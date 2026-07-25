@@ -4835,6 +4835,7 @@ impl VirtualMachine {
                     allow_side_effects: bool,
                     depth: u8,
                     remaining_unwraps: *mut u8,
+                    visited_any: bool,
                 }
                 extern "C" fn agg_iter(
                     _vm: *mut crate::VM,
@@ -4844,6 +4845,7 @@ impl VirtualMachine {
                 ) {
                     // SAFETY: `ctx` is `&mut AggCtx` for the duration of `for_each`.
                     let ctx = unsafe { bun_ptr::callback_ctx::<AggCtx<'_>>(ctx) };
+                    ctx.visited_any = true;
                     // SAFETY: per-thread VM.
                     let vm = VirtualMachine::get().as_mut();
                     let exception_list = if ctx.exception_list.is_null() {
@@ -4885,16 +4887,19 @@ impl VirtualMachine {
                     allow_side_effects,
                     depth: depth + 1,
                     remaining_unwraps: std::ptr::from_mut(remaining_unwraps),
+                    visited_any: false,
                 };
-                if errors
-                    .for_each(global_ref, (&raw mut ctx).cast(), agg_iter)
-                    .is_ok()
-                {
-                    return;
+                match errors.for_each(global_ref, (&raw mut ctx).cast(), agg_iter) {
+                    // An empty `errors` (e.g. `Promise.any([])`) falls through
+                    // so the AggregateError itself is printed, not nothing.
+                    Ok(()) if ctx.visited_any => return,
+                    Ok(()) => {}
+                    Err(_) => {
+                        // Iteration threw (e.g. poisoned Symbol.iterator):
+                        // clear it and fall through.
+                        global_ref.clear_exception_except_termination();
+                    }
                 }
-                // Iteration threw (e.g. poisoned Symbol.iterator): clear it and
-                // fall through so the AggregateError itself is still printed.
-                global_ref.clear_exception_except_termination();
             }
         }
 

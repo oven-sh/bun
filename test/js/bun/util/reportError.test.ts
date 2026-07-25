@@ -237,8 +237,32 @@ test("uncaught AggregateError with intact `errors` still prints each sub-error",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stderr).toContain("inner_a");
-  expect(stderr).toContain("inner_b");
+  // Match the printed error headers: the echoed source line also contains the
+  // bare marker names, so `toContain("inner_a")` alone can't fail.
+  expect(stderr).toContain("error: inner_a");
+  expect(stderr).toContain("error: inner_b");
+  expect(stdout).toBe("");
+  expect(proc.signalCode).toBeNull();
+  expect(exitCode).toBe(1);
+});
+
+// An empty `errors` array is the untampered shape from `Promise.any([])` and
+// `new AggregateError([], msg)`: zero sub-errors used to mean zero output, so
+// the AggregateError's own message was swallowed.
+test.concurrent.each([
+  ["explicit empty AggregateError", 'throw new AggregateError([], "agg_boom");', "AggregateError: agg_boom"],
+  // (Bun's Promise.any rejection carries an empty message, so match the header.)
+  ["unhandled Promise.any with no promises", "Promise.any([]);", "AggregateError:"],
+] as const)("uncaught AggregateError with empty `errors` prints the error itself (%s)", async (_name, fixture, expected) => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: { ...bunEnv, NO_COLOR: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toContain(expected);
   expect(stdout).toBe("");
   expect(proc.signalCode).toBeNull();
   expect(exitCode).toBe(1);

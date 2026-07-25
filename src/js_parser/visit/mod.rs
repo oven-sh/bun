@@ -480,21 +480,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             }
                         }
                         let mut end: usize = 0;
-                        // SAFETY: `end <= i < used.len() == object.properties.len()`;
-                        // G::Property has no Drop; src/dst never overlap when i != end.
-                        unsafe {
-                            let props_ptr = object.properties.slice_mut().as_mut_ptr();
-                            for (i, &keep) in used.iter().enumerate() {
-                                if keep {
-                                    if i != end {
-                                        core::ptr::copy_nonoverlapping(
-                                            props_ptr.add(i),
-                                            props_ptr.add(end),
-                                            1,
-                                        );
-                                    }
-                                    end += 1;
-                                }
+                        for (i, &keep) in used.iter().enumerate() {
+                            if keep {
+                                object.properties.slice_mut().swap(end, i);
+                                end += 1;
                             }
                         }
                         object.properties.truncate(end);

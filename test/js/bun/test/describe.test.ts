@@ -339,13 +339,7 @@ describe("beforeAll/afterAll are pruned when a describe has no non-skipped tests
     expect(hookLine).toBeDefined();
     const log = JSON.parse(hookLine!.slice("HOOKLOG ".length));
 
-    expect(log).toEqual([
-      "bA-allfailing",
-      "aA-allfailing",
-      "bA-skipPlusTodo",
-      "aA-skipPlusTodo",
-      "BODY-keep",
-    ]);
+    expect(log).toEqual(["bA-allfailing", "aA-allfailing", "bA-skipPlusTodo", "aA-skipPlusTodo", "BODY-keep"]);
     expect(exitCode).toBe(0);
   });
 });

@@ -2864,9 +2864,6 @@ pub mod formatter {
             write_indent_n(self.indent, writer)
         }
 
-        /// `... N more item(s)` marker for Map/Set past `MAP_SET_ENTRY_CAP`.
-        /// Supplies the separator the next entry would have: leading `, `
-        /// in single-line, indent + trailing `,\n` in multi-line.
         fn print_more_items_marker<const C: bool>(
             &mut self,
             writer: &mut dyn bun_io::Write,

@@ -141,6 +141,7 @@ describe.concurrent("node-module-module", () => {
       m.paths = Module._nodeModulePaths(path.dirname(__filename));
 
       assert.strictEqual(typeof Module.prototype.require, "function");
+      assert.strictEqual(typeof Module.prototype._compile, "function");
       assert.strictEqual(typeof m.require, "function");
       assert.strictEqual(m instanceof Module, true);
       assert.strictEqual(module instanceof Module, true);

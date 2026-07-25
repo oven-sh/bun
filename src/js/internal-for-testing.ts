@@ -267,6 +267,16 @@ export const primordials = {
       TypedArrayPrototypeGetLength: $TypedArrayPrototypeGetLength,
     };
   },
+  // Materializes every primordial and returns one { name, holder, kind, key, value, available }
+  // row per JSCPrimordials.h entry, straight from JSC.
+  audit: $newCppFunction("PrimordialsAudit.cpp", "Bun__primordialsAudit", 0) as () => Array<{
+    name: string;
+    holder: string;
+    kind: "Method" | "Getter" | "SymbolMethod" | "SymbolGetter";
+    key: string | symbol;
+    value: Function;
+    available: boolean;
+  }>,
 };
 
 // Userland access to node-internal modules for vendored node tests that

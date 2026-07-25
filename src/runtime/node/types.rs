@@ -309,9 +309,7 @@ impl bun_jsc::Unprotect for StringOrBuffer {
 }
 
 impl StringOrBuffer {
-    /// Pin-or-dupe `value`'s bytes for a call that may outlive later JS coercions.
-    /// `FastTypedArray` inputs are duped (pinning would `slowDownAndWasteMemory()`); every
-    /// other mode is pinned in place. `protect` GC-roots the JS value for the `Buffer` arms.
+    /// Pin `value`'s bytes (`FastTypedArray` is duped instead; pinning would `slowDownAndWasteMemory()`).
     fn pinned_buffer_from_js(global: &JSGlobalObject, value: JSValue, protect: bool) -> Self {
         use jsc::BorrowedBufferBytes;
         match value.borrow_array_buffer_bytes(global) {

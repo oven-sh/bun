@@ -266,35 +266,53 @@ pub fn for_each_multipart_entry<C>(
     let mut slice = input;
     let subslicer = SlicedString::init(input, input);
 
-    let mut buf = [0u8; 76];
+    // RFC 2046 §5.1.1: the CRLF preceding the encapsulation boundary is
+    // conceptually attached to the boundary, not to the preceding part's body.
+    // Matching `--boundary` without that leading CRLF lets a mid-line
+    // `--boundary` inside a field value terminate the part early and parses
+    // the value's remaining bytes as an attacker-authored extra part.
+    let mut buf = [0u8; 78];
     {
-        // Hand-rolled `--{boundary}--` formatting — boundary is raw bytes,
-        // not guaranteed UTF-8, so avoid `core::fmt`.
-        let need = boundary.len() + 4;
+        // Hand-rolled `\r\n--{boundary}--` formatting — boundary is raw
+        // bytes, not guaranteed UTF-8, so avoid `core::fmt`.
+        let need = boundary.len() + 6;
         if need > buf.len() {
             return Err(crate::Error::BoundaryIsTooLong);
         }
-        buf[..2].copy_from_slice(b"--");
-        buf[2..2 + boundary.len()].copy_from_slice(boundary);
-        buf[2 + boundary.len()..need].copy_from_slice(b"--");
+        buf[..2].copy_from_slice(b"\r\n");
+        buf[2..4].copy_from_slice(b"--");
+        buf[4..4 + boundary.len()].copy_from_slice(boundary);
+        buf[4 + boundary.len()..need].copy_from_slice(b"--");
         let final_boundary = &buf[..need];
 
-        let Some(final_boundary_index) = strings::last_index_of(input, final_boundary) else {
+        if let Some(i) = strings::last_index_of(slice, final_boundary) {
+            slice = &slice[..i];
+        } else if slice.starts_with(&final_boundary[2..]) {
+            // `--{boundary}--` at offset 0: an empty form with no preamble.
+            return Ok(());
+        } else {
             return Err(crate::Error::MissingFinalBoundary);
-        };
-        slice = &slice[..final_boundary_index];
+        }
     }
 
-    // Hand-rolled `--{boundary}\r\n` formatting (same raw-bytes caveat).
-    // Length check already passed above (same `boundary.len() + 4`).
-    let sep_len = boundary.len() + 4;
-    buf[..2].copy_from_slice(b"--");
-    buf[2..2 + boundary.len()].copy_from_slice(boundary);
-    buf[2 + boundary.len()..sep_len].copy_from_slice(b"\r\n");
+    // Hand-rolled `\r\n--{boundary}\r\n` formatting (same raw-bytes caveat).
+    // Length check already passed above (same `boundary.len() + 6`).
+    let sep_len = boundary.len() + 6;
+    buf[4 + boundary.len()..sep_len].copy_from_slice(b"\r\n");
     let separator = &buf[..sep_len];
 
+    // The opening dash-boundary is the one delimiter permitted without a
+    // leading CRLF (no preamble). Consume it explicitly so every remaining
+    // delimiter is the full CRLF-anchored form.
+    if slice.starts_with(&separator[2..]) {
+        slice = &slice[separator.len() - 2..];
+    } else if let Some(i) = strings::index_of(slice, separator) {
+        slice = &slice[i + separator.len()..];
+    } else {
+        return Ok(());
+    }
+
     let mut splitter = strings::split(slice, separator);
-    let _ = splitter.next(); // skip first boundary
 
     while let Some(chunk) = splitter.next() {
         let mut remain = chunk;
@@ -400,11 +418,7 @@ pub fn for_each_multipart_entry<C>(
             continue;
         }
 
-        let mut body = remain;
-        if body.ends_with(b"\r\n") {
-            body = &body[..body.len() - 2];
-        }
-        field.value = body;
+        field.value = remain;
         field.filename = filename.unwrap_or_default();
         field.is_file = is_file;
 

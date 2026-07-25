@@ -772,7 +772,6 @@ ${Buffer.alloc(counter * 2, " ").toString()}throw new Error(${counter});`,
     expect(reloadCounter).toBe(50);
     bundler.kill();
     await runner.exited;
-    // TODO: bun has a memory leak when --hot is used on very large files
   },
   longTimeout,
 );

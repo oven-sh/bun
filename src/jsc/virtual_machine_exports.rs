@@ -346,3 +346,13 @@ pub fn Bun__setSyntheticAllocationLimitForTesting(
         .store(limit, core::sync::atomic::Ordering::Relaxed);
     Ok(JSValue::js_number(prev as f64))
 }
+
+/// Number of live entries in the VM's ref-string source-code cache. Exposed via
+/// `bun:internal-for-testing` so --hot leak tests can observe the native-heap
+/// side of the leak (ref_strings entries are Box<[u8]> + ExternalStringImpl,
+/// not JS cells, so invisible to `heapStats()`).
+#[crate::host_fn(export = "Bun__refStringsCount")]
+pub fn Bun__refStringsCount(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+    let count = VirtualMachine::get().ref_strings.count();
+    Ok(JSValue::js_number(f64::from(count)))
+}

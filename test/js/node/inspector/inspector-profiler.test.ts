@@ -537,29 +537,35 @@ session.connect();
 await session.post("Profiler.enable");
 await session.post("Profiler.startPreciseCoverage", { callCount: true, detailed: true });
 const url = "file:///delta-fixture/virtual.js";
-const f = vm.runInThisContext("function f(){return 1}; f", { filename: url });
-f(); f(); f();
+const code = "function f(n){ if(n<0) return 'neg'; return 'pos'; }; f";
+const negOffset = code.indexOf("'neg'");
+const f = vm.runInThisContext(code, { filename: url });
+f(-1); f(-1); f(-1);
 const first = await session.post("Profiler.takePreciseCoverage");
-f();
+f(1);
 const second = await session.post("Profiler.takePreciseCoverage");
 await session.post("Profiler.stopPreciseCoverage");
 session.disconnect();
-const bodyOffset = "function f(){".length;
-const countFor = c => {
+const rangesFor = c => {
   const entry = c.result.find(s => s.url === url);
-  // Innermost function entry that covers the body of f().
-  const fn = entry?.functions
-    .filter(f => f.ranges[0].startOffset <= bodyOffset && bodyOffset < f.ranges[0].endOffset)
-    .sort((a, b) => a.ranges[0].endOffset - b.ranges[0].endOffset)[0];
-  return fn?.ranges[0].count;
+  const fn = entry?.functions.find(f => f.functionName === "f");
+  return fn?.ranges.map(r => [r.startOffset, r.endOffset, r.count]);
 };
-console.log(JSON.stringify({ first: countFor(first), second: countFor(second) }));
+console.log(JSON.stringify({ negOffset, first: rangesFor(first), second: rangesFor(second) }));
 `,
       });
       await using proc = Bun.spawn({ cmd: [bunExe(), "fixture.mjs"], env: bunEnv, cwd: String(dir), stderr: "pipe" });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect({ stderrIfFailed: exitCode === 0 ? "" : stderr, exitCode }).toEqual({ stderrIfFailed: "", exitCode: 0 });
-      expect(JSON.parse(stdout.trim())).toEqual({ first: 3, second: 1 });
+      const { negOffset, first, second } = JSON.parse(stdout.trim());
+      // Window 1: all 3 calls took the negative branch, so no sub-range (branch count equals call count).
+      expect(first[0][2]).toBe(3);
+      // Window 2: one call took the positive branch; the negative branch ran 0 times
+      // in this window and must appear as a count-0 sub-range (not be dropped as a
+      // no-code tail because its cumulative raw count is > 0).
+      expect(second[0][2]).toBe(1);
+      const negRange = second.find(([s, e, c]) => s <= negOffset && negOffset < e && c === 0);
+      expect(negRange).toBeDefined();
     });
 
     test.concurrent("collects block coverage with call counts for vm scripts", async () => {

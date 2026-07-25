@@ -184,7 +184,8 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_collectPreciseCoverage, (JSGlobalObject * gl
             range->pushInteger(block.m_startOffset);
             range->pushInteger(block.m_endOffset);
             range->pushDouble(static_cast<double>(block.m_executionCount));
-            range->pushBoolean(block.m_executionCount == 0 && rangeHasCode(block.m_startOffset, block.m_endOffset));
+            // JS delta-subtracts the count; a block that ever ran has code, so don't scan it.
+            range->pushBoolean(block.m_executionCount > 0 || rangeHasCode(block.m_startOffset, block.m_endOffset));
             blockArray->pushValue(WTF::move(range));
         }
         script->setValue("blocks"_s, WTF::move(blockArray));

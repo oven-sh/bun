@@ -1351,14 +1351,14 @@ describe("bun test", () => {
       input: `
         import { test } from "bun:test";
         test("foofoo", () => {});
-        test("bar", () => {});
+        test("just bar", () => {});
         test("barbar", () => {});
         test("quux", () => {});
       `,
     });
     expect(stderr).toContain("(pass) foofoo");
     expect(stderr).toContain("(pass) barbar");
-    expect(stderr).not.toContain("(pass) bar ");
+    expect(stderr).not.toContain("(pass) just bar");
     expect(stderr).not.toContain("(pass) quux");
     expect(stderr).toContain("2 pass");
     expect(stderr).toContain("2 filtered out");

@@ -232,9 +232,9 @@ pub(crate) const RUNTIME_PARAMS_: &[ParamType] = &[
     parse_param!(
         "-i                                Auto-install dependencies during execution. Equivalent to --install=fallback."
     ),
-    parse_param!("-e, --eval <STR>                  Evaluate argument as a script"),
+    parse_param!("-e, --eval <STR>!                 Evaluate argument as a script"),
     parse_param!(
-        "-p, --print <STR>                 Evaluate argument as a script and print the result"
+        "-p, --print <STR>?!               Evaluate argument as a script and print the result"
     ),
     parse_param!(
         "--prefer-offline                  Skip staleness checks for packages in the Bun runtime and resolve from disk"
@@ -1182,6 +1182,7 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
                 // TODO: prevent `node --port <script>` from working
                 ctx.runtime_options.eval.script = port_str.into();
                 ctx.runtime_options.eval.eval_and_print = true;
+                ctx.runtime_options.eval.provided = true;
             } else {
                 opts.port = match strings::parse_int::<u16>(port_str, 10) {
                     Ok(v) => Some(v),
@@ -1250,44 +1251,28 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
             }
         }
 
-        if let Some(script) = args.option(b"--print") {
-            ctx.runtime_options.eval.eval_and_print = true;
-            if (script == b"-e" || script == b"--eval") && args.option(b"--eval").is_none() {
-                // node's `-p` is a bare flag and `-e` carries the code
-                // (`node -p -e "code"`), but bun's `-p` takes a value, so it
-                // swallows the literal `-e` token and the code lands in the
-                // entrypoint positional. Reclaim it; node consumes it too, so
-                // it must not stay in `positionals` (it would resolve as the
-                // run target and land in `process.argv`).
-                if ctx.positionals.is_empty() {
-                    // node: `node -p -e` → "<execPath>: -e requires an argument"
-                    // on stderr, exit code 9.
-                    let exe: &[u8] = bun_core::self_exe_path()
-                        .map(|p| p.as_bytes())
-                        .unwrap_or(b"bun");
-                    Output::pretty_error(&format_args!(
-                        "{}: -e requires an argument\n",
-                        BStr::new(exe)
-                    ));
-                    Output::flush();
-                    Global::exit(9);
-                }
-                ctx.runtime_options.eval.script = ctx.positionals.remove(0);
-            } else if let Some(code) = script.strip_prefix(b"--eval=") {
-                // `node --print --eval=-42`: the attached-value spelling for
-                // code starting with `-`.
-                ctx.runtime_options.eval.script = code.into();
-            } else {
-                ctx.runtime_options.eval.script = script.into();
-            }
-        } else if let Some(script) = args.option(b"--eval") {
+        // Node registers `--print` as a boolean and `--print <arg>` as an alias
+        // for `-pe`, i.e. `--print --eval <arg>`, so -p turns on print mode and
+        // may also carry the script (`bun -p 42`, `bun -pe 42`, `bun -p -e 42`).
+        //
+        // Divergence: because both spellings feed one upstream `--eval` string,
+        // Node takes whichever came last, so `node -p 7 -e 9` prints 9. Bun's
+        // parser keeps the two options in separate slots with no relative
+        // order, so a script on -p wins and it prints 7.
+        let print_arg = args.option(b"--print");
+        let eval_arg = args.option(b"--eval");
+        if print_arg.is_some() || eval_arg.is_some() {
+            // `provided` (not a non-empty script) is what selects eval mode, so
+            // `bun -e ""` runs an empty program and bare `bun -p` prints
+            // undefined instead of falling through to help.
+            ctx.runtime_options.eval.provided = true;
+            ctx.runtime_options.eval.eval_and_print = print_arg.is_some();
+            let script: &[u8] = match (print_arg, eval_arg) {
+                (Some(print_script), _) if !print_script.is_empty() => print_script,
+                (_, Some(eval_script)) => eval_script,
+                (print_script, None) => print_script.unwrap_or_default(),
+            };
             ctx.runtime_options.eval.script = script.into();
-        }
-        // node: an eval expression starting with `-` can be escaped with a
-        // backslash (`node -p "\-42"` prints -42); strip the single leading
-        // backslash before it reaches the parser.
-        if ctx.runtime_options.eval.script.starts_with(b"\\-") {
-            ctx.runtime_options.eval.script = ctx.runtime_options.eval.script[1..].into();
         }
         ctx.runtime_options.if_present = args.flag(b"--if-present");
         ctx.runtime_options.smol = args.flag(b"--smol");

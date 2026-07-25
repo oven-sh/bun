@@ -3364,15 +3364,28 @@ pub mod formatter {
         let name_slice = name_str.to_slice();
         let expected = match dom_node_type_for_class_name(name_slice.slice()) {
             Some(e) => e,
-            // Custom elements: the prototype chain still goes through `HTMLElement`.
-            None => {
-                let mut proto_name = ZigString::init(b"");
-                grand.get_class_name(global_this, &mut proto_name)?;
-                let proto_slice = proto_name.to_slice();
-                match dom_node_type_for_class_name(proto_slice.slice()) {
-                    Some(DOM_ELEMENT_NODE) => DOM_ELEMENT_NODE,
-                    _ => return Ok(false),
+            // Custom elements: walk up until an `*Element` ancestor is found.
+            None => 'walk: {
+                let mut cur = grand;
+                for _ in 0..8 {
+                    if !cur.is_cell() || cur.js_type() == jsc::JSType::ProxyObject {
+                        return Ok(false);
+                    }
+                    let next = cur.get_prototype(global_this);
+                    if next.is_empty_or_undefined_or_null() {
+                        return Ok(false);
+                    }
+                    let mut proto_name = ZigString::init(b"");
+                    cur.get_class_name(global_this, &mut proto_name)?;
+                    let proto_slice = proto_name.to_slice();
+                    if let Some(DOM_ELEMENT_NODE) =
+                        dom_node_type_for_class_name(proto_slice.slice())
+                    {
+                        break 'walk DOM_ELEMENT_NODE;
+                    }
+                    cur = next;
                 }
+                return Ok(false);
             }
         };
         let confirmed = match value.get(global_this, "nodeType") {

@@ -1176,6 +1176,31 @@ static JSValue fetchESMSourceCode(
         JSC::ensureStillAliveHere(value);
         RELEASE_AND_RETURN(scope, rejectOrResolve(JSSourceCode::create(globalObject->vm(), WTF::move(source))));
     }
+#if ENABLE(WEBASSEMBLY)
+    else if (res->result.value.tag == SyntheticModuleType::Wasm) {
+        // WebAssembly/ESM integration: the Rust side packed the raw wasm bytes
+        // into source_code as Latin-1 (one byte per char). Hand them to JSC as a
+        // WebAssemblySourceProvider so JSModuleLoader dispatches to
+        // JSWebAssembly::instantiate and the module namespace is the instance's
+        // exports.
+        WTF::String wasmSource = res->result.value.source_code.toWTFString(BunString::NonNull);
+        Vector<uint8_t> wasmBytes;
+        if (wasmSource.is8Bit()) {
+            wasmBytes.append(wasmSource.span8());
+        } else {
+            auto span = wasmSource.span16();
+            wasmBytes.reserveInitialCapacity(span.size());
+            for (auto ch : span)
+                wasmBytes.append(static_cast<uint8_t>(ch & 0xff));
+        }
+
+        auto moduleKey = specifier->toWTFString(BunString::ZeroCopy);
+        auto sourceUrlString = res->result.value.source_url.toWTFString(BunString::ZeroCopy);
+        auto sourceURL = !sourceUrlString.isEmpty() ? WTF::URL::fileURLWithFileSystemPath(sourceUrlString) : WTF::URL();
+        auto provider = JSC::WebAssemblySourceProvider::create(WTF::move(wasmBytes), JSC::SourceOrigin(sourceURL), WTF::move(moduleKey));
+        RELEASE_AND_RETURN(scope, rejectOrResolve(JSC::JSSourceCode::create(vm, JSC::SourceCode(WTF::move(provider)))));
+    }
+#endif
 
     auto provider = Zig::SourceProvider::create(globalObject, res->result.value);
     if (useIsolationCache) {

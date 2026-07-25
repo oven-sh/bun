@@ -339,6 +339,30 @@ static JSValue constructBunSQLObject(VM& vm, JSObject* bunObject)
     RELEASE_AND_RETURN(scope, sqlValue.getObject()->get(globalObject, clientData->builtinNames().SQLPublicName()));
 }
 
+extern "C" JSC::EncodedJSValue Bun__requestClusterUnixServeFd(JSGlobalObject* globalObject, JSC::EncodedJSValue pathValue)
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* zigGlobal = defaultGlobalObject(globalObject);
+    JSValue clusterModule = zigGlobal->internalModuleRegistry()->requireId(globalObject, vm, InternalModuleRegistry::NodeCluster);
+    RETURN_IF_EXCEPTION(scope, {});
+    JSObject* clusterObject = clusterModule.getObject();
+    if (!clusterObject) return JSValue::encode(jsUndefined());
+    JSValue defaultExport = clusterObject->get(globalObject, vm.propertyNames->defaultKeyword);
+    RETURN_IF_EXCEPTION(scope, {});
+    JSObject* cluster = defaultExport.getObject();
+    if (!cluster) cluster = clusterObject;
+    JSValue fn = cluster->get(globalObject, Identifier::fromString(vm, "_bunServeUnix"_s));
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!fn.isCallable()) return JSValue::encode(jsUndefined());
+    MarkedArgumentBuffer args;
+    args.append(JSValue::decode(pathValue));
+    auto callData = JSC::getCallData(fn);
+    JSValue result = JSC::call(globalObject, fn, callData, cluster, args);
+    RETURN_IF_EXCEPTION(scope, {});
+    RELEASE_AND_RETURN(scope, JSValue::encode(result));
+}
+
 extern "C" JSC::EncodedJSValue JSPasswordObject__create(JSGlobalObject*);
 
 static JSValue constructPasswordObject(VM& vm, JSObject* bunObject)

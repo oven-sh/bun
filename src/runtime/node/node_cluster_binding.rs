@@ -396,3 +396,51 @@ pub fn should_ignore_one_disconnect_event_listener(global: &JSGlobalObject) -> b
     let vm = global.bun_vm();
     vm.channel_ref_should_ignore_one_disconnect_event_listener
 }
+
+#[cfg(not(windows))]
+unsafe extern "C" {
+    fn bsd_create_listen_socket_unix(
+        path: *const core::ffi::c_char,
+        pathlen: usize,
+        options: core::ffi::c_int,
+        error: *mut core::ffi::c_int,
+    ) -> core::ffi::c_int;
+}
+
+/// Bind+listen an AF_UNIX stream socket at `path` without attaching it to an
+/// event loop. Used by the cluster primary to create a shared listen
+/// descriptor that is handed to every worker over SCM_RIGHTS so `Bun.serve`
+/// in the workers can adopt it (SO_REUSEPORT does not apply to AF_UNIX).
+/// Returns the fd on success, or the negative errno on failure.
+#[bun_jsc::host_fn]
+pub(crate) fn bind_unix_listen_fd(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    #[cfg(windows)]
+    {
+        let _ = frame;
+        let _ = global;
+        return Ok(JSValue::js_number(-(bun_sys::SystemErrno::ENOTSUP as i32) as f64));
+    }
+    #[cfg(not(windows))]
+    {
+        let [path] = frame.arguments_as_array::<1>();
+        if !path.is_string() {
+            return Err(global.throw_invalid_argument_type_value("path", "string", path));
+        }
+        let slice = path.to_slice(global)?;
+        let bytes = slice.slice();
+        let mut errno: core::ffi::c_int = 0;
+        // SAFETY: bytes is valid for the duration of the call.
+        let fd = unsafe {
+            bsd_create_listen_socket_unix(bytes.as_ptr().cast(), bytes.len(), 0, &mut errno)
+        };
+        if fd < 0 {
+            let e = if errno != 0 {
+                errno
+            } else {
+                bun_sys::SystemErrno::EADDRINUSE as i32
+            };
+            return Ok(JSValue::js_number(-(e as f64)));
+        }
+        Ok(JSValue::js_number(fd as f64))
+    }
+}

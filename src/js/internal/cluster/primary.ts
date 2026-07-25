@@ -7,6 +7,7 @@ const { throwNotImplemented, kHandle } = require("internal/shared");
 
 const sendHelper = $newRustFunction("node_cluster_binding.rs", "sendHelperPrimary", 4);
 const onInternalMessage = $newRustFunction("node_cluster_binding.rs", "onInternalMessagePrimary", 3);
+const bindUnixListenFd = $newRustFunction("node_cluster_binding.rs", "bindUnixListenFd", 1);
 
 let child_process;
 
@@ -207,6 +208,7 @@ const methodMessageMapping = {
   listening,
   online,
   queryServer,
+  bunServeUnix,
 };
 
 function onmessage(message, _handle) {
@@ -290,6 +292,45 @@ function queryServer(worker, message) {
       handle,
     );
   });
+}
+
+// path -> { fd, workers: Set<id> }
+const bunServeUnixHandles = new Map();
+
+// Bun.serve({ unix }) in a worker asks the primary for a shared listen fd so
+// every worker accepts on the same AF_UNIX socket (SO_REUSEPORT is TCP-only).
+function bunServeUnix(worker, message) {
+  const path = message.path;
+  const key = `bunServeUnix:${path}`;
+  if (typeof path !== "string" || process.platform === "win32") {
+    send(worker, { errno: -22 /* EINVAL */, key, ack: message.seq });
+    return;
+  }
+  let entry = bunServeUnixHandles.get(path);
+  if (entry === undefined) {
+    const result = bindUnixListenFd(path);
+    if (result < 0) {
+      send(worker, { errno: result, key, ack: message.seq });
+      return;
+    }
+    entry = { fd: result, workers: new Set() };
+    bunServeUnixHandles.set(path, entry);
+    handles.set(key, {
+      remove(w) {
+        if (!entry!.workers.delete(w.id)) return false;
+        if (entry!.workers.size !== 0) return false;
+        bunServeUnixHandles.delete(path);
+        require("node:fs").closeSync(entry!.fd);
+        try {
+          if (path.charCodeAt(0) !== 0) require("node:fs").unlinkSync(path);
+        } catch {}
+        return true;
+      },
+    });
+  }
+  entry.workers.add(worker.id);
+  const reply = { cmd: "NODE_HANDLE", type: "bun.ServeUnixFd", message: { errno: 0, key, ack: message.seq, cmd: "NODE_CLUSTER" } };
+  sendHelper(worker.process[kHandle], reply, { fd: entry.fd }, null);
 }
 
 function listening(worker, message) {

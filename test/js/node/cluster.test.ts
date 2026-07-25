@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, bunRun, joinP, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, bunRun, isWindows, joinP, tempDir, tempDirWithFiles } from "harness";
 
 test("cloneable and transferable equals", () => {
   const dir = tempDirWithFiles("bun-test", {
@@ -159,6 +159,79 @@ process.send("regular message");
   });
   const { stdout } = bunRun(joinP(dir, "parent.ts"), bunEnv);
   expect(stdout).toContain("P received regular message");
+});
+
+// https://github.com/oven-sh/bun/issues/13611
+// SO_REUSEPORT does not apply to AF_UNIX; every worker must adopt the same
+// listen descriptor from the primary instead of binding independently.
+test.skipIf(isWindows)("Bun.serve({ unix }) shares one listen socket across cluster workers", async () => {
+  using dir = tempDir("bun-serve-cluster-unix", {
+    "index.ts": `
+      import cluster from "node:cluster";
+      import net from "node:net";
+      import path from "node:path";
+      const SOCK = path.join(process.cwd(), "serve.sock");
+      const WORKERS = 4;
+      if (cluster.isPrimary) {
+        let ready = 0;
+        const workers: any[] = [];
+        for (let i = 0; i < WORKERS; i++) {
+          const w = cluster.fork({ WORKER_NUM: String(i) });
+          workers.push(w);
+          w.on("message", m => { if (m === "ready" && ++ready === WORKERS) go(); });
+          w.on("exit", (code, sig) => {
+            if ((code ?? 0) !== 0 && sig !== "SIGTERM") {
+              console.error("worker " + i + " exited " + code);
+              process.exit(1);
+            }
+          });
+        }
+        async function go() {
+          // Every worker returned from Bun.serve without throwing: on an
+          // unpatched build 3 of 4 workers EADDRINUSE and exit before this
+          // prints.
+          console.log("listening=" + WORKERS);
+          // accept() on a shared fd is kernel-scheduled across the epoll set,
+          // not round-robin; keep going until at least two workers have
+          // answered. Without the fix this never passes because only one
+          // worker ever bound.
+          const seen = new Set<string>();
+          for (let i = 0; i < 100 && seen.size < 2; i++) {
+            await new Promise<void>(r => {
+              const c = net.connect(SOCK);
+              let b = "";
+              c.on("data", d => b += d);
+              c.on("close", () => { seen.add(b.split("\\r\\n\\r\\n")[1] ?? ""); r(); });
+              c.on("error", () => r());
+              c.write("GET / HTTP/1.0\\r\\nHost: x\\r\\n\\r\\n");
+            });
+          }
+          console.log("distinct=" + seen.size);
+          for (const w of workers) w.kill();
+          process.exit(seen.size >= 2 ? 0 : 1);
+        }
+      } else {
+        const id = process.env.WORKER_NUM;
+        Bun.serve({
+          unix: SOCK,
+          reusePort: true,
+          fetch() { return new Response("worker-" + id); },
+        });
+        process.send!("ready");
+      }
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "index.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).not.toContain("EADDRINUSE");
+  expect(stdout).toContain("listening=4");
+  expect(stdout).toContain("distinct=2");
+  expect(exitCode).toBe(0);
 });
 
 test("disconnect() on a cluster.Worker built around a plain object does not abort", async () => {

@@ -1579,6 +1579,45 @@ pub(crate) fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> Js
         }
     }
 
+    // Bun.serve({ unix }) in a node:cluster worker: SO_REUSEPORT does not
+    // apply to AF_UNIX, so instead of each worker binding independently (the
+    // last bind wins and every other worker EADDRINUSEs), ask the primary for
+    // a single shared listen descriptor and adopt it. The IPC round-trip
+    // pumps the event loop so Bun.serve() stays synchronous to callers.
+    #[cfg(not(windows))]
+    if config.reuse_port && global_object.bun_vm().ipc.is_some() {
+        if let crate::server::server_config::Address::Unix(path) = &config.address {
+            let bytes = path.as_bytes();
+            if !bytes.is_empty() {
+                unsafe extern "C" {
+                    fn Bun__requestClusterUnixServeFd(
+                        global: &JSGlobalObject,
+                        path: JSValue,
+                    ) -> JSValue;
+                }
+                let path_js = bun_jsc::bun_string_jsc::create_utf8_for_js(global_object, bytes)?;
+                // SAFETY: FFI to C++ shim in BunObject.cpp; both args valid.
+                let promise = unsafe { Bun__requestClusterUnixServeFd(global_object, path_js) };
+                if global_object.has_exception() {
+                    return Err(bun_jsc::JsError::Thrown);
+                }
+                if let Some(any) = promise.as_any_promise() {
+                    global_object.bun_vm().as_mut().wait_for_promise(any);
+                    if global_object.has_exception() {
+                        return Err(bun_jsc::JsError::Thrown);
+                    }
+                    let result = any.result(global_object.vm());
+                    if result.is_number() {
+                        let fd = result.to_int32();
+                        if fd >= 0 {
+                            config.cluster_unix_fd = Some(fd);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     macro_rules! serve_with {
         ($ServerType:ty, $tag:expr) => {{
             let server = <$ServerType>::init(&mut config, global_object)?;

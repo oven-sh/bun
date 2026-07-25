@@ -57,6 +57,19 @@ cluster._setupWorker = function () {
   }
 };
 
+cluster._bunServeUnix = function (path) {
+  return new Promise(resolve => {
+    if (!process.connected) return resolve(-1);
+    send({ act: "bunServeUnix", path }, (reply, handle) => {
+      if (handle && typeof handle.fd === "number" && handle.fd >= 0) {
+        resolve(handle.fd);
+      } else {
+        resolve(typeof reply?.errno === "number" && reply.errno < 0 ? reply.errno : -1);
+      }
+    });
+  });
+};
+
 // `obj` is a net#Server or a dgram#Socket object.
 cluster._getServer = function (obj, options, cb) {
   let address = options.address;

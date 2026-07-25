@@ -55,6 +55,10 @@ pub struct ServerConfig {
     pub websocket: Option<WebSocketServerContext>,
 
     pub reuse_port: bool,
+    /// Set by `Bun.serve` (not parsed from JS) when this process is a
+    /// `node:cluster` worker and the primary handed us a shared AF_UNIX listen
+    /// descriptor; `listen()` adopts it instead of binding `address`.
+    pub cluster_unix_fd: Option<i32>,
     pub id: Box<[u8]>,
     pub allow_hot: bool,
     pub ipv6_only: bool,
@@ -88,6 +92,7 @@ impl Default for ServerConfig {
             on_node_http_request: JSValue::ZERO,
             websocket: None,
             reuse_port: false,
+            cluster_unix_fd: None,
             id: Box::default(),
             allow_hot: true,
             ipv6_only: false,
@@ -272,6 +277,7 @@ impl ServerConfig {
             on_node_http_request: self.on_node_http_request,
             websocket: self.websocket.take(),
             reuse_port: self.reuse_port,
+            cluster_unix_fd: self.cluster_unix_fd,
             id: core::mem::take(&mut self.id),
             allow_hot: self.allow_hot,
             ipv6_only: self.ipv6_only,

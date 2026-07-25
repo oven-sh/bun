@@ -496,9 +496,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         return Some(p.value_for_import_meta_main(false, target.loc));
                     }
 
-                    // `import.meta.require` is a Bun extension. When bundling for a target that
-                    // does not support it (node/browser), lower it to the same node that a bare
-                    // `require` identifier becomes so the target's `__require` polyfill is used.
                     if name == b"require"
                         && p.options.lower_import_meta_require
                         && !p.is_source_runtime()

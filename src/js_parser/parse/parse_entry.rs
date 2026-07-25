@@ -92,9 +92,7 @@ pub struct Options<'a> {
     /// Used for inlining the state of import.meta.main during visiting
     pub import_meta_main_value: Option<bool>,
     pub lower_import_meta_main_for_node_js: bool,
-    /// `import.meta.require` is a Bun extension; when bundling for a target that
-    /// does not support it natively, rewrite it to the same `__require` that a
-    /// bare `require` identifier becomes.
+    /// Rewrite `import.meta.require` (a Bun extension) to the `__require` polyfill.
     pub lower_import_meta_require: bool,
 
     /// When using react fast refresh or server components, the framework is

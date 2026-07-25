@@ -2710,28 +2710,39 @@ fn get_or_put_resolved_package(
             // into the lockfile string buffer before any other mutation.
             // `version.tag == Symlink`.
             let symlink_path = this.lockfile.str_detached(version.symlink());
-            // Only resolve path-form `link:` when declared in the root or a
-            // workspace package; a downloaded package must not be able to
-            // symlink an arbitrary path on the host. Same gate as `file:`.
-            let res = if dependency::is_link_path(symlink_path)
-                && this.lockfile.is_workspace_dependency(dependency_id)
-            {
-                let mut buf2 = PathBuffer::uninit();
-                let symlink_path_abs = if bun_paths::is_absolute(symlink_path) {
-                    symlink_path
-                } else {
-                    Path::resolve_path::join_abs_string_buf::<Path::platform::Auto>(
-                        FileSystem::instance().top_level_dir(),
-                        &mut buf2,
-                        &[symlink_path],
+            let res = if dependency::is_link_path(symlink_path) {
+                // A downloaded package must not be able to symlink an arbitrary
+                // host path; only honour path-form `link:` when it came from
+                // the root/a workspace package or a root-authored override.
+                // Same gate as the `file:` (`Tag::Folder`) arm above.
+                let trusted = this.lockfile.is_workspace_dependency(dependency_id) || {
+                    let buf = this.lockfile.buffers.string_bytes.as_slice();
+                    this.lockfile.overrides.contains_name(
+                        dependency.name_hash,
+                        dependency.name.slice(buf),
+                        buf,
                     )
                 };
-                FolderResolution::get_or_put(
-                    GlobalOrRelative::Relative(dependency::version::Tag::Symlink),
-                    version,
-                    symlink_path_abs,
-                    this,
-                )
+                if !trusted {
+                    FolderResolutionValue::Err(crate::Error::MissingPackageJSON)
+                } else {
+                    let mut buf2 = PathBuffer::uninit();
+                    let symlink_path_abs = if bun_paths::is_absolute(symlink_path) {
+                        symlink_path
+                    } else {
+                        Path::resolve_path::join_abs_string_buf::<Path::platform::Auto>(
+                            FileSystem::instance().top_level_dir(),
+                            &mut buf2,
+                            &[symlink_path],
+                        )
+                    };
+                    FolderResolution::get_or_put(
+                        GlobalOrRelative::Relative(dependency::version::Tag::Symlink),
+                        version,
+                        symlink_path_abs,
+                        this,
+                    )
+                }
             } else {
                 let link_dir =
                     unsafe { detach_lifetime(package_manager_real::global_link_dir_path(this)) };

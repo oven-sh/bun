@@ -740,11 +740,12 @@ impl VersionExt for Version {
                     true,
                 ) || self.npm().eql(rhs.npm(), lhs_buf, rhs_buf)
             }
-            Tag::Folder | Tag::DistTag => self.literal.eql(rhs.literal, lhs_buf, rhs_buf),
+            Tag::Folder | Tag::DistTag | Tag::Symlink => {
+                self.literal.eql(rhs.literal, lhs_buf, rhs_buf)
+            }
             Tag::Git => Repository::eql(self.git(), rhs.git(), lhs_buf, rhs_buf),
             Tag::Github => Repository::eql(self.github(), rhs.github(), lhs_buf, rhs_buf),
             Tag::Tarball => self.tarball().eql(rhs.tarball(), lhs_buf, rhs_buf),
-            Tag::Symlink => self.symlink().eql(*rhs.symlink(), lhs_buf, rhs_buf),
             Tag::Workspace => self.workspace().eql(*rhs.workspace(), lhs_buf, rhs_buf),
             _ => true,
         }

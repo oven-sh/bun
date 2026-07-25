@@ -253,6 +253,35 @@ function installExitTracing(): void {
   process.exit = exit as typeof process.exit;
 }
 
+// node's initializeHeapSnapshotSignalHandlers (lib/internal/process/pre_execution.js):
+// --heapsnapshot-signal installs a real `process.on(<signal>)` listener, so
+// `process.listenerCount(<signal>)` is observably 1 before user code runs.
+let heapSnapshotSequence = 0;
+function installHeapSnapshotSignalHandler(signal: string, diagnosticDir: string | null): void {
+  require("internal/validators").validateSignalName(signal, "--heapsnapshot-signal");
+  process.on(signal, function doWriteHeapSnapshot() {
+    require("node:v8").writeHeapSnapshot(heapSnapshotFilename(diagnosticDir));
+  });
+}
+
+// `${diagnosticDir}/Heap.<yyyymmdd>.<hhmmss>.<pid>.<threadId>.<seq>.heapsnapshot`
+// in local time; undefined lets node:v8 pick the same name in the cwd.
+function heapSnapshotFilename(diagnosticDir: string | null): string | undefined {
+  if (!diagnosticDir) return undefined;
+
+  const date = new Date();
+  const yyyy = date.getFullYear();
+  const mm = String(date.getMonth() + 1).padStart(2, "0");
+  const dd = String(date.getDate()).padStart(2, "0");
+  const hh = String(date.getHours()).padStart(2, "0");
+  const MM = String(date.getMinutes()).padStart(2, "0");
+  const ss = String(date.getSeconds()).padStart(2, "0");
+  const seq = String(++heapSnapshotSequence).padStart(3, "0");
+  const threadId = require("node:worker_threads").threadId;
+
+  return `${diagnosticDir}/Heap.${yyyy}${mm}${dd}.${hh}${MM}${ss}.${process.pid}.${threadId}.${seq}.heapsnapshot`;
+}
+
 {
   const execArgv = process.execArgv;
   let catString: string | null = null;
@@ -261,6 +290,8 @@ function installExitTracing(): void {
   let traceEnv = false;
   let traceEnvJsStack = false;
   let traceExit = false;
+  let heapSnapshotSignal: string | null = null;
+  let diagnosticDir: string | null = null;
 
   for (let i = 0; i < execArgv.length; i++) {
     const arg = execArgv[i];
@@ -292,7 +323,19 @@ function installExitTracing(): void {
       // keys its native-stack assertions on that string appearing.
     } else if (arg === "--trace-exit") {
       traceExit = true;
+    } else if (arg === "--heapsnapshot-signal") {
+      if (i + 1 < execArgv.length) heapSnapshotSignal = execArgv[++i];
+    } else if (arg.startsWith("--heapsnapshot-signal=")) {
+      heapSnapshotSignal = arg.slice("--heapsnapshot-signal=".length);
+    } else if (arg === "--diagnostic-dir") {
+      if (i + 1 < execArgv.length) diagnosticDir = execArgv[++i];
+    } else if (arg.startsWith("--diagnostic-dir=")) {
+      diagnosticDir = arg.slice("--diagnostic-dir=".length);
     }
+  }
+
+  if (heapSnapshotSignal !== null) {
+    installHeapSnapshotSignalHandler(heapSnapshotSignal, diagnosticDir);
   }
 
   if (stackTraceLimit !== null) {

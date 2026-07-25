@@ -79,7 +79,8 @@ test("v8.writeHeapSnapshot()", async () => {
   // Without a path the snapshot is written to the cwd, so give it one we own.
   using dir = tempDir("v8-heap-snapshot", {});
   const { filename, ...rest } = await runFixture("write-default", { cwd: String(dir) });
-  expect(filename).toMatch(/^Heap-\d{8}-\d{6}-\d+-\d+\.heapsnapshot$/);
+  // node's DiagnosticFilename: Heap.<yyyymmdd>.<hhmmss>.<pid>.<tid>.<seq>
+  expect(filename).toMatch(/^Heap\.\d{8}\.\d{6}\.\d+\.\d+\.\d{3}\.heapsnapshot$/);
   expect(rest).toEqual(structure);
 });
 

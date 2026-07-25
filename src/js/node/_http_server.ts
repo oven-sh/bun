@@ -93,6 +93,23 @@ const kHttpAllowHalfOpen = Symbol("http.server.httpAllowHalfOpen");
 // category, so this is near-zero cost when tracing is off.
 const kHttpTraceCat = "node,node.http";
 let traceEvents = null;
+
+// node's server-side diagnostics_channel publishers (lib/_http_server.js).
+const dc = require("node:diagnostics_channel");
+const onServerRequestStartChannel = dc.channel("http.server.request.start");
+const onServerResponseCreatedChannel = dc.channel("http.server.response.created");
+const onServerResponseFinishChannel = dc.channel("http.server.response.finish");
+
+function publishServerRequestStart(request, response, socket, server) {
+  if (onServerRequestStartChannel.hasSubscribers) {
+    onServerRequestStartChannel.publish({ request, response, socket, server });
+  }
+  if (onServerResponseFinishChannel.hasSubscribers) {
+    response.once("finish", function onResponseFinish() {
+      onServerResponseFinishChannel.publish({ request, response, socket, server });
+    });
+  }
+}
 function traceServerRequestStart(http_res) {
   traceEvents ??= require("internal/trace_events");
   if (!traceEvents.isCategoryGroupEnabled(kHttpTraceCat)) return;
@@ -966,7 +983,10 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
         }
         // Node traces every parsed request before Expect/limit routing
         // (parserOnIncoming); upgrades never reach that path.
-        if (!is_upgrade) traceServerRequestStart(http_res);
+        if (!is_upgrade) {
+          traceServerRequestStart(http_res);
+          publishServerRequestStart(http_req, http_res, socket, server);
+        }
 
         // Like Node.js: with the optimizeEmptyRequests server option,
         // requests without body headers skip the Readable life cycle (no
@@ -2204,6 +2224,10 @@ function ServerResponse(req, options): void {
   this.statusCode = 200;
   this.statusMessage = undefined;
   this.chunkedEncoding = false;
+
+  if (onServerResponseCreatedChannel.hasSubscribers) {
+    onServerResponseCreatedChannel.publish({ request: req, response: this });
+  }
 }
 $toClass(ServerResponse, "ServerResponse", OutgoingMessage);
 

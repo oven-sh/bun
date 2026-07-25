@@ -1229,16 +1229,13 @@ where
         }
     }
 
-    /// # Safety
-    /// `this` must be the live `RequestContext` user-data pointer registered with uWS.
     pub(crate) fn on_writable_byte_stream(
         this: *mut Self,
         _write_offset: u64,
         _resp: uws::AnyResponse,
     ) -> bool {
         ctx_log!("onWritableByteStream");
-        // SAFETY: caller upholds the fn-level contract — `this` is the live
-        // `RequestContext` user-data pointer registered with uWS.
+        // SAFETY: `this` is the live `RequestContext` user-data pointer registered with uWS.
         let this = unsafe { &mut *this };
         debug_assert!(this.resp.is_some());
         if this.is_aborted_or_ended() {

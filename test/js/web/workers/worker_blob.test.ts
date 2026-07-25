@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
-import { Worker as NodeWorker } from "node:worker_threads";
 import { resolveObjectURL } from "node:buffer";
+import { Worker as NodeWorker } from "node:worker_threads";
 
 test("Worker from a Blob", async () => {
   const worker = new Worker(

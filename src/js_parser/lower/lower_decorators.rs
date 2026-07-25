@@ -356,9 +356,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         name
     }
 
-    /// A synthetic `#__N = void <expr>` class-body property. Placed at a
-    /// lowered private's source position so its brand-add runs on the
-    /// class-body initializer timeline alongside native fields.
+    /// Synthetic `#__N = void <expr>` class-body field at a lowered private's position.
     fn inline_brand_field(
         &mut self,
         used: &mut HashMap<&'a [u8], ()>,
@@ -1472,9 +1470,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
-        // Generated `#`-privates must not textually shadow any private name
-        // already parsed (this class's declarations and any enclosing class's),
-        // because `NoOpRenamer` prints symbol names verbatim.
+        // Every `#`-name already parsed (this class or an enclosing one).
         let mut class_private_names: HashMap<&'a [u8], ()> = HashMap::default();
         for sym in p.symbols.iter() {
             if sym.kind.is_private() {

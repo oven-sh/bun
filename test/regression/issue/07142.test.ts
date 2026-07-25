@@ -1,12 +1,4 @@
 // https://github.com/oven-sh/bun/issues/7142
-//
-// Nitro/Nuxt produce a `.output/server/node_modules` that only contains the
-// files the "node" exports condition reaches. Packages like `ofetch` and
-// `node-fetch-native` also declare a `"bun"` condition pointing at a file the
-// bundler never copied, so Bun matched `"bun"`, found no file on disk, and
-// failed the whole resolution with "Cannot find package". When the `"bun"`
-// target is missing we now retry exports resolution without that condition so
-// the `"node"` / `"default"` target (which Node.js would pick) is used instead.
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
@@ -22,7 +14,7 @@ async function run(dir: string, entry: string) {
   return { stdout, stderr, exitCode };
 }
 
-describe('exports "bun" condition target missing on disk', () => {
+describe.concurrent('exports "bun" condition target missing on disk', () => {
   test("falls through to the node condition (import)", async () => {
     using dir = tempDir("issue-7142-import", {
       "node_modules/ofetch/package.json": JSON.stringify({
@@ -39,7 +31,6 @@ describe('exports "bun" condition target missing on disk', () => {
           },
         },
       }),
-      // only the node target shipped
       "node_modules/ofetch/dist/node.mjs": `export const picked = "node.mjs";\n`,
       "node_modules/ipx/package.json": JSON.stringify({
         name: "ipx",
@@ -103,6 +94,31 @@ describe('exports "bun" condition target missing on disk', () => {
     expect(exitCode).toBe(0);
   });
 
+  test("falls through for the package.json imports map", async () => {
+    using dir = tempDir("issue-7142-imports", {
+      "node_modules/pkg/package.json": JSON.stringify({
+        name: "pkg",
+        type: "module",
+        exports: { ".": "./index.mjs" },
+        imports: {
+          "#internal": {
+            bun: "./bun.mjs",
+            default: "./node.mjs",
+          },
+        },
+      }),
+      "node_modules/pkg/node.mjs": `export const picked = "node.mjs";\n`,
+      "node_modules/pkg/index.mjs": `export { picked } from "#internal";\n`,
+      "index.mjs": `import { picked } from "pkg";\nconsole.log(picked);\n`,
+      "package.json": JSON.stringify({ name: "app", type: "module" }),
+    });
+
+    const { stdout, stderr, exitCode } = await run(dir, "index.mjs");
+    expect(stderr).not.toContain("Cannot find");
+    expect(stdout.trim()).toBe("node.mjs");
+    expect(exitCode).toBe(0);
+  });
+
   test("still prefers the bun condition when its target exists", async () => {
     using dir = tempDir("issue-7142-prefers-bun", {
       "node_modules/pkg/package.json": JSON.stringify({
@@ -144,7 +160,8 @@ describe('exports "bun" condition target missing on disk', () => {
       "package.json": JSON.stringify({ name: "app", type: "module" }),
     });
 
-    const { exitCode } = await run(dir, "index.mjs");
+    const { stderr, exitCode } = await run(dir, "index.mjs");
+    expect(stderr).toContain("pkg");
     expect(exitCode).not.toBe(0);
   });
 
@@ -165,7 +182,8 @@ describe('exports "bun" condition target missing on disk', () => {
       "package.json": JSON.stringify({ name: "app", type: "module" }),
     });
 
-    const { stdout, exitCode } = await run(dir, "index.mjs");
+    const { stdout, stderr, exitCode } = await run(dir, "index.mjs");
+    expect(stderr).toContain("pkg");
     expect(stdout.trim()).not.toBe("index.mjs");
     expect(exitCode).not.toBe(0);
   });

@@ -1278,10 +1278,6 @@ pub struct ESModule<'a> {
     pub conditions: &'a ConditionsMap,
     // allocator dropped — global mimalloc
     pub module_type: &'a mut ModuleType,
-    /// Treat the `"bun"` condition key as not matching. Used by the resolver to
-    /// retry when the `"bun"` target resolved to a file that is missing on
-    /// disk (e.g. node-targeted deployment bundles that pruned it) so the
-    /// remaining `"node"` / `"import"` / `"default"` conditions get a chance.
     pub skip_bun_condition: bool,
 }
 

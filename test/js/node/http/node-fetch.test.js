@@ -450,6 +450,68 @@ describe("node-fetch honours the agent option", () => {
     }
   });
 
+  test("HEAD response releases the abort listener", async () => {
+    const { agent } = makeAgent();
+    let uncaught = 0;
+    const onUncaught = () => uncaught++;
+    process.on("uncaughtException", onUncaught);
+    try {
+      const controller = new AbortController();
+      await withServer(
+        (req, res) => res.end(),
+        async port => {
+          const res = await fetch2(`http://127.0.0.1:${port}/`, {
+            agent,
+            method: "HEAD",
+            signal: controller.signal,
+          });
+          expect(res.status).toBe(200);
+          expect(res.body).toBeNull();
+        },
+      );
+      // The request has resolved and the underlying socket is closed; the
+      // abort listener must have been removed and must not throw.
+      await new Promise(r => setImmediate(r));
+      controller.abort();
+      await new Promise(r => setImmediate(r));
+      expect(uncaught).toBe(0);
+    } finally {
+      process.off("uncaughtException", onUncaught);
+      agent.destroy();
+    }
+  });
+
+  test("accepts DataView and non-Uint8Array typed-array bodies", async () => {
+    const { agent } = makeAgent();
+    try {
+      await withServer(
+        (req, res) => {
+          const chunks = [];
+          req.on("data", c => chunks.push(c));
+          req.on("end", () => res.end(Buffer.concat(chunks).toString("hex")));
+        },
+        async port => {
+          const bytes = new Uint8Array([0xde, 0xad, 0xbe, 0xef]);
+          let res = await fetch2(`http://127.0.0.1:${port}/`, {
+            agent,
+            method: "POST",
+            body: new DataView(bytes.buffer),
+          });
+          expect(await res.text()).toBe("deadbeef");
+
+          res = await fetch2(`http://127.0.0.1:${port}/`, {
+            agent,
+            method: "POST",
+            body: new Uint16Array(bytes.buffer),
+          });
+          expect(await res.text()).toBe("deadbeef");
+        },
+      );
+    } finally {
+      agent.destroy();
+    }
+  });
+
   test("rejects cleanly when signal is already aborted", async () => {
     const { agent } = makeAgent();
     let uncaught = 0;

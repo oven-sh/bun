@@ -315,7 +315,7 @@ function fetchWithAgent(url, init, counter) {
             return;
           }
           const nextHeaders = new Headers(init.headers || (isWebRequest && url.headers) || undefined);
-          const nextInit: any = { ...init, method, body: init.body, counter: counter + 1, headers: nextHeaders };
+          const nextInit: any = { ...init, method, signal, body: init.body, counter: counter + 1, headers: nextHeaders };
           const nextURL = new URL(locationURL);
           if (nextURL.hostname !== parsedHostname || nextURL.protocol !== protocol) {
             for (const name of ["authorization", "www-authenticate", "cookie", "cookie2"]) nextHeaders.delete(name);
@@ -341,8 +341,14 @@ function fetchWithAgent(url, init, counter) {
         // redirect === "manual" or no location: fall through and return the 3xx response as-is.
       }
 
+      const nullBody = status === 204 || status === 304 || method === "HEAD";
       const out = new PassThrough();
-      bodyStream = out;
+      // A late onAbort() may destroy `out` with an error after pipeline() has
+      // detached its listener (or when `out` was never consumed); keep a
+      // swallowing listener so that never becomes an uncaught 'error'.
+      out.on("error", () => {});
+      bodyStream = nullBody ? undefined : out;
+      res.once("close", removeAbort);
       out.once("close", removeAbort);
       const pumpErr = (err: any) => {
         if (err) out.destroy(err);
@@ -391,7 +397,7 @@ function fetchWithAgent(url, init, counter) {
         // only accepts 101 / [200, 599], so build with a safe value and
         // patch the real one on top when it falls outside that range.
         const safeStatus = (status >= 200 && status <= 599) || status === 101 ? status : 599;
-        response = new Response(status === 204 || status === 304 || method === "HEAD" ? null : out, {
+        response = new Response(nullBody ? null : out, {
           status: safeStatus,
           statusText: res.statusMessage || "",
           headers: responseHeaders,
@@ -426,8 +432,12 @@ function fetchWithAgent(url, init, counter) {
       sendBuffered(blobPromise);
     } else if (body == null) {
       req.end();
-    } else if (typeof body === "string" || body instanceof ArrayBuffer || ArrayBuffer.isView(body)) {
-      req.end(body instanceof ArrayBuffer ? new Uint8Array(body) : body);
+    } else if (typeof body === "string" || body instanceof Uint8Array) {
+      req.end(body);
+    } else if (body instanceof ArrayBuffer) {
+      req.end(new Uint8Array(body));
+    } else if (ArrayBuffer.isView(body)) {
+      req.end(new Uint8Array((body as ArrayBufferView).buffer, (body as ArrayBufferView).byteOffset, (body as ArrayBufferView).byteLength));
     } else if (body instanceof Blob) {
       sendBuffered(body.arrayBuffer());
     } else if (typeof (body as any).pipe === "function" || typeof (body as any).getReader === "function") {

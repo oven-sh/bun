@@ -3180,6 +3180,16 @@ unsafe extern "C" {
     // only precondition (≥124-byte writable buffer), so `safe fn` discharges
     // the link-time proof and callers need no `unsafe` block.
     safe fn WTF__dtoa(buf: &mut [u8; 124], number: f64) -> usize;
+
+    // Rounds `number` to `significant_digits` significant figures (the same
+    // rounding as `Number.prototype.toPrecision`, with trailing zeros trimmed)
+    // and writes it into `buf`. Same buffer contract as `WTF__dtoa`;
+    // `significant_digits` must be in 1..=100.
+    safe fn WTF__numberToFixedPrecisionString(
+        buf: &mut [u8; 124],
+        number: f64,
+        significant_digits: u32,
+    ) -> usize;
 }
 
 impl FormatDouble {
@@ -3193,6 +3203,23 @@ impl FormatDouble {
             return b"-0";
         }
         let len = WTF__dtoa(buf, number);
+        &buf[..len]
+    }
+
+    /// Like [`Self::dtoa_with_negative_zero`], but rounds `number` to
+    /// `significant_digits` significant figures first — the same rounding as JS
+    /// `Number.prototype.toPrecision`, with trailing zeros trimmed. Used by
+    /// snapshot serialization to keep floating-point output stable across CPU
+    /// architectures. `significant_digits` must be in 1..=100.
+    pub fn to_fixed_precision_with_negative_zero(
+        buf: &mut [u8; 124],
+        number: f64,
+        significant_digits: u32,
+    ) -> &[u8] {
+        if number == 0.0 && number.is_sign_negative() {
+            return b"-0";
+        }
+        let len = WTF__numberToFixedPrecisionString(buf, number, significant_digits);
         &buf[..len]
     }
 }

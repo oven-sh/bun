@@ -392,3 +392,10 @@ test("file operations", () => {
   }).toMatchSnapshot();
 });
 ```
+
+Floating-point results can also differ in their final digit between CPU architectures, causing snapshots like `0.8414709848078965` to fail in CI. To round numbers to a fixed number of significant figures when serializing snapshots, set [`snapshotFloatPrecision`](/docs/runtime/bunfig#test-snapshotfloatprecision) in your `bunfig.toml`:
+
+```toml title="bunfig.toml" icon="settings"
+[test]
+snapshotFloatPrecision = 15
+```

@@ -438,6 +438,22 @@ impl<'a> Parser<'a> {
                         expr.as_bool().expect("infallible: type checked");
                 }
 
+                if let Some(expr) = test_.get(b"snapshotFloatPrecision") {
+                    self.expect(&expr, ExprTag::ENumber)?;
+                    let n = expr.as_number().expect("infallible: type checked");
+                    // Significant figures, matching `Number.prototype.toPrecision`,
+                    // which accepts 1..=100.
+                    if n.fract() != 0.0 || !(1.0..=100.0).contains(&n) {
+                        return self.add_error_format(
+                            expr.loc,
+                            format_args!(
+                                "test.snapshotFloatPrecision must be an integer between 1 and 100, received {n}"
+                            ),
+                        );
+                    }
+                    self.ctx.test_options.snapshot_float_precision = n as u32;
+                }
+
                 if let Some(expr) = test_.get(b"reporter") {
                     self.expect(&expr, ExprTag::EObject)?;
                     if let Some(junit_expr) = expr.get(b"junit") {

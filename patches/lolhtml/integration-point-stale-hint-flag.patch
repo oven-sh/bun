@@ -1,6 +1,6 @@
 --- a/src/transform_stream/dispatcher.rs
 +++ b/src/transform_stream/dispatcher.rs
-@@ -323,8 +323,16 @@
+@@ -376,8 +376,16 @@
          flags: TokenCaptureFlags,
      ) -> ParserDirective {
          self.delegate.capture_flags = flags;

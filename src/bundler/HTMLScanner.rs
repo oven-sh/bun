@@ -329,16 +329,17 @@ impl<T: HTMLProcessorHandler, const VISIT_DOCUMENT_TAGS: bool>
             }
         }
 
-        let settings = lol_html::Settings {
-            element_content_handlers,
-            encoding: lol_html::AsciiCompatibleEncoding::utf_8(),
-            memory_settings: lol_html::MemorySettings {
-                preallocated_parsing_buffer_size: (input.len() / 4).max(1024),
-                max_allowed_memory_usage: 1024 * 1024 * 10,
-            },
-            strict: false,
-            ..lol_html::Settings::new()
-        };
+        let mut settings = lol_html::Settings::new()
+            .with_encoding(lol_html::AsciiCompatibleEncoding::utf_8())
+            .with_memory_settings(
+                lol_html::MemorySettings::new()
+                    .with_preallocated_parsing_buffer_size((input.len() / 4).max(1024))
+                    .with_max_allowed_memory_usage(1024 * 1024 * 10),
+            )
+            .with_strict(false);
+        for handler in element_content_handlers {
+            settings = settings.append_element_content_handler(handler);
+        }
 
         // lol-html signals end-of-document with one zero-length chunk; the
         // C-API sink routed that to a no-op `done()`, never to `on_write_html`.

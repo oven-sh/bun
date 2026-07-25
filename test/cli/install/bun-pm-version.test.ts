@@ -544,10 +544,7 @@ describe.concurrent("bun pm version", () => {
         "package.json": originalJson,
       });
 
-      const { output, code } = await runCommand(
-        [bunExe(), "pm", "version", "patch", "--no-git-tag-version"],
-        testDir,
-      );
+      const { output, code } = await runCommand([bunExe(), "pm", "version", "patch", "--no-git-tag-version"], testDir);
 
       expect(output.trim()).toBe("v1.0.1");
       expect(code).toBe(0);

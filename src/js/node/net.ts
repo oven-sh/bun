@@ -544,7 +544,11 @@ const SocketHandlers: SocketHandler = {
 } as const;
 
 function finishSocketEnd(self) {
-  if (self[kended]) return;
+  // A locally-destroyed socket must not synthesize a graceful 'end' from its
+  // own teardown close (node's readable is already destroyed by then, so no
+  // 'end' is observable; destroy() followed by the native close was emitting
+  // one here).
+  if (self[kended] || self.destroyed) return;
   self[kended] = true;
   if (!self.allowHalfOpen) self.write = writeAfterFIN;
   self.push(null);

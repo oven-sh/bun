@@ -1281,11 +1281,6 @@ pub(crate) fn inject(
     };
     let _ = (&mut zname_owned, &mut zname);
 
-    // Record the path we opened so the caller can rename it directly. On Linux
-    // `/proc/self/fd/N` readlink can return a path that does not exist in the
-    // caller's mount namespace (Docker Desktop virtiofs bind mounts are the
-    // common case: the dentry walk yields `/run/host_virtiofs/...`), so the
-    // caller must not attempt to re-derive this from the fd.
     *out_temp_path = bun_core::ZBox::from_bytes(zname.as_bytes());
 
     match target.os {
@@ -1931,12 +1926,7 @@ pub fn to_executable(
                 "failed to embed module graph in executable"
             )));
         }
-        // inject() created the temp file at `temp_path` (relative to cwd, or
-        // absolute when the tmpdir fallback fired). Rename from that exact
-        // path rather than re-deriving it via /proc/self/fd, which on
-        // virtiofs bind mounts (Docker Desktop dev containers) resolves to a
-        // host-side path that does not exist in this mount namespace and so
-        // would fail the rename with ENOENT (#12318).
+        // Rename by the path inject() opened; /proc/self/fd readlink is wrong under virtiofs bind mounts (#12318).
         let temp_posix: &ZStr = temp_path.as_zstr();
         let outfile_basename = bun_paths::basename(outfile);
         let mut outfile_posix_buf = PathBuffer::uninit();

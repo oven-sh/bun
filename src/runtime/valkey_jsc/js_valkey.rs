@@ -465,19 +465,6 @@ impl bun_ptr::RefCounted for JSValkeyClient {
         unsafe { &raw mut (*this).ref_count }
     }
     unsafe fn destructor(this: *mut Self, _ctx: ()) {
-        // SAFETY: last ref dropped; `this` is live until `deinit` reclaims it.
-        let this_ref = unsafe { &*this };
-        if this_ref.this_value.get().is_not_empty() {
-            // Over-release: `finalize()` clears `this_value` last, so the
-            // wrapper's +1 is still outstanding. Donate back; freeing now
-            // would UAF the rest of the finalize body.
-            debug_assert!(
-                false,
-                "JSValkeyClient refcount reached 0 with this_value still attached",
-            );
-            this_ref.ref_();
-            return;
-        }
         // SAFETY: last ref dropped; sole owner.
         unsafe { JSValkeyClient::deinit(this) };
     }
@@ -1439,9 +1426,8 @@ impl JSValkeyClient {
             return;
         }
 
-        // During VM shutdown the event loop won't tick, so the deferred task
-        // below would never run; close inline. `flags.finalized` is already
-        // set, so the synchronous on_close path short-circuits.
+        // During VM shutdown the event loop won't tick, so the deferred task below
+        // would never run; close inline (this_value is cleared, no JS re-entry).
         if self.vm().is_shutting_down() {
             bun_core::hint::cold();
             self.client_mut().close();
@@ -1500,12 +1486,10 @@ impl JSValkeyClient {
         // SAFETY: the JS wrapper owned one ref; this scope consumes it.
         let _guard = unsafe { ScopedRef::adopt(this.as_ctx_ptr()) };
 
-        this.client_mut().flags.finalized = true;
         this.stop_timers();
-        this.close_socket_next_tick();
-        // Cleared last: `destructor()` gates `deinit` on this being empty, so
-        // the body above never observes a freed box.
         this.this_value.with_mut(|t| t.finalize());
+        this.client_mut().flags.finalized = true;
+        this.close_socket_next_tick();
         // `_subscription_ctx` is three inline bools (no allocation, no GC
         // ref); `is_subscriber` can legitimately still be set here if the
         // server never confirmed UNSUBSCRIBE before disconnect, since

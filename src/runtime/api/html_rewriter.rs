@@ -885,17 +885,47 @@ impl BufferOutputSink {
             ((*sink).global, (*sink).response, (*sink).rewriter)
         };
 
+        // Install the capture slot `handler_callback` writes to. `init()`
+        // already does this for the sync path, but on the async path `init()`
+        // has returned and torn its scope down; without this the handler's
+        // error is lost and the caller only sees the generic lol-html string.
+        // Note (Stacked Borrows): `Cell::as_ptr` yields SharedReadWrite
+        // provenance, so local `.get()` reads don't invalidate the stored raw
+        // pointer.
+        let captured: core::cell::Cell<JSValue> = core::cell::Cell::new(JSValue::ZERO);
+        let vm: &mut VirtualMachine = global.bun_vm().as_mut();
+        let scope = vm.unhandled_rejection_scope();
+        let prev_capture = vm.unhandled_pending_rejection_to_capture;
+        vm.unhandled_pending_rejection_to_capture = Some(captured.as_ptr());
+        vm.on_unhandled_rejection =
+            VirtualMachine::on_quiet_unhandled_rejection_handler_capture_value;
+        scopeguard::defer! {
+            captured.get().ensure_still_alive();
+            let vm = VirtualMachine::get().as_mut();
+            vm.unhandled_pending_rejection_to_capture = prev_capture;
+            scope.apply(vm);
+        }
+
+        let deliver_async =
+            |e: &lol_html::errors::RewritingError, captured: &core::cell::Cell<JSValue>| {
+                let err = if captured.get().is_empty() {
+                    webcore::body::ValueError::Message(lol_err_string(e))
+                } else {
+                    webcore::body::ValueError::JSValue(StrongOptional::create(
+                        captured.get(),
+                        &global,
+                    ))
+                };
+                // SAFETY: response kept alive by response_value Strong.
+                let _ = unsafe { (*response).get_body_value() }.to_error_instance(err, &global);
+            };
+
         // SAFETY: rewriter heap-allocated by init(), not yet freed.
         if let Err(e) = unsafe { (*rewriter).write(bytes) } {
             // Poisoned: never call `end()` after a failed `write()`. The
             // field stays non-null so `Drop` frees the rewriter.
             if is_async {
-                // SAFETY: response kept alive by response_value Strong.
-                let _ = unsafe { (*response).get_body_value() }.to_error_instance(
-                    webcore::body::ValueError::Message(lol_err_string(&e)),
-                    &global,
-                );
-                // TODO: properly propagate exception upwards
+                deliver_async(&e, &captured);
                 return None;
             } else {
                 return Some(create_lolhtml_error(&global, &e));
@@ -909,12 +939,7 @@ impl BufferOutputSink {
         // SAFETY: `rewriter` was heap-allocated by init(); sole owner now.
         if let Err(e) = unsafe { bun_core::heap::take(rewriter) }.end() {
             if is_async {
-                // SAFETY: response kept alive by response_value Strong.
-                let _ = unsafe { (*response).get_body_value() }.to_error_instance(
-                    webcore::body::ValueError::Message(lol_err_string(&e)),
-                    &global,
-                );
-                // TODO: properly propagate exception upwards
+                deliver_async(&e, &captured);
                 return None;
             } else {
                 return Some(create_lolhtml_error(&global, &e));
@@ -1252,36 +1277,31 @@ where
     ) {
         Ok(v) => v,
         Err(_) => {
-            // If there's an exception in the scope, capture it for later retrieval
             if let Some(exc) = scope.exception() {
                 let exc_value = JSValue::from_cell(exc.as_ptr());
-                // Store the exception in the VM's unhandled rejection capture
-                // mechanism if it's available (this is the same mechanism used
-                // by BufferOutputSink)
+                exc_value.ensure_still_alive();
+                // The slot is a stack local in run_output_sink (conservatively
+                // scanned) read by `create_lolhtml_error` / `deliver_async`
+                // before any JSC allocation. No protect here: the reader does
+                // not unprotect, so protecting leaks one Exception root per
+                // throw (#31804).
                 if let Some(err_ptr) = vm().unhandled_pending_rejection_to_capture {
-                    // SAFETY: VM-owned pointer set by BufferOutputSink::init.
+                    // SAFETY: VM-owned pointer set by run_output_sink.
                     unsafe { *err_ptr = exc_value };
-                    exc_value.protect();
                 }
             }
-            // Clear the exception from the scope to prevent assertion failures
             scope.clear_exception();
-            // Return true to indicate failure to LOLHTML, which will cause the
-            // write operation to fail and the error handling logic to take over.
             return true;
         }
     };
 
-    // Check if there's an exception that was thrown but not caught by the error union
     if let Some(exc) = scope.exception() {
         let exc_value = JSValue::from_cell(exc.as_ptr());
-        // Store the exception in the VM's unhandled rejection capture mechanism
+        exc_value.ensure_still_alive();
         if let Some(err_ptr) = vm().unhandled_pending_rejection_to_capture {
-            // SAFETY: VM-owned pointer set by BufferOutputSink::init.
+            // SAFETY: VM-owned pointer set by run_output_sink.
             unsafe { *err_ptr = exc_value };
-            exc_value.protect();
         }
-        // Clear the exception to prevent assertion failures
         scope.clear_exception();
         return true;
     }
@@ -1314,7 +1334,7 @@ where
                 let err = promise.result(global.vm());
                 err.ensure_still_alive();
                 if let Some(err_ptr) = vm().unhandled_pending_rejection_to_capture {
-                    // SAFETY: VM-owned pointer set by BufferOutputSink::init.
+                    // SAFETY: VM-owned pointer set by run_output_sink.
                     unsafe { *err_ptr = err };
                 }
             }

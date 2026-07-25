@@ -35,7 +35,6 @@ let BufferModule;
 const inspectGlobals = require("internal/util/inspect_globals");
 const {
   primordials,
-  uncurryThis,
   ArrayFrom,
   ArrayPrototypeFilter,
   ArrayPrototypeFlat,
@@ -1406,11 +1405,12 @@ function formatValue(ctx, value, recurseTimes, typedArray) {
   // Check that value is an object with an inspect function on it.
   if (ctx.customInspect) {
     const maybeCustom = value[customInspectSymbol];
+    const publicInspect = inspectGlobals.publicInspect;
     if (
       typeof maybeCustom === "function" &&
       // Filter out the util module, its inspect function is special.
       maybeCustom !== inspect &&
-      maybeCustom !== inspectGlobals.publicInspect &&
+      maybeCustom !== publicInspect &&
       // Also filter out any prototype objects using the circular check.
       Object.getOwnPropertyDescriptor(value, "constructor")?.value?.prototype !== value
     ) {

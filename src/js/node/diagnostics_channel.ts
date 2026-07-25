@@ -22,7 +22,7 @@ class WeakReference<T extends WeakKey> extends WeakRef<T> {
   #strong: T | undefined = undefined;
 
   get() {
-    return this.deref();
+    return this.#strong ?? this.deref();
   }
 
   incRef() {

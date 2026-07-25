@@ -110,7 +110,7 @@ function loadImpl() {
 // The public `util.inspect`: a thin wrapper so node:util does not load the (large)
 // inspect implementation eagerly; internal callers hand this same function to
 // `[util.inspect.custom]` hooks so `arg === require("util").inspect` holds.
-function publicInspect(value, opts) {
+function publicInspect(_value, _opts) {
   return loadImpl().inspect.$apply(this, arguments);
 }
 Object.defineProperty(publicInspect, "name", { value: "inspect" });

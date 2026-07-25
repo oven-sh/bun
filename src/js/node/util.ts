@@ -39,10 +39,10 @@ const parseArgs = $newRustFunction("parse_args.rs", "parseArgs", 1);
 // always receive the same function whether or not node:util has loaded.
 const inspect = inspectGlobals.publicInspect;
 const { SafeMap } = require("internal/primordials");
-function formatWithOptions(inspectOptions, ...args) {
+function formatWithOptions(_inspectOptions, ..._args) {
   return utl().formatWithOptions.$apply(this, arguments);
 }
-function format(...args) {
+function format(..._args) {
   return utl().format.$apply(this, arguments);
 }
 function stripVTControlCharacters(str) {

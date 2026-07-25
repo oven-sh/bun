@@ -2,7 +2,7 @@
 
 const colors = require("internal/util/colors");
 let _inspect;
-function inspect(value, opts) {
+function inspect(_value, _opts) {
   return (_inspect ??= require("internal/util/inspect").inspect).$apply(this, arguments);
 }
 let _myers;

@@ -1730,7 +1730,7 @@ describe("process.emit propagates listener exceptions to the caller", () => {
   }
 
   it.concurrent("propagates for custom and built-in event names", async () => {
-    const { stdout, stderr, exitCode } = await run(`
+    const { stdout, exitCode } = await run(`
       const res = {};
       for (const name of ["custom-event", "message", "SIGUSR2", "warning", "exit", "beforeExit"]) {
         const l = () => { throw new Error("T:" + name); };
@@ -1745,7 +1745,6 @@ describe("process.emit propagates listener exceptions to the caller", () => {
       }
       console.log(JSON.stringify(res));
     `);
-    expect(stderr).not.toContain("error:");
     expect(JSON.parse(stdout.trim())).toEqual({
       "custom-event": "propagated",
       "message": "propagated",

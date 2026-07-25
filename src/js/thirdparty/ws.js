@@ -1575,6 +1575,8 @@ function duplexOnError(err) {
   }
 }
 
+let Duplex;
+
 /**
  * Wraps a `WebSocket` in a duplex stream.
  *
@@ -1588,8 +1590,6 @@ function duplexOnError(err) {
  * @return {Duplex} The duplex stream
  * @public
  */
-let Duplex;
-
 function createWebSocketStream(ws, options) {
   Duplex ??= require("node:stream").Duplex;
   let terminateOnDestroy = true;

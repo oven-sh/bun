@@ -391,23 +391,13 @@ describe("bun test", () => {
         stdout: "pipe",
         stderr: "pipe",
       });
-      const [stdout, stderr, exitCode] = await Promise.all([
-        proc.stdout.text(),
-        proc.stderr.text(),
-        proc.exited,
-      ]);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
       // afterEach for the failing test, then the afterAll of every scope that
       // was already on the stack, innermost first; nothing from scopes that had
       // not started yet (B, and A's sibling test).
       const marks = stdout.split("\n").filter(l => /BEFOREALL|AFTERALL|AFTEREACH|-RAN/.test(l));
-      expect(marks).toEqual([
-        "A-BEFOREALL",
-        "A1-AFTEREACH",
-        "A1-AFTERALL",
-        "A-AFTERALL",
-        "ROOT-AFTERALL",
-      ]);
+      expect(marks).toEqual(["A-BEFOREALL", "A1-AFTEREACH", "A1-AFTERALL", "A-AFTERALL", "ROOT-AFTERALL"]);
       expect(stderr).toContain("Bailed out after 1 failure");
       expect(stderr).not.toContain("a1-second");
       expect(stderr).not.toContain("a-sibling");

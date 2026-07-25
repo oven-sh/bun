@@ -727,6 +727,162 @@ describe.concurrent(() => {
   });
 
   describe("process.onExit", () => {
+    it("drains microtasks queued by the listener on natural exit", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `process.on("exit", async () => {
+             console.log("exit-listener");
+             Promise.resolve().then(() => console.log("pt-in-exit"));
+             queueMicrotask(() => console.log("qm-in-exit"));
+             await Promise.resolve();
+             console.log("after-await-in-exit");
+           });`,
+        ],
+        env: bunEnv,
+        stdio: ["inherit", "pipe", "pipe"],
+      });
+      const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: "exit-listener\npt-in-exit\nqm-in-exit\nafter-await-in-exit\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    it("does not drain microtasks queued by the listener on process.exit()", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `process.on("exit", () => {
+             console.log("exit-listener");
+             queueMicrotask(() => console.log("qm-in-exit"));
+           });
+           process.exit(0);`,
+        ],
+        env: bunEnv,
+        stdio: ["inherit", "pipe", "pipe"],
+      });
+      const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: "exit-listener\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    it("does not drain microtasks queued by the listener after a fatal uncaught exception", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `process.on("exit", () => {
+             console.log("exit-listener");
+             queueMicrotask(() => console.log("qm-in-exit"));
+           });
+           throw new Error("boom");`,
+        ],
+        env: bunEnv,
+        stdio: ["inherit", "pipe", "pipe"],
+      });
+      const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+      expect(stderr).toInclude("error: boom");
+      expect(stdout).toBe("exit-listener\n");
+      expect(exitCode).toBe(1);
+    });
+
+    it("does not drain microtasks queued by the listener when a beforeExit listener throws", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `process.on("beforeExit", () => { throw new Error("boom"); });
+           process.on("exit", () => {
+             console.log("exit-listener");
+             queueMicrotask(() => console.log("qm-in-exit"));
+           });`,
+        ],
+        env: bunEnv,
+        stdio: ["inherit", "pipe", "pipe"],
+      });
+      const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+      expect(stderr).toInclude("error: boom");
+      expect(stdout).toBe("exit-listener\n");
+      expect(exitCode).toBe(1);
+    });
+
+    it("dispatches unhandledRejection for a promise rejected inside the listener on natural exit", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `process.on("unhandledRejection", r => console.log("ur:", r));
+           process.on("exit", () => {
+             console.log("exit-listener");
+             Promise.reject("boom");
+             queueMicrotask(() => console.log("qm-in-exit"));
+           });`,
+        ],
+        env: bunEnv,
+        stdio: ["inherit", "pipe", "pipe"],
+      });
+      const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: "exit-listener\nqm-in-exit\nur: boom\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    it("does not drain process.nextTick queued by the listener on natural exit", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `process.on("exit", () => {
+             console.log("exit-listener");
+             process.nextTick(() => console.log("nt-in-exit"));
+             queueMicrotask(() => console.log("qm-in-exit"));
+           });`,
+        ],
+        env: bunEnv,
+        stdio: ["inherit", "pipe", "pipe"],
+      });
+      const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: "exit-listener\nqm-in-exit\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    it("drains microtasks queued by the listener on a worker's natural exit", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const { Worker } = require("worker_threads");
+           const w = new Worker(\`
+             process.on("exit", () => {
+               console.log("exit-listener");
+               queueMicrotask(() => console.log("qm-in-exit"));
+             });
+           \`, { eval: true });
+           w.on("exit", () => console.log("worker-done"));`,
+        ],
+        env: bunEnv,
+        stdio: ["inherit", "pipe", "pipe"],
+      });
+      const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: "exit-listener\nqm-in-exit\nworker-done\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
     it("throwing inside preserves exit code", async () => {
       await using proc = Bun.spawn({
         cmd: [bunExe(), "-e", `process.on("exit", () => {throw new Error("boom")});`],

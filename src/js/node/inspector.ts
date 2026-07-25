@@ -700,7 +700,14 @@ const Network = {
     // The request charset sits at the top level, not inside `request`.
     const requestIsUTF8 = params.charset === "utf-8";
     const initiator = captureNetworkInitiator();
-    forEachNetworkSession(sessionRequestWillBeSent, { requestId, request, requestIsUTF8, timestamp, wallTime, initiator });
+    forEachNetworkSession(sessionRequestWillBeSent, {
+      requestId,
+      request,
+      requestIsUTF8,
+      timestamp,
+      wallTime,
+      initiator,
+    });
   },
 
   responseReceived(params: any) {

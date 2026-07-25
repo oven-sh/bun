@@ -3,12 +3,7 @@
 // publishes none, so instead the global is swapped for a delegating wrapper
 // while inspection is enabled (same pattern as node:inspector's console
 // hooks). The events emitted mirror lib/internal/inspector/network_undici.js.
-const {
-  kResourceType,
-  getMonotonicTime,
-  getNextRequestId,
-  sniffMimeType,
-} = require("internal/inspector/network");
+const { kResourceType, getMonotonicTime, getNextRequestId, sniffMimeType } = require("internal/inspector/network");
 const { Network } = require("node:inspector");
 
 // Captured at module load: instrumentation must keep working (and stay

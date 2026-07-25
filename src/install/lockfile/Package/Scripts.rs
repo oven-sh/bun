@@ -21,11 +21,16 @@ const SCRIPT_NAMES_LEN: usize = LockfileScripts::NAMES.len();
 
 fn git_dep_dev_install_command() -> Option<Box<[u8]>> {
     let bun_exe = bun_core::self_exe_path().ok()?;
-    let registry = crate::package_manager_real::PackageManager::get()
+    let scope_url = &crate::package_manager_real::PackageManager::get()
         .options
         .scope
-        .url
-        .href();
+        .url;
+    let url = scope_url.url();
+    let registry: Box<[u8]> = if url.username.is_empty() && url.password.is_empty() {
+        Box::from(scope_url.href())
+    } else {
+        url.href_without_auth()
+    };
     let mut cmd: Vec<u8> = Vec::with_capacity(bun_exe.len() + registry.len() + 64);
     bun_core::handle_oom(bun_shell_parser::escape_8bit::<true, false>(
         bun_exe.as_bytes(),
@@ -35,7 +40,7 @@ fn git_dep_dev_install_command() -> Option<Box<[u8]>> {
     if !registry.is_empty() {
         cmd.extend_from_slice(b" --registry ");
         bun_core::handle_oom(bun_shell_parser::escape_8bit::<true, false>(
-            registry, &mut cmd,
+            &registry, &mut cmd,
         ));
     }
     Some(cmd.into_boxed_slice())

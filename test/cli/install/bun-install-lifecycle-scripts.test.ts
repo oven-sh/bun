@@ -1931,7 +1931,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
           name: "consumer",
           version: "1.0.0",
           dependencies: {
-            "git-dep-needs-dev": `git+file://${repoDir.replaceAll("\\", "/")}#main`,
+            "git-dep-needs-dev": `git+${Bun.pathToFileURL(repoDir).href}#main`,
           },
           trustedDependencies: ["git-dep-needs-dev"],
         }),

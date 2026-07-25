@@ -655,6 +655,31 @@ describe("bundler", () => {
       const out = api.readFile("/out.js");
       // Must come before "var __commonJS = ..." runtime helpers
       expect(out).toStartWith('"use client";\n');
+      expect(out.indexOf('"use client"')).toBeLessThan(out.indexOf("__commonJS"));
+    },
+  });
+  itBundled("edgecase/DirectiveInsideBakeDevModuleClosure", {
+    files: {
+      "/entry.js": /* js */ `
+        "use strict";
+        "use potato";
+        import { x } from "./dep.js";
+        console.log(x);
+      `,
+      "/dep.js": /* js */ `
+        "use tomato";
+        export const x = 1;
+        console.log("dep loaded");
+      `,
+    },
+    format: "internal_bake_dev",
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      // Each module closure keeps its own directive prologue first; the chunk
+      // itself gets no top-level copy in this format.
+      expect(out).toMatch(/\{\s*"use strict";\s*"use potato";/);
+      expect(out).toMatch(/\{\s*"use tomato";/);
+      expect(out).not.toMatch(/^"use strict";/);
     },
   });
   itBundled("edgecase/DirectiveFromEntryOnlyWhenBundling", {

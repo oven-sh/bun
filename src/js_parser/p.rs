@@ -8136,10 +8136,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             {
                 let mut remaining_stmts = &mut stmts_to_copy[..];
                 for directive in prologue {
-                    remaining_stmts[0] = self.s(
-                        S::Directive { value: *directive },
-                        self.module_scope_directive_loc,
-                    );
+                    // Only "use strict" has a recorded source location.
+                    let loc = if directive.slice() == b"use strict" {
+                        self.module_scope_directive_loc
+                    } else {
+                        bun_ast::Loc::EMPTY
+                    };
+                    remaining_stmts[0] = self.s(S::Directive { value: *directive }, loc);
                     remaining_stmts = &mut remaining_stmts[1..];
                 }
 

@@ -225,7 +225,7 @@ void Bun::appendAsyncLocalStorageStackFrames(VM& vm, JSCell* owner, Vector<Stack
 
     auto promiseContext = [](JSPromise* p, bool unwrap) -> JSValue {
         if (!p)
-            return { };
+            return {};
         JSValue context = p->asyncStackTraceContext();
         return unwrap ? unwrapAsyncContextTuple(context) : context;
     };

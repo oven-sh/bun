@@ -1011,12 +1011,18 @@ export { after };
   expect(await proc.exited).toBe(0);
 }, 30_000);
 
-// JSC's FrontendRouter broadcasts every command response to every connected
-// frontend channel. With a per-connection backend-id counter, two clients'
-// first commands both carry backend id 1 and each adapter claims whichever
-// response arrives first, so one client receives the other's result under its
-// own command id.
-test("two inspector.open() clients each receive their own Runtime.evaluate result", async () => {
+// JSC's FrontendRouter::sendResponse broadcasts every command response to every
+// connected frontend channel. With a per-connection backend-id counter, each
+// adapter starts at backend id 1, so concurrently-attached adapters have the
+// same ids in #pending and claim each other's broadcast responses, delivering
+// one client's Runtime.evaluate result to another client under that client's
+// own command id. The census below fires CLIENTS*EVALS_PER_CLIENT evaluates
+// with a per-client marker string and asserts that no client ever observes
+// another client's marker.
+test("concurrent inspector.open() clients never receive another client's Runtime.evaluate result", async () => {
+  const CLIENTS = 5;
+  const EVALS_PER_CLIENT = 40;
+
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -1047,37 +1053,52 @@ test("two inspector.open() clients each receive their own Runtime.evaluate resul
     wsUrl = stdoutText.match(/URL (ws:\S+)/)?.[1];
   }
 
-  const attach = async () => {
+  type Client = { ws: WebSocket; marker: string; own: number; foreign: number; outstanding: Set<number> };
+  const clients: Client[] = [];
+  const allResponded = Promise.withResolvers<void>();
+  const failed = Promise.withResolvers<never>();
+  let totalOutstanding = CLIENTS * EVALS_PER_CLIENT;
+
+  for (let i = 0; i < CLIENTS; i++) {
     const ws = new WebSocket(wsUrl!);
+    const client: Client = { ws, marker: `client-${i}:`, own: 0, foreign: 0, outstanding: new Set() };
+    ws.onmessage = event => {
+      const msg = JSON.parse(String(event.data));
+      if (msg.id === undefined || !client.outstanding.has(msg.id)) return;
+      client.outstanding.delete(msg.id);
+      const value = msg.result?.result?.value;
+      if (typeof value === "string" && value.startsWith(client.marker)) client.own++;
+      else client.foreign++;
+      if (--totalOutstanding === 0) allResponded.resolve();
+    };
+    ws.onerror = e => failed.reject(e);
+    ws.onclose = () =>
+      totalOutstanding > 0 && failed.reject(new Error(`client ${i} closed early; stderr: ${stderrText}`));
     const opened = Promise.withResolvers<void>();
     ws.onopen = () => opened.resolve();
-    ws.onerror = e => opened.reject(e);
     await opened.promise;
-    return ws;
-  };
-  const evaluate = (ws: WebSocket, id: number, expression: string) =>
-    new Promise<any>((resolve, reject) => {
-      ws.addEventListener("message", event => {
-        const msg = JSON.parse(String(event.data));
-        if (msg.id === id) resolve(msg.result?.result?.value);
-      });
-      ws.addEventListener("error", reject);
-      ws.addEventListener("close", () => reject(new Error(`socket closed before response; stderr: ${stderrText}`)));
-      ws.send(JSON.stringify({ id, method: "Runtime.evaluate", params: { expression } }));
-    });
+    clients.push(client);
+  }
 
-  const a = await attach();
-  const b = await attach();
-  // A short busy loop keeps the inspected thread inside A's evaluate long
-  // enough for B's command to reach the adapter on the debugger thread, so both
-  // adapters have a backend command in flight when the response broadcasts.
-  const aValue = evaluate(a, 1, `(() => { let n = 0; for (let i = 0; i < 5e7; i++) n++; return "answer-for-A"; })()`);
-  const bValue = evaluate(b, 2, `"answer-for-B"`);
+  // Interleave sends round-robin so every adapter has backend commands in
+  // flight while the others' responses broadcast; then wait for every response.
+  for (let j = 0; j < EVALS_PER_CLIENT; j++) {
+    for (const client of clients) {
+      const id = j + 1;
+      client.outstanding.add(id);
+      client.ws.send(
+        JSON.stringify({ id, method: "Runtime.evaluate", params: { expression: `"${client.marker}${j}"` } }),
+      );
+    }
+  }
+
   try {
-    expect({ a: await aValue, b: await bValue }).toEqual({ a: "answer-for-A", b: "answer-for-B" });
+    await Promise.race([allResponded.promise, failed.promise]);
+    const own = clients.reduce((n, c) => n + c.own, 0);
+    const foreign = clients.reduce((n, c) => n + c.foreign, 0);
+    expect({ own, foreign }).toEqual({ own: CLIENTS * EVALS_PER_CLIENT, foreign: 0 });
   } finally {
-    a.close();
-    b.close();
+    for (const { ws } of clients) ws.close();
     proc.kill("SIGKILL");
     await stderrDrained;
   }

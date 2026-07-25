@@ -97,9 +97,9 @@ function isShortOnly(flag: FlagInfo): boolean {
 
 // Global flags whose value is a separate word; the subcommand scan (both
 // shells) must step over that value so `bun --cwd dir <TAB>` doesn't treat
-// `dir` as the subcommand. --inspect* take an *optional* value that only
-// binds via `=`, so exclude them here.
-const optionalValueGlobals = new Set(["inspect", "inspect-wait", "inspect-brk"]);
+// `dir` as the subcommand. These four are declared `<X>?` in Arguments.rs
+// (value optional, only binds via `=`), so exclude them here.
+const optionalValueGlobals = new Set(["inspect", "inspect-wait", "inspect-brk", "config"]);
 const globalValueFlags: string[] = data.globalFlags
   .filter(f => f.hasValue && !isShortOnly(f) && !optionalValueGlobals.has(f.name))
   .flatMap(f => [`--${f.name}`, ...(f.shortName ? [`-${f.shortName}`] : [])])
@@ -127,7 +127,7 @@ function fishFlag(condition: string, flag: FlagInfo): string {
     if (flag.shortName) parts.push(`-s '${flag.shortName}'`);
     parts.push(`-l '${flag.name}'`);
   }
-  if (flag.hasValue) {
+  if (flag.hasValue && !optionalValueGlobals.has(flag.name)) {
     parts.push("-r");
   } else {
     parts.push("-f");

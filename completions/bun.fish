@@ -37,7 +37,7 @@ function __bun_first_arg_in -d "Test whether the first non-option token is one o
             continue
         end
         switch $t
-            case --conditions --config --console-depth --cwd --dns-result-order --elide-lines --env-file --eval --fetch-preconnect --filter --import --install --max-http-header-size --port --preload --print --require --shell --title --unhandled-rejections -F -c -e -p -r
+            case --conditions --console-depth --cwd --dns-result-order --elide-lines --env-file --eval --fetch-preconnect --filter --import --install --max-http-header-size --port --preload --print --require --shell --title --unhandled-rejections -F -e -p -r
                 set skip 1
             case '-*'
                 continue
@@ -115,9 +115,9 @@ complete -c bun -n 'not __bun_first_arg_in run test x repl exec install i add a 
 complete -c bun -n 'not __bun_first_arg_in run test x repl exec install i add a remove rm update audit outdated link unlink publish patch pm info build init create c upgrade; or __bun_first_arg_in run test repl exec' -s 'r' -l 'preload' -r -d 'Import a module before other modules are loaded'
 complete -c bun -n 'not __bun_first_arg_in run test x repl exec install i add a remove rm update audit outdated link unlink publish patch pm info build init create c upgrade; or __bun_first_arg_in run test repl exec' -l 'require' -r -d 'Alias of --preload, for Node.js compatibility'
 complete -c bun -n 'not __bun_first_arg_in run test x repl exec install i add a remove rm update audit outdated link unlink publish patch pm info build init create c upgrade; or __bun_first_arg_in run test repl exec' -l 'import' -r -d 'Alias of --preload, for Node.js compatibility'
-complete -c bun -n 'not __bun_first_arg_in run test x repl exec install i add a remove rm update audit outdated link unlink publish patch pm info build init create c upgrade; or __bun_first_arg_in run test repl exec' -l 'inspect' -r -d 'Activate Bun\'s debugger'
-complete -c bun -n 'not __bun_first_arg_in run test x repl exec install i add a remove rm update audit outdated link unlink publish patch pm info build init create c upgrade; or __bun_first_arg_in run test repl exec' -l 'inspect-wait' -r -d 'Activate Bun\'s debugger, wait for a connection before executing'
-complete -c bun -n 'not __bun_first_arg_in run test x repl exec install i add a remove rm update audit outdated link unlink publish patch pm info build init create c upgrade; or __bun_first_arg_in run test repl exec' -l 'inspect-brk' -r -d 'Activate Bun\'s debugger, set breakpoint on first line of code and wait'
+complete -c bun -n 'not __bun_first_arg_in run test x repl exec install i add a remove rm update audit outdated link unlink publish patch pm info build init create c upgrade; or __bun_first_arg_in run test repl exec' -l 'inspect' -f -d 'Activate Bun\'s debugger'
+complete -c bun -n 'not __bun_first_arg_in run test x repl exec install i add a remove rm update audit outdated link unlink publish patch pm info build init create c upgrade; or __bun_first_arg_in run test repl exec' -l 'inspect-wait' -f -d 'Activate Bun\'s debugger, wait for a connection before executing'
+complete -c bun -n 'not __bun_first_arg_in run test x repl exec install i add a remove rm update audit outdated link unlink publish patch pm info build init create c upgrade; or __bun_first_arg_in run test repl exec' -l 'inspect-brk' -f -d 'Activate Bun\'s debugger, set breakpoint on first line of code and wait'
 complete -c bun -n 'not __bun_first_arg_in run test x repl exec install i add a remove rm update audit outdated link unlink publish patch pm info build init create c upgrade; or __bun_first_arg_in run test repl exec' -l 'if-present' -f -d 'Exit without an error if the entrypoint does not exist'
 complete -c bun -n 'not __bun_first_arg_in run test x repl exec install i add a remove rm update audit outdated link unlink publish patch pm info build init create c upgrade; or __bun_first_arg_in run test repl exec' -l 'no-install' -f -d 'Disable auto install in the Bun runtime'
 complete -c bun -n 'not __bun_first_arg_in run test x repl exec install i add a remove rm update audit outdated link unlink publish patch pm info build init create c upgrade; or __bun_first_arg_in run test repl exec' -l 'install' -r -d 'Configure auto-install behavior. One of "auto" (default, auto-installs when no node_modules), "fallback" (missing packages only), "force" (always).'
@@ -149,7 +149,7 @@ complete -c bun -n 'not __bun_first_arg_in run test x repl exec install i add a 
 complete -c bun -n 'not __bun_first_arg_in run test x repl exec install i add a remove rm update audit outdated link unlink publish patch pm info build init create c upgrade; or __bun_first_arg_in run test repl exec' -l 'shell' -r -d 'Control the shell used for package.json scripts. Supports either \'bun\' or \'system\''
 complete -c bun -n 'not __bun_first_arg_in run test x repl exec install i add a remove rm update audit outdated link unlink publish patch pm info build init create c upgrade; or __bun_first_arg_in run test repl exec' -l 'env-file' -r -d 'Load environment variables from the specified file(s)'
 complete -c bun -n 'not __bun_first_arg_in run test x repl exec install i add a remove rm update audit outdated link unlink publish patch pm info build init create c upgrade; or __bun_first_arg_in run test repl exec' -l 'cwd' -r -d 'Absolute path to resolve files & entry points from. This just changes the process\' cwd.'
-complete -c bun -n 'not __bun_first_arg_in run test x repl exec install i add a remove rm update audit outdated link unlink publish patch pm info build init create c upgrade; or __bun_first_arg_in run test repl exec' -s 'c' -l 'config' -r -d 'Specify path to Bun config file. Default $cwd/bunfig.toml'
+complete -c bun -n 'not __bun_first_arg_in run test x repl exec install i add a remove rm update audit outdated link unlink publish patch pm info build init create c upgrade; or __bun_first_arg_in run test repl exec' -s 'c' -l 'config' -f -d 'Specify path to Bun config file. Default $cwd/bunfig.toml'
 
 # bun test
 complete -c bun -n '__bun_first_arg_in test' -l 'timeout' -r -d 'Set the per-test timeout in milliseconds, default is 5000.'
@@ -170,7 +170,7 @@ complete -c bun -n '__bun_first_arg_in test' -l 'reporter-outfile' -r -d 'Output
 complete -c bun -n '__bun_first_arg_in x' -l 'bun' -f -d 'Force the command to run with Bun instead of Node.js'
 
 # bun install
-complete -c bun -n '__bun_first_arg_in install i' -s 'c' -l 'config' -r -d 'Specify path to config file (bunfig.toml)'
+complete -c bun -n '__bun_first_arg_in install i' -s 'c' -l 'config' -f -d 'Specify path to config file (bunfig.toml)'
 complete -c bun -n '__bun_first_arg_in install i' -s 'y' -l 'yarn' -f -d 'Write a yarn.lock file (yarn v1)'
 complete -c bun -n '__bun_first_arg_in install i' -s 'p' -l 'production' -f -d 'Don\'t install devDependencies'
 complete -c bun -n '__bun_first_arg_in install i' -l 'no-save' -f -d 'Don\'t update package.json or save a lockfile'
@@ -209,7 +209,7 @@ complete -c bun -n '__bun_first_arg_in install i' -s 'a' -l 'analyze' -f -d 'Ana
 complete -c bun -n '__bun_first_arg_in install i' -l 'only-missing' -f -d 'Only add dependencies to package.json if they are not already present'
 
 # bun add
-complete -c bun -n '__bun_first_arg_in add a' -s 'c' -l 'config' -r -d 'Specify path to config file (bunfig.toml)'
+complete -c bun -n '__bun_first_arg_in add a' -s 'c' -l 'config' -f -d 'Specify path to config file (bunfig.toml)'
 complete -c bun -n '__bun_first_arg_in add a' -s 'y' -l 'yarn' -f -d 'Write a yarn.lock file (yarn v1)'
 complete -c bun -n '__bun_first_arg_in add a' -s 'p' -l 'production' -f -d 'Don\'t install devDependencies'
 complete -c bun -n '__bun_first_arg_in add a' -l 'no-save' -f -d 'Don\'t update package.json or save a lockfile'
@@ -247,7 +247,7 @@ complete -c bun -n '__bun_first_arg_in add a' -s 'a' -l 'analyze' -f -d 'Recursi
 complete -c bun -n '__bun_first_arg_in add a' -l 'only-missing' -f -d 'Only add dependencies to package.json if they are not already present'
 
 # bun remove
-complete -c bun -n '__bun_first_arg_in remove rm' -s 'c' -l 'config' -r -d 'Specify path to config file (bunfig.toml)'
+complete -c bun -n '__bun_first_arg_in remove rm' -s 'c' -l 'config' -f -d 'Specify path to config file (bunfig.toml)'
 complete -c bun -n '__bun_first_arg_in remove rm' -s 'y' -l 'yarn' -f -d 'Write a yarn.lock file (yarn v1)'
 complete -c bun -n '__bun_first_arg_in remove rm' -s 'p' -l 'production' -f -d 'Don\'t install devDependencies'
 complete -c bun -n '__bun_first_arg_in remove rm' -l 'no-save' -f -d 'Don\'t update package.json or save a lockfile'
@@ -279,7 +279,7 @@ complete -c bun -n '__bun_first_arg_in remove rm' -l 'lockfile-only' -f -d 'Gene
 complete -c bun -n '__bun_first_arg_in remove rm' -l 'linker' -r -d 'Linker strategy (one of "isolated" or "hoisted")'
 
 # bun update
-complete -c bun -n '__bun_first_arg_in update' -s 'c' -l 'config' -r -d 'Specify path to config file (bunfig.toml)'
+complete -c bun -n '__bun_first_arg_in update' -s 'c' -l 'config' -f -d 'Specify path to config file (bunfig.toml)'
 complete -c bun -n '__bun_first_arg_in update' -s 'y' -l 'yarn' -f -d 'Write a yarn.lock file (yarn v1)'
 complete -c bun -n '__bun_first_arg_in update' -s 'p' -l 'production' -f -d 'Don\'t install devDependencies'
 complete -c bun -n '__bun_first_arg_in update' -l 'no-save' -f -d 'Don\'t update package.json or save a lockfile'
@@ -318,7 +318,7 @@ complete -c bun -n '__bun_first_arg_in update' -s 'r' -l 'recursive' -f -d 'Upda
 complete -c bun -n '__bun_first_arg_in audit' -l 'json' -f -d 'Output in JSON format'
 
 # bun outdated
-complete -c bun -n '__bun_first_arg_in outdated' -s 'c' -l 'config' -r -d 'Specify path to config file (bunfig.toml)'
+complete -c bun -n '__bun_first_arg_in outdated' -s 'c' -l 'config' -f -d 'Specify path to config file (bunfig.toml)'
 complete -c bun -n '__bun_first_arg_in outdated' -s 'y' -l 'yarn' -f -d 'Write a yarn.lock file (yarn v1)'
 complete -c bun -n '__bun_first_arg_in outdated' -s 'p' -l 'production' -f -d 'Don\'t install devDependencies'
 complete -c bun -n '__bun_first_arg_in outdated' -l 'no-save' -f -d 'Don\'t update package.json or save a lockfile'
@@ -352,7 +352,7 @@ complete -c bun -n '__bun_first_arg_in outdated' -s 'F' -l 'filter' -r -d 'Displ
 complete -c bun -n '__bun_first_arg_in outdated' -s 'r' -l 'recursive' -f -d 'Check outdated packages in all workspaces'
 
 # bun link
-complete -c bun -n '__bun_first_arg_in link' -s 'c' -l 'config' -r -d 'Specify path to config file (bunfig.toml)'
+complete -c bun -n '__bun_first_arg_in link' -s 'c' -l 'config' -f -d 'Specify path to config file (bunfig.toml)'
 complete -c bun -n '__bun_first_arg_in link' -s 'y' -l 'yarn' -f -d 'Write a yarn.lock file (yarn v1)'
 complete -c bun -n '__bun_first_arg_in link' -s 'p' -l 'production' -f -d 'Don\'t install devDependencies'
 complete -c bun -n '__bun_first_arg_in link' -l 'no-save' -f -d 'Don\'t update package.json or save a lockfile'
@@ -384,7 +384,7 @@ complete -c bun -n '__bun_first_arg_in link' -l 'lockfile-only' -f -d 'Generate 
 complete -c bun -n '__bun_first_arg_in link' -l 'linker' -r -d 'Linker strategy (one of "isolated" or "hoisted")'
 
 # bun unlink
-complete -c bun -n '__bun_first_arg_in unlink' -s 'c' -l 'config' -r -d 'Specify path to config file (bunfig.toml)'
+complete -c bun -n '__bun_first_arg_in unlink' -s 'c' -l 'config' -f -d 'Specify path to config file (bunfig.toml)'
 complete -c bun -n '__bun_first_arg_in unlink' -s 'y' -l 'yarn' -f -d 'Write a yarn.lock file (yarn v1)'
 complete -c bun -n '__bun_first_arg_in unlink' -s 'p' -l 'production' -f -d 'Don\'t install devDependencies'
 complete -c bun -n '__bun_first_arg_in unlink' -l 'no-save' -f -d 'Don\'t update package.json or save a lockfile'
@@ -416,7 +416,7 @@ complete -c bun -n '__bun_first_arg_in unlink' -l 'lockfile-only' -f -d 'Generat
 complete -c bun -n '__bun_first_arg_in unlink' -l 'linker' -r -d 'Linker strategy (one of "isolated" or "hoisted")'
 
 # bun publish
-complete -c bun -n '__bun_first_arg_in publish' -s 'c' -l 'config' -r -d 'Specify path to config file (bunfig.toml)'
+complete -c bun -n '__bun_first_arg_in publish' -s 'c' -l 'config' -f -d 'Specify path to config file (bunfig.toml)'
 complete -c bun -n '__bun_first_arg_in publish' -s 'y' -l 'yarn' -f -d 'Write a yarn.lock file (yarn v1)'
 complete -c bun -n '__bun_first_arg_in publish' -s 'p' -l 'production' -f -d 'Don\'t install devDependencies'
 complete -c bun -n '__bun_first_arg_in publish' -l 'no-save' -f -d 'Don\'t update package.json or save a lockfile'
@@ -453,7 +453,7 @@ complete -c bun -n '__bun_first_arg_in publish' -l 'auth-type' -r -d 'Specify th
 complete -c bun -n '__bun_first_arg_in publish' -l 'gzip-level' -r -d 'Specify a custom compression level for gzip. Default is 9.'
 
 # bun patch
-complete -c bun -n '__bun_first_arg_in patch' -s 'c' -l 'config' -r -d 'Specify path to config file (bunfig.toml)'
+complete -c bun -n '__bun_first_arg_in patch' -s 'c' -l 'config' -f -d 'Specify path to config file (bunfig.toml)'
 complete -c bun -n '__bun_first_arg_in patch' -s 'y' -l 'yarn' -f -d 'Write a yarn.lock file (yarn v1)'
 complete -c bun -n '__bun_first_arg_in patch' -s 'p' -l 'production' -f -d 'Don\'t install devDependencies'
 complete -c bun -n '__bun_first_arg_in patch' -l 'no-save' -f -d 'Don\'t update package.json or save a lockfile'
@@ -487,7 +487,7 @@ complete -c bun -n '__bun_first_arg_in patch' -l 'commit' -f -d 'Install a packa
 complete -c bun -n '__bun_first_arg_in patch' -l 'patches-dir' -r -d 'The directory to put the patch file in (only if --commit is used)'
 
 # bun info
-complete -c bun -n '__bun_first_arg_in info' -s 'c' -l 'config' -r -d 'Specify path to config file (bunfig.toml)'
+complete -c bun -n '__bun_first_arg_in info' -s 'c' -l 'config' -f -d 'Specify path to config file (bunfig.toml)'
 complete -c bun -n '__bun_first_arg_in info' -s 'y' -l 'yarn' -f -d 'Write a yarn.lock file (yarn v1)'
 complete -c bun -n '__bun_first_arg_in info' -s 'p' -l 'production' -f -d 'Don\'t install devDependencies'
 complete -c bun -n '__bun_first_arg_in info' -l 'no-save' -f -d 'Don\'t update package.json or save a lockfile'

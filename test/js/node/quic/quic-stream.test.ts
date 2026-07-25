@@ -201,6 +201,8 @@ describe("HTTP/3 inbound field-section validation (RFC 9114)", () => {
     { name: "uppercase field name", pairs: [...valid, "X-Upper", "v"] },
     { name: "non-token field name", pairs: [...valid, "bad name", "v"] },
     { name: "CR in field value", pairs: [...valid, "x-crlf", "a\r\nb"] },
+    { name: "leading SP in field value", pairs: [...valid, "x-ws", " v"] },
+    { name: "trailing HTAB in field value", pairs: [...valid, "x-ws", "v\t"] },
     { name: "transfer-encoding", pairs: [...valid, "transfer-encoding", "chunked"] },
     { name: "connection", pairs: [...valid, "connection", "close"] },
     { name: "keep-alive", pairs: [...valid, "keep-alive", "timeout=5"] },
@@ -214,12 +216,16 @@ describe("HTTP/3 inbound field-section validation (RFC 9114)", () => {
     { name: "CONNECT without :authority", pairs: [":method", "CONNECT"] },
     { name: "plain CONNECT with :path", pairs: [":method", "CONNECT", ":authority", "h", ":path", "/"] },
     { name: "no :authority and no Host", pairs: [":method", "GET", ":scheme", "https", ":path", "/"] },
+    { name: "empty Host without :authority", pairs: [":method", "GET", ":scheme", "https", ":path", "/", "host", ""] },
+    { name: "non-numeric content-length", pairs: [...valid, "content-length", "abc"] },
+    { name: "conflicting content-length", pairs: [...valid, "content-length", "5", "content-length", "100"] },
   ];
 
   const malformedResponses: Row[] = [
     { name: "missing :status", pairs: ["content-type", "text/plain"] },
     { name: "duplicate :status", pairs: [":status", "200", ":status", "404"] },
     { name: "non-numeric :status", pairs: [":status", "abc"] },
+    { name: ":status < 100", pairs: [":status", "050"] },
     { name: "request pseudo in response", pairs: [":status", "200", ":path", "/"] },
     { name: "uppercase field name", pairs: [":status", "200", "X-Upper", "v"] },
     { name: "transfer-encoding", pairs: [":status", "200", "transfer-encoding", "chunked"] },
@@ -227,9 +233,15 @@ describe("HTTP/3 inbound field-section validation (RFC 9114)", () => {
     { name: "pseudo after regular", pairs: ["x-ok", "v", ":status", "200"] },
   ];
 
+  const publicBadResponses = [
+    { name: "missing :status", headers: { "content-type": "text/plain" } },
+    { name: ":method in response", headers: { ":status": "200", ":method": "GET" } },
+  ];
+
   const wellFormedRequests: Row[] = [
     { name: "te: trailers", pairs: [...valid, "te", "trailers"] },
     { name: "te: Trailers (mixed case)", pairs: [...valid, "te", "Trailers"] },
+    { name: "repeated content-length (same value)", pairs: [...valid, "content-length", "0", "content-length", "0"] },
     {
       name: "Host without :authority",
       pairs: [":method", "GET", ":scheme", "https", ":path", "/", "host", "localhost"],
@@ -261,6 +273,8 @@ describe("HTTP/3 inbound field-section validation (RFC 9114)", () => {
           const tag = h["x-case"];
           if (tag?.startsWith("resp/")) {
             (this as any)[kSendRaw](malformedResponses[+tag.slice(5)].pairs, 1, 1);
+          } else if (tag?.startsWith("pub/")) {
+            this.sendHeaders(publicBadResponses[+tag.slice(4)].headers, { terminal: true });
           } else {
             (serverSeen[tag ?? h[":path"]] ??= []).push(h);
             this.sendHeaders({ ":status": "200" }, { terminal: true });
@@ -288,12 +302,13 @@ describe("HTTP/3 inbound field-section validation (RFC 9114)", () => {
       (e: any) => e,
     );
 
-  test.concurrent.each(malformedRequests)("server rejects malformed request: $name", async ({ name, pairs }) => {
+  test.concurrent.each(malformedRequests)("server rejects malformed request: $name", async ({ pairs }) => {
     const stream = await client.createBidirectionalStream();
     (stream as any)[kSendRaw](pairs, 1, 1);
     const err = await closedErr(stream);
-    expect({ seen: serverSeen[name], code: err?.code, errorCode: err?.errorCode }).toEqual({
-      seen: undefined,
+    // The RESET_STREAM from the server is the observable proof: onheaders and
+    // the reset path are mutually exclusive in on_stream_read.
+    expect({ code: err?.code, errorCode: err?.errorCode }).toEqual({
       code: "ERR_QUIC_APPLICATION_ERROR",
       errorCode: H3_MESSAGE_ERROR,
     });
@@ -325,28 +340,12 @@ describe("HTTP/3 inbound field-section validation (RFC 9114)", () => {
 
   // These reach the server through public `sendHeaders`, which does not enforce
   // role-appropriate or mandatory pseudo-headers: the gap was on the API surface.
-  test.concurrent.each([
-    { name: "missing :status", headers: { "content-type": "text/plain" } },
-    { name: ":method in response", headers: { ":status": "200", ":method": "GET" } },
-  ])("client rejects response via public sendHeaders: $name", async ({ headers }) => {
-    const clientSeen: unknown[] = [];
-    await using server = await listen(
-      async ss => {
-        ss.onstream = (s: any) => s.closed.catch(() => {});
-        await ss.closed.catch(() => {});
-      },
-      {
-        sni: { "*": { keys: [key], certs: [cert] } },
-        onheaders(this: any) {
-          this.sendHeaders(headers, { terminal: true });
-        },
-      },
-    );
-    const c = await connect(server.address, { servername: "localhost", verifyPeer: "manual" });
-    await c.opened;
-    try {
-      const stream = await c.createBidirectionalStream({
-        headers: { ":method": "GET", ":scheme": "https", ":authority": "localhost", ":path": "/" },
+  test.concurrent.each(publicBadResponses.map((r, i) => ({ ...r, i })))(
+    "client rejects response via public sendHeaders: $name",
+    async ({ i }) => {
+      const clientSeen: unknown[] = [];
+      const stream = await client.createBidirectionalStream({
+        headers: { ":method": "GET", ":scheme": "https", ":authority": "h", ":path": "/", "x-case": `pub/${i}` },
         onheaders: (h: any) => clientSeen.push(h),
       });
       const err = await closedErr(stream);
@@ -355,10 +354,8 @@ describe("HTTP/3 inbound field-section validation (RFC 9114)", () => {
         code: "ERR_QUIC_APPLICATION_ERROR",
         errorCode: H3_MESSAGE_ERROR,
       });
-    } finally {
-      c.close();
-    }
-  });
+    },
+  );
 
   test.concurrent("server rejects request missing :scheme (public sendHeaders)", async () => {
     const stream = await client.createBidirectionalStream();

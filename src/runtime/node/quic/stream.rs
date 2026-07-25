@@ -52,7 +52,9 @@ fn is_valid_h3_field_name(name: &[u8]) -> bool {
 
 /// RFC 9110 §5.5. NUL is the pair delimiter, already rejected in C.
 fn is_valid_h3_field_value(value: &[u8]) -> bool {
-    !value.iter().any(|&c| matches!(c, b'\r' | b'\n'))
+    !matches!(value.first(), Some(b' ' | b'\t'))
+        && !matches!(value.last(), Some(b' ' | b'\t'))
+        && !value.iter().any(|&c| matches!(c, b'\r' | b'\n'))
 }
 
 /// RFC 9114 §4.2.1.
@@ -83,10 +85,11 @@ fn validate_h3_field_section(pairs: &[Vec<u8>], role: H3HeaderRole) -> Result<u3
     let mut seen_pseudo: u8 = 0;
     let mut seen_regular = false;
     let mut saw_host = false;
+    let mut content_length: Option<&[u8]> = None;
     let mut method_is_connect = false;
     let mut is_interim = false;
-    for kv in pairs.chunks_exact(2) {
-        let (name, value) = (kv[0].as_slice(), kv[1].as_slice());
+    for [name, value] in pairs.as_chunks::<2>().0 {
+        let (name, value) = (name.as_slice(), value.as_slice());
         if !is_valid_h3_field_value(value) {
             return Err(());
         }
@@ -117,7 +120,10 @@ fn validate_h3_field_section(pairs: &[Vec<u8>], role: H3HeaderRole) -> Result<u3
                     if bit != PSEUDO_STATUS {
                         return Err(());
                     }
-                    if value.len() != 3 || !value.iter().all(u8::is_ascii_digit) {
+                    if value.len() != 3
+                        || !value.iter().all(u8::is_ascii_digit)
+                        || value[0] == b'0'
+                    {
                         return Err(());
                     }
                     is_interim = value[0] == b'1';
@@ -129,7 +135,18 @@ fn validate_h3_field_section(pairs: &[Vec<u8>], role: H3HeaderRole) -> Result<u3
             if !is_valid_h3_field_name(name) || is_connection_specific(name, value) {
                 return Err(());
             }
-            saw_host |= name == b"host";
+            match name {
+                b"host" => saw_host |= !value.is_empty(),
+                b"content-length" => {
+                    if value.is_empty()
+                        || !value.iter().all(u8::is_ascii_digit)
+                        || content_length.replace(value).is_some_and(|prev| prev != value)
+                    {
+                        return Err(());
+                    }
+                }
+                _ => {}
+            }
         }
     }
     match role {
@@ -1180,6 +1197,7 @@ pub(super) unsafe extern "C" fn on_stream_read(ctx: *mut c_void, s: *mut lsquic:
         };
         match validate_h3_field_section(&pairs, role) {
             Err(()) => {
+                stream.want_read(false);
                 if let Some(s) = qs.ls() {
                     s.reset(H3_MESSAGE_ERROR);
                     // reset() alone leaves the peer free to keep writing.

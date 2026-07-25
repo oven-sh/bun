@@ -38,7 +38,7 @@ describeWithContainer("postgres", { image: "postgres_plain" }, container => {
     for (const [v, want] of cases) {
       await sql`insert into nprec values (${v}, ${v}, ${v})`;
     }
-    const rows = await sql`select n::text as n, f, t from nprec`;
+    const rows = await sql`select n::text as n, f, t from nprec order by ctid`;
 
     expect(
       rows.map((r: { n: string; f: number; t: string }) => ({

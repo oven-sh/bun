@@ -1661,13 +1661,12 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
         if (!stringsEqual) {
             return false;
         }
-        if constexpr (checkPrototypes) {
-            // node also compares own properties of boxed strings.
-            break;
-        } else if constexpr (isStrict) {
-            // Only strict mode compares extra own properties on boxed primitives.
+        if constexpr (checkPrototypes || isStrict) {
+            // Only these modes compare extra own properties on boxed primitives.
             // Guarded so a plain boxed string does not fall through to the property
-            // walk, which would enumerate every character index.
+            // walk, which would enumerate every character index; node does walk
+            // those indices, so `break` (not nonIndexOwnPropertiesEqual) when
+            // extras exist so an out-of-range index still fails the compare.
             if (hasExtraOwnProperties(c1->structure()) || hasExtraOwnProperties(c2->structure())) {
                 break;
             }

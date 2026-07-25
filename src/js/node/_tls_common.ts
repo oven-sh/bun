@@ -36,8 +36,6 @@ function translatePeerCertificate(c) {
   return c;
 }
 
-process.emitWarning("The _tls_common module is deprecated. Use `node:tls` instead.", "DeprecationWarning", "DEP0192");
-
 export default {
   SecureContext,
   createSecureContext,

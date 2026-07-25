@@ -728,21 +728,27 @@ static WATCH_RELOAD_GRACE_ARMED: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
 
 fn arm_watch_reload_grace_timer() {
-    if WATCH_RELOAD_GRACE_ARMED.swap(true, core::sync::atomic::Ordering::Relaxed) {
+    if WATCH_RELOAD_GRACE_ARMED.load(core::sync::atomic::Ordering::Relaxed) {
         return;
     }
-    let _ = std::thread::Builder::new()
+    // The JS thread is progressing when either it has entered reload_process
+    // or it is synchronously running the kill-signal handlers; only the
+    // neither case (never drained the posted task) should be forced.
+    let js_thread_progressing = || {
+        bun_core::is_process_reload_in_progress_on_another_thread()
+            || crate::posix_signal_handle::is_emitting_watch_kill_signal()
+    };
+    let spawned = std::thread::Builder::new()
         .name("WatchReloadGrace".into())
-        .spawn(|| {
+        .spawn(move || {
             const GRACE_MS: u64 = 500;
             const STEP_MS: u64 = 10;
             let mut waited = 0u64;
-            while waited < GRACE_MS && !bun_core::is_process_reload_in_progress_on_another_thread()
-            {
+            while waited < GRACE_MS && !js_thread_progressing() {
                 std::thread::sleep(std::time::Duration::from_millis(STEP_MS));
                 waited += STEP_MS;
             }
-            if !bun_core::is_process_reload_in_progress_on_another_thread() {
+            if !js_thread_progressing() {
                 Output::flush();
                 bun_core::reload_process(
                     CLEAR_SCREEN.load(core::sync::atomic::Ordering::Relaxed),
@@ -755,7 +761,20 @@ fn arm_watch_reload_grace_timer() {
             loop {
                 std::thread::sleep(std::time::Duration::from_secs(3600));
             }
-        });
+        })
+        .is_ok();
+    if spawned {
+        WATCH_RELOAD_GRACE_ARMED.store(true, core::sync::atomic::Ordering::Relaxed);
+    } else {
+        // Spawn failed: fall through to the same force path the grace thread
+        // would have taken, rather than silently disarming the fallback.
+        Output::flush();
+        bun_core::reload_process(
+            CLEAR_SCREEN.load(core::sync::atomic::Ordering::Relaxed),
+            false,
+        );
+        unreachable!();
+    }
 }
 
 impl<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool>

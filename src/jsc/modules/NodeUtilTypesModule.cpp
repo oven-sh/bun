@@ -665,13 +665,9 @@ static bool setSubsetAndProps(JSC::JSGlobalObject* globalObject, JSC::MarkedArgu
 static bool isSpecialValue(JSValue value)
 {
     // `typeof x !== "object"`: primitives, null, and callables are decided
-    // by full strict deep equality. Errors, Dates, and RegExps have their
-    // own arms above; the Error check remains for the one-sided case where
-    // only the non-Error side reaches here.
-    if (!value.isObject() || value.isCallable())
-        return true;
-    JSC::JSCell* cell = value.asCell();
-    return cell->inherits<JSC::ErrorInstance>() || cell->type() == JSC::ErrorInstanceType;
+    // by full strict deep equality. Every specific type (Error, Date, RegExp,
+    // boxed primitives, ...) has already been handled by its own arm above.
+    return !value.isObject() || value.isCallable();
 }
 
 static bool compareBranch(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuffer& gcBuffer, CycleState& cycles, JSC::ThrowScope& scope, JSValue actual, JSValue expected)

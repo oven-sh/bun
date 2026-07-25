@@ -77,6 +77,7 @@ describe("bundler", () => {
   itBundled("edgecase/DedupeExternalESMImports", {
     files: {
       "/entry.js": /* js */ `
+        import { h } from "./h.js";
         import { a } from "./a.js";
         import { b } from "./b.js";
         import { c } from "./c.js";
@@ -84,7 +85,11 @@ describe("bundler", () => {
         import { e } from "./e.js";
         import { f } from "./f.js";
         import { g } from "./g.js";
-        console.log(JSON.stringify({ a, b, c, d, e, f, g }));
+        console.log(JSON.stringify({ a, b, c, d, e, f, g, h }));
+      `,
+      "/h.js": /* js */ `
+        import "pkg";
+        export const h = "H";
       `,
       "/a.js": /* js */ `
         import * as NS from "pkg";
@@ -129,12 +134,12 @@ describe("bundler", () => {
       const out = api.readFile("/out.js");
       const imports = out.match(/^import[^;]*;/gm) ?? [];
       // One import statement per distinct clause shape (star, default, named);
-      // the second file of each pair and the bare side-effect import are
-      // dropped and reference the first file's binding.
+      // the second file of each pair and both bare side-effect imports (h
+      // before, g after the binding imports) are dropped.
       expect(imports).toEqual(['import * as NS from "pkg";', 'import def from "pkg";', 'import { named } from "pkg";']);
     },
     run: {
-      stdout: '{"a":"EXT","b":"EXT2","c":"DEF","d":"DEF!","e":"NAMED","f":"NAMED?","g":"G"}',
+      stdout: '{"a":"EXT","b":"EXT2","c":"DEF","d":"DEF!","e":"NAMED","f":"NAMED?","g":"G","h":"H"}',
     },
   });
   itBundled("edgecase/DedupeExternalESMImportsExactOnly", {

@@ -60,6 +60,7 @@ pub fn dedupe_external_esm_imports(c: &mut LinkerContext, chunks: &mut [Chunk]) 
         star_ref: Ref,
         default_ref: Option<Ref>,
         items: Vec<(&'static [u8], Ref)>,
+        bare_key: u64,
     }
 
     let mut seen: Vec<Entry> = Vec::new();
@@ -120,8 +121,10 @@ pub fn dedupe_external_esm_imports(c: &mut LinkerContext, chunks: &mut [Chunk]) 
                             && strings::eql(e.path_namespace, record.path.namespace)
                     };
 
-                    // A bare `import "pkg"` is pure side-effect; any kept import for the
-                    // same specifier already evaluates the module, so drop the bare one.
+                    // A bare `import "pkg"` is pure side-effect; any other kept
+                    // import for the same specifier (before or after) makes it
+                    // redundant. `bare_key` lets a later binding import drop it
+                    // retroactively.
                     if !has_star && default_ref.is_none() && aliases.is_empty() {
                         if seen.iter().any(same_path) {
                             js.external_import_records_to_skip
@@ -136,9 +139,15 @@ pub fn dedupe_external_esm_imports(c: &mut LinkerContext, chunks: &mut [Chunk]) 
                                 star_ref: Ref::NONE,
                                 default_ref: None,
                                 items: Vec::new(),
+                                bare_key: pack(source_index, s.import_record_index),
                             });
                         }
                         continue;
+                    }
+
+                    if let Some(bare) = seen.iter_mut().find(|e| e.bare_key != 0 && same_path(e)) {
+                        js.external_import_records_to_skip.insert(bare.bare_key, ());
+                        bare.bare_key = 0;
                     }
 
                     let existing = seen.iter().find(|e| {
@@ -174,6 +183,7 @@ pub fn dedupe_external_esm_imports(c: &mut LinkerContext, chunks: &mut [Chunk]) 
                             star_ref: s.namespace_ref,
                             default_ref,
                             items,
+                            bare_key: 0,
                         });
                         continue;
                     };

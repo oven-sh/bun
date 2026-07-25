@@ -33,6 +33,7 @@
 #include "Event.h"
 #include "EventNames.h"
 #include "StructuredSerializeOptions.h"
+#include <JavaScriptCore/Error.h>
 #include <JavaScriptCore/IteratorOperations.h>
 #include <JavaScriptCore/ScriptCallStack.h>
 #include <wtf/TZoneMallocInlines.h>
@@ -95,6 +96,8 @@ void WebWorker__releaseParentPollRef(void* worker);
 
 // Free the native WebWorker struct. Called from ~Worker.
 void WebWorker__destroy(void* worker);
+
+void Bun__reportUnhandledError(JSC::JSGlobalObject*, JSC::EncodedJSValue);
 
 } // extern "C"
 // -------------------------------------------------------------------------------------------------
@@ -517,14 +520,34 @@ void Worker::fireEarlyMessages(Zig::GlobalObject* workerGlobalObject)
     }
 }
 
-void Worker::dispatchErrorWithMessage(WTF::String message)
+void Worker::dispatchErrorWithMessage(WTF::String message, RefPtr<SerializedScriptValue>&& serializedError)
 {
-    postTaskToParent([protectedThis = Ref { *this }, message = message.isolatedCopy()](ScriptExecutionContext&) {
-        ErrorEvent::Init init;
-        init.message = message;
+    postTaskToParent([protectedThis = Ref { *this }, message = message.isolatedCopy(), serializedError = WTF::move(serializedError)](ScriptExecutionContext& context) {
+        if (protectedThis->m_options.kind != WorkerOptions::Kind::Web
+            || protectedThis->hasEventListeners(eventNames().errorEvent)) {
+            ErrorEvent::Init init;
+            init.message = message;
+            auto event = ErrorEvent::create(eventNames().errorEvent, init, EventIsTrusted::Yes);
+            protectedThis->dispatchEvent(event);
+            return;
+        }
 
-        auto event = ErrorEvent::create(eventNames().errorEvent, init, EventIsTrusted::Yes);
-        protectedThis->dispatchEvent(event);
+        // https://html.spec.whatwg.org/multipage/workers.html#runtime-script-errors-2
+        // A Web Worker error the parent did not observe is reported to the host
+        // so it is printed and reflected in the process exit code. The Node
+        // worker_threads wrapper always installs an error listener, so this is
+        // reachable only via the global Worker constructor with no error listener.
+        auto* globalObject = context.globalObject();
+        auto& vm = JSC::getVM(globalObject);
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+        JSValue reported;
+        if (serializedError)
+            reported = serializedError->deserialize(*globalObject, globalObject, SerializationErrorMode::NonThrowing);
+        scope.clearExceptionExceptTermination();
+        if (!reported)
+            reported = JSC::createError(globalObject, message);
+        Bun__reportUnhandledError(globalObject, JSValue::encode(reported));
+        scope.clearExceptionExceptTermination();
     });
 }
 
@@ -736,12 +759,17 @@ extern "C" void WebWorker__dispatchError(Zig::GlobalObject* globalObject, Worker
 
     globalObject->globalEventScope->dispatchEvent(ErrorEvent::create(eventNames().errorEvent, init, EventIsTrusted::Yes));
     switch (worker->options().kind) {
-    case WorkerOptions::Kind::Web:
-        return worker->dispatchErrorWithMessage(WTF::move(messageStr));
+    case WorkerOptions::Kind::Web: {
+        auto& vm = JSC::getVM(globalObject);
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+        auto serialized = SerializedScriptValue::create(*globalObject, error, SerializationForStorage::No, SerializationErrorMode::NonThrowing);
+        CLEAR_IF_EXCEPTION(scope);
+        return worker->dispatchErrorWithMessage(WTF::move(messageStr), WTF::move(serialized));
+    }
     case WorkerOptions::Kind::Node:
         if (!worker->dispatchErrorWithValue(globalObject, error)) {
             // If serialization threw an error, use the string instead
-            worker->dispatchErrorWithMessage(WTF::move(messageStr));
+            worker->dispatchErrorWithMessage(WTF::move(messageStr), nullptr);
         }
         return;
     }

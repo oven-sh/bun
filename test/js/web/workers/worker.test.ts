@@ -334,6 +334,66 @@ describe("web worker", () => {
       expect(err.message).toBe("5");
       expect(err.error).toBe(null);
     });
+
+    for (const body of [`throw new Error("WEB-WORKER-UNCAUGHT")`, `Promise.reject(new Error("WEB-WORKER-UNCAUGHT"))`]) {
+      test(`with no listener is reported to the parent (${body.split("(")[0]})`, async () => {
+        await using proc = Bun.spawn({
+          cmd: [
+            bunExe(),
+            "-e",
+            `new Worker("data:text/javascript," + encodeURIComponent(${JSON.stringify(body)}));`,
+          ],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).toContain("WEB-WORKER-UNCAUGHT");
+        expect(exitCode).toBe(1);
+      });
+    }
+
+    test("with no listener is caught by process.on('uncaughtException')", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `process.on("uncaughtException", err => console.log("caught", err.message));
+           const w = new Worker("data:text/javascript," + encodeURIComponent('throw new Error("WEB-WORKER-UNCAUGHT")'));
+           w.addEventListener("close", e => console.log("worker closed", e.code));`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).not.toContain("WEB-WORKER-UNCAUGHT");
+      expect(stdout).toContain("caught WEB-WORKER-UNCAUGHT");
+      expect(stdout).toContain("worker closed 1");
+      expect(exitCode).toBe(0);
+    });
+
+    test("with a listener present is not reported as unhandled", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `process.on("uncaughtException", err => { console.log("caught"); process.exitCode = 2; });
+           const w = new Worker("data:text/javascript," + encodeURIComponent('throw new Error("WEB-WORKER-UNCAUGHT")'));
+           w.addEventListener("error", e => console.log("listener saw", e.message.includes("WEB-WORKER-UNCAUGHT")));
+           w.addEventListener("close", e => console.log("worker closed", e.code));`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).not.toContain("WEB-WORKER-UNCAUGHT");
+      expect(stdout).toContain("listener saw true");
+      expect(stdout).not.toContain("caught");
+      expect(stdout).toContain("worker closed 1");
+      expect(exitCode).toBe(0);
+    });
   });
 });
 

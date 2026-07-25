@@ -300,7 +300,11 @@ impl<'a> Scanner<'a> {
         }
 
         for filter_name in self.filter_names {
-            if strings::index_of(name, filter_name).is_some() {
+            if bun_glob::detect_glob_syntax(filter_name) {
+                if bun_glob::r#match(filter_name, name).matches() {
+                    return true;
+                }
+            } else if strings::index_of(name, filter_name).is_some() {
                 return true;
             }
         }

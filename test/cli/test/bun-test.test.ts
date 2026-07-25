@@ -1635,4 +1635,91 @@ describe.concurrent("test file discovery (scanner)", () => {
     expect(stderr).toContain(" 1 pass");
     expect(exitCode).toBe(0);
   });
+
+  // https://github.com/oven-sh/bun/issues/10353
+  describe("glob filters", () => {
+    const make = (name: string) =>
+      `import { test } from "bun:test"; test("${name}", () => { console.log("RAN ${name}"); });`;
+    const fixture = () =>
+      tempDir("scanner-glob-filter", {
+        "test/module.test.ts": make("module"),
+        "test/script.test.ts": make("script"),
+        "test/dir/file.test.ts": make("dirfile"),
+        "test/config/config.test.ts": make("config"),
+        "other/elsewhere.test.ts": make("elsewhere"),
+      });
+
+    async function run(dir: string, args: string[]) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", ...args],
+        env: bunEnv,
+        cwd: dir,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    }
+
+    test("'test/**/*.test.ts' matches top-level and nested files", async () => {
+      using dir = fixture();
+      const { stdout, stderr, exitCode } = await run(String(dir), ["test/**/*.test.ts"]);
+
+      expect(stdout).toContain("RAN module");
+      expect(stdout).toContain("RAN script");
+      expect(stdout).toContain("RAN dirfile");
+      expect(stdout).toContain("RAN config");
+      expect(stdout).not.toContain("RAN elsewhere");
+      expect(stderr).toContain(" 4 pass");
+      expect(exitCode).toBe(0);
+    });
+
+    test("'test/*.test.ts' matches only the top level of test/", async () => {
+      using dir = fixture();
+      const { stdout, stderr, exitCode } = await run(String(dir), ["test/*.test.ts"]);
+
+      expect(stdout).toContain("RAN module");
+      expect(stdout).toContain("RAN script");
+      expect(stdout).not.toContain("RAN dirfile");
+      expect(stdout).not.toContain("RAN config");
+      expect(stdout).not.toContain("RAN elsewhere");
+      expect(stderr).toContain(" 2 pass");
+      expect(exitCode).toBe(0);
+    });
+
+    test("glob and substring filters can be mixed", async () => {
+      using dir = fixture();
+      const { stdout, stderr, exitCode } = await run(String(dir), ["test/*.test.ts", "elsewhere"]);
+
+      expect(stdout).toContain("RAN module");
+      expect(stdout).toContain("RAN script");
+      expect(stdout).toContain("RAN elsewhere");
+      expect(stdout).not.toContain("RAN dirfile");
+      expect(stdout).not.toContain("RAN config");
+      expect(stderr).toContain(" 3 pass");
+      expect(exitCode).toBe(0);
+    });
+
+    test("brace expansion works in glob filters", async () => {
+      using dir = fixture();
+      const { stdout, stderr, exitCode } = await run(String(dir), ["test/{module,script}.test.ts"]);
+
+      expect(stdout).toContain("RAN module");
+      expect(stdout).toContain("RAN script");
+      expect(stdout).not.toContain("RAN dirfile");
+      expect(stdout).not.toContain("RAN config");
+      expect(stderr).toContain(" 2 pass");
+      expect(exitCode).toBe(0);
+    });
+
+    test("filters without glob syntax still substring-match", async () => {
+      using dir = fixture();
+      const { stdout, stderr, exitCode } = await run(String(dir), ["config"]);
+
+      expect(stdout).toContain("RAN config");
+      expect(stdout).not.toContain("RAN module");
+      expect(stderr).toContain(" 1 pass");
+      expect(exitCode).toBe(0);
+    });
+  });
 });

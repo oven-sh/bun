@@ -234,9 +234,9 @@
 +lsquic_conn_abort_silent (lsquic_conn_t *);
 +
 +/**
-+ * Destroy every sent-but-unacked 0-RTT packet so rejected early stream
-+ * data is never retransmitted at 1-RTT.  Only valid from inside the
-+ * @ref on_early_data_failed callback.
++ * Destroy every queued 0-RTT packet so rejected early stream data is
++ * never retransmitted at 1-RTT.  Only valid from inside the
++ * @ref on_early_data_failed callback.  No-op for HTTP/3 connections.
 + */
 +void
 +lsquic_conn_drop_0rtt_packets (lsquic_conn_t *);
@@ -1391,7 +1391,7 @@
      if (0 == (conn->ifc_flags & IFC_IMMEDIATE_CLOSE_FLAGS))
          if (0 != conn->ifc_process_incoming_packet(conn, packet_in))
              conn->ifc_flags |= IFC_ERROR;
-@@ -8342,10 +8642,32 @@
+@@ -8342,10 +8642,37 @@
      struct ietf_full_conn *conn = (struct ietf_full_conn *) lconn;
  
      LSQ_DEBUG("early data failed");
@@ -1402,13 +1402,16 @@
  }
  
  
-+/* bun: destroy the unacked 0-RTT packets so a rejected early stream's
++/* bun: destroy the queued 0-RTT packets so a rejected early stream's
 + * STREAM frames are never retransmitted at 1-RTT.  node:quic tears every
 + * 0-RTT stream down and the application re-opens; without this the stashed
 + * packets reach the server on a stream the client already reported as
 + * failed, and the documented re-open delivers the payload a second time.
 + * Called from node:quic's on_early_data_failed callback (before this
-+ * function's one caller stashes, so the stash finds nothing). */
++ * function's one caller stashes, so the stash finds nothing).  No-op in
++ * HTTP/3 mode: init_http packetized the H3 control and QPACK streams at
++ * 0-RTT, and those must be retransmitted (IFC_HTTP_INITED is already set
++ * so handshake_ok will not re-run init_http). */
 +void
 +lsquic_conn_drop_0rtt_packets (struct lsquic_conn *lconn)
 +{
@@ -1417,6 +1420,8 @@
 +    if ((lconn->cn_flags & (LSCONN_MINI|LSCONN_IETF)) != LSCONN_IETF)
 +        return;
 +    conn = (struct ietf_full_conn *) lconn;
++    if (conn->ifc_flags & IFC_HTTP)
++        return;
 +    lsquic_send_ctl_drop_0rtt_packets(&conn->ifc_send_ctl);
 +}
 +

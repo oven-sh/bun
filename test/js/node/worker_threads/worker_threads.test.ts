@@ -1393,6 +1393,21 @@ test("MessagePort emit() delivers the raw payload and returns a boolean", () => 
     p.close();
   }
 
+  // listenerCount reads the native EventTarget map directly, not via a
+  // user-overridable `.listeners` duck-type (tamper-resistance).
+  {
+    const { port1: p } = new MessageChannel();
+    p.on("message", () => {});
+    (p as any).listeners = () => [];
+    try {
+      (MessagePort.prototype as any).listeners = () => [];
+      expect({ count: p.listenerCount("message"), emit: p.emit("message", 1) }).toEqual({ count: 1, emit: true });
+    } finally {
+      delete (MessagePort.prototype as any).listeners;
+    }
+    p.close();
+  }
+
   // Custom events (unchanged behaviour, guards against regression): .on() gets
   // the arg, addEventListener gets CustomEvent with .detail = arg.
   {

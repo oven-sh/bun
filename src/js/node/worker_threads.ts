@@ -220,10 +220,10 @@ function injectFakeEmitter(Class) {
   function getMaxListeners() {
     return this[kMaxListeners] ?? 10;
   }
-  const getEventListeners = EventEmitter.getEventListeners;
+  const getEventListenersForEventTarget = $newCppFunction("JSEventTargetNode.cpp", "jsFunctionNodeEventsGetEventListeners", 1);
   function listenerCount(type) {
     try {
-      return getEventListeners(this, type).length;
+      return getEventListenersForEventTarget(this, type).length;
     } catch {
       // fakeParentPort has no EventTarget internal slot; fall back to the .on() registry.
       return registryFor(this, false)?.get(type)?.size ?? 0;

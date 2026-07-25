@@ -591,7 +591,16 @@ describe.concurrent("--no-bundle with --outdir", () => {
     });
 
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "build", "--no-bundle", "./a.ts", "./b.ts", "--outdir=dist", "--entry-naming", "[name]-[hash].[ext]"],
+      cmd: [
+        bunExe(),
+        "build",
+        "--no-bundle",
+        "./a.ts",
+        "./b.ts",
+        "--outdir=dist",
+        "--entry-naming",
+        "[name]-[hash].[ext]",
+      ],
       env: bunEnv,
       cwd: String(dir),
       stdout: "pipe",

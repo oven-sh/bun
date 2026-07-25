@@ -1376,23 +1376,39 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return None;
         }
         let arg = call.args.slice()[0];
-        let name: &'a [u8] = match arg.data {
+        let (name, name_loc): (&'a [u8], js_ast::Loc) = match arg.data {
             js_ast::ExprData::EString(mut s) => {
                 s.resolve_rope_if_needed(self.arena);
-                s.string(self.arena).expect("unreachable")
+                (s.string(self.arena).expect("unreachable"), arg.loc)
             }
             js_ast::ExprData::EObject(obj) => {
-                // Passing `module_root` or `try` opts into the resolver and
-                // skips the filename lookup; leave those calls alone.
-                if obj.has_property(b"module_root") || obj.has_property(b"try") {
+                // Only rewrite the exact `{ bindings: "name" }` shape. Any
+                // other option (`path`, `module_root`, `try`, spreads,
+                // computed keys) changes what `bindings` returns or where it
+                // searches, so leave those calls alone.
+                let props = obj.properties.slice();
+                if props.len() != 1 {
                     return None;
                 }
-                let value = E::Object::get(&obj, b"bindings")?;
+                let prop = &props[0];
+                if prop.kind != G::PropertyKind::Normal
+                    || prop.flags.contains(Flags::Property::IsComputed)
+                    || prop.flags.contains(Flags::Property::IsSpread)
+                {
+                    return None;
+                }
+                let js_ast::ExprData::EString(key) = prop.key?.data else {
+                    return None;
+                };
+                if !key.eql_comptime(b"bindings") {
+                    return None;
+                }
+                let value = prop.value?;
                 let js_ast::ExprData::EString(mut s) = value.data else {
                     return None;
                 };
                 s.resolve_rope_if_needed(self.arena);
-                s.string(self.arena).expect("unreachable")
+                (s.string(self.arena).expect("unreachable"), value.loc)
             }
             _ => return None,
         };
@@ -1417,7 +1433,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // SAFETY: `name` is arena-owned and outlives the record (see
             // `add_import_record_by_range_and_path`).
             record.path = unsafe { fs::Path::init(name).into_static() };
-            record.range = self.source.range_of_string(arg.loc);
+            record.range = self.source.range_of_string(name_loc);
             record.tag = bun_ast::ImportRecordTag::NapiBindings;
         }
 

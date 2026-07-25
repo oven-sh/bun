@@ -6018,38 +6018,32 @@ pub mod bv2_impl {
                 }
 
                 if import_record.tag == bun_ast::ImportRecordTag::NapiBindings {
-                    let mut buf = bun_paths::path_buffer_pool::get();
-                    if let Some(len) =
-                        resolve_napi_bindings_path(source_dir, import_record.path.text, &mut buf)
-                    {
-                        // SAFETY: arena outlives the bundle pass (see `interned_slice`).
-                        let owned = unsafe {
-                            bun_ptr::detach_lifetime(self.arena().alloc_slice_copy(&buf[..len]))
-                        };
-                        import_record.path = bun_paths::fs::Path::init(owned);
-                        import_record.tag = bun_ast::ImportRecordTag::None;
-                        import_record.loader = Some(Loader::Napi);
+                    import_record.tag = bun_ast::ImportRecordTag::None;
+                    let found = if ctx.target == Target::Browser {
+                        None
                     } else {
-                        import_record.path.is_disabled = true;
-                        import_record.tag = bun_ast::ImportRecordTag::None;
-                        if !import_record
-                            .flags
-                            .contains(bun_ast::ImportRecordFlags::HANDLES_IMPORT_ERRORS)
-                        {
-                            let log = self.log_for_resolution_failures(
-                                source.path.text,
-                                ctx.target.bake_graph(),
-                            );
-                            log.add_range_error_fmt(
-                                Some(source),
-                                import_record.range,
-                                format_args!(
-                                    "Could not locate the bindings file \"{}\". Make sure native addons are built before bundling.",
-                                    bstr::BStr::new(import_record.path.text),
-                                ),
-                            );
+                        let mut buf = bun_paths::path_buffer_pool::get();
+                        resolve_napi_bindings_path(source_dir, import_record.path.text, &mut buf)
+                            // SAFETY: arena outlives the bundle pass (see `interned_slice`).
+                            .map(|len| unsafe {
+                                bun_ptr::detach_lifetime(
+                                    self.arena().alloc_slice_copy(&buf[..len]),
+                                )
+                            })
+                    };
+                    match found {
+                        Some(owned) => {
+                            import_record.path = bun_paths::fs::Path::init(owned);
+                            import_record.loader = Some(Loader::Napi);
                         }
-                        continue;
+                        None => {
+                            // Leave the record disabled so the build still
+                            // succeeds; the call will throw at runtime, which
+                            // is what bundling the `bindings` package already
+                            // produced before this rewrite existed.
+                            import_record.path.is_disabled = true;
+                            continue;
+                        }
                     }
                 }
 

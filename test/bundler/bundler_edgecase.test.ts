@@ -2541,6 +2541,72 @@ describe("bundler", () => {
       `);
     },
   });
+
+  // https://github.com/oven-sh/bun/issues/10964
+  const bindingsFixture = {
+    "/node_modules/bindings/package.json": `{"name":"bindings","main":"./index.js"}`,
+    "/node_modules/bindings/index.js": `
+      module.exports = function bindings(opts) {
+        throw new Error("Could not find module root");
+      };
+    `,
+    "/node_modules/my-native/package.json": `{"name":"my-native","main":"./lib/index.js"}`,
+    "/node_modules/my-native/build/Release/my-native.node": "\0",
+  };
+  itBundled("edgecase/RequireBindingsBunTargetEmbedsAddon", {
+    target: "bun",
+    outdir: "/out",
+    files: {
+      "/entry.js": `console.log(typeof require("my-native"));`,
+      "/node_modules/my-native/lib/index.js": `module.exports = require("bindings")("my-native");`,
+      ...bindingsFixture,
+    },
+    onAfterBundle(api) {
+      const out = api.readFile("/out/entry.js");
+      expect(out).not.toContain("Could not find module root");
+      expect(out).toMatch(/__require\("\.\/my-native-[a-z0-9]+\.node"\)/);
+    },
+  });
+  itBundled("edgecase/RequireBindingsBrowserTargetBuilds", {
+    target: "browser",
+    files: {
+      "/entry.js": `console.log(typeof require("my-native"));`,
+      "/node_modules/my-native/lib/index.js": `module.exports = require("bindings")("my-native");`,
+      ...bindingsFixture,
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("my-native.node");
+    },
+  });
+  itBundled("edgecase/RequireBindingsWithPathOptionNotRewritten", {
+    target: "bun",
+    files: {
+      "/entry.js": `console.log(typeof require("my-native"));`,
+      "/node_modules/my-native/lib/index.js":
+        `module.exports = require("bindings")({ bindings: "my-native", path: true });`,
+      ...bindingsFixture,
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("Could not find module root");
+    },
+  });
+  itBundled("edgecase/RequireBindingsMissingAddonStillBuilds", {
+    target: "bun",
+    files: {
+      "/entry.js": `console.log(typeof require("my-native"));`,
+      "/node_modules/my-native/package.json": `{"name":"my-native","main":"./index.js"}`,
+      "/node_modules/my-native/index.js": `module.exports = require("bindings")("missing");`,
+      "/node_modules/bindings/package.json": `{"name":"bindings","main":"./index.js"}`,
+      "/node_modules/bindings/index.js": `
+        module.exports = function bindings(opts) {
+          throw new Error("Could not find module root");
+        };
+      `,
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("missing.node");
+    },
+  });
 });
 
 for (const backend of ["api", "cli"] as const) {

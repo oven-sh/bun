@@ -174,9 +174,6 @@ function injectFakeEmitter(Class) {
   // EventTarget identity is (type, callback, capture): the registry entry per
   // listener is a two-slot [bubble, capture] pair holding what was handed to
   // the native map (the listener itself, or a wrapper for on()/once()/{once}).
-  function captureSlot(options) {
-    return options === true || (typeof options === "object" && options !== null && options.capture) ? 1 : 0;
-  }
   function recordListener(target, type, listener, actual, slot) {
     const map = registryFor(target, true)!;
     let byListener = map.get(type);
@@ -231,19 +228,31 @@ function injectFakeEmitter(Class) {
 
   // Overridden so EventTarget-style registration shares the on()/once()
   // registry, like node's single-map NodeEventTarget.
-  function addEventListener(type, listener, options) {
+  function addEventListener(type, listener) {
+    if (arguments.length < 2) throw $ERR_MISSING_ARGS("type", "listener");
+    const options = arguments[2];
     if (typeof listener === "function" && listener[kWrapped])
       return nativeAddEventListener.$call(this, type, listener, options);
     if (listener == null || (typeof listener !== "function" && typeof listener !== "object"))
       return nativeAddEventListener.$call(this, type, listener, options);
-    const opts = typeof options === "object" && options !== null ? options : undefined;
-    const signal = opts?.signal;
+    // Read each option once and hand a normalized dictionary to native so a
+    // stateful getter can't make the registry and the native map disagree.
+    let capture = options === true;
+    let once = false;
+    let passive = false;
+    let signal;
+    if (typeof options === "object" && options !== null) {
+      capture = !!options.capture;
+      once = !!options.once;
+      passive = !!options.passive;
+      signal = options.signal;
+    }
     // native is a no-op on an already-aborted signal; don't record a phantom entry.
     if (signal?.aborted) return;
-    const slot = captureSlot(options);
+    const slot = capture ? 1 : 0;
     const target = this;
     let actual = listener;
-    if (opts?.once) {
+    if (once) {
       actual = function (ev) {
         forgetListener(target, type, listener, slot);
         return typeof listener === "function" ? listener.$call(this, ev) : listener.handleEvent?.(ev);
@@ -251,31 +260,34 @@ function injectFakeEmitter(Class) {
     }
     if (!recordListener(this, type, listener, actual, slot)) return;
     try {
-      nativeAddEventListener.$call(this, type, actual, options);
+      nativeAddEventListener.$call(this, type, actual, { __proto__: null, capture, once, passive, signal });
     } catch (e) {
       forgetListener(this, type, listener, slot);
       throw e;
     }
-    if (signal) {
+    if (signal !== undefined) {
       // The native abort algorithm is C++ and never re-enters this override, so
       // mirror node: remove via the override on abort so registry and native stay
       // in step. WeakRef the port because the native algorithm holds it weakly.
       const weak = new WeakRef(this);
-      const capture = slot === 1;
-      signal.addEventListener(
+      nativeAddEventListener.$call(
+        signal,
         "abort",
         () => {
           const t = weak.deref();
           if (t) removeEventListener.$call(t, type, listener, capture);
         },
-        { once: true },
+        { __proto__: null, once: true },
       );
     }
   }
 
-  function removeEventListener(type, listener, options) {
-    const actual = forgetListener(this, type, listener, captureSlot(options)) ?? listener;
-    nativeRemoveEventListener.$call(this, type, actual, options);
+  function removeEventListener(type, listener) {
+    if (arguments.length < 2) throw $ERR_MISSING_ARGS("type", "listener");
+    const options = arguments[2];
+    const capture = options === true || (typeof options === "object" && options !== null && !!options.capture);
+    const actual = forgetListener(this, type, listener, capture ? 1 : 0) ?? listener;
+    nativeRemoveEventListener.$call(this, type, actual, capture);
   }
 
   function emit(event, ...args) {

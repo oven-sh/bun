@@ -1452,6 +1452,32 @@ test("MessagePort emitter and EventTarget registrations share one registry", () 
     p.close();
   }
 
+  // Fewer than two arguments still throws (the override must not pad the call).
+  {
+    const { port1: p } = new MessageChannel();
+    expect(() => (p.addEventListener as any)("x")).toThrow(TypeError);
+    expect(() => (p.removeEventListener as any)("x")).toThrow(TypeError);
+    expect({ ael: p.addEventListener.length, rel: p.removeEventListener.length }).toEqual({ ael: 2, rel: 2 });
+    p.close();
+  }
+
+  // Each option getter is observed once: the override normalizes the dictionary
+  // before handing it to native so the registry slot agrees with the native map.
+  {
+    const { port1: p } = new MessageChannel();
+    let reads = 0;
+    const f = () => {};
+    p.addEventListener("g", f, {
+      get capture() {
+        reads++;
+        return false;
+      },
+    });
+    expect(reads).toBe(1);
+    p.removeEventListener("g", f);
+    p.close();
+  }
+
   // EventTarget identity is (type, listener, capture): the same function can be
   // registered once per capture flag, and removeEventListener only removes the
   // entry whose capture flag matches.

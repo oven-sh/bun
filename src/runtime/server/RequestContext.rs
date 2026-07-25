@@ -371,7 +371,7 @@ mod shim {
     }
     #[inline]
     pub(super) fn byte_stream_unpipe(s: NonNull<ByteStream>) {
-        // The lone caller has just `take()`n the pointer out of
+        // Every caller has just `take()`n the pointer out of
         // `self.byte_stream`; the allocation is kept alive by
         // `response_body_readable_stream_ref` (BackRef invariant: pointee
         // outlives this temporary). R-2: `unpipe_without_deref` takes `&self`

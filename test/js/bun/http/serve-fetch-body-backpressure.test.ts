@@ -123,7 +123,6 @@ test.concurrent("Bun.serve proxying a fetch() body applies client backpressure t
     expect(pulls).toBeGreaterThan(pullsAtStall);
   } finally {
     socket.destroy();
-    proxy.kill();
   }
 });
 
@@ -196,12 +195,8 @@ test.concurrent("client abort while backpressured cancels the upstream fetch", a
   // upstream's serve then cancels the ReadableStream. Poll for that signal.
   for (let i = 0; i < 200 && !cancelled; i++) await Bun.sleep(10);
 
-  try {
-    expect({ cancelled, pullsUnderCap: pulls < CAP_CHUNKS, pulls }).toMatchObject({
-      cancelled: true,
-      pullsUnderCap: true,
-    });
-  } finally {
-    proxy.kill();
-  }
+  expect({ cancelled, pullsUnderCap: pulls < CAP_CHUNKS, pulls }).toMatchObject({
+    cancelled: true,
+    pullsUnderCap: true,
+  });
 });

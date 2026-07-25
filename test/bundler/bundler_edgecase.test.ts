@@ -131,11 +131,7 @@ describe("bundler", () => {
       // One import statement per distinct clause shape (star, default, named);
       // the second file of each pair and the bare side-effect import are
       // dropped and reference the first file's binding.
-      expect(imports).toEqual([
-        'import * as NS from "pkg";',
-        'import def from "pkg";',
-        'import { named } from "pkg";',
-      ]);
+      expect(imports).toEqual(['import * as NS from "pkg";', 'import def from "pkg";', 'import { named } from "pkg";']);
     },
     run: {
       stdout: '{"a":"EXT","b":"EXT2","c":"DEF","d":"DEF!","e":"NAMED","f":"NAMED?","g":"G"}',

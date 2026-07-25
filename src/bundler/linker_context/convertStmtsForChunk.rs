@@ -103,8 +103,7 @@ pub fn convert_stmts_for_chunk(
                     }
 
                     if let crate::chunk::Content::Javascript(js) = &chunk.content {
-                        let key =
-                            ((source_index as u64) << 32) | (s.import_record_index as u64);
+                        let key = ((source_index as u64) << 32) | (s.import_record_index as u64);
                         if js.external_import_records_to_skip.contains_key(&key) {
                             continue 'stmt_loop;
                         }

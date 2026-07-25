@@ -113,7 +113,11 @@ pub fn dedupe_external_esm_imports(c: &mut LinkerContext, chunks: &mut [Chunk]) 
                             path_text: record.path.text,
                             path_namespace: record.path.namespace,
                             loader: record.loader,
-                            star_ref: if has_star { Some(s.namespace_ref) } else { None },
+                            star_ref: if has_star {
+                                Some(s.namespace_ref)
+                            } else {
+                                None
+                            },
                             default_ref,
                             items,
                         });
@@ -146,8 +150,7 @@ pub fn dedupe_external_esm_imports(c: &mut LinkerContext, chunks: &mut [Chunk]) 
                                 .unwrap();
                             symbols.merge(item.name.ref_, canonical);
                         }
-                        let key =
-                            ((source_index as u64) << 32) | (s.import_record_index as u64);
+                        let key = ((source_index as u64) << 32) | (s.import_record_index as u64);
                         js.external_import_records_to_skip.insert(key, ());
                     } else {
                         // Not fully covered: the statement is kept. Record the

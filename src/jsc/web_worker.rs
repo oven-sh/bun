@@ -1135,8 +1135,8 @@ impl WebWorker {
             }
         }
 
-        // terminate() may have landed during load_entry_point_for_web_worker; skip dispatchOnline/tick().
-        if self.has_requested_terminate() {
+        // terminate() may have landed during entrySettled / the status block above; skip dispatchOnline/tick().
+        if self.has_requested_terminate() && !self.exit_called.load(Ordering::Relaxed) {
             self.flush_logs(vm);
             return self.shutdown();
         }

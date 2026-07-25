@@ -2831,6 +2831,99 @@ describe("bundler", () => {
     },
     120_000,
   );
+  // https://github.com/oven-sh/bun/issues/14110
+  itBundled("edgecase/EsmTopLevelVarShadowsHostGlobal", {
+    files: {
+      "/entry.js": /* js */ `
+        import { getComputedStyle, requestAnimationFrame } from "./helpers.js";
+        const el = { ownerDocument: { defaultView: globalThis } };
+        console.log(getComputedStyle(el));
+        requestAnimationFrame(v => console.log(v));
+      `,
+      "/helpers.js": /* js */ `
+        export const getComputedStyle = el => el.ownerDocument.defaultView.getComputedStyle(el, null);
+        export const requestAnimationFrame = cb => cb("raf");
+      `,
+    },
+    format: "esm",
+    runtimeFiles: {
+      "/run.cjs": /* js */ `
+        let calls = 0;
+        globalThis.getComputedStyle = function native() {
+          if (++calls > 1000) throw new RangeError("Maximum call stack size exceeded");
+          return "native";
+        };
+        globalThis.requestAnimationFrame = cb => cb("native-raf");
+        const src = require("fs").readFileSync(__dirname + "/out.js", "utf8");
+        // Indirect eval runs in the global scope so top-level "var" becomes a
+        // globalThis property, matching a classic <script> tag.
+        (0, eval)(src);
+        console.log("calls=" + calls);
+      `,
+    },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).not.toMatch(/\bvar getComputedStyle\b/);
+      expect(out).not.toMatch(/\bvar requestAnimationFrame\b/);
+      expect(out).toContain("defaultView.getComputedStyle(");
+    },
+    run: {
+      file: "/run.cjs",
+      stdout: "native\nraf\ncalls=1",
+    },
+  });
+  itBundled("edgecase/EsmTopLevelVarShadowsHostGlobalUnboundReference", {
+    files: {
+      "/entry.js": /* js */ `
+        import { fetch as moduleFetch } from "./helpers.js";
+        console.log(moduleFetch());
+        console.log(typeof fetch);
+      `,
+      "/helpers.js": /* js */ `
+        export const fetch = () => "module fetch";
+      `,
+    },
+    format: "esm",
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).not.toMatch(/\bvar fetch\b/);
+      expect(out).toMatch(/typeof fetch\b/);
+    },
+    run: { stdout: "module fetch\nfunction" },
+  });
+  itBundled("edgecase/IifeTopLevelVarShadowsHostGlobal", {
+    files: {
+      "/entry.js": /* js */ `
+        import { getComputedStyle } from "./helpers.js";
+        globalThis.gcs = getComputedStyle;
+      `,
+      "/helpers.js": /* js */ `
+        export const getComputedStyle = el => el.ownerDocument.defaultView.getComputedStyle(el, null);
+      `,
+    },
+    format: "iife",
+    runtimeFiles: {
+      "/run.cjs": /* js */ `
+        let calls = 0;
+        globalThis.getComputedStyle = function native() {
+          if (++calls > 1000) throw new RangeError("Maximum call stack size exceeded");
+          return "native";
+        };
+        const src = require("fs").readFileSync(__dirname + "/out.js", "utf8");
+        (0, eval)(src);
+        console.log(globalThis.gcs({ ownerDocument: { defaultView: globalThis } }));
+        console.log("calls=" + calls);
+      `,
+    },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toMatch(/\bvar getComputedStyle\b/);
+    },
+    run: {
+      file: "/run.cjs",
+      stdout: "native\ncalls=1",
+    },
+  });
   itBundled("edgecase/NonAsciiPathDerivedWrapperName", {
     files: {
       "/entry.ts": /* js */ `

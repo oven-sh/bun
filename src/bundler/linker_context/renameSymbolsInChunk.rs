@@ -10,7 +10,9 @@ use bun_ast::{Part, SlotCounts};
 use crate::bun_renamer as renamer;
 use crate::bun_renamer::{ChunkRenamer, MinifyRenamer, NumberRenamer, StableSymbolCount};
 use crate::chunk::Content;
+use crate::defines_table;
 use crate::js_meta;
+use crate::options;
 use crate::{Chunk, LinkerContext, StableRef, WrapKind};
 
 /// TODO: investigate if we need to parallelize this function
@@ -133,6 +135,35 @@ pub unsafe fn rename_symbols_in_chunk(
             unsafe { &*symbols },
             &mut reserved_names,
         );
+    }
+
+    // Scope hoisting rewrites module-scope `const`/`let` to `var` so the
+    // declaration can be split from its initializer when a module is wrapped.
+    // For `--format=esm` the chunk has no wrapper, so those `var`s sit at the
+    // true top level. Loaded as a module that is fine, but loaded as a classic
+    // `<script>` a top-level `var` becomes a property of `globalThis`. When the
+    // original name collides with a host global that the code reads back
+    // through `window`/`defaultView`, the bundle silently overwrites it
+    // (Chart.js's `const getComputedStyle = …` recurses into itself via
+    // `defaultView.getComputedStyle`; #14110). Reserve any declared top-level
+    // name that is in the pure-global table so the number renamer suffixes the
+    // binding while unbound references to the real global keep the name.
+    if c.options.output_format == options::OutputFormat::Esm {
+        for &source_index in files_in_order {
+            let scope = &all_module_scopes[source_index as usize];
+            for member in scope.members.values() {
+                // SAFETY: `symbols` points to the live `c.graph.symbols`; read-only here.
+                let symbol = unsafe { &*symbols }.get_const(member.ref_).unwrap();
+                if symbol.kind != symbol::Kind::Unbound
+                    && !symbol.must_not_be_renamed()
+                    && defines_table::is_pure_global_identifier(symbol.original_name.slice())
+                {
+                    reserved_names
+                        .put(symbol.original_name.slice(), 1)
+                        .expect("unreachable");
+                }
+            }
+        }
     }
 
     let sorted_imports_from_other_chunks: Vec<StableRef> = {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
-import { setImmediate, setInterval, setTimeout } from "node:timers/promises";
 import { bunEnv, bunExe } from "harness";
+import { setImmediate, setInterval, setTimeout } from "node:timers/promises";
 
 const bound = <T>(p: Promise<T>, ms: number) =>
   Promise.race([

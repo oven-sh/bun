@@ -500,8 +500,11 @@ impl RunCommand {
         .as_deref()
     }
 
-    /// Symlinks/hardlinks the running bun binary as
-    /// `node` + `bun` inside a temp dir and prepends that dir to `path`.
+    /// Symlinks/hardlinks the running bun binary as `node` + `bun` inside a
+    /// temp dir and prepends that dir to `path`. Also links `npm` + `npx`
+    /// there *only when* they are not already resolvable in `original_path`,
+    /// so the shim is a fallback on bun-only hosts and never shadows a real
+    /// npm under `--bun`.
     ///
     /// `#[cold]`: only reached on the `bun run <script>` / lifecycle-script
     /// slow path, never on plain `bun foo.js` startup. Forcing it into
@@ -512,6 +515,7 @@ impl RunCommand {
     pub fn create_fake_temporary_node_executable(
         path: &mut Vec<u8>,
         optional_bun_path: &mut &[u8],
+        original_path: &[u8],
     ) -> Result<(), crate::Error> {
         // If we are already running as "node", the path should exist
         if PRETEND_TO_BE_NODE.load(core::sync::atomic::Ordering::Relaxed) {
@@ -626,7 +630,24 @@ impl RunCommand {
                 Err(_) => return Ok(()),
             }
 
-            for dest in [NODE_LINK, BUN_LINK, NPM_LINK, NPX_LINK] {
+            let mut which_buf = bun_paths::PathBuffer::uninit();
+            let need_npm =
+                bun_which::which(&mut which_buf, original_path, b".", b"npm").is_none();
+            let need_npx =
+                bun_which::which(&mut which_buf, original_path, b".", b"npx").is_none();
+
+            for (dest, wanted) in [
+                (NODE_LINK, true),
+                (BUN_LINK, true),
+                (NPM_LINK, need_npm),
+                (NPX_LINK, need_npx),
+            ] {
+                if !wanted {
+                    // A real one exists in PATH. Remove any stale shim left by
+                    // a previous run so it can't shadow the real binary.
+                    let _ = bun_sys::unlink(dest);
+                    continue;
+                }
                 let mut replaced = false;
                 loop {
                     match bun_sys::symlink(argv0_z, dest) {
@@ -730,13 +751,22 @@ impl RunCommand {
                 let _ = bun_sys::Dir::cwd().make_dir(&dir_slice_u8);
             }
 
+            let mut which_buf = bun_paths::PathBuffer::uninit();
+            let need_npm =
+                bun_which::which(&mut which_buf, original_path, b".", b"npm").is_none();
+            let need_npx =
+                bun_which::which(&mut which_buf, original_path, b".", b"npx").is_none();
+
             let image_path = win::exe_path_w();
-            for name in [
-                strings::w!("\\node.exe\0"),
-                strings::w!("\\bun.exe\0"),
-                strings::w!("\\npm.exe\0"),
-                strings::w!("\\npx.exe\0"),
+            for (name, wanted) in [
+                (strings::w!("\\node.exe\0"), true),
+                (strings::w!("\\bun.exe\0"), true),
+                (strings::w!("\\npm.exe\0"), need_npm),
+                (strings::w!("\\npx.exe\0"), need_npx),
             ] {
+                if !wanted {
+                    continue;
+                }
                 target_path_buffer[dir_slice_len..][..name.len()].copy_from_slice(name);
                 // `target_path_buffer` is mutated in place between FFI calls
                 // (the dir-NUL/backslash toggle below).

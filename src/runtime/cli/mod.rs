@@ -860,10 +860,12 @@ pub mod command {
     }
 
     /// npm long options that take a separate value argument and have no bun
-    /// equivalent. When bun is invoked as `npm` via the `--bun` shim these are
-    /// dropped together with their value so the value is not mistaken for a
-    /// positional (e.g. `npm install --loglevel error react` must not try to
-    /// install a package called `error`). Kept sorted for `binary_search`.
+    /// equivalent. When bun is invoked as `npm` via the shim these are dropped
+    /// together with their value so the value is not mistaken for a positional
+    /// (e.g. `npm install --loglevel error react` must not try to install a
+    /// package called `error`). Options that change the *target* of the
+    /// operation (`--workspace`/`--prefix`) are translated instead; see
+    /// `translate_npm_value_flag`. Kept sorted for `binary_search`.
     const NPM_VALUE_FLAGS_IGNORED: &[&[u8]] = &[
         b"access",
         b"before",
@@ -891,7 +893,6 @@ pub mod command {
         b"node-options",
         b"otp",
         b"pack-destination",
-        b"prefix",
         b"script-shell",
         b"searchexclude",
         b"searchlimit",
@@ -900,19 +901,35 @@ pub mod command {
         b"tag",
         b"userconfig",
         b"viewer",
-        b"workspace",
     ];
 
+    #[derive(Clone, Copy)]
+    enum NpmFlag {
+        Drop,
+        Rename(&'static bun_core::ZStr),
+    }
+
     #[cold]
-    fn is_npm_ignored_value_flag(arg: &[u8]) -> bool {
-        if let Some(name) = arg.strip_prefix(b"--") {
-            let name = match strings::index_of_char(name, b'=') {
-                Some(eq) => &name[..eq as usize],
-                None => name,
-            };
-            return NPM_VALUE_FLAGS_IGNORED.binary_search(&name).is_ok();
+    fn translate_npm_value_flag(arg: &[u8]) -> Option<NpmFlag> {
+        use bun_core::zstr;
+        let name: &[u8] = if let Some(long) = arg.strip_prefix(b"--") {
+            match strings::index_of_char(long, b'=') {
+                Some(eq) => &long[..eq as usize],
+                None => long,
+            }
+        } else if arg == b"-w" || arg.starts_with(b"-w=") {
+            b"workspace"
+        } else if arg == b"-C" || arg.starts_with(b"-C=") {
+            b"prefix"
+        } else {
+            return None;
+        };
+        match name {
+            b"workspace" => Some(NpmFlag::Rename(zstr!("--filter"))),
+            b"prefix" => Some(NpmFlag::Rename(zstr!("--cwd"))),
+            _ if NPM_VALUE_FLAGS_IGNORED.binary_search(&name).is_ok() => Some(NpmFlag::Drop),
+            _ => None,
         }
-        arg == b"-w" || arg.starts_with(b"-w=")
     }
 
     /// Rewrite argv when bun is invoked as `npm` (via the `--bun` shim dir) so
@@ -932,86 +949,132 @@ pub mod command {
         );
 
         let argv = bun::argv().as_slice();
-        let mut out: Vec<&'static ZStr> = Vec::with_capacity(argv.len() + 1);
         let Some(&argv0) = argv.first() else { return };
-        out.push(argv0);
 
-        // Copy argv[from..] into `out`, dropping npm-only value-taking flags
-        // (and their separate value). Stops at the first positional when
-        // `stop_at_positional` is set and returns its index; otherwise copies
-        // through to the end, returning `argv.len()`. A bare `--` ends flag
-        // processing either way.
-        let copy_dropping_npm_flags =
-            |out: &mut Vec<&'static ZStr>, from: usize, stop_at_positional: bool| -> usize {
-                let mut i = from;
-                while i < argv.len() {
-                    let a = argv[i];
-                    let ab = a.as_bytes();
-                    if ab == b"--" {
-                        if !stop_at_positional {
-                            out.extend_from_slice(&argv[i..]);
-                        }
+        // Copy `argv[from..]` into `tail`, dropping npm-only value-taking
+        // flags (with their separate value) and renaming
+        // `--workspace`/`--prefix` to their bun spellings into `hoisted`.
+        // Renamed flags are hoisted before the subcommand so `bun run`'s
+        // stop-after-first-positional does not pass them through to the
+        // script. Stops at the first positional when `stop_at_positional` is
+        // set and returns its index; otherwise copies to the end. A bare `--`
+        // ends flag processing either way.
+        fn copy_translating_npm_flags(
+            argv: &[&'static ZStr],
+            tail: &mut Vec<&'static ZStr>,
+            hoisted: &mut Vec<&'static ZStr>,
+            from: usize,
+            stop_at_positional: bool,
+        ) -> usize {
+            let mut i = from;
+            while i < argv.len() {
+                let a = argv[i];
+                let ab = a.as_bytes();
+                if ab == b"--" {
+                    if !stop_at_positional {
+                        tail.extend_from_slice(&argv[i..]);
+                    }
+                    return i;
+                }
+                if ab.first() != Some(&b'-') {
+                    if stop_at_positional {
                         return i;
                     }
-                    if ab.first() != Some(&b'-') {
-                        if stop_at_positional {
-                            return i;
-                        }
-                        out.push(a);
-                        i += 1;
-                        continue;
-                    }
-                    if is_npm_ignored_value_flag(ab) {
-                        let consumes_next = !strings::contains_char(ab, b'=')
-                            && argv
-                                .get(i + 1)
-                                .is_some_and(|n| n.as_bytes().first() != Some(&b'-'));
-                        i += if consumes_next { 2 } else { 1 };
-                        continue;
-                    }
-                    out.push(a);
+                    tail.push(a);
                     i += 1;
+                    continue;
                 }
-                argv.len()
-            };
+                if let Some(tr) = translate_npm_value_flag(ab) {
+                    let eq = strings::index_of_char(ab, b'=');
+                    let consumes_next = eq.is_none()
+                        && argv
+                            .get(i + 1)
+                            .is_some_and(|n| n.as_bytes().first() != Some(&b'-'));
+                    if let NpmFlag::Rename(new_name) = tr {
+                        hoisted.push(new_name);
+                        if let Some(eq) = eq {
+                            let with_nul = a.as_bytes_with_nul();
+                            hoisted.push(ZStr::from_static(&with_nul[eq as usize + 1..]));
+                        } else if consumes_next {
+                            hoisted.push(argv[i + 1]);
+                        }
+                    }
+                    i += if consumes_next { 2 } else { 1 };
+                    continue;
+                }
+                tail.push(a);
+                i += 1;
+            }
+            argv.len()
+        }
 
-        let sub_idx = copy_dropping_npm_flags(&mut out, 1, true);
+        let mut hoisted: Vec<&'static ZStr> = Vec::new();
+        let mut pre_subcommand_flags: Vec<&'static ZStr> = Vec::new();
+        let sub_idx =
+            copy_translating_npm_flags(argv, &mut pre_subcommand_flags, &mut hoisted, 1, true);
         let subcommand = argv.get(sub_idx).filter(|a| a.as_bytes() != b"--");
         let rest_start = sub_idx + usize::from(sub_idx < argv.len());
+        let has_positional_after = argv[rest_start..]
+            .iter()
+            .take_while(|a| a.as_bytes() != b"--")
+            .any(|a| a.as_bytes().first() != Some(&b'-'));
 
+        let mut mapped: Vec<&'static ZStr> = Vec::with_capacity(2);
         match subcommand.map(|z| z.as_bytes()) {
             // npm's lifecycle shortcuts run the package.json script; map to
             // `bun run <name>` so `npm test` does not invoke bun's test runner.
             Some(b"test" | b"t" | b"tst") => {
-                out.push(zstr!("run"));
-                out.push(zstr!("test"));
+                mapped.push(zstr!("run"));
+                mapped.push(zstr!("test"));
             }
             Some(b"start") => {
-                out.push(zstr!("run"));
-                out.push(zstr!("start"));
+                mapped.push(zstr!("run"));
+                mapped.push(zstr!("start"));
             }
             Some(b"stop") => {
-                out.push(zstr!("run"));
-                out.push(zstr!("stop"));
+                mapped.push(zstr!("run"));
+                mapped.push(zstr!("stop"));
             }
             Some(b"restart") => {
-                out.push(zstr!("run"));
-                out.push(zstr!("restart"));
+                mapped.push(zstr!("run"));
+                mapped.push(zstr!("restart"));
             }
-            Some(b"run-script" | b"rum" | b"urn") => out.push(zstr!("run")),
+            Some(b"run-script" | b"rum" | b"urn") => mapped.push(zstr!("run")),
+            // npm ≥7's `npm exec` is what `npx` delegates to; bun's own `exec`
+            // is a shell-script runner.
+            Some(b"exec") => mapped.push(zstr!("x")),
+            // `npm init <x>` / `npm create <x>` ≡ `npx create-<x>`. Bare
+            // `npm init` scaffolds a package.json, same as `bun init`.
+            Some(b"init" | b"create" | b"innit") => {
+                mapped.push(if has_positional_after {
+                    zstr!("create")
+                } else {
+                    zstr!("init")
+                });
+            }
             Some(b"clean-install" | b"ic" | b"install-clean" | b"isntall-clean") => {
-                out.push(zstr!("ci"));
+                mapped.push(zstr!("ci"));
             }
             Some(b"i" | b"isntall" | b"in" | b"ins" | b"inst" | b"insta" | b"instal") => {
-                out.push(zstr!("install"));
+                mapped.push(zstr!("install"));
             }
-            Some(b"ls" | b"la" | b"ll") => out.push(zstr!("list")),
-            Some(b"view" | b"show") => out.push(zstr!("info")),
-            Some(_) => out.push(*subcommand.unwrap()),
+            Some(b"ls" | b"la" | b"ll") => mapped.push(zstr!("list")),
+            Some(b"view" | b"show") => mapped.push(zstr!("info")),
+            Some(_) => mapped.push(*subcommand.unwrap()),
             None => {}
         }
 
-        copy_dropping_npm_flags(&mut out, rest_start, false);
+        let mut tail: Vec<&'static ZStr> = Vec::with_capacity(argv.len().saturating_sub(rest_start));
+        copy_translating_npm_flags(argv, &mut tail, &mut hoisted, rest_start, false);
+
+        let mut out: Vec<&'static ZStr> = Vec::with_capacity(
+            1 + pre_subcommand_flags.len() + mapped.len() + hoisted.len() + tail.len(),
+        );
+        out.push(argv0);
+        out.extend_from_slice(&pre_subcommand_flags);
+        out.extend_from_slice(&mapped);
+        out.extend_from_slice(&hoisted);
+        out.extend_from_slice(&tail);
 
         static SLOT: std::sync::OnceLock<Box<[&'static ZStr]>> = std::sync::OnceLock::new();
         let stored = SLOT.get_or_init(move || out.into_boxed_slice());

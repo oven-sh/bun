@@ -1,12 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import { copyFileSync, symlinkSync } from "node:fs";
+import { chmodSync, copyFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 // https://github.com/oven-sh/bun/issues/5995
-// With `--bun`, the shim directory that provides a `node` symlink to bun also
-// provides `npm` and `npx`, so scripts and tools that spawn `npm`/`npx` via
-// child_process work when neither is installed on the host.
+// The shim directory that provides a `node` symlink to bun for `--bun` / hosts
+// without node also provides `npm` and `npx` fallbacks, so tools that spawn
+// `npm`/`npx` via child_process work on a bun-only host.
 describe("fake npm/npx cli", () => {
   // A PATH that contains no node/npm/npx: just the dir of the bun-under-test.
   // `bun run` locates a shell via hardcoded fallbacks when PATH has none; on
@@ -23,43 +23,71 @@ describe("fake npm/npx cli", () => {
     NODE: undefined,
   };
 
-  async function runScript(dir: string, name: string, extraArgs: string[] = []) {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "--bun", "run", name, ...extraArgs],
-      cwd: dir,
-      env: stripEnv,
-      stderr: "pipe",
-      stdout: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    return { stdout, stderr, exitCode };
-  }
+  const spawnNpmFixture = `
+    const { spawnSync } = require("child_process");
+    for (const cmd of ["npm", "npx"]) {
+      const r = spawnSync(cmd, ["--version"], { encoding: "utf8", shell: ${isWindows} });
+      if (r.error) {
+        console.log(cmd + " ERR " + (r.error.code || r.error.message));
+      } else {
+        console.log(cmd + " OK " + r.stdout.trim());
+      }
+    }
+  `;
 
-  test.concurrent("child_process.spawn('npm'|'npx') resolves via the shim when not in PATH", async () => {
+  // The shim directory is shared (`/tmp/bun-node-*`), so the two tests that
+  // exercise its creation cannot run concurrently with each other (or with
+  // anything else that passes `--bun` with a different PATH).
+  test("child_process.spawn('npm'|'npx') resolves via the shim when not in PATH", async () => {
     using dir = tempDir("fake-npm-spawn", {
       "package.json": JSON.stringify({
         name: "fake-npm-spawn",
         scripts: { go: `${bunExe()} spawn-npm.js` },
       }),
-      "spawn-npm.js": `
-        const { spawnSync } = require("child_process");
-        for (const cmd of ["npm", "npx"]) {
-          const r = spawnSync(cmd, ["--version"], { encoding: "utf8", shell: ${isWindows} });
-          if (r.error) {
-            console.log(cmd + " ERR " + (r.error.code || r.error.message));
-          } else {
-            console.log(cmd + " OK " + r.stdout.trim());
-          }
-        }
-      `,
+      "spawn-npm.js": spawnNpmFixture,
     });
 
-    const { stdout, stderr, exitCode } = await runScript(String(dir), "go");
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--bun", "run", "go"],
+      cwd: String(dir),
+      env: stripEnv,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).not.toContain("ENOENT");
     expect(stdout.trim().split("\n")).toEqual([
       expect.stringMatching(/^npm OK \d+\.\d+\.\d+/),
       expect.stringMatching(/^npx OK \d+\.\d+\.\d+/),
     ]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("does not shadow a real npm in PATH under --bun", async () => {
+    using dir = tempDir("fake-npm-noshadow", {
+      "package.json": JSON.stringify({
+        name: "fake-npm-noshadow",
+        scripts: { go: `${bunExe()} spawn-npm.js` },
+      }),
+      "spawn-npm.js": spawnNpmFixture,
+      "fakebin/placeholder": "",
+    });
+    for (const name of ["npm", "npx"]) {
+      const f = join(String(dir), "fakebin", name + (isWindows ? ".cmd" : ""));
+      writeFileSync(f, isWindows ? `@echo REAL-${name}\r\n` : `#!/bin/sh\necho REAL-${name}\n`);
+      if (!isWindows) chmodSync(f, 0o755);
+    }
+    const sep = isWindows ? ";" : ":";
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--bun", "run", "go"],
+      cwd: String(dir),
+      env: { ...stripEnv, PATH: barePATH + sep + join(String(dir), "fakebin") },
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim().split("\n")).toEqual(["npm OK REAL-npm", "npx OK REAL-npx"]);
     expect(exitCode).toBe(0);
   });
 
@@ -133,10 +161,57 @@ describe("fake npm/npx cli", () => {
       expect(r.exitCode).toBe(0);
     });
 
-    test.concurrent("npx dispatches as bunx", () => {
+    test.concurrent("npx / npm exec dispatch as bunx", () => {
       using dir = tempDir("fake-npx", { "package.json": "{}" });
-      const r = fakePmRun(String(dir), "npx", ["--help"]);
-      expect(r.stdout + r.stderr).toContain("Usage: bunx");
+      expect(fakePmRun(String(dir), "npx", ["--help"]).stderr).toContain("Usage: bunx");
+      expect(fakePmRun(String(dir), "npm", ["exec", "--help"]).stderr).toContain("Usage: bunx");
+    });
+
+    test.concurrent("npm init <x> / npm create <x> dispatch as bun create, not bun init", () => {
+      using dir = tempDir("fake-npm-init", {
+        "package.json": "{}",
+        "bunfig.toml": `[install]\nregistry = "http://127.0.0.1:1/nope"\n`,
+      });
+      // `bun create <name>` runs `bunx create-<name>`; with an unreachable
+      // registry that fails fast without scaffolding anything. `bun init
+      // <name>` would instead mkdir `<name>/` and write index.ts into it.
+      for (const cmd of ["init", "create"]) {
+        const r = fakePmRun(String(dir), "npm", [cmd, "nonexistent-template"]);
+        expect(r.stdout + r.stderr).toContain("create-nonexistent-template");
+        expect(r.stdout + r.stderr).not.toContain("index.ts");
+      }
+      // Bare `npm init` still means `bun init`.
+      const bare = fakePmRun(String(dir), "npm", ["init", "--help"]);
+      expect(bare.stdout + bare.stderr).toContain("bun init");
+    });
+
+    test.concurrent("npm run -w <pkg> / --prefix <dir> are translated, not dropped", () => {
+      using dir = tempDir("fake-npm-ws", {
+        "package.json": JSON.stringify({
+          name: "root",
+          workspaces: ["packages/*"],
+          scripts: { go: "echo ROOT" },
+        }),
+        "packages/a/package.json": JSON.stringify({ name: "a", scripts: { go: "echo FROM-A" } }),
+      });
+      const r = fakePmRun(String(dir), "npm", ["run", "go", "-w", "a"]);
+      expect(r.stdout).toContain("FROM-A");
+      expect(r.stdout).not.toContain("ROOT");
+
+      const r2 = fakePmRun(String(dir), "npm", ["run", "go", "--workspace=a"]);
+      expect(r2.stdout).toContain("FROM-A");
+
+      // `--prefix` → `--cwd`
+      const r3 = fakePmRun(String(dir), "npm", ["--prefix", join(String(dir), "packages", "a"), "run", "go"]);
+      expect(r3.stdout).toContain("FROM-A");
+    });
+
+    test.concurrent("-- stops flag translation", () => {
+      using dir = tempDir("fake-npm-dd", {
+        "package.json": JSON.stringify({ scripts: { go: "echo ARGS:" } }),
+      });
+      const r = fakePmRun(String(dir), "npm", ["run", "go", "--", "--loglevel", "error"]);
+      expect(r.stdout).toContain("ARGS: --loglevel error");
     });
 
     test.concurrent("pnpm as argv0 is not treated as npm", () => {

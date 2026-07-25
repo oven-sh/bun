@@ -250,7 +250,9 @@ export const primordials = {
       JSONStringify: $JSONStringify({ a: 1 }),
       TypedArrayPrototypeGetLength: $TypedArrayPrototypeGetLength.$call(u8),
       TypedArrayPrototypeSubarray: $TypedArrayPrototypeGetLength.$call($TypedArrayPrototypeSubarray.$call(u8, 1, 3)),
-      DataViewPrototypeGetByteLength: $DataViewPrototypeGetByteLength.$call(new DataView($TypedArrayPrototypeGetBuffer.$call(u8))),
+      DataViewPrototypeGetByteLength: $DataViewPrototypeGetByteLength.$call(
+        new DataView($TypedArrayPrototypeGetBuffer.$call(u8)),
+      ),
       PromiseResolve: $PromiseResolve.$call($Promise, 1) instanceof $Promise,
     };
   },

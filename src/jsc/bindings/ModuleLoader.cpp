@@ -772,9 +772,9 @@ JSValue fetchCommonJSModule(
     if (Bun::IsolatedModuleCache::canUse(vm, bunVM, typeAttribute)) {
         if (auto* cached = Bun::IsolatedModuleCache::lookup(vm, specifierWtfString)) {
             if (cached->sourceType() == JSC::SourceProviderSourceType::Program) {
-                // The wrapper override only affects CJS evaluation; if it's
-                // active, fall through and re-transpile so the override can run.
-                if (!globalObject->hasOverriddenModuleWrapper) {
+                // The wrapper/_compile overrides only affect CJS evaluation; if
+                // either is active, fall through and re-transpile so the override runs.
+                if (!globalObject->hasOverriddenModuleWrapper && !globalObject->hasOverriddenModulePrototypeCompile) {
                     target->evaluate(globalObject, Ref(*cached), cached->m_resolvedSource.tag == ResolvedSourceTagPackageJSONTypeModule);
                     RETURN_IF_EXCEPTION(scope, {});
                     RELEASE_AND_RETURN(scope, target);

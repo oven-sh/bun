@@ -1429,7 +1429,7 @@ void JSCommonJSModule::evaluateWithPotentiallyOverriddenCompile(
         auto scope = DECLARE_THROW_SCOPE(vm);
         JSC::CallData callData = JSC::getCallData(compileFunction.asCell());
         if (callData.type == JSC::CallData::Type::None) {
-            throwTypeError(globalObject, scope, "overridden module._compile is not a function (called from overridden Module._extensions)"_s);
+            throwTypeError(globalObject, scope, "overridden module._compile is not a function"_s);
             return;
         }
         WTF::String sourceString = source.source_code.toWTFString(BunString::ZeroCopy);

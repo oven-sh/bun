@@ -271,8 +271,7 @@ impl<'a> ImportScanner<'a> {
                             && st.default_name.is_none();
                         // replace_exports is Bun.Transpiler-only; it opts TS into dropping
                         // value imports orphaned by the replaced export (#12892).
-                        let has_replace_exports =
-                            p.options.features.replace_exports.count() > 0;
+                        let has_replace_exports = p.options.features.replace_exports.count() > 0;
                         if (is_typescript_enabled
                             && found_imports
                             && is_unused_in_typescript

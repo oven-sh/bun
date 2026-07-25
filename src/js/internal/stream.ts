@@ -1,6 +1,5 @@
 "use strict";
 
-const ObjectKeys = Object.keys;
 const ObjectDefineProperty = Object.defineProperty;
 
 const customPromisify = Symbol.for("nodejs.util.promisify.custom");

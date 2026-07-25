@@ -1723,7 +1723,6 @@ Readable.wrap = function (src, options) {
   }).wrap(src);
 };
 
-// Attach the streaming operators (map, filter, toArray, ...) to Readable.prototype.
 const { streamReturningOperators, promiseReturningOperators } = require("internal/streams/operators");
 const opStreamKeys = ObjectKeys(streamReturningOperators);
 for (let i = 0; i < opStreamKeys.length; i++) {

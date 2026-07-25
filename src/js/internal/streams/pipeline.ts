@@ -24,6 +24,7 @@ const SymbolDispose = Symbol.dispose;
 
 let PassThrough;
 let Readable;
+let Duplex;
 let addAbortListener;
 
 function destroyer(stream, reading, writing) {
@@ -274,7 +275,7 @@ function pipelineImpl(streams, callback, opts?) {
       } else if (isIterable(stream) || isReadableNodeStream(stream) || isTransformStream(stream)) {
         ret = stream;
       } else {
-        ret = require("internal/streams/duplex").from(stream);
+        ret = (Duplex ??= require("internal/streams/duplex")).from(stream);
       }
     } else if (typeof stream === "function") {
       if (isTransformStream(ret)) {
@@ -382,7 +383,7 @@ function pipelineImpl(streams, callback, opts?) {
       }
       ret = stream;
     } else {
-      ret = require("internal/streams/duplex").from(stream);
+      ret = (Duplex ??= require("internal/streams/duplex")).from(stream);
     }
   }
 

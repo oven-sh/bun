@@ -230,12 +230,14 @@ const exports = {
     return defineTTYValue("ReadStream", loadReadStream());
   },
   set ReadStream(value) {
+    ReadStream = value;
     defineTTYValue("ReadStream", value);
   },
   get WriteStream() {
     return defineTTYValue("WriteStream", loadWriteStream());
   },
   set WriteStream(value) {
+    WriteStream = value;
     defineTTYValue("WriteStream", value);
   },
   isatty,

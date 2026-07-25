@@ -1274,6 +1274,12 @@ fn has_blob_url(blob_id: &[u8]) -> bool {
     crate::webcore::object_url_registry::ObjectURLRegistry::singleton().has(blob_id)
 }
 
+/// `WebCore.ObjectURLRegistry.singleton().revoke_all_for_context(context_id)`.
+fn revoke_object_urls_for_context(context_id: i32) {
+    crate::webcore::object_url_registry::ObjectURLRegistry::singleton()
+        .revoke_all_for_context(context_id)
+}
+
 /// `Response::get_blob_without_call_frame` /
 /// `Request::get_blob_without_call_frame`. Downcasts
 /// `value` to a `Response`/`Request` (whose data shapes + `BodyMixin` impl live
@@ -1487,6 +1493,7 @@ pub(crate) static __BUN_RUNTIME_HOOKS: RuntimeHooks = RuntimeHooks {
     retroactively_report_discovered_tests,
     cancel_all_timers,
     close_dns_for_terminate,
+    revoke_object_urls_for_context,
 };
 
 // ════════════════════════════════════════════════════════════════════════════

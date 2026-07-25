@@ -28,6 +28,12 @@ impl Default for ObjectURLRegistry {
 
 pub struct Entry {
     blob: Blob,
+    /// The `ScriptExecutionContext` id of the realm that called
+    /// `URL.createObjectURL`. Used by [`ObjectURLRegistry::revoke_all_for_context`]
+    /// so worker teardown removes that worker's entries per the File API spec
+    /// (a blob URL store entry is removed when its creating environment is
+    /// discarded).
+    context_id: i32,
 }
 
 // `Entry` is auto-`Send`: its sole field is `Blob`, which already asserts
@@ -38,9 +44,10 @@ const _: fn() = || {
 };
 
 impl Entry {
-    pub fn init(blob: &Blob) -> Box<Entry> {
+    pub fn init(blob: &Blob, context_id: i32) -> Box<Entry> {
         Box::new(Entry {
             blob: blob.dupe_with_content_type(true),
+            context_id,
         })
     }
 }
@@ -55,7 +62,7 @@ impl Drop for Entry {
 impl ObjectURLRegistry {
     pub fn register(&self, vm: &mut VirtualMachine, blob: &Blob) -> UUID {
         let uuid = vm.rare_data().next_uuid();
-        let entry = Entry::init(blob);
+        let entry = Entry::init(blob, vm.initial_script_execution_context_identifier);
 
         self.map.lock().insert(uuid.bytes, entry);
         uuid
@@ -89,6 +96,21 @@ impl ObjectURLRegistry {
         };
         // Box<Entry> dropped here
         let _ = self.map.lock().remove(&uuid.bytes);
+    }
+
+    /// Remove every entry registered by `context_id`. Called from worker
+    /// teardown (via `RuntimeHooks::revoke_object_urls_for_context`) so a
+    /// worker's blob URLs do not outlive that worker.
+    pub fn revoke_all_for_context(&self, context_id: i32) {
+        let mut map = self.map.lock();
+        let keys: Vec<[u8; 16]> = map
+            .iter()
+            .filter(|(_, e)| e.context_id == context_id)
+            .map(|(k, _)| *k)
+            .collect();
+        for k in keys {
+            let _ = map.remove(&k);
+        }
     }
 
     pub fn has(&self, pathname: &[u8]) -> bool {

@@ -1251,6 +1251,10 @@ impl WebWorker {
             vm.on_exit();
             if let Some(hooks) = runtime_hooks() {
                 (hooks.cron_clear_all_teardown)(vm);
+                // This worker's realm is gone; per the File API spec its blob
+                // URL store entries go with it. Runs before `dispatchExit` so
+                // by the time the parent observes `exit`, the URLs are revoked.
+                (hooks.revoke_object_urls_for_context)(self.execution_context_id as i32);
                 // Drain `TimeoutObject`s from this worker's timer heap before
                 // `close_all_socket_groups` / `WebWorker__teardownJSCVM` so
                 // their heap nodes are unlinked while `runtime_state` and the

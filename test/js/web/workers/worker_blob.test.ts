@@ -1,4 +1,6 @@
 import { expect, test } from "bun:test";
+import { Worker as NodeWorker } from "node:worker_threads";
+import { resolveObjectURL } from "node:buffer";
 
 test("Worker from a Blob", async () => {
   const worker = new Worker(
@@ -123,4 +125,38 @@ test("Worker on a revoked blob still works", async () => {
   });
 
   expect(revoked).toBe("revoked.");
+});
+
+test("Blob URLs created inside a Worker are revoked when the worker exits", async () => {
+  const worker = new NodeWorker(
+    `const { parentPort } = require("node:worker_threads");
+     const u8 = new Uint8Array(1024).fill(7);
+     parentPort.postMessage(URL.createObjectURL(new Blob([u8])));`,
+    { eval: true },
+  );
+  const url = await new Promise<string>(resolve => worker.once("message", resolve));
+  await new Promise(resolve => worker.once("exit", resolve));
+
+  expect(resolveObjectURL(url)).toBeUndefined();
+  await expect(fetch(url)).rejects.toThrow();
+});
+
+test("Worker exit does not revoke Blob URLs created by other threads", async () => {
+  const parentUrl = URL.createObjectURL(new Blob([new Uint8Array(64).fill(1)]));
+  try {
+    const worker = new NodeWorker(
+      `const { parentPort } = require("node:worker_threads");
+       parentPort.postMessage(URL.createObjectURL(new Blob([new Uint8Array(64)])));`,
+      { eval: true },
+    );
+    const workerUrl = await new Promise<string>(resolve => worker.once("message", resolve));
+    await new Promise(resolve => worker.once("exit", resolve));
+
+    expect(resolveObjectURL(workerUrl)).toBeUndefined();
+    const blob = resolveObjectURL(parentUrl);
+    expect(blob).toBeInstanceOf(Blob);
+    expect(new Uint8Array(await blob!.arrayBuffer())).toEqual(new Uint8Array(64).fill(1));
+  } finally {
+    URL.revokeObjectURL(parentUrl);
+  }
 });

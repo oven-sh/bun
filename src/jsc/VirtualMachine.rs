@@ -1820,6 +1820,12 @@ pub struct RuntimeHooks {
     /// never lazily created. Called from `WebWorker::shutdown` / `global_exit`
     /// right after `close_all_socket_groups`.
     pub close_dns_for_terminate: fn(),
+    /// `ObjectURLRegistry::singleton().revoke_all_for_context(context_id)` —
+    /// removes every blob URL registered by the given script execution context.
+    /// The File API spec ties a blob URL store entry to its creating
+    /// environment; called from `WebWorker::shutdown` so a worker's blob URLs
+    /// do not outlive the worker. Registry lives in `bun_runtime::webcore`.
+    pub revoke_object_urls_for_context: fn(context_id: i32),
 }
 
 /// Canonical `EventLoopCtx` vtable for a `*mut VirtualMachine` owner — the JS

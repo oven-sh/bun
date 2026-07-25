@@ -2689,9 +2689,7 @@ class Http2Stream extends Duplex {
     // seamless compatibility with http1. When the session is being torn down with an error
     // (closeSession in node passes the session error to every stream), surface that error
     // instead of a generic stream error so the same error reaches both client.on('error')
-    // and req.on('error') regardless of which dispatch path reached _destroy first. Same
-    // listenerCount guard as destroyStreamForSessionDestroy/emitStreamErrorNT: a stream that was
-    // never surfaced to user code has no possible 'error' listener.
+    // and req.on('error') regardless of which dispatch path reached _destroy first.
     if (err == null && rstCode !== NGHTTP2_NO_ERROR && rstCode !== NGHTTP2_CANCEL && this.listenerCount("error") > 0) {
       err = session?.[kSessionDestroyError] ?? $ERR_HTTP2_STREAM_ERROR(nameForErrorCode[rstCode] || rstCode);
     }

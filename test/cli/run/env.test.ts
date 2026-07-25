@@ -876,9 +876,7 @@ for (const shell of ["system", "bun"]) {
         ".env.development": "BUNTEST_DOTENV_C=from-dev",
         ".env.development.local": "BUNTEST_DOTENV_D=from-dev-local",
       });
-      const unset = isWindowsCMD
-        ? ["%BUNTEST_DOTENV_B%", "%BUNTEST_DOTENV_C%", "%BUNTEST_DOTENV_D%"]
-        : ["", "", ""];
+      const unset = isWindowsCMD ? ["%BUNTEST_DOTENV_B%", "%BUNTEST_DOTENV_C%", "%BUNTEST_DOTENV_D%"] : ["", "", ""];
       expect(bunRunAsScript(tmp, "show-env", {}, ["--shell=" + shell]).stdout).toBe(
         `A=from-env, B=${unset[0]}, C=${unset[1]}, D=${unset[2]}`,
       );
@@ -896,9 +894,9 @@ for (const shell of ["system", "bun"]) {
         ".env.development": "BUNTEST_DOTENV_C=from-dev",
       });
       const unset = isWindowsCMD ? ["%BUNTEST_DOTENV_A%", "%BUNTEST_DOTENV_C%", "%BUNTEST_DOTENV_D%"] : ["", "", ""];
-      expect(
-        bunRunAsScript(tmp, "show-env", { BUNTEST_DOTENV_PROC: "proc" }, ["--shell=" + shell]).stdout,
-      ).toBe(`A=${unset[0]}, B=b-proc, C=${unset[1]}, D=${unset[2]}`);
+      expect(bunRunAsScript(tmp, "show-env", { BUNTEST_DOTENV_PROC: "proc" }, ["--shell=" + shell]).stdout).toBe(
+        `A=${unset[0]}, B=b-proc, C=${unset[1]}, D=${unset[2]}`,
+      );
     });
 
     test("forwards --env-file values that expand an unresolved key", () => {
@@ -909,12 +907,10 @@ for (const shell of ["system", "bun"]) {
         "package.json": '{"scripts":{"show-env":"' + show_dotenv_script + '"}}',
         "custom.env": "BUNTEST_DOTENV_A=${BUNTEST_DOTENV_UNSET:-fallback}",
       });
-      const unset = isWindowsCMD
-        ? ["%BUNTEST_DOTENV_B%", "%BUNTEST_DOTENV_C%", "%BUNTEST_DOTENV_D%"]
-        : ["", "", ""];
-      expect(
-        bunRunAsScript(tmp, "show-env", {}, ["--env-file=custom.env", "--shell=" + shell]).stdout,
-      ).toBe(`A=fallback, B=${unset[0]}, C=${unset[1]}, D=${unset[2]}`);
+      const unset = isWindowsCMD ? ["%BUNTEST_DOTENV_B%", "%BUNTEST_DOTENV_C%", "%BUNTEST_DOTENV_D%"] : ["", "", ""];
+      expect(bunRunAsScript(tmp, "show-env", {}, ["--env-file=custom.env", "--shell=" + shell]).stdout).toBe(
+        `A=fallback, B=${unset[0]}, C=${unset[1]}, D=${unset[2]}`,
+      );
     });
 
     for (const withDevFile of [true, false]) {

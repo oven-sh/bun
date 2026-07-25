@@ -2164,12 +2164,14 @@ impl BlobExt for Blob {
                     resolve_file_stat(store);
                 }
                 // Fresh borrow after possible mutation by `resolve_file_stat`.
-                return JSValue::js_number(store.data_mut().as_file().last_modified as f64);
+                return JSValue::js_number(JSValue::purify_nan(
+                    store.data_mut().as_file().last_modified as f64,
+                ));
             }
         }
 
         if self.is_jsdom_file.get() {
-            return JSValue::js_number(self.last_modified.get());
+            return JSValue::js_number(JSValue::purify_nan(self.last_modified.get()));
         }
 
         JSValue::js_number(jsc::INIT_TIMESTAMP as f64)

@@ -521,13 +521,14 @@ describe("re-export of type alongside value at runtime (#7384)", () => {
       const x: ValueOf<typeof BUEvents> = BUEvents.A;
       console.log(JSON.stringify({ x, keys: Object.keys(BUEvents).sort() }));
     `,
-    ".cache/.keep": "",
+    ".cache-async/.keep": "",
+    ".cache-sync/.keep": "",
   });
   for (const disableAsync of [false, true]) {
     test(`${disableAsync ? "sync" : "async"} transpiler (runtime transpiler cache hit)`, async () => {
       const env = {
         ...bunEnv,
-        BUN_RUNTIME_TRANSPILER_CACHE_PATH: `${cacheDir}/.cache`,
+        BUN_RUNTIME_TRANSPILER_CACHE_PATH: `${cacheDir}/.cache-${disableAsync ? "sync" : "async"}`,
         BUN_DEBUG_ENABLE_RESTORE_FROM_TRANSPILER_CACHE: "1",
         ...(disableAsync ? { BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER: "1" } : {}),
       };

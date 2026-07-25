@@ -49,8 +49,7 @@ describe("bundler", () => {
       "/mods/b.js": `module.exports = 2;`,
     },
     run: {
-      stdout:
-        "Cannot find module './mods/c.js' in glob import map. Available: ./mods/a.js, ./mods/b.js",
+      stdout: "Cannot find module './mods/c.js' in glob import map. Available: ./mods/a.js, ./mods/b.js",
     },
   });
 

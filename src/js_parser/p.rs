@@ -968,11 +968,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// `require(arg)` into `__glob({ "./a.js": () => require("./a.js"), ... })(arg)`.
     /// Returns `None` when glob resolution is disabled, the shape is
     /// ineligible, or no files match.
-    pub fn try_glob_dynamic_require(
-        &mut self,
-        arg: Expr,
-        kind: ImportKind,
-    ) -> Option<Expr> {
+    pub fn try_glob_dynamic_require(&mut self, arg: Expr, kind: ImportKind) -> Option<Expr> {
         if !self.options.bundle || self.is_control_flow_dead {
             return None;
         }
@@ -1056,7 +1052,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 )
             };
 
-            let ret_stmt = self.s(S::Return { value: Some(value_expr) }, loc);
+            let ret_stmt = self.s(
+                S::Return {
+                    value: Some(value_expr),
+                },
+                loc,
+            );
             let body_stmts = self.arena.alloc_slice_copy(&[ret_stmt]);
             let thunk = self.new_expr(
                 E::Arrow {

@@ -107,7 +107,10 @@ pub fn parser_glob_resolver(source_dir: &[u8], pattern: &[u8]) -> Vec<Box<[u8]>>
         // The walker is free to return either separator; normalise to `/` so
         // map keys match the template literal's runtime value on every
         // platform.
-        let mut s: Vec<u8> = p.iter().map(|&b| if b == b'\\' { b'/' } else { b }).collect();
+        let mut s: Vec<u8> = p
+            .iter()
+            .map(|&b| if b == b'\\' { b'/' } else { b })
+            .collect();
         if !(s.starts_with(b"./") || s.starts_with(b"../")) {
             s.splice(0..0, b"./".iter().copied());
         }

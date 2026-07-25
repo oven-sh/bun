@@ -4789,8 +4789,6 @@ impl VirtualMachine {
         if is_aggregate {
             use crate::console_object::formatter::visited;
 
-            // Depth guard: this branch re-enters through `agg_iter` below with
-            // no intervening JSC stack check.
             if !formatter.stack_check.is_safe_to_recurse() {
                 let marker = if allow_ansi_color {
                     bun_core::pretty_fmt!("<r><cyan>[AggregateError: nesting too deep]<r>\n", true)
@@ -4801,8 +4799,6 @@ impl VirtualMachine {
                 return;
             }
 
-            // Circular-ref guard keyed on the AggregateError object identity,
-            // same visited pool the cause-chain and object printers use.
             if formatter.map_node.is_none() {
                 let mut node = NonNull::new(visited::Pool::get_node())
                     .expect("ObjectPool::get_node always returns a valid heap node");
@@ -4821,8 +4817,7 @@ impl VirtualMachine {
                 let _ = writer.write_all(marker.as_bytes());
                 return;
             }
-            // Fall through so the AggregateError's own name/message/stack is
-            // printed before its children.
+            // Fall through: print this AggregateError's own header before its children.
         }
 
         // Note: reborrow so the add-to-error-list tail can still see it after
@@ -4883,9 +4878,7 @@ impl VirtualMachine {
                     ctx.allow_side_effects,
                 );
             }
-            // `getErrorsProperty` is `getDirect` (own data prop, nothrow), so
-            // a deleted or accessor `errors` surfaces here as empty / a
-            // GetterSetter cell.
+            // `getDirect`: empty / GetterSetter when `.errors` is deleted or an accessor.
             let errors = value.get_errors_property(global_ref);
             if errors.is_object() {
                 let mut ctx = AggCtx {

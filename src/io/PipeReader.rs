@@ -453,10 +453,6 @@ impl PosixBufferedReader {
 
     // Exists for consistently with Windows.
     pub fn has_pending_read(&self) -> bool {
-        // `is_watching()` (not `is_registered()`): a one-shot poll that has
-        // fired and not been re-armed will not deliver again, so callers that
-        // gate on this to decide between "wait for the poll" and "read now"
-        // must see it as no pending read.
         matches!(&self.handle, PollOrFd::Poll(poll) if poll.is_watching())
     }
 
@@ -885,26 +881,13 @@ impl PosixBufferedReader {
                                         ReadState::Progress
                                     },
                                 );
-                                // Once HUP is set the kernel returns the
-                                // remaining bytes then 0, so draining to
-                                // `bytes_read == 0` is bounded; keep going
-                                // even if the consumer said stop (e.g. the
-                                // shell `PipeReader::on_read_chunk` returns
-                                // false on `.eof`) so we reach `done()`
-                                // instead of leaving data in the kernel
-                                // with no poll armed.
                                 if received_hup {
+                                    // HUP: drain to `bytes_read == 0` even if
+                                    // the consumer said stop, so `done()` is
+                                    // reached (shell-blocking-pipe.test.ts).
                                     head_start = 0;
                                     continue;
                                 }
-                                // No HUP: deliver at most one stack-buffer
-                                // chunk per call and hand control back to
-                                // the event loop. An always-ready source
-                                // that never EAGAINs (/dev/urandom,
-                                // /dev/zero) would otherwise spin here
-                                // forever. Re-arm only when the consumer
-                                // wants more; a `false` return is
-                                // backpressure and the next pull re-arms.
                                 if keep_going && file_type != FileType::File {
                                     parent.register_poll();
                                 }
@@ -959,7 +942,6 @@ impl PosixBufferedReader {
                     }
                 }
 
-                // One stack-buffer pass per call; yield to the event loop.
                 if file_type != FileType::File {
                     parent.register_poll();
                 }

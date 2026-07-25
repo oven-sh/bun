@@ -795,12 +795,6 @@ impl FileReader {
 
         // SAFETY: see `reader_buffer` decl.
         let reader_buffer_len = unsafe { (*reader_buffer).len() };
-        // Stop once the buffered amount reaches the highwater mark. This must
-        // apply to pollable readers too: an always-ready source such as
-        // /dev/urandom never EAGAINs, so "keep pulling so the writer does not
-        // block" would otherwise buffer without bound. The read loop yields
-        // (without re-arming the poll) when this returns false, and the next
-        // pull drains `buffered` and drives the next read.
         let ret = !matches!(
             self.read_inside_on_pull.get(),
             ReadDuringJSOnPullResult::Temporary(_)

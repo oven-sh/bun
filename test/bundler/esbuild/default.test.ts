@@ -4045,6 +4045,43 @@ describe.concurrent("bundler", () => {
       expect(out).not.toMatch(/require\.resolve\(["']\/|require\.resolve\(["'][A-Za-z]:/);
     },
   });
+  // Same behaviour when an onResolve plugin matches: the record takes the
+  // plugin-dispatched resolution path instead of the direct resolver, and
+  // must still leave the specifier alone and not enqueue the target.
+  for (const [label, plugin] of [
+    // NoMatch: plugin returns undefined, run_resolver() falls back to disk.
+    ["Passthrough", (b: any) => b.onResolve({ filter: /.*/ }, () => undefined)],
+    // Success: plugin returns a concrete non-external path.
+    [
+      "Returned",
+      (b: any) =>
+        b.onResolve({ filter: /^\.\/only-resolved\.js$/ }, (args: any) => ({
+          path: path.join(args.resolveDir, "only-resolved.js"),
+        })),
+    ],
+  ] as const) {
+    itBundled(`default/RequireResolvePreservesSpecifierOnResolve${label}`, {
+      files: {
+        "/entry.js": /* js */ `
+          const a = require.resolve("./only-resolved.js");
+          const b = require("./also-required.js");
+          console.log(a, b);
+        `,
+        "/only-resolved.js": `module.exports = "ONLY_RESOLVED_SENTINEL";`,
+        "/also-required.js": `module.exports = "ALSO_REQUIRED_SENTINEL";`,
+      },
+      target: "node",
+      format: "cjs",
+      plugins: plugin,
+      onAfterBundle(api) {
+        const out = api.readFile("/out.js");
+        expect(out).toContain('require.resolve("./only-resolved.js")');
+        expect(out).toContain("ALSO_REQUIRED_SENTINEL");
+        expect(out).not.toContain("ONLY_RESOLVED_SENTINEL");
+        expect(out).not.toMatch(/require\.resolve\(["']\/|require\.resolve\(["'][A-Za-z]:/);
+      },
+    });
+  }
   itBundled("default/InjectMissing", {
     files: {
       "/entry.js": ``,

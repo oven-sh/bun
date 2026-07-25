@@ -117,6 +117,47 @@ var ResponsePrototype = Response.prototype;
 
 const kUrl = Symbol("kUrl");
 
+const kAgentTlsKeys = [
+  "ca",
+  "cert",
+  "key",
+  "passphrase",
+  "pfx",
+  "ciphers",
+  "secureOptions",
+  "minVersion",
+  "maxVersion",
+  "servername",
+  "rejectUnauthorized",
+  "checkServerIdentity",
+];
+
+function tlsFromAgent(agent, url) {
+  if ($isCallable(agent)) {
+    let parsedUrl;
+    if (url instanceof URL) parsedUrl = url;
+    else {
+      const href = typeof url === "string" ? url : $isObject(url) ? url.url : undefined;
+      if (typeof href !== "string" || !URL.canParse(href)) return undefined;
+      parsedUrl = new URL(href);
+    }
+    agent = agent.$call(undefined, parsedUrl);
+  }
+  if (!$isObject(agent)) return undefined;
+  // https.Agent stores the constructor options on `options`. Agents from the
+  // `proxy-agent` family keep their TLS settings on `connectOpts` instead.
+  let opts = agent.options;
+  if (!$isObject(opts)) opts = agent.connectOpts;
+  else if ($isObject(agent.connectOpts)) opts = { __proto__: null, ...agent.connectOpts, ...opts };
+  if (!$isObject(opts)) return undefined;
+  let tls;
+  for (const key of kAgentTlsKeys) {
+    const value = opts[key];
+    if (value !== undefined) (tls ??= { __proto__: null })[key] = value;
+  }
+  return tls;
+}
+
 class Request extends WebRequest {
   [kUrl]?: string;
 
@@ -169,6 +210,11 @@ async function fetch(
       }
       init = { ...init, body: Readable.toWeb(readable) };
     }
+  }
+  const initAgent = init && (init as any).agent;
+  if (initAgent && (init as any).tls === undefined) {
+    const tls = tlsFromAgent(initAgent, url);
+    if (tls !== undefined) init = { ...init, tls } as any;
   }
   const response = await nativeFetch.$call(undefined, url, init);
   Object.setPrototypeOf(response, ResponsePrototype);

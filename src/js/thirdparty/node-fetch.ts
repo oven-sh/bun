@@ -46,6 +46,7 @@ class Response extends WebResponse {
       let readable = body;
       if (typeof readable._readableState !== "object") {
         const passthrough = new PassThrough();
+        readable.on("error", err => passthrough.destroy(err));
         readable.pipe(passthrough);
         readable = passthrough;
       }
@@ -171,6 +172,7 @@ async function fetch(
       let readable = initBody;
       if (!(readable instanceof Readable)) {
         const passthrough = new PassThrough();
+        readable.on("error", err => passthrough.destroy(err));
         readable.pipe(passthrough);
         readable = passthrough;
       }

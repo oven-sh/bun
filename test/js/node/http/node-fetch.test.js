@@ -76,6 +76,18 @@ test("node-fetch Response accepts a legacy Stream body that is not a stream.Read
   expect(await res.text()).toBe("hello world");
 });
 
+test("node-fetch Response rejects body consumers when a legacy Stream body errors", async () => {
+  class MinipassLike extends stream.Stream {}
+
+  const body = new MinipassLike();
+  body.on("error", () => {});
+
+  const res = new Response(body, { status: 200 });
+  queueMicrotask(() => body.emit("error", new Error("integrity check failed")));
+
+  await expect(res.text()).rejects.toThrow("integrity check failed");
+});
+
 test("node-fetch Response accepts a stream.Readable body", async () => {
   const body = stream.Readable.from([Buffer.from("from "), Buffer.from("readable")]);
   const res = new Response(body, { status: 200 });

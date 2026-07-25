@@ -203,9 +203,7 @@ describe("PKCS#8 private-key CHOICE forms", () => {
     const reference = createPrivateKey(fixture("ml_dsa_44_private_seed_only.pem"));
     for (const inner of ["ml_dsa_44_private.pem", "ml_dsa_44_private_both_encrypted.pem"]) {
       const bundle = cert + fixture(inner).toString("ascii");
-      const key = createPrivateKey(
-        inner.includes("encrypted") ? { key: bundle, passphrase: "password" } : bundle,
-      );
+      const key = createPrivateKey(inner.includes("encrypted") ? { key: bundle, passphrase: "password" } : bundle);
       expect({ inner, type: key.asymmetricKeyType, equalsSeedOnly: key.equals(reference) }).toEqual({
         inner,
         type: "ml-dsa-44",

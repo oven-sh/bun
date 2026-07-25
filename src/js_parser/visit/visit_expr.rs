@@ -2017,18 +2017,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         let name = str_.slice(p.arena);
                         if !name.is_empty() {
                             // Always store `<name>.node` so the record never collides with a bare builtin alias (e.g. `zlib`).
-                            let name: &[u8] = if strings::has_suffix_comptime(name, b".node") {
+                            const EXT: &[u8] = b".node";
+                            let name: &[u8] = if strings::has_suffix_comptime(name, EXT) {
                                 name
                             } else {
-                                let mut buf =
-                                    bun_alloc::ArenaVec::with_capacity_in(name.len() + 5, p.arena);
+                                let mut buf = bun_alloc::ArenaVec::with_capacity_in(
+                                    name.len() + EXT.len(),
+                                    p.arena,
+                                );
                                 buf.extend_from_slice(name);
-                                buf.extend_from_slice(b".node");
+                                buf.extend_from_slice(EXT);
                                 buf.into_bump_slice()
                             };
                             let record = &mut p.import_records.items_mut()[idx];
-                            // SAFETY: `name` is arena-owned via `p.arena`; see
-                            // `add_import_record_by_range_and_path`.
+                            // SAFETY: `name` is arena-owned via `p.arena`; see `add_import_record_by_range_and_path`.
                             record.path =
                                 unsafe { crate::parser::fs::Path::init(name).into_static() };
                             record.tag = bun_ast::ImportRecordTag::NativeBindings;

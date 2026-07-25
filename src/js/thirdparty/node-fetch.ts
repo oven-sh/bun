@@ -184,18 +184,25 @@ function fetchWithAgent(url, init, counter) {
     let agent = init.agent;
     if ($isCallable(agent)) agent = agent.$call(undefined, parsed);
 
-    const method = (init.method || (url instanceof WebRequest && url.method) || "GET").toUpperCase();
+    const isWebRequest = url instanceof WebRequest;
+    const method = (init.method || (isWebRequest && url.method) || "GET").toUpperCase();
     const compress = init.compress !== false;
-    const redirect = init.redirect || "follow";
+    const redirect = init.redirect || (isWebRequest && url.redirect) || "follow";
     const follow = typeof init.follow === "number" ? init.follow : FOLLOW_MAX_DEFAULT;
-    const signal = init.signal;
+    const signal = init.signal ?? (isWebRequest ? url.signal : undefined);
+    if (signal?.aborted) {
+      const err: any = new DOMException("The operation was aborted.", "AbortError");
+      err.type = "aborted";
+      reject(err);
+      return;
+    }
 
-    const headers = new Headers(init.headers || (url instanceof WebRequest && url.headers) || undefined);
+    const headers = new Headers(init.headers || (isWebRequest && url.headers) || undefined);
     if (!headers.has("accept")) headers.set("accept", "*/*");
     if (compress && !headers.has("accept-encoding")) headers.set("accept-encoding", "gzip, deflate, br");
     if (!headers.has("connection") && !agent) headers.set("connection", "close");
 
-    let body = init.body ?? (url instanceof WebRequest ? url.body : null);
+    let body = init.body ?? (isWebRequest ? url.body : null);
     if (body != null && (method === "GET" || method === "HEAD")) {
       reject(new TypeError("Request with GET/HEAD method cannot have body"));
       return;
@@ -241,6 +248,14 @@ function fetchWithAgent(url, init, counter) {
     const removeAbort = () => {
       if (signal) signal.removeEventListener("abort", onAbort);
     };
+    const failRequest = err => {
+      if (settled) return;
+      settled = true;
+      removeAbort();
+      reject(new FetchError(`request to ${href} failed, reason: ${err.message}`, "system", err));
+    };
+    req.on("error", failRequest);
+
     const onAbort = () => {
       const err: any = new DOMException("The operation was aborted.", "AbortError");
       err.type = "aborted";
@@ -251,21 +266,7 @@ function fetchWithAgent(url, init, counter) {
       req.destroy(err);
       if (bodyStream) bodyStream.destroy(err);
     };
-    if (signal) {
-      if (signal.aborted) {
-        onAbort();
-        return;
-      }
-      signal.addEventListener("abort", onAbort, { once: true });
-    }
-
-    const failRequest = err => {
-      if (settled) return;
-      settled = true;
-      removeAbort();
-      reject(new FetchError(`request to ${href} failed, reason: ${err.message}`, "system", err));
-    };
-    req.on("error", failRequest);
+    if (signal) signal.addEventListener("abort", onAbort, { once: true });
 
     req.on("response", (res: any) => {
       if (settled) return;
@@ -313,7 +314,7 @@ function fetchWithAgent(url, init, counter) {
             finalize(new FetchError(`maximum redirect reached at: ${href}`, "max-redirect"));
             return;
           }
-          const nextHeaders = new Headers(init.headers || (url instanceof WebRequest && url.headers) || undefined);
+          const nextHeaders = new Headers(init.headers || (isWebRequest && url.headers) || undefined);
           const nextInit: any = { ...init, method, body: init.body, counter: counter + 1, headers: nextHeaders };
           const nextURL = new URL(locationURL);
           if (nextURL.hostname !== parsedHostname || nextURL.protocol !== protocol) {

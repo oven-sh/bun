@@ -450,6 +450,23 @@ describe("node-fetch honours the agent option", () => {
     }
   });
 
+  test("rejects cleanly when signal is already aborted", async () => {
+    const { agent } = makeAgent();
+    let uncaught = 0;
+    const onUncaught = () => uncaught++;
+    process.on("uncaughtException", onUncaught);
+    try {
+      await expect(fetch2("http://127.0.0.1:1/", { agent, signal: AbortSignal.abort() })).rejects.toMatchObject({
+        name: "AbortError",
+      });
+      await new Promise(r => setImmediate(r));
+      expect(uncaught).toBe(0);
+    } finally {
+      process.off("uncaughtException", onUncaught);
+      agent.destroy();
+    }
+  });
+
   test("picks https.request for https: URLs", async () => {
     let calls = 0;
     const agent = new (class extends https.Agent {

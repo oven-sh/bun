@@ -170,6 +170,37 @@ async function fetch(
       init = { ...init, body: Readable.toWeb(readable) };
     }
   }
+  // node-fetch forwards `agent` to https.request, which carries TLS options
+  // (ca, cert, key, rejectUnauthorized, ...) on agent.options. Bun's native
+  // fetch reads those from a `tls` option instead, so translate them here.
+  let agent = init && (init as any).agent;
+  if (agent != null && (init as any).tls == null) {
+    if ($isCallable(agent)) {
+      const href =
+        typeof url === "string" ? url : $isObject(url) ? (url as any).href || (url as any).url : `${url}`;
+      agent = agent.$call(undefined, require("node:url").parse(href));
+    }
+    if ($isObject(agent)) {
+      const agentOpts = agent.options;
+      const connectOpts = agent.connectOpts;
+      const opts =
+        $isObject(agentOpts) && $isObject(connectOpts)
+          ? { __proto__: null, ...connectOpts, ...agentOpts }
+          : $isObject(agentOpts)
+            ? agentOpts
+            : $isObject(connectOpts)
+              ? connectOpts
+              : undefined;
+      if (opts !== undefined) {
+        let tls: Record<string, unknown> | undefined;
+        for (const k of kAgentTlsOptionKeys) {
+          const v = opts[k];
+          if (v !== undefined) (tls ??= { __proto__: null })[k] = v;
+        }
+        if (tls !== undefined) init = { ...init, tls } as any;
+      }
+    }
+  }
   const response = await nativeFetch.$call(undefined, url, init);
   Object.setPrototypeOf(response, ResponsePrototype);
   return response;
@@ -207,6 +238,21 @@ function blobFromSync(path, options) {
 
 var fileFrom = blobFrom;
 var fileFromSync = blobFromSync;
+
+const kAgentTlsOptionKeys = [
+  "ca",
+  "cert",
+  "key",
+  "pfx",
+  "passphrase",
+  "rejectUnauthorized",
+  "checkServerIdentity",
+  "servername",
+  "secureOptions",
+  "ciphers",
+  "crl",
+  "sigalgs",
+] as const;
 
 function isRedirect(code) {
   return code === 301 || code === 302 || code === 303 || code === 307 || code === 308;

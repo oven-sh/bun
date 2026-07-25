@@ -8,18 +8,21 @@ const dumpArgvEntry = /* js */ `
   console.log(JSON.stringify({
     execArgv: process.execArgv,
     argv0: process.argv[0],
-    // Standalone argv[1] is "/$bunfs/root/..." on posix and "B:/~BUN/root/..." on Windows.
-    argv1IsVirtual: /(\\$bunfs|~BUN)/.test(String(process.argv[1] ?? "")),
+    argv1: process.argv[1],
     argvLength: process.argv.length,
     userArgs: process.argv.slice(2),
     title: process.title,
   }));
 `;
 
+// Standalone argv[1] is "/$bunfs/root/..." on posix and "B:/~BUN/root/..." on
+// Windows (see StandaloneModuleGraph.rs BASE_PUBLIC_PATH).
+const COMPILED_ARGV1 = /(\$bunfs|~BUN)\/root\//;
+
 type Dump = {
   execArgv: string[];
   argv0: string;
-  argv1IsVirtual: boolean;
+  argv1: string;
   argvLength: number;
   userArgs: string[];
   title: string;
@@ -29,12 +32,11 @@ function parse(stdout: string): Dump {
   return JSON.parse(stdout.trim());
 }
 
-// Four `bun build --compile` invocations run here. bundler_compile.test.ts and
-// bundler_compile_autoload.test.ts avoid describe.concurrent because 8-20
-// concurrent --compile links exhaust CI memory/IO (build #40193). Four is half
-// the lower threshold and matches bundler_html_server.test.ts, so concurrent is
-// kept for the wall-time win; drop `.concurrent` if this ever SIGTERMs in CI.
-describe.concurrent("bundler", () => {
+// Four `bun build --compile` invocations. Kept sequential: sibling files
+// (bundler_compile.test.ts, bundler_compile_autoload.test.ts) document that
+// overlapping --compile links exhausts CI memory/IO, and the main win here is
+// already the 10-to-4 compile reduction.
+describe("bundler", () => {
   // --compile-exec-argv flags are both processed at runtime AND exposed via
   // process.execArgv, and none of them leak into process.argv. Also covers
   // issue #26082: user-supplied --version/-v/--help/-h reach the app instead
@@ -54,7 +56,7 @@ describe.concurrent("bundler", () => {
           expect(out.title).toBe("CompileExecArgvTest");
           expect(out.execArgv).toEqual(["--title=CompileExecArgvTest", "--smol"]);
           expect(out.argv0).toBe("bun");
-          expect(out.argv1IsVirtual).toBe(true);
+          expect(out.argv1).toMatch(COMPILED_ARGV1);
           expect(out.userArgs).toEqual(["runtime", "test"]);
           expect(out.argvLength).toBe(4);
         },
@@ -105,7 +107,7 @@ describe.concurrent("bundler", () => {
           const out = parse(stdout);
           expect(out.execArgv).toEqual(["--user-agent=test-agent", "--smol"]);
           expect(out.argv0).toBe("bun");
-          expect(out.argv1IsVirtual).toBe(true);
+          expect(out.argv1).toMatch(COMPILED_ARGV1);
           expect(out.userArgs).toEqual([]);
           expect(out.argvLength).toBe(2);
         },
@@ -118,7 +120,7 @@ describe.concurrent("bundler", () => {
           const out = parse(stdout);
           expect(out.execArgv).toEqual(["--user-agent=test-agent", "--smol"]);
           expect(out.argv0).toBe("bun");
-          expect(out.argv1IsVirtual).toBe(true);
+          expect(out.argv1).toMatch(COMPILED_ARGV1);
           expect(out.userArgs).toEqual(["user-arg1", "user-arg2"]);
           expect(out.argvLength).toBe(4);
         },

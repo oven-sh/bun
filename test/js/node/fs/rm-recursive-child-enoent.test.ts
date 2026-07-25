@@ -1,12 +1,6 @@
 // A child that disappears between readdir() and unlinkat() must not abort the
-// recursive walk: the entry is already gone, which is the state rm wanted.
-// Before this fix zig_delete_tree returned ENOENT from the child, rm({force})
-// treated that as "the root path is missing" and returned success, and the
-// rest of the tree (including the root) stayed on disk.
-//
-// Node's callback/promise rm (lib/internal/fs/rimraf.js) swallows a child
-// ENOENT and keeps going; this test pins Bun to that behaviour for rmSync,
-// promises.rm and callback rm alike.
+// recursive walk. Before this fix rm({force}) returned success with the tree
+// still on disk; without force it reported a misleading top-level ENOENT.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, tempDir } from "harness";
 import { join } from "node:path";
@@ -41,13 +35,14 @@ const FIXTURE = /* js */ `
 import fs from "node:fs";
 import { join } from "node:path";
 
-const [, , which, root, force] = process.argv;
-fs.mkdirSync(join(root, "sub"), { recursive: true });
+const [, , which, root, force, depth] = process.argv;
+const deep = [root, ...Array.from({ length: +depth }, (_, i) => "d" + i)];
+fs.mkdirSync(join(...deep), { recursive: true });
 fs.writeFileSync(join(root, "keep-a.txt"), "x");
 fs.writeFileSync(join(root, "keep-b.txt"), "x");
-fs.writeFileSync(join(root, "sub", "keep-c.txt"), "x");
-fs.writeFileSync(join(root, "sub", "GHOST"), "x");
-fs.writeFileSync(join(root, "sub", "keep-d.txt"), "x");
+fs.writeFileSync(join(...deep, "keep-c.txt"), "x");
+fs.writeFileSync(join(...deep, "GHOST"), "x");
+fs.writeFileSync(join(...deep, "keep-d.txt"), "x");
 
 const opts = { recursive: true, force: force === "force" };
 let err;
@@ -86,11 +81,11 @@ beforeAll(async () => {
 
 afterAll(() => dir?.[Symbol.dispose]());
 
-const run = async (which: string, force: "force" | "noforce") => {
-  const root = join(String(dir), `tree-${which}-${force}`);
+const run = async (which: string, force: "force" | "noforce", depth: number) => {
+  const root = join(String(dir), `tree-${which}-${force}-${depth}`);
   const existing = bunEnv.LD_PRELOAD;
   await using proc = Bun.spawn({
-    cmd: [bunExe(), join(String(dir), "fixture.mjs"), which, root, force],
+    cmd: [bunExe(), join(String(dir), "fixture.mjs"), which, root, force, String(depth)],
     env: {
       ...bunEnv,
       LD_PRELOAD: existing ? `${shimPath}:${existing}` : shimPath,
@@ -100,18 +95,23 @@ const run = async (which: string, force: "force" | "noforce") => {
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
-  expect(exitCode).toBe(0);
-  return JSON.parse(stdout.trim());
+  return { stdout: stdout.trim(), stderr, exitCode };
 };
 
 describe.skipIf(!isLinux || !cc)("rm({recursive}) continues past a child that raced to ENOENT", () => {
   for (const which of ["sync", "promise", "cb"] as const) {
-    test.concurrent(`${which} force:true removes the whole tree`, async () => {
-      expect(await run(which, "force")).toEqual({ err: null, exists: false });
-    });
-    test.concurrent(`${which} force:false removes the whole tree`, async () => {
-      expect(await run(which, "noforce")).toEqual({ err: null, exists: false });
-    });
+    for (const force of ["force", "noforce"] as const) {
+      // depth 1 exercises the main stack loop; depth 18 overflows the 16-slot
+      // stack into the min_stack fallback.
+      for (const depth of [1, 18] as const) {
+        test.concurrent(`${which} force:${force === "force"} depth:${depth} removes the whole tree`, async () => {
+          expect(await run(which, force, depth)).toEqual({
+            stdout: JSON.stringify({ err: null, exists: false }),
+            stderr: "",
+            exitCode: 0,
+          });
+        });
+      }
+    }
   }
 });

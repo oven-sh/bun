@@ -481,6 +481,7 @@ impl Source {
     pub fn is_no_color() -> bool {
         // Parsed bool, default false. NO_COLOR=0 → false.
         env_var::NO_COLOR.get().unwrap_or(false)
+            || env_var::NODE_DISABLE_COLORS.get_not_empty().is_some()
     }
 
     pub fn get_force_color_depth() -> Option<ColorDepth> {
@@ -540,8 +541,8 @@ impl Source {
                 }
 
                 let mut enable_color: Option<bool> = None;
-                if Self::is_force_color() {
-                    enable_color = Some(true);
+                if let Some(depth) = Self::get_force_color_depth() {
+                    enable_color = Some(depth != ColorDepth::None);
                 } else if Self::is_no_color() {
                     enable_color = Some(false);
                 } else if Self::is_color_terminal() && (is_stdout_tty || is_stderr_tty) {
@@ -894,7 +895,7 @@ fn compute_color_depth() -> ColorDepth {
     ColorDepth::None
 }
 
-/// CI log viewers that render ANSI; list matches `src/js/internal/tty.ts`.
+/// CI log viewers that render ANSI; subset of `CI_ENVS` in `src/js/internal/tty.ts`.
 #[cfg(not(target_arch = "wasm32"))]
 fn is_ansi_capable_ci() -> bool {
     macro_rules! set {

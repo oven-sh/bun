@@ -298,7 +298,8 @@ impl CreateCommand {
                 >(filesystem.top_level_dir, dirname))?;
 
         let mut progress = Progress {
-            supports_ansi_escape_codes: Output::enable_ansi_colors_stderr(),
+            supports_ansi_escape_codes: Output::stderr_descriptor_type()
+                == Output::DescriptorType::Terminal,
             ..Default::default()
         };
         // `Progress::start` returns
@@ -2340,7 +2341,8 @@ impl CreateListExamplesCommand {
         env_loader.load_process()?;
 
         let mut progress = Progress {
-            supports_ansi_escape_codes: Output::enable_ansi_colors_stderr(),
+            supports_ansi_escape_codes: Output::stderr_descriptor_type()
+                == Output::DescriptorType::Terminal,
             ..Default::default()
         };
         // `Progress::start` returns `&mut Node` borrowing `progress`; detach

@@ -915,6 +915,8 @@ pub(crate) fn run_scripts_with_filter(
             #[cfg(not(windows))]
             {
                 Output::enable_ansi_colors_stdout()
+                    && (Output::stdout_descriptor_type() == Output::DescriptorType::Terminal
+                        || Output::Source::is_force_color())
             }
         },
         shell_bin,

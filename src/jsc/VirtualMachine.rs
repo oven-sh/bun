@@ -3500,9 +3500,9 @@ impl VirtualMachine {
         self.hot_reload_deferred = false;
 
         bun_core::debug!("Reloading...");
-        let should_clear_terminal = !self
-            .env_loader()
-            .has_set_no_clear_terminal_on_reload(!bun_core::Output::enable_ansi_colors_stdout());
+        let should_clear_terminal = !self.env_loader().has_set_no_clear_terminal_on_reload(
+            bun_core::Output::stdout_descriptor_type() != bun_core::Output::DescriptorType::Terminal,
+        );
         if self.hot_reload == HOT_RELOAD_WATCH {
             bun_core::Output::flush();
             bun_core::reload_process(should_clear_terminal, false);

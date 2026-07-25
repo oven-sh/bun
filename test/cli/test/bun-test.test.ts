@@ -443,6 +443,8 @@ describe("bun test", () => {
       ["Azure DevOps (TF_BUILD + AGENT_NAME)", { TF_BUILD: "True", AGENT_NAME: "a" }, true],
       ["GITHUB_ACTIONS without CI", { GITHUB_ACTIONS: "true" }, false],
       ["CI + GITHUB_ACTIONS + NO_COLOR=1", { CI: "true", GITHUB_ACTIONS: "true", NO_COLOR: "1" }, false],
+      ["CI + GITHUB_ACTIONS + FORCE_COLOR=0", { CI: "true", GITHUB_ACTIONS: "true", FORCE_COLOR: "0" }, false],
+      ["CI + GITHUB_ACTIONS + NODE_DISABLE_COLORS=1", { CI: "true", GITHUB_ACTIONS: "true", NODE_DISABLE_COLORS: "1" }, false],
       ["CI + GITHUB_ACTIONS + TERM=dumb", { CI: "true", GITHUB_ACTIONS: "true", TERM: "dumb" }, false],
     ];
 
@@ -471,8 +473,11 @@ describe("bun test", () => {
       });
       expect(stderr).toContain("\x1b[");
       // `::error` annotations themselves stay plain text for the Actions parser.
-      for (const line of stderr.split("\n")) {
-        if (line.startsWith("::error")) expect(line).not.toContain("\x1b[");
+      const annotations = stderr.split("\n").filter(l => l.includes("::error"));
+      expect(annotations).not.toBeEmpty();
+      for (const line of annotations) {
+        expect(line).toStartWith("::error");
+        expect(line).not.toContain("\x1b[");
       }
     });
 

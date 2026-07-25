@@ -592,6 +592,40 @@ describe("bun", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("CI env enables colour but not the live-redraw UI", () => {
+    const dir = tempDirWithFiles("testworkspace", {
+      packages: {
+        dep0: {
+          "index.js": Array(20).fill("console.log('log_line');").join("\n"),
+          "package.json": JSON.stringify({ name: "dep0", scripts: { script: `${bunExe()} run index.js` } }),
+        },
+      },
+      "package.json": JSON.stringify({ name: "ws", workspaces: ["packages/*"] }),
+    });
+
+    const { exitCode, stdout } = spawnSync({
+      cwd: dir,
+      cmd: [bunExe(), "run", "--filter", "./packages/dep0", "script"],
+      env: {
+        ...bunEnv,
+        NO_COLOR: undefined,
+        FORCE_COLOR: undefined,
+        CI: "true",
+        GITHUB_ACTIONS: "true",
+        BUILDKITE: undefined,
+        TERM: undefined,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const stdoutval = stdout.toString();
+    expect(stdoutval).not.toContain("\x1b[1A");
+    expect(stdoutval).not.toContain("\x1b[?2026");
+    expect(stdoutval).not.toMatch(/lines elided/);
+    expect(stdoutval).toMatch(/(?:log_line[\s\S]*?){20}/);
+    expect(exitCode).toBe(0);
+  });
+
   test("self-referential directory symlink in a workspace does not loop", () => {
     const dir = tempDirWithFiles("filter-symlink-loop", {
       packages: {

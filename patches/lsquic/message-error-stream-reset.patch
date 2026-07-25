@@ -122,19 +122,18 @@
          lconn->cn_if->ci_abort_error(lconn, 1, HEC_MESSAGE_ERROR,
              "number of bytes in DATA frames of stream %"PRIu64" exceeds "
              "content-length limit of %llu", stream->id, stream->sm_cont_len);
-@@ -5142,7 +5208,11 @@
+@@ -5139,6 +5205,11 @@
+                     goto end;
+                 default:
+                     assert(LQRHS_ERROR == rhs);
++                    /* bun: qdh_header_read_results already reset this stream
++                     * (or aborted the connection for a QPACK-fatal error). */
++                    if (stream->conn_pub->enpub
++                                ->enp_settings.es_message_error_is_stream)
++                        goto end;
                      stream->sm_qflags &= ~SMQF_QPACK_DEC;
                      filter->hqfi_flags |= HQFI_FLAG_ERROR;
                      LSQ_INFO("error processing header block");
--                    abort_connection(stream);   /* XXX Overkill? */
-+                    /* bun: qdh_header_read_results already reset this stream
-+                     * (or aborted the connection for a QPACK-fatal error). */
-+                    if (!stream->conn_pub->enpub
-+                                ->enp_settings.es_message_error_is_stream)
-+                        abort_connection(stream);
-                     goto end;
-                 }
-                 break;
 --- a/src/liblsquic/lsquic_qdec_hdl.c
 +++ b/src/liblsquic/lsquic_qdec_hdl.c
 @@ -551,18 +551,28 @@

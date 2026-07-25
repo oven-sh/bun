@@ -6764,6 +6764,68 @@ describe.concurrent("bun-install", () => {
     });
   });
 
+  // https://github.com/oven-sh/bun/issues/10949
+  it("documents that --production implies --frozen-lockfile", async () => {
+    await withContext(defaultOpts, async ctx => {
+      let urls: string[] = [];
+      setContextHandler(
+        ctx,
+        dummyRegistryForContext(ctx, urls, { "0.0.3": { as: "0.0.3" }, "0.0.5": { as: "0.0.5" } }),
+      );
+
+      // --help should say that --production implies --frozen-lockfile
+      const help = spawn({
+        cmd: [bunExe(), "install", "--help"],
+        cwd: ctx.package_dir,
+        stdout: "pipe",
+        stderr: "pipe",
+        env,
+      });
+      const [helpOut, helpErr] = await Promise.all([help.stdout.text(), help.stderr.text()]);
+      const helpText = helpOut + helpErr;
+      const productionLine = helpText.split("\n").find(line => line.includes("--production"));
+      expect(productionLine).toMatch(/--production.*Implies --frozen-lockfile/);
+      expect(await help.exited).toBe(0);
+
+      await writeFile(
+        join(ctx.package_dir, "package.json"),
+        JSON.stringify({ name: "foo", version: "0.0.1", dependencies: { baz: "0.0.3" } }),
+      );
+
+      expect(
+        await spawn({
+          cmd: [bunExe(), "install"],
+          cwd: ctx.package_dir,
+          stdout: "ignore",
+          stdin: "ignore",
+          stderr: "ignore",
+          env,
+        }).exited,
+      ).toBe(0);
+
+      // change version of baz in package.json so it disagrees with the lockfile
+      await writeFile(
+        join(ctx.package_dir, "package.json"),
+        JSON.stringify({ name: "foo", version: "0.0.1", dependencies: { baz: "0.0.5" } }),
+      );
+
+      const { stderr, exited } = spawn({
+        cmd: [bunExe(), "install", "--production"],
+        cwd: ctx.package_dir,
+        stdout: "pipe",
+        stdin: "pipe",
+        stderr: "pipe",
+        env,
+      });
+
+      // the note should mention --production, not just --frozen-lockfile
+      const err = await stderr.text();
+      expect(err).toContain("error: lockfile had changes, but lockfile is frozen");
+      expect(err).toContain("--production");
+      expect(await exited).toBe(1);
+    });
+  });
+
   it("should perform bin-linking across multiple dependencies", async () => {
     await withContext(defaultOpts, async ctx => {
       const foo_package = JSON.stringify({

@@ -736,7 +736,7 @@ pub fn install_with_manager(
                     "<r><red>error<r><d>:<r> lockfile had changes, but lockfile is frozen"
                 );
                 bun_core::note!(
-                    "try re-running without <d>--frozen-lockfile<r> and commit the updated lockfile"
+                    "try re-running without <d>--frozen-lockfile<r> or <d>--production<r> and commit the updated lockfile"
                 );
             }
             Global::crash();

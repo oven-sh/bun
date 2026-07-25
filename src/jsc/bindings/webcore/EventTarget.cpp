@@ -300,6 +300,7 @@ void EventTarget::innerInvokeEventListeners(Event& event, EventListenerVector li
     ASSERT(scriptExecutionContext());
 
     auto& context = *scriptExecutionContext();
+    bool hasRemovedOnceListener = false;
     // bool contextIsDocument = is<Document>(context);
     // if (contextIsDocument)
     //     InspectorInstrumentation::willDispatchEvent(downcast<Document>(context), event);
@@ -329,8 +330,15 @@ void EventTarget::innerInvokeEventListeners(Event& event, EventListenerVector li
         JSC::EnsureStillAliveScope jsFunctionProtector(registeredListener->callback().jsFunction());
 
         // Do this before invocation to avoid reentrancy issues.
-        if (registeredListener->isOnce())
-            removeEventListener(event.type(), registeredListener->callback(), registeredListener->useCapture());
+        // Mark the listener as removed in place and compact the live vector once
+        // after the loop; calling removeEventListener here is O(N) per listener
+        // (linear find + linear erase) and makes dispatching N once-listeners O(N^2).
+        if (registeredListener->isOnce()) {
+            registeredListener->markAsRemoved();
+            hasRemovedOnceListener = true;
+            if (this->onDidChangeListener) [[unlikely]]
+                this->onDidChangeListener(*this, event.type(), OnDidChangeListenerKind::Remove);
+        }
 
         if (registeredListener->isPassive())
             event.setInPassiveListener(true);
@@ -345,6 +353,12 @@ void EventTarget::innerInvokeEventListeners(Event& event, EventListenerVector li
 
         if (registeredListener->isPassive())
             event.setInPassiveListener(false);
+    }
+
+    if (hasRemovedOnceListener) {
+        if (auto* data = eventTargetData())
+            data->eventListenerMap.compactRemoved(event.type());
+        eventListenersDidChange();
     }
 
     // if (contextIsDocument)

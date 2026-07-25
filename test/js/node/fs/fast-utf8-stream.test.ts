@@ -5,7 +5,7 @@ import * as realFs from "node:fs";
 import { Utf8Stream } from "node:fs";
 import { join } from "node:path";
 
-describe("fs.Utf8Stream reopen", () => {
+describe.concurrent("fs.Utf8Stream reopen", () => {
   // Deterministic reproduction of the test-fastutf8stream-reopen.js flake.
   //
   // After reopen(), fileOpened() emits 'ready' synchronously. If a listener on

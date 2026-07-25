@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, normalizeBunSnapshot, tmpdirSync } from "harness";
+import { bunEnv, bunExe, normalizeBunSnapshot, tempDir, tmpdirSync } from "harness";
 import { join } from "path";
 import util from "util";
 it("prototype", () => {
@@ -237,6 +237,40 @@ it("Event subclass with a throwing getter does not make Bun.inspect throw", () =
   expect(errorOut).toContain(`type: "error"`);
   expect(errorOut).not.toContain("message:");
   expect(errorOut).not.toContain("error:");
+});
+
+it("Event subclass with a throwing getter does not make toMatchSnapshot fail", async () => {
+  using dir = tempDir("inspect-event-snapshot", {
+    "snap.test.js": `
+      import { test, expect } from "bun:test";
+      test("type", () => {
+        class E extends Event { get type() { throw new Error("type-getter-boom"); } }
+        expect(new E("t")).toMatchSnapshot();
+      });
+      test("data", () => {
+        class M extends Event { get data() { throw new Error("data-getter-boom"); } }
+        expect(new M("message")).toMatchSnapshot();
+      });
+      test("error", () => {
+        class R extends Event {
+          get error() { throw new Error("error-getter-boom"); }
+          get message() { throw new Error("message-getter-boom"); }
+        }
+        expect(new R("error")).toMatchSnapshot();
+      });
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--update-snapshots", "snap.test.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const all = stdout + stderr;
+  expect(all).not.toContain("Failed to pretty format");
+  expect(all).toContain("3 pass");
+  expect(exitCode).toBe(0);
 });
 
 // https://github.com/oven-sh/bun/issues/561

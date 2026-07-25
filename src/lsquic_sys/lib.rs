@@ -622,8 +622,7 @@ impl Conn {
         // SAFETY: as above.
         unsafe { lsquic_conn_get_ssl(self.0) }
     }
-    /// The Stream ID from the peer's GOAWAY frame (RFC 9114 §5.2).
-    /// `None` until one arrives; client-only.
+    /// Stream ID from the peer's GOAWAY (RFC 9114 §5.2); client-only.
     pub fn min_goaway_stream_id(&self) -> Option<u64> {
         unsafe extern "C" {
             fn lsquic_conn_get_min_goaway_stream_id(c: *const lsquic_conn, out: *mut u64) -> c_int;

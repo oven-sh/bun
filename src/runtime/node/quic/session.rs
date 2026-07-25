@@ -2389,12 +2389,7 @@ lsquic_callback! {
         session.push_event(SessionEvent::GoawayReceived {
             last_stream_id: stream_id,
         });
-        // RFC 9114 §5.2: client requests above the GOAWAY id were not
-        // processed and are safe to retry. lsquic is about to fake-reset or
-        // shutdown-internal those streams without firing on_reset, which would
-        // surface here as a clean EOF; mark them rejected first so the reader
-        // sees an error instead of a truncated body. The `>` matches lsquic's
-        // own walk (on_goaway_client in lsquic_full_conn_ietf.c).
+        // lsquic fake-resets id>goaway_id with no on_reset (→clean EOF); reject so readers error.
         let Some(stream_id) = stream_id.filter(|_| !session.is_server()) else {
             return;
         };
@@ -2404,9 +2399,7 @@ lsquic_callback! {
                 continue;
             };
             let id = stream.stream_id();
-            // Client-initiated bidirectional streams have the two low bits
-            // clear (RFC 9000 §2.1); pending streams report id < 0. A stream
-            // already reset was handled by a previous GOAWAY with a higher id.
+            // Low 2 bits 0 = client-bidi (RFC 9000 §2.1); id<0 = pending.
             if id < 0
                 || id as u64 & 0x3 != 0
                 || id as u64 <= stream_id

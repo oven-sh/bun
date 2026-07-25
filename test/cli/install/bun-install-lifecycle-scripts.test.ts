@@ -159,13 +159,22 @@ describe.concurrent.each([
       }),
     );
 
+    const cleanEnv = {
+      ...env,
+      BUN_CONFIG_IGNORE_SCRIPTS: undefined,
+      NPM_CONFIG_IGNORE_SCRIPTS: undefined,
+      npm_config_ignore_scripts: undefined,
+    };
     const marker = join(packageDir, "postinstall.txt");
 
-    await runBunInstall({ ...env, [key]: value }, packageDir, { savesLockfile: false });
+    await runBunInstall({ ...cleanEnv, [key]: value }, packageDir, { savesLockfile: false });
     expect(await exists(marker)).toBe(false);
 
-    await runBunInstall({ ...env, [key]: "false" }, packageDir, { savesLockfile: false });
-    expect(await exists(marker)).toBe(true);
+    for (const falsy of ["false", ""]) {
+      await runBunInstall({ ...cleanEnv, [key]: falsy }, packageDir, { savesLockfile: false });
+      expect(await exists(marker)).toBe(true);
+      await rm(marker);
+    }
   });
 });
 

@@ -638,10 +638,12 @@ impl Options {
 
             for key in IGNORE_SCRIPTS_KEYS {
                 if let Some(value) = env.get(key) {
-                    if value != b"0" && value != b"false" {
-                        self.do_.set(Do::RUN_SCRIPTS, false);
+                    if !value.is_empty() {
+                        if value != b"0" && value != b"false" {
+                            self.do_.set(Do::RUN_SCRIPTS, false);
+                        }
+                        break;
                     }
-                    break;
                 }
             }
         }

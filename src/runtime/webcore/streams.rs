@@ -2161,8 +2161,7 @@ impl NetworkSink {
         this.wrote = task.uploaded;
         if this.flush_promise.has_value() {
             let global = this.global_this.expect("global_this set at construction");
-            // flush() resolves with the per-call delta, 0 = nothing pending; only
-            // end() reports the cumulative `wrote`.
+            // flush() resolves with the per-call delta; only end() reports cumulative `wrote`.
             this.flush_promise
                 .resolve(&global, JSValue::js_number(flushed as f64))?;
         }

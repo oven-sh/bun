@@ -539,18 +539,22 @@ mod _impl {
             }
         }
 
-        pub fn set_flush(&mut self, flush: c_int) {
-            // Caller passes a valid BrotliEncoderOperation discriminant (Node
-            // zlib constants 0..=3). Exhaustive match — `Op` is `#[repr(u32)]`
-            // so the prior `c_int` bit-cast was a width hazard anyway. Out-of-
-            // range traps.
-            self.flush = match flush {
-                0 => Op::process,
-                1 => Op::flush,
-                2 => Op::finish,
-                3 => Op::emit_metadata,
-                n => unreachable!("invalid BrotliEncoderOperation {n}"),
-            };
+        /// The four real `BrotliEncoderOperation`s are the only valid brotli
+        /// flush values. A zlib-only mode (Z_FINISH=4/Z_BLOCK=5/Z_TREES=6) has
+        /// no brotli op, so it fails the conversion and the shared write path
+        /// rejects it before it can reach the encoder.
+        pub fn flush_op_from_u32(flush: u32) -> Option<Op> {
+            match flush {
+                0 => Some(Op::process),
+                1 => Some(Op::flush),
+                2 => Some(Op::finish),
+                3 => Some(Op::emit_metadata),
+                _ => None,
+            }
+        }
+
+        pub fn set_flush(&mut self, op: Op) {
+            self.flush = op;
         }
 
         pub fn do_work(&mut self) {
@@ -694,7 +698,11 @@ mod _impl {
     // Stamps `impl CompressionContext for Context`, `impl Taskable`/
     // `CompressionStreamImpl for NativeBrotli`, and `pub mod js { … }` (the
     // `NativeBrotliPrototype__*CachedValue` accessors).
-    crate::__impl_compression_stream!(NativeBrotli, Context, "NativeBrotli");
+    //
+    // FlushOp = `BrotliEncoderOperation` (PROCESS/FLUSH/FINISH/EMIT_METADATA).
+    // Zlib-only flush values (Z_FINISH=4/Z_BLOCK=5/Z_TREES=6) have no brotli op
+    // and are rejected at the write boundary by `flush_op_from_u32`.
+    crate::__impl_compression_stream!(NativeBrotli, Context, "NativeBrotli", Op);
 
     fn code_for_error(err: c::BrotliDecoderErrorCode2) -> *const core::ffi::c_char {
         // Node builds these as `"ERR_" + <brotli enum suffix>` where the suffix

@@ -196,6 +196,7 @@ function ZlibBase(opts, mode, handle, { flush, finishFlush, fullFlush }) {
   this._defaultFlushFlag = flush;
   this._finishFlushFlag = finishFlush;
   this._defaultFullFlushFlag = fullFlush;
+  this._flushBoundIdx = flushBoundIdx;
   this._info = opts && opts.info;
   this._maxOutputLength = maxOutputLength;
 
@@ -271,6 +272,17 @@ ZlibBase.prototype.flush = function (kind, callback) {
     callback = kind;
     kind = this._defaultFullFlushFlag;
   }
+
+  // Reject kinds outside this codec's flush range before queuing the fake
+  // flush chunk — otherwise a brotli stream forwards a zlib-only flush value
+  // (Z_FINISH/Z_BLOCK) to the native encoder, which spins without progress
+  // (nodejs/node#63701). Matches Node's flush(kind) validation via
+  // checkRangesOrGetDefault: undefined/NaN fall through to the default,
+  // non-numbers throw ERR_INVALID_ARG_TYPE, out-of-range numbers throw
+  // ERR_OUT_OF_RANGE.
+  const flushBound = FLUSH_BOUND[this._flushBoundIdx];
+  kind = checkRangesOrGetDefault(kind, "kind", flushBound[0], flushBound[1], this._defaultFullFlushFlag);
+
   if (this.writableFinished) {
     if (callback) process.nextTick(callback);
   } else if (this.writableEnded) {
@@ -410,15 +422,25 @@ function processChunk(self, chunk, flushFlag, cb) {
   handle.inOff = 0;
   handle.flushFlag = flushFlag;
 
-  handle.write(
-    flushFlag, // flush
-    chunk, // in
-    0, // in_off
-    handle.availInBefore, // in_len
-    self._outBuffer, // out
-    self._outOffset, // out_off
-    handle.availOutBefore, // out_len
-  );
+  try {
+    handle.write(
+      flushFlag, // flush
+      chunk, // in
+      0, // in_off
+      handle.availInBefore, // in_len
+      self._outBuffer, // out
+      self._outOffset, // out_off
+      handle.availOutBefore, // out_len
+    );
+  } catch (err) {
+    // The native write rejects flush values the codec doesn't define (e.g.
+    // brotli with a zlib-only constant like Z_FINISH) synchronously, before
+    // scheduling any work. Route the error through the stream's error path
+    // instead of letting it escape into the stream machinery.
+    handle.buffer = null;
+    handle.cb = null;
+    cb(err);
+  }
 }
 
 function processCallback() {

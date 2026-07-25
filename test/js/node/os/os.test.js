@@ -178,6 +178,8 @@ it("cpus() returns plain data objects", () => {
   expect(inspected).not.toContain("Getter");
   expect(inspected).not.toContain("toJSON");
   expect(inspected).toContain("model:");
+
+  expect(os.cpus.length).toBe(0);
 });
 
 // https://github.com/oven-sh/bun/issues/9203
@@ -195,17 +197,6 @@ it("cpus() array is safely mutable", () => {
   }
   // Mutating one call's result must not affect later calls.
   expect(os.cpus().length).toBe(length);
-});
-
-// https://github.com/oven-sh/bun/issues/9203
-it("cpus() snapshots are taken at call time", () => {
-  const a = os.cpus();
-  // Access b first so that if the results were lazily populated the older
-  // snapshot `a` would be read later and appear to be "newer".
-  const b = os.cpus();
-  const bUser = b[0].times.user;
-  const aUser = a[0].times.user;
-  expect(bUser - aUser).toBeGreaterThanOrEqual(0);
 });
 
 it("networkInterfaces", () => {

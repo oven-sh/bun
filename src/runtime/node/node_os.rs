@@ -36,7 +36,6 @@ pub(crate) fn freemem() -> u64 {
 
 mod _impl {
     use super::*;
-    use crate::node::ErrorCode;
     #[cfg(any(target_os = "linux", target_os = "android"))]
     use bun_core::ZStr;
     use bun_core::ZigString;
@@ -57,15 +56,14 @@ mod _impl {
     // ─── local shims for upstream API gaps (Phase D) ──────────────────────────
 
     /// Unified error for `cpus_impl_*` so `?` works on both `JsResult` and
-    /// `crate::Error`/`bun_sys::Error`. The variant payload is discarded by
-    /// `cpus()`, which throws a `SystemError`.
+    /// `crate::Error`/`bun_sys::Error`.
     pub(crate) enum OsError {
-        Js,
+        Js(bun_jsc::JsError),
         Any,
     }
     impl From<bun_jsc::JsError> for OsError {
-        fn from(_: bun_jsc::JsError) -> Self {
-            Self::Js
+        fn from(e: bun_jsc::JsError) -> Self {
+            Self::Js(e)
         }
     }
     impl From<crate::Error> for OsError {
@@ -159,7 +157,7 @@ mod _impl {
         )*};
     }
         create_callback! {
-            create_cpus_callback,               "cpus",              1, bindgen_Node_os_jsCpus;
+            create_cpus_callback,               "cpus",              0, bindgen_Node_os_jsCpus;
             create_freemem_callback,            "freemem",           0, bindgen_Node_os_jsFreemem;
             create_get_priority_callback,       "getPriority",       2, bindgen_Node_os_jsGetPriority;
             create_homedir_callback,            "homedir",           1, bindgen_Node_os_jsHomedir;
@@ -265,15 +263,10 @@ mod _impl {
 
         match result {
             Ok(v) => Ok(v),
-            Err(_) => {
-                let err = SystemError {
-                    message: BunString::static_("Failed to get CPU information").into(),
-                    code: BunString::static_(<&'static str>::from(ErrorCode::ERR_SYSTEM_ERROR))
-                        .into(),
-                    ..Default::default()
-                };
-                Err(global.throw_value(err.to_error_instance(global)))
-            }
+            // Node's os.cpus() does `getCPUs() || []` and never throws on
+            // syscall/parse failure.
+            Err(OsError::Any) => JSValue::create_empty_array(global, 0),
+            Err(OsError::Js(e)) => Err(e),
         }
     }
 

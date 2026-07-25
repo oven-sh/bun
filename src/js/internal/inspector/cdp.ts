@@ -398,6 +398,9 @@ class InspectorCDPAdapter {
       // that window (a breakpointResolved or a pause at the untranslated
       // coordinate) are suppressed.
       resetPending?: boolean;
+      // Set when the client removes the breakpoint while resetPending; the
+      // re-set reply then retires the new binding instead of aliasing it.
+      clientRemoved?: boolean;
     }
   > = new SafeMap();
   // Current backend breakpointId -> the id the client knows (only entries that
@@ -521,6 +524,12 @@ class InspectorCDPAdapter {
     bp.resetPending = false;
     if (error || typeof result.breakpointId !== "string") return;
     const { breakpointId } = result;
+    if (bp.clientRemoved) {
+      // The client removed this breakpoint while the re-set was in flight;
+      // retire the new binding instead of aliasing it.
+      this.#sendToBackend("Debugger.removeBreakpoint", { breakpointId });
+      return;
+    }
     this.#breakpointIdAliases.$delete(bp.jscId);
     bp.jscId = breakpointId;
     if (breakpointId !== clientBreakpointId) this.#breakpointIdAliases.$set(breakpointId, clientBreakpointId);
@@ -993,6 +1002,14 @@ class InspectorCDPAdapter {
         if (tracked) {
           this.#preParseBreakpoints.delete(params.breakpointId);
           this.#breakpointIdAliases.$delete(tracked.jscId);
+          if (tracked.resetPending) {
+            // The old binding is already removed and the re-set is in
+            // flight; its reply removes the new binding (clientRemoved) —
+            // forwarding the stale id would error and orphan the new one.
+            tracked.clientRemoved = true;
+            this.#replyToClient(id, {});
+            return;
+          }
           this.#sendToBackend(method, { breakpointId: tracked.jscId }, id, method);
           return;
         }
@@ -1346,8 +1363,11 @@ class InspectorCDPAdapter {
         // the backend queue, so the posted remove/re-set complete during this
         // very pause; resuming then lets execution reach the corrected
         // binding, which reports the pause the client expects.
-        const hits: string[] = params.hitBreakpoints ?? [];
-        if (hits.length > 0 && hits.every(h => this.#isStaleResetBreakpoint(h))) {
+        if (
+          params.reason === "Breakpoint" &&
+          typeof params.data?.breakpointId === "string" &&
+          this.#isStaleResetBreakpoint(params.data.breakpointId)
+        ) {
           this.#sendToBackend("Debugger.resume");
           return;
         }

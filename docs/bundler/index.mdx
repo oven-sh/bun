@@ -1099,7 +1099,7 @@ The output file would now look something like this.
 var logo = "https://cdn.example.com/logo-a7305bdef.svg";
 ```
 
-`publicPath` does not rewrite specifiers for [external](#external) modules. An import marked as external is emitted unchanged so it can be resolved at runtime. To rewrite an external specifier to a CDN URL, use an [`onResolve`](/bundler/plugins#onresolve) plugin that returns `{ path, external: true }`.
+`publicPath` does not rewrite specifiers for [external](#external) modules. An import marked as external is emitted unchanged so it can be resolved at runtime.
 
 ### define
 

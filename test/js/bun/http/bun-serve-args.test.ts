@@ -84,22 +84,12 @@ describe("hostname and port works", () => {
     {
       port: 0,
       hostname: undefined,
-      unix: "",
+      unix: undefined,
     },
     {
       port: 0,
       hostname: null,
-      unix: "",
-    },
-    {
-      port: 0,
-      hostname: null,
-      unix: Buffer.from(""),
-    },
-    {
-      port: 0,
-      hostname: Buffer.from(defaultHostname),
-      unix: Buffer.from(""),
+      unix: null,
     },
     {
       port: 0,
@@ -125,6 +115,79 @@ describe("hostname and port works", () => {
       server.stop();
     });
   }
+});
+
+describe("unix option validation", () => {
+  test("empty string throws instead of silently binding TCP", () => {
+    expect(() =>
+      serve({
+        // @ts-expect-error
+        unix: "",
+        fetch: () => new Response("ok"),
+      }),
+    ).toThrow(/non-empty string/);
+  });
+
+  test("empty Buffer throws", () => {
+    expect(() =>
+      serve({
+        // @ts-expect-error
+        unix: Buffer.from(""),
+        fetch: () => new Response("ok"),
+      }),
+    ).toThrow(/non-empty string/);
+  });
+
+  test.each([[42], [{}], [true], [["sock"]], [() => {}], [{ toString: () => "coerced.sock" }]])(
+    "non-string %p throws TypeError",
+    value => {
+      expect(() =>
+        serve({
+          // @ts-expect-error
+          unix: value,
+          fetch: () => new Response("ok"),
+        }),
+      ).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
+    },
+  );
+
+  test.each([undefined, null])("%p is treated as absent (TCP)", value => {
+    using server = serve({
+      port: 0,
+      // @ts-expect-error
+      unix: value,
+      fetch: () => new Response("ok"),
+    });
+    expect(server.port).toBeGreaterThan(0);
+    expect(server.url.protocol).toBe("http:");
+  });
+
+  test.skipIf(isWindows)("server.url never throws for unix paths with special characters", () => {
+    const dir = tmpdirSync();
+    for (const name of ["my app.sock", "a#b.sock", "a?b.sock", "a@b.sock"]) {
+      const p = dir + "/" + name;
+      using server = serve({ unix: p, fetch: () => new Response("ok") });
+      const url = server.url;
+      expect(url).toBeInstanceOf(URL);
+      expect(url.protocol).toBe("unix:");
+      expect(decodeURIComponent(url.pathname)).toBe(p);
+    }
+  });
+
+  test.skipIf(isWindows)("server.url never throws for a relative unix path with a space", () => {
+    const cwd = process.cwd();
+    const dir = tmpdirSync();
+    process.chdir(dir);
+    try {
+      using server = serve({ unix: "my app.sock", fetch: () => new Response("ok") });
+      const url = server.url;
+      expect(url).toBeInstanceOf(URL);
+      expect(url.protocol).toBe("unix:");
+      expect(decodeURIComponent(url.hostname)).toBe("my app.sock");
+    } finally {
+      process.chdir(cwd);
+    }
+  });
 });
 
 describe("Bun.serve error handling", () => {
@@ -698,32 +761,31 @@ describe("Bun.serve unix socket validation", () => {
     }
   });
 
-  test("unix socket path coercion", () => {
-    // Number should coerce to string
-    using server = serve({
-      // @ts-expect-error - Testing runtime coercion
-      unix: Math.ceil(Math.random() * 100000000),
-      fetch() {
-        return new Response("ok");
-      },
-    });
-    server.stop();
+  test("unix socket path coercion is rejected", () => {
+    expect(() =>
+      serve({
+        // @ts-expect-error - Testing runtime coercion
+        unix: Math.ceil(Math.random() * 100000000),
+        fetch() {
+          return new Response("ok");
+        },
+      }),
+    ).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
 
-    // Object with toString()
     const pathObj = {
       toString() {
         return Math.random().toString(32).slice(2, 15) + ".sock";
       },
     };
-
-    using server2 = serve({
-      // @ts-expect-error - Testing runtime coercion
-      unix: pathObj,
-      fetch() {
-        return new Response("ok");
-      },
-    });
-    server2.stop();
+    expect(() =>
+      serve({
+        // @ts-expect-error - Testing runtime coercion
+        unix: pathObj,
+        fetch() {
+          return new Response("ok");
+        },
+      }),
+    ).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
   });
 
   test("invalid unix socket path coercion should throw", () => {

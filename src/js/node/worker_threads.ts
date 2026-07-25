@@ -980,6 +980,10 @@ class Worker extends EventEmitter {
   // Mirrors ref()/unref() for the async_hooks WORKER resource's hasRef();
   // undefined once the thread has exited, as node's handle reads back.
   #hasRef: boolean | undefined = true;
+  // node's worker has a public MessagePort whose AsyncWrap starts unref'd and
+  // follows worker.ref()/unref(); Bun's equivalent lives inside the native
+  // WebWorker, so its async_hooks MESSAGEPORT resource mirrors it here.
+  #publicPortHasRef = false;
 
   // this is used by terminate();
   // either is the exit code if exited, a promise resolving to the exit code, or undefined if we haven't sent .terminate() yet
@@ -1157,29 +1161,38 @@ class Worker extends EventEmitter {
     const count = tickInitHooks.length;
     if (count === 0) return;
     const worker = this;
-    const resource = {
-      hasRef() {
-        return worker.#hasRef;
-      },
-    };
-    const asyncId = newAsyncId();
     // Snapshot: enable()/disable() from inside a hook must not affect the
     // in-flight dispatch (node stages such mutations in tmp_array).
     const snapshot = $newArrayWithSize<Function>(count);
     for (let i = 0; i < count; i++) snapshot[i] = tickInitHooks[i];
-    for (let i = 0; i < count; i++) {
-      try {
-        snapshot[i](asyncId, "WORKER", 0, resource);
-      } catch (err) {
-        // node: a throwing init hook is fatal (fatalError: print + exit 1),
-        // never surfaced to the `new Worker` caller — which here has already
-        // spawned the thread. console is user-mutable, so shield the print.
+    function emitOne(type: string, resource: object) {
+      const asyncId = newAsyncId();
+      for (let i = 0; i < count; i++) {
         try {
-          console.error(typeof err?.stack === "string" ? err.stack : err);
-        } catch {}
-        process.exit(1);
+          snapshot[i](asyncId, type, 0, resource);
+        } catch (err) {
+          // node: a throwing init hook is fatal (fatalError: print + exit 1),
+          // never surfaced to the `new Worker` caller — which here has already
+          // spawned the thread. console is user-mutable, so shield the print.
+          try {
+            console.error(typeof err?.stack === "string" ? err.stack : err);
+          } catch {}
+          process.exit(1);
+        }
       }
     }
+    emitOne("WORKER", {
+      hasRef() {
+        return worker.#hasRef;
+      },
+    });
+    // node also emits a MESSAGEPORT init for the worker's public port here
+    // (its AsyncWrap is constructed with the worker).
+    emitOne("MESSAGEPORT", {
+      hasRef() {
+        return worker.#publicPortHasRef;
+      },
+    });
   }
 
   get threadId() {
@@ -1196,12 +1209,18 @@ class Worker extends EventEmitter {
     this.#worker.ref();
     // node's ref()/unref() no-op once the handle is gone, leaving hasRef()
     // undefined rather than resurrecting it.
-    if (!this.#exited) this.#hasRef = true;
+    if (!this.#exited) {
+      this.#hasRef = true;
+      this.#publicPortHasRef = true;
+    }
   }
 
   unref() {
     this.#worker.unref();
-    if (!this.#exited) this.#hasRef = false;
+    if (!this.#exited) {
+      this.#hasRef = false;
+      this.#publicPortHasRef = false;
+    }
   }
 
   get stdin() {
@@ -1381,6 +1400,9 @@ class Worker extends EventEmitter {
     }
     this.#stdinPort?.close();
     this.#onExitPromise = e.code;
+    // node closes the public port before 'exit' fires, so its MESSAGEPORT
+    // resource reads unref'd from inside 'exit' listeners.
+    this.#publicPortHasRef = false;
     this.emit("exit", e.code);
     // node's WORKER handle is gone once the thread has exited, so its
     // hasRef() reads back undefined. 'exit' listeners ran synchronously above

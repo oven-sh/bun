@@ -188,6 +188,67 @@ int pthread_create(pthread_t *t, const pthread_attr_t *a, void *(*f)(void *), vo
   expect(exitCode).not.toBe(0);
 });
 
+// Modules loaded inside a worker_threads Worker must be registered with the
+// process watcher under --watch, so editing a worker dependency restarts the
+// process. Also pins node's watch status-line wording on stdout
+// ("Completed running ...", "Restarting ...", upstream
+// lib/internal/main/watch_mode.js). Writes repeat on an interval until the
+// restart is observed so the test tolerates slow (debug/ASAN) startup.
+it("--watch restarts when a worker_threads dependency changes and prints node's status lines", async () => {
+  using dir = tempDir("watch-worker-dep", {
+    "dep.js": `module.exports = "dep v1";`,
+    "worker.js": `console.log(require("./dep.js"));`,
+    "main.js": `const { Worker } = require("node:worker_threads");
+new Worker(require("node:path").join(__dirname, "worker.js"));`,
+  });
+  const main = join(String(dir), "main.js");
+  watchee = spawn({
+    cmd: [bunExe(), "--watch", main],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const completedLine = `Completed running '${main}'. Waiting for file changes before restarting...`;
+  const restartingLine = `Restarting '${main}'`;
+
+  let rewriter: Timer | undefined;
+  const lines: string[] = [];
+  try {
+    let buffered = "";
+    let completes = 0;
+    outer: for await (const chunk of watchee.stdout) {
+      buffered += new TextDecoder().decode(chunk);
+      let newline;
+      while ((newline = buffered.indexOf("\n")) !== -1) {
+        const line = buffered.slice(0, newline);
+        buffered = buffered.slice(newline + 1);
+        lines.push(line);
+        if (line === completedLine && ++completes === 2) break outer;
+        if (line === completedLine && completes === 1) {
+          // Rewrite the worker dependency until the restart lands.
+          const rewrite = () => Bun.write(join(String(dir), "dep.js"), `module.exports = "dep v1";`);
+          rewrite();
+          rewriter = setInterval(rewrite, 500);
+        }
+        if (line === restartingLine) clearInterval(rewriter);
+      }
+    }
+  } finally {
+    clearInterval(rewriter);
+    watchee.kill();
+  }
+
+  expect(lines[0]).toBe("dep v1");
+  expect(lines[1]).toBe(completedLine);
+  expect(lines[2]).toBe(restartingLine);
+  // Repeated rewrites may squeeze in extra restarts; the run after the last
+  // observed restart must produce the worker output and complete again.
+  expect(lines[lines.length - 2]).toBe("dep v1");
+  expect(lines[lines.length - 1]).toBe(completedLine);
+}, 30000);
+
 // A script that registers a SIGTERM handler and then spins in synchronous
 // code must still restart on file change: the watcher thread posts the reload
 // to the JS thread first (so listeners can run), but forces the reload itself

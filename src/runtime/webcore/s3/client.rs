@@ -445,12 +445,14 @@ pub(crate) fn writable_stream(
             let _exit_guard = unsafe { bun_jsc::event_loop::EventLoop::enter_scope(event_loop) };
             match result {
                 S3UploadResult::Success => {
+                    let uploaded = sink.wrote;
                     if sink.flush_promise.has_value() {
                         sink.flush_promise
-                            .resolve(global, JSValue::js_number(0.0))?;
+                            .resolve(global, JSValue::js_number(uploaded as f64))?;
                     }
                     if sink.end_promise.has_value() {
-                        sink.end_promise.resolve(global, JSValue::js_number(0.0))?;
+                        sink.end_promise
+                            .resolve(global, JSValue::js_number(uploaded as f64))?;
                     }
                 }
                 S3UploadResult::Failure(err) => {
@@ -498,6 +500,7 @@ pub(crate) fn writable_stream(
         available: IntegerBitSet::init_full(),
         current_part_number: 1,
         ref_count: core::cell::Cell::new(2), // +1 for the stream
+        uploaded: 0,
         ended: false,
         options,
         acl: None,
@@ -675,9 +678,10 @@ impl S3UploadStreamWrapper {
         match &result {
             S3UploadResult::Success => {
                 if self_.end_promise.has_value() {
+                    let uploaded = self_.task_mut().uploaded;
                     self_
                         .end_promise
-                        .resolve(&self_.global, JSValue::js_number(0.0))?;
+                        .resolve(&self_.global, JSValue::js_number(uploaded as f64))?;
                     self_.end_promise = bun_jsc::JSPromiseStrong::empty();
                 }
             }
@@ -852,6 +856,7 @@ pub fn upload_stream(
         available: IntegerBitSet::init_full(),
         current_part_number: 1,
         ref_count: core::cell::Cell::new(2), // +1 for the stream ctx (only deinit after task and context ended)
+        uploaded: 0,
         ended: false,
         options,
         acl,

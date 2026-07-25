@@ -1663,12 +1663,14 @@ impl BlobExt for Blob {
                         return Ok(promise_value);
                     }
                     jsc::js_promise::Status::Fulfilled => {
+                        // SAFETY: `file_sink` holds our +1 ref; live until deref below.
+                        let written = unsafe { (*file_sink).written.get() };
                         // SAFETY: release our +1 ref on the sink.
                         unsafe { webcore::FileSink::deref(file_sink) };
                         readable_stream.done(global_this);
                         return Ok(JSPromise::resolved_promise_value(
                             global_this,
-                            JSValue::js_number(0.0),
+                            JSValue::js_number(written as f64),
                         ));
                     }
                     jsc::js_promise::Status::Rejected => {
@@ -1693,12 +1695,14 @@ impl BlobExt for Blob {
                 );
             }
         }
+        // SAFETY: `file_sink` holds our +1 ref; live until deref below.
+        let written = unsafe { (*file_sink).written.get() };
         // SAFETY: release our +1 ref on the sink.
         unsafe { webcore::FileSink::deref(file_sink) };
 
         Ok(JSPromise::resolved_promise_value(
             global_this,
-            JSValue::js_number(0.0),
+            JSValue::js_number(written as f64),
         ))
     }
 
@@ -5959,7 +5963,10 @@ pub fn on_file_stream_resolve_request_stream(
     if let Some(stream) = strong.get(global_this) {
         stream.done(global_this);
     }
-    this.promise.resolve(global_this, JSValue::js_number(0.0))?;
+    // SAFETY: `this.sink` is the +1 ref held until `Drop` below; live here.
+    let written = unsafe { (*this.sink).written.get() };
+    this.promise
+        .resolve(global_this, JSValue::js_number(written as f64))?;
     Ok(JSValue::UNDEFINED)
 }
 

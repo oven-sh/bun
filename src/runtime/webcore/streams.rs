@@ -2047,6 +2047,11 @@ pub struct NetworkSink {
     // JSC_BORROW: process-lifetime VM global; safe `Deref` via `BackRef`.
     pub global_this: Option<BackRef<JSGlobalObject>>,
     pub high_water_mark: BlobSizeType,
+    /// Cumulative payload bytes the server has acknowledged so far, mirrored
+    /// from `MultiPartUpload.uploaded` on each `on_writable` callback. Read by
+    /// the completion callback to resolve `end()`/`flush()` because `task` may
+    /// already be detached (GC of the JS wrapper) by then.
+    pub wrote: u64,
     pub flush_promise: JSPromiseStrong,
     pub end_promise: JSPromiseStrong,
     pub ended: bool,
@@ -2061,6 +2066,7 @@ impl Default for NetworkSink {
             signal: Signal::default(),
             global_this: None,
             high_water_mark: 2048,
+            wrote: 0,
             flush_promise: JSPromiseStrong::default(),
             end_promise: JSPromiseStrong::default(),
             ended: false,
@@ -2155,10 +2161,11 @@ impl NetworkSink {
             flushed,
             task.state as u8
         );
+        this.wrote = task.uploaded;
         if this.flush_promise.has_value() {
             let global = this.global_this.expect("global_this set at construction");
             this.flush_promise
-                .resolve(&global, JSValue::js_number(flushed as f64))?;
+                .resolve(&global, JSValue::js_number(this.wrote as f64))?;
         }
         Ok(())
     }
@@ -2274,27 +2281,24 @@ impl NetworkSink {
     }
 
     pub fn end_from_js(&mut self, _global_this: &JSGlobalObject) -> bun_sys::Result<JSValue> {
-        let _ = self.end(None);
         if self.end_promise.has_value() {
             // we are already waiting for the end
+            let _ = self.end(None);
             return bun_sys::Result::Ok(self.end_promise.value());
         }
         if self.task.is_some() {
-            // we need to wait for the task to end
+            // `end()` may run the upload to completion synchronously (local
+            // endpoint / warm connection), which fires `wrapper_callback`
+            // before we return. Create the promise first so the callback has
+            // it to resolve with the byte count.
             self.end_promise = JSPromiseStrong::init(self.global_this());
             let value = self.end_promise.value();
-            if !self.ended {
-                self.ended = true;
-                // we need to send EOF
-                if let Some(task) = self.task_mut() {
-                    let _ = task.write_bytes(b"", true);
-                }
-                self.signal.close(None);
-            }
+            let _ = self.end(None);
             return bun_sys::Result::Ok(value);
         }
+        let _ = self.end(None);
         // task already detached
-        bun_sys::Result::Ok(JSValue::js_number(0.0))
+        bun_sys::Result::Ok(JSValue::js_number(self.wrote as f64))
     }
 
     pub fn to_js(&mut self, global_this: &JSGlobalObject) -> JSValue {

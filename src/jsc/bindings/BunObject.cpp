@@ -359,8 +359,9 @@ extern "C" JSC::EncodedJSValue Bun__requestClusterUnixServeFd(JSGlobalObject* gl
     args.append(JSValue::decode(pathValue));
     auto callData = JSC::getCallData(fn);
     JSValue result = JSC::call(globalObject, fn, callData, cluster, args);
+    // The caller is Rust: check fully here instead of releasing to a C++ parent scope.
     RETURN_IF_EXCEPTION(scope, {});
-    RELEASE_AND_RETURN(scope, JSValue::encode(result));
+    return JSValue::encode(result);
 }
 
 extern "C" JSC::EncodedJSValue JSPasswordObject__create(JSGlobalObject*);

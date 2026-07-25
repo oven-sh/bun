@@ -1592,11 +1592,10 @@ pub(crate) fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> Js
                     ) -> JSValue;
                 }
                 let path_js = bun_jsc::bun_string_jsc::create_utf8_for_js(global_object, bytes)?;
-                // SAFETY: FFI to C++ shim in BunObject.cpp; both args valid.
-                let promise = unsafe { Bun__requestClusterUnixServeFd(global_object, path_js) };
-                if global_object.has_exception() {
-                    return Err(bun_jsc::JsError::Thrown);
-                }
+                let promise = bun_jsc::from_js_host_call(global_object, || {
+                    // SAFETY: FFI to C++ shim in BunObject.cpp; both args valid.
+                    unsafe { Bun__requestClusterUnixServeFd(global_object, path_js) }
+                })?;
                 if let Some(any) = promise.as_any_promise() {
                     global_object.bun_vm().as_mut().wait_for_promise(any);
                     if global_object.has_exception() {

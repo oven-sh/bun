@@ -298,6 +298,8 @@ const bunServeUnixHandles = new Map(); // path -> { fd, workers: Set<id> }
 
 // Shared AF_UNIX listen fds for Bun.serve({ unix }) in workers (SO_REUSEPORT is TCP-only).
 function bunServeUnix(worker, message) {
+  // Stop processing if worker already disconnecting
+  if (worker.exitedAfterDisconnect) return;
   const sockPath = message.path;
   const key = `bunServeUnix:${sockPath}`;
   if (typeof sockPath !== "string" || process.platform === "win32") {

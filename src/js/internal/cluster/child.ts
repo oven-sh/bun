@@ -79,7 +79,8 @@ cluster._bunServeUnix = function (unixPath) {
     // A primary that does not know this act silently drops it; bound the wait so Bun.serve falls back to a direct bind.
     const timer = setTimeout(() => settle(-1), 5000);
     const sent = send({ act: "bunServeUnix", path: unixPath }, (reply, handle) => {
-      if (handle && typeof handle.fd === "number" && handle.fd >= 0) settle(handle.fd);
+      const fd = handle?.fd;
+      if (typeof fd === "number" && fd >= 0) settle(fd);
       else settle(typeof reply?.errno === "number" && reply.errno < 0 ? reply.errno : -1);
     });
     if (sent === false) settle(-1);

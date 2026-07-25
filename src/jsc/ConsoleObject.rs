@@ -2864,14 +2864,9 @@ pub mod formatter {
             write_indent_n(self.indent, writer)
         }
 
-        /// Emit the `... N more item(s)` elision marker used when a Map/Set
-        /// has more entries than `MAP_SET_ENTRY_CAP`. Mirrors the array
-        /// printer's truncation message and Node's output shape. The caller
-        /// has just finished printing entry `MAP_SET_ENTRY_CAP - 1`, so in
-        /// single-line mode this supplies the leading `, ` that the next
-        /// entry would have printed; in multi-line mode the previous entry
-        /// already wrote its own trailing `,\n`, so this supplies the indent
-        /// and its own trailing `,\n`.
+        /// `... N more item(s)` marker for Map/Set past `MAP_SET_ENTRY_CAP`.
+        /// Supplies the separator the next entry would have: leading `, `
+        /// in single-line, indent + trailing `,\n` in multi-line.
         fn print_more_items_marker<const C: bool>(
             &mut self,
             writer: &mut dyn bun_io::Write,
@@ -2913,8 +2908,6 @@ pub mod formatter {
     // MapIterator / SetIterator / PropertyIterator (forEach callback contexts)
     // ───────────────────────────────────────────────────────────────────────
 
-    /// Matches the array printer's hardcoded cap and Node's `maxArrayLength`
-    /// default for Map/Set.
     const MAP_SET_ENTRY_CAP: usize = 100;
 
     pub struct MapIteratorCtx<
@@ -3560,36 +3553,6 @@ pub mod formatter {
                 opts |= TagOptions::DISABLE_INSPECT_CUSTOM;
             }
             opts
-        }
-
-        /// Property read for display purposes only: a user-installed getter
-        /// that throws must not abort the whole `console.log`/`Bun.inspect`
-        /// call. Mirrors the `print_to_json` catch-then-`clear_exception()`
-        /// pattern. The absent/undefined result is treated as `None`.
-        #[inline]
-        fn get_swallowing_throw(&self, receiver: JSValue, name: &str) -> Option<JSValue> {
-            match receiver.get(self.global_this, name) {
-                Ok(v) => v,
-                Err(_) => {
-                    self.global_this.clear_exception();
-                    None
-                }
-            }
-        }
-
-        #[inline]
-        fn fast_get_swallowing_throw(
-            &self,
-            receiver: JSValue,
-            builtin_name: jsc::BuiltinName,
-        ) -> Option<JSValue> {
-            match receiver.fast_get(self.global_this, builtin_name) {
-                Ok(v) => v,
-                Err(_) => {
-                    self.global_this.clear_exception();
-                    None
-                }
-            }
         }
 
         #[inline(never)]
@@ -5041,7 +5004,7 @@ pub mod formatter {
             }
 
             let event_type_value: JSValue = 'brk: {
-                let Some(value_) = self.get_swallowing_throw(value, "type") else {
+                let Some(value_) = value.get(self.global_this, "type")? else {
                     break 'brk JSValue::UNDEFINED;
                 };
                 if value_.is_string() {
@@ -5117,7 +5080,7 @@ pub mod formatter {
                 }
 
                 if let Some(message_value) =
-                    self.fast_get_swallowing_throw(value, jsc::BuiltinName::Message)
+                    value.fast_get(self.global_this, jsc::BuiltinName::Message)?
                 {
                     if message_value.is_string() {
                         if !self.single_line {
@@ -5155,8 +5118,8 @@ pub mod formatter {
                             pf!("<d>"),
                             pf!("<r>")
                         );
-                        let data: JSValue = self
-                            .fast_get_swallowing_throw(value, jsc::BuiltinName::Data)
+                        let data: JSValue = value
+                            .fast_get(self.global_this, jsc::BuiltinName::Data)?
                             .unwrap_or(JSValue::UNDEFINED);
                         let tag = Tag::get_advanced(data, self.global_this, self.tag_opts())?;
                         self.format::<C>(tag, writer_, data, self.global_this)?;
@@ -5170,7 +5133,7 @@ pub mod formatter {
                     }
                     EventType::ErrorEvent => {
                         if let Some(error_value) =
-                            self.fast_get_swallowing_throw(value, jsc::BuiltinName::Error)
+                            value.fast_get(self.global_this, jsc::BuiltinName::Error)?
                         {
                             if !self.single_line {
                                 self.write_indent(writer_).expect("unreachable");

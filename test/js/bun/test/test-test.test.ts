@@ -647,7 +647,8 @@ it("skip() and skipIf()", () => {
   expect(result.match(/reachable/g)).toHaveLength(6);
 });
 
-it("should run beforeAll() & afterAll() even without tests", async () => {
+// https://github.com/oven-sh/bun/issues/3494
+it("should run beforeAll() & afterAll() for a describe whose only tests are nested, and skip them for an empty describe", async () => {
   const test_dir = tmpdirSync();
   try {
     await writeFile(
@@ -657,6 +658,14 @@ beforeAll(() => console.log("before all"));
 beforeEach(() => console.log("before each"));
 afterEach(() => console.log("after each"));
 afterAll(() => console.log("after all"));
+
+describe("nested-only", () => {
+  beforeAll(() => console.log("before all nested-only"));
+  afterAll(() => console.log("after all nested-only"));
+  describe("inner", () => {
+    test("t", () => {});
+  });
+});
 
 describe("empty", () => {
   beforeAll(() => console.log("before all scoped"));
@@ -676,15 +685,19 @@ describe("empty", () => {
     });
     expect(stderr).toBeDefined();
     const err = await stderr.text();
-    expect(err).toContain("0 pass");
+    expect(err).toContain("1 pass");
     expect(err).toContain("0 fail");
     expect(stdout).toBeDefined();
     const out = await stdout.text();
+    // jest-circus skips a describe's beforeAll/afterAll when it has no non-skipped descendant
+    // test, so the "empty" block's hooks never run.
     expect(out.split(/\r?\n/)).toEqual([
       `bun test ${Bun.version_with_sha}`,
       "before all",
-      "before all scoped",
-      "after all scoped",
+      "before all nested-only",
+      "before each",
+      "after each",
+      "after all nested-only",
       "after all",
       "",
     ]);

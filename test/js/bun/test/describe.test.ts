@@ -223,3 +223,129 @@ describe("passing arrow function as args", () => {
     expect(fullOutput).toInclude("1 fail");
   });
 });
+
+describe("beforeAll/afterAll are pruned when a describe has no non-skipped tests", () => {
+  // jest-circus only runs a describe's beforeAll/afterAll when the block contains at least
+  // one test whose mode is not "skip". test.todo counts (hooks run); test.skip does not.
+  test("all-skipped, nested-all-skipped, and empty describes don't run hooks", () => {
+    const test_dir = tempDirWithFiles("describe-skip-hooks", {
+      "hooks.test.js": `
+        import { describe, test, beforeAll, afterAll } from "bun:test";
+        const L = [];
+        afterAll(() => console.log("HOOKLOG " + JSON.stringify(L)));
+
+        describe("all-skipped", () => {
+          beforeAll(() => void L.push("bA-allskip"));
+          afterAll(() => void L.push("aA-allskip"));
+          test.skip("a1", () => {});
+          test.skip("a2", () => {});
+        });
+
+        describe("outer", () => {
+          beforeAll(() => void L.push("bA-outer"));
+          afterAll(() => void L.push("aA-outer"));
+          describe("inner-allskip", () => {
+            beforeAll(() => void L.push("bA-inner"));
+            afterAll(() => void L.push("aA-inner"));
+            test.skip("i1", () => {});
+          });
+        });
+
+        describe("empty", () => {
+          beforeAll(() => void L.push("bA-empty"));
+          afterAll(() => void L.push("aA-empty"));
+        });
+
+        describe("all-todo", () => {
+          beforeAll(() => void L.push("bA-alltodo"));
+          afterAll(() => void L.push("aA-alltodo"));
+          test.todo("t1");
+        });
+
+        describe("mixed", () => {
+          beforeAll(() => void L.push("bA-mixed"));
+          afterAll(() => void L.push("aA-mixed"));
+          test.skip("s", () => {});
+          test("n", () => void L.push("BODY-mixed"));
+        });
+
+        test("keep", () => void L.push("BODY-keep"));
+      `,
+    });
+
+    const { stdout, stderr, exitCode } = spawnSync({
+      cmd: [bunExe(), "test", "hooks.test.js"],
+      cwd: test_dir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+
+    const out = stdout.toString();
+    const err = stderr.toString();
+    const hookLine = out.split("\n").find(l => l.startsWith("HOOKLOG "));
+    expect(hookLine).toBeDefined();
+    const log = JSON.parse(hookLine!.slice("HOOKLOG ".length));
+
+    // jest 30 output for the same fixture:
+    expect(log).toEqual(["bA-alltodo", "aA-alltodo", "bA-mixed", "BODY-mixed", "aA-mixed", "BODY-keep"]);
+
+    // skipped tests are still reported
+    expect(err).toInclude("all-skipped > a1");
+    expect(err).toInclude("outer > inner-allskip > i1");
+    expect(exitCode).toBe(0);
+  });
+
+  test("describe.skip, test.failing-only, and skip+todo mix keep jest parity", () => {
+    const test_dir = tempDirWithFiles("describe-skip-hooks-parity", {
+      "parity.test.js": `
+        import { describe, test, beforeAll, afterAll } from "bun:test";
+        const L = [];
+        afterAll(() => console.log("HOOKLOG " + JSON.stringify(L)));
+
+        describe.skip("dskip", () => {
+          beforeAll(() => void L.push("bA-dskip"));
+          afterAll(() => void L.push("aA-dskip"));
+          test("t", () => {});
+        });
+
+        describe("all-failing", () => {
+          beforeAll(() => void L.push("bA-allfailing"));
+          afterAll(() => void L.push("aA-allfailing"));
+          test.failing("f", () => { throw new Error("expected") });
+        });
+
+        describe("skip-plus-todo", () => {
+          beforeAll(() => void L.push("bA-skipPlusTodo"));
+          afterAll(() => void L.push("aA-skipPlusTodo"));
+          test.skip("s", () => {});
+          test.todo("t");
+        });
+
+        test("keep", () => void L.push("BODY-keep"));
+      `,
+    });
+
+    const { stdout, exitCode } = spawnSync({
+      cmd: [bunExe(), "test", "parity.test.js"],
+      cwd: test_dir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+
+    const out = stdout.toString();
+    const hookLine = out.split("\n").find(l => l.startsWith("HOOKLOG "));
+    expect(hookLine).toBeDefined();
+    const log = JSON.parse(hookLine!.slice("HOOKLOG ".length));
+
+    expect(log).toEqual([
+      "bA-allfailing",
+      "aA-allfailing",
+      "bA-skipPlusTodo",
+      "aA-skipPlusTodo",
+      "BODY-keep",
+    ]);
+    expect(exitCode).toBe(0);
+  });
+});

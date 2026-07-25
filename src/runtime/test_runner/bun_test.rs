@@ -1033,12 +1033,6 @@ impl BunTest {
                 self.phase = Phase::Execution;
                 debug::dump_describe(&self.collection.root_scope)?;
 
-                let has_filter = if let Some(reporter) = self.reporter {
-                    // SAFETY: reporter outlives every BunTest (see field doc).
-                    unsafe { reporter.as_ref() }.jest.filter_regex.is_some()
-                } else {
-                    false
-                };
                 // Derive a per-file shuffle PRNG from (seed, file_path) so a
                 // file's test order depends only on the path and the printed
                 // seed — not on which worker ran it or what files preceded it
@@ -1064,7 +1058,6 @@ impl BunTest {
                 let should_randomize = per_file_prng.take();
 
                 let mut order = Order::Order::init(Order::Config {
-                    always_use_hooks: self.collection.root_scope.base.only == Only::No && !has_filter,
                     randomize: should_randomize,
                 });
 
@@ -1693,6 +1686,9 @@ pub struct BaseScope {
     pub concurrent: bool,
     pub mode: ScopeMode,
     pub only: Only,
+    /// On a test entry: `callback.is_some()` (drives beforeEach/afterEach).
+    /// On a describe: at least one descendant test has `mode` other than Skip/FilteredOut
+    /// (drives beforeAll/afterAll; jest runs those iff the block has a non-skipped test).
     pub has_callback: bool,
     /// this value is 0 unless the debugger is active and the scope has a debugger id
     pub test_id_for_debugger: i32,
@@ -1729,7 +1725,7 @@ impl BaseScope {
         }
     }
 
-    pub fn propagate(&mut self, has_callback: bool) {
+    pub fn propagate(&mut self, has_callback: bool, triggers_all_hooks: bool) {
         self.has_callback = has_callback;
         if let Some(parent) = self.parent {
             // SAFETY: parent backref valid; tree is single-threaded and parent
@@ -1738,7 +1734,7 @@ impl BaseScope {
             if self.only != Only::No {
                 parent.mark_contains_only();
             }
-            if self.has_callback {
+            if triggers_all_hooks {
                 parent.mark_has_callback();
             }
         }
@@ -1813,7 +1809,7 @@ impl DescribeScope {
         base: BaseScopeCfg,
     ) -> &mut DescribeScope {
         let mut child = Self::create(BaseScope::init(base, name_not_owned, Some(std::ptr::from_mut(self)), false));
-        child.base.propagate(false);
+        child.base.propagate(false, false);
         self.entries.push(TestScheduleEntry::Describe(child));
         match self.entries.last_mut().unwrap() {
             TestScheduleEntry::Describe(d) => &mut **d,
@@ -1831,7 +1827,10 @@ impl DescribeScope {
     ) -> JsResult<&mut ExecutionEntry> {
         let mut entry = ExecutionEntry::create(name_not_owned, callback, cfg, Some(std::ptr::from_mut(self)), base, phase);
         let has_cb = entry.callback.is_some();
-        entry.base.propagate(has_cb);
+        // jest-circus runs a describe's beforeAll/afterAll iff it contains at least one
+        // test that isn't skipped. `test.todo` counts; `test.skip` and filtered-out don't.
+        let triggers_all_hooks = !matches!(entry.base.mode, ScopeMode::Skip | ScopeMode::FilteredOut);
+        entry.base.propagate(has_cb, triggers_all_hooks);
         self.entries.push(TestScheduleEntry::TestCallback(entry));
         match self.entries.last_mut().unwrap() {
             TestScheduleEntry::TestCallback(e) => Ok(&mut **e),

@@ -82,7 +82,7 @@ impl Order {
         if current.failed {
             return Ok(()); // do not schedule any tests in a failed describe scope
         }
-        let use_hooks = self.cfg.always_use_hooks || current.base.has_callback;
+        let use_hooks = current.base.has_callback;
 
         // gather beforeAll
         let beforeall_order: AllOrderResult = if use_hooks {
@@ -262,7 +262,6 @@ impl AllOrderResult {
 }
 
 pub struct Config {
-    pub always_use_hooks: bool,
     // The only call site seeds a concrete `DefaultPrng` (xoshiro256++), so
     // no type-erased Random vtable is needed.
     pub randomize: Option<bun_core::rand::DefaultPrng>,

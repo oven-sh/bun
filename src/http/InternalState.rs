@@ -13,11 +13,6 @@ bun_core::define_scoped_log!(log, HTTPInternalState, hidden);
 
 pub struct InternalState<'a> {
     pub response_message_buffer: MutableString,
-    /// pending response is the temporary storage for the response headers, url and status code
-    /// this uses shared_response_headers_buf to store the headers
-    /// this will be turned None once the metadata is cloned
-    pub pending_response: Option<bun_picohttp::Response<'static>>,
-
     /// This is the cloned metadata containing the response headers, url and status code after the .headers phase are received
     /// will be turned None once returned to the user (the ownership is transferred to the user)
     /// this can happen after await fetch(...) and the body can continue streaming when this is already None
@@ -121,7 +116,6 @@ impl Default for InternalState<'_> {
     fn default() -> Self {
         Self {
             response_message_buffer: MutableString::init_empty(),
-            pending_response: None,
             cloned_metadata: None,
             flags: InternalStateFlags::new(),
             transfer_encoding: Encoding::Identity,
@@ -157,7 +151,6 @@ impl<'a> InternalState<'a> {
             response_message_buffer: MutableString::init_empty(),
             body_out_str: Some(NonNull::from(body_out_str)),
             stage: Stage::Pending,
-            pending_response: None,
             ..Default::default()
         }
     }
@@ -239,6 +232,29 @@ impl<'a> InternalState<'a> {
 
         // Content-Type: text/event-stream we should be done only when Close/End/Timeout connection
         self.flags.received_last_chunk
+    }
+
+    /// True when a socket close during `in_progress` completes the body rather
+    /// than failing it: chunked decoder already in the trailers state, or a
+    /// close-delimited response (no Content-Length, no Transfer-Encoding).
+    pub fn is_body_complete_on_close(&self) -> bool {
+        if self.is_chunked_encoding() {
+            // 4 = CHUNKED_IN_TRAILERS_LINE_HEAD, 5 = CHUNKED_IN_TRAILERS_LINE_MIDDLE
+            return matches!(self.chunked_decoder._state, 4 | 5);
+        }
+        self.content_length.is_none() && self.response_stage == HTTPStage::Body
+    }
+
+    /// Mark the body complete and drive `process_body_buffer` one last time
+    /// with `is_final_chunk = true` so a compressed stream that never reached
+    /// stream-end is rejected. Call from every site that flips
+    /// `received_last_chunk` on an end-of-body signal that arrives with no
+    /// accompanying body bytes (h1 FIN, proxy-tunnel close, h2/h3 END_STREAM).
+    /// No-op for complete, empty, or uncompressed bodies.
+    pub fn finalize_body_on_eof(&mut self) -> Result<(), Error> {
+        self.flags.received_last_chunk = true;
+        let buffer_snap = core::mem::take(&mut self.get_body_buffer().list);
+        self.process_body_buffer(buffer_snap, true).map(drop)
     }
 
     pub fn decompress_bytes(
@@ -381,15 +397,6 @@ impl<'a> InternalState<'a> {
 
         self.compressed_body.reset();
         Ok(())
-    }
-
-    pub fn decompress(
-        &mut self,
-        buffer: &MutableString,
-        body_out_str: &mut MutableString,
-        is_final_chunk: bool,
-    ) -> Result<(), Error> {
-        self.decompress_bytes(buffer.list.as_slice(), body_out_str, is_final_chunk)
     }
 
     // `buffer` is always the current body buffer's bytes. To avoid aliased &mut/& under

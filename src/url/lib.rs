@@ -64,9 +64,6 @@ pub mod whatwg {
         safe fn URL__fromString(str: &mut String) -> Option<core::ptr::NonNull<URL>>;
         safe fn URL__protocol(url: &URL) -> String;
         safe fn URL__href(url: &URL) -> String;
-        safe fn URL__username(url: &URL) -> String;
-        safe fn URL__password(url: &URL) -> String;
-        safe fn URL__search(url: &URL) -> String;
         safe fn URL__host(url: &URL) -> String;
         safe fn URL__hostname(url: &URL) -> String;
         safe fn URL__port(url: &URL) -> u32;
@@ -145,15 +142,6 @@ pub mod whatwg {
         }
         pub fn href(&self) -> String {
             URL__href(self)
-        }
-        pub fn username(&self) -> String {
-            URL__username(self)
-        }
-        pub fn password(&self) -> String {
-            URL__password(self)
-        }
-        pub fn search(&self) -> String {
-            URL__search(self)
         }
         /// Returns the host WITHOUT the port.
         ///
@@ -322,7 +310,7 @@ impl<'a> URL<'a> {
     }
 
     pub fn is_file(&self) -> bool {
-        self.protocol == b"file"
+        strings::eql_case_insensitive_ascii(self.protocol, b"file", true)
     }
 
     /// host + path without the ending slash, protocol, searchParams and hash
@@ -375,15 +363,6 @@ impl<'a> URL<'a> {
         Self::from_string(&BunString::borrow_utf8(input))
     }
 
-    pub fn is_localhost(&self) -> bool {
-        self.hostname.is_empty() || self.hostname == b"localhost" || self.hostname == b"0.0.0.0"
-    }
-
-    #[inline]
-    pub fn is_unix(&self) -> bool {
-        self.protocol.starts_with(b"unix")
-    }
-
     pub fn display_protocol(&self) -> &[u8] {
         if !self.protocol.is_empty() {
             return self.protocol;
@@ -398,17 +377,19 @@ impl<'a> URL<'a> {
         b"http"
     }
 
+    // RFC 3986 §3.1: the scheme is case-insensitive. `URL::parse` borrows
+    // `protocol` from the input without normalizing, so compare accordingly.
     #[inline]
     pub fn is_https(&self) -> bool {
-        self.protocol == b"https"
+        strings::eql_case_insensitive_ascii(self.protocol, b"https", true)
     }
     #[inline]
     pub fn is_s3(&self) -> bool {
-        self.protocol == b"s3"
+        strings::eql_case_insensitive_ascii(self.protocol, b"s3", true)
     }
     #[inline]
     pub fn is_http(&self) -> bool {
-        self.protocol == b"http"
+        strings::eql_case_insensitive_ascii(self.protocol, b"http", true)
     }
 
     pub fn display_hostname(&self) -> &[u8] {
@@ -466,7 +447,7 @@ impl<'a> URL<'a> {
     }
 
     pub fn has_http_like_protocol(&self) -> bool {
-        self.protocol == b"http" || self.protocol == b"https"
+        self.is_http() || self.is_https()
     }
 
     pub fn get_port(&self) -> Option<u16> {
@@ -979,30 +960,6 @@ impl QueryStringMap {
 
     pub fn has(&self, input: &[u8]) -> bool {
         self.get_index(input).is_some()
-    }
-
-    pub fn get_all<'s>(&'s self, input: &[u8], target: &mut [&'s [u8]]) -> usize {
-        let hash = wyhash(input);
-        self.get_all_with_hash_from_offset(target, hash, 0)
-    }
-
-    pub fn get_all_with_hash_from_offset<'s>(
-        &'s self,
-        target: &mut [&'s [u8]],
-        hash: u64,
-        offset: usize,
-    ) -> usize {
-        let mut remainder = &self.list[offset..];
-        let mut target_i: usize = 0;
-        while !remainder.is_empty() && target_i < target.len() {
-            let Some(i) = remainder.iter().position(|p| p.name_hash == hash) else {
-                break;
-            };
-            target[target_i] = self.str(remainder[i].value);
-            remainder = &remainder[i + 1..];
-            target_i += 1;
-        }
-        target_i
     }
 
     pub fn init_with_scanner(

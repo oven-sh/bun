@@ -26,8 +26,6 @@ bun run build:local run script.ts          # debug build with local WebKit
 
 When exec args are present, build output is suppressed unless the build fails — you see only the binary's output. Build flags (e.g. `--asan=off`) go before the exec args; see `scripts/build.ts` header for the full arg routing rules.
 
-```
-
 ### Changes that don't require a build
 
 Edits to **TypeScript type declarations** (`packages/bun-types/**/*.d.ts`) do not touch any compiled code, so `bun bd` is unnecessary. The types test just packs the `.d.ts` files and runs `tsc` against fixtures — it never executes your build. Run it directly with the system Bun (an explicit exception to the "never use `bun test` directly" rule):
@@ -190,7 +188,6 @@ The code review rules — what blocks merges, distilled from ~2,500 merged PRs �
 
 Several situational sections live in `.claude/docs/landing-prs.md` — read the relevant one before the work it covers: **Node/Web compat** (touching `node:*` modules, Web APIs, or `src/runtime/node/`), **API design** (adding or changing user-facing API surface), **Performance** (optimizing, touching hot paths, or making perf claims), **Cross-platform** (platform-gated code, FFI/ABI, or platform-sensitive tests), **Dependencies & vendoring** (bumping deps or touching `vendor/`), **Docs, types, and comments** (docs, `.d.ts`, JSDoc), and **PR process** (opening or responding to a PR).
 
-
 ## Important Development Notes
 
 1. **Never use `bun test` or `bun <file>` directly** - always use `bun bd test` or `bun bd <command>`. `bun bd` compiles & runs the debug build.
@@ -205,7 +202,8 @@ Several situational sections live in `.claude/docs/landing-prs.md` — read the 
 10. **Debug builds** - Use `BUN_DEBUG_QUIET_LOGS=1` to disable debug logging, or `BUN_DEBUG_<SCOPE>=1` to enable a specific `bun_core::output` scoped logger
 11. **Be humble & honest** - NEVER overstate what you got done or what actually works in commits, PRs or in messages to the user.
 12. **Branch names must start with `claude/`** - This is a requirement for the CI to work.
-13. **Keep code comments to 3 lines max** - Comments must be concise. If the code needs more explanation than that, it belongs in docs — and only when explicitly asked for.
+13. **If you need a paragraph-long comment to justify why the workaround is OK, the code is wrong — fix the code.**.
+14. After every code comment you write, ask yourself, "Is this information the next Claude would spend multiple tool calls trying to understand?". If the answer isn't clearly yes, the code comment is noise - delete it.
 
 **ONLY** push up changes after running `bun bd test <file>` and ensuring your tests pass.
 

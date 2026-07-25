@@ -53,12 +53,6 @@ impl Dir {
     pub fn open(path: &[u8]) -> Maybe<Self> {
         open_dir_at(Fd::cwd(), path).map(Self::from_fd)
     }
-    /// Open `path` relative to cwd with explicit flags. `O_DIRECTORY` is
-    /// always added.
-    #[inline]
-    pub fn open_with(path: &[u8], flags: i32) -> Maybe<Self> {
-        openat_a(Fd::cwd(), path, flags | O::DIRECTORY, 0).map(Self::from_fd)
-    }
     /// Open `sub_path` relative to this dir.
     #[inline]
     pub fn open_at(&self, sub_path: &[u8]) -> Maybe<Self> {

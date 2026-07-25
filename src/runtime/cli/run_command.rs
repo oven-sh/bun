@@ -237,7 +237,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         original_script: &[u8],
         name: &[u8],
         cwd: &[u8],
-        env: &mut DotEnv::Loader<'_>,
+        env: &mut DotEnv::Loader,
         passthrough: &[Box<[u8]>],
         silent: bool,
         use_system_shell: bool,
@@ -262,7 +262,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         original_script: &[u8],
         name: &[u8],
         cwd: &[u8],
-        env: &mut DotEnv::Loader<'_>,
+        env: &mut DotEnv::Loader,
         passthrough: &[Box<[u8]>],
         silent: bool,
         use_system_shell: bool,
@@ -308,13 +308,8 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         if !use_system_shell {
             // SAFETY: `MiniEventLoop` stores `env` as a raw `*mut`; the loader
             // outlives the call (process-lifetime in `configure_env_for_run`).
-            // Erase the loader's borrowed lifetime to `'static` for the
-            // singleton handoff.
             let mini = bun_event_loop::MiniEventLoop::init_global(
-                Some(unsafe {
-                    &mut *std::ptr::from_mut::<DotEnv::Loader<'_>>(env)
-                        .cast::<DotEnv::Loader<'static>>()
-                }),
+                Some(unsafe { &mut *std::ptr::from_mut::<DotEnv::Loader>(env) }),
                 Some(cwd),
             );
             // SAFETY: `init_global` returns the thread-local singleton as a raw
@@ -396,12 +391,8 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             windows: crate::api::bun_process::WindowsOptions {
                 loop_: bun_jsc::EventLoopHandle::init_mini(
                     bun_event_loop::MiniEventLoop::init_global(
-                        // SAFETY: same lifetime erasure as the `!use_system_shell`
-                        // branch above — `env` outlives the mini event loop.
-                        Some(unsafe {
-                            &mut *::core::ptr::from_mut::<DotEnv::Loader<'_>>(env)
-                                .cast::<DotEnv::Loader<'static>>()
-                        }),
+                        // SAFETY: `env` outlives the mini event loop.
+                        Some(unsafe { &mut *::core::ptr::from_mut::<DotEnv::Loader>(env) }),
                         None,
                     ),
                 ),
@@ -538,7 +529,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
     pub fn configure_env_for_run(
         ctx: &mut ContextData,
         this_transpiler: &mut ::core::mem::MaybeUninit<Transpiler<'static>>,
-        env: Option<*mut DotEnv::Loader<'static>>,
+        env: Option<*mut DotEnv::Loader>,
         log_errors: bool,
         store_root_fd: bool,
     ) -> crate::Result<bun_resolver::DirInfoRef> {
@@ -552,7 +543,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
     pub fn configure_env_for_run_without_linker(
         ctx: &mut ContextData,
         this_transpiler: &mut ::core::mem::MaybeUninit<Transpiler<'static>>,
-        env: Option<*mut DotEnv::Loader<'static>>,
+        env: Option<*mut DotEnv::Loader>,
         log_errors: bool,
         store_root_fd: bool,
     ) -> crate::Result<bun_resolver::DirInfoRef> {
@@ -584,7 +575,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
     fn configure_env_for_run_impl(
         ctx: &mut ContextData,
         this_transpiler: &mut ::core::mem::MaybeUninit<Transpiler<'static>>,
-        env: Option<*mut DotEnv::Loader<'static>>,
+        env: Option<*mut DotEnv::Loader>,
         log_errors: bool,
         store_root_fd: bool,
         with_linker: bool,
@@ -899,9 +890,8 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         let top_level_dir: &[u8] = ctx.args.absolute_working_dir.as_deref().unwrap_or(b"");
         let mini = bun_event_loop::MiniEventLoop::init_global(
             // SAFETY: `bundle.env` points to the process-lifetime DotEnv
-            // singleton (set by `Transpiler::init`); erasing the borrowed
-            // lifetime mirrors the `run_package_script_foreground` handoff.
-            Some(unsafe { &mut *bundle.env.cast::<DotEnv::Loader<'static>>() }),
+            // singleton (set by `Transpiler::init`).
+            Some(unsafe { &mut *bundle.env }),
             None,
         );
         // SAFETY: `init_global` returns the thread-local singleton; single-
@@ -1076,8 +1066,6 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         vm.load_extra_env_and_source_code_printer();
         vm.is_main_thread = true;
         bun_jsc::virtual_machine::IS_MAIN_THREAD_VM.set(true);
-
-        vm.env_loader().load_tracy();
 
         bun_http::EXPERIMENTAL_HTTP2_CLIENT_FROM_CLI.store(
             ctx.runtime_options.experimental_http2_fetch,
@@ -2082,7 +2070,7 @@ impl RunCommand {
         executable: &[u8],
         executable_z: &ZStr,
         cwd: &[u8],
-        env: &mut DotEnv::Loader<'static>,
+        env: &mut DotEnv::Loader,
         passthrough: &[Box<[u8]>],
         original_script_for_bun_run: Option<&[u8]>,
     ) -> crate::Result<::core::convert::Infallible> {
@@ -2137,7 +2125,7 @@ impl RunCommand {
         executable: &[u8],
         executable_z: &ZStr,
         cwd: &[u8],
-        env: &mut DotEnv::Loader<'static>,
+        env: &mut DotEnv::Loader,
         passthrough: &[Box<[u8]>],
         original_script_for_bun_run: Option<&[u8]>,
     ) -> crate::Result<::core::convert::Infallible> {
@@ -2168,12 +2156,8 @@ impl RunCommand {
             windows: crate::api::bun_process::WindowsOptions {
                 loop_: bun_jsc::EventLoopHandle::init_mini(
                     bun_event_loop::MiniEventLoop::init_global(
-                        Some(unsafe {
-                            // SAFETY: env loader is process-lifetime; erase
-                            // borrowed lifetime for the singleton handoff.
-                            &mut *::core::ptr::from_mut::<DotEnv::Loader<'_>>(env)
-                                .cast::<DotEnv::Loader<'static>>()
-                        }),
+                        // SAFETY: env loader is process-lifetime.
+                        Some(unsafe { &mut *::core::ptr::from_mut::<DotEnv::Loader>(env) }),
                         None,
                     ),
                 ),
@@ -2444,7 +2428,7 @@ impl RunCommand {
             root_dir_info.abs_path,
             force_using_bun,
         )?;
-        let env_loader: &mut DotEnv::Loader<'static> = this_transpiler.env_mut();
+        let env_loader: &mut DotEnv::Loader = this_transpiler.env_mut();
         env_loader
             .map
             .put(b"npm_command", b"run-script")
@@ -3167,20 +3151,6 @@ impl RemoteImageDownload {
 }
 
 impl RunCommand {
-    pub fn ls(ctx: &mut ContextData) -> crate::Result<()> {
-        let args = ctx.args.clone();
-
-        let arena: &'static bun_alloc::Arena = runner_arena();
-        let mut this_transpiler = Transpiler::init(arena, ctx.log, args, None)?;
-        this_transpiler.options.env.behavior = api::DotEnvBehavior::LoadAll;
-        this_transpiler.options.env.prefix = Box::default();
-
-        this_transpiler.resolver.care_about_bin_folder = true;
-        this_transpiler.resolver.care_about_scripts = true;
-        this_transpiler.configure_linker();
-        Ok(())
-    }
-
     /// `bun feedback` — boots the embedded `eval/feedback.ts` script.
     fn bun_feedback(ctx: &mut ContextData) -> crate::Result<::core::convert::Infallible> {
         let mut entry_point_buf = [0u8; MAX_PATH_BYTES + EVAL_TRIGGER.len()];
@@ -4007,7 +3977,7 @@ impl BunXFastPath {
     pub fn try_launch(
         ctx: &mut ContextData,
         path_len: usize,
-        env: &mut DotEnv::Loader<'static>,
+        env: &mut DotEnv::Loader,
         passthrough: &[Box<[u8]>],
     ) {
         if !bun_core::FeatureFlags::WINDOWS_BUNX_FAST_PATH {

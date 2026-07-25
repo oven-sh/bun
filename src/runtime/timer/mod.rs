@@ -665,6 +665,17 @@ impl All {
         // SAFETY: caller guarantees `timer` is a valid live EventLoopTimer.
         let tag = unsafe { (*timer).tag };
         debug_assert!(tag != EventLoopTimerTag::WTFTimer, "use wtf_arm");
+
+        // Bump the global epoch into the per-timer flags so equal-deadline JS
+        // timers (setTimeout/setInterval/AbortSignal.timeout) fire in insertion
+        // order. Before heap insert: `EventLoopTimer::less` reads epoch as tiebreak.
+        // SAFETY: `timer` is live (caller contract).
+        if let Some(flags) = unsafe { js_timer_flags_ptr(timer) } {
+            self.epoch = self.epoch.wrapping_add(1) & ((1u32 << 25) - 1);
+            // SAFETY: `flags` points into the live container recovered above.
+            unsafe { (*flags.as_ptr()).set_epoch(self.epoch) };
+        }
+
         if self.fake_timers.is_active() && tag.allow_fake_timers() {
             // SAFETY: see fn contract
             unsafe {
@@ -829,17 +840,8 @@ impl All {
         timer_ref.next.sec = time.sec;
         timer_ref.next.nsec = time.nsec;
 
-        // Bump the global epoch and write it back
-        // into the per-timer flags so equal-deadline JS timers fire in
-        // refresh order.
-        // SAFETY: `timer` is live (caller contract); `timer_ref`'s last use
-        // is above so the raw `(*timer).tag` read inside is SB-clean.
-        if let Some(flags) = unsafe { js_timer_flags_ptr(timer) } {
-            self.epoch = self.epoch.wrapping_add(1) & ((1u32 << 25) - 1);
-            // SAFETY: `flags` points into the live container recovered above.
-            unsafe { (*flags.as_ptr()).set_epoch(self.epoch) };
-        }
-
+        // `insert` bumps the global epoch and writes it into the per-timer
+        // flags so equal-deadline JS timers fire in refresh order.
         self.insert(timer);
     }
 

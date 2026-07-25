@@ -42,10 +42,6 @@ pub struct WindowsNamedPipeContext {
     is_open: bool,
 }
 
-// Intrusive refcount: when count hits zero, calls `schedule_deinit` (NOT immediate free).
-// `ref_()`/`deref()` are provided by `#[derive(CellRefCounted)]` above.
-pub type RefCount = bun_ptr::IntrusiveRc<WindowsNamedPipeContext>;
-
 /// Reached from `on_close` → `Self::deref` while `WindowsNamedPipe::on_close`
 /// still holds a live `&mut (*this).named_pipe` and uses it after we return, so
 /// project raw fields only — same constraint as the `on_*` handlers below.

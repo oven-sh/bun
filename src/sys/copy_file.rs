@@ -58,7 +58,9 @@ bitflags::bitflags! {
         const HAS_IOCTL_FICLONE_FAILED     = 1 << 1;
         const HAS_COPY_FILE_RANGE_FAILED   = 1 << 2;
         const HAS_SENDFILE_FAILED          = 1 << 3;
-        // _: u4 padding
+        /// Per-fd, not per-tree: cleared on entry to `copy_file_with_state`.
+        const HAS_HINTED_SEQUENTIAL        = 1 << 4;
+        // _: u3 padding
     }
 }
 impl Default for LinuxCopyFileState {
@@ -111,6 +113,9 @@ pub fn copy_file_with_state(
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
     {
+        // Per-fd bit; the other bits persist across files in a tree walk.
+        copy_file_state.remove(LinuxCopyFileState::HAS_HINTED_SEQUENTIAL);
+
         if can_use_ioctl_ficlone()
             && !copy_file_state.contains(LinuxCopyFileState::HAS_SEEN_EXDEV)
             && !copy_file_state.contains(LinuxCopyFileState::HAS_IOCTL_FICLONE_FAILED)
@@ -217,6 +222,11 @@ pub fn copy_file_with_state(
 
     #[cfg(not(any(target_os = "linux", target_os = "android", windows)))]
     {
+        // macOS has no posix_fadvise; FreeBSD's matches Linux semantics.
+        #[cfg(target_os = "freebsd")]
+        // SAFETY: `in_` is a valid open fd; `posix_fadvise` only reads it.
+        let _ = unsafe { libc::posix_fadvise(in_.native(), 0, 0, libc::POSIX_FADV_SEQUENTIAL) };
+
         loop {
             {
                 let amt =
@@ -406,6 +416,14 @@ pub fn copy_file_range(
             }
         }
         break;
+    }
+
+    if !copy_file_state.contains(LinuxCopyFileState::HAS_HINTED_SEQUENTIAL) {
+        copy_file_state.insert(LinuxCopyFileState::HAS_HINTED_SEQUENTIAL);
+        // The read/write loop below is called once per 32 KiB chunk; hint once
+        // up front so the kernel doubles its readahead window. Best-effort.
+        // SAFETY: `in_` is a valid open fd; `posix_fadvise` only reads it.
+        let _ = unsafe { libc::posix_fadvise(in_, 0, 0, libc::POSIX_FADV_SEQUENTIAL) };
     }
 
     copy_file_read_write_loop(in_, out, len)

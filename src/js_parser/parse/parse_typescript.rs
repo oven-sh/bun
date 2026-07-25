@@ -628,25 +628,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 name: js_ast::StoreStr::new(b"" as &[u8]),
                 value: None,
             };
-            // Assigned in both live arms below; the third arm returns.
-            let needs_symbol: bool;
-
             // Parse the name
-            if p.lexer.token == T::TStringLiteral {
+            let needs_symbol: bool = if p.lexer.token == T::TStringLiteral {
                 // `slice8()` is currently duplicated in E.rs (two impl blocks);
                 // read `.data` directly — `to_utf8_e_string` guarantees `is_utf16 == false`.
                 let estr = p.lexer.to_utf8_e_string()?;
                 debug_assert!(!estr.is_utf16);
                 value.name = estr.data;
-                needs_symbol = js_lexer::is_identifier(value.name.slice());
+                js_lexer::is_identifier(value.name.slice())
             } else if p.lexer.is_identifier_or_keyword() {
                 value.name = js_ast::StoreStr::new(p.lexer.identifier);
-                needs_symbol = true;
+                true
             } else {
                 p.lexer.expect(T::TIdentifier)?;
                 // error early, name is still `undefined`
                 return Err(crate::Error::SyntaxError);
-            }
+            };
             p.lexer.next()?;
 
             // Identifiers can be referenced by other values

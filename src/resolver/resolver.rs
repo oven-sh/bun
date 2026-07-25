@@ -19,18 +19,12 @@ use std::io::Write as _;
 use ::bun_install_types::resolver_hooks as Install;
 use ::bun_install_types::resolver_hooks::{AutoInstaller, Resolution};
 use ::bun_semver as Semver;
-// Re-exported so downstream (bun_bundler) can name the trait in
-// `Transpiler::get_package_manager`'s return type without a direct
-// `bun_install_types` dep (LAYERING: pass-through, no new edge).
-pub use ::bun_install_types::resolver_hooks::AutoInstaller as PackageManagerTrait;
 
 // LAYERING: `PackageManager.initWithRuntime` lives in
 // `bun_install`, which depends on this crate. The lazy-init body is defined
 // `#[no_mangle]` in `bun_install::auto_installer` and resolved at link time
 // (same pattern as `__bun_regex_*` / `__BUN_RUNTIME_HOOKS`). `install` is the
-// `?*Api.BunInstall` (`self.opts.install`); `env` is the `*DotEnv.Loader`
-// (lifetime-erased to `'static` — the install crate stores it as a raw
-// `NonNull<Loader<'static>>`).
+// `?*Api.BunInstall` (`self.opts.install`); `env` is the `*DotEnv.Loader`.
 unsafe extern "Rust" {
     /// SAFETY (genuine FFI precondition — NOT a `safe fn` candidate): impl
     /// reborrows `&mut *log` / `&mut *env` and reads `*install` if non-null.
@@ -41,7 +35,7 @@ unsafe extern "Rust" {
     fn __bun_resolver_init_package_manager(
         log: NonNull<bun_ast::Log>,
         install: Option<NonNull<bun_options_types::schema::api::BunInstall>>,
-        env: NonNull<bun_dotenv::Loader<'static>>,
+        env: NonNull<bun_dotenv::Loader>,
     ) -> core::result::Result<NonNull<dyn AutoInstaller>, bun_errno::SystemErrno>;
 }
 use crate::cache::Set as CacheSet;
@@ -58,10 +52,6 @@ pub mod Dependency {
     }
 }
 
-/// Transitional re-export module: `package_json.rs` and a few external crates
-/// still spell these paths via `__forward_decls`; the items are now real
-/// re-exports of `bun_install_types` (no local stubs).
-pub(crate) mod __forward_decls {}
 // bun_paths shim — value-dispatched join helpers over `resolve_path::Platform`.
 // `dirname` (`Option`-returning) and
 // `PosixToWinNormalizer` are the real `::bun_paths` items — brought in by the
@@ -297,9 +287,9 @@ use bun_ast::SideEffects;
 // address is stable across `Vec` growth, so handing out `&'static T` is sound.
 
 /// Intern a parsed `PackageJSON` into the process-lifetime DirInfo arena.
-/// Returns `NonNull` (not `&'static`) so the mut-provenance survives into
-/// `DirInfo::reset()`'s `drop_in_place` -- handing out `&T` here and casting
-/// back to `*mut T` at the drop site would be UB under Stacked Borrows.
+/// Returns `NonNull` (not `&'static`) so mut-provenance survives to write
+/// sites — handing out `&T` here and casting back to `*mut T` would be UB
+/// under Stacked Borrows.
 fn intern_package_json(pkg: PackageJSON) -> core::ptr::NonNull<PackageJSON> {
     // `Box` is load-bearing: returns `NonNull<PackageJSON>` derived from the
     // box interior, treated as `'static`; unboxing would dangle on `Vec` realloc.
@@ -332,8 +322,6 @@ static ResolverDev: bun_core::output::ScopedLogger =
 // DirnameStore/FilenameStore). Alias here so the ~80 bare-`Path` use sites
 // resolve without a per-site lifetime annotation.
 type Path = crate::fs::Path<'static>;
-
-use crate::dir_info::HashMapExt as _;
 
 /// A temporary threadlocal buffer with a lifetime more than the current
 /// function call.
@@ -380,7 +368,6 @@ pub struct Bufs {
     pub remap_path_trailing_slash: PathBuffer,
     pub path_in_global_disk_cache: PathBuffer,
     pub abs_to_rel: PathBuffer,
-    pub node_modules_paths_buf: PathBuffer,
     pub import_path_for_standalone_module_graph: PathBuffer,
 
     #[cfg(windows)]
@@ -477,30 +464,6 @@ pub use bun_watcher::AnyResolveWatcher;
 // runtime fn-pointer alongside the context — `init` produces the
 // `AnyResolveWatcher` erased shim.
 
-pub struct ResolveWatcher<C> {
-    on_watch: fn(*mut C, &[u8], FD),
-    _marker: core::marker::PhantomData<*mut C>,
-}
-impl<C> ResolveWatcher<C> {
-    pub const fn new(on_watch: fn(*mut C, &[u8], FD)) -> Self {
-        Self {
-            on_watch,
-            _marker: core::marker::PhantomData,
-        }
-    }
-    pub fn init(self, ctx: *mut C) -> AnyResolveWatcher {
-        AnyResolveWatcher {
-            context: ctx.cast(),
-            // SAFETY: `fn(*mut C, ..)` and `fn(*mut (), ..)` are ABI-identical
-            // (Rust-ABI, thin-ptr first arg). The callback body discharges its
-            // own type-recovery.
-            callback: unsafe {
-                bun_ptr::cast_fn_ptr::<fn(*mut C, &[u8], FD), fn(*mut (), &[u8], FD)>(self.on_watch)
-            },
-        }
-    }
-}
-
 pub struct Resolver<'a> {
     pub opts: options::BundleOptions,
     // NOTE: `fs` / `log` are raw aliasing
@@ -548,7 +511,7 @@ pub struct Resolver<'a> {
     // → `run_env_loader()` which takes `&mut *self.env`). Holding a live
     // `&Loader` across that `&mut Loader` would be aliased-&mut UB; a raw
     // pointer carries no aliasing guarantee.
-    pub env_loader: Option<NonNull<DotEnv::Loader<'a>>>,
+    pub env_loader: Option<NonNull<DotEnv::Loader>>,
     pub store_fd: bool,
 
     pub standalone_module_graph: Option<&'a dyn StandaloneModuleGraph>,
@@ -670,8 +633,7 @@ impl<'a> Resolver<'a> {
             generation: from.generation,
             package_manager: from.package_manager,
             on_wake_package_manager: from.on_wake_package_manager,
-            // SAFETY: see fn doc — pointee outlives `'a`.
-            env_loader: from.env_loader.map(|p| p.cast::<DotEnv::Loader<'a>>()),
+            env_loader: from.env_loader,
             store_fd: from.store_fd,
             // SAFETY: see fn doc — lifetime-widen the trait-object borrow. The
             // vtable layout is identical (only the borrow-checker tag differs);
@@ -733,13 +695,6 @@ impl<'a> Resolver<'a> {
         // all mutation across worker clones; `&mut self` rules out
         // intra-instance aliasing.
         unsafe { &mut *self.fs }
-    }
-
-    /// Resolve the current [`options::ExtOrder`] tag to the slice it names
-    /// inside `self.opts`.
-    #[inline(always)]
-    pub fn extension_order(&self) -> &[Box<[u8]>] {
-        self.opts.ext_order_slice(self.extension_order)
     }
 
     /// Raw-pointer projection to the inner `RealFS` (`self.fs.fs`).
@@ -875,13 +830,9 @@ impl<'a> Resolver<'a> {
         if let Some(pm) = self.package_manager {
             return Ok(pm.as_ptr());
         }
-        // SAFETY: `DotEnv::Loader<'a>` is layout-identical across `'a`;
-        // `init_with_runtime` only borrows it for the synchronous init (the
-        // static `PackageManager` retains a raw `NonNull<Loader<'static>>`).
-        let env: NonNull<DotEnv::Loader<'static>> = self
+        let env: NonNull<DotEnv::Loader> = self
             .env_loader
-            .expect("Resolver.env_loader must be set before auto-install")
-            .cast::<DotEnv::Loader<'static>>();
+            .expect("Resolver.env_loader must be set before auto-install");
         // SAFETY: `__bun_resolver_init_package_manager` is defined
         // `#[no_mangle]` in `bun_install::auto_installer` and linked into the
         // final binary; `self.log` / `self.opts.install` / `env` point at
@@ -921,7 +872,7 @@ impl<'a> Resolver<'a> {
     /// live concurrently — see the field comment for why this is *not* stored
     /// as `Option<&'a Loader>`.
     #[inline]
-    pub fn env_loader(&self) -> Option<&'a DotEnv::Loader<'a>> {
+    pub fn env_loader(&self) -> Option<&'a DotEnv::Loader> {
         // SAFETY: BACKREF — `env_loader` names the Transpiler-owned
         // `DotEnv::Loader`, live for the resolver's lifetime `'a`; resolution
         // never mutates the env, so no `&mut Loader` overlaps this shared
@@ -2453,78 +2404,6 @@ impl<'a> Resolver<'a> {
         }
     }
 
-    // This is a fallback, hopefully not called often. It should be relatively quick because everything should be in the cache.
-    pub fn package_json_for_resolved_node_module(
-        &mut self,
-        result: &Result,
-    ) -> Option<*const PackageJSON> {
-        let mut dir_info = self
-            .dir_info_cached(result.path_pair.primary.name().dir)
-            .ok()
-            .flatten()?;
-        loop {
-            if let Some(pkg) = dir_info.package_json() {
-                // if it doesn't have a name, assume it's something just for adjusting the main fields (react-bootstrap does this)
-                // In that case, we really would like the top-level package that you download from NPM
-                // so we ignore any unnamed packages
-                return Some(std::ptr::from_ref(pkg));
-            }
-
-            dir_info = dir_info.get_parent()?;
-        }
-    }
-
-    pub fn root_node_module_package_json(&mut self, result: &Result) -> Option<RootPathPair<'_>> {
-        let path = result.path_const()?;
-        let mut absolute = path.text();
-        // /foo/node_modules/@babel/standalone/index.js
-        //     ^------------^
-        let mut end = strings::last_index_of(absolute, NODE_MODULE_ROOT_STRING).or_else(|| {
-            // try non-symlinked version
-            if path.pretty().len() != absolute.len() {
-                absolute = path.pretty();
-                return strings::last_index_of(absolute, NODE_MODULE_ROOT_STRING);
-            }
-            None
-        })?;
-        end += NODE_MODULE_ROOT_STRING.len();
-
-        let is_scoped_package = absolute[end] == b'@';
-        end += strings::index_of_char(&absolute[end..], SEP)? as usize;
-
-        // /foo/node_modules/@babel/standalone/index.js
-        //                   ^
-        if is_scoped_package {
-            end += 1;
-            end += strings::index_of_char(&absolute[end..], SEP)? as usize;
-        }
-
-        end += 1;
-
-        // /foo/node_modules/@babel/standalone/index.js
-        //                                    ^
-        let slice = &absolute[0..end];
-
-        // Try to avoid the hash table lookup whenever possible
-        // That can cause filesystem lookups in parent directories and it requires a lock
-        if let Some(pkg) = result.package_json_ref() {
-            if slice == pkg.source.path.name().dir_with_trailing_slash() {
-                return Some(RootPathPair {
-                    package_json: std::ptr::from_ref(pkg),
-                    base_path: slice,
-                });
-            }
-        }
-
-        {
-            let dir_info = self.dir_info_cached(slice).ok().flatten()?;
-            Some(RootPathPair {
-                base_path: slice,
-                package_json: std::ptr::from_ref(dir_info.package_json()?),
-            })
-        }
-    }
-
     /// Directory cache keys must follow the following rules. If the rules are broken,
     /// then there will be conflicting cache entries, and trying to bust the cache may not work.
     ///
@@ -3252,7 +3131,6 @@ impl<'a> Resolver<'a> {
                                     return MatchStatus::Pending(Box::new(PendingResolution {
                                         esm: cloned,
                                         dependency: dependency_version,
-                                        resolution_id: resolved_package_id,
                                         string_buf,
                                         tag: PendingResolutionTag::Download,
                                         ..Default::default()
@@ -4149,6 +4027,16 @@ impl<'a> Resolver<'a> {
             return Ok(None);
         }
 
+        // `PathName::init` leaves `.dir` empty when the separator is the
+        // leading one (e.g. `/a.js`) or the path has no separator at all
+        // (virtual/plugin specifiers). Callers like `finalize_result` pass
+        // that `.dir` straight through and already treat `None` as "skip",
+        // so return it here instead of walking the cache with an empty key.
+        // https://github.com/oven-sh/bun/issues/30429
+        if input_path.is_empty() {
+            return Ok(None);
+        }
+
         #[cfg(windows)]
         {
             let win32_normalized_dir_info_cache_buf = bufs!(win32_normalized_dir_info_cache);
@@ -4181,11 +4069,12 @@ impl<'a> Resolver<'a> {
             }
         }
 
-        assert!(
-            bun_paths::is_absolute(input_path),
-            "cannot resolve DirInfo for non-absolute path: {}",
-            bstr::BStr::new(input_path)
-        );
+        // A non-absolute path has no DirInfo. Every caller already routes
+        // `Ok(None)` into its fallback, so bail instead of panicking on a
+        // path shape the caller produced.
+        if !bun_paths::is_absolute(input_path) {
+            return Ok(None);
+        }
 
         let path_without_trailing_slash = strings::without_trailing_slash_windows_path(input_path);
         Self::assert_valid_cache_key(path_without_trailing_slash);
@@ -6568,29 +6457,6 @@ impl<'a> Resolver<'a> {
     }
 }
 
-impl<'a> Resolver<'a> {
-    /// NOTE: NOT `impl Drop` — the bundler builds a `Resolver` per worker
-    /// thread (see `for_worker`), and all instances share the same `dir_cache`
-    /// singleton. A `Drop` impl would fire once per worker going out of scope,
-    /// resetting the SHARED cache (freeing PackageJSON/TSConfigJSON, closing cached
-    /// fds) while other live Resolvers still hold pointers into it. Call
-    /// `deinit` explicitly exactly once at shutdown.
-    pub fn deinit(&mut self) {
-        // Caller is the sole remaining owner at shutdown; no other Resolver alias is live.
-        for di in self.dir_cache_mut().values_mut() {
-            // `DirInfo::reset` releases owned PackageJSON / TSConfigJSON resources
-            // in-place (side effects beyond memory: those Drops close cached fds /
-            // deref intrusive refcounts).
-            di.reset();
-        }
-        // dir_cache is &'static — do not deinit the singleton here. `dir_cache`
-        // is the process-global
-        // BSSMap singleton (`DirInfo.HashMap` / `hash_map_instance()`); the
-        // entries' owned resources are released by the `reset()` loop above and
-        // the map storage itself lives for the process.
-    }
-}
-
 // ─── nested helper types ───────────────────────────────────────────────────
 
 enum DependencyToResolve {
@@ -6728,9 +6594,6 @@ fn module_type_from_ext(ext: &[u8]) -> Option<options::ModuleType> {
     MODULE_TYPE_FROM_EXT.get(ext).copied()
 }
 
-const NODE_MODULE_ROOT_STRING: &[u8] =
-    const_format::concatcp!(SEP_STR, "node_modules", SEP_STR).as_bytes();
-
 pub struct Dirname;
 
 impl Dirname {
@@ -6786,9 +6649,4 @@ impl Dirname {
 
         &path[0..end_index + 1]
     }
-}
-
-pub struct RootPathPair<'b> {
-    pub base_path: &'b [u8],
-    pub package_json: *const PackageJSON,
 }

@@ -512,7 +512,6 @@ impl Execution {
         if let Some(entry_ptr) = sequence.active_entry {
             // SAFETY: arena-owned entry, alive for lifetime of BunTest
             let entry = unsafe { entry_ptr.as_ref() };
-            Execution::on_entry_completed(entry_ptr);
 
             sequence.executing = false;
             if sequence.maybe_skip {
@@ -537,6 +536,7 @@ impl Execution {
             // Handle retry logic: if test failed and we have retries remaining, retry it
             if test_failed && sequence.remaining_retry_count > 0 {
                 sequence.remaining_retry_count -= 1;
+                Execution::discard_junit_failure(buntest);
                 Execution::reset_sequence(sequence);
                 return;
             }
@@ -544,6 +544,7 @@ impl Execution {
             // Handle repeat logic: if test passed and we have repeats remaining, repeat it
             if test_passed && sequence.remaining_repeat_count > 0 {
                 sequence.remaining_repeat_count -= 1;
+                Execution::discard_junit_failure(buntest);
                 Execution::reset_sequence(sequence);
                 return;
             }
@@ -620,8 +621,6 @@ impl Execution {
         }
     }
 
-    fn on_entry_completed(_entry: NonNull<ExecutionEntry>) {}
-
     fn on_sequence_completed(buntest: NonNull<BunTest>, sequence: &mut ExecutionSequence) {
         let elapsed_ns: u64 = if sequence.started_at.eql(&Timespec::EPOCH) {
             0
@@ -697,6 +696,22 @@ impl Execution {
                         );
                     }
                 }
+            }
+        }
+    }
+
+    /// Drop any captured junit failure so the next retry/repeat starts fresh.
+    /// Kept out of `reset_sequence` so within-attempt errors (e.g. a throwing
+    /// afterEach after the test body already threw) accumulate instead of
+    /// clobbering the primary failure.
+    fn discard_junit_failure(buntest: NonNull<BunTest>) {
+        // SAFETY: `buntest` points at the live per-file BunTest; single-threaded
+        // test runner, no other borrow live here.
+        if let Some(reporter) = unsafe { (*buntest.as_ptr()).reporter } {
+            // SAFETY: `reporter` is a `NonNull<CommandLineReporter>` with write
+            // provenance (see BunTest docs); single-threaded, no other borrow.
+            if let Some(junit) = unsafe { (*reporter.as_ptr()).reporters.junit.as_deref_mut() } {
+                junit.last_failure = None;
             }
         }
     }

@@ -320,11 +320,7 @@ impl PosixLoop {
     ) -> Handler {
         // SAFETY: `this` is the live C-allocated loop pointer per fn contract.
         unsafe { c::uws_loop_addPostHandler(this, ctx, callback) };
-        Handler {
-            loop_: this,
-            ctx,
-            callback,
-        }
+        Handler { loop_: this }
     }
 
     /// # Safety
@@ -337,11 +333,7 @@ impl PosixLoop {
     ) -> Handler {
         // SAFETY: `this` is the live C-allocated loop pointer per fn contract.
         unsafe { c::uws_loop_addPreHandler(this, ctx, callback) };
-        Handler {
-            loop_: this,
-            ctx,
-            callback,
-        }
+        Handler { loop_: this }
     }
 
     pub fn run(&mut self) {
@@ -373,26 +365,6 @@ impl PosixLoop {
 /// shared `&Loop` would make the `*const → *mut` cast UB when written through.
 pub struct Handler {
     pub loop_: *mut Loop,
-    ctx: *mut c_void,
-    callback: unsafe extern "C" fn(*mut c_void, *mut Loop),
-}
-
-impl Handler {
-    pub fn remove_post(&self) {
-        // SAFETY: `loop_` is the original C-allocated raw pointer (from
-        // `us_create_loop`/`uws_get_loop`) stored by `add_*_handler`, with provenance
-        // that outlives this Handler and permits mutation; callback was previously registered.
-        unsafe { c::uws_loop_removePostHandler(self.loop_, self.ctx, self.callback) };
-    }
-
-    pub fn remove_pre(&self) {
-        // Intentionally calls `uws_loop_removePostHandler` here (likely an
-        // upstream bug); preserving longstanding behavior verbatim.
-        // SAFETY: `loop_` is the original C-allocated raw pointer (from
-        // `us_create_loop`/`uws_get_loop`) stored by `add_*_handler`, with provenance
-        // that outlives this Handler and permits mutation; callback was previously registered.
-        unsafe { c::uws_loop_removePostHandler(self.loop_, self.ctx, self.callback) };
-    }
 }
 
 // ───────────────────────────── WindowsLoop ─────────────────────────────
@@ -587,11 +559,7 @@ impl WindowsLoop {
     ) -> Handler {
         // SAFETY: `this` is the live C-allocated loop pointer per fn contract.
         unsafe { c::uws_loop_addPostHandler(this, ctx, callback) };
-        Handler {
-            loop_: this,
-            ctx,
-            callback,
-        }
+        Handler { loop_: this }
     }
 
     /// # Safety
@@ -604,11 +572,7 @@ impl WindowsLoop {
     ) -> Handler {
         // SAFETY: `this` is the live C-allocated loop pointer per fn contract.
         unsafe { c::uws_loop_addPreHandler(this, ctx, callback) };
-        Handler {
-            loop_: this,
-            ctx,
-            callback,
-        }
+        Handler { loop_: this }
     }
 }
 
@@ -650,7 +614,6 @@ mod c {
         pub(super) fn us_loop_pump(loop_: *mut Loop);
         pub fn us_wakeup_loop(loop_: *mut Loop);
         pub(super) fn uws_loop_addPostHandler(loop_: *mut Loop, ctx: *mut c_void, cb: LoopCtxCb);
-        pub(super) fn uws_loop_removePostHandler(loop_: *mut Loop, ctx: *mut c_void, cb: LoopCtxCb);
         pub(super) fn uws_loop_addPreHandler(loop_: *mut Loop, ctx: *mut c_void, cb: LoopCtxCb);
         #[cfg(not(windows))]
         pub(super) fn us_loop_run_bun_tick(

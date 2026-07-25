@@ -43,8 +43,7 @@ pub mod bun_install_js_bindings {
 
         let mut log = bun_ast::Log::init();
 
-        let args = frame.arguments_old::<1>();
-        let args = args.slice();
+        let args = frame.arguments();
         let cwd = args[0].to_slice_or_null(global)?;
 
         let dir = match bun_sys::open_dir_absolute_not_for_deleting_or_renaming(cwd.slice()) {
@@ -105,7 +104,6 @@ pub mod bun_install_js_bindings {
         // `Vec<u8>`.
         let mut w = WriteStream::new(WriteStreamOptions {
             indent: 2,
-            emit_null_optional_fields: true,
             emit_nonportable_numbers_as_strings: true,
         });
         // `jsonStringify` only surfaces the underlying writer's error; the

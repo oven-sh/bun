@@ -53,17 +53,9 @@ pub const CI_ASSERT: bool =
 pub const SHOW_CRASH_TRACE: bool = IS_DEBUG || IS_TEST || ENABLE_ASAN;
 
 pub const REPORTED_NODEJS_VERSION: &str = build_options::REPORTED_NODEJS_VERSION;
-pub const BASELINE: bool = build_options::BASELINE;
-/// Only `BASELINE` gates SIMD.
-pub const ENABLE_SIMD: bool = !BASELINE;
 pub const GIT_SHA: &str = build_options::SHA;
 pub const GIT_SHA_SHORT: &str = if !build_options::SHA.is_empty() {
     const_str_slice(build_options::SHA, 0, 9)
-} else {
-    ""
-};
-pub const GIT_SHA_SHORTER: &str = if !build_options::SHA.is_empty() {
-    const_str_slice(build_options::SHA, 0, 6)
 } else {
     ""
 };
@@ -105,16 +97,6 @@ pub enum OperatingSystem {
     Wasm,
 }
 
-/// OS tag for the targets Bun builds for.
-#[repr(u8)]
-#[derive(Copy, Clone, PartialEq, Eq)]
-pub enum StdOsTag {
-    Macos,
-    Linux,
-    Freebsd,
-    Windows,
-}
-
 impl OperatingSystem {
     /// user-facing name with capitalization
     pub const fn display_string(self) -> &'static str {
@@ -135,16 +117,6 @@ impl OperatingSystem {
             Self::Freebsd => "freebsd",
             Self::Windows => "win32",
             Self::Wasm => "wasm",
-        }
-    }
-
-    pub const fn std_os_tag(self) -> StdOsTag {
-        match self {
-            Self::Mac => StdOsTag::Macos,
-            Self::Linux => StdOsTag::Linux,
-            Self::Freebsd => StdOsTag::Freebsd,
-            Self::Windows => StdOsTag::Windows,
-            Self::Wasm => unreachable!(),
         }
     }
 
@@ -197,10 +169,6 @@ pub const OS: OperatingSystem = if IS_MAC {
     panic!("Please add your OS to the OperatingSystem enum")
 };
 
-/// `process.platform`-style name for the host OS (`"win32"` on Windows).
-/// NB: Android targets resolve to `"linux"` here — for the user-facing
-/// `"android"` string see `bun_core::Global::os_name`.
-pub const OS_NAME_NODE: &str = OS.name_string();
 /// npm-package / release-archive segment for the host OS (`"windows"` on Windows).
 pub const OS_NAME_NPM: &str = OS.npm_name();
 

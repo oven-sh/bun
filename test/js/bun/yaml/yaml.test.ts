@@ -63,9 +63,9 @@ describe("Bun.YAML", () => {
         const str = "value: 42";
         const encoder = new TextEncoder();
         const bytes = encoder.encode(str);
-        // Ensure buffer is aligned for Int32Array
+        // Ensure buffer is aligned for Int32Array; pad with LF (NUL is not c-printable)
         const alignedBuffer = new ArrayBuffer(Math.ceil(bytes.length / 4) * 4);
-        new Uint8Array(alignedBuffer).set(bytes);
+        new Uint8Array(alignedBuffer).fill(0x0a).set(bytes);
         const int32Array = new Int32Array(alignedBuffer);
         expect(YAML.parse(int32Array)).toEqual({ value: 42 });
       });
@@ -74,9 +74,9 @@ describe("Bun.YAML", () => {
         const str = "test: pass";
         const encoder = new TextEncoder();
         const bytes = encoder.encode(str);
-        // Ensure buffer is aligned for Uint32Array
+        // Ensure buffer is aligned for Uint32Array; pad with LF (NUL is not c-printable)
         const alignedBuffer = new ArrayBuffer(Math.ceil(bytes.length / 4) * 4);
-        new Uint8Array(alignedBuffer).set(bytes);
+        new Uint8Array(alignedBuffer).fill(0x0a).set(bytes);
         const uint32Array = new Uint32Array(alignedBuffer);
         expect(YAML.parse(uint32Array)).toEqual({ test: "pass" });
       });
@@ -118,9 +118,9 @@ describe("Bun.YAML", () => {
         const str = "huge: 1000";
         const encoder = new TextEncoder();
         const bytes = encoder.encode(str);
-        // Ensure buffer is aligned for BigUint64Array
+        // Ensure buffer is aligned for BigUint64Array; pad with LF (NUL is not c-printable)
         const alignedBuffer = new ArrayBuffer(Math.ceil(bytes.length / 8) * 8);
-        new Uint8Array(alignedBuffer).set(bytes);
+        new Uint8Array(alignedBuffer).fill(0x0a).set(bytes);
         const bigUint64Array = new BigUint64Array(alignedBuffer);
         expect(YAML.parse(bigUint64Array)).toEqual({ huge: 1000 });
       });
@@ -171,9 +171,9 @@ database:
         const yaml = "[1, 2, 3, 4, 5]";
         const encoder = new TextEncoder();
         const bytes = encoder.encode(yaml);
-        // Ensure buffer is aligned for Uint32Array
+        // Ensure buffer is aligned for Uint32Array; pad with LF (NUL is not c-printable)
         const alignedBuffer = new ArrayBuffer(Math.ceil(bytes.length / 4) * 4);
-        new Uint8Array(alignedBuffer).set(bytes);
+        new Uint8Array(alignedBuffer).fill(0x0a).set(bytes);
         const uint32Array = new Uint32Array(alignedBuffer);
         expect(YAML.parse(uint32Array)).toEqual([1, 2, 3, 4, 5]);
       });
@@ -1305,6 +1305,36 @@ folded: >
           // ScanOptions.tag doesn't affect their resolution anyway.
           expect(YAML.parse('a: !!str\n"b": c\n')).toEqual({ a: "", b: "c" });
           expect(YAML.parse("a: !!str\n'b': c\n")).toEqual({ a: "", b: "c" });
+          // Same for a seq entry; the tag resolves e-scalar and the quoted
+          // sibling is not re-scanned.
+          expect(YAML.parse('- !!str\n- "123"\n')).toEqual(["", "123"]);
+          expect(YAML.parse("- !!str\n- '123'\n")).toEqual(["", "123"]);
+          // A quoted scalar that *is* content (indent > n) takes the tag as-is.
+          expect(YAML.parse('a:\n  !!str\n  "0xFF"\n')).toEqual({ a: "0xFF" });
+          expect(YAML.parse("a:\n  !!str\n  '0xFF'\n")).toEqual({ a: "0xFF" });
+          // Block scalar at parent indent after a tag: tag resolves e-scalar
+          // (`|` at indent 0 cannot be [197] flow-in-block content for `a:`).
+          expect(() => YAML.parse("a: !!str\n|\n text\n")).toThrow("Unexpected token");
+        });
+
+        test("multi-line quoted scalars fold line breaks per [120]/[109]", () => {
+          // Line folding: a single break becomes a space, an extra break
+          // becomes a literal newline, and `\\<break>` in double-quoted is a
+          // line continuation (no space). These are the inputs the old
+          // `multiline` computation keyed on; the resolved value is the only
+          // observable.
+          expect(YAML.parse('a: "one\n  two"\n')).toEqual({ a: "one two" });
+          expect(YAML.parse("a: 'one\n  two'\n")).toEqual({ a: "one two" });
+          expect(YAML.parse('a: "one\n\n  two"\n')).toEqual({ a: "one\ntwo" });
+          expect(YAML.parse('a: "one\\\n  two"\n')).toEqual({ a: "onetwo" });
+          expect(YAML.parse('a:\n  "one\n   two"\nb: y\n')).toEqual({ a: "one two", b: "y" });
+          expect(YAML.parse("a:\n  'one\n   two'\nb: y\n")).toEqual({ a: "one two", b: "y" });
+          // Same folding applies in flow context.
+          expect(YAML.parse('["a\n b", c]\n')).toEqual(["a b", "c"]);
+          expect(YAML.parse('{"a\n b": 1}\n')).toEqual({ "a b": 1 });
+          // A multi-line quoted scalar used as an implicit block-map key is
+          // still a [154] violation, regardless of how the value folds.
+          expect(() => YAML.parse('a: !!str\n"b\n c": x\n')).toThrow("Multiline implicit key");
         });
 
         test("tag does not leak to abandoned sibling key", () => {
@@ -1833,11 +1863,37 @@ folded: >
       // Bugs surfaced by the multi-modal bughunt (12 finder lenses × 3 rounds).
       // Each todo asserts the spec-correct result.
       describe("bughunt findings", () => {
-        test.todo("NUL byte (U+0000) is not c-printable — should error, not truncate", () => {
-          // [1] c-printable excludes NUL. Currently NUL is the EOF sentinel, so
-          // input is silently truncated. Data loss / security-adjacent.
-          expect(() => YAML.parse("a: 1\x00b: 2")).toThrow();
-          expect(() => YAML.parse("key: foo\x00bar")).toThrow();
+        describe("NUL byte (U+0000) is not c-printable — should error, not truncate", () => {
+          // [1] c-printable excludes NUL. NUL is the peek()/next() EOF sentinel,
+          // so a literal NUL in the input must be distinguished from real EOF.
+          test.each([
+            ["between mappings", "a: 1\x00b: 2"],
+            ["inside a plain scalar value", "key: foo\x00bar"],
+            ["at start of input", "\x00a: 1"],
+            ["as the only byte", "\x00"],
+            ["inside a block sequence", "- a\n- b\x00- c"],
+            ["inside a literal block scalar", "x: |\n  foo\x00bar"],
+            ["inside a folded block scalar", "x: >\n  foo\x00bar"],
+            ["in a block scalar header", "x: |\x00"],
+            ["inside a comment", "# foo\x00bar\nkey: 1"],
+            ["inside a block-scalar header comment", "x: | # foo\x00bar\n  body"],
+            ["inside a directive trailing comment", "%YAML 1.2 # c\x00mt\n---\nkey: 1"],
+            ["inside a plain scalar (utf16 input)", "😀: foo\x00bar"],
+            ["from a Buffer", Buffer.from("a: 1\x00b: 2")],
+          ] as const)("%s", (_name, input) => {
+            expect(() => YAML.parse(input as string)).toThrow(SyntaxError);
+          });
+          test("flow collections still error (not truncate) on NUL", () => {
+            expect(() => YAML.parse("[a, b\x00, c]")).toThrow(SyntaxError);
+            expect(() => YAML.parse("{a: 1\x00, b: 2}")).toThrow(SyntaxError);
+          });
+          test("quoted scalars still error on NUL", () => {
+            expect(() => YAML.parse('"foo\x00bar"')).toThrow(SyntaxError);
+            expect(() => YAML.parse("'foo\x00bar'")).toThrow(SyntaxError);
+          });
+          test('escaped NUL ("\\0") remains valid', () => {
+            expect(YAML.parse('"a\\0b"')).toBe("a\x00b");
+          });
         });
 
         test.todo("C0/C1/DEL control characters are not c-printable — should error", () => {
@@ -2359,32 +2415,36 @@ my_config:
       expect(YAML.parse(input2)).toMatchSnapshot();
     });
 
-    test("handles YAML bombs", () => {
-      function buildTest(depth) {
-        const lines: string[] = [];
-        lines.push(`a0: &a0\n  k0: 0`);
-        for (let i = 1; i <= depth; i++) {
-          const refs = Array.from({ length: i }, (_, j) => `*a${j}`).join(", ");
-          lines.push(`a${i}: &a${i}\n  <<: [${refs}]\n  k${i}: ${i}`);
+    test(
+      "handles YAML bombs",
+      () => {
+        function buildTest(depth) {
+          const lines: string[] = [];
+          lines.push(`a0: &a0\n  k0: 0`);
+          for (let i = 1; i <= depth; i++) {
+            const refs = Array.from({ length: i }, (_, j) => `*a${j}`).join(", ");
+            lines.push(`a${i}: &a${i}\n  <<: [${refs}]\n  k${i}: ${i}`);
+          }
+          lines.push(`root:\n  <<: *a${depth}`);
+          const input = lines.join("\n");
+
+          const expected: any = {};
+          for (let i = 0; i <= depth; i++) {
+            const record = {};
+            for (let j = 0; j <= i; j++) record[`k${j}`] = j;
+            expected[`a${i}`] = record;
+          }
+          expected.root = { ...expected[`a${depth}`] };
+
+          return { input, expected };
         }
-        lines.push(`root:\n  <<: *a${depth}`);
-        const input = lines.join("\n");
 
-        const expected: any = {};
-        for (let i = 0; i <= depth; i++) {
-          const record = {};
-          for (let j = 0; j <= i; j++) record[`k${j}`] = j;
-          expected[`a${i}`] = record;
-        }
-        expected.root = { ...expected[`a${depth}`] };
+        const { input, expected } = buildTest(24);
 
-        return { input, expected };
-      }
-
-      const { input, expected } = buildTest(24);
-
-      expect(YAML.parse(input)).toEqual(expected);
-    }, 100);
+        expect(YAML.parse(input)).toEqual(expected);
+      },
+      isDebug || isASAN ? 2000 : 100,
+    );
 
     describe("merge keys", () => {
       test("merge overrides", () => {

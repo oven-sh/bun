@@ -769,7 +769,7 @@ function expectsError(stackStartFn: Function, actual: unknown, error: unknown, m
       details += ` (${(error as Error).name})`;
     }
     details += message ? `: ${message}` : ".";
-    const fnType = stackStartFn === assert.rejects ? "rejection" : "exception";
+    const fnType = stackStartFn === kQualifiedStackNames["assert.rejects"] ? "rejection" : "exception";
     innerFail({
       actual: undefined,
       expected: error,
@@ -812,7 +812,7 @@ function expectsNoError(stackStartFn, actual, error, message) {
 
   if (!error || hasMatchingError(actual, error)) {
     const details = message ? `: ${message}` : ".";
-    const fnType = stackStartFn === assert.doesNotReject ? "rejection" : "exception";
+    const fnType = stackStartFn === kQualifiedStackNames["assert.doesNotReject"] ? "rejection" : "exception";
     innerFail({
       actual,
       expected: error,
@@ -840,16 +840,23 @@ assert.throws = function throws(promiseFn: () => Promise<unknown> | Promise<unkn
  * @param {...any} [args]
  * @returns {Promise<void>}
  */
-function rejects(block: (() => Promise<unknown>) | Promise<unknown>, message?: string | Error): Promise<void>;
-function rejects(
-  block: (() => Promise<unknown>) | Promise<unknown>,
-  error: nodeAssert.AssertPredicate,
-  message?: string | Error,
-): Promise<void>;
-async function rejects(block: (() => Promise<unknown>) | Promise<unknown>, ...args: any[]): Promise<void> {
-  expectsError(rejects, await waitForActual(block), ...args);
-}
-assert.rejects = rejects;
+// The method-shorthand string keys bake the qualified names into the parse-time
+// (executable) names, which is what async stack frames render; V8 infers the
+// same qualified name from the call site, so node prints
+// "at async assert.rejects" where a plain `function rejects` gives "rejects"
+// under JSC. `.name` is then restored to match node's.
+const kQualifiedStackNames = {
+  async "assert.rejects"(block: (() => Promise<unknown>) | Promise<unknown>, ...args: any[]): Promise<void> {
+    // The captured binding, not `assert.rejects`: node's implementation keeps
+    // working (and reporting operator "rejects") after the property is replaced.
+    expectsError(kQualifiedStackNames["assert.rejects"], await waitForActual(block), ...args);
+  },
+  async "assert.doesNotReject"(fn: (() => Promise<unknown>) | Promise<unknown>, ...args: unknown[]): Promise<void> {
+    expectsNoError(kQualifiedStackNames["assert.doesNotReject"], await waitForActual(fn), ...args);
+  },
+};
+assert.rejects = kQualifiedStackNames["assert.rejects"];
+Object.defineProperty(assert.rejects, "name", { value: "rejects", configurable: true });
 
 /**
  * Asserts that the function `fn` does not throw an error.
@@ -867,9 +874,8 @@ assert.doesNotThrow = function doesNotThrow(fn: () => Promise<unknown>, ...args:
  * @param {...any} [args]
  * @returns {Promise<void>}
  */
-assert.doesNotReject = async function doesNotReject(fn: () => Promise<unknown>, ...args: unknown[]): Promise<void> {
-  expectsNoError(doesNotReject, await waitForActual(fn), ...args);
-};
+assert.doesNotReject = kQualifiedStackNames["assert.doesNotReject"];
+Object.defineProperty(assert.doesNotReject, "name", { value: "doesNotReject", configurable: true });
 
 /**
  * Throws `value` if the value is not `null` or `undefined`.

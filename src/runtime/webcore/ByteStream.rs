@@ -397,6 +397,12 @@ impl ByteStream {
                 if self.buffer_action.get().is_some() {
                     panic!("Expected buffer action to be null");
                 }
+                // Erroring a stream discards queued chunks; drop the buffered
+                // bytes now instead of retaining them off-heap until GC.
+                self.buffer.with_mut(|b| {
+                    b.clear();
+                    b.shrink_to_fit();
+                });
                 self.pending
                     .with_mut(|p| p.result = streams::Result::Err(err));
             }
@@ -462,6 +468,13 @@ impl ByteStream {
         }
 
         if self.has_received_last_chunk.get() {
+            // Surface a stored terminal error (set by `append(Err)` when no
+            // reader was waiting) instead of silently reporting `Done`.
+            if matches!(self.pending.get().result, streams::Result::Err(_)) {
+                return self
+                    .pending
+                    .with_mut(|p| core::mem::replace(&mut p.result, streams::Result::Done));
+            }
             return streams::Result::Done;
         }
 

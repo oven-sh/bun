@@ -66,11 +66,6 @@ impl CookieMapRef {
         CookieMap__ref(cookie_map);
         Self(NonNull::from(cookie_map))
     }
-
-    #[inline]
-    pub fn as_ptr(&self) -> *mut CookieMap {
-        self.0.as_ptr()
-    }
 }
 
 impl core::ops::Deref for CookieMapRef {

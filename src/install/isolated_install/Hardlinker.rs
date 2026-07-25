@@ -19,7 +19,6 @@ type OsPath = Path<
 >;
 
 pub struct Hardlinker {
-    pub src_dir: Fd,
     pub src: OsAbsPath,
     pub dest: OsPath,
     pub walker: Walker,
@@ -33,7 +32,6 @@ impl Hardlinker {
         skip_dirnames: &[&OSPathSlice],
     ) -> Result<Hardlinker, AllocError> {
         Ok(Hardlinker {
-            src_dir: folder_dir,
             src,
             dest,
             walker: {

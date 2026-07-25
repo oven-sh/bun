@@ -46,12 +46,6 @@ bun_opaque::opaque_ffi! {
 }
 
 impl Request {
-    pub fn is_ancient(&self) -> bool {
-        c::uws_req_is_ancient(self)
-    }
-    pub fn get_yield(&self) -> bool {
-        c::uws_req_get_yield(self)
-    }
     pub fn set_yield(&mut self, yield_: bool) {
         c::uws_req_set_yield(self, yield_)
     }
@@ -81,14 +75,6 @@ impl Request {
         // SAFETY: ptr/len describe a valid slice owned by the request for its lifetime
         Some(unsafe { bun_core::ffi::slice(ptr, len) })
     }
-    pub fn query(&self, name: &[u8]) -> &[u8] {
-        let mut ptr: *const u8 = core::ptr::null();
-        // SAFETY: uws_req_get_query writes a pointer into request-owned storage and returns its length
-        let len = unsafe { c::uws_req_get_query(self, name.as_ptr(), name.len(), &raw mut ptr) };
-        // SAFETY: ptr/len describe a valid slice owned by the request for its lifetime;
-        // ffi::slice tolerates the (null, 0) shape uWS returns when no query is present.
-        unsafe { bun_core::ffi::slice(ptr, len) }
-    }
     pub fn parameter(&self, index: u16) -> &[u8] {
         let mut ptr: *const u8 = core::ptr::null();
         let len = c::uws_req_get_parameter(self, c_ushort::try_from(index).unwrap(), &mut ptr);
@@ -103,8 +89,6 @@ mod c {
     use core::ffi::c_ushort;
 
     unsafe extern "C" {
-        pub(super) safe fn uws_req_is_ancient(res: &Request) -> bool;
-        pub(super) safe fn uws_req_get_yield(res: &Request) -> bool;
         pub(super) safe fn uws_req_set_yield(res: &mut Request, yield_: bool);
         // Out-param `dest` is a `&mut *const u8` (non-null, valid for write); the C
         // shim only stores a pointer into request-owned storage and returns its
@@ -115,12 +99,6 @@ mod c {
             res: *const Request,
             lower_case_header: *const u8,
             lower_case_header_length: usize,
-            dest: *mut *const u8,
-        ) -> usize;
-        pub(super) fn uws_req_get_query(
-            res: *const Request,
-            key: *const u8,
-            key_length: usize,
             dest: *mut *const u8,
         ) -> usize;
         pub(super) safe fn uws_req_get_parameter(

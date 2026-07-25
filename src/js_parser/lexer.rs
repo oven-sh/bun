@@ -2,6 +2,7 @@
 
 use core::fmt;
 
+use bun_alloc::Arena;
 use bun_ast as js_ast;
 use bun_ast::lexer_tables as tables;
 use bun_ast::{LexerLog, Loc, Log, Range, Source};
@@ -10,9 +11,6 @@ use bun_core::strings;
 use bun_core::strings::CodepointIterator;
 use bun_core::{Environment, feature_flags as FeatureFlags};
 use identifier as js_identifier;
-// MOVE-IN: Indentation now lives in this crate (was bun_js_printer::Options::Indentation).
-use bun_alloc::Arena;
-use bun_ast::{Indentation, IndentationCharacter};
 
 // Unicode ID-Start/ID-Continue tables moved DOWN to `bun_core` (pure data;
 // no upward deps) so `bun_core::lexer` / `MutableString` get full coverage
@@ -34,8 +32,6 @@ pub use tables::{
 fn tokenToString_get(token: T) -> &'static [u8] {
     tokenToString[token]
 }
-
-pub static EMPTY_JAVASCRIPT_STRING: [u16; 1] = [0];
 
 #[derive(Default, Clone, Copy)]
 pub struct JSXPragma {
@@ -77,56 +73,12 @@ impl JSXPragma {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, core::marker::ConstParamTy)]
-pub struct JSONOptions {
-    /// Enable JSON-specific warnings/errors
-    pub is_json: bool,
-
-    /// tsconfig.json supports comments & trailing commas
-    pub allow_comments: bool,
-    pub allow_trailing_commas: bool,
-
-    /// Loading JSON-in-JSON may start like \\""\\"
-    /// This is technically invalid, since we parse from the first value of the string
-    pub ignore_leading_escape_sequences: bool,
-    pub ignore_trailing_escape_sequences: bool,
-
-    pub json_warn_duplicate_keys: bool,
-
-    /// mark as originally for a macro to enable inlining
-    pub was_originally_macro: bool,
-
-    pub guess_indentation: bool,
-}
-
-impl JSONOptions {
-    pub const DEFAULT: Self = Self {
-        is_json: false,
-        allow_comments: false,
-        allow_trailing_commas: false,
-        ignore_leading_escape_sequences: false,
-        ignore_trailing_escape_sequences: false,
-        json_warn_duplicate_keys: true,
-        was_originally_macro: false,
-        guess_indentation: false,
-    };
-}
-
-impl Default for JSONOptions {
-    fn default() -> Self {
-        Self::DEFAULT
-    }
-}
-
 /// The lexer is generic over the eight const bools of the option set.
 ///
 /// `Lexer` (below) is the default instantiation.
 ///
-/// nightly-2025-12-10 rejects field projection (`J.is_json`) on a
-/// `const J: JSONOptions` parameter inside a generic-const expression
-/// ("overly complex generic constant"), even with `generic_const_exprs`.
-/// The option set is therefore modeled as a *type* parameter
-/// implementing [`JsonOptionsT`], whose associated consts *are* accepted in
+/// The option set is modeled as a *type* parameter
+/// implementing [`JsonOptionsT`], whose associated consts are accepted in
 /// const-argument position under `generic_const_exprs`. Callers define a ZST
 /// per option set and `impl JsonOptionsT for It { const IS_JSON: bool = true; … }`.
 pub trait JsonOptionsT {
@@ -137,22 +89,9 @@ pub trait JsonOptionsT {
     const IGNORE_TRAILING_ESCAPE_SEQUENCES: bool = false;
     const JSON_WARN_DUPLICATE_KEYS: bool = true;
     const WAS_ORIGINALLY_MACRO: bool = false;
-    const GUESS_INDENTATION: bool = false;
-
-    /// Reify as a value.
-    const OPTIONS: JSONOptions = JSONOptions {
-        is_json: Self::IS_JSON,
-        allow_comments: Self::ALLOW_COMMENTS,
-        allow_trailing_commas: Self::ALLOW_TRAILING_COMMAS,
-        ignore_leading_escape_sequences: Self::IGNORE_LEADING_ESCAPE_SEQUENCES,
-        ignore_trailing_escape_sequences: Self::IGNORE_TRAILING_ESCAPE_SEQUENCES,
-        json_warn_duplicate_keys: Self::JSON_WARN_DUPLICATE_KEYS,
-        was_originally_macro: Self::WAS_ORIGINALLY_MACRO,
-        guess_indentation: Self::GUESS_INDENTATION,
-    };
 }
 
-/// `JSONOptions{}` — the default (non-JSON, JS-mode) option set.
+/// The default (non-JSON, JS-mode) option set.
 pub struct DefaultJsonOptions;
 impl JsonOptionsT for DefaultJsonOptions {}
 
@@ -170,7 +109,6 @@ pub type NewLexer<'a, J: JsonOptionsT = DefaultJsonOptions> = LexerType<
     { <J as JsonOptionsT>::IGNORE_TRAILING_ESCAPE_SEQUENCES },
     { <J as JsonOptionsT>::JSON_WARN_DUPLICATE_KEYS },
     { <J as JsonOptionsT>::WAS_ORIGINALLY_MACRO },
-    { <J as JsonOptionsT>::GUESS_INDENTATION },
 >;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
@@ -192,12 +130,6 @@ pub enum StringLiteralRawFormat {
     Ascii,
     Utf16,
     NeedsDecode,
-}
-
-#[derive(Clone, Copy, Default)]
-pub struct IndentInfo {
-    pub guess: Indentation,
-    pub first_newline: bool,
 }
 
 /// `packed struct(u8) { suffix_len: u2, needs_decode: bool, _padding: u5 = 0 }`
@@ -255,7 +187,6 @@ pub struct LexerSnapshot<'a> {
     pub token: T,
     pub has_newline_before: bool,
     pub has_pure_comment_before: bool,
-    pub has_no_side_effect_comment_before: bool,
     pub has_react_hooks_suppression_before: bool,
     pub has_react_hooks_block_suppression: bool,
     pub preserve_all_comments_before: bool,
@@ -269,7 +200,6 @@ pub struct LexerSnapshot<'a> {
     pub rescan_close_brace_as_template_token: bool,
     pub prev_error_loc: Loc,
     pub prev_token_was_await_keyword: bool,
-    pub await_keyword_loc: Loc,
     pub fn_or_arrow_start_loc: Loc,
     pub regex_flags_start: Option<u16>,
     pub string_literal_raw_content: &'a [u8],
@@ -278,7 +208,6 @@ pub struct LexerSnapshot<'a> {
     pub is_ascii_only: bool,
     pub track_comments: bool,
     pub track_react_suppressions: bool,
-    pub indent_info: IndentInfo,
     // Vec buffer lengths — restore() truncates back to these.
     pub all_comments_len: usize,
     pub comments_to_preserve_before_len: usize,
@@ -298,7 +227,6 @@ pub struct LexerType<
     const IGNORE_TRAILING_ESCAPE_SEQUENCES: bool,
     const JSON_WARN_DUPLICATE_KEYS: bool,
     const WAS_ORIGINALLY_MACRO: bool,
-    const GUESS_INDENTATION: bool,
 > {
     // err: ?LexerType.Error,
     /// Raw pointer to the caller-owned `Log`. The parser holds a second
@@ -334,7 +262,6 @@ pub struct LexerType<
     pub token: T,
     pub has_newline_before: bool,
     pub has_pure_comment_before: bool,
-    pub has_no_side_effect_comment_before: bool,
     /// Set (and never cleared by `next()`) once an `eslint-disable[-next-line]`
     /// comment naming `react-hooks/rules-of-hooks` or `react-hooks/exhaustive-deps`
     /// has been scanned. The parser reads this at function-body close to set
@@ -356,7 +283,6 @@ pub struct LexerType<
     pub rescan_close_brace_as_template_token: bool,
     pub prev_error_loc: Loc,
     pub prev_token_was_await_keyword: bool,
-    pub await_keyword_loc: Loc,
     pub fn_or_arrow_start_loc: Loc,
     pub regex_flags_start: Option<u16>,
     pub arena: &'a Arena,
@@ -370,9 +296,6 @@ pub struct LexerType<
     pub track_comments: bool,
     pub track_react_suppressions: bool,
     pub all_comments: Vec<Range>,
-
-    /// Only meaningful when `GUESS_INDENTATION` is set.
-    pub indent_info: IndentInfo,
 }
 
 // Note: Rust macros must emit complete items; the macro now wraps the
@@ -388,7 +311,6 @@ macro_rules! lexer_impl_header {
             const IGNORE_TRAILING_ESCAPE_SEQUENCES: bool,
             const JSON_WARN_DUPLICATE_KEYS: bool,
             const WAS_ORIGINALLY_MACRO: bool,
-            const GUESS_INDENTATION: bool,
         >
             LexerType<
                 'a,
@@ -399,7 +321,6 @@ macro_rules! lexer_impl_header {
                 IGNORE_TRAILING_ESCAPE_SEQUENCES,
                 JSON_WARN_DUPLICATE_KEYS,
                 WAS_ORIGINALLY_MACRO,
-                GUESS_INDENTATION,
             >
         { $($body)* }
     };
@@ -414,7 +335,6 @@ impl<
     const IGNORE_TRAILING_ESCAPE_SEQUENCES: bool,
     const JSON_WARN_DUPLICATE_KEYS: bool,
     const WAS_ORIGINALLY_MACRO: bool,
-    const GUESS_INDENTATION: bool,
 > LexerLog<'a>
     for LexerType<
         'a,
@@ -425,7 +345,6 @@ impl<
         IGNORE_TRAILING_ESCAPE_SEQUENCES,
         JSON_WARN_DUPLICATE_KEYS,
         WAS_ORIGINALLY_MACRO,
-        GUESS_INDENTATION,
     >
 {
     type Err = Error;
@@ -520,7 +439,6 @@ lexer_impl_header! {
             token: self.token,
             has_newline_before: self.has_newline_before,
             has_pure_comment_before: self.has_pure_comment_before,
-            has_no_side_effect_comment_before: self.has_no_side_effect_comment_before,
             has_react_hooks_suppression_before: self.has_react_hooks_suppression_before,
             has_react_hooks_block_suppression: self.has_react_hooks_block_suppression,
             preserve_all_comments_before: self.preserve_all_comments_before,
@@ -534,7 +452,6 @@ lexer_impl_header! {
             rescan_close_brace_as_template_token: self.rescan_close_brace_as_template_token,
             prev_error_loc: self.prev_error_loc,
             prev_token_was_await_keyword: self.prev_token_was_await_keyword,
-            await_keyword_loc: self.await_keyword_loc,
             fn_or_arrow_start_loc: self.fn_or_arrow_start_loc,
             regex_flags_start: self.regex_flags_start,
             string_literal_raw_content: self.string_literal_raw_content,
@@ -543,7 +460,6 @@ lexer_impl_header! {
             is_ascii_only: self.is_ascii_only,
             track_comments: self.track_comments,
             track_react_suppressions: self.track_react_suppressions,
-            indent_info: self.indent_info,
             all_comments_len: self.all_comments.len(),
             comments_to_preserve_before_len: self.comments_to_preserve_before.len(),
         }
@@ -562,7 +478,6 @@ lexer_impl_header! {
         self.token = original.token;
         self.has_newline_before = original.has_newline_before;
         self.has_pure_comment_before = original.has_pure_comment_before;
-        self.has_no_side_effect_comment_before = original.has_no_side_effect_comment_before;
         self.has_react_hooks_suppression_before = original.has_react_hooks_suppression_before;
         self.has_react_hooks_block_suppression = original.has_react_hooks_block_suppression;
         self.preserve_all_comments_before = original.preserve_all_comments_before;
@@ -577,7 +492,6 @@ lexer_impl_header! {
             original.rescan_close_brace_as_template_token;
         self.prev_error_loc = original.prev_error_loc;
         self.prev_token_was_await_keyword = original.prev_token_was_await_keyword;
-        self.await_keyword_loc = original.await_keyword_loc;
         self.fn_or_arrow_start_loc = original.fn_or_arrow_start_loc;
         self.regex_flags_start = original.regex_flags_start;
         self.string_literal_raw_content = original.string_literal_raw_content;
@@ -586,7 +500,6 @@ lexer_impl_header! {
         self.is_ascii_only = original.is_ascii_only;
         self.track_comments = original.track_comments;
         self.track_react_suppressions = original.track_react_suppressions;
-        self.indent_info = original.indent_info;
 
         debug_assert!(self.all_comments.len() >= original.all_comments_len);
         debug_assert!(
@@ -1523,7 +1436,6 @@ lexer_impl_header! {
     pub fn next(&mut self) -> Result<(), Error> {
         self.has_newline_before = self.end == 0;
         self.has_pure_comment_before = false;
-        self.has_no_side_effect_comment_before = false;
         self.prev_token_was_await_keyword = false;
 
         // PERF: bind the source slice once so every inlined `step()` in the
@@ -1599,44 +1511,6 @@ lexer_impl_header! {
                 0x0D | 0x0A | 0x2028 | 0x2029 =>
                 {
                     self.has_newline_before = true;
-
-                    if GUESS_INDENTATION {
-                        if self.indent_info.first_newline
-                            && self.code_point == 0x0A
-                        {
-                            while self.code_point == 0x0A
-                                || self.code_point == 0x0D
-                            {
-                                self.step_with(contents);
-                            }
-
-                            if self.code_point != 0x20
-                                && self.code_point != 0x09
-                            {
-                                // try to get the next one. this handles cases where the file starts
-                                // with a newline
-                                continue;
-                            }
-
-                            self.indent_info.first_newline = false;
-
-                            let indent_character = self.code_point;
-                            let mut count: usize = 0;
-                            while self.code_point == indent_character {
-                                self.step_with(contents);
-                                count += 1;
-                            }
-
-                            self.indent_info.guess.character =
-                                if indent_character == 0x20 {
-                                    IndentationCharacter::Space
-                                } else {
-                                    IndentationCharacter::Tab
-                                };
-                            self.indent_info.guess.scalar = count;
-                            continue;
-                        }
-                    }
 
                     self.step_with(contents);
                     continue;
@@ -2664,28 +2538,12 @@ lexer_impl_header! {
         0
     }
 
-    // TODO: implement this
-    pub fn remove_multiline_comment_indent(&mut self, _: &[u8], text: &'a [u8]) -> &'a [u8] {
-        text
-    }
-
     pub fn range(&self) -> Range {
         Range {
             loc: bun_ast::usize2loc(self.start),
             // Saturate on overflow.
             len: i32::try_from(self.end - self.start).unwrap_or(i32::MAX),
         }
-    }
-
-    pub fn init_json(
-        log: &mut Log,
-        source: &'a Source,
-        arena: &'a Arena,
-    ) -> Result<Self, Error> {
-        let mut lex = Self::init_without_reading(log, source, arena);
-        lex.step();
-        lex.next()?;
-        Ok(lex)
     }
 
     /// `log` is *not* tied to `'a`: the lexer stores it as `NonNull<Log>` (see
@@ -2713,7 +2571,6 @@ lexer_impl_header! {
             token: T::TEndOfFile,
             has_newline_before: false,
             has_pure_comment_before: false,
-            has_no_side_effect_comment_before: false,
             has_react_hooks_suppression_before: false,
             has_react_hooks_block_suppression: false,
             preserve_all_comments_before: false,
@@ -2728,7 +2585,6 @@ lexer_impl_header! {
             rescan_close_brace_as_template_token: false,
             prev_error_loc: Loc::EMPTY,
             prev_token_was_await_keyword: false,
-            await_keyword_loc: Loc::EMPTY,
             fn_or_arrow_start_loc: Loc::EMPTY,
             regex_flags_start: None,
             arena,
@@ -2740,10 +2596,6 @@ lexer_impl_header! {
             track_comments: false,
             track_react_suppressions: false,
             all_comments: Vec::new(),
-            indent_info: IndentInfo {
-                guess: Indentation::default(),
-                first_newline: true,
-            },
         }
     }
 

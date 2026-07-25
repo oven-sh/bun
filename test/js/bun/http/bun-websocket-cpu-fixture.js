@@ -38,6 +38,7 @@ let previousUsage = process.cpuUsage();
 let previousTime = Date.now();
 
 let count = 0;
+let minCpuUsagePercentage = Infinity;
 setInterval(() => {
   count++;
 
@@ -53,6 +54,7 @@ setInterval(() => {
 
   // Calculate percentage for the current process
   const cpuUsagePercentage = (totalCpuTime / timeDeltaMicroseconds) * 100;
+  minCpuUsagePercentage = Math.min(minCpuUsagePercentage, cpuUsagePercentage);
 
   console.log(`CPU Usage: ${cpuUsagePercentage.toFixed(2)}%`);
 
@@ -61,7 +63,9 @@ setInterval(() => {
 
   if (count == 3) {
     server.stop(true);
-    // The expected value is around 0.XX%, but we allow a 2% margin of error to account for potential flakiness.
-    process.exit(cpuUsagePercentage < 2 ? 0 : 1);
+    // The #25475 regression spins the event loop at ~100% on every sample; an idle
+    // loop reads ~0% (up to a few % on Windows where GetProcessTimes charges whole
+    // ~15.6ms ticks). Gate on the quietest sample with the same 50% bound as 21654.
+    process.exit(minCpuUsagePercentage < 50 ? 0 : 1);
   }
 }, 1000);

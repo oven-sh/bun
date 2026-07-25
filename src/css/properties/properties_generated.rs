@@ -6247,108 +6247,6 @@ impl Property {
         properties_impl::property_mixin::to_css(self, dest, important)
     }
 
-    /// Returns the given longhand property for a shorthand.
-    ///
-    /// Per-type `longhand` is not implemented yet, so the per-arm dispatch is
-    /// routed through a no-op `lh!` (`return None`) until the
-    /// `DefineShorthand` derive exists. There are no callers.
-    pub fn longhand(&self, property_id: &PropertyId) -> Option<Property> {
-        #[inline(always)]
-        fn lh<T: ?Sized>(_v: &T, _id: &PropertyId) -> Option<Property> {
-            // Trip in debug so callers can't accidentally rely on the
-            // always-`None` placeholder before `DefineShorthand::longhand`
-            // is ported.
-            debug_assert!(
-                false,
-                "Property::longhand: per-type DefineShorthand::longhand not yet ported"
-            );
-            None
-        }
-        match self {
-            Property::BackgroundPosition(v) => lh(v, property_id),
-            Property::Overflow(v) => lh(v, property_id),
-            Property::InsetBlock(v) => lh(v, property_id),
-            Property::InsetInline(v) => lh(v, property_id),
-            Property::Inset(v) => lh(v, property_id),
-            Property::BorderRadius(v) => {
-                if v.1 != property_id.prefix() {
-                    return None;
-                }
-                lh(&v.0, property_id)
-            }
-            Property::BorderImage(v) => {
-                if v.1 != property_id.prefix() {
-                    return None;
-                }
-                lh(&v.0, property_id)
-            }
-            Property::BorderColor(v) => lh(v, property_id),
-            Property::BorderStyle(v) => lh(v, property_id),
-            Property::BorderWidth(v) => lh(v, property_id),
-            Property::BorderBlockColor(v) => lh(v, property_id),
-            Property::BorderBlockStyle(v) => lh(v, property_id),
-            Property::BorderBlockWidth(v) => lh(v, property_id),
-            Property::BorderInlineColor(v) => lh(v, property_id),
-            Property::BorderInlineStyle(v) => lh(v, property_id),
-            Property::BorderInlineWidth(v) => lh(v, property_id),
-            Property::Border(v) => lh(v, property_id),
-            Property::BorderTop(v) => lh(v, property_id),
-            Property::BorderBottom(v) => lh(v, property_id),
-            Property::BorderLeft(v) => lh(v, property_id),
-            Property::BorderRight(v) => lh(v, property_id),
-            Property::BorderBlock(v) => lh(v, property_id),
-            Property::BorderBlockStart(v) => lh(v, property_id),
-            Property::BorderBlockEnd(v) => lh(v, property_id),
-            Property::BorderInline(v) => lh(v, property_id),
-            Property::BorderInlineStart(v) => lh(v, property_id),
-            Property::BorderInlineEnd(v) => lh(v, property_id),
-            Property::Outline(v) => lh(v, property_id),
-            Property::FlexFlow(v) => {
-                if v.1 != property_id.prefix() {
-                    return None;
-                }
-                lh(&v.0, property_id)
-            }
-            Property::Flex(v) => {
-                if v.1 != property_id.prefix() {
-                    return None;
-                }
-                lh(&v.0, property_id)
-            }
-            Property::PlaceContent(v) => lh(v, property_id),
-            Property::PlaceSelf(v) => lh(v, property_id),
-            Property::PlaceItems(v) => lh(v, property_id),
-            Property::Gap(v) => lh(v, property_id),
-            Property::MarginBlock(v) => lh(v, property_id),
-            Property::MarginInline(v) => lh(v, property_id),
-            Property::Margin(v) => lh(v, property_id),
-            Property::PaddingBlock(v) => lh(v, property_id),
-            Property::PaddingInline(v) => lh(v, property_id),
-            Property::Padding(v) => lh(v, property_id),
-            Property::ScrollMarginBlock(v) => lh(v, property_id),
-            Property::ScrollMarginInline(v) => lh(v, property_id),
-            Property::ScrollMargin(v) => lh(v, property_id),
-            Property::ScrollPaddingBlock(v) => lh(v, property_id),
-            Property::ScrollPaddingInline(v) => lh(v, property_id),
-            Property::ScrollPadding(v) => lh(v, property_id),
-            Property::Font(v) => lh(v, property_id),
-            Property::Transition(v) => {
-                if v.1 != property_id.prefix() {
-                    return None;
-                }
-                lh(&v.0, property_id)
-            }
-            Property::Mask(v) => {
-                if v.1 != property_id.prefix() {
-                    return None;
-                }
-                lh(&v.0, property_id)
-            }
-            Property::MaskBorder(v) => lh(v, property_id),
-            _ => None,
-        }
-    }
-
     pub fn deep_clone(&self, arena: &bun_alloc::Arena) -> Property {
         match self {
             Property::BackgroundColor(v) => {
@@ -7454,16 +7352,6 @@ impl Property {
             (Property::Custom(a), Property::Custom(b)) => a.eql(b),
             _ => false,
         }
-    }
-
-    /// We're going to have this empty for now since not every property has a deinit function.
-    /// It's not strictly necessary since all allocations are into an arena.
-    /// It's mostly intended as a performance optimization in the case where mimalloc arena is used,
-    /// since it can reclaim the memory and use it for subsequent allocations.
-    /// I haven't benchmarked that though, so I don't actually know how much faster it would actually make it.
-    pub fn deinit(&mut self, arena: &bun_alloc::Arena) {
-        let _ = self;
-        let _ = arena;
     }
 }
 

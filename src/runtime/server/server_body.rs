@@ -26,7 +26,7 @@ use bun_jsc::ZigStringJsc as _;
 use bun_jsc::uuid::UUID;
 use bun_jsc::{
     self as jsc, ArrayBuffer, CallFrame, GlobalRef, JSGlobalObject, JSPromise, JSValue, JsError,
-    JsResult, Node, StringJsc as _, StrongOptional, VirtualMachine, host_fn,
+    JsResult, Node, StringJsc as _, VirtualMachine, host_fn,
 };
 use bun_paths as paths;
 use bun_ptr::RefPtr;
@@ -66,7 +66,7 @@ pub(super) use super::static_route::StaticRoute;
 // associated types, so the per-monomorphization handle types are surfaced via
 // this local trait. Only `IS_H3` is consumed for control flow; `Req`/`Resp`
 // are erased to `c_void` to match `super::request_context::{Req, Resp}`.
-pub trait RequestCtx: super::any_request_context::CtxKind {
+pub(super) trait RequestCtx: super::any_request_context::CtxKind {
     type Req: ReqLike;
     type Resp: RespLike;
     const IS_H3: bool;
@@ -95,7 +95,7 @@ where
 /// can be written without naming the concrete `RequestContext<_, SSL, DBG, H3>`
 /// type. Implemented via blanket impl below for every `NewRequestContext<..>`.
 #[allow(clippy::too_many_arguments)]
-pub trait RequestCtxOps: RequestCtx {
+pub(super) trait RequestCtxOps: RequestCtx {
     type Server;
     fn create_in(
         slot: *mut Self,
@@ -116,7 +116,6 @@ pub trait RequestCtxOps: RequestCtx {
     fn render_missing(&mut self);
     fn to_async(&mut self, req: &mut Self::Req, request_object: &mut Request);
     fn ctx_method(&self) -> http::Method;
-    fn set_upgrade_context(&mut self, ctx: Option<*mut WebSocketUpgradeContext>);
     fn defer_deinit_ptr(&mut self) -> &mut Option<DeferDeinitFlag>;
     fn set_request_body(&mut self, body: Option<crate::webcore::body::BodyHiveHandle>);
     fn request_body_mut(&mut self) -> Option<&mut BodyValue>;
@@ -191,10 +190,6 @@ where
     #[inline]
     fn ctx_method(&self) -> http::Method {
         self.method
-    }
-    #[inline]
-    fn set_upgrade_context(&mut self, c: Option<*mut WebSocketUpgradeContext>) {
-        self.upgrade_context = c
     }
     #[inline]
     fn defer_deinit_ptr(&mut self) -> &mut Option<DeferDeinitFlag> {
@@ -286,7 +281,7 @@ where
 // call sites can dispatch to either uWS HTTP/1 or HTTP/3 handle types without
 // touching `bun_uws_sys`. Only the surface `prepare_js_request_context_for`
 // actually needs is exposed.
-pub trait ReqLike {
+pub(super) trait ReqLike {
     fn header(&mut self, name: &[u8]) -> Option<&[u8]>;
     fn method(&mut self) -> &[u8];
     fn url(&mut self) -> &[u8];
@@ -329,7 +324,7 @@ impl ReqLike for uws_sys::h3::Request {
     }
 }
 
-pub trait RespLike {
+pub(super) trait RespLike {
     const IS_H3: bool;
     fn write_status(&mut self, status: &[u8]);
     fn end_without_body(&mut self, close_connection: bool);
@@ -418,6 +413,18 @@ impl RespLike for uws_sys::h3::Response {
 pub(super) fn respond_stopped_503<R: RespLike + ?Sized>(resp: &mut R) {
     resp.write_status(b"503 Service Unavailable");
     resp.end_without_body(!R::IS_H3);
+}
+
+/// RFC 6455 §4.1: |Sec-WebSocket-Key| is the base64 encoding of a 16-byte
+/// value, i.e. 22 base64 characters followed by `==`.
+#[inline]
+fn is_valid_sec_websocket_key(key: &[u8]) -> bool {
+    key.len() == 24
+        && key[22] == b'='
+        && key[23] == b'='
+        && key[..22]
+            .iter()
+            .all(|&c| c.is_ascii_alphanumeric() || c == b'+' || c == b'/')
 }
 
 pub(super) type ServerRequestContext<const SSL: bool, const DEBUG: bool> =
@@ -1258,13 +1265,6 @@ fn on_timeout_for_idle_warn() {
     }
 }
 
-// ─── PluginsResult ───────────────────────────────────────────────────────────
-pub enum PluginsResult<'a> {
-    Pending,
-    Found(Option<&'a JSBundler::Plugin>),
-    Err,
-}
-
 // ─── NewServer ───────────────────────────────────────────────────────────────
 // ─── NewServer (canonical type lives in mod.rs) ──────────────────────────────
 // NOTE (unification): the struct, `ServerFlags`, `UserRoute`,
@@ -1274,7 +1274,7 @@ pub enum PluginsResult<'a> {
 // methods on the same type — there is no separate Phase-A struct.
 pub(super) use super::{
     CreateJsRequest, DebugHTTPSServer, DebugHTTPServer, HTTPSServer, HTTPServer, NewServer,
-    SavedRequest, ServerFlags, UserRoute,
+    ServerFlags, UserRoute,
 };
 
 /// Generic over the
@@ -1286,30 +1286,6 @@ pub struct PreparedRequestFor<'a, Ctx> {
     pub js_request: JSValue,
     pub request_object: &'a mut Request,
     pub ctx: &'a mut Ctx,
-}
-
-impl<'a, Ctx: RequestCtxOps> PreparedRequestFor<'a, Ctx> {
-    /// This is used by DevServer for deferring calling the JS handler
-    /// to until the bundle is actually ready.
-    pub fn save(
-        self,
-        global: &JSGlobalObject,
-        req: &mut Ctx::Req,
-        resp: &mut Ctx::Resp,
-    ) -> SavedRequest {
-        debug_assert!(!Ctx::IS_H3, "PreparedRequest.save is HTTP/1-only");
-        // By saving a request, all information from `req` must be
-        // copied since the provided uws.Request will be re-used for
-        // future requests (stack allocated).
-        RequestCtxOps::to_async(self.ctx, req, self.request_object);
-
-        SavedRequest {
-            js_request: StrongOptional::create(self.js_request, global),
-            request: self.request_object,
-            ctx: AnyRequestContext::init(std::ptr::from_ref::<Ctx>(self.ctx)),
-            response: RespLike::to_any_response(resp),
-        }
-    }
 }
 
 // `WebSocketUpgradeServer<SSL>` so `ServerWebSocket::behavior::<Self, SSL>` and
@@ -1410,19 +1386,6 @@ where
     NewRequestContext<Self, SSL, DEBUG, false>: super::request_context::RequestContextHostFns,
     NewRequestContext<Self, SSL, DEBUG, true>: super::request_context::RequestContextHostFns,
 {
-    pub fn get_plugins(&self) -> PluginsResult<'_> {
-        match self.plugins_ref() {
-            None => PluginsResult::Found(None),
-            Some(p) => match &p.state {
-                ServePluginsState::Unqueued(_) | ServePluginsState::Pending { .. } => {
-                    PluginsResult::Pending
-                }
-                ServePluginsState::Loaded(plugin) => PluginsResult::Found(Some(plugin.as_ref())),
-                ServePluginsState::Err => PluginsResult::Err,
-            },
-        }
-    }
-
     // NOTE: there is no `getPluginsAsync` method or `AnyServer` dispatcher;
     // the live HTMLBundle path goes through `get_or_load_plugins`.
 
@@ -1466,18 +1429,18 @@ where
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let arguments = callframe.arguments_old::<1>();
-        if arguments.len < 1 {
+        let [topic_value] = callframe.arguments_as_array::<1>();
+        if callframe.arguments_count() < 1 {
             return Err(global.throw_not_enough_arguments("subscriberCount", 1, 0));
         }
 
-        if arguments.ptr[0].is_empty_or_undefined_or_null() {
+        if topic_value.is_empty_or_undefined_or_null() {
             return Err(global.throw_invalid_arguments(format_args!(
                 "subscriberCount requires a topic name as a string"
             )));
         }
 
-        let topic = arguments.ptr[0].to_slice(global)?;
+        let topic = topic_value.to_slice(global)?;
 
         if topic.slice().is_empty() {
             return Ok(JSValue::js_number(0.0));
@@ -1498,8 +1461,7 @@ where
     /// `pub const doStop = host_fn.wrapInstanceMethod(ThisServer, "stopFromJS", false)`
     #[bun_jsc::host_fn(method)]
     pub fn do_stop(&mut self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let args = callframe.arguments_old::<2>();
-        let mut iter = jsc::ArgumentsSlice::init(global.bun_vm_ref(), args.slice());
+        let mut iter = jsc::ArgumentsSlice::init(global.bun_vm_ref(), callframe.arguments());
         // ?jsc.JSValue
         let abruptly = iter.next_eat();
         Ok(self.stop_from_js(abruptly))
@@ -1522,8 +1484,7 @@ where
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let args = callframe.arguments_old::<4>();
-        let mut iter = jsc::ArgumentsSlice::init(global.bun_vm_ref(), args.slice());
+        let mut iter = jsc::ArgumentsSlice::init(global.bun_vm_ref(), callframe.arguments());
         // jsc.JSValue
         let object = iter
             .next_eat()
@@ -1540,8 +1501,7 @@ where
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let args = callframe.arguments_old::<5>();
-        let mut iter = jsc::ArgumentsSlice::init(global.bun_vm_ref(), args.slice());
+        let mut iter = jsc::ArgumentsSlice::init(global.bun_vm_ref(), callframe.arguments());
         let topic_value = iter
             .next_eat()
             .ok_or_else(|| global.throw_invalid_arguments(format_args!("Missing argument")))?;
@@ -1565,8 +1525,7 @@ where
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let args = callframe.arguments_old::<2>();
-        let mut iter = jsc::ArgumentsSlice::init(global.bun_vm_ref(), args.slice());
+        let mut iter = jsc::ArgumentsSlice::init(global.bun_vm_ref(), callframe.arguments());
         // *jsc.WebCore.Request
         let arg = iter.next_eat().ok_or_else(|| {
             global.throw_invalid_arguments(format_args!("Missing Request object"))
@@ -1624,8 +1583,7 @@ where
 
     #[bun_jsc::host_fn(method)]
     pub fn timeout(&mut self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let arguments_buf = callframe.arguments_old::<2>();
-        let arguments = arguments_buf.slice();
+        let arguments = callframe.arguments();
         if arguments.len() < 2 || arguments[0].is_empty_or_undefined_or_null() {
             return Err(global.throw_not_enough_arguments("timeout", 2, arguments.len()));
         }
@@ -1657,15 +1615,6 @@ where
         }
 
         Ok(JSValue::UNDEFINED)
-    }
-
-    pub fn append_static_route(
-        &mut self,
-        path: &[u8],
-        route: super::AnyRoute,
-        method: server_config::MethodOptional,
-    ) -> Result<(), crate::Error> {
-        self.config.append_static_route(path, route, method)
     }
 
     pub fn publish(
@@ -1958,12 +1907,16 @@ where
         let mut sec_websocket_key_str = ZigString::EMPTY;
         let mut sec_websocket_protocol = ZigString::EMPTY;
         let mut sec_websocket_extensions = ZigString::EMPTY;
+        let mut sec_websocket_version = ZigString::EMPTY;
+        let mut upgrade_header = ZigString::EMPTY;
 
         // Owned backing storage for sec_websocket_*.
         // `ZigStringSlice` impls `Drop`; reassignment drops the previous value.
         let mut _sec_websocket_key_owned = bun_core::ZigStringSlice::empty();
         let mut _sec_websocket_protocol_owned = bun_core::ZigStringSlice::empty();
         let mut _sec_websocket_extensions_owned = bun_core::ZigStringSlice::empty();
+        let mut _sec_websocket_version_owned = bun_core::ZigStringSlice::empty();
+        let mut _upgrade_header_owned = bun_core::ZigStringSlice::empty();
 
         // NOTE: `FetchHeaders::fast_get` takes `&mut self` (FFI signature
         // is `*mut`), so go through the `BodyMixin` accessor which yields a
@@ -1985,6 +1938,14 @@ where
             if let Some(ext) = head.fast_get(HTTPHeaderName::SecWebSocketExtensions) {
                 _sec_websocket_extensions_owned = ext.to_slice_clone();
                 sec_websocket_extensions = ZigString::init(_sec_websocket_extensions_owned.slice());
+            }
+            if let Some(ver) = head.fast_get(HTTPHeaderName::SecWebSocketVersion) {
+                _sec_websocket_version_owned = ver.to_slice_clone();
+                sec_websocket_version = ZigString::init(_sec_websocket_version_owned.slice());
+            }
+            if let Some(up) = head.fast_get(HTTPHeaderName::Upgrade) {
+                _upgrade_header_owned = up.to_slice_clone();
+                upgrade_header = ZigString::init(_upgrade_header_owned.slice());
             }
         }
 
@@ -2011,9 +1972,39 @@ where
                 sec_websocket_extensions =
                     ZigString::init(r.header(b"sec-websocket-extensions").unwrap_or(b""));
             }
+            if sec_websocket_version.len == 0 {
+                sec_websocket_version =
+                    ZigString::init(r.header(b"sec-websocket-version").unwrap_or(b""));
+            }
+            if upgrade_header.len == 0 {
+                upgrade_header = ZigString::init(r.header(b"upgrade").unwrap_or(b""));
+            }
         }
 
-        if sec_websocket_key_str.len != 24 {
+        // RFC 6455 §4.2.1: validate the client's opening handshake.
+        // A request that does not name "websocket" in its |Upgrade| token list,
+        // or whose |Sec-WebSocket-Key| is not base64 of 16 bytes, is not a
+        // WebSocket handshake; fall through so the caller's fetch() can respond.
+        if !upgrade_header
+            .slice()
+            .split(|&c| c == b',')
+            .any(|t| strings::eql_case_insensitive_ascii(t.trim_ascii(), b"websocket", true))
+        {
+            return Ok(JSValue::FALSE);
+        }
+        if !is_valid_sec_websocket_key(sec_websocket_key_str.slice()) {
+            return Ok(JSValue::FALSE);
+        }
+        // RFC 6455 §4.4: an unsupported |Sec-WebSocket-Version| MUST be
+        // answered with an HTTP error and a |Sec-WebSocket-Version| header
+        // listing the versions the server understands.
+        if sec_websocket_version.slice() != b"13" {
+            resp.write_status(b"426 Upgrade Required");
+            resp.write_header(b"Sec-WebSocket-Version", b"13");
+            // SAFETY: upgrader_ptr is live (ref_() above)
+            let upgrader = unsafe { &mut *upgrader_ptr };
+            upgrader.flags.set_has_written_status(true);
+            upgrader.end_without_body(true);
             return Ok(JSValue::FALSE);
         }
         if sec_websocket_protocol.len > 0 {
@@ -2255,7 +2246,6 @@ where
             ws.handler
                 .flags
                 .set(super::web_socket_server_context::HandlerFlags::SSL, SSL);
-            ws.global_object = bun_ptr::BackRef::new(global);
             self.config.websocket = Some(ws);
             self.write_ws_handler_slots(server_js, global);
         }
@@ -2367,8 +2357,7 @@ where
             );
         }
 
-        let arguments_buf = callframe.arguments_old::<2>();
-        let arguments = arguments_buf.slice();
+        let arguments = callframe.arguments();
         if arguments.is_empty() {
             let fetch_error = Fetch::FETCH_ERROR_NO_ARGS;
             return Ok(
@@ -2573,28 +2562,26 @@ where
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_port(&self, _: &JSGlobalObject) -> JSValue {
-        if matches!(self.config.address, server_config::Address::Unix(_)) {
-            return JSValue::UNDEFINED;
-        }
+        let config_port = match &self.config.address {
+            server_config::Address::Unix(_) => return JSValue::UNDEFINED,
+            server_config::Address::Tcp { port, .. } => *port,
+        };
 
         if let Some(listener) = self.listener {
             // S008: `app::ListenSocket<SSL>` is a ZST opaque — safe deref.
-            return JSValue::js_number(
-                bun_opaque::opaque_deref_mut(listener).get_local_port() as f64
-            );
+            if let Some(p) = bun_opaque::opaque_deref_mut(listener).get_local_port() {
+                return JSValue::js_number(p as f64);
+            }
         }
         if Self::HAS_H3 {
             if let Some(h3l) = self.h3_listener {
                 // S008: `h3::ListenSocket` is an `opaque_ffi!` ZST — safe deref.
-                return JSValue::js_number(
-                    bun_opaque::opaque_deref_mut(h3l).get_local_port() as f64
-                );
+                if let Some(p) = bun_opaque::opaque_deref_mut(h3l).get_local_port() {
+                    return JSValue::js_number(p as f64);
+                }
             }
         }
-        match &self.config.address {
-            server_config::Address::Tcp { port, .. } => JSValue::js_number(*port as f64),
-            server_config::Address::Unix(_) => unreachable!(),
-        }
+        JSValue::js_number(config_port as f64)
     }
 
     #[bun_jsc::host_fn(getter)]
@@ -2628,7 +2615,7 @@ where
                 if let Some(listener) = self.listener {
                     // S008: `app::ListenSocket<SSL>` is a ZST opaque — safe deref.
                     let listener = bun_opaque::opaque_deref_mut(listener);
-                    port = u16::try_from(listener.get_local_port()).expect("int cast");
+                    port = listener.get_local_port().unwrap_or(port);
 
                     let mut buf = [0u8; 64];
                     let Some(address_bytes) = listener.socket().local_address(&mut buf) else {
@@ -2647,7 +2634,7 @@ where
                     if let Some(h3l) = self.h3_listener {
                         // S008: `h3::ListenSocket` is an `opaque_ffi!` ZST — safe deref.
                         let h3l = bun_opaque::opaque_deref_mut(h3l);
-                        port = u16::try_from(h3l.get_local_port()).expect("int cast");
+                        port = h3l.get_local_port().unwrap_or(port);
                         let mut buf = [0u8; 64];
                         let Some(address_bytes) = h3l.get_local_address(&mut buf) else {
                             return Ok(JSValue::NULL);
@@ -3523,24 +3510,6 @@ where
         resp.end(&json_string, resp.should_close_connection());
     }
 
-    pub fn on404(
-        _this: &mut Self,
-        req: &mut uws::Request,
-        resp: &mut uws_sys::NewAppResponse<SSL>,
-    ) {
-        if cfg!(debug_assertions) {
-            // NOTE: see on_chrome_dev_tools_json_request — scoped_log! double-evaluates args.
-            let m = req.method().to_vec();
-            let u = req.url().to_vec();
-            httplog!("{} - {} 404", BStr::new(&m), BStr::new(&u));
-        }
-
-        resp.write_status(b"404 Not Found");
-
-        // Rely on browser default page for now.
-        resp.end(b"", false);
-    }
-
     pub fn on_client_error_callback(
         &mut self,
         socket: &mut uws::Socket,
@@ -3643,13 +3612,6 @@ bun_jsc::impl_js_class_via_generated!(HTTPServer => crate::generated_classes::js
 bun_jsc::impl_js_class_via_generated!(HTTPSServer => crate::generated_classes::js_HTTPSServer, no_constructor);
 bun_jsc::impl_js_class_via_generated!(DebugHTTPServer => crate::generated_classes::js_DebugHTTPServer, no_constructor);
 bun_jsc::impl_js_class_via_generated!(DebugHTTPSServer => crate::generated_classes::js_DebugHTTPSServer, no_constructor);
-
-pub enum AnyUserRouteList<'a> {
-    HTTPServer(&'a [UserRoute<false, false>]),
-    HTTPSServer(&'a [UserRoute<true, false>]),
-    DebugHTTPServer(&'a [UserRoute<false, true>]),
-    DebugHTTPSServer(&'a [UserRoute<true, true>]),
-}
 
 // ─── Exported fns ────────────────────────────────────────────────────────────
 #[unsafe(no_mangle)]

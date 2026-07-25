@@ -100,7 +100,6 @@ unsafe impl<T: Linked> Node for T {
 
 pub struct Batch<T: Node> {
     pub front: *mut T,
-    pub last: *mut T,
     pub count: usize,
 }
 
@@ -115,7 +114,6 @@ impl<T: Node> Default for Batch<T> {
     fn default() -> Self {
         Self {
             front: ptr::null_mut(),
-            last: ptr::null_mut(),
             count: 0,
         }
     }
@@ -335,7 +333,6 @@ impl<T: Node> UnboundedQueue<T> {
         }
 
         batch.front = first;
-        batch.last = last;
         batch
     }
 

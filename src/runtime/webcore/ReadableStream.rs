@@ -391,34 +391,6 @@ impl ReadableStream {
         }
     }
 
-    pub fn from_file_blob_with_offset(
-        global_this: &JSGlobalObject,
-        blob: &Blob,
-        offset: usize,
-    ) -> JsResult<JSValue> {
-        let Some(store) = blob.store.get() else {
-            return ReadableStream::empty(global_this);
-        };
-        match &store.data {
-            webcore::blob::store::Data::File(_) => {
-                let reader = NewSource::<FileReader>::new_mut(NewSource {
-                    global_this: Some(bun_ptr::BackRef::new(global_this)),
-                    context: FileReader {
-                        event_loop: core::cell::Cell::new(jsc::EventLoopHandle::init(
-                            global_this.bun_vm().as_mut().event_loop().cast(),
-                        )),
-                        start_offset: Some(offset),
-                        lazy: bun_jsc::JsCell::new(webcore::file_reader::Lazy::Blob(store.clone())),
-                        ..Default::default()
-                    },
-                    ..Default::default()
-                });
-                reader.to_readable_stream(global_this)
-            }
-            _ => Err(global_this.throw(format_args!("Expected FileBlob"))),
-        }
-    }
-
     pub fn from_pipe<P>(
         global_this: &JSGlobalObject,
         _parent: P,
@@ -861,16 +833,6 @@ impl<C: SourceContext> NewSource<C> {
         unsafe { &mut *Self::new(init) }
     }
 
-    pub fn pull(&mut self, buf: &mut [u8]) -> streams::Result {
-        self.context.on_pull(buf, JSValue::ZERO)
-    }
-
-    pub fn r#ref(&mut self) {
-        if C::SUPPORTS_REF {
-            self.context.set_ref_unref(true);
-        }
-    }
-
     pub fn unref(&mut self) {
         if C::SUPPORTS_REF {
             self.context.set_ref_unref(false);
@@ -1002,10 +964,6 @@ impl<C: SourceContext> NewSource<C> {
         remaining
     }
 
-    pub fn get_error(&mut self) -> Option<syscall::Error> {
-        self.pending_err.take()
-    }
-
     pub fn drain(&mut self) -> Vec<u8> {
         self.context.drain_internal_buffer()
     }
@@ -1068,14 +1026,13 @@ impl<C: SourceContext> NewSource<C> {
         call_frame: &CallFrame,
     ) -> JsResult<JSValue> {
         let this_jsvalue = call_frame.this();
-        let arguments = call_frame.arguments_old::<2>();
-        let view = arguments.ptr[0];
+        let [view, flags] = call_frame.arguments_as_array::<2>();
         view.ensure_still_alive();
         let Some(mut buffer) = view.as_array_buffer(global_this) else {
             return Ok(JSValue::UNDEFINED);
         };
         let result = self.on_pull_from_js(buffer.slice_mut(), view);
-        Self::process_result(this_jsvalue, global_this, arguments.ptr[1], result)
+        Self::process_result(this_jsvalue, global_this, flags, result)
     }
 
     pub fn start_from_js(

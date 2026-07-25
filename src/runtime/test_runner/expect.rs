@@ -173,14 +173,6 @@ impl Flags {
     pub fn encode(self) -> FlagsCppType {
         self.0
     }
-    #[inline]
-    pub fn decode(bitset: FlagsCppType) -> Self {
-        Self(bitset)
-    }
-    #[inline]
-    pub fn from_bitset(bitset: i32) -> Self {
-        Self(bitset as u8)
-    }
 }
 
 impl Expect {
@@ -697,8 +689,7 @@ impl Expect {
 
     // extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub fn call(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let arguments_ = callframe.arguments_old::<2>();
-        let arguments = arguments_.slice();
+        let arguments = callframe.arguments();
         let value = if arguments.len() < 1 { JSValue::UNDEFINED } else { arguments[0] };
 
         let mut custom_label = bun_core::String::empty();
@@ -779,8 +770,7 @@ impl Expect {
         // post_match on drop so it runs on every exit path.
         let this = scopeguard::guard(self, |t| t.post_match(global_this));
 
-        let arguments_ = call_frame.arguments_old::<1>();
-        let arguments = arguments_.slice();
+        let arguments = call_frame.arguments();
 
         let mut _msg: ZigString = ZigString::EMPTY;
 
@@ -826,8 +816,7 @@ impl Expect {
         // so `post_match` runs on every exit.
         let this = scopeguard::guard(self, |t| t.post_match(global_this));
 
-        let arguments_ = call_frame.arguments_old::<1>();
-        let arguments = arguments_.slice();
+        let arguments = call_frame.arguments();
 
         let mut _msg: ZigString = ZigString::EMPTY;
 
@@ -1362,8 +1351,7 @@ impl Expect {
     /// Implements `expect.extend({ ... })`
     // extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub fn extend(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-        let args_ = call_frame.arguments_old::<1>();
-        let args = args_.slice();
+        let args = call_frame.arguments();
 
         if args.is_empty() || !args[0].is_object() {
             return Err(crate::throw_pretty_static!(
@@ -1687,8 +1675,7 @@ impl Expect {
         // SAFETY: bun_vm() returns the live VM pointer for this global.
         let _gc = global_this.bun_vm().as_mut().auto_gc_on_drop();
 
-        let arguments_ = call_frame.arguments_old::<1>();
-        let arguments = arguments_.slice();
+        let arguments = call_frame.arguments();
 
         if arguments.is_empty() {
             return Err(global_this.throw_invalid_arguments(format_args!("expect.assertions() takes 1 argument")));
@@ -1733,28 +1720,12 @@ impl Expect {
         Ok(JSValue::UNDEFINED)
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub fn not_implemented_jsc_fn(&self, global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
-        Err(global_this.throw(format_args!("Not implemented")))
-    }
 
     // extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub fn not_implemented_static_fn(global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
         Err(global_this.throw(format_args!("Not implemented")))
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub fn not_implemented_jsc_prop(_this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        Err(global_this.throw(format_args!("Not implemented")))
-    }
-
-    // `not_implemented_static_prop` is a static-prop getter
-    // (`(globalThis, JSValue, JSValue)`, no `*Expect` receiver). The
-    // `host_fn(getter)` shape was wrong (it injects `&Self`). Unreferenced by
-    // codegen today, so kept as a plain assoc fn matching the static ABI.
-    pub fn not_implemented_static_prop(global_this: &JSGlobalObject, _: JSValue, _: JSValue) -> JsResult<JSValue> {
-        Err(global_this.throw(format_args!("Not implemented")))
-    }
 
     pub fn post_match(&self, global_this: &JSGlobalObject) {
         global_this.bun_vm().auto_garbage_collect();
@@ -1797,7 +1768,7 @@ impl Expect {
 
     // extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub fn do_unreachable(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let arg = callframe.arguments_old::<1>().ptr[0];
+        let [arg] = callframe.arguments_as_array::<1>();
 
         if arg.is_empty_or_undefined_or_null() {
             let error_value = bun_core::String::init("reached unreachable code").to_error_instance(global_this);
@@ -2100,8 +2071,7 @@ impl Expect {
     ) -> JsResult<JSValue> {
         let this = self.post_match_guard(global);
 
-        let arguments_ = frame.arguments_old::<1>();
-        let arguments = arguments_.slice();
+        let arguments = frame.arguments();
         if arguments.len() < 1 {
             return Err(global.throw_invalid_arguments(format_args!("{matcher_name}() requires 1 argument")));
         }
@@ -2224,8 +2194,7 @@ impl Expect {
         let this = self.post_match_guard(global);
         let this_value = frame.this();
 
-        let arguments_ = frame.arguments_old::<1>();
-        let arguments = arguments_.slice();
+        let arguments = frame.arguments();
         if arguments.len() < 1 {
             return Err(global.throw_invalid_arguments(format_args!("{matcher_name}() takes 1 argument")));
         }
@@ -2418,8 +2387,7 @@ pub struct ExpectCloseTo {
 impl ExpectCloseTo {
     // extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub fn call(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-        let args_buf = call_frame.arguments_old::<2>();
-        let args = args_buf.slice();
+        let args = call_frame.arguments();
 
         if args.is_empty() || !args[0].is_number() {
             return Err(crate::throw_pretty_static!(
@@ -2459,8 +2427,7 @@ pub struct ExpectObjectContaining {
 impl ExpectObjectContaining {
     // extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub fn call(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-        let args_buf = call_frame.arguments_old::<1>();
-        let args = args_buf.slice();
+        let args = call_frame.arguments();
 
         if args.is_empty() || !args[0].is_object() {
             return Err(crate::throw_pretty_static!(
@@ -2487,8 +2454,7 @@ pub struct ExpectStringContaining {
 impl ExpectStringContaining {
     // extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub fn call(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-        let args_buf = call_frame.arguments_old::<1>();
-        let args = args_buf.slice();
+        let args = call_frame.arguments();
 
         if args.is_empty() || !args[0].is_string() {
             return Err(crate::throw_pretty_static!(
@@ -2515,8 +2481,7 @@ pub struct ExpectAny {
 impl ExpectAny {
     // extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub fn call(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-        let _arguments = call_frame.arguments_old::<1>();
-        let arguments: &[JSValue] = &_arguments.ptr[.._arguments.len];
+        let arguments = call_frame.arguments();
 
         if arguments.is_empty() {
             return Err(global_this.throw2(
@@ -2563,8 +2528,7 @@ pub struct ExpectArrayContaining {
 impl ExpectArrayContaining {
     // extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub fn call(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-        let args_buf = call_frame.arguments_old::<1>();
-        let args = args_buf.slice();
+        let args = call_frame.arguments();
 
         if args.is_empty() || !args[0].js_type().is_array() {
             return Err(crate::throw_pretty_static!(
@@ -2757,32 +2721,6 @@ impl ExpectCustomAsymmetricMatcher {
         Ok(false)
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub fn to_asymmetric_matcher(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let mut mutable_string = bun_core::MutableString::init_2048()?;
-
-        // With `false`, JS exceptions surface
-        // through `maybe_clear` as `Error::UNEXPECTED` while remaining set on
-        // the VM; only allocation failures map to OOM. Propagate accordingly
-        // instead of clobbering with a fresh OutOfMemory throw.
-        let printed = self
-            .custom_print(callframe.this(), global_this, mutable_string.writer(), false)
-            .map_err(|e| {
-                if matches!(e, crate::Error::Alloc(_)) {
-                    global_this.throw_out_of_memory()
-                } else {
-                    // exception already on the VM (see `maybe_clear` with dont_throw=false)
-                    JsError::Thrown
-                }
-            })?;
-        if printed {
-            let slice: &[u8] = mutable_string.slice();
-            return bun_core::String::init(slice).to_js(global_this);
-        }
-        // Pretty-print the matcher instance itself, available
-        // here as `callframe.this()`.
-        ExpectMatcherUtils::print_value(global_this, callframe.this(), None)
-    }
 }
 
 /// Reference: `MatcherContext` in https://github.com/jestjs/jest/blob/main/packages/expect/src/types.ts
@@ -2820,14 +2758,13 @@ impl ExpectMatcherContext {
 
     #[bun_jsc::host_fn(method)]
     pub fn equals(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let arguments = callframe.arguments_old::<3>();
-        if arguments.len < 2 {
+        let args = callframe.arguments();
+        if args.len() < 2 {
             return Err(global_this.throw2(
                 "expect.extends matcher: this.util.equals expects at least 2 arguments",
                 (),
             ));
         }
-        let args = arguments.slice();
         Ok(JSValue::from(args[0].jest_deep_equals(args[1], global_this)?))
     }
 }
@@ -2887,32 +2824,28 @@ impl ExpectMatcherUtils {
 
     #[bun_jsc::host_fn(method)]
     pub fn stringify(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let arguments = callframe.arguments_old::<1>();
-        let arguments = arguments.slice();
+        let arguments = callframe.arguments();
         let value = if arguments.is_empty() { JSValue::UNDEFINED } else { arguments[0] };
         Ok(Self::print_value_catched(global_this, value, None))
     }
 
     #[bun_jsc::host_fn(method)]
     pub fn print_expected(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let arguments = callframe.arguments_old::<1>();
-        let arguments = arguments.slice();
+        let arguments = callframe.arguments();
         let value = if arguments.is_empty() { JSValue::UNDEFINED } else { arguments[0] };
         Ok(Self::print_value_catched(global_this, value, Some("<green>")))
     }
 
     #[bun_jsc::host_fn(method)]
     pub fn print_received(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let arguments = callframe.arguments_old::<1>();
-        let arguments = arguments.slice();
+        let arguments = callframe.arguments();
         let value = if arguments.is_empty() { JSValue::UNDEFINED } else { arguments[0] };
         Ok(Self::print_value_catched(global_this, value, Some("<red>")))
     }
 
     #[bun_jsc::host_fn(method)]
     pub fn matcher_hint(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let arguments = callframe.arguments_old::<4>();
-        let arguments = arguments.slice();
+        let arguments = callframe.arguments();
 
         if arguments.is_empty() || !arguments[0].is_string() {
             return Err(global_this.throw2(
@@ -3357,13 +3290,6 @@ mod tests {
             assert!(next_output.is_some());
             assert!(next_input.unwrap().ends_with(next_output.unwrap()));
         }
-    }
-
-    #[allow(dead_code)]
-    fn test_one(input: &[u8]) {
-        let mut cpy = vec![0u8; input.len()];
-        let res = Expect::trim_leading_whitespace_for_inline_snapshot(input, &mut cpy);
-        sanity_check(input, &res);
     }
 
     #[test]

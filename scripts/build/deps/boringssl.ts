@@ -36,6 +36,11 @@ export const boringssl: Dependency = {
     commit: BORINGSSL_COMMIT,
   }),
 
+  // Upstream mem.cc gates OPENSSL_memory_* weak-symbol overrides on __ELF__;
+  // on Mach-O/COFF the hooks compile to static nullptr and OPENSSL_malloc goes
+  // straight to libc. Declare them as plain externs so lib.rs binds everywhere.
+  patches: ["patches/boringssl/require-memory-hooks.patch"],
+
   build: cfg => {
     // win-x64 uses NASM-syntax .asm; everything else (including win-aarch64)
     // uses gas .S that clang assembles.
@@ -48,6 +53,9 @@ export const boringssl: Dependency = {
       includes: ["include"],
       defines: {
         BORINGSSL_IMPLEMENTATION: true,
+        // See `patches:` above. Off under ASAN so BoringSSL allocs stay on the
+        // intercepted libc heap on Mach-O/COFF instead of routing to mimalloc.
+        ...(!cfg.asan && { BORINGSSL_REQUIRE_MEMORY_HOOKS: true }),
         ...(cfg.windows && {
           _HAS_EXCEPTIONS: 0,
           WIN32_LEAN_AND_MEAN: true,

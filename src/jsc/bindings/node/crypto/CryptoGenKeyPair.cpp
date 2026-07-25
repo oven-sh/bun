@@ -168,7 +168,7 @@ JSC_DEFINE_HOST_FUNCTION(jsGenerateKeyPair, (JSC::JSGlobalObject * globalObject,
         return JSValue::encode(jsUndefined());
     }
     // TODO: should just get `id` here
-    if (typeView == "ed25519"_s || typeView == "ed448"_s || typeView == "x25519"_s || typeView == "x448"_s) {
+    if (typeView == "ed25519"_s || typeView == "ed448"_s || typeView == "x25519"_s || typeView == "x448"_s || pqcKeyTypeToNid(typeView)) {
         std::optional<NidKeyPairJobCtx> ctx = NidKeyPairJobCtx::fromJS(globalObject, scope, typeView, optionsValue, config);
         EXCEPTION_ASSERT(ctx.has_value() == !scope.exception());
         RETURN_IF_EXCEPTION(scope, {});
@@ -268,7 +268,7 @@ JSC_DEFINE_HOST_FUNCTION(jsGenerateKeyPairSync, (JSGlobalObject * globalObject, 
         RETURN_IF_EXCEPTION(scope, {});
         privateKeyValue = ctx->m_keyObj.exportPrivate(globalObject, scope, ctx->m_privateKeyEncoding);
         RETURN_IF_EXCEPTION(scope, {});
-    } else if (typeView == "ed25519"_s || typeView == "ed448"_s || typeView == "x25519"_s || typeView == "x448"_s) {
+    } else if (typeView == "ed25519"_s || typeView == "ed448"_s || typeView == "x25519"_s || typeView == "x448"_s || pqcKeyTypeToNid(typeView)) {
         auto ctx = NidKeyPairJobCtx::fromJS(globalObject, scope, typeView, optionsValue, config);
         EXCEPTION_ASSERT(ctx.has_value() == !scope.exception());
         RETURN_IF_EXCEPTION(scope, {});

@@ -420,7 +420,7 @@ pub mod default_alloc {
 
 pub use max_heap_allocator::MaxHeapAllocator;
 pub use nullable_allocator::NullableAllocator;
-pub use stack_fallback::{ArenaPtr, StackFallback};
+pub use stack_fallback::ArenaPtr;
 
 #[path = "MimallocArena.rs"]
 pub mod mimalloc_arena;
@@ -3289,12 +3289,10 @@ impl<
     ) -> core::result::Result<(), AllocError> {
         let _guard = self.map().mutex.lock();
 
-        let slice: &'static [u8];
-
         // Is this actually a slice into the map? Don't free it.
-        if self.is_key_statically_allocated(key) {
+        let slice: &'static [u8] = if self.is_key_statically_allocated(key) {
             // SAFETY: key points into self.key_list_buffer which lives for the singleton's life.
-            slice = unsafe { core::slice::from_raw_parts(key.as_ptr(), key.len()) };
+            unsafe { core::slice::from_raw_parts(key.as_ptr(), key.len()) }
         } else if self.key_list_buffer_used + key.len() < self.key_list_buffer.len() {
             let start = self.key_list_buffer_used;
             self.key_list_buffer_used += key.len();
@@ -3310,7 +3308,7 @@ impl<
             };
             dst.copy_from_slice(key);
             // SAFETY: points into self.key_list_buffer (singleton-static lifetime).
-            slice = unsafe { core::slice::from_raw_parts(dst.as_ptr(), dst.len()) };
+            unsafe { core::slice::from_raw_parts(dst.as_ptr(), dst.len()) }
         } else {
             // Propagate OOM. Route
             // through mimalloc directly (PORTING.md forbids `Box::leak`) so the
@@ -3324,8 +3322,8 @@ impl<
             unsafe { core::ptr::copy_nonoverlapping(key.as_ptr(), ptr, key.len()) };
             // SAFETY: allocation is owned by this singleton for process lifetime (or until
             // freed below on overwrite).
-            slice = unsafe { core::slice::from_raw_parts(ptr, key.len()) };
-        }
+            unsafe { core::slice::from_raw_parts(ptr, key.len()) }
+        };
 
         let slice = if REMOVE_TRAILING_SLASHES {
             trim_right(slice, b"/")

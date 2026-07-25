@@ -135,6 +135,16 @@ panic = "abort"
 
 [profile.dev]
 panic = "abort"
+# Split DWARF: debuginfo goes into `.dwo` files alongside each `.o` instead of
+# being packed into the rlibs and then re-packed into `libbun_rust.a`. The debug
+# `.a` was ~1.5 GB (≥80% debuginfo) and the `bun_bin` staticlib step alone spent
+# ~6s archiving it. With split DWARF the `.a` is ~1/4 the size, per-crate
+# codegen writes less to disk, and `gdb`/`lldb` still resolve full debuginfo via
+# the skeleton CUs (`DW_AT_dwo_name`) pointing into `<target>/deps/*.dwo`.
+# No effect on the compiled code. Windows uses PDB so this is a no-op there
+# (rustc ignores it); Darwin's `"unpacked"` is the `.o`-is-the-debuginfo mode
+# `dsymutil` already expects.
+split-debuginfo = "unpacked"
 
 # Fast-iteration release build for local benching when fat LTO's link time
 # (minutes) is in the way. `bun run build:release --cargo-profile=release-dev`.

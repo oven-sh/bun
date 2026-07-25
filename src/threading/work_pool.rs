@@ -146,10 +146,6 @@ impl WorkPool {
         POOL.get_or_init(create)
     }
 
-    pub fn schedule_batch(batch: Batch) {
-        Self::get().schedule(batch);
-    }
-
     pub fn schedule(task: *mut Task) {
         Self::get().schedule(Batch::from(task));
     }

@@ -33,7 +33,6 @@ pub mod r#impl {
         pub mod selector_impl {
             use super::*;
 
-            pub type PseudoElement = parser::PseudoElement;
             pub type VendorPrefix = css::VendorPrefix;
         }
     }

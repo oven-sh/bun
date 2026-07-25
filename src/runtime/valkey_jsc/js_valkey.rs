@@ -300,8 +300,7 @@ impl SubscriptionCtx {
         Ok(())
     }
 
-    /// Return whether the subscription context is ready to be deleted by the JS garbage collector.
-    pub fn is_deletable(&self, global_object: &JSGlobalObject) -> JsResult<bool> {
+    fn is_deletable(&self, global_object: &JSGlobalObject) -> JsResult<bool> {
         // The user may request .close(), in which case we can dispose of the subscription object.
         // If that is the case, finalized will be true. Otherwise, we should treat the object as
         // disposable if there are no active subscriptions.
@@ -1000,27 +999,6 @@ impl JSValkeyClient {
         debug!("removeSubscription: exiting");
     }
 
-    pub fn get_or_create_subscription_ctx(&self) -> JsResult<&SubscriptionCtx> {
-        // Return the existing ctx so we don't unconditionally reinit.
-        if self._subscription_ctx.get().is_subscriber {
-            return Ok(self._subscription_ctx.get());
-        }
-
-        // Save the original flag values and create a new subscription context
-        self._subscription_ctx.set(SubscriptionCtx::init(self)?);
-
-        // We need to make sure we disable the offline queue, but we actually want to make sure
-        // that our HELLO message goes through first. Consequently, we only disable the offline
-        // queue if we're already connected.
-        if self.client.get().status == valkey::Status::Connected {
-            self.client_mut().flags.enable_offline_queue = false;
-        }
-
-        self.client_mut().flags.enable_auto_pipelining = false;
-
-        Ok(self._subscription_ctx.get())
-    }
-
     pub fn is_subscriber(&self) -> bool {
         self._subscription_ctx.get().is_subscriber
     }
@@ -1140,13 +1118,6 @@ impl JSValkeyClient {
     fn reset_connection_timeout(&self) {
         self.timer
             .arm(self, self.client.get().get_timeout_interval());
-    }
-
-    pub fn disable_connection_timeout(&self) {
-        self.timer.disarm(self);
-        self.timer
-            .event_loop_timer
-            .with_mut(|t| t.state = Timer::State::CANCELLED);
     }
 
     pub fn on_connection_timeout(&self) {
@@ -1432,12 +1403,6 @@ impl JSValkeyClient {
     }
 
     // Callback for when Valkey client times out
-    pub fn on_valkey_timeout(&self) {
-        let _ = self.client_fail(
-            b"Connection timeout",
-            protocol::RedisError::ConnectionClosed,
-        );
-    }
 
     pub fn client_fail(&self, message: &[u8], err: protocol::RedisError) -> JsTerminatedResult<()> {
         narrow_terminated(self.client_mut().fail(message, err))
@@ -1549,21 +1514,12 @@ impl JSValkeyClient {
         let socket_ref = self.ref_scope();
 
         let is_tls = self.client.get().tls != valkey::TLS::None;
-        // `vm.rare_data()` needs `&mut VirtualMachine`; `client.vm`
-        // is `&'static`. Cast through raw — the per-thread VM is single-owner
-        // on the JS thread, and `valkey_group` only touches the embedded
-        // `SocketGroup` field + `vm.uws_loop()` (disjoint from anything we
-        // hold). Same pattern as `Bun__RareData__postgresGroup`.
-        let vm_ptr = std::ptr::from_ref::<VirtualMachine>(self.client.get().vm).cast_mut();
-        // SAFETY: per-thread VM, accessed from the JS thread; `rare_data()`
-        // lazy-inits the box.
-        let group: *mut uws::SocketGroup = unsafe {
-            let rare = std::ptr::from_mut::<jsc::rare_data::RareData>((*vm_ptr).rare_data());
-            if is_tls {
-                (*rare).valkey_group::<true>(&*vm_ptr)
-            } else {
-                (*rare).valkey_group::<false>(&*vm_ptr)
-            }
+        let vm = self.client.get().vm.as_mut();
+        let loop_ = vm.uws_loop();
+        let group: *mut uws::SocketGroup = if is_tls {
+            vm.rare_data().valkey_group::<true>(loop_)
+        } else {
+            vm.rare_data().valkey_group::<false>(loop_)
         };
 
         // Populate `_secure` first, then handle the failure branch outside the
@@ -1603,8 +1559,8 @@ impl JSValkeyClient {
         let ssl_ctx: Option<*mut uws::SslCtx> = match &self.client.get().tls {
             valkey::TLS::None => None,
             valkey::TLS::Enabled => {
-                // SAFETY: `vm_ptr` is the live per-thread VM (see above).
-                Some(unsafe { crate::jsc_hooks::default_client_ssl_ctx(vm_ptr) })
+                // SAFETY: `vm` is the live per-thread VM (see above).
+                Some(unsafe { crate::jsc_hooks::default_client_ssl_ctx(vm) })
             }
             valkey::TLS::Custom(_) => Some(self._secure.get().unwrap()),
         };

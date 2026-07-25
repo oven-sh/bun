@@ -41,10 +41,7 @@ use core::sync::atomic::{AtomicPtr, AtomicU8, AtomicU16, AtomicU32, AtomicU64, O
 ///
 /// Default ordering is **Acquire/Release**, not Relaxed — at least six of the
 /// data-race findings that motivated this type were "Relaxed gives no
-/// happens-before for the init it guards". Telemetry / best-effort hints can
-/// opt out via [`load_relaxed`](Self::load_relaxed) /
-/// [`store_relaxed`](Self::store_relaxed), named so grep finds every site
-/// that opted out of ordering.
+/// happens-before for the init it guards".
 #[repr(C)]
 pub struct AtomicCell<T: Copy> {
     // ZST that forces 8-byte alignment so `inner`'s address is valid for
@@ -63,7 +60,7 @@ pub struct AtomicCell<T: Copy> {
 // pointers are `!Send`. What the receiving thread *does* with a loaded pointer
 // is on the caller, same as `AtomicPtr`. A plain `T: Copy` bound would be
 // unsound: `&Cell<u32>` is `Copy + !Send`, and shipping one to another thread
-// via `into_inner()` would be a data race.
+// via `load()` would be a data race.
 unsafe impl<T: Atom> Sync for AtomicCell<T> {}
 // SAFETY: see the `Sync` justification above — the same invariants apply to
 // moving the cell itself across threads; `T: Copy` has no drop glue to race.
@@ -78,12 +75,6 @@ impl<T: Copy> AtomicCell<T> {
             _align: [],
             inner: UnsafeCell::new(value),
         }
-    }
-
-    /// Consume and return the inner value (no atomic op; we own it).
-    #[inline]
-    pub fn into_inner(self) -> T {
-        self.inner.into_inner()
     }
 }
 
@@ -101,13 +92,6 @@ impl<T: Atom> AtomicCell<T> {
     pub fn store(&self, value: T) {
         // SAFETY: as above.
         unsafe { T::_atomic_store(self.inner.get(), value, Ordering::Release) }
-    }
-
-    /// AcqRel swap; returns the previous value.
-    #[inline]
-    pub fn swap(&self, value: T) -> T {
-        // SAFETY: as above.
-        unsafe { T::_atomic_swap(self.inner.get(), value, Ordering::AcqRel) }
     }
 
     /// AcqRel compare-and-swap. `Ok(prev)` on success, `Err(actual)` on
@@ -139,22 +123,6 @@ impl<T: Atom> AtomicCell<T> {
             }
         }
         Err(prev)
-    }
-
-    /// Relaxed load. **Only** for telemetry / best-effort hints (e.g.
-    /// `memory_cost()` from a GC helper thread). Named `load_relaxed` not
-    /// `load(Ordering)` so grep finds every site that opted out of ordering.
-    #[inline]
-    pub fn load_relaxed(&self) -> T {
-        // SAFETY: as above.
-        unsafe { T::_atomic_load(self.inner.get(), Ordering::Relaxed) }
-    }
-
-    /// Relaxed store. See [`load_relaxed`](Self::load_relaxed).
-    #[inline]
-    pub fn store_relaxed(&self, value: T) {
-        // SAFETY: as above.
-        unsafe { T::_atomic_store(self.inner.get(), value, Ordering::Relaxed) }
     }
 }
 
@@ -207,8 +175,6 @@ pub unsafe trait Atom: Copy {
     unsafe fn _atomic_load(p: *mut Self, ord: Ordering) -> Self;
     #[doc(hidden)]
     unsafe fn _atomic_store(p: *mut Self, v: Self, ord: Ordering);
-    #[doc(hidden)]
-    unsafe fn _atomic_swap(p: *mut Self, v: Self, ord: Ordering) -> Self;
     #[doc(hidden)]
     unsafe fn _atomic_cas(
         p: *mut Self,
@@ -274,11 +240,6 @@ macro_rules! unsafe_impl_atom {
                 unsafe { $crate::atomic_cell::_dispatch_store::<$T>(p, v, ord) }
             }
             #[inline]
-            unsafe fn _atomic_swap(p: *mut Self, v: Self, ord: ::core::sync::atomic::Ordering) -> Self {
-                // SAFETY: as above.
-                unsafe { $crate::atomic_cell::_dispatch_swap::<$T>(p, v, ord) }
-            }
-            #[inline]
             unsafe fn _atomic_cas(
                 p: *mut Self,
                 cur: Self,
@@ -293,7 +254,7 @@ macro_rules! unsafe_impl_atom {
     )+};
 }
 
-// The four dispatch helpers below are `pub` only so `unsafe_impl_atom!` can
+// The three dispatch helpers below are `pub` only so `unsafe_impl_atom!` can
 // reach them from other crates; they are not part of the stable surface.
 
 macro_rules! size_dispatch {
@@ -359,15 +320,6 @@ pub unsafe fn _dispatch_store<T: Copy>(p: *mut T, v: T, ord: Ordering) {
 }
 #[doc(hidden)]
 #[inline(always)]
-pub unsafe fn _dispatch_swap<T: Copy>(p: *mut T, v: T, ord: Ordering) -> T {
-    size_dispatch!(T, p, |a: A, I| {
-        // SAFETY: this arm has `size_of::<I>() == size_of::<T>()`; `T: Atom`
-        // guarantees no padding and that the round-trip yields a valid `T`.
-        unsafe { xmute::<I, T>(a.swap(xmute::<T, I>(v), ord)) }
-    })
-}
-#[doc(hidden)]
-#[inline(always)]
 pub unsafe fn _dispatch_cas<T: Copy>(
     p: *mut T,
     cur: T,
@@ -418,12 +370,6 @@ unsafe impl<U> Atom for *mut U {
         unsafe { (*(p as *const AtomicPtr<U>)).store(v, ord) }
     }
     #[inline]
-    unsafe fn _atomic_swap(p: *mut Self, v: Self, ord: Ordering) -> Self {
-        // SAFETY: `p` is 8-aligned and live; `*mut U` and `AtomicPtr<U>` have
-        // identical layout (see `_atomic_load`).
-        unsafe { (*(p as *const AtomicPtr<U>)).swap(v, ord) }
-    }
-    #[inline]
     unsafe fn _atomic_cas(
         p: *mut Self,
         cur: Self,
@@ -450,16 +396,6 @@ unsafe impl<U> Atom for *const U {
         // SAFETY: `p` is 8-aligned and live; `*const U` and `AtomicPtr<U>`
         // have identical layout (see `_atomic_load`).
         unsafe { (*(p as *const AtomicPtr<U>)).store(v.cast_mut(), ord) }
-    }
-    #[inline]
-    unsafe fn _atomic_swap(p: *mut Self, v: Self, ord: Ordering) -> Self {
-        // SAFETY: `p` is 8-aligned and live; `*const U` and `AtomicPtr<U>`
-        // have identical layout (see `_atomic_load`).
-        unsafe {
-            (*(p as *const AtomicPtr<U>))
-                .swap(v.cast_mut(), ord)
-                .cast_const()
-        }
     }
     #[inline]
     unsafe fn _atomic_cas(
@@ -505,12 +441,6 @@ unsafe impl<U> Atom for Option<NonNull<U>> {
         // SAFETY: `p` is 8-aligned and live; `Option<NonNull<U>>` and
         // `AtomicPtr<U>` have identical layout (see `_atomic_load`).
         unsafe { (*(p as *const AtomicPtr<U>)).store(nn_to_raw(v), ord) }
-    }
-    #[inline]
-    unsafe fn _atomic_swap(p: *mut Self, v: Self, ord: Ordering) -> Self {
-        // SAFETY: `p` is 8-aligned and live; `Option<NonNull<U>>` and
-        // `AtomicPtr<U>` have identical layout (see `_atomic_load`).
-        NonNull::new(unsafe { (*(p as *const AtomicPtr<U>)).swap(nn_to_raw(v), ord) })
     }
     #[inline]
     unsafe fn _atomic_cas(
@@ -672,10 +602,9 @@ mod tests {
         let c = AtomicCell::new(42_i32);
         assert_eq!(c.load(), 42);
         c.store(-7);
-        assert_eq!(c.swap(100), -7);
-        assert_eq!(c.load(), 100);
-        assert_eq!(c.compare_exchange(0, 1), Err(100));
-        assert_eq!(c.compare_exchange(100, 1), Ok(100));
+        assert_eq!(c.load(), -7);
+        assert_eq!(c.compare_exchange(0, 1), Err(-7));
+        assert_eq!(c.compare_exchange(-7, 1), Ok(-7));
         assert_eq!(c.load(), 1);
     }
 
@@ -684,7 +613,7 @@ mod tests {
         let c = AtomicCell::new(false);
         assert!(!c.load());
         c.store(true);
-        assert!(c.swap(false));
+        assert!(c.load());
     }
 
     #[test]

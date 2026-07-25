@@ -16,38 +16,24 @@ unsafe extern "C" {
     safe fn URL__fromJS(value: JSValue, global: &JSGlobalObject) -> *mut URL;
     safe fn URL__fromString(input: &mut String) -> *mut URL;
     safe fn URL__protocol(url: &URL) -> String;
-    safe fn URL__href(url: &URL) -> String;
     safe fn URL__username(url: &URL) -> String;
     safe fn URL__password(url: &URL) -> String;
-    safe fn URL__search(url: &URL) -> String;
     safe fn URL__host(url: &URL) -> String;
     safe fn URL__hostname(url: &URL) -> String;
     safe fn URL__port(url: &URL) -> u32;
     fn URL__deinit(url: *mut URL);
     safe fn URL__pathname(url: &URL) -> String;
     safe fn URL__getHrefFromJS(value: JSValue, global: &JSGlobalObject) -> String;
-    safe fn URL__getHref(input: &mut String) -> String;
     safe fn URL__getFileURLString(input: &mut String) -> String;
     safe fn URL__getHrefJoin(base: &mut String, relative: &mut String) -> String;
     safe fn URL__pathFromFileURL(input: &mut String) -> String;
     safe fn URL__hash(url: &URL) -> String;
-    safe fn URL__fragmentIdentifier(url: &URL) -> String;
 }
 
 impl URL {
     /// Includes the leading '#'.
     pub fn hash(&self) -> String {
         URL__hash(self)
-    }
-
-    /// Exactly the same as hash, excluding the leading '#'.
-    pub fn fragment_identifier(&self) -> String {
-        URL__fragmentIdentifier(self)
-    }
-
-    pub fn href_from_string(str: String) -> String {
-        let mut input = str;
-        URL__getHref(&mut input)
     }
 
     pub fn join(base: String, relative: String) -> String {
@@ -93,20 +79,12 @@ impl URL {
         URL__protocol(self)
     }
 
-    pub fn href(&self) -> String {
-        URL__href(self)
-    }
-
     pub fn username(&self) -> String {
         URL__username(self)
     }
 
     pub fn password(&self) -> String {
         URL__password(self)
-    }
-
-    pub fn search(&self) -> String {
-        URL__search(self)
     }
 
     /// Returns the host WITHOUT the port.

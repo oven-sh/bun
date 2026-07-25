@@ -31,6 +31,8 @@
 // #include "BlobRegistry.h"
 // #include "ByteArrayPixelBuffer.h"
 #include "CryptoKeyAES.h"
+#include "CryptoKeyAKP.h"
+#include <openssl/err.h>
 #include "CryptoKeyEC.h"
 #include "CryptoKeyHMAC.h"
 #include "CryptoKeyOKP.h"
@@ -475,7 +477,9 @@ static String agentClusterIDFromGlobalObject(JSGlobalObject& globalObject)
 
 #if ENABLE(WEB_CRYPTO)
 
-const uint32_t currentKeyFormatVersion = 1;
+// Version 2 added the AKP key class (ML-DSA/ML-KEM), the KEM usage tags, and
+// the ChaCha20-Poly1305/ML-* algorithm identifier tags.
+const uint32_t currentKeyFormatVersion = 2;
 
 enum class CryptoKeyClassSubtag {
     HMAC = 0,
@@ -484,8 +488,9 @@ enum class CryptoKeyClassSubtag {
     EC = 3,
     Raw = 4,
     OKP = 5,
+    AKP = 6,
 };
-const uint8_t cryptoKeyClassSubtagMaximumValue = 5;
+const uint8_t cryptoKeyClassSubtagMaximumValue = 6;
 
 enum class CryptoKeyAsymmetricTypeSubtag {
     Public = 0,
@@ -501,9 +506,13 @@ enum class CryptoKeyUsageTag {
     DeriveKey = 4,
     DeriveBits = 5,
     WrapKey = 6,
-    UnwrapKey = 7
+    UnwrapKey = 7,
+    EncapsulateKey = 8,
+    EncapsulateBits = 9,
+    DecapsulateKey = 10,
+    DecapsulateBits = 11
 };
-const uint8_t cryptoKeyUsageTagMaximumValue = 7;
+const uint8_t cryptoKeyUsageTagMaximumValue = 11;
 
 enum class CryptoAlgorithmIdentifierTag {
     RSAES_PKCS1_v1_5 = 0,
@@ -530,9 +539,15 @@ enum class CryptoAlgorithmIdentifierTag {
     SHA3_256 = 24,
     SHA3_384 = 25,
     SHA3_512 = 26,
+    CHACHA20_POLY1305 = 27,
+    ML_DSA_44 = 28,
+    ML_DSA_65 = 29,
+    ML_DSA_87 = 30,
+    ML_KEM_768 = 31,
+    ML_KEM_1024 = 32,
 };
 
-const uint8_t cryptoAlgorithmIdentifierTagMaximumValue = 26;
+const uint8_t cryptoAlgorithmIdentifierTagMaximumValue = 32;
 
 static unsigned countUsages(CryptoKeyUsageBitmap usages)
 {
@@ -2547,6 +2562,24 @@ private:
         case CryptoAlgorithmIdentifier::X25519:
             write(CryptoAlgorithmIdentifierTag::X25519);
             break;
+        case CryptoAlgorithmIdentifier::ChaCha20_Poly1305:
+            write(CryptoAlgorithmIdentifierTag::CHACHA20_POLY1305);
+            break;
+        case CryptoAlgorithmIdentifier::ML_DSA_44:
+            write(CryptoAlgorithmIdentifierTag::ML_DSA_44);
+            break;
+        case CryptoAlgorithmIdentifier::ML_DSA_65:
+            write(CryptoAlgorithmIdentifierTag::ML_DSA_65);
+            break;
+        case CryptoAlgorithmIdentifier::ML_DSA_87:
+            write(CryptoAlgorithmIdentifierTag::ML_DSA_87);
+            break;
+        case CryptoAlgorithmIdentifier::ML_KEM_768:
+            write(CryptoAlgorithmIdentifierTag::ML_KEM_768);
+            break;
+        case CryptoAlgorithmIdentifier::ML_KEM_1024:
+            write(CryptoAlgorithmIdentifierTag::ML_KEM_1024);
+            break;
         case CryptoAlgorithmIdentifier::None: {
             RELEASE_ASSERT_NOT_REACHED();
             break;
@@ -2622,6 +2655,14 @@ private:
             write(CryptoKeyUsageTag::WrapKey);
         if (usages & CryptoKeyUsageUnwrapKey)
             write(CryptoKeyUsageTag::UnwrapKey);
+        if (usages & CryptoKeyUsageEncapsulateKey)
+            write(CryptoKeyUsageTag::EncapsulateKey);
+        if (usages & CryptoKeyUsageEncapsulateBits)
+            write(CryptoKeyUsageTag::EncapsulateBits);
+        if (usages & CryptoKeyUsageDecapsulateKey)
+            write(CryptoKeyUsageTag::DecapsulateKey);
+        if (usages & CryptoKeyUsageDecapsulateBits)
+            write(CryptoKeyUsageTag::DecapsulateBits);
 
         switch (key->keyClass()) {
         case CryptoKeyClass::HMAC:
@@ -2663,6 +2704,32 @@ private:
             write(key->algorithmIdentifier());
             write(downcast<CryptoKeyRaw>(*key).key());
             break;
+        case CryptoKeyClass::AKP: {
+            write(CryptoKeyClassSubtag::AKP);
+            write(key->algorithmIdentifier());
+            auto& akpKey = downcast<CryptoKeyAKP>(*key);
+            switch (key->type()) {
+            case CryptoKey::Type::Public: {
+                write(CryptoKeyAsymmetricTypeSubtag::Public);
+                auto result = akpKey.exportRawPublic();
+                ASSERT(!result.hasException());
+                write(result.releaseReturnValue());
+                break;
+            }
+            case CryptoKey::Type::Private: {
+                // PKCS#8 embeds the FIPS 203/204 seed when the key has one, so
+                // raw-seed exportability survives the round trip like in Node.
+                write(CryptoKeyAsymmetricTypeSubtag::Private);
+                auto result = akpKey.exportPkcs8();
+                ASSERT(!result.hasException());
+                write(result.releaseReturnValue());
+                break;
+            }
+            default:
+                ASSERT_NOT_REACHED();
+            }
+            break;
+        }
         case CryptoKeyClass::RSA: {
             write(CryptoKeyClassSubtag::RSA);
             write(key->algorithmIdentifier());
@@ -4077,6 +4144,24 @@ private:
         case CryptoAlgorithmIdentifierTag::X25519:
             result = CryptoAlgorithmIdentifier::X25519;
             break;
+        case CryptoAlgorithmIdentifierTag::CHACHA20_POLY1305:
+            result = CryptoAlgorithmIdentifier::ChaCha20_Poly1305;
+            break;
+        case CryptoAlgorithmIdentifierTag::ML_DSA_44:
+            result = CryptoAlgorithmIdentifier::ML_DSA_44;
+            break;
+        case CryptoAlgorithmIdentifierTag::ML_DSA_65:
+            result = CryptoAlgorithmIdentifier::ML_DSA_65;
+            break;
+        case CryptoAlgorithmIdentifierTag::ML_DSA_87:
+            result = CryptoAlgorithmIdentifier::ML_DSA_87;
+            break;
+        case CryptoAlgorithmIdentifierTag::ML_KEM_768:
+            result = CryptoAlgorithmIdentifier::ML_KEM_768;
+            break;
+        case CryptoAlgorithmIdentifierTag::ML_KEM_1024:
+            result = CryptoAlgorithmIdentifier::ML_KEM_1024;
+            break;
         }
         return true;
     }
@@ -4308,7 +4393,7 @@ private:
         return true;
     }
 
-    bool readRawKey(CryptoKeyUsageBitmap usages, RefPtr<CryptoKey>& result)
+    bool readRawKey(bool extractable, CryptoKeyUsageBitmap usages, RefPtr<CryptoKey>& result)
     {
         CryptoAlgorithmIdentifier algorithm;
         if (!read(algorithm))
@@ -4318,8 +4403,36 @@ private:
         Vector<uint8_t> keyData;
         if (!read(keyData))
             return false;
-        result = CryptoKeyRaw::create(algorithm, WTF::move(keyData), usages);
+        result = CryptoKeyRaw::create(algorithm, WTF::move(keyData), usages, extractable);
         return true;
+    }
+
+    bool readAKPKey(bool extractable, CryptoKeyUsageBitmap usages, RefPtr<CryptoKey>& result)
+    {
+        CryptoAlgorithmIdentifier algorithm;
+        if (!read(algorithm))
+            return false;
+        if (!CryptoKeyAKP::isMlDsa(algorithm) && !CryptoKeyAKP::isMlKem(algorithm))
+            return false;
+        CryptoKeyAsymmetricTypeSubtag type;
+        if (!read(type))
+            return false;
+        Vector<uint8_t> keyData;
+        if (!read(keyData))
+            return false;
+        switch (type) {
+        case CryptoKeyAsymmetricTypeSubtag::Public:
+            result = CryptoKeyAKP::importRawPublic(algorithm, WTF::move(keyData), extractable, usages);
+            break;
+        case CryptoKeyAsymmetricTypeSubtag::Private:
+            result = CryptoKeyAKP::importPkcs8(algorithm, WTF::move(keyData), extractable, usages, nullptr);
+            break;
+        }
+        // A corrupt payload leaves the BoringSSL parse error in the queue;
+        // nothing here attaches it as a cause, so clear it.
+        if (!result)
+            ERR_clear_error();
+        return !!result;
     }
 
     bool readCryptoKey(JSValue& cryptoKey)
@@ -4366,6 +4479,18 @@ private:
             case CryptoKeyUsageTag::UnwrapKey:
                 usages |= CryptoKeyUsageUnwrapKey;
                 break;
+            case CryptoKeyUsageTag::EncapsulateKey:
+                usages |= CryptoKeyUsageEncapsulateKey;
+                break;
+            case CryptoKeyUsageTag::EncapsulateBits:
+                usages |= CryptoKeyUsageEncapsulateBits;
+                break;
+            case CryptoKeyUsageTag::DecapsulateKey:
+                usages |= CryptoKeyUsageDecapsulateKey;
+                break;
+            case CryptoKeyUsageTag::DecapsulateBits:
+                usages |= CryptoKeyUsageDecapsulateBits;
+                break;
             }
         }
 
@@ -4391,11 +4516,15 @@ private:
                 return false;
             break;
         case CryptoKeyClassSubtag::Raw:
-            if (!readRawKey(usages, result))
+            if (!readRawKey(extractable, usages, result))
                 return false;
             break;
         case CryptoKeyClassSubtag::OKP:
             if (!readOKPKey(extractable, usages, result))
+                return false;
+            break;
+        case CryptoKeyClassSubtag::AKP:
+            if (!readAKPKey(extractable, usages, result))
                 return false;
             break;
         }

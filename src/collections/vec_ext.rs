@@ -29,7 +29,6 @@ pub trait VecExt<T>: Sized {
         T: Clone;
     fn move_from_list(list: Vec<T>) -> Self;
     fn from_owned_slice(items: Box<[T]>) -> Self;
-    fn init_with_buffer_vec(buffer: Vec<T>) -> Self;
     /// Arena-builder → owned `Vec<T>`. The linker always calls
     /// `transfer_ownership` afterwards (full copy), so doing the copy up-front
     /// here is no worse and lets the arena round-trip disappear.
@@ -69,9 +68,6 @@ pub trait VecExt<T>: Sized {
     /// — it encodes the "source is leaked, never dropped again" contract in
     /// the type system instead of a `// SAFETY:` comment.
     fn from_bump_vec(v: bun_alloc::ArenaVec<'_, T>) -> Self;
-    /// Arena pre-reservation: `Vec` cannot allocate from a bump arena, so this
-    /// becomes a global-allocator `with_capacity`.  The arena is ignored.
-    fn init_capacity_in(_arena: &bun_alloc::Arena, cap: usize) -> Self;
     /// Wrap a borrowed slice as a `Vec<T>` that **must not be dropped or
     /// grown**.  Same hazard as the original — callers wrap in `ManuallyDrop`.
     /// Kept only for the `StreamResult::Temporary*` pattern; new code should
@@ -87,7 +83,6 @@ pub trait VecExt<T>: Sized {
     /// `.len` field access (old struct stored a `u32`); kept for sites that did
     /// arithmetic on the raw `u32`.
     fn len_u32(&self) -> u32;
-    fn cap_u32(&self) -> u32;
 
     // ── mutation ──────────────────────────────────────────────────────────
     fn append(&mut self, value: T);
@@ -99,7 +94,6 @@ pub trait VecExt<T>: Sized {
     where
         T: Copy;
     fn ensure_total_capacity(&mut self, n: usize);
-    fn ensure_total_capacity_precise(&mut self, n: usize);
     fn ensure_unused_capacity(&mut self, n: usize);
     fn shrink_retaining_capacity(&mut self, new_len: usize);
     fn shrink_and_free(&mut self, new_len: usize);
@@ -115,9 +109,6 @@ pub trait VecExt<T>: Sized {
     fn insert_slice(&mut self, index: usize, vals: &[T])
     where
         T: Clone;
-    fn replace_range(&mut self, start: usize, len: usize, new_items: &[T])
-    where
-        T: Clone;
     /// # Safety
     /// Exposes `self[len..capacity]` as initialized. Every element must be
     /// overwritten before any read (including Drop). Prefer
@@ -128,10 +119,6 @@ pub trait VecExt<T>: Sized {
     /// must fully initialize the slice before any read/drop. Prefer
     /// [`unused_capacity_slice`] + `set_len` for non-POD `T`.
     unsafe fn writable_slice(&mut self, additional: usize) -> &mut [T];
-    /// # Safety
-    /// As [`writable_slice`] but skips `reserve`; caller must guarantee
-    /// `len + additional <= capacity` (debug-asserted).
-    unsafe fn writable_slice_assume_capacity(&mut self, additional: usize) -> &mut [T];
     /// # Safety
     /// As [`writable_slice`] but uses `reserve_exact` so the allocation grows
     /// to *exactly* `len + additional`. Use when the buffer is the final
@@ -160,11 +147,6 @@ pub trait VecExt<T>: Sized {
     fn move_to_list(&mut self) -> Vec<T>;
     fn move_to_list_managed(&mut self) -> Vec<T>;
     fn to_owned_slice(&mut self) -> Box<[T]>;
-    /// No-op for `Vec` — already globally owned.  Kept so cat-4 call sites
-    /// (`LinkerGraph::load`) compile during incremental migration; delete once
-    /// all callers are gone.
-    #[inline]
-    fn transfer_ownership(&mut self) {}
     /// Non-owning header alias.  For `Vec` this is `from_raw_parts` into a
     /// `ManuallyDrop` — same UB-if-dropped contract as before.
     fn shallow_copy(&self) -> ManuallyDrop<Self>;
@@ -174,10 +156,6 @@ pub trait VecExt<T>: Sized {
     fn unused_capacity_slice(&mut self) -> &mut [core::mem::MaybeUninit<T>];
     fn allocated_slice(&mut self) -> &mut [core::mem::MaybeUninit<T>];
     fn memory_cost(&self) -> usize;
-    fn sort_asc(&mut self)
-    where
-        T: AsRef<[u8]>;
-    fn sort(&mut self, less_than: impl FnMut(&T, &T) -> bool);
     fn deep_clone_with<F>(&self, clone_one: F) -> Self
     where
         F: FnMut(&T) -> T;
@@ -234,10 +212,6 @@ impl<T, A: Allocator + Default + 'static> VecExt<T> for Vec<T, A> {
         Self::move_from_list(items.into_vec())
     }
     #[inline]
-    fn init_with_buffer_vec(buffer: Vec<T>) -> Self {
-        Self::move_from_list(buffer)
-    }
-    #[inline]
     unsafe fn from_bump_slice(items: &mut [T]) -> Self {
         let mut v = Vec::with_capacity_in(items.len(), A::default());
         // SAFETY: caller contract — `items` is a leaked bump-arena slice
@@ -291,10 +265,6 @@ impl<T, A: Allocator + Default + 'static> VecExt<T> for Vec<T, A> {
         out
     }
     #[inline]
-    fn init_capacity_in(_arena: &bun_alloc::Arena, cap: usize) -> Self {
-        Vec::with_capacity_in(cap, A::default())
-    }
-    #[inline]
     unsafe fn from_borrowed_slice_dangerous(items: &[T]) -> ManuallyDrop<Self> {
         // SAFETY: caller must never drop or grow the returned `Vec` — its
         // buffer is borrowed.  Same contract as the original.
@@ -332,10 +302,6 @@ impl<T, A: Allocator + Default + 'static> VecExt<T> for Vec<T, A> {
     fn len_u32(&self) -> u32 {
         self.len() as u32
     }
-    #[inline]
-    fn cap_u32(&self) -> u32 {
-        self.capacity() as u32
-    }
 
     #[inline]
     fn append(&mut self, value: T) {
@@ -364,11 +330,6 @@ impl<T, A: Allocator + Default + 'static> VecExt<T> for Vec<T, A> {
     fn ensure_total_capacity(&mut self, n: usize) {
         let need = n.saturating_sub(self.len());
         self.reserve(need);
-    }
-    #[inline]
-    fn ensure_total_capacity_precise(&mut self, n: usize) {
-        let need = n.saturating_sub(self.len());
-        self.reserve_exact(need);
     }
     #[inline]
     fn ensure_unused_capacity(&mut self, n: usize) {
@@ -410,13 +371,6 @@ impl<T, A: Allocator + Default + 'static> VecExt<T> for Vec<T, A> {
         self.splice(index..index, vals.iter().cloned());
     }
     #[inline]
-    fn replace_range(&mut self, start: usize, len: usize, new_items: &[T])
-    where
-        T: Clone,
-    {
-        self.splice(start..start + len, new_items.iter().cloned());
-    }
-    #[inline]
     unsafe fn expand_to_capacity(&mut self) {
         // SAFETY: caller contract — every element in `[len, cap)` is written
         // before being observed.
@@ -426,14 +380,6 @@ impl<T, A: Allocator + Default + 'static> VecExt<T> for Vec<T, A> {
         self.reserve(additional);
         let prev = self.len();
         // SAFETY: caller contract — slice is fully written before any read.
-        unsafe { self.set_len(prev + additional) };
-        &mut self[prev..]
-    }
-    #[inline]
-    unsafe fn writable_slice_assume_capacity(&mut self, additional: usize) -> &mut [T] {
-        debug_assert!(self.len() + additional <= self.capacity());
-        let prev = self.len();
-        // SAFETY: caller contract — capacity asserted; slice fully written before any read.
         unsafe { self.set_len(prev + additional) };
         &mut self[prev..]
     }
@@ -526,23 +472,6 @@ impl<T, A: Allocator + Default + 'static> VecExt<T> for Vec<T, A> {
     fn memory_cost(&self) -> usize {
         self.capacity() * core::mem::size_of::<T>()
     }
-    #[inline]
-    fn sort_asc(&mut self)
-    where
-        T: AsRef<[u8]>,
-    {
-        self.sort_unstable_by(|a, b| a.as_ref().cmp(b.as_ref()));
-    }
-    #[inline]
-    fn sort(&mut self, mut less_than: impl FnMut(&T, &T) -> bool) {
-        self.sort_by(|a, b| {
-            if less_than(a, b) {
-                core::cmp::Ordering::Less
-            } else {
-                core::cmp::Ordering::Greater
-            }
-        });
-    }
     fn deep_clone_with<F>(&self, mut clone_one: F) -> Self
     where
         F: FnMut(&T) -> T,
@@ -572,17 +501,11 @@ pub trait ByteVecExt {
     fn write(&mut self, str: &[u8]) -> Result<u32, AllocError>;
     fn write_latin1(&mut self, str: &[u8]) -> Result<u32, AllocError>;
     fn write_utf16(&mut self, str: &[u16]) -> Result<u32, AllocError>;
-    fn write_type_as_bytes_assume_capacity<Int: Copy>(&mut self, int: Int);
 
     /// libuv `uv_alloc_cb`-style: ensure **at least** `suggested` bytes of
-    /// spare capacity past `len()`, then return the *full* spare-capacity
-    /// slice (`len == capacity - len()`, which may exceed `suggested`).
-    ///
-    /// Callers that must hand libuv exactly `suggested` bytes slice the
-    /// result themselves: `&mut v.uv_alloc_spare(n)[..n]`.
-    fn uv_alloc_spare(&mut self, suggested: usize) -> &mut [core::mem::MaybeUninit<u8>];
-    /// As [`uv_alloc_spare`] but typed `&mut [u8]` so the result can be used
-    /// directly as a `uv_buf_t` / `read(2)` target without a per-site cast.
+    /// spare capacity past `len()`, typed `&mut [u8]` so the result can be
+    /// used directly as a `uv_buf_t` / `read(2)` target without a per-site
+    /// cast.
     ///
     /// # Safety
     /// The returned bytes are **uninitialised**. Caller must only treat the
@@ -590,8 +513,7 @@ pub trait ByteVecExt {
     /// committing with [`uv_commit`]); the bytes must not be read before then.
     unsafe fn uv_alloc_spare_u8(&mut self, suggested: usize) -> &mut [u8];
     /// Commit `nread` bytes that the FFI/syscall just wrote into the slice
-    /// returned by [`uv_alloc_spare`] / [`uv_alloc_spare_u8`]: bumps `len` by
-    /// `nread`. Debug-asserts `len + nread <= capacity`.
+    /// returned by [`uv_alloc_spare_u8`]: bumps `len` by `nread`. Debug-asserts `len + nread <= capacity`.
     ///
     /// # Safety
     /// The `nread` bytes at `[len, len + nread)` must have been initialised by
@@ -627,27 +549,6 @@ impl ByteVecExt for Vec<u8> {
         strings::convert_utf16_to_utf8_append(self, str);
         Ok((self.len() - initial) as u32)
     }
-    fn write_type_as_bytes_assume_capacity<Int: Copy>(&mut self, int: Int) {
-        let size = core::mem::size_of::<Int>();
-        debug_assert!(self.capacity() >= self.len() + size);
-        let prev = self.len();
-        // SAFETY: capacity asserted; writing `size` bytes into the uninit tail.
-        unsafe {
-            self.as_mut_ptr()
-                .add(prev)
-                .cast::<Int>()
-                .write_unaligned(int);
-            self.set_len(prev + size);
-        }
-    }
-    #[inline]
-    fn uv_alloc_spare(&mut self, suggested: usize) -> &mut [core::mem::MaybeUninit<u8>] {
-        // `Vec::reserve` already amortises by doubling, so a plain
-        // `reserve(suggested)` suffices — no manual `cap - len < suggested`
-        // dance is needed (it short-circuits internally).
-        self.reserve(suggested);
-        self.spare_capacity_mut()
-    }
     #[inline]
     unsafe fn uv_alloc_spare_u8(&mut self, suggested: usize) -> &mut [u8] {
         // SAFETY: caller contract on `uv_alloc_spare_u8` — the returned uninit
@@ -677,17 +578,9 @@ pub struct OffsetByteList {
 }
 
 impl OffsetByteList {
-    pub fn init(head: u32, byte_list: Vec<u8>) -> Self {
-        Self { head, byte_list }
-    }
-
     pub fn write(&mut self, bytes: &[u8]) -> Result<(), AllocError> {
         self.byte_list.extend_from_slice(bytes);
         Ok(())
-    }
-
-    pub fn slice(&self) -> &[u8] {
-        &self.byte_list[..self.head as usize]
     }
 
     pub fn remaining(&self) -> &[u8] {
@@ -704,11 +597,6 @@ impl OffsetByteList {
 
     pub fn len(&self) -> u32 {
         self.byte_list.len() as u32 - self.head
-    }
-
-    pub fn clear(&mut self) {
-        self.head = 0;
-        self.byte_list.clear();
     }
 
     pub fn clear_and_free(&mut self) {

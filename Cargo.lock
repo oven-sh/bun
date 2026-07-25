@@ -157,37 +157,18 @@ name = "bun_analytics"
 version = "0.0.0"
 dependencies = [
  "bitflags",
- "bstr",
  "bun_core",
- "bun_errno",
  "bun_semver",
- "bun_sys",
- "const_format",
- "enum-map",
- "enumset",
  "libc",
- "scopeguard",
- "strum",
- "thiserror",
 ]
 
 [[package]]
 name = "bun_api"
 version = "0.0.0"
 dependencies = [
- "bitflags",
- "bstr",
  "bun_alloc",
- "bun_collections",
- "bun_install_types",
  "bun_options_types",
  "bun_url",
- "const_format",
- "enum-map",
- "enumset",
- "libc",
- "scopeguard",
- "strum",
 ]
 
 [[package]]
@@ -1452,17 +1433,9 @@ dependencies = [
 name = "bun_perf"
 version = "0.0.0"
 dependencies = [
- "bitflags",
- "bstr",
  "bun_core",
- "bun_paths",
  "bun_sys",
- "const_format",
- "enum-map",
- "enumset",
  "libc",
- "scopeguard",
- "strum",
 ]
 
 [[package]]
@@ -1602,7 +1575,6 @@ dependencies = [
  "bun_errno",
  "bun_http_types",
  "bun_js_parser",
- "bun_options_types",
  "bun_paths",
  "bun_ptr",
  "bun_resolver",
@@ -1763,35 +1735,21 @@ dependencies = [
 name = "bun_semver"
 version = "0.0.0"
 dependencies = [
- "bitflags",
  "bstr",
  "bun_alloc",
  "bun_collections",
  "bun_core",
  "bun_wyhash",
- "const_format",
- "enum-map",
- "enumset",
- "libc",
- "scopeguard",
- "strum",
 ]
 
 [[package]]
 name = "bun_semver_jsc"
 version = "0.0.0"
 dependencies = [
- "bitflags",
  "bstr",
  "bun_core",
  "bun_jsc",
  "bun_semver",
- "const_format",
- "enum-map",
- "enumset",
- "libc",
- "scopeguard",
- "strum",
 ]
 
 [[package]]
@@ -2105,17 +2063,12 @@ dependencies = [
 name = "bun_threading"
 version = "0.0.0"
 dependencies = [
- "bitflags",
- "bstr",
  "bun_alloc",
  "bun_collections",
  "bun_core",
  "bun_ptr",
  "bun_safety",
  "bun_sys",
- "const_format",
- "enum-map",
- "enumset",
  "libc",
  "scopeguard",
  "strum",
@@ -2126,15 +2079,7 @@ dependencies = [
 name = "bun_transpiler"
 version = "0.0.0"
 dependencies = [
- "bitflags",
- "bstr",
  "bun_bundler",
- "const_format",
- "enum-map",
- "enumset",
- "libc",
- "scopeguard",
- "strum",
 ]
 
 [[package]]

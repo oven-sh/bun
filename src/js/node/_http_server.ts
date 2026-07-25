@@ -1388,10 +1388,7 @@ function detachSocketListenersForHandoff(socket) {
   socket.removeListener("error", socketOnError);
   socket.removeListener("timeout", onNodeHTTPServerSocketTimeout);
   socket.on("end", onReadableStreamEnd);
-  // Node's OutgoingMessage.end() fully uncorks the connection; a response
-  // on this kept-alive socket may have corked the Duplex (res.cork() forwards
-  // to the socket) without ever reaching the standalone OutgoingMessage end
-  // path, so bring it back to zero before the raw socket is handed over.
+  // Hand the raw socket over uncorked, like Node.
   const writableState = socket._writableState;
   if (writableState && writableState.corked) {
     writableState.corked = 1;

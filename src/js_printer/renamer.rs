@@ -1116,13 +1116,14 @@ pub fn compute_initial_reserved_names(
     let mut names = StringHashMap::<u32>::default();
 
     // Identifiers the printer may emit as raw text without a Ref.
-    const EXTRAS: [&[u8]; 6] = [
+    const EXTRAS: [&[u8]; 7] = [
         b"Promise",
         b"Require",
         b"globalThis",
         b"Error",
         b"Infinity",
         b"NaN",
+        b"undefined",
     ];
 
     const CJS_NAMES: [&[u8]; 2] = [b"exports", b"module"];

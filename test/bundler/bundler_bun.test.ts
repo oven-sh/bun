@@ -213,9 +213,9 @@ error: Hello World`,
       "/entry.ts": /* js */ `
         {
           let Infinity = 5;
-          if (1e400 === 5) throw new Error("Infinity literal captured local Infinity");
+          let trap = Infinity;
+          if (1e400 === trap) throw new Error("Infinity literal captured local Infinity");
           if (1e400 !== globalThis.Infinity) throw new Error("1e400 is not Infinity");
-          void Infinity;
         }
         console.log("PASS");
       `,
@@ -227,11 +227,25 @@ error: Hello World`,
     minifySyntax: true,
     files: {
       "/entry.ts": /* js */ `
+        function check(NaN: any) {
+          if (!globalThis.Number.isNaN(0/0)) throw new Error("folded NaN captured local NaN");
+          return NaN;
+        }
+        console.log(check(6) === 6 ? "PASS" : "FAIL");
+      `,
+    },
+    run: { stdout: "PASS" },
+  });
+  itBundled("bun/SynthesizedUndefinedWithShadowedUndefined", {
+    target: "bun",
+    files: {
+      "/entry.ts": /* js */ `
         {
-          let NaN = 6;
-          if (0/0 === 6) throw new Error("folded NaN captured local NaN");
-          if (!globalThis.Number.isNaN(0/0)) throw new Error("0/0 is not NaN");
-          void NaN;
+          let undefined = 5;
+          let trap = undefined;
+          const h = import.meta.hot;
+          if (h === trap) throw new Error("synthesized undefined captured local");
+          if (h !== globalThis.undefined) throw new Error("import.meta.hot is not undefined");
         }
         console.log("PASS");
       `,

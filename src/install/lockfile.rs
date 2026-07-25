@@ -854,9 +854,9 @@ impl Lockfile {
         Ok(())
     }
 
-    /// `bun add <url>` starts URL-keyed, then `assign_root_resolution` renames it.
-    /// If another URL already installed the same name, hoisting sees a loop.
-    /// The new request supersedes the stale root, so drop it before rebuilding.
+    /// Drops root entries that a `bun add <url>` request replaced: once resolution
+    /// renames the request to its package name, a stale entry for that name from a
+    /// different URL would make hoisting report a dependency loop.
     fn remove_superseded_root_dependencies(
         old: &mut Lockfile,
         manager: &mut PackageManager,
@@ -889,9 +889,7 @@ impl Lockfile {
             let deps: &[Dependency] = dep_slice.get(old.buffers.dependencies.as_slice());
             let resolutions: &[PackageID] = res_slice.get(old.buffers.resolutions.as_slice());
 
-            // A root dependency is "requested" when it matches one of the
-            // update requests the user typed. Only non-aliased URL adds get
-            // renamed to the resolved name, so only those can collide.
+            // Only non-aliased URL adds get renamed to the resolved name, so only those can collide.
             let mut matched = vec![false; n];
             let mut superseding: Vec<(PackageNameHash, dependency::Behavior, PackageID)> =
                 Vec::new();
@@ -915,9 +913,8 @@ impl Lockfile {
                 }
             }
 
-            // Prune only within the same dependency group (identical behavior) and
-            // when the resolution differs, matching the package.json editor's
-            // single-group rewrite; a cross-group collision stays a loud loop.
+            // Prune within the same behavior group only, matching the package.json
+            // rewrite; a cross-group collision stays a loud DependencyLoop.
             let mut keep = vec![true; n];
             for (i, dep) in deps.iter().enumerate() {
                 if matched[i] || dep.behavior.is_peer() {
@@ -941,9 +938,8 @@ impl Lockfile {
             return;
         }
 
-        // Compact both parallel arrays in place (order-preserving retain). The
-        // trailing `removed` slots fall outside the shrunk slice and are never
-        // read again; the cloner rebuilds `buffers` compactly from the slice.
+        // Order-preserving retain; the trailing slots fall outside the shrunk
+        // slice and the cloner never reads them.
         {
             let deps = dep_slice.mut_(old.buffers.dependencies.as_mut_slice());
             let mut w = 0;

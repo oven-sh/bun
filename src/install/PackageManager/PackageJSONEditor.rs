@@ -846,9 +846,8 @@ pub(crate) fn edit(
                     }
                 }
 
-                // A URL entry is keyed by its URL; once resolved, its name may
-                // already have an entry (installed from a different URL). Merge
-                // into this slot instead of emitting a duplicate key.
+                // The resolved name may already have its own entry (installed from a
+                // different URL); remove it instead of emitting a duplicate key.
                 let resolved_name = request.get_resolved_name(&manager.lockfile);
                 if request.package_id != INVALID_PACKAGE_ID
                     && !resolved_name.is_empty()

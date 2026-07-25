@@ -402,6 +402,14 @@ declare module "bun" {
      */
     argv?: any[] | undefined;
 
+    /**
+     * List of Node.js CLI options passed to the worker. Sets
+     * `process.execArgv` inside the worker. Passing any value (including `[]`)
+     * also opts the worker out of inheriting preloads configured via
+     * `bunfig.toml` or `--preload` / `--require` / `--import`.
+     */
+    execArgv?: string[] | undefined;
+
     /** If `true` and the first argument is a string, interpret the first argument to the constructor as a script that is executed once the worker is online. */
     // eval?: boolean | undefined;
 

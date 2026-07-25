@@ -2266,12 +2266,10 @@ impl VirtualMachine {
             .preload
             .iter()
             .map(|p| {
-                if is_absolute(p)
-                    || is_package_path_not_absolute(p)
-                    || p.starts_with(b"node:")
-                    || p.starts_with(b"bun:")
-                    || p.starts_with(b"file://")
-                {
+                // `is_absolute || is_package_path_not_absolute` is exactly
+                // "not a `./` / `../` relative path", which covers `node:`,
+                // `bun:`, `file://` and bare package names.
+                if is_absolute(p) || is_package_path_not_absolute(p) {
                     return p.clone();
                 }
                 let mut buf = path_buffer_pool::get();

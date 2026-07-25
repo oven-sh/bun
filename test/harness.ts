@@ -1831,7 +1831,11 @@ export class VerdaccioRegistry {
 
   async start(silent: boolean = true) {
     await rm(join(dirname(this.configPath), "htpasswd"), { force: true });
-    this.process = fork(require.resolve("verdaccio/bin/verdaccio"), ["-c", this.configPath, "-l", `${this.port}`], {
+    // `-l 0.0.0.0:<port>`: without an explicit host verdaccio binds to
+    // whatever `localhost` resolves to in the forked child, which on
+    // IPv6-first hosts is `::1` while `registryUrl()` clients may reach
+    // `127.0.0.1`, yielding ECONNREFUSED.
+    this.process = fork(require.resolve("verdaccio/bin/verdaccio"), ["-c", this.configPath, "-l", `0.0.0.0:${this.port}`], {
       silent,
       // Prefer using a release build of Bun since it's faster
       execPath: isCI ? bunExe() : Bun.which("bun") || bunExe(),

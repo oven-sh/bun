@@ -1007,12 +1007,9 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
         }
     }
 
-    /// Best-effort synchronous drain of `outgoing` to the fd without
-    /// dispatching any `Parent::on_*` callback. For teardown paths
-    /// (`FileSink::finalize`) where the caller holds `&mut Parent` and
-    /// re-entry via the stored backref would violate its noalias (R-2).
-    /// Non-blocking: a pollable fd that is not writable stops at the first
-    /// retry.
+    /// Best-effort drain of `outgoing` without any `Parent::on_*` dispatch,
+    /// for teardown callers that hold `&mut Parent` (R-2). Stops on the first
+    /// retry/error.
     pub fn drain_without_reporting(&mut self) {
         if self.is_done || self.closed_without_reporting || self.outgoing.is_empty() {
             return;
@@ -2475,11 +2472,8 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
         self.last_write_result.clone()
     }
 
-    /// No-op on Windows: every non-`SyncFile` write reaches here via
-    /// `process_send()`, which already queued a `uv_fs_write`/`uv_write` and
-    /// took a parent ref, so the sink outlives its JS wrapper until the
-    /// completion fires. Draining `outgoing` here would have to go through
-    /// `process_send()` again, which touches the parent backref.
+    /// No-op: `process_send()` already queued the write and holds a parent
+    /// ref; draining again would have to touch the parent backref.
     pub fn drain_without_reporting(&mut self) {}
 
     pub fn end(&mut self) {

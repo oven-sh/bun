@@ -704,10 +704,20 @@ test("a streamed body longer than its declared Content-Length is rejected before
 });
 
 test("a streamed body shorter than its declared Content-Length is rejected", async () => {
+  let recorded = Buffer.alloc(0);
   await using server = net
     .createServer(sock => {
       sock.on("error", () => {});
-      sock.on("data", () => sock.end("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok"));
+      sock.on("data", d => {
+        recorded = Buffer.concat([recorded, d]);
+        const raw = recorded.toString("latin1");
+        const i = raw.indexOf("\r\n\r\n");
+        // Respond only once body bytes have arrived, so the mismatch check at
+        // stream end has run on the JS thread before the 200 can be observed.
+        if (i >= 0 && raw.length > i + 4) {
+          sock.end("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok");
+        }
+      });
     })
     .listen(0, "127.0.0.1");
   await once(server, "listening");

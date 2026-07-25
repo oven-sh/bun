@@ -222,6 +222,11 @@ impl PosixLoop {
     /// process_conns. Early-returns when nothing wrote, so safe to call
     /// from drainMicrotasks without per-iteration cost.
     pub fn drain_quic_if_necessary(&mut self) {
+        if !self.internal_loop_data.nq_head.is_null() {
+            // Full pass with close dispatch deferred to the next loop point.
+            // SAFETY: self is a valid loop pointer
+            unsafe { c::us_nq_loop_drain(self) };
+        }
         if self.internal_loop_data.quic_head.is_null() {
             return;
         }
@@ -463,6 +468,11 @@ impl WindowsLoop {
     }
 
     pub fn drain_quic_if_necessary(&mut self) {
+        if !self.internal_loop_data.nq_head.is_null() {
+            // Full pass with close dispatch deferred to the next loop point.
+            // SAFETY: self is a valid loop pointer
+            unsafe { c::us_nq_loop_drain(self) };
+        }
         if self.internal_loop_data.quic_head.is_null() {
             return;
         }
@@ -609,6 +619,7 @@ mod c {
         ) -> *mut Loop;
         pub(super) fn us_loop_free(loop_: *mut Loop);
         pub(super) fn us_quic_loop_flush_if_pending(loop_: *mut Loop);
+        pub(super) fn us_nq_loop_drain(loop_: *mut Loop);
         pub fn us_loop_run(loop_: *mut Loop);
         #[cfg(windows)]
         pub(super) fn us_loop_pump(loop_: *mut Loop);

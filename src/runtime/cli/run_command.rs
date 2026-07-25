@@ -1067,8 +1067,6 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         vm.is_main_thread = true;
         bun_jsc::virtual_machine::IS_MAIN_THREAD_VM.set(true);
 
-        vm.env_loader().load_tracy();
-
         bun_http::EXPERIMENTAL_HTTP2_CLIENT_FROM_CLI.store(
             ctx.runtime_options.experimental_http2_fetch,
             ::core::sync::atomic::Ordering::Relaxed,

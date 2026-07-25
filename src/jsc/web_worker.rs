@@ -1316,6 +1316,9 @@ impl WebWorker {
             // leak its ConcurrentTask + AsyncFSTask under LSan.
             vm.event_loop_mut().wait_for_concurrent_posters();
             vm.event_loop_mut().release_queued_tasks_for_shutdown();
+            if let Some(rare) = vm.rare_data.as_deref_mut() {
+                rare.release_js_handles();
+            }
             exit_code = i32::from(vm.exit_handler.exit_code);
             global_object = Some(vm.global);
         }

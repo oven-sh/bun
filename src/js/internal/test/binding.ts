@@ -60,6 +60,8 @@ function internalBinding(name: string) {
       // The real thing: os/fs/crypto/zlib/trace sections, same object node's
       // internalBinding("constants") exposes (ProcessBindingConstants.cpp).
       return $processBindingConstants;
+    case "quic":
+      return require("internal/quic/binding");
     case "uv": {
       // process.binding("uv") carries libuv's own codes on every platform
       // (including Windows' synthetic ones), same as node's uv binding —

@@ -546,11 +546,23 @@ impl WindowsWatcher {
     pub(crate) fn stop(&mut self) {
         // Runs on the watch thread after the loop exits, under `Watcher.mutex`.
         // SAFETY: live handles were opened in add_root()/new(); dead roots
-        // already closed theirs in mark_dead().
+        // already closed theirs in mark_dead() with no I/O pending.
         unsafe {
-            for (dw, root) in self.watchers.iter().zip(&self.roots) {
+            for (dw, root) in self.watchers.iter_mut().zip(&self.roots) {
                 if !root.dead.load() {
-                    w::CloseHandle(dw.dir_handle);
+                    // Cancel the pending ReadDirectoryChangesW and wait for
+                    // the cancellation to finish writing `overlapped`: the
+                    // caller frees this DirWatcher right after stop() returns,
+                    // and CloseHandle alone only initiates cancellation.
+                    let _ = w::kernel32::CancelIoEx(dw.dir_handle, &mut dw.overlapped);
+                    let mut nbytes: w::DWORD = 0;
+                    let _ = w::kernel32::GetOverlappedResult(
+                        dw.dir_handle,
+                        &mut dw.overlapped,
+                        &mut nbytes,
+                        1,
+                    );
+                    let _ = w::CloseHandle(dw.dir_handle);
                 }
             }
             w::CloseHandle(self.iocp);

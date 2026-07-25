@@ -5152,11 +5152,7 @@ private:
             double d;
             if (!read(d))
                 return JSValue();
-            // timeClip() does not canonicalize an impure NaN (std::abs(NaN) > max
-            // is false, std::trunc preserves the payload), and Date.prototype.getTime
-            // boxes m_internalNumber with jsNumber() unpurified. A crafted payload
-            // reaching here via bun:jsc.deserialize / v8.deserialize would otherwise
-            // store a forged JSValue bit pattern that getTime()/valueOf() returns.
+            // timeClip() passes an impure NaN through; getTime() would box it unpurified.
             DateInstance* obj = DateInstance::create(m_lexicalGlobalObject->vm(), m_globalObject->dateStructure(), purifyNaN(d));
             addTerminalToObjectPool(obj);
             return obj;

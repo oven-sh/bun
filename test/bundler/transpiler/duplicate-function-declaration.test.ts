@@ -148,7 +148,7 @@ describe("duplicate function declarations at runtime", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toMatch(/"foo" has already been declared|Multiple exports with the same name "foo"/);
     expect(stdout).toBe("");
-    expect(exitCode).not.toBe(0);
+    expect(exitCode).toBe(1);
   });
 
   test.concurrent("duplicate top-level function in .mjs is a SyntaxError", async () => {
@@ -167,7 +167,7 @@ describe("duplicate function declarations at runtime", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toContain('"foo" has already been declared');
     expect(stdout).toBe("");
-    expect(exitCode).not.toBe(0);
+    expect(exitCode).toBe(1);
   });
 
   test.concurrent("duplicate block-scoped function in .mjs is a SyntaxError", async () => {
@@ -185,6 +185,6 @@ describe("duplicate function declarations at runtime", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toContain('"foo" has already been declared');
     expect(stdout).toBe("");
-    expect(exitCode).not.toBe(0);
+    expect(exitCode).toBe(1);
   });
 });

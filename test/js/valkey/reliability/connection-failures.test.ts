@@ -341,12 +341,18 @@ describe("Valkey: connect() error identity", () => {
   // Previously all connect-time failures surfaced as ERR_REDIS_CONNECTION_CLOSED / "Connection closed".
   const CRLF = "\r\n";
 
-  async function stubServer(reply: (text: string) => string | null) {
+  async function stubServer(helloReply: string | null) {
     const server = net.createServer(sock => {
+      let received = "";
+      let replied = false;
       sock.on("error", () => {});
       sock.on("data", d => {
-        const r = reply(d.toString().toUpperCase());
-        if (r !== null) sock.write(r);
+        if (replied || helloReply === null) return;
+        received += d.toString().toUpperCase();
+        if (received.includes("HELLO") && received.endsWith(CRLF)) {
+          replied = true;
+          sock.write(helloReply);
+        }
       });
     });
     await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
@@ -369,9 +375,7 @@ describe("Valkey: connect() error identity", () => {
   }
 
   test("-WRONGPASS reply to HELLO rejects connect() with the server's error text", async () => {
-    const srv = await stubServer(t =>
-      t.includes("HELLO") ? `-WRONGPASS invalid username-password pair or user is disabled.${CRLF}` : `+OK${CRLF}`,
-    );
+    const srv = await stubServer(`-WRONGPASS invalid username-password pair or user is disabled.${CRLF}`);
     try {
       expect(await connectError(`redis://:bad@127.0.0.1:${srv.port}`, { autoReconnect: false })).toEqual({
         code: "ERR_REDIS_AUTHENTICATION_FAILED",
@@ -383,11 +387,7 @@ describe("Valkey: connect() error identity", () => {
   });
 
   test("-NOAUTH reply to HELLO rejects connect() with the server's error text", async () => {
-    const srv = await stubServer(t =>
-      t.includes("HELLO")
-        ? `-NOAUTH HELLO must be called with the client already authenticated${CRLF}`
-        : `-NOAUTH Authentication required.${CRLF}`,
-    );
+    const srv = await stubServer(`-NOAUTH HELLO must be called with the client already authenticated${CRLF}`);
     try {
       expect(await connectError(`redis://127.0.0.1:${srv.port}`, { autoReconnect: false })).toEqual({
         code: "ERR_REDIS_AUTHENTICATION_FAILED",
@@ -399,7 +399,7 @@ describe("Valkey: connect() error identity", () => {
   });
 
   test("connectionTimeout expiry rejects connect() with ERR_REDIS_CONNECTION_TIMEOUT", async () => {
-    const srv = await stubServer(() => null);
+    const srv = await stubServer(null);
     try {
       expect(
         await connectError(`redis://127.0.0.1:${srv.port}`, {

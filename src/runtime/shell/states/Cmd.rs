@@ -583,10 +583,17 @@ impl Cmd {
         // When this command's stdout is the capture pipe that relays to the
         // script's color terminal, hint FORCE_COLOR so color-aware programs
         // do not suppress ANSI just because `isatty()` is false.
-        if let Some(line) = force_color_env
-            && matches!(spawn_args.stdio[1], Stdio::Capture(_))
-        {
-            spawn_args.env_array.push(line.as_ptr().cast());
+        if let Some(line) = force_color_env {
+            let stdout_is_relay = match &spawn_args.stdio[1] {
+                Stdio::Capture(_) => true,
+                Stdio::Dup2(d) if matches!(d.to, StdioKind::Stderr) => {
+                    matches!(spawn_args.stdio[2], Stdio::Capture(_))
+                }
+                _ => false,
+            };
+            if stdout_is_relay {
+                spawn_args.env_array.push(line.as_ptr().cast());
+            }
         }
 
         // Stage the exec slot *before* spawning so PipeReader / process-exit

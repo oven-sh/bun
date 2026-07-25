@@ -2987,7 +2987,7 @@ describe("FORCE_COLOR", () => {
     TERM: "xterm-256color",
   };
 
-  async function runInTerminal(fixture: string) {
+  async function runInTerminal(fixture: string, env: Record<string, string | undefined> = colorEnv) {
     let output = "";
     const { promise, resolve, reject } = Promise.withResolvers<void>();
     await using terminal = new Bun.Terminal({
@@ -3000,7 +3000,7 @@ describe("FORCE_COLOR", () => {
     });
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", fixture],
-      env: colorEnv,
+      env,
       terminal,
     });
     // Exit and PTY data delivery are independent; only the data callback
@@ -3026,6 +3026,11 @@ describe("FORCE_COLOR", () => {
 
   test("is set for a subprocess whose output goes to a color terminal", async () => {
     const output = await runInTerminal(fixture(`await $\`PROBE\`;`));
+    expect(output).toMatch(/^fc=[123] nc=\r?$/m);
+  });
+
+  test("is set for `cmd 2>&1` when stderr is the relayed terminal", async () => {
+    const output = await runInTerminal(fixture(`await $\`PROBE 2>&1\`;`));
     expect(output).toMatch(/^fc=[123] nc=\r?$/m);
   });
 
@@ -3082,6 +3087,11 @@ describe("FORCE_COLOR", () => {
     // exported shell variable.
     const output = await runInTerminal(fixture(`await $\`echo fc=[$FORCE_COLOR]\`;`));
     expect(output).toMatch(/^fc=\[\]\r?$/m);
+  });
+
+  test.skipIf(isWindows)("is not set when TERM=dumb", async () => {
+    const output = await runInTerminal(fixture(`await $\`PROBE\`;`), { ...colorEnv, TERM: "dumb" });
+    expect(output).toMatch(/^fc= nc=\r?$/m);
   });
 
   test("is not set when the script's own stdout is not a terminal", async () => {

@@ -1251,14 +1251,15 @@ impl Interpreter {
         if cap_out.is_some()
             && bun_sys::isatty(stdout_fd)
             && bun_core::output::enable_ansi_colors_stdout()
+            && bun_core::output::Source::is_color_terminal()
         {
             use bun_core::output::ColorDepth;
-            let line: &'static [u8] = match bun_core::output::Source::color_depth() {
-                ColorDepth::C16m => b"FORCE_COLOR=3\0",
-                ColorDepth::C256 => b"FORCE_COLOR=2\0",
-                _ => b"FORCE_COLOR=1\0",
-            };
-            self.force_color_env.set(Some(line));
+            self.force_color_env
+                .set(Some(match bun_core::output::Source::color_depth() {
+                    ColorDepth::C16m => b"FORCE_COLOR=3\0",
+                    ColorDepth::C256 => b"FORCE_COLOR=2\0",
+                    _ => b"FORCE_COLOR=1\0",
+                }));
         }
 
         Ok(())

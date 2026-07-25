@@ -795,12 +795,12 @@ impl<'a> PackageInstall<'a> {
         true
     }
 
-    // 1. verify that .bun-tag exists (was it installed from bun?)
-    // 2. check .bun-tag against the resolved version
-    fn verify_git_resolution(&mut self, repo: &Repository, root_node_modules_dir: &Dir) -> bool {
+    /// Build `<destination_dir_subpath>/.bun-tag` as a NUL-terminated slice
+    /// inside `destination_dir_subpath_buf` for the body of `f`, restoring the
+    /// original terminator on return.
+    fn with_bun_tag_path<R>(&mut self, f: impl FnOnce(&mut Self, &ZStr) -> R) -> R {
         let dest_len = self.destination_dir_subpath.len();
         let suffix: &[u8] = &[SEP, b'.', b'b', b'u', b'n', b'-', b't', b'a', b'g'];
-        // Reshaped for borrowck — write into buf via raw indices.
         self.destination_dir_subpath_buf[dest_len..dest_len + suffix.len()].copy_from_slice(suffix);
         self.destination_dir_subpath_buf[dest_len + SEP_STR.len() + b".bun-tag".len()] = 0;
         // SAFETY: NUL written above.
@@ -816,18 +816,41 @@ impl<'a> PackageInstall<'a> {
             // dest_len < buf capacity (was the prior NUL position).
             move |p| unsafe { *p.add(dest_len) = 0 },
         );
+        f(self, bun_tag_path)
+    }
 
-        let Ok(bun_tag_file) = self
-            .node_modules
-            .read_small_file(root_node_modules_dir, bun_tag_path)
-        else {
-            return false;
-        };
-        strings::eql_long(
-            repo.resolved.slice(&self.lockfile.buffers.string_bytes),
-            &bun_tag_file.bytes,
-            true,
-        )
+    // 1. verify that .bun-tag exists (was it installed from bun?)
+    // 2. check .bun-tag against the resolved version
+    fn verify_git_resolution(&mut self, repo: &Repository, root_node_modules_dir: &Dir) -> bool {
+        self.with_bun_tag_path(|this, bun_tag_path| {
+            let Ok(bun_tag_file) = this
+                .node_modules
+                .read_small_file(root_node_modules_dir, bun_tag_path)
+            else {
+                return false;
+            };
+            strings::eql_long(
+                repo.resolved.slice(&this.lockfile.buffers.string_bytes),
+                &bun_tag_file.bytes,
+                true,
+            )
+        })
+    }
+
+    /// For `LocalTarball` / `RemoteTarball` the resolution formats as the
+    /// tarball path/URL, which never matches the installed package.json
+    /// `"version"`. Compare against the `.bun-tag` written by `install()`
+    /// instead so a second `bun install` with the same resolution is a no-op.
+    fn verify_tarball_resolution(&mut self, root_node_modules_dir: &Dir) -> bool {
+        self.with_bun_tag_path(|this, bun_tag_path| {
+            let Ok(bun_tag_file) = this
+                .node_modules
+                .read_small_file(root_node_modules_dir, bun_tag_path)
+            else {
+                return false;
+            };
+            strings::eql_long(this.package_version, &bun_tag_file.bytes, true)
+        })
     }
 
     pub(crate) fn verify(&mut self, resolution: &Resolution, root_node_modules_dir: &Dir) -> bool {
@@ -837,6 +860,9 @@ impl<'a> PackageInstall<'a> {
             }
             resolution::Tag::Github => {
                 self.verify_git_resolution(resolution.github(), root_node_modules_dir)
+            }
+            resolution::Tag::LocalTarball | resolution::Tag::RemoteTarball => {
+                self.verify_tarball_resolution(root_node_modules_dir)
             }
             resolution::Tag::Root => self.verify_transitive_symlinked_folder(root_node_modules_dir),
             resolution::Tag::Folder => {
@@ -2393,6 +2419,43 @@ impl<'a> PackageInstall<'a> {
     }
 
     pub(crate) fn install(
+        &mut self,
+        skip_delete: bool,
+        destination_dir: &Dir,
+        method_: Method,
+        resolution_tag: resolution::Tag,
+    ) -> InstallResult {
+        let result = self.install_impl(skip_delete, destination_dir, method_, resolution_tag);
+        if matches!(result, InstallResult::Success)
+            && matches!(
+                resolution_tag,
+                resolution::Tag::LocalTarball | resolution::Tag::RemoteTarball
+            )
+        {
+            // Record the resolution (tarball path or URL) so `verify()` can
+            // recognise this install on the next run. Written after the copy so
+            // it is present even when the cache folder predates this change.
+            self.with_bun_tag_path(|this, bun_tag_path| {
+                if sys::File::openat(
+                    destination_dir.fd(),
+                    bun_tag_path,
+                    sys::O::WRONLY
+                        | sys::O::CREAT
+                        | sys::O::TRUNC
+                        | if cfg!(windows) { 0 } else { sys::O::NOFOLLOW },
+                    0o644,
+                )
+                .and_then(|f| f.write_all(this.package_version))
+                .is_err()
+                {
+                    let _ = sys::unlinkat(destination_dir.fd(), bun_tag_path);
+                }
+            });
+        }
+        result
+    }
+
+    fn install_impl(
         &mut self,
         skip_delete: bool,
         destination_dir: &Dir,

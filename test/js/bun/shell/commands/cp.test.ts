@@ -1,7 +1,7 @@
 import { $ } from "bun";
 import { shellInternals } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, isMacOS, tempDir, tempDirWithFiles } from "harness";
 import { join } from "path";
 import { bunExe, createTestBuilder } from "../test_builder";
 import { sortedShellOutput } from "../util";
@@ -63,7 +63,7 @@ describe.if(!builtinDisabled("cp"))("bunshell cp", async () => {
 
   // #14595
   describe("recursive flag aliases", () => {
-    for (const flag of ["-r", "-R", "--recursive"]) {
+    for (const flag of ["-r", "-R", "-rf", "-Rf", "-fR", "--recursive"]) {
       TestBuilder.command`mkdir src; echo hi > src/a.txt; cp ${{ raw: flag }} src dest`
         .ensureTempDir()
         .exitCode(0)
@@ -73,7 +73,7 @@ describe.if(!builtinDisabled("cp"))("bunshell cp", async () => {
         .runAsTest(`cp ${flag} copies a directory`);
     }
 
-    for (const flag of ["-rv", "-vr", "-Rv", "-vR", "-nrv"]) {
+    for (const flag of ["-rv", "-vr", "-Rv", "-vR", "-nrv", "-frv"]) {
       TestBuilder.command`mkdir src; echo hi > src/a.txt; cp ${{ raw: flag }} src dest`
         .ensureTempDir()
         .exitCode(0)
@@ -84,14 +84,16 @@ describe.if(!builtinDisabled("cp"))("bunshell cp", async () => {
         .runAsTest(`cp ${flag} copies a directory verbosely`);
     }
 
-    TestBuilder.command`echo hi > a.txt; cp --verbose a.txt b.txt`
-      .ensureTempDir()
-      .exitCode(0)
-      .stderr("")
-      .stdout(p("$TEMP_DIR/a.txt -> $TEMP_DIR/b.txt\n"))
-      .fileEquals("b.txt", "hi\n")
-      .testMini()
-      .runAsTest("cp --verbose copies a file");
+    for (const flag of ["--verbose", "--force --verbose"]) {
+      TestBuilder.command`echo hi > a.txt; cp ${{ raw: flag }} a.txt b.txt`
+        .ensureTempDir()
+        .exitCode(0)
+        .stderr("")
+        .stdout(p("$TEMP_DIR/a.txt -> $TEMP_DIR/b.txt\n"))
+        .fileEquals("b.txt", "hi\n")
+        .testMini()
+        .runAsTest(`cp ${flag} copies a file`);
+    }
   });
 
   describe("EBUSY windows", () => {
@@ -217,7 +219,20 @@ function expectSortedOutput(expected: string) {
 // #14595: the cp builtin is disabled on POSIX (falls through to /bin/cp), so
 // force-enable it via BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS to cover the flag
 // parser on all platforms.
-describe.each(["-r", "-R", "-rv", "-vr", "-Rv", "-vR", "-nrv", "--recursive"])("bunshell cp %s (builtin)", flag => {
+describe.each([
+  { flag: "-r", verbose: false },
+  { flag: "-R", verbose: false },
+  { flag: "-rf", verbose: false },
+  { flag: "-Rf", verbose: false },
+  { flag: "-fR", verbose: false },
+  { flag: "--recursive", verbose: false },
+  { flag: "-rv", verbose: true },
+  { flag: "-vr", verbose: true },
+  { flag: "-Rv", verbose: true },
+  { flag: "-vR", verbose: true },
+  { flag: "-nrv", verbose: true },
+  { flag: "-frv", verbose: true },
+])("bunshell cp $flag (builtin)", ({ flag, verbose }) => {
   test.concurrent(`copies a directory`, async () => {
     using dir = tempDir("cp-recursive", {
       "src/a.txt": "hi",
@@ -231,8 +246,10 @@ describe.each(["-r", "-R", "-rv", "-vr", "-Rv", "-vR", "-nrv", "--recursive"])("
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
-    if (flag.startsWith("-") && !flag.startsWith("--") && flag.includes("v")) {
-      expect(stdout).toContain("a.txt");
+    if (verbose) {
+      // On macOS the clonefile() fast path for whole-directory copies returns
+      // before the per-file on_copy callback ever runs, so -v is silent there.
+      if (!isMacOS) expect(stdout).toContain("a.txt");
     } else {
       expect(stdout).toBe("");
     }

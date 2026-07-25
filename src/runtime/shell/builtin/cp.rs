@@ -787,13 +787,14 @@ impl FlagParser for Opts {
                 self.verbose = true;
                 Some(ParseFlagResult::ContinueParsing)
             }
+            // `force: true` is already the default (see `CpFlags` below).
+            b"--force" => Some(ParseFlagResult::ContinueParsing),
             _ => None,
         }
     }
 
     fn parse_short(&mut self, ch: u8, smallflags: &[u8], i: usize) -> Option<ParseFlagResult> {
         match ch {
-            b'f' => Some(ParseFlagResult::Unsupported(unsupported_flag(b"-f"))),
             b'H' => Some(ParseFlagResult::Unsupported(unsupported_flag(b"-H"))),
             b'i' => Some(ParseFlagResult::Unsupported(unsupported_flag(b"-i"))),
             b'L' => Some(ParseFlagResult::Unsupported(unsupported_flag(b"-L"))),
@@ -807,7 +808,8 @@ impl FlagParser for Opts {
                 self.verbose = true;
                 None
             }
-            b'n' => None,
+            // `force: true` is already the default (see `CpFlags` below).
+            b'f' | b'n' => None,
             _ => Some(ParseFlagResult::IllegalOption(&raw const smallflags[i..])),
         }
     }

@@ -1071,7 +1071,7 @@ test("two inspector.open() clients each receive their own Runtime.evaluate resul
   // A short busy loop keeps the inspected thread inside A's evaluate long
   // enough for B's command to reach the adapter on the debugger thread, so both
   // adapters have a backend command in flight when the response broadcasts.
-  const aValue = evaluate(a, 1, `(() => { let n = 0; for (let i = 0; i < 1e6; i++) n++; return "answer-for-A"; })()`);
+  const aValue = evaluate(a, 1, `(() => { let n = 0; for (let i = 0; i < 5e7; i++) n++; return "answer-for-A"; })()`);
   const bValue = evaluate(b, 2, `"answer-for-B"`);
   try {
     expect({ a: await aValue, b: await bValue }).toEqual({ a: "answer-for-A", b: "answer-for-B" });

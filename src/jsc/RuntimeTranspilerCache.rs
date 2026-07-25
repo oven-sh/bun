@@ -43,7 +43,10 @@ bun_core::declare_scope!(cache, visible);
 /// path reinstates the bug for any previously-cached TLA module (#30887).
 /// Version 23: `jsx.runtime`/`jsx.development` participate in the features hash,
 /// and tsconfig `"jsx": "react-jsx"` now emits the production runtime (#4227).
-const EXPECTED_VERSION: u32 = 23;
+/// Version 24: output/sourcemap/esm-record hash checks are mandatory (the
+/// `hash != 0` bypass is gone), so entries whose payload was rewritten with a
+/// zeroed hash field are rejected instead of consumed.
+const EXPECTED_VERSION: u32 = 24;
 
 /// Source files smaller than this are not written to / read from the on-disk
 /// transpiler cache. Originally 50 KiB, which excluded almost every file in a
@@ -476,7 +479,7 @@ impl Entry {
                         return Err(crate::CrateError::MissingData);
                     }
 
-                    if self.metadata.output_hash != 0 && hash(bytes) != self.metadata.output_hash {
+                    if hash(bytes) != self.metadata.output_hash {
                         return Err(crate::CrateError::InvalidHash);
                     }
 
@@ -506,10 +509,8 @@ impl Entry {
                     let errdefer = scopeguard::guard(latin1, |s| s.deref());
                     let read_bytes = file.pread_all(bytes, self.metadata.output_byte_offset)?;
 
-                    if self.metadata.output_hash != 0 {
-                        if hash(latin1.latin1()) != self.metadata.output_hash {
-                            return Err(crate::CrateError::InvalidHash);
-                        }
+                    if hash(latin1.latin1()) != self.metadata.output_hash {
+                        return Err(crate::CrateError::InvalidHash);
                     }
 
                     if read_bytes as u64 != self.metadata.output_byte_length {
@@ -539,11 +540,9 @@ impl Entry {
                         return Err(crate::CrateError::MissingData);
                     }
 
-                    if self.metadata.output_hash != 0 {
-                        let utf16_bytes: &[u8] = bytemuck::cast_slice(string.utf16());
-                        if hash(utf16_bytes) != self.metadata.output_hash {
-                            return Err(crate::CrateError::InvalidHash);
-                        }
+                    let utf16_bytes: &[u8] = bytemuck::cast_slice(string.utf16());
+                    if hash(utf16_bytes) != self.metadata.output_hash {
+                        return Err(crate::CrateError::InvalidHash);
                     }
 
                     scopeguard::ScopeGuard::into_inner(errdefer);
@@ -564,6 +563,9 @@ impl Entry {
                 self.metadata.sourcemap_byte_length as usize,
                 self.metadata.sourcemap_byte_offset,
             )?;
+            if hash(&self.sourcemap) != self.metadata.sourcemap_hash {
+                return Err(crate::CrateError::InvalidHash);
+            }
         }
 
         if self.metadata.esm_record_byte_length > 0 {
@@ -573,10 +575,8 @@ impl Entry {
                 self.metadata.esm_record_byte_offset,
             )?;
 
-            if self.metadata.esm_record_hash != 0 {
-                if hash(&esm_record) != self.metadata.esm_record_hash {
-                    return Err(crate::CrateError::InvalidHash);
-                }
+            if hash(&esm_record) != self.metadata.esm_record_hash {
+                return Err(crate::CrateError::InvalidHash);
             }
 
             self.esm_record = esm_record;
@@ -615,6 +615,41 @@ impl Default for RuntimeTranspilerCache {
 
 pub fn hash(bytes: &[u8]) -> u64 {
     Wyhash::hash(SEED, bytes)
+}
+
+#[cfg(unix)]
+#[inline]
+fn current_user_id() -> u32 {
+    bun_sys::c::getuid() as u32
+}
+
+#[cfg(windows)]
+#[inline]
+fn current_user_id() -> u32 {
+    bun_sys::windows::user_unique_id()
+}
+
+/// Trust check for the resolved cache root: on unix the directory must be
+/// owned by the current uid and not writable by group/other. A nonexistent
+/// path is trusted (we will create it with the right mode). Any other shape
+/// (symlink, wrong owner, lax mode) means another uid could plant `.pile`
+/// entries, so the cache is disabled rather than consumed.
+#[cfg(unix)]
+fn is_trusted_cache_dir(path: &ZStr) -> bool {
+    match bun_sys::lstat(path) {
+        Ok(st) => {
+            (st.st_mode & libc::S_IFMT) == libc::S_IFDIR
+                && st.st_uid == bun_sys::c::getuid()
+                && (st.st_mode & (libc::S_IWGRP | libc::S_IWOTH)) == 0
+        }
+        Err(_) => true,
+    }
+}
+
+#[cfg(not(unix))]
+#[inline(always)]
+fn is_trusted_cache_dir(_path: &ZStr) -> bool {
+    true
 }
 
 /// Allocate `len` bytes and fill them via `pread_all` at `offset`, returning
@@ -700,8 +735,15 @@ impl RuntimeTranspilerCache {
         // that `absBufZ` used.
         let top = FileSystem::instance().top_level_dir;
 
+        // Per-uid leaf segment (`@t@-<uid>`) so the default cache location is
+        // not shared across users on a multi-tenant host.
+        let mut seg = [0u8; 4 + 10];
+        seg[..4].copy_from_slice(b"@t@-");
+        let n = bun_core::fmt::print_int(&mut seg[4..], current_user_id());
+        let tcache_seg: &[u8] = &seg[..4 + n];
+
         if let Some(dir) = env_var::XDG_CACHE_HOME.get() {
-            let parts: &[&[u8]] = &[dir, b"bun", b"@t@"];
+            let parts: &[&[u8]] = &[dir, b"bun", tcache_seg];
             return path_handler::join_abs_string_buf_z::<platform::Loose>(
                 top,
                 &mut buf[..],
@@ -715,7 +757,7 @@ impl RuntimeTranspilerCache {
             // On a mac, default to ~/Library/Caches/bun/*
             // This is different than ~/.bun/install/cache, and not configurable by the user.
             if let Some(home) = env_var::HOME.get() {
-                let parts: &[&[u8]] = &[home, b"Library/", b"Caches/", b"bun", b"@t@"];
+                let parts: &[&[u8]] = &[home, b"Library/", b"Caches/", b"bun", tcache_seg];
                 return path_handler::join_abs_string_buf_z::<platform::Loose>(
                     top,
                     &mut buf[..],
@@ -726,7 +768,7 @@ impl RuntimeTranspilerCache {
         }
 
         if let Some(dir) = env_var::HOME.get() {
-            let parts: &[&[u8]] = &[dir, b".bun", b"install", b"cache", b"@t@"];
+            let parts: &[&[u8]] = &[dir, b".bun", b"install", b"cache", tcache_seg];
             return path_handler::join_abs_string_buf_z::<platform::Loose>(
                 top,
                 &mut buf[..],
@@ -758,8 +800,17 @@ impl RuntimeTranspilerCache {
         let path_len = match Self::RUNTIME_TRANSPILER_CACHE.with(|c| c.get()) {
             Some(len) => len,
             None => {
-                let len = Self::CACHE_DIR_BUF
-                    .with_borrow_mut(|tl_buf| Self::really_get_cache_dir(tl_buf));
+                let len = Self::CACHE_DIR_BUF.with_borrow_mut(|tl_buf| {
+                    let len = Self::really_get_cache_dir(tl_buf);
+                    if len > 0 && !is_trusted_cache_dir(ZStr::from_buf(&tl_buf[..], len)) {
+                        bun_core::scoped_log!(
+                            cache,
+                            "transpiler cache root failed ownership/mode check, disabling"
+                        );
+                        return 0;
+                    }
+                    len
+                });
                 if len == 0 {
                     IS_DISABLED.store(true, Ordering::Relaxed);
                     return Err(crate::CrateError::CacheDisabled);

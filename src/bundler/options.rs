@@ -205,9 +205,7 @@ pub(crate) use bun_ast::Target;
 // module-level name for callers that pre-date it.
 pub use bun_ast::target::TARGET_MAP;
 
-// Re-export of the canonical table in `bun_resolver::options`; kept as a
-// module-level name for callers that pre-date it. `PackageJSON::parse` reads
-// the whole union, so every name listed here is stored in the cached parse.
+// Re-export of the canonical table in `bun_resolver::options`, kept under its pre-existing name.
 pub use bun_resolver::options::ALL_DEFAULT_MAIN_FIELD_NAMES as TARGET_MAIN_FIELD_NAMES;
 
 // Note that this means if a package specifies "module" and "main", the ES6

@@ -311,8 +311,7 @@ pub const ALL_DEFAULT_MAIN_FIELD_NAMES: [&[u8]; 4] = [
     b"browser",
     b"module",
     b"main",
-    // https://github.com/jsforum/jsforum/issues/5
-    // Older packages might use jsnext:main in place of module
+    // Older packages use this in place of module: https://github.com/jsforum/jsforum/issues/5
     b"jsnext:main",
 ];
 

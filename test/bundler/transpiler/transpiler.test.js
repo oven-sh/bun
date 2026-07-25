@@ -2196,6 +2196,12 @@ console.log(<div {...obj} key="after" />);`),
 
   // https://github.com/oven-sh/bun/issues/7499
   describe("autoImportJSX defaults to true for the automatic runtime", () => {
+    it("no-arg constructor", () => {
+      expect(new Bun.Transpiler().transformSync("export default <div/>;")).toMatch(
+        /^import { jsxDEV as (\w+) } from "react\/jsx-dev-runtime";\nexport default \1\("div",/,
+      );
+    });
+
     it("development", () => {
       const out = new Bun.Transpiler({
         loader: "tsx",

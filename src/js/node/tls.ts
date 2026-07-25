@@ -1163,7 +1163,8 @@ function buildSharedCreds(server) {
     // Per-server ticket keys must not land on a digest-cached shared SSL_CTX.
     ticketKeys === undefined,
   ));
-  if (ticketKeys !== undefined && sc.context) _setTicketKeys(sc.context, ticketKeys);
+  const { context } = sc;
+  if (ticketKeys !== undefined && context) _setTicketKeys(context, ticketKeys);
   return sc;
 }
 
@@ -1435,6 +1436,9 @@ function Server(options, secureConnectionListener): void {
           // Pin so BoringSSL's default-key auto-rotation doesn't change later reads.
           this._ticketKeys = Buffer.from(keys);
           _setTicketKeys(_handle, keys);
+          if (this._sharedCreds && !(this[ksharedCredsOptions] instanceof InternalSecureContext)) {
+            this._sharedCreds = null;
+          }
         }
         return keys;
       }

@@ -112,12 +112,13 @@ test("throwing inside an error suppresses the error and continues printing prope
 
   const { stderr, exitCode } = result;
 
-  expect(stderr.toString().trim()).toStartWith(`ENOENT: no such file or directory, open 'this-file-path-is-bad'
+  expect(stderr.toString()).toContain(`ENOENT: no such file or directory, open 'this-file-path-is-bad'
     path: "this-file-path-is-bad",
  syscall: "open",
    errno: ${process.binding("uv").UV_ENOENT},
     code: "ENOENT"
 `);
+  expect(stderr.toString()).toContain("err-fd-fixture.js:2");
   expect(exitCode).toBe(1);
 });
 

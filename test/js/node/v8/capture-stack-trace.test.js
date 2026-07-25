@@ -1177,6 +1177,25 @@ await inner();
 Promise.race([inner()]);
 await Promise.resolve();
 `,
+    // With AsyncLocalStorage active the reaction context is wrapped in an
+    // InternalFieldTuple; the walk has to unwrap field 0 to see the module.
+    "als.mjs": `import { AsyncLocalStorage } from "node:async_hooks";
+new AsyncLocalStorage().enterWith({});
+async function inner() {
+  await 0;
+  console.log(new Error("boom").stack);
+}
+await inner();
+`,
+    // Errors created in native code with no JS frames (e.g. fs.promises) take
+    // a separate reaction-chain walk (Bun__attachAsyncStackFromPromise).
+    "native.mjs": `import { readFile } from "node:fs/promises";
+try {
+  await readFile("/nonexistent-tla-probe/x");
+} catch (e) {
+  console.log(e.stack);
+}
+`,
     // A module's await frame reaches across an import boundary.
     "entry.mjs": `import { run } from "./lib.mjs";
 await run();
@@ -1244,6 +1263,21 @@ export async function run() { await inner(); }
     const lines = stdout.trim().split("\n");
     expect(lines[1]).toMatch(/^ {4}at inner \(.*race\.mjs:3:\d+\)$/);
     expect(lines).toHaveLength(2);
+    expect(exitCode).toBe(0);
+  }
+
+  {
+    const { stdout, exitCode } = await run("als.mjs");
+    const lines = stdout.trim().split("\n");
+    expect(lines[1]).toMatch(/^ {4}at inner \(.*als\.mjs:5:\d+\)$/);
+    expect(lines[lines.length - 1]).toMatch(/^ {4}at async .*als\.mjs:7:\d+$/);
+    expect(exitCode).toBe(0);
+  }
+
+  {
+    const { stdout, exitCode } = await run("native.mjs");
+    const lines = stdout.trim().split("\n");
+    expect(lines[lines.length - 1]).toMatch(/^ {4}at async .*native\.mjs:3:\d+$/);
     expect(exitCode).toBe(0);
   }
 

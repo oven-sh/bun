@@ -40,6 +40,16 @@ static inline bool dynamicCastValue(JSValue v, T** out)
     return *out != nullptr;
 }
 
+// With AsyncLocalStorage active, JSPromise::resolveWithInternalMicrotaskForAsyncAwait
+// wraps the await context in InternalFieldTuple(context, asyncContext). Unwrap
+// to field 0 so both the generator and module-record probes see the real cell.
+static inline JSValue unwrapAsyncContextTuple(JSValue v)
+{
+    if (auto* tuple = cellAs<InternalFieldTuple>(v))
+        return tuple->getInternalField(0);
+    return v;
+}
+
 static BytecodeIndex yieldStateToBytecodeIndex(CodeBlock* codeBlock, int32_t state)
 {
     size_t numberOfJumpTables = codeBlock->numberOfUnlinkedSwitchJumpTables();
@@ -92,15 +102,6 @@ static void collectAsyncStackFramesFromPromise(JSC::VM& vm, JSC::JSCell* owner, 
 
     JSC::AssertNoGC assertNoGC;
 
-    auto unwrapGeneratorFromContext = [&](JSC::JSValue context) -> JSC::JSAsyncFunctionGenerator* {
-        JSC::InternalFieldTuple* tuple = nullptr;
-        if (dynamicCastValue(context, &tuple))
-            context = tuple->getInternalField(0);
-        JSC::JSAsyncFunctionGenerator* generator = nullptr;
-        dynamicCastValue(context, &generator);
-        return generator;
-    };
-
     // Walk reaction->context → generator. If context is not a generator (e.g.
     // thenable-chain from `return promise` without await inside an async
     // function), follow reaction->promise() to the next promise in the chain.
@@ -120,8 +121,8 @@ static void collectAsyncStackFramesFromPromise(JSC::VM& vm, JSC::JSCell* owner, 
                 return nullptr;
             switch (p->inlineReactionKind()) {
             case JSC::JSPromise::InlineReactionKind::InternalMicrotask: {
-                JSValue context = p->inlineReactionContext();
-                if (auto* generator = unwrapGeneratorFromContext(context))
+                JSValue context = unwrapAsyncContextTuple(p->inlineReactionContext());
+                if (auto* generator = cellAs<JSC::JSAsyncFunctionGenerator>(context))
                     return generator;
                 terminalModule = cellAs<JSModuleRecord>(context);
                 // No generator in the context. For the resolve-with-promise fast
@@ -147,8 +148,8 @@ static void collectAsyncStackFramesFromPromise(JSC::VM& vm, JSC::JSCell* owner, 
             auto* reaction = dynamicDowncast<JSC::JSPromiseReaction>(p->payloadCell());
             if (!reaction)
                 return nullptr;
-            JSValue context = JSC::JSPromiseReaction::tryGetContext(reaction);
-            if (auto* generator = unwrapGeneratorFromContext(context))
+            JSValue context = unwrapAsyncContextTuple(JSC::JSPromiseReaction::tryGetContext(reaction));
+            if (auto* generator = cellAs<JSC::JSAsyncFunctionGenerator>(context))
                 return generator;
             terminalModule = cellAs<JSModuleRecord>(context);
             // No generator in context — follow the thenable chain to the
@@ -258,7 +259,7 @@ void Bun::appendTopLevelAwaitStackFrame(VM& vm, JSCell* owner, Vector<StackFrame
 
     auto reactionContext = [](JSValue v) -> JSValue {
         auto* promise = cellAs<JSPromise>(v);
-        return promise ? promise->asyncStackTraceContext() : JSValue();
+        return promise ? unwrapAsyncContextTuple(promise->asyncStackTraceContext()) : JSValue();
     };
 
     JSModuleRecord* moduleRecord = nullptr;
@@ -270,7 +271,7 @@ void Bun::appendTopLevelAwaitStackFrame(VM& vm, JSCell* owner, Vector<StackFrame
             continue;
         }
         if (auto* promise = cellAs<JSPromise>(context)) {
-            JSValue inner = promise->asyncStackTraceContext();
+            JSValue inner = unwrapAsyncContextTuple(promise->asyncStackTraceContext());
             if (auto* next = cellAs<JSAsyncFunctionGenerator>(inner)) {
                 generator = next;
                 continue;

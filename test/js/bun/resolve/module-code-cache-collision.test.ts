@@ -1,8 +1,6 @@
-import * as internalForTesting from "bun:internal-for-testing";
+import { stringImplHash } from "bun:internal-for-testing";
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
-
-const { stringImplHash } = internalForTesting as { stringImplHash?: (s: string) => number };
 
 // JSC's CodeCache keys UnlinkedModuleProgramCodeBlocks on a 24-bit StringImpl
 // hash of the source text. Two distinct modules whose *transpiled* source
@@ -26,12 +24,10 @@ function assertCollidingPair(a: string, b: string) {
     ).toBe(src);
   }
   expect(a).not.toBe(b);
-  if (stringImplHash) {
-    expect(
-      stringImplHash(a),
-      "WTF StringImpl::hash() changed; this pair no longer collides, re-mine the collision pair",
-    ).toBe(stringImplHash(b));
-  }
+  expect(
+    stringImplHash(a),
+    "WTF StringImpl::hash() changed; this pair no longer collides, re-mine the collision pair",
+  ).toBe(stringImplHash(b));
 }
 
 test.concurrent("modules with hash-colliding source evaluate their own code (const export)", async () => {

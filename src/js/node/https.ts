@@ -516,9 +516,7 @@ function createServer(options, requestListener) {
     // ALPN requests are always answered with http/1.1.
     options.ALPNProtocols = ["http/1.1"];
   }
-  // Node's https.Server is always a TLS listener, even without key/cert: the
-  // handshake fails closed (sslv3 alert handshake failure) rather than
-  // downgrading to plaintext. The Server constructor keys TLS off this symbol.
+  // https is always TLS even without key/cert (handshakes fail closed, like Node).
   options[isTlsSymbol] = true;
   const server = http.createServer(options, requestListener);
   const optionsALPNProtocols = options.ALPNProtocols;

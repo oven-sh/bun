@@ -1369,12 +1369,8 @@ impl ServerConfig {
             }
         }
 
-        // `node:http`'s Server wrapper always passes `onNodeHTTPRequest`, and its
-        // https flavour must match Node's fail-closed behaviour (a TLS listener
-        // whose every handshake alerts) when the user supplied no key/cert.
-        // Direct `Bun.serve` callers get a synchronous TypeError instead so an
-        // empty/tuning-only `tls` object can never quietly downgrade to
-        // plaintext or stand up a cert-less `https:` listener.
+        // node:https (via `onNodeHTTPRequest`) keeps Node's cert-less
+        // fail-closed listener; direct `Bun.serve` callers get a TypeError.
         let is_node_http = !args.on_node_http_request.is_empty();
         let require_identity = |global: &JSGlobalObject, cfg: Option<&SSLConfig>| -> JsResult<()> {
             if is_node_http || cfg.is_some_and(SSLConfig::has_identity_material) {
@@ -1431,9 +1427,7 @@ impl ServerConfig {
                     return Err(JsError::Thrown);
                 }
                 require_identity(global, parsed.as_ref())?;
-                // `require_identity` only lets `None`/no-identity through on the
-                // node:https path; arm a cert-less context there so handshakes
-                // fail-closed instead of downgrading to plaintext.
+                // Only node:https reaches here without identity; arm cert-less.
                 args.ssl_config = Some(parsed.unwrap_or_else(SSLConfig::zero));
             }
         }

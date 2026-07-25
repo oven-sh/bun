@@ -135,11 +135,8 @@ impl SSLConfig {
         Self::default()
     }
 
-    /// Whether this config carries a server identity (a key+cert pair, inline
-    /// or by file path). `ca`/`crl` are trust material, not identity, and the
-    /// remaining fields are tuning knobs: none of them can make a TLS server
-    /// handshake succeed on their own. Used by `Bun.serve` to reject a `tls`
-    /// option that would listen as `https:` but fail every handshake.
+    /// Whether this config carries a server identity (key+cert pair); `ca`,
+    /// `crl` and the tuning fields alone cannot complete a TLS handshake.
     #[inline]
     pub fn has_identity_material(&self) -> bool {
         (self.cert.is_some() && self.key.is_some())

@@ -154,10 +154,8 @@ describe("Bun.serve SSL validations", () => {
   }
 });
 
-// A `tls` object must carry server identity (key+cert / keyFile+certFile).
-// Before this was enforced, `tls: {}` silently fell back to plaintext HTTP and
-// `tls: { <tuning field> }` stood up a cert-less `https:` listener whose every
-// handshake aborted with an internal alert.
+// `tls: {}` used to fall back to plaintext and tuning-only `tls` stood up a
+// cert-less https:// listener; both must now throw synchronously.
 describe("Bun.serve tls must carry key+cert", () => {
   const withoutIdentity = [
     ["empty object", {}],
@@ -192,8 +190,6 @@ describe("Bun.serve tls must carry key+cert", () => {
     expect(await res.text()).toBe("ok");
   });
 
-  // The v0.2.1 legacy reader parsed TLS options off the top-level serve object
-  // too; a stray tuning field there must not accidentally arm TLS.
   test("top-level tuning field does not arm TLS", async () => {
     await using server = Bun.serve({
       port: 0,
@@ -217,9 +213,6 @@ describe("Bun.serve tls must carry key+cert", () => {
   });
 });
 
-// Node.js's https.createServer never throws for a missing key/cert and never
-// downgrades to plaintext: it listens as TLS and every handshake fails with a
-// fatal alert.
 describe("node:https createServer without key/cert is TLS fail-closed", () => {
   for (const [label, options] of [
     ["no options", undefined],

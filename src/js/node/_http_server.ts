@@ -319,9 +319,8 @@ function Server(options, callback): void {
   } else {
     validateObject(options, "options");
     options = { ...options };
-    // `node:https` stamps this on the options object it hands over so an https
-    // server is TLS even without key/cert (handshakes fail closed, like Node).
     if (options[isTlsSymbol]) {
+      // Set by `node:https`; an https server is TLS even without key/cert.
       this[isTlsSymbol] = true;
       delete options[isTlsSymbol];
     }

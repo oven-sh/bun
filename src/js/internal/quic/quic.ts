@@ -2582,14 +2582,19 @@ class QuicStream {
   }
 
   [kInspect](depth, options) {
-    if (depth < 0) {
+    if (typeof depth === "number" && depth < 0) {
       return "QuicStream { }";
     }
 
+    // stream -> session -> endpoint -> sessions is cyclic, and each hop
+    // builds a fresh wrapper object that the inspector's seen-set cannot
+    // recognise. Bound the recursion off the remaining `depth` (null is
+    // "infinite": clamp to the util.inspect default) so Bun.inspect and
+    // `util.inspect({depth: null})` stay finite.
     const opts = {
       __proto__: null,
       ...options,
-      depth: options.depth == null ? null : options.depth - 1,
+      depth: (typeof depth === "number" ? depth : 2) - 1,
     };
 
     const { id, direction, pending, stats, session } = this;
@@ -3878,14 +3883,17 @@ class QuicSession {
   }
 
   [kInspect](depth, options) {
-    if (depth < 0) {
+    if (typeof depth === "number" && depth < 0) {
       return "QuicSession { }";
     }
 
+    // See QuicStream[kInspect]: session <-> endpoint is a cycle through
+    // fresh wrapper objects, so bound by the remaining `depth` and clamp
+    // null to the util.inspect default.
     const opts = {
       __proto__: null,
       ...options,
-      depth: options.depth == null ? null : options.depth - 1,
+      depth: (typeof depth === "number" ? depth : 2) - 1,
     };
 
     const { isPendingClose: closing, endpoint, path, state, stats, streams } = this.#inner;
@@ -4561,14 +4569,17 @@ class QuicEndpoint {
   }
 
   [kInspect](depth, options) {
-    if (depth < 0) {
+    if (typeof depth === "number" && depth < 0) {
       return "QuicEndpoint { }";
     }
 
+    // See QuicStream[kInspect]: endpoint <-> session is a cycle through
+    // fresh wrapper objects, so bound by the remaining `depth` and clamp
+    // null to the util.inspect default.
     const opts = {
       __proto__: null,
       ...options,
-      depth: options.depth == null ? null : options.depth - 1,
+      depth: (typeof depth === "number" ? depth : 2) - 1,
     };
 
     const { address, busy, isPendingClose: closing, listening, sessions, stats, state } = this.#inner;

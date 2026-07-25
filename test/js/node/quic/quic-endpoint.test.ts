@@ -267,3 +267,87 @@ describe("endpoint.close() while a session is live", () => {
     expect({ announced, resolved }).toEqual({ announced: 1, resolved: true });
   });
 });
+
+// endpoint[kInspect] -> {sessions} -> session[kInspect] -> {endpoint} is a
+// cycle, but each hop wraps its fields in a fresh object literal and calls
+// util.inspect() on that, so the inspector's seen-set never recognises the
+// back-edge. The old `options.depth == null ? null : options.depth - 1`
+// re-derived the child depth from the *original* budget, so Bun.inspect
+// (depth 8) re-expanded the endpoint K^4 times and
+// util.inspect({depth: null}) never terminated at all.
+describe("custom inspect", () => {
+  test("Bun.inspect / util.inspect on a live endpoint stay bounded", async () => {
+    // Spawn: the unfixed build runs forever on inspect({depth: null}).
+    using dir = tempDir("quic-inspect", {
+      "run.mjs": `
+        import { listen, connect, QuicEndpoint } from "node:quic";
+        import { createPrivateKey } from "node:crypto";
+        import { readFileSync } from "node:fs";
+        import { inspect } from "node:util";
+        const key = createPrivateKey(readFileSync(${JSON.stringify(join(keysDir, "agent1-key.pem"))}));
+        const cert = readFileSync(${JSON.stringify(join(keysDir, "agent1-cert.pem"))});
+        const server = await listen(async s => { s.onerror = () => {}; await s.closed.catch(() => {}); },
+          { sni: { "*": { keys: [key], certs: [cert] } }, alpn: ["i"], address: "127.0.0.1:0",
+            transportParams: { maxIdleTimeout: 30 } });
+        const clientEndpoint = new QuicEndpoint();
+        const live = [];
+        const sizes = {};
+        for (const K of [2, 4]) {
+          while (live.length < K) {
+            const c = await connect(server.address,
+              { endpoint: clientEndpoint, alpn: "i", verifyPeer: "manual",
+                transportParams: { maxIdleTimeout: 30 } });
+            c.closed.catch(() => {});
+            await c.opened;
+            live.push(c);
+          }
+          sizes["bun@" + K] = Bun.inspect(server).length;
+          sizes["session@" + K] = Bun.inspect(live[0]).length;
+          sizes["util@" + K] = inspect(server).length;
+          sizes["null@" + K] = inspect(server, { depth: null }).length;
+        }
+        console.log(JSON.stringify(sizes));
+        for (const c of live) c.destroy();
+        clientEndpoint.destroy();
+        server.destroy();
+        process.exit(0);
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 30000,
+      killSignal: "SIGKILL",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toContain("ExperimentalWarning");
+    expect(stdout.trim()).toStartWith("{");
+    const sizes = JSON.parse(stdout);
+
+    // Before: Bun.inspect at K=4 was ~367 KB (~7x per extra session) and
+    // util.inspect({depth: null}) recursed until the process was killed.
+    // After: each session is expanded once, so doubling K roughly doubles
+    // the output, and {depth: null} clamps to the util.inspect default.
+    expect(sizes).toEqual({
+      "bun@2": expect.any(Number),
+      "bun@4": expect.any(Number),
+      "session@2": expect.any(Number),
+      "session@4": expect.any(Number),
+      "util@2": expect.any(Number),
+      "util@4": expect.any(Number),
+      "null@2": expect.any(Number),
+      "null@4": expect.any(Number),
+    });
+    expect(sizes["bun@4"]).toBeLessThan(64 * 1024);
+    expect(sizes["bun@4"]).toBeLessThan(sizes["bun@2"] * 3);
+    expect(sizes["session@4"]).toBeLessThan(64 * 1024);
+    expect(sizes["null@4"]).toBeLessThan(16 * 1024);
+    expect(sizes["util@4"]).toBeLessThan(4 * 1024);
+    expect(exitCode).toBe(0);
+  }, 45000);
+});

@@ -5206,9 +5206,12 @@ async function connect(address, options = kEmptyObject) {
     });
   }
 
-  const session = endpoint[kConnect](address[kSocketAddressHandle], rest);
-
+  // Stamp before kConnect: the native side may build_engine and then throw,
+  // leaving a baked engine on an endpoint whose key would otherwise stay
+  // undefined and so match any later connect().
   endpoint[kNoteClientEngine](engineKey);
+
+  const session = endpoint[kConnect](address[kSocketAddressHandle], rest);
 
   if (onEndpointClientSessionChannel.hasSubscribers) {
     onEndpointClientSessionChannel.publish({

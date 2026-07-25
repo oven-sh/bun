@@ -587,13 +587,13 @@ impl QuicStream {
         self.this_value.with_mut(|r| r.downgrade());
     }
 
-    /// `on_stream_close` for [`QuicEndpoint::detach_for_finalize`]: clears
-    /// `raw` and nothing else, since `session` may already be freed.
+    /// `on_stream_close` for `QuicEndpoint::detach_for_finalize`.
     pub(super) unsafe extern "C" fn on_close_detached(
         ctx: *mut c_void,
         _s: *mut lsquic::lsquic_stream,
     ) {
-        // SAFETY: `finalize` nulls the lsquic ctx, so a non-null one is live.
+        // SAFETY: `finalize` nulls the lsquic ctx, so a non-null one is live;
+        // only `raw` is touched because `session` may already be freed.
         if let Some(qs) = unsafe { super::ffi::ctx_ref::<QuicStream>(ctx) } {
             qs.raw.set(null_mut());
         }
@@ -604,10 +604,9 @@ impl QuicStream {
         reason = "codegen's host_fn_finalize calls this as `|b| QuicStream::finalize(b)` and requires `self: Box<Self>`"
     )]
     pub(crate) fn finalize(self: Box<Self>) {
-        // See [`QuicEndpoint::detach_for_finalize`]. A non-null `raw` is live
-        // by the `ls()` invariant, and null is always a valid ctx.
         if let Some(s) = self.ls() {
-            // SAFETY: as above.
+            // SAFETY: see `QuicEndpoint::detach_for_finalize`; a non-null `raw`
+            // is live by the `ls()` invariant, and null is always a valid ctx.
             unsafe { s.set_ctx(null_mut()) };
         }
     }

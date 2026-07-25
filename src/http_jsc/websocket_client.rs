@@ -874,14 +874,18 @@ impl<const SSL: bool> WebSocket<SSL> {
     /// Assemble the (optional) close payload, echo a close frame back, and
     /// stop reading: a received Close always terminates the parse loop.
     fn recv_close(&self, cursor: &mut RecvCursor<'_>) -> Step {
-        if cursor.body_remain == 1 || cursor.body_remain > MAX_CONTROL_PAYLOAD {
-            return self.recv_failed(ErrorCode::InvalidControlFrame);
-        }
-
-        if cursor.body_remain == 0 {
-            self.close_received.set(true);
-            self.send_close();
-            return Step::Terminated;
+        // Once `buffer_control_payload` has started buffering, `body_remain`
+        // counts bytes buffered so far (see its doc comment), so these length
+        // guards only apply on first entry.
+        if !self.control_frame_started.get() {
+            if cursor.body_remain == 1 || cursor.body_remain > MAX_CONTROL_PAYLOAD {
+                return self.recv_failed(ErrorCode::InvalidControlFrame);
+            }
+            if cursor.body_remain == 0 {
+                self.close_received.set(true);
+                self.send_close();
+                return Step::Terminated;
+            }
         }
 
         let Some((payload, payload_len)) = self.buffer_control_payload(cursor) else {
@@ -891,12 +895,8 @@ impl<const SSL: bool> WebSocket<SSL> {
         self.close_received.set(true);
         if payload_len >= 2 {
             let received_code = u16::from_be_bytes([payload[0], payload[1]]);
-            let (echo_code, dispatch_code) = received_close_codes(received_code);
-            self.send_close_with_body(
-                Some(echo_code),
-                Some(dispatch_code),
-                &payload[2..payload_len],
-            );
+            let code = received_close_code(received_code);
+            self.send_close_with_body(Some(code), None, &payload[2..payload_len]);
         } else {
             self.send_close();
         }
@@ -2124,18 +2124,17 @@ enum Step {
     Terminated,
 }
 
-/// Map a status code received in a Close frame to the `(wire echo, JS dispatch)`
-/// pair. RFC 6455 §7.4.1-§7.4.2: codes outside the legal on-wire set (`<1000`,
-/// the reserved `1004`–`1006` and `1015`–`2999`, and the undefined `>4999`) are
-/// a protocol error, so JS sees 1002. §7.1.5: the JS-visible code is otherwise
-/// the received one. §5.5.1: the wire echo repeats the received code verbatim.
-fn received_close_codes(received: u16) -> (u16, u16) {
+/// Map a status code received in a Close frame to the code echoed on the wire
+/// and reported to JS. RFC 6455 §7.4.1-§7.4.2: codes outside the legal on-wire
+/// set (`<1000`, the reserved `1004`–`1006` and `1015`–`2999`, and the
+/// undefined `>4999`) are a protocol error, so both see 1002. Otherwise the
+/// received code passes through verbatim (§5.5.1, §7.1.5).
+fn received_close_code(received: u16) -> u16 {
     let is_invalid = received < 1000
         || (1004..1007).contains(&received)
         || (1015..=2999).contains(&received)
         || received > 4999;
-    let dispatch = if is_invalid { 1002 } else { received };
-    (dispatch, dispatch)
+    if is_invalid { 1002 } else { received }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

@@ -237,15 +237,17 @@ describe.concurrent("WebSocket client and server-sent close frames", () => {
 describe.concurrent("WebSocket client echoes the received close code on the wire", () => {
   type Echo = { wireCode: number | "EMPTY"; jsCode: number };
 
-  async function serverSendsCloseAndReadsEcho(sent: number | "EMPTY"): Promise<Echo> {
-    const sentFrame =
-      sent === "EMPTY" ? Buffer.from([0x88, 0]) : Buffer.from([0x88, 2, (sent >> 8) & 0xff, sent & 0xff]);
+  // `segments` is written one entry at a time with a short gap, so a multi-
+  // entry array reaches the client as separate TCP reads (same split-delivery
+  // pattern as websocket-close-fragmented / websocket-client-short-read).
+  async function serverSendsCloseAndReadsEcho(segments: Buffer[]): Promise<Echo> {
     const gotEcho = Promise.withResolvers<number | "EMPTY">();
     const listening = Promise.withResolvers<void>();
 
     const server = createServer(sock => {
       let buf = Buffer.alloc(0);
       let upgraded = false;
+      sock.setNoDelay(true);
       sock.on("data", chunk => {
         buf = Buffer.concat([buf, chunk]);
         if (!upgraded) {
@@ -262,7 +264,13 @@ describe.concurrent("WebSocket client echoes the received close code on the wire
           );
           upgraded = true;
           buf = Buffer.alloc(0);
-          sock.write(sentFrame);
+          void (async () => {
+            for (const [i, seg] of segments.entries()) {
+              if (i > 0) await new Promise(r => setTimeout(r, 10));
+              if (sock.destroyed) return;
+              sock.write(seg);
+            }
+          })();
           return;
         }
         // Client frames are masked: 2-byte header + 4-byte mask key, then the
@@ -275,7 +283,10 @@ describe.concurrent("WebSocket client echoes the received close code on the wire
         gotEcho.resolve(wireCode);
         sock.end();
       });
-      sock.on("error", () => {});
+      // A regression that RSTs or FINs without echoing a Close frame must fail
+      // the assertion, not the harness timeout.
+      sock.on("error", e => gotEcho.reject(e));
+      sock.on("close", () => gotEcho.reject(new Error("socket closed without close-frame echo")));
     });
     server.listen(0, "127.0.0.1", () => listening.resolve());
     await listening.promise;
@@ -291,6 +302,10 @@ describe.concurrent("WebSocket client echoes the received close code on the wire
     } finally {
       await new Promise(r => server.close(r));
     }
+  }
+
+  function closeFrame(sent: number | "EMPTY") {
+    return sent === "EMPTY" ? Buffer.from([0x88, 0]) : Buffer.from([0x88, 2, (sent >> 8) & 0xff, sent & 0xff]);
   }
 
   // `sent` is what the server puts on the wire; `wireCode` is what the client
@@ -310,7 +325,25 @@ describe.concurrent("WebSocket client echoes the received close code on the wire
 
   describe.each(cases)("server sends $sent", ({ sent, wireCode, jsCode }) => {
     it(`client echoes ${wireCode} on the wire and JS sees ${jsCode}`, async () => {
-      expect(await serverSendsCloseAndReadsEcho(sent)).toEqual({ wireCode, jsCode });
+      expect(await serverSendsCloseAndReadsEcho([closeFrame(sent)])).toEqual({ wireCode, jsCode });
+    });
+  });
+
+  // recv_close's length guards must only run on first entry: once
+  // buffer_control_payload has started, body_remain is "bytes buffered so
+  // far", so a Close frame whose 2-byte header arrives alone (or with 1
+  // payload byte) must still deliver the server's code on re-entry.
+  it("Close header and code split across reads still echoes the received code", async () => {
+    expect(await serverSendsCloseAndReadsEcho([Buffer.from([0x88, 0x02]), Buffer.from([0x03, 0xe8])])).toEqual({
+      wireCode: 1000,
+      jsCode: 1000,
+    });
+  });
+
+  it("Close header and 1 payload byte split across reads still echoes the received code", async () => {
+    expect(await serverSendsCloseAndReadsEcho([Buffer.from([0x88, 0x02, 0x0b]), Buffer.from([0xb8])])).toEqual({
+      wireCode: 3000,
+      jsCode: 3000,
     });
   });
 });

@@ -12,7 +12,7 @@
 
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { basename, dirname, resolve } from "node:path";
 import type { Config } from "./config.ts";
 import { DARWIN_STACK_SIZE } from "./flags.ts";
 import type { Ninja } from "./ninja.ts";
@@ -189,6 +189,15 @@ export function registerShimRules(n: Ninja, cfg: Config): void {
     });
   }
 
+  if (cfg.windows && cfg.asan) {
+    // Place a runtime DLL beside the executable. cmd's copy handles the
+    // Windows path shape; /Y overwrites without prompting, /B is binary.
+    n.rule("copy_runtime_dll", {
+      command: `cmd /c copy /Y /B $in $out >nul`,
+      description: "runtime dll $out",
+    });
+  }
+
   if (needsMuslCrtDecompress(cfg)) {
     // llvm-objcopy (multi-target; host GNU objcopy rejects foreign-arch ELF).
     // Resolve it next to clang (debian has no unversioned symlink on PATH).
@@ -292,4 +301,28 @@ export function emitShims(n: Ninja, cfg: Config): ShimLinkOpts {
   }
 
   return { ldflags, implicitInputs };
+}
+
+/**
+ * Windows ASAN: copy the sanitizer runtime DLL beside the linked executable.
+ *
+ * The -asan prebuilt WebKit ships the runtime it was built against; bun's
+ * instrumented objects and the instrumented WTF/JSC libs both call into it,
+ * and the loader resolves it from the executable's directory. Emitted as a
+ * build edge downstream of the exe so it runs after the prebuilt fetch and
+ * re-runs if the tarball is refetched. Returns the destination path — pass
+ * it as a prerequisite of anything that runs the executable.
+ */
+export function emitWindowsAsanRuntime(n: Ninja, cfg: Config, exe: string, srcDll: string): string {
+  const dest = resolve(dirname(exe), basename(srcDll));
+  n.build({
+    outputs: [dest],
+    rule: "copy_runtime_dll",
+    inputs: [srcDll],
+    // The DLL comes out of the prebuilt tarball. Ordering after the exe
+    // keeps the copy in the post-link phase and guarantees the output
+    // directory exists.
+    orderOnlyInputs: [exe],
+  });
+  return dest;
 }

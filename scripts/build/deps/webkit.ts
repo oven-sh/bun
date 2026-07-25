@@ -3,7 +3,7 @@
  * for local mode. Override via `--webkit-version=<hash>` to test a branch.
  * From https://github.com/oven-sh/WebKit releases.
  */
-export const WEBKIT_VERSION = "549170099226f816a4b204ea1d8fa102fb79eefa";
+export const WEBKIT_VERSION = "5897d35200e8234037980623cd05a3f51492be11";
 
 /**
  * WebKit (JavaScriptCore) — the JS engine.
@@ -136,6 +136,27 @@ function prebuiltIcuLibs(cfg: Config): string[] {
     return ["lib/libicudata.a", "lib/libicui18n.a", "lib/libicuuc.a"];
   }
   return []; // darwin: system ICU
+}
+
+/**
+ * Windows ASAN runtime — the -asan prebuilt ships the sanitizer libs it was
+ * linked against (import lib + /MT static runtime thunk) in lib/, and the
+ * runtime DLL in bin/. bun links these exact files rather than the ones in
+ * clang's resource dir: the instrumented WTF/JSC ABI only agrees with the
+ * runtime version the tarball was built with.
+ */
+function prebuiltAsanRuntimeLibs(cfg: Config): string[] {
+  if (!(cfg.windows && cfg.asan)) return [];
+  return ["lib/clang_rt.asan_dynamic-x86_64.lib", "lib/clang_rt.asan_static_runtime_thunk-x86_64.lib"];
+}
+
+/**
+ * The runtime DLL the windows -asan prebuilt ships in bin/. Instrumented
+ * WebKit and bun objects both call into it, so it must sit beside the
+ * executable at run time. Only exists for the windows -asan prebuilt.
+ */
+export function prebuiltAsanRuntimeDll(cfg: Config): string {
+  return resolve(prebuiltDestDir(cfg), "bin", "clang_rt.asan_dynamic-x86_64.dll");
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -391,14 +412,19 @@ export const webkit: Dependency = {
       // it. If a future version drops libbmalloc.a, you'll get a clear
       // "file not found" at link time (not silent omission + cryptic
       // undefined symbols).
-      const libs = [...coreLibs(cfg), ...prebuiltIcuLibs(cfg), bmallocLib(cfg)];
+      const libs = [...coreLibs(cfg), ...prebuiltIcuLibs(cfg), bmallocLib(cfg), ...prebuiltAsanRuntimeLibs(cfg)];
 
       const includes = ["include"];
       // Linux/windows: ICU headers under wtf/unicode. macOS: deleted by
       // postExtract.
       if (!cfg.darwin) includes.push("include/wtf/unicode");
 
-      return { libs, includes };
+      // Windows -asan: the runtime DLL the tarball ships in bin/ (see
+      // prebuiltAsanRuntimeDll). Declared so the fetch edge produces it and
+      // the copy-beside-exe edge has a real input.
+      const runtimeFiles = cfg.windows && cfg.asan ? ["bin/clang_rt.asan_dynamic-x86_64.dll"] : [];
+
+      return { libs, includes, runtimeFiles };
     }
 
     // Local: paths relative to BUILD dir (headers generated during build).

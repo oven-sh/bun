@@ -299,8 +299,16 @@ function llvmSearchPaths(os: OS, arch: Arch): string[] {
   }
 
   if (os === "windows") {
-    // Prefer standalone LLVM over VS-bundled
+    // Prefer standalone LLVM over VS-bundled: Visual Studio's optional
+    // ClangCL component ships its own (older) clang-cl under
+    // VC\Tools\Llvm, which lands on PATH via the dev shell and would win a
+    // bare PATH search. List the standalone installs explicitly, in order:
+    // the official installer's default, then scoop's per-user location.
     paths.push("C:\\Program Files\\LLVM\\bin");
+    const userProfile = process.env.USERPROFILE;
+    if (userProfile) {
+      paths.push(`${userProfile}\\scoop\\apps\\llvm\\current\\bin`);
+    }
   }
 
   if (os === "linux" || os === "darwin") {
@@ -422,10 +430,16 @@ export function resolveLlvmToolchain(
     checkVersion: true,
     required: true,
   });
-  const cxx = findLlvmTool(msvcTarget ? "clang-cl" : "clang++", paths, os, {
-    checkVersion: false,
-    required: true,
-  })?.path;
+  // On the MSVC target C and C++ are the SAME driver (clang-cl), so reuse
+  // the version-checked binary. A second, unchecked "clang-cl" lookup can
+  // land on a different install — the VS-bundled (older) clang-cl the dev
+  // shell prepends to PATH — and compile C++ with an unvetted version.
+  const cxx = msvcTarget
+    ? ccResult?.path
+    : findLlvmTool("clang++", paths, os, {
+        checkVersion: false,
+        required: true,
+      })?.path;
 
   // Resource dir (builtin headers live at <resource-dir>/include). Needed by
   // darwin cross-compiles, which rebuild the include search path explicitly

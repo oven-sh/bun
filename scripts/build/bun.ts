@@ -34,13 +34,14 @@ import { bunExeName, shouldStrip, type Config } from "./config.ts";
 import { generateDepVersionsHeader } from "./depVersionsHeader.ts";
 import { allDeps } from "./deps/index.ts";
 import { lolhtml } from "./deps/lolhtml.ts";
+import { prebuiltAsanRuntimeDll } from "./deps/webkit.ts";
 import { assert } from "./error.ts";
 import { bunIncludes, computeFlags, extraFlagsFor, linkDepends } from "./flags.ts";
 import { writeIfChanged } from "./fs.ts";
 import type { BuildNode, Ninja } from "./ninja.ts";
 import { emitRust, linkerMapPath, rustLibPath, rustLtoLinkInputs } from "./rust.ts";
 import { quote, slash } from "./shell.ts";
-import { emitShims, machoPostlinkCommand, machoPostlinkImplicitInputs } from "./shims.ts";
+import { emitShims, emitWindowsAsanRuntime, machoPostlinkCommand, machoPostlinkImplicitInputs } from "./shims.ts";
 import { computeDepLibs, resolveDep, type ResolvedDep } from "./source.ts";
 import { streamPath } from "./stream.ts";
 import { generateUnifiedSources } from "./unified.ts";
@@ -509,6 +510,15 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     linkerMapOutput: cfg.linux && cfg.release && !cfg.asan && !cfg.valgrind ? linkerMapPath(cfg) : undefined,
   });
 
+  // ─── Step 7b: Windows ASAN runtime beside the exe ───
+  // The -asan prebuilt WebKit ships the sanitizer runtime DLL it was built
+  // against; instrumented bun objects and WebKit libs both call into it, so
+  // it must sit next to bun.exe or the loader fails before main runs. Copy
+  // as a build edge (not at configure time) so it lands after the prebuilt
+  // is extracted and reruns if the tarball is refetched.
+  const asanRuntimeDll =
+    cfg.windows && cfg.asan ? emitWindowsAsanRuntime(n, cfg, exe, prebuiltAsanRuntimeDll(cfg)) : undefined;
+
   // ─── Step 8: post-link (strip + dsymutil) ───
   // Plain release only: produce stripped `bun` alongside `bun-profile`.
   // Debug/asan/etc. keep symbols (you want them for debugging).
@@ -542,7 +552,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   // ASAN binaries to run from subprocesses (shadow memory layout conflict
   // with ELF_ET_DYN_BASE, see sanitizers/856). We try with setarch first,
   // fall back to direct invocation.
-  emitSmokeTest(n, cfg, exe, exeName);
+  emitSmokeTest(n, cfg, exe, exeName, asanRuntimeDll ? [asanRuntimeDll] : []);
 
   return { exe, strippedExe, dsym, deps, codegen, rustObjects, objects: allObjects };
 }
@@ -759,11 +769,12 @@ function emitRustAndLink(n: Ninja, cfg: Config, sources: Sources): BunOutput {
  * linker didn't catch (missing symbol only referenced at init, ICU ABI
  * mismatch, etc.).
  */
-function emitSmokeTest(n: Ninja, cfg: Config, exe: string, exeName: string): void {
+function emitSmokeTest(n: Ninja, cfg: Config, exe: string, exeName: string, runtimeDeps: string[] = []): void {
   // Skip when the binary can't run on this host (different os/arch/abi) —
-  // `ninja check` becomes a no-op alias for the exe.
+  // `ninja check` becomes a no-op alias for the exe. runtimeDeps (e.g. the
+  // Windows ASAN runtime DLL) still gate the phony so the exe is runnable.
   if (!cfg.canRunOnHost) {
-    n.phony("check", [exe]);
+    n.phony("check", [exe, ...runtimeDeps]);
     return;
   }
   const stamp = resolve(cfg.buildDir, `${exeName}.smoke-test-passed`);
@@ -804,6 +815,10 @@ function emitSmokeTest(n: Ninja, cfg: Config, exe: string, exeName: string): voi
     outputs: [stamp],
     rule: "smoke_test",
     inputs: [exe],
+    // Runtime prerequisites the exe needs at load time (e.g. the Windows
+    // ASAN runtime DLL beside it). Implicit: not on the command line, but
+    // the test can't pass until they exist.
+    implicitInputs: runtimeDeps,
   });
 
   // Phony target — `ninja check` runs the smoke test.

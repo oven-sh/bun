@@ -400,6 +400,14 @@ export interface Provides {
    * a single-file dep with no build system (picohttpparser: one .c file).
    */
   sources?: string[];
+  /**
+   * Runtime artifacts the prebuilt ships that the built executable needs
+   * beside it at run time (not linked) — e.g. the Windows ASAN runtime DLL
+   * in the -asan WebKit tarball. Paths relative to the dep's destDir.
+   * Declared as implicit outputs of the fetch rule so a downstream edge can
+   * take them as inputs; prebuilt only.
+   */
+  runtimeFiles?: string[];
 }
 
 /**
@@ -1032,17 +1040,18 @@ function emitPrebuilt(
   // get libX.a prefix/suffix), prebuilt tarballs ship full filenames — we
   // take `provides.libs` entries as-is relative to destDir.
   const libs = provides.libs.map(lib => resolve(destDir, lib));
+  const runtimeFiles = (provides.runtimeFiles ?? []).map(f => resolve(destDir, f));
   const includes = provides.includes.map(inc => {
     if (isAbsolute(inc)) return inc;
     return inc === "." ? destDir : resolve(destDir, inc);
   });
 
-  // Outputs: stamp + all libs. Stamp is the explicit output; libs are
-  // implicit (so deleting them correctly retriggers fetch, and restat
-  // prunes downstream when fetch was a no-op).
+  // Outputs: stamp + all libs + runtime files. Stamp is the explicit output;
+  // the rest are implicit (so deleting them correctly retriggers fetch, and
+  // restat prunes downstream when fetch was a no-op).
   n.build({
     outputs: [stamp],
-    implicitOutputs: libs,
+    implicitOutputs: [...libs, ...runtimeFiles],
     rule: "dep_fetch_prebuilt",
     inputs: [],
     // Only fetch-cli.ts. download.ts has a lot of shared helpers — editing

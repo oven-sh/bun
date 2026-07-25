@@ -329,22 +329,32 @@ pub mod default_alloc {
             return 0;
         }
         // Under `bun_asan` the global allocator is `std::alloc::System`, so the
-        // size must come from libc, not mimalloc — and the symbol differs per
-        // OS (`malloc_usable_size` on Linux, `malloc_size` on macOS). `bun_asan`
-        // is only ever set on Linux or macOS, so the catch-all (non-asan, every
-        // `check-all` target including Windows) stays on mimalloc.
+        // size must come from the C runtime, not mimalloc — and the symbol
+        // differs per OS (`malloc_usable_size` on Linux, `malloc_size` on
+        // macOS, `_msize` on Windows). This entry point never sees an
+        // over-aligned block (those are only sized via `usable_size_aligned`),
+        // so on Windows the plain `_msize` is the right query.
         #[cfg(all(bun_asan, target_os = "linux"))]
         return unsafe { libc::malloc_usable_size(ptr.cast_mut()) };
         #[cfg(all(bun_asan, target_os = "macos"))]
         return unsafe { libc::malloc_size(ptr) };
+        #[cfg(all(bun_asan, target_os = "windows"))]
+        return unsafe { crate::win_crt::_msize(ptr.cast_mut()) };
         // SAFETY: caller guarantees `ptr` is a live mimalloc allocation (the
         // non-null check above already handled null).
-        #[cfg(not(any(all(bun_asan, target_os = "linux"), all(bun_asan, target_os = "macos"))))]
+        #[cfg(not(any(
+            all(bun_asan, target_os = "linux"),
+            all(bun_asan, target_os = "macos"),
+            all(bun_asan, target_os = "windows")
+        )))]
         return unsafe { crate::mimalloc::mi_usable_size(ptr) };
     }
 
     // The aligned variants are `#[cfg]`-split (not `if cfg!()`) because the
-    // posix_memalign/malloc_usable_size symbols don't exist on Windows.
+    // symbols involved differ per OS: posix_memalign/malloc_usable_size are
+    // POSIX-only, and Windows' `_aligned_malloc` blocks must be released with
+    // `_aligned_free` (not `free`), so the aligned entry points own their
+    // own free/size functions rather than sharing the plain `free` above.
 
     #[cfg(not(bun_asan))]
     #[inline]
@@ -352,7 +362,7 @@ pub mod default_alloc {
         crate::mimalloc::mi_malloc_auto_align(size, align)
     }
 
-    #[cfg(bun_asan)]
+    #[cfg(all(bun_asan, not(target_os = "windows")))]
     #[inline]
     pub fn malloc_aligned(size: usize, align: usize) -> *mut c_void {
         if align <= crate::MAX_ALIGN_T {
@@ -364,6 +374,20 @@ pub mod default_alloc {
             return core::ptr::null_mut();
         }
         p
+    }
+
+    // Over-aligned blocks come from `_aligned_malloc`, which the UCRT pairs
+    // with `_aligned_free` — they are NOT valid inputs to `free`. Every
+    // aligned entry point here therefore has an aligned counterpart
+    // (`free_aligned`, `usable_size_aligned`, `realloc_aligned`) that routes
+    // by the same `align <= MAX_ALIGN_T` split.
+    #[cfg(all(bun_asan, target_os = "windows"))]
+    #[inline]
+    pub fn malloc_aligned(size: usize, align: usize) -> *mut c_void {
+        if align <= crate::MAX_ALIGN_T {
+            return unsafe { libc::malloc(size) };
+        }
+        unsafe { crate::win_crt::_aligned_malloc(size, align) }
     }
 
     #[cfg(not(bun_asan))]
@@ -397,7 +421,7 @@ pub mod default_alloc {
 
     /// # Safety
     /// `ptr` must be null or a live allocation from the default allocator with the given `align`.
-    #[cfg(bun_asan)]
+    #[cfg(all(bun_asan, not(target_os = "windows")))]
     #[inline]
     pub unsafe fn realloc_aligned(ptr: *mut c_void, new_size: usize, align: usize) -> *mut c_void {
         if align <= crate::MAX_ALIGN_T {
@@ -415,6 +439,82 @@ pub mod default_alloc {
             }
         }
         new_ptr
+    }
+
+    /// # Safety
+    /// `ptr` must be null or a live allocation from the default allocator with the given `align`.
+    #[cfg(all(bun_asan, target_os = "windows"))]
+    #[inline]
+    pub unsafe fn realloc_aligned(ptr: *mut c_void, new_size: usize, align: usize) -> *mut c_void {
+        if align <= crate::MAX_ALIGN_T {
+            return unsafe { libc::realloc(ptr, new_size) };
+        }
+        // SAFETY: caller guarantees `ptr` is null or a live `_aligned_malloc`
+        // block with alignment `align`; `_aligned_realloc` accepts null.
+        unsafe { crate::win_crt::_aligned_realloc(ptr, new_size, align) }
+    }
+
+    /// Frees a block obtained from `malloc_aligned`/`zalloc_aligned`/`realloc_aligned`.
+    ///
+    /// On Windows over-aligned blocks come from `_aligned_malloc` and must be
+    /// released with `_aligned_free`; elsewhere aligned blocks are ordinary
+    /// heap blocks. Routes by the same `align <= MAX_ALIGN_T` split the
+    /// allocation used, so callers pass the alignment they allocated with.
+    ///
+    /// # Safety
+    /// `ptr` must be null or a live allocation from the default allocator with the given `align`.
+    #[inline]
+    pub unsafe fn free_aligned(ptr: *mut c_void, align: usize) {
+        #[cfg(all(bun_asan, target_os = "windows"))]
+        if align > crate::MAX_ALIGN_T {
+            // SAFETY: caller contract — over-aligned block from `_aligned_malloc`.
+            return unsafe { crate::win_crt::_aligned_free(ptr) };
+        }
+        #[cfg(not(all(bun_asan, target_os = "windows")))]
+        let _ = align;
+        // SAFETY: caller contract — a plain heap block (mimalloc or the C runtime's).
+        unsafe { free(ptr) }
+    }
+
+    /// Usable size of a block from the aligned family.
+    ///
+    /// # Safety
+    /// `ptr` must be null or a live allocation from the default allocator with the given `align`.
+    #[inline]
+    pub unsafe fn usable_size_aligned(ptr: *const c_void, align: usize) -> usize {
+        if ptr.is_null() {
+            return 0;
+        }
+        #[cfg(all(bun_asan, target_os = "windows"))]
+        if align > crate::MAX_ALIGN_T {
+            // SAFETY: caller contract — over-aligned block from `_aligned_malloc`,
+            // whose size is only queryable via `_aligned_msize` with its alignment.
+            return unsafe { crate::win_crt::_aligned_msize(ptr.cast_mut(), align, 0) };
+        }
+        #[cfg(not(all(bun_asan, target_os = "windows")))]
+        let _ = align;
+        // SAFETY: caller contract — a plain heap block.
+        unsafe { usable_size(ptr) }
+    }
+}
+
+/// UCRT aligned-allocation family. `_aligned_malloc` blocks are a separate
+/// heap object kind: sized only via `_aligned_msize` and released only via
+/// `_aligned_free`. Windows + `bun_asan` only (the default allocator is the
+/// system CRT heap there).
+#[cfg(all(bun_asan, target_os = "windows"))]
+mod win_crt {
+    use core::ffi::c_void;
+    unsafe extern "C" {
+        pub(crate) fn _msize(ptr: *mut c_void) -> usize;
+        pub(crate) fn _aligned_malloc(size: usize, alignment: usize) -> *mut c_void;
+        pub(crate) fn _aligned_realloc(
+            ptr: *mut c_void,
+            size: usize,
+            alignment: usize,
+        ) -> *mut c_void;
+        pub(crate) fn _aligned_free(ptr: *mut c_void);
+        pub(crate) fn _aligned_msize(ptr: *mut c_void, alignment: usize, offset: usize) -> usize;
     }
 }
 

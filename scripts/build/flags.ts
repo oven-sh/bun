@@ -217,13 +217,16 @@ export const globalFlags: Flag[] = [
   // ─── MSVC runtime (Windows) ───
   {
     flag: "/MTd",
-    when: c => c.windows && c.debug,
+    when: c => c.windows && c.debug && !c.asan,
     desc: "Static debug MSVC runtime",
   },
   {
+    // The -asan prebuilt WebKit ships only the /MT static runtime thunk
+    // (no /MTd flavour), and every module in the link must share one CRT
+    // flavour, so ASAN pins the release CRT even for a debug bun.
     flag: "/MT",
-    when: c => c.windows && c.release,
-    desc: "Static MSVC runtime",
+    when: c => c.windows && (c.release || c.asan),
+    desc: "Static MSVC runtime (ASAN pins /MT: prebuilt ships only the /MT sanitizer thunk)",
   },
   {
     flag: "/U_DLL",
@@ -310,6 +313,20 @@ export const globalFlags: Flag[] = [
     flag: "-fsanitize=address",
     when: c => c.asan,
     desc: "AddressSanitizer (also forwarded to deps for ABI consistency)",
+  },
+
+  {
+    // The MSVC STL auto-enables ASan container annotations under
+    // -fsanitize=address and stamps each object with detect_mismatch keys
+    // (annotate_string / annotate_vector). The -asan WebKit prebuilt is built
+    // with them OFF, and lld-link's /failifmismatch rejects mixing the two
+    // layouts, so every object linked into bun (deps included) must match.
+    // Global for the same reason -fsanitize=address is. Also passed with -D
+    // through clang-cl. The container-overflow class these feed is
+    // suppressed at run time anyway (detect_container_overflow=0).
+    flag: ["-D_DISABLE_STRING_ANNOTATION", "-D_DISABLE_VECTOR_ANNOTATION"],
+    when: c => c.windows && c.asan,
+    desc: "Disable MSVC STL ASan container annotations to match the -asan WebKit prebuilt's ABI",
   },
 
   // ─── C++ language behavior ───
@@ -941,8 +958,26 @@ export const linkerFlags: Flag[] = [
   },
   {
     flag: ["/STACK:0x1200000,0x200000", "/errorlimit:0"],
-    when: c => c.windows,
+    when: c => c.windows && !c.asan,
     desc: "18MB stack reserve (JSC uses deep recursion), no error limit",
+  },
+  {
+    // ASAN's runtime commits its shadow lazily from a vectored exception
+    // handler that runs on the faulting thread's stack. If that handler
+    // itself touches an uncommitted guard page while committing, the fault
+    // nests and the process dies with a silent 0xC0000005. Committing the
+    // whole stack up front removes the guard-page interaction entirely.
+    flag: ["/STACK:0x1200000,0x1200000", "/errorlimit:0"],
+    when: c => c.windows && c.asan,
+    desc: "18MB stack fully committed (ASAN shadow committer must not nest a guard-page fault), no error limit",
+  },
+  {
+    // Identical-code folding merges instrumented functions and their
+    // metadata; ASAN's globals/ODR bookkeeping then sees one address for
+    // distinct entities. Keep every function/global distinct under ASAN.
+    flag: "/OPT:NOICF",
+    when: c => c.windows && c.asan,
+    desc: "No identical-code folding under ASAN (folding breaks sanitizer bookkeeping)",
   },
   {
     flag: "/DEBUG:FULL",
@@ -979,8 +1014,16 @@ export const linkerFlags: Flag[] = [
       "/delayload:IPHLPAPI.dll",
       "/delayload:CRYPT32.dll",
     ],
-    when: c => c.windows && c.release,
+    when: c => c.windows && c.release && !c.asan,
     desc: "Release link opts + delay-load non-critical DLLs (faster startup)",
+  },
+  {
+    // The release opts above are folding-based (SAFEICF, lldtailmerge) and
+    // conflict with the sanitizer's per-function/global bookkeeping, so the
+    // -asan variant keeps only the reference GC and the PDB.
+    flag: ["/OPT:REF", "/DEBUG:FULL"],
+    when: c => c.windows && c.asan,
+    desc: "ASAN link: unreferenced-section GC + PDB, no folding, no delayloads",
   },
 
   // ─── macOS ───
@@ -1516,8 +1559,11 @@ export function bunIncludes(cfg: Config): string[] {
     // include anywhere (our headers, bun-uws, or a WebKit header pulled into a
     // Bun TU) drags libstdc++'s globals_io.o into the link and runs
     // std::ios_base::Init + the full locale facet set before main. Debug builds
-    // keep the real header available for ad-hoc printf-debugging.
-    ...(cfg.release ? [join(cwd, "src/banned-includes")] : []),
+    // keep the real header available for ad-hoc printf-debugging. ASAN builds
+    // are release-profile but are instrumentation artifacts, not shipped
+    // binaries, so the startup-bloat concern doesn't apply — and the
+    // instrumented WebKit's bundled simdutf legitimately includes <iostream>.
+    ...(cfg.release && !cfg.asan ? [join(cwd, "src/banned-includes")] : []),
     join(cwd, "packages"),
     join(cwd, "packages/bun-usockets"),
     join(cwd, "packages/bun-usockets/src"),

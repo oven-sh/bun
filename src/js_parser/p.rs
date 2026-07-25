@@ -2945,8 +2945,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // at a module's top level. Checked here (not at declaration time) because
         // strict / ESM status may be decided by a later `"use strict"` / `export`.
         if !scope_ref.replaced.is_empty() {
-            let is_file_esm = self.has_es_module_syntax
-                || self.options.module_type == options::ModuleType::Esm;
+            let is_file_esm =
+                self.has_es_module_syntax || self.options.module_type == options::ModuleType::Esm;
             let scope_rejects_duplicate_fns = (scope_ref.kind == js_ast::scope::Kind::Block
                 && (scope_ref.strict_mode != js_ast::StrictModeKind::SloppyMode || is_file_esm))
                 || (scope_ref.parent.is_none() && is_file_esm);

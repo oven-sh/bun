@@ -4554,17 +4554,18 @@ class QuicEndpoint {
       return;
     }
     // Node parity: idle endpoints are unref'd, not destroyed — see test-quic-endpoint-idle-timeout.
-    if (inner.idleTimeout) {
+    const { idleTimeout, closeOnIdle } = inner;
+    if (idleTimeout) {
       const timer = setTimeout(() => {
         if (!this.destroyed && !inner.listening && inner.sessions.size === 0) {
           inner.suppressCloseChannels = true;
           this.destroy();
         }
-      }, inner.idleTimeout * 1000);
+      }, idleTimeout * 1000);
       if (typeof timer?.unref === "function") timer.unref();
       return;
     }
-    if (inner.closeOnIdle) {
+    if (closeOnIdle) {
       // Deferred: session.destroy() calls us before #handle.destroy() has
       // queued the session's CONNECTION_CLOSE.
       queueMicrotask(() => {

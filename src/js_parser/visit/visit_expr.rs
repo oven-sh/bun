@@ -258,7 +258,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 && p.options.module_type != crate::parser::options::ModuleType::Esm
                 && p.is_strict_mode_output_format()
                 && p.define.for_identifier(name).is_none()
-                && !matches!(name, b"Buffer" | b"process" | b"global" | b"Bun")
+                && !matches!(
+                    name,
+                    b"Buffer"
+                        | b"process"
+                        | b"global"
+                        | b"Bun"
+                        | b"setImmediate"
+                        | b"clearImmediate"
+                        | b"structuredClone"
+                )
             {
                 // `X = ...` with no declaration creates a global in sloppy mode but
                 // throws ReferenceError in strict-mode ESM output; hoist a `var` so the

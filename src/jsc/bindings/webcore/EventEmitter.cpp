@@ -187,17 +187,16 @@ bool EventEmitter::fireEventListeners(const Identifier& eventType, const MarkedA
     if (!listenersVector) [[unlikely]] {
         if (eventType == scriptExecutionContext()->vm().propertyNames->error && arguments.size() > 0) {
             Ref<EventEmitter> protectedThis(*this);
-            auto* thisObject = protectedThis->m_thisObject.get();
-            if (!thisObject)
-                return false;
-
-            auto* globalObject = thisObject->globalObject();
             if (propagateExceptions) {
+                auto* globalObject = scriptExecutionContext()->jsGlobalObject();
                 auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
                 scope.throwException(globalObject, arguments.at(0));
                 return false;
             }
-            Bun__reportUnhandledError(globalObject, JSValue::encode(arguments.at(0)));
+            auto* thisObject = protectedThis->m_thisObject.get();
+            if (!thisObject)
+                return false;
+            Bun__reportUnhandledError(thisObject->globalObject(), JSValue::encode(arguments.at(0)));
             return false;
         }
         return false;

@@ -1773,7 +1773,6 @@ describe("process.emit propagates listener exceptions to the caller", () => {
 
   it.concurrent("emit('error', err) with no error listener throws synchronously", async () => {
     const { stdout, exitCode } = await run(`
-      process.on("unused", () => {});
       let caught;
       try {
         process.emit("error", new Error("no-listener"));

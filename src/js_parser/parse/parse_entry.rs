@@ -898,15 +898,6 @@ impl<'a> Parser<'a> {
             )));
         }
 
-        // Strip the leading directive prologue from `stmts` and record it on
-        // the AST so the printer / linker can emit it ahead of auto-injected
-        // parts (JSX runtime import, runtime helpers, `before`-hoisted imports).
-        // https://github.com/oven-sh/bun/issues/6854
-        // Preserved legal comments (`/*! ... */`, `//! ...`) become SComment
-        // statements ahead of the statement they precede, so they are part of
-        // the leading run without terminating the prologue. The REPL treats
-        // directives as expressions (a bare string is a completion value), so
-        // leave them in place there.
         let mut prologue_len = 0usize;
         let mut directive_count = 0usize;
         if !p.options.repl_mode {
@@ -935,8 +926,6 @@ impl<'a> Parser<'a> {
             bun_ast::StoreSlice::from_bump(list)
         };
         let stmts: &'a mut [Stmt] = if directive_count > 0 {
-            // Compact the comments to the end of the prologue prefix
-            // (preserving their order), then drop the directive slots.
             let mut j = prologue_len;
             for i in (0..prologue_len).rev() {
                 if matches!(stmts[i].data, js_ast::StmtData::SComment(_)) {

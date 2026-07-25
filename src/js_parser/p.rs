@@ -8123,9 +8123,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 total_stmts_count += part.stmts.len();
             }
 
-            // The wrapper function body is the module's top level: re-insert
-            // the directive prologue there instead of printing it outside the
-            // wrapper (the program completion value must stay the wrapper).
             let prologue = directives.slice();
             directives = bun_ast::StoreSlice::EMPTY;
 
@@ -8136,7 +8133,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             {
                 let mut remaining_stmts = &mut stmts_to_copy[..];
                 for directive in prologue {
-                    // Only "use strict" has a recorded source location.
                     let loc = if directive.slice() == b"use strict" {
                         self.module_scope_directive_loc
                     } else {

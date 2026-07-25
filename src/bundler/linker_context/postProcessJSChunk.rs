@@ -411,8 +411,7 @@ pub(crate) fn post_process_js_chunk(
     }
 
     // Add the top-level directive if present (but omit "use strict" in ES
-    // modules because all ES modules are automatically in strict mode).
-    // InternalBakeDev re-inserts directives inside each module closure instead.
+    // modules because all ES modules are automatically in strict mode)
     if chunk.is_entry_point() && output_format != options::OutputFormat::InternalBakeDev {
         let directives = c.graph.ast.items_directives()[chunk.entry_point.source_index() as usize];
         let newline: &[u8] = if c.options.minify_whitespace {

@@ -88,9 +88,6 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                 }
             }
 
-            // The HMR closure body is the module's top level: its directive
-            // prologue goes first (post_process_js_chunk skips directives for
-            // this format).
             let directives = ast.directives.slice();
             let main_stmts_len = directives.len()
                 + stmts.inside_wrapper_prefix.stmts.len()
@@ -281,8 +278,6 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                     bun_ast::Loc::EMPTY,
                 ))
                 .expect("unreachable");
-            // Keep later `append_sync_dependency` inserts (init_*() calls)
-            // after the prologue, or the directive stops being one.
             stmts.inside_wrapper_prefix.sync_dependencies_end += 1;
         }
     }

@@ -571,9 +571,7 @@ pub fn hash_header_name(name: &[u8]) -> u64 {
     bun_wyhash::hash_ascii_lowercase(0, name)
 }
 
-/// Whether an `Upgrade` header value (RFC 9110 §7.8 `#protocol` token list)
-/// offers `h2`/`h2c`. Used by both `build_request` and the JS-thread
-/// `upgraded_connection` derivation so header and body framing agree.
+/// Shared by `build_request` and the JS-thread `upgraded_connection` check so header and body framing agree.
 pub fn upgrade_header_offers_h2(value: &[u8]) -> bool {
     for token in value.split(|&b| b == b',') {
         let token = bun_core::strings::trim(token, b" \t");
@@ -2368,9 +2366,7 @@ impl<'a> HTTPClient<'a> {
             // leaving the header entirely absent from the request.
             let will_append = header_count < MAX_USER_HEADERS;
 
-            // Hop-by-hop / framing headers are owned by this client (RFC 9110
-            // §7.6.1); node:http writes its own request head in JS and never
-            // reaches this function.
+            // Hop-by-hop / framing headers are owned by this client; node:http never reaches this function.
             match hash {
                 h if h == hash_header_const(b"Content-Length") => {
                     // Content-Length is always consumed (never written to the buffer).

@@ -1,4 +1,5 @@
-import { describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isASAN } from "harness";
 import { createTestBuilder } from "../test_builder";
 const TestBuilder = createTestBuilder(import.meta.path);
 
@@ -134,4 +135,39 @@ describe("seq without stdout", async () => {
     .stdout("5 4 3 2 1 0\n")
     .stderr("")
     .runAsTest("works basic down without stdout");
+});
+
+// Regression guard: the fd-output path used to build the full output into a
+// local Vec, store it into state, then clone the stored Vec to hand to
+// BuiltinIO::enqueue (which itself copies into IOWriter's buffer). That is a
+// full-output-sized clone on top of the copy that must exist, so peak RSS was
+// ~3x the output instead of ~2x. ASAN-gated because release mimalloc does not
+// retain freed pages the way ASAN's allocator does.
+test.skipIf(!isASAN)("seq piped to an fd does not clone its output buffer before enqueue", async () => {
+  // 100-byte separator keeps the output large (~32 MB) with only 300k
+  // iterations, so the child finishes in ~1s under ASAN.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const sep = Buffer.alloc(100, "x").toString();` +
+        `await Bun.$\`seq 1 10 > /dev/null\`;` +
+        `const b = process.memoryUsage().rss;` +
+        `await Bun.$\`seq -s \${sep} 1 300000 > /dev/null\`;` +
+        `console.log(process.memoryUsage().rss - b);`,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const rawDelta = stdout.trim();
+  expect(rawDelta).toMatch(/^\d+$/);
+  const deltaBytes = Number(rawDelta);
+  // Output is 31_688_895 bytes. With the fix the child's RSS grows by
+  // ~128-134 MB (rendered Vec capacity + IOWriter's copy + ASAN shadow);
+  // without it the extra clone pushes it to ~170 MB.
+  expect(deltaBytes).toBeGreaterThan(0);
+  expect(deltaBytes).toBeLessThan(152 * 1024 * 1024);
+  expect(exitCode).toBe(0);
 });

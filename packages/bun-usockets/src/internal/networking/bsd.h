@@ -56,13 +56,7 @@ struct bsd_addr_t {
     int port;
 };
 
-#ifdef _WIN32
-// on windows we can only receive one packet at a time
-#define LIBUS_UDP_RECV_COUNT 1
-#else
-// on unix we can receive at most as many packets as fit into the receive buffer
 #define LIBUS_UDP_RECV_COUNT (LIBUS_RECV_BUFFER_LENGTH / LIBUS_UDP_MAX_SIZE)
-#endif
 
 #ifdef __APPLE__
 /*
@@ -141,8 +135,8 @@ struct udp_recvbuf {
 #if defined(_WIN32)
     char *buf;
     size_t buflen;
-    size_t recvlen;
-    struct sockaddr_storage addr;
+    size_t recvlen[LIBUS_UDP_RECV_COUNT];
+    struct sockaddr_storage addr[LIBUS_UDP_RECV_COUNT];
 #else
     struct mmsghdr msgvec[LIBUS_UDP_RECV_COUNT];
     struct iovec iov[LIBUS_UDP_RECV_COUNT];

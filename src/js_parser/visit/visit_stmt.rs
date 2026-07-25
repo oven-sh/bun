@@ -1362,7 +1362,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             && (p.options.features.minify_syntax && data.value.is_primitive_literal());
         p.stmt_expr_value = data.value.data;
 
-        let is_top_level = p.current_scope == p.module_scope;
+        let is_top_level = p.current_scope == p.module_scope && !p.is_inside_single_stmt_body;
         if p.should_unwrap_common_js_to_esm() {
             p.commonjs_named_exports_needs_conversion = if is_top_level {
                 u32::MAX

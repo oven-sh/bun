@@ -336,12 +336,15 @@ void FetchHeaders::filterAndFill(const HTTPHeaderMap& headers, Guard guard)
     }
 }
 
+// https://fetch.spec.whatwg.org/#concept-header-list-sort-and-combine
 std::optional<KeyValuePair<String, String>> FetchHeaders::Iterator::next()
 {
+    auto& setCookieHeaders = m_headers->m_headers.getSetCookieHeaders();
+
     if (m_keys.isEmpty() || m_updateCounter != m_headers->m_updateCounter) {
-        bool hasSetCookie = !m_headers->getSetCookieHeaders().isEmpty();
+        size_t setCookieCount = setCookieHeaders.size();
         m_keys.resize(0);
-        m_keys.reserveCapacity(m_headers->m_headers.size() + (hasSetCookie ? 1 : 0));
+        m_keys.reserveCapacity(m_headers->m_headers.size());
         if (m_lowerCaseKeys) {
             for (auto& header : m_headers->m_headers)
                 m_keys.unsafeAppendWithoutCapacityCheck(header.asciiLowerCaseName());
@@ -350,39 +353,27 @@ std::optional<KeyValuePair<String, String>> FetchHeaders::Iterator::next()
                 m_keys.unsafeAppendWithoutCapacityCheck(header.name());
         }
         std::sort(m_keys.begin(), m_keys.end(), WTF::codePointCompareLessThan);
-        if (hasSetCookie)
-            m_keys.unsafeAppendWithoutCapacityCheck(String());
 
-        m_currentIndex += m_cookieIndex;
-        if (hasSetCookie) {
-            size_t setCookieKeyIndex = m_keys.size() - 1;
-            if (m_currentIndex < setCookieKeyIndex)
-                m_cookieIndex = 0;
-            else {
-                m_cookieIndex = std::min(m_currentIndex - setCookieKeyIndex, m_headers->getSetCookieHeaders().size());
-                m_currentIndex -= m_cookieIndex;
-            }
-        } else
-            m_cookieIndex = 0;
+        // Set-cookie entries are not combined: each value is its own entry at the
+        // name's sorted position. Null strings mark those slots; the loop below
+        // emits setCookieHeaders[slot - m_setCookieKeyIndex] for each of them.
+        m_setCookieKeyIndex = 0;
+        if (setCookieCount) {
+            auto& setCookieName = WTF::httpHeaderNameStringImpl(HTTPHeaderName::SetCookie);
+            m_setCookieKeyIndex = static_cast<size_t>(std::lower_bound(m_keys.begin(), m_keys.end(), setCookieName, WTF::codePointCompareLessThan) - m_keys.begin());
+            m_keys.insertFill(m_setCookieKeyIndex, String(), setCookieCount);
+        }
 
         m_updateCounter = m_headers->m_updateCounter;
     }
 
-    auto& setCookieHeaders = m_headers->m_headers.getSetCookieHeaders();
-
     while (m_currentIndex < m_keys.size()) {
-        auto key = m_keys[m_currentIndex];
+        size_t index = m_currentIndex++;
+        auto key = m_keys[index];
 
-        if (key.isNull()) {
-            if (m_cookieIndex < setCookieHeaders.size()) {
-                String value = setCookieHeaders[m_cookieIndex++];
-                return KeyValuePair<String, String> { WTF::httpHeaderNameStringImpl(HTTPHeaderName::SetCookie), WTF::move(value) };
-            }
-            m_currentIndex++;
-            continue;
-        }
+        if (key.isNull())
+            return KeyValuePair<String, String> { WTF::httpHeaderNameStringImpl(HTTPHeaderName::SetCookie), setCookieHeaders[index - m_setCookieKeyIndex] };
 
-        m_currentIndex++;
         auto value = m_headers->m_headers.get(key);
         if (!value.isNull())
             return KeyValuePair<String, String> { WTF::move(key), WTF::move(value) };
@@ -394,7 +385,6 @@ std::optional<KeyValuePair<String, String>> FetchHeaders::Iterator::next()
 FetchHeaders::Iterator::Iterator(FetchHeaders& headers, bool lowerCaseKeys = true)
     : m_headers(headers)
 {
-    m_cookieIndex = 0;
     m_lowerCaseKeys = lowerCaseKeys;
 }
 

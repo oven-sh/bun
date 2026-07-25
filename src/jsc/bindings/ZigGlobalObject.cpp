@@ -3572,6 +3572,20 @@ extern "C" void JSC__JSGlobalObject__queueMicrotaskCallback(Zig::GlobalObject* g
     globalObject->vm().queueMicrotask(WTF::move(task));
 }
 
+// A file:// module specifier keeps its ?query/#fragment in Bun's
+// path-with-?query module-cache-key form, so distinct URLs stay distinct
+// module instances (Node keys ES modules by the full URL). The fragment
+// rides in the query slot because the resolver splits keys only on '?'.
+static WTF::String fileURLToModuleKey(const WTF::URL& url)
+{
+    auto path = url.fileSystemPath();
+    auto query = url.query();
+    bool hasFragment = url.hasFragmentIdentifier();
+    if (query.isEmpty() && !hasFragment)
+        return path;
+    return makeString(path, '?', query, hasFragment ? url.fragmentIdentifierWithLeadingNumberSign() : StringView());
+}
+
 JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject,
     JSModuleLoader* loader, JSValue key,
     JSValue referrer, RefPtr<JSC::ScriptFetcher>, bool)
@@ -3587,7 +3601,7 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
         if (moduleName->startsWith("file://"_s)) {
             auto url = WTF::URL(moduleName);
             if (url.isValid() && !url.isEmpty()) {
-                keyZ = Bun::toStringRef(url.fileSystemPath());
+                keyZ = Bun::toStringRef(fileURLToModuleKey(url));
             } else {
                 keyZ = Bun::toStringRef(moduleName);
             }
@@ -3723,7 +3737,7 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
         if (moduleName->startsWith("file://"_s)) {
             auto url = WTF::URL(moduleName);
             if (url.isValid() && !url.isEmpty()) {
-                moduleStringHolder = url.fileSystemPath();
+                moduleStringHolder = fileURLToModuleKey(url);
                 moduleNameZ = Bun::toStringRef(moduleStringHolder);
             } else {
                 moduleNameZ = Bun::toStringRef(moduleName);

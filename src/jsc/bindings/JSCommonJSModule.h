@@ -151,6 +151,11 @@ public:
     }
 
     bool hasEvaluated = false;
+    // True while the module wrapper function (or eval-entry body) is on the
+    // stack. Mirrors Node's kIsExecuting: require(esm) uses it to detect a
+    // cycle where an ESM in a require()-driven graph imports a CommonJS module
+    // that is currently being executed higher up the require stack.
+    bool isExecuting = false;
 
     JSCommonJSModule(JSC::VM& vm, JSC::Structure* structure, JSC::JSString* id, JSC::JSValue filename, JSC::JSString* dirname)
         : Base(vm, structure)

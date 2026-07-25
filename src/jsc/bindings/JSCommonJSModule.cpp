@@ -31,6 +31,10 @@
 
 #include "BunString.h"
 #include "headers.h"
+#include <wtf/Scope.h>
+#include <JavaScriptCore/JSModuleLoader.h>
+#include <JavaScriptCore/JSModuleRecord.h>
+#include <JavaScriptCore/ModuleRegistryEntry.h>
 
 #include "JavaScriptCore/CallData.h"
 #include "JavaScriptCore/Synchronousness.h"
@@ -166,6 +170,8 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
         // throw in an eval-entry body would vanish and the process would
         // exit 0 silently. Use the out-param overload and rethrow.
         WTF::NakedPtr<JSC::Exception> returnedException;
+        moduleObject->isExecuting = true;
+        auto clearExecuting = WTF::makeScopeExit([&] { moduleObject->isExecuting = false; });
         JSValue result = JSC::evaluate(globalObject, code, jsUndefined(), returnedException);
         if (returnedException) [[unlikely]] {
             scope.throwException(globalObject, returnedException.get());
@@ -227,6 +233,8 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
     //
     //    fn(exports, require, module, __filename, __dirname) { /* code */ }(exports, require, module, __filename, __dirname)
     //
+    moduleObject->isExecuting = true;
+    auto clearExecuting = WTF::makeScopeExit([&] { moduleObject->isExecuting = false; });
     JSC::profiledCall(globalObject, ProfilingReason::API, fn, callData, moduleObject, args);
     RETURN_IF_EXCEPTION(scope, false);
     return true;
@@ -236,6 +244,47 @@ bool JSCommonJSModule::load(JSC::VM& vm, Zig::GlobalObject* globalObject)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (this->hasEvaluated || this->sourceCode.isNull()) {
+        // A module with no source code that never evaluated is a require(esm)
+        // wrapper. If the underlying ES module is still mid-evaluation, this
+        // cache hit is a require() re-entering an ESM higher up the stack.
+        // Node rejects that instead of handing out a half-initialized
+        // namespace (bindings may still be in TDZ):
+        // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/modules/cjs/loader.js#L1035-L1043
+        if (!this->hasEvaluated && this->sourceCode.isNull()) {
+            if (JSString* idString = m_id.get()) {
+                auto idStrScope = idString->value(globalObject);
+                RETURN_IF_EXCEPTION(scope, false);
+                const WTF::String idStr = idStrScope;
+                auto* entry = globalObject->moduleLoader()->registryEntry(JSC::Identifier::fromString(vm, idStr));
+                if (entry) {
+                    if (auto* record = dynamicDowncast<JSC::JSModuleRecord>(entry->record())) {
+                        auto status = record->status();
+                        // Node throws for any require(esm) wrapper whose module
+                        // has not finished evaluating — including one whose
+                        // graph is still loading, since a cache hit at that
+                        // point can only come from re-entering the require.
+                        if (status != JSC::CyclicModuleRecord::Status::Evaluated) {
+                            WTF::StringBuilder message;
+                            message.append("Cannot require() ES Module "_s);
+                            message.append(idStr);
+                            message.append(" in a cycle."_s);
+                            if (auto* parentModule = m_parent.get()) {
+                                JSValue parentFilename = parentModule->filename();
+                                if (parentFilename && parentFilename.isString()) {
+                                    const WTF::String parentStr = asString(parentFilename)->value(globalObject);
+                                    RETURN_IF_EXCEPTION(scope, false);
+                                    message.append(" (from "_s);
+                                    message.append(parentStr);
+                                    message.append(')');
+                                }
+                            }
+                            Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_REQUIRE_CYCLE_MODULE, message.toString());
+                            return false;
+                        }
+                    }
+                }
+            }
+        }
         return true;
     }
 
@@ -1550,6 +1599,23 @@ static JSC::SourceCode commonJSModuleSyntheticSourceCode(const SourceOrigin& sou
 
                 if (entry) {
                     if (auto* moduleObject = dynamicDowncast<JSCommonJSModule>(entry)) {
+                        // A generation request while this module's body is on the
+                        // stack means a synchronous require()-driven graph load is
+                        // trying to import a CommonJS module that has not finished
+                        // executing — a require cycle. Node rejects this during its
+                        // synchronous load; a plain (async) import instead receives
+                        // the partial exports, so only throw when the synchronous
+                        // queue is active. functionEsmLoadSync recognizes this
+                        // error by identity and rewrites the message with the
+                        // offending import edge.
+                        // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/modules/esm/loader.js#L403-L414
+                        if (moduleObject->isExecuting && vm.m_synchronousModuleQueue) {
+                            auto* error = Bun::createError(globalObject, Bun::ErrorCode::ERR_REQUIRE_CYCLE_MODULE,
+                                makeString("Cannot import CommonJS Module "_s, moduleKey.string(), " in a cycle."_s));
+                            globalObject->m_pendingRequireESMCycleError.set(vm, globalObject, error);
+                            scope.throwException(globalObject, error);
+                            return;
+                        }
                         if (!moduleObject->hasEvaluated) {
                             evaluateCommonJSModuleOnce(
                                 vm,

@@ -1,7 +1,9 @@
 // $esmLoadSync's Pending fallback used to accept any record at status >=
 // Evaluating with !hasTLA(). hasTLA() only reports the *self* flag, so a
 // module with no TLA whose dependency has TLA (status EvaluatingAsync) was
-// returned with bindings still in TDZ. It must throw "async module" instead.
+// returned with bindings still in TDZ. It must throw ERR_REQUIRE_ASYNC_MODULE
+// instead (like Node, which rejects require() of any graph containing
+// top-level await).
 //
 // Separately, when the Pending path *does* throw, it used to removeEntry()
 // unconditionally. If an outer import() already created the entry, deleting
@@ -28,7 +30,7 @@ test("require(esm) rejects when a transitive dependency has top-level await", as
       try {
         require("./middle.mjs");
       } catch (e) {
-        threw = e instanceof TypeError && String(e.message).includes("async module");
+        threw = e.code === "ERR_REQUIRE_ASYNC_MODULE" && String(e.message).includes("top-level await");
       }
       if (!threw) throw new Error("expected require(transitive-TLA) to throw");
       console.log("ok");
@@ -62,8 +64,8 @@ test("require(esm) failing on TLA does not delete an entry an outer import() own
       // Yield to a macro-task so the loader has fetched + entered evaluation
       // (status EvaluatingAsync) but the TLA setTimeout(20) is still pending.
       await new Promise(r => setTimeout(r, 1));
-      // The new loader throws "async module"; the old JS loader returned a
-      // partial namespace. Either way the registry entry must survive.
+      // The loader throws ERR_REQUIRE_ASYNC_MODULE; the old JS loader returned
+      // a partial namespace. Either way the registry entry must survive.
       try { require("./side.mjs"); } catch {}
       const m = await p;
       if (m.n !== 1) throw new Error("side.mjs evaluated " + m.n + " times");

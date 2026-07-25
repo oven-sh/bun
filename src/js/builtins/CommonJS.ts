@@ -107,7 +107,7 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string, o
   // -1 means we need to lookup the module from the ESM registry.
   if (out === -1) {
     try {
-      out = $requireESM(id);
+      out = $requireESM(id, this.filename);
     } catch (exception) {
       // Since the ESM code is mostly JS, we need to handle exceptions here.
       $requireMap.$delete(id);
@@ -171,14 +171,14 @@ export function internalRequire(id: string, parent: JSCommonJSModule) {
 }
 
 $visibility = "Private";
-export function loadEsmIntoCjs(resolvedSpecifier: string) {
+export function loadEsmIntoCjs(resolvedSpecifier: string, parentFilename?: string) {
   // The JSC module loader pipeline is now pure C++. $esmLoadSync sets a VM
   // flag that makes the loader's internal promise reactions run immediately
   // (instead of queueing microtasks) whenever the upstream promise is already
   // settled. Because Bun resolves and reads source code synchronously, the
   // entire fetch → parse → link → evaluate chain completes within this call
   // for any module graph that does not use top-level await.
-  return $esmLoadSync(resolvedSpecifier);
+  return $esmLoadSync(resolvedSpecifier, parentFilename);
 }
 
 /* Legacy implementation removed: relied on the old JS-side JSModuleLoader
@@ -314,11 +314,12 @@ function loadEsmIntoCjs__dead(resolvedSpecifier: string) {
 */
 
 $visibility = "Private";
-export function requireESM(this, resolved: string) {
-  var exports = $esmNamespaceForCjs(resolved);
-  if (exports === undefined) {
-    exports = $loadEsmIntoCjs(resolved);
-  }
+export function requireESM(this, resolved: string, parentFilename?: string) {
+  // $esmLoadSync returns the cached namespace when the module is already
+  // evaluated, and re-checks the graph for top-level await and require()
+  // cycles on every call (matching Node, which rejects require() of an async
+  // graph even after a successful import() evaluated it).
+  var exports = $loadEsmIntoCjs(resolved, parentFilename);
   if (exports === undefined) {
     throw new TypeError(`require() failed to evaluate module "${resolved}". This is an internal consistentency error.`);
   }
@@ -328,7 +329,7 @@ export function requireESM(this, resolved: string) {
 export function requireESMFromHijackedExtension(this: JSCommonJSModule, id: string) {
   $assert(this);
   try {
-    $requireESM(id);
+    $requireESM(id, this.parent?.filename);
   } catch (exception) {
     // Since the ESM code is mostly JS, we need to handle exceptions here.
     $requireMap.$delete(id);

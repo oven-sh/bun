@@ -1,5 +1,8 @@
 import { expect, test } from "bun:test";
+import * as internalForTesting from "bun:internal-for-testing";
 import { bunEnv, bunExe, tempDir } from "harness";
+
+const { stringImplHash } = internalForTesting as { stringImplHash?: (s: string) => number };
 
 // JSC's CodeCache keys UnlinkedModuleProgramCodeBlocks on a 24-bit StringImpl
 // hash of the source text. Two distinct modules whose *transpiled* source
@@ -9,23 +12,32 @@ import { bunEnv, bunExe, tempDir } from "harness";
 // null SymbolTableEntry lookup inside JSModuleNamespaceObject::getOwnPropertySlotCommon.
 
 // Each pair below was mined so the *literal* file bytes collide under WTF's
-// RapidHash (StringImpl::hash, masked to 24 bits). That only exercises the
-// CodeCache bug if the runtime transpiler emits these sources unchanged; the
-// precondition check fails loudly (rather than the tests going vacuous) when
-// printer output drifts and the pairs need re-mining.
+// StringImpl::hash() (24-bit-masked StringHasher). That only exercises the bug
+// while (a) the runtime transpiler emits these sources unchanged and (b) WTF's
+// string hash produces the same collision. Both preconditions are asserted so
+// the tests fail loudly (rather than go vacuous) when either drifts and the
+// pairs need re-mining.
 const transpiler = new Bun.Transpiler({ target: "bun" });
-function assertTranspilesToSelf(sources: readonly string[]) {
-  const diffs = sources.filter(src => transpiler.transformSync(src, "js") !== src);
-  expect(diffs, "runtime transpiler no longer emits these fixtures byte-for-byte; re-mine the collision pairs").toEqual(
-    [],
-  );
+function assertCollidingPair(a: string, b: string) {
+  for (const src of [a, b]) {
+    expect(
+      transpiler.transformSync(src, "js"),
+      "runtime transpiler no longer emits this fixture byte-for-byte; re-mine the collision pair",
+    ).toBe(src);
+  }
+  expect(a).not.toBe(b);
+  if (stringImplHash) {
+    expect(
+      stringImplHash(a),
+      "WTF StringImpl::hash() changed; this pair no longer collides, re-mine the collision pair",
+    ).toBe(stringImplHash(b));
+  }
 }
 
 test.concurrent("modules with hash-colliding source evaluate their own code (const export)", async () => {
-  // RapidHash("export const tag = \"T004433\";\n") == RapidHash("export const tag = \"T004767\";\n")
   const a = 'export const tag = "T004433";\n';
   const b = 'export const tag = "T004767";\n';
-  assertTranspilesToSelf([a, b]);
+  assertCollidingPair(a, b);
 
   using dir = tempDir("codecache-collision-const", {
     "a.mjs": a,
@@ -58,7 +70,7 @@ test.concurrent("modules with hash-colliding source do not crash on namespace de
   // release at SymbolTableEntry::scopeOffset().
   const a = "export default function fn_T000686() {}\n";
   const b = "export default function fn_T004636() {}\n";
-  assertTranspilesToSelf([a, b]);
+  assertCollidingPair(a, b);
 
   using dir = tempDir("codecache-collision-fn", {
     "a.mjs": a,

@@ -958,3 +958,15 @@ bool BunString::isEmpty() const
         return true;
     }
 }
+
+// bun:internal-for-testing — expose WTF's StringImpl::hash() (the 24-bit-masked
+// StringHasher result that SourceCodeKey uses for CodeCache lookup) so a test
+// can assert a mined hash-collision pair still collides after a WebKit bump.
+BUN_DEFINE_HOST_FUNCTION(Bun__stringImplHashForTesting, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    WTF::String str = callFrame->argument(0).toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSC::JSValue::encode(JSC::jsNumber(str.impl() ? str.impl()->hash() : 0));
+}

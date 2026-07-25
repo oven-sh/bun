@@ -1,8 +1,10 @@
 import { file, spawn } from "bun";
-import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
 import { access, mkdir, readFile, rm, writeFile } from "fs/promises";
-import { bunExe, bunEnv as env, readdirSorted, toBeValidBin, toHaveBins } from "harness";
+import { bunExe, bunEnv as env, readdirSorted, tempDir, toBeValidBin, toHaveBins } from "harness";
+import { devNull } from "os";
 import { join } from "path";
+import { pathToFileURL } from "url";
 import {
   dummyAfterAll,
   dummyAfterEach,
@@ -526,4 +528,154 @@ it("should print UTF-8 arrows correctly with colors enabled", async () => {
   // double-encoded UTF-8 (each byte of the arrow re-encoded as Latin-1)
   expect(out).not.toContain("â");
   expect(await exited2).toBe(0);
+});
+
+// https://github.com/oven-sh/bun/issues/8590
+describe("git dependencies", () => {
+  async function git(cwd: string, ...args: string[]) {
+    await using proc = spawn({
+      cmd: ["git", ...args],
+      cwd,
+      env: {
+        ...env,
+        GIT_CONFIG_GLOBAL: devNull,
+        GIT_CONFIG_SYSTEM: devNull,
+        GIT_AUTHOR_NAME: "bun",
+        GIT_AUTHOR_EMAIL: "bun@example.com",
+        GIT_COMMITTER_NAME: "bun",
+        GIT_COMMITTER_EMAIL: "bun@example.com",
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    if (exitCode !== 0) throw new Error(`git ${args.join(" ")} failed (${exitCode}):\n${stderr}\n${stdout}`);
+    return stdout.trim();
+  }
+
+  async function runBun(cwd: string, cacheDir: string, ...args: string[]) {
+    await using proc = spawn({
+      cmd: [bunExe(), ...args],
+      cwd,
+      env: { ...env, BUN_INSTALL_CACHE_DIR: cacheDir },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  async function makeRemote(version: string) {
+    const remote = tempDir("git-dep-remote", {
+      "package.json": JSON.stringify({ name: "git-dep", version }),
+      "index.js": `module.exports = "${version}";`,
+    });
+    await git(String(remote), "init", "-q", "-b", "main");
+    await git(String(remote), "add", ".");
+    await git(String(remote), "commit", "-q", "-m", version);
+    return remote;
+  }
+
+  async function bumpRemote(remote: string, version: string) {
+    await writeFile(join(remote, "package.json"), JSON.stringify({ name: "git-dep", version }));
+    await writeFile(join(remote, "index.js"), `module.exports = "${version}";`);
+    await git(remote, "add", ".");
+    await git(remote, "commit", "-q", "-m", version);
+  }
+
+  for (const args of [["update"], ["update", "git-dep"], ["update", "--force"]]) {
+    it(`bun ${args.join(" ")} re-resolves a git dependency to the latest commit`, async () => {
+      using remote = await makeRemote("1.0.0");
+      using project = tempDir("git-dep-project", {
+        "package.json": JSON.stringify({
+          name: "app",
+          dependencies: { "git-dep": `git+${pathToFileURL(String(remote))}` },
+        }),
+        "bunfig.toml": `[install]\nregistry = "http://localhost:1/"\n`,
+      });
+      using cache = tempDir("git-dep-cache", {});
+
+      const install = await runBun(String(project), String(cache), "install");
+      expect(install.stderr).not.toContain("error:");
+      expect(install.exitCode).toBe(0);
+      const pkg1 = await file(join(String(project), "node_modules", "git-dep", "package.json")).json();
+      expect(pkg1.version).toBe("1.0.0");
+
+      const lock1 = await file(join(String(project), "bun.lock")).text();
+      const sha1 = await git(String(remote), "rev-parse", "HEAD");
+      expect(lock1).toContain(sha1);
+
+      await bumpRemote(String(remote), "2.0.0");
+      const sha2 = await git(String(remote), "rev-parse", "HEAD");
+      expect(sha2).not.toBe(sha1);
+
+      const update = await runBun(String(project), String(cache), ...args);
+      expect(update.stderr).not.toContain("error:");
+      expect(update.exitCode).toBe(0);
+
+      const pkg2 = await file(join(String(project), "node_modules", "git-dep", "package.json")).json();
+      expect(pkg2.version).toBe("2.0.0");
+
+      const lock2 = await file(join(String(project), "bun.lock")).text();
+      expect(lock2).toContain(sha2);
+      expect(lock2).not.toContain(sha1);
+    });
+  }
+
+  it("bun update re-resolves a git dependency with a branch committish", async () => {
+    using remote = await makeRemote("1.0.0");
+    using project = tempDir("git-dep-branch-project", {
+      "package.json": JSON.stringify({
+        name: "app",
+        dependencies: { "git-dep": `git+${pathToFileURL(String(remote))}#main` },
+      }),
+      "bunfig.toml": `[install]\nregistry = "http://localhost:1/"\n`,
+    });
+    using cache = tempDir("git-dep-branch-cache", {});
+
+    const install = await runBun(String(project), String(cache), "install");
+    expect(install.stderr).not.toContain("error:");
+    expect(install.exitCode).toBe(0);
+    const pkg1 = await file(join(String(project), "node_modules", "git-dep", "package.json")).json();
+    expect(pkg1.version).toBe("1.0.0");
+
+    await bumpRemote(String(remote), "2.0.0");
+
+    const update = await runBun(String(project), String(cache), "update");
+    expect(update.stderr).not.toContain("error:");
+    expect(update.exitCode).toBe(0);
+
+    const pkg2 = await file(join(String(project), "node_modules", "git-dep", "package.json")).json();
+    expect(pkg2.version).toBe("2.0.0");
+  });
+
+  it("bun install keeps the locked commit for a git dependency", async () => {
+    using remote = await makeRemote("1.0.0");
+    using project = tempDir("git-dep-install-project", {
+      "package.json": JSON.stringify({
+        name: "app",
+        dependencies: { "git-dep": `git+${pathToFileURL(String(remote))}` },
+      }),
+      "bunfig.toml": `[install]\nregistry = "http://localhost:1/"\n`,
+    });
+    using cache = tempDir("git-dep-install-cache", {});
+
+    const install = await runBun(String(project), String(cache), "install");
+    expect(install.stderr).not.toContain("error:");
+    expect(install.exitCode).toBe(0);
+    const sha1 = await git(String(remote), "rev-parse", "HEAD");
+    const lock1 = await file(join(String(project), "bun.lock")).text();
+    expect(lock1).toContain(sha1);
+
+    await bumpRemote(String(remote), "2.0.0");
+
+    const install2 = await runBun(String(project), String(cache), "install");
+    expect(install2.stderr).not.toContain("error:");
+    expect(install2.exitCode).toBe(0);
+
+    const pkg = await file(join(String(project), "node_modules", "git-dep", "package.json")).json();
+    expect(pkg.version).toBe("1.0.0");
+    const lock2 = await file(join(String(project), "bun.lock")).text();
+    expect(lock2).toContain(sha1);
+  });
 });

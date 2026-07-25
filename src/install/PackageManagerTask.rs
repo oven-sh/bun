@@ -399,6 +399,28 @@ impl<'a> Task<'a> {
                     let mut attempt: u8 = 1;
 
                     let dir = 'brk: {
+                        if url.starts_with(b"file:") {
+                            match Repository::download(
+                                req.env,
+                                &mut this.log,
+                                // SAFETY: see `manager` decl — short-lived `&mut` at call boundary.
+                                unsafe { &mut *manager }.get_cache_directory(),
+                                this.id,
+                                name,
+                                url,
+                                attempt,
+                            ) {
+                                Ok(d) => break 'brk Some(d),
+                                Err(err) => {
+                                    this.err = Some(err);
+                                    this.status = Status::Fail;
+                                    this.data = Data {
+                                        git_clone: ManuallyDrop::new(Fd::invalid()),
+                                    };
+                                    break 'body;
+                                }
+                            }
+                        }
                         if let Some(https) = Repository::try_https(url) {
                             match Repository::download(
                                 req.env,

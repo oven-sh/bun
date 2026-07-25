@@ -706,7 +706,20 @@ impl RepositoryExt for Repository {
                     &[folder_name.as_bytes()],
                 );
 
-                if let Err(err) = exec(env, &[b"git", b"-C", path, b"fetch", b"--quiet"]) {
+                if let Err(err) = exec(
+                    env,
+                    &[
+                        b"git",
+                        b"-C",
+                        path,
+                        b"fetch",
+                        b"--quiet",
+                        b"--force",
+                        b"--tags",
+                        b"origin",
+                        b"+refs/heads/*:refs/heads/*",
+                    ],
+                ) {
                     log.add_error_fmt(
                         None,
                         bun_ast::Loc::EMPTY,

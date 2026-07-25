@@ -813,7 +813,11 @@ pub mod store {
         }
         let end = bun_core::strings::index_of_any(after, b"/\\")?;
         let bucket = &after[..end];
-        if bucket.is_empty() { None } else { Some(bucket) }
+        if bucket.is_empty() {
+            None
+        } else {
+            Some(bucket)
+        }
     }
 
     /// An S3 blob store. Data-only at this tier;

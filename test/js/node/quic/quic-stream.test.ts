@@ -223,6 +223,8 @@ describe("HTTP/3 inbound field-section validation (RFC 9114)", () => {
     { name: "non-numeric content-length", pairs: [...valid, "content-length", "abc"] },
     { name: "conflicting content-length", pairs: [...valid, "content-length", "5", "content-length", "100"] },
     { name: "content-length overflow", pairs: [...valid, "content-length", "99999999999999999999"] },
+    { name: ":method with space", pairs: [":method", "GET POST", ":scheme", "https", ":authority", "h", ":path", "/"] },
+    { name: ":scheme with space", pairs: [":method", "GET", ":scheme", "ht tp", ":authority", "h", ":path", "/"] },
   ];
 
   const malformedResponses: Row[] = [

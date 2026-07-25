@@ -110,14 +110,28 @@ fn validate_h3_field_section(pairs: &[Vec<u8>], role: H3HeaderRole) -> Result<u3
             }
             seen_pseudo |= bit;
             match role {
-                H3HeaderRole::Request => {
-                    if bit == PSEUDO_STATUS {
-                        return Err(());
-                    }
-                    if bit == PSEUDO_METHOD {
+                H3HeaderRole::Request => match bit {
+                    PSEUDO_STATUS => return Err(()),
+                    PSEUDO_METHOD => {
+                        if !value
+                            .iter()
+                            .all(|c| is_valid_h3_field_name(&[c.to_ascii_lowercase()]))
+                        {
+                            return Err(());
+                        }
                         method_is_connect = value == b"CONNECT";
                     }
-                }
+                    PSEUDO_SCHEME => {
+                        if !value[0].is_ascii_alphabetic()
+                            || !value[1..]
+                                .iter()
+                                .all(|&c| c.is_ascii_alphanumeric() || matches!(c, b'+' | b'-' | b'.'))
+                        {
+                            return Err(());
+                        }
+                    }
+                    _ => {}
+                },
                 H3HeaderRole::Response => {
                     if bit != PSEUDO_STATUS {
                         return Err(());

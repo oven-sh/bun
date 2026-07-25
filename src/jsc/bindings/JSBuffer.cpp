@@ -3422,6 +3422,10 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_writeBigInt64LE, (JSGlobalObj
 
     auto* castedThis = bufferAccessReceiver(lexicalGlobalObject, scope, callFrame->thisValue());
     RETURN_IF_EXCEPTION(scope, {});
+    if (castedThis->type() == JSC::DataViewType) [[unlikely]] {
+        // A DataView receiver has no `length`, so boundsError() compares against NaN.
+        return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "offset"_s, ">= 0 and <= NaN"_s, callFrame->argument(1));
+    }
     auto byteLength = castedThis->length();
 
     auto valueVal = callFrame->argument(0);
@@ -3451,6 +3455,10 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_writeBigInt64BE, (JSGlobalObj
 
     auto* castedThis = bufferAccessReceiver(lexicalGlobalObject, scope, callFrame->thisValue());
     RETURN_IF_EXCEPTION(scope, {});
+    if (castedThis->type() == JSC::DataViewType) [[unlikely]] {
+        // A DataView receiver has no `length`, so boundsError() compares against NaN.
+        return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "offset"_s, ">= 0 and <= NaN"_s, callFrame->argument(1));
+    }
     auto byteLength = castedThis->length();
 
     auto valueVal = callFrame->argument(0);
@@ -3480,6 +3488,10 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_writeBigUInt64LE, (JSGlobalOb
 
     auto* castedThis = bufferAccessReceiver(lexicalGlobalObject, scope, callFrame->thisValue());
     RETURN_IF_EXCEPTION(scope, {});
+    if (castedThis->type() == JSC::DataViewType) [[unlikely]] {
+        // A DataView receiver has no `length`, so boundsError() compares against NaN.
+        return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "offset"_s, ">= 0 and <= NaN"_s, callFrame->argument(1));
+    }
     auto byteLength = castedThis->length();
 
     auto valueVal = callFrame->argument(0);
@@ -3508,6 +3520,10 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_writeBigUInt64BE, (JSGlobalOb
 
     auto* castedThis = bufferAccessReceiver(lexicalGlobalObject, scope, callFrame->thisValue());
     RETURN_IF_EXCEPTION(scope, {});
+    if (castedThis->type() == JSC::DataViewType) [[unlikely]] {
+        // A DataView receiver has no `length`, so boundsError() compares against NaN.
+        return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "offset"_s, ">= 0 and <= NaN"_s, callFrame->argument(1));
+    }
     auto byteLength = castedThis->length();
 
     auto valueVal = callFrame->argument(0);

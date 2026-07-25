@@ -1486,11 +1486,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     StrictModeKind::ExplicitStrictMode;
                                 if p.current_scope == p.module_scope {
                                     p.module_scope_directive_loc = stmt.loc;
-                                    // At module scope, keep "use strict" as an
-                                    // SDirective like other directives so the
-                                    // prologue list preserves source order; it
-                                    // is stripped into `Ast.directives` before
-                                    // the visit pass.
                                     stmt = Stmt::alloc(
                                         S::Directive {
                                             value: bun_ast::StoreStr::new(b"use strict"),

@@ -5244,15 +5244,9 @@ pub fn write_file_internal(
                         let BodyValue::Locked(locked) = (unsafe { &mut *body_value }) else {
                             unreachable!()
                         };
-                        // Opt the producer into BufferAll before `task` is repurposed
-                        // so a paused fetch (#29831) resumes and eventually `resolve()`s.
-                        // Only valid while `on_start_streaming` hasn't been taken:
-                        // once the ByteStream is materialised the producer delivers
-                        // through it (never via `resolve()`), may already have dropped
-                        // its ref, and `check_body_stream_ref` can have moved the
-                        // readable out of `locked.readable`, so neither that slot nor
-                        // `locked.task` is a reliable witness here. The
-                        // materialised-stream case is the pre-existing #13237 hang.
+                        // Opt the producer into BufferAll before `task` is repurposed so a
+                        // paused fetch reaches `resolve()`. `on_start_streaming` still present
+                        // is the witness that `task` is the live producer and not stale.
                         if locked.on_start_streaming.is_some() {
                             if let (Some(on_start_buffering), Some(producer_task)) =
                                 (locked.on_start_buffering.take(), locked.task)

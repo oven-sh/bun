@@ -796,6 +796,8 @@ describe("CONNECT/Upgrade on a kept-alive connection can write to the socket", (
     let writableLengthAfterWrite: number | undefined;
     const handler = (req: http.IncomingMessage, socket: net.Socket) => {
       corkedAtHandoff = socket.writableCorked;
+      let clientEnded = false;
+      let responded = false;
       const respond = () => {
         socket.write(
           method === "CONNECT"
@@ -806,11 +808,18 @@ describe("CONNECT/Upgrade on a kept-alive connection can write to the socket", (
         // force-uncork would flush the leaked cork and mask the regression.
         socket.write("tunnel-data");
         writableLengthAfterWrite = socket.writableLength;
+        responded = true;
+        if (clientEnded) socket.end();
       };
+      // End once the client FINs so the received promise below never hangs.
+      // The client's FIN can arrive before a setImmediate-deferred respond() on
+      // Windows, so end() is deferred until both have happened.
+      socket.on("end", () => {
+        clientEnded = true;
+        if (responded) socket.end();
+      });
       if (writeAsync) setImmediate(respond);
       else respond();
-      // End once the client FINs so the received promise below never hangs.
-      socket.on("end", () => socket.end());
     };
     server.on(method === "CONNECT" ? "connect" : "upgrade", handler);
     server.listen(0, "127.0.0.1");

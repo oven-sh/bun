@@ -163,6 +163,12 @@ const tamperedAggregateErrors = [
     "unhandled rejection with self-referential errors",
     'const e = new AggregateError([], "agg_boom"); e.errors = [e]; Promise.reject(e);',
   ],
+  // Wide cycle: a depth cap alone still visits fan_out^depth nodes, hanging
+  // the printer; the shared unwrap budget must bound total work.
+  [
+    "wide self-referential errors array",
+    'const e = new AggregateError([], "agg_boom"); e.errors = Array(8).fill(e); throw e;',
+  ],
 ] as const;
 
 test.concurrent.each(tamperedAggregateErrors)(

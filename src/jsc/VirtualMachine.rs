@@ -4779,6 +4779,9 @@ impl VirtualMachine {
         allow_ansi_color: bool,
         allow_side_effects: bool,
     ) {
+        // Shared across the whole tree: `depth` alone still allows fan_out^depth
+        // nodes for a wide cyclic `errors` (e.g. `e.errors = Array(20).fill(e)`).
+        let mut remaining_unwraps: u8 = 32;
         self.print_errorlike_object_at_depth(
             value,
             exception,
@@ -4788,11 +4791,14 @@ impl VirtualMachine {
             allow_ansi_color,
             allow_side_effects,
             0,
+            &mut remaining_unwraps,
         );
     }
 
     /// `depth` bounds the `AggregateError.errors` recursion so a cyclic
-    /// `errors` (`e.errors = [e]`) terminates instead of blowing the stack.
+    /// `errors` (`e.errors = [e]`) terminates instead of blowing the stack;
+    /// `remaining_unwraps` bounds total unwraps so a wide cycle can't fan out.
+    #[allow(clippy::too_many_arguments)]
     fn print_errorlike_object_at_depth(
         &mut self,
         value: JSValue,
@@ -4803,13 +4809,18 @@ impl VirtualMachine {
         allow_ansi_color: bool,
         allow_side_effects: bool,
         depth: u8,
+        remaining_unwraps: &mut u8,
     ) {
         const MAX_AGGREGATE_ERROR_DEPTH: u8 = 8;
 
         let global_ref = self.global();
         let mut exception_list = exception_list;
 
-        if value.is_aggregate_error(global_ref) && depth < MAX_AGGREGATE_ERROR_DEPTH {
+        if value.is_aggregate_error(global_ref)
+            && depth < MAX_AGGREGATE_ERROR_DEPTH
+            && *remaining_unwraps > 0
+        {
+            *remaining_unwraps -= 1;
             // Own data slot only (nothrow, no getter call); only iterate the
             // spec-created shape. Tampered values fall through to plain printing.
             let errors = value.get_errors_property(global_ref);
@@ -4823,6 +4834,7 @@ impl VirtualMachine {
                     allow_ansi_color: bool,
                     allow_side_effects: bool,
                     depth: u8,
+                    remaining_unwraps: *mut u8,
                 }
                 extern "C" fn agg_iter(
                     _vm: *mut crate::VM,
@@ -4847,6 +4859,9 @@ impl VirtualMachine {
                     // SAFETY: `ctx.writer` borrows the caller's stack local,
                     // live across the synchronous `for_each` call.
                     let writer = unsafe { &mut *ctx.writer };
+                    // SAFETY: `ctx.remaining_unwraps` borrows the entry point's
+                    // stack counter, live across the synchronous `for_each` call.
+                    let remaining_unwraps = unsafe { &mut *ctx.remaining_unwraps };
                     vm.print_errorlike_object_at_depth(
                         next_value,
                         None,
@@ -4856,6 +4871,7 @@ impl VirtualMachine {
                         ctx.allow_ansi_color,
                         ctx.allow_side_effects,
                         ctx.depth,
+                        remaining_unwraps,
                     );
                 }
                 let mut ctx = AggCtx {
@@ -4868,6 +4884,7 @@ impl VirtualMachine {
                     allow_ansi_color,
                     allow_side_effects,
                     depth: depth + 1,
+                    remaining_unwraps: std::ptr::from_mut(remaining_unwraps),
                 };
                 if errors
                     .for_each(global_ref, (&raw mut ctx).cast(), agg_iter)

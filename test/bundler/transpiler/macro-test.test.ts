@@ -159,18 +159,7 @@ describe("destructuring a macro object", () => {
       console.log(JSON.stringify(out));
     `,
   };
-  const expected = [
-    "a,b,c",
-    "a,b,c",
-    "a,b,c",
-    "a,b,c",
-    "a,b,c",
-    "a,b,c",
-    "a,c",
-    "a,b",
-    "c,undefined",
-    "1,3",
-  ];
+  const expected = ["a,b,c", "a,b,c", "a,b,c", "a,b,c", "a,b,c", "a,b,c", "a,c", "a,b", "c,undefined", "1,3"];
 
   async function run(cmd: string[], cwd: string) {
     await using proc = Bun.spawn({ cmd, env: bunEnv, cwd, stdout: "pipe", stderr: "pipe" });

@@ -1291,7 +1291,7 @@ it("reload() cannot turn a Bun.serve server into a node:http server", async () =
       // Fresh connections after the reload (fetch pools per-origin, so mix in
       // explicit no-keepalive requests to force new native sockets).
       for (let i = 0; i < 8; i++) {
-        const res = await fetch(server.url.origin, { headers: { connection: "close" } });
+        const res = await fetch(server.url.origin, { keepalive: false });
         expect(await res.text()).toBe("second");
       }
     },

@@ -954,6 +954,7 @@ const CONTENT_LENGTH_HEADER_NAME: &[u8] = b"Content-Length";
 const CHUNKED_ENCODED_HEADER: picohttp::Header =
     picohttp::Header::new(b"Transfer-Encoding", b"chunked");
 const CONNECTION_HEADER: picohttp::Header = picohttp::Header::new(b"Connection", b"keep-alive");
+const CONNECTION_UPGRADE_HEADER: picohttp::Header = picohttp::Header::new(b"Connection", b"Upgrade");
 const ACCEPT_HEADER: picohttp::Header = picohttp::Header::new(b"Accept", b"*/*");
 
 const ACCEPT_ENCODING_NO_COMPRESSION: &[u8] = b"identity";
@@ -2339,6 +2340,14 @@ impl<'a> HTTPClient<'a> {
         let mut add_transfer_encoding = true;
         let mut original_content_length: Option<&[u8]> = None;
 
+        // fetch() owns the hop-by-hop / framing headers: Connection, Keep-Alive,
+        // Upgrade, Expect, HTTP2-Settings, Transfer-Encoding and (for stream
+        // bodies) Content-Length are dropped so a caller cannot inject
+        // hop-by-hop directives (RFC 9110 §7.6.1), the h2c upgrade shape, or a
+        // desynchronized CL/TE frame. node:http (`is_node_http_client`) keeps
+        // full control.
+        let enforce_fetch_forbidden = !self.flags.is_node_http_client;
+
         // Reserve slots for default headers that may be appended after user headers
         // (Connection, User-Agent, Accept, Host, Accept-Encoding, Content-Length/Transfer-Encoding).
         const MAX_DEFAULT_HEADERS: usize = 6;
@@ -2364,20 +2373,26 @@ impl<'a> HTTPClient<'a> {
                     continue;
                 }
                 h if h == hash_header_const(b"Connection") => {
+                    let connection_value = self.header_str(header_values[i]);
+                    if bun_core::strings::eql_case_insensitive_ascii_check_length(
+                        connection_value,
+                        b"close",
+                    ) {
+                        self.flags.disable_keepalive = true;
+                    } else if bun_core::strings::eql_case_insensitive_ascii_check_length(
+                        connection_value,
+                        b"keep-alive",
+                    ) {
+                        self.flags.disable_keepalive = false;
+                    }
+                    if enforce_fetch_forbidden {
+                        // The `close`/`keep-alive` intent above was honoured; the
+                        // verbatim value (which may name arbitrary headers for a
+                        // downstream hop to strip) never reaches the wire.
+                        continue;
+                    }
                     if will_append {
                         override_connection_header = true;
-                        let connection_value = self.header_str(header_values[i]);
-                        if bun_core::strings::eql_case_insensitive_ascii_check_length(
-                            connection_value,
-                            b"close",
-                        ) {
-                            self.flags.disable_keepalive = true;
-                        } else if bun_core::strings::eql_case_insensitive_ascii_check_length(
-                            connection_value,
-                            b"keep-alive",
-                        ) {
-                            self.flags.disable_keepalive = false;
-                        }
                     }
                 }
                 h if h == hash_header_const(b"if-modified-since") => {
@@ -2410,24 +2425,31 @@ impl<'a> HTTPClient<'a> {
                     }
                 }
                 h if h == hash_header_const(b"Upgrade") => {
-                    if will_append {
-                        let value = self.header_str(header_values[i]);
-                        if !bun_core::strings::eql_any_case_insensitive_ascii(
-                            value,
-                            &[b"h2", b"h2c"],
-                        ) {
-                            self.flags.upgrade_state = HTTPUpgradeState::Pending;
-                        }
+                    let value = self.header_str(header_values[i]);
+                    let is_h2 =
+                        bun_core::strings::eql_any_case_insensitive_ascii(value, &[b"h2", b"h2c"]);
+                    if enforce_fetch_forbidden && is_h2 {
+                        continue;
+                    }
+                    if will_append && !is_h2 {
+                        self.flags.upgrade_state = HTTPUpgradeState::Pending;
                     }
                 }
                 h if h == hash_header_const(CHUNKED_ENCODED_HEADER.name()) => {
-                    if !self.flags.is_streaming_request_body {
+                    if enforce_fetch_forbidden || !self.flags.is_streaming_request_body {
                         continue;
                     }
                     // We don't want to override chunked encoding header if it was set by the user
                     if will_append {
                         add_transfer_encoding = false;
                     }
+                }
+                h if enforce_fetch_forbidden
+                    && (h == hash_header_const(b"Keep-Alive")
+                        || h == hash_header_const(b"Expect")
+                        || h == hash_header_const(b"HTTP2-Settings")) =>
+                {
+                    continue;
                 }
                 _ => {}
             }
@@ -2443,7 +2465,13 @@ impl<'a> HTTPClient<'a> {
             header_count += 1;
         }
 
-        if !override_connection_header && !self.flags.disable_keepalive {
+        if enforce_fetch_forbidden && self.flags.upgrade_state == HTTPUpgradeState::Pending {
+            // User supplied `Upgrade: <proto>`; emit the normalized
+            // `Connection: Upgrade` ourselves so no caller-controlled tokens
+            // ride along in the Connection line.
+            request_headers_buf[header_count] = CONNECTION_UPGRADE_HEADER;
+            header_count += 1;
+        } else if !override_connection_header && !self.flags.disable_keepalive {
             request_headers_buf[header_count] = CONNECTION_HEADER;
             header_count += 1;
         }
@@ -2471,7 +2499,7 @@ impl<'a> HTTPClient<'a> {
 
         if body_len > 0 || self.method.has_request_body() {
             if self.flags.is_streaming_request_body {
-                if let Some(content_length) = original_content_length {
+                if let Some(content_length) = original_content_length.filter(|_| !enforce_fetch_forbidden) {
                     if add_transfer_encoding {
                         // User explicitly set Content-Length and did not set Transfer-Encoding;
                         // preserve Content-Length instead of using chunked encoding.

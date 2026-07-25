@@ -1464,9 +1464,7 @@ impl WebWorker {
         if vm_log.msgs.is_empty() {
             return;
         }
-        // Keyed on the JSC request so the same-thread self-signals that only set the atomic
-        // (start_vm()'s configure_defines failure: "vm.log carries the error for flushLogs")
-        // still dispatch.
+        // Keyed on the JSC request so same-thread self-signals that only set the atomic (configure_defines) still dispatch.
         if self.has_requested_terminate() && vm.jsc_vm().has_termination_request() {
             return;
         }
@@ -1475,8 +1473,7 @@ impl WebWorker {
             if self.has_requested_terminate() {
                 return;
             }
-            // `take_exception` on a `JsError` always returns an Exception
-            // cell; None is unreachable. Do not silently drop the error.
+            // take_exception on a JsError always yields an Exception cell; None is unreachable.
             let exc = global
                 .take_exception(e)
                 .as_exception(global.vm().as_mut_ptr())

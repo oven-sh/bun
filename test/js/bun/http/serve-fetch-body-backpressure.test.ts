@@ -3,6 +3,25 @@ import { bunEnv, bunExe, isASAN, isDebug } from "harness";
 import net from "node:net";
 import { join } from "node:path";
 
+async function startProxy(upstreamUrl: string) {
+  const proxy = Bun.spawn({
+    cmd: [bunExe(), join(import.meta.dir, "serve-fetch-body-backpressure-fixture.ts"), upstreamUrl],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const reader = proxy.stdout.getReader();
+  let head = "";
+  while (!head.includes("\n")) {
+    const { value, done } = await reader.read();
+    if (done) throw new Error("proxy exited before reporting ports");
+    head += Buffer.from(value).toString("utf8");
+  }
+  reader.releaseLock();
+  const { proxyPort, controlPort } = JSON.parse(head.slice(0, head.indexOf("\n")));
+  return { proxy, proxyPort, controlPort };
+}
+
 // Bun.serve returning `fetch(upstream)` to a slow client must propagate
 // backpressure from the client socket to the upstream fetch. Before the fix,
 // the ByteStream pipe path resumed the upstream unconditionally after every
@@ -38,26 +57,8 @@ test.concurrent("Bun.serve proxying a fetch() body applies client backpressure t
     },
   });
 
-  await using proxy = Bun.spawn({
-    cmd: [
-      bunExe(),
-      join(import.meta.dir, "serve-fetch-body-backpressure-fixture.ts"),
-      `http://127.0.0.1:${upstream.port}/`,
-    ],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "inherit",
-  });
-
-  const reader = proxy.stdout.getReader();
-  let head = "";
-  while (!head.includes("\n")) {
-    const { value, done } = await reader.read();
-    if (done) throw new Error("proxy exited before reporting ports");
-    head += Buffer.from(value).toString("utf8");
-  }
-  reader.releaseLock();
-  const { proxyPort, controlPort } = JSON.parse(head.slice(0, head.indexOf("\n")));
+  const { proxy, proxyPort, controlPort } = await startProxy(`http://127.0.0.1:${upstream.port}/`);
+  await using _proxy = proxy;
 
   const rss = async () => (await fetch(`http://127.0.0.1:${controlPort}/`).then(r => r.json())).rss as number;
   const baselineRss = await rss();
@@ -96,19 +97,23 @@ test.concurrent("Bun.serve proxying a fetch() body applies client backpressure t
     const peakRss = await rss();
     const deltaMB = (peakRss - baselineRss) / (1024 * 1024);
     const bodyMB = BODY_BYTES / (1024 * 1024);
+    const limitMB = bodyMB / (isASAN || isDebug ? 1.5 : 2);
 
     // Without backpressure the proxy buffers the whole body in its uWS send
     // buffer while the client is stalled: RSS grows by ~bodyMB and the
     // upstream runs to CAP_CHUNKS. With backpressure the upstream parks after
     // a few socket-buffer-sized chunks and the proxy's RSS barely moves.
-    const limitMB = bodyMB / (isASAN || isDebug ? 1.5 : 2);
-    expect({ producedEverything, pulls, deltaMB: Math.round(deltaMB) }).toEqual({
+    expect({
+      producedEverything,
+      pullsUnderHalf: pulls < CAP_CHUNKS / 2,
+      deltaUnderLimit: deltaMB < limitMB,
+      pulls,
+      deltaMB: Math.round(deltaMB),
+    }).toMatchObject({
       producedEverything: false,
-      pulls: expect.any(Number),
-      deltaMB: expect.any(Number),
+      pullsUnderHalf: true,
+      deltaUnderLimit: true,
     });
-    expect(pulls).toBeLessThan(CAP_CHUNKS / 2);
-    expect(deltaMB).toBeLessThan(limitMB);
 
     // Resume the client and verify the upstream is unparked: pulls must grow
     // past the stall point once the proxy's send buffer drains.
@@ -153,64 +158,49 @@ test.concurrent("client abort while backpressured cancels the upstream fetch", a
     },
   });
 
-  await using proxy = Bun.spawn({
-    cmd: [
-      bunExe(),
-      join(import.meta.dir, "serve-fetch-body-backpressure-fixture.ts"),
-      `http://127.0.0.1:${upstream.port}/`,
-    ],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "inherit",
-  });
-
-  const reader = proxy.stdout.getReader();
-  let head = "";
-  while (!head.includes("\n")) {
-    const { value, done } = await reader.read();
-    if (done) throw new Error("proxy exited before reporting ports");
-    head += Buffer.from(value).toString("utf8");
-  }
-  reader.releaseLock();
-  const { proxyPort } = JSON.parse(head.slice(0, head.indexOf("\n")));
+  const { proxy, proxyPort } = await startProxy(`http://127.0.0.1:${upstream.port}/`);
+  await using _proxy = proxy;
 
   const failed = Promise.withResolvers<never>();
   proxy.exited.then(code => failed.reject(new Error(`proxy exited early (code ${code})`)));
 
   const socket = net.connect(proxyPort, "127.0.0.1");
-  const stalled = Promise.withResolvers<void>();
-  socket.on("error", e => failed.reject(e));
-  socket.on("connect", () => socket.write("GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n"));
-  socket.once("data", () => {
-    socket.pause();
-    stalled.resolve();
-  });
-  await Promise.race([stalled.promise, failed.promise]);
+  try {
+    const stalled = Promise.withResolvers<void>();
+    socket.on("error", e => failed.reject(e));
+    socket.on("connect", () => socket.write("GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n"));
+    socket.once("data", () => {
+      socket.pause();
+      stalled.resolve();
+    });
+    await Promise.race([stalled.promise, failed.promise]);
 
-  let lastPulls = -1;
-  let stableTurns = 0;
-  while (pulls < CAP_CHUNKS && stableTurns < 12) {
-    await Bun.sleep(25);
-    if (pulls === lastPulls) stableTurns++;
-    else {
-      stableTurns = 0;
-      lastPulls = pulls;
+    let lastPulls = -1;
+    let stableTurns = 0;
+    while (pulls < CAP_CHUNKS && stableTurns < 12) {
+      await Bun.sleep(25);
+      if (pulls === lastPulls) stableTurns++;
+      else {
+        stableTurns = 0;
+        lastPulls = pulls;
+      }
     }
+    expect(pulls).toBeLessThan(CAP_CHUNKS / 2);
+  } finally {
+    socket.removeAllListeners("error");
+    socket.on("error", () => {});
+    socket.destroy();
   }
-  const pullsAtStall = pulls;
-  expect(pullsAtStall).toBeLessThan(CAP_CHUNKS / 2);
-
-  socket.removeAllListeners("error");
-  socket.on("error", () => {});
-  socket.destroy();
 
   // The proxy's on_abort should cancel its fetch to the upstream; the
   // upstream's serve then cancels the ReadableStream. Poll for that signal.
   for (let i = 0; i < 200 && !cancelled; i++) await Bun.sleep(10);
 
   try {
-    expect({ cancelled, pulls }).toEqual({ cancelled: true, pulls: expect.any(Number) });
-    expect(pulls).toBeLessThan(CAP_CHUNKS);
+    expect({ cancelled, pullsUnderCap: pulls < CAP_CHUNKS, pulls }).toMatchObject({
+      cancelled: true,
+      pullsUnderCap: true,
+    });
   } finally {
     proxy.kill();
   }

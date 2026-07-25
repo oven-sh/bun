@@ -12,7 +12,7 @@ test("long single line with many redeclarations reports errors in bounded time",
     const chunk = i => \`const a_\${i%10}=1,b_\${(i+1)%10}=[1,2,3],c_\${(i+2)%10}={x:'\${String(i).padStart(8,"0")}'},d_\${(i+1)%10}=(e)=>e*2;\`;
     let src = "";
     let i = 0;
-    while (src.length < 256 * 1024) src += chunk(i++);
+    while (src.length < 128 * 1024) src += chunk(i++);
     const T = new Bun.Transpiler({ loader: "ts" });
     const t0 = performance.now();
     let err;
@@ -51,9 +51,8 @@ test("long single line with many redeclarations reports errors in bounded time",
     // "const " (6 bytes), 1-based.
     column: 567,
   });
-  // Before the fix: ~4s release / well over a minute in debug+ASAN for 256KB.
-  // After: tens of ms release, a few hundred ms debug+ASAN.
-  const limit = isDebug || isASAN ? 10_000 : 2_000;
+  // 128KB before the fix: ~1.1s release, ~10s+ debug+ASAN.
+  const limit = isDebug || isASAN ? 3_000 : 500;
   expect(out.ms).toBeLessThan(limit);
   expect(exitCode).toBe(0);
-}, 120_000);
+});

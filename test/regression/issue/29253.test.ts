@@ -335,7 +335,10 @@ test.concurrent("module.isPreloading is true during --preload and false afterwar
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stderr).toBe("");
-  const lines = stdout.trim().split("\n").map(l => JSON.parse(l));
+  const lines = stdout
+    .trim()
+    .split("\n")
+    .map(l => JSON.parse(l));
   expect(lines).toEqual([
     { where: "preload", module: true, fresh: true, proto: true },
     { where: "main", module: false },

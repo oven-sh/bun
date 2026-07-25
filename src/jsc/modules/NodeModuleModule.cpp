@@ -41,9 +41,6 @@ JSC_DECLARE_HOST_FUNCTION(jsFunctionResolveLookupPaths);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionSyncBuiltinExports);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionWrap);
 
-JSC_DECLARE_CUSTOM_GETTER(getterRequireFunction);
-JSC_DECLARE_CUSTOM_SETTER(setterRequireFunction);
-
 // This is a list of builtin module names that do not have the node prefix. It
 // also includes Bun's builtin modules, as well as Bun's thirdparty overrides.
 // The reason for overstuffing this list is so that uses that use these as the
@@ -590,39 +587,6 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionFindPath, (JSGlobalObject * globalObject, JSC
     return NodeModuleModule__findPath(globalObject, request_bun_str, paths);
 }
 
-// These two setters are only used if you directly hit
-// `Module.prototype.require` or `module.require`. When accessing the cjs
-// require argument, this is a bound version of `require`, which calls into the
-// overridden one.
-//
-// This require function also intentionally does not have .resolve on it, nor
-// does it have any of the other properties.
-//
-// Note: allowing require to be overridable at all is only needed for Next.js to
-// work (they do Module.prototype.require = ...)
-
-JSC_DEFINE_CUSTOM_GETTER(getterRequireFunction,
-    (JSC::JSGlobalObject * globalObject,
-        JSC::EncodedJSValue thisValue, JSC::PropertyName))
-{
-    return JSValue::encode(globalObject->getDirect(
-        globalObject->vm(), WebCore::clientData(globalObject->vm())->builtinNames().overridableRequirePrivateName()));
-}
-
-JSC_DEFINE_CUSTOM_SETTER(setterRequireFunction,
-    (JSC::JSGlobalObject * globalObject,
-        JSC::EncodedJSValue thisValue,
-        JSC::EncodedJSValue value,
-        JSC::PropertyName propertyName))
-{
-    globalObject->putDirect(globalObject->vm(),
-        WebCore::clientData(globalObject->vm())
-            ->builtinNames()
-            .overridableRequirePrivateName(),
-        JSValue::decode(value), 0);
-    return true;
-}
-
 static JSValue getModuleCacheObject(VM& vm, JSObject* moduleObject)
 {
     return uncheckedDowncast<Zig::GlobalObject>(moduleObject->globalObject())
@@ -770,17 +734,7 @@ JSC_DEFINE_CUSTOM_SETTER(setNodeModuleWrapper,
 static JSValue getModulePrototypeObject(VM& vm, JSObject* moduleObject)
 {
     auto* globalObject = defaultGlobalObject(moduleObject->globalObject());
-    auto prototype = constructEmptyObject(globalObject, globalObject->objectPrototype(), 2);
-
-    prototype->putDirectCustomAccessor(
-        vm, WebCore::clientData(vm)->builtinNames().requirePublicName(),
-        JSC::CustomGetterSetter::create(vm, getterRequireFunction,
-            setterRequireFunction),
-        0);
-
-    prototype->putDirect(vm, Identifier::fromString(vm, "_compile"_s), globalObject->modulePrototypeUnderscoreCompileFunction());
-
-    return prototype;
+    return globalObject->CommonJSModuleObjectStructure()->storedPrototypeObject();
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionLoad, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))

@@ -768,6 +768,28 @@ JSC_DEFINE_HOST_FUNCTION(functionJSCommonJSModule_compile, (JSGlobalObject * glo
     return JSValue::encode(jsUndefined());
 }
 
+// These back `Module.prototype.require`. When read, they return the process-wide
+// overridable require (so `new Module(id).require(...)` resolves relative to that
+// module). When written on an instance, they shadow with an own property; when
+// written on the prototype they replace the process-wide function, which is how
+// tooling like Next.js hooks `Module.prototype.require`.
+JSC_DEFINE_CUSTOM_GETTER(getterRequire, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
+{
+    auto& vm = JSC::getVM(globalObject);
+    return JSValue::encode(globalObject->getDirect(vm, WebCore::clientData(vm)->builtinNames().overridableRequirePrivateName()));
+}
+
+JSC_DEFINE_CUSTOM_SETTER(setterRequire, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue value, JSC::PropertyName))
+{
+    auto& vm = JSC::getVM(globalObject);
+    if (auto* moduleObject = dynamicDowncast<JSCommonJSModule>(JSValue::decode(thisValue))) {
+        moduleObject->putDirect(vm, WebCore::clientData(vm)->builtinNames().requirePublicName(), JSValue::decode(value), 0);
+        return true;
+    }
+    globalObject->putDirect(vm, WebCore::clientData(vm)->builtinNames().overridableRequirePrivateName(), JSValue::decode(value), 0);
+    return true;
+}
+
 static const struct HashTableValue JSCommonJSModulePrototypeTableValues[] = {
     { "_compile"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, getterUnderscoreCompile, setterUnderscoreCompile } },
     { "children"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, getterChildren, setterChildren } },
@@ -823,6 +845,11 @@ public:
         Base::finishCreation(vm);
         ASSERT(inherits(info()));
         reifyStaticProperties(vm, info(), JSCommonJSModulePrototypeTableValues, *this);
+
+        this->putDirectCustomAccessor(
+            vm, clientData(vm)->builtinNames().requirePublicName(),
+            JSC::CustomGetterSetter::create(vm, getterRequire, setterRequire),
+            JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DontEnum | 0);
 
         this->putDirectNativeFunction(
             vm,

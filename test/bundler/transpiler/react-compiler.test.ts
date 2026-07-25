@@ -315,7 +315,17 @@ describe("bundler", () => {
       expect(out).toMatch(/\b_c\(\d+\)/);
       expect(out).toContain("BUNDLED_OTHER_SENTINEL");
       expect(out).not.toMatch(/require\(["']\.\/other["']\)/);
-      expect(out).not.toMatch(/require\.resolve\(["']\.\/other["']\)/);
+      // The require.resolve argument must stay the original specifier; the
+      // bundler never rewrites it to a resolved absolute path.
+      expect(out).toMatch(/\.resolve\(["']\.\/other["']\)/);
+      expect(out).not.toMatch(/\.resolve\(["'][A-Za-z]:|\.resolve\(["']\//);
+    },
+    // That the import record survived the react-compiler round-trip is
+    // observable as the bundler's require.resolve-not-external warning; if the
+    // record were lost the call would degrade to an opaque runtime call and
+    // the bundler would not see it.
+    bundleWarnings: {
+      "/entry.jsx": ['"./other" should be marked as external for use with "require.resolve"'],
     },
   });
 

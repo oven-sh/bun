@@ -4004,6 +4004,47 @@ describe.concurrent("bundler", () => {
     },
     external: ["external-pkg", "@scope/external-pkg", "{{root}}/external-file"],
   });
+  // https://github.com/evanw/esbuild/blob/main/internal/bundler_tests/bundler_default_test.go (TestRequireResolve output)
+  // Previously the resolved absolute path was written into the bundle, leaking
+  // the build machine's node_modules layout and breaking the output when the
+  // bundle is run from anywhere else (e.g. bundling jsdom).
+  itBundled("default/RequireResolvePreservesSpecifier", {
+    files: {
+      "/entry.js": /* js */ `
+        const a = require.resolve("./only-resolved.js");
+        const b = require("./also-required.js");
+        const c = require.resolve("./also-required.js");
+        let d;
+        try { d = require.resolve("./inside-try.js"); } catch {}
+        console.log(a, b, c, d);
+      `,
+      "/only-resolved.js": `module.exports = "ONLY_RESOLVED_SENTINEL";`,
+      "/also-required.js": `module.exports = "ALSO_REQUIRED_SENTINEL";`,
+      "/inside-try.js": `module.exports = "INSIDE_TRY_SENTINEL";`,
+    },
+    target: "node",
+    format: "cjs",
+    bundleWarnings: {
+      "/entry.js": [
+        '"./only-resolved.js" should be marked as external for use with "require.resolve"',
+        '"./also-required.js" should be marked as external for use with "require.resolve"',
+      ],
+    },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      // Original specifiers must be preserved verbatim.
+      expect(out).toContain('require.resolve("./only-resolved.js")');
+      expect(out).toContain('require.resolve("./also-required.js")');
+      expect(out).toContain('require.resolve("./inside-try.js")');
+      // A file reached via `require()` is bundled; a file reached only via
+      // `require.resolve()` is not.
+      expect(out).toContain("ALSO_REQUIRED_SENTINEL");
+      expect(out).not.toContain("ONLY_RESOLVED_SENTINEL");
+      expect(out).not.toContain("INSIDE_TRY_SENTINEL");
+      // No absolute paths in the output.
+      expect(out).not.toMatch(/require\.resolve\(["']\/|require\.resolve\(["'][A-Za-z]:/);
+    },
+  });
   itBundled("default/InjectMissing", {
     files: {
       "/entry.js": ``,

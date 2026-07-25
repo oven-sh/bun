@@ -5993,6 +5993,23 @@ pub mod bv2_impl {
                     if let Some(_file_map_result) =
                         file_map.resolve(self.arena(), source.path.text, import_record.path.text)
                     {
+                        if import_record.kind == ImportKind::RequireResolve {
+                            if !import_record
+                                .flags
+                                .contains(bun_ast::ImportRecordFlags::HANDLES_IMPORT_ERRORS)
+                            {
+                                self.log_for_resolution_failures(source.path.text, bake_graph)
+                                    .add_range_warning_fmt(
+                                        Some(source),
+                                        import_record.range,
+                                        format_args!(
+                                            "\"{}\" should be marked as external for use with \"require.resolve\"",
+                                            bstr::BStr::new(import_record.path.text),
+                                        ),
+                                    );
+                            }
+                            continue;
+                        }
                         let mut file_map_result = _file_map_result;
                         let mut path_primary = file_map_result.path_pair.primary;
                         let import_record_loader = import_record.loader.unwrap_or_else(|| {
@@ -6264,6 +6281,31 @@ pub mod bv2_impl {
                         resolve_result.primary_side_effects_data
                             != bun_ast::SideEffects::HasSideEffects,
                     );
+                    continue;
+                }
+
+                // require.resolve() returns a filesystem path string at runtime,
+                // so bundling its target is never useful: the caller needs a real
+                // path to read/spawn/stat, not the module's exports. esbuild
+                // resolves the specifier (so missing-module errors above still
+                // fire) but then leaves the original text in place and never adds
+                // the file to the graph through this record. If the same file is
+                // also reached via `require()`/`import`, that record bundles it.
+                if import_record.kind == ImportKind::RequireResolve {
+                    if !import_record
+                        .flags
+                        .contains(bun_ast::ImportRecordFlags::HANDLES_IMPORT_ERRORS)
+                    {
+                        self.log_for_resolution_failures(source.path.text, bake_graph)
+                            .add_range_warning_fmt(
+                                Some(source),
+                                import_record.range,
+                                format_args!(
+                                    "\"{}\" should be marked as external for use with \"require.resolve\"",
+                                    bstr::BStr::new(import_record.path.text),
+                                ),
+                            );
+                    }
                     continue;
                 }
 

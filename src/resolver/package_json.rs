@@ -587,9 +587,7 @@ impl PackageJSON {
             }
         }
 
-        // Read the "main" fields. We're cached process-globally, so read every
-        // default name regardless of the invoking resolver's target (#14253),
-        // plus any user-configured names; `put` dedupes the overlap.
+        // Cached across targets, so store every default main-field name, not just this target's (#14253).
         let mut read_main_field = |name: &[u8]| {
             if let Some(main_json) = json.as_property(name) {
                 let expr: &js_ast::Expr = &main_json.expr;

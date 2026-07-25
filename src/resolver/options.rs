@@ -307,11 +307,12 @@ impl BundleOptions {
 // false, silently disabling the module-vs-main dual-resolution path.
 pub(crate) struct TargetMainFields;
 
-pub(crate) const ALL_DEFAULT_MAIN_FIELD_NAMES: [&[u8]; 4] = [
+pub const ALL_DEFAULT_MAIN_FIELD_NAMES: [&[u8]; 4] = [
     b"browser",
     b"module",
     b"main",
     // https://github.com/jsforum/jsforum/issues/5
+    // Older packages might use jsnext:main in place of module
     b"jsnext:main",
 ];
 

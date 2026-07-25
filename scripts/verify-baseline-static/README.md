@@ -67,8 +67,8 @@ the decoder reports it.
 extensions no toolchain targeting x86-64 emits without explicit intrinsics.
 Their encodings (`0f xx` for the defunct extensions, `C7/C6 F8` for
 XBEGIN/XABORT) surface when a jump table's bytes happen to line up; the MSVC
-CRT `strspn.asm` family's image-relative RVA tables are the observed source
-of the latter.
+CRT strspn/strcspn/strpbrk switch tables are the observed source of the
+latter.
 
 **Not filtered (very rare):** a table whose bytes form a valid
 VEX/EVEX-prefixed encoding. Looks like a real AVX hit. Triage the same way:

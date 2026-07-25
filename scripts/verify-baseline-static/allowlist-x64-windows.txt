@@ -884,15 +884,15 @@ wcsnlen                     [AVX, AVX2]
 # ----------------------------------------------------------------------------
 # MSVC CRT strspn family. Data-in-.text false positive, NOT a gate.
 #
-# The UCRT's x64 strspn.asm (assembled once each for strspn/strcspn/strpbrk)
-# is SSE2-only; the psrldq/pslldq byte-shift ladder is dispatched through an
-# indirect `jmp *table[rbp + rax*4]` where the table is three arrays of 4-byte
-# image-relative RVAs stored in .text right after the function's `ret`. Those
-# RVAs change with link layout, and linear sweep desyncs into them: entry
-# bytes `C7 F8 xx xx` / `C6 F8 xx` decode as XBEGIN/XABORT (handled in
-# is_impossible_feature), and `C4/C5 xx ..` can decode as stray VEX. The SDE
-# -nhm step in this job calls strcspn (libarchive mtree, sqlite3) and passes,
-# confirming no post-SSE2 code runs.
+# ucrt/string/amd64/strspn.c (compiled 3x for strspn/strcspn/strpbrk) is
+# SSE2-only; its `switch (shift)` over _mm_srli_si128/_mm_slli_si128 lowers
+# to an indirect `jmp *table[rbp + rax*4]` where MSVC stores the table as
+# three arrays of 4-byte image-relative RVAs in .text right after the
+# function's `ret`. Those RVAs change with link layout, and linear sweep
+# desyncs into them: entry bytes `C7 F8 xx xx` / `C6 F8 xx` decode as
+# XBEGIN/XABORT (handled in is_impossible_feature), and `C4/C5 xx ..` can
+# decode as stray VEX. The SDE -nhm step in this job calls strcspn
+# (libarchive mtree, sqlite3) and passes, confirming no post-SSE2 code runs.
 # (3 symbols)
 # ----------------------------------------------------------------------------
 strcspn                     [AVX, AVX2]

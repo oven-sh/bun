@@ -431,7 +431,7 @@ test("resetting all mocks", () => {
 
 ### Restore All Mocks
 
-`mock.restore()` restores every mock at once, instead of calling `mockFn.mockRestore()` on each one. It does not reset modules overridden with `mock.module()`.
+`mock.restore()` restores every mock at once, instead of calling `mockFn.mockRestore()` on each one. It also reverts modules overridden with `mock.module()` back to their original exports.
 
 ```ts title="test.ts" icon="/icons/typescript.svg"
 import { expect, mock, spyOn, test } from "bun:test";

@@ -1210,4 +1210,126 @@ describe("ES Decorators", () => {
       expect(exitCode).toBe(0);
     });
   });
+
+  describe("undecorated auto-accessor lowering", () => {
+    test("initializer runs in source order with sibling fields", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        const log = [];
+        const mk = (name, v) => (log.push(name), v);
+        class C {
+          a = mk("a", 1);
+          accessor b = mk("b", 2);
+          c = mk("c", this.b);
+        }
+        const c = new C();
+        console.log(log.join(","));
+        console.log(c.a, c.b, c.c);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("a,b,c\n1 2 2\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("static accessor initializer runs in source order with sibling static fields", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        const log = [];
+        const mk = (name, v) => (log.push(name), v);
+        class C {
+          static a = mk("a", 1);
+          static accessor b = mk("b", 2);
+          static c = mk("c", C.b);
+        }
+        console.log(log.join(","));
+        console.log(C.a, C.b, C.c);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("a,b,c\n1 2 2\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("subclass may declare an accessor with the same name as its base", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        class Base { accessor v = 1; }
+        class Sub extends Base { accessor v = 2; }
+        const s = new Sub();
+        console.log(s.v);
+        s.v = 99;
+        console.log(s.v);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("2\n99\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("two classes in a file may each declare a same-named accessor", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        class A { accessor x = 1; }
+        class B { accessor x = 2; }
+        const a = new A(), b = new B();
+        a.x = 10;
+        console.log(a.x, b.x);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("10 2\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("instance and static accessors may share a name", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        class C {
+          accessor x = 1;
+          static accessor x = 2;
+        }
+        const c = new C();
+        c.x = 10;
+        C.x = 20;
+        console.log(c.x, C.x);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("10 20\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("generated storage name avoids existing private names", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        class C {
+          #_y = "user";
+          accessor y = "acc";
+          read() { return this.#_y; }
+        }
+        const c = new C();
+        console.log(c.y, c.read());
+        c.y = "changed";
+        console.log(c.y, c.read());
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("acc user\nchanged user\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("accessor with a private-name key round-trips", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        class C {
+          accessor #z = 5;
+          get z() { return this.#z; }
+          set z(v) { this.#z = v; }
+        }
+        const c = new C();
+        console.log(c.z);
+        c.z = 50;
+        console.log(c.z);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("5\n50\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("storage is a class-body private field, not a module-scope WeakMap", () => {
+      const transpiler = new Bun.Transpiler({ loader: "js", target: "bun" });
+      const out = transpiler.transformSync(`class C { accessor x = 1; }`);
+      expect(out).toContain("#_x");
+      expect(out).not.toContain("WeakMap");
+      expect(out).not.toContain("__privateAdd");
+    });
+  });
 });

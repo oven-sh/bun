@@ -1393,8 +1393,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut emitted_private_adds: HashMap<u32, ()> = HashMap::default();
         let mut static_private_add_blocks = BumpVec::<Property>::new_in(bump);
 
-        // Pre-scan: determine if all private members need lowering
+        // Pre-scan: determine if all private members need lowering, and collect
+        // the class's private-name set so generated accessor-storage privates
+        // can pick an unused name.
         let mut lower_all_private = false;
+        let mut class_private_names: HashMap<&'a [u8], ()> = HashMap::default();
         {
             let mut has_any_private = false;
             let mut has_any_decorated = false;
@@ -1412,16 +1415,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         )
                     {
                         lower_all_private = true;
-                        break;
                     }
                 }
-                if cprop.key.is_some()
-                    && matches!(
-                        cprop.key.unwrap().data,
-                        js_ast::ExprData::EPrivateIdentifier(_)
-                    )
+                if let Some(k) = cprop.key
+                    && let js_ast::ExprData::EPrivateIdentifier(pi) = &k.data
                 {
                     has_any_private = true;
+                    let name: &'a [u8] =
+                        p.symbols[pi.ref_.inner_index() as usize].original_name.slice();
+                    class_private_names.insert(name, ());
                 }
             }
             if !lower_all_private && has_any_private && has_any_decorated {
@@ -1539,29 +1541,80 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         continue;
                     }
                 }
-                // Undecorated auto-accessor → WeakMap + getter/setter
+                // Undecorated auto-accessor → native `#`-storage field + get/set.
+                // The storage initializer stays at the accessor's class-body
+                // position so it runs in source order with neighbouring fields,
+                // and the per-class private name needs no module-scope binding.
                 if prop.kind == PropertyKind::AutoAccessor {
-                    let accessor_name: &'a [u8] = 'brk: {
+                    let storage_base: &'a [u8] = 'brk: {
                         if let Some(k) = prop.key {
-                            if let js_ast::ExprData::EString(s) = &k.data
-                                && s.is_utf8()
-                            {
-                                break 'brk p.bump_name2(b"_", &s.data);
+                            match &k.data {
+                                js_ast::ExprData::EString(s)
+                                    if s.is_utf8()
+                                        && js_lexer::is_identifier(&s.data) =>
+                                {
+                                    break 'brk p.bump_name2(b"#_", &s.data);
+                                }
+                                js_ast::ExprData::EPrivateIdentifier(pi) => {
+                                    let orig: &'a [u8] = p.symbols
+                                        [pi.ref_.inner_index() as usize]
+                                        .original_name
+                                        .slice();
+                                    break 'brk p.bump_name2(b"#_", &orig[1..]);
+                                }
+                                _ => {}
                             }
                         }
-                        let name =
-                            p.bump_name(b"_accessor_storage", Some(accessor_storage_counter));
+                        let name = p.bump_name(
+                            b"#_accessor_storage",
+                            Some(accessor_storage_counter),
+                        );
                         accessor_storage_counter += 1;
                         name
                     };
-                    let wm_ref = p.new_sym(js_ast::symbol::Kind::Other, accessor_name);
-                    let wme = p.new_weak_map_expr(loc);
-                    prefix_stmts.push(p.var_decl(wm_ref, Some(wme), loc));
+                    let mut storage_name: &'a [u8] = storage_base;
+                    let mut tries: usize = 2;
+                    while class_private_names.contains_key(storage_name) {
+                        storage_name = p.bump_name(storage_base, Some(tries));
+                        tries += 1;
+                    }
+                    class_private_names.insert(storage_name, ());
 
-                    // Getter: get foo() { return __privateGet(this, _foo); }
+                    let is_static = prop.flags.contains(Flags::Property::IsStatic);
+                    let storage_kind = if is_static {
+                        js_ast::symbol::Kind::PrivateStaticField
+                    } else {
+                        js_ast::symbol::Kind::PrivateField
+                    };
+                    let storage_ref = p.new_sym(storage_kind, storage_name);
+                    let storage_key =
+                        p.new_expr(E::PrivateIdentifier { ref_: storage_ref }, loc);
+
+                    let storage_flags = if is_static {
+                        Flags::Property::IsStatic.into()
+                    } else {
+                        js_ast::flags::PROPERTY_NONE
+                    };
+                    new_properties.push(Property {
+                        key: Some(storage_key),
+                        initializer: prop.initializer,
+                        kind: PropertyKind::Normal,
+                        flags: storage_flags,
+                        ..Default::default()
+                    });
+
+                    // get foo() { return this.#_foo; }
                     let this_e = p.new_expr(E::This {}, loc);
-                    let wm_e = p.use_ref(wm_ref, loc);
-                    let get_ret = p.call_rt(loc, b"__privateGet", &[this_e, wm_e]);
+                    let idx_e =
+                        p.new_expr(E::PrivateIdentifier { ref_: storage_ref }, loc);
+                    let get_ret = p.new_expr(
+                        E::Index {
+                            target: this_e,
+                            index: idx_e,
+                            optional_chain: None,
+                        },
+                        loc,
+                    );
                     let get_body = bump.alloc_slice_copy(&[p.s(
                         S::Return {
                             value: Some(get_ret),
@@ -1576,19 +1629,21 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         ..Default::default()
                     };
 
-                    // Setter: set foo(v) { __privateSet(this, _foo, v); }
+                    // set foo(v) { this.#_foo = v; }
                     let setter_param_ref = p.new_sym(js_ast::symbol::Kind::Other, b"v");
                     let this_e2 = p.new_expr(E::This {}, loc);
-                    let wm_e2 = p.use_ref(wm_ref, loc);
-                    let v_e = p.use_ref(setter_param_ref, loc);
-                    let set_call = p.call_rt(loc, b"__privateSet", &[this_e2, wm_e2, v_e]);
-                    let set_body = bump.alloc_slice_copy(&[p.s(
-                        S::SExpr {
-                            value: set_call,
-                            ..Default::default()
+                    let idx_e2 =
+                        p.new_expr(E::PrivateIdentifier { ref_: storage_ref }, loc);
+                    let lhs = p.new_expr(
+                        E::Index {
+                            target: this_e2,
+                            index: idx_e2,
+                            optional_chain: None,
                         },
                         loc,
-                    )]);
+                    );
+                    let v_e = p.use_ref(setter_param_ref, loc);
+                    let set_body = bump.alloc_slice_copy(&[Stmt::assign(lhs, v_e)]);
                     let setter_binding = p.b(
                         B::Identifier {
                             r#ref: setter_param_ref,
@@ -1624,30 +1679,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         flags: getter_flags,
                         ..Default::default()
                     });
-
-                    let init_val = prop
-                        .initializer
-                        .unwrap_or_else(|| p.new_expr(E::Undefined {}, loc));
-                    if !prop.flags.contains(Flags::Property::IsStatic) {
-                        let this_e3 = p.new_expr(E::This {}, loc);
-                        let wm_e3 = p.use_ref(wm_ref, loc);
-                        let call = p.call_rt(loc, b"__privateAdd", &[this_e3, wm_e3, init_val]);
-                        constructor_inject_stmts.push(p.s(
-                            S::SExpr {
-                                value: call,
-                                ..Default::default()
-                            },
-                            loc,
-                        ));
-                    } else {
-                        let cn_e = p.use_ref(class_name_ref, class_name_loc);
-                        let wm_e3 = p.use_ref(wm_ref, loc);
-                        suffix_exprs.push(p.call_rt(
-                            loc,
-                            b"__privateAdd",
-                            &[cn_e, wm_e3, init_val],
-                        ));
-                    }
                     continue;
                 }
                 // Static blocks → extract to suffix

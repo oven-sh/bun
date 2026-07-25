@@ -658,7 +658,11 @@ class InspectorCDPAdapter {
           this.#replyErrorToClient(id, -32000, "Debugger agent is not enabled");
           return;
         }
-        const state = params.state === "caught" ? "all" : typeof params.state === "string" ? params.state : "none";
+        const state = params.state === "caught" ? "all" : params.state;
+        if (typeof state !== "string" || !(state in PAUSE_ON_EXCEPTIONS_ORDER)) {
+          this.#replyErrorToClient(id, -32602, `Unknown pause on exceptions mode: ${params.state}`);
+          return;
+        }
         this.#flags.pauseOnExceptions = state;
         this.#syncBackendAggregate();
         this.#replyToClient(id, {});
@@ -701,7 +705,7 @@ class InspectorCDPAdapter {
           return;
         }
         const maxDepth = params.maxDepth;
-        this.#flags.asyncCallStackDepth = typeof maxDepth === "number" && maxDepth > 0 ? maxDepth : 0;
+        this.#flags.asyncCallStackDepth = Number.isFinite(maxDepth) && maxDepth > 0 ? maxDepth | 0 : 0;
         this.#syncBackendAggregate();
         this.#replyToClient(id, {});
         return;

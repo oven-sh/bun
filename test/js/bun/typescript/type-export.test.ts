@@ -503,4 +503,78 @@ describe("re-export of type alongside value at runtime (#7384)", () => {
     expect(stderr).toContain("export 'ValueOf' not found");
     expect(exitCode).toBe(1);
   });
+
+  // The on-disk RuntimeTranspilerCache stores the serialized ModuleInfo as
+  // esm_record. bunEnv disables the cache and the fixtures above are under the
+  // 4 KiB minimum, so cover the cache-HIT path explicitly: pad utils.ts past
+  // the floor, point BUN_RUNTIME_TRANSPILER_CACHE_PATH at a real dir, and run
+  // twice per transpile path so the second run hits create_from_cached_record.
+  const padding = Array.from({ length: 400 }, (_, i) => `const pad_${i} = ${i};`).join("\n");
+  const cacheDir = tempDirWithFiles("reexport-type-7384-cache", {
+    "EventTypes.ts": `
+      export type ValueOf<T> = T[keyof T];
+      export const BUEvents = { A: "a", B: "b" } as const;
+    `,
+    "utils.ts": `${padding}\nexport { ValueOf, BUEvents } from "./EventTypes";`,
+    "index.ts": `
+      import { ValueOf, BUEvents } from "./utils";
+      const x: ValueOf<typeof BUEvents> = BUEvents.A;
+      console.log(JSON.stringify({ x, keys: Object.keys(BUEvents).sort() }));
+    `,
+    ".cache/.keep": "",
+  });
+  for (const disableAsync of [false, true]) {
+    test(`${disableAsync ? "sync" : "async"} transpiler (runtime transpiler cache hit)`, async () => {
+      const env = {
+        ...bunEnv,
+        BUN_RUNTIME_TRANSPILER_CACHE_PATH: `${cacheDir}/.cache`,
+        BUN_DEBUG_ENABLE_RESTORE_FROM_TRANSPILER_CACHE: "1",
+        ...(disableAsync ? { BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER: "1" } : {}),
+      };
+      for (const which of ["miss", "hit"]) {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "index.ts"],
+          env,
+          cwd: cacheDir,
+          stdio: ["inherit", "pipe", "pipe"],
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ which, stderr: stderr.trim(), out: JSON.parse(stdout.trim() || "null"), exitCode }).toEqual({
+          which,
+          stderr: "",
+          out: { x: "a", keys: ["A", "B"] },
+          exitCode: 0,
+        });
+      }
+    });
+  }
+});
+
+// Marking the JSModuleRecord m_isTypeScript means *every* unresolved indirect
+// export in a .ts file is tolerated at link time, not just type-only ones: the
+// re-exporting file has no local signal for which is which. A direct import of
+// the missing name still errors; a namespace import just omits the key. This
+// matches what `bun build` / `--compile` already produced and what
+// ts-node/tsx do. Pin it so the trade-off is explicit.
+test.concurrent("ts barrel re-exporting a missing value name links without error", async () => {
+  const dir = tempDirWithFiles("reexport-missing-value", {
+    "lib.ts": "export const foo = 1;",
+    "barrel.ts": `export { foo, fooo } from "./lib";`,
+    "via-ns.ts": `
+      import * as b from "./barrel";
+      console.log(JSON.stringify({ keys: Object.keys(b).sort(), fooo: (b as any).fooo }));
+    `,
+    "via-named.ts": `import { fooo } from "./barrel"; console.log(fooo);`,
+  });
+  {
+    const ns = await run([bunExe(), "via-ns.ts"], dir);
+    expect(ns.stderr.trim()).toBe("");
+    expect(JSON.parse(ns.stdout.trim())).toEqual({ keys: ["foo"], fooo: undefined });
+    expect(ns.exitCode).toBe(0);
+  }
+  {
+    const named = await run([bunExe(), "via-named.ts"], dir);
+    expect(named.stderr).toContain("Export named 'fooo' not found");
+    expect(named.exitCode).toBe(1);
+  }
 });

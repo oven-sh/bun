@@ -263,8 +263,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // `var` declaration so the bundled output keeps working. Compound
                 // assignments (`Update`) read the value first and already throw in sloppy
                 // mode, so they are excluded.
-                p.symbols[result.r#ref.inner_index() as usize].kind =
-                    js_ast::symbol::Kind::Hoisted;
+                p.symbols[result.r#ref.inner_index() as usize].kind = js_ast::symbol::Kind::Hoisted;
                 p.relocated_top_level_vars.push(js_ast::LocRef {
                     loc: expr.loc,
                     ref_: result.r#ref,

@@ -199,6 +199,7 @@ function fetchWithAgent(url, init, counter) {
 
     const headers = new Headers(init.headers || (isWebRequest && url.headers) || undefined);
     if (!headers.has("accept")) headers.set("accept", "*/*");
+    if (!headers.has("user-agent")) headers.set("user-agent", "node-fetch");
     if (compress && !headers.has("accept-encoding")) headers.set("accept-encoding", "gzip, deflate, br");
     if (!headers.has("connection") && !agent) headers.set("connection", "close");
 

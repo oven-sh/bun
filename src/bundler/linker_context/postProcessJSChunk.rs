@@ -324,6 +324,13 @@ pub fn post_process_js_chunk(
                             if record.flags.contains(ImportRecordFlags::IS_UNUSED) {
                                 continue;
                             }
+                            if crate::linker_context::dedupe_external_esm_imports::is_redundant_external_import(
+                                chunk,
+                                part_range.source_index.get(),
+                                s.import_record_index,
+                            ) {
+                                continue;
+                            }
 
                             let import_path = record.path.text;
                             let irp_id = mi.str(import_path);

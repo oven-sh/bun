@@ -1263,12 +1263,8 @@ pub struct JavaScriptChunk {
     pub files_in_chunk_order: Box<[IndexInt]>,
     pub parts_in_chunk_in_order: Box<[PartRange]>,
 
-    /// External ES-module `SImport` statements that are redundant for this
-    /// chunk because an earlier file in `files_in_chunk_order` already emits
-    /// an import for the same path covering every clause. Keyed by
-    /// `(source_index as u64) << 32 | import_record_index as u64`; populated
-    /// in `dedupe_external_esm_imports` and consulted in
-    /// `convert_stmts_for_chunk`.
+    /// `(source_index << 32) | import_record_index` for external `SImport`s
+    /// that `dedupe_external_esm_imports` found redundant in this chunk.
     pub external_import_records_to_skip: bun_collections::HashMap<u64, ()>,
 
     // for code splitting

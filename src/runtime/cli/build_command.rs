@@ -569,6 +569,9 @@ impl BuildCommand {
         // `this_transpiler` for the rest of its life. Snapshot every options
         // field read after that point so the borrow checker is satisfied.
         let opt_output_dir: Box<[u8]> = this_transpiler.options.output_dir.clone();
+        let opt_serve_plugins = this_transpiler.options.serve_plugins.clone();
+        let opt_bunfig_path: Box<[u8]> = this_transpiler.options.bunfig_path.clone();
+        let opt_target = this_transpiler.options.target;
         let opt_minify_identifiers = this_transpiler.options.minify_identifiers;
         let opt_minify_whitespace = this_transpiler.options.minify_whitespace;
         let opt_minify_syntax = this_transpiler.options.minify_syntax;
@@ -620,10 +623,30 @@ impl BuildCommand {
                 // resolver subset; bundler-side `entry_naming` is sufficient.
             }
 
-            // Stack-owned Mini event loop so its tasks/concurrent_tasks queues
-            // drop at scope exit; the arena bulk-free skips Drop. Outlives the
-            // BACKREF passed to `generate_from_cli`.
-            let mut event_loop = bun_event_loop::AnyEventLoop::init();
+            // Bundler plugins from bunfig `[serve.static].plugins` need a JS VM +
+            // JS event loop so onLoad/onResolve callbacks can run. Without
+            // plugins the Mini loop is used and no VM is created.
+            let (mut event_loop, plugins) = if let Some(specifiers) =
+                opt_serve_plugins.as_deref().filter(|s| !s.is_empty())
+            {
+                let (vm_ptr, plugin) = load_bundler_plugins(
+                    ctx.args.clone(),
+                    ctx.log,
+                    ctx.runtime_options.smol,
+                    opt_target,
+                    specifiers,
+                    &opt_bunfig_path,
+                );
+                // SAFETY: `vm_ptr` is the unique live VM on this thread;
+                // process-lifetime (exec() never returns).
+                let vm = unsafe { &mut *vm_ptr };
+                (
+                    bun_event_loop::AnyEventLoop::js(vm.event_loop().cast()),
+                    Some(plugin),
+                )
+            } else {
+                (bun_event_loop::AnyEventLoop::init(), None)
+            };
 
             let build_result = match BundleV2::generate_from_cli(
                 this_transpiler,
@@ -634,6 +657,7 @@ impl BuildCommand {
                 &mut minify_duration,
                 &mut input_code_length,
                 fetcher,
+                plugins,
             ) {
                 Ok(r) => r,
                 Err(err) => {
@@ -1137,6 +1161,126 @@ impl BuildCommand {
             ctx.debug.hot_reload == HotReload::Watch,
         );
     }
+}
+
+/// When `[serve.static].plugins` is configured in bunfig, `bun build` spins up a
+/// JS VM so those plugins can participate in bundling. Returns the created VM
+/// (caller keeps it alive for the bundle) and the loaded `JSBundlerPlugin`, or
+/// prints the error and exits.
+///
+/// `#[cold]` so the VM-init body is kept out of the no-plugin fast path's icache
+/// footprint.
+#[cold]
+fn load_bundler_plugins(
+    args: api::TransformOptions,
+    log: *mut bun_ast::Log,
+    smol: bool,
+    target: bun_ast::Target,
+    plugin_specifiers: &[Box<[u8]>],
+    bunfig_path: &[u8],
+) -> (
+    *mut bun_jsc::virtual_machine::VirtualMachine,
+    core::ptr::NonNull<bun_bundler::bundle_v2::JSBundlerPlugin>,
+) {
+    use bun_jsc::virtual_machine::{InitOptions as VmInitOptions, VirtualMachine};
+    use crate::api::js_bundler::{Plugin, PluginJscExt as _};
+    use bun_core::String as BunString;
+
+    bun_jsc::initialize(false);
+    bun_ast::initialize_store();
+
+    let vm_ptr = match VirtualMachine::init(VmInitOptions {
+        transform_options: args,
+        log: core::ptr::NonNull::new(log),
+        smol,
+        mini_mode: smol,
+        is_main_thread: true,
+        ..Default::default()
+    }) {
+        Ok(p) => p,
+        Err(err) => {
+            bun_core::pretty_errorln!(
+                "<r><red>error<r><d>:<r> failed to initialize JavaScript runtime for bundler plugins: {}",
+                err.name()
+            );
+            Global::exit(1);
+        }
+    };
+    // SAFETY: `init` returns the unique freshly-boxed VM on this thread.
+    let vm = unsafe { &mut *vm_ptr };
+    vm.load_extra_env_and_source_code_printer();
+    vm.event_loop_ref().ensure_waker();
+    let global = vm.global();
+
+    // The API lock must be held for every JSC heap access, both during plugin
+    // setup here and while the bundler drives plugin callbacks through the JS
+    // event loop. `exec()` never returns (it diverges via `exit_or_watch`), so
+    // the guard is intentionally never dropped.
+    // SAFETY: `vm.jsc_vm` is the live `JSC::VM*` set in `VirtualMachine::init`.
+    #[allow(clippy::mem_forget)]
+    core::mem::forget(unsafe { (*vm.jsc_vm).get_api_lock() });
+
+    let plugin_target = match target {
+        bun_ast::Target::Bun | bun_ast::Target::BunMacro => bun_jsc::BunPluginTarget::Bun,
+        bun_ast::Target::Node => bun_jsc::BunPluginTarget::Node,
+        _ => bun_jsc::BunPluginTarget::Browser,
+    };
+    let plugin = Plugin::create(global, plugin_target);
+    let plugin_ref = Plugin::opaque_ref(plugin);
+
+    let mut bunstring_array: Vec<BunString> = Vec::with_capacity(plugin_specifiers.len());
+    for spec in plugin_specifiers {
+        bunstring_array.push(BunString::init(&**spec));
+    }
+    let bunfig_folder = bun_paths::resolve_path::dirname::<
+        bun_paths::resolve_path::platform::Auto,
+    >(bunfig_path);
+
+    let fail = |err: bun_jsc::JSValue| -> ! {
+        // SAFETY: `vm_ptr` is the unique live VM on this thread.
+        unsafe { (*vm_ptr).print_error_like_object_to_console(err) };
+        Output::flush();
+        Global::exit(1);
+    };
+
+    let setup = || -> bun_jsc::JsResult<bun_jsc::JSValue> {
+        let plugin_js_array = bun_jsc::bun_string_jsc::to_js_array(global, &bunstring_array)?;
+        let bunfig_folder_js = bun_jsc::bun_string_jsc::create_utf8_for_js(global, bunfig_folder)?;
+        vm.event_loop_mut().enter();
+        let result = bun_jsc::host_fn::from_js_host_call(global, || {
+            plugin_ref.load_and_resolve_plugins_for_serve(plugin_js_array, bunfig_folder_js)
+        });
+        vm.event_loop_mut().exit();
+        result
+    };
+
+    match setup() {
+        Ok(result) => {
+            if let Some(e) = global.try_take_exception() {
+                fail(e);
+            }
+            if !result.is_empty_or_undefined_or_null() {
+                if let Some(promise) = result.as_any_promise() {
+                    promise.set_handled(global.vm());
+                    vm.wait_for_promise(promise);
+                    match promise.unwrap(global.vm(), bun_jsc::PromiseUnwrapMode::MarkHandled) {
+                        bun_jsc::PromiseResult::Pending => unreachable!(),
+                        bun_jsc::PromiseResult::Fulfilled(_) => {}
+                        bun_jsc::PromiseResult::Rejected(err) => fail(err),
+                    }
+                }
+            }
+        }
+        Err(_) => {
+            let e = global.try_take_exception().unwrap_or(bun_jsc::JSValue::UNDEFINED);
+            fail(e);
+        }
+    }
+
+    (
+        vm_ptr,
+        core::ptr::NonNull::new(plugin).expect("Plugin::create returns non-null"),
+    )
 }
 
 fn exit_or_watch(code: u8, watch: bool) -> ! {

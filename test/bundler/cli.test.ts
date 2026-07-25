@@ -466,6 +466,133 @@ test("multi-entry build writes each entry point into the output directory", asyn
   expect(b).toContain('"B"');
 });
 
+// https://github.com/oven-sh/bun/issues/7138
+describe("bunfig [serve.static].plugins", () => {
+  const pluginSource = `
+    import type { BunPlugin } from "bun";
+    const p: BunPlugin = {
+      name: "myext",
+      setup(build) {
+        build.onResolve({ filter: /^virtual:hello$/ }, () => {
+          return { path: "hello", namespace: "virtual" };
+        });
+        build.onLoad({ filter: /.*/, namespace: "virtual" }, () => {
+          return { contents: 'export default "RESOLVED";', loader: "js" };
+        });
+        build.onLoad({ filter: /\\.myext$/ }, async (args) => {
+          const text = await Bun.file(args.path).text();
+          return {
+            contents: "export default " + JSON.stringify(text.trim()) + ";",
+            loader: "js",
+          };
+        });
+      },
+    };
+    export default p;
+  `;
+
+  test("onLoad plugin runs for bun build", async () => {
+    using dir = tempDir("build-cli-plugin-onload", {
+      "bunfig.toml": `[serve.static]\nplugins = ["./plugin.ts"]\n`,
+      "plugin.ts": pluginSource,
+      "data.myext": "hello from loader",
+      "entry.ts": `import msg from "./data.myext";\nconsole.log(msg);`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "entry.ts", "--outdir", "out"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    const out = await Bun.file(path.join(String(dir), "out", "entry.js")).text();
+    expect(out).toContain('"hello from loader"');
+    // Without the plugin the bundler would emit data.myext as an asset file and
+    // list it in the build summary.
+    expect(stdout).not.toContain("asset");
+  });
+
+  test("onResolve plugin runs for bun build", async () => {
+    using dir = tempDir("build-cli-plugin-onresolve", {
+      "bunfig.toml": `[serve.static]\nplugins = ["./plugin.ts"]\n`,
+      "plugin.ts": pluginSource,
+      "entry.ts": `import msg from "virtual:hello";\nconsole.log(msg);`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "entry.ts", "--outdir", "out"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    const out = await Bun.file(path.join(String(dir), "out", "entry.js")).text();
+    expect(out).toContain('"RESOLVED"');
+  });
+
+  test(
+    "onLoad plugin runs for bun build --compile",
+    async () => {
+      using dir = tempDir("build-cli-plugin-compile", {
+        "bunfig.toml": `[serve.static]\nplugins = ["./plugin.ts"]\n`,
+        "plugin.ts": pluginSource,
+        "data.myext": "compiled via plugin",
+        "entry.ts": `import msg from "./data.myext";\nconsole.log(msg);`,
+      });
+      const outfile = path.join(String(dir), isWindows ? "compiled.exe" : "compiled");
+      {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "build", "entry.ts", "--compile", "--outfile", outfile],
+          env: bunEnv,
+          cwd: String(dir),
+          stderr: "pipe",
+          stdout: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).toBe("");
+        expect(exitCode).toBe(0);
+      }
+      {
+        await using proc = Bun.spawn({
+          cmd: [outfile],
+          env: bunEnv,
+          cwd: String(dir),
+          stderr: "pipe",
+          stdout: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).toBe("");
+        expect(stdout).toBe("compiled via plugin\n");
+        expect(exitCode).toBe(0);
+      }
+    },
+    60_000,
+  );
+
+  test("failed plugin load exits non-zero", async () => {
+    using dir = tempDir("build-cli-plugin-error", {
+      "bunfig.toml": `[serve.static]\nplugins = ["./plugin.ts"]\n`,
+      "plugin.ts": `throw new Error("plugin load failed");`,
+      "entry.ts": `console.log("unreachable");`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "entry.ts", "--outdir", "out"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("plugin load failed");
+    expect(exitCode).toBe(1);
+  });
+});
+
 describe("CLI argument error messages", () => {
   test("--format with an unrecognized value echoes the value back", async () => {
     using dir = tempDir("build-format-err", { "in.js": "console.log(1)" });

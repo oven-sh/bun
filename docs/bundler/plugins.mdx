@@ -85,6 +85,17 @@ await Bun.build({
 });
 ```
 
+To use a plugin with the `bun build` CLI, export it as the default export of a module and list that module in `bunfig.toml`:
+
+```toml title="bunfig.toml" icon="settings"
+[serve.static]
+plugins = ["./my-plugin.ts"]
+```
+
+```sh terminal icon="terminal"
+bun build ./app.ts --outdir ./out
+```
+
 ## Plugin lifecycle
 
 ### Namespaces

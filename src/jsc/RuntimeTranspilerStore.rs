@@ -1120,8 +1120,18 @@ impl TranspilerJob {
 
         let is_commonjs_module = parse_result.ast.has_commonjs_export_names
             || parse_result.ast.exports_kind == ExportsKind::Cjs;
+        // When the parser emitted errors but still produced an AST (e.g.
+        // `Multiple exports with the same name`), the printed ModuleInfo would
+        // silently dedupe the conflicting entry and the error would surface
+        // later as an unrelated link-time failure. Leave `module_info` unset so
+        // JSC's own analyze re-parses the output and reports the real syntax
+        // error, matching the sync path which bails on `log.errors > 0`.
         let mut module_info: Option<Box<analyze_transpiled_module::ModuleInfo>> =
-            if use_module_info_for_esm && !is_commonjs_module && loader.is_java_script_like() {
+            if use_module_info_for_esm
+                && !is_commonjs_module
+                && loader.is_java_script_like()
+                && !log.has_errors()
+            {
                 Some(analyze_transpiled_module::ModuleInfo::create(
                     loader.is_type_script(),
                 ))

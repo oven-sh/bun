@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { tls as tlsCert } from "harness";
 import { once } from "node:events";
-import { createServer as createHttpsServer } from "node:https";
+import { createServer as createHttpsServer, Server as HttpsServer } from "node:https";
+import { Server as HttpServer } from "node:http";
 import { connect as tlsConnect } from "node:tls";
 import privateKey from "../../third_party/jsonwebtoken/priv.pem" with { type: "text" };
 import publicKey from "../../third_party/jsonwebtoken/pub.pem" with { type: "text" };
@@ -166,6 +167,8 @@ describe("Bun.serve tls must carry key+cert", () => {
     ["key without cert", { key: tlsCert.key }],
     ["cert without key", { cert: tlsCert.cert }],
     ["array entry without cert", [{ key: tlsCert.key, rejectUnauthorized: false }]],
+    ["array with only an empty entry", [{}]],
+    ["array with only empty entries", [{}, {}]],
   ] as const;
   for (const [label, tls] of withoutIdentity) {
     test(label, () => {
@@ -213,41 +216,54 @@ describe("Bun.serve tls must carry key+cert", () => {
   });
 });
 
-describe("node:https createServer without key/cert is TLS fail-closed", () => {
-  for (const [label, options] of [
+describe("node:https without key/cert is TLS fail-closed", () => {
+  const matrix = [
     ["no options", undefined],
     ["empty options", {}],
     ["requestCert only", { requestCert: true }],
     ["rejectUnauthorized only", { rejectUnauthorized: false }],
-  ] as const) {
-    test(label, async () => {
-      const server = createHttpsServer(options as any, (_req, res) => res.end("plaintext"));
-      await once(server.listen(0), "listening");
-      const { port } = server.address() as import("node:net").AddressInfo;
-      try {
-        // A plaintext HTTP client must not get a response body.
-        await expect(
-          fetch(`http://127.0.0.1:${port}/`, { signal: AbortSignal.timeout(2000) }).then(r => r.text()),
-        ).rejects.toThrow();
+  ] as const;
+  const makers = [
+    ["createServer", (o: any, h: any) => createHttpsServer(o, h)],
+    ["new Server", (o: any, h: any) => new HttpsServer(o, h)],
+  ] as const;
+  for (const [makeLabel, make] of makers) {
+    for (const [label, options] of matrix) {
+      test(`${makeLabel}: ${label}`, async () => {
+        const server = make(options, (_req, res) => res.end("plaintext"));
+        await once(server.listen(0), "listening");
+        const { port } = server.address() as import("node:net").AddressInfo;
+        try {
+          // A plaintext HTTP client must not get a response body.
+          await expect(
+            fetch(`http://127.0.0.1:${port}/`, { signal: AbortSignal.timeout(2000) }).then(r => r.text()),
+          ).rejects.toThrow();
 
-        // A TLS client must see the handshake fail (not succeed).
-        const handshake = new Promise<void>((resolve, reject) => {
-          const sock = tlsConnect({ port, host: "127.0.0.1", rejectUnauthorized: false });
-          sock.once("secureConnect", () => {
-            sock.destroy();
-            reject(new Error("handshake unexpectedly succeeded"));
+          // A TLS client must see the handshake fail (not succeed).
+          const handshake = new Promise<void>((resolve, reject) => {
+            const sock = tlsConnect({ port, host: "127.0.0.1", rejectUnauthorized: false });
+            sock.once("secureConnect", () => {
+              sock.destroy();
+              reject(new Error("handshake unexpectedly succeeded"));
+            });
+            sock.once("error", () => {
+              sock.destroy();
+              resolve();
+            });
           });
-          sock.once("error", () => {
-            sock.destroy();
-            resolve();
-          });
-        });
-        await expect(handshake).resolves.toBeUndefined();
-      } finally {
-        await new Promise<void>(r => server.close(() => r()));
-      }
-    });
+          await expect(handshake).resolves.toBeUndefined();
+        } finally {
+          await new Promise<void>(r => server.close(() => r()));
+        }
+      });
+    }
   }
+
+  test("https.Server instanceof http.Server", () => {
+    const server = new HttpsServer({});
+    expect(server instanceof HttpsServer).toBe(true);
+    expect(server instanceof HttpServer).toBe(true);
+  });
 
   test("with key+cert serves over TLS", async () => {
     const server = createHttpsServer({ key: tlsCert.key, cert: tlsCert.cert }, (_req, res) => res.end("ok"));

@@ -1397,7 +1397,6 @@ impl ServerConfig {
                                 if global.has_exception() {
                                     return Err(JsError::Thrown);
                                 }
-                                // Backwards-compatibility; we ignored empty tls objects.
                                 continue;
                             }
                         };
@@ -1418,6 +1417,9 @@ impl ServerConfig {
 
                             args.sni.as_mut().unwrap().push(ssl_config);
                         }
+                    }
+                    if args.ssl_config.is_none() {
+                        require_identity(global, None)?;
                     }
                 }
             } else {

@@ -544,7 +544,11 @@ function emitConsoleAPICalled(type: string, args: unknown[], hook: Function) {
           executionContextId: 1,
           timestamp,
         };
-        if (callFrames !== undefined) params.stackTrace = { callFrames: ArrayPrototypeSlice.$call(callFrames) };
+        if (callFrames !== undefined) {
+          const frames: object[] = [];
+          for (let i = 0; i < callFrames.length; i++) frames.push({ ...(callFrames[i] as AnyRecord) });
+          params.stackTrace = { callFrames: frames };
+        }
         const message = { method: "Runtime.consoleAPICalled", params };
         // Node's Session#onMessage emits the method-specific event first,
         // then the generic "inspectorNotification".
@@ -602,31 +606,34 @@ function makeSpecialConsoleHook(method: string, original: Function): Function {
         const next = (consoleCounts.get(key) ?? 0) + 1;
         consoleCounts.set(key, next);
         emitConsoleAPICalled("count", [`${key}: ${next}`], hook);
-        return original.$call(this, label);
+        return original.$call(this, key);
       };
       return hook;
     }
     case "countReset":
       return function (this: unknown, label?: unknown) {
-        consoleCounts.delete(toLabel(label));
-        return original.$call(this, label);
+        const key = toLabel(label);
+        consoleCounts.delete(key);
+        return original.$call(this, key);
       };
     case "time":
       return function (this: unknown, label?: unknown) {
         const key = toLabel(label);
         if (!consoleTimers.has(key)) consoleTimers.set(key, PerformanceNow());
-        return original.$call(this, label);
+        return original.$call(this, key);
       };
     case "timeLog": {
       const hook = function (this: unknown) {
-        const key = toLabel(arguments[0]);
+        const forward = ArrayPrototypeSlice.$call(arguments);
+        const key = toLabel(forward[0]);
+        forward[0] = key;
         const start = consoleTimers.get(key);
         if (start !== undefined) {
-          const emitArgs = ArrayPrototypeSlice.$call(arguments);
+          const emitArgs = ArrayPrototypeSlice.$call(forward);
           emitArgs[0] = `${key}: ${PerformanceNow() - start} ms`;
           emitConsoleAPICalled("log", emitArgs, hook);
         }
-        return original.$apply(this, arguments);
+        return original.$apply(this, forward);
       };
       return hook;
     }
@@ -638,7 +645,7 @@ function makeSpecialConsoleHook(method: string, original: Function): Function {
           consoleTimers.delete(key);
           emitConsoleAPICalled("timeEnd", [`${key}: ${PerformanceNow() - start} ms`], hook);
         }
-        return original.$call(this, label);
+        return original.$call(this, key);
       };
       return hook;
     }
@@ -657,7 +664,8 @@ function installConsoleHooks() {
     hookedConsoleMethods.push([method, original, hook]);
     consoleObject[method] = hook;
   }
-  for (const method of CONSOLE_API_SPECIAL) {
+  for (let i = 0; i < CONSOLE_API_SPECIAL.length; i++) {
+    const method = CONSOLE_API_SPECIAL[i];
     const original = consoleObject[method];
     if (typeof original !== "function") continue;
     const hook = makeSpecialConsoleHook(method, original);
@@ -677,8 +685,6 @@ function removeConsoleHooks() {
     }
   }
   hookedConsoleMethods.length = 0;
-  consoleCounts.clear();
-  consoleTimers.clear();
 }
 
 // Reshapes the raw control-flow-profiler data from jsFunction_collectPreciseCoverage

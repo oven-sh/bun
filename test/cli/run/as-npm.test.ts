@@ -307,6 +307,8 @@ describe("fake npm/npx cli", () => {
       // npm's -p before the subcommand must not become bunx's --package,
       // which would take the mapped "x" token for the package name.
       expect((await fakePmRun(String(dir), "npm", ["-p", "exec", "--help"])).stderr).toContain("Usage: bunx");
+      // After the subcommand too: npm's -p is --parseable, not --package.
+      expect((await fakePmRun(String(dir), "npm", ["exec", "-p", "--help"])).stderr).toContain("Usage: bunx");
     });
 
     test("npm lowercase shorts are not bun's production/yarn flags", async () => {

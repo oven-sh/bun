@@ -1279,8 +1279,7 @@ fn load_bundler_plugins(
     )
 }
 
-/// Set by [`load_bundler_plugins`] so [`exit_or_watch`] can route the process
-/// exit through the VM's `on_exit`/`global_exit` path when plugins were loaded.
+/// Set by [`load_bundler_plugins`]; [`exit_or_watch`] routes through it.
 static BUILD_PLUGIN_VM: core::sync::atomic::AtomicPtr<bun_jsc::virtual_machine::VirtualMachine> =
     core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
 
@@ -1294,8 +1293,7 @@ fn exit_or_watch(code: u8, watch: bool) -> ! {
     }
     let vm_ptr = BUILD_PLUGIN_VM.swap(core::ptr::null_mut(), core::sync::atomic::Ordering::Relaxed);
     if !vm_ptr.is_null() {
-        // SAFETY: set once from `load_bundler_plugins` on this thread; the VM
-        // is process-lifetime and never otherwise torn down.
+        // SAFETY: set by `load_bundler_plugins` on this thread; process-lifetime.
         let vm = unsafe { &mut *vm_ptr };
         vm.exit_handler.exit_code = code;
         vm.on_exit();

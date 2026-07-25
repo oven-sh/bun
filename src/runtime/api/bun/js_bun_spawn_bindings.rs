@@ -942,6 +942,13 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
         // or run microtasks, so a ReadableStream stdin (e.g. a streaming fetch
         // Response body) would never progress there. Drain it to bytes on the
         // main event loop before entering the isolated loop.
+        //
+        // `timeout`/`signal` are wired up only after the child is spawned, so
+        // this drain is unbounded (Node's `timeout` is child runtime only; the
+        // `stdin: await res.arrayBuffer()` workaround has the same hang).
+        // Bound a network body at its source: `fetch(url, { signal:
+        // AbortSignal.timeout(n) })` fires here because `wait_for_promise`
+        // ticks the main loop.
         if matches!(stdio[0], Stdio::ReadableStream(_)) {
             let Stdio::ReadableStream(stream) = core::mem::replace(&mut stdio[0], Stdio::Ignore)
             else {

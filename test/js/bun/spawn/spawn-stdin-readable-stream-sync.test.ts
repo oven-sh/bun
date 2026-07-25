@@ -86,6 +86,43 @@ describe("spawnSync with ReadableStream stdin", () => {
     expect(exitCode).toBe(0);
   });
 
+  // The stdin drain runs on the main event loop (before the child is
+  // spawned and before the isolated loop is entered), so queued microtasks
+  // fire while the stream is being buffered. This is the same as if the
+  // caller had written `const b = await res.bytes(); spawnSync({ stdin: b
+  // })`. The isolated-loop invariants (no microtasks/timers while the child
+  // runs) still hold because the child has not started yet. Timers may also
+  // fire if the drain reaches `auto_tick()` (e.g. for a network body), but
+  // that is not deterministic for a pure-microtask stream so only the
+  // microtask is asserted here.
+  test("main-loop microtasks run during the pre-spawn stdin drain", () => {
+    let microtask: "before" | "during" | undefined;
+    let inSpawnSync = false;
+    queueMicrotask(() => {
+      microtask = inSpawnSync ? "during" : "before";
+    });
+    let pulls = 0;
+    const stream = new ReadableStream({
+      async pull(c) {
+        await Promise.resolve();
+        if (pulls++ === 0) return c.enqueue(new TextEncoder().encode("x"));
+        c.close();
+      },
+    });
+    inSpawnSync = true;
+    const { stdout, exitCode } = spawnSync({
+      cmd: [bunExe(), "-e", childScript],
+      stdin: stream,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+    inSpawnSync = false;
+    expect(microtask).toBe("during");
+    expect(stdout.toString()).toBe("n=1");
+    expect(exitCode).toBe(0);
+  });
+
   test("stdout/stderr ReadableStream still rejected in sync mode", () => {
     const stream = new ReadableStream({ start: c => c.close() });
     expect(() =>

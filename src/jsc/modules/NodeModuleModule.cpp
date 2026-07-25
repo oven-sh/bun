@@ -767,15 +767,6 @@ JSC_DEFINE_CUSTOM_SETTER(setNodeModuleWrapper,
     return true;
 }
 
-extern "C" bool Bun__VirtualMachine__isInPreload(void* /* BunVM */);
-
-JSC_DEFINE_CUSTOM_GETTER(nodeModuleIsPreloading,
-    (JSC::JSGlobalObject * globalObject,
-        JSC::EncodedJSValue thisValue, JSC::PropertyName))
-{
-    return JSValue::encode(jsBoolean(Bun__VirtualMachine__isInPreload(defaultGlobalObject(globalObject)->bunVM())));
-}
-
 static JSValue getModulePrototypeObject(VM& vm, JSObject* moduleObject)
 {
     auto* globalObject = defaultGlobalObject(moduleObject->globalObject());
@@ -799,7 +790,7 @@ static JSValue getModulePrototypeObject(VM& vm, JSObject* moduleObject)
 
     prototype->putDirectCustomAccessor(
         vm, Identifier::fromString(vm, "isPreloading"_s),
-        JSC::CustomGetterSetter::create(vm, nodeModuleIsPreloading, nullptr),
+        JSC::CustomGetterSetter::create(vm, getterIsPreloading, nullptr),
         JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
 
     return prototype;

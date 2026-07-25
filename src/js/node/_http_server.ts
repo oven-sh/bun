@@ -558,6 +558,9 @@ Server.prototype.address = function () {
 };
 
 Server.prototype.listen = function () {
+  if (this[serverSymbol]) {
+    throw $ERR_SERVER_ALREADY_LISTEN();
+  }
   const server = this;
   let port, host, onListen;
   let socketPath;

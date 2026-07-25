@@ -330,6 +330,12 @@ impl ResolveMessage {
     }
 
     #[crate::host_fn(getter)]
+    pub fn get_stack(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        let text = crate::BuildMessage::generate_stack_string(b"ResolveMessage", &this.msg);
+        Ok(ZigString::init_utf8(&text).to_js(global))
+    }
+
+    #[crate::host_fn(getter)]
     pub fn get_level(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
         Ok(ZigString::init(this.msg.kind.string()).to_js(global))
     }

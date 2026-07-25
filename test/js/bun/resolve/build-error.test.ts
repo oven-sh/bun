@@ -1,6 +1,26 @@
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
 
+// https://github.com/oven-sh/bun/issues/12510
+test("BuildMessage .stack is a string with name, message, and location", async () => {
+  let error: any;
+  try {
+    await import("../util/inspect-error-fixture-bad.js");
+    expect.unreachable();
+  } catch (e) {
+    error = e;
+  }
+  expect(error.name).toBe("BuildMessage");
+  expect(typeof error.stack).toBe("string");
+  const lines = error.stack.split("\n");
+  expect(lines[0]).toBe(`BuildMessage: ${error.message}`);
+  expect(lines[1]).toMatch(/^ {4}at .+inspect-error-fixture-bad\.js:\d+:\d+$/);
+  expect(`${error.stack}`).not.toBe("undefined");
+
+  expect(() => (error.stack = "custom")).not.toThrow();
+  expect(error.stack).toBe("custom");
+});
+
 test("BuildError is modifiable", async () => {
   try {
     await import("../util/inspect-error-fixture-bad.js");

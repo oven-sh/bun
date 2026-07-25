@@ -32,6 +32,39 @@ describe("ResolveMessage", () => {
     }
   });
 
+  // https://github.com/oven-sh/bun/issues/12510
+  it(".stack is a string starting with '<name>: <message>'", async () => {
+    let e: any;
+    try {
+      // @ts-ignore
+      await import("./does-not-exist-stack-test.js");
+      expect.unreachable();
+    } catch (err) {
+      e = err;
+    }
+    expect(e.name).toBe("ResolveMessage");
+    expect(typeof e.stack).toBe("string");
+    expect(e.stack).toStartWith(`ResolveMessage: ${e.message}`);
+    expect(e.stack).toContain("does-not-exist-stack-test.js");
+    expect(`${e.stack}`).not.toBe("undefined");
+  });
+
+  it(".stack is writable", async () => {
+    let e: any;
+    try {
+      // @ts-ignore
+      await import("./does-not-exist-stack-test-2.js");
+      expect.unreachable();
+    } catch (err) {
+      e = err;
+    }
+    const original = e.stack;
+    expect(typeof original).toBe("string");
+    expect(() => (e.stack = "custom stack")).not.toThrow();
+    expect(e.stack).toBe("custom stack");
+    expect(e.stack).not.toBe(original);
+  });
+
   it("has code for require.resolve", () => {
     try {
       require.resolve("./file-importing-nonexistent-file.js");

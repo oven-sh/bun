@@ -3582,18 +3582,16 @@ async function runFilesInProcess(opts: ReturnType<typeof validateRunOptions>, re
     const files = discoverRunFiles(opts);
     const numbering = { verdictNumber: 0 };
     standaloneSink = inProcessSinkImpl.bind(undefined, reporter, counts, numbering);
-    // runFiles' twin: the entry loop stops spawning between files and between
-    // entries on abort, so --test --test-isolation=none stays Ctrl+C-able.
-    const signal = opts.signal as AbortSignal | undefined;
-    // Captured like runFiles: test:interrupted is the mid-run abort shape; a
-    // signal that was already aborted at run() time skips it.
-    const preAborted = signal?.aborted === true;
+    // node's in-process runner does not consult the run signal for scheduling
+    // (observed on v26.3.0: with isolation 'none', a pre-aborted signal and a
+    // mid-run abort both leave every file running to a normal verdict and the
+    // summary succeeds). Ctrl+C for --test --test-isolation=none is the CLI
+    // driver's job: it exits promptly on SIGINT like node's harness.
     // node's root test is already running while files load, so before() hooks
     // registered at a file's top level execute immediately, in file order.
     callerRoot.started = true;
     try {
       for (const file of files) {
-        if (signal?.aborted) break;
         if (file === Bun.main) {
           // Importing the entry module from inside its own evaluation can
           // never settle (the import awaits the very evaluation that is
@@ -3649,22 +3647,6 @@ async function runFilesInProcess(opts: ReturnType<typeof validateRunOptions>, re
       console.error(hookError);
       counts.failed++;
     }
-    if (preAborted) {
-      // node reports per-file testAborted verdicts for a signal already
-      // aborted at run() time (mirrors runFiles' reportAbortedFile loop);
-      // republishChildEvent counts testAborted as cancelled.
-      const abortedError = makeTestFailure("This operation was aborted", "testAborted");
-      for (const file of files) {
-        const fileNode = new TestNode(file, callerRoot, kDefaultOptions, false, false);
-        fileNode.filePath = file;
-        activeRunFile = file;
-        reportFailedImportNode(fileNode, abortedError);
-      }
-    } else if (signal?.aborted) {
-      counts.failed++;
-      reporter.emitMessage("test:interrupted", { __proto__: null, nesting: 0, tests: [] });
-    }
-
     const durationMs = roundDurationMs(performance.now() - started);
     // Emitted directly so it carries no data.file, matching runFiles and the
     // adjacent run-level summary (the sink would stamp the stale activeRunFile).

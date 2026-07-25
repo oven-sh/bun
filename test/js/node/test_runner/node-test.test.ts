@@ -1326,6 +1326,50 @@ test.concurrent("run(): a child inheriting --bail emits no reporter chrome", asy
   });
 });
 
+test.concurrent("run({isolation:'none'}): the run signal is not consulted for scheduling", async () => {
+  // node's in-process runner ignores the signal entirely (v26.3.0, verified
+  // with side effects): a pre-aborted signal still runs every file body to a
+  // normal passing verdict and the summary succeeds. Only process isolation
+  // reports testAborted for skipped files.
+  using dir = tempDir("node-test-none-signal", {
+    "f.test.mjs": `
+      import { test } from 'node:test';
+      import { writeFileSync } from 'node:fs';
+      test('side', () => { writeFileSync(new URL('./ran.txt', import.meta.url), '1'); });
+    `,
+    "driver.mjs": `
+      import { run } from 'node:test';
+      import { fileURLToPath } from 'node:url';
+      import { existsSync } from 'node:fs';
+      const ac = new AbortController();
+      ac.abort();
+      const stream = run({ files: [fileURLToPath(new URL('./f.test.mjs', import.meta.url))], signal: ac.signal, isolation: 'none' });
+      const out = { passes: [], fails: [], success: null, ran: false };
+      stream.on('test:pass', function onPass(t) { out.passes.push(t.name); });
+      stream.on('test:fail', function onFail(t) { out.fails.push(t.name); });
+      stream.on('test:summary', function onSummary(t) { if (t.file === undefined) out.success = t.success; });
+      for await (const _ of stream);
+      out.ran = existsSync(new URL('./ran.txt', import.meta.url));
+      console.log(JSON.stringify(out));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", join(String(dir), "driver.mjs")],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // Verbatim node v26.3.0 behavior for this fixture.
+  expect(JSON.parse(stdout.trim() || "null")).toEqual({
+    passes: ["side"],
+    fails: [],
+    success: true,
+    ran: true,
+  });
+});
+
 test.concurrent("run({isolation:'none'}): a suite's duration spans all of its children", async () => {
   using dir = tempDir("node-test-suite-duration", {
     "f.test.mjs": `

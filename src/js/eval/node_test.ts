@@ -344,6 +344,12 @@ async function main() {
   // signal, which kills the current child and stops spawning.
   function onRunnerSignal() {
     abortController.abort();
+    if (runOptions.isolation === "none") {
+      // node's in-process runner ignores the run signal for scheduling, but
+      // its --test harness still exits promptly on SIGINT (observed v26.3.0:
+      // exit code 1 within milliseconds).
+      process.exit(1);
+    }
   }
   process.on("SIGINT", onRunnerSignal);
   process.on("SIGTERM", onRunnerSignal);

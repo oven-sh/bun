@@ -343,6 +343,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             }
 
                             // rewrite `module.exports` to `exports`
+                            //
+                            // `ESpecial::ModuleExports` is printed as `exports_ref`, so
+                            // this is a use of that symbol. When the parent expression is a
+                            // property access (`module.exports.foo`), the
+                            // `ESpecial::ModuleExports` arm below balances this with
+                            // `ignore_usage`. When it isn't (e.g.
+                            // `Object.assign(module.exports, ...)`), the unbalanced use
+                            // makes `uses_exports_ref` true and deoptimizes the CJS→ESM
+                            // unwrapping, keeping the module wrapped as CommonJS so
+                            // dynamically-added exports remain reachable.
+                            let exports_ref = p.exports_ref;
+                            p.record_usage(exports_ref);
                             return Some(Expr {
                                 data: js_ast::ExprData::ESpecial(E::Special::ModuleExports),
                                 loc: name_loc,
@@ -608,6 +620,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         p.deoptimize_common_js_named_exports();
                                         return None;
                                     }
+
+                                    // Balance the `record_usage(exports_ref)` from the
+                                    // `module.exports` rewrite above: this property access
+                                    // consumes the `ESpecial::ModuleExports` value, so it
+                                    // is not an escaping use of the exports object.
+                                    let exports_ref = p.exports_ref;
+                                    p.ignore_usage(exports_ref);
 
                                     // Note: reshaped for borrowck — see exports_ref arm above.
                                     let ref_ = if let Some(existing) =

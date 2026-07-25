@@ -57,7 +57,8 @@ M._extensions[".js"] = function (m, f) { globalThis.__hits.push(path.basename(f)
       "hook.cjs": hook,
       "dep.js": "module.exports = 1;",
       "dep2.cjs": "module.exports = 2;",
-      "main.mjs": 'await import("./dep.js"); await import("./dep2.cjs"); console.log(JSON.stringify(globalThis.__hits));',
+      "main.mjs":
+        'await import("./dep.js"); await import("./dep2.cjs"); console.log(JSON.stringify(globalThis.__hits));',
     });
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-r", "./hook.cjs", "main.mjs"],

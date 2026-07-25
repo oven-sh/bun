@@ -1790,11 +1790,37 @@ impl EndTag {
             return Ok(());
         }
         let name = setter_utf8_arg(global, value)?;
+        if let Err(e) = validate_tag_name(&name) {
+            return Err(global.throw_value(create_lolhtml_error(global, &e)));
+        }
         let Some(end_tag) = cell_get(&self.end_tag) else {
             return Ok(());
         };
         end_tag.set_name_str(name);
         Ok(())
+    }
+}
+
+/// lol-html's [`EndTag::set_name_str`] accepts the string verbatim, so a `>`
+/// in the assigned name becomes literal `</name>rest>` in the output. Apply
+/// the same check `Element::set_tag_name` runs (`tag_name_bytes_from_str`) so
+/// the two setters agree. The encoding-replacement check is omitted: the
+/// rewriter is built with `AsciiCompatibleEncoding::utf_8()`, under which
+/// every `str` encodes without replacement.
+fn validate_tag_name(name: &str) -> Result<(), lol_html::errors::TagNameError> {
+    use lol_html::errors::TagNameError;
+    match name.as_bytes().first() {
+        None => Err(TagNameError::Empty),
+        Some(ch) if !ch.is_ascii_alphabetic() => Err(TagNameError::InvalidFirstCharacter),
+        Some(_) => match name
+            .as_bytes()
+            .iter()
+            .copied()
+            .find(|&ch| matches!(ch, b' ' | b'\n' | b'\r' | b'\t' | b'\x0C' | b'/' | b'>'))
+        {
+            Some(ch) => Err(TagNameError::ForbiddenCharacter(ch as char)),
+            None => Ok(()),
+        },
     }
 }
 

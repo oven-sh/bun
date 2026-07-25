@@ -1208,6 +1208,61 @@ describe("tagName, endTag.name, and comment.text setters", () => {
     expect(out).toBe("<p>hi</div>");
   });
 
+  describe("endTag.name validates the same as element.tagName", () => {
+    const run = (name, setter) =>
+      new HTMLRewriter()
+        .on("div", {
+          element(el) {
+            if (setter === "tagName") el.tagName = name;
+            else el.onEndTag(end => void (end.name = name));
+          },
+        })
+        .transform("<div>x</div>");
+
+    it.each([
+      ["", /Tag name can't be empty/],
+      ["1div", /first character of the tag name/],
+      ["div>x", /`>` character is forbidden/],
+      ["div x", /` ` character is forbidden/],
+      ["div/x", /`\/` character is forbidden/],
+      ["div\nx", /`\n` character is forbidden/],
+      ["div\tx", /`\t` character is forbidden/],
+      ["div\rx", /`\r` character is forbidden/],
+      ["div\fx", /`\f` character is forbidden/],
+    ])("rejects %j", (name, message) => {
+      // element.tagName already validates via lol-html; endTag.name must match.
+      for (const setter of ["tagName", "endTag.name"]) {
+        expect(() => run(name, setter)).toThrow(
+          expect.objectContaining({ name: "HTMLRewriterError", message: expect.stringMatching(message) }),
+        );
+      }
+    });
+
+    it("rejecting the name leaves the end tag untouched", () => {
+      let threw;
+      const out = new HTMLRewriter()
+        .on("div", {
+          element(el) {
+            el.onEndTag(end => {
+              try {
+                end.name = "div><script>alert(1)</script";
+              } catch (e) {
+                threw = e;
+              }
+            });
+          },
+        })
+        .transform("<div>x</div>");
+      expect(threw?.name).toBe("HTMLRewriterError");
+      expect(out).toBe("<div>x</div>");
+      expect(out.includes("<script>")).toBe(false);
+    });
+
+    it("accepts a valid name", () => {
+      expect(run("section", "endTag.name")).toBe("<div>x</section>");
+    });
+  });
+
   it("the assigned value is coerced with ToString, which may re-enter the wrapper", () => {
     const out = new HTMLRewriter()
       .on("p", {

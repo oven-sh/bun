@@ -226,21 +226,23 @@ describe("bunshell cp combined short flags (builtin)", () => {
     });
   }
 
-  test.concurrent("cp -Rvn parses every flag in the cluster", async () => {
-    using dir = tempDir("cp-cluster-flags-n", {
-      "src/a.txt": "hi",
+  for (const flag of ["-nRv", "-fRv"]) {
+    test.concurrent(`cp ${flag} parses every flag in the cluster`, async () => {
+      using dir = tempDir("cp-cluster-flags-leading", {
+        "src/a.txt": "hi",
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", `await Bun.$\`cp ${flag} src dest\``],
+        env,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout).toContain("a.txt");
+      expect(await Bun.file(join(String(dir), "dest", "a.txt")).text()).toBe("hi");
+      expect(exitCode).toBe(0);
     });
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", `await Bun.$\`cp -Rvn src dest\``],
-      env,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    expect(stdout).toContain("a.txt");
-    expect(await Bun.file(join(String(dir), "dest", "a.txt")).text()).toBe("hi");
-    expect(exitCode).toBe(0);
-  });
+  }
 });

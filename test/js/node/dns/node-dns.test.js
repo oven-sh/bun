@@ -731,12 +731,18 @@ describe("dns.resolveAny with CNAME records", () => {
 
   it("reports CNAME (not A) plus other records in a mixed answer and never emits null", async () => {
     const res = await resolver.resolveAny("mix.z.example");
-    expect(res).toEqual([{ value: "mixtarget.example", type: "CNAME" }, { entries: ["hi"], type: "TXT" }]);
+    expect(res).toEqual([
+      { value: "mixtarget.example", type: "CNAME" },
+      { entries: ["hi"], type: "TXT" },
+    ]);
   });
 
   it("still returns AAAA records alongside CNAME", async () => {
     const res = await resolver.resolveAny("aaaa.z.example");
-    expect(res).toEqual([{ value: "target.example", type: "CNAME" }, { address: "::2a", ttl: 60, type: "AAAA" }]);
+    expect(res).toEqual([
+      { value: "target.example", type: "CNAME" },
+      { address: "::2a", ttl: 60, type: "AAAA" },
+    ]);
   });
 
   it("callback form returns the same shape", async () => {

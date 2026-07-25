@@ -31,10 +31,7 @@ const SymbolIterator = Symbol.iterator;
 const SymbolMatchAll = Symbol.matchAll;
 const TypedArray = ObjectGetPrototypeOf(Uint8Array);
 
-process.emitWarning(
-  "Frozen intristics is an experimental feature and might change at any time",
-  "ExperimentalWarning",
-);
+process.emitWarning("Frozen intristics is an experimental feature and might change at any time", "ExperimentalWarning");
 
 {
   const intrinsicPrototypes: unknown[] = [

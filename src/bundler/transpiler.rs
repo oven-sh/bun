@@ -2900,44 +2900,6 @@ impl<'a> Transpiler<'a> {
         output_file.output_kind = options::OutputKind::Chunk;
         output_file.side = None;
         output_file.entry_point_index = None;
-        output_file.dest_path = {
-            let rel_to_root = bun_paths::resolve_path::relative_platform::<
-                bun_paths::resolve_path::platform::Loose,
-                false,
-            >(&self.options.root_dir, file_path_text);
-            let pathname = Fs::PathName::init(rel_to_root);
-            let out_ext: &[u8] = if self.options.preserve_extensions {
-                pathname.ext
-            } else {
-                self.options
-                    .out_extensions
-                    .get(pathname.ext)
-                    .copied()
-                    .unwrap_or(pathname.ext)
-            };
-            let mut template: options::PathTemplate = options::PathTemplate::FILE.into();
-            if !self.options.entry_naming.is_empty() {
-                template.data.clone_from(&self.options.entry_naming);
-            }
-            template.placeholder.name = pathname.base.to_vec().into_boxed_slice();
-            template.placeholder.dir = pathname.dir.to_vec().into_boxed_slice();
-            template.placeholder.ext = match out_ext {
-                [b'.', rest @ ..] => rest,
-                ext => ext,
-            }
-            .to_vec()
-            .into_boxed_slice();
-            if template.needs(options::PlaceholderField::Target) {
-                template.placeholder.target = <&'static str>::from(self.options.target)
-                    .as_bytes()
-                    .to_vec()
-                    .into_boxed_slice();
-            }
-            let mut v = Vec::new();
-            template.print(&mut v, true).expect("write to Vec<u8>");
-            bun_paths::resolve_path::platform_to_posix_in_place::<u8>(&mut v);
-            v.into_boxed_slice()
-        };
 
         match loader {
             options::Loader::Jsx
@@ -3068,6 +3030,50 @@ impl<'a> Transpiler<'a> {
                 output_file.value = self.build_copied_file_output(file_path_text, file_path_ext)?;
             }
         }
+
+        output_file.dest_path = {
+            let rel_to_root = bun_paths::resolve_path::relative_platform::<
+                bun_paths::resolve_path::platform::Loose,
+                false,
+            >(&self.options.root_dir, file_path_text);
+            let pathname = Fs::PathName::init(rel_to_root);
+            let out_ext: &[u8] = if self.options.preserve_extensions {
+                pathname.ext
+            } else {
+                self.options
+                    .out_extensions
+                    .get(pathname.ext)
+                    .copied()
+                    .unwrap_or(pathname.ext)
+            };
+            let mut template: options::PathTemplate = options::PathTemplate::FILE.into();
+            if !self.options.entry_naming.is_empty() {
+                template.data.clone_from(&self.options.entry_naming);
+            }
+            template.placeholder.name = pathname.base.to_vec().into_boxed_slice();
+            template.placeholder.dir = pathname.dir.to_vec().into_boxed_slice();
+            template.placeholder.ext = match out_ext {
+                [b'.', rest @ ..] => rest,
+                ext => ext,
+            }
+            .to_vec()
+            .into_boxed_slice();
+            if template.needs(options::PlaceholderField::Target) {
+                template.placeholder.target = <&'static str>::from(self.options.target)
+                    .as_bytes()
+                    .to_vec()
+                    .into_boxed_slice();
+            }
+            if template.needs(options::PlaceholderField::Hash) {
+                if let crate::output_file::Value::Buffer { bytes } = &output_file.value {
+                    template.placeholder.hash = Some(crate::ContentHasher::run(bytes));
+                }
+            }
+            let mut v = Vec::new();
+            template.print(&mut v, true).expect("write to Vec<u8>");
+            bun_paths::resolve_path::platform_to_posix_in_place::<u8>(&mut v);
+            v.into_boxed_slice()
+        };
 
         Ok(Some(output_file))
     }

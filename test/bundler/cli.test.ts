@@ -584,6 +584,31 @@ describe.concurrent("--no-bundle with --outdir", () => {
     expect(out).toContain("app");
   });
 
+  test("fills [hash] in --entry-naming with distinct values per entry", async () => {
+    using dir = tempDir("no-bundle-outdir-hash", {
+      "a.ts": `export const a = 1;\n`,
+      "b.ts": `export const b = 2;\n`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--no-bundle", "./a.ts", "./b.ts", "--outdir=dist", "--entry-naming", "[name]-[hash].[ext]"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+
+    const files = fs.readdirSync(path.join(String(dir), "dist")).sort();
+    expect(files).toHaveLength(2);
+    expect(files[0]).toMatch(/^a-[0-9a-z]+\.js$/);
+    expect(files[1]).toMatch(/^b-[0-9a-z]+\.js$/);
+    expect(stdout).toContain(files[0]);
+    expect(stdout).toContain(files[1]);
+  });
+
   test("does not escape --outdir when an entry point is outside --root", async () => {
     using dir = tempDir("no-bundle-outdir-escape", {
       "src/a.ts": `export const a = 1;\n`,

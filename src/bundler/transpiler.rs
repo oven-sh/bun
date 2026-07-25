@@ -3032,9 +3032,7 @@ impl<'a> Transpiler<'a> {
         }
 
         output_file.dest_path = match &output_file.value {
-            crate::output_file::Value::Copy(op) => {
-                strings::concat(&[b"./", &op.pathname])
-            }
+            crate::output_file::Value::Copy(op) => strings::concat(&[b"./", &op.pathname]),
             value => {
                 let rel_to_root = bun_paths::resolve_path::relative_platform::<
                     bun_paths::resolve_path::platform::Loose,

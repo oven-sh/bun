@@ -26,46 +26,38 @@ function transpiles(code: string, t = js): string {
 describe("duplicate function declarations", () => {
   describe("rejected at module scope in ESM", () => {
     test("export function + export function", () => {
-      expect(
-        transpileError(
-          "export function foo() { return 1 }\n" + "export function foo() { return 2 }",
-        ),
-      ).toMatch(/"foo" has already been declared|Multiple exports with the same name "foo"/);
+      expect(transpileError("export function foo() { return 1 }\n" + "export function foo() { return 2 }")).toMatch(
+        /"foo" has already been declared|Multiple exports with the same name "foo"/,
+      );
     });
 
     test("export async function + export async function", () => {
       expect(
-        transpileError(
-          "export async function foo() { return 1 }\n" + "export async function foo() { return 2 }",
-        ),
+        transpileError("export async function foo() { return 1 }\n" + "export async function foo() { return 2 }"),
       ).toMatch(/"foo" has already been declared|Multiple exports with the same name "foo"/);
     });
 
     test("function + export function", () => {
-      expect(
-        transpileError("function foo() { return 1 }\n" + "export function foo() { return 2 }"),
-      ).toContain('"foo" has already been declared');
+      expect(transpileError("function foo() { return 1 }\n" + "export function foo() { return 2 }")).toContain(
+        '"foo" has already been declared',
+      );
     });
 
     test("export function + function", () => {
-      expect(
-        transpileError("export function foo() { return 1 }\n" + "function foo() { return 2 }"),
-      ).toContain('"foo" has already been declared');
+      expect(transpileError("export function foo() { return 1 }\n" + "function foo() { return 2 }")).toContain(
+        '"foo" has already been declared',
+      );
     });
 
     test("two non-exported functions in a module (via export {})", () => {
-      expect(
-        transpileError(
-          "function foo() { return 1 }\n" + "function foo() { return 2 }\n" + "export {}",
-        ),
-      ).toContain('"foo" has already been declared');
+      expect(transpileError("function foo() { return 1 }\n" + "function foo() { return 2 }\n" + "export {}")).toContain(
+        '"foo" has already been declared',
+      );
     });
 
     test("two non-exported functions in a module (via import)", () => {
       expect(
-        transpileError(
-          "import 'x'\n" + "function foo() { return 1 }\n" + "function foo() { return 2 }",
-        ),
+        transpileError("import 'x'\n" + "function foo() { return 1 }\n" + "function foo() { return 2 }"),
       ).toContain('"foo" has already been declared');
     });
   });
@@ -73,17 +65,13 @@ describe("duplicate function declarations", () => {
   describe("rejected inside a block in strict mode", () => {
     test('explicit "use strict"', () => {
       expect(
-        transpileError(
-          "'use strict'\n" + "{ function foo() { return 1 }\n" + "function foo() { return 2 } }",
-        ),
+        transpileError("'use strict'\n" + "{ function foo() { return 1 }\n" + "function foo() { return 2 } }"),
       ).toContain('"foo" has already been declared');
     });
 
     test("implicit via ESM", () => {
       expect(
-        transpileError(
-          "{ function foo() { return 1 }\n" + "function foo() { return 2 } }\n" + "export {}",
-        ),
+        transpileError("{ function foo() { return 1 }\n" + "function foo() { return 2 } }\n" + "export {}"),
       ).toContain('"foo" has already been declared');
     });
   });
@@ -91,23 +79,17 @@ describe("duplicate function declarations", () => {
   describe("allowed", () => {
     test("in a script with no ESM syntax", () => {
       // Top-level of a script is like a function body; last declaration wins.
-      expect(() =>
-        transpiles("function foo() { return 1 }\n" + "function foo() { return 2 }"),
-      ).not.toThrow();
+      expect(() => transpiles("function foo() { return 1 }\n" + "function foo() { return 2 }")).not.toThrow();
     });
 
     test("inside a function body (even in ESM)", () => {
       expect(() =>
-        transpiles(
-          "function outer() { function foo() {}\n" + "function foo() {} }\n" + "export {}",
-        ),
+        transpiles("function outer() { function foo() {}\n" + "function foo() {} }\n" + "export {}"),
       ).not.toThrow();
     });
 
     test("inside a block in sloppy mode", () => {
-      expect(() =>
-        transpiles("{ function foo() { return 1 }\n" + "function foo() { return 2 } }"),
-      ).not.toThrow();
+      expect(() => transpiles("{ function foo() { return 1 }\n" + "function foo() { return 2 } }")).not.toThrow();
     });
 
     test("TypeScript overload signatures", () => {
@@ -134,10 +116,7 @@ describe("duplicate function declarations at runtime", () => {
   // executing the last declaration.
   test.concurrent("duplicate export function in .mjs is a SyntaxError", async () => {
     using dir = tempDir("dup-export-fn", {
-      "dup.mjs":
-        "export function foo() { return 1 }\n" +
-        "export function foo() { return 2 }\n" +
-        "console.log(foo())",
+      "dup.mjs": "export function foo() { return 1 }\n" + "export function foo() { return 2 }\n" + "console.log(foo())",
     });
     await using proc = Bun.spawn({
       cmd: [bunExe(), "dup.mjs"],
@@ -146,11 +125,7 @@ describe("duplicate function declarations at runtime", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toMatch(/"foo" has already been declared|Multiple exports with the same name "foo"/);
     expect(stdout).toBe("");
     expect(exitCode).not.toBe(0);
@@ -159,10 +134,7 @@ describe("duplicate function declarations at runtime", () => {
   test.concurrent("duplicate top-level function in .mjs is a SyntaxError", async () => {
     using dir = tempDir("dup-fn", {
       "dup.mjs":
-        "function foo() { return 1 }\n" +
-        "function foo() { return 2 }\n" +
-        "console.log(foo())\n" +
-        "export {}",
+        "function foo() { return 1 }\n" + "function foo() { return 2 }\n" + "console.log(foo())\n" + "export {}",
     });
     await using proc = Bun.spawn({
       cmd: [bunExe(), "dup.mjs"],
@@ -171,11 +143,7 @@ describe("duplicate function declarations at runtime", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toContain('"foo" has already been declared');
     expect(stdout).toBe("");
     expect(exitCode).not.toBe(0);

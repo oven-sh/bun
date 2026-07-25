@@ -1302,14 +1302,9 @@ function validateBody(body) {
 }
 
 /**
- * Parses an alternating [name, value, name, value, ...] array from C++
- * into a plain header object, applying the same duplicate-field rules as
- * node's http2 `toHeaderObject` (lib/internal/http2/util.js) so the app
- * sees a generic HTTP header block:
- *  - `cookie`: concatenated with "; " (RFC 9114 §4.2.1 / RFC 7540 §8.1.2.5)
- *  - `set-cookie`: always an array, even for a single value
- *  - known single-value fields: first value wins, later duplicates discarded
- *  - everything else: concatenated with ", "
+ * Parses an alternating [name, value, name, value, ...] array from C++ into a
+ * plain header object. Duplicate-field folding matches node's http2
+ * `toHeaderObject` (lib/internal/http2/util.js).
  * @param {string[]} pairs
  * @returns {object}
  */
@@ -1326,6 +1321,7 @@ function parseHeaderPairs(pairs) {
     } else if (!kSingleValueFields.has(name)) {
       switch (name) {
         case "cookie":
+          // RFC 9114 §4.2.1: MUST concatenate with "; " before non-h3 context.
           block[name] = `${existing}; ${value}`;
           break;
         case "set-cookie":

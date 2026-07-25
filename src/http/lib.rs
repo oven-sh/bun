@@ -4768,13 +4768,6 @@ impl<'a> HTTPClient<'a> {
         let mut pretend_304 = false;
         let mut is_server_sent_events = false;
 
-        // RFC 9112 §9.3: HTTP/1.0 connections are non-persistent unless the
-        // response carries an explicit `Connection: keep-alive`. The header loop
-        // below can flip this back on. Skip the CONNECT reply itself: that
-        // status line is about the client↔proxy hop, and allow_keepalive is not
-        // reset between here and the origin response inside the tunnel. h2/h3
-        // reach here with a synthetic minor_version of 0 but overwrite
-        // allow_keepalive afterwards.
         if response.minor_version == 0
             && !(self.flags.proxy_tunneling && self.proxy_tunnel.is_none())
         {
@@ -4890,9 +4883,6 @@ impl<'a> HTTPClient<'a> {
                     location = header.value();
                 }
                 h if h == hash_header_const(b"Connection") => {
-                    // RFC 9112 §9.6: `close` on a response means the server will
-                    // close after this message regardless of status code; the
-                    // connection MUST NOT be reused.
                     if bun_core::strings::eql_case_insensitive_ascii_check_length(
                         header.value(),
                         b"close",

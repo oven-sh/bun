@@ -649,7 +649,11 @@ impl NodeHTTPResponse {
         }
 
         if flags.contains(Flags::ENDED) {
-            return self.body_read_state.get() == BodyReadState::Pending;
+            return self.body_read_state.get() == BodyReadState::Pending
+                || !self
+                    .buffered_request_body_data_during_pause
+                    .get()
+                    .is_empty();
         }
 
         true
@@ -1429,9 +1433,8 @@ impl NodeHTTPResponse {
         if flags.contains(Flags::SOCKET_CLOSED) || flags.contains(Flags::UPGRADED) {
             return JSValue::FALSE;
         }
-        if (flags.contains(Flags::REQUEST_HAS_COMPLETED) || flags.contains(Flags::ENDED))
-            && self.body_read_state.get() != BodyReadState::Pending
-        {
+        let ended = flags.contains(Flags::REQUEST_HAS_COMPLETED) || flags.contains(Flags::ENDED);
+        if ended && self.body_read_state.get() != BodyReadState::Pending {
             return JSValue::FALSE;
         }
         // Body already delivered: re-arming onData/onTimeout would overwrite a
@@ -1442,6 +1445,13 @@ impl NodeHTTPResponse {
         {
             self.set_on_aborted_handler();
             raw.on_data(on_data_shim, self.as_ctx_ptr());
+        }
+        // After the response has ended detachSocket() cleared
+        // socket._httpMessage, so #resumeSocket() can no longer route the
+        // drain to the IncomingMessage; leave it for _read()'s
+        // handle.drainRequestBody() which pushes to `this` directly.
+        if ended {
+            return JSValue::TRUE;
         }
         self.update_flags(|f| f.remove(Flags::IS_DATA_BUFFERED_DURING_PAUSE));
         let mut result: JSValue = JSValue::TRUE;
@@ -1611,16 +1621,7 @@ impl NodeHTTPResponse {
             if self.body_read_ref.get().has {
                 self.body_read_ref.with_mut(|r| r.unref(vm_get()));
             }
-            // mark_request_as_done would free the buffered tail before the
-            // consumer drains it; drain_buffered_request_body_from_pause calls
-            // this once the tail has been handed to JS.
-            if self
-                .buffered_request_body_data_during_pause
-                .get()
-                .is_empty()
-            {
-                self.mark_request_as_done_if_necessary();
-            }
+            self.mark_request_as_done_if_necessary();
         }
     }
 

@@ -4311,10 +4311,11 @@ describe("request body still flows after res.end() was called in the handler", (
     // body segments are not delivered; 'end' must still fire so the consumer
     // is not left waiting.
     let ended = false;
-    const { promise: closed, resolve } = Promise.withResolvers<void>();
+    const { promise: closed, resolve, reject } = Promise.withResolvers<void>();
     await using server = createServer((req, res) => {
       req.on("data", () => {});
       req.once("end", () => (ended = true));
+      req.once("error", reject);
       req.once("close", resolve);
       res.end("ok");
     });
@@ -4323,6 +4324,7 @@ describe("request body still flows after res.end() was called in the handler", (
 
     const sock = connect(port, "127.0.0.1");
     await once(sock, "connect");
+    sock.on("error", () => {});
     sock.write("POST / HTTP/1.1\r\nHost: x\r\nConnection: close\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n");
     sock.setNoDelay(true);
     await new Promise<void>(r => setImmediate(r));

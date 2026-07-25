@@ -3905,8 +3905,7 @@ unsafe fn normalize_specifier_for_loader<'a>(
     }
     let specifier = slice;
     let mut query: &[u8] = b"";
-    if let Some(i) = bun_core::strings::index_of_char_usize(slice, b'?') {
-        let i = i as usize;
+    if let Some(i) = bun_jsc::virtual_machine::index_of_query_or_fragment(slice) {
         query = &slice[i..];
         slice = &slice[..i];
     }
@@ -4826,14 +4825,13 @@ const STDIN_SUFFIX: &[u8] = b"\\[stdin]";
 #[cfg(not(windows))]
 const STDIN_SUFFIX: &[u8] = b"/[stdin]";
 
-/// Split off the `?query` suffix.
+/// Split off the `?query` / `#fragment` suffix.
 #[inline]
 fn normalize_specifier_for_resolution<'a>(
     specifier: &'a [u8],
     query_string: &mut &'a [u8],
 ) -> &'a [u8] {
-    if let Some(i) = bun_core::strings::index_of_char_usize(specifier, b'?') {
-        let i = i as usize;
+    if let Some(i) = bun_jsc::virtual_machine::index_of_query_or_fragment(specifier) {
         *query_string = &specifier[i..];
         &specifier[..i]
     } else {

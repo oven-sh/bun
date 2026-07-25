@@ -3580,7 +3580,13 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
         if (moduleName->startsWith("file://"_s)) {
             auto url = WTF::URL(moduleName);
             if (url.isValid() && !url.isEmpty()) {
-                keyZ = Bun::toStringRef(url.fileSystemPath());
+                // Keep ?query and #fragment so the resolver returns them as
+                // part of the module key; fileSystemPath() drops both.
+                auto query = url.queryWithLeadingQuestionMark();
+                auto fragment = url.fragmentIdentifierWithLeadingNumberSign();
+                keyZ = (query.isEmpty() && fragment.isEmpty())
+                    ? Bun::toStringRef(url.fileSystemPath())
+                    : Bun::toStringRef(makeString(url.fileSystemPath(), query, fragment));
             } else {
                 keyZ = Bun::toStringRef(moduleName);
             }
@@ -3684,9 +3690,10 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
     } else if (sourceURL.protocolIsFile()) {
         sourceOriginStringHolder = sourceURL.fileSystemPath();
         auto query = sourceURL.queryWithLeadingQuestionMark();
-        auto referrerKey = query.isEmpty()
+        auto fragment = sourceURL.fragmentIdentifierWithLeadingNumberSign();
+        auto referrerKey = (query.isEmpty() && fragment.isEmpty())
             ? JSC::Identifier::fromString(vm, sourceOriginStringHolder)
-            : JSC::Identifier::fromString(vm, makeString(sourceOriginStringHolder, query));
+            : JSC::Identifier::fromString(vm, makeString(sourceOriginStringHolder, query, fragment));
         referrerAsyncOrder = globalObject->moduleLoader()->asyncEvaluationOrderForKey(referrerKey);
     } else if (sourceURL.protocol() == "builtin"_s) {
         ASSERT(sourceURL.string().startsWith("builtin://"_s));
@@ -3716,7 +3723,13 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
         if (moduleName->startsWith("file://"_s)) {
             auto url = WTF::URL(moduleName);
             if (url.isValid() && !url.isEmpty()) {
-                moduleStringHolder = url.fileSystemPath();
+                // Keep ?query and #fragment so the resolver returns them as
+                // part of the module key; fileSystemPath() drops both.
+                auto query = url.queryWithLeadingQuestionMark();
+                auto fragment = url.fragmentIdentifierWithLeadingNumberSign();
+                moduleStringHolder = (query.isEmpty() && fragment.isEmpty())
+                    ? url.fileSystemPath()
+                    : makeString(url.fileSystemPath(), query, fragment);
                 moduleNameZ = Bun::toStringRef(moduleStringHolder);
             } else {
                 moduleNameZ = Bun::toStringRef(moduleName);

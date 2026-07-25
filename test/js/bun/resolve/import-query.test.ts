@@ -216,6 +216,113 @@ test("import of an extension mapped to the napi loader throws instead of crashin
   });
 });
 
+// Node keys the ESM cache on the full URL including the fragment, so
+// `await import("./x.mjs#a")` and `./x.mjs#b` are distinct modules.
+test("dynamic import with a #fragment keys the module cache per fragment", async () => {
+  using dir = tempDir("import-fragment-dynamic", {
+    "config.mjs": `export default 1;\nexport const url = import.meta.url;`,
+    "entry.mjs": `
+      import { pathToFileURL } from "node:url";
+      import { writeFileSync } from "node:fs";
+      const fileURL = pathToFileURL("./config.mjs").href;
+      const tail = u => u.slice(u.lastIndexOf("/") + 1);
+
+      const rel1 = await import("./config.mjs#a");
+      writeFileSync("./config.mjs", "export default 2;\\nexport const url = import.meta.url;");
+      const rel2 = await import("./config.mjs#b");
+      const rel2Again = await import("./config.mjs#b");
+
+      writeFileSync("./config.mjs", "export default 3;\\nexport const url = import.meta.url;");
+      const url1 = await import(fileURL + "#c");
+      writeFileSync("./config.mjs", "export default 4;\\nexport const url = import.meta.url;");
+      const url2 = await import(fileURL + "#d");
+
+      writeFileSync("./config.mjs", "export default 5;\\nexport const url = import.meta.url;");
+      const mix1 = await import("./config.mjs?v=1#x");
+      const mix2 = await import("./config.mjs?v=1#y");
+
+      console.log(JSON.stringify({
+        rel: [rel1.default, rel2.default],
+        relUrls: [tail(rel1.url), tail(rel2.url)],
+        relDistinct: rel1 !== rel2,
+        relCached: rel2 === rel2Again,
+        url: [url1.default, url2.default],
+        urlDistinct: url1 !== url2,
+        mixDistinct: mix1 !== mix2,
+        mixUrls: [tail(mix1.url), tail(mix2.url)],
+      }));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "entry.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout.trim())).toEqual({
+    rel: [1, 2],
+    relUrls: ["config.mjs#a", "config.mjs#b"],
+    relDistinct: true,
+    relCached: true,
+    url: [3, 4],
+    urlDistinct: true,
+    mixDistinct: true,
+    mixUrls: ["config.mjs?v=1#x", "config.mjs?v=1#y"],
+  });
+  expect(exitCode).toBe(0);
+});
+
+test("static import with a #fragment keys the module cache per fragment", async () => {
+  using dir = tempDir("import-fragment-static", {
+    "target.mjs": `(globalThis.hits ??= []).push(import.meta.url);`,
+    "entry.mjs": [
+      `import "./target.mjs#a";`,
+      `import "./target.mjs#b";`,
+      `import "./target.mjs#a";`,
+      `console.log(JSON.stringify(globalThis.hits.map(u => u.slice(u.lastIndexOf("/") + 1))));`,
+    ].join("\n"),
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "entry.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout.trim())).toEqual(["target.mjs#a", "target.mjs#b"]);
+  expect(exitCode).toBe(0);
+});
+
+// A leading `#` is a package.json "imports" subpath, not a URL fragment;
+// fragment splitting must not swallow it.
+test("#fragment splitting does not break package.json imports subpaths", async () => {
+  using dir = tempDir("import-fragment-imports-field", {
+    "package.json": JSON.stringify({ type: "module", imports: { "#pkg": "./target.mjs" } }),
+    "target.mjs": `export default "ok";`,
+    "entry.mjs": `
+      const m = await import("#pkg");
+      const r = Bun.resolveSync("#pkg", import.meta.dir);
+      console.log(JSON.stringify({ d: m.default, r: r.endsWith("target.mjs") }));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "entry.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout.trim())).toEqual({ d: "ok", r: true });
+  expect(exitCode).toBe(0);
+});
+
 test("Bun.resolveSync with non-ASCII specifier and query string", async () => {
   using dir = tempDir("resolve-query-nonascii", {
     "target.js": ``,

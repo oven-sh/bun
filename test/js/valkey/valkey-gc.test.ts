@@ -122,11 +122,6 @@ test.concurrent(
   },
 );
 
-// Fuzzer found the same over-release reachable from subscribe() when the
-// socket dies mid-call: upsert_receive_handler's exit guard re-enters
-// on_writable/update_poll_ref before send() takes its own ref, so a
-// connect/close fault path inside could free the client under the live
-// `&self`. This variant races a server-side RST against subscribe()+close().
 // subscribe() used to release one more intrusive ref than it took:
 // SubscriptionCtx.parent() recovered &JSValkeyClient via container_of on
 // &SubscriptionCtx (three plain bools, a Freeze type). The shared-ref argument
@@ -214,6 +209,11 @@ test.concurrent(
   },
 );
 
+// Fuzzer found the same over-release reachable from subscribe() when the
+// socket dies mid-call: upsert_receive_handler's exit guard re-enters
+// on_writable/update_poll_ref before send() takes its own ref, so a
+// connect/close fault path inside could free the client under the live
+// `&self`. This variant races a server-side RST against subscribe()+close().
 test.concurrent("RedisClient survives subscribe() + close() against a server that resets the connection", async () => {
   const src = `
     const CRLF = "\\r\\n";

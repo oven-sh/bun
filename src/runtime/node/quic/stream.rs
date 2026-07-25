@@ -63,11 +63,9 @@ fn is_valid_h3_field_value(value: &[u8]) -> bool {
 /// with the value `trailers`.
 fn is_connection_specific(name: &[u8], value: &[u8]) -> bool {
     match name {
-        b"connection"
-        | b"keep-alive"
-        | b"proxy-connection"
-        | b"transfer-encoding"
-        | b"upgrade" => true,
+        b"connection" | b"keep-alive" | b"proxy-connection" | b"transfer-encoding" | b"upgrade" => {
+            true
+        }
         b"te" => value != b"trailers",
         _ => false,
     }

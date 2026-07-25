@@ -259,57 +259,51 @@ describe("HTTP/3 inbound field-section validation (RFC 9114)", () => {
     };
   }
 
-  test.concurrent.each(malformedRequests)(
-    "server rejects malformed request: $name",
-    async ({ pairs }) => {
-      const { client, seen, done } = await withH3({});
-      const stream = await client.createBidirectionalStream();
-      (stream as any)[kSendRaw](pairs, 1, 1);
+  test.concurrent.each(malformedRequests)("server rejects malformed request: $name", async ({ pairs }) => {
+    const { client, seen, done } = await withH3({});
+    const stream = await client.createBidirectionalStream();
+    (stream as any)[kSendRaw](pairs, 1, 1);
 
-      // The server resets the stream with H3_MESSAGE_ERROR; the client learns
-      // it via the RESET_STREAM frame, which rejects `closed`.
-      const err = await stream.closed.then(
-        () => undefined,
-        (e: any) => e,
-      );
-      await done();
+    // The server resets the stream with H3_MESSAGE_ERROR; the client learns
+    // it via the RESET_STREAM frame, which rejects `closed`.
+    const err = await stream.closed.then(
+      () => undefined,
+      (e: any) => e,
+    );
+    await done();
 
-      expect({ seen, code: err?.code, errorCode: err?.errorCode }).toEqual({
-        seen: [],
-        code: "ERR_QUIC_APPLICATION_ERROR",
-        errorCode: H3_MESSAGE_ERROR,
-      });
-    },
-  );
+    expect({ seen, code: err?.code, errorCode: err?.errorCode }).toEqual({
+      seen: [],
+      code: "ERR_QUIC_APPLICATION_ERROR",
+      errorCode: H3_MESSAGE_ERROR,
+    });
+  });
 
-  test.concurrent.each(malformedResponses)(
-    "client rejects malformed response: $name",
-    async ({ pairs }) => {
-      const clientSeen: unknown[] = [];
-      const { client, done } = await withH3({
-        onServerHeaders(this: any) {
-          (this as any)[kSendRaw](pairs, 1, 1);
-        },
-      });
-      const stream = await client.createBidirectionalStream({
-        headers: { ":method": "GET", ":scheme": "https", ":authority": "localhost", ":path": "/" },
-        onheaders(h: any) {
-          clientSeen.push(h);
-        },
-      });
-      const err = await stream.closed.then(
-        () => undefined,
-        (e: any) => e,
-      );
-      await done();
+  test.concurrent.each(malformedResponses)("client rejects malformed response: $name", async ({ pairs }) => {
+    const clientSeen: unknown[] = [];
+    const { client, done } = await withH3({
+      onServerHeaders(this: any) {
+        (this as any)[kSendRaw](pairs, 1, 1);
+      },
+    });
+    const stream = await client.createBidirectionalStream({
+      headers: { ":method": "GET", ":scheme": "https", ":authority": "localhost", ":path": "/" },
+      onheaders(h: any) {
+        clientSeen.push(h);
+      },
+    });
+    const err = await stream.closed.then(
+      () => undefined,
+      (e: any) => e,
+    );
+    await done();
 
-      expect({ clientSeen, code: err?.code, errorCode: err?.errorCode }).toEqual({
-        clientSeen: [],
-        code: "ERR_QUIC_APPLICATION_ERROR",
-        errorCode: H3_MESSAGE_ERROR,
-      });
-    },
-  );
+    expect({ clientSeen, code: err?.code, errorCode: err?.errorCode }).toEqual({
+      clientSeen: [],
+      code: "ERR_QUIC_APPLICATION_ERROR",
+      errorCode: H3_MESSAGE_ERROR,
+    });
+  });
 
   // Well-formed sections that live near a boundary must still be accepted.
   test.concurrent.each([

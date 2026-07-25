@@ -64,6 +64,7 @@ describe("node-fetch honors TLS options from agent", () => {
     await once(server, "listening");
     const { port } = server.address() as AddressInfo;
 
+    const anonAgent = new https.Agent({ ca: ca1, servername: "agent1" });
     const agent = new https.Agent({
       ca: ca1,
       cert: serverCert,
@@ -72,9 +73,7 @@ describe("node-fetch honors TLS options from agent", () => {
     });
     try {
       // Without cert/key on the agent the server sees an unauthenticated client.
-      const anon = await nodeFetch(`https://localhost:${port}/`, {
-        agent: new https.Agent({ ca: ca1, servername: "agent1" }),
-      });
+      const anon = await nodeFetch(`https://localhost:${port}/`, { agent: anonAgent });
       expect(await anon.json()).toEqual({ authorized: false });
 
       const res = await nodeFetch(`https://localhost:${port}/`, { agent });
@@ -94,6 +93,7 @@ describe("node-fetch honors TLS options from agent", () => {
         pemAgent.destroy();
       }
     } finally {
+      anonAgent.destroy();
       agent.destroy();
       server.close();
       await once(server, "close");

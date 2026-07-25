@@ -2537,7 +2537,10 @@ impl<'a> ValueBufferer<'a> {
             unreachable!()
         };
 
-        if locked.on_receive_value.is_some() || locked.task.is_some() {
+        if locked.on_receive_value.is_some() {
+            return Err(crate::Error::StreamAlreadyUsed);
+        }
+        if locked.task.is_some() {
             // ValueBufferer wants the whole body; tell the producer to never
             // pause for JS backpressure before the stream is materialised.
             if let (Some(on_start_buffering), Some(task)) =

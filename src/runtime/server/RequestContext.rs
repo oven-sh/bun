@@ -3249,7 +3249,11 @@ where
                     }
                 }
 
-                if lock.on_receive_value.is_some() || lock.task.is_some() {
+                if lock.on_receive_value.is_some() {
+                    this.render_missing();
+                    return;
+                }
+                if lock.task.is_some() {
                     // someone else is waiting for the stream or waiting for `onStartStreaming`
                     let Ok(readable) = value.to_readable_stream(global_this) else {
                         return;

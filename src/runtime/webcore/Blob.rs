@@ -5227,6 +5227,19 @@ pub fn write_file_internal(
                                 "ReadableStream has already been used"
                             )));
                         }
+                        // SAFETY: re-borrow after the early-return paths.
+                        let BodyValue::Locked(locked) = (unsafe { &mut *body_value }) else {
+                            unreachable!()
+                        };
+                        if locked.is_disturbed2(global_this) {
+                            destination_blob.detach();
+                            return Err(global_this
+                                .err(
+                                    jsc::ErrorCode::BODY_ALREADY_USED,
+                                    format_args!("Body already used"),
+                                )
+                                .throw());
+                        }
                         let task =
                             bun_core::heap::into_raw(Box::new(WriteFileWaitFromLockedValueTask {
                                 global_this: bun_ptr::BackRef::new(global_this),
@@ -5238,10 +5251,6 @@ pub fn write_file_internal(
                                 promise: jsc::JSPromiseStrong::init(global_this),
                                 mkdirp_if_not_exists: options.mkdirp_if_not_exists.unwrap_or(true),
                             }));
-                        // SAFETY: re-borrow after the early-return paths.
-                        let BodyValue::Locked(locked) = (unsafe { &mut *body_value }) else {
-                            unreachable!()
-                        };
                         locked.task = Some(task.cast::<c_void>());
                         locked.on_receive_value = Some(WriteFileWaitFromLockedValueTask::then_wrap);
                         // SAFETY: `task` was just heap-allocated; consumed in `then_wrap`.

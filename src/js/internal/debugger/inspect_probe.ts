@@ -22,6 +22,7 @@ const {
   StringPrototypeIncludes,
   StringPrototypeSlice,
   StringPrototypeStartsWith,
+  StringPrototypeTrim,
   Symbol,
   SideEffectFreeRegExpPrototypeSymbolReplace,
 } = require("internal/debugger/primordials");
@@ -147,6 +148,18 @@ function trimProbeChildStderr(stderr) {
       continue;
     }
     if (StringPrototypeStartsWith(line, kProbeEndingPrefix)) {
+      continue;
+    }
+    // Bun's own inspector banner, printed alongside Node's listening line.
+    // Node targets have no equivalent, so reports must not carry it.
+    if (StringPrototypeIncludes(line, "--------------------- Bun Inspector ---------------------")) {
+      continue;
+    }
+    if (line === "Listening:" || line === "Inspect in browser:") {
+      continue;
+    }
+    const trimmed = StringPrototypeTrim(line);
+    if (StringPrototypeStartsWith(trimmed, "ws://") || StringPrototypeStartsWith(trimmed, "https://debug.bun.sh/#")) {
       continue;
     }
     ArrayPrototypePush(kept, line);

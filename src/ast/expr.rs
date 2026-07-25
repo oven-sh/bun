@@ -75,6 +75,33 @@ impl Expr {
         self
     }
 
+    /// Zero every `Loc` in a JSON subtree parsed from another document, so splicing it into an AST never leaves offsets that index a different buffer.
+    pub fn clear_source_locs(&mut self) {
+        self.loc = Loc::EMPTY;
+        match &mut self.data {
+            Data::EObject(o) => {
+                let o = &mut **o;
+                o.close_brace_loc = Loc::EMPTY;
+                for prop in o.properties.slice_mut() {
+                    if let Some(key) = &mut prop.key {
+                        key.clear_source_locs();
+                    }
+                    if let Some(value) = &mut prop.value {
+                        value.clear_source_locs();
+                    }
+                }
+            }
+            Data::EArray(a) => {
+                let a = &mut **a;
+                a.close_bracket_loc = Loc::EMPTY;
+                for item in a.items.slice_mut() {
+                    item.clear_source_locs();
+                }
+            }
+            _ => {}
+        }
+    }
+
     #[inline]
     pub fn init_identifier(ref_: Ref, loc: Loc) -> Expr {
         Expr {

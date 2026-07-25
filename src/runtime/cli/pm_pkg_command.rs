@@ -687,27 +687,6 @@ impl PmPkgCommand {
         Self::set_nested(&mut nested, remaining_path, value, parse_json)
     }
 
-    /// Spliced-in nodes carry `Loc::EMPTY` so comment preservation never mistakes value-string offsets for package.json offsets.
-    fn clear_locs(expr: &mut Expr) {
-        expr.loc = Loc::EMPTY;
-        if let Some(obj) = expr.data.e_object_mut() {
-            obj.close_brace_loc = Loc::EMPTY;
-            for prop in obj.properties.slice_mut() {
-                if let Some(key) = &mut prop.key {
-                    Self::clear_locs(key);
-                }
-                if let Some(value) = &mut prop.value {
-                    Self::clear_locs(value);
-                }
-            }
-        } else if let Some(arr) = expr.data.e_array_mut() {
-            arr.close_bracket_loc = Loc::EMPTY;
-            for item in arr.items.slice_mut() {
-                Self::clear_locs(item);
-            }
-        }
-    }
-
     fn parse_value(value: &[u8], parse_json: bool) -> Result<Expr, Error> {
         if parse_json {
             if value == b"true" {
@@ -731,7 +710,7 @@ impl PmPkgCommand {
             if let Ok(mut json_expr) =
                 json::parse_package_json_utf8(&temp_source, &mut temp_log, dummy_bump())
             {
-                Self::clear_locs(&mut json_expr);
+                json_expr.clear_source_locs();
                 return Ok(json_expr);
             } else {
                 let data: &[u8] = dummy_bump().alloc_slice_copy(value);

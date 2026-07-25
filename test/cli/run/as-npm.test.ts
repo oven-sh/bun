@@ -91,6 +91,33 @@ describe("fake npm/npx cli", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("does not shadow a vendored node_modules/.bin npm", async () => {
+    using dir = tempDir("fake-npm-binshadow", {
+      "package.json": JSON.stringify({
+        name: "fake-npm-binshadow",
+        scripts: { go: `${bunExe()} spawn-npm.js` },
+      }),
+      "spawn-npm.js": spawnNpmFixture,
+      "node_modules/.bin/placeholder": "",
+    });
+    for (const name of ["npm", "npx"]) {
+      const f = join(String(dir), "node_modules", ".bin", name + (isWindows ? ".cmd" : ""));
+      writeFileSync(f, isWindows ? `@echo BIN-${name}\r\n` : `#!/bin/sh\necho BIN-${name}\n`);
+      if (!isWindows) chmodSync(f, 0o755);
+    }
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--bun", "run", "go"],
+      cwd: String(dir),
+      env: stripEnv,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim().split("\n")).toEqual(["npm OK BIN-npm", "npx OK BIN-npx"]);
+    expect(exitCode).toBe(0);
+  });
+
   // When invoked via argv[0] == "npm" / "npx", bun must recognize itself and
   // behave as its package manager / bunx, not try to run a file called
   // "install" or "some-pkg".
@@ -404,6 +431,25 @@ describe("fake npm/npx cli", () => {
       const short = await fakePmRun(String(dir), "npm", ["run", "-s", "go"]);
       expect(short.stdout).toContain("ARGS:");
       expect(short.exitCode).toBe(0);
+      const force = await fakePmRun(String(dir), "npm", ["run", "--force", "go"]);
+      expect(force.stdout).toContain("ARGS:");
+      expect(force.exitCode).toBe(0);
+      // npm shorts before the subcommand must not reach bun's parser, where
+      // -d means --define and would consume "run".
+      const pre = await fakePmRun(String(dir), "npm", ["-d", "run", "go"]);
+      expect(pre.stdout).toContain("ARGS:");
+      expect(pre.exitCode).toBe(0);
+    });
+
+    test.concurrent("npm -y init does not scaffold into a folder named init", async () => {
+      using dir = tempDir("fake-npm-yinit", {
+        "package.json": "{}",
+        // init runs an install afterwards; keep it off the network.
+        "bunfig.toml": `[install]\nregistry = "http://127.0.0.1:1/nope"\n`,
+      });
+      await fakePmRun(String(dir), "npm", ["-y", "init"]);
+      expect(existsSync(join(String(dir), "init"))).toBe(false);
+      expect(existsSync(join(String(dir), "index.ts"))).toBe(true);
     });
 
     test.concurrent("-- stops flag translation", async () => {

@@ -980,6 +980,19 @@ pub mod command {
                     | b"--workspaces"
                     | b"--if-present"
                     | b"--silent"
+                    | b"-f"
+                    | b"--force"
+                    | b"--dry-run"
+                    | b"--offline"
+                    | b"--prefer-offline"
+                    | b"--prefer-online"
+                    | b"--legacy-peer-deps"
+                    | b"--strict-peer-deps"
+                    | b"--save"
+                    | b"--audit"
+                    | b"--fund"
+                    | b"--package-lock-only"
+                    | b"--production"
             )
     }
 
@@ -1187,6 +1200,13 @@ pub mod command {
         if matches!(mapped.first().map(|z| z.as_bytes()), Some(b"x" | b"create")) {
             hoisted.clear();
         }
+        if matches!(mapped.first().map(|z| z.as_bytes()), Some(b"run" | b"init")) {
+            for a in pre_subcommand_flags.drain(..) {
+                if matches!(a.as_bytes(), b"--if-present" | b"--silent") {
+                    hoisted.push(a);
+                }
+            }
+        }
         if matches!(mapped.first().map(|z| z.as_bytes()), Some(b"run")) {
             let mut new_tail: Vec<&'static ZStr> = Vec::with_capacity(tail.len());
             let mut i = 0;
@@ -1298,6 +1318,10 @@ pub mod command {
                 || translate_npm_value_flag(ab, &[], &[]).is_some()
             {
                 i += if consumes_next { 2 } else { 1 };
+                continue;
+            }
+            if ab != b"--silent" && is_npm_bool_flag(ab) {
+                i += 1;
                 continue;
             }
             out.push(a);

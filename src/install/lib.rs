@@ -629,9 +629,14 @@ impl RunCommand {
 
             let mut which_buf = bun_paths::PathBuffer::uninit();
             let mut real_in_path = |bin: &[u8]| -> bool {
-                bun_which::which(&mut which_buf, original_path, b".", bin).is_some_and(|p| {
-                    !bun_core::strings::starts_with(p.as_bytes(), Self::BUN_NODE_DIR.as_bytes())
-                })
+                bun_which::which(&mut which_buf, b"node_modules/.bin", b".", bin).is_some()
+                    || bun_which::which(&mut which_buf, original_path, b".", bin).is_some_and(|p| {
+                        let pb = p.as_bytes();
+                        let dir = Self::BUN_NODE_DIR.as_bytes();
+                        !(pb.len() > dir.len()
+                            && pb[dir.len()] == b'/'
+                            && bun_core::strings::starts_with(pb, dir))
+                    })
             };
             let need_npm = !real_in_path(b"npm");
             let need_npx = !real_in_path(b"npx");
@@ -754,14 +759,16 @@ impl RunCommand {
                 &target_path_buffer[prefix.len()..dir_slice_len],
             );
             let mut real_in_path = |bin: &[u8]| -> bool {
-                bun_which::which(&mut which_buf, original_path, b".", bin).is_some_and(|p| {
-                    let pb = p.as_bytes();
-                    !(pb.len() >= shim_dir_utf8.len()
-                        && strings::eql_case_insensitive_asciii_check_length(
-                            &pb[..shim_dir_utf8.len()],
-                            &shim_dir_utf8,
-                        ))
-                })
+                bun_which::which(&mut which_buf, b"node_modules/.bin", b".", bin).is_some()
+                    || bun_which::which(&mut which_buf, original_path, b".", bin).is_some_and(|p| {
+                        let pb = p.as_bytes();
+                        !(pb.len() > shim_dir_utf8.len()
+                            && matches!(pb[shim_dir_utf8.len()], b'\\' | b'/')
+                            && strings::eql_case_insensitive_asciii_check_length(
+                                &pb[..shim_dir_utf8.len()],
+                                &shim_dir_utf8,
+                            ))
+                    })
             };
             let need_npm = !real_in_path(b"npm");
             let need_npx = !real_in_path(b"npx");

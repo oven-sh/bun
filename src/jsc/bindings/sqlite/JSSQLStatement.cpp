@@ -202,6 +202,10 @@ static inline JSC::JSValue jsBigIntFromSQLite(JSC::JSGlobalObject* globalObject,
         return {};                                                                                                 \
     }
 
+namespace WebCore {
+class JSSQLStatement;
+}
+
 DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(VersionSqlite3);
 
 class VersionSqlite3 {
@@ -217,6 +221,13 @@ public:
     sqlite3* db;
     std::atomic<uint64_t> version;
     size_t reference_count;
+
+    // Every live JSSQLStatement prepared against this connection. Not owning:
+    // entries are added in JSSQLStatement::create, removed on finalize/destroy.
+    // close() walks this to finalize the underlying sqlite3_stmt so the handle
+    // can be released even when user code (or a library like drizzle) dropped a
+    // statement without finalizing it.
+    Vector<WebCore::JSSQLStatement*> statements;
 
     void release()
     {
@@ -475,6 +486,7 @@ public:
         JSSQLStatement* ptr = new (NotNull, JSC::allocateCell<JSSQLStatement>(globalObject->vm())) JSSQLStatement(structure, *globalObject, stmt, version_db, memorySizeChange);
         if (version_db) {
             ++version_db->reference_count;
+            version_db->statements.append(ptr);
         }
         ptr->finishCreation(globalObject->vm());
         return ptr;
@@ -1841,6 +1853,18 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementCloseStatementFunction, (JSC::JSGlobalObj
         return JSValue::encode(jsUndefined());
     }
 
+    // A prepared statement keeps the sqlite3 connection alive until it is
+    // finalized, so release the ones handed out via db.prepare() whose JS
+    // wrappers are still around. Matches better-sqlite3's close().
+    Vector<JSSQLStatement*> statements;
+    statements.swap(versionDB->statements);
+    for (auto* statement : statements) {
+        if (statement->stmt) {
+            sqlite3_finalize(statement->stmt);
+            statement->stmt = nullptr;
+        }
+    }
+
     // sqlite3_close_v2 is used for automatic GC cleanup
     int statusCode = shouldThrowOnError ? sqlite3_close(db) : sqlite3_close_v2(db);
     if (statusCode != SQLITE_OK) {
@@ -2825,6 +2849,8 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementFunctionFinalize, (JSC::JSGlobalObject * 
     if (castedThis->stmt) {
         sqlite3_finalize(castedThis->stmt);
         castedThis->stmt = nullptr;
+        if (castedThis->version_db)
+            castedThis->version_db->statements.removeFirst(castedThis);
     }
 
     RELEASE_AND_RETURN(scope, JSValue::encode(jsUndefined()));
@@ -2846,6 +2872,7 @@ JSSQLStatement::~JSSQLStatement()
 {
     if (this->stmt) {
         sqlite3_finalize(this->stmt);
+        this->stmt = nullptr;
     }
 
     if (auto* columnNames = this->columnNames.get()) {
@@ -2854,6 +2881,7 @@ JSSQLStatement::~JSSQLStatement()
     }
 
     if (this->version_db) {
+        this->version_db->statements.removeFirst(this);
         this->version_db->release();
     }
 }

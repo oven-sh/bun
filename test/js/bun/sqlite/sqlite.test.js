@@ -1543,13 +1543,13 @@ it("should close with WAL enabled", () => {
   expect(readdirSync(dir).sort()).toEqual(["empty.txt", "my.db"]);
 });
 
-it("close(true) should throw an error if the database is in use", () => {
+it("close(true) finalizes outstanding prepared statements", () => {
   const db = new Database(":memory:");
   db.exec("CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT)");
   db.exec("INSERT INTO foo (name) VALUES ('foo')");
   const prepared = db.prepare("SELECT * FROM foo");
-  expect(() => db.close(true)).toThrow("database is locked");
-  prepared.finalize();
+  expect(() => db.close(true)).not.toThrow();
+  expect(() => prepared.all()).toThrow("Statement has finalized");
   expect(() => db.close(true)).not.toThrow();
 });
 
@@ -1558,19 +1558,38 @@ it("close() should NOT throw an error if the database is in use", () => {
   db.exec("CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT)");
   db.exec("INSERT INTO foo (name) VALUES ('foo')");
   const prepared = db.prepare("SELECT * FROM foo");
-  expect(() => db.close()).not.toThrow("database is locked");
+  expect(() => db.close()).not.toThrow();
+  expect(() => prepared.all()).toThrow("Statement has finalized");
 });
 
-it("should dispose AND throw an error if the database is in use", () => {
+// https://github.com/oven-sh/bun/issues/11418
+it("close(true) works after db.prepare()'d statements were dropped without finalize (drizzle-orm pattern)", () => {
+  const db = new Database(":memory:");
+  db.exec("CREATE TABLE t (a INTEGER)");
+  // drizzle-orm/bun-sqlite's session prepareQuery() does this: prepare a
+  // statement, run it, let the reference fall out of scope. The wrapper is not
+  // finalized until GC, which previously made sqlite3_close() report "database
+  // is locked".
+  (() => {
+    db.prepare("INSERT INTO t VALUES (?)").run(1);
+  })();
+  (() => {
+    expect(db.prepare("SELECT * FROM t").all()).toEqual([{ a: 1 }]);
+  })();
+  expect(() => db.close(true)).not.toThrow();
+});
+
+it("should dispose without throwing when a prepared statement is still live", () => {
+  let prepared;
   expect(() => {
-    let prepared;
     {
       using db = new Database(":memory:");
       db.exec("CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT)");
       db.exec("INSERT INTO foo (name) VALUES ('foo')");
       prepared = db.prepare("SELECT * FROM foo");
     }
-  }).toThrow("database is locked");
+  }).not.toThrow();
+  expect(() => prepared.all()).toThrow("Statement has finalized");
 });
 
 it("should dispose", () => {
@@ -1664,11 +1683,13 @@ it("#13082", async () => {
       return stmt;
     })();
     Bun.gc(true);
-    await Bun.sleep(100);
+    await Bun.sleep(1);
     Bun.gc(true);
-    stmt.all();
-    stmt.get();
-    stmt.run();
+    // close() finalizes outstanding statements, so these throw rather than
+    // reading the closed database. The original bug was a segfault here.
+    expect(() => stmt.all()).toThrow("Statement has finalized");
+    expect(() => stmt.get()).toThrow("Statement has finalized");
+    expect(() => stmt.run()).toThrow("Statement has finalized");
   }
 
   const count = 100;
@@ -1677,7 +1698,8 @@ it("#13082", async () => {
     runs[i] = run();
   }
 
-  await Promise.allSettled(runs);
+  const results = await Promise.allSettled(runs);
+  for (const r of results) expect(r.status).toBe("fulfilled");
 });
 
 // The internal SQL.run / SQL.prepare / SQL.isInTransaction helpers used to

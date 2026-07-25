@@ -396,15 +396,19 @@ describe.each(["content-length", "chunked"] as const)("fetch() abandoned Respons
           /* js */ `
         const net = require("node:net");
         const CHUNK = Buffer.alloc(65536, 0x61);
-        const TOTAL = 64 * 1024 * 1024;
+        // Body must exceed kernel loopback send+recv autotuning (approaching
+        // 256 MiB on some CI hosts) so the server's push() blocks before
+        // reaching TOTAL; the server only actually writes until it blocks.
+        const TOTAL = 1024 * 1024 * 1024;
         const chunked = ${JSON.stringify(encoding === "chunked")};
-        let written = 0;
-        let conns = 0;
+        const conns = [];
         const { promise: settled, resolve: settle } = Promise.withResolvers();
         const server = net.createServer(socket => {
-          conns++;
+          const c = { written: 0 };
+          conns.push(c);
+          const first = conns.length === 1;
           socket.on("error", () => {});
-          socket.on("close", () => settle("closed"));
+          if (first) socket.on("close", () => settle("closed"));
           socket.once("data", () => {
             const head = chunked
               ? "HTTP/1.1 200 OK\\r\\nTransfer-Encoding: chunked\\r\\n\\r\\n"
@@ -417,11 +421,11 @@ describe.each(["content-length", "chunked"] as const)("fetch() abandoned Respons
             const push = () => {
               while (sent < TOTAL && !socket.destroyed) {
                 sent += CHUNK.length;
-                written += CHUNK.length;
+                c.written += CHUNK.length;
                 if (!socket.write(frame)) return void socket.once("drain", push);
               }
               if (chunked && !socket.destroyed) socket.write("0\\r\\n\\r\\n");
-              settle("drained");
+              if (first) settle("drained");
             };
             push();
           });
@@ -442,9 +446,10 @@ describe.each(["content-length", "chunked"] as const)("fetch() abandoned Respons
           Bun.gc(true);
           await Bun.sleep(0);
         }
-        // Either the server sees the socket close (fix) or it finishes pushing
-        // the whole body into a still-open socket (the old drain-to-pool path).
+        // Either the server sees the first socket close (fix) or it finishes
+        // pushing the whole body into a still-open socket (the drain path).
         const outcome = await settled;
+        const written = conns[0].written;
 
         let second = "skipped";
         if (outcome === "closed") {
@@ -455,7 +460,7 @@ describe.each(["content-length", "chunked"] as const)("fetch() abandoned Respons
           second = r2.status === 200 ? "ok" : String(r2.status);
         }
 
-        process.stdout.write(JSON.stringify({ outcome, written, total: TOTAL, conns, second }));
+        process.stdout.write(JSON.stringify({ outcome, written, total: TOTAL, conns: conns.length, second }));
         process.exit(0);
       `,
         ],
@@ -467,17 +472,15 @@ describe.each(["content-length", "chunked"] as const)("fetch() abandoned Respons
       if (!stdout) throw new Error(`client exited ${exitCode}: ${stderr}`);
       const { outcome, written, total, conns, second } = JSON.parse(stdout);
       // Before the fix the finalizer resumed the transport and the server wrote
-      // the full 64 MiB before pooling the socket (outcome "drained", conns 1).
-      // After, the server sees the close at the kernel send+recv window, well
-      // under half of 64 MiB on any lane, and the second fetch opens a fresh
-      // connection.
+      // the full body before pooling the socket (outcome "drained", conns 1).
+      // After, the server sees the close at the kernel send+recv window and the
+      // second fetch opens a fresh connection.
       expect({ outcome, drained: written >= total, conns, second }).toEqual({
         outcome: "closed",
         drained: false,
         conns: 2,
         second: "ok",
       });
-      expect(written).toBeLessThan(total / 2);
       expect(exitCode).toBe(0);
     },
     30_000,

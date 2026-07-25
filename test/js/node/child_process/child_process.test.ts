@@ -1,7 +1,7 @@
 import { semver, write } from "bun";
 import { afterAll, beforeEach, describe, expect, it } from "bun:test";
 import fs from "fs";
-import { bunEnv, bunExe, isLinux, isPosix, isWindows, nodeExe, runBunInstall, shellExe, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isLinux, isPosix, isWindows, nodeExe, runBunInstall, shellExe, tempDir, tmpdirSync } from "harness";
 import { ChildProcess, exec, execFile, execFileSync, execSync, fork, spawn, spawnSync } from "node:child_process";
 import { getEventListeners, once, setMaxListeners } from "node:events";
 import { promisify } from "node:util";
@@ -288,6 +288,52 @@ describe("spawn()", () => {
     });
     expect(end!).toBeDefined();
     expect(end! - start < 2000).toBe(true);
+  });
+
+  it("should deliver the timeout kill even after child.unref()", async () => {
+    using dir = tempDir("child-process-timeout-unref", {
+      "parent.js": `
+        const { spawn } = require("node:child_process");
+        const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 100)"], {
+          timeout: 500,
+          stdio: "ignore",
+        });
+        process.stdout.write(String(child.pid));
+        child.unref();
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), path.join(String(dir), "parent.js")],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const pid = parseInt(stdout, 10);
+    expect(pid).toBeGreaterThan(0);
+    expect(exitCode).toBe(0);
+
+    // The parent has exited. The timeout timer must have kept its event loop
+    // alive long enough to send the kill signal, so the grandchild should be
+    // dead (or dying) now rather than orphaned.
+    let alive = true;
+    for (let i = 0; alive && i < 100; i++) {
+      try {
+        process.kill(pid, 0);
+      } catch {
+        alive = false;
+      }
+      if (alive) await Bun.sleep(10);
+    }
+    if (alive) {
+      try {
+        process.kill(pid);
+      } catch {}
+    }
+    expect(alive).toBe(false);
   });
 
   it("should allow us to set env", async () => {

@@ -546,6 +546,9 @@ impl Source {
                     enable_color = Some(false);
                 } else if Self::is_color_terminal() && (is_stdout_tty || is_stderr_tty) {
                     enable_color = Some(true);
+                } else if env_var::TERM.get().unwrap_or(b"") != b"dumb" && is_ansi_capable_ci()
+                {
+                    enable_color = Some(true);
                 }
 
                 ENABLE_ANSI_COLORS_STDOUT
@@ -890,6 +893,36 @@ fn compute_color_depth() -> ColorDepth {
     }
 
     ColorDepth::None
+}
+
+/// CI environments whose log viewers render ANSI escape sequences. On such a
+/// system we enable color output even when stdout/stderr are pipes. The
+/// provider list is the same one used by Node's `tty.WriteStream#getColorDepth`
+/// (`src/js/internal/tty.ts`) and `chalk/supports-color`, so behaviour matches
+/// the broader ecosystem. Bare `CI` without a known provider stays uncoloured.
+#[cfg(not(target_arch = "wasm32"))]
+fn is_ansi_capable_ci() -> bool {
+    macro_rules! set {
+        ($k:literal) => {
+            crate::getenv_z(crate::zstr!($k)).is_some()
+        };
+    }
+    // Azure DevOps does not set `CI`.
+    if set!("TF_BUILD") && set!("AGENT_NAME") {
+        return true;
+    }
+    if !set!("CI") {
+        return false;
+    }
+    set!("GITHUB_ACTIONS")
+        || set!("GITEA_ACTIONS")
+        || set!("GITLAB_CI")
+        || set!("CIRCLECI")
+        || set!("TRAVIS")
+        || set!("APPVEYOR")
+        || set!("BUILDKITE")
+        || set!("DRONE")
+        || crate::getenv_z(crate::zstr!("CI_NAME")) == Some(b"codeship")
 }
 
 // ──────────────────────────────────────────────────────────────────────────

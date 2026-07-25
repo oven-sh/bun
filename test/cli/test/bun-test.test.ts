@@ -404,6 +404,90 @@ describe("bun test", () => {
       expect(stderr).toHaveTestTimedOutAfter(5000);
     }, 10000);
   });
+  describe("color output", () => {
+    // Env vars that influence color detection must all be scrubbed so the
+    // only signals the child sees are the ones each case sets.
+    const colorNeutralEnv = {
+      NO_COLOR: undefined,
+      FORCE_COLOR: undefined,
+      CI: undefined,
+      GITHUB_ACTIONS: undefined,
+      GITEA_ACTIONS: undefined,
+      GITLAB_CI: undefined,
+      CIRCLECI: undefined,
+      TRAVIS: undefined,
+      APPVEYOR: undefined,
+      BUILDKITE: undefined,
+      DRONE: undefined,
+      CI_NAME: undefined,
+      TF_BUILD: undefined,
+      AGENT_NAME: undefined,
+      TERM: undefined,
+      COLORTERM: undefined,
+      TERM_PROGRAM: undefined,
+      TMUX: undefined,
+      NODE_DISABLE_COLORS: undefined,
+    } as const;
+
+    const colorCases: Array<[string, Record<string, string>, boolean]> = [
+      ["piped, no CI env", {}, false],
+      ["CI=true alone (unknown provider)", { CI: "true" }, false],
+      ["CI + GITHUB_ACTIONS", { CI: "true", GITHUB_ACTIONS: "true" }, true],
+      ["CI + GITEA_ACTIONS", { CI: "true", GITEA_ACTIONS: "true" }, true],
+      ["CI + GITLAB_CI", { CI: "true", GITLAB_CI: "true" }, true],
+      ["CI + CIRCLECI", { CI: "true", CIRCLECI: "true" }, true],
+      ["CI + BUILDKITE", { CI: "true", BUILDKITE: "true" }, true],
+      ["CI + TRAVIS", { CI: "true", TRAVIS: "1" }, true],
+      ["CI + APPVEYOR", { CI: "True", APPVEYOR: "True" }, true],
+      ["CI + DRONE", { CI: "true", DRONE: "true" }, true],
+      ["CI + CI_NAME=codeship", { CI: "true", CI_NAME: "codeship" }, true],
+      ["Azure DevOps (TF_BUILD + AGENT_NAME)", { TF_BUILD: "True", AGENT_NAME: "a" }, true],
+      ["GITHUB_ACTIONS without CI", { GITHUB_ACTIONS: "true" }, false],
+      ["CI + GITHUB_ACTIONS + NO_COLOR=1", { CI: "true", GITHUB_ACTIONS: "true", NO_COLOR: "1" }, false],
+      ["CI + GITHUB_ACTIONS + TERM=dumb", { CI: "true", GITHUB_ACTIONS: "true", TERM: "dumb" }, false],
+    ];
+
+    test.concurrent.each(colorCases)("Bun.enableANSIColors: %s", async (_name, extra, expected) => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", "process.stdout.write(String(Bun.enableANSIColors))"],
+        env: { ...bunEnv, ...colorNeutralEnv, ...extra },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout).toBe(String(expected));
+      expect(exitCode).toBe(0);
+    });
+
+    // https://github.com/oven-sh/bun/issues/8070
+    test("bun test emits ANSI colors under GITHUB_ACTIONS with piped output", () => {
+      const stderr = runTest({
+        input: `
+          import { test, expect } from "bun:test";
+          test("pass", () => { expect(1).toBe(1); });
+          test("fail", () => { expect(1).toBe(2); });
+        `,
+        env: { ...colorNeutralEnv, CI: "true", GITHUB_ACTIONS: "true" },
+      });
+      expect(stderr).toContain("\x1b[");
+      // `::error` annotations themselves stay plain text for the Actions parser.
+      for (const line of stderr.split("\n")) {
+        if (line.startsWith("::error")) expect(line).not.toContain("\x1b[");
+      }
+    });
+
+    test("bun test emits no ANSI colors under bare CI with piped output", () => {
+      const stderr = runTest({
+        input: `
+          import { test, expect } from "bun:test";
+          test("pass", () => { expect(1).toBe(1); });
+        `,
+        env: { ...colorNeutralEnv, CI: "true" },
+      });
+      expect(stderr).not.toContain("\x1b[");
+    });
+  });
   describe("support for Github Actions", () => {
     test("should not group logs by default", () => {
       const stderr = runTest({

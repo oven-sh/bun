@@ -104,6 +104,8 @@ pub fn scan_imports_and_exports(
     let entry_point_kinds: *mut [EntryPoint::Kind] = files.entry_point_kind;
     let named_imports: *mut [NamedImports] = ast.named_imports;
     let named_exports: *mut [NamedExports] = ast.named_exports;
+    let commonjs_named_exports: *mut [bundled_ast::CommonJSNamedExports] =
+        ast.commonjs_named_exports;
     let flags: *mut [js_meta::Flags] = meta.flags;
     let ast_flags_list: *mut [AstFlags] = ast.flags;
     let export_star_import_records: *mut [bun_alloc::AstVec<u32>] = ast.export_star_import_records;
@@ -236,8 +238,19 @@ pub fn scan_imports_and_exports(
                     ImportKind::Dynamic => {
                         if !this.graph.code_splitting {
                             // If we're not splitting, then import() is just a require() that
-                            // returns a promise, so the imported file must be a CommonJS module
-                            if col_ref!(exports_kind)[other_file] == ExportsKind::Esm {
+                            // returns a promise, so the imported file must be a CommonJS module.
+                            //
+                            // FORCE_CJS_TO_ESM alone is path-based, so check for CJS syntax too.
+                            let was_converted_from_cjs = other_flags
+                                .contains(AstFlags::FORCE_CJS_TO_ESM)
+                                && col_ref!(commonjs_named_exports)[other_file].count() > 0;
+                            if was_converted_from_cjs
+                                && !col_ref!(entry_point_kinds)[other_file].is_entry_point()
+                            {
+                                // Keep the CJS wrapper so __toESM supplies `.default`.
+                                col!(exports_kind)[other_file] = ExportsKind::Cjs;
+                                col!(flags)[other_file].wrap = WrapKind::Cjs;
+                            } else if col_ref!(exports_kind)[other_file] == ExportsKind::Esm {
                                 col!(flags)[other_file].wrap = WrapKind::Esm;
                             } else {
                                 // TODO: introduce a NamedRequire for require("./foo").Bar AST nodes to support tree-shaking those.

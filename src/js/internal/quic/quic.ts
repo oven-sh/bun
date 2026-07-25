@@ -4564,12 +4564,9 @@ class QuicEndpoint {
       if (typeof timer?.unref === "function") timer.unref();
       return;
     }
-    // connect() created this endpoint and the caller holds no reference to it
-    // past session.close(): endpointRegistry is the only root, so without this
-    // the bound UDP fd and native engine leak for the life of the process.
-    // Deferred because session.destroy() calls us before it reaches
-    // #handle.destroy(), which is what queues the session's CONNECTION_CLOSE.
     if (inner.closeOnIdle) {
+      // Deferred: session.destroy() calls us before #handle.destroy() has
+      // queued the session's CONNECTION_CLOSE.
       queueMicrotask(() => {
         if (!this.destroyed && !inner.isPendingClose && !inner.listening && inner.sessions.size === 0) {
           inner.suppressCloseChannels = true;

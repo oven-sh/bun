@@ -286,6 +286,36 @@ describe.concurrent("require() reads module source through fs.readFileSync", () 
     expect(exitCode).toBe(0);
   });
 
+  test("unknown-extension and extensionless requires with no handler still route through the override", async () => {
+    const { stdout, stderr, exitCode } = await run(
+      {
+        "main.cjs": `
+          const fs = require('fs');
+          const path = require('path');
+          const conf = path.join(__dirname, 'app.conf');
+          const bin = path.join(__dirname, 'script');
+          const origReadFileSync = fs.readFileSync;
+          fs.readFileSync = function (...args) {
+            if (args[0] === conf) return 'module.exports = "PATCHED-CONF";';
+            if (args[0] === bin) return 'module.exports = "PATCHED-BIN";';
+            return origReadFileSync(...args);
+          };
+          try {
+            console.log(JSON.stringify([require(conf), require(bin)]));
+          } finally {
+            fs.readFileSync = origReadFileSync;
+          }
+        `,
+        "app.conf": `module.exports = "ORIGINAL-CONF";`,
+        "script": `module.exports = "ORIGINAL-BIN";`,
+      },
+      "main.cjs",
+    );
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual(["PATCHED-CONF", "PATCHED-BIN"]);
+    expect(exitCode).toBe(0);
+  });
+
   test("installing via Object.defineProperty is observed too", async () => {
     const { stdout, stderr, exitCode } = await run(
       {

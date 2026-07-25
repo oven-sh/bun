@@ -525,6 +525,23 @@ const cases: Case[] = [
     loose: true,
   },
   {
+    name: "a DataView with an extra own string-named property",
+    a: () => withExtraProperty(new DataView(new ArrayBuffer(2))),
+    b: () => new DataView(new ArrayBuffer(2)),
+    strict: false,
+    loose: false,
+  },
+  {
+    // node's DataView compare uses getOwnNonIndexProperties; an integer-index
+    // own property is ignored, like on typed arrays.
+    name: "a DataView with an extra integer-index own property",
+    a: () => Object.assign(new DataView(new ArrayBuffer(2)), { 0: 1 }),
+    b: () => new DataView(new ArrayBuffer(2)),
+    strict: true,
+    loose: true,
+    looseBug: "reports not equal",
+  },
+  {
     name: "a Buffer and a Uint8Array with the same bytes",
     a: () => Buffer.from([1]),
     b: () => new Uint8Array([1]),

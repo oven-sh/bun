@@ -1347,10 +1347,10 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
         if (!WTF::equalSpans(std::span { static_cast<const uint8_t*>(left->vector()), byteLength },
                 std::span { static_cast<const uint8_t*>(right->vector()), byteLength }))
             return false;
-        if constexpr (checkPrototypes) {
-            break;
-        }
-        return true;
+        // node compares DataView own properties via getOwnNonIndexProperties
+        // (an extra integer-index key is ignored), so compare the non-index
+        // keys directly instead of falling through to the full own-key walk.
+        return nonIndexOwnPropertiesEqual<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, gcBuffer, stack, scope, left, right);
     }
     case JSDateType: {
         if (c2Type != JSDateType) {

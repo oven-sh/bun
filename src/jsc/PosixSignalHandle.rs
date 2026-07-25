@@ -245,9 +245,13 @@ pub(crate) fn emit_watch_kill_signal_before_reload(global_object: &JSGlobalObjec
     if sig == 0 || is_uncatchable_signal(i32::from(sig)) {
         return;
     }
+    // Set once and left set: after the handler returns the caller proceeds
+    // straight through persist_now() into reload_process() without yielding,
+    // and the grace-timer thread treats this flag as "JS thread is doing
+    // watch-reload work" for its deadline extension. execve replaces the
+    // image, so nothing needs to clear it.
     IS_EMITTING_WATCH_KILL_SIGNAL.store(true, Ordering::Relaxed);
     let _ = Bun__onSignalForJS(i32::from(sig), global_object);
-    IS_EMITTING_WATCH_KILL_SIGNAL.store(false, Ordering::Relaxed);
 }
 
 impl PosixSignalTask {

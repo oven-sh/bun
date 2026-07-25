@@ -3393,6 +3393,7 @@ extern "C" void JSGlobalObject__clearTerminationException(JSC::JSGlobalObject* g
 }
 
 extern "C" void Bun__queueTask(JSC::JSGlobalObject*, WebCore::EventLoopTask* task);
+extern "C" void Bun__queueTaskNextLoopIteration(JSC::JSGlobalObject*, WebCore::EventLoopTask* task);
 extern "C" void Bun__queueTaskConcurrently(JSC::JSGlobalObject*, WebCore::EventLoopTask* task);
 extern "C" [[ZIG_EXPORT(check_slow)]] void Bun__performTask(Zig::GlobalObject* globalObject, WebCore::EventLoopTask* task)
 {
@@ -3422,6 +3423,11 @@ RefPtr<Performance> GlobalObject::performance()
 void GlobalObject::queueTask(WebCore::EventLoopTask* task)
 {
     Bun__queueTask(this, task);
+}
+
+void GlobalObject::queueTaskNextLoopIteration(WebCore::EventLoopTask* task)
+{
+    Bun__queueTaskNextLoopIteration(this, task);
 }
 
 void GlobalObject::queueTaskConcurrently(WebCore::EventLoopTask* task)

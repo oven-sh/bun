@@ -179,8 +179,20 @@ void MessagePortPipe::drainAndDispatch(uint8_t side, ScriptExecutionContextIdent
         }
     }
 
-    if (rescheduleCtx)
-        scheduleDrain(side, rescheduleCtx);
+    if (rescheduleCtx) {
+        // Limit exhausted with messages still queued (a handler kept sending).
+        // Resume on the NEXT event-loop iteration, not via postTask: the tick's
+        // task loop drains tasks queued by tasks, so an ordinary post would run
+        // this drain again before the loop ever polls I/O or fires timers — a
+        // same-thread ping-pong pair would starve setTimeout forever. Node
+        // yields the same way here (TriggerAsync in MessagePort::OnMessage:
+        // the uv_async fires next iteration, after due timers).
+        // We are on `rescheduleCtx`'s thread (it == expectedCtx, checked in the
+        // loop), so `context` is this thread's live context.
+        context->postTaskNextLoopIteration([pipe = Ref { *this }, side, ctxId = rescheduleCtx](ScriptExecutionContext&) {
+            pipe->drainAndDispatch(side, ctxId);
+        });
+    }
 }
 
 std::optional<MessageWithMessagePorts> MessagePortPipe::takeOne(uint8_t side)

@@ -112,6 +112,10 @@ public:
     void postTaskConcurrently(Function<void(ScriptExecutionContext&)>&& lambda);
     // Executes the task on context's thread asynchronously.
     void postTask(Function<void(ScriptExecutionContext&)>&& lambda);
+    // Executes the task on this context's thread on the *next* event-loop
+    // iteration (after I/O poll + due timers). Must be called on this
+    // context's own thread.
+    void postTaskNextLoopIteration(Function<void(ScriptExecutionContext&)>&& lambda);
     // Executes the task on context's thread asynchronously.
     void postTask(EventLoopTask* task);
 

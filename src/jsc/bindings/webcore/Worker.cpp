@@ -342,7 +342,12 @@ void Worker::drainToWorker(ScriptExecutionContext& context)
         globalObject->globalEventScope->dispatchEvent(event);
     });
     if (reschedule) {
-        ScriptExecutionContext::postTaskTo(m_clientIdentifier, [protectedThis = Ref { *this }](ScriptExecutionContext& ctx) {
+        // Budget spent with messages left: resume on the next loop iteration
+        // (we are on the worker thread, `context` is its live context). An
+        // ordinary post would re-run in the same tick's drain-until-empty task
+        // loop and starve the worker's timers under a sustained sender — see
+        // MessagePortPipe::drainAndDispatch.
+        context.postTaskNextLoopIteration([protectedThis = Ref { *this }](ScriptExecutionContext& ctx) {
             protectedThis->drainToWorker(ctx);
         });
     }
@@ -360,7 +365,9 @@ void Worker::drainToParent(ScriptExecutionContext& context)
         dispatchEvent(event);
     });
     if (reschedule) {
-        postTaskToParent([protectedThis = Ref { *this }](ScriptExecutionContext& c) {
+        // Same yield as drainToWorker: this runs on the parent thread, so
+        // `context` is the parent context this task was dispatched on.
+        context.postTaskNextLoopIteration([protectedThis = Ref { *this }](ScriptExecutionContext& c) {
             protectedThis->drainToParent(c);
         });
     }

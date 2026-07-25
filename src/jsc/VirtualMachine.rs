@@ -1107,6 +1107,7 @@ impl VirtualMachine {
             && ((active as usize)
                 + self.active_tasks
                 + el.tasks.readable_length()
+                + el.next_loop_iteration_tasks.len()
                 + (el.has_pending_refs() as usize)
                 > 0)
     }

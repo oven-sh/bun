@@ -31,7 +31,6 @@ use crate::{
 // so assignments at the two `.tag = Workspace` sites type-check.
 use crate::bin_real::ToJsonStyle;
 use crate::config_version::ConfigVersion;
-use crate::extract_tarball as ExtractTarball;
 use crate::integrity::Integrity;
 use crate::npm::Negatable;
 use crate::package_manager_real::Options as PackageManagerOptions;
@@ -253,9 +252,9 @@ impl Stringifier {
                         if pkg_metas[i].integrity.tag.is_supported() {
                             continue;
                         }
-                        // No supported integrity: only v2-clean if the tarball
-                        // URL is under the *default* registry, the one case the
-                        // writer normalizes to `""` (see the npm URL
+                        // No supported integrity: only v2-clean if the URL is
+                        // already empty or under the *default* registry, the
+                        // cases the writer serializes as `""` (see the npm URL
                         // serialization in `save_from_binary_inner`). An empty
                         // URL never sets the parser's `npm_url_needs_integrity`,
                         // so that round-trips for any reader. A URL under a
@@ -267,7 +266,9 @@ impl Stringifier {
                         // without that scope then fails to parse. Stay at v1 for
                         // those so the file keeps loading everywhere.
                         let url = res.npm().url.slice(buf);
-                        if !url_is_under_registry(url, Npm::Registry::DEFAULT_URL.as_bytes()) {
+                        if !url.is_empty()
+                            && !url_is_under_registry(url, Npm::Registry::DEFAULT_URL.as_bytes())
+                        {
                             return Version::V1;
                         }
                     }
@@ -2381,25 +2382,14 @@ pub fn parse_into_binary_lockfile(
                     return Err(ParseError::InvalidPackageInfo);
                 };
 
-                if registry_str.is_empty() {
-                    // Use scope-specific registry if available, otherwise fall back to default
-                    let registry_url = if let Some(mgr) = manager.as_deref() {
-                        mgr.scope_for_package_name(name_str).url.href()
-                    } else {
-                        Npm::Registry::DEFAULT_URL.as_bytes()
-                    };
-
-                    let url = ExtractTarball::build_url(
-                        registry_url,
-                        &strings::StringOrTinyString::init(
-                            name.slice(lockfile.buffers.string_bytes.as_slice()),
-                        ),
-                        res.npm().version,
-                        lockfile.buffers.string_bytes.as_slice(),
-                    )?;
-
-                    res.npm_mut().url = sbuf!(lockfile).append(url)?;
-                } else {
+                // `""` means the tarball lives at the canonical path under the
+                // reader's configured registry. Keep the URL empty in memory so
+                // it round-trips as `""` on save; materializing the configured
+                // registry's URL here would get written back verbatim, pinning
+                // the shared lockfile to this machine's registry config
+                // (#35524). The download path rebuilds the URL from the
+                // configured scope when it's empty (`NetworkTask::for_tarball`).
+                if !registry_str.is_empty() {
                     let configured_registry = if let Some(mgr) = manager.as_deref() {
                         mgr.scope_for_package_name(name_str).url.href()
                     } else {

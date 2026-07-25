@@ -1775,8 +1775,22 @@ describe("deno_task", () => {
         });
         const res = await fetch(`http://127.0.0.1:${srv.port}/`);
         const { exitCode, stderr } = await $`cat < ${res}`.quiet().nothrow();
-        expect(stderr.toString()).toMatch(/failed to read Response body/);
+        expect(stderr.toString()).toMatch(/failed to read body for stdin redirect/);
         expect(exitCode).toBe(1);
+      });
+
+      test("Bun.write on the same body throws and the shell still settles", async () => {
+        const [res, stop] = await served(500_000);
+        try {
+          using dir = tempDir("shell-body-write", {});
+          const p = $`cat < ${res}`.quiet();
+          p.run();
+          expect(() => Bun.write(join(String(dir), "out"), res)).toThrow(/already used/i);
+          const { stdout } = await p;
+          expect(stdout.length).toBe(500_000);
+        } finally {
+          stop();
+        }
       });
 
       // Bodies that never had a native producer attached, or whose body has

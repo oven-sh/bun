@@ -461,7 +461,7 @@ impl Cmd {
                 interp,
                 this,
                 format_args!(
-                    "bun: failed to read Response body for stdin redirect: {}\n",
+                    "bun: failed to read body for stdin redirect: {}\n",
                     js_err.fmt_string(global),
                 ),
             )

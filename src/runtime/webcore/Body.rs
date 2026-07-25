@@ -324,7 +324,11 @@ impl PendingValue {
     ) -> Option<DeferredStartBuffering> {
         // No producer `task` means nothing will ever call `resolve` on this body.
         let producer_task = self.task?;
-        if self.readable.has() || self.promise.is_some() || self.on_receive_value.is_some() {
+        if self.readable.has()
+            || self.promise.is_some()
+            || self.on_receive_value.is_some()
+            || !self.action.is_none()
+        {
             return None;
         }
         let on_start_buffering = self.on_start_buffering.take();

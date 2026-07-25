@@ -192,6 +192,7 @@ describe.concurrent("primordials survive tampering", () => {
       const pristine = { __proto__: null };
       for (let i = 0; i < rows.length; i++) pristine[rows[i].name] = liveValue(rows[i]);
       const poison = function poisoned() { return "poisoned"; };
+      const canaryBefore = holderObjects.ArrayPrototype.push;
 
       // 1. Plain assignment, Reflect.set, and defineProperty (value + accessor) on every key.
       for (let i = 0; i < rows.length; i++) {
@@ -231,10 +232,10 @@ describe.concurrent("primordials survive tampering", () => {
       // observe the toJSON planted on Object.prototype (spec-correct behavior).
       let changed = "";
       for (let i = 0; i < after.length; i++) if (after[i].value !== pristine[after[i].name]) changed += (changed ? "," : "") + after[i].name;
-      reportAndExit({ __proto__: null, changed });
+      reportAndExit({ __proto__: null, changed, tampered: holderObjects.ArrayPrototype.push !== canaryBefore });
     `);
     expect(stderr).toBe("");
-    expect(JSON.parse(stdout)).toEqual({ changed: "" });
+    expect(JSON.parse(stdout)).toEqual({ changed: "", tampered: true });
     expect(exitCode).toBe(0);
   });
 

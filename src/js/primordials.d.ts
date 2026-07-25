@@ -1,4 +1,5 @@
 // GENERATED FILE — do not edit. Regenerate with: bun src/codegen/generate-primordials-dts.ts
+// oxlint-disable typescript/no-wrapper-object-types -- wrapper types model real prototype receivers
 //
 // Tamper-proof references to the original ECMAScript builtins, exposed by JSC
 // (JSCPrimordials.h) as link-time constants and named after Node.js's primordials.

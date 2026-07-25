@@ -2143,10 +2143,8 @@ impl Resolver {
             // SAFETY: `channel` is the live handle from `ares_init_options`, owned by this resolver.
             unsafe { c_ares::Channel::destroy(channel) };
         }
-        // Native-backend lookups (libinfo/libc/libuv) occupy
-        // `pending_host_cache_native` and are not cancelled by `ares_destroy`,
-        // so every EDESTRUCTION callback's `request_completed()` takes the
-        // `add_timer` branch while one is in flight; drop the timer (and its
+        // Native-backend lookups (`pending_host_cache_native`) are not cancelled
+        // by `ares_destroy`, so the timer may still be linked; drop it (and its
         // +1 ref / uws active-handle) explicitly.
         self.remove_timer();
     }
@@ -4162,16 +4160,10 @@ impl Resolver {
         false
     }
 
-    /// Arm the retransmit timer for a just-dispatched query.
-    ///
-    /// c-ares callers must invoke this *before* handing the request to the
-    /// channel (`Channel::resolve` / `get_host_by_addr` / `get_addr_info` /
-    /// `get_name_info`): those entry points may invoke the completion callback
-    /// synchronously (e.g. `ARES_EBADNAME` for a malformed name, `ARES_ENOTIMP`
-    /// for an unparseable IP), and that callback's `request_completed()` →
-    /// `remove_timer()` must see the timer as ACTIVE so the `ref_()`/`deref()`
-    /// pair on this resolver stays balanced. Native backends (libinfo/libc/
-    /// libuv) are truly async so ordering does not matter there.
+    /// Arm the retransmit timer. Call *before* handing the request to c-ares:
+    /// dispatch can fire the completion callback synchronously (EBADNAME/
+    /// ENOTIMP/…), and its `request_completed()` must see the timer ACTIVE so
+    /// the `ref_()`/`deref()` pair balances.
     fn request_sent(&self, _vm: &VirtualMachine) {
         let _ = self.add_timer(None);
     }

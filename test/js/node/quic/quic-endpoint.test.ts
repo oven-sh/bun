@@ -287,7 +287,9 @@ describe("node:quic in a Worker", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout, exitCode }).toEqual({ stdout: "PASS\n", exitCode: 0 });
-    void stderr;
-  }, 60000);
+    // stderr carries the per-worker ExperimentalWarning (random blob URLs) on
+    // a clean run and the ASAN report on regression; keep it in the received
+    // object so the failure diff shows which callback UAF'd.
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "PASS\n", stderr: expect.any(String), exitCode: 0 });
+  }, 120000);
 });

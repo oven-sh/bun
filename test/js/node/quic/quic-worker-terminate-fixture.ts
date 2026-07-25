@@ -54,12 +54,15 @@ const src = `
   await new Promise(() => {});
 `;
 
-for (let round = 0; round < 6; round++) {
+for (let round = 0; round < 10; round++) {
   const w = new Worker(src, { eval: true, workerData });
   await new Promise<void>((resolve, reject) => {
     w.once("message", () => resolve());
     w.once("error", reject);
   });
+  // No observable signal to await: terminate() must land at a varied phase
+  // of the connect/stream churn so the sweep sees live wrappers; awaiting a
+  // specific worker event would collapse that distribution.
   await Bun.sleep(200 + ((round * 53) % 300));
   await w.terminate();
 }

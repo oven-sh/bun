@@ -1804,13 +1804,12 @@ class QuicStream {
     const inner = this.#inner;
     if (fn === undefined) {
       inner.onheaders = undefined;
-      inner.state.wantsHeaders = false;
     } else {
       validateFunction(fn, "onheaders");
       assertHeadersSupported(inner.session);
       inner.onheaders = FunctionPrototypeBind(fn, this);
-      inner.state.wantsHeaders = true;
     }
+    inner.state.wantsHeaders = inner.onheaders !== undefined || inner.ontrailers !== undefined || inner.oninfo !== undefined;
   }
 
   /** @type {Function|undefined} */
@@ -1829,6 +1828,7 @@ class QuicStream {
       assertHeadersSupported(inner.session);
       inner.oninfo = FunctionPrototypeBind(fn, this);
     }
+    inner.state.wantsHeaders = inner.onheaders !== undefined || inner.ontrailers !== undefined || inner.oninfo !== undefined;
   }
 
   /** @type {Function|undefined} */
@@ -1847,6 +1847,7 @@ class QuicStream {
       assertHeadersSupported(inner.session);
       inner.ontrailers = FunctionPrototypeBind(fn, this);
     }
+    inner.state.wantsHeaders = inner.onheaders !== undefined || inner.ontrailers !== undefined || inner.oninfo !== undefined;
   }
 
   /** @type {Function|undefined} */
@@ -2525,7 +2526,6 @@ class QuicStream {
 
     switch (kindName) {
       case "initial":
-        assert(inner.onheaders, "Unexpected stream headers event");
         inner.headers ??= block;
         if (onStreamHeadersChannel.hasSubscribers) {
           onStreamHeadersChannel.publish({
@@ -2535,7 +2535,12 @@ class QuicStream {
             headers: block,
           });
         }
-        safeCallbackInvoke(inner.onheaders, this, block);
+        {
+          // wantsHeaders is shared with ontrailers/oninfo, so the initial
+          // block can arrive with only one of those set.
+          const { onheaders } = inner;
+          if (onheaders) safeCallbackInvoke(onheaders, this, block);
+        }
         break;
       case "trailing":
         if (onStreamTrailersChannel.hasSubscribers) {

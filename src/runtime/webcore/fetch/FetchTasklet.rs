@@ -208,7 +208,6 @@ impl HTTPRequestBody {
                     segments: segs.segments,
                     idx: 0,
                     done: false,
-                    total_size,
                 },
                 ..Default::default()
             });

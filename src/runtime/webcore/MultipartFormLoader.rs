@@ -44,7 +44,6 @@ pub struct MultipartFormLoader {
     pub segments: Vec<Segment>,
     pub idx: usize,
     pub done: bool,
-    pub total_size: u64,
 }
 
 impl readable_stream::SourceContext for MultipartFormLoader {
@@ -109,8 +108,12 @@ impl readable_stream::SourceContext for MultipartFormLoader {
                             return streams::Result::Err(streams::result::StreamError::Error(err));
                         }
                         Ok(0) => {
-                            // EOF before `remain`: file shrank since stat. Stop short.
-                            *remain = 0;
+                            // File shrank after Content-Length went on the wire:
+                            // abort rather than underrun the promised length.
+                            let err = sys::Error::new(bun_errno::SystemErrno::EIO, sys::Tag::pread)
+                                .with_fd(*fd);
+                            self.clear_data();
+                            return streams::Result::Err(streams::result::StreamError::Error(err));
                         }
                         Ok(n) => {
                             written += n;

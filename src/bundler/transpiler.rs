@@ -815,15 +815,12 @@ impl<'a> Transpiler<'a> {
                 // shared config. Skip when `--env-file` was passed or when
                 // default loading is disabled (same gating as cwd defaults).
                 if env_files.is_empty() && !skip_default_env {
-                    if let Some(root_dir) = Self::workspace_root_dir_entry(
-                        dir_info,
-                        dir.dir,
-                        self.resolver.generation,
-                    ) {
+                    if let Some(root_dir) =
+                        Self::workspace_root_dir_entry(dir_info, dir.dir, self.resolver.generation)
+                    {
                         // SAFETY: BSSMap singleton owns `*root_dir`;
                         // single-threaded path, sole `&mut` for the call.
-                        let root_dir: &mut bun_resolver::fs::DirEntry =
-                            unsafe { &mut *root_dir };
+                        let root_dir: &mut bun_resolver::fs::DirEntry = unsafe { &mut *root_dir };
                         env.load_workspace_root_defaults(suffix, root_dir)?;
                     }
                 }

@@ -235,6 +235,8 @@ describe.concurrent("node-module-module", () => {
         // A module instance must reflect the prototype override while it's active.
         const reflects = new Module("x")._compile === override;
         const v1 = require("./t.js");
+        // import.meta in CJS (Bun extension) must still work when routed through _compile.
+        const metaUrl = require("./meta.cjs");
         // Restoring the original re-enables the fast path.
         Module.prototype._compile = orig;
         delete require.cache[require.resolve("./t.js")];
@@ -245,9 +247,11 @@ describe.concurrent("node-module-module", () => {
           v1,
           v2,
           reflects,
+          metaIsFileUrl: typeof metaUrl === "string" && metaUrl.startsWith("file://") && metaUrl.endsWith("meta.cjs"),
         }));
       `,
       "t.js": `module.exports = "ORIGINAL";`,
+      "meta.cjs": `module.exports = import.meta.url;`,
     });
     await using proc = Bun.spawn({
       cmd: [bunExe(), "main.cjs"],
@@ -260,10 +264,11 @@ describe.concurrent("node-module-module", () => {
     expect(stderr).toBe("");
     expect(JSON.parse(stdout)).toEqual({
       present: true,
-      hits: 1,
+      hits: 2,
       v1: "PATCHED",
       v2: "ORIGINAL",
       reflects: true,
+      metaIsFileUrl: true,
     });
     expect(exitCode).toBe(0);
   });

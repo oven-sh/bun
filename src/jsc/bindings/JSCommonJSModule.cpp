@@ -731,6 +731,13 @@ JSC_DEFINE_HOST_FUNCTION(functionJSCommonJSModule_compile, (JSGlobalObject * glo
             zigGlobalObject->m_moduleWrapperStart,
             sourceString,
             zigGlobalObject->m_moduleWrapperEnd);
+    } else if (sourceString.contains("$Bun_import_meta"_s)) [[unlikely]] {
+        // The transpiler rewrote import.meta to a sixth wrapper parameter;
+        // evaluateCommonJSModuleOnce supplies it when parameterCount() > 5.
+        wrappedString = makeString(
+            "(function(exports,require,module,__filename,__dirname,$Bun_import_meta){"_s,
+            sourceString,
+            "\n})"_s);
     } else {
         wrappedString = makeString(
             "(function(exports,require,module,__filename,__dirname){"_s,

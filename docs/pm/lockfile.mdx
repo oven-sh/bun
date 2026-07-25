@@ -61,3 +61,132 @@ When running `bun install` in a project without a `bun.lock`, Bun automatically 
 - `pnpm-lock.yaml` (pnpm)
 
 The original lockfile is preserved and can be removed manually after verification.
+
+## Format
+
+`bun.lock` is a [JSONC](https://en.wikipedia.org/wiki/JSON#JSON_with_comments) file — JSON that also allows comments and trailing commas — so it stays human-readable and produces clean, reviewable git diffs.
+
+The canonical schema is the `BunLockFile` TypeScript type shipped with [`bun-types`](https://www.npmjs.com/package/bun-types). If you have `@types/bun` (or `bun-types`) installed, you can import it directly:
+
+```ts
+import type { BunLockFile } from "bun";
+```
+
+<Note>
+  The format is versioned via the top-level `lockfileVersion` field. Tooling that reads `bun.lock` should branch on `lockfileVersion` rather than assume a fixed shape.
+</Note>
+
+### Top-level fields
+
+Bun writes these keys in the following order:
+
+| Field | Type | Description |
+| ----- | ---- | ----------- |
+| `lockfileVersion` | `0 \| 1 \| 2` | Version of the lockfile format. See [Versioning](#versioning). |
+| `configVersion` | `0 \| 1` | Optional. Selects the default install [linker strategy](/pm/isolated-installs). See [Versioning](#versioning). |
+| `workspaces` | `object` | Map of workspace path → workspace info. The root package uses the empty-string key `""`. See [`workspaces`](#the-workspaces-map). |
+| `trustedDependencies` | `string[]` | Optional. Packages allowed to run [lifecycle scripts](/pm/lifecycle#trusteddependencies). |
+| `patchedDependencies` | `object` | Optional. Map of `name@version` → patch file path. See [patch](/pm/cli/patch). |
+| `overrides` | `object` | Optional. Dependency version [overrides](/pm/overrides). |
+| `catalog` | `object` | Optional. The default [catalog](/pm/catalogs): a map of package name → version. |
+| `catalogs` | `object` | Optional. Named [catalogs](/pm/catalogs): a map of catalog name → (package name → version). |
+| `packages` | `object` | Map of every resolved package → a tuple describing it. See [`packages`](#the-packages-map). |
+
+### Versioning
+
+**`lockfileVersion`** is the version of the file format itself:
+
+| Version | Change |
+| ------- | ------ |
+| `0` | The original text lockfile, introduced in Bun v1.2. |
+| `1` | Stopped redundantly listing a workspace package's dependencies as a trailing object. |
+| `2` | Stricter parsing only — no change to what Bun writes for the same project. An npm package resolved to a tarball URL outside the configured registry must carry a supported integrity hash, and a git dependency's internal tag must be a safe path component. |
+
+Bun never silently upgrades an existing lockfile: re-saving keeps the `lockfileVersion` the file already had, so a `bun.lock` round-trips unchanged across machines. The one exception is a v0 lockfile, which is written back as v1 — the lowest version whose on-disk shape matches what Bun emits.
+
+**`configVersion`** is independent of `lockfileVersion` and only affects the default [linker strategy](/pm/isolated-installs):
+
+- `0` (or absent, for projects created before Bun v1.3.2) — the linker is hoisted.
+- `1` — the linker is isolated for workspaces and hoisted for single-package projects.
+
+### The `workspaces` map
+
+Each key is a workspace path relative to the project root; the root package uses the empty-string key `""`. Each value is a `BunLockFileWorkspacePackage`:
+
+```ts
+{
+  name?: string;
+  version?: string;
+  dependencies?: Record<string, string>;
+  devDependencies?: Record<string, string>;
+  optionalDependencies?: Record<string, string>;
+  peerDependencies?: Record<string, string>;
+  optionalPeers?: string[];
+  bin?: string | Record<string, string>;
+  binDir?: string;
+}
+```
+
+### The `packages` map
+
+Each key is the package's location under `node_modules`: just the package name when it is hoisted to the top level (e.g. `"lodash"`), or a `parent/name` path when it is nested under another package (e.g. `"errorhandler/accepts"`).
+
+Each value is a **tuple whose shape depends on how the package was resolved**. The first element is always `"name@specifier"`; the specifier's prefix identifies the resolution:
+
+| Resolution | Tuple |
+| ---------- | ----- |
+| npm | `["name@version", registry, info, integrity]` |
+| workspace | `["name@workspace:path"]` |
+| symlink | `["name@link:path", info]` |
+| folder | `["name@file:path", info]` |
+| tarball | `["name@specifier", info]`, plus a trailing `integrity` string when one is known |
+| git / github | `["name@git+url" \| "name@github:repo", info, resolved]`, plus a trailing `integrity` string when one is known |
+| root | `["name@root:", info]`, where `info` is `{}` or holds only `bin` / `binDir` |
+
+Notes:
+
+- `registry` is the empty string `""` for the default registry, otherwise the registry URL.
+- `integrity` is a [Subresource Integrity](https://developer.mozilla.org/en-US/docs/Web/Security/Subresource_Integrity) hash (e.g. `sha512-…`). It is always present for npm packages, and present for tarball and git/github packages only when Bun has a supported hash — so those tuples have an optional final element.
+- For git/github, `resolved` is the exact resolved commit-ish that was checked out.
+
+`info` is a `BunLockFilePackageInfo`:
+
+```ts
+{
+  dependencies?: Record<string, string>;
+  devDependencies?: Record<string, string>;
+  optionalDependencies?: Record<string, string>;
+  peerDependencies?: Record<string, string>;
+  optionalPeers?: string[];
+  bin?: string | Record<string, string>;
+  binDir?: string;
+  os?: string | string[];
+  cpu?: string | string[];
+  bundled?: true;
+}
+```
+
+### Example
+
+```jsonc bun.lock icon="file-json"
+{
+  "lockfileVersion": 2,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "my-app",
+      "dependencies": {
+        "lodash": "^4.17.21",
+      },
+    },
+    "packages/ui": {
+      "name": "@my-app/ui",
+      "version": "1.0.0",
+    },
+  },
+  "packages": {
+    "@my-app/ui": ["@my-app/ui@workspace:packages/ui"],
+    "lodash": ["lodash@4.17.21", "", {}, "sha512-v2kDEe57lecTulaDIuNTPy3Ry4gLGJ6Z1O3vE1krgXZNrsQ+LFTGHVxVjcXPs17LhbZVGedAJv8XZ1tvj5FvKg=="],
+  },
+}
+```

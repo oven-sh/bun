@@ -1,4 +1,5 @@
 import { file, spawn, write } from "bun";
+import type { BunLockFile, BunLockFilePackageArray } from "bun";
 import { afterAll, beforeAll, expect, it } from "bun:test";
 import { access, copyFile, cp, exists, open, rm, writeFile } from "fs/promises";
 import {
@@ -868,4 +869,93 @@ it("prints an actionable error for a lockfile version newer than this build supp
   // the old message gave no hint at all
   expect(err).not.toContain("Unknown lockfile version");
   expect(await exited).toBe(0);
+});
+
+const isInfo = (x: unknown): boolean => typeof x === "object" && x !== null && !Array.isArray(x);
+const isStr = (x: unknown): boolean => typeof x === "string";
+
+// Classify a `packages` tuple by the schema documented in docs/pm/lockfile.mdx.
+// Returns null if the tuple matches no documented shape (schema is incomplete).
+function classifyLockEntry(entry: BunLockFilePackageArray): string | null {
+  if (!Array.isArray(entry) || !isStr(entry[0])) return null;
+  const spec = entry[0].slice(entry[0].lastIndexOf("@") + 1);
+  if (spec.startsWith("workspace:")) return entry.length === 1 ? "workspace" : null;
+  if (spec.startsWith("root:")) return entry.length === 2 && isInfo(entry[1]) ? "root" : null;
+  if (spec.startsWith("git+") || spec.startsWith("github:")) {
+    const ok =
+      (entry.length === 3 || entry.length === 4) &&
+      isInfo(entry[1]) &&
+      isStr(entry[2]) &&
+      (entry.length === 3 || isStr(entry[3]));
+    return ok ? "git" : null;
+  }
+  if (spec.startsWith("link:")) return entry.length === 2 && isInfo(entry[1]) ? "symlink" : null;
+  if (spec.startsWith("file:")) return entry.length === 2 && isInfo(entry[1]) ? "folder" : null;
+  if (entry.length === 4 && isStr(entry[1]) && isInfo(entry[2]) && isStr(entry[3])) return "npm";
+  if ((entry.length === 2 || entry.length === 3) && isInfo(entry[1]) && (entry.length === 2 || isStr(entry[2])))
+    return "tarball";
+  return null;
+}
+
+// Generates a real bun.lock over local resolution kinds (no registry needed) and
+// checks every emitted tuple against the documented schema. npm/git/github shapes
+// are covered by the bun-types fixture and the snapshot corpus.
+it("writes package entries that all match the documented schema", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir();
+
+  await copyFile(join(__dirname, "bar-0.0.2.tgz"), join(packageDir, "bar-0.0.2.tgz"));
+  await write(
+    join(packageDir, "local-folder-dep", "package.json"),
+    JSON.stringify({ name: "local-folder-dep", version: "1.0.0" }),
+  );
+  await write(
+    join(packageDir, "packages", "ws-pkg", "package.json"),
+    JSON.stringify({ name: "ws-pkg", version: "2.0.0" }),
+  );
+  await writeFile(
+    packageJson,
+    JSON.stringify({
+      name: "schema-fixture",
+      version: "1.0.0",
+      workspaces: ["packages/*"],
+      dependencies: {
+        "dummy-tarball": "file:./bar-0.0.2.tgz", // tarball
+        "local-folder-dep": "file:./local-folder-dep", // folder
+        "ws-pkg": "workspace:*", // workspace
+      },
+    }),
+  );
+
+  await using proc = spawn({
+    cmd: [bunExe(), "install", "--save-text-lockfile"],
+    cwd: packageDir,
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
+
+  const lock = Bun.JSONC.parse(await file(join(packageDir, "bun.lock")).text()) as BunLockFile;
+
+  // Every generated package entry must match a documented shape.
+  const unclassified: Record<string, BunLockFilePackageArray> = {};
+  const kinds = new Map<string, string>();
+  for (const [name, entry] of Object.entries(lock.packages)) {
+    const kind = classifyLockEntry(entry);
+    if (kind === null) unclassified[name] = entry;
+    else kinds.set(name, kind);
+  }
+  expect(unclassified).toEqual({});
+
+  const observed = new Set(kinds.values());
+  expect([...observed].sort()).toEqual(expect.arrayContaining(["folder", "tarball", "workspace"]));
+
+  // The local tarball entry carries a trailing integrity (the 3-element form
+  // that neither the docs nor the TypeScript type described before this change).
+  const tarballName = [...kinds].find(([, kind]) => kind === "tarball")?.[0];
+  expect(tarballName).toBeDefined();
+  const tarball = lock.packages[tarballName!] as [string, unknown, string];
+  expect(tarball).toHaveLength(3);
+  expect(tarball[2]).toMatch(/^sha\d+-/);
 });

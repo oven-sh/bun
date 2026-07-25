@@ -9542,10 +9542,10 @@ declare module "bun" {
      * symlink     -> [ "name@link:path", INFO ]
      * folder      -> [ "name@file:path", INFO ]
      * workspace   -> [ "name@workspace:path" ] // workspace is only path
-     * tarball     -> [ "name@tarball", INFO ]
+     * tarball     -> [ "name@tarball", INFO ] | [ ..., integrity ] // integrity when known
      * root        -> [ "name@root:", { bin, binDir } ]
-     * git         -> [ "name@git+repo", INFO, .bun-tag string (TODO: remove this) ]
-     * github      -> [ "name@github:user/repo", INFO, .bun-tag string (TODO: remove this) ]
+     * git         -> [ "name@git+repo", INFO, resolved ] | [ ..., integrity ] // integrity when known
+     * github      -> [ "name@github:user/repo", INFO, resolved ] | [ ..., integrity ] // integrity when known
      * ```
      */
     packages: {
@@ -9574,18 +9574,83 @@ declare module "bun" {
     bundled?: true;
   };
 
-  /** @see {@link BunLockFile.packages} */
-  type BunLockFilePackageArray =
-    /** npm */
-    | [pkg: string, registry: string, info: BunLockFilePackageInfo, integrity: string]
-    /** symlink, folder, tarball */
+  /** The `info` object of a `root` package only ever carries `bin`/`binDir`. */
+  type BunLockFileRootPackageInfo = Pick<BunLockFileBasePackageInfo, "bin" | "binDir">;
+
+  /**
+   * A Subresource Integrity hash as written to the lockfile, e.g. `sha512-...`.
+   * Doubles as the discriminant that separates a tarball's trailing integrity
+   * from a git package's `resolved` commit-ish.
+   */
+  type BunLockFileIntegrity = `sha${number}-${string}`;
+
+  /**
+   * An npm package: `["name@version", registry, info, integrity]`.
+   *
+   * `registry` is the empty string `""` for the default registry, otherwise the
+   * registry URL. `integrity` is always present.
+   */
+  type BunLockFileNpmPackage = [
+    pkg: string,
+    registry: string,
+    info: BunLockFilePackageInfo,
+    integrity: BunLockFileIntegrity,
+  ];
+
+  /** A `workspace` package: `["name@workspace:path"]` — the path is the only field. */
+  type BunLockFileWorkspacePackageArray = [pkg: `${string}@workspace:${string}`];
+
+  /** A `symlink` (`link:`) or `folder` (`file:`) package: `["name@spec", info]`. */
+  type BunLockFilePathPackage = [
+    pkg: `${string}@link:${string}` | `${string}@file:${string}`,
+    info: BunLockFilePackageInfo,
+  ];
+
+  /**
+   * A `tarball` package (local or remote): `["name@spec", info]`, with a
+   * trailing integrity hash when a supported one is known.
+   *
+   * This is the fallback shape: its `pkg` is a plain `string`, not a prefixed
+   * template literal, so it structurally overlaps the two-element
+   * {@link BunLockFilePathPackage} (a `@link:`/`@file:` tuple is also a valid
+   * tarball). A tarball specifier carries no fixed prefix, so it is not a hard
+   * discriminant — a tarball is the entry whose specifier matches no other
+   * resolution's prefix.
+   */
+  type BunLockFileTarballPackage =
     | [pkg: string, info: BunLockFilePackageInfo]
-    /** workspace */
-    | [pkg: string]
-    /** git, github */
-    | [pkg: string, info: BunLockFilePackageInfo, bunTag: string]
-    /** root */
-    | [pkg: string, info: Pick<BunLockFileBasePackageInfo, "bin" | "binDir">];
+    | [pkg: string, info: BunLockFilePackageInfo, integrity: BunLockFileIntegrity];
+
+  /**
+   * A `git` or `github` package: `["name@spec", info, resolved]`, with a
+   * trailing integrity hash when a supported one is known. `resolved` is the
+   * exact resolved commit-ish that was checked out.
+   */
+  type BunLockFileGitPackage =
+    | [pkg: `${string}@git+${string}` | `${string}@github:${string}`, info: BunLockFilePackageInfo, resolved: string]
+    | [
+        pkg: `${string}@git+${string}` | `${string}@github:${string}`,
+        info: BunLockFilePackageInfo,
+        resolved: string,
+        integrity: BunLockFileIntegrity,
+      ];
+
+  /** The `root` package: `["name@root:", { bin?, binDir? }]`. */
+  type BunLockFileRootPackage = [pkg: `${string}@root:`, info: BunLockFileRootPackageInfo];
+
+  /**
+   * An entry in {@link BunLockFile.packages}. The tuple's shape identifies how
+   * the package was resolved; see each member type.
+   *
+   * @see {@link BunLockFile.packages}
+   */
+  type BunLockFilePackageArray =
+    | BunLockFileNpmPackage
+    | BunLockFileWorkspacePackageArray
+    | BunLockFilePathPackage
+    | BunLockFileTarballPackage
+    | BunLockFileGitPackage
+    | BunLockFileRootPackage;
 
   interface CookieInit {
     name?: string;

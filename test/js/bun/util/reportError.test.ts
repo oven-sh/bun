@@ -253,20 +253,23 @@ test.concurrent.each([
   ["explicit empty AggregateError", 'throw new AggregateError([], "agg_boom");', "AggregateError: agg_boom"],
   // (Bun's Promise.any rejection carries an empty message, so match the header.)
   ["unhandled Promise.any with no promises", "Promise.any([]);", "AggregateError:"],
-] as const)("uncaught AggregateError with empty `errors` prints the error itself (%s)", async (_name, fixture, expected) => {
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", fixture],
-    env: { ...bunEnv, NO_COLOR: "1" },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+] as const)(
+  "uncaught AggregateError with empty `errors` prints the error itself (%s)",
+  async (_name, fixture, expected) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: { ...bunEnv, NO_COLOR: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stderr).toContain(expected);
-  expect(stdout).toBe("");
-  expect(proc.signalCode).toBeNull();
-  expect(exitCode).toBe(1);
-});
+    expect(stderr).toContain(expected);
+    expect(stdout).toBe("");
+    expect(proc.signalCode).toBeNull();
+    expect(exitCode).toBe(1);
+  },
+);
 
 // The depth cap that stops a cyclic `errors` must stay clear of any nesting a
 // real program produces.

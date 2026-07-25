@@ -876,9 +876,8 @@ impl MarkedArrayBuffer {
         })
     }
 
-    /// The caller's live `ArrayBuffer` for in-place writes. When this is an
-    /// owned snapshot of a resizable input (see `StringOrBuffer::array_buffer_into`),
-    /// `self.buffer.ptr` points at a private copy, so re-read from `value`.
+    /// For in-place writes: re-read from `value` when `self.buffer.ptr` is an
+    /// owned snapshot (see `StringOrBuffer::array_buffer_into`).
     #[inline]
     pub fn live_array_buffer(&self, global: &JSGlobalObject) -> ArrayBuffer {
         if self.owns_buffer && self.buffer.value != JSValue::ZERO {

@@ -390,19 +390,10 @@ impl StringOrBuffer {
         }
     }
 
-    /// Core of the `ArrayBuffer`/view arm of `from_js_*`. `pin()` guards
-    /// `transfer()` but not `ArrayBuffer.prototype.resize()`: a shrink
-    /// mprotects trimmed pages `PROT_NONE` while a borrowed slice still spans
-    /// them, so a later argument's getter/`toString` (sync) or the JS thread
-    /// (async) can SIGSEGV the reader. Snapshot resizable non-shared inputs
-    /// into an owned `Buffer` so variant dispatch (CryptoHasher output,
-    /// `fs.write`) stays intact; growable `SharedArrayBuffer` only grows
-    /// in-place so the captured extent remains readable.
-    ///
-    /// `snapshot_volatile = false` skips the resizable copy for callers that
-    /// have already evaluated every later argument (e.g. `NodeHTTPResponse`,
-    /// which resolves `encoding`/`callback` before capturing and carries its
-    /// own tail-only resizable spill).
+    /// `pin()` guards `transfer()` but not `ArrayBuffer.prototype.resize()`,
+    /// so resizable non-shared inputs are snapshotted (growable SAB only grows
+    /// in-place; captured extent stays readable). `snapshot_volatile = false`
+    /// opts out for callers that run no more user JS before reading.
     #[inline]
     fn array_buffer_into(
         out: &mut Self,
@@ -535,9 +526,8 @@ impl StringOrBuffer {
         Self::from_js_with_encoding_maybe_async(global, value, encoding, false, true)
     }
 
-    /// Out-param convenience wrapper for `NodeHTTPResponse::write_or_end`:
-    /// encoding/callback are resolved before the buffer is captured and the
-    /// write path spills resizable tails itself, so skip the upfront copy.
+    /// Out-param wrapper for `NodeHTTPResponse`; it evaluates encoding/callback
+    /// before capture and spills resizable tails itself (`snapshot_volatile=false`).
     #[inline]
     pub fn from_js_with_encoding_into(
         out: &mut StringOrBuffer,

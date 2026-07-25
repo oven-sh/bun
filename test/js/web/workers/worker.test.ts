@@ -416,6 +416,38 @@ describe("web worker", () => {
       expect(exitCode).toBe(0);
     });
 
+    test.concurrent("with no listener is not reported after terminate()", async () => {
+      // Spawn many workers that throw, then terminate() each one immediately.
+      // Whether the in-flight error task lands before or after terminate()
+      // sets m_terminateRequested, it must never surface as an unhandled
+      // exception on the parent.
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `process.on("uncaughtException", err => { console.error("UNHANDLED", err.message); process.exitCode = 2; });
+           const src = "data:text/javascript," + encodeURIComponent('throw new Error("POST-TERMINATE")');
+           const N = 64;
+           let closed = 0;
+           const { promise, resolve } = Promise.withResolvers();
+           for (let i = 0; i < N; i++) {
+             const w = new Worker(src);
+             w.addEventListener("close", () => { if (++closed === N) resolve(); });
+             w.terminate();
+           }
+           await promise;
+           console.log("done");`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).not.toContain("POST-TERMINATE");
+      expect(stdout).toContain("done");
+      expect(exitCode).toBe(0);
+    });
+
     test.concurrent("worker_threads with no listener prints and exits 1 (control)", async () => {
       await using proc = Bun.spawn({
         cmd: [

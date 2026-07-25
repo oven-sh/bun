@@ -83,10 +83,8 @@ describe.concurrent("error-graph cycles do not crash the printer", () => {
   }
 });
 
-// Depth tests kept out of the concurrent matrix: each prints hundreds of
-// headers before the stack guard fires, which is seconds under debug+ASAN.
 // Release bun segfaults at ~2000 levels.
-describe("error-graph depth does not crash the printer", () => {
+describe.concurrent("error-graph depth does not crash the printer", () => {
   const deepAgg = `let x = new AggregateError([], "leaf"); for (let i = 0; i < 3000; i++) x = new AggregateError([x], "n" + i); const e = x;`;
   const deepCause = `let x = new Error("leaf"); for (let i = 0; i < 3000; i++) x = new Error("n" + i, { cause: x }); const e = x;`;
 

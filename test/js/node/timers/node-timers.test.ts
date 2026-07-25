@@ -155,6 +155,82 @@ describe("_destroyed", () => {
   });
 });
 
+describe("hasRef", () => {
+  it("stays true after clearTimeout/clearInterval", () => {
+    const t = setTimeout(() => {}, 1_000_000);
+    clearTimeout(t);
+    const i = setInterval(() => {}, 1_000_000);
+    clearInterval(i);
+    expect({ timeout: t.hasRef(), interval: i.hasRef() }).toEqual({ timeout: true, interval: true });
+    expect({ timeout: t.ref().hasRef(), interval: i.ref().hasRef() }).toEqual({ timeout: true, interval: true });
+  });
+
+  it("stays false for an unref'd timer after clearing", () => {
+    const t = setTimeout(() => {}, 1_000_000);
+    t.unref();
+    clearTimeout(t);
+    const i = setInterval(() => {}, 1_000_000);
+    i.unref();
+    clearInterval(i);
+    expect({ timeout: t.hasRef(), interval: i.hasRef() }).toEqual({ timeout: false, interval: false });
+  });
+
+  it("reflects ref()/unref() after clearTimeout", () => {
+    const t = setTimeout(() => {}, 1_000_000);
+    clearTimeout(t);
+    t.unref();
+    expect(t.hasRef()).toBe(false);
+    t.ref();
+    expect(t.hasRef()).toBe(true);
+  });
+
+  it("stays true after a setTimeout fires", async () => {
+    const { promise, resolve } = Promise.withResolvers<void>();
+    const t = setTimeout(() => resolve(), 0);
+    await promise;
+    expect(t.hasRef()).toBe(true);
+    t.unref();
+    expect(t.hasRef()).toBe(false);
+    t.ref();
+    expect(t.hasRef()).toBe(true);
+  });
+
+  it("is false for setImmediate after clearing or firing", async () => {
+    const cleared = setImmediate(() => {});
+    clearImmediate(cleared);
+    expect(cleared.hasRef()).toBe(false);
+    expect(cleared.ref().hasRef()).toBe(false);
+
+    const { promise, resolve } = Promise.withResolvers<void>();
+    const fired = setImmediate(() => resolve());
+    await promise;
+    expect(fired.hasRef()).toBe(false);
+    expect(fired.ref().hasRef()).toBe(false);
+  });
+
+  it("ref() on a cleared timer does not keep the process alive", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const t = setTimeout(() => { throw new Error("fired"); }, 24 * 3600 * 1000);
+         clearTimeout(t);
+         t.ref();
+         console.log(JSON.stringify({ hasRef: t.hasRef(), destroyed: t._destroyed }));`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), exitCode }).toEqual({
+      stdout: `{"hasRef":true,"destroyed":true}`,
+      exitCode: 0,
+    });
+    expect(stderr).not.toContain("fired");
+  });
+});
+
 describe("clear", () => {
   it("can clear the other kind of timer", async () => {
     const timeout1 = setTimeout(() => {

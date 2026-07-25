@@ -9819,6 +9819,9 @@ pub fn zig_delete_tree(
                                 treat_as_dir = false;
                                 continue 'handle_entry;
                             }
+                            // Raced: the entry we just read from this directory
+                            // is already gone. That's the state we wanted.
+                            Err(E::ENOENT) => break 'handle_entry,
                             #[cfg(target_os = "macos")]
                             Err(e @ (E::EACCES | E::EPERM)) => {
                                 // Same as the pop-delete site below: node's rimraf
@@ -9856,6 +9859,9 @@ pub fn zig_delete_tree(
                     let top_fd = stack[top_idx].iter.iter.dir;
                     match dt_delete_file(sys::Dir::borrow(&top_fd), &entry_name) {
                         Ok(()) => break 'handle_entry,
+                        // Raced: the entry we just read from this directory is
+                        // already gone. That's the state we wanted.
+                        Err(E::ENOENT) => break 'handle_entry,
                         Err(E::EISDIR) => {
                             treat_as_dir = true;
                             continue 'handle_entry;

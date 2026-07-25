@@ -662,3 +662,126 @@ describe("bun", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+// https://github.com/oven-sh/bun/issues/10346
+// `bun --filter` pipes child stdout/stderr, so the child's isatty() is false and
+// tools that gate color on it go monochrome. When the parent is attached to a
+// color terminal the filter runner now forwards that decision via FORCE_COLOR.
+describe("--filter forwards color to scripts", () => {
+  function colorFixture() {
+    return tempDirWithFiles("filter-color", {
+      packages: {
+        pkga: {
+          "probe.js": `process.stdout.write("RESULT " + JSON.stringify({
+            FORCE_COLOR: process.env.FORCE_COLOR ?? null,
+            NO_COLOR: process.env.NO_COLOR ?? null,
+            enableANSI: Bun.enableANSIColors,
+          }) + "\\n");`,
+          "package.json": JSON.stringify({
+            name: "pkga",
+            scripts: { probe: `${bunExe()} probe.js` },
+          }),
+        },
+      },
+      "package.json": JSON.stringify({ name: "ws", workspaces: ["packages/*"] }),
+    });
+  }
+
+  async function runOnPTY(dir: string, extraEnv: Record<string, string | undefined>) {
+    const decoder = new TextDecoder();
+    let output = "";
+    const done = Promise.withResolvers<void>();
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "--filter", "*", "probe"],
+      cwd: dir,
+      env: {
+        ...bunEnv,
+        NO_COLOR: undefined,
+        FORCE_COLOR: undefined,
+        CI: undefined,
+        TERM: "xterm-256color",
+        COLORTERM: undefined,
+        ...extraEnv,
+      },
+      terminal: {
+        cols: 200,
+        rows: 24,
+        data(_t, chunk: Uint8Array) {
+          output += decoder.decode(chunk, { stream: true });
+          if (output.includes("RESULT ") && output.includes("}")) done.resolve();
+        },
+        exit() {
+          done.resolve();
+        },
+      },
+    });
+    await done.promise;
+    await proc.exited;
+    output += decoder.decode();
+    const stripped = Bun.stripANSI(output).replace(/\r/g, "");
+    const m = stripped.match(/RESULT (\{[^}]*\})/);
+    if (!m) throw new Error("missing RESULT in terminal output: " + JSON.stringify(output));
+    return JSON.parse(m[1]);
+  }
+
+  test("sets FORCE_COLOR when parent stdout is a color TTY", async () => {
+    const dir = colorFixture();
+    const result = await runOnPTY(dir, {});
+    expect(result).toEqual({
+      FORCE_COLOR: "2",
+      NO_COLOR: null,
+      enableANSI: true,
+    });
+  });
+
+  test("sets FORCE_COLOR=3 for a truecolor terminal", async () => {
+    const dir = colorFixture();
+    const result = await runOnPTY(dir, { COLORTERM: "truecolor" });
+    expect(result).toEqual({
+      FORCE_COLOR: "3",
+      NO_COLOR: null,
+      enableANSI: true,
+    });
+  });
+
+  test("respects an explicit NO_COLOR", async () => {
+    const dir = colorFixture();
+    const result = await runOnPTY(dir, { NO_COLOR: "1" });
+    expect(result).toEqual({
+      FORCE_COLOR: null,
+      NO_COLOR: "1",
+      enableANSI: false,
+    });
+  });
+
+  test("respects an explicit FORCE_COLOR value", async () => {
+    const dir = colorFixture();
+    const result = await runOnPTY(dir, { FORCE_COLOR: "0" });
+    expect(result.FORCE_COLOR).toBe("0");
+  });
+
+  test("does not set FORCE_COLOR when parent stdout is not a TTY", async () => {
+    const dir = colorFixture();
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "--filter", "*", "probe"],
+      cwd: dir,
+      env: {
+        ...bunEnv,
+        NO_COLOR: undefined,
+        FORCE_COLOR: undefined,
+        CI: undefined,
+        TERM: "xterm-256color",
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const m = stdout.match(/RESULT (\{[^}]*\})/);
+    if (!m) throw new Error("missing RESULT in: " + JSON.stringify(stdout));
+    const result = JSON.parse(m[1]);
+    expect({ FORCE_COLOR: result.FORCE_COLOR, NO_COLOR: result.NO_COLOR }).toEqual({
+      FORCE_COLOR: null,
+      NO_COLOR: null,
+    });
+  });
+});

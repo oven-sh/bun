@@ -802,6 +802,24 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
 
     // SAFETY: transpiler.env is a process-lifetime *mut Loader set in init.
     let env_ptr: *mut DotEnvLoader = this_transpiler.env;
+    // Child stdout/stderr are pipes, so isatty()-based color detection in the
+    // child reports false. When we are rendering with color, forward that
+    // decision via FORCE_COLOR so downstream tools keep their colors. Skip if
+    // the user already set FORCE_COLOR or NO_COLOR so explicit choices are
+    // preserved verbatim.
+    if Output::enable_ansi_colors_stdout() {
+        // SAFETY: env_ptr is the process-lifetime DotEnv loader; no other borrow is live yet.
+        let env = unsafe { &mut *env_ptr };
+        if env.map.get(b"FORCE_COLOR").is_none() && env.map.get(b"NO_COLOR").is_none() {
+            use bun_core::output::{ColorDepth, Source};
+            let depth: &[u8] = match Source::color_depth() {
+                ColorDepth::C16m => b"3",
+                ColorDepth::C256 => b"2",
+                _ => b"1",
+            };
+            let _ = env.map.put(b"FORCE_COLOR", depth);
+        }
+    }
     let event_loop = bun_event_loop::MiniEventLoop::init_global(
         // SAFETY: env_ptr is the process-lifetime DotEnv loader; no other borrow of it is live yet.
         Some(unsafe { &mut *env_ptr }),

@@ -731,49 +731,49 @@ fn arm_watch_reload_grace_timer() {
     if WATCH_RELOAD_GRACE_ARMED.load(core::sync::atomic::Ordering::Relaxed) {
         return;
     }
-    // The JS thread is progressing when either it has entered reload_process
-    // or it is synchronously running the kill-signal handlers; only the
-    // neither case (never drained the posted task) should be forced.
-    let js_thread_progressing = || {
-        bun_core::is_process_reload_in_progress_on_another_thread()
-            || crate::posix_signal_handle::is_emitting_watch_kill_signal()
+    let reload_started = bun_core::is_process_reload_in_progress_on_another_thread;
+    let handler_running = crate::posix_signal_handle::is_emitting_watch_kill_signal;
+    let force = || -> ! {
+        Output::flush();
+        bun_core::reload_process(CLEAR_SCREEN.load(core::sync::atomic::Ordering::Relaxed), false);
+        unreachable!();
     };
     let spawned = std::thread::Builder::new()
         .name("WatchReloadGrace".into())
         .spawn(move || {
-            const GRACE_MS: u64 = 500;
             const STEP_MS: u64 = 10;
+            // Budget to drain the posted WatchReloadTask; extended once when
+            // the kill-signal emit is observed so a bounded synchronous
+            // handler has time to finish before being torn down mid-run.
+            const DRAIN_MS: u64 = 500;
+            const HANDLER_MS: u64 = 2000;
+            let mut deadline = DRAIN_MS;
+            let mut extended = false;
             let mut waited = 0u64;
-            while waited < GRACE_MS && !js_thread_progressing() {
+            while waited < deadline {
+                if reload_started() {
+                    // execve prep has begun; park until it tears this thread down.
+                    loop {
+                        std::thread::sleep(std::time::Duration::from_secs(3600));
+                    }
+                }
+                if !extended && handler_running() {
+                    deadline = waited + HANDLER_MS;
+                    extended = true;
+                }
                 std::thread::sleep(std::time::Duration::from_millis(STEP_MS));
                 waited += STEP_MS;
             }
-            if !js_thread_progressing() {
-                Output::flush();
-                bun_core::reload_process(
-                    CLEAR_SCREEN.load(core::sync::atomic::Ordering::Relaxed),
-                    false,
-                );
-                unreachable!();
-            }
-            // The JS thread owns the reload; park until execve tears this
-            // thread down (re-arming is pointless, the process is going away).
-            loop {
-                std::thread::sleep(std::time::Duration::from_secs(3600));
-            }
+            // Deadline hit without reload_process starting: either the task
+            // never drained, or the handler itself is wedged. Force it (node
+            // SIGKILLs the child after its own grace period either way).
+            force();
         })
         .is_ok();
     if spawned {
         WATCH_RELOAD_GRACE_ARMED.store(true, core::sync::atomic::Ordering::Relaxed);
     } else {
-        // Spawn failed: fall through to the same force path the grace thread
-        // would have taken, rather than silently disarming the fallback.
-        Output::flush();
-        bun_core::reload_process(
-            CLEAR_SCREEN.load(core::sync::atomic::Ordering::Relaxed),
-            false,
-        );
-        unreachable!();
+        force();
     }
 }
 

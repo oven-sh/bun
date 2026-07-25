@@ -238,3 +238,52 @@ it("--watch forces a restart when the kill-signal listener thread is stuck in sy
   watchee.kill("SIGKILL");
   await watchee.exited;
 }, 30000);
+
+// Same fallback, but the wedge is *inside* the handler rather than before
+// the posted task drains: the emit-flag stays true for the handler's full
+// synchronous duration, and the grace thread must still force the reload
+// when the handler never returns.
+it("--watch forces a restart when the kill-signal handler itself never returns", async () => {
+  using dir = tempDir("watch-sigterm-wedged-handler", {
+    "busy.js": `
+      process.on("SIGTERM", () => {
+        const end = Date.now() + 30_000;
+        while (Date.now() < end) {}
+        process.exit(1);
+      });
+      console.log("iter first");
+      setInterval(() => {}, 1000);
+    `,
+  });
+
+  watchee = spawn({
+    cmd: [bunExe(), "--watch", "busy.js"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const reader = watchee.stdout.getReader();
+  const decoder = new TextDecoder();
+  let output = "";
+  const waitFor = async (needle: string) => {
+    while (!output.includes(needle)) {
+      const { value, done } = await reader.read();
+      if (done) throw new Error(`stream closed, output so far: ${JSON.stringify(output)}`);
+      output += decoder.decode(value, { stream: true });
+    }
+  };
+
+  await waitFor("iter first");
+  await Bun.write(
+    join(String(dir), "busy.js"),
+    `console.log("iter second");
+     process.exit(0);`,
+  );
+  await waitFor("iter second");
+
+  reader.releaseLock();
+  watchee.kill("SIGKILL");
+  await watchee.exited;
+}, 30000);

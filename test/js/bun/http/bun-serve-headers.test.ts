@@ -239,6 +239,69 @@ describe("response Content-Length for ReadableStream bodies", () => {
     expect(body.subarray(0, 4).toString()).toBe("AAAA");
   });
 
+  // Exercises HTTPServerWritable's single-write fast path: a sub-highWaterMark
+  // stream that enqueues once and closes synchronously buffers then ends in one
+  // send, and end() must not let try_end() add a second Content-Length.
+  test.concurrent("sub-highWaterMark stream, single write", async () => {
+    const payload = Buffer.alloc(100, "S");
+    using server = Bun.serve({
+      port: 0,
+      development: false,
+      fetch() {
+        return new Response(
+          new ReadableStream({
+            start(c) {
+              c.enqueue(payload);
+              c.close();
+            },
+          }),
+          { headers: { "Content-Length": String(payload.length) } },
+        );
+      },
+    });
+
+    const { head, body } = await rawGET(server.port);
+    expect(head.toLowerCase()).not.toContain("transfer-encoding");
+    expect(contentLength(head)).toEqual([String(payload.length)]);
+    expect(body.equals(payload)).toBe(true);
+  });
+
+  // The stream errors after the Content-Length is already on the wire: the
+  // server must close the socket rather than leave the client waiting on the
+  // promised bytes.
+  test.concurrent("stream that errors after Content-Length is committed closes the socket", async () => {
+    using server = Bun.serve({
+      port: 0,
+      development: false,
+      fetch() {
+        return new Response(
+          new ReadableStream({
+            async pull() {
+              await new Promise(r => setImmediate(r));
+              throw new Error("boom");
+            },
+          }),
+          { headers: { "Content-Length": "100" } },
+        );
+      },
+      error() {},
+    });
+
+    const socket = net.connect(server.port, "127.0.0.1");
+    try {
+      socket.on("error", () => {});
+      await once(socket, "connect");
+      socket.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n");
+      const chunks: Buffer[] = [];
+      socket.on("data", c => chunks.push(c));
+      await once(socket, "close");
+      const head = Buffer.concat(chunks).toString("latin1").split("\r\n\r\n")[0] ?? "";
+      expect(contentLength(head).length).toBeLessThanOrEqual(1);
+    } finally {
+      socket.destroy();
+    }
+  });
+
   test.concurrent("Readable.toWeb stream (node:stream source)", async () => {
     const payload = Buffer.alloc(4096, "C");
     using server = Bun.serve({
@@ -263,7 +326,21 @@ describe("response Content-Length for ReadableStream bodies", () => {
     using upstream = Bun.serve({
       port: 0,
       development: false,
-      fetch: () => new Response(payload),
+      fetch() {
+        // Stream the body so the proxy cannot have it fully buffered before
+        // rendering (the byte_stream path, not the blob fast path).
+        let sent = 0;
+        return new Response(
+          new ReadableStream({
+            async pull(c) {
+              if (sent >= payload.length) return c.close();
+              await new Promise(r => setImmediate(r));
+              c.enqueue(payload.subarray(sent, (sent += 2000)));
+            },
+          }),
+          { headers: { "Content-Length": String(payload.length) } },
+        );
+      },
     });
     using proxy = Bun.serve({
       port: 0,
@@ -271,7 +348,7 @@ describe("response Content-Length for ReadableStream bodies", () => {
       async fetch() {
         const r = await fetch(upstream.url);
         return new Response(r.body, {
-          headers: { "Content-Length": r.headers.get("content-length")! },
+          headers: { "Content-Length": String(payload.length) },
         });
       },
     });

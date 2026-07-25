@@ -934,7 +934,9 @@ where
                 }
             }
             let state = resp.state();
-            if state.is_http_write_called() && state.is_response_pending() {
+            if state.is_response_pending()
+                && (state.is_http_write_called() || state.has_written_content_length_header())
+            {
                 ctx.force_close();
             } else {
                 ctx.end_stream(ctx.should_close_connection());
@@ -992,6 +994,13 @@ where
         // `RequestContext` threaded through cork user-data.
         let ctx = unsafe { &mut *ctx };
         if let Some(resp) = ctx.resp {
+            // A committed Content-Length with no body bytes cannot be completed
+            // gracefully; close so the client sees a truncated message instead
+            // of waiting on the promised bytes.
+            if ctx.flags.has_written_status() && resp.state().has_written_content_length_header() {
+                ctx.force_close();
+                return;
+            }
             if !DEBUG_MODE {
                 if !ctx.flags.has_written_status() {
                     resp.write_status(b"204 No Content");
@@ -1151,9 +1160,8 @@ where
         ctx_log!("endStream");
         if let Some(resp) = self.resp {
             self.detach_response();
-            // This will send a terminating 0\r\n\r\n chunk to the client
-            // We only want to do that if they're still expecting a body
-            // We cannot call this function if the Content-Length header was previously set
+            // Chunked framing: terminating 0\r\n\r\n. With Content-Length
+            // marked, sendTerminatingChunk()/internalEnd() just markDone.
             if resp.state().is_response_pending() {
                 resp.end_stream(close_connection);
             }
@@ -3078,9 +3086,13 @@ where
         // Body bytes were already written: close without the terminating chunk
         // (RFC 9112 section 7) so the client sees an incomplete message, not a
         // truncated body that looks like a complete, successful response.
+        // Same when a Content-Length is already on the wire (#10507): sending
+        // a 0-byte body against a non-zero promise would hang keep-alive.
         if let Some(resp) = req.resp {
             let state = resp.state();
-            if state.is_http_write_called() && state.is_response_pending() {
+            if state.is_response_pending()
+                && (state.is_http_write_called() || state.has_written_content_length_header())
+            {
                 req.force_close();
                 return;
             }

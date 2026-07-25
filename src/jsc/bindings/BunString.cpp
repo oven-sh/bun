@@ -661,6 +661,16 @@ extern "C" BunString URL__getHref(BunString* input)
     return Bun::toStringRef(url.string());
 }
 
+namespace Bun {
+WTF::String fileSystemPathWithQuery(const WTF::URL& url)
+{
+    auto query = url.queryWithLeadingQuestionMark();
+    if (query.isEmpty())
+        return url.fileSystemPath();
+    return makeString(url.fileSystemPath(), query);
+}
+}
+
 extern "C" BunString URL__pathFromFileURL(BunString* input)
 {
     auto&& str = input->toWTFString();
@@ -678,10 +688,7 @@ extern "C" BunString URL__pathAndQueryFromFileURL(BunString* input)
     if (!url.isValid() || url.isEmpty())
         return { BunStringTag::Dead };
 
-    auto query = url.queryWithLeadingQuestionMark();
-    if (query.isEmpty())
-        return Bun::toStringRef(url.fileSystemPath());
-    return Bun::toStringRef(makeString(url.fileSystemPath(), query));
+    return Bun::toStringRef(Bun::fileSystemPathWithQuery(url));
 }
 
 extern "C" BunString URL__getHrefJoin(BunString* baseStr, BunString* relativeStr)

@@ -549,10 +549,7 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
         if (specifier.startsWith("file:"_s)) {
             URL fileURL = URL(url, specifier);
             if (fileURL.isValid()) {
-                auto query = fileURL.queryWithLeadingQuestionMark();
-                specifier = query.isEmpty()
-                    ? fileURL.fileSystemPath()
-                    : makeString(fileURL.fileSystemPath(), query);
+                specifier = Bun::fileSystemPathWithQuery(fileURL);
                 specifierString = jsString(vm, specifier);
                 globalObject->onLoadPlugins.mustDoExpensiveRelativeLookup = true;
                 return;
@@ -584,14 +581,10 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
                 if (relativeURL.isValid()) {
                     globalObject->onLoadPlugins.mustDoExpensiveRelativeLookup = true;
 
-                    if (relativeURL.protocolIsFile()) {
-                        auto query = relativeURL.queryWithLeadingQuestionMark();
-                        specifier = query.isEmpty()
-                            ? relativeURL.fileSystemPath()
-                            : makeString(relativeURL.fileSystemPath(), query);
-                    } else {
+                    if (relativeURL.protocolIsFile())
+                        specifier = Bun::fileSystemPathWithQuery(relativeURL);
+                    else
                         specifier = relativeURL.string();
-                    }
 
                     specifierString = jsString(vm, specifier);
                 }
@@ -796,11 +789,7 @@ std::optional<String> BunPlugin::OnLoad::resolveVirtualModule(const String& path
         if (path.startsWith("./"_s) || path.startsWith(".."_s)) {
             auto url = WTF::URL::fileURLWithFileSystemPath(from);
             ASSERT(url.isValid());
-            auto joined = URL(url, path);
-            auto query = joined.queryWithLeadingQuestionMark();
-            joinedPath = query.isEmpty()
-                ? joined.fileSystemPath()
-                : makeString(joined.fileSystemPath(), query);
+            joinedPath = Bun::fileSystemPathWithQuery(URL(url, path));
         }
 
         return virtualModules->contains(joinedPath) ? std::optional<String> { joinedPath } : std::nullopt;

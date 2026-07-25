@@ -3530,6 +3530,9 @@ impl VirtualMachine {
                 !self.env_loader().has_set_no_clear_terminal_on_reload(
                     !bun_core::Output::enable_ansi_colors_stdout(),
                 );
+            // execve will not reach on_exit; flush the compile cache here like
+            // node's child does via AtExit(FlushCompileCache) on every restart.
+            crate::node_compile_cache::persist_now();
             bun_core::Output::flush();
             bun_core::reload_process(should_clear_terminal, false);
         }

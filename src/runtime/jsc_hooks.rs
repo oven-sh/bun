@@ -3116,11 +3116,24 @@ fn transpile_source_code_inner(
                     // (Stacked Borrows — see the matching note below).
                     let printer: &mut bun_js_printer::BufferPrinter =
                         unsafe { &mut *(*extra).source_code_printer };
+                    let written = printer.ctx.get_written();
+                    let node_compile_cache_blob = if bun_jsc::node_compile_cache::is_enabled()
+                        && path.is_file()
+                        && loader.is_java_script_like()
+                    {
+                        bun_jsc::node_compile_cache::fetch(
+                            path.text,
+                            is_commonjs_module,
+                            written,
+                        )
+                    } else {
+                        None
+                    };
                     // SAFETY: per fn contract — `jsc_vm` is the live per-thread
                     // VM; `printer.ctx.get_written()` borrows thread-local data.
                     let mut resolved_source = unsafe {
                         (*jsc_vm).ref_counted_resolved_source::<false>(
-                            printer.ctx.get_written(),
+                            written,
                             input_specifier.dupe_ref(),
                             path.text,
                             None,
@@ -3128,6 +3141,10 @@ fn transpile_source_code_inner(
                     };
                     resolved_source.is_commonjs_module = is_commonjs_module;
                     resolved_source.module_info = module_info;
+                    if let Some((ptr, size)) = node_compile_cache_blob {
+                        resolved_source.bytecode_cache = ptr;
+                        resolved_source.bytecode_cache_size = size;
+                    }
                     return Ok(OwnedResolvedSource::from(resolved_source));
                 }
 

@@ -2,7 +2,7 @@ import type { Subprocess } from "bun";
 import { spawn } from "bun";
 import { afterEach, expect, it } from "bun:test";
 import { bunEnv, bunExe, isBroken, isLinux, isWindows, tempDir, tmpdirSync } from "harness";
-import { rmSync } from "node:fs";
+import { readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 
 let watchee: Subprocess;
@@ -286,4 +286,47 @@ it("--watch forces a restart when the kill-signal handler itself never returns",
   reader.releaseLock();
   watchee.kill("SIGKILL");
   await watchee.exited;
+}, 30000);
+
+// execve replaces the process without reaching on_exit(), so the compile
+// cache must be flushed explicitly on the reload path; otherwise
+// NODE_COMPILE_CACHE never writes anything under --watch.
+it("NODE_COMPILE_CACHE persists across a --watch reload", async () => {
+  using dir = tempDir("watch-compile-cache", {
+    "dep.js": `module.exports = 1;`,
+    "app.js": `require("./dep.js"); console.log("iter first");`,
+  });
+  const cacheDir = join(String(dir), ".cc");
+
+  watchee = spawn({
+    cmd: [bunExe(), "--watch", "app.js"],
+    cwd: String(dir),
+    env: { ...bunEnv, NODE_COMPILE_CACHE: cacheDir },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const reader = watchee.stdout.getReader();
+  const decoder = new TextDecoder();
+  let output = "";
+  const waitFor = async (needle: string) => {
+    while (!output.includes(needle)) {
+      const { value, done } = await reader.read();
+      if (done) throw new Error(`stream closed, output so far: ${JSON.stringify(output)}`);
+      output += decoder.decode(value, { stream: true });
+    }
+  };
+
+  await waitFor("iter first");
+  await Bun.write(join(String(dir), "app.js"), `require("./dep.js"); console.log("iter second");`);
+  await waitFor("iter second");
+
+  reader.releaseLock();
+  watchee.kill("SIGKILL");
+  await watchee.exited;
+
+  // The first iteration persisted before execve; the <version-tag>/<hash>
+  // files must now exist on disk.
+  const entries = readdirSync(cacheDir, { recursive: true, withFileTypes: true });
+  expect(entries.filter(e => e.isFile()).length).toBeGreaterThan(0);
 }, 30000);

@@ -658,6 +658,7 @@ where
         // loop so the JS thread emits them before execve (node runs the child's
         // handlers on kill); otherwise execve immediately (node's default kill).
         if RELOAD_IMMEDIATELY && !crate::posix_signal_handle::watch_kill_signal_has_listeners() {
+            crate::node_compile_cache::persist_now();
             Output::flush();
             flush_changed_paths_for_reload();
             bun_core::reload_process(

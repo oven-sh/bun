@@ -304,7 +304,21 @@ extern "C" void on_before_reload_process_linux()
     // If this fails, it's ultimately okay, we're just trying our best to avoid leaking file descriptors.
     bun_close_range(3, ~0U, CLOSE_RANGE_CLOEXEC);
 
-    // reset all signals to default
+    // Reset signal dispositions to default before unblocking the mask. With
+    // bun's handlers still installed, a SIGTERM arriving between here and
+    // execve is consumed (queued for JS dispatch) and then lost when execve
+    // replaces the image, wedging a --watch child a parent just tried to
+    // kill. execve itself resets caught dispositions, so this only shrinks
+    // the window to zero.
+    struct sigaction sa {};
+    sa.sa_handler = SIG_DFL;
+    sigemptyset(&sa.sa_mask);
+    for (int s = 1; s < NSIG; s++) {
+        if (s == SIGKILL || s == SIGSTOP)
+            continue;
+        sigaction(s, &sa, nullptr);
+    }
+
     sigset_t signal_set;
     sigemptyset(&signal_set);
     sigprocmask(SIG_SETMASK, &signal_set, nullptr);

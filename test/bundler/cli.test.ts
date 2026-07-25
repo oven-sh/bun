@@ -533,6 +533,8 @@ test("bun build --no-bundle --watch rebuilds when the entry file changes", async
     stderr: "pipe",
     stdin: "ignore",
   });
+  const stdout = proc.stdout.text();
+  const stderr = proc.stderr.text();
 
   const waitForOutput = async (needle: string) => {
     while (true) {
@@ -542,10 +544,9 @@ test("bun build --no-bundle --watch rebuilds when the entry file changes", async
         .catch(() => "");
       if (text.includes(needle)) return text;
       if (exitCode !== null) {
-        const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text()]);
         throw new Error(
           `watcher exited (code ${exitCode}) before emitting ${JSON.stringify(needle)}\n` +
-            `outfile: ${JSON.stringify(text)}\nstdout: ${stdout}\nstderr: ${stderr}`,
+            `outfile: ${JSON.stringify(text)}\nstdout: ${await stdout}\nstderr: ${await stderr}`,
         );
       }
       await Bun.sleep(16);
@@ -560,4 +561,5 @@ test("bun build --no-bundle --watch rebuilds when the entry file changes", async
 
   const rebuilt = await waitForOutput("marker-v2");
   expect(rebuilt).not.toContain("marker-v1");
+  expect(rebuilt).not.toContain(": string");
 });

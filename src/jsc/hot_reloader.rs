@@ -1407,9 +1407,6 @@ fn __bun_jsc_enable_hot_module_reloading_for_bundler(
 }
 
 // ── `bun build --no-bundle --watch` (Ctx = Transpiler) ───────────────────
-// Same RELOAD_IMMEDIATELY semantics as the BundleV2 path above; the
-// transform-only CLI never constructs a `BundleV2`, so the `Transpiler`
-// itself owns the watcher backref.
 
 impl<'a> HotReloaderCtx for bun_bundler::Transpiler<'a> {
     type EventLoop = bun_event_loop::AnyEventLoop;
@@ -1426,9 +1423,7 @@ impl<'a> HotReloaderCtx for bun_bundler::Transpiler<'a> {
         let handle = self
             .bun_watcher
             .expect("bun_watcher_mut on un-enabled Transpiler reloader");
-        // SAFETY: `Box<Watcher>` leaked via `into_raw` in `install_bun_watcher`;
-        // live for the process (the CLI transpiler is arena-allocated and the
-        // main thread parks in `exit_or_watch`).
+        // SAFETY: `install_bun_watcher` leaked the `Box<Watcher>`; process-lifetime.
         unsafe { &mut *handle.as_ptr() }
     }
 
@@ -1472,8 +1467,6 @@ impl<'a> HotReloaderCtx for bun_bundler::Transpiler<'a> {
     }
 }
 
-/// `bun build --no-bundle --watch` reloader: same `RELOAD_IMMEDIATELY = true`
-/// execve-on-change semantics as [`BundlerWatcher`], but with the CLI
-/// `Transpiler` as context.
+/// [`BundlerWatcher`] equivalent for `bun build --no-bundle --watch`.
 pub type TranspilerWatcher =
     NewHotReloader<bun_bundler::Transpiler<'static>, bun_event_loop::AnyEventLoop, true>;

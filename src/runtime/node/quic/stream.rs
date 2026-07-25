@@ -385,7 +385,9 @@ impl QuicStream {
     }
 
     /// 0-RTT was rejected: Node destroys every stream opened during the
-    /// early-data phase.
+    /// early-data phase. Called synchronously from `on_early_data_failed`,
+    /// i.e. inside the engine tick, before lsquic re-queues the stashed
+    /// 0-RTT packets as 1-RTT lost.
     pub(super) fn cancel_early_rejected(&self, code: u64) {
         self.mark_reset(code);
         self.outbound.with_mut(|o| {
@@ -395,8 +397,16 @@ impl QuicStream {
         });
         self.with_state(|st| st.write_ended = 1);
         if let Some(s) = self.ls() {
-            // Node destroys it silently.
-            s.shutdown_internal();
+            // stop_sending swaps `sm_readable` to `stream_readable_discard`
+            // via `stream_shutdown_read`, so a response HEADERS that raced
+            // the reset cannot reach `lsquic_qdh_header_in_begin` (which
+            // asserts `!STREAM_U_READ_DONE`). reset sets `SMQF_SEND_RST`,
+            // making `send_ctl_next_lost` elide this stream's frames from
+            // the 0-RTT stash instead of retransmitting them at 1-RTT; the
+            // H3 control and QPACK streams are lsquic-internal and never
+            // reach here, so their frames survive the retransmit.
+            s.stop_sending(code);
+            s.reset(code);
         }
     }
 

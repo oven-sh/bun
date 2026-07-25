@@ -325,7 +325,6 @@ pub(super) enum SessionEvent {
         count: u32,
         acked: bool,
     },
-    EarlyDataFailed,
     /// HTTP/3 ORIGIN frame payload (RFC 9412).
     Origin(Vec<u8>),
     /// Version Negotiation packet (RFC 8999 sec 6).
@@ -1218,23 +1217,6 @@ impl QuicSession {
                             self.handle(),
                             &[id_js, status_js],
                         );
-                    }
-                }
-                SessionEvent::EarlyDataFailed => {
-                    // Node parity: their `closed` promises reject with an
-                    // application error.
-                    let code = self.with_state(|s| {
-                        if s.internal_error_code != 0 {
-                            s.internal_error_code
-                        } else {
-                            1
-                        }
-                    });
-                    let streams: Vec<*mut super::stream::QuicStream> = self.streams.get().clone();
-                    for sp in streams {
-                        if let Some(stream) = self.live_stream(sp) {
-                            stream.cancel_early_rejected(code);
-                        }
                     }
                 }
                 SessionEvent::DatagramAckStatus { count, acked } => {
@@ -2540,10 +2522,24 @@ lsquic_callback! {
     }
 
     pub(super) fn on_early_data_failed(session: &QuicSession) {
-        // Front of the queue: lsquic resets the early streams before this
-        // callback, so their clean closes are already queued and would settle
-        // `closed` before the rejection node delivers could land.
-        session.events.with_mut(|e| e.insert(0, SessionEvent::EarlyDataFailed));
+        // Inside the engine tick: runs before `stash_0rtt_packets`, and
+        // the stash is drained to the lost queue and retransmitted in this
+        // same tick once the handshake completes. Resetting the early
+        // streams here (not deferred to `process_events`) is what makes
+        // `send_ctl_next_lost` elide their frames.
+        let code = session.with_state(|s| {
+            if s.internal_error_code != 0 {
+                s.internal_error_code
+            } else {
+                1
+            }
+        });
+        let streams: Vec<*mut super::stream::QuicStream> = session.streams.get().clone();
+        for sp in streams {
+            if let Some(stream) = session.live_stream(sp) {
+                stream.cancel_early_rejected(code);
+            }
+        }
         session.schedule_process();
     }
 

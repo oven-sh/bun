@@ -145,4 +145,34 @@ describe("path.join", () => {
 
     assert.strictEqual(failures.length, 0, failures.join(""));
   });
+
+  // Matches Node >= v22 behavior (CVE-2024-36139): join skips normalization
+  // when a joined part is a DOS reserved device name, leaving ".." segments
+  // uncollapsed, and normalize prefixes drive-like relative results with ".\".
+  // Expected values verified against Node v26.3.0.
+  test("win32 reserved device names and drive-like relative paths", () => {
+    assert.strictEqual(path.win32.join("uploads", "c:"), ".\\uploads\\c:");
+    assert.strictEqual(path.win32.join("uploads", "..", "c:"), ".\\c:");
+    assert.strictEqual(path.win32.join("a", "b", "c:"), ".\\a\\b\\c:");
+    assert.strictEqual(path.win32.join("a", "b:"), ".\\a\\b:");
+    assert.strictEqual(path.win32.join("a", ":"), ".\\a\\:");
+    // Reserved device name in a part: ".." stays uncollapsed.
+    assert.strictEqual(path.win32.join("uploads", "..\\CON:"), "uploads\\..\\CON:");
+    assert.strictEqual(path.win32.join("a", "NUL:", "..", ".."), "a\\NUL:\\..\\..");
+    assert.strictEqual(path.win32.join("a", "CON:", "b"), "a\\CON:\\b");
+    assert.strictEqual(path.win32.join("a\\CON:"), "a\\CON:");
+    assert.strictEqual(path.win32.join("CON:"), "CON:");
+    assert.strictEqual(path.win32.join("nul:"), "nul:");
+    assert.strictEqual(path.win32.join("CON:", ""), "CON:");
+    assert.strictEqual(path.win32.join("", "CON:"), "CON:");
+    assert.strictEqual(path.win32.join("C:", "CON:"), "C:\\CON:");
+    assert.strictEqual(path.win32.join("\\\\server", "share", "CON:"), "\\\\server\\share\\CON:");
+    // Parts are split on "\" only, so a "/" keeps the name out of part
+    // position and normalization still runs.
+    assert.strictEqual(path.win32.join("uploads", "../CON:"), ".\\CON:");
+    assert.strictEqual(path.win32.join("a/CON:", "b"), ".\\a\\CON:\\b");
+    // Not reserved.
+    assert.strictEqual(path.win32.join("COM1", "x"), "COM1\\x");
+    assert.strictEqual(path.win32.join("c:", "foo"), "c:\\foo");
+  });
 });

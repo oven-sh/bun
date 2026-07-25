@@ -30,6 +30,54 @@ describe("path.normalize", () => {
     assert.strictEqual(path.win32.normalize("foo/bar\\baz"), "foo\\bar\\baz");
   });
 
+  // Matches Node >= v22 behavior (CVE-2024-36139): a relative path that would
+  // come back looking like a drive or a DOS device is prefixed with ".\".
+  // Expected values verified against Node v26.3.0.
+  test("win32 relative paths that look like a drive or DOS device", () => {
+    assert.strictEqual(path.win32.normalize("CON:"), ".\\CON:.");
+    assert.strictEqual(path.win32.normalize("con:"), ".\\con:.");
+    assert.strictEqual(path.win32.normalize("NUL:"), ".\\NUL:.");
+    assert.strictEqual(path.win32.normalize("prn:"), ".\\prn:.");
+    assert.strictEqual(path.win32.normalize("COM9:"), ".\\COM9:.");
+    assert.strictEqual(path.win32.normalize("lpt9:"), ".\\lpt9:.");
+    assert.strictEqual(path.win32.normalize("LPT\u00b9:"), ".\\LPT\u00b9:.");
+    assert.strictEqual(path.win32.normalize("COM1:x"), ".\\COM1:x");
+    assert.strictEqual(path.win32.normalize("CON:."), ".\\CON:.");
+    assert.strictEqual(path.win32.normalize("CON:.."), ".\\CON:..");
+    assert.strictEqual(path.win32.normalize("CON:\\"), ".\\CON:.\\");
+    assert.strictEqual(path.win32.normalize("CON:\\foo"), ".\\CON:foo");
+    assert.strictEqual(path.win32.normalize("CON:/foo/../bar"), ".\\CON:bar");
+    assert.strictEqual(path.win32.normalize("CON:x\\y"), ".\\CON:x\\y");
+    assert.strictEqual(path.win32.normalize("nul:x:y"), ".\\nul:x:y");
+    assert.strictEqual(path.win32.normalize("uploads/../CON:"), ".\\CON:");
+    assert.strictEqual(path.win32.normalize("..\\CON:"), ".\\..\\CON:");
+    assert.strictEqual(path.win32.normalize("uploads/../c:"), ".\\c:");
+    assert.strictEqual(path.win32.normalize("a/../../c:"), ".\\..\\c:");
+    assert.strictEqual(path.win32.normalize("a\\c:"), ".\\a\\c:");
+    assert.strictEqual(path.win32.normalize("x\\CON:"), ".\\x\\CON:");
+    assert.strictEqual(path.win32.normalize("foo:"), ".\\foo:");
+    assert.strictEqual(path.win32.normalize("aux.txt:"), ".\\aux.txt:");
+    assert.strictEqual(path.win32.normalize("COM0:"), ".\\COM0:");
+    assert.strictEqual(path.win32.normalize("COM10:"), ".\\COM10:");
+    assert.strictEqual(path.win32.normalize("CONN:"), ".\\CONN:");
+    // indexOf(":") === -1 makes Node check the path minus its last char.
+    assert.strictEqual(path.win32.normalize("AUXX"), ".\\AUXX");
+    assert.strictEqual(path.win32.normalize("AUX\\"), ".\\AUX\\");
+    // Not prefixed: no colon at a segment end and no drive-like tail.
+    assert.strictEqual(path.win32.normalize("CON"), "CON");
+    assert.strictEqual(path.win32.normalize("CON\\x"), "CON\\x");
+    assert.strictEqual(path.win32.normalize("foo:bar"), "foo:bar");
+    assert.strictEqual(path.win32.normalize("a:b:c"), "a:b:c");
+    assert.strictEqual(path.win32.normalize("c:foo"), "c:foo");
+    assert.strictEqual(path.win32.normalize("c:..\\a"), "c:..\\a");
+    assert.strictEqual(path.win32.normalize("C:CON:"), "C:CON:");
+    assert.strictEqual(path.win32.normalize("\\CON:"), "\\CON:");
+    // Device roots.
+    assert.strictEqual(path.win32.normalize("\\\\.\\PHYSICALDRIVE0"), "\\\\.\\PHYSICALDRIVE0");
+    assert.strictEqual(path.win32.normalize("\\\\?\\COM1:"), "\\\\?\\COM1:\\");
+    assert.strictEqual(path.win32.normalize("\\\\.\\CON:"), "\\\\?\\CON:\\");
+  });
+
   test("posix", () => {
     assert.strictEqual(path.posix.normalize("./fixtures///b/../b/c.js"), "fixtures/b/c.js");
     assert.strictEqual(path.posix.normalize("/foo/../../../bar"), "/bar");

@@ -3574,6 +3574,13 @@ impl<'a> HTTPClient<'a> {
 
     /// `100 Continue` arrived for an `Expect: 100-continue` request: release
     /// the body that `on_writable` / `write_to_stream` have been holding back.
+    ///
+    /// Over a CONNECT tunnel this runs from inside `ProxyTunnel::receive` →
+    /// `handle_traffic`. Re-entering the wrapper from there is the same
+    /// pattern as `ProxyTunnel::on_handshake` → `on_writable` and relies on
+    /// the `black_box` laundering inside `SSLWrapper::handle_traffic`;
+    /// deferring the body write until after `receive` returns instead touches
+    /// `self` after a completion callback may have freed it.
     fn resume_after_100_continue<const IS_SSL: bool>(&mut self, socket: HttpSocket<IS_SSL>) {
         if !self.state.flags.awaiting_continue {
             return;
@@ -3771,14 +3778,12 @@ impl<'a> HTTPClient<'a> {
 
             break parsed;
         };
-        if self.state.flags.awaiting_continue
-            && !(self.flags.proxy_tunneling && self.proxy_tunnel.is_none())
-        {
-            // Origin final status without a preceding 100: abandon the body
-            // and forbid reuse (declared length never sent). A CONNECT reply
-            // is not an origin response.
+        // Origin final status without a preceding 100: abandon the body. A
+        // CONNECT reply is not an origin response.
+        let abandoned_expect_body = self.state.flags.awaiting_continue
+            && !(self.flags.proxy_tunneling && self.proxy_tunnel.is_none());
+        if abandoned_expect_body {
             self.state.flags.awaiting_continue = false;
-            self.flags.disable_keepalive = true;
             self.state.request_body = bun_ptr::RawSlice::EMPTY;
             self.state.request_stage = RequestStage::Done;
         }
@@ -3789,6 +3794,13 @@ impl<'a> HTTPClient<'a> {
                 return;
             }
         };
+        if abandoned_expect_body {
+            // Declared length never sent; the connection must not be pooled.
+            // Set after handle_response_metadata so `Connection: keep-alive`
+            // can't overwrite it, and on the per-attempt flags so a redirect
+            // hop's fresh connection is still poolable.
+            self.state.flags.allow_keepalive = false;
+        }
 
         if (self.state.content_encoding_i as usize) < response.headers.list.len()
             && !self.state.flags.did_set_content_encoding

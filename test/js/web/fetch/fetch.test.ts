@@ -3155,8 +3155,10 @@ describe("fetch Expect: 100-continue (HTTP/1.1)", () => {
     // Content-Length was never satisfied. Pooling that socket would let the
     // next request's head land inside the previous request's body frame.
     let connections = 0;
+    const sockets: import("net").Socket[] = [];
     const server = net.createServer(sock => {
       connections++;
+      sockets.push(sock);
       let buf = Buffer.alloc(0);
       sock.on("data", chunk => {
         buf = Buffer.concat([buf, chunk]);
@@ -3179,7 +3181,7 @@ describe("fetch Expect: 100-continue (HTTP/1.1)", () => {
         keepalive: true,
       });
       await r1.text();
-      const r2 = await fetch(url, { keepalive: true });
+      const r2 = await fetch(url);
       await r2.text();
       expect({ connections, status1: r1.status, status2: r2.status }).toEqual({
         connections: 2,
@@ -3187,6 +3189,7 @@ describe("fetch Expect: 100-continue (HTTP/1.1)", () => {
         status2: 200,
       });
     } finally {
+      for (const s of sockets) s.destroy();
       server.close();
     }
   });

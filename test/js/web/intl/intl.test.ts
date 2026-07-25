@@ -10,7 +10,7 @@
 // links the unmodified libicudata.a.
 
 import { describe, expect, test } from "bun:test";
-import { isLinux } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows } from "harness";
 
 // Snapshots are CLDR-version-specific. Only check them where Bun bundles the
 // ICU they were generated against (Linux); macOS uses Apple's libicucore and
@@ -305,5 +305,95 @@ describe("exhaustive locale sweep (every compressed item)", () => {
       const b = new Intl.DisplayNames(loc, { type: "region" }).of("US");
       expect(a).toBe(b);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// DefaultLocale — https://tc39.es/ecma402/#sec-defaultlocale
+// https://github.com/oven-sh/bun/issues/8480
+// https://github.com/oven-sh/bun/issues/24851
+//
+// ICU's uloc_getDefault() consults LC_ALL > LC_MESSAGES > LANG on POSIX and
+// GetUserDefaultLocaleName on Windows. Node/V8 use it verbatim (mapping the
+// C/POSIX sentinel to "en-US"); Bun previously hardcoded "en-US" because WTF's
+// platformUserPreferredLanguages() reads setlocale(LC_CTYPE, nullptr), which
+// stays at "C" unless the process calls setlocale(LC_ALL, "").
+// ---------------------------------------------------------------------------
+
+// On Windows ICU ignores LC_*/LANG and reads the system locale, so a fixed
+// expectation against env vars would be wrong there (Node behaves the same).
+describe.skipIf(isWindows)("DefaultLocale follows POSIX locale environment", () => {
+  const resolveDefaultLocale = async (localeEnv: Record<string, string>) => {
+    const env = { ...bunEnv };
+    delete env.LC_ALL;
+    delete env.LC_MESSAGES;
+    delete env.LANG;
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const vm = require("node:vm");
+         process.stdout.write(JSON.stringify([
+           Intl.DateTimeFormat().resolvedOptions().locale,
+           Intl.NumberFormat().resolvedOptions().locale,
+           Intl.Collator().resolvedOptions().locale,
+           vm.runInNewContext("Intl.DateTimeFormat().resolvedOptions().locale"),
+         ]));`,
+      ],
+      env: { ...env, ...localeEnv },
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    return JSON.parse(stdout) as [string, string, string, string];
+  };
+
+  describe.each(["LC_ALL", "LC_MESSAGES", "LANG"])("via %s", key => {
+    test.concurrent.each([
+      ["zh_CN.UTF-8", "zh-CN"],
+      ["fr_FR.UTF-8", "fr-FR"],
+      ["en_IN.UTF-8", "en-IN"],
+      ["ja_JP", "ja-JP"],
+      ["sv_SE.ISO8859-1", "sv-SE"],
+    ])("%s → %s", async (raw, expected) => {
+      expect(await resolveDefaultLocale({ [key]: raw })).toEqual([expected, expected, expected, expected]);
+    });
+  });
+
+  test.concurrent("LC_ALL overrides LC_MESSAGES and LANG", async () => {
+    expect(await resolveDefaultLocale({ LC_ALL: "de_DE.UTF-8", LC_MESSAGES: "fr_FR.UTF-8", LANG: "ja_JP.UTF-8" })).toEqual(
+      ["de-DE", "de-DE", "de-DE", "de-DE"],
+    );
+  });
+
+  test.concurrent("LC_MESSAGES overrides LANG", async () => {
+    expect(await resolveDefaultLocale({ LC_MESSAGES: "de_DE.UTF-8", LANG: "fr_FR.UTF-8" })).toEqual([
+      "de-DE",
+      "de-DE",
+      "de-DE",
+      "de-DE",
+    ]);
+  });
+
+  test.concurrent.each(["C", "POSIX", "C.UTF-8"])("LANG=%s falls back to en-US", async raw => {
+    expect(await resolveDefaultLocale({ LANG: raw })).toEqual(["en-US", "en-US", "en-US", "en-US"]);
+  });
+
+  test.concurrent("unset locale falls back to en-US", async () => {
+    expect(await resolveDefaultLocale({})).toEqual(["en-US", "en-US", "en-US", "en-US"]);
+  });
+
+  test.concurrent("default locale drives toLocaleString() output", async () => {
+    const env = { ...bunEnv, LC_ALL: "de_DE.UTF-8" };
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `process.stdout.write((1234567.89).toLocaleString());`],
+      env,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("1.234.567,89");
+    expect(exitCode).toBe(0);
   });
 });

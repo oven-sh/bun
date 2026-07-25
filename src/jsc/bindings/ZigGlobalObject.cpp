@@ -972,7 +972,7 @@ const JSC::GlobalObjectMethodTable& GlobalObject::globalObjectMethodTable()
         &currentScriptExecutionOwner,
         &scriptExecutionStatus,
         &unsafeEvalNoop, // reportViolationForUnsafeEval
-        nullptr, // defaultLanguage
+        &defaultLanguage, // defaultLanguage
         &compileStreaming,
         &instantiateStreaming,
         &Zig::deriveShadowRealmGlobalObject,
@@ -1000,7 +1000,7 @@ const JSC::GlobalObjectMethodTable& EvalGlobalObject::globalObjectMethodTable()
         &currentScriptExecutionOwner,
         &scriptExecutionStatus,
         &unsafeEvalNoop, // reportViolationForUnsafeEval
-        nullptr, // defaultLanguage
+        &defaultLanguage, // defaultLanguage
         &compileStreaming,
         &instantiateStreaming,
         &Zig::deriveShadowRealmGlobalObject,

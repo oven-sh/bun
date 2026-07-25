@@ -2,16 +2,35 @@
 #include "root.h"
 #include "ZigGlobalObject.h"
 #include "BunGlobalScope.h"
+#include "JavaScriptCore/IntlObject.h"
 #include "JavaScriptCore/VM.h"
 #include "JavaScriptCore/VMTraps.h"
 #include "JavaScriptCore/VMTrapsInlines.h"
 #include "JavaScriptCore/LazyClassStructure.h"
 #include "JavaScriptCore/LazyClassStructureInlines.h"
 #include "BunClientData.h"
+#include <unicode/uloc.h>
 
 namespace Bun {
 
 using namespace JSC;
+
+// GlobalObjectMethodTable::defaultLanguage hook. Matches V8's
+// Isolate::DefaultLocale(): ask ICU for its process default (LC_ALL /
+// LC_MESSAGES / LANG on POSIX, GetUserDefaultLocaleName on Windows), map the
+// C/POSIX sentinel to "en-US", and hand JSC a BCP-47 tag. Without this hook
+// JSC::defaultLocale() falls through to WTF::platformUserPreferredLanguages(),
+// which on Unix reads setlocale(LC_CTYPE, nullptr) and sees "C" because Bun
+// never calls setlocale(LC_ALL, ""), so the ICU fallback in defaultLocale() is
+// never reached and every Intl constructor resolves to "en-US".
+String GlobalScope::defaultLanguage()
+{
+    const char* localeID = uloc_getDefault();
+    if (!localeID || !*localeID || !strcmp(localeID, "en_US_POSIX") || !strcmp(localeID, "c") || !strcmp(localeID, "C"))
+        return "en-US"_s;
+    String tag = JSC::languageTagForLocaleID(localeID);
+    return tag.isEmpty() ? "und"_s : tag;
+}
 
 void GlobalScope::finishCreation(JSC::VM& vm)
 {

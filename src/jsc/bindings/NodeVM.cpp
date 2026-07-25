@@ -969,7 +969,7 @@ const JSC::GlobalObjectMethodTable& NodeVMGlobalObject::globalObjectMethodTable(
         &currentScriptExecutionOwner,
         &scriptExecutionStatus,
         &unsafeEvalNoop, // reportViolationForUnsafeEval
-        nullptr, // defaultLanguage
+        &defaultLanguage, // defaultLanguage
         nullptr, // compileStreaming
         nullptr, // instantiateStreaming
         nullptr,

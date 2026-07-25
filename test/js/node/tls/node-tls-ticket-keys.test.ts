@@ -65,8 +65,8 @@ describe("tls.Server ticketKeys", () => {
     replacement.fill(0);
     expect(server.getTicketKeys().equals(replacementCopy)).toBe(true);
 
-    await listen(server);
     try {
+      await listen(server);
       expect(server.getTicketKeys().equals(replacementCopy)).toBe(true);
 
       const rotated = randomBytes(48);
@@ -85,8 +85,8 @@ describe("tls.Server ticketKeys", () => {
     // Subsequent calls are stable until setTicketKeys.
     expect(server.getTicketKeys().equals(k)).toBe(true);
 
-    await listen(server);
     try {
+      await listen(server);
       expect(server.getTicketKeys().equals(k)).toBe(true);
     } finally {
       server.close();
@@ -95,8 +95,8 @@ describe("tls.Server ticketKeys", () => {
 
   test("getTicketKeys first called after listen() returns stable 48 bytes", async () => {
     const server = tls.createServer({ ...COMMON_CERT });
-    await listen(server);
     try {
+      await listen(server);
       const k = server.getTicketKeys();
       expect(Buffer.isBuffer(k)).toBe(true);
       expect(k.length).toBe(48);
@@ -108,8 +108,8 @@ describe("tls.Server ticketKeys", () => {
 
   test("setTicketKeys accepts Buffer, Uint8Array and DataView", async () => {
     const server = tls.createServer({ ...COMMON_CERT });
-    await listen(server);
     try {
+      await listen(server);
       const buf = Buffer.alloc(48);
       for (let i = 0; i < 48; i++) buf[i] = i;
       server.setTicketKeys(buf);
@@ -147,9 +147,9 @@ describe("tls.Server ticketKeys", () => {
     };
     const a = mk();
     const b = mk();
-    const pa = await listen(a);
-    const pb = await listen(b);
     try {
+      const pa = await listen(a);
+      const pb = await listen(b);
       // Both servers expose the shared key material.
       expect(a.getTicketKeys().equals(keys)).toBe(true);
       expect(b.getTicketKeys().equals(keys)).toBe(true);
@@ -179,9 +179,9 @@ describe("tls.Server ticketKeys", () => {
     };
     const a = mk(randomBytes(48));
     const b = mk(randomBytes(48));
-    const pa = await listen(a);
-    const pb = await listen(b);
     try {
+      const pa = await listen(a);
+      const pb = await listen(b);
       const first = await connectOnce(pa, null);
       expect(first.reused).toBe(false);
       expect(first.session).not.toBeNull();
@@ -202,9 +202,9 @@ describe("tls.Server ticketKeys", () => {
     };
     const a = mk();
     const b = mk();
-    const pa = await listen(a);
-    const pb = await listen(b);
     try {
+      const pa = await listen(a);
+      const pb = await listen(b);
       const shared = randomBytes(48);
       a.setTicketKeys(shared);
       b.setTicketKeys(shared);

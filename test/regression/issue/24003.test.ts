@@ -73,8 +73,11 @@ describe.concurrent("issue #24003", () => {
     expect(asyncFrames(stdout)).toEqual(["at async viaRace", "at async caller", "at async main"]);
   });
 
-  test("async stack frames without AsyncLocalStorage are not duplicated", async () => {
+  // The hook is installed lazily from the AsyncLocalStorage constructor; construct one
+  // without entering a store so the lockstep walk runs but JSC succeeds at every hop.
+  test("async stack frames are not duplicated when no AsyncLocalStorage store is active", async () => {
     const stdout = await run(`
+    new (require("node:async_hooks").AsyncLocalStorage)();
     async function fn3() { await 0; throw new Error("boom"); }
     async function fn2() { await fn3(); }
     async function fn1() { await fn2(); }
@@ -88,8 +91,9 @@ describe.concurrent("issue #24003", () => {
     expect(asyncFrames(stdout)).toEqual(["at async fn2", "at async fn1", "at async main"]);
   });
 
-  test("async stack frames through Promise.race without AsyncLocalStorage are not duplicated", async () => {
+  test("async stack frames through Promise.race are not duplicated when no AsyncLocalStorage store is active", async () => {
     const stdout = await run(`
+    new (require("node:async_hooks").AsyncLocalStorage)();
     async function leaf() { await 0; throw new Error("boom"); }
     async function viaRace() { await Promise.race([leaf()]); }
     async function caller() { await viaRace(); }

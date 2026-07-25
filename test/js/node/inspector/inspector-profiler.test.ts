@@ -518,6 +518,37 @@ console.log(JSON.stringify({ first: countFor(first), second: countFor(second) })
       expect(JSON.parse(stdout.trim())).toEqual({ first: 3, second: 1 });
     });
 
+    // CDP contract: startPreciseCoverage also resets execution counters, so a
+    // stop/start restart opens a fresh window (matching V8 and pre-#31823 Bun).
+    test.concurrent("restart (stop then start) resets counters", async () => {
+      using dir = tempDir("inspector-coverage-restart", {
+        "fixture.mjs": `
+import { Session } from "node:inspector/promises";
+import vm from "node:vm";
+const session = new Session();
+session.connect();
+await session.post("Profiler.enable");
+await session.post("Profiler.startPreciseCoverage", { callCount: true, detailed: true });
+const url = "file:///restart-fixture/virtual.js";
+const f = vm.runInThisContext("function f(){return 1}; f", { filename: url });
+f(); f(); f();
+await session.post("Profiler.stopPreciseCoverage");
+f(); f(); // calls while coverage is stopped: must not be counted
+await session.post("Profiler.startPreciseCoverage", { callCount: true, detailed: true });
+f(); f(); f(); f();
+const take = await session.post("Profiler.takePreciseCoverage");
+session.disconnect();
+const entry = take.result.find(s => s.url === url);
+const fn = entry?.functions?.find(x => x.functionName === "f");
+console.log(JSON.stringify({ count: fn?.ranges?.[0]?.count }));
+`,
+      });
+      await using proc = Bun.spawn({ cmd: [bunExe(), "fixture.mjs"], env: bunEnv, cwd: String(dir), stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stderrIfFailed: exitCode === 0 ? "" : stderr, exitCode }).toEqual({ stderrIfFailed: "", exitCode: 0 });
+      expect(JSON.parse(stdout.trim())).toEqual({ count: 4 });
+    });
+
     test.concurrent("collects block coverage with call counts for vm scripts", async () => {
       using dir = tempDir("inspector-coverage-vm", {
         "fixture.mjs": coverageVmFixture,

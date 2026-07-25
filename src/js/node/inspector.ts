@@ -417,9 +417,21 @@ class Session extends EventEmitter {
   #preciseCoverageCallCount = false;
   #preciseCoverageDetailed = false;
   #forwardedDebugger = false;
-  // Baseline for delta semantics: takePreciseCoverage must reset counters, but
-  // JSC has no counter-reset API, so subtract the previous take instead.
+  // Baseline for delta semantics: start/takePreciseCoverage must reset counters,
+  // but JSC has no counter-reset API, so subtract a recorded snapshot instead.
   #coverageBaseline: Map<string, number> = new Map();
+
+  #snapshotCoverageBaseline() {
+    const baseline = this.#coverageBaseline;
+    baseline.$clear();
+    const scripts = collectCoverageScripts();
+    if (scripts instanceof Error) return;
+    for (const script of scripts) {
+      for (const block of script.blocks) {
+        baseline.$set(`${script.scriptId}:${block[0]}:${block[1]}`, block[2]);
+      }
+    }
+  }
 
   connect() {
     if (this.#connected) {
@@ -483,8 +495,8 @@ class Session extends EventEmitter {
     const payload = deferred ? result[kDeferToImmediate] : result;
 
     if (callback) {
-      // Callback API - async. Deferred results (start/stop precise coverage)
-      // wait one event-loop turn so deleteAllCode's whenIdle work has run.
+      // Callback API - async. Deferred results wait one event-loop turn so
+      // deleteAllCode's whenIdle work has run before the callback.
       const deliver = () => {
         if (payload instanceof Error) {
           callback(payload, undefined);
@@ -563,7 +575,10 @@ class Session extends EventEmitter {
         if (!this.#profilerEnabled) return $ERR_INSPECTOR_COMMAND("-32000: Profiler is not enabled");
         this.#preciseCoverageCallCount = !!(params as any)?.callCount;
         this.#preciseCoverageDetailed = !!(params as any)?.detailed;
-        this.#coverageBaseline.$clear();
+        // CDP: "resets execution counters". The VM profiler stays on across
+        // stop/start, so snapshot current raw counts as the baseline instead
+        // (the native side returns [] when the profiler is not yet enabled).
+        this.#snapshotCoverageBaseline();
         // CDP: monotonic seconds since an arbitrary origin (V8 uses TimeTicks).
         const response = { timestamp: performance.now() / 1000 };
         if (this.#preciseCoverageEnabled) return response;
@@ -589,8 +604,7 @@ class Session extends EventEmitter {
         if (scripts instanceof Error) return scripts;
         // CDP contract: takePreciseCoverage resets execution counters, so a
         // second take reports the delta. JSC has no counter reset, so subtract
-        // the previous take's raw block counts (function-level call counts are
-        // derived from the entry block, so they follow automatically).
+        // the previous baseline and record the new raw counts as the next one.
         const baseline = this.#coverageBaseline;
         for (const script of scripts) {
           for (const block of script.blocks) {

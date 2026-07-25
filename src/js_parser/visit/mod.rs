@@ -452,8 +452,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 return;
                             }
                         }
-                        // Mark referenced indices first; compacting during lookup would
-                        // overwrite entries later `as_property` calls still need (#9613).
                         let mut used: smallvec::SmallVec<[bool; 8]> =
                             smallvec::smallvec![false; object.properties.len()];
                         for property in bound_object.properties() {

@@ -1361,7 +1361,7 @@ describe("--env-file", () => {
     return await Promise.all([subprocess.stderr.text(), subprocess.stdout.text(), subprocess.exited] as const);
   }
 
-  it.each(["--env-file .env.custom", "--env-file=.env.custom"])(
+  it.concurrent.each(["--env-file .env.custom", "--env-file=.env.custom"])(
     "loads the file into the spawned process env (%s)",
     async spelling => {
       const { x_dir, env } = setup();
@@ -1378,7 +1378,7 @@ describe("--env-file", () => {
     },
   );
 
-  it("supports multiple --env-file flags (later wins)", async () => {
+  it.concurrent("supports multiple --env-file flags (later wins)", async () => {
     const { x_dir, env } = setup();
     delete env.BUNX_TEST_A;
     delete env.BUNX_TEST_B;
@@ -1397,7 +1397,7 @@ describe("--env-file", () => {
     expect(exited).toBe(0);
   });
 
-  it("does not treat the file path after --env-file as the package name", async () => {
+  it.concurrent("does not treat the file path after --env-file as the package name", async () => {
     const { x_dir, env } = setup();
     await writeFile(join(x_dir, ".env.custom"), "X=1\n");
 
@@ -1411,23 +1411,33 @@ describe("--env-file", () => {
   });
 
   // Guard: the new --env-file arm must not consume flags that appear after the
-  // package name. This also held before the fix; it is here to catch a future
-  // parser change that forgets the maybe_package_name early-continue.
-  it("--env-file after the package name is passed through, not consumed by bunx", async () => {
+  // package name. This held before the fix too; it is here to catch a future
+  // parser change that forgets the maybe_package_name early-continue. The bin
+  // is a shell/cmd script (not a node shebang) because node itself also
+  // interprets --env-file after the script path, which would mask the check.
+  it.concurrent("--env-file after the package name is passed through, not consumed by bunx", async () => {
     const { x_dir, env } = setup();
+    delete env.BUNX_SHOULD_NOT_LOAD;
+    await writeFile(join(x_dir, ".env.passthrough"), "BUNX_SHOULD_NOT_LOAD=wrongly-consumed\n");
+    await mkdir(join(x_dir, "node_modules", ".bin"), { recursive: true });
+    if (isWindows) {
+      await writeFile(
+        join(x_dir, "node_modules", ".bin", "print-passthrough.cmd"),
+        "@echo off\r\n" +
+          "if defined BUNX_SHOULD_NOT_LOAD (echo marker=%BUNX_SHOULD_NOT_LOAD%) else (echo marker=unset)\r\n" +
+          "echo argv=%*\r\n",
+      );
+    } else {
+      const bin = join(x_dir, "node_modules", ".bin", "print-passthrough");
+      await writeFile(bin, '#!/bin/sh\necho "marker=${BUNX_SHOULD_NOT_LOAD:-unset}"\necho "argv=$*"\n');
+      chmodSync(bin, 0o755);
+    }
 
-    const [err, out, exited] = await run(
-      x_dir,
-      env,
-      "--no-install",
-      "definitely-absent",
-      "--env-file",
-      "should-be-passed-through",
-    );
+    const [err, out, exited] = await run(x_dir, env, "print-passthrough", "--env-file", ".env.passthrough");
 
-    expect(err).not.toContain("should-be-passed-through");
-    expect(err).toContain("Could not find an existing 'definitely-absent' binary to run.");
-    expect(out).toHaveLength(0);
-    expect(exited).toBe(1);
+    expect(err).not.toContain("error:");
+    const lines = out.trim().split(/\r?\n/);
+    expect(lines).toEqual(["marker=unset", "argv=--env-file .env.passthrough"]);
+    expect(exited).toBe(0);
   });
 });

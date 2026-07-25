@@ -148,11 +148,7 @@ export const setSyntheticAllocationLimitForTesting: (limit: number) => number = 
   1,
 );
 
-export const refStringsCount: () => number = $newRustFunction(
-  "virtual_machine_exports.rs",
-  "Bun__refStringsCount",
-  0,
-);
+export const refStringsCount: () => number = $newRustFunction("virtual_machine_exports.rs", "Bun__refStringsCount", 0);
 
 // Shrink the markdown parser's block-metadata cap (in bytes) so its
 // `TooManyBlocks` error is reachable without 4 GiB of input. The cap can only

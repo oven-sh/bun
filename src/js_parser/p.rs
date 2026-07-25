@@ -1227,6 +1227,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 )
             }
             _ => {
+                // Covers each branch of a ternary require() split apart by
+                // `maybe_transpose_if_require`.
+                if let Some(glob) = self.handle_glob_pattern(arg, None) {
+                    return glob;
+                }
                 let _ = self.check_dynamic_specifier(arg, arg.loc, "require()");
                 self.record_usage_of_runtime_require();
                 self.new_expr(
@@ -1241,16 +1246,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// Try to recognise `require("./dir/" + x)` / `import("./dir/" + x)` (or the
-    /// template-literal equivalent) and lower it to a bundled lookup map so the
-    /// matching files are included in the output. Matches esbuild's behaviour:
-    /// see https://esbuild.github.io/api/#glob. Returns `None` when the pattern
-    /// does not qualify (no `./`/`../` prefix, fully opaque arg, etc.), in which
-    /// case the caller falls through to the unbundled runtime `require`.
-    ///
-    /// `import_state` is the surrounding `import()` visit state (`None` for
-    /// `require()`); it carries the second-argument options, the derived
-    /// loader override, and the `.then().catch()`/`await` error-handling info.
+    /// Lower `require("./dir/" + x)` / `import("./dir/" + x)` to a bundled
+    /// lookup map, matching esbuild (https://esbuild.github.io/api/#glob).
+    /// `None` means the pattern does not qualify and the caller falls through
+    /// to the unbundled runtime path. `import_state` is `None` for `require()`.
     pub fn handle_glob_pattern(
         &mut self,
         arg: Expr,
@@ -1270,10 +1269,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return None;
         }
 
-        // Build the glob pattern. A wildcard immediately after `/` expands to
-        // `**/*` (may recurse into subdirectories); otherwise it is `*` (stays
-        // in the current directory). This matches esbuild and keeps
-        // `"./file-" + x + ".js"` from recursing.
+        // Like esbuild: a wildcard after `/` becomes `**/*` (recursive),
+        // mid-segment it becomes `*` so `"./file-" + x + ".js"` stays flat.
         let mut pattern = Vec::<u8>::new();
         let mut prefix_is_relative = false;
         let mut had_wildcard = false;
@@ -1295,9 +1292,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             {
                 prefix_is_relative = true;
             }
-            // `*` / `?` / `[` / `{` in the literal text would change glob
-            // semantics relative to a substring match. esbuild escapes them; we
-            // don't have a glob-escape helper, so bail to the runtime path.
+            // Glob metacharacters in literal text would change the match; bail.
             if bun_glob::detect_glob_syntax(text) {
                 return None;
             }
@@ -1316,17 +1311,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return None;
         }
 
-        // Walk the filesystem for matches. Any I/O error (including the source
-        // directory being virtual / not on disk) falls through to the unbundled
-        // path rather than failing the build.
         let mut matches: Vec<Box<[u8]>> = Vec::new();
         if !walk_glob_for_bundle(source_dir, &pattern, &mut matches) {
             return None;
         }
 
-        // Nothing on disk matched: fall through so `check_dynamic_specifier`
-        // (and the `allowUnresolved` gate) still see this call, and runtime
-        // resolution can still pick up files that only exist at run time.
+        // Zero matches falls through so `check_dynamic_specifier` still runs.
         if matches.is_empty() {
             return None;
         }
@@ -1347,11 +1337,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let import_tag = import_state.and_then(|s| s.import_record_tag);
 
         for abs in &matches {
-            // Key in the map is the same relative form the caller will pass at
-            // runtime (starts with `./` or `../`). Force POSIX separators so the
-            // keys match what the caller builds at runtime on every platform.
+            // `Loose` normalizes with host rules but emits POSIX separators,
+            // so keys match what callers build at runtime on every platform.
             let rel = bun_paths::resolve_path::relative_platform::<
-                bun_paths::resolve_path::platform::Posix,
+                bun_paths::resolve_path::platform::Loose,
                 false,
             >(source_dir, abs);
             let rel_with_dot: &'a [u8] = if strings::has_prefix_comptime(rel, b"../")
@@ -1365,9 +1354,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 buf.into_bump_slice()
             };
 
-            // Record the relative specifier (not the absolute path we globbed)
-            // so `--external` patterns and `onResolve` plugins match it the same
-            // as if the user had written `require("./engines/boa.js")`.
+            // Relative specifier so `--external` and `onResolve` match it.
             let import_record_index = self.add_import_record(
                 if import_state.is_none() {
                     ImportKind::Require
@@ -1438,10 +1425,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             loc,
         );
 
-        // `__glob` falls back to the runtime `require` / `import()` when the
-        // key is not in the map so extensionless or index-style specifiers
-        // (`"./engines/" + "boa"`) still resolve the way they did before the
-        // matching files were bundled.
+        // On a map miss `__glob` falls back to the runtime `require`/`import()`
+        // so extensionless specifiers (`"./engines/" + "boa"`) still resolve.
         let fallback = if !self.options.features.allow_runtime {
             None
         } else if import_state.is_none() {
@@ -1449,6 +1434,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             Some(self.value_for_require(loc))
         } else {
             let param_ref = self.new_symbol(js_ast::symbol::Kind::Other, b"p");
+            VecExt::append(&mut self.current_scope_mut().generated, param_ref);
             let param_expr = self.new_expr(
                 E::Identifier {
                     ref_: param_ref,
@@ -1496,9 +1482,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         ))
     }
 
-    /// Flattens `expr` into alternating literal / wildcard segments. Returns
-    /// `false` for shapes that cannot be analysed (tagged template, non-string
-    /// left operand of `+`, etc.).
+    /// Flattens `expr` into alternating literal / wildcard segments.
+    /// `false` means the shape cannot be analysed (tagged template, etc).
     fn glob_parts_from_expr(
         &mut self,
         expr: Expr,
@@ -1520,6 +1505,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 match &tmpl.head {
                     js_ast::e::TemplateContents::Cooked(head) => {
+                        // Copy so folding leftovers (ropes) can be flattened.
+                        let mut head = *head;
+                        head.resolve_rope_if_needed(self.arena);
                         let bytes = match head.string(self.arena) {
                             Ok(b) => b,
                             Err(_) => return false,
@@ -1534,6 +1522,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                     match &part.tail {
                         js_ast::e::TemplateContents::Cooked(tail) => {
+                            let mut tail = *tail;
+                            tail.resolve_rope_if_needed(self.arena);
                             let bytes = match tail.string(self.arena) {
                                 Ok(b) => b,
                                 Err(_) => return false,
@@ -1546,8 +1536,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 true
             }
             js_ast::ExprData::EBinary(bin) if bin.op == js_ast::op::Code::BinAdd => {
-                // The left side must itself be analysable so we have a literal
-                // prefix to anchor the glob.
+                // The left side must yield a literal prefix to anchor the glob.
                 if !self.glob_parts_from_expr(bin.left, out) {
                     return false;
                 }
@@ -9567,10 +9556,8 @@ pub trait GenerateImportSymbols {
     fn alias_name(&self, key: &Self::Key) -> &'static [u8];
 }
 
-/// Walk `source_dir` for `pattern` (relative, POSIX, may contain `**`/`*`),
-/// pushing the absolute path of every file that matches into `out`. Returns
-/// `false` on any I/O failure so the caller can fall back to the unbundled
-/// runtime require.
+/// Pushes the absolute path of every file under `source_dir` matching
+/// `pattern` into `out`; `false` on any I/O failure.
 fn walk_glob_for_bundle(source_dir: &[u8], pattern: &[u8], out: &mut Vec<Box<[u8]>>) -> bool {
     let mut walker = match bun_glob::BunGlobWalker::init_with_cwd(
         pattern, source_dir, /*dot*/ false, /*absolute*/ true,

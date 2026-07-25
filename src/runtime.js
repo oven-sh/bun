@@ -109,9 +109,7 @@ var __moduleCache;
 // When you do know the module is CJS
 export var __commonJS = (cb, mod) => () => (mod || cb((mod = { exports: {} }).exports, mod), mod.exports);
 
-// Map of bundled modules for `require("./dir/" + x)` / `import("./dir/" + x)`.
-// `fallback` is the unbundled `require` / `import()` so an extensionless key or
-// a file created at run time still resolves like it would have without the map.
+// Lookup map for `require("./dir/" + x)`; `fallback` is the unbundled require/import.
 export var __glob = (map, fallback) => path => {
   var fn = map[path];
   if (fn) return fn();

@@ -108,20 +108,80 @@ describe("bundler", () => {
   });
 
   // A second argument to `import()` carrying `with: { type }` must reach both
-  // the bundled matches and the runtime fallback.
+  // the bundled matches and the runtime fallback. `.html` defaults to a
+  // non-text loader, so the raw-text output proves the attribute was applied.
   itBundled("glob/ImportWithTypeOption", {
     target: "bun",
     files: {
       "/entry.js": /* js */ `
         const name = globalThis.__which ?? "a";
-        const m = await import(\`./data/\${name}.txt\`, { with: { type: "text" } });
+        const m = await import(\`./data/\${name}.html\`, { with: { type: "text" } });
         console.log(m.default);
       `,
-      "/data/a.txt": "hello-from-text",
+      "/data/a.html": "<b>hello-from-text</b>",
     },
-    run: { stdout: "hello-from-text" },
+    run: { stdout: "<b>hello-from-text</b>" },
     onAfterBundle(api) {
       api.expectFile("/out.js").toContain(`{ with: { type: "text" } }`);
+    },
+  });
+
+  // Both branches of a ternary argument get glob-bundled.
+  itBundled("glob/RequireTernaryArg", {
+    target: "bun",
+    files: {
+      "/entry.js": /* js */ `
+        const n = "a";
+        const which = globalThis.__y ? "y" : "x";
+        const m = require(which === "y" ? \`./y/\${n}.js\` : \`./x/\${n}.js\`);
+        console.log(m);
+      `,
+      "/x/a.js": `module.exports = "X";`,
+      "/y/a.js": `module.exports = "Y";`,
+    },
+    run: { stdout: "X" },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain(`"./x/a.js"`);
+      api.expectFile("/out.js").toContain(`"./y/a.js"`);
+    },
+  });
+
+  // A constant template part is folded into the head as a rope; the rope must
+  // be flattened so the pattern is "./v2/**/*.js", not "./v*.js".
+  itBundled("glob/TemplateFoldedConstantPart", {
+    target: "bun",
+    files: {
+      "/entry.js": /* js */ `
+        const name = "a";
+        console.log(require(\`./v\${2}/\${name}.js\`));
+      `,
+      "/v2/a.js": `module.exports = "V2A";`,
+    },
+    run: { stdout: "V2A" },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain(`"./v2/a.js"`);
+    },
+  });
+
+  // The generated fallback parameter must not shadow a user binding that is
+  // passed as the import options.
+  itBundled("glob/FallbackParamNoShadow", {
+    target: "bun",
+    files: {
+      "/entry.js": /* js */ `
+        const p = { with: { type: "text" } };
+        const name = globalThis.__which ?? "a";
+        const m = await import(\`./data/\${name}.txt\`, p);
+        console.log(m.default);
+      `,
+      "/data/a.txt": "hello",
+    },
+    run: { stdout: "hello" },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      if (out.includes("import(p, p)")) {
+        throw new Error("fallback parameter shadows user binding 'p'");
+      }
     },
   });
 

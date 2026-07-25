@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { createPrivateKey, createPublicKey, generateKeyPairSync, sign, verify } from "crypto";
+import { createPrivateKey, createPublicKey, generateKeyPairSync, sign, subtle, verify } from "crypto";
 import fs from "fs";
 import { bunEnv, bunExe } from "harness";
 import path from "path";
@@ -9,6 +9,11 @@ const parallelDir = path.join(import.meta.dir, "..", "test", "parallel");
 
 function fixture(name: string) {
   return fs.readFileSync(path.join(keysDir, name));
+}
+
+function fixtureDer(name: string) {
+  const pem = fixture(name).toString("ascii");
+  return Buffer.from(pem.replace(/-----(BEGIN|END) PRIVATE KEY-----|\s/g, ""), "base64");
 }
 
 // ML-DSA signature sizes and public-key sizes per FIPS 204.
@@ -90,6 +95,105 @@ describe("ML-KEM", () => {
       const priv = createPrivateKey(fixture(`${stem}_private_seed_only.pem`));
       expect(priv.asymmetricKeyType).toBe(type);
     });
+  });
+});
+
+// ML-DSA / ML-KEM private keys encode a CHOICE of three forms (RFC 9881 /
+// 9935): `seed [0]`, `expandedKey`, or `both SEQUENCE{seed, expandedKey}`.
+// OpenSSL 3.5's default `genpkey` output is the `both` form. BoringSSL only
+// natively parses `seed [0]`, so Bun extracts the seed from `both` itself.
+describe("PKCS#8 private-key CHOICE forms", () => {
+  const mlDsaUsages: KeyUsage[] = ["sign"];
+  const mlKemUsages: KeyUsage[] = ["decapsulateBits", "decapsulateKey"];
+
+  describe.each([
+    ["ml-dsa-44", "ML-DSA-44", mlDsaUsages],
+    ["ml-dsa-65", "ML-DSA-65", mlDsaUsages],
+    ["ml-dsa-87", "ML-DSA-87", mlDsaUsages],
+    ["ml-kem-768", "ML-KEM-768", mlKemUsages],
+    ["ml-kem-1024", "ML-KEM-1024", mlKemUsages],
+  ] as const)("%s", (type, algName, usages) => {
+    const stem = type.replaceAll("-", "_");
+    const seedOnly = `${stem}_private_seed_only.pem`;
+    const both = `${stem}_private.pem`;
+    const expandedOnly = `${stem}_private_priv_only.pem`;
+
+    test("createPrivateKey accepts the `both` form (PEM and DER)", () => {
+      const reference = createPrivateKey(fixture(seedOnly));
+      const fromPem = createPrivateKey(fixture(both));
+      const fromDer = createPrivateKey({ key: fixtureDer(both), format: "der", type: "pkcs8" });
+      expect({
+        pemType: fromPem.asymmetricKeyType,
+        derType: fromDer.asymmetricKeyType,
+        pemEqualsSeedOnly: fromPem.equals(reference),
+        derEqualsSeedOnly: fromDer.equals(reference),
+        exportedPem: fromPem.export({ format: "pem", type: "pkcs8" }),
+      }).toEqual({
+        pemType: type,
+        derType: type,
+        pemEqualsSeedOnly: true,
+        derEqualsSeedOnly: true,
+        exportedPem: fixture(seedOnly).toString("ascii"),
+      });
+    });
+
+    test("createPublicKey from the `both` private PEM derives the right public key", () => {
+      const pub = createPublicKey(fixture(both));
+      const reference = createPublicKey(fixture(`${stem}_public.pem`));
+      expect(pub.equals(reference)).toBe(true);
+    });
+
+    test("subtle.importKey accepts the `both` form", async () => {
+      const key = await subtle.importKey("pkcs8", fixtureDer(both), { name: algName }, true, usages);
+      const exported = Buffer.from(await subtle.exportKey("pkcs8", key));
+      expect({
+        type: key.type,
+        name: key.algorithm.name,
+        exportedMatchesSeedOnly: exported.equals(fixtureDer(seedOnly)),
+      }).toEqual({ type: "private", name: algName, exportedMatchesSeedOnly: true });
+    });
+
+    test("subtle.importKey of the `both` form under a different parameter set is rejected as wrong key type", async () => {
+      const other = type === "ml-dsa-44" ? "ML-DSA-65" : "ML-DSA-44";
+      const otherUsages: KeyUsage[] = ["sign"];
+      await expect(subtle.importKey("pkcs8", fixtureDer(both), { name: other }, true, otherUsages)).rejects.toThrow(
+        "Invalid key type",
+      );
+    });
+
+    test("`both` form with a seed that does not match the expanded key is rejected", async () => {
+      // Byte 30 of the PKCS#8 is the first byte of the seed OCTET STRING
+      // contents for every fixture here (13-byte AlgorithmIdentifier, 4-byte
+      // OCTET STRING and SEQUENCE headers, 2-byte seed OCTET STRING header).
+      const modified = Buffer.from(fixtureDer(both));
+      modified[30] ^= 0xff;
+      await expect(subtle.importKey("pkcs8", modified, { name: algName }, true, usages)).rejects.toThrow(
+        expect.objectContaining({ name: "DataError" }),
+      );
+      expect(() => createPrivateKey({ key: modified, format: "der", type: "pkcs8" })).toThrow(
+        expect.objectContaining({ code: "ERR_OSSL_EVP_PRIVATE_KEY_WAS_NOT_SEED" }),
+      );
+    });
+
+    test("expandedKey-only form (no seed) is rejected", async () => {
+      expect(() => createPrivateKey(fixture(expandedOnly))).toThrow(
+        expect.objectContaining({ code: "ERR_OSSL_EVP_PRIVATE_KEY_WAS_NOT_SEED" }),
+      );
+      expect(() => createPrivateKey({ key: fixtureDer(expandedOnly), format: "der", type: "pkcs8" })).toThrow(
+        expect.objectContaining({ code: "ERR_OSSL_EVP_PRIVATE_KEY_WAS_NOT_SEED" }),
+      );
+      await expect(subtle.importKey("pkcs8", fixtureDer(expandedOnly), { name: algName }, true, usages)).rejects.toThrow(
+        /PKCS#8 key without a seed is not supported/,
+      );
+    });
+  });
+
+  test("ML-DSA: sign/verify works with a key imported from the `both` form", () => {
+    const priv = createPrivateKey(fixture("ml_dsa_44_private.pem"));
+    const pub = createPublicKey(fixture("ml_dsa_44_public.pem"));
+    const data = Buffer.from("hello bun");
+    const sig = sign(undefined, data, priv);
+    expect(verify(undefined, data, pub, sig)).toBe(true);
   });
 });
 

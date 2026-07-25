@@ -6,9 +6,11 @@
 #include "ncrypto.h"
 #include <openssl/asn1.h>
 #include <openssl/bn.h>
+#include <openssl/bytestring.h>
 #include <openssl/dh.h>
 #include <openssl/evp.h>
 #include <openssl/hmac.h>
+#include <openssl/obj.h>
 #include <openssl/pkcs12.h>
 #include <openssl/rand.h>
 #include <openssl/x509v3.h>
@@ -2541,6 +2543,96 @@ Buffer<char> GetPassphrase(
 }
 } // namespace
 
+EVPKeyPointer EVPKeyPointer::TryParsePqcBothFormPkcs8(
+    const Buffer<const unsigned char>& der)
+{
+    // Seed / expanded-key sizes per FIPS 204 (ML-DSA) and FIPS 203 (ML-KEM),
+    // plus where the expanded key overlaps the public key so we can verify the
+    // two halves of the "both" form agree. For ML-DSA that is the 32-byte rho
+    // at the start of both encodings; for ML-KEM the expanded dk embeds the
+    // full encapsulation key ek at offset 384*k.
+    struct Params {
+        int nid;
+        const EVP_PKEY_ALG* (*alg)();
+        size_t seedLen;
+        size_t expandedLen;
+        size_t pubInExpandedOffset;
+        size_t pubCompareLen;
+    };
+    static constexpr Params pqcAlgs[] = {
+        { NID_ML_DSA_44, EVP_pkey_ml_dsa_44, 32, 2560, 0, 32 },
+        { NID_ML_DSA_65, EVP_pkey_ml_dsa_65, 32, 4032, 0, 32 },
+        { NID_ML_DSA_87, EVP_pkey_ml_dsa_87, 32, 4896, 0, 32 },
+        { NID_ML_KEM_768, EVP_pkey_ml_kem_768, 64, 2400, 1152, 1184 },
+        { NID_ML_KEM_1024, EVP_pkey_ml_kem_1024, 64, 3168, 1536, 1568 },
+    };
+
+    CBS cbs, pkcs8, algorithm, oid, privateKey;
+    uint64_t version;
+    CBS_init(&cbs, der.data, der.len);
+    if (!CBS_get_asn1(&cbs, &pkcs8, CBS_ASN1_SEQUENCE) || CBS_len(&cbs) != 0
+        || !CBS_get_asn1_uint64(&pkcs8, &version) || version != 0
+        || !CBS_get_asn1(&pkcs8, &algorithm, CBS_ASN1_SEQUENCE)
+        || !CBS_get_asn1(&algorithm, &oid, CBS_ASN1_OBJECT)
+        || CBS_len(&algorithm) != 0
+        || !CBS_get_asn1(&pkcs8, &privateKey, CBS_ASN1_OCTETSTRING)) {
+        return {};
+    }
+
+    const Params* params = nullptr;
+    int nid = OBJ_cbs2nid(&oid);
+    for (const auto& candidate : pqcAlgs) {
+        if (candidate.nid == nid) {
+            params = &candidate;
+            break;
+        }
+    }
+    if (!params) return {};
+
+    // The "both" arm is a SEQUENCE of two OCTET STRINGs: seed then
+    // expandedKey. BoringSSL only needs the seed; it re-derives the rest.
+    CBS both, seed, expanded;
+    if (!CBS_get_asn1(&privateKey, &both, CBS_ASN1_SEQUENCE)
+        || CBS_len(&privateKey) != 0
+        || !CBS_get_asn1(&both, &seed, CBS_ASN1_OCTETSTRING)
+        || !CBS_get_asn1(&both, &expanded, CBS_ASN1_OCTETSTRING)
+        || CBS_len(&both) != 0
+        || CBS_len(&seed) != params->seedLen
+        || CBS_len(&expanded) != params->expandedLen) {
+        return {};
+    }
+
+    MarkPopErrorOnReturn markPop;
+    EVPKeyPointer key(EVP_PKEY_from_private_seed(params->alg(), CBS_data(&seed), CBS_len(&seed)));
+    if (!key) return {};
+
+    // Reject a seed that does not re-derive the expanded key, matching
+    // OpenSSL's consistency check for this form.
+    size_t pubLen = 0;
+    if (!EVP_PKEY_get_raw_public_key(key.get(), nullptr, &pubLen)
+        || pubLen < params->pubCompareLen) {
+        return {};
+    }
+    auto pub = DataPointer::Alloc(pubLen);
+    if (!pub
+        || !EVP_PKEY_get_raw_public_key(key.get(), static_cast<uint8_t*>(pub.get()), &pubLen)
+        || CRYPTO_memcmp(pub.get(),
+               CBS_data(&expanded) + params->pubInExpandedOffset,
+               params->pubCompareLen)
+            != 0) {
+        return {};
+    }
+
+    return key;
+}
+
+namespace {
+bool isPrivateKeyWasNotSeedError(int err)
+{
+    return ERR_GET_LIB(err) == ERR_LIB_EVP && ERR_GET_REASON(err) == EVP_R_PRIVATE_KEY_WAS_NOT_SEED;
+}
+} // namespace
+
 EVPKeyPointer::ParseKeyResult EVPKeyPointer::TryParsePrivateKey(
     const PrivateKeyEncodingConfig& config,
     const Buffer<const unsigned char>& buffer)
@@ -2568,6 +2660,24 @@ EVPKeyPointer::ParseKeyResult EVPKeyPointer::TryParsePrivateKey(
             nullptr,
             PasswordCallback,
             config.passphrase.has_value() ? &passphrase : nullptr);
+        if (!key && isPrivateKeyWasNotSeedError(ERR_peek_error())) {
+            auto pemBio = BIOPointer::New(buffer);
+            uint8_t* der = nullptr;
+            long derLen = 0;
+            char* name = nullptr;
+            if (pemBio
+                && PEM_bytes_read_bio(&der, &derLen, &name, PEM_STRING_PKCS8INF, pemBio.get(),
+                    PasswordCallback, config.passphrase.has_value() ? &passphrase : nullptr)) {
+                OPENSSL_free(name);
+                Buffer<const unsigned char> derBuf { .data = der, .len = static_cast<size_t>(derLen) };
+                auto recovered = TryParsePqcBothFormPkcs8(derBuf);
+                OPENSSL_free(der);
+                if (recovered) {
+                    ERR_clear_error();
+                    return ParseKeyResult(WTF::move(recovered));
+                }
+            }
+        }
         return keyOrError(EVPKeyPointer(key), config.passphrase.has_value());
     }
 
@@ -2594,7 +2704,14 @@ EVPKeyPointer::ParseKeyResult EVPKeyPointer::TryParsePrivateKey(
         if (!p8inf) {
             return ParseKeyResult(PKParseError::FAILED, ERR_peek_error());
         }
-        return keyOrError(EVPKeyPointer(EVP_PKCS82PKEY(p8inf.get())));
+        EVPKeyPointer key(EVP_PKCS82PKEY(p8inf.get()));
+        if (!key && isPrivateKeyWasNotSeedError(ERR_peek_error())) {
+            if (auto recovered = TryParsePqcBothFormPkcs8(buffer)) {
+                ERR_clear_error();
+                return ParseKeyResult(WTF::move(recovered));
+            }
+        }
+        return keyOrError(WTF::move(key));
     }
     case PKEncodingType::SEC1: {
         auto key = d2i_PrivateKey_bio(bio.get(), nullptr);

@@ -33,9 +33,11 @@
 #include "CryptoAlgorithmRegistry.h"
 #include "CryptoKeyPair.h"
 #include "JsonWebKey.h"
+#include "ncrypto.h"
 #include <openssl/bytestring.h>
 #include <openssl/err.h>
 #include <openssl/evp.h>
+#include <openssl/evp_errors.h>
 #include <openssl/mem.h>
 #include <wtf/text/Base64.h>
 
@@ -194,8 +196,23 @@ RefPtr<CryptoKeyAKP> CryptoKeyAKP::importPkcs8(CryptoAlgorithmIdentifier identif
     CBS cbs;
     CBS_init(&cbs, keyData.begin(), keyData.size());
     EvpPKeyPtr key(EVP_parse_private_key(&cbs));
-    if (!key || CBS_len(&cbs) != 0)
+    if (!key) {
+        // BoringSSL's decoder only accepts the `seed [0]` arm of the RFC 9881
+        // / 9935 private-key CHOICE. The `both` SEQUENCE (OpenSSL 3.5's
+        // default output) carries a seed too; recover it so those keys load.
+        int err = ERR_peek_last_error();
+        if (ERR_GET_LIB(err) == ERR_LIB_EVP && ERR_GET_REASON(err) == EVP_R_PRIVATE_KEY_WAS_NOT_SEED) {
+            ncrypto::Buffer<const unsigned char> der { .data = keyData.begin(), .len = keyData.size() };
+            if (auto recovered = ncrypto::EVPKeyPointer::TryParsePqcBothFormPkcs8(der)) {
+                ERR_clear_error();
+                key.reset(recovered.release());
+            }
+        }
+        if (!key)
+            return nullptr;
+    } else if (CBS_len(&cbs) != 0) {
         return nullptr;
+    }
     if (EVP_PKEY_id(key.get()) != nidForIdentifier(identifier)) {
         if (wrongKeyType)
             *wrongKeyType = true;

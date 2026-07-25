@@ -177,7 +177,11 @@ describe("node:test", () => {
           "RAN top-only-modifier",
           "RAN top-only-option",
         ]);
+        // only+skip and only+todo are included in the filter (reported as their
+        // directive), not dropped: Node under --test-only reports 5/1/1 here.
         expect(stderr).toContain("5 pass");
+        expect(stderr).toContain("1 skip");
+        expect(stderr).toContain("1 todo");
         expect({ exitCode, stderr }).toMatchObject({
           exitCode: 0,
           stderr: expect.stringContaining("0 fail"),
@@ -204,6 +208,8 @@ describe("node:test", () => {
         "RAN unmarked-child",
       ]);
       expect(stderr).toContain("8 pass");
+      expect(stderr).toContain("1 skip");
+      expect(stderr).toContain("1 todo");
       expect({ exitCode, stderr }).toMatchObject({
         exitCode: 0,
         stderr: expect.stringContaining("0 fail"),

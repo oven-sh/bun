@@ -1,5 +1,6 @@
-// Under `--only` / `--test-only` (Node's --test-only), exactly the five
-// only-marked tests run; without the flag, `only` is a no-op and all eight run.
+// Under `--only` / `--test-only` (Node's --test-only) the seven only-marked
+// entries are selected (five run, one todo, one skip); without the flag `only`
+// is a no-op and all ten entries are selected.
 const { test, describe } = require("node:test");
 
 test.only("top-level only modifier", () => console.log("RAN top-only-modifier"));
@@ -19,3 +20,7 @@ describe("plain suite", () => {
 describe("unmarked suite", () => {
   test("unmarked child", () => console.log("RAN unmarked-child"));
 });
+// `only` is independent of skip/todo: under --test-only these are included in
+// the filter and reported as their directive, not filtered out.
+test.only("only+todo", { todo: true }, () => console.log("RAN only-todo"));
+test.only("only+skip", { skip: true }, () => console.log("RAN only-skip"));

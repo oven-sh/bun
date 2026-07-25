@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isPosix, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isPosix, tempDir } from "harness";
 import { symlinkSync } from "node:fs";
 import { join } from "node:path";
 
@@ -125,68 +125,5 @@ describe.skipIf(!isPosix)("SIGUSR1 default disposition", () => {
     expect(stderr).toBe("");
     expect(stdout.trim()).toBe("SIGUSR1");
     expect(exitCode).toBe(0);
-  });
-});
-
-describe.skipIf(isWindows)("--heapsnapshot-signal", () => {
-  // V8 heap snapshot generation under a debug+ASAN build is slow.
-  test.concurrent(
-    "writes a heap snapshot when the signal is received",
-    async () => {
-      using dir = tempDir("heapsnapshot-signal", {});
-      await using proc = Bun.spawn({
-        cmd: [
-          bunExe(),
-          "--heapsnapshot-signal=SIGUSR2",
-          "-e",
-          `process.kill(process.pid, "SIGUSR2");
-           // The snapshot is written from a signal listener on the next tick;
-           // give the event loop one turn, then exit.
-           setImmediate(() => setImmediate(() => { console.log("survived"); process.exit(0); }));`,
-        ],
-        env: bunEnv,
-        cwd: String(dir),
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stderr).toBe("");
-      expect(stdout.trim()).toBe("survived");
-      expect(exitCode).toBe(0);
-      expect(proc.signalCode).toBeNull();
-
-      const files = Array.from(new Bun.Glob("Heap-*.heapsnapshot").scanSync({ cwd: String(dir) }));
-      expect(files.length).toBe(1);
-      const stat = await Bun.file(join(String(dir), files[0])).stat();
-      expect(stat.size).toBeGreaterThan(0);
-    },
-    30_000,
-  );
-
-  test.concurrent("--heapsnapshot-signal appears in process.execArgv", async () => {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "--heapsnapshot-signal", "SIGUSR2", "-e", `console.log(JSON.stringify(process.execArgv));`],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    // Node.js includes the space-separated value as its own element, and
-    // also includes -e and its script in execArgv.
-    expect(JSON.parse(stdout).slice(0, 2)).toEqual(["--heapsnapshot-signal", "SIGUSR2"]);
-    expect(exitCode).toBe(0);
-  });
-
-  test.concurrent("rejects an unknown signal name", async () => {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "--heapsnapshot-signal=NOTREAL", "-e", `0`],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toContain("Unknown signal: NOTREAL");
-    expect(exitCode).not.toBe(0);
   });
 });

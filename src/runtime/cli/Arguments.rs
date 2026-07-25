@@ -307,7 +307,6 @@ pub(crate) const RUNTIME_PARAMS_: &[ParamType] = &[
     parse_param!("--trace-exit"),
     parse_param!("--expose-internals"),
     parse_param!("--stack-trace-limit <STR>"),
-    parse_param!("--heapsnapshot-signal <STR>"),
 ];
 
 pub(crate) const AUTO_OR_RUN_PARAMS: &[ParamType] = &[

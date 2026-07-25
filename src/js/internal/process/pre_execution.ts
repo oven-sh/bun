@@ -258,7 +258,6 @@ function installExitTracing(): void {
   let catString: string | null = null;
   let filePattern: string | null = null;
   let stackTraceLimit: string | null = null;
-  let heapsnapshotSignal: string | null = null;
   let traceEnv = false;
   let traceEnvJsStack = false;
   let traceExit = false;
@@ -293,10 +292,6 @@ function installExitTracing(): void {
       // keys its native-stack assertions on that string appearing.
     } else if (arg === "--trace-exit") {
       traceExit = true;
-    } else if (arg === "--heapsnapshot-signal") {
-      if (i + 1 < execArgv.length) heapsnapshotSignal = execArgv[++i];
-    } else if (arg.startsWith("--heapsnapshot-signal=")) {
-      heapsnapshotSignal = arg.slice("--heapsnapshot-signal=".length);
     }
   }
 
@@ -337,12 +332,6 @@ function installExitTracing(): void {
     envTracePrintMessage = traceEnv;
     envTracePrintJsStack = traceEnvJsStack;
     installEnvTracing();
-  }
-  if (heapsnapshotSignal !== null && process.platform !== "win32") {
-    require("internal/validators").validateSignalName(heapsnapshotSignal);
-    process.on(heapsnapshotSignal as NodeJS.Signals, () => {
-      require("node:v8").writeHeapSnapshot();
-    });
   }
 }
 

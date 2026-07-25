@@ -1,6 +1,6 @@
 import { spawn } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
 
 describe("node:test", () => {
@@ -323,6 +323,47 @@ describe("node:test", () => {
       stderr: expect.stringContaining("0 fail"),
     });
   });
+});
+
+test("JUnit reporter carries node:test skip/todo reasons", async () => {
+  using dir = tempDir("node-test-junit-reasons", {
+    "reasons.test.mjs": `
+      import { test, describe } from "node:test";
+      describe("suite", () => {
+        test("skipped with reason", { skip: "not on tuesday" }, () => {});
+        test("runtime skip", (t) => { t.skip("runtime <reason>"); });
+        test("todo with reason", { todo: "implement later" }, () => {});
+        test("runtime todo", (t) => { t.todo("rewrite me"); });
+        test("plain skip", { skip: true }, () => {});
+        test("plain todo", { todo: true }, () => {});
+      });
+    `,
+  });
+  const outfile = join(String(dir), "out.xml");
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--reporter=junit", `--reporter-outfile=${outfile}`, "reasons.test.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  const xml = await Bun.file(outfile).text();
+  // declared {skip:'reason'} / {todo:'reason'}
+  expect(xml).toContain('<skipped type="skipped" message="not on tuesday" />');
+  expect(xml).toContain('<skipped type="todo" message="implement later" />');
+  // runtime t.skip('reason') / t.todo('reason'); message must be XML-escaped
+  expect(xml).toContain('<skipped type="skipped" message="runtime &lt;reason&gt;" />');
+  expect(xml).toContain('<skipped type="todo" message="rewrite me" />');
+  // skip/todo without a reason still carry the type attribute
+  expect(xml).toContain('<skipped type="skipped" />');
+  expect(xml).toContain('<skipped type="todo" message="TODO" />');
+  // no bare `<skipped />` survives
+  expect(xml).not.toMatch(/<skipped\s*\/>/);
+  // sanity: summary line saw the right counts
+  expect(stderr).toContain("3 skip");
+  expect(stderr).toContain("3 todo");
+  expect(exitCode).toBe(0);
 });
 
 async function runTests(filenames: string[], env: Record<string, string> = {}, args: string[] = []) {

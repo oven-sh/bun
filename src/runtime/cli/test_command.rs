@@ -647,6 +647,7 @@ impl JunitReporter {
         assertions: u32,
         elapsed_ns: u64,
         line_number: u32,
+        note: Option<&[u8]>,
     ) -> crate::Result<()> {
         // Std::io::Write removed; bun_io::Write (top-level) provides write_fmt.
         let elapsed_ns_f64: f64 = elapsed_ns as f64;
@@ -787,26 +788,26 @@ impl JunitReporter {
                 self.contents.extend_from_slice(indent);
                 self.contents.extend_from_slice(b"</testcase>\n");
             }
-            R::SkippedBecauseLabel | R::Skip => {
+            R::SkippedBecauseLabel | R::Skip | R::Todo => {
                 if !self.suite_stack.is_empty() {
                     let last = self.suite_stack.len() - 1;
                     self.suite_stack[last].metrics.skipped += 1;
                 }
+                let is_todo = matches!(status, R::Todo);
                 self.contents.extend_from_slice(b">\n");
                 self.contents.extend_from_slice(indent);
-                self.contents.extend_from_slice(b"  <skipped />\n");
-                self.contents.extend_from_slice(indent);
-                self.contents.extend_from_slice(b"</testcase>\n");
-            }
-            R::Todo => {
-                if !self.suite_stack.is_empty() {
-                    let last = self.suite_stack.len() - 1;
-                    self.suite_stack[last].metrics.skipped += 1;
-                }
-                self.contents.extend_from_slice(b">\n");
-                self.contents.extend_from_slice(indent);
+                self.contents.extend_from_slice(b"  <skipped type=\"");
                 self.contents
-                    .extend_from_slice(b"  <skipped message=\"TODO\" />\n");
+                    .extend_from_slice(if is_todo { b"todo" } else { b"skipped" });
+                self.contents.extend_from_slice(b"\"");
+                if let Some(note) = note.filter(|n| !n.is_empty()) {
+                    self.contents.extend_from_slice(b" message=\"");
+                    escape_xml(note, &mut self.contents)?;
+                    self.contents.extend_from_slice(b"\"");
+                } else if is_todo {
+                    self.contents.extend_from_slice(b" message=\"TODO\"");
+                }
+                self.contents.extend_from_slice(b" />\n");
                 self.contents.extend_from_slice(indent);
                 self.contents.extend_from_slice(b"</testcase>\n");
             }
@@ -1338,6 +1339,9 @@ impl CommandLineReporter {
                 }
             }
 
+            let note: Option<&[u8]> =
+                sequence.note.as_deref().or(test_entry.note.as_deref());
+
             junit
                 .write_test_case(
                     status,
@@ -1347,6 +1351,7 @@ impl CommandLineReporter {
                     assertions,
                     elapsed_ns,
                     line_number,
+                    note,
                 )
                 .expect("oom");
         }

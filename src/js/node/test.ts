@@ -1626,7 +1626,8 @@ class TestNode {
 const fileGeneration = $newRustFunction("jest.rs", "jsFileGeneration", 0);
 // Overrides the running bun:test sequence result: `false` → skip, `true` → todo.
 // `done` binds the intended sequence so a late call after the bun:test watchdog
-// moved on cannot write onto the currently-running test.
+// moved on cannot write onto the currently-running test. The optional third
+// argument is the skip/todo reason string for reporters (JUnit `<skipped message>`).
 const markCurrentResult = $newRustFunction("jest.rs", "jsNodeTestMarkResult", 2);
 
 let rootNode: TestNode | undefined;
@@ -2540,9 +2541,9 @@ function createTopLevelTestRunner(node: TestNode, fn: TestFn, declaredTodo = fal
         // (Node counts these as skip/todo even when the body threw); a declared
         // todo body's failure must reach bun:test's own todo accounting instead.
         if (node.skipped) {
-          markCurrentResult(false, done);
+          markCurrentResult(false, done, node.message);
         } else if (node.todoFlag && !declaredTodo && (runChildReporterEnabled || !todoBefore)) {
-          markCurrentResult(true, done);
+          markCurrentResult(true, done, node.message);
         } else {
           done(failure);
           return;
@@ -2606,7 +2607,7 @@ function addTest(
     if (runChildReporterEnabled && effectiveMode === "skip") {
       const runner = function (done: (err?: unknown) => void) {
         reportDirectiveOnlyNode(node, "skip");
-        markCurrentResult(false, done);
+        markCurrentResult(false, done, node.message);
         done(undefined);
       };
       if (passOptions !== undefined) test(name, runner, passOptions);
@@ -2629,8 +2630,10 @@ function addTest(
     const register = effectiveMode === "todo" ? test.todo : test.skip;
     // Node runs todo bodies; bun:test only does so under --todo.
     const body = effectiveMode === "todo" ? createTopLevelTestRunner(node, fn, true) : kDefaultFunction;
-    if (passOptions !== undefined) {
-      register(name, body, passOptions);
+    const registerOptions =
+      node.message !== undefined ? { ...passOptions, note: node.message } : passOptions;
+    if (registerOptions !== undefined) {
+      register(name, body, registerOptions);
     } else {
       register(name, body);
     }

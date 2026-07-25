@@ -2,7 +2,7 @@ use core::fmt;
 use crate::test_runner::expect::JSValueTestExt;
 use core::sync::atomic::{AtomicI32, Ordering};
 
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsClass, JsResult};
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsClass, JsResult, StringJsc as _};
 use bun_core::String as BunString;
 
 use crate::test_runner::bun_test::{self, BaseScopeCfg, BunTest, DescribeScope};
@@ -246,6 +246,7 @@ pub(crate) fn call_as_function(global: &JSGlobalObject, frame: &CallFrame) -> Js
                     bound,
                     formatted_label.as_deref(),
                     &args.options,
+                    args.note.as_deref(),
                     callback_length.saturating_sub(args_list.len()),
                     line_no,
                 )
@@ -261,6 +262,7 @@ pub(crate) fn call_as_function(global: &JSGlobalObject, frame: &CallFrame) -> Js
             args.callback,
             args.description.as_deref(),
             &args.options,
+            args.note.as_deref(),
             callback_length,
             line_no,
         )?;
@@ -325,6 +327,7 @@ impl ScopeFunctions {
         callback: Option<JSValue>,
         description: Option<&[u8]>,
         options: &ParseArgumentsOptions,
+        note: Option<&[u8]>,
         callback_length: usize,
         line_no: u32,
     ) -> JsResult<()> {
@@ -446,7 +449,7 @@ impl ScopeFunctions {
                     bstr::BStr::new(bun_test.collection.active_scope().base.name.as_deref().unwrap_or(b"(unnamed)"))
                 ));
 
-                let _ = bun_test.collection.active_scope_mut().append_test(
+                let entry = bun_test.collection.active_scope_mut().append_test(
                     description,
                     if matches_filter { callback } else { None },
                     bun_test::ExecutionEntryCfg {
@@ -458,6 +461,9 @@ impl ScopeFunctions {
                     base,
                     bun_test::AddedInPhase::Collection,
                 )?;
+                if let Some(note) = note {
+                    entry.note = Some(note.to_vec().into_boxed_slice());
+                }
             }
         }
         Ok(())
@@ -522,6 +528,7 @@ pub struct ParseArgumentsResult {
     pub description: Option<Vec<u8>>,
     pub callback: Option<JSValue>,
     pub options: ParseArgumentsOptions,
+    pub note: Option<Vec<u8>>,
 }
 
 #[derive(Default, Clone, Copy)]
@@ -678,6 +685,7 @@ pub fn parse_arguments(
         description: None,
         callback: result_callback,
         options: ParseArgumentsOptions::default(),
+        note: None,
     };
     // `result` cleanup handled by Drop on early return.
 
@@ -712,6 +720,12 @@ pub fn parse_arguments(
                 return Err(global.throw(format_args!("{}(): Cannot set both retry and repeats", signature)));
             }
             result.options.repeats = repeats.as_number() as u32;
+        }
+        if let Some(note) = options.get(global, "note")? {
+            if note.is_string() {
+                let s = bun_core::String::from_js(note, global)?;
+                result.note = Some(s.to_utf8_bytes());
+            }
         }
     } else if options.is_undefined_or_null() {
         // no options

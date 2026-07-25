@@ -533,11 +533,11 @@ pub(crate) fn js_file_generation(
 /// `done`'s bound `DoneCallback.r#ref.phase` names the intended sequence so a
 /// late call after the watchdog moved on cannot mark the currently-running one.
 pub(crate) fn js_node_test_mark_result(
-    _global: &JSGlobalObject,
+    global: &JSGlobalObject,
     callframe: &CallFrame,
 ) -> JsResult<JSValue> {
     use super::execution::Result as ExecResult;
-    let [mode, done] = callframe.arguments_as_array::<2>();
+    let [mode, done, message] = callframe.arguments_as_array::<3>();
     let Some(buntest_strong) = bun_test::clone_active_strong() else {
         return Ok(JSValue::UNDEFINED);
     };
@@ -578,6 +578,10 @@ pub(crate) fn js_node_test_mark_result(
     let sequence = unsafe { &mut *sequence_ptr.as_ptr() };
     if sequence.result == ExecResult::Pending {
         sequence.result = if mode.to_boolean() { ExecResult::Todo } else { ExecResult::Skip };
+        if message.is_string() {
+            let s = bun_core::String::from_js(message, global)?;
+            sequence.note = Some(s.to_utf8_bytes().into_boxed_slice());
+        }
     }
     Ok(JSValue::UNDEFINED)
 }

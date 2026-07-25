@@ -339,6 +339,65 @@ describe("FormData", () => {
     }
   });
 
+  // RFC 5987/6266: `filename*=UTF-8''…` extended parameter. RFC 7578 §4.2 says
+  // senders MUST NOT generate it, but Node.js/undici and busboy accept it.
+  describe("multipart filename* (RFC 5987 ext-value)", () => {
+    const boundary = "AaB03x";
+    const headers = { "content-type": `multipart/form-data; boundary=${boundary}` };
+    const part = (cd: string, body = "data") =>
+      `--${boundary}\r\nContent-Disposition: ${cd}\r\nContent-Type: text/plain\r\n\r\n${body}\r\n--${boundary}--\r\n`;
+
+    for (const C of [Response, Request] as const) {
+      const make = (body: string) =>
+        C === Response ? new Response(body, { headers }) : new Request("http://x/", { method: "POST", body, headers });
+
+      it(`${C.name}: filename* only is a File with the decoded name`, async () => {
+        const fd = await make(part(`form-data; name="f"; filename*=UTF-8''%E2%82%AC%20rates.txt`)).formData();
+        const v = fd.get("f") as File;
+        expect(v).toBeInstanceOf(File);
+        expect({ name: v.name, type: v.type, text: await v.text() }).toEqual({
+          name: "€ rates.txt",
+          type: "text/plain",
+          text: "data",
+        });
+      });
+
+      it(`${C.name}: filename* wins over a later plain filename`, async () => {
+        const fd = await make(
+          part(`form-data; name="f"; filename*=UTF-8''%E2%82%AC.txt; filename="plain.txt"`),
+        ).formData();
+        const v = fd.get("f") as File;
+        expect(v).toBeInstanceOf(File);
+        expect(v.name).toBe("€.txt");
+      });
+
+      it(`${C.name}: filename* wins over an earlier plain filename`, async () => {
+        const fd = await make(
+          part(`form-data; name="f"; filename="plain.txt"; filename*=UTF-8''%E2%82%AC.txt`),
+        ).formData();
+        const v = fd.get("f") as File;
+        expect(v).toBeInstanceOf(File);
+        expect(v.name).toBe("€.txt");
+      });
+
+      it(`${C.name}: charset is case-insensitive and the language tag is skipped`, async () => {
+        const fd = await make(part(`form-data; name="f"; filename*=utf-8'en'%E2%82%AC.txt`)).formData();
+        const v = fd.get("f") as File;
+        expect(v).toBeInstanceOf(File);
+        expect(v.name).toBe("€.txt");
+      });
+
+      it(`${C.name}: malformed filename* falls back to the plain filename`, async () => {
+        const fd = await make(
+          part(`form-data; name="f"; filename*=ISO-8859-1''%E9.txt; filename="fallback.txt"`),
+        ).formData();
+        const v = fd.get("f") as File;
+        expect(v).toBeInstanceOf(File);
+        expect(v.name).toBe("fallback.txt");
+      });
+    }
+  });
+
   test("FormData.from (URLSearchParams)", () => {
     expect(
       // @ts-expect-error

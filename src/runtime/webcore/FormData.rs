@@ -79,6 +79,10 @@ pub struct Field<'a> {
     /// Borrows into the caller-owned input buffer (binary body slice).
     pub value: &'a [u8],
     pub filename: bun_semver::String,
+    /// Decoded `filename*` (RFC 5987 ext-value). Owned because the
+    /// percent-decoded bytes are not a subslice of the input buffer.
+    /// When present, takes precedence over `filename` (RFC 6266 §4.3).
+    pub filename_star: Option<Box<[u8]>>,
     pub content_type: bun_semver::String,
     pub is_file: bool,
     pub zero_count: u8,
@@ -89,11 +93,28 @@ impl Default for Field<'_> {
         Field {
             value: b"",
             filename: bun_semver::String::default(),
+            filename_star: None,
             content_type: bun_semver::String::default(),
             is_file: false,
             zero_count: 0,
         }
     }
+}
+
+/// Decode an RFC 5987 `ext-value` of the form `charset'[language]'pct-encoded`.
+/// Only the `utf-8` charset is accepted (matching Node.js/undici). Returns
+/// `None` on any parse/decode failure so the caller can fall back to the
+/// plain `filename` parameter instead of rejecting the whole body.
+fn decode_rfc5987_utf8(raw: &[u8]) -> Option<Box<[u8]>> {
+    let first_quote = strings::index_of_char(raw, b'\'')? as usize;
+    let charset = &raw[..first_quote];
+    if !strings::eql_case_insensitive_ascii(charset, b"utf-8", true) {
+        return None;
+    }
+    let after_charset = &raw[first_quote + 1..];
+    let second_quote = strings::index_of_char(after_charset, b'\'')? as usize;
+    let encoded = &after_charset[second_quote + 1..];
+    bun_url::PercentEncoding::decode_alloc(encoded).ok()
 }
 
 impl FormData {
@@ -190,7 +211,10 @@ pub fn to_js_from_multipart_data(
             let key = ZigString::init_utf8(name.slice(buf));
 
             if field.is_file {
-                let filename_str = field.filename.slice(buf);
+                let filename_str: &[u8] = match field.filename_star.as_deref() {
+                    Some(decoded) => decoded,
+                    None => field.filename.slice(buf),
+                };
 
                 let mut blob = Blob::create(value_str, wrap.global, false);
                 let filename = ZigString::init_utf8(filename_str);
@@ -306,6 +330,7 @@ pub fn for_each_multipart_entry<C>(
         let mut field = Field::default();
         let mut name = bun_semver::String::default();
         let mut filename: Option<bun_semver::String> = None;
+        let mut filename_star: Option<Box<[u8]>> = None;
         let mut header_chunk = header;
         let mut is_file = false;
         while !header_chunk.is_empty() && (filename.is_none() || name.len() == 0) {
@@ -334,6 +359,26 @@ pub fn for_each_multipart_entry<C>(
                 while let Some(eql_start) = strings::index_of(value, b"=") {
                     let eql_key = strings::trim(&value[..eql_start], b" \t;");
                     value = &value[eql_start + 1..];
+
+                    // RFC 5987 extended parameter (e.g. `filename*=UTF-8''%E2%82%AC.txt`).
+                    // The ext-value is a bare token, never quoted, so it is consumed up
+                    // to the next `;` before the quoted-string scanner runs.
+                    if strings::eql_case_insensitive_ascii(eql_key, b"filename*", true) {
+                        let raw = match strings::index_of_char(value, b';') {
+                            Some(semi) => {
+                                let r = &value[..semi as usize];
+                                value = &value[semi as usize + 1..];
+                                r
+                            }
+                            None => core::mem::take(&mut value),
+                        };
+                        if let Some(decoded) = decode_rfc5987_utf8(strings::trim(raw, b" \t")) {
+                            filename_star = Some(decoded);
+                            is_file = true;
+                        }
+                        continue;
+                    }
+
                     if value.starts_with(b"\"") {
                         value = &value[1..];
                     }
@@ -364,10 +409,6 @@ pub fn for_each_multipart_entry<C>(
                     } else if strings::eql_case_insensitive_ascii(eql_key, b"filename", true) {
                         filename = Some(subslicer.sub(field_value).value());
                         is_file = true;
-                    }
-
-                    if !name.is_empty() && filename.is_some() {
-                        break;
                     }
 
                     if let Some(semi_start) = strings::index_of_char(value, b';') {
@@ -406,6 +447,7 @@ pub fn for_each_multipart_entry<C>(
         }
         field.value = body;
         field.filename = filename.unwrap_or_default();
+        field.filename_star = filename_star;
         field.is_file = is_file;
 
         iterator(ctx, name, &field, input);

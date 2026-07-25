@@ -49,15 +49,14 @@ public:
     WEBCORE_EXPORT void addListenerForBindings(const Identifier& eventType, RefPtr<EventListener>&&, bool, bool);
     WEBCORE_EXPORT void removeListenerForBindings(const Identifier& eventType, RefPtr<EventListener>&&);
     WEBCORE_EXPORT void removeAllListenersForBindings(const Identifier& eventType);
-    // emitForBindings propagates listener exceptions to the caller (Node.js EventEmitter semantics).
+    // Propagates listener exceptions to the JS caller.
     WEBCORE_EXPORT bool emitForBindings(const Identifier&, const MarkedArgumentBuffer&);
 
     WEBCORE_EXPORT bool addListener(const Identifier& eventType, Ref<EventListener>&&, bool, bool);
     WEBCORE_EXPORT bool removeListener(const Identifier& eventType, EventListener&);
     WEBCORE_EXPORT bool removeAllListeners(const Identifier& eventType);
 
-    // emit() reports listener exceptions as uncaught (for runtime-initiated dispatch where
-    // there is no JS caller on the stack to catch them).
+    // Reports listener exceptions as uncaught; for runtime-initiated dispatch.
     WEBCORE_EXPORT bool emit(const Identifier&, const MarkedArgumentBuffer&);
     WEBCORE_EXPORT void uncaughtExceptionInEventHandler();
 

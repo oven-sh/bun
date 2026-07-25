@@ -259,8 +259,6 @@ bool EventEmitter::innerInvokeEventListeners(const Identifier& eventType, Simple
 
         if (exception) [[unlikely]] {
             if (propagateExceptions) {
-                // Node.js EventEmitter semantics: a listener's synchronous throw propagates
-                // out of emit() to the caller, and subsequent listeners do not run.
                 auto scope = DECLARE_THROW_SCOPE(vm);
                 scope.throwException(lexicalGlobalObject, exception);
                 return fired;

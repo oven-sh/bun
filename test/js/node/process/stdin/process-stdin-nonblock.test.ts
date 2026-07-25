@@ -5,7 +5,7 @@
 // TTY, return one keystroke at a time) instead of throwing `EAGAIN` like Node.
 // https://github.com/oven-sh/bun/issues/5305
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, isMacOS, libcPathForDlopen, isPosix, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, isMacOS, isPosix, libcPathForDlopen, tempDir } from "harness";
 import path from "node:path";
 
 // O_NONBLOCK is a Unix fd flag; the Windows stdin path is libuv-backed and

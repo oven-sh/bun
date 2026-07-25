@@ -307,7 +307,85 @@ pub(crate) const RUNTIME_PARAMS_: &[ParamType] = &[
     parse_param!("--trace-exit"),
     parse_param!("--expose-internals"),
     parse_param!("--stack-trace-limit <STR>"),
+    // Node.js security-sensitive flags that Bun does not implement. Declaring
+    // them makes the parser consume the flag (and its value for the
+    // value-taking ones) so `reject_unsupported_security_flags` can refuse to
+    // start instead of running the application without the requested
+    // restriction. Hidden from `--help`.
+    parse_param!("--enable-fips"),
+    parse_param!("--force-fips"),
+    parse_param!("--tls-cipher-list <STR>"),
+    parse_param!("--experimental-loader <STR>..."),
+    parse_param!("--policy <STR>"),
+    parse_param!("--experimental-policy <STR>"),
+    parse_param!("--experimental-config-file <STR>"),
+    parse_param!("--frozen-intrinsics"),
+    parse_param!("--disallow-code-generation-from-strings"),
+    parse_param!("--disable-proto <STR>"),
+    parse_param!("--secure-heap <STR>"),
+    parse_param!("--secure-heap-min <STR>"),
+    parse_param!("--permission"),
+    parse_param!("--experimental-permission"),
 ];
+
+#[derive(Copy, Clone)]
+enum SecurityFlagKind {
+    Flag,
+    Option,
+    Options,
+    /// `--loader` under `node` emulation only (Bun owns `--loader` otherwise).
+    NodeLoader,
+}
+
+/// Node.js flags that restrict or harden runtime behavior which Bun does not
+/// implement. Accepting any of these silently would run the application
+/// *without* the restriction the caller asked for (FIPS, cipher pinning,
+/// loader hooks, permission model, ...), so they are refused at startup.
+/// Keep each entry's [`SecurityFlagKind`] in step with its `parse_param!`
+/// declaration in [`RUNTIME_PARAMS_`].
+const UNSUPPORTED_SECURITY_FLAGS: &[(&[u8], SecurityFlagKind)] = &[
+    (b"--enable-fips", SecurityFlagKind::Flag),
+    (b"--force-fips", SecurityFlagKind::Flag),
+    (b"--tls-cipher-list", SecurityFlagKind::Option),
+    (b"--experimental-loader", SecurityFlagKind::Options),
+    (b"--loader", SecurityFlagKind::NodeLoader),
+    (b"--policy", SecurityFlagKind::Option),
+    (b"--experimental-policy", SecurityFlagKind::Option),
+    (b"--experimental-config-file", SecurityFlagKind::Option),
+    (b"--frozen-intrinsics", SecurityFlagKind::Flag),
+    (
+        b"--disallow-code-generation-from-strings",
+        SecurityFlagKind::Flag,
+    ),
+    (b"--disable-proto", SecurityFlagKind::Option),
+    (b"--secure-heap", SecurityFlagKind::Option),
+    (b"--secure-heap-min", SecurityFlagKind::Option),
+    (b"--permission", SecurityFlagKind::Flag),
+    (b"--experimental-permission", SecurityFlagKind::Flag),
+];
+
+/// Refuse to start when any flag in [`UNSUPPORTED_SECURITY_FLAGS`] was passed.
+/// Exit code 9 matches Node's "invalid argument" code for a bad CLI option.
+#[cold]
+fn reject_unsupported_security_flags(args: &clap::Args<clap::Help>, cmd: CommandTag) {
+    for &(name, kind) in UNSUPPORTED_SECURITY_FLAGS {
+        let present = match kind {
+            SecurityFlagKind::Flag => args.flag(name),
+            SecurityFlagKind::Option => args.option(name).is_some(),
+            SecurityFlagKind::Options => !args.options(name).is_empty(),
+            SecurityFlagKind::NodeLoader => {
+                cmd == CommandTag::RunAsNodeCommand && !args.options(b"--loader").is_empty()
+            }
+        };
+        if present {
+            Output::err_generic(
+                "{} is not supported in Bun. Refusing to start because silently ignoring it would run without the security restriction it requests.",
+                format_args!("{}", BStr::new(name)),
+            );
+            Global::exit(9);
+        }
+    }
+}
 
 pub(crate) const AUTO_OR_RUN_PARAMS: &[ParamType] = &[
     parse_param!(
@@ -925,6 +1003,8 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
             | CommandTag::TestCommand
             | CommandTag::RunAsNodeCommand
     ) {
+        reject_unsupported_security_flags(&args, cmd);
+
         {
             let preloads = args.options(b"--preload");
             let preloads2 = args.options(b"--require");

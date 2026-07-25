@@ -274,7 +274,9 @@ impl Drop for StringOrBuffer {
             Self::EncodedSlice(_encoded) => {
                 // ZigStringSlice has Drop; cleanup is implicit.
             }
-            Self::Buffer(_) => {}
+            Self::Buffer(buffer) => {
+                buffer.destroy();
+            }
         }
     }
 }
@@ -356,7 +358,9 @@ impl StringOrBuffer {
                 if buffer.buffer.value != JSValue::ZERO {
                     return Ok(buffer.buffer.value);
                 }
-                Ok(buffer.to_node_buffer(ctx))
+                let js = buffer.to_node_buffer(ctx);
+                buffer.owns_buffer = false;
+                Ok(js)
             }
         }
     }
@@ -369,6 +373,47 @@ impl StringOrBuffer {
         } else {
             None
         }
+    }
+
+    /// Core of the `ArrayBuffer`/view arm of `from_js_*`. `pin()` guards
+    /// `transfer()` but not `ArrayBuffer.prototype.resize()`: a shrink
+    /// mprotects trimmed pages `PROT_NONE` while a borrowed slice still spans
+    /// them, so a later argument's getter/`toString` (sync) or the JS thread
+    /// (async) can SIGSEGV the reader. Snapshot resizable non-shared inputs
+    /// into an owned `Buffer` so variant dispatch (CryptoHasher output,
+    /// `fs.write`) stays intact; growable `SharedArrayBuffer` only grows
+    /// in-place so the captured extent remains readable.
+    #[inline]
+    fn array_buffer_into(out: &mut Self, global: &JSGlobalObject, value: JSValue, is_async: bool) {
+        let ab = value.as_array_buffer(global).unwrap_or_default();
+        let buffer = if ab.resizable && !ab.shared {
+            let bytes = ab.byte_slice();
+            let mut owned = if bytes.is_empty() {
+                Buffer::EMPTY
+            } else {
+                global.vm().report_extra_memory(bytes.len());
+                bun_core::handle_oom(Buffer::from_string(bytes))
+            };
+            owned.buffer.value = value;
+            owned.buffer.typed_array_type = ab.typed_array_type;
+            owned
+        } else if is_async {
+            Buffer::from_js_pinned(global, value).unwrap_or(Buffer {
+                buffer: ab,
+                owns_buffer: false,
+                pinned: false,
+            })
+        } else {
+            Buffer {
+                buffer: ab,
+                owns_buffer: false,
+                pinned: false,
+            }
+        };
+        if is_async {
+            buffer.buffer.value.protect();
+        }
+        *out = Self::Buffer(buffer);
     }
 
     /// Out-param core of [`from_js_maybe_async`]. Writes the decoded payload
@@ -437,18 +482,7 @@ impl StringOrBuffer {
             | JSType::BigInt64Array
             | JSType::BigUint64Array
             | JSType::DataView => {
-                let buffer = if is_async {
-                    Buffer::from_js_pinned(global, value)
-                        .unwrap_or_else(|| Buffer::from_array_buffer(global, value))
-                } else {
-                    Buffer::from_array_buffer(global, value)
-                };
-
-                if is_async {
-                    buffer.buffer.value.protect();
-                }
-
-                *out = Self::Buffer(buffer);
+                Self::array_buffer_into(out, global, value, is_async);
                 Ok(true)
             }
             _ => Ok(false),
@@ -508,16 +542,7 @@ impl StringOrBuffer {
         allow_string_object: bool,
     ) -> JsResult<bool> {
         if value.is_cell() && value.js_type().is_array_buffer_like() {
-            let buffer = if is_async {
-                Buffer::from_js_pinned(global, value)
-                    .unwrap_or_else(|| Buffer::from_array_buffer(global, value))
-            } else {
-                Buffer::from_array_buffer(global, value)
-            };
-            if is_async {
-                buffer.buffer.value.protect();
-            }
-            *out = Self::Buffer(buffer);
+            Self::array_buffer_into(out, global, value, is_async);
             return Ok(true);
         }
 

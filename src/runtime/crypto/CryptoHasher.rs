@@ -438,7 +438,7 @@ impl CryptoHasher {
 
         if let Some(string_or_buffer) = output {
             if let StringOrBuffer::Buffer(buffer) = &string_or_buffer {
-                let ab = buffer.buffer;
+                let ab = buffer.live_array_buffer(global);
                 return Self::hash_to_bytes(global, &mut evp, input, Some(ab));
             }
             // `inline else => |*str|` — every non-buffer arm yields a string-like
@@ -687,7 +687,7 @@ impl CryptoHasher {
     ) -> JsResult<JSValue> {
         if let Some(string_or_buffer) = output {
             if let StringOrBuffer::Buffer(buffer) = &string_or_buffer {
-                let ab = buffer.buffer;
+                let ab = buffer.live_array_buffer(global);
                 return this.digest_to_bytes(global, Some(ab));
             }
             // `defer str.deinit()` — handled by Drop.
@@ -927,7 +927,7 @@ impl CryptoHasherZig {
     ) -> JsResult<JSValue> {
         if let Some(string_or_buffer) = output {
             if let StringOrBuffer::Buffer(buffer) = &string_or_buffer {
-                let ab = buffer.buffer;
+                let ab = buffer.live_array_buffer(global);
                 return Self::hash_by_name_inner_to_bytes::<A>(global, input, Some(ab));
             }
             let Some(encoding) = Encoding::from(string_or_buffer.slice()) else {
@@ -1374,7 +1374,7 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
 
         if let Some(string_or_buffer) = output {
             if let StringOrBuffer::Buffer(buffer) = &string_or_buffer {
-                let ab = buffer.buffer;
+                let ab = buffer.live_array_buffer(global);
                 return Self::hash_to_bytes(global, input, Some(ab));
             }
             let Some(encoding) = Encoding::from(string_or_buffer.slice()) else {
@@ -1464,7 +1464,7 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
         }
         if let Some(string_or_buffer) = output {
             if let StringOrBuffer::Buffer(buffer) = &string_or_buffer {
-                let ab = buffer.buffer;
+                let ab = buffer.live_array_buffer(global);
                 return this.digest_to_bytes(global, Some(ab));
             }
             let Some(encoding) = Encoding::from(string_or_buffer.slice()) else {

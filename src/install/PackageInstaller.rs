@@ -1923,9 +1923,7 @@ impl<'a> PackageInstaller<'a> {
                             // these will never be blocked
                         }
                         _ => {
-                            // `has_install_script()` is registry-supplied for npm (may be wrong
-                            // either way); non-npm tags derived it from package.json so it is
-                            // authoritative there.
+                            // npm's flag is registry-supplied and may be wrong; non-npm derived it from disk.
                             if !is_trusted
                                 && (resolution.tag == resolution::Tag::Npm
                                     || self.metas[package_id as usize].has_install_script())

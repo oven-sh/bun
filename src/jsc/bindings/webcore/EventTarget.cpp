@@ -330,8 +330,7 @@ void EventTarget::innerInvokeEventListeners(Event& event, EventListenerVector li
         JSC::EnsureStillAliveScope wrapperProtector(registeredListener->callback().wrapper());
         JSC::EnsureStillAliveScope jsFunctionProtector(registeredListener->callback().jsFunction());
 
-        // Mark before invocation for reentrancy; compactRemoved() after the
-        // loop drops them in one pass (removeEventListener() here is O(N^2)).
+        // Mark before invocation (reentrancy); compactRemoved() below avoids per-listener O(N) removeAt().
         if (registeredListener->isOnce()) {
             registeredListener->markAsRemoved();
             removedOnceListeners = true;

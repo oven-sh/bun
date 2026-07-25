@@ -18,5 +18,3 @@ const control = Bun.serve({
 });
 
 console.log(JSON.stringify({ proxyPort: proxy.port, controlPort: control.port }));
-
-setInterval(() => {}, 1e9);

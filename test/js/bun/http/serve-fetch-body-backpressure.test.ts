@@ -174,15 +174,18 @@ test("client abort while backpressured cancels the upstream fetch", async () => 
   reader.releaseLock();
   const { proxyPort } = JSON.parse(head.slice(0, head.indexOf("\n")));
 
+  const failed = Promise.withResolvers<never>();
+  proxy.exited.then(code => failed.reject(new Error(`proxy exited early (code ${code})`)));
+
   const socket = net.connect(proxyPort, "127.0.0.1");
   const stalled = Promise.withResolvers<void>();
-  socket.on("error", () => {});
+  socket.on("error", e => failed.reject(e));
   socket.on("connect", () => socket.write("GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n"));
   socket.once("data", () => {
     socket.pause();
     stalled.resolve();
   });
-  await stalled.promise;
+  await Promise.race([stalled.promise, failed.promise]);
 
   let lastPulls = -1;
   let stableTurns = 0;
@@ -197,6 +200,8 @@ test("client abort while backpressured cancels the upstream fetch", async () => 
   const pullsAtStall = pulls;
   expect(pullsAtStall).toBeLessThan(CAP_CHUNKS / 2);
 
+  socket.removeAllListeners("error");
+  socket.on("error", () => {});
   socket.destroy();
 
   // The proxy's on_abort should cancel its fetch to the upstream; the

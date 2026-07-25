@@ -3302,6 +3302,11 @@ where
 
     pub fn on_pipe(this: &mut Self, stream: &WebCore::streams::Result) -> bool {
         let is_done = stream.is_done();
+        if is_done {
+            if let Some(byte_stream) = this.byte_stream.take() {
+                shim::byte_stream_unpipe(byte_stream);
+            }
+        }
         // Drop one ref only when the stream signals completion.
         let _ref = is_done.then(|| RequestContextRef(std::ptr::from_mut::<Self>(this)));
 

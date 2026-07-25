@@ -176,10 +176,7 @@ it("should preserve comments in package.json on update", async () => {
 });
 
 it("should preserve comments in package.json on remove", async () => {
-  await writeFile(
-    join(add_dir, "package.json"),
-    JSON.stringify({ name: "pkg-a", version: "0.0.1" }),
-  );
+  await writeFile(join(add_dir, "package.json"), JSON.stringify({ name: "pkg-a", version: "0.0.1" }));
   const add_path = relative(package_dir, add_dir).replace(/\\/g, "/");
   await writeFile(
     join(package_dir, "package.json"),

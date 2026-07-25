@@ -638,9 +638,8 @@ describe("bundler", () => {
   itBundled("cjs/GlobRequireUnsupportedShape", {
     files: {
       "/entry.js": /* js */ `
-        const lang = "en", i = 0;
+        const lang = "en";
         try { require("./locales/" + lang + "/messages.js"); } catch {}
-        try { require("./pages/" + (i + 1) + ".js"); } catch {}
         console.log("ok");
       `,
     },
@@ -648,6 +647,22 @@ describe("bundler", () => {
     run: { stdout: "ok" },
     onAfterBundle(api) {
       api.expectFile("/out.js").not.toContain("__glob");
+    },
+  });
+  itBundled("cjs/GlobRequireNestedConcatOperand", {
+    files: {
+      "/app/entry.js": /* js */ `
+        const i = 0;
+        console.log(require("./pages/" + (i + 1) + ".js"));
+      `,
+      "/app/pages/1.js": /* js */ `module.exports = "page-one";`,
+    },
+    entryPoints: ["/app/entry.js"],
+    outfile: "/out.js",
+    target: "bun",
+    run: { stdout: "page-one" },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("__glob");
     },
   });
   itBundled("cjs/GlobRequireMissing", {

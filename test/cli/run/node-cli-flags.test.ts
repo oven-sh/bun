@@ -105,26 +105,29 @@ describe.skipIf(!isPosix)("SIGUSR1 default disposition", () => {
     expect(exitCode).toBe(0);
   });
 
-  test.concurrent.skipIf(!isLinux)("SIGUSR1 is handled, not SIG_IGN, so exec()'d children revert to SIG_DFL", async () => {
-    // Bun's own spawn path resets every signal to SIG_DFL in the child, so a
-    // spawned-process probe cannot distinguish a handler from SIG_IGN. Read
-    // the parent process's SigIgn mask directly instead.
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `const status = require("node:fs").readFileSync("/proc/self/status", "utf8");
+  test.concurrent.skipIf(!isLinux)(
+    "SIGUSR1 is handled, not SIG_IGN, so exec()'d children revert to SIG_DFL",
+    async () => {
+      // Bun's own spawn path resets every signal to SIG_DFL in the child, so a
+      // spawned-process probe cannot distinguish a handler from SIG_IGN. Read
+      // the parent process's SigIgn mask directly instead.
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const status = require("node:fs").readFileSync("/proc/self/status", "utf8");
          const sigIgn = BigInt("0x" + status.match(/^SigIgn:\\s+([0-9a-f]+)/m)[1]);
          const SIGUSR1 = require("node:os").constants.signals.SIGUSR1;
          console.log(((sigIgn >> BigInt(SIGUSR1 - 1)) & 1n).toString());`,
-      ],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    expect(stdout.trim()).toBe("0");
-    expect(exitCode).toBe(0);
-  });
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout.trim()).toBe("0");
+      expect(exitCode).toBe(0);
+    },
+  );
 });

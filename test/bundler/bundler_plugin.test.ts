@@ -643,6 +643,84 @@ describe("bundler", () => {
       },
     };
   });
+  // https://github.com/oven-sh/bun/issues/11652
+  itBundled("plugin/ResolveExternalRewritesPathESM", ({ root }) => {
+    return {
+      files: {
+        "index.ts": /* ts */ `
+          import React from "react";
+          import { createRoot } from "react-dom/client";
+          export { preact } from "preact";
+          export * from "mobx";
+          const lazy = await import("lodash");
+          console.log(React, createRoot, lazy);
+        `,
+      },
+      format: "esm",
+      plugins(builder) {
+        builder.onResolve({ filter: /^(react|react-dom\/client|preact|mobx|lodash)$/ }, args => {
+          return { path: "https://esm.sh/" + args.path, external: true };
+        });
+      },
+      onAfterBundle(api) {
+        const out = api.readFile("/out.js");
+        expect(out).toContain(`from "https://esm.sh/react"`);
+        expect(out).toContain(`from "https://esm.sh/react-dom/client"`);
+        expect(out).toContain(`from "https://esm.sh/preact"`);
+        expect(out).toContain(`from "https://esm.sh/mobx"`);
+        expect(out).toContain(`import("https://esm.sh/lodash")`);
+        expect(out).not.toContain(`"react"`);
+        expect(out).not.toContain(`"react-dom/client"`);
+        expect(out).not.toContain(`"preact"`);
+        expect(out).not.toContain(`"mobx"`);
+        expect(out).not.toContain(`"lodash"`);
+      },
+    };
+  });
+  itBundled("plugin/ResolveExternalRewritesPathCJS", ({ root }) => {
+    return {
+      files: {
+        "index.ts": /* ts */ `
+          const React = require("react");
+          console.log(React);
+        `,
+      },
+      format: "cjs",
+      plugins(builder) {
+        builder.onResolve({ filter: /^react$/ }, args => {
+          return { path: "https://esm.sh/react", external: true };
+        });
+      },
+      onAfterBundle(api) {
+        const out = api.readFile("/out.js");
+        expect(out).toContain(`require("https://esm.sh/react")`);
+        expect(out).not.toContain(`"react"`);
+      },
+    };
+  });
+  itBundled("plugin/ResolveExternalSamePathUnchanged", ({ root }) => {
+    let called = 0;
+    return {
+      files: {
+        "index.ts": /* ts */ `
+          import React from "react";
+          console.log(React);
+        `,
+      },
+      format: "esm",
+      plugins(builder) {
+        builder.onResolve({ filter: /^react$/ }, args => {
+          called++;
+          return { path: args.path, external: true };
+        });
+      },
+      onAfterBundle(api) {
+        expect(called).toBe(1);
+        const out = api.readFile("/out.js");
+        expect(out).toContain(`from "react"`);
+      },
+    };
+  });
   itBundled("plugin/ResolveManySegfault", ({ root }) => {
     let resolveCount = 0;
     let loadCount = 0;

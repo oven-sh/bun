@@ -1050,15 +1050,15 @@ With `.` as `root`, the generated file structure looks like this:
 
 ### publicPath
 
-A prefix added to any import paths in bundled code.
+A prefix added to the file paths the bundler emits into your code.
 
-In many cases, generated bundles contain no import statements; the goal of bundling is to combine all of the code into a single file. In a few cases, though, the generated bundles contain import statements:
+In many cases, generated bundles contain no references to other files; the goal of bundling is to combine all of the code into a single file. In a few cases, though, the bundler writes paths to other output files into the bundle:
 
-- **Asset imports** — When importing an unrecognized file type like `*.svg`, the bundler defers to the file loader, which copies the file into `outdir` as is. The import is converted into a variable.
-- **External modules** — Files and modules marked as external are not included in the bundle. Instead, the import statement is left in the final bundle.
-- **Chunking.** When `splitting` is enabled, the bundler may generate separate "chunk" files that represent code that is shared among multiple entrypoints.
+- **Asset imports** — When importing an unrecognized file type like `*.svg`, the bundler defers to the file loader, which copies the file into `outdir` as is. The import is converted into a variable holding the file's path.
+- **Chunking** — When `splitting` is enabled, the bundler may generate separate "chunk" files that represent code shared among multiple entrypoints, and emits `import` statements that reference those chunks.
+- **Linked source maps** — With `sourcemap: "linked"`, the bundler emits a `//# sourceMappingURL=` comment pointing at the generated `.map` file.
 
-In any of these cases, the final bundles may contain paths to other files. By default these imports are relative. Here is an example of an asset import:
+By default these paths are relative. Here is an example of an asset import:
 
 <CodeGroup>
 
@@ -1098,6 +1098,8 @@ The output file would now look something like this.
 ```js title="out/index.js" icon="/icons/javascript.svg"
 var logo = "https://cdn.example.com/logo-a7305bdef.svg";
 ```
+
+`publicPath` does not rewrite specifiers for [external](#external) modules. An import marked as external is emitted unchanged so it can be resolved at runtime. To rewrite an external specifier to a CDN URL, use an [`onResolve`](/bundler/plugins#onresolve) plugin that returns `{ path, external: true }`.
 
 ### define
 

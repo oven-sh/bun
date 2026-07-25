@@ -2846,6 +2846,7 @@ describe("bundler", () => {
       `,
     },
     format: "esm",
+    target: "browser",
     runtimeFiles: {
       "/run.cjs": /* js */ `
         let calls = 0;
@@ -2884,6 +2885,7 @@ describe("bundler", () => {
       `,
     },
     format: "esm",
+    target: "browser",
     onAfterBundle(api) {
       const out = api.readFile("/out.js");
       expect(out).not.toMatch(/\bvar fetch\b/);
@@ -2891,6 +2893,60 @@ describe("bundler", () => {
     },
     run: { stdout: "module fetch\nfunction" },
   });
+  itBundled("edgecase/EsmTopLevelVarShadowsHostGlobalScoping", {
+    files: {
+      "/entry.js": /* js */ `
+        import { Response as ModResponse } from "external-pkg";
+        import cjs from "./cjs.cjs";
+        export class Response { body = "mine"; }
+        console.log(new Response().constructor.name, cjs.URL, typeof ModResponse);
+      `,
+      "/cjs.cjs": /* js */ `
+        const URL = "cjs-url";
+        const fetch = () => "cjs-fetch";
+        module.exports = { URL, fetch };
+      `,
+    },
+    format: "esm",
+    target: "browser",
+    external: ["external-pkg"],
+    runtimeFiles: {
+      "/node_modules/external-pkg/index.js": `export const Response = 1;`,
+    },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toMatch(/\bclass Response\b/);
+      expect(out).not.toMatch(/\bclass Response2\b/);
+      expect(out).toMatch(/\bimport { Response\b/);
+      expect(out).toContain("{ URL, fetch }");
+      expect(out).not.toMatch(/\bURL2\b/);
+    },
+    run: { stdout: "Response cjs-url number" },
+  });
+  for (const target of ["bun", "node"] as const) {
+    itBundled(`edgecase/EsmTopLevelVarShadowsHostGlobalTarget_${target}`, {
+      files: {
+        "/entry.js": /* js */ `
+          import { getComputedStyle } from "./helpers.js";
+          const name = "app";
+          const status = "ok";
+          console.log(name, status, typeof getComputedStyle);
+        `,
+        "/helpers.js": /* js */ `
+          export const getComputedStyle = () => 0;
+        `,
+      },
+      format: "esm",
+      target,
+      onAfterBundle(api) {
+        const out = api.readFile("/out.js");
+        expect(out).toMatch(/\bvar getComputedStyle\b/);
+        expect(out).toMatch(/\bvar name\b/);
+        expect(out).toMatch(/\bvar status\b/);
+      },
+      run: { stdout: "app ok function" },
+    });
+  }
   itBundled("edgecase/IifeTopLevelVarShadowsHostGlobal", {
     files: {
       "/entry.js": /* js */ `
@@ -2902,6 +2958,7 @@ describe("bundler", () => {
       `,
     },
     format: "iife",
+    target: "browser",
     runtimeFiles: {
       "/run.cjs": /* js */ `
         let calls = 0;

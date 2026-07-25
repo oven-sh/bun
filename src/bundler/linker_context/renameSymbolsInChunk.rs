@@ -139,23 +139,43 @@ pub unsafe fn rename_symbols_in_chunk(
 
     // Scope hoisting rewrites module-scope `const`/`let` to `var` so the
     // declaration can be split from its initializer when a module is wrapped.
-    // For `--format=esm` the chunk has no wrapper, so those `var`s sit at the
-    // true top level. Loaded as a module that is fine, but loaded as a classic
-    // `<script>` a top-level `var` becomes a property of `globalThis`. When the
-    // original name collides with a host global that the code reads back
-    // through `window`/`defaultView`, the bundle silently overwrites it
-    // (Chart.js's `const getComputedStyle = …` recurses into itself via
-    // `defaultView.getComputedStyle`; #14110). Reserve any declared top-level
-    // name that is in the pure-global table so the number renamer suffixes the
-    // binding while unbound references to the real global keep the name.
-    if c.options.output_format == options::OutputFormat::Esm {
+    // For `--format=esm --target=browser` the chunk has no wrapper, so those
+    // `var`s sit at the true top level. Loaded as a module that is fine, but
+    // loaded as a classic `<script>` a top-level `var`/`function` becomes a
+    // property of `globalThis`. When the original name collides with a host
+    // global that the code reads back through `window`/`defaultView`, the
+    // bundle silently overwrites it (Chart.js's `const getComputedStyle = …`
+    // recurses into itself via `defaultView.getComputedStyle`; #14110).
+    // Reserve any declared top-level name that is in the pure-global table so
+    // the number renamer suffixes the binding while unbound references to the
+    // real global keep the name.
+    //
+    // Gated to `target=browser` because Bun/Node load ESM output in module
+    // scope, where `var` never reaches `globalThis`. `WrapKind::Cjs` modules
+    // keep their declarations inside the `__commonJS` closure, so skip those
+    // too. Only symbol kinds that print as a VarScoped declaration at the
+    // chunk top level (`var`/`function`/`async function`/`function*`) are
+    // considered; `class` and `import` stay lexical and cannot clobber
+    // `globalThis`.
+    if c.options.output_format == options::OutputFormat::Esm
+        && c.options.target == options::Target::Browser
+    {
         for &source_index in files_in_order {
+            if all_flags[source_index as usize].wrap == WrapKind::Cjs {
+                continue;
+            }
             let scope = &all_module_scopes[source_index as usize];
             for member in scope.members.values() {
                 // SAFETY: `symbols` points to the live `c.graph.symbols`; read-only here.
                 let symbol = unsafe { &*symbols }.get_const(member.ref_).unwrap();
-                if symbol.kind != symbol::Kind::Unbound
-                    && !symbol.must_not_be_renamed()
+                if matches!(
+                    symbol.kind,
+                    symbol::Kind::Hoisted
+                        | symbol::Kind::HoistedFunction
+                        | symbol::Kind::GeneratorOrAsyncFunction
+                        | symbol::Kind::Constant
+                        | symbol::Kind::Other
+                ) && !symbol.must_not_be_renamed()
                     && defines_table::is_pure_global_identifier(symbol.original_name.slice())
                 {
                     reserved_names

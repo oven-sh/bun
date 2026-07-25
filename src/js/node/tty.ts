@@ -56,37 +56,13 @@ Object.defineProperty(ReadStream, "prototype", {
     Prototype.setRawMode = function (flag) {
       flag = !!flag;
 
-      // On windows, this goes through the stream handle itself, as it must call
-      // uv_tty_set_mode on the uv_tty_t.
-      //
-      // On POSIX, I tried to use the same approach, but it didn't work reliably,
-      // so we just use the file descriptor and use termios APIs directly.
+      // Windows: Source__setRawModeTty applies UV_TTY_MODE_RAW_VT for every
+      // console fd. POSIX: termios on the fd with per-stream saved state.
       if (process.platform === "win32") {
-        // Special case for stdin, as it has a shared uv_tty handle
-        // and it's stream is constructed differently
-        if (this.fd === 0) {
-          const err = ttySetMode(flag);
-          if (err) {
-            this.emit("error", new Error("setRawMode failed with errno: " + err));
-            return this;
-          }
-        } else {
-          const handle = this.$bunNativePtr;
-          if (!handle) {
-            this.emit("error", new Error("setRawMode failed because it was called on something that is not a TTY"));
-            return this;
-          }
-
-          // If you call setRawMode before you call on('data'), the stream will
-          // not be constructed, leading to EBADF
-          // This corresponds to the `ensureConstructed` function in `native-readable.ts`
-          this.$start();
-
-          const err = handle.setRawMode(flag);
-          if (err) {
-            this.emit("error", err);
-            return this;
-          }
+        const err = ttySetMode(this.fd, flag);
+        if (err) {
+          this.emit("error", new Error("setRawMode failed with errno: " + err));
+          return this;
         }
       } else {
         const state = (this[kRawModeState] ??= new Uint8Array(rawModeStateSize));

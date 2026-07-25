@@ -950,9 +950,7 @@ for (const shell of ["system", "bun"]) {
         ".env": "API_URL=http://localhost:3000",
         ".env.production": "API_URL=https://api.example.com",
       });
-      expect(bunRunAsScript(tmp, "start", {}, ["--shell=" + shell]).stdout).toBe(
-        "API_URL=https://api.example.com",
-      );
+      expect(bunRunAsScript(tmp, "start", {}, ["--shell=" + shell]).stdout).toBe("API_URL=https://api.example.com");
     });
 
     test("--no-env-file disables .env loading for scripts", () => {

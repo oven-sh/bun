@@ -137,6 +137,62 @@ error: Hello World`,
     },
     run: { stdout: "" },
   });
+  // https://github.com/oven-sh/bun/issues/8058
+  // The printer rewrites require("bun") / import("bun") to the literal text
+  // `globalThis.Bun`. A user local named `globalThis` must be renamed so it
+  // does not capture that reference.
+  for (const minifyIdentifiers of [false, true]) {
+    const suffix = minifyIdentifiers ? "Minified" : "";
+    itBundled(`bun/RequireBunWithShadowedGlobalThis${suffix}`, {
+      target: "bun",
+      minifyIdentifiers,
+      files: {
+        "/entry.ts": /* js */ `
+          {
+            let globalThis = { Bun: "intercepted" };
+            const b = require("bun");
+            if (b === "intercepted") throw new Error("require('bun') captured local globalThis");
+            if (typeof b.version !== "string") throw new Error("require('bun') did not return Bun");
+            void globalThis;
+          }
+          console.log("PASS");
+        `,
+      },
+      run: { stdout: "PASS" },
+    });
+    itBundled(`bun/DynamicImportBunWithShadowedGlobalThis${suffix}`, {
+      target: "bun",
+      minifyIdentifiers,
+      files: {
+        "/entry.ts": /* js */ `
+          (async () => {
+            let globalThis = { Bun: "intercepted" };
+            const b = await import("bun");
+            if (b === "intercepted") throw new Error("import('bun') captured local globalThis");
+            if (typeof b.version !== "string") throw new Error("import('bun') did not return Bun");
+            void globalThis;
+            console.log("PASS");
+          })();
+        `,
+      },
+      run: { stdout: "PASS" },
+    });
+    itBundled(`bun/ImportBunWithShadowedGlobalThis${suffix}`, {
+      target: "bun",
+      minifyIdentifiers,
+      files: {
+        "/entry.ts": /* js */ `
+          import * as b from "bun";
+          var globalThis = { Bun: "intercepted" };
+          console.log((globalThis as any).Bun);
+          if ((b as any) === "intercepted") throw new Error("import 'bun' captured local globalThis");
+          if (typeof b?.version !== "string") throw new Error("import 'bun' did not return Bun");
+          console.log("PASS");
+        `,
+      },
+      run: { stdout: "intercepted\nPASS" },
+    });
+  }
   if (Bun.version.startsWith("1.4") || Bun.version.startsWith("1.3") || Bun.version.startsWith("1.2")) {
     for (const backend of ["api", "cli"] as const) {
       itBundled("bun/ExportsConditionsDevelopment" + backend.toUpperCase(), {

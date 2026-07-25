@@ -1326,3 +1326,121 @@ it.concurrent.skipIf(isWindows)(
     }
   },
 );
+
+// https://github.com/oven-sh/bun/issues/12430
+describe("--env-file", () => {
+  async function makeLocalBin(dir: string, name: string, script: string) {
+    await mkdir(join(dir, "node_modules", name), { recursive: true });
+    await mkdir(join(dir, "node_modules", ".bin"), { recursive: true });
+    await writeFile(
+      join(dir, "node_modules", name, "package.json"),
+      JSON.stringify({ name, version: "1.0.0", bin: { [name]: "./cli.js" } }),
+    );
+    await writeFile(join(dir, "node_modules", name, "cli.js"), `#!/usr/bin/env node\n${script}\n`);
+    if (isWindows) {
+      await writeFile(
+        join(dir, "node_modules", ".bin", `${name}.cmd`),
+        `@echo off\r\nnode "%~dp0..\\${name}\\cli.js" %*\r\n`,
+      );
+    } else {
+      await writeFile(
+        join(dir, "node_modules", ".bin", name),
+        `#!/usr/bin/env node\nrequire("../${name}/cli.js");\n`,
+      );
+      chmodSync(join(dir, "node_modules", name, "cli.js"), 0o755);
+      chmodSync(join(dir, "node_modules", ".bin", name), 0o755);
+    }
+  }
+
+  async function run(dir: string, testEnv: Record<string, string>, ...args: string[]) {
+    const subprocess = spawn({
+      cmd: [bunExe(), "x", ...args],
+      cwd: dir,
+      stdout: "pipe",
+      stdin: "ignore",
+      stderr: "pipe",
+      env: testEnv,
+    });
+    return await Promise.all([subprocess.stderr.text(), subprocess.stdout.text(), subprocess.exited] as const);
+  }
+
+  it.each(["--env-file .env.custom", "--env-file=.env.custom"])(
+    "loads the file into the spawned process env (%s)",
+    async spelling => {
+      const { x_dir, env } = setup();
+      delete env.BUNX_TEST_VAR;
+      await makeLocalBin(x_dir, "print-env-var", `console.log("BUNX_TEST_VAR=" + (process.env.BUNX_TEST_VAR ?? ""));`);
+      await writeFile(join(x_dir, ".env.custom"), "BUNX_TEST_VAR=from-env-file\n");
+
+      const [err, out, exited] = await run(x_dir, env, ...spelling.split(" "), "print-env-var");
+
+      expect(err).not.toContain("error:");
+      expect(err).not.toContain("unrecognised dependency format");
+      expect(out.trim()).toBe("BUNX_TEST_VAR=from-env-file");
+      expect(exited).toBe(0);
+    },
+  );
+
+  it("supports multiple --env-file flags (later wins)", async () => {
+    const { x_dir, env } = setup();
+    delete env.BUNX_TEST_A;
+    delete env.BUNX_TEST_B;
+    await makeLocalBin(
+      x_dir,
+      "print-env-ab",
+      `console.log("A=" + (process.env.BUNX_TEST_A ?? "") + " B=" + (process.env.BUNX_TEST_B ?? ""));`,
+    );
+    await writeFile(join(x_dir, ".env.a"), "BUNX_TEST_A=1\nBUNX_TEST_B=from-a\n");
+    await writeFile(join(x_dir, ".env.b"), "BUNX_TEST_B=from-b\n");
+
+    const [err, out, exited] = await run(x_dir, env, "--env-file", ".env.a", "--env-file=.env.b", "print-env-ab");
+
+    expect(err).not.toContain("error:");
+    expect(out.trim()).toBe("A=1 B=from-b");
+    expect(exited).toBe(0);
+  });
+
+  it("does not treat the file path after --env-file as the package name", async () => {
+    const { x_dir, env } = setup();
+    await writeFile(join(x_dir, ".env.custom"), "X=1\n");
+
+    const [err, out, exited] = await run(x_dir, env, "--no-install", "--env-file", ".env.custom", "definitely-absent");
+
+    expect(err).not.toContain("unrecognised dependency format");
+    expect(err).not.toContain("@.env.custom");
+    expect(err).toContain("Could not find an existing 'definitely-absent' binary to run.");
+    expect(out).toHaveLength(0);
+    expect(exited).toBe(1);
+  });
+
+  it("accepts --no-env-file without treating it as the package name", async () => {
+    const { x_dir, env } = setup();
+    await makeLocalBin(x_dir, "print-ok", `console.log("ok");`);
+
+    const [err, out, exited] = await run(x_dir, env, "--no-env-file", "print-ok");
+
+    expect(err).not.toContain("error:");
+    expect(out.trim()).toBe("ok");
+    expect(exited).toBe(0);
+  });
+
+  it("--env-file after the package name is passed through, not consumed by bunx", async () => {
+    const { x_dir, env } = setup();
+
+    const [err, out, exited] = await run(
+      x_dir,
+      env,
+      "--no-install",
+      "definitely-absent",
+      "--env-file",
+      "should-be-passed-through",
+    );
+
+    // bunx must stop consuming flags at the package name; "definitely-absent" is
+    // the package, and "--env-file should-be-passed-through" is passthrough.
+    expect(err).not.toContain("should-be-passed-through");
+    expect(err).toContain("Could not find an existing 'definitely-absent' binary to run.");
+    expect(out).toHaveLength(0);
+    expect(exited).toBe(1);
+  });
+});

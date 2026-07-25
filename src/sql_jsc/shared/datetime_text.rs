@@ -102,7 +102,11 @@ fn parse(
         ..Default::default()
     };
     if text.len() == 10 {
-        return if allow_date_only { Some((result, 10)) } else { None };
+        return if allow_date_only {
+            Some((result, 10))
+        } else {
+            None
+        };
     }
 
     let separator_ok = text[10] == b' ' || (allow_t_separator && text[10] == b'T');

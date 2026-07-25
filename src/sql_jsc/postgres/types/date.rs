@@ -56,8 +56,7 @@ pub fn timestamp_text_to_ms_utc(global_object: &JSGlobalObject, bytes: &[u8]) ->
 /// Returns `None` for anything outside this shape (BC dates, 5+ digit years,
 /// missing offset) so the caller can fall back.
 pub fn timestamptz_text_to_ms_utc(global_object: &JSGlobalObject, bytes: &[u8]) -> Option<f64> {
-    let (parsed, offset_seconds) =
-        crate::shared::datetime_text::parse_postgres_timestamptz(bytes)?;
+    let (parsed, offset_seconds) = crate::shared::datetime_text::parse_postgres_timestamptz(bytes)?;
     let wall_clock_utc = components_to_ms_utc(global_object, &parsed)?;
     Some(wall_clock_utc - f64::from(offset_seconds) * 1000.0)
 }

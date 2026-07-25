@@ -1457,7 +1457,7 @@ impl Request {
             ))));
         }
 
-        let href = bun_url::href_from_string(&req.url.get());
+        let mut href = bun_url::href_from_string(&req.url.get());
         if href.is_empty() {
             if !global_this.has_exception() {
                 // globalThis.throw can cause GC, which could cause the above string to be freed.
@@ -1471,6 +1471,24 @@ impl Request {
             bail!(Err(JsError::Thrown));
         }
 
+        // Bun diverges from Fetch #dom-request step 6: instead of rejecting a
+        // URL that includes credentials, derive `Authorization: Basic` and
+        // strip the userinfo so it never reaches `request.url`.
+        let url_derived_auth: Option<Vec<u8>> = {
+            let href_utf8 = href.to_utf8_without_ref();
+            let parsed = bun_url::URL::parse(href_utf8.slice());
+            match bun_http::basic_auth_from_url_userinfo(parsed.username, parsed.password) {
+                Some(auth) => {
+                    let stripped = bun_http::href_without_userinfo(href_utf8.slice());
+                    drop(href_utf8);
+                    href.deref();
+                    href = BunString::clone_utf8(&stripped);
+                    Some(auth)
+                }
+                None => None,
+            }
+        };
+
         // hrefFromString increments the reference count if they end up being
         // the same
         //
@@ -1478,6 +1496,23 @@ impl Request {
         // decrement it to be perfectly balanced.
 
         req.url.set(href);
+
+        if let Some(auth) = url_derived_auth {
+            let headers = match req.ensure_fetch_headers(global_this) {
+                Ok(h) => h,
+                Err(e) => bail!(Err(e)),
+            };
+            if !headers.fast_has(HTTPHeaderName::Authorization) {
+                match headers.put(
+                    HTTPHeaderName::Authorization,
+                    &BunString::borrow_utf8(&auth),
+                    global_this,
+                ) {
+                    Ok(()) => {}
+                    Err(e) => bail!(Err(e)),
+                }
+            }
+        }
 
         if matches!(req.body_value(), BodyValue::Blob(_)) && req.headers.get().is_some() {
             if let BodyValue::Blob(blob) = req.body_value() {

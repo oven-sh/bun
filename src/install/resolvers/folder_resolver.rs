@@ -479,6 +479,8 @@ pub fn get_or_put(
                 let mut path = PathBuffer::uninit();
                 let folder_path: &[u8] = if dependency::is_link_path(rel) {
                     rel
+                } else if 2 + rel.len() > path.len() {
+                    break 'symlink Err(crate::Error::PathTooLong);
                 } else {
                     path[0] = b'.';
                     path[1] = b'/';

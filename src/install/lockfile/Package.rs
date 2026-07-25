@@ -1787,6 +1787,17 @@ impl Package<u64> {
                         string_builder.append::<String>(relative)
                     } else {
                         let mut prefixed = PathBuffer::uninit();
+                        if 2 + relative.len() > prefixed.len() {
+                            log.add_error_fmt(
+                                source,
+                                value_loc_of(source, key_loc),
+                                format_args!(
+                                    "Dependency \"{}\" has an unsafe folder path",
+                                    bstr::BStr::new(external_alias.slice(buf)),
+                                ),
+                            );
+                            return Err(crate::Error::InstallFailed);
+                        }
                         prefixed[0] = b'.';
                         prefixed[1] = b'/';
                         prefixed[2..2 + relative.len()].copy_from_slice(relative);

@@ -8,7 +8,6 @@ use bun_event_loop::{TaskTag, Taskable, task_tag};
 use bun_http::{AsyncHTTP, HTTPClientResult, Headers, Signals};
 use bun_io::KeepAlive;
 use bun_jsc::js_global_object::ScriptExecutionContextIdentifier;
-use bun_jsc::virtual_machine::VirtualMachine;
 use bun_s3_signing::credentials::SignResult;
 use bun_s3_signing::error::S3Error;
 use bun_threading::Mutex;
@@ -19,9 +18,6 @@ pub struct S3HttpDownloadStreamingTask {
     // `MaybeUninit` because `AsyncHTTP` contains non-null references, so
     // `mem::zeroed()` can't be used here (mirrors `S3HttpSimpleTask`).
     pub http: core::mem::MaybeUninit<AsyncHTTP<'static>>,
-    /// JSC_BORROW: per-thread VM singleton, outlives every task. `None` only in
-    /// the inert `Default` placeholder (overwritten before the task escapes).
-    pub vm: Option<bun_ptr::BackRef<VirtualMachine>>,
     /// See [`ScriptExecutionContextIdentifier::post_concurrent_task`].
     pub context_id: ScriptExecutionContextIdentifier,
     pub sign_result: SignResult,
@@ -64,7 +60,6 @@ impl Default for S3HttpDownloadStreamingTask {
         Self {
             // never read — fully overwritten by `AsyncHTTP::init` before first use.
             http: core::mem::MaybeUninit::uninit(),
-            vm: None,
             context_id: ScriptExecutionContextIdentifier(0),
             sign_result: SignResult::default(),
             headers: Headers::default(),

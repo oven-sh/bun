@@ -1012,8 +1012,6 @@ pub(crate) fn download_stream(
             callback,
             range: range.map(Vec::into_boxed_slice),
             headers,
-            // `VirtualMachine::get()` returns the live per-thread VM singleton.
-            vm: Some(bun_ptr::BackRef::new(VirtualMachine::get())),
             context_id: VirtualMachine::get()
                 .global()
                 .script_execution_context_identifier(),

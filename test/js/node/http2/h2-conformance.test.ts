@@ -1414,3 +1414,144 @@ describe("inbound stream lifecycle", () => {
     }
   });
 });
+
+// Malformed frames from the wire must never terminate the server process. A connection error is
+// scoped to the connection (RFC 9113 §5.4.1): the session gets a GOAWAY, 'sessionError' fires,
+// the socket closes, and the server keeps serving other connections. Node (nghttp2) behaves this
+// way for every case here. Prior to this change, any HPACK decode failure or CONTINUATION-sequence
+// violation re-surfaced the session error on the half-parsed stream — which user code never saw
+// and so could not have an 'error' listener on — and the unhandled stream 'error' became an
+// uncaughtException.
+describe("malformed-frame process survival (RFC 9113 §5.4.1)", () => {
+  const wellFormedGet = Buffer.concat([Buffer.from([0x82, 0x86, 0x84, 0x01]), hpackLiteral("localhost")]);
+
+  // Each case is the raw bytes to send after the client preface + SETTINGS; every one is a
+  // connection error the server must tear down that one connection for, and nothing else.
+  const killingFrames: [string, Buffer][] = [
+    // HPACK §6.1: indexed representation with index 0 is a decoding error.
+    ["HPACK index 0", encodeFrame(FrameType.HEADERS, 0x5, 1, Buffer.from([0x80]))],
+    // HPACK §2.3.3: index past static + dynamic table bounds.
+    ["HPACK out-of-range index", encodeFrame(FrameType.HEADERS, 0x5, 1, Buffer.from([0xff, 0xff, 0x7f]))],
+    // HPACK §5.2: literal header whose string length exceeds the remaining block.
+    ["HPACK truncated literal", encodeFrame(FrameType.HEADERS, 0x5, 1, Buffer.from([0x00, 0x05, 0x78]))],
+    // Arbitrary bytes that cannot form a valid HPACK instruction sequence.
+    [
+      "HPACK junk bytes",
+      encodeFrame(FrameType.HEADERS, 0x5, 1, Buffer.from([0x40, 0x81, 0xff, 0xff, 0xff, 0xff, 0xff])),
+    ],
+    // HPACK §6.3: dynamic-table size update larger than SETTINGS_HEADER_TABLE_SIZE.
+    [
+      "HPACK dynamic-table size update over max",
+      encodeFrame(FrameType.HEADERS, 0x5, 1, Buffer.from([0x3f, 0xe2, 0xff, 0xff, 0xff, 0x07])),
+    ],
+    // HPACK §5.2: Huffman-coded literal with the 8-bit EOS symbol inside (decoding error).
+    [
+      "HPACK invalid Huffman sequence",
+      encodeFrame(FrameType.HEADERS, 0x5, 1, Buffer.from([0x00, 0x84, 0xff, 0xff, 0xff, 0xff, 0x00])),
+    ],
+    // HPACK §5.1: string-length varint that exceeds 32 bits.
+    [
+      "HPACK string length overflow",
+      encodeFrame(FrameType.HEADERS, 0x5, 1, Buffer.from([0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x7f])),
+    ],
+    // RFC 9113 §4.3: any frame other than CONTINUATION between HEADERS and END_HEADERS.
+    [
+      "PING inside a header block",
+      Buffer.concat([
+        encodeFrame(FrameType.HEADERS, 0x1 /* END_STREAM, no END_HEADERS */, 1, wellFormedGet),
+        encodeFrame(FrameType.PING, 0, 0, Buffer.alloc(8)),
+      ]),
+    ],
+    // RFC 9113 §6.10: CONTINUATION for a different stream while a header block is open.
+    [
+      "other-stream HEADERS inside a header block",
+      Buffer.concat([
+        encodeFrame(FrameType.HEADERS, 0x1 /* END_STREAM, no END_HEADERS */, 1, wellFormedGet),
+        encodeFrame(FrameType.HEADERS, 0x5, 3, wellFormedGet),
+      ]),
+    ],
+  ];
+
+  const fixture = require.resolve("./h2-malformed-frame-survival-fixture.ts");
+
+  test.concurrent.each(killingFrames)("%s closes only the connection", async (_name, payload) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), fixture],
+      env: bunEnv,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    const reader = proc.stdout.getReader();
+    let buffered = "";
+    while (!buffered.includes("\n")) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffered += Buffer.from(value).toString("latin1");
+    }
+    reader.releaseLock();
+    const m = buffered.match(/PORT:(\d+)/);
+    expect(m?.[1]).toBeDefined();
+    const childPort = Number(m![1]);
+
+    // Send the malformed bytes on one connection and wait for the server to tear it down.
+    {
+      const s = net.connect(childPort, "127.0.0.1");
+      s.on("error", () => {});
+      s.resume();
+      await once(s, "connect");
+      s.write(Buffer.concat([PREFACE, encodeFrame(FrameType.SETTINGS, 0, 0), payload]));
+      await once(s, "close");
+    }
+
+    // The child's default uncaughtException handler would have terminated it by now; a fresh
+    // connection succeeding is the liveness proof.
+    const probe = net.connect(childPort, "127.0.0.1");
+    const probeResult = await Promise.race([
+      once(probe, "connect").then(() => "connected" as const),
+      once(probe, "error").then(([e]) => e as Error),
+      proc.exited.then(code => `exited:${code}` as const),
+    ]);
+    if (probeResult !== "connected") {
+      const stderr = await proc.stderr.text();
+      expect({ probeResult: String(probeResult), stderr }).toEqual({ probeResult: "connected", stderr: "" });
+    }
+
+    // Liveness means a well-formed request on the fresh connection completes.
+    const frames: Frame[] = [];
+    const gotResponse = Promise.withResolvers<void>();
+    let buf = Buffer.alloc(0);
+    probe.on("data", d => {
+      buf = Buffer.concat([buf, d]);
+      while (buf.length >= 9) {
+        const len = buf.readUIntBE(0, 3);
+        if (buf.length < 9 + len) break;
+        const f: Frame = {
+          length: len,
+          type: buf.readUInt8(3),
+          flags: buf.readUInt8(4),
+          streamId: buf.readUInt32BE(5) & 0x7fffffff,
+          payload: buf.subarray(9, 9 + len),
+        };
+        frames.push(f);
+        buf = buf.subarray(9 + len);
+        if (f.streamId === 1 && (f.flags & 0x1) !== 0) gotResponse.resolve();
+        if (f.type === FrameType.GOAWAY) gotResponse.resolve();
+      }
+    });
+    probe.on("close", () => gotResponse.resolve());
+    probe.write(
+      Buffer.concat([
+        PREFACE,
+        encodeFrame(FrameType.SETTINGS, 0, 0),
+        encodeFrame(FrameType.HEADERS, 0x5, 1, wellFormedGet),
+      ]),
+    );
+    await gotResponse.promise;
+    const data = frames.filter(f => f.type === FrameType.DATA && f.streamId === 1);
+    expect(Buffer.concat(data.map(f => f.payload)).toString()).toBe("ok");
+    probe.destroy();
+
+    proc.stdin.write("quit\n");
+    const exitCode = await proc.exited;
+    expect(exitCode).toBe(0);
+  });
+});

@@ -2690,7 +2690,11 @@ class Http2Stream extends Duplex {
     // (closeSession in node passes the session error to every stream), surface that error
     // instead of a generic stream error so the same error reaches both client.on('error')
     // and req.on('error') regardless of which dispatch path reached _destroy first.
-    if (err == null && rstCode !== NGHTTP2_NO_ERROR && rstCode !== NGHTTP2_CANCEL) {
+    // Gated on an 'error' listener being present, exactly like destroyStreamForSessionDestroy
+    // and emitStreamErrorNT: a stream user code never received (half-parsed before the 'stream'
+    // event fired) has no possible listener, and re-synthesizing the error here would land as
+    // an uncaughtException and terminate the process for a peer protocol violation.
+    if (err == null && rstCode !== NGHTTP2_NO_ERROR && rstCode !== NGHTTP2_CANCEL && this.listenerCount("error") > 0) {
       err = session?.[kSessionDestroyError] ?? $ERR_HTTP2_STREAM_ERROR(nameForErrorCode[rstCode] || rstCode);
     }
 

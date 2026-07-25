@@ -291,7 +291,7 @@ const beforeMs = Date.now();
 await send("Runtime.evaluate", {
   expression:
     'console.log("first-log");' +
-    'console.count("cnt"); console.count("cnt");' +
+    'console.count("cnt"); console.count("cnt"); console.countReset("cnt"); console.count("cnt");' +
     'console.time("tm"); console.timeLog("tm", "mid"); console.timeEnd("tm");' +
     'console.log("__done__");',
 });
@@ -335,12 +335,14 @@ test("Runtime.consoleAPICalled over the DevTools WebSocket reports a millisecond
   expect(summary.firstTimestamp).toBeGreaterThanOrEqual(summary.beforeMs - 1);
   expect(summary.firstTimestamp).toBeLessThanOrEqual(summary.afterMs + 1);
 
-  // console.count / console.timeLog / console.timeEnd reach
-  // InspectorConsoleAgent and emit events. JSC reports count at
+  // console.count / console.countReset / console.timeLog / console.timeEnd
+  // reach InspectorConsoleAgent and emit events. JSC reports count at
   // {type:"log", level:"debug"} (so CDP type "debug") and both timeLog and
-  // timeEnd as {type:"timing"} (so CDP type "timeEnd").
-  expect(summary.types).toEqual(["log", "debug", "debug", "timeEnd", "timeEnd", "log"]);
-  expect(summary.countTexts).toEqual(["cnt: 1", "cnt: 2"]);
+  // timeEnd as {type:"timing"} (so CDP type "timeEnd"). countReset emits
+  // nothing itself; the third count reads "cnt: 1" only if the reset reached
+  // the inspector agent.
+  expect(summary.types).toEqual(["log", "debug", "debug", "debug", "timeEnd", "timeEnd", "log"]);
+  expect(summary.countTexts).toEqual(["cnt: 1", "cnt: 2", "cnt: 1"]);
   // JSC's timeLog forwards the caller's extra arguments as parameters while
   // timeEnd has none, so the adapter falls back to the formatted text there.
   expect(summary.timingArgs).toEqual(["mid", expect.stringMatching(/^tm: \d+(\.\d+)?ms$/)]);

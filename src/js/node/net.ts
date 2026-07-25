@@ -1804,12 +1804,16 @@ Socket.prototype.address = function address() {
 
 Socket.prototype._onTimeout = function () {
   const handle = this._handle;
-  const lastWriteQueueSize = this[kLastWriteQueueSize];
-  if (lastWriteQueueSize > 0 && handle) {
+  // Node gates on kLastWriteQueueSize > 0, which kAfterAsyncWrite zeroes when
+  // the async write completes. Bun's equivalent completion signal is
+  // kwriteCallback being cleared by the drain/error handlers, so gate on that
+  // (set together with kLastWriteQueueSize in _write's async branch) instead
+  // of resetting the size at every completion site.
+  if (this[kwriteCallback] && handle) {
     // `lastWriteQueueSize !== writeQueueSize` means there is
     // an active write in progress, so we suppress the timeout.
     const writeQueueSize = getBufferedAmount(handle);
-    if (lastWriteQueueSize !== writeQueueSize) {
+    if (this[kLastWriteQueueSize] !== writeQueueSize) {
       this[kLastWriteQueueSize] = writeQueueSize;
       this._unrefTimer();
       return;

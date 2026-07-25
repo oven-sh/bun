@@ -1,6 +1,6 @@
-import { test, expect, describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
-import { once, getEventListeners } from "node:events";
+import { getEventListeners, once } from "node:events";
 
 // Load so that a build without the native NodeEventTarget surface falls back
 // to the JS shim; with it present the require is a no-op for the prototype.

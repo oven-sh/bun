@@ -892,7 +892,11 @@ impl<const SSL: bool> WebSocket<SSL> {
         if payload_len >= 2 {
             let received_code = u16::from_be_bytes([payload[0], payload[1]]);
             let (echo_code, dispatch_code) = received_close_codes(received_code);
-            self.send_close_with_body(Some(echo_code), Some(dispatch_code), &payload[2..payload_len]);
+            self.send_close_with_body(
+                Some(echo_code),
+                Some(dispatch_code),
+                &payload[2..payload_len],
+            );
         } else {
             self.send_close();
         }

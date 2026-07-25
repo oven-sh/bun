@@ -1139,7 +1139,14 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
             group_dependents: Vec::new(),
             next_dependents: Vec::new(),
             options: SpawnOptions {
-                stdin: spawn::Stdio::Inherit,
+                // Inherit stdin only for a single script so reads don't race
+                // across concurrent children; matches plain `bun run` semantics
+                // for the one-script case.
+                stdin: if configs.len() == 1 {
+                    spawn::Stdio::Inherit
+                } else {
+                    spawn::Stdio::Ignore
+                },
                 #[cfg(unix)]
                 stdout: spawn::Stdio::Buffer,
                 #[cfg(not(unix))]

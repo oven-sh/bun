@@ -655,17 +655,19 @@ describe("bundler", () => {
   // Same file mixes a dynamic require() (forces the per-file __require polyfill
   // to become ast.require_ref) with direct eval; the wrapper parameter must
   // still be named `require`.
+  const dynamicRequireFiles = {
+    "/entry.js": /* js */ `
+      console.log(require("./mod.cjs"));
+    `,
+    "/mod.cjs": /* js */ `
+      var name = "buffer";
+      var Buf = require(name).Buffer;
+      module.exports = eval("req" + "uire")("buffer").Buffer === Buf;
+    `,
+  };
+
   itBundled("cjs/DirectEvalWithDynamicRequireBun", {
-    files: {
-      "/entry.js": /* js */ `
-        console.log(require("./mod.cjs"));
-      `,
-      "/mod.cjs": /* js */ `
-        var name = "buffer";
-        var Buf = require(name).Buffer;
-        module.exports = eval("req" + "uire")("buffer").Buffer === Buf;
-      `,
-    },
+    files: dynamicRequireFiles,
     target: "bun",
     onAfterBundle(api) {
       const out = api.readFile("/out.js");
@@ -677,16 +679,7 @@ describe("bundler", () => {
   });
 
   itBundled("cjs/DirectEvalWithDynamicRequireNodeESM", {
-    files: {
-      "/entry.js": /* js */ `
-        console.log(require("./mod.cjs"));
-      `,
-      "/mod.cjs": /* js */ `
-        var name = "buffer";
-        var Buf = require(name).Buffer;
-        module.exports = eval("req" + "uire")("buffer").Buffer === Buf;
-      `,
-    },
+    files: dynamicRequireFiles,
     target: "node",
     format: "esm",
     outfile: "/out.mjs",

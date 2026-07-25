@@ -1554,7 +1554,7 @@ impl<'a> Resolver<'a> {
         source_dir: &[u8],
         binding_name: &[u8],
     ) -> Option<&'static [u8]> {
-        // `try` table from npm `bindings` 1.5.0, minus entries that embed runtime-version strings.
+        // `try` table from npm `bindings` 1.5.0, minus runtime-templated entries, reordered Release-before-Debug.
         const BINDINGS_SEARCH: &[&[&[u8]]] = &[
             &[b"build"],
             &[b"build", b"Release"],
@@ -1569,8 +1569,14 @@ impl<'a> Resolver<'a> {
             &[b"addon-build", b"default", b"install-root"],
         ];
 
-        let dir_info = self.dir_info_cached(source_dir).ok().flatten()?;
-        let module_root = dir_info.enclosing_package_json?.source.path.source_dir();
+        let mut dir_info = self.dir_info_cached(source_dir).ok().flatten()?;
+        // `enclosing_package_json` skips nameless package.json; `bindings.getRoot()` does not.
+        let module_root = loop {
+            if let Some(pkg) = dir_info.package_json() {
+                break pkg.source.path.source_dir();
+            }
+            dir_info = dir_info.get_parent()?;
+        };
 
         let mut parts: [&[u8]; 5] = [module_root, b"", b"", b"", binding_name];
         for sub in BINDINGS_SEARCH {
@@ -1581,7 +1587,7 @@ impl<'a> Resolver<'a> {
                 .fs_ref()
                 .abs_buf_checked(&parts, bufs!(native_bindings_candidate))
             else {
-                return None;
+                continue;
             };
             if let Some(found) = self.load_as_file(candidate, options::ExtOrder::DefaultDefault) {
                 return Some(found.path);

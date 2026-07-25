@@ -357,8 +357,11 @@ fn refuse_node_permission_flags(args: &clap::Args<clap::Help>) {
             .unwrap_or(false)
     {
         Output::err_generic(
-            "Bun does not implement the Node.js permission model, so {} would run without the requested restrictions. Refusing to run.\n       Set BUN_IGNORE_NODE_PERMISSION_FLAGS=1 to ignore this flag and run without a sandbox.",
+            "Bun does not implement the Node.js permission model, so {} would run without the requested restrictions. Refusing to run.",
             format_args!("{}", BStr::new(flag)),
+        );
+        bun_core::note!(
+            "Set BUN_IGNORE_NODE_PERMISSION_FLAGS=1 to ignore this flag and run without a sandbox."
         );
         Global::exit(1);
     }

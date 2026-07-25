@@ -726,22 +726,26 @@ describe("bundler", () => {
     files: {
       "/entry.js": /* js */ `
         import lib from './lib.cjs';
-        console.log(typeof lib.orig, lib.orig === Promise);
+        console.log(typeof lib.orig, lib.orig === Promise, typeof lib.buf);
       `,
       "/lib.cjs": /* js */ `
         var orig = Promise;
         Promise = function Patched() {};
-        module.exports = { orig: orig };
+        var buf = Buffer;
+        Buffer = function PatchedBuffer() {};
+        module.exports = { orig: orig, buf: buf };
         Promise = orig;
+        Buffer = buf;
       `,
     },
     format: "esm",
     outfile: "/out.mjs",
     run: {
-      stdout: "function true",
+      stdout: "function true function",
     },
     onAfterBundle(api) {
       api.expectFile("/out.mjs").not.toContain("var Promise");
+      api.expectFile("/out.mjs").not.toContain("var Buffer");
     },
   });
 

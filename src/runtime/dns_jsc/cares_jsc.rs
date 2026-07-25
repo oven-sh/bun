@@ -562,22 +562,22 @@ pub(crate) fn any_reply_to_js(
     this: &mut c_ares::struct_any_reply,
     global_this: &JSGlobalObject,
 ) -> JsResult<JSValue> {
-    // The field set is expanded manually here. Keep in lockstep with
-    // `c_ares::struct_any_reply`'s fields.
-    let len: usize = this.a_reply.is_some() as usize
-        + this.aaaa_reply.is_some() as usize
-        + (!this.mx_reply.is_null()) as usize
-        + (!this.ns_reply.is_null()) as usize
-        + (!this.txt_reply.is_null()) as usize
-        + (!this.srv_reply.is_null()) as usize
-        + (!this.ptr_reply.is_null()) as usize
-        + (!this.naptr_reply.is_null()) as usize
-        + (!this.soa_reply.is_null()) as usize
-        + (!this.caa_reply.is_null()) as usize;
-
-    let array = JSValue::create_empty_array(global_this, len)?;
+    // Each field may contribute zero or many records, so start empty and let
+    // `put_index` grow the array instead of precomputing a length that can
+    // overshoot and leave trailing holes.
+    let array = JSValue::create_empty_array(global_this, 0)?;
     let mut i: u32 = 0;
 
+    if let Some(reply) = this.cname_reply.as_deref_mut() {
+        // SAFETY: parse_a succeeded → hostent is non-null.
+        let hostent = unsafe { &*reply.hostent };
+        if !hostent.h_name.is_null() {
+            // SAFETY: h_name is a non-null NUL-terminated C string from c-ares.
+            let name = unsafe { bun_core::ffi::cstr(hostent.h_name) }.to_bytes();
+            let response = utf8_to_js(global_this, name)?;
+            any_reply_append_all(global_this, array, &mut i, response, b"cname")?;
+        }
+    }
     if let Some(reply) = this.a_reply.as_deref_mut() {
         let response = hostent_with_ttls_to_js_response(reply, global_this, b"a")?;
         any_reply_append_all(global_this, array, &mut i, response, b"a")?;

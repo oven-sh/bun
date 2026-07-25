@@ -1,5 +1,6 @@
-import { beforeAll, describe, expect, it, setDefaultTimeout, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, it, setDefaultTimeout, test } from "bun:test";
 import { isWindows } from "harness";
+import * as dgram from "node:dgram";
 import * as dns from "node:dns";
 import * as dns_promises from "node:dns/promises";
 import * as fs from "node:fs";
@@ -659,5 +660,90 @@ describe("dns.lookupService with a numeric-string port", () => {
     expect(() => dns_promises.lookupService("127.0.0.1", "nope")).toThrow(
       expect.objectContaining({ code: "ERR_SOCKET_BAD_PORT" }),
     );
+  });
+});
+
+describe("dns.resolveAny with CNAME records", () => {
+  // Loopback UDP responder so no network is touched.
+  const enc = n =>
+    Buffer.concat([
+      ...n.split(".").map(p => Buffer.concat([Buffer.from([p.length]), Buffer.from(p)])),
+      Buffer.from([0]),
+    ]);
+  const rr = (name, type, ttl, rd) =>
+    Buffer.concat([enc(name), Buffer.from([0, type, 0, 1, 0, 0, ttl >> 8, ttl & 255, 0, rd.length]), rd]);
+
+  let server;
+  let resolver;
+
+  beforeAll(async () => {
+    server = dgram.createSocket("udp4");
+    server.on("message", (m, ri) => {
+      let i = 12;
+      const labels = [];
+      while (m[i]) {
+        labels.push(m.slice(i + 1, i + 1 + m[i]).toString());
+        i += m[i] + 1;
+      }
+      const q = m.slice(12, i + 5);
+      const name = labels.join(".");
+      const rest = labels.slice(1).join(".");
+      let ans;
+      if (labels[0] === "loop") {
+        ans = [rr(name, 5, 60, enc("b." + rest)), rr("b." + rest, 5, 60, enc(name))];
+      } else if (labels[0] === "one") {
+        ans = [rr(name, 5, 60, enc("target.example"))];
+      } else if (labels[0] === "aaaa") {
+        ans = [
+          rr(name, 5, 60, enc("target.example")),
+          rr(name, 28, 60, Buffer.from([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 42])),
+        ];
+      } else {
+        ans = [
+          rr(name, 1, 60, Buffer.from([10, 0, 0, 1])),
+          rr(name, 5, 60, enc("mixtarget.example")),
+          rr(name, 16, 60, Buffer.from([2, 104, 105])),
+        ];
+      }
+      const hdr = Buffer.from([m[0], m[1], 0x81, 0x80, 0, 1, 0, ans.length, 0, 0, 0, 0]);
+      server.send(Buffer.concat([hdr, q, ...ans]), ri.port, ri.address);
+    });
+    const { promise, resolve } = Promise.withResolvers();
+    server.bind(0, "127.0.0.1", resolve);
+    await promise;
+    resolver = new dns.promises.Resolver({ timeout: 2000, tries: 1 });
+    resolver.setServers(["127.0.0.1:" + server.address().port]);
+  });
+
+  afterAll(() => {
+    server?.close();
+  });
+
+  it("returns {type:'CNAME', value} for a CNAME-only ANY answer", async () => {
+    const res = await resolver.resolveAny("one.z.example");
+    expect(res).toEqual([{ value: "target.example", type: "CNAME" }]);
+  });
+
+  it("returns a single CNAME for a CNAME chain", async () => {
+    const res = await resolver.resolveAny("loop.z.example");
+    expect(res).toEqual([{ value: "b.z.example", type: "CNAME" }]);
+  });
+
+  it("reports CNAME (not A) plus other records in a mixed answer and never emits null", async () => {
+    const res = await resolver.resolveAny("mix.z.example");
+    expect(res).toEqual([{ value: "mixtarget.example", type: "CNAME" }, { entries: ["hi"], type: "TXT" }]);
+  });
+
+  it("still returns AAAA records alongside CNAME", async () => {
+    const res = await resolver.resolveAny("aaaa.z.example");
+    expect(res).toEqual([{ value: "target.example", type: "CNAME" }, { address: "::2a", ttl: 60, type: "AAAA" }]);
+  });
+
+  it("callback form returns the same shape", async () => {
+    const r = new dns.Resolver({ timeout: 2000, tries: 1 });
+    r.setServers(["127.0.0.1:" + server.address().port]);
+    const { promise, resolve, reject } = Promise.withResolvers();
+    r.resolveAny("one.z.example", (err, res) => (err ? reject(err) : resolve(res)));
+    expect(await promise).toEqual([{ value: "target.example", type: "CNAME" }]);
   });
 });

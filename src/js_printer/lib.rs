@@ -1681,6 +1681,40 @@ pub mod __gated_printer {
             }
         }
 
+        /// Emit the next pending JSONC comment(s) inline if they share a source line with the value ending at `after` (no newline between).
+        #[inline]
+        pub fn flush_json_same_line_comment(&mut self, after: i32) {
+            if !IS_JSON || after < 0 {
+                return;
+            }
+            let comments = self.options.json_preserve_comments;
+            let source = self.options.json_comment_source;
+            while self.json_comment_cursor < comments.len() {
+                let range = comments[self.json_comment_cursor];
+                if range.loc.start <= after || range.len <= 0 {
+                    break;
+                }
+                let start = range.loc.start as usize;
+                let end = start + range.len as usize;
+                if end > source.len() || (after as usize) >= start {
+                    break;
+                }
+                if source[after as usize..start]
+                    .iter()
+                    .any(|&b| b == b'\n' || b == b'\r')
+                {
+                    break;
+                }
+                self.json_comment_cursor += 1;
+                self.json_comment_watermark = range.loc.start;
+                self.print(b" ");
+                self.print(&source[start..end]);
+                if source.get(start + 1) == Some(&b'/') {
+                    break;
+                }
+            }
+        }
+
         /// Emit each preserved JSONC comment starting before `before` exactly once; `leading_break` puts the newline/indent before it instead of after.
         #[inline]
         pub fn flush_json_comments_before(&mut self, before: i32, leading_break: bool) {
@@ -3641,12 +3675,6 @@ pub mod __gated_printer {
                         }
 
                         for (i, item) in items.iter().enumerate() {
-                            if i != 0 {
-                                self.print(b",");
-                                if e.is_single_line {
-                                    self.print_space();
-                                }
-                            }
                             if !e.is_single_line {
                                 self.print_newline();
                                 self.print_indent();
@@ -3656,9 +3684,19 @@ pub mod __gated_printer {
                             }
                             self.print_expr(*item, Level::Comma, ExprFlag::none());
 
-                            if i == items.len() - 1 && matches!(item.data, ExprData::EMissing(_)) {
+                            let last = i == items.len() - 1;
+                            if last && matches!(item.data, ExprData::EMissing(_)) {
                                 // Make sure there's a comma after trailing missing items
                                 self.print(b",");
+                            }
+                            if !last {
+                                self.print(b",");
+                                if e.is_single_line {
+                                    self.print_space();
+                                }
+                            }
+                            if IS_JSON && !e.is_single_line {
+                                self.flush_json_same_line_comment(json_value_end_loc(item));
                             }
                         }
 
@@ -3712,34 +3750,34 @@ pub mod __gated_printer {
                             self.indent();
                         }
 
-                        if e.is_single_line && !IS_JSON {
-                            self.print_space();
-                        } else {
-                            self.print_newline();
-                            self.print_indent();
-                        }
-                        if IS_JSON {
-                            if let Some(key) = &props[0].key {
-                                self.flush_json_comments_before(key.loc.start, false);
+                        for (i, property) in props.iter().enumerate() {
+                            if e.is_single_line && !IS_JSON {
+                                if i == 0 {
+                                    self.print_space();
+                                }
+                            } else {
+                                self.print_newline();
+                                self.print_indent();
                             }
-                        }
-                        self.print_property(&props[0]);
-
-                        if props.len() > 1 {
-                            for property in &props[1..] {
+                            let key_loc = property.key.as_ref().map_or(-1, |k| k.loc.start);
+                            if IS_JSON {
+                                self.flush_json_comments_before(key_loc, false);
+                            }
+                            self.print_property(property);
+                            if i + 1 < props.len() {
                                 self.print(b",");
                                 if e.is_single_line && !IS_JSON {
                                     self.print_space();
-                                } else {
-                                    self.print_newline();
-                                    self.print_indent();
                                 }
-                                if IS_JSON {
-                                    if let Some(key) = &property.key {
-                                        self.flush_json_comments_before(key.loc.start, false);
-                                    }
-                                }
-                                self.print_property(property);
+                            }
+                            if IS_JSON {
+                                let end_loc = property
+                                    .value
+                                    .as_ref()
+                                    .map(json_value_end_loc)
+                                    .filter(|&l| l >= 0)
+                                    .unwrap_or(key_loc);
+                                self.flush_json_same_line_comment(end_loc);
                             }
                         }
 
@@ -7866,6 +7904,15 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
     printer.writer.done()?;
 
     Ok(usize::try_from(printer.writer.written().max(0)).expect("int cast"))
+}
+
+/// Best-effort last source byte of a JSON value, for same-line-comment detection.
+fn json_value_end_loc(expr: &js_ast::Expr) -> i32 {
+    match &expr.data {
+        js_ast::expr::Data::EObject(o) if o.close_brace_loc.start > 0 => o.close_brace_loc.start,
+        js_ast::expr::Data::EArray(a) if a.close_bracket_loc.start > 0 => a.close_bracket_loc.start,
+        _ => expr.loc.start,
+    }
 }
 
 pub fn print_json<W: WriterTrait>(

@@ -122,17 +122,20 @@ it("should preserve comments in package.json on add", async () => {
   const err = await stderr.text();
   expect(err).not.toContain("error:");
   expect(await exited).toBe(0);
-  const out = await file(join(package_dir, "package.json")).text();
-  expect(out).toContain("// the name");
-  expect(out).toContain("/* scripts go here */");
-  expect(out).toContain("// run the thing");
-  expect(out).toContain("// trailing note");
-  expect(out).toContain('"bar": "^0.0.2"');
-  expect(JSON.parse(out.replace(/\/\/.*$/gm, "").replace(/\/\*[\s\S]*?\*\//g, ""))).toEqual({
-    name: "foo",
-    scripts: { start: "node ." },
-    dependencies: { bar: "^0.0.2" },
-  });
+  expect(await file(join(package_dir, "package.json")).text()).toEqual(`{
+  // the name
+  "name": "foo",
+  /* scripts go here */
+  "scripts": {
+    // run the thing
+    "start": "node ."
+    // trailing note
+  },
+  "dependencies": {
+    "bar": "^0.0.2"
+  }
+}
+`);
 });
 
 it("should preserve comments in package.json on update", async () => {
@@ -144,9 +147,13 @@ it("should preserve comments in package.json on update", async () => {
   "name": "foo",
   "dependencies": {
     // bar: primary dependency
-    "bar": "^0.0.2"
+    "bar": "^0.0.2", // same-line trailer
     /* trailing after bar */
   },
+  "workspaces": [
+    // workspace packages
+    "packages/*" // glob
+  ],
   // end-of-file note
   "private": true
 }
@@ -163,16 +170,21 @@ it("should preserve comments in package.json on update", async () => {
   const err = await stderr.text();
   expect(err).not.toContain("error:");
   expect(await exited).toBe(0);
-  const out = await file(join(package_dir, "package.json")).text();
-  expect(out).toContain("// bar: primary dependency");
-  expect(out).toContain("/* trailing after bar */");
-  expect(out).toContain("// end-of-file note");
-  expect(out).toContain('"bar": "^0.0.2"');
-  // comment still precedes the property it documented
-  const barIdx = out.indexOf('"bar"');
-  const barCommentIdx = out.indexOf("// bar: primary");
-  expect(barCommentIdx).toBeGreaterThan(-1);
-  expect(barCommentIdx).toBeLessThan(barIdx);
+  expect(await file(join(package_dir, "package.json")).text()).toEqual(`{
+  "name": "foo",
+  "dependencies": {
+    // bar: primary dependency
+    "bar": "^0.0.2" // same-line trailer
+    /* trailing after bar */
+  },
+  "workspaces": [
+    // workspace packages
+    "packages/*" // glob
+  ],
+  // end-of-file note
+  "private": true
+}
+`);
 });
 
 it("should preserve comments in package.json on remove", async () => {
@@ -205,10 +217,18 @@ it("should preserve comments in package.json on remove", async () => {
   const err = await stderr.text();
   expect(err).not.toContain("error:");
   expect(await exited).toBe(0);
-  const out = await file(join(package_dir, "package.json")).text();
-  expect(out).toContain("// project manifest");
-  expect(out).toContain("// scripts below");
-  expect(out).not.toContain('"pkg-a"');
+  // `// local workspace dep` annotated the removed property; it is kept (never
+  // deleted) and flushed before the next surviving key.
+  expect(await file(join(package_dir, "package.json")).text()).toEqual(`{
+  // project manifest
+  "name": "foo",
+  // local workspace dep
+  // scripts below
+  "scripts": {
+    "test": "echo ok"
+  }
+}
+`);
 });
 
 it("should reject missing package", async () => {

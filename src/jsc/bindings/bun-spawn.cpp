@@ -25,6 +25,13 @@ extern char** environ;
 #define CLOSE_RANGE_CLOEXEC (1U << 2)
 #endif
 
+#ifndef PR_SET_THP_DISABLE
+#define PR_SET_THP_DISABLE 41
+#endif
+#ifndef PR_GET_THP_DISABLE
+#define PR_GET_THP_DISABLE 42
+#endif
+
 #if OS(LINUX)
 extern "C" ssize_t bun_close_range(unsigned int start, unsigned int end, unsigned int flags);
 #endif
@@ -163,6 +170,12 @@ extern "C" ssize_t posix_spawn_bun(
     // Save it so the parent can restore it once vfork returns, like Go's
     // forkAndExecInChild1 and systemd's safe_fork_full do.
     int saved_dumpable = (request->set_uid || request->set_gid) ? prctl(PR_GET_DUMPABLE, 0, 0, 0, 0) : -1;
+    // mimalloc (built with MI_DEFAULT_ALLOW_THP=0) sets PR_SET_THP_DISABLE at
+    // startup. That flag lives on mm->flags (MMF_DISABLE_THP), is inherited by
+    // fork and preserved across execve, so every subprocess would inherit it.
+    // The vfork child shares our mm, so save now, clear in the child just
+    // before exec, and restore in the parent once vfork returns.
+    int saved_thp_disable = prctl(PR_GET_THP_DISABLE, 0, 0, 0, 0);
     pid_t child = vfork();
 #else
     // On macOS, we must use fork() because vfork() is more strictly enforced.
@@ -344,6 +357,15 @@ extern "C" ssize_t posix_spawn_bun(
         // Close all fds > current_max_fd, preferring cloexec if available
         closeRangeOrLoop(current_max_fd + 1, INT_MAX, true);
 
+#if OS(LINUX)
+        // Reset THP to the system default for the new process. Done as late as
+        // possible because under vfork this also flips the flag on the shared
+        // parent mm until the parent restores it after vfork returns.
+        if (saved_thp_disable > 0) {
+            (void)prctl(PR_SET_THP_DISABLE, 0, 0, 0, 0);
+        }
+#endif
+
         if (execve(path, argv, envp) == -1) {
             return childFailed();
         }
@@ -428,6 +450,9 @@ extern "C" ssize_t posix_spawn_bun(
     // a saved value of 2 (suid_dumpable=2) means it was already the reset value.
     if (saved_dumpable == 0 || saved_dumpable == 1) {
         (void)prctl(PR_SET_DUMPABLE, saved_dumpable, 0, 0, 0);
+    }
+    if (saved_thp_disable > 0) {
+        (void)prctl(PR_SET_THP_DISABLE, saved_thp_disable, 0, 0, 0);
     }
 #endif
 

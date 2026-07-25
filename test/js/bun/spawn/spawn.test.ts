@@ -7,6 +7,7 @@ import {
   getMaxFD,
   isBroken,
   isDebug,
+  isLinux,
   isMacOS,
   isPosix,
   isWindows,
@@ -1254,4 +1255,20 @@ describe("uid/gid", () => {
     }
     expect(thrown?.code).toBe("EPERM");
   });
+});
+
+const ownThp = isLinux ? readFileSync("/proc/self/status", "utf8").match(/^THP_enabled:\s*(\d)/m)?.[1] : undefined;
+
+// mimalloc sets PR_SET_THP_DISABLE at startup on Linux; the flag is inherited
+// across fork and preserved across execve. Spawn should clear it so children
+// get the system default instead of having transparent huge pages disabled.
+it.if(ownThp === "0")("child does not inherit PR_SET_THP_DISABLE", async () => {
+  await using proc = spawn({ cmd: ["cat", "/proc/self/status"], stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout.match(/^THP_enabled:\s*(\d)/m)?.[1]).toBe("1");
+  expect(exitCode).toBe(0);
+
+  // Parent's flag is restored once vfork returns.
+  expect(readFileSync("/proc/self/status", "utf8").match(/^THP_enabled:\s*(\d)/m)?.[1]).toBe("0");
 });

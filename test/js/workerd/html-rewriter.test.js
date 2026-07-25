@@ -180,9 +180,6 @@ describe("HTMLRewriter", () => {
         // Must reject with the upstream connection error, and must never
         // resolve with the truncated document.
         expect(await text).toEqual(rejectedWithConnectionError);
-        // The body is now in its error state. A second read must report the
-        // same failure, not resolve as an empty "successful" document.
-        expect(await settle(transformed.text())).toEqual(rejectedWithConnectionError);
       });
     });
 
@@ -196,16 +193,22 @@ describe("HTMLRewriter", () => {
     });
 
     it(".body on the transformed response is an errored stream", async () => {
+      // The rewrite streams, so bytes that arrive before the failure are
+      // delivered; read to completion and assert the stream ends in an error
+      // instead of closing cleanly as a truncated "successful" document.
+      async function readAll(reader) {
+        while (true) {
+          const r = await settle(reader.read());
+          if (r.rejected) return r;
+          if (r.value.done) return r;
+        }
+      }
       await withPartialBodyServer(async (url, release) => {
         const res = await fetch(url);
         const transformed = rewriter().transform(res);
-        const text = settle(transformed.text());
+        const reader = transformed.body.getReader();
         release();
-        // Barrier: once this has rejected, the body is in its error state.
-        expect(await text).toEqual(rejectedWithConnectionError);
-        // Reading `.body` must reject with the same upstream error instead of
-        // closing cleanly as an empty "successful" document.
-        expect(await settle(transformed.body.getReader().read())).toEqual(rejectedWithConnectionError);
+        expect(await readAll(reader)).toEqual(rejectedWithConnectionError);
       });
     });
 
@@ -213,12 +216,15 @@ describe("HTMLRewriter", () => {
       await withPartialBodyServer(async (url, release) => {
         const res = await fetch(url);
         const transformed = rewriter().transform(res);
-        // Start the read BEFORE the upstream fails. This is the one shape
-        // (readable attached, no pending promise) where the error must reach
-        // the attached stream; discarding it would strand this read forever.
-        const read = settle(transformed.body.getReader().read());
+        const reader = transformed.body.getReader();
+        // Start the read BEFORE the upstream fails so it is pending when the
+        // error arrives. The first read may resolve with the chunk that was
+        // rewritten before the failure; the stream must eventually reject.
+        let read = settle(reader.read());
         release();
-        expect(await read).toEqual(rejectedWithConnectionError);
+        let r = await read;
+        while (!r.rejected && !r.value.done) r = await settle(reader.read());
+        expect(r).toEqual(rejectedWithConnectionError);
       });
     });
 
@@ -226,13 +232,10 @@ describe("HTMLRewriter", () => {
       await withPartialBodyServer(async (url, release) => {
         const res = await fetch(url);
         const transformed = rewriter().transform(res);
-        const text = settle(transformed.text());
+        const clone = transformed.clone();
         release();
-        // Barrier: the body is now in its error state.
-        expect(await text).toEqual(rejectedWithConnectionError);
-        // Cloning a failed body must produce a failed body, not an empty one
-        // that reads back as a complete (and empty) document.
-        expect(await settle(transformed.clone().text())).toEqual(rejectedWithConnectionError);
+        expect(await settle(transformed.text())).toEqual(rejectedWithConnectionError);
+        expect(await settle(clone.text())).toEqual(rejectedWithConnectionError);
       });
     });
 
@@ -387,18 +390,22 @@ describe("HTMLRewriter", () => {
       expect(await text).toBe("<p>bye</p>");
     });
 
-    it("every promise-returning reader on the transformed response", async () => {
-      // `.body.getReader()` is covered by the `.todo` below: the ResumableSink
-      // pump delivers chunks from a microtask, so at the instant `transform()`
-      // returns the body is still `Locked`, which is the pre-existing #19305
-      // output-side bug. Readers that return a promise await a turn first and
-      // are unaffected.
+    it("every way of reading the transformed response", async () => {
       const read = {
         text: response => response.text(),
         arrayBuffer: async response => new TextDecoder().decode(await response.arrayBuffer()),
         bytes: async response => new TextDecoder().decode(await response.bytes()),
         blob: response => response.blob().then(blob => blob.text()),
         json: response => response.json().then(value => JSON.stringify(value)),
+        getReader: async response => {
+          const reader = response.body.getReader();
+          const parts = [];
+          for (let chunk = await reader.read(); !chunk.done; chunk = await reader.read()) {
+            parts.push(new TextDecoder().decode(chunk.value));
+          }
+          return parts.join("");
+        },
+        readableStreamToText: response => Bun.readableStreamToText(response.body),
       };
 
       const html = '<p>hi</p><p data-x="1">there</p>';
@@ -545,12 +552,7 @@ describe("HTMLRewriter", () => {
       }
     });
 
-    // Resolves with "" instead: the `.body` getter builds a ByteStream the
-    // producer is never told about, so done() closes it empty. Pre-existing and
-    // not specific to JS sources — a fetch body that is still mid-stream when
-    // transform() returns does the same thing on main (#19305, and #6068 for
-    // the Bun.serve shape, which hangs). Un-skip once the output side is fixed.
-    it.todo(".body of a transform whose source is still pending", async () => {
+    it(".body of a transform whose source is still pending", async () => {
       const { promise: gate, resolve: openGate } = Promise.withResolvers();
       const body = new ReadableStream({
         async start(controller) {

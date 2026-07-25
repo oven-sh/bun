@@ -706,15 +706,12 @@ impl S3UploadStreamWrapper {
 
 impl ResumableSinkContext for S3UploadStreamWrapper {
     #[inline]
-    fn write_request_data(this: *mut Self, bytes: &[u8]) -> ResumableSinkBackpressure {
-        // SAFETY: `this` is the live context registered in `ResumableSink::init`;
-        // S3UploadStreamWrapper does not re-enter the sink from these callbacks.
-        S3UploadStreamWrapper::write_request_data(unsafe { &mut *this }, bytes)
+    fn write_request_data(&mut self, bytes: &[u8]) -> ResumableSinkBackpressure {
+        S3UploadStreamWrapper::write_request_data(self, bytes)
     }
     #[inline]
-    fn write_end_request(this: *mut Self, err: Option<JSValue>) {
-        // SAFETY: see `write_request_data`.
-        S3UploadStreamWrapper::write_end_request(unsafe { &mut *this }, err)
+    fn write_end_request(&mut self, err: Option<JSValue>) {
+        S3UploadStreamWrapper::write_end_request(self, err)
     }
 }
 

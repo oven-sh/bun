@@ -38,22 +38,16 @@ pub trait ResumableSinkJs {
 }
 
 /// Trait capturing the per-`Context` callbacks the sink invokes.
-///
-/// Both methods take `*mut Self` (not `&mut self`) per the "borrow = ptr"
-/// dispatch rule in src/CLAUDE.md: HTMLRewriter's `write_request_data` drives
-/// `lol_html::HtmlRewriter::write`, which runs user async handlers via
-/// `vm.wait_for_promise`; on the `Source::Bytes` native-pipe path that nested
-/// event loop can deliver the next chunk and re-enter `on_write` on the same
-/// context. A `&mut self` receiver would be aliased on the re-entrant call.
-/// Impls that do not re-enter (FetchTasklet, S3) dereference once at the top.
-///
-/// # Safety
-/// `this` is the live heap allocation stored in [`ResumableSink::context`];
-/// callers only invoke these via [`ResumableSink::on_write`] /
-/// [`ResumableSink::on_end`].
 pub trait ResumableSinkContext {
-    fn write_request_data(this: *mut Self, bytes: &[u8]) -> ResumableSinkBackpressure;
-    fn write_end_request(this: *mut Self, err: Option<JSValue>);
+    /// Skip the `Source::Bytes` native-pipe fast path and always drive the
+    /// stream through the JS pump. Set by contexts whose `write_request_data`
+    /// nests the event loop (HTMLRewriter's `wait_for_promise`), which could
+    /// re-enter the native pipe callback; the JS pump's `m_reading` guard and
+    /// read-after-write sequencing prevent that.
+    const AVOID_NATIVE_PIPE: bool = false;
+
+    fn write_request_data(&mut self, bytes: &[u8]) -> ResumableSinkBackpressure;
+    fn write_end_request(&mut self, err: Option<JSValue>);
 }
 
 #[repr(u8)]
@@ -131,11 +125,14 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
 
     #[inline]
     fn on_write(ctx: *mut Context, bytes: &[u8]) -> ResumableSinkBackpressure {
-        Context::write_request_data(ctx, bytes)
+        // SAFETY: `context` is a BACKREF to the owning Context which outlives
+        // this sink. Dereferenced as `&mut` because impls mutate.
+        unsafe { (*ctx).write_request_data(bytes) }
     }
     #[inline]
     fn on_end(ctx: *mut Context, err: Option<JSValue>) {
-        Context::write_end_request(ctx, err)
+        // SAFETY: see on_write.
+        unsafe { (*ctx).write_end_request(err) }
     }
 
     pub fn constructor(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<*mut Self> {
@@ -187,7 +184,9 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
             unsafe { Self::deref_(this) };
             return this;
         }
-        if let Some(byte_stream) = stream.ptr.bytes() {
+        if !Context::AVOID_NATIVE_PIPE
+            && let Some(byte_stream) = stream.ptr.bytes()
+        {
             // BACKREF: see `Source::bytes()` — payload owned by `stream`.
             // R-2: all touched ByteStream methods/fields are `&self`/interior-mutable.
             // if pipe is empty, we can pipe
@@ -637,15 +636,12 @@ impl_resumable_sink_js!(
 // (S3UploadStreamWrapper's impl lives next to its struct in s3/client.rs.)
 impl ResumableSinkContext for FetchTasklet {
     #[inline]
-    fn write_request_data(this: *mut Self, bytes: &[u8]) -> ResumableSinkBackpressure {
-        // SAFETY: `this` is the live context registered in `ResumableSink::init`;
-        // FetchTasklet does not re-enter the sink from these callbacks.
-        FetchTasklet::write_request_data(unsafe { &mut *this }, bytes)
+    fn write_request_data(&mut self, bytes: &[u8]) -> ResumableSinkBackpressure {
+        FetchTasklet::write_request_data(self, bytes)
     }
     #[inline]
-    fn write_end_request(this: *mut Self, err: Option<JSValue>) {
-        // SAFETY: see `write_request_data`.
-        FetchTasklet::write_end_request(unsafe { &mut *this }, err)
+    fn write_end_request(&mut self, err: Option<JSValue>) {
+        FetchTasklet::write_end_request(self, err)
     }
 }
 

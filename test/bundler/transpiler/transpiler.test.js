@@ -2680,7 +2680,7 @@ console.log(<div {...obj} key="after" />);`),
     });
 
     it("string quote selection", () => {
-      expectPrinted_(`console.log("\\n")`, "console.log(`\n`)");
+      expectPrinted_(`console.log("\\n")`, 'console.log("\\n")');
       expectPrinted_(`console.log("\\"")`, `console.log('"')`);
       expectPrinted_(`console.log('\\'')`, `console.log("'")`);
       expectPrinted_("console.log(`\\`hi\\``)", "console.log(`\\`hi\\``)");

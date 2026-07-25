@@ -615,7 +615,7 @@ pub fn can_print_without_escape(c: i32, ascii_only: bool) -> bool {
 const INDENTATION_SPACE_BUF: [u8; 128] = [b' '; 128];
 const INDENTATION_TAB_BUF: [u8; 128] = [b'\t'; 128];
 
-pub fn best_quote_char_for_string<T>(str: &[T], allow_backtick: bool) -> u8
+pub fn best_quote_char_for_string<T>(str: &[T], allow_backtick: bool, minify_syntax: bool) -> u8
 where
     T: Copy + Into<u32>,
 {
@@ -631,8 +631,15 @@ where
             0x22 /* " */ => double_cost += 1,
             0x60 /* ` */ => backtick_cost += 1,
             0x0A /* \n */ => {
-                single_cost += 1;
-                double_cost += 1;
+                // A newline can be written literally only inside a template
+                // literal, so counting it against the quoted forms biases the
+                // choice toward a backtick. That rewrite only pays off when
+                // minifying syntax; otherwise keep the newline escaped in a
+                // quoted string (matches esbuild's non-minified output).
+                if minify_syntax {
+                    single_cost += 1;
+                    double_cost += 1;
+                }
             }
             0x5C /* \\ */ => {
                 i += 1;
@@ -2276,14 +2283,18 @@ pub mod __gated_printer {
             self.print(b"}");
         }
 
-        pub fn best_quote_char_for_e_string(str: &E::String, allow_backtick: bool) -> u8 {
+        pub fn best_quote_char_for_e_string(
+            str: &E::String,
+            allow_backtick: bool,
+            minify_syntax: bool,
+        ) -> u8 {
             if IS_JSON {
                 return b'"';
             }
             if str.is_utf8() {
-                best_quote_char_for_string(str.slice8(), allow_backtick)
+                best_quote_char_for_string(str.slice8(), allow_backtick, minify_syntax)
             } else {
-                best_quote_char_for_string(str.slice16(), allow_backtick)
+                best_quote_char_for_string(str.slice16(), allow_backtick, minify_syntax)
             }
         }
 
@@ -2699,7 +2710,8 @@ pub mod __gated_printer {
         }
 
         pub fn print_string_literal_e_string(&mut self, str: &E::String, allow_backtick: bool) {
-            let quote = Self::best_quote_char_for_e_string(str, allow_backtick);
+            let quote =
+                Self::best_quote_char_for_e_string(str, allow_backtick, self.options.minify_syntax);
             self.print(quote);
             self.print_string_characters_e_string(str, quote);
             self.print(quote);
@@ -2738,7 +2750,7 @@ pub mod __gated_printer {
             debug_assert!(is_valid_wtf8(str));
 
             let quote = if !IS_JSON {
-                best_quote_char_for_string(str, allow_backtick)
+                best_quote_char_for_string(str, allow_backtick, self.options.minify_syntax)
             } else {
                 b'"'
             };
@@ -4678,7 +4690,11 @@ pub mod __gated_printer {
                             }
                         }
                     } else {
-                        let c = best_quote_char_for_string(key_str.slice16(), false);
+                        let c = best_quote_char_for_string(
+                            key_str.slice16(),
+                            false,
+                            self.options.minify_syntax,
+                        );
                         self.print(c);
                         self.print_string_characters_utf16(key_str.slice16(), c);
                         self.print(c);
@@ -6184,7 +6200,11 @@ pub mod __gated_printer {
                 unreachable!();
             }
 
-            let quote = best_quote_char_for_string(import_record.path.text, false);
+            let quote = best_quote_char_for_string(
+                import_record.path.text,
+                false,
+                self.options.minify_syntax,
+            );
             if import_record
                 .flags
                 .contains(ImportRecordFlags::PRINT_NAMESPACE_IN_PATH)

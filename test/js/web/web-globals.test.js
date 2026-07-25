@@ -392,8 +392,11 @@ test.skipIf(isWindows)("alert/confirm/prompt work while readline has stdin in ra
   await using proc = Bun.spawn({ cmd: [bunExe(), "-e", childSrc], env: bunEnv, terminal });
   // A child that dies early must reject the pending waitFor rather than hang
   // it. A pre-constructed Bun.Terminal does not fire its exit() callback on
-  // child exit, so key this off the process itself.
+  // child exit, so key this off the process itself. A clean exit is left to
+  // the data callback (the final PTY read can arrive after the pidfd event in
+  // the same poll batch, so rejecting on code 0 would race the success path).
   proc.exited.then(code => {
+    if (code === 0) return;
     for (const w of waiters.splice(0)) {
       w.reject(
         new Error("child exited (" + code + ") before " + JSON.stringify(w.marker) + "; out=" + JSON.stringify(out)),

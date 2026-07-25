@@ -3351,15 +3351,7 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 
 extern "C" bool JSGlobalObject__setTimeZone(JSC::JSGlobalObject* globalObject, const ZigString* timeZone)
 {
-    auto& vm = JSC::getVM(globalObject);
-
-    if (WTF::setTimeZoneOverride(Zig::toString(*timeZone))) {
-        WTF::timeZoneDidChange();
-        vm.dateCache.clearForTimeZoneChange();
-        return true;
-    }
-
-    return false;
+    return Bun::setTimeZoneFromEnvValue(globalObject, Zig::toString(*timeZone));
 }
 
 extern "C" void JSGlobalObject__requestTermination(JSC::JSGlobalObject* globalObject)

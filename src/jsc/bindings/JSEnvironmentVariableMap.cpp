@@ -23,6 +23,13 @@
 #include "SharedEnvStore.h"
 #include "wtf/NeverDestroyed.h"
 #include "WebCoreJSBuiltins.h"
+#include <JavaScriptCore/IntlObject.h>
+#include <wtf/text/MakeString.h>
+
+#if OS(UNIX)
+#include <limits.h>
+#include <stdlib.h>
+#endif
 
 using namespace JSC;
 
@@ -482,15 +489,128 @@ static constexpr ASCIILiteral kProxyEnvVarNames[] = {
     "no_proxy"_s,
 };
 
+// JSC's DateCache resolves the default time zone by name: it takes the WTF
+// override (or ICU's ucal_getHostTimeZone string), runs it through
+// intlResolveTimeZoneID, and if that lookup fails it collapses to UTC. That
+// loses POSIX TZ forms libc accepts but ICU cannot name, which V8 keeps as a
+// fixed-offset SimpleTimeZone. Normalize those forms to an IANA name JSC's
+// table knows so Date offsets match Node.
+//
+// Handled forms (POSIX / glibc conventions):
+//   ":America/New_York"            leading ':' stripped
+//   ":/etc/localtime"              realpath()'d, zoneinfo suffix extracted
+//   "/usr/share/zoneinfo/Zone"     zoneinfo prefix stripped
+//   "MSK-3", "UTC+5", "ABC5"       POSIX std offset -> Etc/GMT+/-h
+//
+// Anything else falls back to clearing the override so ICU's host detection
+// runs; a stale override from an earlier assignment must not persist past an
+// unrecognized value.
+bool setTimeZoneFromEnvValue(JSC::JSGlobalObject* globalObject, const WTF::String& raw)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto commit = [&](const String& name) -> bool {
+        if (!WTF::setTimeZoneOverride(name))
+            return false;
+        WTF::timeZoneDidChange();
+        vm.dateCache.clearForTimeZoneChange();
+        return true;
+    };
+
+    if (raw.isEmpty())
+        return commit(emptyString());
+
+    String tz = raw.startsWith(':') ? raw.substring(1) : raw;
+
+#if OS(UNIX)
+    if (tz.startsWith('/')) {
+        auto extractZoneInfoSuffix = [](StringView path) -> String {
+            constexpr auto marker = "/zoneinfo/"_s;
+            size_t pos = path.reverseFind(marker);
+            if (pos == notFound)
+                return String();
+            StringView suffix = path.substring(pos + marker.length());
+            if (suffix.startsWith("posix/"_s) || suffix.startsWith("right/"_s))
+                suffix = suffix.substring(6);
+            if (suffix.isEmpty() || suffix == "posixrules"_s || suffix == "localtime"_s)
+                return String();
+            return suffix.toString();
+        };
+        String zone = extractZoneInfoSuffix(tz);
+        if (zone.isNull()) {
+            CString utf8 = tz.utf8();
+            char buf[PATH_MAX];
+            if (const char* resolved = realpath(utf8.data(), buf))
+                zone = extractZoneInfoSuffix(StringView::fromLatin1(resolved));
+        }
+        if (!zone.isNull())
+            tz = WTF::move(zone);
+    }
+#endif
+
+    if (JSC::intlResolveTimeZoneID(tz))
+        return commit(tz);
+
+    // ICU may canonicalize an alias JSC's table filtered out (e.g. legacy
+    // EST5EDT on tzdata that links it to America/New_York).
+    if (!tz.isEmpty()) {
+        String primary = JSC::toPrimaryIanaTimeZoneIdentifier(StringView(tz));
+        if (!primary.isEmpty() && primary != tz && JSC::intlResolveTimeZoneID(primary))
+            return commit(primary);
+    }
+
+    // POSIX std offset: std is 3+ alpha chars or a quoted <...> name; offset is
+    // [+|-]hh. The sign is hours *west* of UTC, so Etc/GMT keeps it as-is.
+    // Node only honors whole-hour offsets with nothing following (ICU's
+    // uprv_tzname rejects ':' or a trailing dst name, so e.g. IST-5:30 and
+    // FOO4BAR fall back to /etc/localtime there too).
+    {
+        StringView v(tz);
+        size_t i = 0;
+        if (!v.isEmpty() && v[0] == '<') {
+            size_t end = v.find('>');
+            if (end == notFound)
+                goto posix_done;
+            i = end + 1;
+        } else {
+            while (i < v.length() && isASCIIAlpha(v[i]))
+                ++i;
+            if (i < 3)
+                goto posix_done;
+        }
+        bool negative = false;
+        if (i < v.length() && (v[i] == '+' || v[i] == '-')) {
+            negative = v[i] == '-';
+            ++i;
+        }
+        size_t hstart = i;
+        while (i < v.length() && isASCIIDigit(v[i]))
+            ++i;
+        if (i == hstart || i - hstart > 2 || i != v.length())
+            goto posix_done;
+        int hours = 0;
+        for (size_t j = hstart; j < i; ++j)
+            hours = hours * 10 + (v[j] - '0');
+        if (hours == 0)
+            return commit("UTC"_s);
+        // Etc/GMT zones exist for +1..+12 and -1..-14.
+        if (negative ? hours <= 14 : hours <= 12) {
+            String etc = makeString("Etc/GMT"_s, negative ? '-' : '+', hours);
+            if (JSC::intlResolveTimeZoneID(etc))
+                return commit(etc);
+        }
+    }
+posix_done:
+
+    commit(emptyString());
+    return false;
+}
+
 // The parse-and-apply bodies for the three side-effecting env vars, shared by
 // the regular process.env CustomSetters and applySharedEnvSideEffects so a new
 // side-effecting var need only be added in one place.
 static void applyTZFromString(JSGlobalObject* globalObject, const String& value)
 {
-    if (value.length() < 32 && WTF::setTimeZoneOverride(value)) {
-        WTF::timeZoneDidChange();
-        JSC::getVM(globalObject).dateCache.clearForTimeZoneChange();
-    }
+    setTimeZoneFromEnvValue(globalObject, value);
 }
 static void applyTLSRejectFromString(JSGlobalObject*, const String& value)
 {

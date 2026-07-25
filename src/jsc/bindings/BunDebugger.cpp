@@ -750,6 +750,17 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionReportNodeInspectorServerStarted, (JSGlobalOb
     String error = callFrame->argument(2).isUndefined() ? String() : callFrame->argument(2).toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
+    // Empty url with no error is the "close" acknowledgement from the
+    // debugger-thread control callback, after server.stop(true) has fired each
+    // connection's close callback and downgraded the ServerWebSocket wrapper's
+    // Strong handle to Weak. The Rust box behind each wrapper is only freed
+    // when GC sweeps it, and this thread's VM never runs destruct-on-exit, so
+    // sweep here before waking the main thread (which may immediately
+    // process.exit()). close() is synchronous and rare enough that a full
+    // collection is acceptable.
+    if (url.isEmpty() && error.isEmpty())
+        vm.heap.collectNow(JSC::Sync, JSC::CollectionScope::Full);
+
     auto& state = nodeInspectorState();
     {
         Locker<Lock> locker(state.lock);

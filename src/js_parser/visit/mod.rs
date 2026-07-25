@@ -543,6 +543,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 } else {
                     self.vis_scope().is_after_const_local_prefix = true;
                 }
+                self.maybe_track_glob_specifier(id_ref, decl.value);
                 // SAFETY: original_name is arena-owned, valid for 'a.
                 let original_name: &'a [u8] = self.symbols[id_ref.inner_index() as usize]
                     .original_name

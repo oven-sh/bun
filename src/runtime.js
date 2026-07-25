@@ -109,6 +109,15 @@ var __moduleCache;
 // When you do know the module is CJS
 export var __commonJS = (cb, mod) => () => (mod || cb((mod = { exports: {} }).exports, mod), mod.exports);
 
+// Lookup table for require()/import() calls whose specifier is a template
+// literal. Each key is the relative path string as it appears at the call
+// site; the value thunk calls the wrapped factory for that file.
+export var __glob = map => path => {
+  var fn = map[path];
+  if (fn) return fn();
+  throw new Error("Cannot find module '" + path + "' in glob import map. Available: " + Object.keys(map).join(", "));
+};
+
 export var __name = (target, name) => {
   Object.defineProperty(target, "name", {
     value: name,

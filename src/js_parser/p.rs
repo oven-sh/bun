@@ -563,6 +563,13 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
 
     pub const_values: bun_ast::ast_result::ConstValuesMap,
 
+    /// Side-map for esbuild-style glob requires: when the bundler's
+    /// `glob_resolver` is set and a `const`/`let` binding is initialized with a
+    /// template literal (or string-concat chain) whose shape starts with `./`
+    /// or `../`, the initializer is recorded here so a subsequent
+    /// `require(ident)` can extract the glob pattern without inlining.
+    pub glob_specifier_values: bun_ast::ast_result::ConstValuesMap,
+
     // These are backed by stack fallback allocators in _parse, and are uninitialized until then.
     pub binary_expression_stack: ListManaged<'a, BinaryExpressionVisitor>,
     // Reusable stack for `SideEffects::simplify_unused_binary_comma_expr`;
@@ -801,28 +808,301 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         arg: Expr,
         buf: &'b mut BumpVec<'a, u8>,
     ) -> Result<&'b [u8], crate::Error> {
-        if let Some(tmpl) = arg.data.e_template() {
-            if tmpl.tag.is_some() {
-                return Ok(b""); // tagged template — opaque
-            }
-            match &tmpl.head {
-                js_ast::e::TemplateContents::Cooked(head) => {
-                    buf.extend_from_slice(head.string(self.arena)?);
-                }
-                js_ast::e::TemplateContents::Raw(_) => return Ok(b""), // shouldn't happen post-visit but be safe
-            }
-            for part in tmpl.parts().iter() {
-                buf.push(0); // \x00 placeholder per interpolation
-                match &part.tail {
-                    js_ast::e::TemplateContents::Cooked(tail) => {
-                        buf.extend_from_slice(tail.string(self.arena)?);
-                    }
-                    js_ast::e::TemplateContents::Raw(_) => return Ok(b""), // raw tail — treat as opaque
-                }
-            }
-            return Ok(buf.as_slice());
+        if self.append_dynamic_specifier_shape(arg, buf)? {
+            Ok(buf.as_slice())
+        } else {
+            buf.clear();
+            Ok(b"")
         }
-        Ok(b"")
+    }
+
+    /// Append `arg`'s static shape to `buf`, returning `false` if any piece is
+    /// opaque. Separate from `extract_dynamic_specifier_shape` so that string-
+    /// concatenation chains can recurse without each level resetting `buf`.
+    fn append_dynamic_specifier_shape(
+        &mut self,
+        arg: Expr,
+        buf: &mut BumpVec<'a, u8>,
+    ) -> Result<bool, crate::Error> {
+        match &arg.data {
+            js_ast::ExprData::EString(s) => {
+                buf.extend_from_slice(s.string(self.arena)?);
+                Ok(true)
+            }
+            js_ast::ExprData::ETemplate(tmpl) => {
+                if tmpl.tag.is_some() {
+                    return Ok(false);
+                }
+                match &tmpl.head {
+                    js_ast::e::TemplateContents::Cooked(head) => {
+                        buf.extend_from_slice(head.string(self.arena)?);
+                    }
+                    js_ast::e::TemplateContents::Raw(_) => return Ok(false),
+                }
+                for part in tmpl.parts().iter() {
+                    // Nest into the interpolation so `${"a" + x}` yields "a\x00"
+                    // rather than a bare placeholder.
+                    if !self.append_dynamic_specifier_shape(part.value, buf)? {
+                        buf.push(0);
+                    }
+                    match &part.tail {
+                        js_ast::e::TemplateContents::Cooked(tail) => {
+                            buf.extend_from_slice(tail.string(self.arena)?);
+                        }
+                        js_ast::e::TemplateContents::Raw(_) => return Ok(false),
+                    }
+                }
+                Ok(true)
+            }
+            js_ast::ExprData::EBinary(bin) if bin.op == js_ast::Op::Code::BinAdd => {
+                let (l, r) = (bin.left, bin.right);
+                let ok_l = self.append_dynamic_specifier_shape(l, buf)?;
+                if !ok_l {
+                    buf.push(0);
+                }
+                let ok_r = self.append_dynamic_specifier_shape(r, buf)?;
+                if !ok_r {
+                    buf.push(0);
+                }
+                // A concat is a valid shape as long as at least one side
+                // contributed something literal (prevents bare `a + b`
+                // from matching, same as esbuild).
+                Ok(ok_l || ok_r)
+            }
+            js_ast::ExprData::EIdentifier(id) => {
+                let ref_ = id.ref_;
+                if ref_.source_index() == self.source.index.0
+                    && self.symbols[ref_.inner_index() as usize].kind
+                        == js_ast::symbol::Kind::Constant
+                {
+                    if let Some(init) = self.glob_specifier_values.get(&ref_) {
+                        let init = *init;
+                        return self.append_dynamic_specifier_shape(init, buf);
+                    }
+                }
+                Ok(false)
+            }
+            _ => Ok(false),
+        }
+    }
+
+    /// A shape is eligible for glob resolution when it starts with `./` or
+    /// `../`, contains at least one dynamic placeholder, and has a non-empty
+    /// literal suffix (so the walker has a fixed extension to match against).
+    /// Also rejects shapes whose literal parts already contain glob
+    /// metacharacters, which would otherwise be misread by the walker.
+    fn glob_shape_is_eligible(shape: &[u8]) -> bool {
+        if !(shape.starts_with(b"./") || shape.starts_with(b"../")) {
+            return false;
+        }
+        if !shape.iter().any(|b| *b == 0) {
+            return false;
+        }
+        match shape.last() {
+            Some(&0) | Some(&b'/') => return false,
+            _ => {}
+        }
+        for &b in shape {
+            if matches!(b, b'*' | b'?' | b'[' | b'{' | b'!') {
+                return false;
+            }
+        }
+        true
+    }
+
+    /// Translate a `\x00`-delimited shape into a glob pattern for the
+    /// filesystem walker. A run of placeholders collapses to a single
+    /// wildcard: `**/*` when the run is bounded by `/` on both sides, `*`
+    /// otherwise. This matches esbuild's `handleGlobPattern` and keeps
+    /// `./mods/${x}.js` bounded to one directory instead of recursing.
+    fn glob_shape_to_pattern(shape: &[u8], out: &mut Vec<u8>) {
+        out.clear();
+        let mut i = 0;
+        while i < shape.len() {
+            let b = shape[i];
+            if b != 0 {
+                out.push(b);
+                i += 1;
+                continue;
+            }
+            while i < shape.len() && shape[i] == 0 {
+                i += 1;
+            }
+            let left_slash = out.last() == Some(&b'/');
+            let right_slash = shape.get(i) == Some(&b'/');
+            if left_slash && right_slash {
+                out.extend_from_slice(b"**/*");
+            } else {
+                out.push(b'*');
+            }
+        }
+    }
+
+    /// Record `const x = <template>` initializers so a later `require(x)` can
+    /// extract the glob shape. Only identifiers that are never reassigned are
+    /// tracked (guaranteed for `const`; for `let`/`var` the symbol table's
+    /// reassignment bit is checked at lookup time in
+    /// `append_dynamic_specifier_shape`).
+    pub fn maybe_track_glob_specifier(&mut self, ref_: Ref, value: Option<Expr>) {
+        if self.options.glob_resolver.is_none() {
+            return;
+        }
+        let Some(val) = value else { return };
+        match val.data {
+            js_ast::ExprData::ETemplate(ref t) if t.tag.is_none() => {}
+            js_ast::ExprData::EBinary(ref b) if b.op == js_ast::Op::Code::BinAdd => {}
+            _ => return,
+        }
+        let mut shape_buf = BumpVec::new_in(self.arena);
+        let shape = match self.extract_dynamic_specifier_shape(val, &mut shape_buf) {
+            Ok(s) => s,
+            Err(_) => return,
+        };
+        if shape.starts_with(b"./") || shape.starts_with(b"../") {
+            self.glob_specifier_values.put(ref_, val).expect("oom");
+        }
+    }
+
+    /// When `arg` is a template-literal (or concat / tracked identifier) whose
+    /// shape is a relative path, walk the filesystem for matches and rewrite
+    /// `require(arg)` into `__glob({ "./a.js": () => require("./a.js"), ... })(arg)`.
+    /// Returns `None` when glob resolution is disabled, the shape is
+    /// ineligible, or no files match.
+    pub fn try_glob_dynamic_require(
+        &mut self,
+        arg: Expr,
+        kind: ImportKind,
+    ) -> Option<Expr> {
+        if !self.options.bundle || self.is_control_flow_dead {
+            return None;
+        }
+        let resolver = self.options.glob_resolver?;
+
+        let mut shape_buf = BumpVec::new_in(self.arena);
+        let shape = self
+            .extract_dynamic_specifier_shape(arg, &mut shape_buf)
+            .ok()?;
+        if !Self::glob_shape_is_eligible(shape) {
+            return None;
+        }
+
+        let mut pattern = Vec::with_capacity(shape.len() + 4);
+        Self::glob_shape_to_pattern(shape, &mut pattern);
+
+        let source_dir = self.source.path.source_dir();
+        let mut matches = resolver(source_dir, &pattern);
+        if matches.is_empty() {
+            return None;
+        }
+        // Bail out (fall through to runtime require) rather than silently
+        // bundling an unbounded file set. 256 is well above any
+        // platform-matrix use case while keeping a pathological
+        // `./${x}.js` in a huge directory from exploding the bundle.
+        const GLOB_MATCH_CAP: usize = 256;
+        if matches.len() > GLOB_MATCH_CAP {
+            return None;
+        }
+        matches.sort();
+        matches.dedup();
+
+        let loc = arg.loc;
+        let handles_import_errors = self.fn_or_arrow_data_visit.try_body_count != 0;
+
+        let mut properties: BumpVec<'_, G::Property> =
+            BumpVec::with_capacity_in(matches.len(), self.arena);
+        for m in matches.iter() {
+            let path_bytes: &'a [u8] = self.arena.alloc_slice_copy(m);
+            let path = fs::Path::init(path_bytes);
+            let import_record_index = self.add_import_record_by_range_and_path(
+                kind,
+                self.source.range_of_string(loc),
+                &path,
+            );
+            self.import_records.items_mut()[import_record_index as usize]
+                .flags
+                .set(
+                    bun_ast::ImportRecordFlags::HANDLES_IMPORT_ERRORS,
+                    handles_import_errors,
+                );
+            self.import_records_for_current_part
+                .push(import_record_index);
+
+            let value_expr = if kind == ImportKind::Dynamic {
+                let path_str = self.new_expr(
+                    E::String {
+                        data: path_bytes.into(),
+                        ..Default::default()
+                    },
+                    loc,
+                );
+                self.new_expr(
+                    E::Import {
+                        expr: path_str,
+                        import_record_index,
+                        options: Expr {
+                            loc,
+                            data: js_ast::ExprData::EMissing(E::Missing {}),
+                        },
+                    },
+                    loc,
+                )
+            } else {
+                self.new_expr(
+                    E::RequireString {
+                        import_record_index,
+                        ..Default::default()
+                    },
+                    loc,
+                )
+            };
+
+            let ret_stmt = self.s(S::Return { value: Some(value_expr) }, loc);
+            let body_stmts = self.arena.alloc_slice_copy(&[ret_stmt]);
+            let thunk = self.new_expr(
+                E::Arrow {
+                    args: bun_ast::StoreSlice::EMPTY,
+                    body: G::FnBody {
+                        loc,
+                        stmts: body_stmts.into(),
+                    },
+                    prefer_expr: true,
+                    ..Default::default()
+                },
+                loc,
+            );
+
+            let key = self.new_expr(
+                E::String {
+                    data: path_bytes.into(),
+                    ..Default::default()
+                },
+                loc,
+            );
+            properties.push(G::Property {
+                key: Some(key),
+                value: Some(thunk),
+                ..Default::default()
+            });
+        }
+
+        let map_obj = self.new_expr(
+            E::Object {
+                properties: G::PropertyList::from_bump_vec(properties),
+                ..Default::default()
+            },
+            loc,
+        );
+
+        let glob_call = self.call_runtime(loc, b"__glob", ExprNodeList::init_one(map_obj));
+
+        Some(self.new_expr(
+            E::Call {
+                target: glob_call,
+                args: ExprNodeList::init_one(arg),
+                ..Default::default()
+            },
+            loc,
+        ))
     }
 
     pub fn check_dynamic_specifier(
@@ -1001,6 +1281,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 },
                 state.loc,
             );
+        }
+
+        if let Some(glob) = self.try_glob_dynamic_require(arg, ImportKind::Dynamic) {
+            return glob;
         }
 
         if self.options.warn_about_unbundled_modules {
@@ -1223,6 +1507,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 )
             }
             _ => {
+                if let Some(glob) = self.try_glob_dynamic_require(arg, ImportKind::Require) {
+                    return glob;
+                }
                 let _ = self.check_dynamic_specifier(arg, arg.loc, "require()");
                 self.record_usage_of_runtime_require();
                 self.new_expr(
@@ -8797,6 +9084,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             relocated_top_level_vars: BumpVec::new_in(arena),
             after_arrow_body_loc: bun_ast::Loc::EMPTY,
             const_values: Default::default(),
+            glob_specifier_values: Default::default(),
             binary_expression_stack: BumpVec::new_in(arena),
             binary_expression_simplify_stack: BumpVec::new_in(arena),
             ref_to_ts_namespace_member: Default::default(),

@@ -59,6 +59,15 @@ pub mod options {
     /// is captured.
     pub(crate) type AllowUnresolvedMatcher = fn(pattern: &[u8], shape: &[u8]) -> bool;
 
+    /// Filesystem glob resolver for esbuild-style dynamic `require()` /
+    /// `import()` whose argument is a template literal. Injected by the
+    /// bundler (the parser cannot depend on `bun_glob`). Returns the list of
+    /// matching paths, each written exactly as a `require()` specifier would
+    /// be (i.e. starting with the same `./` / `../` prefix as `pattern`).
+    ///
+    /// `None` leaves dynamic requires unchanged (non-bundling use).
+    pub type GlobResolver = fn(source_dir: &[u8], pattern: &[u8]) -> Vec<Box<[u8]>>;
+
     #[derive(Debug, Clone, Default)]
     pub enum AllowUnresolved {
         /// Default. Skip all checks — current behavior.

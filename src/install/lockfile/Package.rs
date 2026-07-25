@@ -606,11 +606,9 @@ impl Package<u64> {
             .zip(resolutions.iter_mut())
             .enumerate()
         {
-            // An optional peer never keeps its target alive on its own: during
-            // fresh resolve the slot is left invalid (enqueue_dependency returns
-            // early for optional peers) and `hoist` fills it only when another
-            // edge placed the package. Carrying the old id forward here would
-            // otherwise pin a removed package in the lockfile forever.
+            // Optional-peer slots are owned by `hoist`, not carried over:
+            // `enqueue_dependency` never resolves them, so a stale id here
+            // would pin a removed package.
             if old_dependencies[i].behavior.is_optional_peer() {
                 *resolution = invalid_package_id;
                 continue;

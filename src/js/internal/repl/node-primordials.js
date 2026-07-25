@@ -9,7 +9,14 @@
 // rather than realm bootstrap; SafePromiseRace additionally wraps its input in
 // a SafeArrayIterator because spec Promise.race reads
 // Array.prototype[Symbol.iterator] at CALL time.
-const { SafeMap, SafeSet, SafeWeakMap, SafeWeakSet, SafeStringIterator, SafeArrayIterator } = require("internal/primordials");
+const {
+  SafeMap,
+  SafeSet,
+  SafeWeakMap,
+  SafeWeakSet,
+  SafeStringIterator,
+  SafeArrayIterator,
+} = require("internal/primordials");
 
 const ArrayFromFn = Array.from;
 const ArrayPrototypeAtFn = Array.prototype.at;

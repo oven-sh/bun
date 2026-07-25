@@ -219,8 +219,10 @@ extern "C" bool ZigGlobalObject__callOverriddenFsReadFileSync(Zig::GlobalObject*
 
     JSC::JSValue current = Bun::currentValueOfTrackedExport(globalObject, Bun::TrackedExport::FsReadFileSync);
     RETURN_IF_EXCEPTION(scope, true);
-    if (!current || !current.isCallable())
-        return false;
+    if (!current || !current.isCallable()) {
+        throwTypeError(globalObject, scope, "fs.readFileSync is not a function"_s);
+        return true;
+    }
 
     JSC::CallData callData = JSC::getCallData(current);
     JSC::MarkedArgumentBuffer args;

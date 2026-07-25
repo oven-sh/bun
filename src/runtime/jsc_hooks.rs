@@ -4258,14 +4258,31 @@ unsafe fn transpile_file(
     let fs_override_source: Option<bun_ast::Source>;
     if (is_commonjs_require || force_loader_type.is_some())
         && lr.virtual_source.is_none()
-        // Only for extensions the built-in loader owns. `None` means a
-        // user-registered `require.extensions['.foo']` may claim this file
-        // via the second `CommonJsCustomExtension` short-circuit below, and
-        // the override must fire from inside that handler (not here) to match
-        // Node's once-per-require contract.
-        && matches!(lr.loader, Some(l) if l != Loader::Napi)
+        // Only for loaders whose transpile arm actually parses
+        // `virtual_source`. Napi/Sqlite/Html/Wasm/File build from the path (or
+        // a fixed shim) and would call the override, discard the result, and
+        // read from disk anyway. `None` means a user-registered
+        // `require.extensions['.foo']` may claim the file via the second
+        // `CommonJsCustomExtension` short-circuit below; the override must
+        // fire from inside that handler to match Node's once-per-require
+        // contract.
+        && matches!(
+            lr.loader,
+            Some(
+                Loader::Js
+                    | Loader::Jsx
+                    | Loader::Ts
+                    | Loader::Tsx
+                    | Loader::Json
+                    | Loader::Jsonc
+                    | Loader::Json5
+                    | Loader::Toml
+                    | Loader::Yaml
+                    | Loader::Text
+                    | Loader::Md
+            )
+        )
         && bun_paths::is_absolute(lr.path.text)
-        && !bun_core::strings::has_suffix_comptime(lr.path.text, b".node")
     {
         // SAFETY: per fn contract — `specifier_ptr` is valid for the call.
         match global_ref.call_overridden_fs_read_file_sync(unsafe { &*specifier_ptr }) {

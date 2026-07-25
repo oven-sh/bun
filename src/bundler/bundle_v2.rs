@@ -5887,6 +5887,18 @@ pub mod bv2_impl {
                         }
                     }
                 }
+
+                if glob.entries.is_empty() {
+                    let range = result.ast.import_records[glob.import_record_index as usize].range;
+                    result.log.add_range_warning_fmt(
+                        Some(&result.source),
+                        range,
+                        format_args!(
+                            "require() pattern matched no bundleable files in \"{}\"",
+                            bstr::BStr::new(dir_prefix)
+                        ),
+                    );
+                }
             }
         }
 

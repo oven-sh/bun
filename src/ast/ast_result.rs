@@ -30,7 +30,7 @@ pub struct GlobImport {
 
 #[derive(Clone, Copy)]
 pub struct GlobImportEntry {
-    /// Runtime lookup key (e.g. `"./src/cat"`), interned in the resolver store.
+    /// Runtime lookup key (e.g. `"./src/cat"`), allocated in the per-build graph arena.
     pub key: &'static [u8],
     pub source_index: crate::Index,
 }

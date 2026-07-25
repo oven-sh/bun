@@ -452,7 +452,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 return;
                             }
                         }
-                        let mut end: u32 = 0;
+                        // First pass: resolve every bound key against the unmodified
+                        // property list. Writing `properties[end] = properties[query.i]`
+                        // here would clobber entries that later bound keys still need
+                        // to look up (e.g. `const { c, a } = { a, b, c }` overwrites
+                        // `a` before it is found). Record which source indices are
+                        // referenced instead, then compact in a second pass.
+                        let mut used: smallvec::SmallVec<[bool; 8]> =
+                            smallvec::smallvec![false; object.properties.len()];
                         for property in bound_object.properties() {
                             if let Some(name) = property.key.as_string_literal(self.arena) {
                                 if let Some(query) = object.as_property(name) {
@@ -474,14 +481,21 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                             }
                                         }
                                     }
-                                    // output_properties[end] = output_properties[query.i]
-                                    // SAFETY: both indices < object.properties.len; G::Property
-                                    // has no Drop; src/dst may alias when end == query.i.
-                                    unsafe {
-                                        let props_ptr = object.properties.slice_mut().as_mut_ptr();
-                                        core::ptr::copy(
-                                            props_ptr.add(query.i as usize),
-                                            props_ptr.add(end as usize),
+                                    used[query.i as usize] = true;
+                                }
+                            }
+                        }
+                        let mut end: usize = 0;
+                        // SAFETY: `end <= i < used.len() == object.properties.len()`;
+                        // G::Property has no Drop; src/dst never overlap when i != end.
+                        unsafe {
+                            let props_ptr = object.properties.slice_mut().as_mut_ptr();
+                            for (i, &keep) in used.iter().enumerate() {
+                                if keep {
+                                    if i != end {
+                                        core::ptr::copy_nonoverlapping(
+                                            props_ptr.add(i),
+                                            props_ptr.add(end),
                                             1,
                                         );
                                     }
@@ -489,7 +503,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 }
                             }
                         }
-                        object.properties.truncate(end as usize);
+                        object.properties.truncate(end);
                     }
                 }
             }

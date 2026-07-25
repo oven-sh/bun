@@ -133,6 +133,74 @@ test("ireturnapromise", async () => {
   expect(await ireturnapromise()).toEqual("aaa");
 });
 
+// #9613: a destructuring pattern whose key order differs from the macro's object literal must
+// keep every referenced property. The visitor previously compacted the object in place while
+// still looking keys up in it, so a write at `properties[end]` could overwrite an entry that a
+// later bound key needed.
+describe("destructuring a macro object", () => {
+  const files = {
+    "m.ts": `
+      export const obj = () => ({ a: "a", b: "b", c: "c" });
+      export const nested = () => ({ outer: { x: 1, y: 2, z: 3 }, other: 0 });
+    `,
+    "index.ts": `
+      import { obj, nested } from "./m.ts" with { type: "macro" };
+      const out: string[] = [];
+      { const { a, b, c } = obj(); out.push([a, b, c].join(",")); }
+      { const { a, c, b } = obj(); out.push([a, b, c].join(",")); }
+      { const { b, a, c } = obj(); out.push([a, b, c].join(",")); }
+      { const { b, c, a } = obj(); out.push([a, b, c].join(",")); }
+      { const { c, a, b } = obj(); out.push([a, b, c].join(",")); }
+      { const { c, b, a } = obj(); out.push([a, b, c].join(",")); }
+      { const { c, a } = obj(); out.push([a, c].join(",")); }
+      { const { b, a: a2 } = obj(); out.push([a2, b].join(",")); }
+      { const { c, missing } = obj(); out.push([c, String(missing)].join(",")); }
+      { const { outer: { z, x } } = nested(); out.push([x, z].join(",")); }
+      console.log(JSON.stringify(out));
+    `,
+  };
+  const expected = [
+    "a,b,c",
+    "a,b,c",
+    "a,b,c",
+    "a,b,c",
+    "a,b,c",
+    "a,b,c",
+    "a,c",
+    "a,b",
+    "c,undefined",
+    "1,3",
+  ];
+
+  async function run(cmd: string[], cwd: string) {
+    await using proc = Bun.spawn({ cmd, env: bunEnv, cwd, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test.concurrent("bun run", async () => {
+    using dir = tempDir("macro-destructure-run", files);
+    const { stdout, stderr, exitCode } = await run([bunExe(), "index.ts"], String(dir));
+    expect({ out: JSON.parse(stdout.trim().split("\n").pop()!), stderr, exitCode }).toEqual({
+      out: expected,
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent("bun build", async () => {
+    using dir = tempDir("macro-destructure-build", files);
+    const build = await run([bunExe(), "build", "./index.ts", "--target", "bun", "--outfile", "out.js"], String(dir));
+    expect(build).toMatchObject({ exitCode: 0 });
+    const { stdout, stderr, exitCode } = await run([bunExe(), "out.js"], String(dir));
+    expect({ out: JSON.parse(stdout.trim().split("\n").pop()!), stderr, exitCode }).toEqual({
+      out: expected,
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});
+
 // A numeric key >= 100000 (JSC's MIN_SPARSE_ARRAY_INDEX) makes the property put inside
 // JSC__JSValue__putToPropertyKey take a path that can throw, so the binding must check for
 // an exception. BUN_JSC_validateExceptionChecks=1 aborts the child if the check is missing.

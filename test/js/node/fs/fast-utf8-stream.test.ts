@@ -123,4 +123,45 @@ describe.concurrent("fs.Utf8Stream reopen", () => {
     stream.end();
     await closed;
   });
+
+  // Same hazard on the other arm of the post-'ready' dispatch: with
+  // minLength > 0, calling flush(cb) while a reopen's fs.open is in flight
+  // sets #flushPending. If a write() inside the 'ready' handler then starts an
+  // fs.write, fileOpened must not dispatch a second #actualWrite() for the
+  // same buffer just because #flushPending is true.
+  test("does not double-dispatch fs.write when flush() is pending across reopen", async () => {
+    using dir = tempDir("utf8stream-reopen-flush", {});
+    const dest = join(String(dir), "out.log");
+
+    const writes: string[] = [];
+    const fsOverride = {
+      write(fd: number, buf: string, enc: string, cb: (err: any, n?: number) => void) {
+        writes.push(String(buf));
+        return (realFs.write as any)(fd, buf, enc, cb);
+      },
+    };
+
+    const stream = new Utf8Stream({ dest, sync: false, minLength: 4, fs: fsOverride });
+    stream.write("first\n");
+    await once(stream, "drain");
+    writes.length = 0;
+
+    const readyHandled = Promise.withResolvers<void>();
+    stream.once("ready", () => {
+      stream.write("hello\n");
+      readyHandled.resolve();
+    });
+    stream.reopen();
+    stream.flush(() => {});
+
+    await readyHandled.promise;
+    await once(stream, "drain");
+
+    expect(writes).toEqual(["hello\n"]);
+    expect(realFs.readFileSync(dest, "utf8")).toBe("first\nhello\n");
+
+    const closed = once(stream, "close");
+    stream.end();
+    await closed;
+  });
 });

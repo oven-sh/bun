@@ -452,10 +452,12 @@ class Utf8Stream extends EventEmitter {
       }
 
       // start
-      if ((!this.#writing && this.#len > this.#minLength) || this.#flushPending) {
-        this.#actualWrite();
-      } else if (reopening && !this.#writing) {
-        process.nextTick(() => this.emit("drain"));
+      if (!this.#writing) {
+        if (this.#len > this.#minLength || this.#flushPending) {
+          this.#actualWrite();
+        } else if (reopening) {
+          process.nextTick(() => this.emit("drain"));
+        }
       }
     };
 

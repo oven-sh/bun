@@ -46,8 +46,6 @@ pub enum CmdState {
     Done,
 }
 
-/// Heap-allocated resume context for `CmdState::BufferingRedirectBody`; stored
-/// in `PendingValue::task` and consumed by `Cmd::on_redirect_body_received`.
 struct RedirectBodyBufferCtx {
     interp: *mut Interpreter,
     cmd: NodeId,
@@ -325,13 +323,6 @@ impl Cmd {
         interp.child_done(parent, this, 1)
     }
 
-    /// If the stdin redirect is a `Request`/`Response` whose body is still a
-    /// `Locked` `PendingValue` (e.g. a `fetch()` body paused by backpressure),
-    /// hook its native completion and return `true`; the caller then parks in
-    /// `BufferingRedirectBody` until `on_redirect_body_received` resumes it.
-    /// Returns `false` when there is nothing to wait for; in that case the body
-    /// is either already a blob, or still `Locked` because a stream/consumer is
-    /// already attached (which `init_subproc_redirections` will throw on).
     fn try_buffer_redirect_body(interp: &Interpreter, this: NodeId, node: &ast::Cmd) -> bool {
         if !node.redirect.stdin() {
             return false;
@@ -380,11 +371,6 @@ impl Cmd {
         true
     }
 
-    /// Reject a Request/Response body that `use_as_any_blob()` would silently
-    /// turn into an empty blob. `to_blob_if_possible()` and
-    /// `try_buffer_redirect_body` have already run, so a remaining `Locked`
-    /// means a ReadableStream or another consumer is attached and the body
-    /// cannot be drained synchronously.
     pub(crate) fn reject_unbufferable_body(
         body: &crate::webcore::body::Value,
         global: &crate::jsc::JSGlobalObject,
@@ -415,9 +401,6 @@ impl Cmd {
         }
     }
 
-    /// `PendingValue::on_receive_value` hook. The producer has already written
-    /// the final `InternalBlob` / `Error` into the Response body before
-    /// invoking `resolve` / `to_error_instance`, so this only has to resume.
     fn on_redirect_body_received(
         ctx: *mut core::ffi::c_void,
         _value: &mut crate::webcore::body::Value,

@@ -317,26 +317,12 @@ impl PendingValue {
         self.to_any_blob_allow_promise()
     }
 
-    /// Install a native completion hook that fires once the producer (fetch /
-    /// server request) has delivered the full body, and tell that producer to
-    /// start buffering. Used by consumers that need the whole body as bytes
-    /// but are not themselves a JS Promise (`Bun.$` stdin redirect).
-    ///
-    /// Returns `false` when a ReadableStream or another consumer is already
-    /// attached; the caller must go through the stream or reject.
-    ///
-    /// The producer replaces the owning `Body::Value` with the final
-    /// `InternalBlob` / `Error` before invoking `resolve` / `to_error_instance`,
-    /// so when `on_receive` runs the body has already been updated in place and
-    /// the callback only needs to resume its state machine.
     pub(crate) fn hook_native_receiver(
         &mut self,
         ctx: *mut c_void,
         on_receive: fn(ctx: *mut c_void, value: &mut Value),
     ) -> bool {
-        // A native producer (fetch tasklet / server request ctx) registers
-        // itself as `task`; without one there is nothing that will call
-        // `resolve` / `to_error_instance`, so the hook would never fire.
+        // No producer `task` means nothing will ever call `resolve` on this body.
         let Some(producer_task) = self.task else {
             return false;
         };
@@ -348,8 +334,7 @@ impl PendingValue {
         }
         self.task = Some(ctx);
         self.on_receive_value = Some(on_receive);
-        // `task` now names the consumer; the remaining producer-facing hooks
-        // would read it as their own ctx, so they must not fire anymore.
+        // `task` now names the consumer, so the producer-ctx hooks must not fire.
         self.on_start_streaming = None;
         self.on_readable_stream_available = None;
         self.on_stream_cancelled = None;

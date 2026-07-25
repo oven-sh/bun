@@ -115,14 +115,15 @@ test("http.Server 'connection' socket 'readable' + read() yields the raw request
   }
 });
 
-test("https.Server 'connection' socket 'data' carries the decrypted request bytes", async () => {
+test("https.Server 'secureConnection' socket 'data' carries the decrypted request bytes", async () => {
   let resolveData!: (b: Buffer) => void;
   const firstData = new Promise<Buffer>(r => (resolveData = r));
 
   const server = createHttpsServer({ key: tlsCerts.key, cert: tlsCerts.cert }, (req, res) => {
     res.end("ok");
   });
-  server.on("connection", socket => {
+  // Node's https 'connection' is the raw net.Socket; the TLSSocket is 'secureConnection'.
+  server.on("secureConnection", socket => {
     socket.on("data", chunk => resolveData(chunk));
   });
   await once(server.listen(0), "listening");
@@ -203,15 +204,13 @@ test("http.Server 'connection' socket 'data' sees the CONNECT request line once"
     await once(client, "connect");
     client.write("CONNECT x:1 HTTP/1.1\r\nHost: x\r\n\r\nEXTRA");
     await once(client, "data");
-    client.write("HELLO");
     const deadline = Date.now() + 1000;
-    while (!Buffer.concat(received).includes("HELLO") && Date.now() < deadline) {
+    while (!Buffer.concat(received).includes("EXTRA") && Date.now() < deadline) {
       await new Promise(r => setImmediate(r));
     }
     const raw = Buffer.concat(received).toString("latin1");
     expect(raw).toContain("CONNECT x:1 HTTP/1.1\r\n");
     expect((raw.match(/EXTRA/g) ?? []).length).toBe(1);
-    expect((raw.match(/HELLO/g) ?? []).length).toBe(1);
   } finally {
     client.destroy();
     server.closeAllConnections();

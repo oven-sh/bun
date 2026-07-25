@@ -4434,13 +4434,6 @@ impl<'a> HTTPClient<'a> {
         }
     }
 
-    /// Build the result payload for the progress/completion callback.
-    ///
-    /// `body` is left `None`: every caller attaches it from `state.body_out_str`
-    /// *after* the `state.reset()` that follows this call (reset writes through
-    /// the same allocation). With `body` absent the result is fully owned, so
-    /// it can be held across the caller's `&mut self` mutations without a
-    /// lifetime widen.
     /// For a restartable streaming body, decide what `do_redirect` does with
     /// it and return the `Stream` to pass to `start()` when the follow-up
     /// request must re-send it. The 303/301/302 GET-downgrade path drops the
@@ -4482,6 +4475,13 @@ impl<'a> HTTPClient<'a> {
         None
     }
 
+    /// Build the result payload for the progress/completion callback.
+    ///
+    /// `body` is left `None`: every caller attaches it from `state.body_out_str`
+    /// *after* the `state.reset()` that follows this call (reset writes through
+    /// the same allocation). With `body` absent the result is fully owned, so
+    /// it can be held across the caller's `&mut self` mutations without a
+    /// lifetime widen.
     pub fn to_result(&mut self) -> HTTPClientResult<'static> {
         let body_size: BodySize = if self.state.is_chunked_encoding() {
             BodySize::TotalReceived(self.state.total_body_received)

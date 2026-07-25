@@ -1,7 +1,11 @@
 import { S3Client, type S3Options } from "bun";
 import { describe, expect, it } from "bun:test";
-import { tempDir } from "harness";
+import { isASAN, tempDir } from "harness";
 import path from "node:path";
+
+// writer() leaks its NetworkSink (pre-existing, fix in #34999), which trips
+// LeakSanitizer; skip those tests under ASAN until that PR lands.
+const itWriter = it.skipIf(isASAN);
 
 // Every write entry point is typed/documented as "Promise resolving to number of
 // bytes written". Buffered sources already returned the true count; streamed
@@ -76,7 +80,16 @@ describe("s3 write() resolves with bytes transferred", () => {
     expect({ returned: n, received: m.received() }).toEqual({ returned: PAYLOAD, received: PAYLOAD });
   });
 
-  it("writer(): end() returns total bytes written", async () => {
+  it("streamed: S3Client.write(key, Bun.file) returns byte count", async () => {
+    using m = mockOrigin();
+    using dir = tempDir("s3-write-ret-direct", {
+      "src.bin": Buffer.alloc(PAYLOAD, "B"),
+    });
+    const n = await m.client.write("k", Bun.file(path.join(String(dir), "src.bin")));
+    expect({ returned: n, received: m.received() }).toEqual({ returned: PAYLOAD, received: PAYLOAD });
+  });
+
+  itWriter("writer(): end() returns total bytes written", async () => {
     using m = mockOrigin();
     const w = m.client.file("k").writer();
     w.write(new Uint8Array(PAYLOAD));
@@ -89,7 +102,7 @@ describe("s3 write() resolves with bytes transferred", () => {
     });
   });
 
-  it("writer(): end() returns total bytes for a multipart upload", async () => {
+  itWriter("writer(): end() returns total bytes for a multipart upload", async () => {
     let partsReceived = 0;
     using server = Bun.serve({
       port: 0,
@@ -121,8 +134,15 @@ describe("s3 write() resolves with bytes transferred", () => {
     const total = partSize + 1024 * 1024;
     const w = client.file("k").writer({ partSize });
     w.write(Buffer.alloc(total, "a"));
+    // flush() resolves with the cumulative bytes the server has acknowledged:
+    // the one full part; the 1 MiB remainder stays buffered until end().
+    const flushed = await w.flush();
     const n = await w.end();
-    expect({ returned: n, received: partsReceived }).toEqual({ returned: total, received: total });
+    expect({ flushed, returned: n, received: partsReceived }).toEqual({
+      flushed: partSize,
+      returned: total,
+      received: total,
+    });
   });
 
   it("download: Bun.write(path, s3file) returns bytes written to disk", async () => {

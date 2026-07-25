@@ -723,10 +723,7 @@ fn update_package_json_and_install_with_manager_with_updates(
                             }
                             #[cfg(windows)]
                             bun_sys::EntryKind::File => {
-                                // On Windows, package bins are `<name>.exe` + `<name>.bunx`
-                                // shim pairs rather than symlinks. A `.bunx` whose encoded
-                                // target no longer exists is the dangling case; remove it
-                                // together with its `.exe` sibling.
+                                // Windows counterpart of the SymLink arm: `<name>.bunx` + `<name>.exe` shim pairs.
                                 let name = entry.name.slice_u8();
                                 if !strings::has_suffix_comptime(name, b".bunx") {
                                     continue 'iterator;
@@ -777,10 +774,7 @@ fn update_package_json_and_install_with_manager_with_updates(
     Ok(())
 }
 
-/// Decode the target path from a `.bunx` shim and report whether it no longer
-/// exists. The `.bunx` format (see `src/install/windows-shim/BinLinkingShim.rs`)
-/// begins with a UTF-16LE path relative to the parent of the bin directory,
-/// terminated by a `"` code unit. Anything we cannot decode is treated as live.
+/// Does `bunx_name`'s encoded target (see `windows-shim/BinLinkingShim.rs`) no longer exist?
 #[cfg(windows)]
 fn is_dangling_windows_shim(bin_dir: Fd, bunx_name: &ZStr, bin_dir_path: &ZStr) -> bool {
     let Ok(file) = bun_sys::File::openat(bin_dir, bunx_name.as_bytes(), bun_sys::O::RDONLY, 0)
@@ -791,6 +785,7 @@ fn is_dangling_windows_shim(bin_dir: Fd, bunx_name: &ZStr, bin_dir_path: &ZStr) 
         return false;
     };
 
+    // encoding: [WSTR:bin_path][u16:'"']...; bin_path is relative to `dirname(bin_dir)`.
     let mut rel_target_byte_len = None;
     let mut i = 0;
     while i + 1 < contents.len() {

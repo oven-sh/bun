@@ -485,6 +485,32 @@ describe("bunx --no-install", () => {
   });
 });
 
+// https://github.com/oven-sh/bun/issues/14596
+// The npm `bun` package ships its bins as `bin/bunx.exe` on every platform.
+// pnpm (and other cmd-shim-style linkers) exec that path directly instead of
+// via a `bunx`-named symlink, so argv[0] ends with `bunx.exe` even on posix.
+it.concurrent("detects bunx mode when argv[0] ends with bunx.exe on posix", async () => {
+  const { x_dir, env } = setup();
+  const exe = join(x_dir, "bunx.exe");
+  copyFileSync(bunExe(), exe);
+  if (!isWindows) chmodSync(exe, 0o755);
+
+  await using proc = spawn({
+    cmd: [exe, "--help"],
+    cwd: x_dir,
+    stdout: "pipe",
+    stdin: "ignore",
+    stderr: "pipe",
+    env,
+  });
+  const [out, err, exited] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(err).not.toContain("error:");
+  expect(out).toContain("Usage: bunx");
+  expect(out).not.toContain("Bun is a fast JavaScript runtime");
+  expect(exited).toBe(0);
+});
+
 it.concurrent("should handle postinstall scripts correctly with symlinked bunx", async () => {
   const { x_dir, env } = setup();
   // Create a symlink to bun called "bunx"

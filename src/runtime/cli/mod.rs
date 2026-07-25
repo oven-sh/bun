@@ -826,14 +826,17 @@ pub mod command {
     // stays silent on unknown flags.
     // ──────────────────
     pub(crate) fn is_bun_x(argv0: &[u8]) -> bool {
-        #[cfg(windows)]
-        {
-            return strings::ends_with(argv0, b"bunx.exe") || strings::ends_with(argv0, b"bunx");
+        // The npm `bun` package ships its bins as `bin/bunx.exe` on every
+        // platform. Package-manager shims that exec the target by its real path
+        // (pnpm, cmd-shim) carry that `.exe` suffix into argv[0] even on posix,
+        // so match both spellings everywhere.
+        // https://github.com/oven-sh/bun/issues/14596
+        if strings::ends_with(argv0, b"bunx") || strings::ends_with(argv0, b"bunx.exe") {
+            return true;
         }
-        #[cfg(not(windows))]
-        {
-            strings::ends_with(argv0, b"bunx")
-        }
+        bun_core::Environment::IS_DEBUG
+            && (strings::ends_with(argv0, b"bunx-debug")
+                || strings::ends_with(argv0, b"bunx-debug.exe"))
     }
 
     pub(crate) fn is_node(argv0: &[u8]) -> bool {

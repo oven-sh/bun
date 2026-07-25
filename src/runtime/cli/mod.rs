@@ -956,8 +956,6 @@ pub mod command {
         }
     }
 
-    /// npm flags that never take a value from the following token, so
-    /// dropping them must not consume it.
     #[cold]
     fn is_npm_bool_flag(arg: &[u8]) -> bool {
         strings::has_prefix_comptime(arg, b"--no-")

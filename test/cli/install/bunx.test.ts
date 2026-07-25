@@ -2,7 +2,7 @@ import { spawn } from "bun";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, setDefaultTimeout } from "bun:test";
 import { mkdir, rm, writeFile } from "fs/promises";
 import { bunEnv, bunExe, isDebug, isWindows, readdirSorted, tmpdirSync } from "harness";
-import { chmodSync, copyFileSync, existsSync, readdirSync, statSync, symlinkSync } from "node:fs";
+import { chmodSync, copyFileSync, readdirSync, statSync, symlinkSync } from "node:fs";
 import { tmpdir } from "os";
 import { delimiter, join, resolve } from "path";
 import { dummyAfterAll, dummyBeforeAll, dummyBeforeEach, dummyRegistry, getPort, setHandler } from "./dummy.registry";
@@ -1277,12 +1277,15 @@ it.skipIf(!isWindows)("completions: writes bunx.cmd (not bunx.exe) when hard lin
     stdout: "pipe",
     stderr: "pipe",
   });
-  await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // stderr always carries the "PowerShell completions are not yet written"
+  // message on Windows; drain it but do not assert on its contents.
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   const cmdPath = join(dir, `${bunxName}.cmd`);
-  expect(existsSync(cmdPath)).toBe(true);
+  // Bun.file().text() throws ENOENT naming the path if the fallback did not run.
   expect(await Bun.file(cmdPath).text()).toBe("@%~dp0bun.exe x %*\n");
   expect(statSync(join(dir, `${bunxName}.exe`)).isDirectory()).toBe(true);
+  expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 0 });
 });
 
 // The bunx cache root lives at a predictable path inside the shared temp dir

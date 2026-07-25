@@ -4016,14 +4016,20 @@ describe.concurrent("bundler", () => {
         const c = require.resolve("./also-required.js");
         let d;
         try { d = require.resolve("./inside-try.js"); } catch {}
-        console.log(a, b, c, d);
+        const e = require.resolve("./marked-external.js");
+        console.log(a, b, c, d, e);
       `,
       "/only-resolved.js": `module.exports = "ONLY_RESOLVED_SENTINEL";`,
       "/also-required.js": `module.exports = "ALSO_REQUIRED_SENTINEL";`,
       "/inside-try.js": `module.exports = "INSIDE_TRY_SENTINEL";`,
+      "/marked-external.js": `module.exports = "MARKED_EXTERNAL_SENTINEL";`,
     },
     target: "node",
     format: "cjs",
+    external: ["{{root}}/marked-external.js"],
+    // The harness fails on an unexpected warning, so the absence of entries
+    // for ./inside-try.js (suppressed by try/catch) and ./marked-external.js
+    // (silenced by --external) is enforced here.
     bundleWarnings: {
       "/entry.js": [
         '"./only-resolved.js" should be marked as external for use with "require.resolve"',
@@ -4036,11 +4042,13 @@ describe.concurrent("bundler", () => {
       expect(out).toContain('require.resolve("./only-resolved.js")');
       expect(out).toContain('require.resolve("./also-required.js")');
       expect(out).toContain('require.resolve("./inside-try.js")');
+      expect(out).toContain('require.resolve("./marked-external.js")');
       // A file reached via `require()` is bundled; a file reached only via
       // `require.resolve()` is not.
       expect(out).toContain("ALSO_REQUIRED_SENTINEL");
       expect(out).not.toContain("ONLY_RESOLVED_SENTINEL");
       expect(out).not.toContain("INSIDE_TRY_SENTINEL");
+      expect(out).not.toContain("MARKED_EXTERNAL_SENTINEL");
       // No absolute paths in the output.
       expect(out).not.toMatch(/require\.resolve\(["']\/|require\.resolve\(["'][A-Za-z]:/);
     },

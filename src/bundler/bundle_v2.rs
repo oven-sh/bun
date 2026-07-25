@@ -2137,6 +2137,42 @@ pub mod bv2_impl {
             true
         }
 
+        /// `should_skip_require_resolve_enqueue` for the post-plugin-dispatch
+        /// paths, where the importer's `Source` and `ImportRecord` are reached
+        /// via graph indices rather than being in scope.
+        fn should_skip_require_resolve_for_importer(
+            &mut self,
+            ir: &jsc_api::JSBundler::MiniImportRecord,
+            bake_graph: bake::Graph,
+        ) -> bool {
+            if ir.kind != ImportKind::RequireResolve || self.dev_server.is_some() {
+                return false;
+            }
+            let handles_import_errors = self.graph.ast.items_import_records()
+                [ir.importer_source_index as usize]
+                .as_slice()
+                .get(ir.import_record_index as usize)
+                .is_some_and(|r| {
+                    r.flags
+                        .contains(bun_ast::ImportRecordFlags::HANDLES_IMPORT_ERRORS)
+                });
+            // SAFETY: `input_files` is not mutated by the callee; the detach
+            // avoids a `&mut self` vs `&self.graph` overlap.
+            let source: &bun_ast::Source = unsafe {
+                bun_ptr::detach_lifetime_ref(
+                    &self.graph.input_files.items_source()[ir.importer_source_index as usize],
+                )
+            };
+            self.should_skip_require_resolve_enqueue(
+                ir.kind,
+                source,
+                ir.range,
+                &ir.specifier,
+                handles_import_errors,
+                bake_graph,
+            )
+        }
+
         /// This runs on the Bundle Thread.
         pub fn run_resolver(
             &mut self,
@@ -2161,29 +2197,10 @@ pub mod bv2_impl {
                     &import_record.source_file,
                     &import_record.specifier,
                 ) {
+                    if self
+                        .should_skip_require_resolve_for_importer(import_record, target.bake_graph())
                     {
-                        let handles_import_errors = self.graph.ast.items_import_records()
-                            [import_record.importer_source_index as usize]
-                            .as_slice()[import_record.import_record_index as usize]
-                            .flags
-                            .contains(bun_ast::ImportRecordFlags::HANDLES_IMPORT_ERRORS);
-                        // SAFETY: `input_files` is not mutated by the helper.
-                        let source: &bun_ast::Source = unsafe {
-                            bun_ptr::detach_lifetime_ref(
-                                &self.graph.input_files.items_source()
-                                    [import_record.importer_source_index as usize],
-                            )
-                        };
-                        if self.should_skip_require_resolve_enqueue(
-                            import_record.kind,
-                            source,
-                            import_record.range,
-                            &import_record.specifier,
-                            handles_import_errors,
-                            target.bake_graph(),
-                        ) {
-                            return;
-                        }
+                        return;
                     }
                     let file_map_result = _file_map_result;
                     let mut path_primary = file_map_result.path_pair.primary;
@@ -2416,30 +2433,8 @@ pub mod bv2_impl {
                 return;
             }
 
-            {
-                let handles_import_errors = self.graph.ast.items_import_records()
-                    [import_record.importer_source_index as usize]
-                    .as_slice()[import_record.import_record_index as usize]
-                    .flags
-                    .contains(bun_ast::ImportRecordFlags::HANDLES_IMPORT_ERRORS);
-                // SAFETY: `input_files` is not mutated by the helper; the
-                // detach avoids a `&mut self` vs `&self.graph` overlap.
-                let source: &bun_ast::Source = unsafe {
-                    bun_ptr::detach_lifetime_ref(
-                        &self.graph.input_files.items_source()
-                            [import_record.importer_source_index as usize],
-                    )
-                };
-                if self.should_skip_require_resolve_enqueue(
-                    import_record.kind,
-                    source,
-                    import_record.range,
-                    &import_record.specifier,
-                    handles_import_errors,
-                    target.bake_graph(),
-                ) {
-                    return;
-                }
+            if self.should_skip_require_resolve_for_importer(import_record, target.bake_graph()) {
+                return;
             }
 
             if path.pretty.as_ptr() == path.text.as_ptr() {
@@ -4635,35 +4630,16 @@ pub mod bv2_impl {
                 }
                 jsc_api::JSBundler::ResolveValue::Success(result) => {
                     let mut out_source_index: Option<Index> = None;
-                    if !result.external && resolve.import_record.kind != ImportKind::EntryPointBuild
-                    {
-                        let handles_import_errors = this.graph.ast.items_import_records()
-                            [resolve.import_record.importer_source_index as usize]
-                            .as_slice()
-                            .get(resolve.import_record.import_record_index as usize)
-                            .is_some_and(|r| {
-                                r.flags
-                                    .contains(bun_ast::ImportRecordFlags::HANDLES_IMPORT_ERRORS)
-                            });
-                        // SAFETY: `input_files` is not mutated by the helper.
-                        let source: &bun_ast::Source = unsafe {
-                            bun_ptr::detach_lifetime_ref(
-                                &this.graph.input_files.items_source()
-                                    [resolve.import_record.importer_source_index as usize],
-                            )
-                        };
-                        if this.should_skip_require_resolve_enqueue(
-                            resolve.import_record.kind,
-                            source,
-                            resolve.import_record.range,
-                            &resolve.import_record.specifier,
-                            handles_import_errors,
+                    if !result.external
+                        && resolve.import_record.kind != ImportKind::EntryPointBuild
+                        && this.should_skip_require_resolve_for_importer(
+                            &resolve.import_record,
                             resolve.import_record.original_target.bake_graph(),
-                        ) {
-                            drop(result.namespace);
-                            drop(result.path);
-                            return;
-                        }
+                        )
+                    {
+                        drop(result.namespace);
+                        drop(result.path);
+                        return;
                     }
                     if !result.external {
                         // SAFETY: `result.{path,namespace}` are `Box<[u8]>` whose heap

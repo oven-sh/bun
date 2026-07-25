@@ -4821,6 +4821,9 @@ describe("read*/write* after JIT tier-up", () => {
       () => Buffer.prototype.writeIntLE.call(dv, 1, 0, 3),
       () => Buffer.prototype.readInt32LE.call(dv, 0),
       () => Buffer.prototype.writeInt32LE.call(dv, 1, 0),
+      () => Buffer.prototype.readBigInt64LE.call(dv, 0),
+      () => Buffer.prototype.writeBigInt64LE.call(dv, 5n, 0),
+      () => Buffer.prototype.writeBigUInt64BE.call(dv, 5n, 0),
     ]) {
       expect(codeOf(f)).toBe("ERR_OUT_OF_RANGE");
       expect(() => f()).toThrow("<= NaN");

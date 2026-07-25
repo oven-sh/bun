@@ -576,7 +576,11 @@ describe("HTTP server CONNECT", () => {
     ],
   ])("dispatches a CONNECT whose head arrives in two reads (%s)", async (_name, first, second, expectedHead) => {
     await using proxyServer = http.createServer();
-    const { promise: gotConnect, resolve: onConnect, reject: onConnectFail } = Promise.withResolvers<{
+    const {
+      promise: gotConnect,
+      resolve: onConnect,
+      reject: onConnectFail,
+    } = Promise.withResolvers<{
       url: string;
       host: string | undefined;
       head: string;

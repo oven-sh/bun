@@ -1628,6 +1628,15 @@ const fileGeneration = $newRustFunction("jest.rs", "jsFileGeneration", 0);
 // `done` binds the intended sequence so a late call after the bun:test watchdog
 // moved on cannot write onto the currently-running test.
 const markCurrentResult = $newRustFunction("jest.rs", "jsNodeTestMarkResult", 2);
+// Whether `bun test` was started with `--only` (Node's `--test-only`). Node
+// only applies the `only` filter when that flag is set; without it the marker
+// is a no-op (every test runs). Read lazily once: the CLI flag is fixed for
+// the process, but this module may be loaded before the runner is in place.
+const readTestOnly = $newRustFunction("jest.rs", "jsNodeTestOnly", 0);
+let testOnlyFlag: boolean | undefined;
+function testOnlyEnabled(): boolean {
+  return (testOnlyFlag ??= readTestOnly());
+}
 
 let rootNode: TestNode | undefined;
 let rootGeneration = -1;
@@ -2559,7 +2568,7 @@ function addTest(
   arg1: unknown,
   arg2: unknown,
   executionParent: TestNode | undefined,
-  mode?: "skip" | "todo",
+  mode?: "skip" | "todo" | "only",
 ): Promise<undefined> {
   const { name, options, fn } = parseTestArgs(arg0, arg1, arg2);
   const { ownTags } = validateTestOptions(options);
@@ -2637,14 +2646,15 @@ function addTest(
     return Promise.resolve(undefined);
   }
 
-  // Node's `only` (the option and the test.only()/describe.only() spellings)
-  // is a no-op unless --test-only is passed, so it registers an ordinary
-  // test/suite; bun:test's only() would skip siblings and is rejected in CI.
+  // Node's `only` (the option and test.only()/describe.only() spellings) is a
+  // no-op unless --test-only is passed; under the flag it maps to bun:test's
+  // test.only() whose filter matches Node's.
+  const register = (mode === "only" || options.only) && testOnlyEnabled() ? test.only : test;
   const runner = createTopLevelTestRunner(node, fn);
   if (passOptions !== undefined) {
-    test(name, runner, passOptions);
+    register(name, runner, passOptions);
   } else {
-    test(name, runner);
+    register(name, runner);
   }
 
   // Resolved eagerly rather than when the runner settles: bun:test never invokes
@@ -2659,7 +2669,7 @@ function addSuite(
   arg1: unknown,
   arg2: unknown,
   executionParent?: TestNode,
-  mode?: "skip" | "todo",
+  mode?: "skip" | "todo" | "only",
 ): Promise<undefined> {
   const { name, options, fn } = parseTestArgs(arg0, arg1, arg2);
   const { ownTags } = validateTestOptions(options);
@@ -2734,6 +2744,8 @@ function addSuite(
   else if (effectiveMode === "todo") {
     suiteNode.todoFlag = true;
     register = runChildReporterEnabled ? describe : describe.todo;
+  } else if ((mode === "only" || options.only) && testOnlyEnabled()) {
+    register = describe.only;
   }
   if (effectiveMode !== undefined) reportDirectiveOnlyNode(suiteNode, effectiveMode);
 
@@ -2762,7 +2774,7 @@ test.todo = function (arg0: unknown, arg1: unknown, arg2: unknown) {
 };
 
 test.only = function (arg0: unknown, arg1: unknown, arg2: unknown) {
-  return addTest(arg0, arg1, arg2, undefined);
+  return addTest(arg0, arg1, arg2, undefined, "only");
 };
 
 function describe(arg0: unknown, arg1: unknown, arg2: unknown) {
@@ -2778,7 +2790,7 @@ describe.todo = function (arg0: unknown, arg1: unknown, arg2: unknown) {
 };
 
 describe.only = function (arg0: unknown, arg1: unknown, arg2: unknown) {
-  return addSuite(arg0, arg1, arg2, undefined);
+  return addSuite(arg0, arg1, arg2, undefined, "only");
 };
 
 function hookOwner(): TestNode {

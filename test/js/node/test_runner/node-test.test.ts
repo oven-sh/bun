@@ -160,6 +160,50 @@ describe("node:test", () => {
     });
   });
 
+  for (const flag of ["--only", "--test-only"]) {
+    test.concurrent(
+      `should run exactly the only-marked node:test tests under ${flag}`,
+      async () => {
+        // CI=false: the shim maps Node's `only` onto bun:test's test.only, which
+        // bun:test guards against in CI independently of node:test.
+        const { exitCode, stdout, stderr } = await runTests(["30-only-filter.js"], { CI: "false" }, [flag]);
+        // The five only-marked tests (test.only, {only:true}, describe.only,
+        // describe {only:true}, and a test.only nested in a plain describe) run,
+        // and nothing else does. Previously `--test-only` was an unknown flag
+        // (ran 8) and `--only` ran zero tests with exit 0.
+        expect(stdout.match(/^RAN .*/gm)?.sort()).toEqual([
+          "RAN plain-suite-only-child",
+          "RAN suite-modifier-child",
+          "RAN suite-option-child",
+          "RAN top-only-modifier",
+          "RAN top-only-option",
+        ]);
+        expect(stderr).toContain("5 pass");
+        expect({ exitCode, stderr }).toMatchObject({
+          exitCode: 0,
+          stderr: expect.stringContaining("0 fail"),
+        });
+      },
+      30_000,
+    );
+  }
+
+  test.concurrent(
+    "should run every node:test test when no --only/--test-only flag is passed",
+    async () => {
+      // Without the flag, `only` is a no-op like in Node — every marker form in
+      // the fixture runs alongside its unmarked siblings.
+      const { exitCode, stdout, stderr } = await runTests(["30-only-filter.js"], { CI: "false" });
+      expect(stdout.match(/^RAN .*/gm)).toHaveLength(8);
+      expect(stderr).toContain("8 pass");
+      expect({ exitCode, stderr }).toMatchObject({
+        exitCode: 0,
+        stderr: expect.stringContaining("0 fail"),
+      });
+    },
+    30_000,
+  );
+
   test("should serialize inline suites and await async describe callbacks like node", async () => {
     const { exitCode, stderr } = await runTests(["09-inline-suites.js"]);
     expect(stderr).toContain("3 pass");

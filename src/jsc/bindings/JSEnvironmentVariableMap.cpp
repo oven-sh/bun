@@ -46,8 +46,8 @@ using namespace WebCore;
 JSObject* unwrapProcessEnvProxy(JSObject* envObject)
 {
 #if OS(WINDOWS)
-    if (auto* proxy = jsDynamicCast<JSC::ProxyObject*>(envObject)) {
-        if (auto* target = proxy->target()) return target;
+    if (envObject->type() == JSC::ProxyObjectType) {
+        if (auto* target = static_cast<JSC::ProxyObject*>(envObject)->target()) return target;
     }
 #endif
     return envObject;

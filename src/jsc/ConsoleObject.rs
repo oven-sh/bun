@@ -3362,8 +3362,18 @@ pub mod formatter {
         let mut name_str = ZigString::init(b"");
         value.get_class_name(global_this, &mut name_str)?;
         let name_slice = name_str.to_slice();
-        let Some(expected) = dom_node_type_for_class_name(name_slice.slice()) else {
-            return Ok(false);
+        let expected = match dom_node_type_for_class_name(name_slice.slice()) {
+            Some(e) => e,
+            // Custom elements: the prototype chain still goes through `HTMLElement`.
+            None => {
+                let mut proto_name = ZigString::init(b"");
+                grand.get_class_name(global_this, &mut proto_name)?;
+                let proto_slice = proto_name.to_slice();
+                match dom_node_type_for_class_name(proto_slice.slice()) {
+                    Some(DOM_ELEMENT_NODE) => DOM_ELEMENT_NODE,
+                    _ => return Ok(false),
+                }
+            }
         };
         let confirmed = match value.get(global_this, "nodeType") {
             Ok(Some(n)) if n.is_int32() => n.to_int32() == expected,

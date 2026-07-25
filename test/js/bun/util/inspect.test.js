@@ -886,6 +886,17 @@ describe("DOM nodes", () => {
     expect(Bun.inspect(div)).toBe('<div title="Say \\"Hi\\"" />');
   });
 
+  it("custom element (class extends HTMLElement)", () => {
+    class HTMLElement {}
+    class MyButton extends HTMLElement {
+      nodeType = 1;
+      tagName = "MY-BUTTON";
+      attributes = [];
+      childNodes = [];
+    }
+    expect(Bun.inspect(new MyButton())).toBe("<my-button />");
+  });
+
   it("Text node", () => {
     expect(Bun.inspect(new Text("some text"))).toBe("some text");
   });
@@ -924,18 +935,18 @@ describe("DOM nodes", () => {
   it("toMatchInlineSnapshot (snapshot serializer path)", () => {
     const div = element(HTMLDivElement, "DIV", [attr("id", "x")], [new Text("hi"), new Comment("c")]);
     expect(div).toMatchInlineSnapshot(`
-<div
-  id="x"
->
-  hi
-  <!--c-->
-</div>
-`);
+      <div
+        id="x"
+      >
+        hi
+        <!--c-->
+      </div>
+    `);
     expect(new DocumentFragment([element(HTMLButtonElement, "BUTTON", [], [])])).toMatchInlineSnapshot(`
-<DocumentFragment>
-  <button />
-</DocumentFragment>
-`);
+      <DocumentFragment>
+        <button />
+      </DocumentFragment>
+    `);
   });
 
   it("toEqual diff on a DOM element renders markup, not object graph", () => {

@@ -377,6 +377,16 @@ impl BinaryExpressionVisitor {
                 let null_or_undefined = SideEffects::to_null_or_undefined(p, &e_.left.data);
                 if null_or_undefined.ok {
                     if !null_or_undefined.value {
+                        // "(class {} ?? 0)" => "(0, class {})"
+                        if e_.left.is_anonymous_named() {
+                            return Expr::join_with_comma(
+                                Expr {
+                                    data: prefill::data::ZERO,
+                                    loc: e_.left.loc,
+                                },
+                                e_.left,
+                            );
+                        }
                         return e_.left;
                     } else if null_or_undefined.side_effects == SideEffects::NoSideEffects {
                         // "(null ?? fn)()" => "fn()"
@@ -402,6 +412,16 @@ impl BinaryExpressionVisitor {
             Op::Code::BinLogicalOr => {
                 let side_effects = SideEffects::to_boolean(p, &e_.left.data);
                 if side_effects.ok && side_effects.value {
+                    // "(class {} || 0)" => "(0, class {})"
+                    if e_.left.is_anonymous_named() {
+                        return Expr::join_with_comma(
+                            Expr {
+                                data: prefill::data::ZERO,
+                                loc: e_.left.loc,
+                            },
+                            e_.left,
+                        );
+                    }
                     return e_.left;
                 } else if side_effects.ok && side_effects.side_effects == SideEffects::NoSideEffects
                 {

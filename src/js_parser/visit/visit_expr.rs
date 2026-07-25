@@ -1501,20 +1501,24 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 p.visit_expr(&mut e_.no);
                 p.is_control_flow_dead = old;
 
+                // "(1 ? fn : 2)()" => "fn()"
+                // "(1 ? this.fn : 2)" => "this.fn"
+                // "(1 ? this.fn : 2)()" => "(0, this.fn)()"
+                // "(1 ? class {} : 2)" => "(0, class {})"
+                let needs_comma_wrap = (is_call_target && e_.yes.has_value_for_this_in_call())
+                    || e_.yes.is_anonymous_named();
+
                 if side_effects.side_effects == SideEffects::CouldHaveSideEffects {
                     *e = SideEffects::simplify_unused_expr(p, e_.test_)
+                        .or_else(|| {
+                            needs_comma_wrap.then(|| p.new_expr(E::Number::new(0.0), e_.test_.loc))
+                        })
                         .unwrap_or_else(|| p.new_expr(E::Missing {}, e_.test_.loc))
                         .join_with_comma(e_.yes);
                     return;
                 }
 
-                // "(1 ? fn : 2)()" => "fn()"
-                // "(1 ? this.fn : 2)" => "this.fn"
-                // "(1 ? this.fn : 2)()" => "(0, this.fn)()"
-                // "(1 ? class {} : 2)" => "(0, class {})"
-                if (is_call_target && e_.yes.has_value_for_this_in_call())
-                    || e_.yes.is_anonymous_named()
-                {
+                if needs_comma_wrap {
                     *e = p
                         .new_expr(E::Number::new(0.0), e_.test_.loc)
                         .join_with_comma(e_.yes);
@@ -1531,21 +1535,25 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 p.is_control_flow_dead = old;
                 p.visit_expr(&mut e_.no);
 
+                // "(1 ? fn : 2)()" => "fn()"
+                // "(1 ? this.fn : 2)" => "this.fn"
+                // "(1 ? this.fn : 2)()" => "(0, this.fn)()"
+                // "(0 ? 1 : class {})" => "(0, class {})"
+                let needs_comma_wrap = (is_call_target && e_.no.has_value_for_this_in_call())
+                    || e_.no.is_anonymous_named();
+
                 // "(a, false) ? b : c" => "a, c"
                 if side_effects.side_effects == SideEffects::CouldHaveSideEffects {
                     *e = SideEffects::simplify_unused_expr(p, e_.test_)
+                        .or_else(|| {
+                            needs_comma_wrap.then(|| p.new_expr(E::Number::new(0.0), e_.test_.loc))
+                        })
                         .unwrap_or_else(|| p.new_expr(E::Missing {}, e_.test_.loc))
                         .join_with_comma(e_.no);
                     return;
                 }
 
-                // "(1 ? fn : 2)()" => "fn()"
-                // "(1 ? this.fn : 2)" => "this.fn"
-                // "(1 ? this.fn : 2)()" => "(0, this.fn)()"
-                // "(0 ? 1 : class {})" => "(0, class {})"
-                if (is_call_target && e_.no.has_value_for_this_in_call())
-                    || e_.no.is_anonymous_named()
-                {
+                if needs_comma_wrap {
                     *e = p
                         .new_expr(E::Number::new(0.0), e_.test_.loc)
                         .join_with_comma(e_.no);

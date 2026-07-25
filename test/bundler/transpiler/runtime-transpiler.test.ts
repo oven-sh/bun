@@ -265,12 +265,17 @@ describe("constant folding preserves NamedEvaluation semantics", () => {
       const E = true ? class {} : 0;
       const F = false ? 0 : class {};
       const G = [class {}][0];
+      const H = [] ? class {} : 0;
+      const I = (function () {}) || 0;
+      const J = (() => {}) ?? 0;
+      const L = (class {}) ?? 0;
       const fn = (0, function () {});
       const ar = (0, () => {});
       function param(P = (0, class {})) { return P.name; }
       class Holder { field = (0, class {}); }
       console.log(JSON.stringify({
         A: A.name, B: B.name, C: C.name, D: D.name, E: E.name, F: F.name, G: G.name,
+        H: H.name, I: I.name, J: J.name, L: L.name,
         fn: fn.name, ar: ar.name, param: param(), field: new Holder().field.name,
       }));
     `;
@@ -285,6 +290,10 @@ describe("constant folding preserves NamedEvaluation semantics", () => {
       E: "",
       F: "",
       G: "",
+      H: "",
+      I: "",
+      J: "",
+      L: "",
       fn: "",
       ar: "",
       param: "",

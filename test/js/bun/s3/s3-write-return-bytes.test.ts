@@ -102,10 +102,9 @@ describe("s3 write() resolves with bytes transferred", () => {
           );
         }
         if (req.method === "POST" && req.url.includes("uploadId=")) {
-          return new Response(
-            '<CompleteMultipartUploadResult><ETag>"etag"</ETag></CompleteMultipartUploadResult>',
-            { status: 200 },
-          );
+          return new Response('<CompleteMultipartUploadResult><ETag>"etag"</ETag></CompleteMultipartUploadResult>', {
+            status: 200,
+          });
         }
         partsReceived += body.byteLength;
         return new Response("", { status: 200, headers: { etag: '"e"' } });

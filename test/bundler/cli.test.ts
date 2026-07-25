@@ -560,6 +560,4 @@ test("bun build --no-bundle --watch rebuilds when the entry file changes", async
 
   const rebuilt = await waitForOutput("marker-v2");
   expect(rebuilt).not.toContain("marker-v1");
-
-  proc.kill();
 });

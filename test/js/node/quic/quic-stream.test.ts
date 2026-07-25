@@ -179,3 +179,120 @@ describe("HTTP/3 header encoding", () => {
     expect(Object.keys(seen[0])).not.toContain("authorization");
   });
 });
+
+// RFC 9114 §4.2.1: an HTTP/3 intermediary presenting headers to a non-HTTP/3
+// consumer MUST concatenate multiple `cookie` field lines with "; ". Node's
+// http2/quic header object applies the same http2 `toHeaderObject` rules:
+// `cookie` joins with "; ", `set-cookie` is always an array, known
+// single-value fields discard duplicates, and everything else joins with ", ".
+describe("HTTP/3 duplicate field lines", () => {
+  test("are folded per RFC 9114 / http2 toHeaderObject rules", async () => {
+    const serverSaw = Promise.withResolvers<Record<string, unknown>>();
+    await using server = await listen(
+      async serverSession => {
+        serverSession.onstream = (stream: any) => {
+          stream.closed.catch(() => {});
+        };
+        await serverSession.closed.catch(() => {});
+      },
+      {
+        sni: { "*": { keys: [key], certs: [cert] } },
+        transportParams: { maxIdleTimeout: 1 },
+        onheaders(this: any, headers: Record<string, unknown>) {
+          serverSaw.resolve(headers);
+          this.sendHeaders({
+            ":status": "200",
+            // set-cookie: multiple field lines, must reach the client as an array
+            "set-cookie": ["a=1", "b=2"],
+            // generic multi-value: joins with ", "
+            "x-multi": ["one", "two", "three"],
+          });
+          this.writer.endSync();
+        },
+      },
+    );
+
+    const client = await connect(server.address, {
+      servername: "localhost",
+      verifyPeer: "manual",
+      transportParams: { maxIdleTimeout: 1 },
+    });
+    await client.opened;
+
+    const clientSaw = Promise.withResolvers<Record<string, unknown>>();
+    await client.createBidirectionalStream({
+      headers: {
+        ":method": "GET",
+        ":path": "/",
+        ":scheme": "https",
+        ":authority": "localhost",
+        // RFC 9114 §4.2.1: h3 clients MAY (browsers/curl do) send each cookie
+        // crumb as its own field line. The app must see a single joined string.
+        "cookie": ["a=1", "b=2", "c=3"],
+        // generic multi-value header
+        "accept": ["text/html", "application/json"],
+      },
+      onheaders(headers: Record<string, unknown>) {
+        clientSaw.resolve(headers);
+      },
+    });
+
+    const serverHeaders = await serverSaw.promise;
+    expect({
+      cookie: serverHeaders.cookie,
+      accept: serverHeaders.accept,
+    }).toEqual({
+      cookie: "a=1; b=2; c=3",
+      accept: "text/html, application/json",
+    });
+    expect(typeof serverHeaders.cookie).toBe("string");
+
+    const clientHeaders = await clientSaw.promise;
+    expect({
+      "set-cookie": clientHeaders["set-cookie"],
+      "x-multi": clientHeaders["x-multi"],
+    }).toEqual({
+      "set-cookie": ["a=1", "b=2"],
+      "x-multi": "one, two, three",
+    });
+
+    client.close();
+  });
+
+  test("single set-cookie is still delivered as an array", async () => {
+    await using server = await listen(
+      async serverSession => {
+        serverSession.onstream = (stream: any) => {
+          stream.closed.catch(() => {});
+        };
+        await serverSession.closed.catch(() => {});
+      },
+      {
+        sni: { "*": { keys: [key], certs: [cert] } },
+        transportParams: { maxIdleTimeout: 1 },
+        onheaders(this: any) {
+          this.sendHeaders({ ":status": "200", "set-cookie": "only=one" });
+          this.writer.endSync();
+        },
+      },
+    );
+
+    const client = await connect(server.address, {
+      servername: "localhost",
+      verifyPeer: "manual",
+      transportParams: { maxIdleTimeout: 1 },
+    });
+    await client.opened;
+
+    const got = Promise.withResolvers<unknown>();
+    await client.createBidirectionalStream({
+      headers: { ":method": "GET", ":path": "/", ":scheme": "https", ":authority": "localhost" },
+      onheaders(headers: Record<string, unknown>) {
+        got.resolve(headers["set-cookie"]);
+      },
+    });
+
+    expect(await got.promise).toEqual(["only=one"]);
+    client.close();
+  });
+});

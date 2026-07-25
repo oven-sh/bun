@@ -194,4 +194,5 @@ export default {
   assertValidPseudoHeader,
   assertValidPseudoHeaderTrailer,
   buildNgHeaderString,
+  kSingleValueFields,
 };

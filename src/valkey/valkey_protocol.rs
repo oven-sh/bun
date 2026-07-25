@@ -827,14 +827,4 @@ impl SubscriptionPushMessage {
     pub fn is_message(self) -> bool {
         matches!(self, Self::Message | Self::Pmessage)
     }
-
-    #[inline]
-    pub fn is_subscribe(self) -> bool {
-        matches!(self, Self::Subscribe | Self::Psubscribe)
-    }
-
-    #[inline]
-    pub fn is_unsubscribe(self) -> bool {
-        matches!(self, Self::Unsubscribe | Self::Punsubscribe)
-    }
 }

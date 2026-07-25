@@ -2206,8 +2206,9 @@ impl FetchTasklet {
             && !self.upgraded_connection
             && !self.result.is_http2
         {
-            self.request_body_bytes_written =
-                self.request_body_bytes_written.saturating_add(data.len() as u64);
+            self.request_body_bytes_written = self
+                .request_body_bytes_written
+                .saturating_add(data.len() as u64);
             if self.request_body_bytes_written > declared {
                 // Rejecting before the surplus bytes are buffered is what makes
                 // this a request-smuggling guard: the wire never carries more

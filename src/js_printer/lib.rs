@@ -3938,9 +3938,7 @@ pub mod __gated_printer {
                     self.print(b"{");
                     let props = e.properties.slice();
                     if !props.is_empty() {
-                        // JSON objects always print multi-line (#1980 / #14801), so treat
-                        // a parser-detected single-line object as multi-line here to keep
-                        // indent()/unindent() balanced for nested `{ "k": "v" }` values.
+                        // JSON always expands objects, so fold !IS_JSON in to keep indent()/unindent() paired.
                         let single_line = e.is_single_line && !IS_JSON;
                         if !single_line {
                             self.indent();

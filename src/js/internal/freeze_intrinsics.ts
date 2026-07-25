@@ -237,9 +237,9 @@ export default function freezeIntrinsics(): void {
   const frozenSet = new WeakSet<object>();
   // In Node.js `console._stdout`/`_stderr` are getters; in Bun they are data
   // properties, so seed them as visited to keep stream prototypes unfrozen.
-  const consoleObj = console as { _stdout?: object; _stderr?: object };
-  if (consoleObj._stdout) frozenSet.add(consoleObj._stdout);
-  if (consoleObj._stderr) frozenSet.add(consoleObj._stderr);
+  const { _stdout, _stderr } = console as { _stdout?: object; _stderr?: object };
+  if (_stdout) frozenSet.add(_stdout);
+  if (_stderr) frozenSet.add(_stderr);
   for (let i = 0; i < intrinsics.length; i++) deepFreeze(intrinsics[i]);
 
   // 19.1 Value Properties of the Global Object

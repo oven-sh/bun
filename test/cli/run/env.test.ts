@@ -1038,6 +1038,146 @@ test.skipIf(!canUseRunuser)("process.env is preserved when cwd lacks read permis
   }
 });
 
+// https://github.com/oven-sh/bun/issues/11190
+// https://github.com/oven-sh/bun/issues/10358
+describe.concurrent("workspace root .env is loaded from a subdirectory", () => {
+  const print = `console.log(JSON.stringify({
+    LOCAL: process.env.LOCAL ?? null,
+    ROOT_ONLY: process.env.ROOT_ONLY ?? null,
+    SHARED: process.env.SHARED ?? null,
+  }))`;
+
+  test("bun <file> from a workspace package loads root .env", () => {
+    const dir = tempDirWithFiles("dotenv-ws", {
+      "package.json": JSON.stringify({ name: "root", workspaces: ["packages/*"] }),
+      ".env": "ROOT_ONLY=root\nSHARED=root\n",
+      "packages/app/package.json": JSON.stringify({ name: "app" }),
+      "packages/app/.env": "LOCAL=local\nSHARED=local\n",
+      "packages/app/index.ts": print,
+    });
+    const { stdout } = bunRun(`${dir}/packages/app/index.ts`);
+    // local .env wins for SHARED; root .env fills in ROOT_ONLY
+    expect(JSON.parse(stdout)).toEqual({ LOCAL: "local", ROOT_ONLY: "root", SHARED: "local" });
+  });
+
+  test("workspace package without its own .env sees root .env", () => {
+    const dir = tempDirWithFiles("dotenv-ws", {
+      "package.json": JSON.stringify({ name: "root", workspaces: ["packages/*"] }),
+      ".env": "ROOT_ONLY=root\nSHARED=root\n",
+      "packages/app/package.json": JSON.stringify({ name: "app" }),
+      "packages/app/index.ts": print,
+    });
+    const { stdout } = bunRun(`${dir}/packages/app/index.ts`);
+    expect(JSON.parse(stdout)).toEqual({ LOCAL: null, ROOT_ONLY: "root", SHARED: "root" });
+  });
+
+  test('"workspaces": { "packages": [...] } object form', () => {
+    const dir = tempDirWithFiles("dotenv-ws", {
+      "package.json": JSON.stringify({ name: "root", workspaces: { packages: ["packages/*"] } }),
+      ".env": "ROOT_ONLY=root\n",
+      "packages/app/package.json": JSON.stringify({ name: "app" }),
+      "packages/app/index.ts": print,
+    });
+    const { stdout } = bunRun(`${dir}/packages/app/index.ts`);
+    expect(JSON.parse(stdout)).toEqual({ LOCAL: null, ROOT_ONLY: "root", SHARED: null });
+  });
+
+  test("root .env.development / .env.production follow NODE_ENV", () => {
+    const dir = tempDirWithFiles("dotenv-ws", {
+      "package.json": JSON.stringify({ name: "root", workspaces: ["packages/*"] }),
+      ".env.development": "ROOT_ONLY=dev\n",
+      ".env.production": "ROOT_ONLY=prod\n",
+      "packages/app/package.json": JSON.stringify({ name: "app" }),
+      "packages/app/index.ts": print,
+    });
+    expect(JSON.parse(bunRun(`${dir}/packages/app/index.ts`).stdout)).toEqual({
+      LOCAL: null,
+      ROOT_ONLY: "dev",
+      SHARED: null,
+    });
+    expect(JSON.parse(bunRun(`${dir}/packages/app/index.ts`, { NODE_ENV: "production" }).stdout)).toEqual({
+      LOCAL: null,
+      ROOT_ONLY: "prod",
+      SHARED: null,
+    });
+  });
+
+  test("bun test from a workspace package loads root .env.test", () => {
+    const dir = tempDirWithFiles("dotenv-ws", {
+      "package.json": JSON.stringify({ name: "root", workspaces: ["packages/*"] }),
+      ".env": "SHARED=plain\n",
+      ".env.test": "ROOT_ONLY=from_test\n",
+      "packages/app/package.json": JSON.stringify({ name: "app" }),
+      "packages/app/index.test.ts": "console.log(process.env.ROOT_ONLY, process.env.SHARED);",
+    });
+    const { stdout } = bunTest(`${dir}/packages/app/index.test.ts`, {});
+    expect(stdout).toBe(`bun test ${Bun.version_with_sha}\n` + "from_test plain");
+  });
+
+  test("root .env is loaded through 'bun run' script indirection", () => {
+    const dir = tempDirWithFiles("dotenv-ws", {
+      "package.json": JSON.stringify({ name: "root", workspaces: ["packages/*"] }),
+      ".env": "ROOT_ONLY=root\n",
+      "packages/app/package.json": JSON.stringify({
+        name: "app",
+        scripts: { go: `'${bunExe()}' index.ts` },
+      }),
+      "packages/app/index.ts": print,
+    });
+    const { stdout } = bunRunAsScript(`${dir}/packages/app`, "go");
+    expect(JSON.parse(stdout)).toEqual({ LOCAL: null, ROOT_ONLY: "root", SHARED: null });
+  });
+
+  test("process env still wins over root .env", () => {
+    const dir = tempDirWithFiles("dotenv-ws", {
+      "package.json": JSON.stringify({ name: "root", workspaces: ["packages/*"] }),
+      ".env": "ROOT_ONLY=root\nSHARED=root\n",
+      "packages/app/package.json": JSON.stringify({ name: "app" }),
+      "packages/app/index.ts": print,
+    });
+    const { stdout } = bunRun(`${dir}/packages/app/index.ts`, { SHARED: "process" });
+    expect(JSON.parse(stdout)).toEqual({ LOCAL: null, ROOT_ONLY: "root", SHARED: "process" });
+  });
+
+  test("--env-file disables workspace root lookup", () => {
+    const dir = tempDirWithFiles("dotenv-ws", {
+      "package.json": JSON.stringify({ name: "root", workspaces: ["packages/*"] }),
+      ".env": "ROOT_ONLY=root\n",
+      "packages/app/package.json": JSON.stringify({ name: "app" }),
+      "packages/app/.env.custom": "LOCAL=custom\n",
+      "packages/app/index.ts": print,
+    });
+    const result = Bun.spawnSync([bunExe(), "--env-file=.env.custom", "index.ts"], {
+      cwd: `${dir}/packages/app`,
+      env: { ...bunEnv, NODE_ENV: undefined },
+    });
+    expect(JSON.parse(result.stdout.toString())).toEqual({ LOCAL: "custom", ROOT_ONLY: null, SHARED: null });
+    expect(result.exitCode).toBe(0);
+  });
+
+  test("no workspace root means no ancestor .env is loaded", () => {
+    const dir = tempDirWithFiles("dotenv-no-ws", {
+      "package.json": JSON.stringify({ name: "root" }),
+      ".env": "ROOT_ONLY=root\n",
+      "packages/app/package.json": JSON.stringify({ name: "app" }),
+      "packages/app/index.ts": print,
+    });
+    const { stdout } = bunRun(`${dir}/packages/app/index.ts`);
+    expect(JSON.parse(stdout)).toEqual({ LOCAL: null, ROOT_ONLY: null, SHARED: null });
+  });
+
+  test("node_modules does not walk up to workspace root", () => {
+    const dir = tempDirWithFiles("dotenv-ws", {
+      "package.json": JSON.stringify({ name: "root", workspaces: ["packages/*"] }),
+      ".env": "ROOT_ONLY=root\n",
+      "node_modules/pkg/package.json": JSON.stringify({ name: "pkg" }),
+      "node_modules/pkg/index.ts": print,
+    });
+    const { stdout } = bunRun(`${dir}/node_modules/pkg/index.ts`);
+    expect(JSON.parse(stdout)).toEqual({ LOCAL: null, ROOT_ONLY: null, SHARED: null });
+  });
+});
+
 // `st_size` is only a hint (sparse file, writer racing the loader): the env
 // loader's whole-file read used to `reserve_exact` it and abort the process in
 // `handle_alloc_error` before any user code ran. It must surface as a

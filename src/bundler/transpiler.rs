@@ -711,6 +711,36 @@ impl<'a> Transpiler<'a> {
         self.configure_linker_with_auto_jsx(true);
     }
 
+    /// Walk `start`'s parent chain to find the nearest ancestor whose
+    /// `package.json` declares `"workspaces"`, returning that directory's
+    /// entries. Returns `None` if no such ancestor exists, or if it is the
+    /// same directory we already loaded from (`skip_dir`).
+    fn workspace_root_dir_entry(
+        start: bun_resolver::DirInfoRef,
+        skip_dir: &[u8],
+        generation: bun_core::Generation,
+    ) -> Option<*mut bun_resolver::fs::DirEntry> {
+        let mut dir_info = Some(start);
+        while let Some(info) = dir_info {
+            if info.is_inside_node_modules() || info.is_node_modules() {
+                return None;
+            }
+            if let Some(pkg) = info.package_json() {
+                if pkg.has_workspaces {
+                    let entries = info.get_entries(generation)?;
+                    // SAFETY: BSSMap singleton owns `*entries`; read-only use
+                    // of `.dir` here, with no other live `&mut` to this slot.
+                    if unsafe { (*entries).dir } == skip_dir {
+                        return None;
+                    }
+                    return Some(entries);
+                }
+            }
+            dir_info = info.get_parent();
+        }
+        None
+    }
+
     /// Load `.env` files into the env loader according to
     /// `options.env.behavior`.
     pub fn run_env_loader(&mut self, skip_default_env: bool) -> crate::Result<()> {
@@ -779,6 +809,24 @@ impl<'a> Transpiler<'a> {
                     dot_env::DotEnvFileSuffix::Development
                 };
                 env.load(dir, &env_files, suffix, skip_default_env)?;
+
+                // When cwd is inside a workspace, also load the workspace
+                // root's `.env*` at lower priority so monorepo packages see
+                // shared config. Skip when `--env-file` was passed or when
+                // default loading is disabled (same gating as cwd defaults).
+                if env_files.is_empty() && !skip_default_env {
+                    if let Some(root_dir) = Self::workspace_root_dir_entry(
+                        dir_info,
+                        dir.dir,
+                        self.resolver.generation,
+                    ) {
+                        // SAFETY: BSSMap singleton owns `*root_dir`;
+                        // single-threaded path, sole `&mut` for the call.
+                        let root_dir: &mut bun_resolver::fs::DirEntry =
+                            unsafe { &mut *root_dir };
+                        env.load_workspace_root_defaults(suffix, root_dir)?;
+                    }
+                }
             }
             DotEnvBehavior::disable => {
                 env.load_process()?;

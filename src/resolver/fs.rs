@@ -763,6 +763,10 @@ impl bun_dotenv::DirEntryProbe for DirEntry {
     fn has_comptime_query(&self, query_lower: &'static [u8]) -> bool {
         DirEntry::has_comptime_query(self, query_lower)
     }
+    #[inline]
+    fn dir(&self) -> &[u8] {
+        self.dir
+    }
 }
 
 // pub fn statBatch(fs: *FileSystemEntry, paths: []string) ![]?Stat {

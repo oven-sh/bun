@@ -30,6 +30,8 @@ pub enum DotEnvFileSuffix {
 pub trait DirEntryProbe {
     /// The argument MUST already be ASCII-lowercase.
     fn has_comptime_query(&self, query_lower: &'static [u8]) -> bool;
+    /// Absolute path of this directory.
+    fn dir(&self) -> &[u8];
 }
 
 // LAYERING: the concrete `DirEntry` lives in `bun_resolver::fs` (higher tier,
@@ -715,6 +717,102 @@ impl Loader {
         }
 
         self.try_load_default(dir, dir_handle, b".env", value_buffer)
+    }
+
+    /// Load the default `.env*` set from the workspace root, after
+    /// `load_default_files` has already populated from cwd. Values already set
+    /// (process env, cwd `.env*`) win. Files are tracked by absolute path in
+    /// `custom_files_loaded` so cwd and root `.env` can both contribute.
+    ///
+    /// See https://github.com/oven-sh/bun/issues/11190.
+    pub fn load_workspace_root_defaults<D: DirEntryProbe + ?Sized>(
+        &mut self,
+        suffix: DotEnvFileSuffix,
+        dir: &D,
+    ) -> crate::Result<()> {
+        let mut value_buffer: Vec<u8> = Vec::new();
+        let mut path_buf = bun_paths::path_buffer_pool::get();
+        let dir_path = dir.dir();
+
+        match suffix {
+            DotEnvFileSuffix::Development => self.try_load_workspace_root(
+                dir,
+                dir_path,
+                b".env.development.local",
+                &mut path_buf,
+                &mut value_buffer,
+            )?,
+            DotEnvFileSuffix::Production => self.try_load_workspace_root(
+                dir,
+                dir_path,
+                b".env.production.local",
+                &mut path_buf,
+                &mut value_buffer,
+            )?,
+            DotEnvFileSuffix::Test => self.try_load_workspace_root(
+                dir,
+                dir_path,
+                b".env.test.local",
+                &mut path_buf,
+                &mut value_buffer,
+            )?,
+        }
+
+        if suffix != DotEnvFileSuffix::Test {
+            self.try_load_workspace_root(
+                dir,
+                dir_path,
+                b".env.local",
+                &mut path_buf,
+                &mut value_buffer,
+            )?;
+        }
+
+        match suffix {
+            DotEnvFileSuffix::Development => self.try_load_workspace_root(
+                dir,
+                dir_path,
+                b".env.development",
+                &mut path_buf,
+                &mut value_buffer,
+            )?,
+            DotEnvFileSuffix::Production => self.try_load_workspace_root(
+                dir,
+                dir_path,
+                b".env.production",
+                &mut path_buf,
+                &mut value_buffer,
+            )?,
+            DotEnvFileSuffix::Test => self.try_load_workspace_root(
+                dir,
+                dir_path,
+                b".env.test",
+                &mut path_buf,
+                &mut value_buffer,
+            )?,
+        }
+
+        self.try_load_workspace_root(dir, dir_path, b".env", &mut path_buf, &mut value_buffer)
+    }
+
+    #[inline]
+    fn try_load_workspace_root<D: DirEntryProbe + ?Sized>(
+        &mut self,
+        dir: &D,
+        dir_path: &[u8],
+        name: &'static [u8],
+        path_buf: &mut PathBuffer,
+        value_buffer: &mut Vec<u8>,
+    ) -> crate::Result<()> {
+        if dir.has_comptime_query(name) {
+            let joined = bun_paths::resolve_path::join_string_buf::<bun_paths::platform::Auto>(
+                &mut path_buf[..],
+                &[dir_path, name],
+            );
+            self.load_env_file_dynamic::<false>(joined, value_buffer)?;
+            analytics::Features::dotenv_inc();
+        }
+        Ok(())
     }
 
     /// Probe `dir` for a known `.env*` filename and, if present, load it into

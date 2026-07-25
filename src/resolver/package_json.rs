@@ -86,6 +86,10 @@ pub struct PackageJSON {
     pub scripts: Option<Box<ScriptsMap>>,
     // Values borrow the source buffer (lifetime-erased; owned by `source_contents`).
     pub config: Option<Box<StringArrayHashMap<&'static [u8]>>>,
+    /// True when this package.json declares `"workspaces"` (array, or object
+    /// with a `"packages"` array). The resolver does not expand the globs;
+    /// this is only used to locate the monorepo root for `.env` loading.
+    pub has_workspaces: bool,
 
     pub arch: Architecture,
     pub os: OperatingSystem,
@@ -143,6 +147,7 @@ impl Default for PackageJSON {
             version: Box::default(),
             scripts: None,
             config: None,
+            has_workspaces: false,
             arch: Architecture::all(),
             os: OperatingSystem::all(),
             package_manager_package_id: INVALID_PACKAGE_ID,
@@ -520,6 +525,7 @@ impl PackageJSON {
             main_fields: MainFieldMap::default(),
             scripts: None,
             config: None,
+            has_workspaces: false,
             arch: Architecture::all(),
             os: OperatingSystem::all(),
             package_manager_package_id: INVALID_PACKAGE_ID,
@@ -585,6 +591,17 @@ impl PackageJSON {
                     b"The value for \"type\" must be a string",
                 );
             }
+        }
+
+        if let Some(workspaces_json) = json.as_property(b"workspaces") {
+            package_json.has_workspaces = match workspaces_json.expr.data {
+                js_ast::ExprData::EArrayJSON(_) => true,
+                js_ast::ExprData::EObjectJSON(obj) => matches!(
+                    (*obj).get(b"packages"),
+                    Some(js_ast::e::JsonValue::Array(_))
+                ),
+                _ => false,
+            };
         }
 
         // Read the "main" fields

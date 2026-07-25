@@ -3744,6 +3744,18 @@ impl VirtualMachine {
                 ..Default::default()
             };
         }
+        // The ref-string cache wraps `code` in a Latin-1 external string. When
+        // the printer emitted non-ASCII UTF-8 (currently only RegExp literals,
+        // printed verbatim so `.source` is preserved), interning as Latin-1
+        // would corrupt those bytes, so fall back to a plain UTF-8 copy.
+        if !bun_core::strings::is_all_ascii(code) {
+            return ResolvedSource {
+                source_code: bun_core::String::clone_utf8(code),
+                specifier,
+                source_url: create_if_different(&specifier, source_url),
+                ..Default::default()
+            };
+        }
         // Const-generic bool can't be `!ADD_DOUBLE_REF`, so branch.
         let source = if ADD_DOUBLE_REF {
             self.ref_counted_string::<false>(code, hash_)

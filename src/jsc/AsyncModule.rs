@@ -1375,7 +1375,10 @@ impl AsyncModule {
         }
 
         Ok(ResolvedSource {
-            source_code: BunString::clone_latin1(printer.ctx.get_written()),
+            // `clone_utf8`: RegExp literals are printed verbatim (non-ASCII
+            // bytes possible); `BunString__fromBytes` stays Latin-1 when the
+            // output is all-ASCII.
+            source_code: BunString::clone_utf8(printer.ctx.get_written()),
             specifier: BunString::init(specifier),
             source_url: BunString::init(path.text),
             is_commonjs_module,

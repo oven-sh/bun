@@ -1149,7 +1149,11 @@ impl TranspilerJob {
             // `cache.output_code` (only the `r#impl == None` fallback does,
             // and `r#impl` is `Some(Jsc)` here), so it is always `None`.
             debug_assert!(cache.output_code.is_none());
-            let result = String::clone_latin1(written);
+            // `clone_utf8`: the printer emits ASCII-only output except for
+            // RegExp literals, which are printed verbatim so their `.source`
+            // is preserved; `BunString__fromBytes` keeps the Latin-1 fast
+            // path for the common all-ASCII case.
+            let result = String::clone_utf8(written);
 
             // SAFETY: leaf scalar field read on `*vm`; see `vm` note above.
             if written.len() > 1024 * 1024 * 2 || unsafe { (*vm).smol } {

@@ -4284,41 +4284,11 @@ pub mod __gated_printer {
                 self.print(b" ");
             }
 
-            if IS_BUN_PLATFORM {
-                // Translate any non-ASCII to unicode escape sequences
-                let mut ascii_start: usize = 0;
-                let mut is_ascii = false;
-                let iter = CodepointIterator::init(&e.value);
-                let mut cursor = strings::Cursor::default();
-                while iter.next(&mut cursor) {
-                    match cursor.c as u32 {
-                        FIRST_ASCII..=LAST_ASCII => {
-                            if !is_ascii {
-                                ascii_start = cursor.i as usize;
-                                is_ascii = true;
-                            }
-                        }
-                        _ => {
-                            if is_ascii {
-                                self.print(&e.value[ascii_start..(cursor.i as usize)]);
-                                is_ascii = false;
-                            }
-
-                            match cursor.c as u32 {
-                                c @ 0..=0xFFFF => self.print(&bmp_escape(c)[..]),
-                                c => self.print(&surrogate_pair_escape(c)[..]),
-                            }
-                        }
-                    }
-                }
-
-                if is_ascii {
-                    self.print(&e.value[ascii_start..]);
-                }
-            } else {
-                // UTF8 sequence is fine
-                self.print(&e.value[..]);
-            }
+            // The pattern is printed verbatim (UTF-8), even under `IS_BUN_PLATFORM`:
+            // rewriting `/¶/u` as `/\u00B6/u` changes `RegExp.prototype.source` at
+            // runtime. The consumers of the transpiled buffer treat it as UTF-8
+            // (see `String::clone_utf8` at the `ResolvedSource` construction sites).
+            self.print(&e.value[..]);
 
             // Need a space before the next identifier to avoid it turning into flags
             self.prev_reg_exp_end = self.writer.written();

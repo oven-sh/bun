@@ -43,7 +43,10 @@ bun_core::declare_scope!(cache, visible);
 /// path reinstates the bug for any previously-cached TLA module (#30887).
 /// Version 23: `jsx.runtime`/`jsx.development` participate in the features hash,
 /// and tsconfig `"jsx": "react-jsx"` now emits the production runtime (#4227).
-const EXPECTED_VERSION: u32 = 23;
+/// Version 24: RegExp literals are printed verbatim (no `\uXXXX` escaping of
+/// non-ASCII) so `RegExp.prototype.source` matches the source text (#13853);
+/// cached output is now tagged `Encoding::UTF8`.
+const EXPECTED_VERSION: u32 = 24;
 
 /// Source files smaller than this are not written to / read from the on-disk
 /// transpiler cache. Originally 50 KiB, which excluded almost every file in a
@@ -1009,7 +1012,10 @@ impl RuntimeTranspilerCache {
             return;
         }
         debug_assert!(self.entry.is_none());
-        let output_code = BunString::clone_latin1(output_code_bytes);
+        // Printer output is ASCII except for RegExp literals (printed verbatim
+        // so `.source` is preserved); `clone_utf8` keeps the Latin-1 fast path
+        // for the common all-ASCII case and transcodes to UTF-16 otherwise.
+        let output_code = BunString::clone_utf8(output_code_bytes);
         // Refcount stays at 1, sole owner.
         // BunString is Copy with no Drop, so an extra dupe_ref here would leak.
         self.output_code = Some(output_code);
@@ -1028,7 +1034,7 @@ impl RuntimeTranspilerCache {
         }
         #[cfg(debug_assertions)]
         {
-            bun_core::scoped_log!(cache, "put() = {} bytes", output_code.latin1().len());
+            bun_core::scoped_log!(cache, "put() = {} bytes", output_code_bytes.len());
         }
     }
 }
@@ -1078,10 +1084,13 @@ bun_ast::link_impl_TranspilerCacheImpl! {
             }
             debug_assert!(this.entry.is_none());
 
-            // Borrowed Latin-1 view: `to_file` only reads `byte_slice()` + the encoding
-            // tag (unmarked 8-bit ZigString -> Encoding::LATIN1, same as clone_latin1),
-            // and `output_code_bytes` outlives the synchronous `to_file` call.
-            let output_code = BunString::ascii(output_code_bytes);
+            // Borrowed UTF-8 view: `to_file` only reads `byte_slice()` + the
+            // encoding tag, and `output_code_bytes` outlives the synchronous
+            // `to_file` call. Printer output is ASCII except for RegExp
+            // literals (printed verbatim so `.source` is preserved), so tag as
+            // UTF-8; the read path's `Encoding::UTF8` branch handles both the
+            // all-ASCII fast path and the rare multi-byte case.
+            let output_code = BunString::borrow_utf8(output_code_bytes);
             let result = RuntimeTranspilerCache::to_file(
                 this.input_byte_length.unwrap(),
                 this.input_hash.unwrap(),

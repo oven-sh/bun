@@ -3154,7 +3154,11 @@ fn transpile_source_code_inner(
                 // `None`.
                 debug_assert!(cache.output_code.is_none());
                 let written_len = written.len();
-                let source_code = bun_core::String::clone_latin1(written);
+                // `clone_utf8`: the printer emits ASCII-only output except for
+                // RegExp literals, which are printed verbatim so their `.source`
+                // is preserved; `BunString__fromBytes` keeps the Latin-1 fast
+                // path for the common all-ASCII case.
+                let source_code = bun_core::String::clone_utf8(written);
                 // `printer.ctx.buffer.deinit()`: release the
                 // large/--smol print buffer now instead of holding it until the
                 // next transpile. Replacing the printer drops the old buffer

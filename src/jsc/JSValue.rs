@@ -2778,8 +2778,7 @@ impl JSValue {
     /// Returns a clone of `self` in which every property that matched an
     /// asymmetric matcher in `matchers` has been replaced with that matcher,
     /// so the snapshot formatter records `Any<String>` etc. rather than the
-    /// concrete value. `self` is not mutated. Returns `self` unchanged when
-    /// no substitutions are needed.
+    /// concrete value. `self` is not mutated.
     pub fn jest_substitute_asymmetric_matchers(
         self,
         matchers: JSValue,

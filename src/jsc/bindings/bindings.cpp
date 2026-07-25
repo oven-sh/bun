@@ -1862,9 +1862,9 @@ bool isAsymmetricMatcher(JSValue v)
 
 // Walks `value` and `matchers` in parallel and returns a clone of `value` with
 // any asymmetric matchers from `matchers` substituted in place of the matching
-// `value` properties. If no substitutions are needed the original `value` is
-// returned unchanged (no allocation). Cycles in `value` short-circuit by
-// returning the clone (or original) for the ancestor.
+// `value` properties. A clone is produced for every plain-object/array node on
+// the matcher path; other values (primitives, Error/Date/Map/Set/etc.) are
+// returned unchanged. Cycles in `value` resolve to the ancestor's clone.
 //
 // Used by snapshot serialization so property matchers like `expect.any(Date)`
 // show up as `Any<Date>` in the saved snapshot without mutating the user's
@@ -1907,48 +1907,58 @@ JSValue substituteAsymmetricMatchersImpl(
         return value;
     }
 
+    // Allocate the clone up front and record it in `ancestors` before
+    // recursing, so a back-reference at any depth resolves to the clone and
+    // the formatter's identity-based [Circular] check fires at the same level
+    // it would on the original.
+    JSObject* cloned;
+    if (valueIsArray) {
+        unsigned len = valueObj->getArrayLength();
+        cloned = JSC::constructEmptyArray(globalObject, nullptr, len);
+    } else {
+        // Preserve the original's prototype so the snapshot formatter keeps
+        // the class-name prefix (e.g. `User { ... }`).
+        JSValue proto = valueObj->getPrototype(globalObject);
+        RETURN_IF_EXCEPTION(throwScope, value);
+        JSObject* protoObj = proto.isObject() ? proto.getObject() : globalObject->objectPrototype();
+        cloned = JSC::constructEmptyObject(globalObject, protoObj);
+    }
+    RETURN_IF_EXCEPTION(throwScope, value);
+    gcBuffer.append(cloned);
+    ancestors[JSValue::encode(value)] = cloned;
+
+    // Shallow-copy own properties using the same slot discipline as
+    // `JSC__JSValue__forEachPropertyOrdered` (which the snapshot formatter
+    // drives): accessor slots are taken via `getPureResult()` so user getters
+    // are not invoked and render as the GetterSetter cell, matching the
+    // pre-substitution output. Back-references are rewritten via `ancestors`.
+    PropertyNameArrayBuilder valueProps(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Include);
+    valueObj->methodTable()->getOwnPropertyNames(valueObj, globalObject, valueProps, DontEnumPropertiesMode::Include);
+    RETURN_IF_EXCEPTION(throwScope, value);
+    for (const auto& p : valueProps) {
+        JSC::PropertySlot slot(valueObj, PropertySlot::InternalMethodType::Get);
+        bool hasProperty = valueObj->methodTable()->getOwnPropertySlot(valueObj, globalObject, p, slot);
+        RETURN_IF_EXCEPTION(throwScope, value);
+        if (!hasProperty) continue;
+        if (slot.isAccessor()) {
+            cloned->putDirectAccessor(globalObject, p, slot.getterSetter(), slot.attributes());
+            RETURN_IF_EXCEPTION(throwScope, value);
+            continue;
+        }
+        JSValue v = slot.getValue(globalObject, p);
+        RETURN_IF_EXCEPTION(throwScope, value);
+        if (v.isEmpty()) continue;
+        if (v.isCell()) {
+            auto found = ancestors.find(JSValue::encode(v));
+            if (found != ancestors.end() && found->second) v = JSValue(found->second);
+        }
+        cloned->putDirectMayBeIndex(globalObject, p, v);
+        RETURN_IF_EXCEPTION(throwScope, value);
+    }
+
     PropertyNameArrayBuilder matcherProps(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Include);
     matchersObj->getPropertyNames(globalObject, matcherProps, DontEnumPropertiesMode::Exclude);
     RETURN_IF_EXCEPTION(throwScope, value);
-
-    JSObject* cloned = nullptr;
-    auto ensureCloned = [&]() -> bool {
-        if (cloned) return true;
-        if (valueIsArray) {
-            unsigned len = valueObj->getArrayLength();
-            cloned = JSC::constructEmptyArray(globalObject, nullptr, len);
-        } else {
-            // Preserve the original's prototype so the snapshot formatter keeps
-            // the class-name prefix (e.g. `User { ... }`).
-            JSValue proto = valueObj->getPrototype(globalObject);
-            if (throwScope.exception()) return false;
-            JSObject* protoObj = proto.isObject() ? proto.getObject() : globalObject->objectPrototype();
-            cloned = JSC::constructEmptyObject(globalObject, protoObj);
-        }
-        if (throwScope.exception()) return false;
-        gcBuffer.append(cloned);
-        ancestors[JSValue::encode(value)] = cloned;
-        // Copy own properties (including non-enumerable) so the snapshot sees
-        // the same property set that `forEachPropertyOrdered` would on the
-        // original; substitutions below overwrite individual entries. Rewrite
-        // back-references to cloned ancestors so [Circular] detection in the
-        // formatter still fires at the same nesting level as on the original.
-        PropertyNameArrayBuilder valueProps(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Include);
-        valueObj->methodTable()->getOwnPropertyNames(valueObj, globalObject, valueProps, DontEnumPropertiesMode::Include);
-        if (throwScope.exception()) return false;
-        for (const auto& p : valueProps) {
-            JSValue v = valueObj->getIfPropertyExists(globalObject, p);
-            if (throwScope.exception()) return false;
-            if (v.isEmpty()) continue;
-            if (v.isCell()) {
-                auto found = ancestors.find(JSValue::encode(v));
-                if (found != ancestors.end() && found->second) v = JSValue(found->second);
-            }
-            cloned->putDirectMayBeIndex(globalObject, p, v);
-            if (throwScope.exception()) return false;
-        }
-        return true;
-    };
 
     for (const auto& property : matcherProps) {
         JSValue valueProp = valueObj->getIfPropertyExists(globalObject, property);
@@ -1967,13 +1977,12 @@ JSValue substituteAsymmetricMatchersImpl(
         if (substituted == valueProp) continue;
 
         gcBuffer.append(substituted);
-        if (!ensureCloned()) return value;
         cloned->putDirectMayBeIndex(globalObject, property, substituted);
         RETURN_IF_EXCEPTION(throwScope, value);
     }
 
     ancestors.erase(JSValue::encode(value));
-    return cloned ? JSValue(cloned) : value;
+    return JSValue(cloned);
 }
 }
 

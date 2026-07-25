@@ -64,6 +64,25 @@ test("property matchers preserve class name and handle shared references", () =>
   err.code = "E_FOO";
   expect(err).toMatchSnapshot({ code: expect.any(String) });
   expect(err.code).toBe("E_FOO");
+
+  let getterCalls = 0;
+  const withGetter = {
+    id: 1,
+    get ts() {
+      getterCalls++;
+      return Date.now();
+    },
+  };
+  expect(withGetter).toMatchSnapshot({ id: expect.any(Number) });
+  expect(withGetter.id).toBe(1);
+  expect(getterCalls).toBe(0);
+
+  const inner: any = { id: 1 };
+  const outer: any = { inner };
+  inner.parent = outer;
+  expect(outer).toMatchSnapshot({ inner: { id: expect.any(Number) } });
+  expect(inner.id).toBe(1);
+  expect(inner.parent).toBe(outer);
 });
 
 describe("toMatchSnapshot errors", () => {

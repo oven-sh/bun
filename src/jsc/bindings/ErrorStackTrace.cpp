@@ -25,6 +25,7 @@
 #include <JavaScriptCore/FunctionCodeBlock.h>
 
 #include "ErrorStackFrame.h"
+#include "ErrorStackTraceMetadata.h"
 
 using namespace JSC;
 using namespace WebCore;
@@ -138,15 +139,26 @@ void JSCStackTrace::getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, J
     // JSC's getStackTrace uses StackVisitor::isImplementationVisibilityPrivate
     // which differs from Bun's helper — post-filter to keep behavior consistent
     // with new Error() stack formatting.
+    // syncIndices records each kept frame's position among the raw sync frames so remapStackTraceMetadata can follow the trimming below.
+    WTF::Vector<unsigned> syncIndices;
     stackTrace.reserveInitialCapacity(rawFrames.size());
+    syncIndices.reserveInitialCapacity(rawFrames.size());
+    unsigned rawSyncIndex = 0;
     for (auto& frame : rawFrames) {
-        if (!isImplementationVisibilityPrivate(frame))
+        bool isAsync = frame.isAsyncFrame();
+        if (!isImplementationVisibilityPrivate(frame)) {
+            syncIndices.append(isAsync ? Bun::noSyncFrameIndex : rawSyncIndex);
             stackTrace.append(WTF::move(frame));
+        }
+        if (!isAsync)
+            rawSyncIndex++;
     }
 
     if (!caller.isObject()) {
         if (stackTrace.size() > stackTraceLimit)
             stackTrace.shrink(stackTraceLimit);
+        syncIndices.shrink(stackTrace.size());
+        Bun::remapStackTraceMetadata(owner, syncIndices.span());
         return;
     }
 
@@ -175,11 +187,15 @@ void JSCStackTrace::getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, J
         }
     }
 
-    if (removeCount > 0)
+    if (removeCount > 0) {
         stackTrace.removeAt(0, removeCount);
+        syncIndices.removeAt(0, removeCount);
+    }
 
     if (stackTrace.size() > stackTraceLimit)
         stackTrace.shrink(stackTraceLimit);
+    syncIndices.shrink(stackTrace.size());
+    Bun::remapStackTraceMetadata(owner, syncIndices.span());
 }
 
 JSCStackTrace JSCStackTrace::getStackTraceForThrownValue(JSC::VM& vm, JSC::JSValue thrownValue)

@@ -155,6 +155,7 @@ WTF::String formatStackTrace(
 
     const Bun::StackTraceMetadata* metadata = Bun::stackTraceMetadataFor(errorInstance);
     size_t metadataCursor = 0;
+    unsigned syncFrameIndex = 0;
 
     if (!name.isEmpty()) {
         sb.append(name);
@@ -314,16 +315,11 @@ WTF::String formatStackTrace(
 
         WTF::String functionName = Zig::functionName(vm, globalObjectForFrame, frame, errorInstance ? Zig::FinalizerSafety::NotInFinalizer : Zig::FinalizerSafety::MustNotTriggerGC, &flags);
         WTF::String typeName;
-        // Async frames are spliced into the trace after the metadata hook ran,
-        // so they never have a corresponding entry; skip without advancing.
-        if (metadata && !frame.isAsyncFrame() && frame.callee()) {
-            size_t probe = metadataCursor;
-            while (probe < metadata->entries.size() && metadata->entries[probe].callee != frame.callee())
-                probe++;
-            if (probe < metadata->entries.size()) {
-                typeName = metadata->entries[probe].typeName;
-                metadataCursor = probe + 1;
-            }
+        // Async frames were spliced in after capture and have no sync-frame position.
+        if (!frame.isAsyncFrame()) {
+            if (const WTF::String* name = Bun::receiverTypeName(metadata, metadataCursor, syncFrameIndex))
+                typeName = *name;
+            syncFrameIndex++;
         }
         OrdinalNumber originalLine = {};
         OrdinalNumber originalColumn = {};
@@ -364,12 +360,8 @@ WTF::String formatStackTrace(
             }
         }
 
-        if (!typeName.isEmpty()) {
-            bool alreadyQualified = functionName.startsWith(typeName)
-                && (functionName.length() == typeName.length() || functionName[typeName.length()] == '.');
-            if (!alreadyQualified)
-                functionName = makeString(typeName, '.', functionName);
-        }
+        if (!typeName.isEmpty() && !Zig::functionNameHasTypeNamePrefix(functionName, typeName))
+            functionName = makeString(typeName, '.', functionName);
 
         if (sourceURLForFrame.isEmpty()) {
             if (flags & static_cast<unsigned int>(FunctionNameFlags::Builtin)) {
@@ -459,16 +451,20 @@ static JSValue computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObj
 
     if (const Bun::StackTraceMetadata* metadata = Bun::stackTraceMetadataFor(errorObject)) {
         size_t cursor = 0;
-        for (size_t i = 0; i < stackTrace.size(); i++) {
-            if (stackTrace.at(i).isAsync() || !stackTrace.at(i).callee())
-                continue;
-            size_t probe = cursor;
-            while (probe < metadata->entries.size() && metadata->entries[probe].callee != stackTrace.at(i).callee())
-                probe++;
-            if (probe >= metadata->entries.size())
-                continue;
-            stackTrace.at(i).setReceiverTypeName(metadata->entries[probe].typeName);
-            cursor = probe + 1;
+        unsigned syncFrameIndex = 0;
+        size_t filteredIndex = 0;
+        // Walk stackFrames with the same filter fromExisting applied so metadata indices line up.
+        for (auto& frame : stackFrames) {
+            bool kept = !Zig::isImplementationVisibilityPrivate(frame);
+            if (!frame.isAsyncFrame()) {
+                if (kept && filteredIndex < stackTrace.size()) {
+                    if (const WTF::String* name = Bun::receiverTypeName(metadata, cursor, syncFrameIndex))
+                        stackTrace.at(filteredIndex).setReceiverTypeName(*name);
+                }
+                syncFrameIndex++;
+            }
+            if (kept)
+                filteredIndex++;
         }
     }
 

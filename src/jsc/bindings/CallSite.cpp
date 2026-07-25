@@ -158,13 +158,9 @@ void CallSite::formatAsString(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WT
             sb.append("new "_s);
         }
 
-        if (!typeName.isEmpty()) {
-            bool alreadyQualified = functionName.startsWith(typeName)
-                && (functionName.length() == typeName.length() || functionName[typeName.length()] == '.');
-            if (!alreadyQualified) {
-                sb.append(typeName);
-                sb.append('.');
-            }
+        if (!typeName.isEmpty() && !functionNameHasTypeNamePrefix(functionName, typeName)) {
+            sb.append(typeName);
+            sb.append('.');
         }
 
         sb.append(functionName);

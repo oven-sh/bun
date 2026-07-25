@@ -1212,6 +1212,29 @@ test("CallSite.getTypeName returns the receiver's built-in class name", () => {
   }
 });
 
+test("captureStackTrace caller trimming does not reuse receiver names from removed frames", () => {
+  // The inner recur() is called as Reflect.recur; captureStackTrace(e, recur)
+  // removes that frame, and the surviving outer recur frame is a bare call
+  // that must not inherit the removed frame's Reflect prefix.
+  let depth = 0;
+  function recur() {
+    if (depth++ === 0) {
+      Object.defineProperty(Reflect, "recur", { value: recur, writable: true, configurable: true });
+      try {
+        return Reflect.recur();
+      } finally {
+        delete Reflect.recur;
+      }
+    }
+    const e = new Error();
+    Error.captureStackTrace(e, recur);
+    return e.stack;
+  }
+  const frame = recur().split("\n")[1];
+  expect(frame).toMatch(/^\s+at recur /);
+  expect(frame).not.toContain("Reflect");
+});
+
 // https://github.com/oven-sh/bun/issues/34095
 test("lazy error-info materialization does not store an empty stack value when the compute hook throws", async () => {
   const src = `

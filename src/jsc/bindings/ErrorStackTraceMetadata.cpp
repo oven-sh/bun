@@ -43,8 +43,7 @@ static WTF::String typeNameForReceiver(JSValue thisValue)
     if (!thisObject)
         return String();
 
-    // Bare `foo()`: JSC passes the resolved scope as raw |this| (normalized
-    // later by to_this), so a scope/global-proxy here means "no receiver".
+    // A scope or global-proxy cell here is a bare call's raw un-normalized |this|, not a receiver.
     JSC::JSType type = thisObject->type();
     if ((JSC::FirstScopeType <= type && type <= JSC::LastScopeType) || type == JSC::GlobalProxyType)
         return String();
@@ -60,9 +59,7 @@ static WTF::String typeNameForReceiver(JSValue thisValue)
     return name;
 }
 
-// VM::onAppendStackTrace hook: runs under AssertNoGC inside getStackTrace
-// while call frames are live; matches stackTrace[] frames by callee and
-// records each receiver's classInfo name into this ErrorInstance's cache slot.
+// VM::onAppendStackTrace hook; runs inside getStackTrace while the captured frames are still live on the machine stack.
 void captureStackFrameReceivers(VM& vm, JSCell* owner, WTF::Vector<StackFrame>& stackTrace, size_t maxToAppend)
 {
     UNUSED_PARAM(maxToAppend);
@@ -83,19 +80,17 @@ void captureStackFrameReceivers(VM& vm, JSCell* owner, WTF::Vector<StackFrame>& 
     if (!topCallFrame)
         return;
 
-    slot.data.entries.reserveCapacity(stackTrace.size());
-
     size_t cursor = 0;
-    bool any = false;
     StackVisitor::visit(topCallFrame, vm, [&](StackVisitor& visitor) -> IterationStatus {
+        while (cursor < stackTrace.size() && !stackTrace[cursor].callee())
+            cursor++;
         if (cursor >= stackTrace.size())
             return IterationStatus::Done;
 
         if (visitor->callee().isNativeCallee())
             return IterationStatus::Continue;
 
-        JSCell* callee = visitor->callee().asCell();
-        if (stackTrace[cursor].callee() != callee)
+        if (stackTrace[cursor].callee() != visitor->callee().asCell())
             return IterationStatus::Continue;
 
         String typeName;
@@ -110,20 +105,14 @@ void captureStackFrameReceivers(VM& vm, JSCell* owner, WTF::Vector<StackFrame>& 
             }
         }
         if (!typeName.isEmpty())
-            any = true;
-        slot.data.entries.append({ callee, WTF::move(typeName) });
+            slot.data.entries.append({ static_cast<unsigned>(cursor), WTF::move(typeName) });
         cursor++;
-
-        while (cursor < stackTrace.size() && !stackTrace[cursor].callee())
-            cursor++;
 
         return IterationStatus::Continue;
     });
 
-    if (!any) {
-        slot.data.entries.shrink(0);
+    if (slot.data.entries.isEmpty())
         return;
-    }
 
     static std::atomic<uintptr_t> generation { 0 };
     uintptr_t gen = generation.fetch_add(1, std::memory_order_relaxed) + 1;
@@ -131,6 +120,36 @@ void captureStackFrameReceivers(VM& vm, JSCell* owner, WTF::Vector<StackFrame>& 
     slot.generation = gen;
     // Generation stamp guards against a recycled cell at the same address.
     errorInstance->setBunErrorData(reinterpret_cast<void*>(gen));
+}
+
+void remapStackTraceMetadata(JSCell* owner, std::span<const unsigned> frameSyncIndices)
+{
+    auto* errorInstance = dynamicDowncast<ErrorInstance>(owner);
+    if (!errorInstance)
+        return;
+    CacheSlot& slot = slotFor(owner);
+    if (slot.owner != owner || reinterpret_cast<uintptr_t>(errorInstance->bunErrorData()) != slot.generation)
+        return;
+
+    WTF::Vector<StackTraceMetadata::Entry> remapped;
+    size_t cursor = 0;
+    unsigned newIndex = 0;
+    for (unsigned original : frameSyncIndices) {
+        if (original == noSyncFrameIndex)
+            continue;
+        while (cursor < slot.data.entries.size() && slot.data.entries[cursor].frameIndex < original)
+            cursor++;
+        if (cursor < slot.data.entries.size() && slot.data.entries[cursor].frameIndex == original)
+            remapped.append({ newIndex, WTF::move(slot.data.entries[cursor].typeName) });
+        newIndex++;
+    }
+
+    slot.data.entries = WTF::move(remapped);
+    if (slot.data.entries.isEmpty()) {
+        slot.owner = nullptr;
+        slot.generation = 0;
+        errorInstance->setBunErrorData(nullptr);
+    }
 }
 
 const StackTraceMetadata* stackTraceMetadataFor(JSCell* owner)

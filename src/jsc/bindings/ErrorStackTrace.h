@@ -215,6 +215,13 @@ private:
 bool isImplementationVisibilityPrivate(JSC::StackVisitor& visitor);
 bool isImplementationVisibilityPrivate(const JSC::StackFrame& frame);
 
+// True when functionName is exactly typeName or already starts with "typeName.".
+inline bool functionNameHasTypeNamePrefix(const WTF::String& functionName, const WTF::String& typeName)
+{
+    return functionName.startsWith(typeName)
+        && (functionName.length() == typeName.length() || functionName[typeName.length()] == '.');
+}
+
 String sourceURL(const JSC::SourceOrigin& origin);
 String sourceURL(JSC::SourceProvider* sourceProvider);
 String sourceURL(const JSC::SourceCode& sourceCode);

@@ -108,17 +108,42 @@ describe("fetch() forbidden hop-by-hop request headers", () => {
 
   test("Upgrade: h2c (and HTTP2-Settings) are dropped", async () => {
     // The h2c-smuggling request shape. Bun already refuses the 101, but the request itself
-    // must not advertise h2c upgrade on the wire.
-    const { names, lines } = await recordedRequest({
-      headers: {
-        "Connection": "Upgrade, HTTP2-Settings",
-        "Upgrade": "h2c",
-        "HTTP2-Settings": "AAMAAABkAARAAAAAAAIAAAAA",
-      },
+    // must not advertise h2c upgrade on the wire. Upgrade is an RFC 9110 §7.8 token list,
+    // so case and comma-delimited variants must also match.
+    for (const value of ["h2c", "H2C", " h2c ", "h2c, dummy", "dummy, h2c", "h2"]) {
+      const { names, lines } = await recordedRequest({
+        headers: {
+          "Connection": "Upgrade, HTTP2-Settings",
+          "Upgrade": value,
+          "HTTP2-Settings": "AAMAAABkAARAAAAAAAIAAAAA",
+        },
+      });
+      expect(names.has("upgrade"), `Upgrade: ${JSON.stringify(value)} reached wire`).toBe(false);
+      expect(names.has("http2-settings")).toBe(false);
+      expect(headerValue(lines, "connection")).toBe("keep-alive");
+    }
+  });
+
+  test("Upgrade: H2C with a stream body does not desync framing", async () => {
+    // The JS-thread upgraded_connection check and the HTTP-thread build_request
+    // drop must agree on what counts as h2c, or the wire declares chunked while
+    // the body writer skips chunk framing.
+    await using origin = rawOrigin(acc => acc.includes("0\r\n\r\n"));
+    const port = await origin.listen();
+    async function* body() {
+      yield new TextEncoder().encode("hello");
+    }
+    const res = await fetch(`http://127.0.0.1:${port}/x`, {
+      method: "POST",
+      headers: { Upgrade: "H2C" },
+      body: body(),
+      // @ts-expect-error bun-specific
+      duplex: "half",
     });
-    expect(names.has("upgrade")).toBe(false);
-    expect(names.has("http2-settings")).toBe(false);
-    expect(headerValue(lines, "connection")).toBe("keep-alive");
+    expect(await res.text()).toBe("OK");
+    const lines = origin.state.head.split("\r\n");
+    expect(headerValue(lines, "upgrade")).toBeUndefined();
+    expect(headerValue(lines, "transfer-encoding")).toBe("chunked");
   });
 
   test("Upgrade: websocket is preserved and Connection is normalized to 'Upgrade'", async () => {
@@ -179,7 +204,8 @@ describe("fetch() forbidden hop-by-hop request headers", () => {
   });
 
   test("node:http client still owns Connection (control lane)", async () => {
-    // The drop is fetch()-only; node:http writes its own request line and must keep full control.
+    // node:http writes its request head in JS (_storeHeader) and never reaches
+    // build_request, so it is unaffected by the fetch() drop arm.
     await using origin = rawOrigin(() => true);
     const port = await origin.listen();
     await new Promise<void>((resolve, reject) => {

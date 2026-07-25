@@ -571,6 +571,19 @@ pub fn hash_header_name(name: &[u8]) -> u64 {
     bun_wyhash::hash_ascii_lowercase(0, name)
 }
 
+/// Whether an `Upgrade` header value (RFC 9110 §7.8 `#protocol` token list)
+/// offers `h2`/`h2c`. Used by both `build_request` and the JS-thread
+/// `upgraded_connection` derivation so header and body framing agree.
+pub fn upgrade_header_offers_h2(value: &[u8]) -> bool {
+    for token in value.split(|&b| b == b',') {
+        let token = bun_core::strings::trim(token, b" \t");
+        if bun_core::strings::eql_any_case_insensitive_ascii(token, &[b"h2", b"h2c"]) {
+            return true;
+        }
+    }
+    false
+}
+
 // ───────────────────────────── HTTPClient struct ─────────────────────────────
 // The heavy `impl HTTPClient` (socket dispatch / state machine) remains
 // gated below until the missing
@@ -2336,13 +2349,8 @@ impl<'a> HTTPClient<'a> {
         let mut override_accept_encoding = false;
         let mut override_accept_header = false;
         let mut override_host_header = false;
-        let mut override_connection_header = false;
         let mut override_user_agent = false;
-        let mut add_transfer_encoding = true;
         let mut original_content_length: Option<&[u8]> = None;
-
-        // fetch() drops hop-by-hop / framing headers (RFC 9110 §7.6.1); node:http keeps full control.
-        let enforce_fetch_forbidden = !self.flags.is_node_http_client;
 
         // Reserve slots for default headers that may be appended after user headers
         // (Connection, User-Agent, Accept, Host, Accept-Encoding, Content-Length/Transfer-Encoding).
@@ -2360,8 +2368,9 @@ impl<'a> HTTPClient<'a> {
             // leaving the header entirely absent from the request.
             let will_append = header_count < MAX_USER_HEADERS;
 
-            // Skip host and connection header
-            // we manage those
+            // Hop-by-hop / framing headers are owned by this client (RFC 9110
+            // §7.6.1); node:http writes its own request head in JS and never
+            // reaches this function.
             match hash {
                 h if h == hash_header_const(b"Content-Length") => {
                     // Content-Length is always consumed (never written to the buffer).
@@ -2381,13 +2390,8 @@ impl<'a> HTTPClient<'a> {
                     ) {
                         self.flags.disable_keepalive = false;
                     }
-                    if enforce_fetch_forbidden {
-                        // Intent honoured above; the verbatim value never reaches the wire.
-                        continue;
-                    }
-                    if will_append {
-                        override_connection_header = true;
-                    }
+                    // Intent honoured above; the verbatim value never reaches the wire.
+                    continue;
                 }
                 h if h == hash_header_const(b"if-modified-since") => {
                     if self.flags.force_last_modified && self.if_modified_since.is_empty() {
@@ -2419,29 +2423,17 @@ impl<'a> HTTPClient<'a> {
                     }
                 }
                 h if h == hash_header_const(b"Upgrade") => {
-                    let value = self.header_str(header_values[i]);
-                    let is_h2 =
-                        bun_core::strings::eql_any_case_insensitive_ascii(value, &[b"h2", b"h2c"]);
-                    if enforce_fetch_forbidden && is_h2 {
+                    if upgrade_header_offers_h2(self.header_str(header_values[i])) {
                         continue;
                     }
-                    if will_append && !is_h2 {
+                    if will_append {
                         self.flags.upgrade_state = HTTPUpgradeState::Pending;
                     }
                 }
-                h if h == hash_header_const(CHUNKED_ENCODED_HEADER.name()) => {
-                    if enforce_fetch_forbidden || !self.flags.is_streaming_request_body {
-                        continue;
-                    }
-                    // We don't want to override chunked encoding header if it was set by the user
-                    if will_append {
-                        add_transfer_encoding = false;
-                    }
-                }
-                h if enforce_fetch_forbidden
-                    && (h == hash_header_const(b"Keep-Alive")
-                        || h == hash_header_const(b"Expect")
-                        || h == hash_header_const(b"HTTP2-Settings")) =>
+                h if h == hash_header_const(CHUNKED_ENCODED_HEADER.name())
+                    || h == hash_header_const(b"Keep-Alive")
+                    || h == hash_header_const(b"Expect")
+                    || h == hash_header_const(b"HTTP2-Settings") =>
                 {
                     continue;
                 }
@@ -2459,11 +2451,11 @@ impl<'a> HTTPClient<'a> {
             header_count += 1;
         }
 
-        if enforce_fetch_forbidden && self.flags.upgrade_state == HTTPUpgradeState::Pending {
+        if self.flags.upgrade_state == HTTPUpgradeState::Pending {
             // Emit `Connection: Upgrade` ourselves so no caller tokens ride along.
             request_headers_buf[header_count] = CONNECTION_UPGRADE_HEADER;
             header_count += 1;
-        } else if !override_connection_header && !self.flags.disable_keepalive {
+        } else if !self.flags.disable_keepalive {
             request_headers_buf[header_count] = CONNECTION_HEADER;
             header_count += 1;
         }
@@ -2491,23 +2483,7 @@ impl<'a> HTTPClient<'a> {
 
         if body_len > 0 || self.method.has_request_body() {
             if self.flags.is_streaming_request_body {
-                if let Some(content_length) =
-                    original_content_length.filter(|_| !enforce_fetch_forbidden)
-                {
-                    if add_transfer_encoding {
-                        // User explicitly set Content-Length and did not set Transfer-Encoding;
-                        // preserve Content-Length instead of using chunked encoding.
-                        // This matches Node.js behavior where an explicit Content-Length is always honored.
-                        request_headers_buf[header_count] =
-                            picohttp::Header::new(CONTENT_LENGTH_HEADER_NAME, content_length);
-                        header_count += 1;
-                    }
-                    // If !add_transfer_encoding, the user explicitly set Transfer-Encoding,
-                    // which was already added to request_headers_buf. We respect that and
-                    // do not add Content-Length (they are mutually exclusive per HTTP/1.1).
-                } else if add_transfer_encoding
-                    && self.flags.upgrade_state == HTTPUpgradeState::None
-                {
+                if self.flags.upgrade_state == HTTPUpgradeState::None {
                     request_headers_buf[header_count] = CHUNKED_ENCODED_HEADER;
                     header_count += 1;
                 }

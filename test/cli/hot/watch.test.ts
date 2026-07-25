@@ -69,11 +69,7 @@ test.concurrent("picks up changes in a linked workspace package outside the cwd"
     "apps/myapp/index.js": `import { value } from "@test/db";\nconsole.log("[app]", value);\n`,
   });
   mkdirSync(join(root, "apps/myapp/node_modules/@test"), { recursive: true });
-  symlinkSync(
-    join(root, "packages/db"),
-    join(root, "apps/myapp/node_modules/@test/db"),
-    "junction",
-  );
+  symlinkSync(join(root, "packages/db"), join(root, "apps/myapp/node_modules/@test/db"), "junction");
 
   const dbIndex = join(root, "packages/db/index.js");
 

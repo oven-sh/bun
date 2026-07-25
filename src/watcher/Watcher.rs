@@ -772,11 +772,7 @@ impl Watcher {
         if self.platform.covers(dir) {
             return true;
         }
-        if self
-            .unwatchable_roots
-            .iter()
-            .any(|r| r.as_ref() == dir)
-        {
+        if self.unwatchable_roots.iter().any(|r| r.as_ref() == dir) {
             return false;
         }
         match self.platform.add_root(dir) {

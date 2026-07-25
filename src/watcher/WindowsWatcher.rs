@@ -319,12 +319,7 @@ impl WindowsWatcher {
         dw.prepare().map_err(crate::Error::from)?;
         self.watchers.push(dw);
 
-        bun_core::scoped_log!(
-            watcher,
-            "watching root[{}]: {}",
-            key,
-            bstr::BStr::new(root)
-        );
+        bun_core::scoped_log!(watcher, "watching root[{}]: {}", key, bstr::BStr::new(root));
 
         scopeguard::ScopeGuard::into_inner(handle_guard);
         Ok(())
@@ -473,7 +468,8 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
             let _guard = this.mutex.lock_guard();
             this.platform_scratch.clear();
             for p in this.watchlist.items_file_path() {
-                this.platform_scratch.push(p.as_ref().to_vec().into_boxed_slice());
+                this.platform_scratch
+                    .push(p.as_ref().to_vec().into_boxed_slice());
             }
         }
         let n_items = this.platform_scratch.len();

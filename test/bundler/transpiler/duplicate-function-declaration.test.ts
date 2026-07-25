@@ -132,9 +132,10 @@ describe("duplicate function declarations at runtime", () => {
   });
 
   test.concurrent("duplicate top-level function in .mjs is a SyntaxError", async () => {
+    // No import/export/TLA: the .mjs extension alone must be enough for the
+    // parser to treat the top level as a Module.
     using dir = tempDir("dup-fn", {
-      "dup.mjs":
-        "function foo() { return 1 }\n" + "function foo() { return 2 }\n" + "console.log(foo())\n" + "export {}",
+      "dup.mjs": "function foo() { return 1 }\n" + "function foo() { return 2 }\n" + "console.log(foo())",
     });
     await using proc = Bun.spawn({
       cmd: [bunExe(), "dup.mjs"],

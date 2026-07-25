@@ -2941,17 +2941,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // shared borrow is dropped) and the post-loop `children` walk.
         let scope_ref = &*scope;
 
-        // Duplicate function declarations are forbidden in nested blocks in strict
-        // mode. Separately, they are also forbidden at the top-level of modules.
-        // This check needs to be delayed until now instead of being done when the
-        // functions are declared because we potentially need to scan the whole file
-        // to know if the file is considered to be in strict mode (or is considered
-        // to be a module). We might only encounter an "export {}" clause at the end
-        // of the file.
+        // Duplicate function declarations are forbidden in strict-mode blocks and
+        // at a module's top level. Checked here (not at declaration time) because
+        // strict / ESM status may be decided by a later `"use strict"` / `export`.
         if !scope_ref.replaced.is_empty()
             && ((scope_ref.strict_mode != js_ast::StrictModeKind::SloppyMode
                 && scope_ref.kind == js_ast::scope::Kind::Block)
-                || (scope_ref.parent.is_none() && self.has_es_module_syntax))
+                || (scope_ref.parent.is_none()
+                    && (self.has_es_module_syntax
+                        || self.options.module_type == options::ModuleType::Esm)))
         {
             for replaced in scope_ref.replaced.slice() {
                 let symbol = &self.symbols[replaced.ref_.inner_index() as usize];

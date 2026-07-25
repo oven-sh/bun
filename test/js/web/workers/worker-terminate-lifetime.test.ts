@@ -135,13 +135,16 @@ test.skipIf(!isASAN)(
     // Each subprocess run spawns a middle worker that creates grandchildren
     // whose module load fails, then main terminates the middle worker and
     // exits. The race window is between the grandchild's error dispatch and
-    // terminate_all_and_wait arming TerminationException.
+    // terminate_all_and_wait arming TerminationException. The grandchild path
+    // is an absolute nonexistent file so MODULE_NOT_FOUND is independent of
+    // import.meta.url's value inside the data-URL middle worker.
     const code = `
       const { Worker } = require("node:worker_threads");
+      const bad = require("node:path").join(process.cwd(), "does-not-exist-xyzzy.mjs");
       const middleSrc = \`
         const { Worker, parentPort } = require("node:worker_threads");
         for (let j = 0; j < 4; j++) {
-          const w = new Worker(new URL("./does-not-exist-xyzzy.mjs", import.meta.url));
+          const w = new Worker(\${JSON.stringify(bad)});
           w.on("error", () => {});
         }
         parentPort.postMessage("spawned");
@@ -150,12 +153,13 @@ test.skipIf(!isASAN)(
       const middle = new Worker(new URL(
         "data:text/javascript;base64," + Buffer.from(middleSrc).toString("base64"),
       ));
-      middle.on("error", () => {});
+      middle.on("error", e => { console.error("middle error:", e.message); process.exit(1); });
       middle.on("message", () => {
         middle.terminate();
+        console.log("ok");
         process.exit(0);
       });
-      setTimeout(() => process.exit(0), 2000);
+      setTimeout(() => { console.error("timeout"); process.exit(1); }, 5000);
     `;
 
     for (let i = 0; i < 20; i++) {
@@ -168,7 +172,7 @@ test.skipIf(!isASAN)(
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect({ stderr, stdout, exitCode, signalCode: proc.signalCode }).toEqual({
         stderr: "",
-        stdout: "",
+        stdout: "ok\n",
         exitCode: 0,
         signalCode: null,
       });

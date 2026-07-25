@@ -1362,6 +1362,10 @@ extern "C" int Bun__handleUnhandledRejection(JSC::JSGlobalObject* lexicalGlobalO
     if (!lexicalGlobalObject->inherits(Zig::GlobalObject::info()))
         return false;
     auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
+    // See Bun__handleUncaughtException above: do not lazily create process or
+    // emit on a worker whose terminate() has been requested.
+    if (Zig::GlobalObject::scriptExecutionStatus(globalObject, globalObject) != JSC::ScriptExecutionStatus::Running) [[unlikely]]
+        return false;
     auto* process = globalObject->processObject();
 
     auto eventType = Identifier::fromString(JSC::getVM(globalObject), "unhandledRejection"_s);
@@ -1385,6 +1389,9 @@ extern "C" bool Bun__emitHandledPromiseEvent(JSC::JSGlobalObject* lexicalGlobalO
     if (!lexicalGlobalObject->inherits(Zig::GlobalObject::info()))
         return false;
     auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
+    // See Bun__handleUncaughtException above.
+    if (Zig::GlobalObject::scriptExecutionStatus(globalObject, globalObject) != JSC::ScriptExecutionStatus::Running) [[unlikely]]
+        return false;
     auto* process = globalObject->processObject();
 
     auto eventType = Identifier::fromString(JSC::getVM(globalObject), "rejectionHandled"_s);

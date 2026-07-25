@@ -1135,6 +1135,15 @@ impl WebWorker {
             }
         }
 
+        // terminate() may have landed during load_entry_point_for_web_worker
+        // (between its own has_requested_terminate() check and here). Mirror
+        // the checkpoints at :1083 and the event-loop body so a terminated
+        // worker does not reach dispatchOnline/fireEarlyMessages/tick().
+        if self.has_requested_terminate() {
+            self.flush_logs(vm);
+            return self.shutdown();
+        }
+
         self.flush_logs(vm);
         log!("[{}] event loop start", self.execution_context_id);
         // dispatchOnline fires the parent-side 'open' event and flips the C++

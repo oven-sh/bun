@@ -173,12 +173,14 @@ describe.skipIf(!isPosix)("Bun.file(<infinite chardev>).stream() yields to the e
     ["Bun.file(dev).stream() on /dev/urandom", `Bun.file("/dev/urandom").stream()`],
     ["new Response(Bun.file(dev)).body on /dev/zero", `new Response(Bun.file("/dev/zero")).body`],
   ] as const) {
-    test(label, async () => {
-      await using proc = Bun.spawn({
-        cmd: [
-          bunExe(),
-          "-e",
-          `
+    test(
+      label,
+      async () => {
+        await using proc = Bun.spawn({
+          cmd: [
+            bunExe(),
+            "-e",
+            `
             const rss0 = process.memoryUsage.rss();
             let tickedAfterRead = false;
             setTimeout(() => { tickedAfterRead = true; }, 1).unref();
@@ -195,23 +197,29 @@ describe.skipIf(!isPosix)("Bun.file(<infinite chardev>).stream() yields to the e
               rssGrowthMB,
             }));
           `,
-        ],
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
-        signal: AbortSignal.timeout(hangGuard),
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          ],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+          signal: AbortSignal.timeout(hangGuard),
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-      expect({ stderr, exitCode, signalCode: proc.signalCode }).toEqual({ stderr: "", exitCode: 0, signalCode: null });
-      const out = JSON.parse(stdout);
-      expect(out.tickedAfterRead).toBe(true);
-      expect(out.firstLen).toBeGreaterThan(0);
-      expect(out.firstLen).toBeLessThanOrEqual(1024 * 1024);
-      expect(out.secondLen).toBeGreaterThan(0);
-      expect(out.secondLen).toBeLessThanOrEqual(1024 * 1024);
-      expect(out.rssGrowthMB).toBeLessThan(isASAN || isDebug ? 256 : 128);
-    }, hangGuard + 5_000);
+        expect({ stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+          stderr: "",
+          exitCode: 0,
+          signalCode: null,
+        });
+        const out = JSON.parse(stdout);
+        expect(out.tickedAfterRead).toBe(true);
+        expect(out.firstLen).toBeGreaterThan(0);
+        expect(out.firstLen).toBeLessThanOrEqual(1024 * 1024);
+        expect(out.secondLen).toBeGreaterThan(0);
+        expect(out.secondLen).toBeLessThanOrEqual(1024 * 1024);
+        expect(out.rssGrowthMB).toBeLessThan(isASAN || isDebug ? 256 : 128);
+      },
+      hangGuard + 5_000,
+    );
   }
 
   test("Bun.file('/dev/null').stream() EOFs immediately", async () => {

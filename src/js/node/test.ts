@@ -1628,10 +1628,7 @@ const fileGeneration = $newRustFunction("jest.rs", "jsFileGeneration", 0);
 // `done` binds the intended sequence so a late call after the bun:test watchdog
 // moved on cannot write onto the currently-running test.
 const markCurrentResult = $newRustFunction("jest.rs", "jsNodeTestMarkResult", 2);
-// Whether `bun test` was started with `--only` (Node's `--test-only`). Node
-// only applies the `only` filter when that flag is set; without it the marker
-// is a no-op (every test runs). Read lazily once: the CLI flag is fixed for
-// the process, but this module may be loaded before the runner is in place.
+// Lazily cached: this module can be loaded before the TestRunner exists.
 const readTestOnly = $newRustFunction("jest.rs", "jsNodeTestOnly", 0);
 let testOnlyFlag: boolean | undefined;
 function testOnlyEnabled(): boolean {
@@ -2608,10 +2605,8 @@ function addTest(
   // Node merges .todo()/.skip() into the options and checks skip first, so
   // test.todo(name, { skip: true }, fn) is a skip.
   const effectiveMode = mode === "skip" || options.skip ? "skip" : mode === "todo" || options.todo ? "todo" : undefined;
-  // Node's `only` (the option and test.only()/describe.only() spellings) is a
-  // no-op unless --test-only is passed; under the flag it is independent of
-  // skip/todo (an only-marked skip/todo is still included in the filter) and
-  // maps to bun:test's chained .only, whose filter matches Node's.
+  // Under --test-only, `only` is independent of skip/todo: an only-marked
+  // skip/todo stays in the filter, so bun:test's chained .only carries both.
   const isOnly = (mode === "only" || options.only) && testOnlyEnabled();
 
   if (effectiveMode === "todo" || effectiveMode === "skip") {

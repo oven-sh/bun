@@ -528,8 +528,7 @@ pub(crate) fn js_file_generation(
     Ok(JSValue::from(generation))
 }
 
-/// Reached only from `node:test`: whether `bun test` was started with `--only`
-/// (Node's `--test-only`). Node filters on `only` only when that flag is set.
+/// Reached only from `node:test`: whether `bun test` was started with `--only`.
 pub(crate) fn js_node_test_only(
     _global: &JSGlobalObject,
     _callframe: &CallFrame,

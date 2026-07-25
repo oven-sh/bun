@@ -2106,6 +2106,43 @@ pub mod bv2_impl {
             }
         }
 
+        /// Returns true when a `RequireResolve` import record should stop at
+        /// resolution and not be added to the bundle graph. `require.resolve()`
+        /// returns a filesystem path string at runtime, so bundling its target
+        /// is never useful: the caller needs a real path to read/spawn/stat,
+        /// not the module's exports. esbuild resolves the specifier (so the
+        /// caller still sees module-not-found errors) and then leaves the
+        /// original text in place, emitting the `require-resolve-not-external`
+        /// warning. The dev server is excluded: its `hmr.requireResolve`
+        /// runtime is a pass-through that expects the bundler to have written
+        /// the resolved module id into the record, and build machine == run
+        /// machine so the absolute path is the correct answer there.
+        fn should_skip_require_resolve_enqueue(
+            &mut self,
+            kind: ImportKind,
+            source: &bun_ast::Source,
+            range: bun_ast::Range,
+            specifier: &[u8],
+            handles_import_errors: bool,
+            bake_graph: bake::Graph,
+        ) -> bool {
+            if kind != ImportKind::RequireResolve || self.dev_server.is_some() {
+                return false;
+            }
+            if !handles_import_errors {
+                self.log_for_resolution_failures(source.path.text, bake_graph)
+                    .add_range_warning_fmt(
+                        Some(source),
+                        range,
+                        format_args!(
+                            "\"{}\" should be marked as external for use with \"require.resolve\"",
+                            bstr::BStr::new(specifier),
+                        ),
+                    );
+            }
+            true
+        }
+
         /// This runs on the Bundle Thread.
         pub fn run_resolver(
             &mut self,
@@ -2130,6 +2167,30 @@ pub mod bv2_impl {
                     &import_record.source_file,
                     &import_record.specifier,
                 ) {
+                    {
+                        let handles_import_errors = self.graph.ast.items_import_records()
+                            [import_record.importer_source_index as usize]
+                            .as_slice()[import_record.import_record_index as usize]
+                            .flags
+                            .contains(bun_ast::ImportRecordFlags::HANDLES_IMPORT_ERRORS);
+                        // SAFETY: `input_files` is not mutated by the helper.
+                        let source: &bun_ast::Source = unsafe {
+                            bun_ptr::detach_lifetime_ref(
+                                &self.graph.input_files.items_source()
+                                    [import_record.importer_source_index as usize],
+                            )
+                        };
+                        if self.should_skip_require_resolve_enqueue(
+                            import_record.kind,
+                            source,
+                            import_record.range,
+                            &import_record.specifier,
+                            handles_import_errors,
+                            target.bake_graph(),
+                        ) {
+                            return;
+                        }
+                    }
                     let file_map_result = _file_map_result;
                     let mut path_primary = file_map_result.path_pair.primary;
                     // reshaped for borrowck — `get_or_put` borrows `*self` mutably via
@@ -2359,6 +2420,32 @@ pub mod bv2_impl {
 
             if resolve_result.flags.is_external() {
                 return;
+            }
+
+            {
+                let handles_import_errors = self.graph.ast.items_import_records()
+                    [import_record.importer_source_index as usize]
+                    .as_slice()[import_record.import_record_index as usize]
+                    .flags
+                    .contains(bun_ast::ImportRecordFlags::HANDLES_IMPORT_ERRORS);
+                // SAFETY: `input_files` is not mutated by the helper; the
+                // detach avoids a `&mut self` vs `&self.graph` overlap.
+                let source: &bun_ast::Source = unsafe {
+                    bun_ptr::detach_lifetime_ref(
+                        &self.graph.input_files.items_source()
+                            [import_record.importer_source_index as usize],
+                    )
+                };
+                if self.should_skip_require_resolve_enqueue(
+                    import_record.kind,
+                    source,
+                    import_record.range,
+                    &import_record.specifier,
+                    handles_import_errors,
+                    target.bake_graph(),
+                ) {
+                    return;
+                }
             }
 
             if path.pretty.as_ptr() == path.text.as_ptr() {
@@ -4554,6 +4641,37 @@ pub mod bv2_impl {
                 }
                 jsc_api::JSBundler::ResolveValue::Success(result) => {
                     let mut out_source_index: Option<Index> = None;
+                    if !result.external
+                        && resolve.import_record.kind != ImportKind::EntryPointBuild
+                    {
+                        let handles_import_errors = this.graph.ast.items_import_records()
+                            [resolve.import_record.importer_source_index as usize]
+                            .as_slice()
+                            .get(resolve.import_record.import_record_index as usize)
+                            .is_some_and(|r| {
+                                r.flags
+                                    .contains(bun_ast::ImportRecordFlags::HANDLES_IMPORT_ERRORS)
+                            });
+                        // SAFETY: `input_files` is not mutated by the helper.
+                        let source: &bun_ast::Source = unsafe {
+                            bun_ptr::detach_lifetime_ref(
+                                &this.graph.input_files.items_source()
+                                    [resolve.import_record.importer_source_index as usize],
+                            )
+                        };
+                        if this.should_skip_require_resolve_enqueue(
+                            resolve.import_record.kind,
+                            source,
+                            resolve.import_record.range,
+                            &resolve.import_record.specifier,
+                            handles_import_errors,
+                            resolve.import_record.original_target.bake_graph(),
+                        ) {
+                            drop(result.namespace);
+                            drop(result.path);
+                            return;
+                        }
+                    }
                     if !result.external {
                         // SAFETY: `result.{path,namespace}` are `Box<[u8]>` whose heap
                         // allocations are moved into `this.free_list` below (in the
@@ -5993,21 +6111,16 @@ pub mod bv2_impl {
                     if let Some(_file_map_result) =
                         file_map.resolve(self.arena(), source.path.text, import_record.path.text)
                     {
-                        if import_record.kind == ImportKind::RequireResolve {
-                            if !import_record
+                        if self.should_skip_require_resolve_enqueue(
+                            import_record.kind,
+                            source,
+                            import_record.range,
+                            import_record.path.text,
+                            import_record
                                 .flags
-                                .contains(bun_ast::ImportRecordFlags::HANDLES_IMPORT_ERRORS)
-                            {
-                                self.log_for_resolution_failures(source.path.text, bake_graph)
-                                    .add_range_warning_fmt(
-                                        Some(source),
-                                        import_record.range,
-                                        format_args!(
-                                            "\"{}\" should be marked as external for use with \"require.resolve\"",
-                                            bstr::BStr::new(import_record.path.text),
-                                        ),
-                                    );
-                            }
+                                .contains(bun_ast::ImportRecordFlags::HANDLES_IMPORT_ERRORS),
+                            bake_graph,
+                        ) {
                             continue;
                         }
                         let mut file_map_result = _file_map_result;
@@ -6284,28 +6397,16 @@ pub mod bv2_impl {
                     continue;
                 }
 
-                // require.resolve() returns a filesystem path string at runtime,
-                // so bundling its target is never useful: the caller needs a real
-                // path to read/spawn/stat, not the module's exports. esbuild
-                // resolves the specifier (so missing-module errors above still
-                // fire) but then leaves the original text in place and never adds
-                // the file to the graph through this record. If the same file is
-                // also reached via `require()`/`import`, that record bundles it.
-                if import_record.kind == ImportKind::RequireResolve {
-                    if !import_record
+                if self.should_skip_require_resolve_enqueue(
+                    import_record.kind,
+                    source,
+                    import_record.range,
+                    import_record.path.text,
+                    import_record
                         .flags
-                        .contains(bun_ast::ImportRecordFlags::HANDLES_IMPORT_ERRORS)
-                    {
-                        self.log_for_resolution_failures(source.path.text, bake_graph)
-                            .add_range_warning_fmt(
-                                Some(source),
-                                import_record.range,
-                                format_args!(
-                                    "\"{}\" should be marked as external for use with \"require.resolve\"",
-                                    bstr::BStr::new(import_record.path.text),
-                                ),
-                            );
-                    }
+                        .contains(bun_ast::ImportRecordFlags::HANDLES_IMPORT_ERRORS),
+                    bake_graph,
+                ) {
                     continue;
                 }
 

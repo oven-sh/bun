@@ -4607,19 +4607,9 @@ function alpnWantsHttp(alpn) {
 }
 
 /**
- * lsquic bakes these into the per-engine settings at `build_engine` time
- * (src/runtime/node/quic/endpoint.rs), so a shared client endpoint is only
- * reusable when a later connect()'s values match the first. keepAlive and
- * preferredAddressPolicy are applied per conn there and so stay out of this
- * key. maxIdleTimeout is re-applied via `lsquic_engine_set_idle_timeout_ms`
- * but that mutates the shared settings a conn reads through a pointer at
- * handshake_ok, so it belongs in the key too.
- * @param {boolean} wantHttp
- * @param {*} handshakeTimeout
- * @param {*} cc
- * @param {object} tp transportParams
- * @param {object} app normalized application options
- * @returns {string}
+ * Every option `build_engine` (src/runtime/node/quic/endpoint.rs) bakes into
+ * lsquic's per-engine settings. Only keepAlive and preferredAddressPolicy are
+ * applied per conn there and so stay out of this key.
  */
 function clientEngineKey(wantHttp, handshakeTimeout, cc, tp, app) {
   return (

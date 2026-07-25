@@ -4269,12 +4269,8 @@ unsafe fn transpile_file(
         // SAFETY: per fn contract.
         && unsafe { &*jsc_vm }.has_mutated_built_in_extensions > 0
     {
-        // Node.js routes every CJS-loader load (the entrypoint, nested
-        // require(), and a CJS module reached from ESM import) through
-        // `Module._extensions[ext]`. `is_commonjs_require` alone covers only
-        // nested require(); gating on `module_type != Esm` adds the entrypoint
-        // and ESM-imports-CJS paths while still skipping `.mjs`/`.mts` and
-        // `.js` under `"type": "module"`.
+        // `module_type != Esm` brings the CJS entrypoint and CJS-via-ESM-import
+        // under `Module._extensions`, matching Node.
         use bun_jsc::node_module_module::{CustomLoader, find_longest_registered_extension};
         if let Some(entry) =
             // SAFETY: per fn contract.

@@ -671,6 +671,19 @@ extern "C" BunString URL__pathFromFileURL(BunString* input)
     return Bun::toStringRef(url.fileSystemPath());
 }
 
+extern "C" BunString URL__pathAndQueryFromFileURL(BunString* input)
+{
+    auto&& str = input->toWTFString();
+    auto url = WTF::URL(str);
+    if (!url.isValid() || url.isEmpty())
+        return { BunStringTag::Dead };
+
+    auto query = url.queryWithLeadingQuestionMark();
+    if (query.isEmpty())
+        return Bun::toStringRef(url.fileSystemPath());
+    return Bun::toStringRef(makeString(url.fileSystemPath(), query));
+}
+
 extern "C" BunString URL__getHrefJoin(BunString* baseStr, BunString* relativeStr)
 {
     auto base = baseStr->toWTFString();

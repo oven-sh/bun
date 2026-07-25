@@ -199,7 +199,18 @@ function socketHandshake(
   const tlsSocket = this; // bound
   const ctx = tlsSocket._ctx;
 
-  if (!success) {
+  // `success` matches `socket.authorized`: it is false for a client-certificate
+  // verification failure as well as for a protocol failure. The session is only
+  // torn down here when the TLS session itself was never established; a
+  // verification-class result (an X509 code) reaches the requestCert /
+  // rejectUnauthorized handling below, mirroring net.ts ServerHandlers.
+  const isProtocolFailure =
+    !success &&
+    (verifyError == null ||
+      verifyError.code === "ECONNRESET" ||
+      verifyError.code === "EPROTO" ||
+      /^ERR_(SSL|OSSL)_/.test(verifyError.code));
+  if (isProtocolFailure) {
     const err = verifyError || new Error("TLS handshake failed");
     ctx.server.emit("tlsClientError", err, tlsSocket);
     tlsSocket.destroy(err);

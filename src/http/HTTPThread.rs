@@ -9,7 +9,9 @@ use bun_core::{self, Output};
 use bun_threading::{Mutex, UnboundedQueue};
 use bun_uws as uws;
 
-use crate::async_http::{ACTIVE_REQUESTS_COUNT, MAX_SIMULTANEOUS_REQUESTS};
+use crate::async_http::{
+    ACTIVE_REQUESTS_COUNT, MAX_SIMULTANEOUS_REQUESTS, MAX_TOTAL_SIMULTANEOUS_REQUESTS,
+};
 use crate::http_context::ActiveSocketExt;
 use crate::proxy_tunnel::ProxyTunnel;
 use crate::ssl_config::{self, SSLConfig};
@@ -107,11 +109,23 @@ pub struct HttpThread {
     lazy_https_init: Option<InitOpts>,
 
     pub queued_tasks: Queue,
-    /// Tasks popped from `queued_tasks` that couldn't start because
-    /// `active_requests_count >= max_simultaneous_requests`. Kept in FIFO order
-    /// and processed before `queued_tasks` on the next `drainEvents`. Owned by
-    /// the HTTP thread; never accessed concurrently.
+    /// Tasks popped from `queued_tasks` that couldn't start because their
+    /// origin was at `MAX_SIMULTANEOUS_REQUESTS` or the process was at
+    /// `MAX_TOTAL_SIMULTANEOUS_REQUESTS`. Kept in FIFO order and processed
+    /// before `queued_tasks` on the next `drainEvents`. Owned by the HTTP
+    /// thread; never accessed concurrently.
     pub deferred_tasks: Vec<NonNull<AsyncHttp<'static>>>,
+    /// In-flight request count per destination origin, keyed by
+    /// `AsyncHttp.origin_hash`. Incremented in [`start_queued_task`], released
+    /// by `AsyncHttp::on_async_http_callback_raw`; entries are removed when
+    /// they reach zero. Owned by the HTTP thread.
+    pub active_per_origin: ArrayHashMap<u64, u32>,
+    /// Set whenever a request finishes (a per-origin slot was freed), cleared
+    /// by `drainEvents` before it rescans `deferred_tasks`. Slots are only
+    /// ever freed by a completion, so while this is false no deferred task can
+    /// have become startable and the (potentially long) rescan is skipped.
+    /// Owned by the HTTP thread.
+    pub deferred_may_start: bool,
     /// Set by `drainQueuedShutdowns` when a shutdown's `async_http_id` wasn't in
     /// `socket_async_http_abort_tracker` — the request is either not yet started
     /// (still in `queued_tasks`/`deferred_tasks`) or already done. `drainEvents`
@@ -174,6 +188,8 @@ impl HttpThread {
             lazy_https_init: None,
             queued_tasks: Queue::new(),
             deferred_tasks: Vec::new(),
+            active_per_origin: ArrayHashMap::new(),
+            deferred_may_start: false,
             has_pending_queued_abort: false,
             queued_shutdowns: Vec::new(),
             queued_writes: Vec::new(),
@@ -869,30 +885,37 @@ impl HttpThread {
 
         let mut count: usize = 0;
         let mut active = ACTIVE_REQUESTS_COUNT.load(Ordering::Relaxed);
-        let max = MAX_SIMULTANEOUS_REQUESTS.load(Ordering::Relaxed);
+        let max_per_origin = MAX_SIMULTANEOUS_REQUESTS.load(Ordering::Relaxed);
+        let max_total = MAX_TOTAL_SIMULTANEOUS_REQUESTS.load(Ordering::Relaxed);
 
-        // Fast path: at capacity and no queued/deferred task could possibly be
-        // aborted. A queued task can only become aborted via `scheduleShutdown`,
-        // which we just drained — `drainQueuedShutdowns` sets
-        // `has_pending_queued_abort` for any id it couldn't find in the socket
-        // tracker. If that's clear, there's nothing to fail-fast and nothing can
-        // start, so don't walk the lists.
-        if active >= max && !self.has_pending_queued_abort {
+        // Fast path: at the process-wide ceiling nothing can start regardless
+        // of origin, and no queued/deferred task could possibly be aborted. A
+        // queued task can only become aborted via `scheduleShutdown`, which we
+        // just drained — `drainQueuedShutdowns` sets `has_pending_queued_abort`
+        // for any id it couldn't find in the socket tracker. If that's clear,
+        // there's nothing to fail-fast and nothing can start, so don't walk
+        // the lists.
+        if active >= max_total && !self.has_pending_queued_abort {
             return;
         }
 
         // Deferred tasks are ones we previously popped from the MPSC queue but
-        // couldn't start because we were at max. They stay in FIFO order ahead of
-        // anything still in `queued_tasks`.
+        // couldn't start because their origin (or the whole process) was at its
+        // cap. They stay in FIFO order ahead of anything still in
+        // `queued_tasks`, but a saturated origin never holds back a later task
+        // to a different origin.
         //
-        // Already-aborted tasks are started regardless of `max`: `start_()` will
-        // observe the `aborted` signal and fail immediately with
-        // `error.AbortedBeforeConnecting`, and `onAsyncHTTPCallback` decrements
-        // `active_requests_count` in the same turn — so they never hold a slot.
-        // Without this, an aborted fetch that was queued behind `max` would sit
-        // there until some unrelated request completed; if every active request
-        // is itself hung, the aborted one never settles and its promise hangs
-        // forever even though the user called `controller.abort()`.
+        // Rescanning them is only useful once a slot has been freed, which is
+        // exactly what `deferred_may_start` records; without that gate every
+        // socket event would walk the whole deferred list. `start_()` for
+        // already-aborted tasks runs regardless of either cap: it observes the
+        // `aborted` signal and fails immediately with
+        // `error.AbortedBeforeConnecting`, and `onAsyncHTTPCallback` releases
+        // the slots in the same turn — so they never hold one. Without this, an
+        // aborted fetch that was queued behind the cap would sit there until
+        // some unrelated request completed; if every active request is itself
+        // hung, the aborted one never settles and its promise hangs forever
+        // even though the user called `controller.abort()`.
         //
         // `startQueuedTask` can re-enter `onAsyncHTTPCallback` synchronously (for
         // aborted tasks, or when connect() fails immediately), which reads both
@@ -900,20 +923,28 @@ impl HttpThread {
         // to wake the loop. To keep those reads accurate we swap the deferred list
         // out before iterating so the field reflects only tasks still waiting, and
         // reload `active` from the atomic after every start rather than tracking
-        // it locally.
+        // it locally. That re-entry also sets `deferred_may_start` back to true,
+        // so clearing both flags up-front can't lose a wakeup.
+        let rescan_deferred = self.deferred_may_start || self.has_pending_queued_abort;
+        self.deferred_may_start = false;
         self.has_pending_queued_abort = false;
-        {
+        if rescan_deferred {
             let pending = core::mem::take(&mut self.deferred_tasks);
             for http in pending {
                 // AsyncHttp is heap-owned by the caller and alive until its
                 // completion callback; while parked in `deferred_tasks` no other
                 // borrow exists, so a transient `ParentRef` shared deref is sound.
-                let aborted = bun_ptr::ParentRef::from(http)
-                    .client
-                    .signals
-                    .get(crate::signals::Field::Aborted);
-                if aborted || active < max {
-                    start_queued_task(http.as_ptr(), &mut self.in_flight);
+                let (aborted, origin_hash) = {
+                    let task = bun_ptr::ParentRef::from(http);
+                    (
+                        task.client.signals.get(crate::signals::Field::Aborted),
+                        task.origin_hash,
+                    )
+                };
+                if aborted
+                    || (active < max_total && !self.origin_at_cap(origin_hash, max_per_origin))
+                {
+                    self.start_queued_task(http);
                     if cfg!(debug_assertions) {
                         count += 1;
                     }
@@ -931,18 +962,22 @@ impl HttpThread {
             // AsyncHttp is heap-owned by the caller and alive until its
             // completion callback; the MPSC pop hands sole access to this
             // thread, so a transient `ParentRef` shared deref is sound.
-            let aborted = bun_ptr::ParentRef::from(http)
-                .client
-                .signals
-                .get(crate::signals::Field::Aborted);
-            if !aborted && active >= max {
+            let (aborted, origin_hash) = {
+                let task = bun_ptr::ParentRef::from(http);
+                (
+                    task.client.signals.get(crate::signals::Field::Aborted),
+                    task.origin_hash,
+                )
+            };
+            if !aborted && (active >= max_total || self.origin_at_cap(origin_hash, max_per_origin))
+            {
                 // Can't start this one yet. Defer it (preserves FIFO relative to
-                // later pops) and keep draining — there may be aborted tasks
-                // behind it that we can fail-fast right now.
+                // later pops) and keep draining — there may be aborted tasks, or
+                // tasks for origins that still have room, behind it.
                 self.deferred_tasks.push(http);
                 continue;
             }
-            start_queued_task(http.as_ptr(), &mut self.in_flight);
+            self.start_queued_task(http);
             if cfg!(debug_assertions) {
                 count += 1;
             }
@@ -952,6 +987,69 @@ impl HttpThread {
         if cfg!(debug_assertions) && count > 0 {
             bun_core::scoped_log!(HTTPThread_log, "Processed {} tasks\n", count);
         }
+    }
+
+    /// Whether `origin_hash` already has `max_per_origin` requests in flight.
+    #[inline]
+    fn origin_at_cap(&self, origin_hash: u64, max_per_origin: usize) -> bool {
+        self.active_per_origin
+            .get(&origin_hash)
+            .is_some_and(|&n| n as usize >= max_per_origin)
+    }
+
+    /// Release the per-origin slot reserved in [`Self::start_queued_task`].
+    /// Called by `AsyncHttp::on_async_http_callback_raw` once per finished
+    /// request; entries are dropped as soon as an origin has none in flight.
+    pub fn release_origin_slot(&mut self, origin_hash: u64) {
+        let Some(n) = self.active_per_origin.get_mut(&origin_hash) else {
+            debug_assert!(false, "release_origin_slot: origin has no reserved slots");
+            return;
+        };
+        *n -= 1;
+        if *n == 0 {
+            self.active_per_origin.swap_remove(&origin_hash);
+        }
+    }
+
+    /// Start a task popped from `queued_tasks`/`deferred_tasks`: reserve its
+    /// per-origin slot, clone it into an HTTP-thread-owned box, and kick off
+    /// the request. The slot and the `in_flight` entry are both released by
+    /// `AsyncHttp::on_async_http_callback_raw` when the request finishes.
+    fn start_queued_task(&mut self, http: NonNull<AsyncHttp<'static>>) {
+        let http = http.as_ptr();
+        // SAFETY: http points to a live AsyncHttp queued by the caller thread.
+        let cloned = crate::ThreadlocalAsyncHttp::new(unsafe { core::ptr::read(http) });
+        // Note: AsyncHttp is byte-copied here
+        // since the original stays valid (real owner is `http`, copy is the
+        // HTTP-thread working set).
+        //
+        // `in_flight` keeps the allocation's own pointer, not a `&*cloned`
+        // reborrow of it: the writes below go through `cloned`, and a shared
+        // reborrow would be frozen by the first of them.
+        let cloned_ptr = bun_core::heap::into_raw(cloned);
+        let cloned_nn = NonNull::new(cloned_ptr).expect("freshly leaked Box is non-null");
+        self.in_flight
+            .push(cloned_nn.cast::<crate::ThreadlocalAsyncHttp<'static>>());
+        // SAFETY: freshly leaked; this thread is its sole owner until the request
+        // completes and `in_flight` gives the pointer back.
+        let cloned = unsafe { &mut *cloned_ptr };
+        cloned.async_http.real = NonNull::new(http);
+        // Clear stale queue pointers - the clone inherited http.next and http.task.node.next
+        // which may point to other AsyncHTTP structs that could be freed before the callback
+        // copies data back to the original. If not cleared, retrying a failed request would
+        // re-queue with stale pointers causing use-after-free.
+        cloned.async_http.next.clear();
+        cloned.async_http.task.node.next = core::ptr::null_mut();
+        // Reserve the per-origin slot before `on_start`: an aborted or
+        // instantly-failing request completes synchronously inside it and
+        // releases the slot it expects to already hold.
+        let origin_hash = cloned.async_http.origin_hash;
+        if let Some(n) = self.active_per_origin.get_mut(&origin_hash) {
+            *n += 1;
+        } else {
+            bun_core::handle_oom(self.active_per_origin.put(origin_hash, 1));
+        }
+        cloned.async_http.on_start();
     }
 
     pub fn schedule_receive_resume(&mut self, async_http_id: u32) {
@@ -1142,35 +1240,6 @@ fn evict_oldest_ssl_context() {
     }
     let (_k, entry) = map.swap_remove_at(oldest_idx);
     entry.release();
-}
-
-fn start_queued_task(
-    http: *mut AsyncHttp,
-    in_flight: &mut Vec<NonNull<crate::ThreadlocalAsyncHttp<'static>>>,
-) {
-    // SAFETY: http points to a live AsyncHttp queued by the caller thread.
-    let cloned = crate::ThreadlocalAsyncHttp::new(unsafe { core::ptr::read(http) });
-    // Note: AsyncHttp is byte-copied here
-    // since the original stays valid (real owner is `http`, copy is the
-    // HTTP-thread working set).
-    //
-    // `in_flight` keeps the allocation's own pointer, not a `&*cloned`
-    // reborrow of it: the writes below go through `cloned`, and a shared
-    // reborrow would be frozen by the first of them.
-    let cloned_ptr = bun_core::heap::into_raw(cloned);
-    let cloned_nn = NonNull::new(cloned_ptr).expect("freshly leaked Box is non-null");
-    in_flight.push(cloned_nn.cast::<crate::ThreadlocalAsyncHttp<'static>>());
-    // SAFETY: freshly leaked; this thread is its sole owner until the request
-    // completes and `in_flight` gives the pointer back.
-    let cloned = unsafe { &mut *cloned_ptr };
-    cloned.async_http.real = NonNull::new(http);
-    // Clear stale queue pointers - the clone inherited http.next and http.task.node.next
-    // which may point to other AsyncHTTP structs that could be freed before the callback
-    // copies data back to the original. If not cleared, retrying a failed request would
-    // re-queue with stale pointers causing use-after-free.
-    cloned.async_http.next.clear();
-    cloned.async_http.task.node.next = core::ptr::null_mut();
-    cloned.async_http.on_start();
 }
 
 /// Borrow the HTTP-thread abort tracker. PORTING.md §Global mutable state:

@@ -1,6 +1,6 @@
 import { spawn, spawnSync } from "bun";
 import { beforeAll, describe, expect, it } from "bun:test";
-import { readdirSync } from "fs";
+import { copyFileSync, mkdirSync, readdirSync, readFileSync } from "fs";
 import {
   bunEnv,
   bunExe,
@@ -163,6 +163,80 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
         }
       });
     });
+  });
+
+  // https://github.com/oven-sh/bun/issues/10964
+  describe('require("bindings") with --compile', () => {
+    it.each(["string", "object"])(
+      "embeds the addon when called with a %s argument",
+      async argKind => {
+        const bindingsCall =
+          argKind === "string"
+            ? `require("bindings")("napitests")`
+            : `require("bindings")({ bindings: "napitests.node" })`;
+        const dir = tempDirWithFiles("napi-bindings-compile-" + argKind, {
+          "package.json": JSON.stringify({ name: "app" }),
+          "entry.js": `
+            const addon = require("my-native-addon");
+            console.log(addon(function (str) { return str + "!"; }));
+          `,
+          "node_modules/bindings/package.json": JSON.stringify({
+            name: "bindings",
+            version: "1.5.0",
+            main: "./bindings.js",
+          }),
+          "node_modules/bindings/bindings.js": readFileSync(
+            join(__dirname, "bindings-fixture/bindings.js"),
+            "utf8",
+          ),
+          "node_modules/file-uri-to-path/package.json": JSON.stringify({
+            name: "file-uri-to-path",
+            version: "1.0.0",
+            main: "index.js",
+          }),
+          "node_modules/file-uri-to-path/index.js": readFileSync(
+            join(__dirname, "bindings-fixture/file-uri-to-path.js"),
+            "utf8",
+          ),
+          "node_modules/my-native-addon/package.json": JSON.stringify({
+            name: "my-native-addon",
+            version: "1.0.0",
+            main: "lib/index.js",
+          }),
+          "node_modules/my-native-addon/lib/index.js": `module.exports = ${bindingsCall};`,
+        });
+
+        mkdirSync(join(dir, "node_modules/my-native-addon/build/Debug"), { recursive: true });
+        copyFileSync(
+          join(__dirname, "napi-app/build/Debug/napitests.node"),
+          join(dir, "node_modules/my-native-addon/build/Debug/napitests.node"),
+        );
+
+        const exe = join(dir, "app" + (process.platform === "win32" ? ".exe" : ""));
+        const build = spawnSync({
+          cmd: [bunExe(), "build", "--target=bun", "--compile", "--outfile", exe, join(dir, "entry.js")],
+          cwd: dir,
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        expect(build.stderr.toString()).not.toContain("error:");
+        expect(build.success).toBeTrue();
+
+        const runDir = tempDirWithFiles("napi-bindings-run", {});
+        const result = spawnSync({
+          cmd: [exe],
+          env: bunEnv,
+          cwd: runDir,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        expect(result.stderr.toString()).not.toContain("Could not find module root");
+        expect(result.stdout.toString().trim()).toBe("hello world!");
+        expect(result.success).toBeTrue();
+      },
+      60 * 1000,
+    );
   });
 
   describe("issue_7685", () => {

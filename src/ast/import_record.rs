@@ -125,6 +125,10 @@ pub enum Tag {
     BakeResolveToSsrGraph,
 
     Tailwind,
+
+    /// The `require("bindings")(name)` pattern. The record's path holds the
+    /// binding name; `resolve_import_records` rewrites it to the `.node` file.
+    NapiBindings,
 }
 
 impl Tag {

@@ -2024,6 +2024,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
+        // Rewrite `require("bindings")("name")` to a direct `.node` import so
+        // the addon is embedded in the bundle. The inner `require("bindings")`
+        // has already been visited and is now `ERequireString`.
+        if matches!(e_.target.data, Data::ERequireString(..)) {
+            if let Some(result) = p.maybe_rewrite_bindings_require_call(&*e_, expr.loc) {
+                *e = result;
+                return;
+            }
+        }
+
         if matches!(e_.target.data, Data::ERequireCallTarget) {
             e_.can_be_unwrapped_if_unused = E::CallUnwrap::Never;
 

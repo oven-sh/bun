@@ -1350,6 +1350,86 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
+    /// Rewrite `require("bindings")(name)` so the bundler can embed the
+    /// native `.node` addon instead of bundling the `bindings` package, which
+    /// cannot locate the module root when everything is flattened into one
+    /// file (https://github.com/oven-sh/bun/issues/10964).
+    pub fn maybe_rewrite_bindings_require_call(
+        &mut self,
+        call: &js_ast::E::Call,
+        loc: js_ast::Loc,
+    ) -> Option<Expr> {
+        if !self.options.bundle {
+            return None;
+        }
+        let js_ast::ExprData::ERequireString(req) = call.target.data else {
+            return None;
+        };
+        let index = req.import_record_index;
+        {
+            let record = &self.import_records.items()[index as usize];
+            if record.path.text != b"bindings" {
+                return None;
+            }
+        }
+        if call.args.len_u32() != 1 {
+            return None;
+        }
+        let arg = call.args.slice()[0];
+        let name: &'a [u8] = match arg.data {
+            js_ast::ExprData::EString(mut s) => {
+                s.resolve_rope_if_needed(self.arena);
+                s.string(self.arena).expect("unreachable")
+            }
+            js_ast::ExprData::EObject(obj) => {
+                // Passing `module_root` or `try` opts into the resolver and
+                // skips the filename lookup; leave those calls alone.
+                if obj.has_property(b"module_root") || obj.has_property(b"try") {
+                    return None;
+                }
+                let value = E::Object::get(&obj, b"bindings")?;
+                let js_ast::ExprData::EString(mut s) = value.data else {
+                    return None;
+                };
+                s.resolve_rope_if_needed(self.arena);
+                s.string(self.arena).expect("unreachable")
+            }
+            _ => return None,
+        };
+        if name.is_empty() {
+            return None;
+        }
+
+        // Ensure the name ends in `.node` (the `bindings` package does the same).
+        let name: &'a [u8] = if strings::has_suffix_comptime(name, b".node") {
+            name
+        } else {
+            let mut buf = bun_alloc::ArenaVec::<u8>::with_capacity_in(name.len() + 5, self.arena);
+            buf.extend_from_slice(name);
+            buf.extend_from_slice(b".node");
+            buf.into_bump_slice()
+        };
+
+        // Reuse the existing import record: overwrite the path so no stale
+        // dependency on the `bindings` package remains in the part graph.
+        {
+            let record = &mut self.import_records.items_mut()[index as usize];
+            // SAFETY: `name` is arena-owned and outlives the record (see
+            // `add_import_record_by_range_and_path`).
+            record.path = unsafe { fs::Path::init(name).into_static() };
+            record.range = self.source.range_of_string(arg.loc);
+            record.tag = bun_ast::ImportRecordTag::NapiBindings;
+        }
+
+        Some(self.new_expr(
+            E::RequireString {
+                import_record_index: index,
+                ..Default::default()
+            },
+            loc,
+        ))
+    }
+
     #[inline]
     pub fn should_unwrap_common_js_to_esm(&self) -> bool {
         self.options.features.unwrap_commonjs_to_esm

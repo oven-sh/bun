@@ -5790,6 +5790,77 @@ pub mod bv2_impl {
         pub last_error: Option<Error>,
     }
 
+    /// Resolve a `require("bindings")(name)` call by searching the same
+    /// directory layout the `bindings` npm package would search at runtime.
+    /// On success the absolute path is written into `out` and its length is
+    /// returned.
+    fn resolve_napi_bindings_path(
+        source_dir: &[u8],
+        name: &[u8],
+        out: &mut bun_paths::PathBuffer,
+    ) -> Option<usize> {
+        use bun_paths::resolve_path::{join_abs_string_buf, platform};
+
+        // Walk up from the importer to the nearest package root. The `bindings`
+        // package accepts either a `package.json` or a `node_modules` dir.
+        let mut root_buf = bun_paths::path_buffer_pool::get();
+        let mut probe = bun_paths::path_buffer_pool::get();
+        let mut dir_len = source_dir.len().min(root_buf.len());
+        root_buf[..dir_len].copy_from_slice(&source_dir[..dir_len]);
+        loop {
+            if dir_len == 0 {
+                return None;
+            }
+            let dir = &root_buf[..dir_len];
+            let pkg = join_abs_string_buf::<platform::Auto>(dir, &mut **probe, &[b"package.json"]);
+            if bun_sys::exists(pkg) {
+                break;
+            }
+            let nm = join_abs_string_buf::<platform::Auto>(dir, &mut **probe, &[b"node_modules"]);
+            if bun_sys::exists(nm) {
+                break;
+            }
+            match bun_paths::dirname(dir) {
+                Some(p) if p.len() < dir_len => dir_len = p.len(),
+                _ => return None,
+            }
+        }
+        let module_root = &root_buf[..dir_len];
+
+        const TRY_PATHS: &[&[&[u8]]] = &[
+            &[b"build"],
+            &[b"build", b"Debug"],
+            &[b"build", b"Release"],
+            &[b"out", b"Debug"],
+            &[b"Debug"],
+            &[b"out", b"Release"],
+            &[b"Release"],
+            &[b"build", b"default"],
+            &[b"addon-build", b"release", b"install-root"],
+            &[b"addon-build", b"debug", b"install-root"],
+            &[b"addon-build", b"default", b"install-root"],
+        ];
+
+        for prefix in TRY_PATHS {
+            let mut parts: [&[u8]; 5] = [b""; 5];
+            let mut n = 0usize;
+            for p in prefix.iter() {
+                parts[n] = p;
+                n += 1;
+            }
+            parts[n] = name;
+            n += 1;
+            let candidate =
+                join_abs_string_buf::<platform::Auto>(module_root, &mut **probe, &parts[..n]);
+            if bun_sys::exists(candidate) {
+                let len = candidate.len();
+                out[..len].copy_from_slice(candidate);
+                return Some(len);
+            }
+        }
+        None
+    }
+
     impl<'a> BundleV2<'a> {
         /// Resolve all unresolved import records for a module. Skips records that
         /// are already resolved (valid source_index), unused, or internal.
@@ -5944,6 +6015,42 @@ pub mod bv2_impl {
                     import_record
                         .flags
                         .insert(bun_ast::ImportRecordFlags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS);
+                }
+
+                if import_record.tag == bun_ast::ImportRecordTag::NapiBindings {
+                    let mut buf = bun_paths::path_buffer_pool::get();
+                    if let Some(len) =
+                        resolve_napi_bindings_path(source_dir, import_record.path.text, &mut buf)
+                    {
+                        // SAFETY: arena outlives the bundle pass (see `interned_slice`).
+                        let owned = unsafe {
+                            bun_ptr::detach_lifetime(self.arena().alloc_slice_copy(&buf[..len]))
+                        };
+                        import_record.path = bun_paths::fs::Path::init(owned);
+                        import_record.tag = bun_ast::ImportRecordTag::None;
+                        import_record.loader = Some(Loader::Napi);
+                    } else {
+                        import_record.path.is_disabled = true;
+                        import_record.tag = bun_ast::ImportRecordTag::None;
+                        if !import_record
+                            .flags
+                            .contains(bun_ast::ImportRecordFlags::HANDLES_IMPORT_ERRORS)
+                        {
+                            let log = self.log_for_resolution_failures(
+                                source.path.text,
+                                ctx.target.bake_graph(),
+                            );
+                            log.add_range_error_fmt(
+                                Some(source),
+                                import_record.range,
+                                format_args!(
+                                    "Could not locate the bindings file \"{}\". Make sure native addons are built before bundling.",
+                                    bstr::BStr::new(import_record.path.text),
+                                ),
+                            );
+                        }
+                        continue;
+                    }
                 }
 
                 if self.enqueue_on_resolve_plugin_if_needed(

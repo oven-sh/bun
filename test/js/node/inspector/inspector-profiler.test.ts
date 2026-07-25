@@ -657,7 +657,6 @@ console.log(JSON.stringify({ first: countFor(first), second: countFor(second) })
       expect(functionCounts).toContain(0);
     });
 
-    // https://github.com/oven-sh/bun/issues/3372
     // Sequential: the three concurrent subprocess tests above already saturate
     // the debug-ASAN process budget; a fourth pushes them past the default
     // timeout on constrained runners.

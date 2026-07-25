@@ -31,6 +31,11 @@ pub struct InternalState<'a> {
     pub body_out_str: Option<NonNull<MutableString>>,
     pub compressed_body: MutableString,
     pub content_length: Option<usize>,
+    /// The `timeout=N` parameter from the response's `Keep-Alive` header, in
+    /// seconds. `None` when the header is absent or carries no `timeout`
+    /// parameter. Consumed by the keep-alive pool on release so the pooled
+    /// socket is dropped before the server closes its side.
+    pub keepalive_timeout_seconds: Option<u32>,
     pub total_body_received: usize,
     // Self-borrow into `original_request_body.bytes`; `RawSlice` carries the
     // outlives-holder invariant (the backing `original_request_body` is a
@@ -127,6 +132,7 @@ impl Default for InternalState<'_> {
             body_out_str: None,
             compressed_body: MutableString::init_empty(),
             content_length: None,
+            keepalive_timeout_seconds: None,
             total_body_received: 0,
             request_body: bun_ptr::RawSlice::EMPTY,
             original_request_body: HTTPRequestBody::Bytes(b""),

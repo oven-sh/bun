@@ -181,6 +181,12 @@ pub struct PooledSocket<const SSL: bool> {
     /// HTTP/2 connection state (HPACK tables, server SETTINGS) when
     /// this socket negotiated "h2". Owned by the pool while parked.
     pub h2_session: Option<NonNull<h2::ClientSession>>,
+    /// HTTP-thread monotonic timestamp (ns since `http_thread().timer`) after
+    /// which this parked socket must not be handed out. Derived from the
+    /// server's `Keep-Alive: timeout=N` hint minus
+    /// [`crate::KEEPALIVE_TIMEOUT_BUFFER_SECONDS`]. `0` means no server hint
+    /// was received and only the fixed 5-minute idle timer applies.
+    pub idle_deadline_ns: u64,
 }
 
 /// Upgrade an `Option<NonNull<h2::ClientSession>>` held by a pool / found-slot
@@ -577,6 +583,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
         target_port: u16,
         proxy_auth_hash: u64,
         h2_session: Option<NonNull<h2::ClientSession>>,
+        keepalive_hint_seconds: Option<u32>,
     ) {
         // log("releaseSocket(0x{f})", .{bun.fmt.hexIntUpper(@intFromPtr(socket.socket))});
 
@@ -586,10 +593,19 @@ impl<const SSL: bool> HTTPContext<SSL> {
         debug_assert!(!hostname.is_empty());
         debug_assert!(port > 0);
 
-        if hostname.len() <= MAX_KEEPALIVE_HOSTNAME
+        // Server's `Keep-Alive: timeout=N` → drop the connection before the
+        // server does. Subtract a 1 s safety margin (Node's
+        // `agentKeepAliveTimeoutBuffer` default); if that leaves 0, the
+        // server's idle window is too short to safely reuse at all, so close
+        // instead of pooling. Matches undici / Node's http.Agent.
+        let idle_seconds =
+            keepalive_hint_seconds.map(|n| n.saturating_sub(crate::KEEPALIVE_TIMEOUT_BUFFER_SECONDS));
+        let reusable = hostname.len() <= MAX_KEEPALIVE_HOSTNAME
+            && idle_seconds != Some(0)
             && !(socket.is_closed() || socket.is_shutdown() || socket.get_error() != 0)
-            && socket.is_established()
-        {
+            && socket.is_established();
+
+        if reusable {
             // Captured before `claim()` so the `&mut self.pending_sockets`
             // borrow held by the `HiveSlot` doesn't conflict with a whole-`self`
             // borrow inside the initializer.
@@ -608,8 +624,27 @@ impl<const SSL: bool> HTTPContext<SSL> {
                     ActiveSocket::<SSL>::init(pending_addr.as_ptr().cast_const()),
                 );
                 socket.flush();
-                socket.timeout(0);
-                socket.set_timeout_minutes(5);
+                // With a server hint, arm the short-tick timer for
+                // `hint - 1 s` and also record an absolute deadline so
+                // `existing_socket` can refuse reuse even if the timer tick
+                // hasn't fired yet. Cap the hint at the fixed 5-minute ceiling.
+                let idle_deadline_ns = match idle_seconds {
+                    Some(secs) => {
+                        let secs = secs.min(5 * 60);
+                        socket.set_timeout(secs);
+                        http::http_thread()
+                            .timer
+                            .elapsed()
+                            .as_nanos()
+                            .saturating_add(u128::from(secs) * 1_000_000_000)
+                            as u64
+                    }
+                    None => {
+                        socket.timeout(0);
+                        socket.set_timeout_minutes(5);
+                        0
+                    }
+                };
 
                 let had_tunnel = tunnel.is_some();
                 let mut hostname_buf = [0u8; MAX_KEEPALIVE_HOSTNAME];
@@ -636,6 +671,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
                     target_port,
                     proxy_auth_hash,
                     h2_session,
+                    idle_deadline_ns,
                 });
 
                 bun_core::scoped_log!(
@@ -686,6 +722,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
             return None;
         }
 
+        let now_ns = http::http_thread().timer.elapsed().as_nanos() as u64;
         let mut iter = self.pending_sockets.used.iterator::<true, true>();
 
         while let Some(pending_socket_index) = iter.next() {
@@ -778,6 +815,14 @@ impl<const SSL: bool> HTTPContext<SSL> {
 
                 if http_socket.is_shutdown() || http_socket.get_error() != 0 {
                     Self::terminate_socket(http_socket);
+                    continue;
+                }
+
+                // A socket parked with a server `Keep-Alive: timeout=N` hint
+                // that has since elapsed is about to be (or already is) closed
+                // by the peer; dispatching onto it races the server's FIN.
+                if socket.idle_deadline_ns != 0 && now_ns >= socket.idle_deadline_ns {
+                    Self::close_socket(http_socket);
                     continue;
                 }
 

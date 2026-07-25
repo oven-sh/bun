@@ -991,6 +991,30 @@ fn hash_header_const(name: &[u8]) -> u64 {
     hash_header_name(name)
 }
 
+/// Safety margin subtracted from the server's `Keep-Alive: timeout=N` hint so
+/// the pool drops an idle connection before the server does. Matches Node's
+/// `http.Agent` `agentKeepAliveTimeoutBuffer` default.
+pub(crate) const KEEPALIVE_TIMEOUT_BUFFER_SECONDS: u32 = 1;
+
+/// Parse the `timeout` parameter from a `Keep-Alive` header value
+/// (`timeout=5, max=100`). Parameter name is case-insensitive; a leading
+/// `max=` (Apache's ordering) is accepted. Returns `None` when no `timeout=`
+/// parameter is present or its value is not a non-negative integer.
+pub(crate) fn parse_keepalive_timeout(value: &[u8]) -> Option<u32> {
+    for param in value.split(|&b| b == b',') {
+        let param = param.trim_ascii();
+        if param.len() > 8
+            && strings::eql_case_insensitive_ascii(&param[..8], b"timeout=", false)
+        {
+            let digits = param[8..].trim_ascii();
+            if let Ok(n) = bun_core::parse_unsigned::<u32>(digits, 10) {
+                return Some(n);
+            }
+        }
+    }
+    None
+}
+
 bun_core::comptime_string_map! {
     /// Request-body-header names
     /// (https://fetch.spec.whatwg.org/#request-body-header-name).
@@ -2618,6 +2642,7 @@ impl<'a> HTTPClient<'a> {
                 0,
                 0,
                 None,
+                self.state.keepalive_timeout_seconds,
             );
         } else {
             GenHttpContext::<IS_SSL>::close_socket(socket);
@@ -4200,6 +4225,7 @@ impl<'a> HTTPClient<'a> {
                         0
                     },
                     None,
+                    self.state.keepalive_timeout_seconds,
                 );
             } else {
                 if self.proxy_tunnel.is_some() {
@@ -4376,6 +4402,7 @@ impl<'a> HTTPClient<'a> {
             b"",
             0,
             0,
+            None,
             None,
         );
 
@@ -4889,6 +4916,16 @@ impl<'a> HTTPClient<'a> {
                         ) {
                             self.state.flags.allow_keepalive = true;
                         }
+                    }
+                }
+                h if h == hash_header_const(b"Keep-Alive") => {
+                    // RFC 9112 Appendix A.1.2: `timeout=N` advertises how long
+                    // the server will keep an idle connection open. Honoring it
+                    // lets the pool drop the socket before the server does,
+                    // avoiding the ECONNRESET race on a request dispatched at
+                    // the server's expiry. Matches undici / Node's http.Agent.
+                    if let Some(secs) = parse_keepalive_timeout(header.value()) {
+                        self.state.keepalive_timeout_seconds = Some(secs);
                     }
                 }
                 h if h == hash_header_const(b"Last-Modified") => {

@@ -3,7 +3,9 @@
 // bun.String. Both code paths are exercised:
 //   - absolute URL with a hostname (dupe branch)
 //   - relative path with no hostname (append-to-base-url branch)
-const isASAN = process.execPath.includes("bun-asan");
+// harness.ts sets BUN_TEST_IS_ASAN in bunEnv when the parent test process is
+// ASAN-instrumented (covers both CI's `bun-asan` and local `bun bd` debug builds).
+const isASAN = process.env.BUN_TEST_IS_ASAN === "1";
 using server = Bun.serve({
   port: 0,
   fetch() {

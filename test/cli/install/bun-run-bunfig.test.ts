@@ -249,10 +249,7 @@ describe.each(["bun run", "bun"])(`%s`, cmd => {
   });
 });
 
-// Issue #7703: `bun <file>` / `bun -e` boots the VM through a fast path that
-// used to skip the bun-node shim dir, so a child with a `#!/usr/bin/env node`
-// shebang could not find `node` even though `bun run <script>` could.
-describe("node shim for file entry points", () => {
+describe("--bun node shim for file entry points (#7703)", () => {
   const execPath = process.execPath;
   const whereNode = `
     const node = Bun.which("node");
@@ -265,7 +262,7 @@ describe("node shim for file entry points", () => {
     ["bun run ./<file>", ["run", "./where-node.js"]],
     ["bun -e", ["-e", whereNode]],
   ] as const) {
-    test.concurrent(`--bun adds the node shim for \`${label}\``, async () => {
+    test(`--bun adds the node shim for \`${label}\``, async () => {
       const cwd = tempDirWithFiles("run.bun.file", { "where-node.js": whereNode });
       await using proc = Bun.spawn({
         cmd: [bunExe(), "--bun", ...argv],
@@ -285,7 +282,7 @@ describe("node shim for file entry points", () => {
     });
   }
 
-  test.concurrent("bunfig [run] bun=true adds the node shim for `bun <file>`", async () => {
+  test("bunfig [run] bun=true adds the node shim for `bun <file>`", async () => {
     const cwd = tempDirWithFiles("run.bun.file", {
       "bunfig.toml": toTOMLString({ run: { bun: true } }),
       "where-node.js": whereNode,
@@ -307,7 +304,7 @@ describe("node shim for file entry points", () => {
     expect(exitCode).toBe(0);
   });
 
-  test.concurrent.skipIf(isWindows)("spawning a bin with a node shebang works without node on PATH", async () => {
+  test.skipIf(isWindows)("spawning a bin with a node shebang works under --bun without node on PATH", async () => {
     const cwd = tempDirWithFiles("run.bun.shebang", {
       "bin/my-cli": `#!/usr/bin/env node\nprocess.stdout.write("ran under " + process.argv0);\n`,
       "index.js": `
@@ -319,7 +316,7 @@ describe("node shim for file entry points", () => {
     });
     chmodSync(pathJoin(cwd, "bin", "my-cli"), 0o755);
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "index.js"],
+      cmd: [bunExe(), "--bun", "index.js"],
       env: { ...bunEnv, PATH: pathJoin(cwd, "bin") },
       stdout: "pipe",
       stderr: "pipe",

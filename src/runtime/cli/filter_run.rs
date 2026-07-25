@@ -933,6 +933,12 @@ pub(crate) fn run_scripts_with_filter(
     let state_ptr: bun_ptr::BackRef<State> =
         unsafe { bun_ptr::BackRef::from_raw(core::ptr::addr_of_mut!(state)) };
     let mut map: StringHashMap<Vec<*mut ProcessHandle>> = StringHashMap::default();
+    // Inherit stdin only when one package matched (its pre/main/post run
+    // sequentially); multiple packages run concurrently and would race on fd 0.
+    let single_package = scripts
+        .first()
+        .zip(scripts.last())
+        .is_some_and(|(a, b)| a.package_name == b.package_name);
     for script in scripts.iter() {
         handles_vec.push(ProcessHandle {
             state: state_ptr,
@@ -942,12 +948,7 @@ pub(crate) fn run_scripts_with_filter(
             buffer: Vec::new(),
             process: None,
             options: SpawnOptions {
-                // Only inherit stdin when a single script matched. With >1
-                // concurrent children sharing fd 0 reads would interleave and a
-                // stdin-reading script would block on the TTY where it
-                // previously saw immediate EOF. #10647's use case is a single
-                // --filter '@scope/pkg' match.
-                stdin: if scripts.len() == 1 {
+                stdin: if single_package {
                     spawn::Stdio::Inherit
                 } else {
                     spawn::Stdio::Ignore

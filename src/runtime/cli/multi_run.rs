@@ -1115,6 +1115,9 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
     };
 
     // Initialize handles
+    // Inherit stdin only when one script group was requested (its pre/main/post
+    // run sequentially); multiple groups run concurrently and would race on fd 0.
+    let single_group = group_infos.len() == 1;
     let mut handles: Vec<ProcessHandle> = Vec::with_capacity(configs.len());
     for (i, config) in configs.iter().enumerate() {
         // Find which group this belongs to, for color assignment
@@ -1139,10 +1142,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
             group_dependents: Vec::new(),
             next_dependents: Vec::new(),
             options: SpawnOptions {
-                // Inherit stdin only for a single script so reads don't race
-                // across concurrent children; matches plain `bun run` semantics
-                // for the one-script case.
-                stdin: if configs.len() == 1 {
+                stdin: if single_group {
                     spawn::Stdio::Inherit
                 } else {
                     spawn::Stdio::Ignore

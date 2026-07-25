@@ -671,6 +671,38 @@ describe("bun", () => {
       expect(exitCode).toBe(0);
     });
 
+    test("is inherited for a single package even with pre/post hooks", async () => {
+      const dir = tempDirWithFiles("filter-stdin-hooks", {
+        packages: {
+          pkga: {
+            "read.js": readJs,
+            "package.json": JSON.stringify({
+              name: "pkga",
+              scripts: {
+                prereadstdin: "echo pre",
+                readstdin: `${bunExe()} run read.js`,
+                postreadstdin: "echo post",
+              },
+            }),
+          },
+        },
+        "package.json": JSON.stringify({ name: "ws", workspaces: ["packages/*"] }),
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "run", "--filter", "pkga", "readstdin"],
+        cwd: dir,
+        env: bunEnv,
+        stdin: new Blob(["hello-from-parent\n"]),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout).toContain("STDIN=[hello-from-parent]");
+      expect(exitCode).toBe(0);
+    });
+
     test("is ignored (EOF) when multiple scripts match the filter", async () => {
       const dir = tempDirWithFiles("filter-stdin-many", {
         packages: {

@@ -1095,6 +1095,17 @@ impl<'a> Parser<'a> {
         // https://github.com/lodash/lodash/issues/5660
         let mut force_esm = false;
 
+        // node evaluates data: URL modules as ESM unconditionally
+        // (lib/internal/modules/esm/load.js), so CommonJS feature usage must
+        // not downgrade them to CJS — `module`/`exports` stay unbound and
+        // throw at runtime, as in node. The runtime loader is what forces
+        // `module_type` to Esm for data: URLs (jsc_hooks.rs).
+        if p.options.module_type == options::ModuleType::Esm
+            && p.source.path.text.starts_with(b"data:")
+        {
+            force_esm = true;
+        }
+
         if p.should_unwrap_commonjs_to_esm() {
             if !p.imports_to_convert_from_require.as_slice().is_empty() {
                 let all_stmts = p.arena.alloc_slice_fill_with::<Stmt, _>(
@@ -1509,7 +1520,8 @@ impl<'a> Parser<'a> {
             exports_kind = js_ast::ExportsKind::Cjs;
         } else if p.esm_export_keyword.len > 0 || p.top_level_await_keyword.len > 0 {
             exports_kind = js_ast::ExportsKind::Esm;
-        } else if uses_exports_ref || uses_module_ref || p.has_top_level_return || p.has_with_scope
+        } else if (uses_exports_ref || uses_module_ref || p.has_top_level_return || p.has_with_scope)
+            && !force_esm
         {
             exports_kind = js_ast::ExportsKind::Cjs;
             if p.options.features.commonjs_at_runtime {

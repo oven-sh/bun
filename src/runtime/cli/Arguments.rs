@@ -307,9 +307,7 @@ pub(crate) const RUNTIME_PARAMS_: &[ParamType] = &[
     parse_param!("--trace-exit"),
     parse_param!("--expose-internals"),
     parse_param!("--stack-trace-limit <STR>"),
-    // Node.js permission-model flags. Declared so `parse()` can refuse to run
-    // instead of silently executing unsandboxed; `<STR>?` lets the boolean
-    // grants accept `--allow-x=val` without a DoesntTakeValue error.
+    // Node.js permission-model flags; see `refuse_node_permission_flags`.
     parse_param!("--permission"),
     parse_param!("--experimental-permission"),
     parse_param!("--permission-audit"),
@@ -323,6 +321,48 @@ pub(crate) const RUNTIME_PARAMS_: &[ParamType] = &[
     parse_param!("--allow-inspector <STR>?"),
     parse_param!("--allow-ffi <STR>?"),
 ];
+
+/// Bun does not implement Node's permission model: refuse to run rather than silently executing with none of the restrictions the caller asked for. `BUN_IGNORE_NODE_PERMISSION_FLAGS=1` opts out.
+fn refuse_node_permission_flags(args: &clap::Args<clap::Help>) {
+    let flag: Option<&[u8]> = if args.flag(b"--permission") {
+        Some(b"--permission")
+    } else if args.flag(b"--experimental-permission") {
+        Some(b"--experimental-permission")
+    } else if args.flag(b"--permission-audit") {
+        Some(b"--permission-audit")
+    } else if !args.options(b"--allow-fs-read").is_empty() {
+        Some(b"--allow-fs-read")
+    } else if !args.options(b"--allow-fs-write").is_empty() {
+        Some(b"--allow-fs-write")
+    } else if args.option(b"--allow-child-process").is_some() {
+        Some(b"--allow-child-process")
+    } else if args.option(b"--allow-worker").is_some() {
+        Some(b"--allow-worker")
+    } else if args.option(b"--allow-addons").is_some() {
+        Some(b"--allow-addons")
+    } else if args.option(b"--allow-wasi").is_some() {
+        Some(b"--allow-wasi")
+    } else if args.option(b"--allow-net").is_some() {
+        Some(b"--allow-net")
+    } else if args.option(b"--allow-inspector").is_some() {
+        Some(b"--allow-inspector")
+    } else if args.option(b"--allow-ffi").is_some() {
+        Some(b"--allow-ffi")
+    } else {
+        None
+    };
+    if let Some(flag) = flag
+        && !env_var::BUN_IGNORE_NODE_PERMISSION_FLAGS
+            .get()
+            .unwrap_or(false)
+    {
+        Output::err_generic(
+            "Bun does not implement the Node.js permission model, so {} would run without the requested restrictions. Refusing to run.\n       Set BUN_IGNORE_NODE_PERMISSION_FLAGS=1 to ignore this flag and run without a sandbox.",
+            format_args!("{}", BStr::new(flag)),
+        );
+        Global::exit(1);
+    }
+}
 
 pub(crate) const AUTO_OR_RUN_PARAMS: &[ParamType] = &[
     parse_param!(
@@ -940,50 +980,7 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
             | CommandTag::TestCommand
             | CommandTag::RunAsNodeCommand
     ) {
-        // Bun does not implement Node's permission model. Refuse to run rather
-        // than silently executing with none of the restrictions the caller
-        // asked for.
-        {
-            let permission_flag: Option<&[u8]> = if args.flag(b"--permission") {
-                Some(b"--permission")
-            } else if args.flag(b"--experimental-permission") {
-                Some(b"--experimental-permission")
-            } else if args.flag(b"--permission-audit") {
-                Some(b"--permission-audit")
-            } else if !args.options(b"--allow-fs-read").is_empty() {
-                Some(b"--allow-fs-read")
-            } else if !args.options(b"--allow-fs-write").is_empty() {
-                Some(b"--allow-fs-write")
-            } else if args.option(b"--allow-child-process").is_some() {
-                Some(b"--allow-child-process")
-            } else if args.option(b"--allow-worker").is_some() {
-                Some(b"--allow-worker")
-            } else if args.option(b"--allow-addons").is_some() {
-                Some(b"--allow-addons")
-            } else if args.option(b"--allow-wasi").is_some() {
-                Some(b"--allow-wasi")
-            } else if args.option(b"--allow-net").is_some() {
-                Some(b"--allow-net")
-            } else if args.option(b"--allow-inspector").is_some() {
-                Some(b"--allow-inspector")
-            } else if args.option(b"--allow-ffi").is_some() {
-                Some(b"--allow-ffi")
-            } else {
-                None
-            };
-            if let Some(flag) = permission_flag {
-                if !env_var::BUN_IGNORE_NODE_PERMISSION_FLAGS
-                    .get()
-                    .unwrap_or(false)
-                {
-                    Output::err_generic(
-                        "Bun does not implement the Node.js permission model, so {} would run without the requested restrictions. Refusing to run.\n       Set BUN_IGNORE_NODE_PERMISSION_FLAGS=1 to ignore this flag and run without a sandbox.",
-                        format_args!("{}", BStr::new(flag)),
-                    );
-                    Global::exit(1);
-                }
-            }
-        }
+        refuse_node_permission_flags(&args);
 
         {
             let preloads = args.options(b"--preload");

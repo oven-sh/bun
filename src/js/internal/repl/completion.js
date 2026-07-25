@@ -505,9 +505,7 @@ function complete(line, callback) {
     // Filter, sort (within each group), uniq and merge the completion groups.
     if (completionGroups.length && filter) {
       const newCompletionGroups = [];
-      // Bun: toLowerCase, not toLocaleLowerCase. JSC routes the no-arg form
-      // through the Intl default locale, so under tr/az/lt the Node.js
-      // original would fold "I" to U+0131 and drop Int*/Intl completions.
+      // Bun: toLowerCase; JSC's no-arg toLocaleLowerCase is locale-sensitive (tr/az fold "I" to U+0131).
       const lowerCaseFilter = StringPrototypeToLowerCase(filter);
       ArrayPrototypeForEach(completionGroups, group => {
         const filteredGroup = ArrayPrototypeFilter(group, str => {

@@ -18,9 +18,7 @@ namespace Bun {
 
 using namespace JSC;
 
-// Ports V8's Isolate::DefaultLocale(). Leaving this hook null makes
-// JSC::defaultLocale() consult WTF::platformUserPreferredLanguages(), which
-// short-circuits to "en-US" before JSC's own uloc_getDefault() fallback runs.
+// Ports V8's Isolate::DefaultLocale(). A null hook falls through WTF::platformUserPreferredLanguages() to "en-US".
 String GlobalScope::defaultLanguage()
 {
     const char* localeID = uloc_getDefault();

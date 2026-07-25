@@ -9,11 +9,8 @@ use bun_jsc::{
     self as jsc, CallFrame, GlobalRef, JSGlobalObject, JSValue, JsCell, JsResult, ProtectedJSValue,
     StrongOptional, SystemError, bun_string_jsc,
 };
-// Note: `bun_jsc::VirtualMachine` is a *module* re-export
-// (`pub use self::virtual_machine as VirtualMachine;`). The struct lives at
-// `bun_jsc::virtual_machine::VirtualMachine` — import that directly so the
-// name resolves as a type at `&mut VirtualMachine` annotations and as the
-// owner of the `on_quiet_unhandled_rejection_handler_capture_value` assoc fn.
+// Note: `bun_jsc::VirtualMachine` is a *module* re-export; import the struct
+// directly so the name resolves as a type and as the owner of `get()`.
 use bun_jsc::virtual_machine::VirtualMachine;
 
 use crate::webcore::response::HeadersRef;
@@ -618,41 +615,17 @@ impl BufferOutputSink {
 
         // SAFETY: sink was just allocated via heap::alloc above; refcount==1.
         unsafe { (*sink).response = result };
-        // Note (Stacked Borrows): `sink_error` is written via raw pointer
-        // by the unhandled-rejection handler during `bufferer.run()` and via
-        // `tmp_sync_error` from `on_finished_buffering`. Use a `Cell` so the
-        // exported `*mut` (via `Cell::as_ptr`, i.e. `UnsafeCell::get`) carries
-        // SharedReadWrite provenance — local `.get()` reads do NOT invalidate
-        // the stored raw pointer the way a `&`/`&mut` reborrow of a plain
-        // `mut` local would.
+        // `Cell` so the exported `*mut` (via `Cell::as_ptr`) carries
+        // SharedReadWrite provenance: `write_tmp_sync_error` writes through the
+        // raw pointer, local `.get()` reads must not invalidate it.
         let sink_error: core::cell::Cell<JSValue> = core::cell::Cell::new(JSValue::ZERO);
-        let sink_error_ptr: *mut JSValue = sink_error.as_ptr();
+        // SAFETY: sink is a live heap allocation (refcount >= 1); addr of a
+        // stack local is non-null.
+        unsafe { (*sink).tmp_sync_error = Some(NonNull::new_unchecked(sink_error.as_ptr())) };
+        scopeguard::defer! { sink_error.get().ensure_still_alive(); }
         // SAFETY: original is a live *Response passed from begin_transform; its
         // JS wrapper is on the caller's stack.
         let input_size = unsafe { (*original).get_body_len() };
-        // SAFETY: bun_vm() returns the live VM raw ptr; VM outlives this fn.
-        let vm: &mut VirtualMachine = global.bun_vm().as_mut();
-
-        // Since we're still using vm.waitForPromise, we have to also override
-        // the error rejection handler. That way, we can propagate errors to the
-        // caller.
-        let scope = vm.unhandled_rejection_scope();
-        let prev_unhandled_pending_rejection_to_capture = vm.unhandled_pending_rejection_to_capture;
-        vm.unhandled_pending_rejection_to_capture = Some(sink_error_ptr);
-        // SAFETY: sink is a live heap allocation (refcount >= 1); sink_error_ptr
-        // is non-null (addr of stack local).
-        unsafe { (*sink).tmp_sync_error = Some(NonNull::new_unchecked(sink_error_ptr)) };
-        vm.on_unhandled_rejection =
-            VirtualMachine::on_quiet_unhandled_rejection_handler_capture_value;
-        // Read the *live* slot at scope exit (Cell shares provenance with the
-        // raw-pointer writers).
-        scopeguard::defer! {
-            sink_error.get().ensure_still_alive();
-            // SAFETY: VM outlives this guard (sync stack frame).
-            let vm = VirtualMachine::get().as_mut();
-            vm.unhandled_pending_rejection_to_capture = prev_unhandled_pending_rejection_to_capture;
-            scope.apply(vm);
-        }
 
         // The handler closures point into `Box`es owned by `(*sink).context`,
         // which `sink` keeps alive for the rewriter's whole lifetime.
@@ -885,25 +858,17 @@ impl BufferOutputSink {
             ((*sink).global, (*sink).response, (*sink).rewriter)
         };
 
-        // Install the capture slot `handler_callback` writes to. `init()`
-        // already does this for the sync path, but on the async path `init()`
-        // has returned and torn its scope down; without this the handler's
-        // error is lost and the caller only sees the generic lol-html string.
-        // Note (Stacked Borrows): `Cell::as_ptr` yields SharedReadWrite
-        // provenance, so local `.get()` reads don't invalidate the stored raw
-        // pointer.
+        // Capture slot `handler_callback` writes the thrown value / rejection
+        // into; forwarded to the caller below in place of the generic lol-html
+        // string. `Cell::as_ptr` yields SharedReadWrite provenance so `.get()`
+        // reads don't invalidate the raw pointer the VM stores.
         let captured: core::cell::Cell<JSValue> = core::cell::Cell::new(JSValue::ZERO);
         let vm: &mut VirtualMachine = global.bun_vm().as_mut();
-        let scope = vm.unhandled_rejection_scope();
         let prev_capture = vm.unhandled_pending_rejection_to_capture;
         vm.unhandled_pending_rejection_to_capture = Some(captured.as_ptr());
-        vm.on_unhandled_rejection =
-            VirtualMachine::on_quiet_unhandled_rejection_handler_capture_value;
         scopeguard::defer! {
             captured.get().ensure_still_alive();
-            let vm = VirtualMachine::get().as_mut();
-            vm.unhandled_pending_rejection_to_capture = prev_capture;
-            scope.apply(vm);
+            VirtualMachine::get().as_mut().unhandled_pending_rejection_to_capture = prev_capture;
         }
 
         let deliver_async = |e: &lol_html::errors::RewritingError,
@@ -1275,17 +1240,7 @@ where
         Ok(v) => v,
         Err(_) => {
             if let Some(exc) = scope.exception() {
-                let exc_value = JSValue::from_cell(exc.as_ptr());
-                exc_value.ensure_still_alive();
-                // The slot is a stack local in run_output_sink (conservatively
-                // scanned) read by `create_lolhtml_error` / `deliver_async`
-                // before any JSC allocation. No protect here: the reader does
-                // not unprotect, so protecting leaks one Exception root per
-                // throw (#31804).
-                if let Some(err_ptr) = vm().unhandled_pending_rejection_to_capture {
-                    // SAFETY: VM-owned pointer set by run_output_sink.
-                    unsafe { *err_ptr = exc_value };
-                }
+                capture_handler_error(vm(), JSValue::from_cell(exc.as_ptr()));
             }
             scope.clear_exception();
             return true;
@@ -1293,12 +1248,7 @@ where
     };
 
     if let Some(exc) = scope.exception() {
-        let exc_value = JSValue::from_cell(exc.as_ptr());
-        exc_value.ensure_still_alive();
-        if let Some(err_ptr) = vm().unhandled_pending_rejection_to_capture {
-            // SAFETY: VM-owned pointer set by run_output_sink.
-            unsafe { *err_ptr = exc_value };
-        }
+        capture_handler_error(vm(), JSValue::from_cell(exc.as_ptr()));
         scope.clear_exception();
         return true;
     }
@@ -1313,32 +1263,31 @@ where
         }
 
         if let Some(promise) = result.as_any_promise() {
-            // HTMLRewriter observes the rejection and propagates it to the
-            // caller, so this is a handled rejection. Mark it before waiting
-            // so `handle_rejected_promises()` (run by `wait_for_promise`'s
-            // tick, and again on the next event-loop turn) skips it instead of
-            // firing `process.on("unhandledRejection")`.
+            // The rejection is propagated to the caller, so mark it handled
+            // before waiting: `wait_for_promise`'s tick and the next event-loop
+            // turn both run `handle_rejected_promises()`.
             promise.set_handled(global.vm());
             vm().wait_for_promise(promise);
             let fail = promise.status() == jsc::js_promise::Status::Rejected;
             if fail {
-                // Capture the rejection directly (same slot the sync-throw arm
-                // above writes). `vm.unhandled_rejection()` is NOT equivalent:
-                // it dispatches to `process.on("unhandledRejection")` first and
-                // only reaches the capture handler when no listener exists, so
-                // with a listener the original error is lost and the caller
-                // sees the generic "rewriter has been stopped" instead.
-                let err = promise.result(global.vm());
-                err.ensure_still_alive();
-                if let Some(err_ptr) = vm().unhandled_pending_rejection_to_capture {
-                    // SAFETY: VM-owned pointer set by run_output_sink.
-                    unsafe { *err_ptr = err };
-                }
+                capture_handler_error(vm(), promise.result(global.vm()));
             }
             return fail;
         }
     }
     false
+}
+
+/// Stash the handler's thrown value / rejection in `run_output_sink`'s capture
+/// slot. The slot is a conservatively-scanned stack local read back before any
+/// JSC allocation, so no `protect()` pair is needed (protecting here without a
+/// matching unprotect in the reader leaked one root per throw: #31804).
+fn capture_handler_error(vm: &mut VirtualMachine, err: JSValue) {
+    err.ensure_still_alive();
+    if let Some(err_ptr) = vm.unhandled_pending_rejection_to_capture {
+        // SAFETY: VM-owned pointer set by run_output_sink.
+        unsafe { *err_ptr = err };
+    }
 }
 
 // ───────────────────────── ElementHandler ────────────────────────────────

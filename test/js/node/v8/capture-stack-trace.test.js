@@ -1236,6 +1236,24 @@ test("captureStackTrace on a non-Error object terminates when a name/message get
   expect(typeof o.stack).toBe("string");
 });
 
+test("captureStackTrace on a non-Error object keeps captured frames when a name getter throws", () => {
+  let calls = 0;
+  const o = {};
+  Object.defineProperty(o, "name", {
+    get() {
+      calls++;
+      if (calls === 1) throw new Error("boom");
+      return "Retry";
+    },
+  });
+  Error.captureStackTrace(o);
+  expect(() => o.stack).toThrow("boom");
+  expect(calls).toBe(1);
+  expect(o.stack.split("\n")[0]).toBe("Retry");
+  expect(o.stack).toContain("at ");
+  expect(calls).toBe(2);
+});
+
 test("captureStackTrace lazy .stack resolves when reached via the prototype chain", () => {
   const parent = {};
   Error.captureStackTrace(parent);

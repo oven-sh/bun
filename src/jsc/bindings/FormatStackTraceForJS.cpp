@@ -784,10 +784,6 @@ JSC_DEFINE_CUSTOM_SETTER(errorInstanceLazyStackCustomSetter, (JSGlobalObject * g
     return true;
 }
 
-// Lazy .stack getter installed by Error.captureStackTrace on objects that are
-// not JSC::ErrorInstance. The captured CallSite array is stashed under a
-// private name on the target so the header (name/message) and
-// Error.prepareStackTrace are read at first access, matching V8.
 JSC_DEFINE_CUSTOM_GETTER(nonErrorInstanceLazyStackCustomGetter, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
@@ -797,8 +793,6 @@ JSC_DEFINE_CUSTOM_GETTER(nonErrorInstanceLazyStackCustomGetter, (JSGlobalObject 
     if (!receiver) [[unlikely]]
         return JSValue::encode(jsUndefined());
 
-    // The accessor may be reached via the prototype chain; the CallSite array
-    // lives on the object captureStackTrace was called with.
     const auto& privateName = WebCore::builtinNames(vm).capturedStackTracePrivateName();
     JSObject* errorObject = nullptr;
     JSC::JSArray* callSites = nullptr;
@@ -815,9 +809,10 @@ JSC_DEFINE_CUSTOM_GETTER(nonErrorInstanceLazyStackCustomGetter, (JSGlobalObject 
     if (!callSites) [[unlikely]]
         return JSValue::encode(jsUndefined());
 
-    // Detach before running any user code (name/message getters, prepareStackTrace)
-    // so a re-entrant .stack read terminates at the !callSites guard above.
-    errorObject->putDirect(vm, privateName, jsUndefined(), 0);
+    JSC::EnsureStillAliveScope keepCallSites(callSites);
+
+    // Sentinel so re-entry through a name/message getter hits !callSites above; restored if the user code throws.
+    errorObject->putDirect(vm, privateName, jsNull(), 0);
 
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
 
@@ -829,9 +824,13 @@ JSC_DEFINE_CUSTOM_GETTER(nonErrorInstanceLazyStackCustomGetter, (JSGlobalObject 
         result = formatStackTraceToJSValueWithoutPrepareStackTrace(vm, globalObject, lexicalGlobalObject, errorObject, callSites);
         globalObject->isInsideErrorPrepareStackTraceCallback = false;
     }
-    RETURN_IF_EXCEPTION(scope, {});
+    if (scope.exception()) [[unlikely]] {
+        errorObject->putDirect(vm, privateName, callSites, 0);
+        return {};
+    }
 
     errorObject->putDirect(vm, vm.propertyNames->stack, result, JSC::PropertyAttribute::DontEnum | 0);
+    errorObject->putDirect(vm, privateName, jsUndefined(), 0);
     return JSValue::encode(result);
 }
 

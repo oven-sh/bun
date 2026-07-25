@@ -666,10 +666,13 @@ class InspectorCDPAdapter {
   #translateConsoleMessage(message: AnyObject): void {
     const level = message.level ?? "log";
     const args = message.parameters?.length ? message.parameters : [{ type: "string", value: message.text ?? "" }];
+    // JSC's Console.messageAdded timestamp is WallTime::secondsSinceEpoch();
+    // CDP Runtime.Timestamp is milliseconds since epoch.
+    const timestamp = typeof message.timestamp === "number" ? message.timestamp * 1000 : Date.now();
 
     if (message.source !== "console-api" && level === "error") {
       this.#emitToClient("Runtime.exceptionThrown", {
-        timestamp: message.timestamp ?? Date.now(),
+        timestamp,
         exceptionDetails: {
           exceptionId: this.#nextExceptionId++,
           text: message.text ?? "Uncaught",
@@ -690,7 +693,7 @@ class InspectorCDPAdapter {
       type,
       args,
       executionContextId: EXECUTION_CONTEXT_ID,
-      timestamp: message.timestamp ?? Date.now(),
+      timestamp,
       stackTrace: this.#translateStackTrace(message.stackTrace),
     });
   }

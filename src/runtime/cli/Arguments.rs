@@ -307,6 +307,14 @@ pub(crate) const RUNTIME_PARAMS_: &[ParamType] = &[
     parse_param!("--trace-exit"),
     parse_param!("--expose-internals"),
     parse_param!("--stack-trace-limit <STR>"),
+    // Node.js hardening flags. Applied at global-object creation time
+    // (ZigGlobalObject::finishCreation) so every realm — main thread, workers,
+    // test-isolation globals — sees them.
+    parse_param!("--disallow-code-generation-from-strings"),
+    parse_param!("--disable-proto <STR>"),
+    parse_param!("--frozen-intrinsics"),
+    parse_param!("--secure-heap <STR>"),
+    parse_param!("--secure-heap-min <STR>"),
 ];
 
 pub(crate) const AUTO_OR_RUN_PARAMS: &[ParamType] = &[
@@ -686,6 +694,20 @@ pub(crate) static Bun__Node__ProcessNoDeprecation: core::sync::atomic::AtomicBoo
 #[unsafe(no_mangle)]
 pub(crate) static Bun__Node__ProcessThrowDeprecation: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
+#[unsafe(no_mangle)]
+pub(crate) static Bun__Node__DisallowCodeGenerationFromStrings: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
+
+#[repr(u8)]
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub(crate) enum DisableProto {
+    Off,
+    Delete,
+    Throw,
+}
+#[unsafe(no_mangle)]
+pub(crate) static Bun__Node__DisableProto: core::sync::atomic::AtomicU8 =
+    core::sync::atomic::AtomicU8::new(DisableProto::Off as u8);
 
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -1288,6 +1310,29 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
         }
         if args.flag(b"--zero-fill-buffers") {
             Bun__Node__ZeroFillBuffers.store(true, core::sync::atomic::Ordering::Relaxed);
+        }
+        if args.flag(b"--disallow-code-generation-from-strings") {
+            Bun__Node__DisallowCodeGenerationFromStrings
+                .store(true, core::sync::atomic::Ordering::Relaxed);
+        }
+        if let Some(mode) = args.option(b"--disable-proto") {
+            let mode = match mode {
+                b"delete" => DisableProto::Delete,
+                b"throw" => DisableProto::Throw,
+                _ => {
+                    bun_core::pretty_errorln!(
+                        "<r><red>error<r>: invalid mode passed to --disable-proto: \"{}\". Must be one of \"delete\", \"throw\"",
+                        BStr::new(mode),
+                    );
+                    Global::exit(12);
+                }
+            };
+            Bun__Node__DisableProto.store(mode as u8, core::sync::atomic::Ordering::Relaxed);
+        }
+        if args.option(b"--secure-heap").is_some() || args.option(b"--secure-heap-min").is_some() {
+            bun_core::warn!(
+                "--secure-heap is not supported: Bun links against BoringSSL, which does not implement a secure heap\n"
+            );
         }
         let use_system_ca = args.flag(b"--use-system-ca");
         let use_openssl_ca = args.flag(b"--use-openssl-ca");

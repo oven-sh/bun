@@ -2304,7 +2304,9 @@ impl VirtualMachine {
         // execArgv. (The JS side re-reads `process.execArgv`, so an explicit
         // empty execArgv under a traced parent stays a no-op there.)
         fn is_bootstrap_flag(arg: &[u8]) -> bool {
-            arg.starts_with(b"--trace-") || arg.starts_with(b"--stack-trace-limit")
+            arg.starts_with(b"--trace-")
+                || arg.starts_with(b"--stack-trace-limit")
+                || arg == b"--frozen-intrinsics"
         }
         let needs_pre_execution = bun_core::argv().into_iter().any(is_bootstrap_flag)
             || self

@@ -238,6 +238,34 @@ BUN_DECLARE_HOST_FUNCTION(BUN__HTTP2_assertSettings);
 
 JSC_DECLARE_HOST_FUNCTION(jsFunctionMakeAbortError);
 
+extern "C" bool Bun__Node__DisallowCodeGenerationFromStrings;
+extern "C" uint8_t Bun__Node__DisableProto;
+
+JSC_DEFINE_HOST_FUNCTION(functionProtoAccessDisabled, (JSC::JSGlobalObject * globalObject, JSC::CallFrame*))
+{
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+    return Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_PROTO_ACCESS,
+        "Accessing Object.prototype.__proto__ has been disallowed with --disable-proto=throw"_s);
+}
+
+namespace Bun {
+void applyNodeDisableProto(JSC::JSGlobalObject* globalObject)
+{
+    if (!Bun__Node__DisableProto) [[likely]]
+        return;
+    auto& vm = JSC::getVM(globalObject);
+    auto* proto = globalObject->objectPrototype();
+    JSC::DeletePropertySlot slot;
+    JSC::JSObject::deleteProperty(proto, globalObject, vm.propertyNames->underscoreProto, slot);
+    if (Bun__Node__DisableProto == 2) {
+        auto* thrower = JSC::JSFunction::create(vm, globalObject, 0, String(), functionProtoAccessDisabled, JSC::ImplementationVisibility::Public);
+        auto* accessor = JSC::GetterSetter::create(vm, globalObject, thrower, thrower);
+        proto->putDirectAccessor(globalObject, vm.propertyNames->underscoreProto, accessor,
+            static_cast<unsigned>(JSC::PropertyAttribute::Accessor) | static_cast<unsigned>(JSC::PropertyAttribute::DontEnum));
+    }
+}
+}
+
 using JSGlobalObject = JSC::JSGlobalObject;
 using Exception = JSC::Exception;
 using JSValue = JSC::JSValue;
@@ -2831,6 +2859,11 @@ void GlobalObject::finishCreation(VM& vm)
 #endif
 
     addBuiltinGlobals(vm);
+
+    if (Bun__Node__DisallowCodeGenerationFromStrings) [[unlikely]] {
+        setEvalEnabled(false, "Code generation from strings disallowed for this context"_s);
+    }
+    Bun::applyNodeDisableProto(this);
 
     ASSERT(classInfo());
 }

@@ -845,6 +845,8 @@ ALWAYS_INLINE void* vm(JSC::JSGlobalObject* lexicalGlobalObject)
     return WebCore::clientData(lexicalGlobalObject->vm())->bunVM;
 }
 
+void applyNodeDisableProto(JSC::JSGlobalObject*);
+
 }
 
 #ifndef RENAMED_JSDOM_GLOBAL_OBJECT

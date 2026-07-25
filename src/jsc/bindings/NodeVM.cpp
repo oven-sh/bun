@@ -1079,6 +1079,8 @@ void NodeVMGlobalObject::finishCreation(JSC::VM& vm)
     JSC::DeletePropertySlot slot;
     JSC::JSObject::deleteProperty(this, this, vm.propertyNames->Loader, slot);
 
+    Bun::applyNodeDisableProto(this);
+
     vm.ensureTerminationException();
 
     // Share the async context data with the parent global object.

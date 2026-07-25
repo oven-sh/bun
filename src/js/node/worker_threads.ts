@@ -942,9 +942,17 @@ class Worker extends EventEmitter {
   #urlToRevoke = "";
   // threadId captured for cleaning up the messaging control port on close.
   #messagingThreadId: number | undefined = undefined;
+  // Node's Worker stops its public port while there are zero 'message' listeners, so
+  // messages queue natively and redeliver on the next listener add. Bun's native
+  // WebWorker has no stop(), so #onMessage buffers here and #scheduleFlush replays.
+  #bufferedMessages: unknown[] | null = null;
+  #flushScheduled = false;
 
   constructor(filename: string, options: NodeWorkerOptions = {}) {
     super();
+    this.on("newListener", name => {
+      if (name === "message") this.#scheduleFlush();
+    });
 
     // The `= {}` default only covers undefined; normalize null too so the
     // option accesses below don't throw on `new Worker(file, null)`.
@@ -1319,8 +1327,36 @@ class Worker extends EventEmitter {
   }
 
   #onMessage(event: MessageEvent) {
-    // TODO: is this right?
-    this.emit("message", event.data);
+    const data = event.data;
+    // With zero listeners (or earlier messages still buffered, to preserve FIFO),
+    // queue instead of emitting into the void.
+    if (this.#bufferedMessages !== null || this.listenerCount("message") === 0) {
+      (this.#bufferedMessages ??= []).push(data);
+      if (this.listenerCount("message") > 0) this.#scheduleFlush();
+      return;
+    }
+    this.emit("message", data);
+  }
+
+  #scheduleFlush() {
+    // Called from the 'newListener' hook (which fires BEFORE the listener is attached)
+    // and from #onMessage; the listenerCount check lives in the microtask for both.
+    if (this.#flushScheduled || this.#bufferedMessages === null) return;
+    this.#flushScheduled = true;
+    queueMicrotask(() => {
+      this.#flushScheduled = false;
+      const buf = this.#bufferedMessages;
+      this.#bufferedMessages = null;
+      if (buf === null) return;
+      for (let i = 0; i < buf.length; i++) {
+        // A once() listener may leave zero listeners mid-flush: re-queue the rest.
+        if (this.listenerCount("message") === 0) {
+          this.#bufferedMessages = buf.slice(i);
+          return;
+        }
+        this.emit("message", buf[i]);
+      }
+    });
   }
 
   #onMessageError(event: MessageEvent) {

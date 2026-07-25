@@ -1756,3 +1756,74 @@ test("the SHARE_ENV founding thread's process.env stays live after the swap", as
   expect(stdout.trim()).toBe("yes,unset");
   expect(exitCode).toBe(0);
 });
+
+// Node stops the Worker's public port while there are zero 'message' listeners, so
+// messages the worker sends during that gap buffer and redeliver on the next listener add.
+describe("Worker buffers messages while there is no 'message' listener", () => {
+  test("once() leaves a gap during which the next reply is buffered, not dropped", async () => {
+    // The worker posts a reply ("a") and then Atomics-notifies. In Bun, the reply
+    // reaches the parent's native message dispatch before the waitAsync promise
+    // resolves, so the parent has zero 'message' listeners at delivery time.
+    const sab = new SharedArrayBuffer(4);
+    const flag = new Int32Array(sab);
+    const w = new Worker(
+      `const { parentPort, workerData } = require("node:worker_threads");
+       const flag = new Int32Array(workerData.sab);
+       setInterval(() => {}, 1e6);
+       parentPort.on("message", () => {
+         parentPort.postMessage("a");
+         parentPort.postMessage("b");
+         Atomics.store(flag, 0, 1);
+         Atomics.notify(flag, 0);
+       });
+       parentPort.postMessage("ready");`,
+      { eval: true, workerData: { sab } },
+    );
+    try {
+      expect(await new Promise(r => w.once("message", r))).toBe("ready");
+      const done = Atomics.waitAsync(flag, 0, 0).value;
+      w.postMessage("go");
+      await done;
+      const got: unknown[] = [];
+      w.on("message", m => got.push(m));
+      // The flush of buffered messages is a microtask; one setImmediate round
+      // is enough to observe it (and any still-in-flight native dispatch).
+      await new Promise(r => setImmediate(r));
+      expect(got).toEqual(["a", "b"]);
+    } finally {
+      await w.terminate();
+    }
+  });
+
+  test("postMessageToThread main->worker: reply via parentPort survives the listener gap", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const wt = require("node:worker_threads");
+         const src =
+           'const wt = require("node:worker_threads");' +
+           'setInterval(() => {}, 1e6);' +
+           'process.on("workerMessage", (v, s) => wt.parentPort.postMessage({ workerGot: v, source: s }));' +
+           'wt.parentPort.postMessage({ tid: wt.threadId });';
+         const w = new wt.Worker(src, { eval: true });
+         (async () => {
+           const { tid } = await new Promise(r => w.once("message", r));
+           await wt.postMessageToThread(tid, "m2w", 5000);
+           const reply = await new Promise((r, rej) => {
+             w.once("message", r);
+             setTimeout(() => rej(new Error("DROPPED")), 2000);
+           });
+           console.log(JSON.stringify(reply));
+           await w.terminate();
+         })().catch(e => { console.error(e.code || String(e)); process.exit(1); });`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr.trim()).toBe("");
+    expect(stdout.trim()).toBe(`{"workerGot":"m2w","source":0}`);
+    expect(exitCode).toBe(0);
+  });
+});

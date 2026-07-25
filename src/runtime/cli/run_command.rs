@@ -2874,10 +2874,9 @@ impl RunCommand {
         // `get_fd_path` yields `pipe:[inode]` on Linux and fails outright on
         // macOS. Read it now from the open fd and route through the same
         // `[stdin]` virtual-source path `exec_stdin` uses; the path as typed
-        // is prepended to passthrough so `process.argv[1]` is preserved.
-        // Deliberately only FIFOs: sockets cannot be re-opened via /dev/fd on
-        // Linux so `open` above already failed, and char/block devices (e.g.
-        // /dev/zero) would read forever.
+        // becomes `process.argv[1]`. Deliberately only FIFOs: sockets cannot
+        // be re-opened via /dev/fd on Linux so `open` above already failed,
+        // and char/block devices (e.g. /dev/zero) would read forever.
         if bun_sys::S::ISFIFO(mode) {
             let mut contents: Vec<u8> = Vec::new();
             if bun_sys::File::from_fd(fd)
@@ -2886,34 +2885,8 @@ impl RunCommand {
             {
                 return false;
             }
-            ctx.runtime_options.eval.script = contents.into_boxed_slice();
-
-            let mut passthrough_list: Vec<Box<[u8]>> =
-                Vec::with_capacity(ctx.passthrough.len() + 1);
-            passthrough_list.push(target.to_vec().into_boxed_slice());
-            passthrough_list.append(&mut ctx.passthrough);
-            ctx.passthrough = passthrough_list;
-
-            #[cfg(windows)]
-            const STDIN_TRIGGER: &[u8] = b"\\[stdin]";
-            #[cfg(not(windows))]
-            const STDIN_TRIGGER: &[u8] = b"/[stdin]";
-            let mut entry_point_buf = [0u8; MAX_PATH_BYTES + STDIN_TRIGGER.len()];
-            let mut cwd_buf = PathBuffer::uninit();
-            let Ok(cwd) = bun_core::getcwd(&mut cwd_buf) else {
-                return false;
-            };
-            let cwd_bytes = cwd.as_bytes();
-            let cwd_len = cwd_bytes.len();
-            entry_point_buf[..cwd_len].copy_from_slice(cwd_bytes);
-            entry_point_buf[cwd_len..cwd_len + STDIN_TRIGGER.len()].copy_from_slice(STDIN_TRIGGER);
-            let entry_path = &entry_point_buf[..cwd_len + STDIN_TRIGGER.len()];
-
-            let owned: Box<[u8]> = entry_path.to_vec().into_boxed_slice();
-            if let Err(err) = Self::boot(ctx, owned, None) {
-                Self::boot_failed_exit(ctx, target, &err);
-            }
-            return true;
+            return Self::boot_stdin_script(ctx, contents.into_boxed_slice(), target)
+                .unwrap_or(false);
         }
 
         // Re-derive the canonical absolute path from the open fd (resolves
@@ -2947,7 +2920,18 @@ impl RunCommand {
         if bun_sys::File::stdin().read_to_end_into(&mut list).is_err() {
             return Ok(false);
         }
-        ctx.runtime_options.eval.script = list.into_boxed_slice();
+        Self::boot_stdin_script(ctx, list.into_boxed_slice(), b"-")
+    }
+
+    /// Boot an already-read script as the synthetic `cwd/[stdin]` entry point.
+    /// `argv1` is prepended to `ctx.passthrough` so it shows up as
+    /// `process.argv[1]` (`"-"` for stdin, the path as typed for a FIFO).
+    fn boot_stdin_script(
+        ctx: &mut ContextData,
+        script: Box<[u8]>,
+        argv1: &[u8],
+    ) -> crate::Result<bool> {
+        ctx.runtime_options.eval.script = script;
 
         #[cfg(windows)]
         const STDIN_TRIGGER: &[u8] = b"\\[stdin]";
@@ -2963,10 +2947,8 @@ impl RunCommand {
         entry_point_buf[cwd_len..cwd_len + STDIN_TRIGGER.len()].copy_from_slice(STDIN_TRIGGER);
         let entry_path = &entry_point_buf[..cwd_len + STDIN_TRIGGER.len()];
 
-        // Prepend "-" to `ctx.passthrough` so `process.argv[1]` matches
-        // Node's `node -` semantics.
         let mut passthrough_list: Vec<Box<[u8]>> = Vec::with_capacity(ctx.passthrough.len() + 1);
-        passthrough_list.push(b"-".to_vec().into_boxed_slice());
+        passthrough_list.push(argv1.to_vec().into_boxed_slice());
         passthrough_list.append(&mut ctx.passthrough);
         ctx.passthrough = passthrough_list;
 
@@ -2977,7 +2959,7 @@ impl RunCommand {
         // (= "[stdin]"), in the error message.
         let owned: Box<[u8]> = entry_path.to_vec().into_boxed_slice();
         if let Err(err) = Self::boot(ctx, owned, None) {
-            Self::boot_failed_exit(ctx, b"-", &err);
+            Self::boot_failed_exit(ctx, argv1, &err);
         }
         Ok(true)
     }

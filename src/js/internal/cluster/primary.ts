@@ -83,7 +83,7 @@ function createWorkerProcess(id, env) {
   const execArgv = [...cluster.settings.execArgv];
 
   if (cluster.settings.inspectPort === null) {
-    throw $ERR_SOCKET_BAD_PORT("Port", null, true);
+    throw $ERR_SOCKET_BAD_PORT("Port should be >= 0 and < 65536. Received null.");
   }
   if (isUsingInspector(cluster.settings.execArgv)) {
     execArgv.push(`--inspect-port=${getInspectPort(cluster.settings.inspectPort)}`);

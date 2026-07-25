@@ -235,6 +235,14 @@ impl Lazy {
 
             if sys::S::ISREG(mode) {
                 is_nonblocking = false;
+            } else if sys::S::ISCHR(mode) && !file.is_atty.unwrap_or_else(|| sys::isatty(fd)) {
+                // Non-TTY character devices (/dev/urandom, /dev/zero,
+                // /dev/full, /dev/null, ...) never return EAGAIN and the
+                // infinite ones never return 0 either, so the pollable
+                // read loop that drains until EAGAIN/EOF would spin on the
+                // JS thread forever. Route them through the non-pollable
+                // File path, which reads one bounded chunk per pull.
+                is_nonblocking = false;
             }
 
             // pollable: `S.ISFIFO(mode) or S.ISSOCK(mode)`

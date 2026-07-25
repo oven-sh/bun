@@ -1,6 +1,6 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import fsPromises from "fs/promises";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isPosix, tempDirWithFiles } from "harness";
 import { join } from "path";
 
 test("delete() and stat() should work with unicode paths", async () => {
@@ -154,4 +154,50 @@ test("Bun.file().json() with UTF-8 BOM does not free an interior pointer", async
     emptyErr: "Unexpected end of JSON input",
   });
   expect(exitCode).toBe(0);
+});
+
+// Before the fix, Bun.file("/dev/urandom").stream() classified the fd as a
+// nonblocking pipe and the read loop spun preadv2(RWF_NOWAIT) forever on the
+// JS thread (the device never EAGAINs and never EOFs), wedging the event loop
+// and growing RSS unbounded. Verify that a single read() resolves with a
+// bounded chunk and that a timer scheduled across the read still fires.
+describe.skipIf(!isPosix)("Bun.file(<infinite chardev>).stream() yields to the event loop", () => {
+  for (const [label, source] of [
+    ["Bun.file(dev).stream() on /dev/urandom", `Bun.file("/dev/urandom").stream()`],
+    ["new Response(Bun.file(dev)).body on /dev/zero", `new Response(Bun.file("/dev/zero")).body`],
+  ] as const) {
+    test(label, async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            let tickedAfterRead = false;
+            setTimeout(() => { tickedAfterRead = true; }, 1).unref();
+            const reader = (${source}).getReader();
+            const first = await reader.read();
+            await new Promise(r => setTimeout(r, 10));
+            const second = await reader.read();
+            await reader.cancel();
+            process.stdout.write(JSON.stringify({
+              firstLen: first.value?.length ?? -1,
+              secondLen: second.value?.length ?? -1,
+              tickedAfterRead,
+            }));
+          `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+        signal: AbortSignal.timeout(4_000),
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+      const out = JSON.parse(stdout);
+      expect(out.tickedAfterRead).toBe(true);
+      expect(out.firstLen).toBeGreaterThan(0);
+      expect(out.secondLen).toBeGreaterThan(0);
+    });
+  }
 });

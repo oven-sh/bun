@@ -7386,12 +7386,8 @@ pub fn directory_exists_at_w(dir: Fd, sub: &[u16]) -> Maybe<bool> {
     }
 }
 
-/// Returns `true` when `path` is safe for the current user to use as a
-/// cache root: it must lstat as a real directory owned by `uid` with no
-/// group/other write bits. A nonexistent path is trusted (the caller creates
-/// it with the right mode); any other lstat error fails closed. Used by the
-/// runtime transpiler cache and bunx before they read from a cache directory
-/// that could have been pre-populated by another local user.
+/// `true` when `path` lstat's as a directory owned by `uid` with no
+/// group/other write bits, or does not exist. Any other result fails closed.
 #[cfg(unix)]
 pub fn is_trusted_cache_root(path: &ZStr, uid: libc::uid_t) -> bool {
     match lstat(path) {

@@ -43,10 +43,8 @@ bun_core::declare_scope!(cache, visible);
 /// path reinstates the bug for any previously-cached TLA module (#30887).
 /// Version 23: `jsx.runtime`/`jsx.development` participate in the features hash,
 /// and tsconfig `"jsx": "react-jsx"` now emits the production runtime (#4227).
-/// Version 24: output/sourcemap/esm-record hashes are seeded with `input_hash`
-/// instead of the fixed `SEED`, and a stored hash of 0 no longer skips
-/// verification. Entries written before this version have section hashes that
-/// will not match under the new seed.
+/// Version 24: section hashes are seeded with `input_hash` (not the fixed
+/// `SEED`) and a stored hash of 0 no longer skips verification.
 const EXPECTED_VERSION: u32 = 24;
 
 /// Source files smaller than this are not written to / read from the on-disk
@@ -436,9 +434,6 @@ impl Entry {
             return Err(crate::CrateError::MissingData);
         }
 
-        // Section hashes are keyed on the input hash so the stored value binds
-        // each payload to the source bytes that produced this entry. The caller
-        // has already verified `metadata.input_hash` against the live source.
         let section_seed = self.metadata.input_hash;
 
         debug_assert!(
@@ -715,8 +710,6 @@ impl RuntimeTranspilerCache {
         // that `absBufZ` used.
         let top = FileSystem::instance().top_level_dir;
 
-        // Per-uid leaf segment (`@t@-<uid>`) so the default cache location is
-        // not shared across users on a multi-tenant host.
         let mut seg = [0u8; 4 + 10];
         seg[..4].copy_from_slice(b"@t@-");
         let n = bun_core::fmt::print_int(&mut seg[4..], current_user_id());

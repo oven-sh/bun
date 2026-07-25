@@ -23,6 +23,23 @@
 
 using namespace JSC;
 
+// dynamicDowncast(JSValue)'s isCell() check is true for the empty value on
+// JSVALUE64, so it would read through a null cell. asyncStackTraceContext()
+// and reaction getters return the empty value in several paths, so every
+// JSValue downcast in this file goes through this helper.
+template<typename T>
+static inline T* cellAs(JSValue v)
+{
+    return (v && v.isCell()) ? dynamicDowncast<T>(v.asCell()) : nullptr;
+}
+
+template<typename T>
+static inline bool dynamicCastValue(JSValue v, T** out)
+{
+    *out = cellAs<T>(v);
+    return *out != nullptr;
+}
+
 static BytecodeIndex yieldStateToBytecodeIndex(CodeBlock* codeBlock, int32_t state)
 {
     size_t numberOfJumpTables = codeBlock->numberOfUnlinkedSwitchJumpTables();
@@ -33,6 +50,30 @@ static BytecodeIndex yieldStateToBytecodeIndex(CodeBlock* codeBlock, int32_t sta
             return BytecodeIndex(offset);
     }
     return BytecodeIndex(0);
+}
+
+// SAFETY: a positive Field::State (a yield index) means the module body is
+// suspended at an await, the only state in which JSModuleRecord::evaluate has
+// not cleared m_moduleProgramExecutable, so getOrMakeExecutable() returns the
+// stored executable without allocating. Callers run under AssertNoGC.
+static bool appendSuspendedModuleFrame(VM& vm, JSCell* owner, JSModuleRecord* moduleRecord, Vector<StackFrame>& results)
+{
+    JSValue stateValue = moduleRecord->internalField(AbstractModuleRecord::Field::State).get();
+    if (!stateValue.isInt32())
+        return false;
+    int32_t state = stateValue.asInt32();
+    if (state <= 0)
+        return false;
+
+    ModuleProgramExecutable* executable = moduleRecord->getOrMakeExecutable(moduleRecord->globalObject());
+    if (!executable)
+        return false;
+    CodeBlock* codeBlock = executable->codeBlock();
+    if (!codeBlock)
+        return false;
+
+    results.append(StackFrame(vm, owner, moduleRecord, codeBlock, yieldStateToBytecodeIndex(codeBlock, state), /* isAsyncFrame */ true));
+    return true;
 }
 
 // Walk a promise's reaction chain to find the async generators awaiting it,
@@ -50,13 +91,6 @@ static void collectAsyncStackFramesFromPromise(JSC::VM& vm, JSC::JSCell* owner, 
         return;
 
     JSC::AssertNoGC assertNoGC;
-
-    auto dynamicCastValue = []<typename T>(JSC::JSValue v, T** out) -> bool {
-        if (!v || !v.isCell())
-            return false;
-        *out = dynamicDowncast<T>(v.asCell());
-        return *out != nullptr;
-    };
 
     auto unwrapGeneratorFromContext = [&](JSC::JSValue context) -> JSC::JSAsyncFunctionGenerator* {
         JSC::InternalFieldTuple* tuple = nullptr;
@@ -79,14 +113,17 @@ static void collectAsyncStackFramesFromPromise(JSC::VM& vm, JSC::JSCell* owner, 
     //    payloadCell() and the handler in m_slot.
     //  - As a heap-allocated JSPromiseReaction list once a second handler is
     //    attached, headed at payloadCell().
+    JSModuleRecord* terminalModule = nullptr;
     auto getAwaitingGenerator = [&](JSC::JSPromise* p) -> JSC::JSAsyncFunctionGenerator* {
         for (unsigned hops = 0; p && hops < 32; hops++) {
             if (p->status() != JSC::JSPromise::Status::Pending)
                 return nullptr;
             switch (p->inlineReactionKind()) {
             case JSC::JSPromise::InlineReactionKind::InternalMicrotask: {
-                if (auto* generator = unwrapGeneratorFromContext(p->inlineReactionContext()))
+                JSValue context = p->inlineReactionContext();
+                if (auto* generator = unwrapGeneratorFromContext(context))
                     return generator;
+                terminalModule = cellAs<JSModuleRecord>(context);
                 // No generator in the context. For the resolve-with-promise fast
                 // path (`return promise` without await inside an async function),
                 // the reaction's cell payload is the outer promise being resolved —
@@ -110,8 +147,10 @@ static void collectAsyncStackFramesFromPromise(JSC::VM& vm, JSC::JSCell* owner, 
             auto* reaction = dynamicDowncast<JSC::JSPromiseReaction>(p->payloadCell());
             if (!reaction)
                 return nullptr;
-            if (auto* generator = unwrapGeneratorFromContext(JSC::JSPromiseReaction::tryGetContext(reaction)))
+            JSValue context = JSC::JSPromiseReaction::tryGetContext(reaction);
+            if (auto* generator = unwrapGeneratorFromContext(context))
                 return generator;
+            terminalModule = cellAs<JSModuleRecord>(context);
             // No generator in context — follow the thenable chain to the
             // promise this reaction resolves/rejects.
             if (!dynamicCastValue(reaction->promise(), &p))
@@ -150,6 +189,9 @@ static void collectAsyncStackFramesFromPromise(JSC::VM& vm, JSC::JSCell* owner, 
             break;
         gen = getAwaitingGenerator(returnPromise);
     }
+
+    if (terminalModule && results.size() < maxStackSize)
+        appendSuspendedModuleFrame(vm, owner, terminalModule, results);
 }
 
 extern "C" void Bun__attachAsyncStackFromPromise(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue errorValue, JSC::JSPromise* promise)
@@ -214,56 +256,31 @@ void Bun::appendTopLevelAwaitStackFrame(VM& vm, JSCell* owner, Vector<StackFrame
     if (!origin)
         return;
 
-    auto reactionContext = [](JSValue context) -> JSValue {
-        auto* promise = dynamicDowncast<JSPromise>(context);
+    auto reactionContext = [](JSValue v) -> JSValue {
+        auto* promise = cellAs<JSPromise>(v);
         return promise ? promise->asyncStackTraceContext() : JSValue();
     };
 
-    JSValue terminal;
+    JSModuleRecord* moduleRecord = nullptr;
     JSAsyncFunctionGenerator* generator = origin;
     for (unsigned hops = 0; generator && hops < 256; hops++) {
         JSValue context = reactionContext(generator->internalField(JSAsyncFunctionGenerator::Field::Context).get());
-        if (!context)
-            return;
-        if (auto* next = dynamicDowncast<JSAsyncFunctionGenerator>(context)) {
+        if (auto* next = cellAs<JSAsyncFunctionGenerator>(context)) {
             generator = next;
             continue;
         }
-        if (auto* promise = dynamicDowncast<JSPromise>(context)) {
-            JSValue inner = reactionContext(promise);
-            if (auto* next = dynamicDowncast<JSAsyncFunctionGenerator>(inner)) {
+        if (auto* promise = cellAs<JSPromise>(context)) {
+            JSValue inner = promise->asyncStackTraceContext();
+            if (auto* next = cellAs<JSAsyncFunctionGenerator>(inner)) {
                 generator = next;
                 continue;
             }
-            terminal = inner;
+            moduleRecord = cellAs<JSModuleRecord>(inner);
         } else
-            terminal = context;
+            moduleRecord = cellAs<JSModuleRecord>(context);
         break;
     }
 
-    auto* moduleRecord = dynamicDowncast<JSModuleRecord>(terminal);
-    if (!moduleRecord)
-        return;
-
-    // SAFETY: a positive Field::State (a yield index) means the module body is
-    // suspended at an await, the only state in which JSModuleRecord::evaluate
-    // has not cleared m_moduleProgramExecutable, so getOrMakeExecutable()
-    // returns the stored executable without allocating. Required because
-    // getStackTrace runs under AssertNoGC.
-    JSValue stateValue = moduleRecord->internalField(AbstractModuleRecord::Field::State).get();
-    if (!stateValue.isInt32())
-        return;
-    int32_t state = stateValue.asInt32();
-    if (state <= 0)
-        return;
-
-    ModuleProgramExecutable* executable = moduleRecord->getOrMakeExecutable(moduleRecord->globalObject());
-    if (!executable)
-        return;
-    CodeBlock* codeBlock = executable->codeBlock();
-    if (!codeBlock)
-        return;
-
-    BytecodeIndex bytecodeIndex = yieldStateToBytecodeIndex(codeBlock, state);
-    results.append(StackFrame(vm, owner, moduleRecord, codeBlock, bytecodeIndex, /* isAsyncFrame */ true));
+    if (moduleRecord)
+        appendSuspendedModuleFrame(vm, owner, moduleRecord, results);
 }

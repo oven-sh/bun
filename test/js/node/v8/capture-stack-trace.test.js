@@ -1167,6 +1167,16 @@ await some();
 }
 await inner();
 `,
+    // The async chain can terminate at a combinator result promise with no
+    // awaiter. asyncStackTraceContext() returns the empty JSValue there, which
+    // isCell() misclassifies on JSVALUE64, so it must be checked explicitly.
+    "race.mjs": `async function inner() {
+  await 0;
+  console.log(new Error("boom").stack);
+}
+Promise.race([inner()]);
+await Promise.resolve();
+`,
     // A module's await frame reaches across an import boundary.
     "entry.mjs": `import { run } from "./lib.mjs";
 await run();
@@ -1225,8 +1235,16 @@ export async function run() { await inner(); }
   {
     const { stderr, exitCode } = await run("anon.mjs");
     expect(stderr).toMatch(/anon\.mjs:4:\d+/);
-    expect(stderr).toMatch(/anon\.mjs:8:\d+/);
+    expect(stderr).toMatch(/async \(.*anon\.mjs:8:\d+\)/);
     expect(exitCode).toBe(1);
+  }
+
+  {
+    const { stdout, exitCode } = await run("race.mjs");
+    const lines = stdout.trim().split("\n");
+    expect(lines[1]).toMatch(/^ {4}at inner \(.*race\.mjs:3:\d+\)$/);
+    expect(lines).toHaveLength(2);
+    expect(exitCode).toBe(0);
   }
 
   {

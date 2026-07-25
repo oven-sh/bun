@@ -303,7 +303,20 @@ impl fmt::Display for NameFormatter {
                 write!(f, "new {}", name)?;
             }
             _ => {
-                if !name.is_empty() {
+                if self.is_async {
+                    if self.enable_color {
+                        f.write_str(concat!(
+                            Output::pretty_fmt!("<r><d>", true),
+                            "async",
+                            Output::pretty_fmt!("<r>", true),
+                        ))?;
+                    } else {
+                        f.write_str("async")?;
+                    }
+                    if !name.is_empty() {
+                        write!(f, " {}", name)?;
+                    }
+                } else if !name.is_empty() {
                     write!(f, "{}", name)?;
                 }
             }

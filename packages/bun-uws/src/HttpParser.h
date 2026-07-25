@@ -1133,7 +1133,12 @@ struct HttpResponseData;
                     }
                 }
             }
-            auto result = getHeaders(data, data + length, req->headers, reserved, req->ancientHttp, isConnectRequest, useStrictMethodValidation, useInsecureHTTPParser, maxHeaderSize);
+            /* getHeaders writes isConnect as soon as the request-line is parsed, before it
+             * knows the header block is complete; committing that through the persistent
+             * isConnectRequest& on a short read would make the next onData treat the
+             * buffered head as tunnel data instead of re-parsing it. */
+            bool parsedConnect = false;
+            auto result = getHeaders(data, data + length, req->headers, reserved, req->ancientHttp, parsedConnect, useStrictMethodValidation, useInsecureHTTPParser, maxHeaderSize);
             if(result.isError()) {
                 return result;
             }
@@ -1141,6 +1146,9 @@ struct HttpResponseData;
             /* Short read */
             if(!consumed) {
                 return HttpParserResult::success(consumedTotal, user);
+            }
+            if (parsedConnect) {
+                isConnectRequest = true;
             }
             data += consumed;
             length -= consumed;

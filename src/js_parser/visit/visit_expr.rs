@@ -251,26 +251,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // `module.exports` -> `exports` optimization.
                 p.commonjs_module_exports_assigned_deoptimized = true;
             } else if in_.assign_target == js_ast::AssignTarget::Replace
-                && p.symbols[result.r#ref.inner_index() as usize].kind
-                    == js_ast::symbol::Kind::Unbound
+                && p.should_hoist_implicit_global(result.r#ref, name)
                 && !result.is_inside_with_scope
-                && !p.is_strict_mode()
-                && p.options.module_type != crate::parser::options::ModuleType::Esm
-                && p.is_strict_mode_output_format()
-                && !p.require_ref.eql(result.r#ref)
-                && !p.dirname_ref.eql(result.r#ref)
-                && !p.filename_ref.eql(result.r#ref)
-                && p.define.for_identifier(name).is_none()
-                && !matches!(
-                    name,
-                    b"Buffer"
-                        | b"process"
-                        | b"global"
-                        | b"Bun"
-                        | b"setImmediate"
-                        | b"clearImmediate"
-                        | b"structuredClone"
-                )
             {
                 // `X = ...` with no declaration creates a global in sloppy mode but
                 // throws ReferenceError in strict-mode ESM output; hoist a `var` so the

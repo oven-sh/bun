@@ -749,6 +749,50 @@ describe("bundler", () => {
     },
   });
 
+  itBundled("cjs/ImplicitGlobalAssignBakeDev", {
+    files: {
+      "/entry.js": /* js */ `
+        import lib from './lib.cjs';
+        console.log(lib().name);
+      `,
+      "/lib.cjs": /* js */ `
+        module.exports = function () {
+          return new Generator();
+        };
+        Generator = function () {
+          this.name = "gen";
+        };
+      `,
+    },
+    format: "internal_bake_dev",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("var Generator");
+    },
+  });
+
+  itBundled("cjs/ImplicitGlobalAssignDeadCode", {
+    files: {
+      "/entry.js": /* js */ `
+        import lib from './lib.cjs';
+        console.log(lib);
+      `,
+      "/lib.cjs": /* js */ `
+        if (false) {
+          DebugFoo = 1;
+        }
+        module.exports = typeof DebugFoo;
+      `,
+    },
+    format: "esm",
+    outfile: "/out.mjs",
+    run: {
+      stdout: "undefined",
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.mjs").not.toContain("var DebugFoo");
+    },
+  });
+
   itBundled("cjs/ImplicitGlobalAssignRequire", {
     files: {
       "/entry.js": /* js */ `

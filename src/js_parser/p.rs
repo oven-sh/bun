@@ -4388,6 +4388,37 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.options.bundle && self.options.output_format.is_esm()
     }
 
+    /// Whether a sloppy-mode assignment to an unbound identifier should be
+    /// given a hoisted `var` declaration because the bundled output will run
+    /// in strict mode. Excludes parser-tracked CJS refs and known host
+    /// globals so the hoist does not shadow them.
+    pub fn should_hoist_implicit_global(&self, ref_: Ref, name: &[u8]) -> bool {
+        use crate::parser::options;
+        self.symbols[ref_.inner_index() as usize].kind == js_ast::symbol::Kind::Unbound
+            && !self.is_control_flow_dead
+            && !self.is_strict_mode()
+            && self.options.module_type != options::ModuleType::Esm
+            && self.options.bundle
+            && matches!(
+                self.options.output_format,
+                options::Format::Esm | options::Format::InternalBakeDev
+            )
+            && !self.require_ref.eql(ref_)
+            && !self.dirname_ref.eql(ref_)
+            && !self.filename_ref.eql(ref_)
+            && self.define.for_identifier(name).is_none()
+            && !matches!(
+                name,
+                b"Buffer"
+                    | b"process"
+                    | b"global"
+                    | b"Bun"
+                    | b"setImmediate"
+                    | b"clearImmediate"
+                    | b"structuredClone"
+            )
+    }
+
     /// Declare an ambient symbol resolvable BY NAME via [`Self::find_symbol`]
     /// during visit (writes `module_scope.members[name]`). Use for parser-minted
     /// symbols that user code references as a bare identifier: CJS wrapper vars

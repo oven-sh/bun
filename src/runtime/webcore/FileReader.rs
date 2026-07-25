@@ -166,11 +166,17 @@ impl Lazy {
                             // nonblocking without touching the file description
                             // shared with the parent shell. Only stdin is swapped
                             // in place; stdout/stderr readers keep using a
-                            // separate fd so the write side's blocking-tty
-                            // contract on fd 1/2 is untouched.
-                            let accmode = sys::get_fcntl_flags(*pl_fd)
-                                .map(|f| f as i32 & sys::O::ACCMODE)
-                                .unwrap_or(sys::O::RDONLY);
+                            // separate read-only fd so the write side's
+                            // blocking-tty contract on fd 1/2 is untouched and a
+                            // `> /dev/tty` (O_WRONLY) fd 1 still yields a
+                            // readable reopened fd.
+                            let accmode = if *pl_fd == Fd::stdin() {
+                                sys::get_fcntl_flags(*pl_fd)
+                                    .map(|f| f as i32 & sys::O::ACCMODE)
+                                    .unwrap_or(sys::O::RDONLY)
+                            } else {
+                                sys::O::RDONLY
+                            };
                             let rc = open_as_nonblocking_tty(pl_fd.native(), accmode);
                             if rc > -1 {
                                 is_nonblocking = true;

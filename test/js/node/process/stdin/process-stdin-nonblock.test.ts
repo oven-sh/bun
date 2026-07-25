@@ -5,7 +5,7 @@
 // TTY, return one keystroke at a time) instead of throwing `EAGAIN` like Node.
 // https://github.com/oven-sh/bun/issues/5305
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isPosix, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, isMacOS, libcPathForDlopen, isPosix, tempDir } from "harness";
 import path from "node:path";
 
 // O_NONBLOCK is a Unix fd flag; the Windows stdin path is libuv-backed and
@@ -143,7 +143,8 @@ test.skipIf(!isPosix)(
   60_000,
 );
 
-test.skipIf(!isPosix)("O_NONBLOCK on pipe stdin is restored when bun exits", async () => {
+// `libcPathForDlopen()` covers glibc/musl/darwin; FreeBSD is not mapped yet.
+test.skipIf(!(isLinux || isMacOS))("O_NONBLOCK on pipe stdin is restored when bun exits", async () => {
   // `producer | { bun; sibling }` share one read-end file description. Node
   // restores its startup O_NONBLOCK bit on the way out (ResetStdio); Bun
   // should too so `sibling` does not inherit a nonblocking stdin.
@@ -152,11 +153,10 @@ test.skipIf(!isPosix)("O_NONBLOCK on pipe stdin is restored when bun exits", asy
     // either way, so probe the O_NONBLOCK bit directly via fcntl(F_GETFL).
     "probe.js": `
       const { dlopen, FFIType } = require("bun:ffi");
-      const lib = process.platform === "darwin" ? "libc.dylib" : "libc.so.6";
-      const { symbols: { fcntl } } = dlopen(lib, {
+      const { symbols: { fcntl } } = dlopen(process.env.LIBC, {
         fcntl: { args: [FFIType.int, FFIType.int, FFIType.int], returns: FFIType.int },
       });
-      const O_NONBLOCK = process.platform === "darwin" ? 0x0004 : 0o4000;
+      const { O_NONBLOCK } = require("node:fs").constants;
       console.log((fcntl(0, 3, 0) & O_NONBLOCK) ? "NONBLOCKING" : "BLOCKING");
     `,
     "middle.js": `process.stdin.resume(); process.exit(0);`,
@@ -164,7 +164,7 @@ test.skipIf(!isPosix)("O_NONBLOCK on pipe stdin is restored when bun exits", asy
 
   await using proc = Bun.spawn({
     cmd: ["sh", "-c", `"$BUN" probe.js && "$BUN" middle.js && "$BUN" probe.js`],
-    env: { ...bunEnv, BUN: bunExe() },
+    env: { ...bunEnv, BUN: bunExe(), LIBC: libcPathForDlopen() },
     cwd: String(dir),
     stdin: "pipe",
     stdout: "pipe",

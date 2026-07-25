@@ -1,7 +1,16 @@
 import { file, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, setDefaultTimeout } from "bun:test";
 import { access, appendFile, copyFile, mkdir, readlink, rm, writeFile } from "fs/promises";
-import { bunExe, bunEnv as env, readdirSorted, tmpdirSync, toBeValidBin, toBeWorkspaceLink, toHaveBins } from "harness";
+import {
+  bunExe,
+  bunEnv as env,
+  readdirSorted,
+  tempDir,
+  tmpdirSync,
+  toBeValidBin,
+  toBeWorkspaceLink,
+  toHaveBins,
+} from "harness";
 import { join, relative, resolve } from "path";
 import {
   check_npm_auth_type,
@@ -2468,6 +2477,192 @@ it("should not add duplicate package.json entries when installing the same tarba
     dependencies: {
       baz: tarball_url,
     },
+  });
+});
+
+it("should update a package installed from one tarball URL to a different tarball URL (#32757)", async () => {
+  // Build two tarballs for the same package name at two different versions.
+  using tmpRoot = tempDir("bun-add-url-replace", {});
+  const tmpDir = String(tmpRoot);
+  for (const version of ["1.0.0", "2.0.0"]) {
+    const dir = join(tmpDir, version, "package");
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, "package.json"), JSON.stringify({ name: "mypkg", version }));
+    const { exited } = spawn({
+      cmd: ["tar", "-czf", join(tmpDir, `v${version}.tgz`), "-C", join(tmpDir, version), "package"],
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(await exited).toBe(0);
+  }
+
+  using server = Bun.serve({
+    port: 0,
+    fetch(req) {
+      const file = new URL(req.url).pathname.includes("v2") ? "v2.0.0.tgz" : "v1.0.0.tgz";
+      return new Response(Bun.file(join(tmpDir, file)));
+    },
+  });
+  const server_url = server.url.href.replace(/\/+$/, "");
+  // Two distinct URLs for the same package. Differ by path rather than a query
+  // string: a "?" in a tarball URL lands in the extraction temp-dir name, which
+  // is rejected on Windows (a separate, pre-existing issue from this fix).
+  const v1_url = `${server_url}/v1.tgz`;
+  const v2_url = `${server_url}/v2.tgz`;
+
+  setHandler(dummyRegistry([]));
+  await writeFile(join(package_dir, "package.json"), JSON.stringify({ name: "foo", version: "0.0.1" }));
+
+  // First add installs mypkg@1.0.0 from the v1 URL.
+  {
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "add", v1_url],
+      cwd: package_dir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
+    expect(err).toContain("Saved lockfile");
+    expect(out).toContain("installed mypkg@");
+    expect(exitCode).toBe(0);
+  }
+  expect(await file(join(package_dir, "package.json")).json()).toStrictEqual({
+    name: "foo",
+    version: "0.0.1",
+    dependencies: { mypkg: v1_url },
+  });
+
+  // Second add of a different URL for the same package must replace the entry
+  // rather than fail with a dependency loop.
+  {
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "add", v2_url],
+      cwd: package_dir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
+    expect(err).not.toContain("dependency loop");
+    expect(err).not.toContain("error:");
+    expect(out).toContain("installed mypkg@");
+    expect(exitCode).toBe(0);
+  }
+
+  // package.json points at the new URL with no duplicate entry.
+  const raw = await file(join(package_dir, "package.json")).text();
+  expect(raw.match(/"mypkg"\s*:/g) ?? []).toHaveLength(1);
+  expect(JSON.parse(raw)).toStrictEqual({
+    name: "foo",
+    version: "0.0.1",
+    dependencies: { mypkg: v2_url },
+  });
+
+  // The installed package is the v2 build.
+  expect(await file(join(package_dir, "node_modules", "mypkg", "package.json")).json()).toMatchObject({
+    name: "mypkg",
+    version: "2.0.0",
+  });
+});
+
+it("should update a GitHub dependency when adding the same repo at a different ref (#8031)", async () => {
+  // GitHub tarballs wrap files under `<owner>-<repo>-<sha>/`; bun stores that
+  // directory name as the resolved ref, so the two tags need distinct roots.
+  using tmpRoot = tempDir("bun-add-github-replace", {});
+  const tmpDir = String(tmpRoot);
+  const refs = [
+    { tag: "v1.0.0", root: "owner-repo-aaaa111", version: "1.0.0" },
+    { tag: "v2.0.0", root: "owner-repo-bbbb222", version: "2.0.0" },
+  ] as const;
+  for (const { root, version } of refs) {
+    const dir = join(tmpDir, root);
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, "package.json"), JSON.stringify({ name: "mypkg", version }));
+    const { exited } = spawn({
+      cmd: ["tar", "-czf", join(tmpDir, `${root}.tgz`), "-C", tmpDir, root],
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(await exited).toBe(0);
+  }
+
+  using server = Bun.serve({
+    port: 0,
+    fetch(req) {
+      const path = new URL(req.url).pathname;
+      const ref = refs.find(r => path.endsWith(`/tarball/${r.tag}`));
+      if (ref) {
+        return new Response(Bun.file(join(tmpDir, `${ref.root}.tgz`)), {
+          headers: { "Content-Type": "application/gzip" },
+        });
+      }
+      return new Response("Not Found", { status: 404 });
+    },
+  });
+
+  setHandler(dummyRegistry([]));
+  await writeFile(join(package_dir, "package.json"), JSON.stringify({ name: "foo", version: "0.0.1" }));
+
+  const githubEnv = {
+    ...env,
+    GITHUB_API_URL: server.url.href.replace(/\/+$/, ""),
+    BUN_INSTALL_CACHE_DIR: join(package_dir, ".add-cache"),
+  };
+
+  // First add installs mypkg@1.0.0 from the v1 tag.
+  {
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "add", "owner/repo#v1.0.0"],
+      cwd: package_dir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env: githubEnv,
+    });
+    const [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
+    expect(err).not.toContain("error:");
+    expect(err).toContain("Saved lockfile");
+    expect(out).toContain("installed mypkg@");
+    expect(exitCode).toBe(0);
+  }
+  expect(await file(join(package_dir, "package.json")).json()).toStrictEqual({
+    name: "foo",
+    version: "0.0.1",
+    dependencies: { mypkg: "owner/repo#v1.0.0" },
+  });
+
+  // Second add of a different tag for the same repo must replace the entry
+  // rather than fail with a dependency loop.
+  {
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "add", "owner/repo#v2.0.0"],
+      cwd: package_dir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env: githubEnv,
+    });
+    const [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
+    expect(err).not.toContain("dependency loop");
+    expect(err).not.toContain("error:");
+    expect(out).toContain("installed mypkg@");
+    expect(exitCode).toBe(0);
+  }
+
+  // package.json points at the new tag with no duplicate entry.
+  const raw = await file(join(package_dir, "package.json")).text();
+  expect(raw.match(/"mypkg"\s*:/g) ?? []).toHaveLength(1);
+  expect(JSON.parse(raw)).toStrictEqual({
+    name: "foo",
+    version: "0.0.1",
+    dependencies: { mypkg: "owner/repo#v2.0.0" },
+  });
+  expect(await file(join(package_dir, "node_modules", "mypkg", "package.json")).json()).toMatchObject({
+    name: "mypkg",
+    version: "2.0.0",
   });
 });
 

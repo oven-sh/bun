@@ -4,6 +4,7 @@ const RoundRobinHandle = require("internal/cluster/RoundRobinHandle");
 const SharedHandle = require("internal/cluster/SharedHandle");
 const path = require("node:path");
 const { throwNotImplemented, kHandle } = require("internal/shared");
+const { getInspectPort, isUsingInspector } = require("internal/util/inspector");
 
 const sendHelper = $newRustFunction("node_cluster_binding.rs", "sendHelperPrimary", 4);
 const onInternalMessage = $newRustFunction("node_cluster_binding.rs", "onInternalMessagePrimary", 3);
@@ -81,12 +82,12 @@ function createWorkerProcess(id, env) {
   const workerEnv = { ...process.env, ...env, NODE_UNIQUE_ID: `${id}` };
   const execArgv = [...cluster.settings.execArgv];
 
-  // if (cluster.settings.inspectPort === null) {
-  //   throw new ERR_SOCKET_BAD_PORT("Port", null, true);
-  // }
-  // if (isUsingInspector(cluster.settings.execArgv)) {
-  //   ArrayPrototypePush(execArgv, `--inspect-port=${getInspectPort(cluster.settings.inspectPort)}`);
-  // }
+  if (cluster.settings.inspectPort === null) {
+    throw $ERR_SOCKET_BAD_PORT("Port", null, true);
+  }
+  if (isUsingInspector(cluster.settings.execArgv)) {
+    execArgv.push(`--inspect-port=${getInspectPort(cluster.settings.inspectPort)}`);
+  }
 
   child_process ??= require("node:child_process");
   return child_process.fork(cluster.settings.exec, cluster.settings.args, {

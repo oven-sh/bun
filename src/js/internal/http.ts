@@ -398,7 +398,7 @@ function hasServerResponseFinished(self, chunk, callback) {
       if (finished) {
         err = $ERR_STREAM_WRITE_AFTER_END();
       } else if (destroyed) {
-        err = $ERR_STREAM_DESTROYED("Stream is destroyed");
+        err = $ERR_STREAM_DESTROYED("write");
       }
 
       if (!destroyed) {

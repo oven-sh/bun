@@ -2391,6 +2391,25 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_HTTP_HEADERS_SENT, message));
     }
 
+    case Bun::ErrorCode::ERR_HTTP_CONTENT_LENGTH_MISMATCH: {
+        auto arg0 = callFrame->argument(1);
+        auto str0 = arg0.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto arg1 = callFrame->argument(2);
+        auto str1 = arg1.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto message = makeString("Response body's content-length of "_s, str0, " byte(s) does not match the content-length of "_s, str1, " byte(s) set in header"_s);
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_HTTP_CONTENT_LENGTH_MISMATCH, message));
+    }
+
+    case Bun::ErrorCode::ERR_HTTP2_UNSUPPORTED_PROTOCOL: {
+        auto arg0 = callFrame->argument(1);
+        auto str0 = arg0.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto message = makeString("protocol \""_s, str0, "\" is unsupported."_s);
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_HTTP2_UNSUPPORTED_PROTOCOL, message));
+    }
+
     case Bun::ErrorCode::ERR_UNESCAPED_CHARACTERS: {
         auto arg0 = callFrame->argument(1);
         auto str0 = arg0.toWTFString(globalObject);
@@ -2670,6 +2689,8 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_HTTP2_GOAWAY_SESSION, "New streams cannot be created after receiving a GOAWAY"_s));
     case ErrorCode::ERR_HTTP_BODY_NOT_ALLOWED:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_HTTP_BODY_NOT_ALLOWED, "Adding content for this request method or response status is not allowed."_s));
+    case ErrorCode::ERR_HTTP_TRAILER_INVALID:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_HTTP_TRAILER_INVALID, "Trailers are invalid with this transfer encoding"_s));
     case ErrorCode::ERR_HTTP_SOCKET_ASSIGNED:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_HTTP_SOCKET_ASSIGNED, "Socket already assigned"_s));
     case ErrorCode::ERR_STREAM_RELEASE_LOCK:
@@ -2708,7 +2729,14 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
     }
     }
 
-    auto&& message = callFrame->argument(1).toWTFString(globalObject);
+    auto messageValue = callFrame->argument(1);
+#if ASSERT_ENABLED
+    if (!messageValue.isString()) {
+        JSC::throwTypeError(globalObject, scope, makeString("$ERR_ code "_s, static_cast<int>(error), " has no message template; first argument must be the full message string"_s));
+        RELEASE_AND_RETURN(scope, {});
+    }
+#endif
+    auto&& message = messageValue.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
     return JSC::JSValue::encode(createError(globalObject, error, message));

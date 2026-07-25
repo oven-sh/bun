@@ -1148,7 +1148,7 @@ function asyncWrap(fn: any, name: string) {
 
             if (bytesWritten === 0) {
               if (++retries > 5) {
-                throw $ERR_OPERATION_FAILED("Operation failed: write failed after retries");
+                throw $ERR_OPERATION_FAILED("write failed after retries");
               }
             } else {
               retries = 0;
@@ -1192,7 +1192,7 @@ function asyncWrap(fn: any, name: string) {
               // Retry the writev as-is on a zero-byte write (up to 5 times)
               // instead of degrading to the concat fallback below.
               if (++retries > 5) {
-                throw $ERR_OPERATION_FAILED("Operation failed: writev failed after retries");
+                throw $ERR_OPERATION_FAILED("writev failed after retries");
               }
               continue;
             }
@@ -1229,7 +1229,7 @@ function asyncWrap(fn: any, name: string) {
           const bytesWritten = fsSync.writeSync(fd, buf, offset, length, position >= 0 ? position : null) || 0;
           if (bytesWritten === 0) {
             if (++retries > 5) {
-              throw $ERR_OPERATION_FAILED("Operation failed: write failed after retries");
+              throw $ERR_OPERATION_FAILED("write failed after retries");
             }
           } else {
             retries = 0;

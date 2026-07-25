@@ -1103,6 +1103,9 @@ impl<'a> PackageInstaller<'a> {
             let mut string_builder = temp_lockfile.string_builder();
             let log = self.manager().log_mut();
             if let Err(err) = temp.fill_from_package_json(&mut string_builder, log, folder_path) {
+                if matches!(err, crate::Error::Sys(bun_errno::SystemErrno::ENOENT)) {
+                    return 0;
+                }
                 if log_level != Options::LogLevel::Silent {
                     Output::err_generic(
                         "failed to fill lifecycle scripts for <b>{}<r>: {}",
@@ -1923,11 +1926,7 @@ impl<'a> PackageInstaller<'a> {
                             // these will never be blocked
                         }
                         _ => {
-                            // npm's flag is registry-supplied and may be wrong; non-npm derived it from disk.
-                            if !is_trusted
-                                && (resolution.tag == resolution::Tag::Npm
-                                    || self.metas[package_id as usize].has_install_script())
-                            {
+                            if !is_trusted {
                                 let mut folder_path =
                                     AutoAbsPath::from(self.node_modules.path.as_slice())
                                         .unwrap_or_oom();

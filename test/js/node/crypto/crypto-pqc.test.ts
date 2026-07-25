@@ -182,9 +182,9 @@ describe("PKCS#8 private-key CHOICE forms", () => {
       expect(() => createPrivateKey({ key: fixtureDer(expandedOnly), format: "der", type: "pkcs8" })).toThrow(
         expect.objectContaining({ code: "ERR_OSSL_EVP_PRIVATE_KEY_WAS_NOT_SEED" }),
       );
-      await expect(subtle.importKey("pkcs8", fixtureDer(expandedOnly), { name: algName }, true, usages)).rejects.toThrow(
-        /PKCS#8 key without a seed is not supported/,
-      );
+      await expect(
+        subtle.importKey("pkcs8", fixtureDer(expandedOnly), { name: algName }, true, usages),
+      ).rejects.toThrow(/PKCS#8 key without a seed is not supported/);
     });
   });
 

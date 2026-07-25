@@ -7203,8 +7203,8 @@ describe("RedisClient PSUBSCRIBE (mock server)", () => {
       await c.punsubscribe("evt:*");
 
       // After punsubscribe the client leaves subscriber mode, so regular
-      // commands are allowed again.
-      expect(() => c.set("k", "v")).not.toThrow();
+      // commands are allowed and answered again.
+      expect(await c.set("k", "v")).toBe("OK");
     } finally {
       c.close();
       srv.stop();

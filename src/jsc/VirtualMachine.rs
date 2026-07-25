@@ -4839,12 +4839,8 @@ impl VirtualMachine {
                 allow_ansi_color,
                 allow_side_effects,
             };
-            // `getErrorsProperty` is `getDirect` (own slot, nothrow). User code
-            // can delete/replace `errors`, so it may be empty, an accessor
-            // (GetterSetter cell), or a non-iterable object; feeding any of
-            // those to `for_each` asserts or throws. Guard with `is_object()`
-            // (excludes empty/GetterSetter/primitives) and swallow iteration
-            // errors so the console formatter never propagates.
+            // `getDirect` can hand back empty (deleted prop) or a GetterSetter
+            // cell (accessor); `is_object()` rejects both before `for_each`.
             let errors = value.get_errors_property(global_ref);
             if errors.is_object()
                 && errors

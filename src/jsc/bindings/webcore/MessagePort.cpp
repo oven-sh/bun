@@ -493,10 +493,19 @@ void MessagePort::updateListenerEventLoopRef()
 
 void MessagePort::onDidChangeListenerImpl(EventTarget& self, const AtomString& eventType, OnDidChangeListenerKind kind)
 {
+    auto& port = static_cast<MessagePort&>(self);
+
+    // once:true dispatch removes via mark-and-sweep, not removeEventListener(); keep the has-listener flags in sync here.
+    if (kind != Add) {
+        if (eventType == eventNames().messageEvent && !port.hasEventListeners(eventType))
+            port.m_hasMessageEventListener = false;
+        else if (eventType == eventNames().closeEvent && !port.hasEventListeners(eventType))
+            port.m_hasCloseEventListener.store(false, std::memory_order_release);
+    }
+
     if (eventType != eventNames().messageEvent)
         return;
 
-    auto& port = static_cast<MessagePort&>(self);
     switch (kind) {
     case Add:
         port.m_messageEventCount++;

@@ -202,4 +202,27 @@ describe("AbortSignal", () => {
       expect(exitCode).toBe(0);
     },
   );
+
+  test.concurrent(
+    "listenerCount/getEventListeners inside a {once:true} handler do not see already-fired listeners",
+    async () => {
+      const src = `
+      const { listenerCount, getEventListeners } = require("node:events");
+      const t = new EventTarget();
+      t.addEventListener("x", () => {}, { once: true });
+      t.addEventListener("x", () => {}, { once: true });
+      let during;
+      t.addEventListener("x", () => {
+        during = { count: listenerCount(t, "x"), list: getEventListeners(t, "x").length };
+      }, { once: true });
+      t.dispatchEvent(new Event("x"));
+      console.log(JSON.stringify({ during, after: listenerCount(t, "x") }));
+    `;
+      await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout.trim())).toEqual({ during: { count: 0, list: 0 }, after: 0 });
+      expect(exitCode).toBe(0);
+    },
+  );
 });

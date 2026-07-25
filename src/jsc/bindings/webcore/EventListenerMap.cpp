@@ -52,7 +52,7 @@ bool EventListenerMap::containsCapturing(const AtomString& eventType) const
         return false;
 
     for (auto& eventListener : *listeners) {
-        if (eventListener->useCapture())
+        if (!eventListener->wasRemoved() && eventListener->useCapture())
             return true;
     }
     return false;
@@ -65,7 +65,7 @@ bool EventListenerMap::containsActive(const AtomString& eventType) const
         return false;
 
     for (auto& eventListener : *listeners) {
-        if (!eventListener->isPassive())
+        if (!eventListener->wasRemoved() && !eventListener->isPassive())
             return true;
     }
     return false;

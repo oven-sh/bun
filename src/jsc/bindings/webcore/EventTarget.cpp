@@ -353,9 +353,11 @@ void EventTarget::innerInvokeEventListeners(Event& event, EventListenerVector li
 
     if (removedOnceListeners) {
         if (auto* data = eventTargetData()) {
-            if (data->eventListenerMap.compactRemoved(event.type())) {
-                if (this->onDidChangeListener) [[unlikely]]
-                    this->onDidChangeListener(*this, event.type(), OnDidChangeListenerKind::Remove);
+            if (unsigned removed = data->eventListenerMap.compactRemoved(event.type())) {
+                if (this->onDidChangeListener) [[unlikely]] {
+                    for (unsigned i = 0; i < removed; ++i)
+                        this->onDidChangeListener(*this, event.type(), OnDidChangeListenerKind::Remove);
+                }
                 eventListenersDidChange();
             }
         }

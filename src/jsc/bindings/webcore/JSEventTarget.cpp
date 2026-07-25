@@ -376,6 +376,11 @@ JSC_DEFINE_HOST_FUNCTION(jsEventTargetGetEventListenersCount, (JSC::JSGlobalObje
     RETURN_IF_EXCEPTION(throwScope, {});
     String str = eventName->value(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
-    auto size = thisValue->wrapped().eventListeners(makeAtomString(str)).size();
-    return JSC::JSValue::encode(JSC::jsNumber(size));
+    auto& listeners = thisValue->wrapped().eventListeners(makeAtomString(str));
+    size_t count = 0;
+    for (auto& listener : listeners) {
+        if (!listener->wasRemoved())
+            ++count;
+    }
+    return JSC::JSValue::encode(JSC::jsNumber(count));
 }

@@ -103,6 +103,15 @@ exports[`property matchers preserve class name and handle shared references 2`] 
 }
 `;
 
+exports[`property matchers preserve class name and handle shared references 3`] = `
+{
+  "id": Any<Number>,
+  "self": [Circular],
+}
+`;
+
+exports[`property matchers preserve class name and handle shared references 4`] = `[Error: boom]`;
+
 exports[`toMatchSnapshot errors should throw if arguments are in the wrong order: right spot 1`] = `
 {
   "a": "oops",

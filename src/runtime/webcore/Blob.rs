@@ -1224,9 +1224,6 @@ impl BlobExt for Blob {
         Ok(stream)
     }
 
-    /// The de-duplicated `.stream()` result, if this wrapper has one (only
-    /// fd-backed stores do). `text()`/`arrayBuffer()`/... route through it so
-    /// they reject `ERR_INVALID_STATE` instead of reading the fd concurrently.
     fn fd_cached_stream(&self, this_value: JSValue) -> Option<JSValue> {
         let store = self.store.get().as_deref()?;
         let store::Data::File(f) = &store.data else {

@@ -1069,6 +1069,7 @@ pub(crate) fn inject(
     self_exe: &ZStr,
     inject_options: &InjectOptions,
     target: &CompileTarget,
+    out_temp_path: &mut bun_core::ZBox,
 ) -> Fd {
     let _ = inject_options;
     let mut buf = PathBuffer::uninit();
@@ -1279,6 +1280,13 @@ pub(crate) fn inject(
         }
     };
     let _ = (&mut zname_owned, &mut zname);
+
+    // Record the path we opened so the caller can rename it directly. On Linux
+    // `/proc/self/fd/N` readlink can return a path that does not exist in the
+    // caller's mount namespace (Docker Desktop virtiofs bind mounts are the
+    // common case: the dentry walk yields `/run/host_virtiofs/...`), so the
+    // caller must not attempt to re-derive this from the fd.
+    *out_temp_path = bun_core::ZBox::from_bytes(zname.as_bytes());
 
     match target.os {
         CompileTargetOs::Mac => {
@@ -1779,7 +1787,8 @@ pub fn to_executable(
         bun_core::ZBox::from_vec_with_nul(dest_z.as_bytes().to_vec())
     };
 
-    let fd = inject(&bytes, &self_exe, windows_options, target);
+    let mut temp_path = bun_core::ZBox::default();
+    let fd = inject(&bytes, &self_exe, windows_options, target, &mut temp_path);
     // Note: a scopeguard closure capturing `fd` by value would not observe
     // later reassignments; capturing by `&mut` conflicts with later uses. Explicit
     // `if fd != Fd::INVALID { fd.close(); }` calls are inserted at every return below
@@ -1916,24 +1925,19 @@ pub fn to_executable(
 
     #[cfg(not(windows))]
     {
-        let mut buf2 = PathBuffer::uninit();
-        // Note: borrowck — `get_fd_path` returns `&mut [u8]` borrowing `buf2`;
-        // copy it into an owned buffer so `temp_posix_buf` can also borrow `buf2`'s
-        // sibling without overlap.
-        let temp_location: Vec<u8> = match bun_sys::get_fd_path(fd, &mut buf2) {
-            Ok(p) => p.to_vec(),
-            Err(e) => {
-                if fd != Fd::INVALID {
-                    fd.close();
-                }
-                return Ok(CompileResult::fail_fmt(format_args!(
-                    "failed to get path for fd: {}",
-                    e
-                )));
-            }
-        };
-        let mut temp_posix_buf = PathBuffer::uninit();
-        let temp_posix = path::resolve_path::z(&temp_location, &mut temp_posix_buf);
+        if fd == Fd::INVALID {
+            // inject() already printed the specific failure via pretty_errorln!.
+            return Ok(CompileResult::fail_fmt(format_args!(
+                "failed to embed module graph in executable"
+            )));
+        }
+        // inject() created the temp file at `temp_path` (relative to cwd, or
+        // absolute when the tmpdir fallback fired). Rename from that exact
+        // path rather than re-deriving it via /proc/self/fd, which on
+        // virtiofs bind mounts (Docker Desktop dev containers) resolves to a
+        // host-side path that does not exist in this mount namespace and so
+        // would fail the rename with ENOENT (#12318).
+        let temp_posix: &ZStr = temp_path.as_zstr();
         let outfile_basename = bun_paths::basename(outfile);
         let mut outfile_posix_buf = PathBuffer::uninit();
         let outfile_posix = path::resolve_path::z(outfile_basename, &mut outfile_posix_buf);
@@ -1953,16 +1957,14 @@ pub fn to_executable(
             } else {
                 return Ok(CompileResult::fail_fmt(format_args!(
                     "failed to rename {} to {}: {}",
-                    bstr::BStr::new(&temp_location),
+                    bstr::BStr::new(temp_posix.as_bytes()),
                     bstr::BStr::new(outfile),
                     bstr::BStr::new(e.name())
                 )));
             }
         }
 
-        if fd != Fd::INVALID {
-            fd.close();
-        }
+        fd.close();
         Ok(CompileResult::Success)
     }
 }

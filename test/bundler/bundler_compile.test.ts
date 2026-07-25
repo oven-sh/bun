@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
-import { describe, expect, test } from "bun:test";
-import { rmSync } from "fs";
-import { bunEnv, bunExe, isWindows, tempDir, tempDirWithFiles } from "harness";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { readdirSync, rmSync } from "fs";
+import { bunEnv, bunExe, isLinux, isMusl, isWindows, tempDir, tempDirWithFiles } from "harness";
 import { join } from "path";
 import { BundlerTestInput, itBundled as itBundledBase } from "./expectBundled";
 
@@ -1230,3 +1230,106 @@ test("compile --compile-executable-path rejects a Mach-O template whose __BUN se
     expect(exitCode).toBe(0);
   }
 }, 60_000);
+
+// On Docker Desktop (macOS/Windows) the working directory is a virtiofs bind
+// mount, and Linux's /proc/self/fd/N readlink resolves to the host-side
+// mount source (e.g. /run/host_virtiofs/Users/...) which does not exist in
+// the container's mount namespace. The compile step used to re-derive the
+// temp file path via that readlink and fail the final rename with ENOENT
+// (issue #12318). The shim below reproduces that exact readlink behavior so
+// the test fails without the fix.
+const cc = Bun.which("cc") ?? Bun.which("gcc") ?? Bun.which("clang");
+// LD_PRELOAD cannot intercept the statically-linked musl build.
+describe.skipIf(!isLinux || isMusl || !cc)("compile when /proc/self/fd resolves outside the mount namespace", () => {
+  const PROCFD_SHIM_C = /* c */ `
+#define _GNU_SOURCE
+#include <dlfcn.h>
+#include <string.h>
+#include <stdio.h>
+#include <sys/types.h>
+
+static ssize_t (*real_readlink)(const char *, char *, size_t);
+static ssize_t (*real_readlinkat)(int, const char *, char *, size_t);
+
+static ssize_t rewrite(const char *path, char *buf, size_t bufsiz, ssize_t r) {
+    if (r <= 0) return r;
+    if (strncmp(path, "/proc/self/fd/", 14) != 0) return r;
+    /* Only touch the compile temp file; leave /proc/self/exe etc. alone. */
+    if (r < 10 || memcmp(buf + r - 10, ".bun-build", 10) != 0) return r;
+    char tmp[8192];
+    size_t len = (size_t)r < sizeof(tmp) - 1 ? (size_t)r : sizeof(tmp) - 1;
+    memcpy(tmp, buf, len);
+    tmp[len] = 0;
+    int n = snprintf(buf, bufsiz, "/run/host_virtiofs%s", tmp);
+    if (n < 0) return r;
+    return (size_t)n < bufsiz ? (ssize_t)n : (ssize_t)bufsiz;
+}
+
+ssize_t readlink(const char *path, char *buf, size_t bufsiz) {
+    if (!real_readlink) real_readlink = dlsym(RTLD_NEXT, "readlink");
+    return rewrite(path, buf, bufsiz, real_readlink(path, buf, bufsiz));
+}
+
+ssize_t readlinkat(int dirfd, const char *path, char *buf, size_t bufsiz) {
+    if (!real_readlinkat) real_readlinkat = dlsym(RTLD_NEXT, "readlinkat");
+    return rewrite(path, buf, bufsiz, real_readlinkat(dirfd, path, buf, bufsiz));
+}
+`;
+
+  let shimPath: string;
+  let shimDir: ReturnType<typeof tempDir> | undefined;
+
+  beforeAll(async () => {
+    shimDir = tempDir("compile-procfd-shim", { "shim.c": PROCFD_SHIM_C });
+    shimPath = join(String(shimDir), "shim.so");
+    await using proc = Bun.spawn({
+      cmd: [cc!, "-shared", "-fPIC", "-o", shimPath, join(String(shimDir), "shim.c"), "-ldl"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [out, err, code] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    if (code !== 0) throw new Error(`shim compile failed: ${err || out}`);
+  });
+
+  afterAll(() => {
+    shimDir?.[Symbol.dispose]();
+  });
+
+  test("--outfile mycli", async () => {
+    using dir = tempDir("compile-procfd", {
+      "cli.ts": `console.log("Hello world!");`,
+    });
+    const cwd = String(dir);
+    const existing = bunEnv.LD_PRELOAD;
+    await using build = Bun.spawn({
+      cmd: [bunExe(), "build", "./cli.ts", "--compile", "--outfile", "mycli"],
+      env: { ...bunEnv, LD_PRELOAD: existing ? `${shimPath}:${existing}` : shimPath },
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([
+      build.stdout.text(),
+      build.stderr.text(),
+      build.exited,
+    ]);
+    expect({ stdout, stderr }).toEqual({
+      stdout: expect.not.stringContaining("/run/host_virtiofs"),
+      stderr: expect.not.stringContaining("failed to rename"),
+    });
+    expect(stderr).not.toContain("/run/host_virtiofs");
+    const outPath = join(cwd, "mycli");
+    expect(await Bun.file(outPath).exists()).toBe(true);
+    // No .bun-build temp file left behind in cwd.
+    expect(readdirSync(cwd).filter(n => n.endsWith(".bun-build"))).toEqual([]);
+    expect(exitCode).toBe(0);
+
+    // The produced binary must actually run.
+    await using run = Bun.spawn({ cmd: [outPath], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [runOut, runErr, runCode] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
+    expect(runErr).toBe("");
+    expect(runOut).toBe("Hello world!\n");
+    expect(runCode).toBe(0);
+  }, 60_000);
+});

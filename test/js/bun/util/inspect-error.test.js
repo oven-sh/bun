@@ -194,6 +194,8 @@ test("error.stack throwing an error doesn't lead to a crash", () => {
 // ErrorInstance cells. Node renders any `instanceof Error` value as an error,
 // not as a generic object dump; Bun used to fall through to the generic object
 // formatter for these.
+// (Import placed here so the inline snapshots above keep their line numbers.)
+import { bunEnv, bunExe } from "harness";
 describe("Error-like object (instanceof Error, not a native ErrorInstance)", () => {
   function makeErrorLike(extra) {
     function JsonWebTokenError(msg) {
@@ -278,7 +280,6 @@ describe("Error-like object (instanceof Error, not a native ErrorInstance)", () 
   `;
 
   test.concurrent("console.error renders it as an error", async () => {
-    const { bunEnv, bunExe } = require("harness");
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", fixture + `console.error(new JsonWebTokenError("boom"));`],
       env: { ...bunEnv, NO_COLOR: "1" },
@@ -293,7 +294,6 @@ describe("Error-like object (instanceof Error, not a native ErrorInstance)", () 
   });
 
   test.concurrent("the uncaught-error printer renders it as an error", async () => {
-    const { bunEnv, bunExe } = require("harness");
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", fixture + `throw new JsonWebTokenError("boom");`],
       env: { ...bunEnv, NO_COLOR: "1" },

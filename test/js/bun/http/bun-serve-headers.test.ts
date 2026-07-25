@@ -254,6 +254,33 @@ describe("proxied fetch() response drops decoded Content-Encoding", () => {
     expect(body.toString()).toBe(payload);
   });
 
+  test("HTMLRewriter.transform() on a fetch() Response", async () => {
+    const html = "<a href=/x>hi</a>";
+    const rewritten = '<a href="/y">hi</a>';
+    using upstream = Bun.serve({
+      port: 0,
+      development: false,
+      fetch() {
+        return new Response(gzipSync(html), {
+          headers: { "content-encoding": "gzip", "content-type": "text/html" },
+        });
+      },
+    });
+    using proxy = Bun.serve({
+      port: 0,
+      development: false,
+      async fetch() {
+        return new HTMLRewriter()
+          .on("a", { element: el => void el.setAttribute("href", "/y") })
+          .transform(await fetch(upstream.url));
+      },
+    });
+
+    const { head, body } = await rawGet(proxy.port, rewritten.length);
+    expect(head.toLowerCase()).not.toContain("content-encoding");
+    expect(body.toString()).toBe(rewritten);
+  });
+
   test("explicit Content-Encoding on a handler-built Response is preserved", async () => {
     const gz = gzipSync(payload);
     using server = Bun.serve({

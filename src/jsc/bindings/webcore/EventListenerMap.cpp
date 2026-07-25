@@ -77,7 +77,7 @@ void EventListenerMap::clear()
     Locker locker { m_lock };
 
     for (auto& entry : m_entries) {
-        for (auto& listener : entry.second)
+        for (auto& listener : entry.listeners)
             listener->markAsRemoved();
     }
 
@@ -87,7 +87,7 @@ void EventListenerMap::clear()
 Vector<AtomString> EventListenerMap::eventTypes() const
 {
     return m_entries.map([](auto& entry) {
-        return entry.first;
+        return entry.type;
     });
 }
 
@@ -101,18 +101,51 @@ static inline size_t findListener(const EventListenerVector& listeners, EventLis
     return notFound;
 }
 
+// Packs the identity the spec's duplicate check compares on
+// (JSEventListener::operator== tests m_jsFunction and m_isAttribute; the map
+// additionally tests useCapture) into a single word usable as a hash key. JSC
+// heap cells are 16-byte aligned, so the low two bits are free. Returns 0 for
+// listeners that cannot be keyed (non-JS listener, or a JSEventListener whose
+// weak jsFunction has been cleared), in which case callers fall back to the
+// linear scan.
+static inline uintptr_t callbackKey(const EventListener& listener, bool useCapture)
+{
+    auto* jsListener = dynamicDowncast<JSEventListener>(listener);
+    if (!jsListener) [[unlikely]]
+        return 0;
+    auto* function = jsListener->jsFunction();
+    if (!function) [[unlikely]]
+        return 0;
+    uintptr_t bits = reinterpret_cast<uintptr_t>(function);
+    ASSERT(!(bits & 3));
+    return bits | static_cast<uintptr_t>(useCapture) | (static_cast<uintptr_t>(jsListener->isAttribute()) << 1);
+}
+
+static std::unique_ptr<HashSet<uintptr_t>> buildCallbackIndex(const EventListenerVector& listeners)
+{
+    auto index = makeUnique<HashSet<uintptr_t>>();
+    index->reserveInitialCapacity(listeners.size());
+    for (auto& registeredListener : listeners) {
+        if (auto key = callbackKey(registeredListener->callback(), registeredListener->useCapture()))
+            index->add(key);
+    }
+    return index;
+}
+
 void EventListenerMap::replace(const AtomString& eventType, EventListener& oldListener, Ref<EventListener>&& newListener, const RegisteredEventListener::Options& options)
 {
     releaseAssertOrSetThreadUID();
     Locker locker { m_lock };
 
-    auto* listeners = find(eventType);
-    ASSERT(listeners);
-    size_t index = findListener(*listeners, oldListener, options.capture);
+    auto* entry = findEntry(eventType);
+    ASSERT(entry);
+    auto& listeners = entry->listeners;
+    size_t index = findListener(listeners, oldListener, options.capture);
     ASSERT(index != notFound);
-    auto& registeredListener = listeners->at(index);
+    auto& registeredListener = listeners.at(index);
     registeredListener->markAsRemoved();
     registeredListener = RegisteredEventListener::create(WTF::move(newListener), options);
+    entry->callbackIndex = nullptr;
 }
 
 RegisteredEventListener* EventListenerMap::add(const AtomString& eventType, Ref<EventListener>&& listener, const RegisteredEventListener::Options& options)
@@ -120,18 +153,34 @@ RegisteredEventListener* EventListenerMap::add(const AtomString& eventType, Ref<
     releaseAssertOrSetThreadUID();
     Locker locker { m_lock };
 
-    if (auto* listeners = find(eventType)) {
-        if (findListener(*listeners, listener, options.capture) != notFound)
+    if (auto* entry = findEntry(eventType)) {
+        auto& listeners = entry->listeners;
+        uintptr_t key = callbackKey(listener.get(), options.capture);
+
+        // A key absent from the index proves the listener is not a duplicate
+        // (the index is maintained as a superset of keys present in the
+        // vector). A hit, a keyless listener, or no index yet falls through
+        // to the linear scan the spec describes.
+        bool mayBeDuplicate = !key || !entry->callbackIndex || entry->callbackIndex->contains(key);
+        if (mayBeDuplicate && findListener(listeners, listener, options.capture) != notFound)
             return nullptr; // Duplicate listener.
+
         auto registeredListener = RegisteredEventListener::create(WTF::move(listener), options);
         auto* result = registeredListener.ptr();
-        listeners->append(WTF::move(registeredListener));
+        listeners.append(WTF::move(registeredListener));
+
+        if (entry->callbackIndex) {
+            if (key)
+                entry->callbackIndex->add(key);
+        } else if (listeners.size() >= callbackIndexThreshold) [[unlikely]]
+            entry->callbackIndex = buildCallbackIndex(listeners);
+
         return result;
     }
 
     auto registeredListener = RegisteredEventListener::create(WTF::move(listener), options);
     auto* result = registeredListener.ptr();
-    m_entries.append({ eventType, EventListenerVector { WTF::move(registeredListener) } });
+    m_entries.append({ eventType, EventListenerVector { WTF::move(registeredListener) }, nullptr });
     return result;
 }
 
@@ -152,10 +201,19 @@ bool EventListenerMap::remove(const AtomString& eventType, EventListener& listen
     Locker locker { m_lock };
 
     for (unsigned i = 0; i < m_entries.size(); ++i) {
-        if (m_entries[i].first == eventType) {
-            bool wasRemoved = removeListenerFromVector(m_entries[i].second, listener, useCapture);
-            if (m_entries[i].second.isEmpty())
+        auto& entry = m_entries[i];
+        if (entry.type == eventType) {
+            bool wasRemoved = removeListenerFromVector(entry.listeners, listener, useCapture);
+            if (entry.listeners.isEmpty()) {
                 m_entries.removeAt(i);
+            } else if (wasRemoved && entry.callbackIndex) {
+                if (auto key = callbackKey(listener, useCapture))
+                    entry.callbackIndex->remove(key);
+                // Drop an index that has drifted too far from the vector so
+                // repeated remove/add churn doesn't accumulate stale keys.
+                if (entry.callbackIndex->size() > entry.listeners.size() * 2 + callbackIndexThreshold)
+                    entry.callbackIndex = nullptr;
+            }
             return wasRemoved;
         }
     }
@@ -163,13 +221,19 @@ bool EventListenerMap::remove(const AtomString& eventType, EventListener& listen
     return false;
 }
 
-EventListenerVector* EventListenerMap::find(const AtomString& eventType)
+EventListenerMap::Entry* EventListenerMap::findEntry(const AtomString& eventType)
 {
     for (auto& entry : m_entries) {
-        if (entry.first == eventType)
-            return &entry.second;
+        if (entry.type == eventType)
+            return &entry;
     }
+    return nullptr;
+}
 
+EventListenerVector* EventListenerMap::find(const AtomString& eventType)
+{
+    if (auto* entry = findEntry(eventType))
+        return &entry->listeners;
     return nullptr;
 }
 
@@ -191,9 +255,11 @@ void EventListenerMap::removeFirstEventListenerCreatedFromMarkup(const AtomStrin
     Locker locker { m_lock };
 
     for (unsigned i = 0; i < m_entries.size(); ++i) {
-        if (m_entries[i].first == eventType) {
-            removeFirstListenerCreatedFromMarkup(m_entries[i].second);
-            if (m_entries[i].second.isEmpty())
+        auto& entry = m_entries[i];
+        if (entry.type == eventType) {
+            removeFirstListenerCreatedFromMarkup(entry.listeners);
+            entry.callbackIndex = nullptr;
+            if (entry.listeners.isEmpty())
                 m_entries.removeAt(i);
             return;
         }
@@ -213,7 +279,7 @@ static void copyListenersNotCreatedFromMarkupToTarget(const AtomString& eventTyp
 void EventListenerMap::copyEventListenersNotCreatedFromMarkupToTarget(EventTarget* target)
 {
     for (auto& entry : m_entries)
-        copyListenersNotCreatedFromMarkupToTarget(entry.first, entry.second, target);
+        copyListenersNotCreatedFromMarkupToTarget(entry.type, entry.listeners, target);
 }
 
 } // namespace WebCore

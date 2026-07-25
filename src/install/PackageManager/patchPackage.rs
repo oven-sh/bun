@@ -104,8 +104,7 @@ pub fn do_patch_commit(
     let argument_owned: Option<Box<[u8]>>;
     let argument: &[u8] = if arg_kind == PatchArgKind::Path
         && not_in_workspace_root
-        && (!Platform::Posix.is_absolute(argument)
-            || (cfg!(windows) && !Platform::Windows.is_absolute(argument)))
+        && !Platform::AUTO.is_absolute(argument)
     {
         if let Some(rel_path) = path_argument_relative_to_root_workspace_package(
             &lockfile,
@@ -738,8 +737,7 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
     let argument_owned: Option<Box<[u8]>>;
     let argument: &[u8] = if arg_kind == PatchArgKind::Path
         && not_in_workspace_root
-        && (!Platform::Posix.is_absolute(argument)
-            || (cfg!(windows) && !Platform::Windows.is_absolute(argument)))
+        && !Platform::AUTO.is_absolute(argument)
     {
         if let Some(rel_path) = path_argument_relative_to_root_workspace_package(
             &manager.lockfile,

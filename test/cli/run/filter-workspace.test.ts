@@ -687,12 +687,12 @@ describe("--filter forwards color to scripts", () => {
     });
   }
 
-  async function runOnPTY(dir: string, extraEnv: Record<string, string | undefined>) {
+  async function runOnPTY(dir: string, extraEnv: Record<string, string | undefined>, args = ["--filter", "*", "probe"]) {
     const decoder = new TextDecoder();
     let output = "";
     const done = Promise.withResolvers<void>();
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "run", "--filter", "*", "probe"],
+      cmd: [bunExe(), "run", ...args],
       cwd: dir,
       env: {
         ...bunEnv,
@@ -701,6 +701,8 @@ describe("--filter forwards color to scripts", () => {
         CI: undefined,
         TERM: "xterm-256color",
         COLORTERM: undefined,
+        TMUX: undefined,
+        TERM_PROGRAM: undefined,
         ...extraEnv,
       },
       terminal: {
@@ -760,6 +762,22 @@ describe("--filter forwards color to scripts", () => {
     expect(result.FORCE_COLOR).toBe("0");
   });
 
+  test("respects NODE_DISABLE_COLORS", async () => {
+    const dir = colorFixture();
+    const result = await runOnPTY(dir, { NODE_DISABLE_COLORS: "1" });
+    expect(result.FORCE_COLOR).toBe(null);
+  });
+
+  test("--parallel forwards FORCE_COLOR the same way", async () => {
+    const dir = colorFixture();
+    const result = await runOnPTY(dir, {}, ["--filter", "*", "--parallel", "probe"]);
+    expect(result).toEqual({
+      FORCE_COLOR: "2",
+      NO_COLOR: null,
+      enableANSI: true,
+    });
+  });
+
   test("does not set FORCE_COLOR when parent stdout is not a TTY", async () => {
     const dir = colorFixture();
     await using proc = Bun.spawn({
@@ -771,17 +789,21 @@ describe("--filter forwards color to scripts", () => {
         FORCE_COLOR: undefined,
         CI: undefined,
         TERM: "xterm-256color",
+        COLORTERM: undefined,
+        TMUX: undefined,
+        TERM_PROGRAM: undefined,
       },
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     const m = stdout.match(/RESULT (\{[^}]*\})/);
-    if (!m) throw new Error("missing RESULT in: " + JSON.stringify(stdout));
+    if (!m) throw new Error("missing RESULT in: " + JSON.stringify({ stdout, stderr }));
     const result = JSON.parse(m[1]);
     expect({ FORCE_COLOR: result.FORCE_COLOR, NO_COLOR: result.NO_COLOR }).toEqual({
       FORCE_COLOR: null,
       NO_COLOR: null,
     });
+    expect(exitCode).toBe(0);
   });
 });

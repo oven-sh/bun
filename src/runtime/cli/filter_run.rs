@@ -867,24 +867,8 @@ pub(crate) fn run_scripts_with_filter(
 
     // SAFETY: Transpiler::init always sets `env` to the process-lifetime singleton.
     let env_ptr: *mut bun_dotenv::Loader = this_transpiler.env;
-    // Child stdout/stderr are pipes, so isatty()-based color detection in the
-    // child reports false. When we are rendering with color, forward that
-    // decision via FORCE_COLOR so tools like Vite/Next/chalk keep their colors.
-    // Skip if the user already set FORCE_COLOR or NO_COLOR so explicit choices
-    // are preserved verbatim.
-    if Output::enable_ansi_colors_stdout() {
-        // SAFETY: env_ptr is the process-lifetime DotEnv loader.
-        let env = unsafe { &mut *env_ptr };
-        if env.map.get(b"FORCE_COLOR").is_none() && env.map.get(b"NO_COLOR").is_none() {
-            use bun_core::output::{ColorDepth, Source};
-            let depth: &[u8] = match Source::color_depth() {
-                ColorDepth::C16m => b"3",
-                ColorDepth::C256 => b"2",
-                _ => b"1",
-            };
-            let _ = env.map.put(b"FORCE_COLOR", depth);
-        }
-    }
+    // SAFETY: env_ptr is the process-lifetime DotEnv loader.
+    RunCommand::forward_color_to_piped_scripts(unsafe { &mut *env_ptr });
     let event_loop = MiniEventLoopMod::init_global(
         // SAFETY: see above; `&'static mut` reborrow of the singleton for first-init only.
         Some(unsafe { &mut *env_ptr }),

@@ -8,14 +8,14 @@
 //   $MapPrototypeGetSize.$call(map);
 //   $ObjectDefineProperty(target, key, descriptor);
 
-type PrimordialMethod<Holder, Key extends PropertyKey> = Holder extends Record<Key, infer Method>
-  ? Method extends (...args: infer Args) => infer Return
-    ? (this: Holder, ...args: Args) => Return
-    : Function
-  : Function;
-type PrimordialGetter<Holder, Key extends PropertyKey> = Holder extends Record<Key, infer Value>
-  ? (this: Holder) => Value
-  : Function;
+type PrimordialMethod<Holder, Key extends PropertyKey> =
+  Holder extends Record<Key, infer Method>
+    ? Method extends (...args: infer Args) => infer Return
+      ? (this: Holder, ...args: Args) => Return
+      : Function
+    : Function;
+type PrimordialGetter<Holder, Key extends PropertyKey> =
+  Holder extends Record<Key, infer Value> ? (this: Holder) => Value : Function;
 
 declare const $ObjectPrototypeHasOwnProperty: PrimordialMethod<Object, "hasOwnProperty">;
 declare const $ObjectPrototypeIsPrototypeOf: PrimordialMethod<Object, "isPrototypeOf">;
@@ -200,7 +200,10 @@ declare const $IteratorHelperPrototypeNext: PrimordialMethod<IteratorObject<any>
 declare const $IteratorHelperPrototypeReturn: PrimordialMethod<IteratorObject<any>, "return">;
 declare const $WrapForValidIteratorPrototypeNext: PrimordialMethod<IteratorObject<any>, "next">;
 declare const $WrapForValidIteratorPrototypeReturn: PrimordialMethod<IteratorObject<any>, "return">;
-declare const $AsyncIteratorPrototypeSymbolAsyncIterator: PrimordialMethod<AsyncIteratorObject<any>, typeof Symbol.asyncIterator>;
+declare const $AsyncIteratorPrototypeSymbolAsyncIterator: PrimordialMethod<
+  AsyncIteratorObject<any>,
+  typeof Symbol.asyncIterator
+>;
 declare const $WeakRefPrototypeDeref: PrimordialMethod<WeakRef<any>, "deref">;
 declare const $FinalizationRegistryPrototypeRegister: PrimordialMethod<FinalizationRegistry<any>, "register">;
 declare const $FinalizationRegistryPrototypeUnregister: PrimordialMethod<FinalizationRegistry<any>, "unregister">;

@@ -1803,6 +1803,20 @@ describe("workspace integration", () => {
     expect(r.exitCode).toBe(0);
   });
 
+  test("--parallel --filter='*' inherits root .env into workspace scripts", async () => {
+    using dir = tempDir("mr-ws-rootenv", {
+      ".env": "ROOT_ENV_VAL=mr-root-dotenv\n",
+      "package.json": JSON.stringify({ name: "monorepo", workspaces: ["packages/*"] }),
+      "packages/pkg-a/package.json": JSON.stringify({
+        name: "pkg-a",
+        scripts: { go: `${bunExe()} -e "console.log('seen=' + process.env.ROOT_ENV_VAL)"` },
+      }),
+    });
+    const r = await runMulti(["run", "--parallel", "--filter", "*", "go"], String(dir));
+    expectPrefixed(r.stdout, "pkg-a:go", "seen=mr-root-dotenv");
+    expect(r.exitCode).toBe(0);
+  });
+
   test("--parallel --filter='pkg-a' runs only in matching package", async () => {
     using dir = makeWorkspace("mr-ws-single", {
       "pkg-a": { build: `echo a-only` },

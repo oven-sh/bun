@@ -471,6 +471,90 @@ describe("bun", () => {
     expect(exitCode).toBe(23);
   });
 
+  // https://github.com/oven-sh/bun/issues/10358
+  test("loads root .env files into workspace scripts", () => {
+    // `bun --filter` spawns each script with cwd set to the workspace package
+    // dir. A `.env` at the root must still be loaded by the `--filter` parent
+    // and inherited by those children; before the fix it was dropped and the
+    // script saw `undefined`.
+    const dir = tempDirWithFiles("filter-root-env", {
+      ".env": "ROOT_ENV_VAL=from-root-dotenv\n",
+      ".env.local": "ROOT_LOCAL_VAL=from-root-local\n",
+      packages: {
+        backend: {
+          ".env": "PKG_ENV_VAL=from-pkg-dotenv\n",
+          "index.js":
+            'console.log("ROOT_ENV_VAL=" + process.env.ROOT_ENV_VAL);\n' +
+            'console.log("ROOT_LOCAL_VAL=" + process.env.ROOT_LOCAL_VAL);\n' +
+            'console.log("PKG_ENV_VAL=" + process.env.PKG_ENV_VAL);\n',
+          "package.json": JSON.stringify({
+            name: "backend",
+            scripts: {
+              // A child bun loads packages/backend/.env from its own cwd; the
+              // root .env values arrive as inherited process env.
+              go: `${bunExe()} index.js`,
+            },
+          }),
+        },
+      },
+      "package.json": JSON.stringify({
+        name: "ws",
+        workspaces: ["packages/*"],
+      }),
+    });
+
+    for (const args of [
+      ["run", "--filter", "*", "go"],
+      ["--filter", "*", "go"],
+    ]) {
+      const { exitCode, stdout } = spawnSync({
+        cwd: dir,
+        cmd: [bunExe(), ...args],
+        env: { ...bunEnv, NO_COLOR: "1" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const out = stdout.toString();
+      expect(out).toContain("ROOT_ENV_VAL=from-root-dotenv");
+      expect(out).toContain("ROOT_LOCAL_VAL=from-root-local");
+      expect(out).toContain("PKG_ENV_VAL=from-pkg-dotenv");
+      expect(exitCode).toBe(0);
+    }
+  });
+
+  test("root .env reaches workspace scripts that are not bun", () => {
+    // The workspace script may be any shell command; root .env must still be in
+    // its environment even when no child bun process runs.
+    const dir = tempDirWithFiles("filter-root-env-shell", {
+      ".env": "ROOT_ENV_VAL=shell-sees-root-dotenv\n",
+      packages: {
+        tool: {
+          "package.json": JSON.stringify({
+            name: "tool",
+            scripts: {
+              // On Windows the script runner is bun's own shell, which also
+              // expands `$VAR`, so the same script body works everywhere.
+              go: 'echo "val=$ROOT_ENV_VAL"',
+            },
+          }),
+        },
+      },
+      "package.json": JSON.stringify({
+        name: "ws",
+        workspaces: ["packages/*"],
+      }),
+    });
+    const { exitCode, stdout } = spawnSync({
+      cwd: dir,
+      cmd: [bunExe(), "run", "--filter", "*", "go"],
+      env: { ...bunEnv, NO_COLOR: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(stdout.toString()).toContain("val=shell-sees-root-dotenv");
+    expect(exitCode).toBe(0);
+  });
+
   function runElideLinesTest({
     elideLines,
     target_pattern,

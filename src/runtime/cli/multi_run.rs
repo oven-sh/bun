@@ -795,7 +795,19 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
     // Out-param init pattern.
     let mut this_transpiler_slot =
         ::core::mem::MaybeUninit::<bun_bundler::Transpiler<'static>>::uninit();
-    let _ = RunCommand::configure_env_for_run(ctx, &mut this_transpiler_slot, None, true, false)?;
+    // When `--filter`/`--workspaces` is active, scripts are spawned with cwd set
+    // to each workspace package and the child bun cannot find the root .env
+    // files; load them here so they are inherited. Without a filter the child
+    // runs in the same cwd and loads .env itself (preserves #9635 behavior).
+    let skip_default_env = ctx.filters.is_empty() && !ctx.workspaces;
+    let _ = RunCommand::configure_env_for_run(
+        ctx,
+        &mut this_transpiler_slot,
+        None,
+        true,
+        false,
+        skip_default_env,
+    )?;
     // SAFETY: `configure_env_for_run` fully writes the slot on the success path.
     let this_transpiler = unsafe { this_transpiler_slot.assume_init_mut() };
     let cwd: &[u8] = bun_resolver::fs::FileSystem::get().top_level_dir;

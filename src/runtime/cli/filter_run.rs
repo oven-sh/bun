@@ -734,7 +734,17 @@ pub(crate) fn run_scripts_with_filter(
     // `RunCommand::configure_env_for_run(...) -> Result<Transpiler, _>`; until then
     // pass `&mut MaybeUninit<Transpiler>` (zeroed() is invalid: Transpiler is not #[repr(C)] POD).
     let mut this_transpiler = core::mem::MaybeUninit::<bun_bundler::Transpiler<'static>>::uninit();
-    let _ = RunCommand::configure_env_for_run(&mut *ctx, &mut this_transpiler, None, true, false)?;
+    // `skip_default_env = false`: scripts are spawned with cwd set to each
+    // workspace package, so the child bun cannot find the root .env files.
+    // Load them here so they are inherited through the spawned env.
+    let _ = RunCommand::configure_env_for_run(
+        &mut *ctx,
+        &mut this_transpiler,
+        None,
+        true,
+        false,
+        false,
+    )?;
     // SAFETY: configure_env_for_run fully initializes the out-param on Ok.
     let mut this_transpiler = unsafe { this_transpiler.assume_init() };
 

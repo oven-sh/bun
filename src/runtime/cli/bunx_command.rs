@@ -667,7 +667,7 @@ impl BunxCommand {
         let mut original_path: Vec<u8> = Vec::new();
 
         let root_dir_info =
-            Run::configure_env_for_run(ctx, &mut this_transpiler_slot, None, true, true)?;
+            Run::configure_env_for_run(ctx, &mut this_transpiler_slot, None, true, true, true)?;
         // SAFETY: `configure_env_for_run` returned `Ok`, so the slot is fully
         // initialized via `MaybeUninit::write`.
         let this_transpiler = unsafe { this_transpiler_slot.assume_init_mut() };

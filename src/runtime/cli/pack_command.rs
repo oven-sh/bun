@@ -2018,6 +2018,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
         Some(pm_env(ctx.manager)),
         ctx.manager.options.log_level != LogLevel::Silent,
         false,
+        true,
     ) {
         if matches!(err, crate::Error::Alloc(_)) {
             return Err(PackError::OutOfMemory);

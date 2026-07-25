@@ -532,8 +532,17 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         env: Option<*mut DotEnv::Loader>,
         log_errors: bool,
         store_root_fd: bool,
+        skip_default_env: bool,
     ) -> crate::Result<bun_resolver::DirInfoRef> {
-        Self::configure_env_for_run_impl(ctx, this_transpiler, env, log_errors, store_root_fd, true)
+        Self::configure_env_for_run_impl(
+            ctx,
+            this_transpiler,
+            env,
+            log_errors,
+            store_root_fd,
+            true,
+            skip_default_env,
+        )
     }
 
     /// Like [`Self::configure_env_for_run`] but does **not** construct the
@@ -546,6 +555,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         env: Option<*mut DotEnv::Loader>,
         log_errors: bool,
         store_root_fd: bool,
+        skip_default_env: bool,
     ) -> crate::Result<bun_resolver::DirInfoRef> {
         Self::configure_env_for_run_impl(
             ctx,
@@ -554,6 +564,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             log_errors,
             store_root_fd,
             false,
+            skip_default_env,
         )
     }
 
@@ -579,6 +590,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         log_errors: bool,
         store_root_fd: bool,
         with_linker: bool,
+        skip_default_env: bool,
     ) -> crate::Result<bun_resolver::DirInfoRef> {
         let args = ctx.args.clone();
         let env_is_none = env.is_none();
@@ -660,9 +672,11 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 }
             }
 
-            // Always skip default .env files for package.json script runner
-            // (the script's own bun instance loads .env)
-            let _ = this_transpiler.run_env_loader(true);
+            // Default .env files are normally skipped for the package.json script
+            // runner (the script's own bun instance loads .env; see #9635).
+            // Callers that spawn scripts in a different cwd (`--filter`, workspace
+            // runs) pass `skip_default_env = false` so root .env is inherited.
+            let _ = this_transpiler.run_env_loader(skip_default_env);
         }
 
         // Re-derive after `run_env_loader` — that call creates its own
@@ -2412,6 +2426,7 @@ impl RunCommand {
             None,
             log_errors,
             false,
+            true,
         )?;
         // SAFETY: `configure_env_for_run_without_linker` returned `Ok`, so the
         // slot is fully initialized via `MaybeUninit::write`.

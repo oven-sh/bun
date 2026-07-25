@@ -1414,13 +1414,6 @@ var exports = {
 };
 export default exports;
 
-// Node's CJS loader reads module source through `fs.readFileSync`, so
-// replacing it is a de-facto hook into require() (vue-tsc/volar relies on
-// it). Record the exports object and install a property watchpoint on
-// `readFileSync` so the native loader can detect a replacement with a single
-// word read and route through it instead of reading natively.
-$newCppFunction("JSCommonJSExtensions.cpp", "jsFunctionSetFsReadFileSyncForRequire", 1)(exports);
-
 // Preserve the names
 function setName(fn, value) {
   Object.$defineProperty(fn, "name", {

@@ -501,12 +501,6 @@ public:
     /* Error.prepareStackTrace */                                                                            \
     V(public, WriteBarrier<JSC::Unknown>, m_errorConstructorPrepareStackTraceValue)                          \
                                                                                                              \
-    /* The require("fs") exports object, recorded when node:fs first loads */                                \
-    /* so the CJS loader can read and call a user-installed readFileSync */                                  \
-    /* replacement. Also keeps the exports object alive for the adaptive */                                  \
-    /* watchpoint in m_fsReadFileSyncWatchpoint. */                                                          \
-    V(public, WriteBarrier<JSC::JSObject>, m_fsModuleExportsForRequire)                                      \
-                                                                                                             \
     /* When a napi module initializes on dlopen, we need to know what the value is */                        \
     V(public, NapiModuleAndExports, m_pendingNapiModuleAndExports)                                           \
                                                                                                              \
@@ -783,11 +777,14 @@ public:
     // De-optimization once `require("module").runMain` is written to
     bool hasOverriddenModuleRunMain = false;
 
-    // Node's CJS loader reads module source through `fs.readFileSync`, so
-    // packages such as vue-tsc monkey-patch it to rewrite module source
-    // before evaluation. Invalidated on assignment, Object.defineProperty, or
-    // delete of the `readFileSync` property on the node:fs exports object.
-    Bun::ModuleExportWatchpoint m_fsReadFileSyncWatchpoint;
+    // One-word "has the user replaced this built-in module export?" checks.
+    // Installed automatically by InternalModuleRegistry when the owning
+    // module first evaluates; see ModuleExportWatchpoint.h for the table.
+    Bun::ModuleExportWatchpoint m_trackedExportWatchpoints[static_cast<size_t>(Bun::TrackedExport::Count)];
+    ALWAYS_INLINE Bun::ModuleExportWatchpoint& trackedExport(Bun::TrackedExport slot)
+    {
+        return m_trackedExportWatchpoints[static_cast<size_t>(slot)];
+    }
 
     // node:crypto deprecation warnings are emitted at most once per realm, like Node, whose
     // flags live in per-realm module state (lib/internal/crypto/keys.js). They must not be

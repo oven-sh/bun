@@ -201,21 +201,6 @@ bool JSCommonJSExtensions::deleteProperty(JSC::JSCell* cell, JSC::JSGlobalObject
     return deleted;
 }
 
-// Called once from node:fs when it first evaluates, recording the exports
-// object and installing the adaptive watchpoint on `readFileSync` so the CJS
-// loader can detect a user-installed replacement with a single word read.
-JSC_DEFINE_HOST_FUNCTION(jsFunctionSetFsReadFileSyncForRequire, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
-{
-    Zig::GlobalObject* globalObject = defaultGlobalObject(lexicalGlobalObject);
-    auto& vm = globalObject->vm();
-    JSC::JSObject* exports = callFrame->argument(0).getObject();
-    if (exports) {
-        globalObject->m_fsModuleExportsForRequire.set(vm, globalObject, exports);
-        globalObject->m_fsReadFileSyncWatchpoint.install(globalObject, exports, JSC::Identifier::fromString(vm, "readFileSync"_s));
-    }
-    return JSValue::encode(jsUndefined());
-}
-
 // Node's CJS loader reads module source through the public
 // `fs.readFileSync` property, so monkey-patching it is a de-facto hook into
 // require(). `transpile_file` calls this once it has established that no
@@ -226,16 +211,13 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionSetFsReadFileSyncForRequire, (JSC::JSGlobalOb
 // been touched).
 extern "C" bool ZigGlobalObject__callOverriddenFsReadFileSync(Zig::GlobalObject* globalObject, const BunString* filename, BunString* outSource)
 {
-    if (globalObject->m_fsReadFileSyncWatchpoint.isStillOriginal()) [[likely]]
-        return false;
-    JSC::JSObject* fsExports = globalObject->m_fsModuleExportsForRequire.get();
-    if (!fsExports)
+    if (globalObject->trackedExport(Bun::TrackedExport::FsReadFileSync).isStillOriginal()) [[likely]]
         return false;
 
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSC::JSValue current = fsExports->getIfPropertyExists(globalObject, JSC::Identifier::fromString(vm, "readFileSync"_s));
+    JSC::JSValue current = Bun::currentValueOfTrackedExport(globalObject, Bun::TrackedExport::FsReadFileSync);
     RETURN_IF_EXCEPTION(scope, true);
     if (!current || !current.isCallable())
         return false;
@@ -244,7 +226,8 @@ extern "C" bool ZigGlobalObject__callOverriddenFsReadFileSync(Zig::GlobalObject*
     JSC::MarkedArgumentBuffer args;
     args.append(jsString(vm, filename->toWTFString(BunString::ZeroCopy)));
     args.append(jsString(vm, String("utf8"_s)));
-    JSC::JSValue result = JSC::profiledCall(globalObject, JSC::ProfilingReason::API, current, callData, fsExports, args);
+    JSC::JSValue fsExports = globalObject->internalModuleRegistry()->internalField(Bun::InternalModuleRegistry::Field::NodeFS).get();
+    JSC::JSValue result = JSC::profiledCall(globalObject, JSC::ProfilingReason::API, current, callData, fsExports.isObject() ? fsExports : jsUndefined(), args);
     RETURN_IF_EXCEPTION(scope, true);
     if (result.isString()) {
         *outSource = Bun::toStringRef(result.toWTFString(globalObject));
@@ -262,7 +245,7 @@ extern "C" bool ZigGlobalObject__callOverriddenFsReadFileSync(Zig::GlobalObject*
 
 extern "C" bool ZigGlobalObject__hasOverriddenFsReadFileSync(Zig::GlobalObject* globalObject)
 {
-    return !globalObject->m_fsReadFileSyncWatchpoint.isStillOriginal();
+    return !globalObject->trackedExport(Bun::TrackedExport::FsReadFileSync).isStillOriginal();
 }
 
 extern "C" uint32_t JSCommonJSExtensions__appendFunction(Zig::GlobalObject* globalObject, JSC::JSValue value)

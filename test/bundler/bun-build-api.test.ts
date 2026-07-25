@@ -528,53 +528,66 @@ describe("Bun.build", () => {
   );
 
   // https://github.com/oven-sh/bun/issues/8467
-  test.concurrent("output paths keep the symlink spelling of an entry point", async () => {
-    using dir = tempDir("build-symlink-entry-output", {
-      "packages/mypkg/index.ts": `export const a = 1;\n`,
-      "packages/mypkg/other.ts": `export const b = 2;\n`,
-      "app/src/local.ts": `export const c = 3;\n`,
-      "app/build.ts": `
-        const result = await Bun.build({
-          entrypoints: ["./node_modules/mypkg/index.ts", "./node_modules/mypkg/other.ts", "./src/local.ts"],
-          outdir: "./dist",
-        });
-        if (!result.success) {
-          for (const m of result.logs) console.error(String(m));
-          process.exit(1);
-        }
-        for (const out of result.outputs) {
-          console.log(out.kind + " " + out.path.slice(process.cwd().length + 1).replaceAll("\\\\", "/"));
-        }
-      `,
-    });
-    mkdirSync(join(String(dir), "app", "node_modules"), { recursive: true });
-    symlinkSync(
-      join(String(dir), "packages", "mypkg"),
-      join(String(dir), "app", "node_modules", "mypkg"),
-      isWindows ? "junction" : "dir",
-    );
+  test.concurrent.each([false, true])(
+    "output paths keep the symlink spelling of an entry point (onResolve plugin: %p)",
+    async withPlugin => {
+      using dir = tempDir("build-symlink-entry-output", {
+        "packages/mypkg/index.ts": `export const a = 1;\n`,
+        "packages/mypkg/other.ts": `export const b = 2;\n`,
+        "app/src/real-impl.ts": `export const c = 3;\n`,
+        "app/build.ts": `
+          const result = await Bun.build({
+            entrypoints: [
+              "./node_modules/mypkg/index.ts",
+              "./node_modules/mypkg/other.ts",
+              "./src/alias.ts",
+            ],
+            outdir: "./dist",
+            plugins: ${withPlugin}
+              ? [{ name: "noop", setup(b) { b.onResolve({ filter: /.*/ }, () => undefined); } }]
+              : [],
+          });
+          if (!result.success) {
+            for (const m of result.logs) console.error(String(m));
+            process.exit(1);
+          }
+          for (const out of result.outputs) {
+            console.log(out.kind + " " + out.path.slice(process.cwd().length + 1).replaceAll("\\\\", "/"));
+          }
+        `,
+      });
+      mkdirSync(join(String(dir), "app", "node_modules"), { recursive: true });
+      symlinkSync(
+        join(String(dir), "packages", "mypkg"),
+        join(String(dir), "app", "node_modules", "mypkg"),
+        isWindows ? "junction" : "dir",
+      );
+      // File-level symlink with a different basename, target inside root: pins [name].
+      symlinkSync("real-impl.ts", join(String(dir), "app", "src", "alias.ts"), "file");
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "build.ts"],
-      env: bunEnv,
-      cwd: join(String(dir), "app"),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build.ts"],
+        env: bunEnv,
+        cwd: join(String(dir), "app"),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    const lines = stdout.trim().split("\n").sort();
-    expect({ lines, stderr }).toEqual({
-      lines: [
-        "entry-point dist/node_modules/mypkg/index.js",
-        "entry-point dist/node_modules/mypkg/other.js",
-        "entry-point dist/src/local.js",
-      ],
-      stderr: "",
-    });
-    expect(stdout).not.toContain("_.._");
-    expect(exitCode).toBe(0);
-  });
+      const lines = stdout.trim().split("\n").sort();
+      expect({ lines, stderr }).toEqual({
+        lines: [
+          "entry-point dist/node_modules/mypkg/index.js",
+          "entry-point dist/node_modules/mypkg/other.js",
+          "entry-point dist/src/alias.js",
+        ],
+        stderr: "",
+      });
+      expect(stdout).not.toContain("_.._");
+      expect(stdout).not.toContain("real-impl");
+      expect(exitCode).toBe(0);
+    },
+  );
 
   test.concurrent("errors are returned as an array", async () => {
     const x = await buildNoThrow({

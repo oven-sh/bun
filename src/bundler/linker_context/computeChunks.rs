@@ -643,12 +643,7 @@ pub fn compute_chunks(this: &mut LinkerContext, unique_key: u64) -> crate::Resul
             let root_dir = &this.resolver().opts.root_dir;
             let mut real_path_buf = PathBuffer::uninit();
             let dir: &[u8] = 'dir: {
-                // When `dir_path` already sits under `root_dir`, skip the
-                // open+get_fd_path round-trip: that canonicalization would
-                // discard the symlink spelling an entry point was reached
-                // through (#8467). Fall through when the plain relativization
-                // walks above root so a short-name/symlinked cwd still finds a
-                // common prefix.
+                // #8467: skip get_fd_path when dir_path is already under root_dir (canonicalizing drops the symlink spelling); fall through so a short-name/symlinked cwd still finds a prefix.
                 if bun_paths::is_absolute(dir_path)
                     && !resolve_path::relative_platform::<bun_paths::platform::Auto, false>(
                         root_dir, dir_path,

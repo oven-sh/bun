@@ -2589,11 +2589,7 @@ pub mod bv2_impl {
                 .loader(&self.transpiler.options.loaders)
                 .unwrap_or(Loader::File);
 
-            // When the resolver followed a symlink, `path.pretty` still holds the
-            // pre-symlink absolute path (`set_realpath` moved the old `text` there).
-            // Keep it for output naming so `outdir` mirrors the entry-point spelling
-            // the user wrote, matching esbuild. `path_with_pretty_initialized` below
-            // overwrites `pretty`.
+            // #8467: stash the pre-symlink spelling (in `pretty` until overwritten below) for output naming; matches esbuild.
             if is_entry_point && path.is_symlink && path.is_file() && !path.pretty.is_empty() {
                 self.graph
                     .entry_point_original_names
@@ -4502,19 +4498,9 @@ pub mod bv2_impl {
                                 return;
                             };
                             let mut resolved = resolved;
-                            let Ok(source_index) =
-                                this.enqueue_entry_item(&mut resolved, true, target)
-                            else {
+                            let Ok(_) = this.enqueue_entry_item(&mut resolved, true, target) else {
                                 return;
                             };
-
-                            // Store the original entry point name for virtual entries that fall back to file resolution
-                            if let Some(idx) = source_index {
-                                let _ = this
-                                    .graph
-                                    .entry_point_original_names
-                                    .put(idx, &resolve.import_record.specifier);
-                            }
                             return;
                         }
 

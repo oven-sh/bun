@@ -324,6 +324,7 @@ private:
 
     State m_state { CONNECTING };
     URL m_url;
+    String m_origin;
     unsigned m_bufferedAmount { 0 };
     unsigned m_bufferedAmountAfterClose { 0 };
     // In browsers, the default is Blob, however most applications

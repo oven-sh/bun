@@ -450,6 +450,7 @@ size_t WebSocket::memoryCost() const
 {
     size_t cost = sizeof(WebSocket);
     cost += m_url.string().sizeInBytes();
+    cost += m_origin.sizeInBytes();
     cost += m_subprotocol.sizeInBytes();
     cost += m_extensions.sizeInBytes();
 
@@ -501,6 +502,8 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
         updateHasPendingActivity();
         return Exception { SyntaxError, makeString("URL has fragment component "_s, m_url.stringCenterEllipsizedToLength()) };
     }
+
+    m_origin = m_url.protocolHostAndPort();
 
     // ASSERT(context.contentSecurityPolicy());
     // auto& contentSecurityPolicy = *context.contentSecurityPolicy();
@@ -1432,7 +1435,7 @@ void WebSocket::didReceiveMessage(String&& message)
     if (this->hasEventListeners("message"_s)) {
         // the main reason for dispatching on a separate tick is to handle when you haven't yet attached an event listener
         this->incPendingActivityCount();
-        dispatchEvent(MessageEvent::create(WTF::move(message), m_url.string()));
+        dispatchEvent(MessageEvent::create(WTF::move(message), m_origin));
         this->decPendingActivityCount();
         return;
     }
@@ -1441,7 +1444,7 @@ void WebSocket::didReceiveMessage(String&& message)
         this->incPendingActivityCount();
         context->postTask([this, message_ = WTF::move(message), protectedThis = Ref { *this }](ScriptExecutionContext& context) {
             ASSERT(scriptExecutionContext());
-            protectedThis->dispatchEvent(MessageEvent::create(message_, protectedThis->m_url.string()));
+            protectedThis->dispatchEvent(MessageEvent::create(message_, protectedThis->m_origin));
             protectedThis->decPendingActivityCount();
         });
     }
@@ -1466,7 +1469,7 @@ void WebSocket::didReceiveBinaryData(const AtomString& eventName, const std::spa
             // the main reason for dispatching on a separate tick is to handle when you haven't yet attached an event listener
             this->incPendingActivityCount();
             RefPtr<Blob> blob = Blob::create(binaryData, scriptExecutionContext()->jsGlobalObject());
-            dispatchEvent(MessageEvent::create(eventName, blob.releaseNonNull(), m_url.string()));
+            dispatchEvent(MessageEvent::create(eventName, blob.releaseNonNull(), m_origin));
             this->decPendingActivityCount();
             return;
         }
@@ -1476,7 +1479,7 @@ void WebSocket::didReceiveBinaryData(const AtomString& eventName, const std::spa
             this->incPendingActivityCount();
             context->postTask([this, name = eventName, blob = blob.releaseNonNull(), protectedThis = Ref { *this }](ScriptExecutionContext& context) {
                 ASSERT(scriptExecutionContext());
-                protectedThis->dispatchEvent(MessageEvent::create(name, blob, protectedThis->m_url.string()));
+                protectedThis->dispatchEvent(MessageEvent::create(name, blob, protectedThis->m_origin));
                 protectedThis->decPendingActivityCount();
             });
         }
@@ -1486,7 +1489,7 @@ void WebSocket::didReceiveBinaryData(const AtomString& eventName, const std::spa
         if (this->hasEventListeners(eventName)) {
             // the main reason for dispatching on a separate tick is to handle when you haven't yet attached an event listener
             this->incPendingActivityCount();
-            dispatchEvent(MessageEvent::create(eventName, ArrayBuffer::create(binaryData), m_url.string()));
+            dispatchEvent(MessageEvent::create(eventName, ArrayBuffer::create(binaryData), m_origin));
             this->decPendingActivityCount();
             return;
         }
@@ -1496,7 +1499,7 @@ void WebSocket::didReceiveBinaryData(const AtomString& eventName, const std::spa
             this->incPendingActivityCount();
             context->postTask([this, name = eventName, buffer = WTF::move(arrayBuffer), protectedThis = Ref { *this }](ScriptExecutionContext& context) {
                 ASSERT(scriptExecutionContext());
-                protectedThis->dispatchEvent(MessageEvent::create(name, buffer, m_url.string()));
+                protectedThis->dispatchEvent(MessageEvent::create(name, buffer, protectedThis->m_origin));
                 protectedThis->decPendingActivityCount();
             });
         }
@@ -1524,7 +1527,7 @@ void WebSocket::didReceiveBinaryData(const AtomString& eventName, const std::spa
             JSC::EnsureStillAliveScope ensureStillAlive(buffer);
             MessageEvent::Init init;
             init.data = buffer;
-            init.origin = this->m_url.string();
+            init.origin = this->m_origin;
 
             dispatchEvent(MessageEvent::create(eventName, WTF::move(init), EventIsTrusted::Yes));
             this->decPendingActivityCount();
@@ -1544,7 +1547,7 @@ void WebSocket::didReceiveBinaryData(const AtomString& eventName, const std::spa
                 JSC::EnsureStillAliveScope ensureStillAlive(uint8array);
                 MessageEvent::Init init;
                 init.data = uint8array;
-                init.origin = protectedThis->m_url.string();
+                init.origin = protectedThis->m_origin;
                 protectedThis->dispatchEvent(MessageEvent::create(name, WTF::move(init), EventIsTrusted::Yes));
                 protectedThis->decPendingActivityCount();
             });

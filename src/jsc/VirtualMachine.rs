@@ -4791,9 +4791,8 @@ impl VirtualMachine {
         );
     }
 
-    /// `depth` counts the `AggregateError.errors` levels already unwrapped. Past
-    /// the cap the AggregateError prints as an ordinary error, so a cyclic
-    /// `errors` (`e.errors = [e]`) can't recurse until the native stack dies.
+    /// `depth` bounds the `AggregateError.errors` recursion so a cyclic
+    /// `errors` (`e.errors = [e]`) terminates instead of blowing the stack.
     fn print_errorlike_object_at_depth(
         &mut self,
         value: JSValue,
@@ -4805,33 +4804,18 @@ impl VirtualMachine {
         allow_side_effects: bool,
         depth: u8,
     ) {
-        // Nesting `new AggregateError([new AggregateError([...])])` this deep is
-        // pathological; past it, print the AggregateError itself.
         const MAX_AGGREGATE_ERROR_DEPTH: u8 = 8;
 
-        // Note: the post-print stack/exception_list block is handled at the
-        // tail instead of via a drop guard (the body has no early-`?` returns
-        // once the AggregateError branch is taken).
         let global_ref = self.global();
-
-        // Note: reborrow so the aggregate branch can lend the list to its
-        // iteration ctx and the add-to-error-list tail can still see it after
-        // `print_error_from_maybe_private_data`.
         let mut exception_list = exception_list;
 
         if value.is_aggregate_error(global_ref) && depth < MAX_AGGREGATE_ERROR_DEPTH {
-            // `getErrorsProperty` reads the own data slot (nothrow, no getter
-            // call) and normalizes absent / accessor slots to `undefined`.
-            // Only iterate when the user stored the spec-created shape (an
-            // array); anything else falls through to the plain error-printing
-            // path below so the user's error is still surfaced.
+            // Own data slot only (nothrow, no getter call); only iterate the
+            // spec-created shape. Tampered values fall through to plain printing.
             let errors = value.get_errors_property(global_ref);
             if errors.is_array() {
-                // Note: `JSValue::for_each` takes a C-ABI fn
-                // pointer + erased ctx, so thread the captures through a struct.
-                // The C trampoline erases lifetimes via `*mut c_void`; round-trip
-                // the caller's `&mut ExceptionList` as a raw pointer so child
-                // errors append to the same list.
+                // `for_each` takes a C-ABI fn pointer, so captures go through a
+                // raw-pointer ctx struct.
                 struct AggCtx<'a> {
                     formatter: *mut crate::console_object::Formatter<'a>,
                     writer: *mut bun_core::io::Writer,
@@ -4891,11 +4875,8 @@ impl VirtualMachine {
                 {
                     return;
                 }
-                // Iteration ran user JS and threw (e.g. a patched
-                // `Array.prototype[Symbol.iterator]`). This runs inside the
-                // exception printer, so clear the secondary exception
-                // (terminations stay pending) and fall through to print the
-                // AggregateError itself instead of swallowing it.
+                // Iteration threw (e.g. poisoned Symbol.iterator): clear it and
+                // fall through so the AggregateError itself is still printed.
                 global_ref.clear_exception_except_termination();
             }
         }

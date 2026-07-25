@@ -4025,9 +4025,7 @@ bool JSC__JSValue__isIterable(JSC::EncodedJSValue JSValue, JSC::JSGlobalObject* 
 void JSC__JSValue__forEach(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1, void* ctx, void (*ArgFn3)(JSC::VM* arg0, JSC::JSGlobalObject* arg1, void* arg2, JSC::EncodedJSValue JSValue3))
 {
     JSC::JSValue iterable = JSC::JSValue::decode(JSValue0);
-    // An empty value decodes as a null cell; forEachInIterable would read its
-    // type byte. Callers fetching values via getDirect-style lookups can
-    // produce empty when the property is absent.
+    // Empty decodes as a null cell; forEachInIterable would deref it.
     ASSERT(!iterable.isEmpty());
     if (iterable.isEmpty()) [[unlikely]]
         return;
@@ -4592,11 +4590,8 @@ JSC::EncodedJSValue JSC__JSValue__getErrorsProperty(JSC::EncodedJSValue JSValue0
     if (!obj) [[unlikely]]
         return JSC::JSValue::encode(JSC::jsUndefined());
     JSC::JSValue errors = obj->getDirect(global->vm(), global->vm().propertyNames->errors);
-    // getDirect returns the raw storage slot: empty when the own property is
-    // absent, and the internal GetterSetter / CustomGetterSetter cell when the
-    // property was redefined as an accessor. Those are never valid user-visible
-    // JSValues, so normalize them to undefined rather than letting them escape
-    // to generic JS machinery (forEachInIterable, etc.).
+    // getDirect returns the raw slot: empty if absent, GetterSetter cell if
+    // redefined as an accessor. Neither is a valid user-visible JSValue.
     if (!errors || errors.isGetterSetter() || errors.isCustomGetterSetter()) [[unlikely]]
         return JSC::JSValue::encode(JSC::jsUndefined());
     return JSC::JSValue::encode(errors);

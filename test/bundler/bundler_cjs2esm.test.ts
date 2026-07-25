@@ -584,6 +584,39 @@ describe("bundler", () => {
     },
     run: { stdout: `"THE_DEFAULT"` },
   });
+  // Same as above but the fake-ESM package uses an "exports" map with an
+  // "import" condition instead of the legacy "module" field. Matching the
+  // "import" condition must not be treated as a module-format signal: Node
+  // still loads the target by its extension and nearest package.json "type".
+  itBundled("cjs2esm/ToESMDoesNotSetNodeModeForUntypedESMViaExportsCondition", {
+    files: {
+      "/entry.js": /* js */ `
+        import mod from 'fake-esm';
+        console.log(JSON.stringify(mod.Base));
+      `,
+      "/package.json": `{ "type": "module" }`,
+      "/node_modules/fake-esm/package.json": `{ "name": "fake-esm", "exports": { "import": "./esm/index.js", "require": "./cjs/index.js" } }`,
+      "/node_modules/fake-esm/esm/index.js": /* js */ `
+        import Base from 'cjs-dep';
+        export default { Base: Base };
+      `,
+      "/node_modules/fake-esm/cjs/index.js": /* js */ `
+        module.exports = { Base: require('cjs-dep').default };
+      `,
+      "/node_modules/cjs-dep/package.json": `{ "name": "cjs-dep", "main": "index.js" }`,
+      "/node_modules/cjs-dep/index.js": /* js */ `
+        exports.__esModule = true;
+        exports.default = "THE_DEFAULT";
+        exports.named = "NAMED";
+      `,
+    },
+    target: "bun",
+    onAfterBundle(api) {
+      const code = api.readFile("out.js");
+      expect(code).toContain("__toESM(require_cjs_dep())");
+    },
+    run: { stdout: `"THE_DEFAULT"` },
+  });
   itBundled("cjs2esm/ToESMSetsNodeModeForTypeModule", {
     files: {
       "/entry.js": /* js */ `

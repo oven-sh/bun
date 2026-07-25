@@ -2706,7 +2706,7 @@ impl<'a> Resolver<'a> {
                             if let Some(package_json) = pkg_dir_info.package_json() {
                                 if let Some(exports_map) = package_json.exports.as_ref() {
                                     // The condition set is determined by the kind of import
-                                    let mut module_type = package_json.module_type;
+                                    let module_type = package_json.module_type;
                                     // NOTE: keeping a single
                                     // `ESModule` (which holds `&mut self.debug_logs`) alive across a
                                     // `&mut self` call is aliased-&mut UB. Build a fresh short-lived
@@ -2732,7 +2732,6 @@ impl<'a> Resolver<'a> {
                                                 _ => &self.opts.conditions.import,
                                             },
                                             debug_logs: self.debug_logs.as_mut(),
-                                            module_type: &mut module_type,
                                         }
                                         .resolve(b"/", esm.subpath, &exports_map.root);
                                         // ESModule temporary dropped here; `self` is unborrowed.
@@ -2789,7 +2788,6 @@ impl<'a> Resolver<'a> {
                                                 _ => &self.opts.conditions.import,
                                             },
                                             debug_logs: self.debug_logs.as_mut(),
-                                            module_type: &mut module_type,
                                         }
                                         .resolve(
                                             b"/",
@@ -3206,7 +3204,6 @@ impl<'a> Resolver<'a> {
                     Ok(dir_info_to_use_) => {
                         if let Some(pkg_dir_info) = dir_info_to_use_ {
                             let abs_package_path = pkg_dir_info.abs_path;
-                            let mut module_type = options::ModuleType::Unknown;
                             if let Some(package_json) = pkg_dir_info.package_json() {
                                 if let Some(exports_map) = package_json.exports.as_ref() {
                                     // The condition set is determined by the kind of import
@@ -3227,7 +3224,6 @@ impl<'a> Resolver<'a> {
                                                 _ => &self.opts.conditions.import,
                                             },
                                             debug_logs: self.debug_logs.as_mut(),
-                                            module_type: &mut module_type,
                                         }
                                         .resolve(b"/", esm.subpath, &exports_map.root);
 
@@ -3266,7 +3262,6 @@ impl<'a> Resolver<'a> {
                                                 _ => &self.opts.conditions.import,
                                             },
                                             debug_logs: self.debug_logs.as_mut(),
-                                            module_type: &mut module_type,
                                         }
                                         .resolve(
                                             b"/",
@@ -4889,7 +4884,6 @@ impl<'a> Resolver<'a> {
             }
             return MatchStatus::NotFound;
         }
-        let mut module_type = options::ModuleType::Unknown;
 
         // NOTE: keeping the `ESModule`'s borrow of `self.debug_logs` alive
         // across the subsequent `&mut self` calls would be aliased-&mut UB, so
@@ -4903,10 +4897,8 @@ impl<'a> Resolver<'a> {
                 _ => &self.opts.conditions.import,
             },
             debug_logs: self.debug_logs.as_mut(),
-            module_type: &mut module_type,
         }
         .resolve_imports(import_path, &imports_map.root);
-        let _ = module_type;
 
         if esm_resolution.status == crate::package_json::Status::PackageResolve {
             // https://github.com/oven-sh/bun/issues/4972

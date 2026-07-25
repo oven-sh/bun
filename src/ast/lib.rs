@@ -2672,8 +2672,24 @@ impl LineColumnTracker {
             return source.init_error_position(offset_loc);
         }
 
-        let Some(index) = self.cursors.iter().position(|c| c.offset <= offset) else {
-            return source.init_error_position(offset_loc);
+        // Resume from the first cursor at or behind `offset`. When every cursor
+        // has overshot (the `old_loc` of a redeclaration note points behind all
+        // of them), evict the least-advanced one and restart it from 0 rather
+        // than falling back to `init_error_position`: the fallback repeats
+        // `scan_line_end` on every call, which is O(line length) and turns a
+        // long error-bearing single line into O(errors × line length).
+        let index = match self.cursors.iter().position(|c| c.offset <= offset) {
+            Some(i) => i,
+            None => {
+                let mut i = 0;
+                for (j, c) in self.cursors.iter().enumerate() {
+                    if c.offset <= self.cursors[i].offset {
+                        i = j;
+                    }
+                }
+                self.cursors[i] = ScanCursor::default();
+                i
+            }
         };
         let cursor = &mut self.cursors[index];
 
@@ -2681,17 +2697,25 @@ impl LineColumnTracker {
             cursor.line_end = None;
         }
         cursor.offset = offset;
+        let cached_line_end = cursor.line_end;
+        let line_start = cursor.state.line_start;
 
-        let line_end = match cursor.line_end {
+        let line_end = match cached_line_end {
             Some(line_end) => line_end,
             None => {
-                let line_end = scan_line_end(contents, offset);
-                cursor.line_end = Some(line_end);
+                // Another cursor on the same line already knows where it ends.
+                let reused = self
+                    .cursors
+                    .iter()
+                    .find(|c| c.state.line_start == line_start && c.line_end.is_some())
+                    .and_then(|c| c.line_end);
+                let line_end = reused.unwrap_or_else(|| scan_line_end(contents, offset));
+                self.cursors[index].line_end = Some(line_end);
                 line_end
             }
         };
 
-        cursor.state.to_error_position(line_end)
+        self.cursors[index].state.to_error_position(line_end)
     }
 }
 
@@ -3580,6 +3604,47 @@ mod line_column_tracker_tests {
                 "diverged at offset {offset} of {:?}",
                 bstr::BStr::new(source.contents())
             );
+        }
+    }
+
+    #[test]
+    fn line_column_tracker_cycling_back_references_match_full_scan() {
+        // "a has already been declared" interleaves a forward-marching `new_loc`
+        // with a note `old_loc` that keeps jumping back to one of several early
+        // positions. Exercise both single-line and multi-line sources so the
+        // eviction path and the `line_end` reuse are covered.
+        for contents in [
+            &b"0123456789".repeat(200)[..],
+            &b"0123456789\n".repeat(200)[..],
+        ] {
+            let source = Source::init_path_string(b"tracker-test.js" as &[u8], contents);
+            let mut tracker = LineColumnTracker::default();
+            let old: [usize; 8] = [2, 7, 13, 31, 47, 53, 61, 79];
+            let mut probes = Vec::new();
+            for new in (100..contents.len()).step_by(3) {
+                probes.push(old[new % old.len()]);
+                probes.push(new);
+            }
+            for offset in probes {
+                let loc = usize2loc(offset);
+                let expected = source.init_error_position(loc);
+                let got = tracker.error_position(&source, loc);
+                assert_eq!(
+                    (
+                        expected.line_start,
+                        expected.line_end,
+                        expected.line_count,
+                        expected.column_count
+                    ),
+                    (
+                        got.line_start,
+                        got.line_end,
+                        got.line_count,
+                        got.column_count
+                    ),
+                    "cycling scan diverged at offset {offset}"
+                );
+            }
         }
     }
 

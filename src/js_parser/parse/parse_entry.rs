@@ -934,6 +934,36 @@ impl<'a> Parser<'a> {
                         p.append_part(parts_list, sliced)?;
                     }
 
+                    js_ast::StmtData::SExportDefault(value) => {
+                        // Move export default ahead of other code to help cyclical imports
+                        // in packages like luxon (#1961). Keep a named default class in
+                        // place when an earlier top-level statement already references the
+                        // class name so its TDZ is preserved.
+                        let class_name_ref = match &value.value {
+                            js_ast::StmtOrExpr::Stmt(s) => match &s.data {
+                                js_ast::StmtData::SClass(c) => {
+                                    c.class.class_name.map(|name| name.ref_)
+                                }
+                                _ => None,
+                            },
+                            js_ast::StmtOrExpr::Expr(_) => None,
+                        };
+                        let used_before_decl = match class_name_ref {
+                            Some(ref_) => {
+                                p.symbols.as_slice()[ref_.inner_index() as usize].use_count_estimate
+                                    > 0
+                            }
+                            None => false,
+                        };
+                        let should_move =
+                            !p.options.bundle && !used_before_decl && value.can_be_moved();
+                        let sliced = arena.alloc_slice_copy(&[*stmt]);
+                        p.append_part(&mut parts, sliced)?;
+
+                        if should_move {
+                            before.push(parts.pop().expect("unreachable"));
+                        }
+                    }
                     js_ast::StmtData::SEnum(_) => {
                         // `Part` isn't `Clone`; move out the
                         // pre-visited parts instead of `appendSlice`.

@@ -309,7 +309,7 @@ describe("class declaration TDZ is preserved", () => {
 
   test.concurrent("--no-bundle output keeps class declarations in source order", async () => {
     using dir = tempDir("transpiler-class-tdz-print", {
-      "entry.mjs": `const marker = 1;\nclass Pure { m() { return "ok"; } static s = 3; }\nexport default class Named { static s = 3; }\n`,
+      "entry.mjs": `const marker = 1;\nclass Pure { m() { return "ok"; } static s = 3; }\nexport class Exported { static s = 3; }\n`,
     });
 
     await using proc = Bun.spawn({
@@ -323,7 +323,7 @@ describe("class declaration TDZ is preserved", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(stderr).toBe("");
-    const tokens = ["marker", "class Pure", "class Named"];
+    const tokens = ["marker", "class Pure", "class Exported"];
     const positions = tokens.map(t => [t, stdout.indexOf(t)] as const);
     const order = [...positions].sort((a, b) => a[1] - b[1]).map(([t]) => t);
     expect({ missing: positions.filter(([, i]) => i < 0).map(([t]) => t), order }).toEqual({

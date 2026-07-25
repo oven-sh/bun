@@ -874,9 +874,6 @@ impl<const SSL: bool> WebSocket<SSL> {
     /// Assemble the (optional) close payload, echo a close frame back, and
     /// stop reading: a received Close always terminates the parse loop.
     fn recv_close(&self, cursor: &mut RecvCursor<'_>) -> Step {
-        // Once `buffer_control_payload` has started buffering, `body_remain`
-        // counts bytes buffered so far (see its doc comment), so these length
-        // guards only apply on first entry.
         if !self.control_frame_started.get() {
             if cursor.body_remain == 1 || cursor.body_remain > MAX_CONTROL_PAYLOAD {
                 return self.recv_failed(ErrorCode::InvalidControlFrame);
@@ -904,10 +901,8 @@ impl<const SSL: bool> WebSocket<SSL> {
     }
 
     pub fn send_close(&self) {
-        // Received a bodyless Close: echo a bodyless Close frame on the wire
-        // (RFC 6455 §5.5.1 — the peer distinguishes "no status" from an
-        // explicit 1000), and report 1005 ("no status received") to JS per
-        // §7.1.5.
+        // Received a bodyless Close: echo bodyless (RFC 6455 §5.5.1) and
+        // report 1005 to JS (§7.1.5).
         self.send_close_with_body(None, Some(1005), &[]);
     }
 
@@ -1151,10 +1146,8 @@ impl<const SSL: bool> WebSocket<SSL> {
     }
 
     /// `code` is the status code written to the wire frame; `None` writes a
-    /// bodyless Close frame (payload length 0). `dispatch_code` overrides the
-    /// code reported to JS (`CloseEvent.code`) when it differs from the wire
-    /// code — e.g. a received bodyless Close echoes bodyless but reports 1005;
-    /// when `None`, JS sees `code` (or 1005 if `code` is also `None`).
+    /// bodyless Close. `dispatch_code` overrides the JS-visible
+    /// `CloseEvent.code`; `None` reports `code` (or 1005 when both are `None`).
     fn send_close_with_body(&self, code: Option<u16>, dispatch_code: Option<u16>, body: &[u8]) {
         let body_len = body.len().min(MAX_CLOSE_REASON);
         log!("Sending close with code {:?}", code);
@@ -1174,7 +1167,6 @@ impl<const SSL: bool> WebSocket<SSL> {
         // → terminate → cancel(Failure) would RST and discard the buffered
         // frame.
         let mut frame = [0u8; CONTROL_HEADER_SIZE + 2 + MAX_CLOSE_REASON];
-        // A bodyless echo (`code` is None) carries no code and no reason.
         let payload_len = code.map_or(0, |_| 2 + body_len);
         let header = WebsocketHeader::new((payload_len & 0x7F) as u8, true, Opcode::Close);
         frame[..2].copy_from_slice(&header.slice());
@@ -2124,11 +2116,9 @@ enum Step {
     Terminated,
 }
 
-/// Map a status code received in a Close frame to the code echoed on the wire
-/// and reported to JS. RFC 6455 §7.4.1-§7.4.2: codes outside the legal on-wire
-/// set (`<1000`, the reserved `1004`–`1006` and `1015`–`2999`, and the
-/// undefined `>4999`) are a protocol error, so both see 1002. Otherwise the
-/// received code passes through verbatim (§5.5.1, §7.1.5).
+/// Map a received Close status code to the code echoed and reported to JS:
+/// codes outside the RFC 6455 §7.4 on-wire set become 1002, the rest pass
+/// through verbatim.
 fn received_close_code(received: u16) -> u16 {
     let is_invalid = received < 1000
         || (1004..1007).contains(&received)

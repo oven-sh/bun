@@ -347,7 +347,7 @@ test("JUnit reporter carries node:test skip/todo reasons", async () => {
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   const xml = await Bun.file(outfile).text();
   // declared {skip:'reason'} / {todo:'reason'}
   expect(xml).toContain('<skipped type="skipped" message="not on tuesday" />');
@@ -357,7 +357,7 @@ test("JUnit reporter carries node:test skip/todo reasons", async () => {
   expect(xml).toContain('<skipped type="todo" message="rewrite me" />');
   // skip/todo without a reason still carry the type attribute
   expect(xml).toContain('<skipped type="skipped" />');
-  expect(xml).toContain('<skipped type="todo" message="TODO" />');
+  expect(xml).toContain('<skipped type="todo" />');
   // no bare `<skipped />` survives
   expect(xml).not.toMatch(/<skipped\s*\/>/);
   // sanity: summary line saw the right counts

@@ -793,19 +793,19 @@ impl JunitReporter {
                     let last = self.suite_stack.len() - 1;
                     self.suite_stack[last].metrics.skipped += 1;
                 }
-                let is_todo = matches!(status, R::Todo);
                 self.contents.extend_from_slice(b">\n");
                 self.contents.extend_from_slice(indent);
                 self.contents.extend_from_slice(b"  <skipped type=\"");
-                self.contents
-                    .extend_from_slice(if is_todo { b"todo" } else { b"skipped" });
+                self.contents.extend_from_slice(if matches!(status, R::Todo) {
+                    b"todo"
+                } else {
+                    b"skipped"
+                });
                 self.contents.extend_from_slice(b"\"");
                 if let Some(note) = note.filter(|n| !n.is_empty()) {
                     self.contents.extend_from_slice(b" message=\"");
                     escape_xml(note, &mut self.contents)?;
                     self.contents.extend_from_slice(b"\"");
-                } else if is_todo {
-                    self.contents.extend_from_slice(b" message=\"TODO\"");
                 }
                 self.contents.extend_from_slice(b" />\n");
                 self.contents.extend_from_slice(indent);

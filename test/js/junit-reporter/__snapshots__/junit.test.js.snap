@@ -27,7 +27,7 @@ exports[`junit reporter more scenarios 1`] = `
         <skipped type="skipped" />
       </testcase>
       <testcase name="basic todo test" classname="comprehensive test suite" file="comprehensive.test.js" line="38" assertions="0">
-        <skipped type="todo" message="TODO" />
+        <skipped type="todo" />
       </testcase>
       <testcase name="addition 1 + 2 = 3" classname="comprehensive test suite" file="comprehensive.test.js" line="44" assertions="1" />
       <testcase name="addition 2 + 3 = 5" classname="comprehensive test suite" file="comprehensive.test.js" line="44" assertions="1" />
@@ -43,7 +43,7 @@ exports[`junit reporter more scenarios 1`] = `
       </testcase>
       <testcase name="skip if false" classname="comprehensive test suite" file="comprehensive.test.js" line="67" assertions="1" />
       <testcase name="todo if true" classname="comprehensive test suite" file="comprehensive.test.js" line="71" assertions="0">
-        <skipped type="todo" message="TODO" />
+        <skipped type="todo" />
       </testcase>
       <testcase name="todo if false" classname="comprehensive test suite" file="comprehensive.test.js" line="73" assertions="1" />
       <testcase name="test marked as failing" classname="comprehensive test suite" file="comprehensive.test.js" line="77" assertions="1" />

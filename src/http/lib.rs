@@ -2465,8 +2465,9 @@ impl<'a> HTTPClient<'a> {
 
         if body_len > 0 || self.method.has_request_body() {
             if self.flags.is_streaming_request_body {
-                // Parseable caller CL is honoured (FetchTasklet enforces the count).
+                // RFC 9110 8.6 `1*DIGIT` caller CL is honoured (FetchTasklet enforces the count).
                 if let Some(content_length) = original_content_length
+                    && content_length.iter().all(u8::is_ascii_digit)
                     && bun_core::parse_unsigned::<u64>(content_length, 10).is_ok()
                 {
                     request_headers_buf[header_count] =

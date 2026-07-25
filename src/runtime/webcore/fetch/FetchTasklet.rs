@@ -2057,6 +2057,7 @@ impl FetchTasklet {
             fetch_tasklet.declared_request_content_length = fetch_tasklet
                 .request_headers
                 .get(b"content-length")
+                .filter(|v| v.iter().all(u8::is_ascii_digit))
                 .and_then(|v| bun_core::parse_unsigned::<u64>(v, 10).ok());
             // Intrusive `ref_count` starts at 2 (one for the main thread, one for the HTTP
             // thread), so the same raw pointer can be handed to both sides.

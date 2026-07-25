@@ -730,6 +730,48 @@ test("a streamed body shorter than its declared Content-Length is rejected", asy
   expect(outcome).toEqual({ rejected: true, code: "UND_ERR_REQ_CONTENT_LENGTH_MISMATCH" });
 });
 
+// RFC 9110 section 8.6 defines Content-Length as 1*DIGIT. A value outside that
+// grammar must not reach the wire verbatim: downstream parsers disagree on how
+// to read it (e.g. strtol stops at the first non-digit), which is the same
+// desync as a mismatched count.
+test.each(["1_0", "+10", "0x10", "1e1"])(
+  "a streamed body with non-1*DIGIT Content-Length %j falls back to chunked",
+  async bad => {
+    let recorded = Buffer.alloc(0);
+    await using server = net
+      .createServer(sock => {
+        sock.on("error", () => {});
+        sock.on("data", d => {
+          recorded = Buffer.concat([recorded, d]);
+          if (recorded.toString("latin1").includes("abcdefghij")) {
+            sock.end("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok");
+          }
+        });
+      })
+      .listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as net.AddressInfo;
+
+    const res = await fetch(`http://127.0.0.1:${port}/`, {
+      method: "POST",
+      duplex: "half",
+      headers: { "content-length": bad },
+      body: new ReadableStream({
+        start(c) {
+          c.enqueue(new TextEncoder().encode("abcdefghij"));
+          c.close();
+        },
+      }),
+    });
+    expect(await res.text()).toBe("ok");
+    const headers = recorded.toString("latin1").split("\r\n\r\n")[0];
+    expect({
+      contentLength: /^content-length: (.*)$/im.exec(headers)?.[1],
+      transferEncoding: /^transfer-encoding: (.*)$/im.exec(headers)?.[1],
+    }).toEqual({ contentLength: undefined, transferEncoding: "chunked" });
+  },
+);
+
 // Transfer-Encoding is a forbidden request header (WHATWG fetch): the engine
 // owns body framing. A caller-supplied value used to be written verbatim while
 // the body was still chunk-framed, so `Transfer-Encoding: gzip` produced a

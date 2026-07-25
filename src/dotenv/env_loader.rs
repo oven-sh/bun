@@ -119,8 +119,8 @@ pub struct Loader {
     /// only populated with files specified explicitly (e.g. --env-file arg)
     pub custom_files_loaded: StringArrayHashMap<bun_ast::Source>,
 
-    /// `.env`/`.env.local` entries [`Self::take_script_dotenv`] lifted out of
-    /// `map` for the `bun run <script>` subprocess env; empty elsewhere.
+    /// Non-conditional dotenv entries [`Self::take_script_dotenv`] lifted out
+    /// of `map` for the `bun run <script>` subprocess env; empty elsewhere.
     pub script_forward: Vec<(Box<[u8]>, Box<[u8]>)>,
 
     pub quiet: bool,

@@ -532,8 +532,17 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         env: Option<*mut DotEnv::Loader>,
         log_errors: bool,
         store_root_fd: bool,
+        forward_dotenv: bool,
     ) -> crate::Result<bun_resolver::DirInfoRef> {
-        Self::configure_env_for_run_impl(ctx, this_transpiler, env, log_errors, store_root_fd, true)
+        Self::configure_env_for_run_impl(
+            ctx,
+            this_transpiler,
+            env,
+            log_errors,
+            store_root_fd,
+            true,
+            forward_dotenv,
+        )
     }
 
     /// Like [`Self::configure_env_for_run`] but does **not** construct the
@@ -554,6 +563,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             log_errors,
             store_root_fd,
             false,
+            true,
         )
     }
 
@@ -579,6 +589,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         log_errors: bool,
         store_root_fd: bool,
         with_linker: bool,
+        forward_dotenv: bool,
     ) -> crate::Result<bun_resolver::DirInfoRef> {
         let args = ctx.args.clone();
         let env_is_none = env.is_none();
@@ -660,18 +671,26 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 }
             }
 
-            // Load the default .env files and lift the `.env`/`.env.local`
-            // entries into `script_forward` for the subprocess (#9877);
-            // `.env.{NODE_ENV}[.local]` entries are dropped so a script
-            // re-derives them under its own NODE_ENV (#9635). The map returns
-            // to the process-env prefix so the `bun run <file>` slow path
-            // (which boots a VM on this singleton) matches the fast path.
-            let process_env_count = env_loader.map.map.count();
-            let disable_default = this_transpiler.options.env.disable_default_env_files;
-            let _ = this_transpiler.run_env_loader(disable_default);
-            this_transpiler
-                .env_mut()
-                .take_script_dotenv(process_env_count);
+            if forward_dotenv {
+                // Load the default .env files and lift the non-conditional
+                // entries into `script_forward` for the subprocess (#9877);
+                // NODE_ENV-dependent entries are dropped so a script re-derives
+                // them under its own NODE_ENV (#9635). The map returns to the
+                // process-env prefix so the `bun run <file>` slow path (which
+                // boots a VM on this singleton) matches the fast path.
+                let process_env_count = env_loader.map.map.count();
+                let disable_default = this_transpiler.options.env.disable_default_env_files;
+                let _ = this_transpiler.run_env_loader(disable_default);
+                this_transpiler
+                    .env_mut()
+                    .take_script_dotenv(process_env_count);
+            } else {
+                // `--filter` / multi-run spawn each script in a different
+                // package cwd; forwarding the invocation-cwd `.env` would
+                // shadow per-package `.env` in a nested bun. Skip the default
+                // files (pre-#9877 behavior for these callers).
+                let _ = this_transpiler.run_env_loader(true);
+            }
         }
 
         // Re-derive after `run_env_loader` — that call creates its own

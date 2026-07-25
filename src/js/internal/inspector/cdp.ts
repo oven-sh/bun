@@ -199,7 +199,7 @@ function untagObjectId(objectId: unknown, sessionId: number): string | null {
     return null;
   }
   if (parsed?.bunSessionId !== sessionId) return null;
-  const { bunSessionId, ...rest } = parsed;
+  const { bunSessionId: _bunSessionId, ...rest } = parsed;
   return JSON.stringify(rest);
 }
 
@@ -485,11 +485,11 @@ class InspectorCDPAdapter {
         let callArguments = params.arguments;
         if ($isArray(callArguments)) {
           callArguments = callArguments.map((arg: AnyObject) => {
-            if (arg && typeof arg === "object" && typeof arg.objectId === "string") {
-              const backendArgId = untagObjectId(arg.objectId, this.#sessionId);
-              return backendArgId === null ? arg : { ...arg, objectId: backendArgId };
-            }
-            return arg;
+            if (arg === null || typeof arg !== "object") return arg;
+            const { objectId: argObjectId } = arg;
+            if (typeof argObjectId !== "string") return arg;
+            const backendArgId = untagObjectId(argObjectId, this.#sessionId);
+            return backendArgId === null ? arg : { ...arg, objectId: backendArgId };
           });
         }
         const forward = (targetObjectId: unknown) =>

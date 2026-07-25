@@ -2195,11 +2195,6 @@ console.log(<div {...obj} key="after" />);`),
   });
 
   // https://github.com/oven-sh/bun/issues/7499
-  // The automatic JSX runtime replaces <div/> with a call through a generated
-  // binding (e.g. `jsxDEV_7x81h0kn`) that only exists when the matching
-  // `import { jsxDEV as jsxDEV_... } from ".../jsx-dev-runtime"` is emitted
-  // alongside it. Bun.Transpiler used to default autoImportJSX to false, so the
-  // emitted code referenced a name that was never declared anywhere.
   describe("autoImportJSX defaults to true for the automatic runtime", () => {
     it("development", () => {
       const out = new Bun.Transpiler({
@@ -2208,6 +2203,16 @@ console.log(<div {...obj} key="after" />);`),
       }).transformSync("export default function App() { return <><div>hi</div></>; }");
       expect(out).toMatch(
         /^import { jsxDEV as (\w+), Fragment as (\w+) } from "react\/jsx-dev-runtime";\nexport default function App\(\) {\n  return \1\(\2,/,
+      );
+    });
+
+    it("async .transform() also emits the import", async () => {
+      const out = await new Bun.Transpiler({
+        loader: "tsx",
+        define: { "process.env.NODE_ENV": JSON.stringify("development") },
+      }).transform("export default <div>hi</div>;");
+      expect(out).toMatch(
+        /^import { jsxDEV as (\w+) } from "react\/jsx-dev-runtime";\nexport default \1\("div",/,
       );
     });
 
@@ -2252,6 +2257,16 @@ console.log(<div {...obj} key="after" />);`),
       }).transformSync("export default <div>hi</div>;");
       expect(out).not.toContain("import");
       expect(out).toContain("jsxDEV");
+    });
+
+    it("surfaces the runtime import through .scan()", () => {
+      const opts = { loader: "tsx", define: { "process.env.NODE_ENV": JSON.stringify("development") } };
+
+      expect(new Bun.Transpiler(opts).scan("export default <div/>;").imports).toEqual([
+        { kind: "import-statement", path: "react/jsx-dev-runtime" },
+      ]);
+      expect(new Bun.Transpiler({ ...opts, autoImportJSX: false }).scan("export default <div/>;").imports).toEqual([]);
+      expect(new Bun.Transpiler(opts).scan("export const x = 1;").imports).toEqual([]);
     });
   });
 

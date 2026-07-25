@@ -391,10 +391,8 @@ extern "C" void CrashHandler__setDlOpenAction(const char* action);
 extern "C" bool Bun__VM__allowAddons(void* vm);
 
 #if OS(WINDOWS)
-// Rebind an addon's node.exe imports to this process so napi_* calls reach
-// Bun instead of whatever node.exe the Windows loader found on PATH.
-// https://github.com/oven-sh/bun/issues/10690
-static void rebindThunks(BYTE* base, HMODULE host, PIMAGE_THUNK_DATA iat, PIMAGE_THUNK_DATA names, bool keepUnresolved)
+// Rebind an addon's node.exe imports to this process: https://github.com/oven-sh/bun/issues/10690
+static void rebindThunks(BYTE* base, HMODULE host, PIMAGE_THUNK_DATA iat, PIMAGE_THUNK_DATA names)
 {
     size_t count = 0;
     for (auto* n = names; n->u1.AddressOfData != 0; ++n)
@@ -412,8 +410,7 @@ static void rebindThunks(BYTE* base, HMODULE host, PIMAGE_THUNK_DATA iat, PIMAGE
             auto* byName = reinterpret_cast<PIMAGE_IMPORT_BY_NAME>(base + names[i].u1.AddressOfData);
             proc = GetProcAddress(host, reinterpret_cast<LPCSTR>(byName->Name));
         }
-        if (!proc && keepUnresolved) continue;
-        iat[i].u1.Function = reinterpret_cast<ULONGLONG>(proc);
+        if (proc) iat[i].u1.Function = reinterpret_cast<ULONGLONG>(proc);
     }
 
     DWORD ignore;
@@ -422,8 +419,7 @@ static void rebindThunks(BYTE* base, HMODULE host, PIMAGE_THUNK_DATA iat, PIMAGE
 
 static void rebindNodeExeImports(HMODULE addon)
 {
-    // Workers share one mapped image per HMODULE; serialize so concurrent
-    // loads can't interleave VirtualProtect on the same IAT page.
+    // Serialize across workers so VirtualProtect windows on the shared IAT can't interleave.
     static WTF::Lock rebindLock;
     WTF::Locker locker { rebindLock };
 
@@ -448,8 +444,7 @@ static void rebindNodeExeImports(HMODULE addon)
                 if (!desc->OriginalFirstThunk || !desc->FirstThunk) continue;
                 rebindThunks(base, host,
                     reinterpret_cast<PIMAGE_THUNK_DATA>(base + desc->FirstThunk),
-                    reinterpret_cast<PIMAGE_THUNK_DATA>(base + desc->OriginalFirstThunk),
-                    false);
+                    reinterpret_cast<PIMAGE_THUNK_DATA>(base + desc->OriginalFirstThunk));
             }
         }
     }
@@ -464,8 +459,7 @@ static void rebindNodeExeImports(HMODULE addon)
                 if (!isHostName(reinterpret_cast<const char*>(base + desc->DllNameRVA))) continue;
                 rebindThunks(base, host,
                     reinterpret_cast<PIMAGE_THUNK_DATA>(base + desc->ImportAddressTableRVA),
-                    reinterpret_cast<PIMAGE_THUNK_DATA>(base + desc->ImportNameTableRVA),
-                    true);
+                    reinterpret_cast<PIMAGE_THUNK_DATA>(base + desc->ImportNameTableRVA));
                 if (desc->ModuleHandleRVA)
                     *reinterpret_cast<HMODULE*>(base + desc->ModuleHandleRVA) = host;
             }

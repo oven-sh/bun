@@ -1,6 +1,4 @@
-// Reproduces packages like nodegl that are linked with /DELAYLOAD:node.exe but
-// omit win_delay_load_hook.cc (e.g. cmake-js projects that do not add
-// ${CMAKE_JS_SRC}). See https://github.com/oven-sh/bun/issues/10690.
+// /DELAYLOAD:node.exe without win_delay_load_hook.cc: https://github.com/oven-sh/bun/issues/10690
 #include <node_api.h>
 
 static napi_value hello(napi_env env, napi_callback_info info) {

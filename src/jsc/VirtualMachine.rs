@@ -3745,30 +3745,17 @@ impl VirtualMachine {
             };
         }
         // Const-generic bool can't be `!ADD_DOUBLE_REF`, so branch.
-        let mut was_new = false;
         let source = if ADD_DOUBLE_REF {
-            self.ref_counted_string_with_was_new::<false>(&mut was_new, code, hash_)
+            self.ref_counted_string::<false>(code, hash_)
         } else {
-            self.ref_counted_string_with_was_new::<true>(&mut was_new, code, hash_)
+            self.ref_counted_string::<true>(code, hash_)
         };
-        // SAFETY: `ref_counted_string_with_was_new` returns a live `*mut RefString`
-        // held in `self.ref_strings`; we own +1 (or +3 below) until JSC calls the
+        // SAFETY: `ref_counted_string` returns a live `*mut RefString` held in
+        // `self.ref_strings`; we own +1 (or +3 below) until JSC calls the
         // external-string finalizer.
         let source_ref = unsafe { &*source };
         if ADD_DOUBLE_REF {
             source_ref.ref_();
-            source_ref.ref_();
-        }
-
-        // `ref_strings` is a weak cache: entries self-remove via the external
-        // string finalizer (free_ref_string -> RefString::destroy ->
-        // clear_ref_string) when the impl refcount hits zero. Hand the caller
-        // exactly +1 that it will balance via `source_code_needs_deref = true`.
-        // A fresh entry already carries the +1 from `create_external`; a cache
-        // hit does not, so take one here. Without this the create_external +1
-        // was never released and every distinct transpiled source under --hot
-        // leaked its duped bytes and map slot forever.
-        if !was_new {
             source_ref.ref_();
         }
 
@@ -3845,7 +3832,8 @@ impl VirtualMachine {
         }
     }
 
-    /// Interns `input_` in the VM's ref-string map and returns the ref-counted entry.
+    /// Interns `input_` in the VM's ref-string map and returns the entry with
+    /// exactly +1 owed to the caller on both fresh-insert and cache-hit paths.
     pub fn ref_counted_string<const DUPE: bool>(
         &mut self,
         input_: &[u8],
@@ -3853,7 +3841,13 @@ impl VirtualMachine {
     ) -> *mut crate::ref_string::RefString {
         debug_assert!(!input_.is_empty());
         let mut was_new = false;
-        self.ref_counted_string_with_was_new::<DUPE>(&mut was_new, input_, hash_)
+        let r = self.ref_counted_string_with_was_new::<DUPE>(&mut was_new, input_, hash_);
+        if !was_new {
+            // SAFETY: `r` is live (held in `self.ref_strings`). A fresh entry
+            // already carries +1 from `create_external`; a cache hit does not.
+            unsafe { (*r).ref_() };
+        }
+        r
     }
 
     // Note: `flags` is a runtime arg —

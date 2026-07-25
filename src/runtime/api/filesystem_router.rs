@@ -313,18 +313,9 @@ impl FileSystemRouter {
             root_dir_info.abs_path
         };
 
-        // Note: `vm.refCountedString` is an interning cache — on a cache HIT it
-        // returns the existing `*mut RefString` WITHOUT bumping the refcount.
-        // `getScriptSrc`/`getOrigin` use `.leak()` (no ref), so without an
-        // explicit hold N routers sharing one interned RefString → N finalizers
-        // deref a single +1 → UAF on the second deref. Claim an explicit +1 here
-        // so each `FileSystemRouter` owns its hold; `finalize` releases it.
+        // `ref_counted_string` hands back +1; `finalize` releases it.
         let claim = |p: *mut RefString| -> BackRef<RefString> {
-            // `ref_counted_string` returns a live interned `*mut RefString`; wrap as
-            // `BackRef` (owner-outlives-holder: VM intern cache + our +1).
-            let r = BackRef::from(core::ptr::NonNull::new(p).expect("ref_counted_string"));
-            r.ref_();
-            r
+            BackRef::from(core::ptr::NonNull::new(p).expect("ref_counted_string"))
         };
         let fs_router = Box::new(FileSystemRouter {
             origin: if !origin_str.slice().is_empty() {

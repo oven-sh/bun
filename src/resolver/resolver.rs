@@ -2666,7 +2666,8 @@ impl<'a> Resolver<'a> {
                                     // want problems due to Windows paths, which are very unlike URL
                                     // paths. We also want to avoid any "%" characters in the absolute
                                     // directory path accidentally being interpreted as URL escapes.
-                                    {
+                                    let mut skip_bun_condition = false;
+                                    loop {
                                         let esm_resolution = ESModule {
                                             conditions: match kind {
                                                 ast::ImportKind::Require
@@ -2681,9 +2682,12 @@ impl<'a> Resolver<'a> {
                                             },
                                             debug_logs: self.debug_logs.as_mut(),
                                             module_type: &mut module_type,
+                                            skip_bun_condition,
                                         }
                                         .resolve(b"/", esm.subpath, &exports_map.root);
                                         // ESModule temporary dropped here; `self` is unborrowed.
+
+                                        let matched_status = esm_resolution.status;
 
                                         if self
                                             .handle_esm_resolution(
@@ -2704,6 +2708,29 @@ impl<'a> Resolver<'a> {
                                             }
                                             return MatchStatus::Success;
                                         }
+
+                                        // The exports map matched but the target file isn't on
+                                        // disk. If the `"bun"` condition is active, retry without
+                                        // it so node-targeted deployment bundles (Nitro/Nuxt) that
+                                        // only shipped the `"node"` target still resolve.
+                                        if !skip_bun_condition
+                                            && matches!(
+                                                matched_status,
+                                                crate::package_json::Status::Exact
+                                                    | crate::package_json::Status::ExactEndsWithStar
+                                                    | crate::package_json::Status::Inexact
+                                            )
+                                            && self
+                                                .opts
+                                                .conditions
+                                                .import
+                                                .contains_key(b"bun".as_slice())
+                                        {
+                                            skip_bun_condition = true;
+                                            module_type = package_json.module_type;
+                                            continue;
+                                        }
+                                        break;
                                     }
 
                                     // Some popular packages forget to include the extension in their
@@ -2738,6 +2765,7 @@ impl<'a> Resolver<'a> {
                                             },
                                             debug_logs: self.debug_logs.as_mut(),
                                             module_type: &mut module_type,
+                                            skip_bun_condition: false,
                                         }
                                         .resolve(
                                             b"/",
@@ -3165,7 +3193,8 @@ impl<'a> Resolver<'a> {
                                     // want problems due to Windows paths, which are very unlike URL
                                     // paths. We also want to avoid any "%" characters in the absolute
                                     // directory path accidentally being interpreted as URL escapes.
-                                    {
+                                    let mut skip_bun_condition = false;
+                                    loop {
                                         let esm_resolution = ESModule {
                                             conditions: match kind {
                                                 ast::ImportKind::Require
@@ -3176,8 +3205,11 @@ impl<'a> Resolver<'a> {
                                             },
                                             debug_logs: self.debug_logs.as_mut(),
                                             module_type: &mut module_type,
+                                            skip_bun_condition,
                                         }
                                         .resolve(b"/", esm.subpath, &exports_map.root);
+
+                                        let matched_status = esm_resolution.status;
 
                                         if self
                                             .handle_esm_resolution(
@@ -3196,6 +3228,25 @@ impl<'a> Resolver<'a> {
                                             }
                                             return MatchStatus::Success;
                                         }
+
+                                        if !skip_bun_condition
+                                            && matches!(
+                                                matched_status,
+                                                crate::package_json::Status::Exact
+                                                    | crate::package_json::Status::ExactEndsWithStar
+                                                    | crate::package_json::Status::Inexact
+                                            )
+                                            && self
+                                                .opts
+                                                .conditions
+                                                .import
+                                                .contains_key(b"bun".as_slice())
+                                        {
+                                            skip_bun_condition = true;
+                                            module_type = options::ModuleType::Unknown;
+                                            continue;
+                                        }
+                                        break;
                                     }
 
                                     // Some popular packages forget to include the extension in their
@@ -3215,6 +3266,7 @@ impl<'a> Resolver<'a> {
                                             },
                                             debug_logs: self.debug_logs.as_mut(),
                                             module_type: &mut module_type,
+                                            skip_bun_condition: false,
                                         }
                                         .resolve(
                                             b"/",
@@ -4850,6 +4902,7 @@ impl<'a> Resolver<'a> {
             },
             debug_logs: self.debug_logs.as_mut(),
             module_type: &mut module_type,
+            skip_bun_condition: false,
         }
         .resolve_imports(import_path, &imports_map.root);
         let _ = module_type;

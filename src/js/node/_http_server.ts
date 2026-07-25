@@ -1396,8 +1396,7 @@ function detachSocketListenersForHandoff(socket) {
 const kSocketTimeoutTimer = Symbol("socketTimeoutTimer");
 const kStreamingEnabled = Symbol("kStreamingEnabled");
 const kEnableRawData = Symbol("kEnableRawData");
-// Node feeds its parser from the socket's 'data' event, so user listeners see
-// the raw request bytes; arm the native raw-bytes tap when a listener exists.
+// Arm the native raw-bytes tap so 'data'/'readable' see the raw request bytes.
 function maybeEnableRawSocketData(socket) {
   if (!socket[kStreamingEnabled] && (socket.listenerCount("data") > 0 || socket.listenerCount("readable") > 0)) {
     socket[kEnableRawData]();
@@ -1894,8 +1893,7 @@ const NodeHTTPServerSocket = class Socket extends NetSocket {
         const message = this._httpMessage;
         const req = message?.req;
 
-        // The raw-bytes tap feeds this socket's readable side with wire
-        // bytes; the parsed body goes to the IncomingMessage only.
+        // The raw tap owns the socket readable; parsed body goes to req only.
         if (!handle.onrawdata) {
           if ((bodyReadState & NodeHTTPBodyReadState.done) !== 0) {
             emitServerSocketEOFNT(this, req);

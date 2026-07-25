@@ -326,6 +326,11 @@ pub struct Interpreter {
     pub global_this: Cell<*mut crate::jsc::JSGlobalObject>,
 
     pub flags: Cell<InterpreterFlags>,
+    /// `Some("FORCE_COLOR=N\0")` when the JS-captured root stdout is a color
+    /// terminal. `Cmd` appends it to a child's env only when that child's
+    /// resolved stdout is still the relayed `Stdio::Capture` pipe (not
+    /// `> file` / `| next` / `$(..)`) and no FORCE_COLOR/NO_COLOR is in scope.
+    pub force_color_env: Cell<Option<&'static [u8]>>,
     pub exit_code: Cell<Option<ExitCode>>,
     pub this_jsvalue: Cell<crate::jsc::JSValue>,
     pub cleanup_state: Cell<CleanupState>,
@@ -604,6 +609,7 @@ impl Interpreter {
             async_commands_executing: Cell::new(0),
             global_this: Cell::new(core::ptr::null_mut()),
             flags: Cell::new(InterpreterFlags::default()),
+            force_color_env: Cell::new(None),
             // Starts at `None` so `async_cmd_done` only finishes once
             // `on_root_child_done` has recorded the real exit code.
             exit_code: Cell::new(None),
@@ -1239,6 +1245,22 @@ impl Interpreter {
                 captured: cap_err,
             });
         });
+
+        // JS path: children get a `Stdio::Capture` pipe, so isatty() is false.
+        // When the relayed output is a color terminal, record a FORCE_COLOR
+        // hint; `Cmd` only applies it when appropriate. See `force_color_env`.
+        if cap_out.is_some()
+            && bun_sys::isatty(stdout_fd)
+            && bun_core::output::enable_ansi_colors_stdout()
+        {
+            use bun_core::output::ColorDepth;
+            let line: &'static [u8] = match bun_core::output::Source::color_depth() {
+                ColorDepth::C16m => b"FORCE_COLOR=3\0",
+                ColorDepth::C256 => b"FORCE_COLOR=2\0",
+                _ => b"FORCE_COLOR=1\0",
+            };
+            self.force_color_env.set(Some(line));
+        }
 
         Ok(())
     }

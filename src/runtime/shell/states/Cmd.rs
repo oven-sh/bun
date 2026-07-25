@@ -539,6 +539,16 @@ impl Cmd {
         interp.as_cmd_mut(this).args[0] = resolved;
 
         // Fill env from export_env + cmd_local_env.
+        let force_color_env = interp.force_color_env.get().filter(|_| {
+            use crate::shell::env_str::EnvStr;
+            let env = interp.as_cmd(this).base.shell();
+            let fc = EnvStr::init_slice(b"FORCE_COLOR");
+            let nc = EnvStr::init_slice(b"NO_COLOR");
+            !(env.export_env.contains(fc)
+                || env.export_env.contains(nc)
+                || env.cmd_local_env.contains(fc)
+                || env.cmd_local_env.contains(nc))
+        });
         {
             let env = interp.as_cmd_mut(this).base.shell_mut();
             let mut iter = env.export_env.iterator();
@@ -568,6 +578,15 @@ impl Cmd {
                 drop(arena);
                 return Yield::failed();
             }
+        }
+
+        // When this command's stdout is the capture pipe that relays to the
+        // script's color terminal, hint FORCE_COLOR so color-aware programs
+        // do not suppress ANSI just because `isatty()` is false.
+        if let Some(line) = force_color_env
+            && matches!(spawn_args.stdio[1], Stdio::Capture(_))
+        {
+            spawn_args.env_array.push(line.as_ptr().cast());
         }
 
         // Stage the exec slot *before* spawning so PipeReader / process-exit

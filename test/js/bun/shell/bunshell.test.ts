@@ -2971,3 +2971,149 @@ test("cd treats interpolated arguments starting with tilde or dash as literal di
     expect(exitCode).toBe(1);
   }
 });
+
+// https://github.com/oven-sh/bun/issues/11046
+describe("FORCE_COLOR", () => {
+  // Bun shell relays subprocess stdout/stderr through a pipe so it can
+  // capture the output; the child therefore sees `isatty() === false` and
+  // suppresses ANSI colors. When the relayed output is going to a color
+  // terminal the shell now sets FORCE_COLOR so color-aware programs still
+  // emit escapes.
+  const colorEnv = {
+    ...bunEnv,
+    NO_COLOR: undefined,
+    FORCE_COLOR: undefined,
+    CI: undefined,
+    TERM: "xterm-256color",
+  };
+
+  async function runInTerminal(fixture: string) {
+    let output = "";
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    await using terminal = new Bun.Terminal({
+      cols: 200,
+      rows: 24,
+      data(_term, chunk: Uint8Array) {
+        output += new TextDecoder().decode(chunk);
+        if (output.includes("DONE")) resolve();
+      },
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: colorEnv,
+      terminal,
+    });
+    proc.exited.then(code => (code === 0 ? resolve() : reject(new Error(`exit ${code}: ${output}`))));
+    await promise;
+    await proc.exited;
+    return output;
+  }
+
+  function fixture(body: string) {
+    // The probe spawns a real external subprocess that prints its own
+    // FORCE_COLOR/NO_COLOR environ as `fc=<val> nc=<val>`. On POSIX `sh -c`
+    // keeps this fast; on Windows there is no stock equivalent so the child
+    // bun under test spawns another copy of itself.
+    const probe = isWindows
+      ? `\${process.argv[0]} -e \${'process.stdout.write("fc="+(process.env.FORCE_COLOR||"")+" nc="+(process.env.NO_COLOR||"")+"\\\\n")'}`
+      : `sh -c 'printf "fc=%s nc=%s\\n" "$FORCE_COLOR" "$NO_COLOR"'`;
+    return `import { $ } from "bun";\n${body.replaceAll("PROBE", probe)}\nprocess.stdout.write("DONE\\n");`;
+  }
+
+  test("is set for a subprocess whose output goes to a color terminal", async () => {
+    const output = await runInTerminal(fixture(`await $\`PROBE\`;`));
+    expect(output).toMatch(/^fc=[123] nc=\r?$/m);
+  });
+
+  test("is not set for a subprocess whose stdout is redirected to a file", async () => {
+    const output = await runInTerminal(
+      fixture(
+        `const f = require("path").join(require("os").tmpdir(), "fc-" + process.pid);
+         await $\`PROBE > \${f}\`;
+         process.stdout.write(require("fs").readFileSync(f, "utf8"));`,
+      ),
+    );
+    expect(output).toMatch(/^fc= nc=\r?$/m);
+  });
+
+  test("is not set for a non-final pipeline stage", async () => {
+    const output = await runInTerminal(fixture(`await $\`PROBE | cat\`;`));
+    expect(output).toMatch(/^fc= nc=\r?$/m);
+  });
+
+  test("is not set inside a command substitution", async () => {
+    const output = await runInTerminal(fixture(`await $\`echo result=$(PROBE)\`;`));
+    expect(output).toMatch(/^result=fc= nc=\r?$/m);
+  });
+
+  test("is not set when the caller's env specifies NO_COLOR", async () => {
+    const output = await runInTerminal(fixture(`await $\`PROBE\`.env({ ...process.env, NO_COLOR: "1" });`));
+    expect(output).toMatch(/^fc= nc=1\r?$/m);
+  });
+
+  test("is not set when an inline NO_COLOR=1 assignment is present", async () => {
+    const output = await runInTerminal(fixture(`await $\`NO_COLOR=1 PROBE\`;`));
+    expect(output).toMatch(/^fc= nc=1\r?$/m);
+  });
+
+  test("is not set after an in-script export NO_COLOR", async () => {
+    const output = await runInTerminal(fixture(`await $\`export NO_COLOR=1 && PROBE\`;`));
+    expect(output).toMatch(/^fc= nc=1\r?$/m);
+  });
+
+  test("does not override a FORCE_COLOR already in the caller's env", async () => {
+    const output = await runInTerminal(fixture(`await $\`PROBE\`.env({ ...process.env, FORCE_COLOR: "0" });`));
+    expect(output).toMatch(/^fc=0 nc=\r?$/m);
+  });
+
+  test("is not set for .quiet() / .text()", async () => {
+    const output = await runInTerminal(
+      fixture(`const out = await $\`PROBE\`.text(); process.stdout.write(out);`),
+    );
+    expect(output).toMatch(/^fc= nc=\r?$/m);
+  });
+
+  test("is not visible to shell expansion", async () => {
+    // The hint is appended to the child's spawn env only; it is not an
+    // exported shell variable.
+    const output = await runInTerminal(fixture(`await $\`echo fc=[$FORCE_COLOR]\`;`));
+    expect(output).toMatch(/^fc=\[\]\r?$/m);
+  });
+
+  test("is not set when the script's own stdout is not a terminal", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture(`await $\`PROBE\`;`)],
+      env: colorEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "fc= nc=\nDONE\n", stderr: "", exitCode: 0 });
+  });
+
+  test.skipIf(isWindows)("is not set when stdout is redirected but stderr is a terminal", async () => {
+    // The script's stderr is the PTY (so bun's own color policy is "on"), but
+    // stdout (where the shell relays command output) is a file.
+    let output = "";
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    await using terminal = new Bun.Terminal({
+      cols: 200,
+      rows: 24,
+      data(_t, chunk: Uint8Array) {
+        output += new TextDecoder().decode(chunk);
+        if (output.includes("DONE")) resolve();
+      },
+    });
+    using dir = tempDir("shell-fc-stderr", {});
+    const out = join(String(dir), "out.txt");
+    await using proc = Bun.spawn({
+      cmd: ["sh", "-c", `exec "$0" -e "$1" > "$2"`, bunExe(), fixture(`await $\`PROBE\`; process.stderr.write("DONE\\n");`), out],
+      env: colorEnv,
+      terminal,
+    });
+    proc.exited.then(code => (code === 0 ? resolve() : reject(new Error(`exit ${code}: ${output}`))));
+    await promise;
+    await proc.exited;
+    expect(await Bun.file(out).text()).toBe("fc= nc=\nDONE\n");
+  });
+});

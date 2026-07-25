@@ -59,6 +59,10 @@ void CallSite::finishCreation(VM& vm, JSC::JSGlobalObject* globalObject, JSCStac
     m_functionName.set(vm, this, stackFrame.functionName());
     m_sourceURL.set(vm, this, stackFrame.sourceURL());
     m_sourceID = stackFrame.sourceID();
+    if (!stackFrame.receiverTypeName().isEmpty())
+        m_receiverTypeName.set(vm, this, JSC::jsString(vm, stackFrame.receiverTypeName()));
+    else
+        m_receiverTypeName.set(vm, this, JSC::jsNull());
 
     const auto* sourcePositions = stackFrame.getSourcePositions();
     if (sourcePositions) {
@@ -91,6 +95,7 @@ void CallSite::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisCallSite->m_function);
     visitor.append(thisCallSite->m_functionName);
     visitor.append(thisCallSite->m_sourceURL);
+    visitor.append(thisCallSite->m_receiverTypeName);
 }
 JSC_DEFINE_HOST_FUNCTION(nativeFrameForTesting, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
@@ -125,23 +130,37 @@ void CallSite::formatAsString(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WT
     std::optional<OrdinalNumber> column = columnNumber().zeroBasedInt() >= 0 ? std::optional(columnNumber()) : std::nullopt;
     std::optional<OrdinalNumber> line = lineNumber().zeroBasedInt() >= 0 ? std::optional(lineNumber()) : std::nullopt;
 
+    String typeName;
+    if (!isConstructor()) {
+        if (auto* object = thisValue.getObject()) {
+            auto topExceptionScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+            typeName = object->calculatedClassName(object);
+            if (topExceptionScope.exception()) {
+                (void)topExceptionScope.tryClearException();
+            }
+        }
+        if (typeName.isEmpty()) {
+            JSValue stored = m_receiverTypeName.get();
+            if (auto* str = dynamicDowncast<JSString>(stored)) {
+                auto view = str->tryGetValueWithoutGC();
+                if (!view->isEmpty())
+                    typeName = view;
+            }
+        }
+    }
+
+    if (functionName.isEmpty() && !typeName.isEmpty())
+        functionName = "<anonymous>"_s;
+
     if (functionName.length() > 0) {
 
         if (isConstructor()) {
             sb.append("new "_s);
         }
 
-        if (auto* object = thisValue.getObject()) {
-            auto topExceptionScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-            auto className = object->calculatedClassName(object);
-            if (topExceptionScope.exception()) {
-                (void)topExceptionScope.tryClearException();
-            }
-
-            if (className.length() > 0) {
-                sb.append(className);
-                sb.append('.');
-            }
+        if (!typeName.isEmpty() && !functionName.startsWith(typeName)) {
+            sb.append(typeName);
+            sb.append('.');
         }
 
         sb.append(functionName);

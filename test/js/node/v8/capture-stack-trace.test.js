@@ -420,7 +420,10 @@ test("sanity check", () => {
     Error.prepareStackTrace = (e, s) => {
       // getThis returns undefined in strict mode
       expect(s[0].getThis()).toBe(undefined);
-      expect(s[0].getTypeName()).toBe("undefined");
+      // V8 returns null when the receiver isn't an object (e.g. a direct
+      // strict-mode function call). Previously Bun returned the string
+      // "undefined" here.
+      expect(s[0].getTypeName()).toBe(null);
       // getFunction returns undefined in strict mode
       expect(s[0].getFunction()).toBe(undefined);
       expect(s[0].getFunctionName()).toBe("f3");
@@ -1096,6 +1099,108 @@ test("printing an error whose message getter calls Error.captureStackTrace on it
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect({ lastLine: stdout.trimEnd().split("\n").pop(), exitCode }).toEqual({ lastLine: "after", exitCode: 0 });
+});
+
+// https://github.com/oven-sh/bun/issues/13766
+// https://github.com/oven-sh/bun/issues/4323
+// https://github.com/oven-sh/bun/issues/7780
+test("Error.stack includes the receiver's built-in class name", () => {
+  function capture() {
+    return new Error().stack.split("\n")[1];
+  }
+
+  // function attached to a built-in namespace object
+  Object.defineProperty(Reflect, "capture", { value: capture, writable: true, configurable: true });
+  try {
+    expect(Reflect.capture()).toMatch(/^\s+at Reflect\.capture /);
+  } finally {
+    delete Reflect.capture;
+  }
+
+  // function attached to another built-in
+  Math.capture = capture;
+  try {
+    expect(Math.capture()).toMatch(/^\s+at Math\.capture /);
+  } finally {
+    delete Math.capture;
+  }
+
+  // function called as an element of an array
+  const arr = [];
+  arr.push(capture);
+  expect(arr[0]()).toMatch(/^\s+at Array\.capture /);
+
+  // direct call has no receiver prefix (strict mode receiver is undefined)
+  expect(capture()).toMatch(/^\s+at capture /);
+
+  // constructor frames don't get a receiver prefix
+  function Ctor() {
+    this.frame = new Error().stack.split("\n")[1];
+  }
+  expect(new Ctor().frame).toMatch(/^\s+at new Ctor /);
+});
+
+// https://github.com/oven-sh/bun/issues/13766
+test("Error.stack includes Reflect.decorate for SWC-style decorator helpers", () => {
+  // MikroORM's Utils.lookupPathFromDecorator scans the error stack for
+  // /Reflect\.decorate/ to locate the file that defined a decorated class.
+  // reflect-metadata assigns a plain named function to Reflect.decorate, and
+  // swc/tsc-emitted helpers call it as Reflect.decorate(...). Without the
+  // receiver prefix that regex never matches under Bun and metadata keys
+  // diverge from Node.
+  function decorate(decorators, target, key) {
+    for (var i = decorators.length - 1; i >= 0; i--) decorators[i](target, key);
+  }
+  Object.defineProperty(Reflect, "decorate", { value: decorate, writable: true, configurable: true });
+
+  function _ts_decorate(decorators, target, key, desc) {
+    if (typeof Reflect.decorate === "function") return Reflect.decorate(decorators, target, key, desc);
+  }
+
+  let line;
+  function deco() {
+    line = new Error().stack.split("\n").find(l => /Reflect\.decorate/.test(l));
+  }
+  class Entity {}
+  try {
+    _ts_decorate([deco], Entity.prototype, "field", void 0);
+  } finally {
+    delete Reflect.decorate;
+  }
+
+  expect(line).toMatch(/^\s+at Reflect\.decorate /);
+});
+
+// https://github.com/oven-sh/bun/issues/30938
+test("CallSite.getTypeName returns the receiver's built-in class name", () => {
+  let typeName;
+  Error.prepareStackTrace = (_, s) => {
+    typeName = s[0].getTypeName();
+  };
+  try {
+    function capture() {
+      const e = new Error();
+      void e.stack;
+    }
+
+    Object.defineProperty(Reflect, "capture", { value: capture, writable: true, configurable: true });
+    try {
+      Reflect.capture();
+      expect(typeName).toBe("Reflect");
+    } finally {
+      delete Reflect.capture;
+    }
+
+    const arr = [];
+    arr.push(capture);
+    arr[0]();
+    expect(typeName).toBe("Array");
+
+    capture();
+    expect(typeName).toBe(null);
+  } finally {
+    Error.prepareStackTrace = origPrepareStackTrace;
+  }
 });
 
 // https://github.com/oven-sh/bun/issues/34095

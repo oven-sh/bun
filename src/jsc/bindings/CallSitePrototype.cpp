@@ -102,11 +102,26 @@ JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncGetThis, (JSGlobalObject * globalObjec
     return JSC::JSValue::encode(callSite->thisValue());
 }
 
-// TODO: doesn't get class name
 JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncGetTypeName, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     ENTER_PROTO_FUNC();
-    return JSC::JSValue::encode(JSC::jsTypeStringForValue(globalObject, callSite->thisValue()));
+
+    JSC::JSValue thisValue = callSite->thisValue();
+    if (thisValue && thisValue.isCell()) {
+        if (JSC::JSObject* thisObject = thisValue.getObject()) {
+            if (!thisObject->isGlobalObject()) {
+                String className = JSObject::calculatedClassName(thisObject);
+                if (!className.isEmpty())
+                    return JSC::JSValue::encode(JSC::jsString(vm, className));
+            }
+        }
+    }
+
+    JSValue stored = callSite->receiverTypeName();
+    if (stored && stored.isString())
+        return JSC::JSValue::encode(stored);
+
+    return JSC::JSValue::encode(JSC::jsNull());
 }
 
 JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncGetFunction, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))

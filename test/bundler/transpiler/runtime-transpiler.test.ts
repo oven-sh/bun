@@ -304,11 +304,7 @@ describe("class declaration TDZ is preserved", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(stderr).toBe("");
-    expect(JSON.parse(stdout)).toEqual([
-      "THROW:ReferenceError",
-      "THROW:ReferenceError",
-      "THROW:ReferenceError",
-    ]);
+    expect(JSON.parse(stdout)).toEqual(["THROW:ReferenceError", "THROW:ReferenceError", "THROW:ReferenceError"]);
     expect(exitCode).toBe(0);
   });
 

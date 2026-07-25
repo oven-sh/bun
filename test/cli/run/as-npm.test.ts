@@ -262,6 +262,9 @@ describe("fake npm/npx cli", () => {
       // Bare `npm init` still means `bun init`.
       const bare = await fakePmRun(String(dir), "npm", ["init", "--help"]);
       expect(bare.stdout + bare.stderr).toContain("bun init");
+      // A value-flag's value is not an initializer.
+      const flags = await fakePmRun(String(dir), "npm", ["init", "--loglevel", "error", "--help"]);
+      expect(flags.stdout + flags.stderr).toContain("bun init");
     });
 
     test.concurrent("npm run -w <pkg> / --prefix <dir> are translated, not dropped", async () => {

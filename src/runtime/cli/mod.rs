@@ -1080,10 +1080,6 @@ pub mod command {
         let subcommand = argv.get(sub_idx).filter(|a| a.as_bytes() != b"--");
         let sub_bytes = subcommand.map(|z| z.as_bytes());
         let rest_start = sub_idx + usize::from(sub_idx < argv.len());
-        let has_positional_after = argv[rest_start..]
-            .iter()
-            .take_while(|a| a.as_bytes() != b"--")
-            .any(|a| a.as_bytes().first() != Some(&b'-'));
 
         // npm flags bun's own parser accepts for the mapped subcommand must
         // reach it instead of being dropped, either as-is (`keep`) or under
@@ -1109,6 +1105,18 @@ pub mod command {
         debug_assert_eq!(
             first_pass_end, sub_idx,
             "subcommand prescan must advance exactly like the copy pass"
+        );
+
+        let mut tail: Vec<&'static ZStr> =
+            Vec::with_capacity(argv.len().saturating_sub(rest_start));
+        copy_translating_npm_flags(
+            argv,
+            &mut tail,
+            &mut hoisted,
+            rest_start,
+            false,
+            keep,
+            renames,
         );
 
         let mut mapped: Vec<&'static ZStr> = Vec::with_capacity(2);
@@ -1137,8 +1145,14 @@ pub mod command {
             Some(b"exec") => mapped.push(zstr!("x")),
             // `npm init <x>` / `npm create <x>` ≡ `npx create-<x>`. Bare
             // `npm init` scaffolds a package.json, same as `bun init`.
+            // Decided from `tail`, where value-flags are already consumed, so
+            // e.g. `--loglevel`'s value is not mistaken for an initializer.
             Some(b"init" | b"create" | b"innit") => {
-                mapped.push(if has_positional_after {
+                let has_initializer = tail
+                    .iter()
+                    .take_while(|a| a.as_bytes() != b"--")
+                    .any(|a| a.as_bytes().first() != Some(&b'-'));
+                mapped.push(if has_initializer {
                     zstr!("create")
                 } else {
                     zstr!("init")
@@ -1174,18 +1188,6 @@ pub mod command {
             Some(_) => mapped.push(*subcommand.unwrap()),
             None => {}
         }
-
-        let mut tail: Vec<&'static ZStr> =
-            Vec::with_capacity(argv.len().saturating_sub(rest_start));
-        copy_translating_npm_flags(
-            argv,
-            &mut tail,
-            &mut hoisted,
-            rest_start,
-            false,
-            keep,
-            renames,
-        );
 
         // The bunx parser skips flags it does not know without consuming
         // their value, so a hoisted `--cwd <dir>` would make `<dir>` the

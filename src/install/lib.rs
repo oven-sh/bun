@@ -761,6 +761,16 @@ impl RunCommand {
                 (strings::w!("\\npx.exe\0"), need_npx),
             ] {
                 if !wanted {
+                    // A real one exists in PATH. Remove any stale shim left by
+                    // a previous run so it can't shadow the real binary (the
+                    // shim dir persists across runs and is prepended to PATH).
+                    target_path_buffer[dir_slice_len..][..name.len()].copy_from_slice(name);
+                    // `name` ends in NUL, so the written path is NUL-terminated.
+                    let path_w = bun_core::WStr::from_buf(
+                        &target_path_buffer[..],
+                        dir_slice_len + name.len() - 1,
+                    );
+                    let _ = bun_sys::unlink_w(path_w);
                     continue;
                 }
                 target_path_buffer[dir_slice_len..][..name.len()].copy_from_slice(name);

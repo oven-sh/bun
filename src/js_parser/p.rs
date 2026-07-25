@@ -6474,8 +6474,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                 let mut static_decorators = BumpVec::<Stmt>::new_in(self.arena);
                 let mut instance_decorators = BumpVec::<Stmt>::new_in(self.arena);
-                let mut instance_members = BumpVec::<Stmt>::new_in(self.arena);
-                let mut static_members = BumpVec::<Stmt>::new_in(self.arena);
                 let mut class_properties = BumpVec::<G::Property>::new_in(self.arena);
 
                 for prop in s_class.class.properties.slice_mut().iter_mut() {
@@ -6605,64 +6603,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
                     }
 
-                    if prop.kind != PropertyKind::ClassStaticBlock
-                        && !prop.flags.contains(Flags::Property::IsMethod)
-                        && !matches!(
-                            prop.key.map(|k| k.data),
-                            Some(js_ast::ExprData::EPrivateIdentifier(_))
-                        )
-                        && prop.ts_decorators.len_u32() > 0
-                    {
-                        // remove decorated fields without initializers to avoid assigning undefined.
-                        let Some(initializer) = prop.initializer else {
-                            continue;
-                        };
-
-                        let mut target: Expr;
-                        if prop.flags.contains(Flags::Property::IsStatic) {
-                            let class_name = s_class.class.class_name.unwrap();
-                            let class_ref = class_name.ref_;
-                            self.record_usage(class_ref);
-                            target = self.new_expr(E::Identifier::init(class_ref), class_name.loc);
-                        } else {
-                            target = self.new_expr(
-                                E::This {},
-                                prop.key.expect("infallible: prop has key").loc,
-                            );
-                        }
-
-                        let key = prop.key.expect("infallible: prop has key");
-                        target = match &key.data {
-                            js_ast::ExprData::EString(s)
-                                if s.is_utf8()
-                                    && !prop.flags.contains(Flags::Property::IsComputed) =>
-                            {
-                                self.new_expr(
-                                    E::Dot {
-                                        target,
-                                        name: s.data,
-                                        name_loc: key.loc,
-                                        ..Default::default()
-                                    },
-                                    key.loc,
-                                )
-                            }
-                            _ => self.new_expr(
-                                E::Index {
-                                    target,
-                                    index: key,
-                                    optional_chain: None,
-                                },
-                                key.loc,
-                            ),
-                        };
-
-                        // remove fields with decorators from class body. Move static members outside of class.
-                        if prop.flags.contains(Flags::Property::IsStatic) {
-                            static_members.push(Stmt::assign(target, initializer));
-                        } else {
-                            instance_members.push(Stmt::assign(target, initializer));
-                        }
+                    // Decorated public fields stay in the class body so they keep native
+                    // [[Define]] semantics (matching tsc and esbuild under
+                    // `useDefineForClassFields: true`, which Bun assumes). The decorator
+                    // call was already recorded above via `__legacyDecorateClassTS`.
+                    //
+                    // `declare`/`abstract` fields only reach here when decorated (the
+                    // undecorated case is dropped at parse time); they are type-only and
+                    // must not be printed, so skip them once the decorator call has been
+                    // emitted.
+                    if matches!(prop.kind, PropertyKind::Declare | PropertyKind::Abstract) {
                         continue;
                     }
 
@@ -6674,122 +6624,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 s_class.class.properties =
                     bun_ast::StoreSlice::new_mut(class_properties.into_bump_slice_mut());
 
-                if !instance_members.is_empty() {
-                    if let Some(mut cf) = constructor_function {
-                        // `body.stmts` is an arena-owned `StoreSlice<Stmt>`.
-                        let old_stmts: &[Stmt] = cf.func.body.stmts.slice();
-                        // statements coming from class body inserted after super call or beginning of constructor.
-                        let mut super_index: Option<usize> = None;
-                        for (index, item) in old_stmts.iter().enumerate() {
-                            if !matches!(item.data, js_ast::StmtData::SExpr(se) if matches!(se.value.data, js_ast::ExprData::ECall(c) if matches!(c.target.data, js_ast::ExprData::ESuper(_))))
-                            {
-                                continue;
-                            }
-                            super_index = Some(index);
-                            break;
-                        }
-
-                        let i = super_index.map(|j| j + 1).unwrap_or(0);
-                        let mut constructor_stmts = BumpVec::<Stmt>::with_capacity_in(
-                            old_stmts.len() + instance_members.len(),
-                            self.arena,
-                        );
-                        constructor_stmts.extend_from_slice(&old_stmts[..i]);
-                        constructor_stmts.extend_from_slice(&instance_members);
-                        constructor_stmts.extend_from_slice(&old_stmts[i..]);
-
-                        cf.func.body.stmts =
-                            bun_ast::StoreSlice::new_mut(constructor_stmts.into_bump_slice_mut());
-                    } else {
-                        // Rebuild the property list with the new entry at index 0
-                        // (Property is not Clone).
-                        let old_props: bun_ast::StoreSlice<G::Property> = s_class.class.properties;
-                        let old_len = old_props.len();
-                        let mut properties =
-                            BumpVec::<G::Property>::with_capacity_in(old_len + 1, self.arena);
-                        let mut constructor_stmts = BumpVec::<Stmt>::new_in(self.arena);
-
-                        if s_class.class.extends.is_some() {
-                            let target = self.new_expr(E::Super {}, stmt.loc);
-                            let arguments_ref =
-                                self.new_symbol(js_ast::symbol::Kind::Unbound, arguments_str);
-                            VecExt::append(&mut self.current_scope_mut().generated, arguments_ref);
-
-                            let spread_inner =
-                                self.new_expr(E::Identifier::init(arguments_ref), stmt.loc);
-                            let super_ = self.new_expr(
-                                E::Spread {
-                                    value: spread_inner,
-                                },
-                                stmt.loc,
-                            );
-                            let args = ExprNodeList::init_one(super_);
-
-                            let call_value = self.new_expr(
-                                E::Call {
-                                    target,
-                                    args,
-                                    ..Default::default()
-                                },
-                                stmt.loc,
-                            );
-                            constructor_stmts.push(self.s(
-                                S::SExpr {
-                                    value: call_value,
-                                    ..Default::default()
-                                },
-                                stmt.loc,
-                            ));
-                        }
-
-                        constructor_stmts.extend_from_slice(&instance_members);
-
-                        let key_expr =
-                            self.new_expr(E::EString::from_static(b"constructor"), stmt.loc);
-                        let value_expr = self.new_expr(
-                            E::Function {
-                                func: G::Fn {
-                                    name: None,
-                                    open_parens_loc: bun_ast::Loc::EMPTY,
-                                    args: bun_ast::StoreSlice::EMPTY,
-                                    body: G::FnBody {
-                                        loc: stmt.loc,
-                                        stmts: bun_ast::StoreSlice::new_mut(
-                                            constructor_stmts.into_bump_slice_mut(),
-                                        ),
-                                    },
-                                    flags: Flags::FUNCTION_NONE,
-                                    ..Default::default()
-                                },
-                            },
-                            stmt.loc,
-                        );
-                        properties.push(G::Property {
-                            flags: Flags::Property::IsMethod.into(),
-                            key: Some(key_expr),
-                            value: Some(value_expr),
-                            ..Default::default()
-                        });
-                        for old in old_props.slice_mut().iter_mut() {
-                            properties.push(core::mem::take(old));
-                        }
-
-                        s_class.class.properties =
-                            bun_ast::StoreSlice::new_mut(properties.into_bump_slice_mut());
-                    }
-
-                    // TODO: make sure "super()" comes before instance field initializers
-                    // https://github.com/evanw/esbuild/blob/e9413cc4f7ab87263ea244a999c6fa1f1e34dc65/internal/js_parser/js_parser_lower.go#L2742
-                }
-
                 let mut stmts_count: usize =
-                    1 + static_members.len() + instance_decorators.len() + static_decorators.len();
+                    1 + instance_decorators.len() + static_decorators.len();
                 if s_class.class.ts_decorators.len_u32() > 0 {
                     stmts_count += 1;
                 }
                 let mut stmts = BumpVec::<Stmt>::with_capacity_in(stmts_count, self.arena);
                 stmts.push(stmt);
-                stmts.extend_from_slice(&static_members);
                 stmts.extend_from_slice(&instance_decorators);
                 stmts.extend_from_slice(&static_decorators);
                 if s_class.class.ts_decorators.len_u32() > 0 {

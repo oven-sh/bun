@@ -295,47 +295,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// Build property access: target.name or target[key].
-    fn member_target(&mut self, target_expr: Expr, prop: &Property) -> Expr {
-        let key_expr = prop.key.expect("infallible: prop has key");
-        if prop.flags.contains(Flags::Property::IsComputed)
-            || matches!(key_expr.data, js_ast::ExprData::ENumber(_))
-        {
-            return self.new_expr(
-                E::Index {
-                    target: target_expr,
-                    index: key_expr,
-                    optional_chain: None,
-                },
-                key_expr.loc,
-            );
-        }
-        if let js_ast::ExprData::EString(s) = &key_expr.data {
-            // `E::Dot.name` is a UTF-8 `Str`; a UTF-16 `EString.data` stores
-            // u16-count bytes that are garbage as UTF-8. Fall through to
-            // `E::Index` for UTF-16 keys so the printer emits `["…"]`.
-            if s.is_utf8() {
-                return self.new_expr(
-                    E::Dot {
-                        target: target_expr,
-                        name: s.data,
-                        name_loc: key_expr.loc,
-                        ..Default::default()
-                    },
-                    key_expr.loc,
-                );
-            }
-        }
-        self.new_expr(
-            E::Index {
-                target: target_expr,
-                index: key_expr,
-                optional_chain: None,
-            },
-            key_expr.loc,
-        )
-    }
-
     fn init_flag(idx: usize) -> f64 {
         ((4 + 2 * idx) << 1) as f64
     }
@@ -2182,9 +2141,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 &[cn_e, wm_ref_expr, run_init_call],
                             ));
                         } else {
+                            // [[Define]] semantics: a decorated public static field must shadow
+                            // any inherited accessor on the superclass, matching native class
+                            // fields and the output of tsc and esbuild.
                             let cn_e = p.use_ref(class_name_ref, class_name_loc);
-                            let assign_target = p.member_target(cn_e, &entry.prop);
-                            suffix_exprs.push(Expr::assign(assign_target, run_init_call));
+                            let key_e = entry.prop.key.expect("infallible: prop has key");
+                            suffix_exprs.push(p.call_rt(
+                                loc,
+                                b"__publicField",
+                                &[cn_e, key_e, run_init_call],
+                            ));
                         }
 
                         // Extra initializer
@@ -2268,9 +2234,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         loc,
                     ));
                 } else {
+                    // [[Define]] semantics: a decorated public instance field must create an
+                    // own data property rather than invoke an inherited setter, matching
+                    // native class fields and the output of tsc and esbuild.
                     let t_e = p.new_expr(E::This {}, loc);
-                    let mt = p.member_target(t_e, &entry.prop);
-                    constructor_inject_stmts.push(Stmt::assign(mt, run_init_call));
+                    let key_e = entry.prop.key.expect("infallible: prop has key");
+                    let call = p.call_rt(loc, b"__publicField", &[t_e, key_e, run_init_call]);
+                    constructor_inject_stmts.push(p.s(
+                        S::SExpr {
+                            value: call,
+                            ..Default::default()
+                        },
+                        loc,
+                    ));
                 }
 
                 // Extra initializer

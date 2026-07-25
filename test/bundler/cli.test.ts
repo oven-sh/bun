@@ -516,4 +516,63 @@ describe("CLI argument error messages", () => {
     expect(stderr).toContain("key=value");
     expect(exitCode).toBe(1);
   });
+
+  // https://github.com/oven-sh/bun/issues/7621
+  test("'Could not resolve' error for a bare package path explains how to mark it external", async () => {
+    using dir = tempDir("build-resolve-hint", {
+      "require.js": `module.exports = require('not-a-real-pkg-a');`,
+      "dynamic.js": `export default import('not-a-real-pkg-b');`,
+      "stmt.js": `import x from 'not-a-real-pkg-c'; export { x };`,
+      "relative.js": `module.exports = require('./does-not-exist');`,
+    });
+    const build = async (entry: string) => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", entry, "--target", "node"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stderr, exitCode };
+    };
+
+    // require(): suggests --external and try/catch.
+    {
+      const { stderr, exitCode } = await build("require.js");
+      expect(stderr).toContain('error: Could not resolve: "not-a-real-pkg-a"');
+      expect(stderr).toContain('note: You can mark the path "not-a-real-pkg-a" as external');
+      expect(stderr).toContain('pass "--external not-a-real-pkg-a"');
+      expect(stderr).toContain('surround this "require" call with a try/catch block');
+      expect(exitCode).toBe(1);
+    }
+
+    // import(): suggests --external and .catch().
+    {
+      const { stderr, exitCode } = await build("dynamic.js");
+      expect(stderr).toContain('error: Could not resolve: "not-a-real-pkg-b"');
+      expect(stderr).toContain('note: You can mark the path "not-a-real-pkg-b" as external');
+      expect(stderr).toContain('add ".catch()" here');
+      expect(stderr).not.toContain("try/catch");
+      expect(exitCode).toBe(1);
+    }
+
+    // Static import: only suggests --external.
+    {
+      const { stderr, exitCode } = await build("stmt.js");
+      expect(stderr).toContain('error: Could not resolve: "not-a-real-pkg-c"');
+      expect(stderr).toContain('note: You can mark the path "not-a-real-pkg-c" as external');
+      expect(stderr).not.toContain("try/catch");
+      expect(stderr).not.toContain(".catch()");
+      expect(exitCode).toBe(1);
+    }
+
+    // Relative path: no --external suggestion.
+    {
+      const { stderr, exitCode } = await build("relative.js");
+      expect(stderr).toContain('error: Could not resolve: "./does-not-exist"');
+      expect(stderr).not.toContain("You can mark the path");
+      expect(exitCode).toBe(1);
+    }
+  });
 });

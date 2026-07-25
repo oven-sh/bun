@@ -9,6 +9,7 @@ const {
   validateObject,
   validateAbortSignal,
   validateEncoding,
+  warnOnNonPortableTemplate,
 } = require("internal/validators");
 
 const constants = $processBindingConstants.fs;
@@ -282,8 +283,12 @@ const exports = {
   link: asyncWrap(fs.link, "link"),
   lstat: asyncWrap(fs.lstat, "lstat"),
   mkdir: asyncWrap(fs.mkdir, "mkdir"),
-  mkdtemp: asyncWrap(fs.mkdtemp, "mkdtemp"),
+  mkdtemp: async function mkdtemp(prefix, options) {
+    warnOnNonPortableTemplate(prefix);
+    return fs.mkdtemp(prefix, options);
+  },
   mkdtempDisposable: async function mkdtempDisposable(prefix, options) {
+    warnOnNonPortableTemplate(prefix);
     const path = await fs.mkdtemp(prefix, options);
     // Stash the full path in case of process.chdir()
     const fullPath = require("node:path").resolve(path);

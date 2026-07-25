@@ -32,12 +32,12 @@ assert.throws(() => {
 }, {
   code: 'ERR_INVALID_THIS',
   name: 'TypeError',
-  message: 'Cannot call next() on a non-Iterator object'
+  message: 'Value of "this" must be of type URLSearchParamsIterator'
 });
 assert.throws(() => {
   params.values.call(undefined);
 }, {
   code: 'ERR_INVALID_THIS',
   name: 'TypeError',
-  message: 'Can only call URLSearchParams.values on instances of URLSearchParams'
+  message: 'Value of "this" must be of type URLSearchParams'
 });

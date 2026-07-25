@@ -321,9 +321,12 @@ JSC::EncodedJSValue rejectPromiseWithGetterTypeError(JSC::JSGlobalObject& lexica
     return createRejectedPromiseWithTypeError(lexicalGlobalObject, JSC::makeDOMAttributeGetterTypeErrorMessage(classInfo->className, String(attributeName.uid())), RejectedPromiseWithTypeErrorCause::NativeGetter);
 }
 
-String makeThisTypeErrorMessage(ASCIILiteral interfaceName, ASCIILiteral functionName)
+// Node words every ERR_INVALID_THIS the same way regardless of which member
+// was called: `Value of "this" must be of type <interface>`.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/errors.js
+String makeThisTypeErrorMessage(ASCIILiteral interfaceName)
 {
-    return makeString("Can only call "_s, interfaceName, '.', functionName, " on instances of "_s, interfaceName);
+    return makeString("Value of \"this\" must be of type "_s, interfaceName);
 }
 
 String makeUnsupportedIndexedSetterErrorMessage(ASCIILiteral interfaceName)
@@ -333,19 +336,22 @@ String makeUnsupportedIndexedSetterErrorMessage(ASCIILiteral interfaceName)
 
 EncodedJSValue throwThisTypeError(JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope, ASCIILiteral interfaceName, ASCIILiteral attributeName)
 {
-    scope.throwException(&lexicalGlobalObject, Bun::createInvalidThisError(&lexicalGlobalObject, makeThisTypeErrorMessage(interfaceName, attributeName)));
+    UNUSED_PARAM(attributeName);
+    scope.throwException(&lexicalGlobalObject, Bun::createInvalidThisError(&lexicalGlobalObject, makeThisTypeErrorMessage(interfaceName)));
     return {};
 }
 
 JSC::EncodedJSValue rejectPromiseWithThisTypeError(DeferredPromise& promise, ASCIILiteral interfaceName, ASCIILiteral methodName)
 {
-    promise.reject(ExceptionCode::InvalidThisError, makeThisTypeErrorMessage(interfaceName, methodName));
+    UNUSED_PARAM(methodName);
+    promise.reject(ExceptionCode::InvalidThisError, makeThisTypeErrorMessage(interfaceName));
     return JSValue::encode(jsUndefined());
 }
 
 JSC::EncodedJSValue rejectPromiseWithThisTypeError(JSC::JSGlobalObject& lexicalGlobalObject, ASCIILiteral interfaceName, ASCIILiteral methodName)
 {
-    return createRejectedPromiseWithTypeError(lexicalGlobalObject, makeThisTypeErrorMessage(interfaceName, methodName), RejectedPromiseWithTypeErrorCause::InvalidThis);
+    UNUSED_PARAM(methodName);
+    return createRejectedPromiseWithTypeError(lexicalGlobalObject, makeThisTypeErrorMessage(interfaceName), RejectedPromiseWithTypeErrorCause::InvalidThis);
 }
 
 void throwDOMSyntaxError(JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope, ASCIILiteral message)

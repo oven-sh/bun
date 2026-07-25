@@ -1723,7 +1723,9 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
                 Global::exit(1);
             }
         };
-        ctx.test_options.test_filter_pattern.push(Box::from(*name_pattern));
+        ctx.test_options
+            .test_filter_pattern
+            .push(Box::from(*name_pattern));
         // The compiled regex lives in `bun_jsc::RegularExpression` (T6); the
         // T3 `TestOptions` field is type-erased to `NonNull<()>` to break the
         // back-edge. High tier owns construction/destruction.

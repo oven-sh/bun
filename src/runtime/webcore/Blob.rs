@@ -5244,9 +5244,6 @@ pub fn write_file_internal(
                         let BodyValue::Locked(locked) = (unsafe { &mut *body_value }) else {
                             unreachable!()
                         };
-                        // Opt the producer into BufferAll before `task` is repurposed so a
-                        // paused fetch reaches `resolve()`. `on_start_streaming` still present
-                        // is the witness that `task` is the live producer and not stale.
                         if locked.on_start_streaming.is_some() {
                             if let (Some(on_start_buffering), Some(producer_task)) =
                                 (locked.on_start_buffering.take(), locked.task)

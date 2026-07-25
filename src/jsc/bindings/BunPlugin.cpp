@@ -35,6 +35,10 @@
 #include "AsyncContextFrame.h"
 #include "ImportMetaObject.h"
 
+namespace Bun {
+JSC::JSValue unwrapSpyOriginal(JSC::JSValue);
+}
+
 namespace Zig {
 
 extern "C" void Bun__onDidAppendPlugin(void* bunVM, JSGlobalObject* globalObject);
@@ -420,6 +424,9 @@ public:
     WriteBarrier<JSObject> esmOriginalExports;
     WriteBarrier<JSObject> cjsModule;
     WriteBarrier<Unknown> cjsOriginalExports;
+    // The namespace/module.exports that exists now came from a mock factory, not
+    // the real source; restore should evict rather than replay.
+    bool mustEvictOnRestore = false;
 
     static JSModuleMock* create(JSC::VM& vm, JSC::Structure* structure, JSC::JSObject* callback);
     static Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype);
@@ -617,6 +624,9 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
                     mock->cjsModule.set(vm, mock, priorMock->cjsModule.get());
                 if (priorMock->cjsOriginalExports)
                     mock->cjsOriginalExports.set(vm, mock, priorMock->cjsOriginalExports.get());
+                // A prior mock with no snapshot was installed before the module
+                // loaded; any registry entry seen now came from that mock's factory.
+                mock->mustEvictOnRestore = priorMock->mustEvictOnRestore || (!priorMock->esmNamespace && !priorMock->cjsModule);
             }
         }
     }
@@ -676,16 +686,19 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
                         auto* object = exportsValue.getObject();
                         removeFromESM = false;
 
-                        if (!mock->esmNamespace)
-                            mock->esmNamespace.set(vm, mock, moduleNamespaceObject);
-                        JSObject* esmOriginals = mock->esmOriginalExports.get();
-                        if (!esmOriginals) {
-                            esmOriginals = constructEmptyObject(globalObject);
-                            mock->esmOriginalExports.set(vm, mock, esmOriginals);
+                        JSObject* esmOriginals = nullptr;
+                        if (!mock->mustEvictOnRestore) {
+                            if (!mock->esmNamespace)
+                                mock->esmNamespace.set(vm, mock, moduleNamespaceObject);
+                            esmOriginals = mock->esmOriginalExports.get();
+                            if (!esmOriginals) {
+                                esmOriginals = constructEmptyObject(globalObject);
+                                mock->esmOriginalExports.set(vm, mock, esmOriginals);
+                            }
                         }
 
                         auto snapshotBeforeOverride = [&](const PropertyName& name) -> void {
-                            if (esmOriginals->getDirect(vm, name))
+                            if (!esmOriginals || esmOriginals->getDirect(vm, name))
                                 return;
                             auto topExceptionScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
                             JSValue original = moduleNamespaceObject->get(globalObject, name);
@@ -693,7 +706,7 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
                                 (void)topExceptionScope.tryClearException();
                                 return;
                             }
-                            esmOriginals->putDirect(vm, name, original);
+                            esmOriginals->putDirect(vm, name, Bun::unwrapSpyOriginal(original));
                         };
 
                         if (object) {
@@ -735,7 +748,7 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
     if (entryValue) {
         removeFromCJS = true;
         if (auto* moduleObject = entryValue ? dynamicDowncast<Bun::JSCommonJSModule>(entryValue) : nullptr) {
-            if (!mock->cjsModule) {
+            if (!mock->cjsModule && !mock->mustEvictOnRestore) {
                 JSValue priorExports = moduleObject->getIfPropertyExists(globalObject, Bun::builtinNames(vm).exportsPublicName());
                 RETURN_IF_EXCEPTION(scope, {});
                 mock->cjsModule.set(vm, mock, moduleObject);
@@ -799,9 +812,8 @@ void BunPlugin::OnLoad::restoreModuleMocks(Zig::GlobalObject* globalObject)
 
         toRemove.append(entry.key);
 
-        bool restoredInPlace = false;
-
-        if (auto* ns = dynamicDowncast<JSC::JSModuleNamespaceObject>(moduleMock->esmNamespace.get())) {
+        auto* ns = moduleMock->mustEvictOnRestore ? nullptr : dynamicDowncast<JSC::JSModuleNamespaceObject>(moduleMock->esmNamespace.get());
+        if (ns) {
             if (auto* originals = moduleMock->esmOriginalExports.get()) {
                 auto topExceptionScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
                 JSC::PropertyNameArrayBuilder names(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
@@ -815,31 +827,26 @@ void BunPlugin::OnLoad::restoreModuleMocks(Zig::GlobalObject* globalObject)
                         if (topExceptionScope.exception()) [[unlikely]]
                             (void)topExceptionScope.tryClearException();
                     }
-                    restoredInPlace = true;
                 } else {
                     (void)topExceptionScope.tryClearException();
                 }
             }
-        }
-
-        if (auto* cjs = dynamicDowncast<Bun::JSCommonJSModule>(moduleMock->cjsModule.get())) {
-            JSValue original = moduleMock->cjsOriginalExports.get();
-            cjs->putDirect(vm, Bun::builtinNames(vm).exportsPublicName(), original ? original : jsUndefined(), 0);
-            restoredInPlace = true;
-        }
-
-        if (!restoredInPlace) {
-            // Module was not loaded at mock time; drop any registry entry the mock
-            // materialized so the next import re-loads the real source.
-            auto topExceptionScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-            auto specifierString = jsString(vm, entry.key);
+        } else {
+            // No ESM snapshot; drop any registry entry the mock materialized so the
+            // next import re-loads the real source.
             auto specifierIdent = JSC::Identifier::fromString(vm, entry.key);
             auto* moduleLoader = globalObject->moduleLoader();
-            {
-                WTF::Locker locker { moduleLoader->cellLock() };
-                moduleLoader->removeEntry(specifierIdent);
-            }
-            globalObject->requireMap()->remove(globalObject, specifierString);
+            WTF::Locker locker { moduleLoader->cellLock() };
+            moduleLoader->removeEntry(specifierIdent);
+        }
+
+        auto* cjs = moduleMock->mustEvictOnRestore ? nullptr : dynamicDowncast<Bun::JSCommonJSModule>(moduleMock->cjsModule.get());
+        if (cjs) {
+            JSValue original = moduleMock->cjsOriginalExports.get();
+            cjs->putDirect(vm, Bun::builtinNames(vm).exportsPublicName(), original ? original : jsUndefined(), 0);
+        } else {
+            auto topExceptionScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+            globalObject->requireMap()->remove(globalObject, jsString(vm, entry.key));
             if (topExceptionScope.exception()) [[unlikely]]
                 (void)topExceptionScope.tryClearException();
         }

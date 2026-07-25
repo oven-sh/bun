@@ -164,7 +164,10 @@ impl Lazy {
                             // keeps O_RDWR when the original had it, then `dup2`
                             // it back onto the stdio fd. That leaves fd 0 itself
                             // nonblocking without touching the file description
-                            // shared with the parent shell.
+                            // shared with the parent shell. Only stdin is swapped
+                            // in place; stdout/stderr readers keep using a
+                            // separate fd so the write side's blocking-tty
+                            // contract on fd 1/2 is untouched.
                             let accmode = sys::get_fcntl_flags(*pl_fd)
                                 .map(|f| f as i32 & sys::O::ACCMODE)
                                 .unwrap_or(sys::O::RDONLY);
@@ -172,7 +175,9 @@ impl Lazy {
                             if rc > -1 {
                                 is_nonblocking = true;
                                 file.is_atty = Some(true);
-                                let _ = sys::dup2(Fd::from_native(rc), *pl_fd);
+                                if *pl_fd == Fd::stdin() {
+                                    let _ = sys::dup2(Fd::from_native(rc), *pl_fd);
+                                }
                                 break 'brk Fd::from_native(rc);
                             }
                         }
@@ -263,9 +268,11 @@ impl Lazy {
             // stdio fd. Node exposes that via `process.stdin`: once the stream
             // is started, `fs.readSync(0, …)` returns EAGAIN instead of blocking
             // (issue #5305). The tty path above already swapped in a nonblocking
-            // file description; this covers pipe/socket stdio and the tty
-            // fallback when reopening failed.
-            if fd.stdio_tag().is_some() && this.pollable && !is_nonblocking {
+            // file description; this covers pipe/socket stdin and the tty
+            // fallback when reopening failed. Scoped to stdin so a
+            // `Bun.stdout.stream()` reader does not mutate fd 1/2. The startup
+            // O_NONBLOCK bit is restored in `bun_restore_stdio()`.
+            if fd == Fd::stdin() && this.pollable && !is_nonblocking {
                 if sys::set_nonblocking(fd).is_ok() {
                     is_nonblocking = true;
                 }

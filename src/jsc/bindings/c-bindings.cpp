@@ -485,6 +485,11 @@ extern "C" void Bun__onExit();
 extern "C" int32_t bun_stdio_tty[3];
 #if !OS(WINDOWS)
 static termios termios_to_restore_later[3];
+// F_GETFL snapshot for each stdio fd at startup, or -1 if the fcntl failed.
+// bun_restore_stdio() uses this to restore the O_NONBLOCK bit on exit so a
+// sibling in the same subshell (sharing the pipe file description) does not
+// inherit nonblocking stdin after Bun exits. Mirrors Node's ResetStdio().
+static int bun_stdio_flags[3] = { -1, -1, -1 };
 // Whether Bun itself has modified the termios of each stdio fd during this
 // process's lifetime (e.g. via process.stdin.setRawMode). Used to decide
 // whether the exit-time termios restore should fire when Bun is acting as a
@@ -503,6 +508,26 @@ extern "C" void bun_restore_stdio()
 {
 
 #if !OS(WINDOWS)
+
+    // Restore the O_NONBLOCK bit to its startup value for every stdio fd.
+    // fcntl() is async-signal-safe, so this is fine from onExitSignal.
+    for (int fd = 0; fd < 3; fd++) {
+        if (bun_stdio_flags[fd] < 0)
+            continue;
+        int flags;
+        do
+            flags = fcntl(fd, F_GETFL);
+        while (flags == -1 && errno == EINTR);
+        if (flags == -1)
+            continue;
+        if ((O_NONBLOCK & (flags ^ bun_stdio_flags[fd])) == 0)
+            continue;
+        flags = (flags & ~O_NONBLOCK) | (bun_stdio_flags[fd] & O_NONBLOCK);
+        int err;
+        do
+            err = fcntl(fd, F_SETFL, flags);
+        while (err == -1 && errno == EINTR);
+    }
 
     // Only suppress the restore when Bun is a pipeline producer (stdout is a
     // pipe, not a TTY) and it didn't touch termios itself. That's the #29592
@@ -615,7 +640,13 @@ extern "C" void bun_initialize_process()
         }
     };
 
+    bool anyFlags = false;
     for (int fd = 0; fd < 3; fd++) {
+        do
+            bun_stdio_flags[fd] = fcntl(fd, F_GETFL);
+        while (bun_stdio_flags[fd] == -1 && errno == EINTR);
+        anyFlags = anyFlags || bun_stdio_flags[fd] >= 0;
+
         int result = isatty(fd);
         if (result == 0) {
             if (errno == EBADF) [[unlikely]] {
@@ -641,8 +672,8 @@ extern "C" void bun_initialize_process()
         close(devNullFd_);
     }
 
-    // Restore TTY state on exit
-    if (anyTTYs) {
+    // Restore TTY state / O_NONBLOCK on signal exit
+    if (anyTTYs || anyFlags) {
         struct sigaction sa;
         memset(&sa, 0, sizeof(sa));
         sigemptyset(&sa.sa_mask);

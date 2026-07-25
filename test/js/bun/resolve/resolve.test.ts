@@ -703,13 +703,38 @@ describe("ESM import specifier percent-encoding", () => {
     expect(exitCode).toBe(0);
   });
 
+  it.concurrent("does not double-decode a file:// URL whose target path contains a literal '%'", async () => {
+    using dir = tempDir("esm-specifier-percent-file-url", {
+      "lit%25.js": "export default 'literal-percent-25';",
+      "index.mjs": [
+        `import { pathToFileURL } from 'node:url';`,
+        `const href = pathToFileURL(import.meta.dirname + '/lit%25.js').href;`,
+        `const m = await import(href);`,
+        `console.log(m.default);`,
+      ].join("\n"),
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(stdout).toBe("literal-percent-25\n");
+    expect(exitCode).toBe(0);
+  });
+
   it.concurrent("rejects encoded path separators and malformed escapes", async () => {
     using dir = tempDir("esm-specifier-percent-sep", {
       "sub/file.js": "export default 1;",
       "a%ZZ.js": "export default 1;",
       "index.mjs": [
         `const out = {};`,
-        `for (const spec of ['./sub%2Ffile.js', './sub%2ffile.js', './sub%5Cfile.js', './a%ZZ.js']) {`,
+        `for (const spec of ['./sub%2Ffile.js', './sub%2ffile.js', './sub%5Cfile.js', './sub%5cfile.js', './a%ZZ.js']) {`,
         `  try { await import(spec); out[spec] = 'resolved'; }`,
         `  catch (e) { out[spec] = e.code ?? e.name; }`,
         `}`,
@@ -731,6 +756,7 @@ describe("ESM import specifier percent-encoding", () => {
       "./sub%2Ffile.js": "ERR_MODULE_NOT_FOUND",
       "./sub%2ffile.js": "ERR_MODULE_NOT_FOUND",
       "./sub%5Cfile.js": "ERR_MODULE_NOT_FOUND",
+      "./sub%5cfile.js": "ERR_MODULE_NOT_FOUND",
       "./a%ZZ.js": "ERR_MODULE_NOT_FOUND",
     });
     expect(exitCode).toBe(0);

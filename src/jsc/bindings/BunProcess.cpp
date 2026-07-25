@@ -1212,9 +1212,25 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
     if (!lexicalGlobalObject->inherits(Zig::GlobalObject::info()))
         return false;
     auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
+    auto& vm = JSC::getVM(globalObject);
+
+    // A worker whose terminate() has been requested must not run its
+    // uncaught-exception machinery: the exception reaching here is either the
+    // TerminationException itself or was produced while it was pending, and the
+    // process->get / emit / call sequence below walks the JS heap and may call
+    // user code. With terminate() racing (possibly while the parent/process is
+    // already tearing down), that property walk has tripped
+    // ASSERT(object->structure() == this) in Structure::storedPrototype. Treat
+    // as handled so the Rust caller does not go on to dispatch more JS either.
+    // scriptExecutionStatus is Stopped exactly when has_requested_terminate()
+    // is set on the worker (or the VM is shutting down, which the Rust caller
+    // already short-circuits), so a main-thread node:vm watchdog does not trip
+    // this.
+    if (Zig::GlobalObject::scriptExecutionStatus(globalObject, globalObject) != JSC::ScriptExecutionStatus::Running) [[unlikely]]
+        return true;
+
     auto* process = globalObject->processObject();
     auto& wrapped = process->wrapped();
-    auto& vm = JSC::getVM(globalObject);
 
     // node parity (exitWithUndefinedFatalException): the internal fatal-exception
     // handler is monkey-patchable as process._fatalException. If user code

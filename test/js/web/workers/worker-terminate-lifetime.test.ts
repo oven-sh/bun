@@ -121,6 +121,62 @@ test(
   timeout,
 );
 
+// Regression: a nested worker whose grandchild's module fails to load reports
+// its uncaught MODULE_NOT_FOUND via flush_logs → report_uncaught_exception →
+// Bun__handleUncaughtException. When worker.terminate() and process.exit()
+// land mid-dispatch, that handler would still lazily create `process` and do
+// `process->get("_fatalException")` on a VM already asked to terminate, which
+// tripped ASSERT(object->structure() == this) in Structure::storedPrototype.
+// Debug-assert-only; the race is non-deterministic (~2/14 on
+// release-asan-cov), so loop it.
+test.skipIf(!isASAN)(
+  "terminating a worker while its grandchildren are reporting load errors does not assert",
+  async () => {
+    // Each subprocess run spawns a middle worker that creates grandchildren
+    // whose module load fails, then main terminates the middle worker and
+    // exits. The race window is between the grandchild's error dispatch and
+    // terminate_all_and_wait arming TerminationException.
+    const code = `
+      const { Worker } = require("node:worker_threads");
+      const middleSrc = \`
+        const { Worker, parentPort } = require("node:worker_threads");
+        for (let j = 0; j < 4; j++) {
+          const w = new Worker(new URL("./does-not-exist-xyzzy.mjs", import.meta.url));
+          w.on("error", () => {});
+        }
+        parentPort.postMessage("spawned");
+        setInterval(() => {}, 1000);
+      \`;
+      const middle = new Worker(new URL(
+        "data:text/javascript;base64," + Buffer.from(middleSrc).toString("base64"),
+      ));
+      middle.on("error", () => {});
+      middle.on("message", () => {
+        middle.terminate();
+        process.exit(0);
+      });
+      setTimeout(() => process.exit(0), 2000);
+    `;
+
+    for (let i = 0; i < 20; i++) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", code],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stderr, stdout, exitCode, signalCode: proc.signalCode }).toEqual({
+        stderr: "",
+        stdout: "",
+        exitCode: 0,
+        signalCode: null,
+      });
+    }
+  },
+  timeout * 2,
+);
+
 // Regression: the per-VM c-ares channel was destroyed in deinit_runtime_state
 // (RuntimeState drop) AFTER JSC teardown and RareData.file_polls drop.
 // ares_destroy() synchronously fires EDESTRUCTION query callbacks and socket-

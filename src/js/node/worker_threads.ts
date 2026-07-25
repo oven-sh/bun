@@ -58,7 +58,7 @@ function validateWorkerFilename(filename) {
 
 const {
   MessageChannel,
-  BroadcastChannel,
+  BroadcastChannel: WebBroadcastChannel,
   Worker: WebWorker,
 } = globalThis as typeof globalThis & {
   // The Worker constructor secretly takes an extra parameter to provide the node:worker_threads
@@ -67,6 +67,57 @@ const {
   Worker: new (...args: [...ConstructorParameters<typeof globalThis.Worker>, nodeWorker: Worker]) => WebWorker;
 };
 const SHARE_ENV = Symbol.for("nodejs.worker_threads.SHARE_ENV");
+
+// node implements BroadcastChannel itself (lib/internal/worker/io.js) with
+// argument handling the WHATWG constructor does not have: a missing name is
+// ERR_MISSING_ARGS, any non-symbol name is stringified, postMessage() demands
+// an argument, and a closed channel reports an InvalidStateError DOMException.
+class BroadcastChannel extends WebBroadcastChannel {
+  #closed = false;
+
+  constructor(name?: unknown) {
+    if (arguments.length === 0) throw $ERR_MISSING_ARGS("name");
+    // node's `${name}` under V8; JSC words the symbol failure differently.
+    if (typeof name === "symbol") throw new TypeError("Cannot convert a Symbol value to a string");
+    super(`${name}`);
+  }
+
+  // node brand-checks `this` on every member before anything else
+  // (ERR_INVALID_THIS, checked ahead of argument validation).
+  static #check(channel: BroadcastChannel) {
+    if (!(#closed in channel)) throw $ERR_INVALID_THIS("BroadcastChannel");
+  }
+
+  get name() {
+    BroadcastChannel.#check(this);
+    return super.name;
+  }
+
+  close() {
+    BroadcastChannel.#check(this);
+    this.#closed = true;
+    super.close();
+  }
+
+  postMessage(message: unknown) {
+    BroadcastChannel.#check(this);
+    if (arguments.length === 0) throw $ERR_MISSING_ARGS("message");
+    if (this.#closed) throw new DOMException("BroadcastChannel is closed.", "InvalidStateError");
+    super.postMessage(message);
+  }
+
+  ref() {
+    BroadcastChannel.#check(this);
+    super.ref();
+    return this;
+  }
+
+  unref() {
+    BroadcastChannel.#check(this);
+    super.unref();
+    return this;
+  }
+}
 
 const isMainThread = Bun.isMainThread;
 const {

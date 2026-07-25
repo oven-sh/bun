@@ -92,6 +92,24 @@ void BroadcastChannel::dispatchMessage(Ref<SerializedScriptValue>&& message)
     dispatchEvent(event.event);
 }
 
+void BroadcastChannel::dispatchPendingMessage()
+{
+    auto message = BunBroadcastChannelRegistry::singleton().takePending(m_name, *this);
+    if (!message)
+        return;
+    dispatchMessage(message.releaseNonNull());
+}
+
+JSC::JSValue BroadcastChannel::tryTakeMessage(JSC::JSGlobalObject* lexicalGlobalObject)
+{
+    if (isClosed())
+        return JSC::jsUndefined();
+    auto message = BunBroadcastChannelRegistry::singleton().takePending(m_name, *this);
+    if (!message)
+        return JSC::jsUndefined();
+    return message->deserialize(*lexicalGlobalObject, lexicalGlobalObject, SerializationErrorMode::NonThrowing);
+}
+
 void BroadcastChannel::close()
 {
     uint64_t prev = m_state.fetch_or(Closed, std::memory_order_acq_rel);
@@ -129,6 +147,10 @@ bool BroadcastChannel::hasPendingActivity() const
 
 void BroadcastChannel::jsRef(JSGlobalObject* lexicalGlobalObject)
 {
+    // node: ref() on a closed channel is a no-op (its handle is gone), and
+    // nothing would ever release the ref again.
+    if (isClosed())
+        return;
     if (!m_hasRef) {
         m_hasRef = true;
         Bun__eventLoop__incrementRefConcurrently(WebCore::clientData(lexicalGlobalObject->vm())->bunVM, 1);

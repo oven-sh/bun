@@ -1421,8 +1421,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     && let js_ast::ExprData::EPrivateIdentifier(pi) = &k.data
                 {
                     has_any_private = true;
-                    let name: &'a [u8] =
-                        p.symbols[pi.ref_.inner_index() as usize].original_name.slice();
+                    let name: &'a [u8] = p.symbols[pi.ref_.inner_index() as usize]
+                        .original_name
+                        .slice();
                     class_private_names.insert(name, ());
                 }
             }
@@ -1550,14 +1551,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         if let Some(k) = prop.key {
                             match &k.data {
                                 js_ast::ExprData::EString(s)
-                                    if s.is_utf8()
-                                        && js_lexer::is_identifier(&s.data) =>
+                                    if s.is_utf8() && js_lexer::is_identifier(&s.data) =>
                                 {
                                     break 'brk p.bump_name2(b"#_", &s.data);
                                 }
                                 js_ast::ExprData::EPrivateIdentifier(pi) => {
-                                    let orig: &'a [u8] = p.symbols
-                                        [pi.ref_.inner_index() as usize]
+                                    let orig: &'a [u8] = p.symbols[pi.ref_.inner_index() as usize]
                                         .original_name
                                         .slice();
                                     break 'brk p.bump_name2(b"#_", &orig[1..]);
@@ -1565,10 +1564,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 _ => {}
                             }
                         }
-                        let name = p.bump_name(
-                            b"#_accessor_storage",
-                            Some(accessor_storage_counter),
-                        );
+                        let name =
+                            p.bump_name(b"#_accessor_storage", Some(accessor_storage_counter));
                         accessor_storage_counter += 1;
                         name
                     };
@@ -1587,8 +1584,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         js_ast::symbol::Kind::PrivateField
                     };
                     let storage_ref = p.new_sym(storage_kind, storage_name);
-                    let storage_key =
-                        p.new_expr(E::PrivateIdentifier { ref_: storage_ref }, loc);
+                    let storage_key = p.new_expr(E::PrivateIdentifier { ref_: storage_ref }, loc);
 
                     let storage_flags = if is_static {
                         Flags::Property::IsStatic.into()
@@ -1605,8 +1601,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                     // get foo() { return this.#_foo; }
                     let this_e = p.new_expr(E::This {}, loc);
-                    let idx_e =
-                        p.new_expr(E::PrivateIdentifier { ref_: storage_ref }, loc);
+                    let idx_e = p.new_expr(E::PrivateIdentifier { ref_: storage_ref }, loc);
                     let get_ret = p.new_expr(
                         E::Index {
                             target: this_e,
@@ -1632,8 +1627,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // set foo(v) { this.#_foo = v; }
                     let setter_param_ref = p.new_sym(js_ast::symbol::Kind::Other, b"v");
                     let this_e2 = p.new_expr(E::This {}, loc);
-                    let idx_e2 =
-                        p.new_expr(E::PrivateIdentifier { ref_: storage_ref }, loc);
+                    let idx_e2 = p.new_expr(E::PrivateIdentifier { ref_: storage_ref }, loc);
                     let lhs = p.new_expr(
                         E::Index {
                             target: this_e2,

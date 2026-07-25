@@ -632,6 +632,17 @@ impl NodeHTTPResponse {
 
     fn should_request_be_pending(&self) -> bool {
         let flags = self.flags.get();
+        // The body's fin was parsed onto the paused shim and the tail is still
+        // buffered: mark_request_as_done() would free it before the consumer
+        // drains, so stay pending regardless of which terminal flag is set.
+        if flags.contains(Flags::IS_DATA_BUFFERED_DURING_PAUSE_LAST)
+            && !self
+                .buffered_request_body_data_during_pause
+                .get()
+                .is_empty()
+        {
+            return true;
+        }
         // Once the socket is closed or has been adopted by the WebSocket
         // layer, the HTTP request/response cycle is over — no further uws
         // callbacks will arrive on `raw_response` to balance the

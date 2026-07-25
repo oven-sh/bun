@@ -1159,6 +1159,24 @@ pub mod command {
         if matches!(mapped.first().map(|z| z.as_bytes()), Some(b"x" | b"create")) {
             hoisted.clear();
         }
+        if matches!(mapped.first().map(|z| z.as_bytes()), Some(b"run")) {
+            let mut past_separator = false;
+            tail.retain(|a| {
+                let b = a.as_bytes();
+                if past_separator {
+                    return true;
+                }
+                if b == b"--" {
+                    past_separator = true;
+                    return true;
+                }
+                if b.first() == Some(&b'-') {
+                    hoisted.push(a);
+                    return false;
+                }
+                true
+            });
+        }
         if matches!(mapped.first().map(|z| z.as_bytes()), Some(b"create")) {
             pre_subcommand_flags.clear();
             let mut past_separator = false;

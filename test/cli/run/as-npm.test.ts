@@ -312,6 +312,13 @@ describe("fake npm/npx cli", () => {
       // Bare `npm init` still means `bun init`.
       const bare = await fakePmRun(String(dir), "npm", ["init", "--help"]);
       expect(bare.stdout + bare.stderr).toContain("bun init");
+    });
+
+    test.concurrent("npm init flags do not leak into the template name", async () => {
+      using dir = tempDir("fake-npm-init-flags", {
+        "package.json": "{}",
+        "bunfig.toml": `[install]\nregistry = "http://127.0.0.1:1/nope"\n`,
+      });
       // A value-flag's value is not an initializer.
       const flags = await fakePmRun(String(dir), "npm", ["init", "--loglevel", "error", "--help"]);
       expect(flags.stdout + flags.stderr).toContain("bun init");
@@ -361,6 +368,21 @@ describe("fake npm/npx cli", () => {
       const r = await fakePmRun(String(dir), "npm", ["test", "--prefix", "./client"]);
       expect(r.stdout).toContain("CLIENT-TEST");
       expect(r.exitCode).toBe(0);
+    });
+
+    test.concurrent("npm run flags after the script name are npm's, not the script's", async () => {
+      using dir = tempDir("fake-npm-postflag", {
+        "package.json": JSON.stringify({ name: "p", scripts: { go: "echo ARGS:" } }),
+      });
+      // npm consumes config flags anywhere before `--`; only args after `--`
+      // reach the script.
+      const r = await fakePmRun(String(dir), "npm", ["run", "go", "--silent"]);
+      expect(r.stdout).not.toContain("ARGS: --silent");
+      expect(r.exitCode).toBe(0);
+      // `--if-present` after the script name must reach bun run, so a
+      // missing script exits 0.
+      const ip = await fakePmRun(String(dir), "npm", ["run", "missing-script", "--if-present"]);
+      expect(ip.exitCode).toBe(0);
     });
 
     test.concurrent("-- stops flag translation", async () => {

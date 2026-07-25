@@ -817,7 +817,10 @@ fn is_dangling_windows_shim(bin_dir: Fd, bunx_name: &ZStr, bin_dir_path: &ZStr) 
         target_buf[base_len + 1 + j] = u16::from_le_bytes([contents[j * 2], contents[j * 2 + 1]]);
     }
 
-    bun_sys::exists_at_type_w(Fd::cwd(), &target_buf[..total]).is_err()
+    match bun_sys::exists_at_type_w(Fd::cwd(), &target_buf[..total]) {
+        Ok(_) => false,
+        Err(e) => e.get_errno() == bun_sys::E::ENOENT,
+    }
 }
 
 pub fn update_package_json_and_install_and_cli(

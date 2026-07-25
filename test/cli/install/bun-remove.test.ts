@@ -2,11 +2,12 @@ import { file, spawn, write } from "bun";
 import { afterAll, beforeAll, expect, it } from "bun:test";
 import { existsSync } from "fs";
 import { mkdir, writeFile } from "fs/promises";
-import { bunExe, bunEnv as env, readdirSorted, tmpdirSync, toHaveBins } from "harness";
+import { bunExe, bunEnv as env, isWindows, readdirSorted, tmpdirSync } from "harness";
 import { join, relative } from "path";
 import { createTestContext, destroyTestContext, dummyAfterAll, dummyBeforeAll } from "./dummy.registry";
 
-expect.extend({ toHaveBins });
+const binEntries = (names: string[]) =>
+  isWindows ? names.flatMap(n => [`${n}.bunx`, `${n}.exe`]) : names;
 
 beforeAll(dummyBeforeAll);
 afterAll(dummyAfterAll);
@@ -392,11 +393,11 @@ for (const global of [false, true]) {
     }
 
     await run(["add", "--linker=hoisted", ...globalArgs, "./has-two-bins", "./has-one-bin"]);
-    expect(await readdirSorted(binDir)).toHaveBins(["bin-a", "bin-b", "bin-c"]);
+    expect(await readdirSorted(binDir)).toEqual(binEntries(["bin-a", "bin-b", "bin-c"]));
 
     await run(["remove", ...globalArgs, "has-two-bins"]);
     // bin-a and bin-b are removed; bin-c (from a still-installed package) is not.
-    expect(await readdirSorted(binDir)).toHaveBins(["bin-c"]);
+    expect(await readdirSorted(binDir)).toEqual(binEntries(["bin-c"]));
 
     await run(["remove", ...globalArgs, "has-one-bin"]);
     expect(existsSync(binDir) ? await readdirSorted(binDir) : []).toEqual([]);

@@ -220,6 +220,16 @@ private:
             for (auto &f : httpContextData->filterHandlers) {
                 f((HttpResponse<SSL> *) s, 1);
             }
+        } else if constexpr (IsNodeHttp) {
+            /* node:http compat: surface the raw TCP accept before the TLS
+             * handshake with a distinct filter value. Node emits 'connection'
+             * at accept and 'secureConnection' after the handshake; JS needs
+             * the accept-time notification to arm tls.Server's
+             * handshakeTimeout. The handshake-completion path above still
+             * fires the same filters with 1. */
+            for (auto &f : httpContextData->filterHandlers) {
+                f((HttpResponse<SSL> *) s, 2);
+            }
         }
 
         return s;

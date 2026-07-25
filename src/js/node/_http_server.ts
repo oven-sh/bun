@@ -15,6 +15,7 @@ const {
   validateBoolean,
   validateInteger,
   validateFunction,
+  validateNumber,
   validateOneOf,
 } = require("internal/validators");
 const { ConnResetException, hasObserver, startPerf, stopPerf } = require("internal/shared");
@@ -86,6 +87,7 @@ const OutgoingMessagePrototype = OutgoingMessage.prototype;
 const { kIncomingMessage } = require("node:_http_common");
 const kConnectionsCheckingInterval = Symbol("http.server.connectionsCheckingInterval");
 const kTrackedConnections = Symbol("http.server.trackedConnections");
+const kHandshakeTimer = Symbol("http.server.tlsHandshakeTimer");
 const kHttpAllowHalfOpen = Symbol("http.server.httpAllowHalfOpen");
 
 // node.http trace events ('http.server.request' b/e). The agent module is
@@ -414,6 +416,18 @@ function Server(options, callback): void {
       });
     } else {
       this[tlsSymbol] = null;
+    }
+
+    if (this[isTlsSymbol]) {
+      // tls.Server's handshake deadline; a raw client that never handshakes
+      // is cut off and reported through 'tlsClientError'.
+      // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1386-L1391
+      this._handshakeTimeout = options.handshakeTimeout || 120 * 1000;
+      validateNumber(this._handshakeTimeout, "options.handshakeTimeout");
+      // Node's https.Server re-emits 'tlsClientError' as 'clientError' and
+      // destroys the connection when nothing handles it.
+      // https://github.com/nodejs/node/blob/v26.3.0/lib/https.js#L107-L110
+      this.addListener("tlsClientError", serverTlsClientErrorListener);
     }
   }
 
@@ -1233,19 +1247,63 @@ function defineHttpAllowHalfOpen(server: Server) {
 // its handshake completes), before any request bytes - like Node.js's
 // net.Server 'connection' / tls.Server 'secureConnection' events.
 function onServerConnection(this: Server, socketHandle) {
+  const isTLS = !!this[tlsSymbol];
   if (socketHandle.duplex) {
-    // Already wrapped (shouldn't happen for a brand-new connection).
+    // Second notification for a TLS connection surfaced at accept time: the
+    // handshake has completed on the already-wrapped socket.
+    const socket = socketHandle.duplex;
+    if (isTLS && socketHandle.secureEstablished && !socket._secureEstablished) {
+      socket._secureEstablished = true;
+      clearNodeHTTPHandshakeTimer(socket);
+      this.emit("secureConnection", socket);
+    }
     return;
   }
-  const isTLS = !!this[tlsSymbol];
   const socket = new NodeHTTPServerSocket(this, socketHandle, isTLS);
   // Node's connectionListener attaches the HTTPParser (socket.parser) before
   // emitting 'connection'; expose the shim here so listeners see it populated.
   socket.parser = createServerParserShim(socket);
+  if (isTLS && !socketHandle.secureEstablished) {
+    armNodeHTTPHandshakeTimer(this, socket);
+  }
   this.emit("connection", socket);
   if (isTLS && socketHandle.secureEstablished) {
     this.emit("secureConnection", socket);
   }
+}
+
+// Node's https.Server 'tlsClientError' listener (lib/https.js).
+function serverTlsClientErrorListener(this: Server, err, conn) {
+  if (!this.emit("clientError", err, conn)) conn.destroy(err);
+}
+
+function onNodeHTTPHandshakeDeadline(socket, server) {
+  socket[kHandshakeTimer] = undefined;
+  if (socket.destroyed || socket._secureEstablished) return;
+  // Node routes this through TLSSocket._emitTLSError → the server's
+  // 'tlsClientError' (the socket itself gets no 'error' before control is
+  // released to user code).
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1105-L1110
+  server.emit("tlsClientError", $ERR_TLS_HANDSHAKE_TIMEOUT(), socket);
+}
+
+function clearNodeHTTPHandshakeTimer(socket) {
+  const timer = socket[kHandshakeTimer];
+  if (timer) {
+    socket[kHandshakeTimer] = undefined;
+    clearTimeout(timer);
+  }
+}
+
+function armNodeHTTPHandshakeTimer(server: Server, socket) {
+  const handshakeTimeout = server._handshakeTimeout;
+  if (!(handshakeTimeout > 0)) return;
+  // Unref'd like node's handshake timer: a fully-unref'd server must not be
+  // held open by a client that stalls mid-handshake.
+  const timer = setTimeout(onNodeHTTPHandshakeDeadline, handshakeTimeout, socket, server);
+  timer.unref?.();
+  socket[kHandshakeTimer] = timer;
+  socket.once("close", clearNodeHTTPHandshakeTimer.bind(undefined, socket));
 }
 
 // Like Node.js: server.setTimeout only records the per-socket inactivity

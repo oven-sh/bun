@@ -3766,14 +3766,16 @@ pub(super) fn server_set_on_connection_(
                         <$T>::js_gc_on_connection_set,
                     );
                     // uws filters fire with `1` when an HTTP connection is opened
-                    // (for TLS, when its handshake completes) and `-1` on close;
-                    // only the open notification is forwarded to JS.
+                    // (for TLS, when its handshake completes), `2` for a
+                    // node-compat TLS socket at raw TCP accept (pre-handshake),
+                    // and `-1` on close; only the open notifications are
+                    // forwarded to JS.
                     extern "C" fn thunk(
                         socket: *mut uws_sys::us_socket_t,
                         opened: i32,
                         user_data: *mut c_void,
                     ) {
-                        if opened != 1 {
+                        if opened != 1 && opened != 2 {
                             return;
                         }
                         // SAFETY: user_data is the `*mut Self` registered below;

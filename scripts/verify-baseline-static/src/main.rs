@@ -153,9 +153,10 @@ fn is_harmless_on_nehalem(insn: &Instruction) -> bool {
     }
 
     // CLDEMOTE encodes in hint/NOP space (0f 1c /0) and is architecturally
-    // treated as a NOP on CPUs that don't enumerate it (SDM vol. 2A). Newer
-    // UCRT string routines (e.g. strpbrk) emit it unconditionally as a cache
-    // hint; on Nehalem it NOPs and the routine behaves identically.
+    // treated as a NOP on CPUs that don't enumerate it (SDM vol. 2A). Only
+    // ever observed as a data-in-.text misdecode (the CRT strspn family's
+    // switch-table RVAs, same as RTM below), but the hint-space encoding
+    // makes it harmless regardless of provenance.
     if insn.mnemonic() == Mnemonic::Cldemote {
         return true;
     }

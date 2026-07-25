@@ -994,9 +994,7 @@ where
         // `RequestContext` threaded through cork user-data.
         let ctx = unsafe { &mut *ctx };
         if let Some(resp) = ctx.resp {
-            // A committed Content-Length with no body bytes cannot be completed
-            // gracefully; close so the client sees a truncated message instead
-            // of waiting on the promised bytes.
+            // A committed Content-Length with no body bytes can only be cut short.
             if ctx.flags.has_written_status() && resp.state().has_written_content_length_header() {
                 ctx.force_close();
                 return;
@@ -1160,8 +1158,7 @@ where
         ctx_log!("endStream");
         if let Some(resp) = self.resp {
             self.detach_response();
-            // Chunked framing: terminating 0\r\n\r\n. With Content-Length
-            // marked, sendTerminatingChunk()/internalEnd() just markDone.
+            // Terminating 0\r\n\r\n chunk; a bare markDone when Content-Length was written.
             if resp.state().is_response_pending() {
                 resp.end_stream(close_connection);
             }
@@ -2608,9 +2605,7 @@ where
                 this.end_without_body(this.should_close_connection());
             }
             Body::Value::Locked(_) => {
-                // GET honours a handler-set Content-Length for a stream body
-                // (#10507); HEAD must frame the same way. Read it before
-                // `render_metadata()` swaps out and strips the init headers.
+                // Read before render_metadata() strips it, so HEAD frames like GET (#10507).
                 let user_content_length = response.get_init_headers_mut().and_then(|h| {
                     if h.fast_has(jsc::HTTPHeaderName::TransferEncoding) {
                         return None;
@@ -3086,8 +3081,6 @@ where
         // Body bytes were already written: close without the terminating chunk
         // (RFC 9112 section 7) so the client sees an incomplete message, not a
         // truncated body that looks like a complete, successful response.
-        // Same when a Content-Length is already on the wire (#10507): sending
-        // a 0-byte body against a non-zero promise would hang keep-alive.
         if let Some(resp) = req.resp {
             let state = resp.state();
             if state.is_response_pending()
@@ -3304,6 +3297,17 @@ where
             return;
         }
         let resp = this.resp.expect("infallible: resp bound");
+
+        // An errored stream cannot complete the committed framing; close like handle_reject.
+        if matches!(stream, WebCore::streams::Result::Err(_)) {
+            let state = resp.state();
+            if state.is_response_pending()
+                && (state.is_http_write_called() || state.has_written_content_length_header())
+            {
+                this.force_close();
+                return;
+            }
+        }
 
         let chunk = stream.slice();
         // on failure, it will continue to allocate
@@ -3657,9 +3661,7 @@ where
         });
         let mut has_content_disposition = false;
         let mut has_content_range = false;
-        // A ReadableStream body has no size for uWS to frame from, so the
-        // handler's Content-Length (#10507) is the only thing that can give
-        // the client a length. `do_write_headers` strips it; capture it first.
+        // The handler's Content-Length is the only length a stream body has (#10507).
         let mut user_content_length: Option<u64> = None;
         if let Some(mut headers_) = response.swap_init_headers() {
             has_content_disposition = headers_.fast_has(jsc::HTTPHeaderName::ContentDisposition);

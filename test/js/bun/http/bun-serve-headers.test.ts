@@ -170,6 +170,7 @@ describe("response Content-Length for ReadableStream bodies", () => {
   async function rawGET(port: number, method = "GET"): Promise<{ head: string; body: Buffer }> {
     const socket = net.connect(port, "127.0.0.1");
     try {
+      socket.on("error", () => {});
       await once(socket, "connect");
       socket.write(`${method} / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n`);
       const chunks: Buffer[] = [];
@@ -290,11 +291,15 @@ describe("response Content-Length for ReadableStream bodies", () => {
     const socket = net.connect(server.port, "127.0.0.1");
     try {
       socket.on("error", () => {});
+      // A forced close can surface as ECONNRESET before "close", which would
+      // reject once(socket, "close"); await the event directly instead.
+      const closed = Promise.withResolvers<void>();
+      socket.on("close", () => closed.resolve());
       await once(socket, "connect");
       socket.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n");
       const chunks: Buffer[] = [];
       socket.on("data", c => chunks.push(c));
-      await once(socket, "close");
+      await closed.promise;
       const head = Buffer.concat(chunks).toString("latin1").split("\r\n\r\n")[0] ?? "";
       expect(contentLength(head).length).toBeLessThanOrEqual(1);
     } finally {
@@ -358,6 +363,62 @@ describe("response Content-Length for ReadableStream bodies", () => {
     expect(res.headers.has("transfer-encoding")).toBe(false);
     const body = Buffer.from(await res.arrayBuffer());
     expect(body.equals(payload)).toBe(true);
+  });
+
+  // The upstream dies mid-body after the proxy committed the Content-Length:
+  // the proxy must close its own socket, not end the response cleanly.
+  test.concurrent("proxied fetch().body whose upstream errors closes the socket", async () => {
+    let upstreamSocket: net.Socket | undefined;
+    const upstream = net.createServer(s => {
+      upstreamSocket = s;
+      s.on("error", () => {});
+      s.write("HTTP/1.1 200 OK\r\nContent-Length: 8000\r\n\r\n");
+      s.write(Buffer.alloc(2000, "F"));
+    });
+    await new Promise<void>(r => upstream.listen(0, "127.0.0.1", r));
+    const upstreamPort = (upstream.address() as net.AddressInfo).port;
+    using proxy = Bun.serve({
+      port: 0,
+      development: false,
+      async fetch() {
+        const r = await fetch(`http://127.0.0.1:${upstreamPort}/`);
+        return new Response(r.body, { headers: { "Content-Length": "8000" } });
+      },
+      error() {},
+    });
+
+    const socket = net.connect(proxy.port, "127.0.0.1");
+    try {
+      socket.on("error", () => {});
+      // A forced close can surface as ECONNRESET before "close", which would
+      // reject once(socket, "close"); await the event directly instead.
+      const closed = Promise.withResolvers<void>();
+      socket.on("close", () => closed.resolve());
+      await once(socket, "connect");
+      // Keep-alive on purpose: a clean end would leave this socket open
+      // waiting on the remaining promised bytes.
+      socket.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n");
+      const chunks: Buffer[] = [];
+      let killed = false;
+      socket.on("data", c => {
+        chunks.push(c);
+        const raw = Buffer.concat(chunks);
+        const sep = raw.indexOf("\r\n\r\n");
+        if (!killed && sep !== -1 && raw.length >= sep + 4 + 2000) {
+          killed = true;
+          upstreamSocket!.destroy();
+        }
+      });
+      await closed.promise;
+      const raw = Buffer.concat(chunks);
+      const sep = raw.indexOf("\r\n\r\n");
+      const head = raw.subarray(0, sep).toString("latin1");
+      expect(contentLength(head)).toEqual(["8000"]);
+      expect(raw.length - (sep + 4)).toBeLessThan(8000);
+    } finally {
+      socket.destroy();
+      upstream.close();
+    }
   });
 
   test.concurrent("HEAD matches GET framing", async () => {
@@ -445,6 +506,7 @@ describe("response Content-Length for ReadableStream bodies", () => {
 
     const socket = net.connect(server.port, "127.0.0.1");
     try {
+      socket.on("error", () => {});
       await once(socket, "connect");
       socket.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n");
       const chunks: Buffer[] = [];

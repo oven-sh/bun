@@ -266,6 +266,25 @@ await client.unsubscribe(channel); // Unsubscribe a particular channel.
 await client.unsubscribe(channel, listener); // Unsubscribe a particular listener.
 ```
 
+### Pattern Subscriptions
+
+Subscribe to channels matching a glob-style pattern with `.psubscribe()`. The
+listener receives the message and the concrete channel it was published to:
+
+```typescript redis.ts icon="/icons/typescript.svg"
+await client.psubscribe("news.*", (message, channel) => {
+  console.log(`[${channel}] ${message}`);
+});
+```
+
+Unsubscribe from patterns with `.punsubscribe()`:
+
+```typescript redis.ts icon="/icons/typescript.svg"
+await client.punsubscribe(); // Unsubscribe from all patterns.
+await client.punsubscribe(pattern); // Unsubscribe a particular pattern.
+await client.punsubscribe(pattern, listener); // Unsubscribe a particular listener.
+```
+
 ## Advanced Usage
 
 ### Command Execution and Pipelining

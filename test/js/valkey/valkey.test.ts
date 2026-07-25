@@ -6574,6 +6574,151 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         );
       });
 
+      test("psubscribe to a pattern receives messages", async () => {
+        const TEST_MESSAGE_COUNT = 32;
+        const subscriber = await ctx.newSubscriberClient(connectionType);
+        const prefix = `${randomUUIDv7()}:`;
+        const pattern = `${prefix}*`;
+
+        const received: { message: string; channel: string }[] = [];
+        const counter = awaitableCounter();
+        const count = await subscriber.psubscribe(pattern, (message, channel) => {
+          received.push({ message, channel });
+          counter.increment();
+        });
+        expect(count).toBe(1);
+
+        for (let i = 0; i < TEST_MESSAGE_COUNT; i++) {
+          expect(await ctx.redis.publish(`${prefix}${i}`, `msg${i}`)).toBe(1);
+        }
+
+        await counter.untilValue(TEST_MESSAGE_COUNT);
+        expect(received).toEqual(
+          Array.from({ length: TEST_MESSAGE_COUNT }, (_, i) => ({
+            message: `msg${i}`,
+            channel: `${prefix}${i}`,
+          })),
+        );
+
+        await subscriber.punsubscribe(pattern);
+      });
+
+      test("psubscribe to multiple patterns receives messages", async () => {
+        const subscriber = await ctx.newSubscriberClient(connectionType);
+        const prefixA = `${randomUUIDv7()}:a:`;
+        const prefixB = `${randomUUIDv7()}:b:`;
+
+        const received: { message: string; channel: string }[] = [];
+        const counter = awaitableCounter();
+        await subscriber.psubscribe([`${prefixA}*`, `${prefixB}*`], (message, channel) => {
+          received.push({ message, channel });
+          counter.increment();
+        });
+
+        expect(await ctx.redis.publish(`${prefixA}1`, "a1")).toBe(1);
+        expect(await ctx.redis.publish(`${prefixB}1`, "b1")).toBe(1);
+        expect(await ctx.redis.publish(`${prefixA}2`, "a2")).toBe(1);
+
+        await counter.untilValue(3);
+        expect(received).toEqual([
+          { message: "a1", channel: `${prefixA}1` },
+          { message: "b1", channel: `${prefixB}1` },
+          { message: "a2", channel: `${prefixA}2` },
+        ]);
+
+        await subscriber.punsubscribe([`${prefixA}*`, `${prefixB}*`]);
+      });
+
+      test("punsubscribe stops delivery for that pattern", async () => {
+        const subscriber = await ctx.newSubscriberClient(connectionType);
+        const prefix = `${randomUUIDv7()}:`;
+        const pattern = `${prefix}*`;
+
+        const counter = awaitableCounter();
+        let calls = 0;
+        await subscriber.psubscribe(pattern, () => {
+          calls++;
+          counter.increment();
+        });
+
+        expect(await ctx.redis.publish(`${prefix}x`, "before")).toBe(1);
+        await counter.untilValue(1);
+        expect(calls).toBe(1);
+
+        await subscriber.punsubscribe(pattern);
+
+        expect(await ctx.redis.publish(`${prefix}x`, "after")).toBe(0);
+        expect(calls).toBe(1);
+      });
+
+      test("mixing subscribe and psubscribe on one client", async () => {
+        const subscriber = await ctx.newSubscriberClient(connectionType);
+        const exactChannel = `exact-${randomUUIDv7()}`;
+        const prefix = `${randomUUIDv7()}:`;
+
+        const fromChannel: string[] = [];
+        const fromPattern: string[] = [];
+        const counter = awaitableCounter();
+
+        await subscriber.subscribe(exactChannel, msg => {
+          fromChannel.push(msg);
+          counter.increment();
+        });
+        await subscriber.psubscribe(`${prefix}*`, msg => {
+          fromPattern.push(msg);
+          counter.increment();
+        });
+
+        expect(await ctx.redis.publish(exactChannel, "to-channel")).toBe(1);
+        expect(await ctx.redis.publish(`${prefix}1`, "to-pattern")).toBe(1);
+        await counter.untilValue(2);
+
+        expect(fromChannel).toEqual(["to-channel"]);
+        expect(fromPattern).toEqual(["to-pattern"]);
+
+        // punsubscribe() clears pattern listeners but leaves the channel
+        // subscription intact, so the client stays in subscriber mode.
+        await subscriber.punsubscribe();
+        expect(() => subscriber.set("k", "v")).toThrow("subscriber mode");
+
+        await subscriber.unsubscribe();
+      });
+
+      test("punsubscribe(pattern, listener) removes only that listener", async () => {
+        const subscriber = await ctx.newSubscriberClient(connectionType);
+        const prefix = `${randomUUIDv7()}:`;
+        const pattern = `${prefix}*`;
+
+        const counter = awaitableCounter();
+        let a = 0;
+        let b = 0;
+        const listenerA = () => {
+          a++;
+          counter.increment();
+        };
+        const listenerB = () => {
+          b++;
+          counter.increment();
+        };
+
+        await subscriber.psubscribe(pattern, listenerA);
+        await subscriber.psubscribe(pattern, listenerB);
+
+        expect(await ctx.redis.publish(`${prefix}x`, "m1")).toBe(1);
+        await counter.untilValue(2);
+        expect(a).toBe(1);
+        expect(b).toBe(1);
+
+        await subscriber.punsubscribe(pattern, listenerA);
+
+        expect(await ctx.redis.publish(`${prefix}x`, "m2")).toBe(1);
+        await counter.untilValue(3);
+        expect(a).toBe(1);
+        expect(b).toBe(2);
+
+        await subscriber.punsubscribe(pattern);
+      });
+
       test("high volume pub/sub", async () => {
         const channel = testChannel();
 
@@ -6930,6 +7075,139 @@ describe("RedisClient URL parsing", () => {
       expect(client.connected).toBe(false);
     } finally {
       client.close();
+    }
+  });
+});
+
+// Self-contained mock-server coverage for pattern pub/sub so the psubscribe
+// listener path is exercised even when a real Redis/Valkey isn't available.
+describe("RedisClient PSUBSCRIBE (mock server)", () => {
+  const CRLF = "\r\n";
+  const bulk = (s: string) => `$${Buffer.byteLength(s)}${CRLF}${s}${CRLF}`;
+  const HELLO = `%3${CRLF}${bulk("server")}${bulk("redis")}${bulk("proto")}:3${CRLF}${bulk("version")}${bulk("7.4.0")}`;
+
+  type Mock = {
+    port: number;
+    pushPmessage: (pattern: string, channel: string, payload: string) => void;
+    stop: () => void;
+  };
+
+  function makeServer(): Mock {
+    let sock: any;
+    const server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        open(s) {
+          sock = s;
+        },
+        data(s, raw) {
+          const t = raw.toString();
+          if (t.includes("HELLO")) {
+            s.write(HELLO);
+          } else if (t.includes("PUNSUBSCRIBE")) {
+            const m = /\r\n(.+?)\r\n$/.exec(t);
+            s.write(`>3${CRLF}${bulk("punsubscribe")}${bulk(m ? m[1] : "")}:0${CRLF}`);
+          } else if (t.includes("PSUBSCRIBE")) {
+            const m = /\r\n(.+?)\r\n$/.exec(t);
+            s.write(`>3${CRLF}${bulk("psubscribe")}${bulk(m ? m[1] : "")}:1${CRLF}`);
+          } else if (t.includes("PING")) {
+            s.write(`+PONG${CRLF}`);
+          } else {
+            s.write(`+OK${CRLF}`);
+          }
+        },
+      },
+    });
+    return {
+      port: server.port,
+      pushPmessage(pattern, channel, payload) {
+        sock.write(`>4${CRLF}${bulk("pmessage")}${bulk(pattern)}${bulk(channel)}${bulk(payload)}`);
+      },
+      stop: () => server.stop(true),
+    };
+  }
+
+  test("psubscribe requires a listener and has arity 2", () => {
+    expect(typeof RedisClient.prototype.psubscribe).toBe("function");
+    expect(RedisClient.prototype.psubscribe.length).toBe(2);
+    expect(typeof RedisClient.prototype.punsubscribe).toBe("function");
+  });
+
+  test("psubscribe without a listener throws", async () => {
+    const srv = makeServer();
+    const c: any = new RedisClient(`redis://127.0.0.1:${srv.port}`, { autoReconnect: false });
+    try {
+      await c.connect();
+      expect(() => c.psubscribe("evt:*")).toThrow("listener");
+    } finally {
+      c.close();
+      srv.stop();
+    }
+  });
+
+  test("psubscribe delivers pmessage pushes to its listener", async () => {
+    const srv = makeServer();
+    const c: any = new RedisClient(`redis://127.0.0.1:${srv.port}`, { autoReconnect: false });
+    try {
+      await c.connect();
+
+      const received: [string, string][] = [];
+      const counter = awaitableCounter();
+      const result = await c.psubscribe("evt:*", (message: string, channel: string) => {
+        received.push([message, channel]);
+        counter.increment();
+      });
+
+      // psubscribe should resolve with the subscription count, not the raw
+      // RESP3 push frame it used to leak.
+      expect(result).toBe(1);
+
+      srv.pushPmessage("evt:*", "evt:1", "payload1");
+      srv.pushPmessage("evt:*", "evt:2", "payload2");
+      srv.pushPmessage("evt:*", "evt:3", "payload3");
+
+      await counter.untilValue(3);
+      expect(received).toEqual([
+        ["payload1", "evt:1"],
+        ["payload2", "evt:2"],
+        ["payload3", "evt:3"],
+      ]);
+
+      // Connection stays healthy for regular commands.
+      expect(await c.ping()).toBe("PONG");
+      expect(c.connected).toBe(true);
+    } finally {
+      c.close();
+      srv.stop();
+    }
+  });
+
+  test("punsubscribe stops delivery and leaves subscriber mode", async () => {
+    const srv = makeServer();
+    const c: any = new RedisClient(`redis://127.0.0.1:${srv.port}`, { autoReconnect: false });
+    try {
+      await c.connect();
+
+      let calls = 0;
+      const counter = awaitableCounter();
+      await c.psubscribe("evt:*", () => {
+        calls++;
+        counter.increment();
+      });
+
+      srv.pushPmessage("evt:*", "evt:1", "a");
+      await counter.untilValue(1);
+      expect(calls).toBe(1);
+
+      await c.punsubscribe("evt:*");
+
+      // After punsubscribe the client leaves subscriber mode, so regular
+      // commands are allowed again.
+      expect(() => c.set("k", "v")).not.toThrow();
+    } finally {
+      c.close();
+      srv.stop();
     }
   });
 });

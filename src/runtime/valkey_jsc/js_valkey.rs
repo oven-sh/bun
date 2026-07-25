@@ -71,6 +71,18 @@ pub struct SubscriptionCtx {
     pub original_enable_auto_pipelining: bool,
 }
 
+/// Selects which of the two listener maps a pub/sub operation targets:
+/// `subscribe`/`unsubscribe` route by literal channel name, while
+/// `psubscribe`/`punsubscribe` route by glob pattern. The maps are kept
+/// separate so a pattern like `"news.*"` cannot collide with a literal channel
+/// of the same name, and so `punsubscribe()` with no arguments clears only
+/// pattern listeners.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum SubscriptionKind {
+    Channel,
+    Pattern,
+}
+
 /// The generate-classes.ts output emits a
 /// `js_RedisClient` module with snake-case `*_set_cached`/`*_get_cached`
 /// free-fns plus `to_js`/`from_js`. Re-exported here as `Js`.
@@ -82,7 +94,6 @@ bun_core::impl_field_parent! { SubscriptionCtx => JSValkeyClient._subscription_c
 
 impl SubscriptionCtx {
     pub fn init(valkey_parent: &JSValkeyClient) -> JsResult<Self> {
-        let callback_map = JSMap::create(&valkey_parent.global_object);
         let parent_this = valkey_parent
             .this_value
             .get()
@@ -92,7 +103,12 @@ impl SubscriptionCtx {
         Js::subscription_callback_map_set_cached(
             parent_this,
             &valkey_parent.global_object,
-            callback_map,
+            JSMap::create(&valkey_parent.global_object),
+        );
+        Js::pattern_callback_map_set_cached(
+            parent_this,
+            &valkey_parent.global_object,
+            JSMap::create(&valkey_parent.global_object),
         );
 
         Ok(SubscriptionCtx {
@@ -106,24 +122,34 @@ impl SubscriptionCtx {
         })
     }
 
-    fn subscription_callback_map(&self) -> &mut JSMap {
+    fn callback_map(&self, kind: SubscriptionKind) -> &mut JSMap {
         let parent_this = self
             .parent()
             .this_value
             .get()
             .try_get()
             .expect("unreachable");
-        let value_js = Js::subscription_callback_map_get_cached(parent_this).unwrap();
+        let value_js = match kind {
+            SubscriptionKind::Channel => Js::subscription_callback_map_get_cached(parent_this),
+            SubscriptionKind::Pattern => Js::pattern_callback_map_get_cached(parent_this),
+        }
+        .unwrap();
         // `JSMap` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
         // `from_js` returns a non-null heap cell when the slot was set by
         // `init()`; single JS thread.
         JSMap::opaque_mut(JSMap::from_js(value_js).unwrap().as_ptr())
     }
 
-    /// Get the total number of channels that this subscription context is subscribed to.
+    /// Get the total number of channels and patterns that this subscription
+    /// context is subscribed to.
     pub fn channels_subscribed_to_count(&self, global_object: &JSGlobalObject) -> JsResult<u32> {
-        let count = self.subscription_callback_map().size(global_object)?;
-        Ok(count)
+        let channels = self
+            .callback_map(SubscriptionKind::Channel)
+            .size(global_object)?;
+        let patterns = self
+            .callback_map(SubscriptionKind::Pattern)
+            .size(global_object)?;
+        Ok(channels + patterns)
     }
 
     /// Test whether this context has any subscriptions. It is mandatory to
@@ -134,16 +160,21 @@ impl SubscriptionCtx {
 
     pub fn clear_receive_handlers(
         &self,
+        kind: SubscriptionKind,
         global_object: &JSGlobalObject,
         channel_name: JSValue,
     ) -> JsResult<()> {
-        let map = self.subscription_callback_map();
+        let map = self.callback_map(kind);
         let _ = map.remove(global_object, channel_name)?;
         Ok(())
     }
 
-    pub fn clear_all_receive_handlers(&self, global_object: &JSGlobalObject) -> JsResult<()> {
-        self.subscription_callback_map().clear(global_object)
+    pub fn clear_all_receive_handlers(
+        &self,
+        kind: SubscriptionKind,
+        global_object: &JSGlobalObject,
+    ) -> JsResult<()> {
+        self.callback_map(kind).clear(global_object)
     }
 
     /// Remove a specific receive handler.
@@ -154,11 +185,12 @@ impl SubscriptionCtx {
     /// Note: This function will empty out the map entry if there are no more handlers registered.
     pub fn remove_receive_handler(
         &self,
+        kind: SubscriptionKind,
         global_object: &JSGlobalObject,
         channel_name: JSValue,
         callback: JSValue,
     ) -> JsResult<Option<usize>> {
-        let map = self.subscription_callback_map();
+        let map = self.callback_map(kind);
 
         let existing = map.get(global_object, channel_name)?;
         if existing.is_undefined_or_null() {
@@ -198,6 +230,7 @@ impl SubscriptionCtx {
     /// Add a handler for receiving messages on a specific channel
     pub fn upsert_receive_handler(
         &self,
+        kind: SubscriptionKind,
         global_object: &JSGlobalObject,
         channel_name: JSValue,
         callback: JSValue,
@@ -208,7 +241,7 @@ impl SubscriptionCtx {
         let _guard = scopeguard::guard(parent_br, |p| {
             p.on_new_subscription_callback_insert();
         });
-        let map = self.subscription_callback_map();
+        let map = self.callback_map(kind);
 
         let handlers_array: JSValue;
         let mut is_new_channel = false;
@@ -244,12 +277,11 @@ impl SubscriptionCtx {
 
     pub fn get_callbacks(
         &self,
+        kind: SubscriptionKind,
         global_object: &JSGlobalObject,
         channel_name: JSValue,
     ) -> JsResult<Option<JSValue>> {
-        let result = self
-            .subscription_callback_map()
-            .get(global_object, channel_name)?;
+        let result = self.callback_map(kind).get(global_object, channel_name)?;
         if result == JSValue::UNDEFINED {
             return Ok(None);
         }
@@ -260,11 +292,12 @@ impl SubscriptionCtx {
     /// Handles both single callbacks and arrays of callbacks
     pub fn invoke_callbacks(
         &self,
+        kind: SubscriptionKind,
         global_object: &JSGlobalObject,
         channel_name: JSValue,
         args: &[JSValue],
     ) -> JsResult<()> {
-        let Some(callbacks) = self.get_callbacks(global_object, channel_name)? else {
+        let Some(callbacks) = self.get_callbacks(kind, global_object, channel_name)? else {
             debug!(
                 "No callbacks found for channel {}",
                 // `JSString` is an `opaque_ffi!` ZST — `opaque_ref` is the safe
@@ -321,6 +354,7 @@ impl SubscriptionCtx {
                 global_object,
                 JSValue::UNDEFINED,
             );
+            Js::pattern_callback_map_set_cached(parent_this, global_object, JSValue::UNDEFINED);
         }
     }
 }
@@ -1303,7 +1337,7 @@ impl JSValkeyClient {
         Ok(())
     }
 
-    pub fn on_valkey_message(&self, value: &mut [protocol::RESPValue]) {
+    pub fn on_valkey_message(&self, kind: SubscriptionKind, value: &mut [protocol::RESPValue]) {
         if !self.is_subscriber() {
             debug!("onMessage called but client is not in subscriber mode");
             return;
@@ -1312,22 +1346,41 @@ impl JSValkeyClient {
         let global_object = self.global_object;
         let _exit = self.vm().enter_event_loop_scope();
 
-        // The message push should be an array with [channel, message]
-        if value.len() < 2 {
+        // `message` push data is [channel, payload]; `pmessage` is
+        // [pattern, channel, payload]. The listener-map key is the first
+        // element in both cases (channel name or pattern), and the listener
+        // always receives `(payload, channel)`.
+        let (channel_idx, message_idx) = match kind {
+            SubscriptionKind::Channel => (0, 1),
+            SubscriptionKind::Pattern => (1, 2),
+        };
+        if value.len() <= message_idx {
             debug!("Message array has insufficient elements: {}", value.len());
             return;
         }
 
-        // Extract channel and message
-        let Ok(channel_value) = protocol_jsc::resp_value_to_js(&mut value[0], &global_object)
+        let Ok(channel_value) =
+            protocol_jsc::resp_value_to_js(&mut value[channel_idx], &global_object)
         else {
             debug!("Failed to convert channel to JS");
             return;
         };
-        let Ok(message_value) = protocol_jsc::resp_value_to_js(&mut value[1], &global_object)
+        let Ok(message_value) =
+            protocol_jsc::resp_value_to_js(&mut value[message_idx], &global_object)
         else {
             debug!("Failed to convert message to JS");
             return;
+        };
+        let key_value = if kind == SubscriptionKind::Channel {
+            channel_value
+        } else {
+            match protocol_jsc::resp_value_to_js(&mut value[0], &global_object) {
+                Ok(v) => v,
+                Err(_) => {
+                    debug!("Failed to convert pattern to JS");
+                    return;
+                }
+            }
         };
 
         // Invoke callbacks for this channel with message and channel as arguments
@@ -1335,8 +1388,9 @@ impl JSValkeyClient {
             ._subscription_ctx
             .get()
             .invoke_callbacks(
+                kind,
                 &global_object,
-                channel_value,
+                key_value,
                 &[message_value, channel_value],
             )
             .is_err()

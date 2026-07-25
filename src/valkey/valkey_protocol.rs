@@ -787,6 +787,9 @@ pub enum SubscriptionPushMessage {
     Message,
     Subscribe,
     Unsubscribe,
+    Pmessage,
+    Psubscribe,
+    Punsubscribe,
 }
 
 bun_core::comptime_string_map! {
@@ -794,6 +797,9 @@ bun_core::comptime_string_map! {
         b"message" => SubscriptionPushMessage::Message,
         b"subscribe" => SubscriptionPushMessage::Subscribe,
         b"unsubscribe" => SubscriptionPushMessage::Unsubscribe,
+        b"pmessage" => SubscriptionPushMessage::Pmessage,
+        b"psubscribe" => SubscriptionPushMessage::Psubscribe,
+        b"punsubscribe" => SubscriptionPushMessage::Punsubscribe,
     };
 }
 
@@ -803,17 +809,32 @@ impl SubscriptionPushMessage {
         SUBSCRIPTION_PUSH_MESSAGES.get(bytes).copied()
     }
 
-    /// Pattern (`p`-prefixed) and sharded (`s`-prefixed) variants of the
-    /// `Subscribe`/`Unsubscribe` push kinds; the unprefixed kinds are matched by
-    /// `from_bytes` before this is consulted.
+    /// Sharded (`s`-prefixed) `Subscribe`/`Unsubscribe` push kinds; the
+    /// unprefixed and `p`-prefixed kinds are matched by `from_bytes` before
+    /// this is consulted.
     #[inline]
     pub fn is_reply_kind(kind: &[u8]) -> bool {
         match kind.split_first() {
-            Some((b'p' | b's', base)) => matches!(
+            Some((b's', base)) => matches!(
                 Self::from_bytes(base),
                 Some(Self::Subscribe | Self::Unsubscribe)
             ),
             _ => false,
         }
+    }
+
+    #[inline]
+    pub fn is_message(self) -> bool {
+        matches!(self, Self::Message | Self::Pmessage)
+    }
+
+    #[inline]
+    pub fn is_subscribe(self) -> bool {
+        matches!(self, Self::Subscribe | Self::Psubscribe)
+    }
+
+    #[inline]
+    pub fn is_unsubscribe(self) -> bool {
+        matches!(self, Self::Unsubscribe | Self::Punsubscribe)
     }
 }

@@ -2786,6 +2786,81 @@ declare module "bun" {
     unsubscribe(channels: string[]): Promise<void>;
 
     /**
+     * Subscribe to a Redis channel pattern.
+     *
+     * Patterns use glob-style matching: `?` matches one character, `*` matches
+     * zero or more characters, and `[...]` matches one character in the set.
+     *
+     * Subscribing disables automatic pipelining, so all commands are received
+     * immediately.
+     *
+     * Subscribing moves the client to a dedicated subscription state which
+     * prevents most other commands from being executed until unsubscribed. Only
+     * {@link ping `.ping()`}, {@link subscribe `.subscribe()`},
+     * {@link unsubscribe `.unsubscribe()`}, {@link psubscribe `.psubscribe()`}
+     * and {@link punsubscribe `.punsubscribe()`} can be called while
+     * subscribed.
+     *
+     * @param pattern The glob pattern to subscribe to.
+     * @param listener The listener to call when a message is received on a
+     * channel matching the pattern. The listener receives the message as the
+     * first argument and the originating channel name as the second.
+     *
+     * @example
+     * ```ts
+     * await client.psubscribe("news.*", (message, channel) => {
+     *   console.log(`Received message on ${channel}: ${message}`);
+     * });
+     * ```
+     */
+    psubscribe(pattern: string, listener: RedisClient.StringPubSubListener): Promise<number>;
+
+    /**
+     * Subscribe to multiple Redis channel patterns.
+     *
+     * @param patterns An array of glob patterns to subscribe to.
+     * @param listener The listener to call when a message is received on a
+     * channel matching any of the patterns.
+     */
+    psubscribe(patterns: string[], listener: RedisClient.StringPubSubListener): Promise<number>;
+
+    /**
+     * Unsubscribe from a single Redis channel pattern.
+     *
+     * If there are no more channels or patterns subscribed to, the client
+     * automatically re-enables pipelining if it was previously enabled and
+     * leaves the subscription state.
+     *
+     * @param pattern The pattern to unsubscribe from.
+     */
+    punsubscribe(pattern: string): Promise<void>;
+
+    /**
+     * Remove a listener from a given Redis channel pattern.
+     *
+     * @param pattern The pattern to unsubscribe from.
+     * @param listener The listener to remove. This is tested against
+     * referential equality so you must pass the exact same listener instance as
+     * when subscribing.
+     */
+    punsubscribe(pattern: string, listener: RedisClient.StringPubSubListener): Promise<void>;
+
+    /**
+     * Unsubscribe from all registered Redis channel patterns.
+     *
+     * Channel subscriptions registered via {@link subscribe `.subscribe()`} are
+     * unaffected.
+     */
+    punsubscribe(): Promise<void>;
+
+    /**
+     * Unsubscribe from multiple Redis channel patterns.
+     *
+     * @param patterns An array of patterns to unsubscribe from.
+     */
+    punsubscribe(patterns: string[]): Promise<void>;
+
+    /**
      * Create a new RedisClient instance with the same configuration as the
      * current instance.
      *

@@ -41,6 +41,7 @@ async function countEdenCollections(
     env: {
       ...bunEnv,
       BUN_GC_TIMER_DISABLE: undefined,
+      BUN_GC_TIMER_INTERVAL: undefined,
       BUN_JSC_logGC: "true",
       ...extraEnv,
     },
@@ -50,9 +51,8 @@ async function countEdenCollections(
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   const log = stdout + stderr;
   const eden = (log.match(/=> EdenCollection/g) ?? []).length;
-  const full = (log.match(/=> FullCollection/g) ?? []).length;
   expect(exitCode, log).toBe(0);
-  return { eden, full };
+  return { eden };
 }
 
 describe.skipIf(isDebug)("GarbageCollectionController eden cadence", () => {

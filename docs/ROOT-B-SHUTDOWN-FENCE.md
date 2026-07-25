@@ -113,6 +113,13 @@ Direct callers converted alongside: `FetchTasklet`, `PasswordJob`,
 `AsyncReaddirRecursiveTask`, `S3HttpSimpleTask` / `S3HttpDownloadStreamingTask`,
 `Archive::AsyncTask`, `JSBundleCompletionTask`, `TranspilerJob`.
 
+Same enqueue shape, deferred to follow-up (not in the verify harness):
+`napi_async_work` / `ThreadSafeFunction`, `fs.watch` / `fs.watchFile`
+(PathWatcherManager reader thread), the shell WorkPool tasks, `AsyncModule`
+package-manager wake, and the Windows-only `WriteFileWindows` / `CopyFileWindows`
+`AsyncMkdirp` completion (the POSIX `WriteFile`/`CopyFile` paths above go
+through the converted `WorkTask`/`ConcurrentPromiseTask`).
+
 Explicitly **not** enqueue-shaped and left for their own fixes: nested-worker
 child-init reading a freed parent VM, `node:quic` finalizer ordering,
 `RedisClient::finalize` free-then-read, `Bun.SQL` handle crashes during

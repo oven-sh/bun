@@ -798,6 +798,24 @@ pub mod store {
     // S3
     // ────────────────────────────────────────────────────────────────────
 
+    /// For an `s3://bucket/key` URL, returns the `bucket` segment. Returns
+    /// `None` for non-`s3://` inputs, or when the URL has no key separator
+    /// (so `s3://name` falls through and `name` is treated as a plain key,
+    /// using the configured bucket).
+    pub fn s3_url_bucket(path: &[u8]) -> Option<&[u8]> {
+        let url = bun_url::URL::parse(path);
+        if !url.is_s3() {
+            return None;
+        }
+        let mut after = url.s3_path();
+        if let [b'/' | b'\\', rest @ ..] = after {
+            after = rest;
+        }
+        let end = bun_core::strings::index_of_any(after, b"/\\")?;
+        let bucket = &after[..end];
+        if bucket.is_empty() { None } else { Some(bucket) }
+    }
+
     /// An S3 blob store. Data-only at this tier;
     /// I/O methods (`unlink`/`stat`/`listObjects`/`getCredentialsWithOptions`)
     /// live in `bun_runtime` because they reach the HTTP client / event loop.
@@ -827,7 +845,8 @@ pub mod store {
         }
 
         pub fn path(&self) -> &[u8] {
-            let mut path_name = bun_url::URL::parse(self.pathlike.slice()).s3_path();
+            let url = bun_url::URL::parse(self.pathlike.slice());
+            let mut path_name = url.s3_path();
             // normalize start and ending
             if bun_core::strings::ends_with(path_name, b"/") {
                 path_name = &path_name[0..path_name.len()];
@@ -839,14 +858,27 @@ pub mod store {
             {
                 path_name = &path_name[1..];
             }
+            // For an `s3://bucket/key` URL the bucket has already been moved
+            // into `credentials.bucket` by `S3::init`; return only the key.
+            if url.is_s3() {
+                if let Some(end) = bun_core::strings::index_of_any(path_name, b"/\\") {
+                    path_name = &path_name[end + 1..];
+                }
+            }
             path_name
         }
 
         pub fn init(
             pathlike: PathLike,
             mime_type: Option<MimeType>,
-            credentials: bun_s3_signing::S3Credentials,
+            mut credentials: bun_s3_signing::S3Credentials,
         ) -> S3 {
+            // `s3://bucket/key` addresses `bucket` explicitly: make it override
+            // any bucket inherited from the client / env / per-file options so
+            // the URL is never re-rooted under that ambient bucket.
+            if let Some(bucket) = s3_url_bucket(pathlike.slice()) {
+                credentials.bucket = Box::<[u8]>::from(bucket);
+            }
             S3 {
                 // Heap-allocate a fresh refcounted copy.
                 credentials: Some(Rc::new(credentials)),

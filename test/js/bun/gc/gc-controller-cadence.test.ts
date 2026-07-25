@@ -51,7 +51,7 @@ async function countEdenCollections(
   const log = stdout + stderr;
   const eden = (log.match(/=> EdenCollection/g) ?? []).length;
   const full = (log.match(/=> FullCollection/g) ?? []).length;
-  expect(exitCode).toBe(0);
+  expect(exitCode, log).toBe(0);
   return { eden, full };
 }
 

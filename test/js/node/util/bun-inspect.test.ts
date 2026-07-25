@@ -127,7 +127,9 @@ describe("Bun.inspect", () => {
     ["throw", `throw e;`],
     ["Promise.reject", `Promise.reject(e); await 0;`],
   ])("deeply nested AggregateError via %s does not crash", async (name, emit) => {
-    const src = `let e = new Error("leaf"); for (let i = 0; i < 16 * 1024; i++) e = new AggregateError([e], "agg"); process.stderr.write("built\\n"); ${emit}`;
+    // Fan-out of 2 so the test also covers the `formatter.failed` short-circuit
+    // in `agg_iter`; without it the throw path re-descends per sibling and hangs.
+    const src = `let e = new Error("leaf"); for (let i = 0; i < 16 * 1024; i++) e = new AggregateError([e, e], "agg"); process.stderr.write("built\\n"); ${emit}`;
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", src],
       env: bunEnv,

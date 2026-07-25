@@ -4853,6 +4853,9 @@ impl VirtualMachine {
                 // SAFETY: `ctx.formatter` borrows the caller's stack local,
                 // live across the synchronous `for_each` call.
                 let formatter = unsafe { &mut *ctx.formatter };
+                if formatter.failed {
+                    return;
+                }
                 // SAFETY: `ctx.writer` borrows the caller's stack local,
                 // live across the synchronous `for_each` call.
                 let writer = unsafe { &mut *ctx.writer };

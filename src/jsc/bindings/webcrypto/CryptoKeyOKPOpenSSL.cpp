@@ -34,59 +34,22 @@
 #include <openssl/curve25519.h>
 #include "CommonCryptoDERUtilities.h"
 #include "OpenSSLCryptoUniquePtr.h"
+#include <openssl/bytestring.h>
 #include <openssl/evp.h>
 #include <openssl/x509.h>
 
 namespace WebCore {
 
-// The OID scans below are hand-rolled byte compares and cannot tell a well-formed
-// key of another type from malformed bytes, so ask the real parser before a caller
-// reports "Invalid key type" rather than "Invalid keyData".
-static bool parsesAsSubjectPublicKeyInfo(const Vector<uint8_t>& keyData)
+static int namedCurveToNID(CryptoKeyOKP::NamedCurve namedCurve)
 {
-    const uint8_t* ptr = keyData.begin();
-    return !!EvpPKeyPtr(d2i_PUBKEY(nullptr, &ptr, keyData.size()));
-}
-
-// Decodes the DER length at keyData[index] and advances index past the length
-// bytes. Returns std::nullopt if the encoding is truncated or wider than size_t.
-static std::optional<size_t> readDERLength(const Vector<uint8_t>& keyData, size_t& index)
-{
-    if (index >= keyData.size())
-        return std::nullopt;
-    uint8_t firstByte = keyData[index++];
-    if (firstByte < MaxLengthInOneByte)
-        return firstByte;
-    size_t numBytes = firstByte & 0x7f;
-    if (!numBytes || numBytes > sizeof(size_t) || keyData.size() - index < numBytes)
-        return std::nullopt;
-    size_t length = 0;
-    for (size_t i = 0; i < numBytes; ++i)
-        length = (length << 8) | keyData[index++];
-    return length;
-}
-
-static bool parsesAsPrivateKeyInfo(const Vector<uint8_t>& keyData)
-{
-    const uint8_t* ptr = keyData.begin();
-    auto p8inf = PKCS8PrivKeyInfoPtr(d2i_PKCS8_PRIV_KEY_INFO(nullptr, &ptr, keyData.size()));
-    if (!p8inf)
-        return false;
-    return !!EvpPKeyPtr(EVP_PKCS82PKEY(p8inf.get()));
-}
-
-// The attributes [0] field of a OneAsymmetricKey is SET OF Attribute; each
-// element must be a well-formed Attribute, not just a bounded TLV.
-static bool parsesAsAttributes(std::span<const uint8_t> data)
-{
-    const uint8_t* ptr = data.data();
-    const uint8_t* end = ptr + data.size();
-    while (ptr < end) {
-        auto attribute = X509AttributePtr(d2i_X509_ATTRIBUTE(nullptr, &ptr, end - ptr));
-        if (!attribute)
-            return false;
+    switch (namedCurve) {
+    case CryptoKeyOKP::NamedCurve::X25519:
+        return EVP_PKEY_X25519;
+    case CryptoKeyOKP::NamedCurve::Ed25519:
+        return EVP_PKEY_ED25519;
     }
-    return true;
+    ASSERT_NOT_REACHED();
+    return EVP_PKEY_NONE;
 }
 
 bool CryptoKeyOKP::isPlatformSupportedCurve(NamedCurve namedCurve)
@@ -127,70 +90,26 @@ std::optional<CryptoKeyPair> CryptoKeyOKP::platformGeneratePair(CryptoAlgorithmI
 // For all of the OIDs, the parameters MUST be absent.
 RefPtr<CryptoKeyOKP> CryptoKeyOKP::importSpki(CryptoAlgorithmIdentifier identifier, NamedCurve namedCurve, Vector<uint8_t>&& keyData, bool extractable, CryptoKeyUsageBitmap usages, bool* keyTypeMismatch)
 {
-    // FIXME: We should use the underlying crypto library to import PKCS8 OKP keys.
-
-    // Read SEQUENCE
-    size_t index = 1;
-    if (keyData.size() < index + 1)
+    CBS cbs;
+    CBS_init(&cbs, keyData.begin(), keyData.size());
+    EvpPKeyPtr pkey(EVP_parse_public_key(&cbs));
+    if (!pkey || CBS_len(&cbs) != 0)
         return nullptr;
-
-    // Read length and SEQUENCE
-    // FIXME: Check length is 5 + 1 + 1 + 1 + keyByteSize.
-    index += bytesUsedToEncodedLength(keyData[index]) + 1;
-    if (keyData.size() < index + 1)
-        return nullptr;
-
-    // Read length
-    // FIXME: Check length is 5.
-    index += bytesUsedToEncodedLength(keyData[index]);
-    if (keyData.size() < index + 5)
-        return nullptr;
-
-    // Read OID
-    // FIXME: spec says this is 1 3 101 11X but WPT tests expect 6 3 43 101 11X.
-    auto reportKeyTypeMismatch = [&] {
-        if (keyTypeMismatch && parsesAsSubjectPublicKeyInfo(keyData))
+    if (EVP_PKEY_id(pkey.get()) != namedCurveToNID(namedCurve)) {
+        if (keyTypeMismatch)
             *keyTypeMismatch = true;
-    };
-    if (keyData[index++] != 6 || keyData[index++] != 3 || keyData[index++] != 43 || keyData[index++] != 101) {
-        reportKeyTypeMismatch();
         return nullptr;
     }
 
-    switch (namedCurve) {
-    case NamedCurve::X25519:
-        if (keyData[index++] != 110) {
-            reportKeyTypeMismatch();
-            return nullptr;
-        }
-        break;
-    case NamedCurve::Ed25519:
-        if (keyData[index++] != 112) {
-            reportKeyTypeMismatch();
-            return nullptr;
-        }
-        break;
-    };
-
-    // Read BIT STRING
-    if (keyData.size() < index + 2)
+    size_t rawLen = 0;
+    if (EVP_PKEY_get_raw_public_key(pkey.get(), nullptr, &rawLen) != 1)
         return nullptr;
-    if (keyData[index++] != 3)
+    Vector<uint8_t> raw(rawLen);
+    if (EVP_PKEY_get_raw_public_key(pkey.get(), raw.begin(), &rawLen) != 1)
         return nullptr;
+    raw.shrink(rawLen);
 
-    // Read length
-    // FIXME: Check length is keyByteSize + 1.
-    index += bytesUsedToEncodedLength(keyData[index]);
-
-    if (keyData.size() < index + 1)
-        return nullptr;
-
-    // Initial octet
-    if (!!keyData[index])
-        return nullptr;
-    ++index;
-
-    return create(identifier, namedCurve, CryptoKeyType::Public, std::span<const uint8_t> { keyData.begin() + index, keyData.size() - index }, extractable, usages);
+    return create(identifier, namedCurve, CryptoKeyType::Public, WTF::move(raw), extractable, usages);
 }
 
 constexpr uint8_t OKPOIDFirstByte = 6;
@@ -257,121 +176,31 @@ ExceptionOr<Vector<uint8_t>> CryptoKeyOKP::exportSpki() const
 // For all of the OIDs, the parameters MUST be absent.
 RefPtr<CryptoKeyOKP> CryptoKeyOKP::importPkcs8(CryptoAlgorithmIdentifier identifier, NamedCurve namedCurve, Vector<uint8_t>&& keyData, bool extractable, CryptoKeyUsageBitmap usages, bool* keyTypeMismatch)
 {
-    // FIXME: We should use the underlying crypto library to import PKCS8 OKP keys.
-
-    // Read SEQUENCE, whose encoded length must cover the rest of the input
-    if (keyData.isEmpty() || keyData[0] != SequenceMark)
+    // The PKCS8_PRIV_KEY_INFO template accepts both v1 PrivateKeyInfo and v2
+    // OneAsymmetricKey with the optional attributes [0] and publicKey [1]
+    // fields (oven-sh/boringssl#10), validating attribute bodies as OpenSSL does.
+    const uint8_t* ptr = keyData.begin();
+    auto p8 = PKCS8PrivKeyInfoPtr(d2i_PKCS8_PRIV_KEY_INFO(nullptr, &ptr, keyData.size()));
+    if (!p8 || ptr != keyData.end())
         return nullptr;
-    size_t index = 1;
-    auto sequenceLength = readDERLength(keyData, index);
-    if (!sequenceLength || keyData.size() - index != *sequenceLength)
+    EvpPKeyPtr pkey(EVP_PKCS82PKEY(p8.get()));
+    if (!pkey)
         return nullptr;
-    if (keyData.size() < index + 1)
-        return nullptr;
-
-    // Read version INTEGER: v1(0) or v2(1) per RFC 5958
-    if (keyData.size() - index < 1 || keyData[index++] != IntegerMark)
-        return nullptr;
-    auto versionLength = readDERLength(keyData, index);
-    if (!versionLength || *versionLength != 1 || keyData.size() - index < 1)
-        return nullptr;
-    uint8_t version = keyData[index++];
-    if (version > 1)
-        return nullptr;
-
-    auto reportKeyTypeMismatch = [&] {
-        if (keyTypeMismatch && parsesAsPrivateKeyInfo(keyData))
+    if (EVP_PKEY_id(pkey.get()) != namedCurveToNID(namedCurve)) {
+        if (keyTypeMismatch)
             *keyTypeMismatch = true;
-    };
-
-    // Read AlgorithmIdentifier SEQUENCE; its only content is the 5-byte OID
-    // (RFC 8410: the parameters MUST be absent)
-    if (keyData.size() - index < 1 || keyData[index++] != SequenceMark)
-        return nullptr;
-    auto algorithmLength = readDERLength(keyData, index);
-    if (!algorithmLength || *algorithmLength != 5 || keyData.size() - index < 5) {
-        // a well-formed key of another type lands here (RSA and EC
-        // AlgorithmIdentifiers are longer), so keep the richer error
-        reportKeyTypeMismatch();
         return nullptr;
     }
 
-    // Read OID
-    if (keyData[index++] != OKPOIDFirstByte || keyData[index++] != OKPOIDSecondByte || keyData[index++] != OKPOIDThirdByte || keyData[index++] != OKPOIDFourthByte) {
-        reportKeyTypeMismatch();
+    size_t rawLen = 0;
+    if (EVP_PKEY_get_raw_private_key(pkey.get(), nullptr, &rawLen) != 1)
         return nullptr;
-    }
-
-    switch (namedCurve) {
-    case NamedCurve::X25519:
-        if (keyData[index++] != OKPOIDX25519Byte) {
-            reportKeyTypeMismatch();
-            return nullptr;
-        }
-        break;
-    case NamedCurve::Ed25519:
-        if (keyData[index++] != OKPOIDEd25519Byte) {
-            reportKeyTypeMismatch();
-            return nullptr;
-        }
-        break;
-    };
-
-    // Read privateKey OCTET STRING, bounded by its encoded length: RFC 5958 v2
-    // OneAsymmetricKey may carry optional attributes [0] and publicKey [1]
-    // fields after it, which must not be consumed as key material.
-    if (keyData.size() < index + 1)
+    Vector<uint8_t> raw(rawLen);
+    if (EVP_PKEY_get_raw_private_key(pkey.get(), raw.begin(), &rawLen) != 1)
         return nullptr;
+    raw.shrink(rawLen);
 
-    if (keyData[index++] != 4)
-        return nullptr;
-
-    auto octetStringLength = readDERLength(keyData, index);
-    if (!octetStringLength || keyData.size() - index < *octetStringLength)
-        return nullptr;
-    size_t octetStringEnd = index + *octetStringLength;
-
-    // Read the wrapped CurvePrivateKey OCTET STRING; it must fill the outer
-    // OCTET STRING exactly.
-    if (octetStringEnd - index < 1 || keyData[index++] != 4)
-        return nullptr;
-
-    auto keyLength = readDERLength(keyData, index);
-    if (!keyLength || index > octetStringEnd || octetStringEnd - index != *keyLength)
-        return nullptr;
-
-    std::span<const uint8_t> privateKey { keyData.begin() + index, *keyLength };
-
-    // Read the optional trailing fields, attributes [0] then publicKey [1],
-    // each at most once and in that order. Anything else left in the SEQUENCE
-    // is malformed.
-    index = octetStringEnd;
-    if (index < keyData.size() && keyData[index] == 0xa0) {
-        ++index;
-        auto fieldLength = readDERLength(keyData, index);
-        if (!fieldLength || keyData.size() - index < *fieldLength)
-            return nullptr;
-        if (!parsesAsAttributes(std::span<const uint8_t> { keyData.begin() + index, *fieldLength }))
-            return nullptr;
-        index += *fieldLength;
-    }
-    if (index < keyData.size() && keyData[index] == 0x81) {
-        // publicKey [1] IMPLICIT BIT STRING; RFC 5958 requires v2 when present
-        if (version != 1)
-            return nullptr;
-        ++index;
-        auto fieldLength = readDERLength(keyData, index);
-        if (!fieldLength || keyData.size() - index < *fieldLength)
-            return nullptr;
-        // BIT STRING content starts with the unused-bits octet
-        if (*fieldLength < 1 || keyData[index] > 7)
-            return nullptr;
-        index += *fieldLength;
-    }
-    if (index != keyData.size())
-        return nullptr;
-
-    return create(identifier, namedCurve, CryptoKeyType::Private, privateKey, extractable, usages);
+    return create(identifier, namedCurve, CryptoKeyType::Private, WTF::move(raw), extractable, usages);
 }
 
 ExceptionOr<Vector<uint8_t>> CryptoKeyOKP::exportPkcs8() const

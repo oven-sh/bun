@@ -1800,3 +1800,46 @@ test("ECDSA should work", async () => {
 function randomProp() {
   return "prop" + crypto.randomUUID().replace(/-/g, "");
 }
+
+// https://github.com/oven-sh/bun/issues/35432 — BoringSSL rejected v2
+// OneAsymmetricKey (publicKey [1] / version 1) on both its template and CBS
+// parsers; oven-sh/boringssl#10 makes both tolerate it, matching OpenSSL.
+describe("createPrivateKey with RFC 5958 v2 OneAsymmetricKey", () => {
+  // RFC 8032 section 7.1 test vector 1
+  const seed = "9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60";
+  const pub = "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a";
+  const pubField = "812100" + pub;
+  const spki = Buffer.from("302a300506032b6570032100" + pub, "hex");
+  const der = (version: number, tail: string) => {
+    const body = "0201" + version.toString(16).padStart(2, "0") + "300506032b657004220420" + seed + tail;
+    return Buffer.from("30" + (body.length / 2).toString(16).padStart(2, "0") + body, "hex");
+  };
+
+  const accepts: [string, Buffer][] = [
+    ["v2 with attributes and publicKey", der(1, "a000" + pubField)],
+    ["v2 with publicKey only", der(1, pubField)],
+    ["v2 with attributes only", der(1, "a000")],
+    ["v2 with neither optional field", der(1, "")],
+    ["v1", der(0, "")],
+  ];
+  it.each(accepts)("accepts %s", (_name, key) => {
+    const privateKey = createPrivateKey({ key, format: "der", type: "pkcs8" });
+    expect(privateKey.asymmetricKeyType).toBe("ed25519");
+    const sig = sign(null, Buffer.from("OneAsymmetricKey"), privateKey);
+    expect(verify(null, Buffer.from("OneAsymmetricKey"), createPublicKey({ key: spki, format: "der", type: "spki" }), sig)).toBe(true);
+  });
+
+  const rejects: [string, Buffer][] = [
+    ["v1 with publicKey", der(0, pubField)],
+    ["version > v2", der(2, pubField)],
+    ["empty publicKey BIT STRING", der(1, "8100")],
+    ["publicKey BIT STRING with bad padding octet", der(1, "810108")],
+    ["duplicate publicKey", der(1, "a000" + "810100" + "810100")],
+    ["publicKey before attributes", der(1, "810100" + "a000")],
+    ["unknown trailing [2]", der(1, "a000" + "810100" + "820100")],
+    ["malformed attribute body", der(1, "a001ff")],
+  ];
+  it.each(rejects)("rejects %s", (_name, key) => {
+    expect(() => createPrivateKey({ key, format: "der", type: "pkcs8" })).toThrow();
+  });
+});

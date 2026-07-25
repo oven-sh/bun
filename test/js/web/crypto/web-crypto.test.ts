@@ -1078,9 +1078,6 @@ describe("OKP spki/pkcs8 cross-curve import", () => {
     });
   });
 
-  // RSA and EC AlgorithmIdentifiers are longer than the OKP one, so the pkcs8
-  // importer's length check trips before the OID compare; it must still report
-  // the type mismatch for these well-formed keys.
   it("RSA/EC pkcs8 imported as Ed25519 reports 'Invalid key type'", async () => {
     const rsa = await crypto.subtle.generateKey(
       { name: "RSASSA-PKCS1-v1_5", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
@@ -1103,10 +1100,9 @@ describe("OKP spki/pkcs8 cross-curve import", () => {
   });
 });
 
-// The hand-rolled pkcs8 parser consumed everything after the CurvePrivateKey
-// tag as key material, so the optional attributes [0] and publicKey [1] fields
-// of an RFC 5958 v2 OneAsymmetricKey made the seed 69 bytes and the import was
-// rejected. https://github.com/oven-sh/bun/issues/35432
+// https://github.com/oven-sh/bun/issues/35432 — the OKP pkcs8 importer used a
+// hand-rolled DER walker that mishandled RFC 5958 v2 OneAsymmetricKey; it now
+// goes through BoringSSL's PKCS8_PRIV_KEY_INFO template (oven-sh/boringssl#10).
 describe("OKP pkcs8 import of RFC 5958 v2 OneAsymmetricKey", () => {
   const fromHex = (hex: string) => Uint8Array.from(Buffer.from(hex, "hex"));
   const der = (...parts: string[]) => {

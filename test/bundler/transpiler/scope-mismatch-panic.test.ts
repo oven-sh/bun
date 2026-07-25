@@ -276,7 +276,7 @@ describe("dropped TypeScript class members discard scopes", () => {
       cmd: [
         bunExe(),
         "-e",
-        `process.stdout.write(new Bun.Transpiler({ loader: "tsx" }).transformSync(${JSON.stringify(source)}))`,
+        `process.stdout.write(new Bun.Transpiler({ loader: "tsx", tsconfig: { compilerOptions: { experimentalDecorators: true } } }).transformSync(${JSON.stringify(source)}))`,
       ],
       env: bunEnv,
       stderr: "pipe",

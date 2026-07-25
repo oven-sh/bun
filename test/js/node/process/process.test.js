@@ -1796,8 +1796,7 @@ describe("process property descriptors match Node.js", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stdout.trim()).toBe("pass");
-    expect(exitCode).toBe(0);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "pass", stderr: "", exitCode: 0 });
   });
 });
 

@@ -2658,14 +2658,10 @@ static JSValue constructProcessConfigObject(VM& vm, JSObject* processObject)
 #endif
 
     // Node deep-freezes the whole process.config tree.
-    // objectConstructorFreeze also makes the array's length non-writable,
-    // which JSObject::freeze does not.
-    JSC::objectConstructorFreeze(globalObject, shareableBuiltins);
-    RETURN_IF_EXCEPTION(scope, {});
-    targetDefaults->freeze(vm);
-    variables->freeze(vm);
-    config->freeze(vm);
-    RETURN_IF_EXCEPTION(scope, {});
+    for (JSC::JSObject* object : { static_cast<JSC::JSObject*>(shareableBuiltins), targetDefaults, variables, config }) {
+        JSC::objectConstructorFreeze(globalObject, object);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
     return config;
 }
 

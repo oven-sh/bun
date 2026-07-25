@@ -942,9 +942,7 @@ class Worker extends EventEmitter {
   #urlToRevoke = "";
   // threadId captured for cleaning up the messaging control port on close.
   #messagingThreadId: number | undefined = undefined;
-  // Node's Worker stops its public port while there are zero 'message' listeners, so
-  // messages queue natively and redeliver on the next listener add. Bun's native
-  // WebWorker has no stop(), so #onMessage buffers here and #scheduleFlush replays.
+  // Node's Worker stops its public port while zero 'message' listeners exist; the native WebWorker has no stop(), so buffer here.
   #bufferedMessages: unknown[] | null = null;
   #flushScheduled = false;
 
@@ -1297,6 +1295,8 @@ class Worker extends EventEmitter {
       this.#stdin.destroy();
     }
     this.#stdinPort?.close();
+    // Node drains-and-drops the public port on exit; nothing buffered may surface after 'exit'.
+    this.#bufferedMessages = null;
     this.#onExitPromise = e.code;
     this.emit("exit", e.code);
   }
@@ -1328,8 +1328,7 @@ class Worker extends EventEmitter {
 
   #onMessage(event: MessageEvent) {
     const data = event.data;
-    // With zero listeners (or earlier messages still buffered, to preserve FIFO),
-    // queue instead of emitting into the void.
+    // Zero listeners (or an earlier buffer still pending, for FIFO): queue instead of emitting into the void.
     if (this.#bufferedMessages !== null || this.listenerCount("message") === 0) {
       (this.#bufferedMessages ??= []).push(data);
       if (this.listenerCount("message") > 0) this.#scheduleFlush();
@@ -1339,8 +1338,7 @@ class Worker extends EventEmitter {
   }
 
   #scheduleFlush() {
-    // Called from the 'newListener' hook (which fires BEFORE the listener is attached)
-    // and from #onMessage; the listenerCount check lives in the microtask for both.
+    // 'newListener' fires BEFORE the listener is attached, so the listenerCount check lives in the microtask.
     if (this.#flushScheduled || this.#bufferedMessages === null) return;
     this.#flushScheduled = true;
     queueMicrotask(() => {
@@ -1357,8 +1355,7 @@ class Worker extends EventEmitter {
         try {
           this.emit("message", buf[i]);
         } catch (e) {
-          // Node delivers each queued message as its own task, so a throwing listener
-          // on buf[i] doesn't suppress buf[i+1..]. Re-queue the tail and rethrow.
+          // A throwing listener must not suppress later buffered messages: re-queue the tail and rethrow.
           if (i + 1 < buf.length) {
             this.#bufferedMessages = buf.slice(i + 1);
             this.#scheduleFlush();

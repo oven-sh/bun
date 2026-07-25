@@ -1,6 +1,10 @@
 import { describe, expect, test } from "bun:test";
+import path from "node:path";
 import privateKey from "../../third_party/jsonwebtoken/priv.pem" with { type: "text" };
 import publicKey from "../../third_party/jsonwebtoken/pub.pem" with { type: "text" };
+
+const privateKeyPath = path.join(import.meta.dir, "../../third_party/jsonwebtoken/priv.pem");
+const publicKeyPath = path.join(import.meta.dir, "../../third_party/jsonwebtoken/pub.pem");
 
 describe("Bun.serve SSL validations", () => {
   describe("tls option without a server identity", () => {
@@ -14,6 +18,8 @@ describe("Bun.serve SSL validations", () => {
       "ca": { ca: publicKey },
       "cert only": { cert: publicKey },
       "key only": { key: privateKey },
+      "certFile only": { certFile: publicKeyPath },
+      "keyFile only": { keyFile: privateKeyPath },
     };
 
     // An explicit `tls: { ... }` that has no complete cert+key pair must throw

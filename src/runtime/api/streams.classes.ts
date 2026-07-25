@@ -7,8 +7,7 @@ const rustPaths = {
   MultipartForm: "crate::webcore::multipart_form_loader::Source",
 };
 
-// Sources without a one-shot buffered representation: their prototypes
-// omit .text()/.json()/.arrayBuffer()/.blob()/.bytes().
+// Sources whose prototypes omit the buffered .text()/.json()/etc. shortcuts.
 const noBufferedShortcut = new Set(["File", "MultipartForm"]);
 
 function source(name) {

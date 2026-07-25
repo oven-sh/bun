@@ -4059,12 +4059,7 @@ impl FormDataContext<'_> {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// Streaming multipart serialization
-// ──────────────────────────────────────────────────────────────────────────
-
-/// Serialized `multipart/form-data` body whose file-backed parts are kept as
-/// references to be read in chunks at send time.
+/// Multipart body split so file-backed parts can be read in chunks at send time.
 pub struct MultipartSegments {
     pub segments: Vec<crate::webcore::multipart_form_loader::Segment>,
     pub content_type: Box<[u8]>,
@@ -4141,19 +4136,13 @@ impl MultipartSegmentBuilder<'_> {
                     }
                     let store = blob.store.get().as_ref().unwrap().clone();
                     match store.data_mut().tag() {
-                        store::DataTag::S3 => {
-                            // Not reachable: `needs_streaming_multipart` only selects
-                            // this path for file-backed stores. S3 parts fall through
-                            // to the buffered serializer.
-                        }
+                        // `needs_streaming_multipart` rejects S3; unreachable here.
+                        store::DataTag::S3 => {}
                         store::DataTag::File => {
                             let size = blob.size.get();
-                            // `resolve_size` leaves `seekable == None` when stat
-                            // failed (missing file) and `size == MAX_SIZE` for a
-                            // non-seekable fd (pipe/FIFO). Both mean we cannot
-                            // emit a valid Content-Length; fall back to the
-                            // buffered path so the synchronous read surfaces the
-                            // error (or drains the pipe) there.
+                            // `seekable == None` ⇒ stat failed; `size == MAX_SIZE`
+                            // ⇒ pipe/FIFO. Both lack a Content-Length: fall back
+                            // to the buffered path so the sync read handles it.
                             if size == MAX_SIZE || store.data_mut().as_file().seekable.is_none() {
                                 self.failed = true;
                                 return;
@@ -4182,10 +4171,8 @@ impl MultipartSegmentBuilder<'_> {
 }
 
 impl MultipartSegments {
-    /// Build the segment representation of a `FormData` multipart body.
-    /// Boundary generation, header formatting and escaping match
-    /// [`Blob::from_dom_form_data`]; the difference is that file-backed parts
-    /// are recorded as `Segment::File` instead of being read into memory.
+    /// Same wire encoding as [`Blob::from_dom_form_data`], but file-backed
+    /// parts are kept as `Segment::File` instead of read into memory.
     pub fn from_dom_form_data(
         global_this: &JSGlobalObject,
         form_data: &mut jsc::DOMFormData,
@@ -4265,8 +4252,7 @@ impl MultipartSegments {
         })
     }
 
-    /// True when streaming the body instead of buffering it is worthwhile:
-    /// at least one file-backed entry and no S3 or unsized (pipe/FIFO) entry.
+    /// At least one file-backed entry and no S3 entry.
     pub fn needs_streaming_multipart(form_data: &mut jsc::DOMFormData) -> bool {
         struct Probe {
             has_file: bool,

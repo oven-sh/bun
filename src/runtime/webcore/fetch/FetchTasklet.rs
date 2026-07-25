@@ -135,11 +135,8 @@ pub enum HTTPRequestBody {
     AnyBlob(AnyBlob),
     Sendfile(http::SendFile),
     ReadableStream(ReadableStreamStrong),
-    /// `FormData` body whose file-backed parts are streamed in chunks from
-    /// disk. The stream produces the full multipart encoding; `content_type`
-    /// carries the `multipart/form-data; boundary=...` value and
-    /// `content_length` the precomputed total so the request is sent with an
-    /// explicit `Content-Length` instead of chunked transfer-encoding.
+    /// `FormData` with file-backed parts streamed from disk. Carries the
+    /// precomputed length so the request uses `Content-Length`, not chunked.
     MultipartFormStream {
         stream: ReadableStreamStrong,
         content_type: Box<[u8]>,
@@ -187,8 +184,6 @@ impl HTTPRequestBody {
         }
     }
 
-    /// Borrow the streaming `ReadableStream` if this body is one of the
-    /// streaming variants.
     pub fn readable_stream(&self) -> Option<&ReadableStreamStrong> {
         match self {
             HTTPRequestBody::ReadableStream(s)

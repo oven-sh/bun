@@ -1,8 +1,5 @@
-//! ReadableStream source that serialises a `multipart/form-data` body as a
-//! sequence of in-memory byte runs and file-backed parts, reading each file
-//! in fixed-size chunks. Used as the `fetch()` request body when a
-//! `FormData` contains `Bun.file()` entries so the whole file is not loaded
-//! into memory at once.
+//! Streams a `multipart/form-data` body for `fetch()` so `Bun.file()` parts
+//! are read in chunks instead of buffered whole.
 
 use bun_jsc::JSValue;
 use bun_sys::{self as sys, Fd, FdExt as _};
@@ -15,9 +12,6 @@ use crate::webcore::streams;
 
 pub type Source = readable_stream::NewSource<MultipartFormLoader>;
 
-/// Chunk size requested from the JS pull loop. Sized so a single file part
-/// drains in a small number of pulls while the in-flight buffer stays well
-/// below the sizes that motivated streaming in the first place.
 const CHUNK_SIZE: blob::SizeType = 256 * 1024;
 
 pub enum Segment {
@@ -27,13 +21,10 @@ pub enum Segment {
     },
     File {
         store: StoreRef,
-        /// Absolute byte offset into the file for the next read (starts at the
-        /// Blob's `offset`, advanced on each `pread`).
+        /// Absolute `pread` offset; starts at the Blob's `offset`.
         pos: u64,
-        /// Bytes still to read from this segment.
         remain: u64,
-        /// Opened lazily on the first pull of this segment; closed when
-        /// `remain` reaches 0 or on cancel/deinit.
+        /// Opened lazily on first pull; closed when drained or on cancel.
         fd: Fd,
     },
 }
@@ -118,9 +109,7 @@ impl readable_stream::SourceContext for MultipartFormLoader {
                             return streams::Result::Err(streams::result::StreamError::Error(err));
                         }
                         Ok(0) => {
-                            // EOF before `remain` was satisfied (file shrank or stat
-                            // over-reported). Finish this segment short rather than
-                            // spinning on a 0-byte read.
+                            // EOF before `remain`: file shrank since stat. Stop short.
                             *remain = 0;
                         }
                         Ok(n) => {

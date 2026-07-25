@@ -573,6 +573,24 @@ describe("bundler", () => {
     cjs2esm: { unhandled: ["/lib.js"] },
     run: { stdout: "[2,1]" },
   });
+  // https://github.com/oven-sh/bun/issues/14939 — wasm-bindgen output shape
+  itBundled("cjs2esm/ModuleExportsStoredBeforeAssign", {
+    files: {
+      "/entry.js": /* js */ `
+        import { transform } from './wasm.js';
+        console.log(transform());
+      `,
+      "/wasm.js": /* js */ `
+        let imports = {};
+        imports['__wbindgen_placeholder__'] = module.exports;
+        module.exports.transform = function() {
+          return imports['__wbindgen_placeholder__'] === module.exports ? 'ok' : 'bad';
+        };
+      `,
+    },
+    cjs2esm: { unhandled: ["/wasm.js"] },
+    run: { stdout: "ok" },
+  });
   itBundled("cjs2esm/ModuleExportsComputedIndexDeoptimizes", {
     files: {
       "/entry.js": /* js */ `

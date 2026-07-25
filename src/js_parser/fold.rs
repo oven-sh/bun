@@ -342,17 +342,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 return None;
                             }
 
-                            // rewrite `module.exports` to `exports`
-                            //
-                            // `ESpecial::ModuleExports` is printed as `exports_ref`, so
-                            // this is a use of that symbol. When the parent expression is a
-                            // property access (`module.exports.foo`), the
-                            // `ESpecial::ModuleExports` arm below balances this with
-                            // `ignore_usage`. When it isn't (e.g.
-                            // `Object.assign(module.exports, ...)`), the unbalanced use
-                            // makes `uses_exports_ref` true and deoptimizes the CJS→ESM
-                            // unwrapping, keeping the module wrapped as CommonJS so
-                            // dynamically-added exports remain reachable.
+                            // rewrite `module.exports` to `exports` — counts as a use of exports_ref; the ESpecial::ModuleExports arm below balances this when the value is consumed by a property access.
                             let exports_ref = p.exports_ref;
                             p.record_usage(exports_ref);
                             return Some(Expr {
@@ -621,10 +611,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         return None;
                                     }
 
-                                    // Balance the `record_usage(exports_ref)` from the
-                                    // `module.exports` rewrite above: this property access
-                                    // consumes the `ESpecial::ModuleExports` value, so it
-                                    // is not an escaping use of the exports object.
+                                    // Balance record_usage(exports_ref) from the module.exports rewrite above; this property access consumes the value so it's not an escaping use.
                                     let exports_ref = p.exports_ref;
                                     p.ignore_usage(exports_ref);
 

@@ -1410,17 +1410,9 @@ describe("--env-file", () => {
     expect(exited).toBe(1);
   });
 
-  it("accepts --no-env-file without treating it as the package name", async () => {
-    const { x_dir, env } = setup();
-    await makeLocalBin(x_dir, "print-ok", `console.log("ok");`);
-
-    const [err, out, exited] = await run(x_dir, env, "--no-env-file", "print-ok");
-
-    expect(err).not.toContain("error:");
-    expect(out.trim()).toBe("ok");
-    expect(exited).toBe(0);
-  });
-
+  // Guard: the new --env-file arm must not consume flags that appear after the
+  // package name. This also held before the fix; it is here to catch a future
+  // parser change that forgets the maybe_package_name early-continue.
   it("--env-file after the package name is passed through, not consumed by bunx", async () => {
     const { x_dir, env } = setup();
 
@@ -1433,8 +1425,6 @@ describe("--env-file", () => {
       "should-be-passed-through",
     );
 
-    // bunx must stop consuming flags at the package name; "definitely-absent" is
-    // the package, and "--env-file should-be-passed-through" is passthrough.
     expect(err).not.toContain("should-be-passed-through");
     expect(err).toContain("Could not find an existing 'definitely-absent' binary to run.");
     expect(out).toHaveLength(0);

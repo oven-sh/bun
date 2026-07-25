@@ -115,8 +115,6 @@ impl Options {
                     ctx.debug.run_in_bun = true;
                 } else if positional == b"--no-install" {
                     opts.no_install = true;
-                } else if positional == b"--no-env-file" {
-                    ctx.args.disable_default_env_files = true;
                 } else if positional == b"--env-file" {
                     i += 1;
                     if i >= argv.len() {

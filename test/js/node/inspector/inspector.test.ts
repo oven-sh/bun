@@ -1011,6 +1011,84 @@ export { after };
   expect(await proc.exited).toBe(0);
 });
 
+// WebKit's FrontendRouter::sendResponse broadcasts every command response to
+// every connected FrontendChannel. When each adapter allocated backend command
+// ids from its own counter (so every connection's first command was backend
+// id 1), a response broadcast while two connections both had that id pending
+// satisfied both: one client received the other's Runtime.evaluate result.
+test("concurrent inspector.open() clients each receive their own Runtime.evaluate result", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `require("node:inspector").open(0, "127.0.0.1", false);
+       setInterval(() => {}, 60_000);`,
+    ],
+    env: injectedScriptChildEnv,
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+
+  const decoder = new TextDecoder();
+  const reader = proc.stderr.getReader();
+  let stderrText = "";
+  let wsUrl: string | undefined;
+  while (!wsUrl) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    stderrText += decoder.decode(value);
+    wsUrl ??= stderrText.match(/Debugger listening on (ws:\S+)/)?.[1];
+  }
+  reader.releaseLock();
+  expect(wsUrl).toBeDefined();
+
+  const CLIENTS = 3;
+  const ROUNDS = 8;
+  const misrouted: Array<{ round: number; client: number; expected: string; got: unknown }> = [];
+
+  for (let round = 0; round < ROUNDS; round++) {
+    const clients = await Promise.all(
+      Array.from({ length: CLIENTS }, () => {
+        const ws = new WebSocket(wsUrl!);
+        const result = Promise.withResolvers<unknown>();
+        ws.onmessage = event => {
+          const parsed = JSON.parse(String(event.data));
+          if (parsed.id === 1) result.resolve(parsed.result?.result?.value);
+        };
+        ws.onerror = error => result.reject(error);
+        return new Promise<{ ws: WebSocket; result: Promise<unknown> }>((resolve, reject) => {
+          ws.onopen = () => resolve({ ws, result: result.promise });
+          ws.onerror = error => reject(error);
+        });
+      }),
+    );
+
+    // Each adapter allocates its first backend command id here. Send every
+    // client's request before awaiting any reply so the same id is in flight
+    // on every connection at once; the busy-loop keeps the first evaluate on
+    // the inspected thread long enough for the rest to queue behind it.
+    for (let k = 0; k < CLIENTS; k++) {
+      clients[k].ws.send(
+        JSON.stringify({
+          id: 1,
+          method: "Runtime.evaluate",
+          params: { expression: `(() => { for (let i = 0; i < 5e5; i++); return 'secret-${round}-${k}'; })()` },
+        }),
+      );
+    }
+
+    const received = await Promise.all(clients.map(client => client.result));
+    for (let k = 0; k < CLIENTS; k++) {
+      const expected = `secret-${round}-${k}`;
+      if (received[k] !== expected) misrouted.push({ round, client: k, expected, got: received[k] });
+      clients[k].ws.close();
+    }
+  }
+
+  proc.kill();
+  expect(misrouted).toEqual([]);
+}, 30_000);
+
 test("disconnect does not clobber a console method reassigned by user code", () => {
   const session = new inspector.Session();
   session.connect();

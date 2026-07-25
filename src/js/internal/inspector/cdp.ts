@@ -91,10 +91,20 @@ const CONSOLE_LEVEL_MAP: Record<string, string> = {
   debug: "debug",
 };
 
+// Backend command ids are allocated from one counter shared by every adapter.
+// All adapters talk to the same JSGlobalObjectInspectorController, and WebKit's
+// FrontendRouter::sendResponse() broadcasts each response to every connected
+// FrontendChannel. With a per-adapter counter two adapters would both have a
+// pending entry for the same id, so a broadcast response would satisfy both and
+// one client would receive the other's Runtime.evaluate result. A single id
+// space means a broadcast response only ever matches its originating adapter's
+// #pending map. All adapters run in the debugger thread's realm, so module
+// state is shared.
+let nextBackendId = 1;
+
 class InspectorCDPAdapter {
   #writeToBackend: (message: string) => void;
   #writeToClient: (message: string) => void;
-  #nextBackendId = 1;
   #nextExceptionId = 1;
   #pending = new Map<
     number,
@@ -176,7 +186,7 @@ class InspectorCDPAdapter {
     clientMethod = method,
     onResult?: (result: AnyObject, error?: AnyObject) => void,
   ): void {
-    const id = this.#nextBackendId++;
+    const id = nextBackendId++;
     this.#pending.$set(id, { clientId, method: clientMethod, onResult });
     this.#writeToBackend(JSON.stringify(params === undefined ? { id, method } : { id, method, params }));
   }

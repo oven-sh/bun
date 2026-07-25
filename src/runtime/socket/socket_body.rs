@@ -1557,8 +1557,18 @@ impl<const SSL: bool> NewSocket<SSL> {
         if let Some(handlers) = self.handlers.get() {
             Self::handlers_set_cached(value, global, handlers.cell());
         }
-        // Hold strong until the socket is closed / marked inactive.
-        self.this_value.with_mut(|r| r.set_strong(value, global));
+        if self.socket.get().is_detached() {
+            // A detached handle (node:net's pre-connect `newDetachedSocket`)
+            // has no native events that could outlive the JS references to the
+            // wrapper, and nothing ever runs mark_inactive() on it — a Strong
+            // here is permanent and pins every aborted-before-connect socket
+            // forever. Hold it weak; the connect paths upgrade
+            // (connect_finish / mark_active) once native events are possible.
+            self.this_value.with_mut(|r| r.set_weak(value));
+        } else {
+            // Hold strong until the socket is closed / marked inactive.
+            self.this_value.with_mut(|r| r.set_strong(value, global));
+        }
         value
     }
 

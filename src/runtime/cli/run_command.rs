@@ -1843,18 +1843,17 @@ impl RunCommand {
                 &temp_path_buffer[..len as usize],
             );
 
-            const FILE_NAME: &str = const_format::concatcp!(
-                "bun-node",
-                if Environment::GIT_SHA_SHORT.len() > 0 {
-                    const_format::concatcp!("-", Environment::GIT_SHA_SHORT)
-                } else {
-                    ""
-                },
-                "\\node.exe"
-            );
+            let uid = sys::windows::user_unique_id();
             let conv_len = converted.len();
-            let total = conv_len + FILE_NAME.len();
-            target_path_buffer[conv_len..total].copy_from_slice(FILE_NAME.as_bytes());
+            let total = {
+                let mut cur = std::io::Cursor::new(&mut target_path_buffer[conv_len..]);
+                write!(&mut cur, "bun-node-{uid}").expect("PathBuffer");
+                if Environment::GIT_SHA_SHORT.len() > 0 {
+                    write!(&mut cur, "-{}", Environment::GIT_SHA_SHORT).expect("PathBuffer");
+                }
+                cur.write_all(b"\\node.exe").expect("PathBuffer");
+                conv_len + cur.position() as usize
+            };
             target_path_buffer[total] = 0;
 
             // Park the

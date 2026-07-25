@@ -1161,7 +1161,9 @@ describe.concurrent("bun run", () => {
     expect({ stderr, isBun, shim, exitCode }).toEqual({
       stderr: expect.any(String),
       isBun: true,
-      shim: expect.stringContaining(`bun-node-${uid}`),
+      // `bun-node-<uid>` or `bun-node-<uid>-<sha|debug>`; anchored so a sha
+      // that happens to start with the uid's digits does not match.
+      shim: expect.stringMatching(new RegExp(`^bun-node-${uid}(?:-|$)`)),
       exitCode: 0,
     });
   });

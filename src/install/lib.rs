@@ -411,8 +411,7 @@ impl RunCommand {
     const SHELLS_TO_SEARCH: &'static [&'static [u8]] = &[b"bash", b"sh", b"zsh"];
 
     /// `/tmp/bun-node-<uid>-<sha>` (or debug variant). Windows builds compute
-    /// the path at runtime via `GetTempPathW` (already per-user), so this is
-    /// POSIX-only.
+    /// the path at runtime under `GetTempPathW`, so this helper is POSIX-only.
     ///
     /// The uid component keeps two users on the same host from colliding on a
     /// single 0700 directory (issue #7504); the sha keeps two bun versions from
@@ -582,13 +581,6 @@ impl RunCommand {
 
             let dir = Self::bun_node_dir();
 
-            #[cfg(bun_debug)]
-            {
-                // Debug-only cleanup; failures are ignored. The EEXIST branch
-                // below already handles a stale dir.
-                let _ = bun_sys::delete_tree_absolute(dir.as_bytes());
-            }
-
             // `dir` is at most "/private/tmp/bun-node-<u32>-<short sha>" ≈ 48
             // bytes, so `dir.len() + "/node\0".len()` comfortably fits 128.
             let mut link_buf = [0u8; 128];
@@ -682,22 +674,30 @@ impl RunCommand {
 
             target_path_buffer[..prefix.len()].copy_from_slice(prefix);
 
-            // The dir name is ASCII-only, so widen the const `&str` byte-by-
-            // byte into a small stack buffer at runtime (Rust macros require a
-            // single string *literal* token, which `concatcp!` doesn't yield).
-            let dir_name_str: &str = if bun_core::env::IS_DEBUG {
-                "bun-node-debug"
-            } else if bun_core::env::GIT_SHA_SHORT.is_empty() {
-                "bun-node"
-            } else {
-                const_format::concatcp!("bun-node-", bun_core::env::GIT_SHA_SHORT)
+            // `GetTempPathW` is usually per-user but is not guaranteed to be
+            // (it falls through to the Windows dir, and services may share a
+            // temp root), so key the dir on `user_unique_id()` the same way
+            // bunx does.
+            let uid = win::user_unique_id();
+            let mut dir_name_u8 = [0u8; 64];
+            let dir_name_len = {
+                use std::io::Write as _;
+                let mut cur = std::io::Cursor::new(&mut dir_name_u8[..]);
+                write!(&mut cur, "bun-node-{uid}").expect("fits 64 bytes");
+                if bun_core::env::IS_DEBUG {
+                    write!(&mut cur, "-debug").expect("fits 64 bytes");
+                } else if !bun_core::env::GIT_SHA_SHORT.is_empty() {
+                    write!(&mut cur, "-{}", bun_core::env::GIT_SHA_SHORT).expect("fits 64 bytes");
+                }
+                cur.position() as usize
             };
+            // The dir name is ASCII-only, so widen byte-by-byte.
             let mut dir_name_buf = [0u16; 64];
-            for (i, b) in dir_name_str.bytes().enumerate() {
+            for (i, &b) in dir_name_u8[..dir_name_len].iter().enumerate() {
                 debug_assert!(b < 0x80, "dir_name is ASCII-only");
                 dir_name_buf[i] = b as u16;
             }
-            let dir_name: &[u16] = &dir_name_buf[..dir_name_str.len()];
+            let dir_name: &[u16] = &dir_name_buf[..dir_name_len];
             target_path_buffer[prefix.len() + len..][..dir_name.len()].copy_from_slice(dir_name);
             let dir_slice_len = prefix.len() + len + dir_name.len();
 

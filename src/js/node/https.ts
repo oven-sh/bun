@@ -8,7 +8,7 @@ const net = require("node:net");
 const { urlToHttpOptions } = require("internal/url");
 const { kEmptyObject, once } = require("internal/shared");
 const { validateObject } = require("internal/validators");
-const { kProxyConfig, checkShouldUseProxy, kWaitForProxyTunnel } = require("internal/http");
+const { kProxyConfig, checkShouldUseProxy, kWaitForProxyTunnel, isTlsSymbol } = require("internal/http");
 const { validateHeaderValue } = require("node:_http_common");
 
 const ArrayPrototypeShift = Array.prototype.shift;
@@ -516,6 +516,10 @@ function createServer(options, requestListener) {
     // ALPN requests are always answered with http/1.1.
     options.ALPNProtocols = ["http/1.1"];
   }
+  // Node's https.Server is always a TLS listener, even without key/cert: the
+  // handshake fails closed (sslv3 alert handshake failure) rather than
+  // downgrading to plaintext. The Server constructor keys TLS off this symbol.
+  options[isTlsSymbol] = true;
   const server = http.createServer(options, requestListener);
   const optionsALPNProtocols = options.ALPNProtocols;
   if (optionsALPNProtocols) {

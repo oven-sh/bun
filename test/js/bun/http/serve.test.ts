@@ -2353,9 +2353,11 @@ describe.concurrent("should error with invalid options", async () => {
         tls: [
           {
             key: "lkwejflkwjeflkj",
+            cert: "lkwejflkwjeflkj",
           },
           {
             key: "lkwjefhwlkejfklwj",
+            cert: "lkwjefhwlkejfklwj",
           },
         ],
       });

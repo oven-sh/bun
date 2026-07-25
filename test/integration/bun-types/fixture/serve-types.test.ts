@@ -293,10 +293,8 @@ test(
     tls: {},
   },
   {
-    overrideExpectBehavior: server => {
-      expect(server.hostname).toBeUndefined();
-      expect(server.port).toBeUndefined();
-      expect(server.url.toString()).toStartWith("unix://");
+    onConstructorFailure: error => {
+      expect(error.message).toContain('tls option requires both "key" and "cert"');
     },
   },
 );

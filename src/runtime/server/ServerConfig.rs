@@ -1369,7 +1369,25 @@ impl ServerConfig {
             }
         }
 
+        // `node:http`'s Server wrapper always passes `onNodeHTTPRequest`, and its
+        // https flavour must match Node's fail-closed behaviour (a TLS listener
+        // whose every handshake alerts) when the user supplied no key/cert.
+        // Direct `Bun.serve` callers get a synchronous TypeError instead so an
+        // empty/tuning-only `tls` object can never quietly downgrade to
+        // plaintext or stand up a cert-less `https:` listener.
+        let is_node_http = !args.on_node_http_request.is_empty();
+        let require_identity = |global: &JSGlobalObject, cfg: Option<&SSLConfig>| -> JsResult<()> {
+            if is_node_http || cfg.is_some_and(SSLConfig::has_identity_material) {
+                return Ok(());
+            }
+            Err(global.throw_invalid_arguments(format_args!(
+                "tls option requires both \"key\" and \"cert\" (or \"keyFile\" and \"certFile\")",
+            )))
+        };
+
+        let mut saw_tls_key = false;
         if let Some(tls) = arg.get_truthy(global, "tls")? {
+            saw_tls_key = true;
             if tls.is_falsey() {
                 args.ssl_config = None;
             } else if tls.js_type().is_array() {
@@ -1388,6 +1406,7 @@ impl ServerConfig {
                                 continue;
                             }
                         };
+                        require_identity(global, Some(&ssl_config))?;
 
                         if args.ssl_config.is_none() {
                             args.ssl_config = Some(ssl_config);
@@ -1407,12 +1426,15 @@ impl ServerConfig {
                     }
                 }
             } else {
-                if let Some(ssl_config) = SSLConfig::from_js(vm, global, tls)? {
-                    args.ssl_config = Some(ssl_config);
-                }
+                let parsed = SSLConfig::from_js(vm, global, tls)?;
                 if global.has_exception() {
                     return Err(JsError::Thrown);
                 }
+                require_identity(global, parsed.as_ref())?;
+                // `require_identity` only lets `None`/no-identity through on the
+                // node:https path; arm a cert-less context there so handshakes
+                // fail-closed instead of downgrading to plaintext.
+                args.ssl_config = Some(parsed.unwrap_or_else(SSLConfig::zero));
             }
         }
         if global.has_exception() {
@@ -1421,9 +1443,11 @@ impl ServerConfig {
 
         // @compatibility Bun v0.x - v0.2.1
         // this used to be top-level, now it's "tls" object
-        if args.ssl_config.is_none() {
+        if args.ssl_config.is_none() && !saw_tls_key {
             if let Some(ssl_config) = SSLConfig::from_js(vm, global, arg)? {
-                args.ssl_config = Some(ssl_config);
+                if ssl_config.has_identity_material() {
+                    args.ssl_config = Some(ssl_config);
+                }
             }
             if global.has_exception() {
                 return Err(JsError::Thrown);

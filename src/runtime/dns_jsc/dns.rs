@@ -321,8 +321,6 @@ unsafe extern "C" {
     ) -> i32;
 }
 
-/// Node.js's `ada::idna::to_ascii` step before `ares_query`/`uv_getaddrinfo`.
-/// ASCII names pass through; IDNA failure yields an empty slice c-ares rejects.
 fn hostname_to_ascii<'a>(name: &'a [u8], buf: &'a mut [u8; 1024]) -> &'a [u8] {
     if strings::first_non_ascii(name).is_none() {
         return name;

@@ -3427,7 +3427,7 @@ function standaloneRegister(entry: StandaloneEntry) {
 // Runs root before hooks, the queued entries, then root after hooks.
 // Returns the root hook failure (if any) so callers fail the run cleanly
 // instead of destroying the stream.
-async function executeStandaloneQueue(root: TestNode, signal?: AbortSignal): Promise<unknown> {
+async function executeStandaloneQueue(root: TestNode): Promise<unknown> {
   let hookError: unknown;
   // Node's root is a Test, not a Suite; hookArgFor() hands root a TestContext.
   const rootArg = hookArgFor(root);
@@ -3443,8 +3443,7 @@ async function executeStandaloneQueue(root: TestNode, signal?: AbortSignal): Pro
   if (hookError === undefined) {
     // Entries can register more entries (rare); index loop tolerates growth.
     for (let i = 0; i < standaloneQueue.length; i++) {
-      if (signal?.aborted) break;
-      await runStandaloneEntry(standaloneQueue[i], signal);
+      await runStandaloneEntry(standaloneQueue[i]);
     }
   } else {
     // Node's root Test.postRun cancels each pending subtest; matches the
@@ -3642,7 +3641,7 @@ async function runFilesInProcess(opts: ReturnType<typeof validateRunOptions>, re
       standaloneQueue.push(...pruned);
     }
 
-    const hookError = await executeStandaloneQueue(callerRoot, signal);
+    const hookError = await executeStandaloneQueue(callerRoot);
     if (hookError !== undefined) {
       console.error(hookError);
       counts.failed++;
@@ -3760,7 +3759,7 @@ function standaloneSinkImpl(
   republishChildEvent({ type, data }, Bun.main, stream, counts, numbering);
 }
 
-async function runStandaloneEntry(entry: StandaloneEntry, signal?: AbortSignal) {
+async function runStandaloneEntry(entry: StandaloneEntry) {
   const { node, fn, isSuite, mode, importError } = entry;
   activeRunFile = node.filePath ?? null;
   if (importError !== undefined) {
@@ -3835,8 +3834,7 @@ async function runStandaloneEntry(entry: StandaloneEntry, signal?: AbortSignal) 
       // Abort cancels the suite's remaining children (node's recursive
       // #cancel()), matching the setupFailed arm so the plan count and
       // suite completion stay consistent.
-      if (signal?.aborted) reportCancelledNode(child.node);
-      else await runStandaloneEntry(child, signal);
+      await runStandaloneEntry(child);
     }
   }
   for (const hook of node.hooks.after) {

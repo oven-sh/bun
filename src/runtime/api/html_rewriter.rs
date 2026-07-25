@@ -906,19 +906,16 @@ impl BufferOutputSink {
             scope.apply(vm);
         }
 
-        let deliver_async =
-            |e: &lol_html::errors::RewritingError, captured: &core::cell::Cell<JSValue>| {
-                let err = if captured.get().is_empty() {
-                    webcore::body::ValueError::Message(lol_err_string(e))
-                } else {
-                    webcore::body::ValueError::JSValue(StrongOptional::create(
-                        captured.get(),
-                        &global,
-                    ))
-                };
-                // SAFETY: response kept alive by response_value Strong.
-                let _ = unsafe { (*response).get_body_value() }.to_error_instance(err, &global);
+        let deliver_async = |e: &lol_html::errors::RewritingError,
+                             captured: &core::cell::Cell<JSValue>| {
+            let err = if captured.get().is_empty() {
+                webcore::body::ValueError::Message(lol_err_string(e))
+            } else {
+                webcore::body::ValueError::JSValue(StrongOptional::create(captured.get(), &global))
             };
+            // SAFETY: response kept alive by response_value Strong.
+            let _ = unsafe { (*response).get_body_value() }.to_error_instance(err, &global);
+        };
 
         // SAFETY: rewriter heap-allocated by init(), not yet freed.
         if let Err(e) = unsafe { (*rewriter).write(bytes) } {

@@ -9542,12 +9542,44 @@ impl ReaddirEntry for Buffer {
     }
 }
 
+// Lossless `E` ↔ `SystemErrno` cast. On POSIX they are the same type; on
+// Windows they are distinct `#[repr(u16)]` enums with identical discriminant
+// sets (see `SystemErrno::to_e`).
+#[inline]
+const fn e_as_system_errno(e: E) -> SystemErrno {
+    #[cfg(windows)]
+    {
+        SystemErrno::from_raw(e as u16)
+    }
+    #[cfg(not(windows))]
+    {
+        e
+    }
+}
+#[inline]
+const fn system_errno_as_e(e: SystemErrno) -> E {
+    #[cfg(windows)]
+    {
+        e.to_e()
+    }
+    #[cfg(not(windows))]
+    {
+        e
+    }
+}
+
 // There are three distinct error→errno tables: rmdir-recursive,
 // rm-recursive, and rm non-recursive unlink/rmdir. An earlier draft
 // collapsed them into one, which silently mapped AccessDenied→EPERM for `rm`
 // (Node returns EACCES there) and widened the narrow table. Split back out
 // per call site.
 fn map_anyerror_to_errno(err: &crate::Error) -> E {
+    // `dt_err` packs any errno without a named variant as `Sys(errno)` so the
+    // round-trip is lossless; unwrap it here before falling back to the name
+    // table.
+    if let crate::Error::Sys(e) = err {
+        return system_errno_as_e(*e);
+    }
     match err.name() {
         "AccessDenied" => E::EPERM,
         "PermissionDenied" => E::EPERM,
@@ -9560,7 +9592,9 @@ fn map_anyerror_to_errno(err: &crate::Error) -> E {
         "ReadOnlyFileSystem" => E::EROFS,
         "FileSystem" => E::EIO,
         "FileBusy" | "DeviceBusy" => E::EBUSY,
+        "DirNotEmpty" => E::ENOTEMPTY,
         "NotDir" => E::ENOTDIR,
+        "NoDevice" => E::ENODEV,
         "InvalidUtf8" | "InvalidWtf8" | "BadPathName" => E::EINVAL,
         "FileNotFound" => E::ENOENT,
         "IsDir" => E::EISDIR,
@@ -9571,6 +9605,9 @@ fn map_anyerror_to_errno(err: &crate::Error) -> E {
 // `rm` recursive (zig_delete_tree) — same shape as the rmdir table above except
 // AccessDenied maps to EACCES, not EPERM.
 fn map_anyerror_to_errno_rm_tree(err: &crate::Error) -> E {
+    if let crate::Error::Sys(e) = err {
+        return system_errno_as_e(*e);
+    }
     match err.name() {
         "AccessDenied" => E::EACCES,
         "PermissionDenied" => E::EPERM,
@@ -9585,6 +9622,7 @@ fn map_anyerror_to_errno_rm_tree(err: &crate::Error) -> E {
         "FileSystem" => E::EIO,
         "FileBusy" | "DeviceBusy" => E::EBUSY,
         "NotDir" => E::ENOTDIR,
+        "NoDevice" => E::ENODEV,
         "InvalidUtf8" | "InvalidWtf8" | "BadPathName" => E::EINVAL,
         "FileNotFound" => E::ENOENT,
         "IsDir" => E::EISDIR,
@@ -9660,7 +9698,10 @@ fn dt_err(errno: E) -> crate::Error {
         E::EINVAL => "BadPathName",
         E::EFBIG => "FileTooBig",
         E::ENODEV => "NoDevice",
-        _ => "Unexpected",
+        // Any errno without a named variant is carried raw so the caller's
+        // `map_anyerror_to_errno*` returns it unchanged instead of EFAULT
+        // (e.g. ENOSPC from overlayfs whiteout writes, EDQUOT, ESTALE, ETXTBSY).
+        _ => return crate::Error::Sys(e_as_system_errno(errno)),
     })
 }
 

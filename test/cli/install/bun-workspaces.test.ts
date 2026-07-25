@@ -2128,6 +2128,45 @@ registry = "${verdaccio.registryUrl()}"
 
     expect(lockfile.packages.find(p => p.id === barDependency?.package_id).resolution.tag).toEqual("npm");
   });
+
+  test.concurrent("linkWorkspacePackages = false with unknown dist-tag fails (no workspace fallback)", async () => {
+    using ctx = await setupTest();
+    const { packageDir, env } = ctx;
+    const bunfigPath = await setupWorkspace(packageDir);
+    await Promise.all([
+      write(
+        bunfigPath,
+        `
+[install]
+linkWorkspacePackages = false
+registry = "${verdaccio.registryUrl()}"
+`,
+      ),
+      write(
+        join(packageDir, "packages", "bar", "package.json"),
+        JSON.stringify({
+          name: "bar",
+          version: "1.0.0",
+          dependencies: {
+            "no-deps": "kjwoehcojrgjoj",
+          },
+        }),
+      ),
+    ]);
+
+    const { stderr, exited } = spawn({
+      cmd: [bunExe(), `-c=${bunfigPath}`, "install"],
+      cwd: packageDir,
+      stdout: "ignore",
+      stderr: "pipe",
+      env,
+    });
+
+    const err = await stderr.text();
+    expect(err).toContain("kjwoehcojrgjoj");
+    expect(err).toContain("failed to resolve");
+    expect(await exited).not.toBe(0);
+  });
 });
 
 test("matching workspace devDependency and npm peerDependency", async () => {

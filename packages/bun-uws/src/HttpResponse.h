@@ -96,6 +96,37 @@ public:
         getHttpResponseData()->state |= HttpResponseData<SSL>::HTTP_WROTE_DATE_HEADER;
     }
 
+    /* Uncorks a corked end, then closes if the response is done and flagged
+     * close; returns true when the socket was closed. While the parser is
+     * running on THIS socket, the close defers to onData's tail so the body
+     * is still consumed and validated. */
+    bool uncorkAndCloseIfNeeded(HttpResponseData<SSL> *httpResponseData, bool keepCorked) {
+        if (Super::isCorked()) {
+            if (keepCorked) {
+                return false;
+            }
+            this->uncork();
+        }
+
+        if (httpResponseData->isParsingHttp) {
+            return false;
+        }
+
+        if (httpResponseData->shouldCloseConnection()) {
+            if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) == 0) {
+                if (((AsyncSocket<SSL> *) this)->hasFullyDrained()) {
+                    ((AsyncSocket<SSL> *) this)->shutdown();
+                    /* We need to force close after sending FIN since we want to hinder
+                     * clients from keeping to send their huge data */
+                    ((AsyncSocket<SSL> *) this)->close();
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
     /* Returns true on success, indicating that it might be feasible to write more data.
      * Will start timeout if stream reaches totalSize or write failure.
      * keepCorked: if true, skip the trailing uncork so the caller can batch
@@ -126,12 +157,10 @@ public:
             /* We can only write the header once */
             if (!(httpResponseData->state & (HttpResponseData<SSL>::HTTP_END_CALLED))) {
 
-                /* HTTP 1.1 must send this back unless the client already sent it to us.
-                * It is a connection close when either of the two parties say so but the
-                * one party must tell the other one so.
-                *
-                * This check also serves to limit writing the header only once. */
-                if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE) == 0 && !(httpResponseData->state & (HttpResponseData<SSL>::HTTP_WRITE_CALLED))) {
+                /* RFC 9112 9.6: a server that closes SHOULD send the close
+                 * connection option. Skipped once the body started or when the
+                 * application already wrote its own Connection header. */
+                if (!(httpResponseData->state & (HttpResponseData<SSL>::HTTP_WRITE_CALLED | HttpResponseData<SSL>::HTTP_WROTE_CONNECTION_HEADER))) {
                     writeHeader("Connection", "close");
                 }
 
@@ -187,21 +216,8 @@ public:
             }
             httpResponseData->markDone(this);
 
-            /* We need to check if we should close this socket here now */
-            if (!Super::isCorked()) {
-                if (httpResponseData->shouldCloseConnection()) {
-                    if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) == 0) {
-                        if (((AsyncSocket<SSL> *) this)->hasFullyDrained()) {
-                            ((AsyncSocket<SSL> *) this)->shutdown();
-                            /* We need to force close after sending FIN since we want to hinder
-                                * clients from keeping to send their huge data */
-                            ((AsyncSocket<SSL> *) this)->close();
-                            return true;
-                        }
-                    }
-                }
-            } else if (!keepCorked) {
-                this->uncork();
+            if (uncorkAndCloseIfNeeded(httpResponseData, keepCorked)) {
+                return true;
             }
 
             /* tryEnd can never fail when in chunked mode, since we do not have tryWrite (yet), only write */
@@ -252,22 +268,7 @@ public:
             /* Remove onAborted function if we reach the end */
             if (httpResponseData->offset == totalSize) {
                 httpResponseData->markDone(this);
-
-                /* We need to check if we should close this socket here now */
-                if (!Super::isCorked()) {
-                    if (httpResponseData->shouldCloseConnection()) {
-                        if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) == 0) {
-                            if (((AsyncSocket<SSL> *) this)->hasFullyDrained()) {
-                                ((AsyncSocket<SSL> *) this)->shutdown();
-                                /* We need to force close after sending FIN since we want to hinder
-                                * clients from keeping to send their huge data */
-                                ((AsyncSocket<SSL> *) this)->close();
-                            }
-                        }
-                    }
-                }  else if (!keepCorked) {
-                    this->uncork();
-                }
+                uncorkAndCloseIfNeeded(httpResponseData, keepCorked);
             }
 
             return success;
@@ -372,6 +373,8 @@ public:
         BackPressure backpressure(std::move(((AsyncSocketData<SSL> *) responseData)->buffer));
 
         auto* socketData = responseData->socketData;
+        /* Captured before ~HttpResponseData and adopt (both invalidate it). */
+        bool isParsingHttp = responseData->isParsingHttp;
         HttpContextData<SSL> *httpContextData = httpContext->getSocketContextData();
 
         /* Destroy HttpResponseData (the IsNodeHttp=true type on node:http
@@ -412,7 +415,7 @@ public:
         }
 
         /* We should only mark this if inside the parser; if upgrading "async" we cannot set this */
-        if (httpContextData->flags.isParsingHttp) {
+        if (isParsingHttp) {
             /* We need to tell the Http parser that we changed socket */
             httpContextData->upgradedWebSocket = webSocket;
         }

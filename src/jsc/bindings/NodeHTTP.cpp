@@ -830,12 +830,14 @@ static void writeFetchHeadersToUWSResponse(WebCore::FetchHeaders& headers, uWS::
             data->state |= uWS::HttpResponseData<isSSL>::HTTP_WROTE_TRANSFER_ENCODING_HEADER;
         }
 
-        // RFC 9112 §9.6: a server that sends the "close" connection option MUST
-        // close the connection after the response. Mark the uWS state so
-        // end()/tryEnd() shut the socket down instead of returning it to the
-        // keep-alive pool.
-        if (header.key == WebCore::HTTPHeaderName::Connection && connectionValueHasClose(value)) {
-            data->state |= uWS::HttpResponseData<isSSL>::HTTP_CONNECTION_CLOSE;
+        if (header.key == WebCore::HTTPHeaderName::Connection) {
+            // Prevent automatic Connection: close insertion when user provides one
+            data->state |= uWS::HttpResponseData<isSSL>::HTTP_WROTE_CONNECTION_HEADER;
+            // RFC 9112 §9.6: a server that sends the "close" connection option
+            // MUST close after the response.
+            if (connectionValueHasClose(value)) {
+                data->state |= uWS::HttpResponseData<isSSL>::HTTP_CONNECTION_CLOSE;
+            }
         }
         writeResponseHeader<isSSL>(res, name, value);
     }
@@ -941,8 +943,10 @@ static bool NodeHTTPServer__writeHead(
 
     // node:http's ServerResponse owns the Date header entirely (it honors
     // res.sendDate / removeHeader("date") in JS), so never let uWS write its
-    // own Date header for these responses.
-    response->getHttpResponseData()->state |= uWS::HttpResponseData<isSSL>::HTTP_WROTE_DATE_HEADER;
+    // own Date header for these responses. It owns the Connection header the
+    // same way (_storeHeader always decides and writes one).
+    response->getHttpResponseData()->state |= uWS::HttpResponseData<isSSL>::HTTP_WROTE_DATE_HEADER
+        | uWS::HttpResponseData<isSSL>::HTTP_WROTE_CONNECTION_HEADER;
 
     // 204/304 responses must not carry any body framing, even when the user
     // explicitly set a Transfer-Encoding header (Node.js suppresses the

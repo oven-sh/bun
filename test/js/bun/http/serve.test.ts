@@ -3676,3 +3676,103 @@ it.each([
 
   expect(statusLine).toBe("HTTP/1.1 400 Bad Request");
 });
+
+// RFC 9112 9.6: a server that receives a "close" connection option MUST close
+// the connection after its response; a server that sends one MUST do the same.
+// The sync request-header case worked on main (onData's tail closes it); an
+// async handler's end() runs outside onData, inside cork(), and the close
+// check there was skipped because internalEnd's own uncork had already
+// released the cork slot.
+describe("Connection: close on an async handler", () => {
+  // Resolves either when the server FINs (correct) or when a second response
+  // arrives on the same connection (the bug), so a broken server never hangs.
+  function exchange(port: number, payload: string) {
+    const { promise, resolve } = Promise.withResolvers<{ raw: string; serverClosed: boolean; responses: number }>();
+    const chunks: Buffer[] = [];
+    let serverClosed = false;
+    let sentSecond = false;
+    const sock = net.connect(port, "127.0.0.1", () => sock.write(payload));
+    const raw = () => Buffer.concat(chunks).toString("latin1");
+    const responses = () => (raw().match(/HTTP\/1\.1 200 OK/g) || []).length;
+    sock.on("data", d => {
+      chunks.push(d);
+      if (!sentSecond && raw().includes("\r\n\r\nhi")) {
+        sentSecond = true;
+        sock.write("GET /two HTTP/1.1\r\nHost: x\r\n\r\n", err => void err);
+      }
+      if (responses() > 1) {
+        sock.destroy();
+        resolve({ raw: raw(), serverClosed: false, responses: responses() });
+      }
+    });
+    sock.on("end", () => (serverClosed = true));
+    sock.on("error", () => {});
+    sock.on("close", () => resolve({ raw: raw(), serverClosed, responses: responses() }));
+    return promise;
+  }
+
+  const closeHeaders = (raw: string) => (raw.match(/\r\nconnection: close\r\n/gi) || []).length;
+
+  for (const kind of ["sync", "async"] as const) {
+    const wrap =
+      kind === "sync"
+        ? (f: () => Response) => f
+        : (f: () => Response) => async () => {
+            await Bun.sleep(1);
+            return f();
+          };
+
+    it(`${kind}: a request with Connection: close gets one response, a close header, and a server FIN`, async () => {
+      using server = serve({ port: 0, hostname: "127.0.0.1", fetch: wrap(() => new Response("hi")) });
+      const { raw, serverClosed, responses } = await exchange(
+        server.port,
+        "GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n",
+      );
+      expect({ responses, closeHeaders: closeHeaders(raw), serverClosed }).toEqual({
+        responses: 1,
+        closeHeaders: 1,
+        serverClosed: true,
+      });
+    });
+
+    it(`${kind}: a Response with connection: close gets one close header and a server FIN`, async () => {
+      using server = serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        fetch: wrap(() => new Response("hi", { headers: { connection: "close" } })),
+      });
+      const { raw, serverClosed, responses } = await exchange(server.port, "GET / HTTP/1.1\r\nHost: x\r\n\r\n");
+      expect({ responses, closeHeaders: closeHeaders(raw), serverClosed }).toEqual({
+        responses: 1,
+        closeHeaders: 1,
+        serverClosed: true,
+      });
+    });
+  }
+
+  // An async response that resolves inside ANOTHER socket's request handler
+  // (its microtask drain) must still close; the close gate is per socket, not
+  // per server.
+  it("async: closes when the response resolves inside another socket's onData", async () => {
+    let armed: (() => void) | null = null;
+    using server = serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch: req => {
+        const path = new URL(req.url).pathname;
+        if (path === "/a") {
+          return new Promise<Response>(resolve => {
+            armed = () => resolve(new Response("hi", { headers: { connection: "close" } }));
+          });
+        }
+        if (path === "/b") armed?.();
+        return new Response("hi");
+      },
+    });
+    const a = exchange(server.port, "GET /a HTTP/1.1\r\nHost: x\r\n\r\n");
+    while (!armed) await Bun.sleep(1);
+    await fetch(`http://127.0.0.1:${server.port}/b`);
+    const { serverClosed, responses } = await a;
+    expect({ responses, serverClosed }).toEqual({ responses: 1, serverClosed: true });
+  });
+});

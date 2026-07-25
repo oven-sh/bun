@@ -310,7 +310,7 @@ private:
         ((AsyncSocket<SSL> *) s)->cork();
 
         /* Mark that we are inside the parser now */
-        httpContextData->flags.isParsingHttp = true;
+        httpResponseData->isParsingHttp = true;
         httpResponseData->isIdle = false;
 
         /* node:http compat: maintain the headers/request timeout window (see
@@ -548,8 +548,6 @@ private:
 
         auto httpErrorStatusCode = result.httpErrorStatusCode();
 
-        /* Mark that we are no longer parsing Http */
-        httpContextData->flags.isParsingHttp = false;
         /* If we got fullptr that means the parser wants us to close the socket from error (same as calling the errorHandler) */
         if (httpErrorStatusCode) {
             /* node:http compat: parse errors surface as the server's 'clientError'
@@ -583,6 +581,11 @@ private:
         auto returnedData = result.returnedData;
         /* We need to uncork in all cases, except for nullptr (closed socket, or upgraded socket) */
         if (returnedData != nullptr) {
+            /* Mark that we are no longer parsing Http. httpResponseData is only
+             * live when the socket was neither closed nor upgraded in the
+             * handler (both destroy it); every other branch below that still
+             * dereferences it is already gated on returnedData the same way. */
+            httpResponseData->isParsingHttp = false;
             /* We don't want open sockets to keep the event loop alive between HTTP requests */
             us_socket_unref((us_socket_t *) returnedData);
 

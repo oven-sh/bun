@@ -5020,14 +5020,14 @@ pub mod formatter {
                     );
                 }
 
-                let message_value = match value.fast_get(self.global_this, jsc::BuiltinName::Message)
-                {
-                    Ok(v) => v,
-                    Err(_) => {
-                        self.global_this.clear_exception();
-                        None
-                    }
-                };
+                let message_value =
+                    match value.fast_get(self.global_this, jsc::BuiltinName::Message) {
+                        Ok(v) => v,
+                        Err(_) => {
+                            self.global_this.clear_exception();
+                            None
+                        }
+                    };
                 if let Some(message_value) = message_value {
                     if message_value.is_string() {
                         if !self.single_line {

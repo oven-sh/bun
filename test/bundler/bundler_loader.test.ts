@@ -257,7 +257,7 @@ describe("bundler", async () => {
 
     files: {
       "/entry.ts": /* js */ `
-    import wasm from './add.wasm';
+    import wasm from './add.wasm' with { type: "file" };
     import { join } from 'path';
     const { instance } = await WebAssembly.instantiate(await Bun.file(join(import.meta.dir, wasm)).arrayBuffer());
     console.log(instance.exports.add(1, 2));

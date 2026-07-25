@@ -10,7 +10,7 @@ describe("Bun.build compile with wasm", () => {
     const dir = tempDirWithFiles("build-compile-wasm", {
       "app.js": `
         // Import a wasm module and properly instantiate it
-        import wasmPath from "./test.wasm";
+        import wasmPath from "./test.wasm" with { type: "file" };
 
         async function main() {
           try {

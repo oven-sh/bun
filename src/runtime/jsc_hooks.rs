@@ -3244,10 +3244,7 @@ fn transpile_source_code_inner(
                 }
             }
 
-            // WebAssembly/ESM integration: `import * as x from './x.wasm'` should
-            // compile+instantiate the module and expose its exports as named
-            // bindings. `?query` specifiers keep the legacy path-as-default
-            // behaviour (they are used as asset/cache-bust URLs, see #16476).
+            // `?query` specifiers are asset/cache-bust URLs (#16476), not real wasm imports.
             if bun_core::strings::contains_char(specifier, b'?') {
                 // SAFETY: per fn contract — `extra` is live for the call.
                 unsafe {
@@ -3257,97 +3254,47 @@ fn transpile_source_code_inner(
                 return transpile_source_code_inner(jsc_vm, args, extra);
             }
 
-            let owned;
-            let wasm_bytes: &[u8] = if let Some(source) = args.virtual_source {
-                &source.contents
+            let check_magic = |bytes: &[u8]| -> crate::Result<()> {
+                if bytes.len() < 4 || &bytes[0..4] != b"\x00asm" {
+                    // SAFETY: per fn contract — `args.log` is live for the call.
+                    unsafe { &mut *args.log }.add_error_fmt(
+                        None,
+                        bun_ast::Loc::EMPTY,
+                        format_args!(
+                            "Invalid wasm file {} (missing magic header)",
+                            bun_core::fmt::quote(path.text),
+                        ),
+                    );
+                    return Err(crate::Error::ParseError);
+                }
+                Ok(())
+            };
+
+            let source_code = if let Some(source) = args.virtual_source {
+                check_magic(&source.contents)?;
+                bun_core::String::clone_latin1(&source.contents)
             } else {
                 match bun_sys::File::read_from(bun_sys::Fd::cwd(), path.text) {
                     Ok(bytes) => {
-                        owned = bytes;
-                        &owned
+                        check_magic(&bytes)?;
+                        auto_watch_asset(jsc_vm, path, L::Wasm);
+                        bun_core::String::create_external_globally_allocated_latin1(bytes)
                     }
                     Err(err) => {
                         // SAFETY: per fn contract — `args.log` is live for the call.
                         unsafe { &mut *args.log }.add_error_fmt(
                             None,
                             bun_ast::Loc::EMPTY,
-                            format_args!("{} reading \"{}\"", err, bstr::BStr::new(path.text),),
+                            format_args!("{} reading {}", err, bun_core::fmt::quote(path.text)),
                         );
                         return Err(crate::Error::ParseError);
                     }
                 }
             };
 
-            if wasm_bytes.len() < 4 || &wasm_bytes[0..4] != b"\x00asm" {
-                // SAFETY: per fn contract — `args.log` is live for the call.
-                unsafe { &mut *args.log }.add_error_fmt(
-                    None,
-                    bun_ast::Loc::EMPTY,
-                    format_args!(
-                        "Invalid wasm file \"{}\" (missing magic header)",
-                        bstr::BStr::new(path.text),
-                    ),
-                );
-                return Err(crate::Error::ParseError);
-            }
-
-            // Register with the watcher so `--watch` / hot-reload notices edits,
-            // mirroring the generic `.file` arm below.
-            'auto_watch: {
-                if args.virtual_source.is_some() {
-                    break 'auto_watch;
-                }
-                // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
-                if !unsafe { &*jsc_vm }.is_watcher_enabled() {
-                    break 'auto_watch;
-                }
-                if !bun_paths::is_absolute(path.text)
-                    || bun_core::strings::contains(path.text, b"node_modules")
-                {
-                    break 'auto_watch;
-                }
-                let input_fd = if bun_watcher::REQUIRES_FILE_DESCRIPTORS {
-                    let mut buf = bun_paths::path_buffer_pool::get();
-                    if path.text.len() >= buf.len() {
-                        break 'auto_watch;
-                    }
-                    let z = bun_paths::resolve_path::z(path.text, &mut buf);
-                    match bun_sys::open(z, bun_watcher::WATCH_OPEN_FLAGS, 0) {
-                        Ok(fd) => fd,
-                        Err(_) => break 'auto_watch,
-                    }
-                } else {
-                    bun_sys::Fd::INVALID
-                };
-                let hash = bun_watcher::Watcher::get_hash(path.text);
-                // SAFETY: `bun_watcher` is the `*mut ImportWatcher` set when
-                // `is_watcher_enabled()`; cast recovers the concrete type.
-                let watcher =
-                    unsafe { &mut *(*jsc_vm).bun_watcher.cast::<bun_jsc::ImportWatcher>() };
-                if watcher
-                    .add_file::<true>(
-                        input_fd,
-                        path.text,
-                        hash,
-                        L::Wasm,
-                        bun_sys::Fd::INVALID,
-                        None,
-                    )
-                    .is_err()
-                {
-                    #[cfg(target_os = "macos")]
-                    if input_fd.is_valid() {
-                        use bun_sys::FdExt as _;
-                        input_fd.close();
-                    }
-                }
-            }
-
-            // Latin-1 is a byte↔char mapping; the C++ side (`fetchESMSourceCode`)
-            // reads the 8-bit span back out to build a `WebAssemblySourceProvider`.
             use bun_jsc::resolved_source::Tag as ResolvedSourceTag;
             Ok(OwnedResolvedSource::from(ResolvedSource {
-                source_code: bun_core::String::clone_latin1(wasm_bytes),
+                source_code,
                 specifier: input_specifier.dupe_ref(),
                 source_url: create_if_different(input_specifier, path.text),
                 tag: ResolvedSourceTag::Wasm,
@@ -3426,60 +3373,8 @@ fn transpile_source_code_inner(
                 }));
             }
 
-            // auto-watch for non-virtual absolute paths.
-            'auto_watch: {
-                if args.virtual_source.is_some() {
-                    break 'auto_watch;
-                }
-                // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
-                if !unsafe { &*jsc_vm }.is_watcher_enabled() {
-                    break 'auto_watch;
-                }
-                if !bun_paths::is_absolute(path.text)
-                    || bun_core::strings::contains(path.text, b"node_modules")
-                {
-                    break 'auto_watch;
-                }
-                // kqueue watchers need a file descriptor to receive event
-                // notifications on it; inotify/win32 watch by path.
-                let input_fd = if bun_watcher::REQUIRES_FILE_DESCRIPTORS {
-                    let mut buf = bun_paths::path_buffer_pool::get();
-                    if path.text.len() >= buf.len() {
-                        break 'auto_watch;
-                    }
-                    let z = bun_paths::resolve_path::z(path.text, &mut buf);
-                    match bun_sys::open(z, bun_watcher::WATCH_OPEN_FLAGS, 0) {
-                        Ok(fd) => fd,
-                        Err(_) => break 'auto_watch,
-                    }
-                } else {
-                    bun_sys::Fd::INVALID
-                };
-                let hash = bun_watcher::Watcher::get_hash(path.text);
-                // SAFETY: `bun_watcher` is the `*mut ImportWatcher`
-                // set when `is_watcher_enabled()`; cast recovers the concrete
-                // type.
-                let watcher =
-                    unsafe { &mut *(*jsc_vm).bun_watcher.cast::<bun_jsc::ImportWatcher>() };
-                if watcher
-                    .add_file::<true>(
-                        input_fd,
-                        path.text,
-                        hash,
-                        loader,
-                        bun_sys::Fd::INVALID,
-                        None,
-                    )
-                    .is_err()
-                {
-                    // Close the fd we just opened on macOS;
-                    // not a transpile failure (the user didn't open it).
-                    #[cfg(target_os = "macos")]
-                    if input_fd.is_valid() {
-                        use bun_sys::FdExt as _;
-                        input_fd.close();
-                    }
-                }
+            if args.virtual_source.is_none() {
+                auto_watch_asset(jsc_vm, path, loader);
             }
 
             // `export default <path string>`.
@@ -3542,6 +3437,47 @@ fn transpile_source_code_inner(
                 ..Default::default()
             }))
         }
+    }
+}
+
+/// Register a non-virtual asset path with the watcher (if enabled, absolute,
+/// and not in `node_modules`). Opens its own watch fd on kqueue platforms.
+fn auto_watch_asset(jsc_vm: *mut VirtualMachine, path: &Fs::Path, loader: Loader) {
+    // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
+    if !unsafe { &*jsc_vm }.is_watcher_enabled() {
+        return;
+    }
+    if !bun_paths::is_absolute(path.text)
+        || bun_core::strings::contains(path.text, b"node_modules")
+    {
+        return;
+    }
+    // kqueue watchers need a file descriptor; inotify/win32 watch by path.
+    let input_fd = if bun_watcher::REQUIRES_FILE_DESCRIPTORS {
+        let mut buf = bun_paths::path_buffer_pool::get();
+        if path.text.len() >= buf.len() {
+            return;
+        }
+        let z = bun_paths::resolve_path::z(path.text, &mut buf);
+        match bun_sys::open(z, bun_watcher::WATCH_OPEN_FLAGS, 0) {
+            Ok(fd) => fd,
+            Err(_) => return,
+        }
+    } else {
+        bun_sys::Fd::INVALID
+    };
+    let hash = bun_watcher::Watcher::get_hash(path.text);
+    // SAFETY: `bun_watcher` is the `*mut ImportWatcher` set when
+    // `is_watcher_enabled()`; cast recovers the concrete type.
+    let watcher = unsafe { &mut *(*jsc_vm).bun_watcher.cast::<bun_jsc::ImportWatcher>() };
+    if watcher
+        .add_file::<true>(input_fd, path.text, hash, loader, bun_sys::Fd::INVALID, None)
+        .is_err()
+        && bun_watcher::REQUIRES_FILE_DESCRIPTORS
+        && input_fd.is_valid()
+    {
+        use bun_sys::FdExt as _;
+        input_fd.close();
     }
 }
 
@@ -4366,9 +4302,7 @@ unsafe fn transpile_file(
         }
     }
 
-    // WebAssembly/ESM integration is ESM-only; `require('./x.wasm')` keeps the
-    // legacy path-string behaviour. Node rejects CJS wasm entirely, but Bun
-    // has always returned the path here and users rely on it.
+    // WebAssembly/ESM integration is ESM-only; `require('./x.wasm')` keeps returning the path.
     if is_commonjs_require && lr.loader == Some(Loader::Wasm) {
         lr.loader = Some(Loader::File);
     }

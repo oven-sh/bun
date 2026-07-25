@@ -943,9 +943,7 @@ pub mod resolved_source_tag {
         pub const Javascript: Self = Self(0);
         pub const PackageJsonTypeModule: Self = Self(1);
         pub const PackageJsonTypeCommonjs: Self = Self(2);
-        /// Raw wasm bytes packed into `source_code` as Latin-1; `fetchESMSourceCode`
-        /// feeds them to `JSC::WebAssemblySourceProvider` so the module namespace is
-        /// the instance's exports (WebAssembly/ESM integration).
+        /// Raw wasm bytes in `source_code` (Latin-1) → `JSC::WebAssemblySourceProvider`.
         pub const Wasm: Self = Self(3);
         pub const File: Self = Self(5);
         pub const Esm: Self = Self(6);

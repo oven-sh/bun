@@ -3239,8 +3239,7 @@ impl TestCommand {
             // it for the loop body.
             scopeguard::defer! { unsafe { (*bun_test_root_ptr).exit_file(); } }
 
-            // Per-file spy teardown (guard so it fires on the Rejected-promise
-            // early return too). --isolate swaps the global instead.
+            // Per-file spy teardown; a guard so the Rejected early return is covered too.
             unsafe extern "C" {
                 fn JSMock__restoreTransientSpies(global: *mut jsc::JSGlobalObject);
             }

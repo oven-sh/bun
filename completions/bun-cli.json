@@ -3337,7 +3337,7 @@
         },
         {
           "name": "public-path",
-          "description": "A prefix to be appended to any import paths in bundled code",
+          "description": "A prefix for emitted asset, chunk, and source-map paths",
           "hasValue": true,
           "valueType": "val",
           "required": false,

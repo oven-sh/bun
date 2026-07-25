@@ -521,6 +521,7 @@ describe.concurrent("primordials configuration", () => {
     expect(exitCode).toBe(0);
   });
 
+  // Debug+ASAN Worker startup plus a full audit() regularly exceeds the 5 s default under describe.concurrent.
   test("each Worker global materializes its own primordials", { timeout: 30_000 }, async () => {
     const { stdout, stderr, exitCode } = await runChild(/* js */ `
       const { Worker } = require("node:worker_threads");
@@ -534,8 +535,10 @@ describe.concurrent("primordials configuration", () => {
         'require("node:worker_threads").parentPort.postMessage({ len: arr.length, unavailable });',
         { eval: true }
       );
-      w.on("message", m => { write(stringify(m)); w.terminate(); });
+      let posted = false;
+      w.on("message", m => { posted = true; write(stringify(m)); w.terminate(); });
       w.on("error", e => { process.stderr.write(String(e)); process.exit(1); });
+      w.on("exit", code => { if (!posted) { process.stderr.write("worker exited " + code + " without posting"); process.exit(1); } });
     `);
     expect(stderr).toBe("");
     expect(JSON.parse(stdout)).toEqual({ len: 2, unavailable: 0 });

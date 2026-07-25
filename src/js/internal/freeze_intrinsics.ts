@@ -44,6 +44,7 @@ export default function freezeIntrinsics(): void {
     EvalError.prototype,
     RangeError.prototype,
     ReferenceError.prototype,
+    SuppressedError.prototype,
     SyntaxError.prototype,
     TypeError.prototype,
     URIError.prototype,
@@ -96,6 +97,11 @@ export default function freezeIntrinsics(): void {
     ObjectGetPrototypeOf(ObjectGetPrototypeOf(Array.prototype[SymbolIterator]())), // 27.1.2 IteratorPrototype
     ObjectGetPrototypeOf(ObjectGetPrototypeOf(ObjectGetPrototypeOf((async function* () {})()))), // 27.1.3 AsyncIteratorPrototype
     Promise.prototype, // 27.2
+    DisposableStack.prototype,
+    AsyncDisposableStack.prototype,
+
+    // 28 Reflection
+    ShadowRealm.prototype,
 
     // Other APIs / Web Compatibility
     (console as { Console?: { prototype: object } }).Console?.prototype,
@@ -127,6 +133,7 @@ export default function freezeIntrinsics(): void {
     EvalError,
     RangeError,
     ReferenceError,
+    SuppressedError,
     SyntaxError,
     TypeError,
     URIError,
@@ -185,10 +192,13 @@ export default function freezeIntrinsics(): void {
     ObjectGetPrototypeOf(function* () {}), // GeneratorFunction
     ObjectGetPrototypeOf(async function* () {}), // AsyncGeneratorFunction
     ObjectGetPrototypeOf(async function () {}), // AsyncFunction
+    DisposableStack,
+    AsyncDisposableStack,
 
     // 28 Reflection
     Reflect,
     Proxy,
+    ShadowRealm,
 
     // B.2.1
     escape,

@@ -299,10 +299,40 @@ function installBunExposeInternalsRequireInterceptor() {
       }
       const vendored = requireVendoredNodeInternal(id);
       if (vendored !== undefined) {
+        // Some vendored internals export freshly-minted look-alike symbols;
+        // anything Bun holds module-private must be recovered from the live
+        // objects and override key-for-key, or prototype lookups miss.
+        const override = harnessInternalOverrides[id];
+        if (override !== undefined) {
+          const cached = mergedInternals[id];
+          if (cached !== undefined) return cached;
+          return (mergedInternals[id] = { ...vendored, ...override() });
+        }
         return vendored;
       }
     }
     return originalRequire.apply(this, arguments);
+  };
+  const harnessInternalOverrides = {
+    __proto__: null,
+    // internal/net: the per-socket option symbols are module-private in Bun's
+    // node:net; recover the real ones from a probe socket (the constructor
+    // always sets them) and the prototype.
+    'internal/net': () => {
+      const net = originalRequire.call(module, 'node:net');
+      const probe = net._normalizeArgs([]);
+      const socketProbe = new net.Socket();
+      const bySymbolName = name =>
+        Object.getOwnPropertySymbols(socketProbe).find(s => s.description === name) ??
+        Object.getOwnPropertySymbols(net.Socket.prototype).find(s => s.description === name);
+      return {
+        normalizedArgsSymbol: Object.getOwnPropertySymbols(probe).find(s => s.description === 'normalizedArgs'),
+        kSetNoDelay: bySymbolName('kSetNoDelay'),
+        kSetKeepAlive: bySymbolName('kSetKeepAlive'),
+        kSetKeepAliveInitialDelay: bySymbolName('kSetKeepAliveInitialDelay'),
+        kReinitializeHandle: bySymbolName('kReinitializeHandle'),
+      };
+    },
   };
   // http2-specific internal modules (internal/http2/util, …) are
   // served separately via Bun.plugin module shims backed by the
@@ -1490,35 +1520,6 @@ function installBunExposeInternalsShim() {
         loader: "object",
         exports: { getDefaultHighWaterMark: require("node:stream").getDefaultHighWaterMark },
       }));
-      // node's internal/net: normalizedArgsSymbol is a module-private symbol in
-      // Bun's node:net. Recover the real one from a real _normalizeArgs result
-      // rather than minting a look-alike.
-      build.module("internal/net", () => {
-        const net = require("node:net");
-        const probe = net._normalizeArgs([]);
-        const normalizedArgsSymbol = Object.getOwnPropertySymbols(probe).find(
-          s => s.description === "normalizedArgs",
-        );
-        // The per-socket option symbols are module-private in Bun's node:net,
-        // like normalizedArgsSymbol; recover the real ones from a probe
-        // socket (the constructor always sets them) and the prototype.
-        const socketProbe = new net.Socket();
-        const bySymbolName = name =>
-          Object.getOwnPropertySymbols(socketProbe).find(s => s.description === name) ??
-          Object.getOwnPropertySymbols(net.Socket.prototype).find(s => s.description === name);
-        return {
-          loader: "object",
-          exports: {
-            normalizedArgsSymbol,
-            kSetNoDelay: bySymbolName("kSetNoDelay"),
-            kSetKeepAlive: bySymbolName("kSetKeepAlive"),
-            kSetKeepAliveInitialDelay: bySymbolName("kSetKeepAliveInitialDelay"),
-            kReinitializeHandle: bySymbolName("kReinitializeHandle"),
-          },
-        };
-      });
-      // node's internal/options: map the few CLI options vendored http tests ask
-      // about onto the equivalent runtime values. Unknown options return undefined.
       build.module("internal/options", () => ({
         loader: "object",
         exports: {

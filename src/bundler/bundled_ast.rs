@@ -145,12 +145,10 @@ bitflags::bitflags! {
         const COMMONJS_MODULE_EXPORTS_ASSIGNED_DEOPTIMIZED = 1 << 6;
         const HAS_EXPLICIT_USE_STRICT_DIRECTIVE = 1 << 7;
         const HAS_IMPORT_META = 1 << 8;
-        // Set when the resolver determined this file is unambiguously ESM by
-        // Node.js rules (.mjs/.mts, or "type": "module" in the nearest
-        // package.json). This is distinct from `exports_kind == Esm`: a .js
-        // file with `import` syntax inside a package without "type": "module"
-        // has `exports_kind == Esm` but this flag unset. Used to decide the
-        // `isNodeMode` argument to `__toESM` at print time.
+        // The resolver determined this file is ESM by Node.js rules (.mjs/.mts
+        // or nearest package.json has "type": "module"). Distinct from
+        // `exports_kind == Esm`, which is set by syntax alone. Controls the
+        // `isNodeMode` arg to `__toESM`.
         const MODULE_TYPE_WAS_ESM = 1 << 9;
         // _padding: u6 fills the rest
     }

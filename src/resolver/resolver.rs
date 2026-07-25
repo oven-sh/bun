@@ -1654,15 +1654,12 @@ impl<'a> Resolver<'a> {
                 }
             }
 
-            // If you use mjs or mts, then you're using esm
-            // If you use cjs or cts, then you're using cjs
-            // This should win out over the module type from package.json
-            if !kind.is_from_css()
-                && module_type == options::ModuleType::Unknown
-                && name.ext.len() == 4
-            {
-                module_type =
-                    module_type_from_ext(name.ext).unwrap_or(options::ModuleType::Unknown);
+            // .mjs/.mts are always ESM and .cjs/.cts are always CJS, regardless
+            // of any package.json "type" field.
+            if !kind.is_from_css() && name.ext.len() == 4 {
+                if let Some(from_ext) = module_type_from_ext(name.ext) {
+                    module_type = from_ext;
+                }
             }
 
             if let Some(entries) = dir.get_entries_ref(self.generation) {
@@ -2706,7 +2703,6 @@ impl<'a> Resolver<'a> {
                             if let Some(package_json) = pkg_dir_info.package_json() {
                                 if let Some(exports_map) = package_json.exports.as_ref() {
                                     // The condition set is determined by the kind of import
-                                    let module_type = package_json.module_type;
                                     // NOTE: keeping a single
                                     // `ESModule` (which holds `&mut self.debug_logs`) alive across a
                                     // `&mut self` call is aliased-&mut UB. Build a fresh short-lived
@@ -2748,7 +2744,6 @@ impl<'a> Resolver<'a> {
                                             .is_success()
                                         {
                                             out.is_node_module = true;
-                                            out.module_type = module_type;
                                             self.extension_order = prev_extension_order;
                                             if let Some(d) = self.debug_logs.as_mut() {
                                                 d.decrease_indent();
@@ -2806,7 +2801,6 @@ impl<'a> Resolver<'a> {
                                             .is_success()
                                         {
                                             out.is_node_module = true;
-                                            out.module_type = module_type;
                                             self.extension_order = prev_extension_order;
                                             if let Some(d) = self.debug_logs.as_mut() {
                                                 d.decrease_indent();

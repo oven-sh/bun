@@ -667,4 +667,36 @@ describe("bundler", () => {
     },
     run: { stdout: `{"__esModule":true,"default":"THE_DEFAULT","named":"NAMED"}` },
   });
+  // A .mjs file reached via the "import" condition inside a package with
+  // "type": "commonjs" is still a Node ESM module: .mjs wins over the
+  // package "type" field.
+  itBundled("cjs2esm/ToESMSetsNodeModeForMJSInsideTypeCommonJS", {
+    files: {
+      "/entry.js": /* js */ `
+        import mod from 'dual';
+        console.log(JSON.stringify(mod.Base));
+      `,
+      "/package.json": `{ "type": "module" }`,
+      "/node_modules/dual/package.json": `{ "name": "dual", "type": "commonjs", "exports": { "import": "./index.mjs", "require": "./index.cjs" } }`,
+      "/node_modules/dual/index.mjs": /* js */ `
+        import Base from 'cjs-dep';
+        export default { Base: Base };
+      `,
+      "/node_modules/dual/index.cjs": /* js */ `
+        module.exports = { Base: require('cjs-dep').default };
+      `,
+      "/node_modules/cjs-dep/package.json": `{ "name": "cjs-dep", "main": "index.js" }`,
+      "/node_modules/cjs-dep/index.js": /* js */ `
+        exports.__esModule = true;
+        exports.default = "THE_DEFAULT";
+        exports.named = "NAMED";
+      `,
+    },
+    target: "bun",
+    onAfterBundle(api) {
+      const code = api.readFile("out.js");
+      expect(code).toContain("__toESM(require_cjs_dep(), 1)");
+    },
+    run: { stdout: `{"__esModule":true,"default":"THE_DEFAULT","named":"NAMED"}` },
+  });
 });

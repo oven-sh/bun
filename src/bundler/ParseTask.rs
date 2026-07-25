@@ -2661,7 +2661,20 @@ pub mod parse_worker {
         };
 
         ast.target = target;
-        if task.module_type == options::ModuleType::Esm {
+        let module_type_for_print = if task.module_type == options::ModuleType::Unknown {
+            // Some ParseTask construction sites bypass the resolver (plugin
+            // onResolve, server-component re-parse, in-memory entries) and
+            // leave module_type Unknown. Fall back to the file extension so
+            // .mjs/.mts still get Node ESM interop semantics.
+            match task.path.name().ext {
+                b".mjs" | b".mts" => options::ModuleType::Esm,
+                b".cjs" | b".cts" => options::ModuleType::Cjs,
+                _ => options::ModuleType::Unknown,
+            }
+        } else {
+            task.module_type
+        };
+        if module_type_for_print == options::ModuleType::Esm {
             ast.flags
                 .insert(crate::bundled_ast::Flags::MODULE_TYPE_WAS_ESM);
         }

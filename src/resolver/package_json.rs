@@ -1555,8 +1555,6 @@ fn module_bufs() -> *mut ModuleBufs {
     })
 }
 
-// `debug_logs` is `&'a mut T`, so writing it requires `&mut self`. All
-// resolution methods take `&mut self`.
 impl<'a> ESModule<'a> {
     pub(crate) fn resolve(
         &mut self,

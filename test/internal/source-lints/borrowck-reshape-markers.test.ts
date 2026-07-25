@@ -20,7 +20,7 @@ import { realpathSync } from "node:fs";
 import path from "node:path";
 import { globAllSources } from "../../../scripts/glob-sources.ts";
 
-const LIMIT = 311;
+const LIMIT = 293;
 
 const root = path.resolve(import.meta.dir, "..", "..", "..");
 const rustSources = globAllSources().rust.filter(p => p.endsWith(".rs"));

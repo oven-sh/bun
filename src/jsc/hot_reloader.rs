@@ -735,7 +735,10 @@ fn arm_watch_reload_grace_timer() {
     let handler_running = crate::posix_signal_handle::is_emitting_watch_kill_signal;
     let force = || -> ! {
         Output::flush();
-        bun_core::reload_process(CLEAR_SCREEN.load(core::sync::atomic::Ordering::Relaxed), false);
+        bun_core::reload_process(
+            CLEAR_SCREEN.load(core::sync::atomic::Ordering::Relaxed),
+            false,
+        );
         unreachable!();
     };
     let spawned = std::thread::Builder::new()

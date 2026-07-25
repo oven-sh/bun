@@ -2114,7 +2114,7 @@ function _writeHead(statusCode, reason, obj, response) {
         // header fields, regardless of the header fields present in the
         // message, and thus cannot contain a message body or 'trailers'.
         if (hasInvalidTrailer(response)) {
-          throw $ERR_HTTP_TRAILER_INVALID("Trailers are invalid with this transfer encoding");
+          throw $ERR_HTTP_TRAILER_INVALID();
         }
         // Headers in obj should override previous headers but still
         // allow explicit duplicates. To do so, we first remove any
@@ -2144,7 +2144,7 @@ function _writeHead(statusCode, reason, obj, response) {
       // The message is not chunk-framed, so `Trailer` is the offending header; drop it
       // so a caller that swallows the throw cannot put it on the wire.
       response.removeHeader("trailer");
-      throw $ERR_HTTP_TRAILER_INVALID("Trailers are invalid with this transfer encoding");
+      throw $ERR_HTTP_TRAILER_INVALID();
     }
   }
 }

@@ -226,9 +226,9 @@ describe("PKCS#8 private-key CHOICE forms", () => {
       expect(() => createPrivateKey({ key: encPem, passphrase: "wrong" })).toThrow(
         expect.objectContaining({ code: expect.stringMatching(/^ERR_OSSL_/) }),
       );
-      expect(() =>
-        createPrivateKey({ key: encDer, format: "der", type: "pkcs8", passphrase: "wrong" }),
-      ).toThrow(expect.objectContaining({ code: expect.stringMatching(/^ERR_OSSL_/) }));
+      expect(() => createPrivateKey({ key: encDer, format: "der", type: "pkcs8", passphrase: "wrong" })).toThrow(
+        expect.objectContaining({ code: expect.stringMatching(/^ERR_OSSL_/) }),
+      );
     });
   });
 });

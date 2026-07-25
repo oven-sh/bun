@@ -626,27 +626,26 @@ impl BuildCommand {
             // Bundler plugins from bunfig `[serve.static].plugins` need a JS VM +
             // JS event loop so onLoad/onResolve callbacks can run. Without
             // plugins the Mini loop is used and no VM is created.
-            let (mut event_loop, plugins) = if let Some(specifiers) =
-                opt_serve_plugins.as_deref().filter(|s| !s.is_empty())
-            {
-                let (vm_ptr, plugin) = load_bundler_plugins(
-                    ctx.args.clone(),
-                    ctx.log,
-                    ctx.runtime_options.smol,
-                    opt_target,
-                    specifiers,
-                    &opt_bunfig_path,
-                );
-                // SAFETY: `vm_ptr` is the unique live VM on this thread;
-                // process-lifetime (exec() never returns).
-                let vm = unsafe { &mut *vm_ptr };
-                (
-                    bun_event_loop::AnyEventLoop::js(vm.event_loop().cast()),
-                    Some(plugin),
-                )
-            } else {
-                (bun_event_loop::AnyEventLoop::init(), None)
-            };
+            let (mut event_loop, plugins) =
+                if let Some(specifiers) = opt_serve_plugins.as_deref().filter(|s| !s.is_empty()) {
+                    let (vm_ptr, plugin) = load_bundler_plugins(
+                        ctx.args.clone(),
+                        ctx.log,
+                        ctx.runtime_options.smol,
+                        opt_target,
+                        specifiers,
+                        &opt_bunfig_path,
+                    );
+                    // SAFETY: `vm_ptr` is the unique live VM on this thread;
+                    // process-lifetime (exec() never returns).
+                    let vm = unsafe { &mut *vm_ptr };
+                    (
+                        bun_event_loop::AnyEventLoop::js(vm.event_loop().cast()),
+                        Some(plugin),
+                    )
+                } else {
+                    (bun_event_loop::AnyEventLoop::init(), None)
+                };
 
             let build_result = match BundleV2::generate_from_cli(
                 this_transpiler,
@@ -1182,9 +1181,9 @@ fn load_bundler_plugins(
     *mut bun_jsc::virtual_machine::VirtualMachine,
     core::ptr::NonNull<bun_bundler::bundle_v2::JSBundlerPlugin>,
 ) {
-    use bun_jsc::virtual_machine::{InitOptions as VmInitOptions, VirtualMachine};
     use crate::api::js_bundler::{Plugin, PluginJscExt as _};
     use bun_core::String as BunString;
+    use bun_jsc::virtual_machine::{InitOptions as VmInitOptions, VirtualMachine};
 
     bun_jsc::initialize(false);
     bun_ast::initialize_store();
@@ -1232,9 +1231,8 @@ fn load_bundler_plugins(
     for spec in plugin_specifiers {
         bunstring_array.push(BunString::init(&**spec));
     }
-    let bunfig_folder = bun_paths::resolve_path::dirname::<
-        bun_paths::resolve_path::platform::Auto,
-    >(bunfig_path);
+    let bunfig_folder =
+        bun_paths::resolve_path::dirname::<bun_paths::resolve_path::platform::Auto>(bunfig_path);
 
     let fail = |err: bun_jsc::JSValue| -> ! {
         // SAFETY: `vm_ptr` is the unique live VM on this thread.
@@ -1272,7 +1270,9 @@ fn load_bundler_plugins(
             }
         }
         Err(_) => {
-            let e = global.try_take_exception().unwrap_or(bun_jsc::JSValue::UNDEFINED);
+            let e = global
+                .try_take_exception()
+                .unwrap_or(bun_jsc::JSValue::UNDEFINED);
             fail(e);
         }
     }

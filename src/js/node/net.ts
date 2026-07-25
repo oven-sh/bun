@@ -1804,8 +1804,6 @@ Socket.prototype.address = function address() {
 
 Socket.prototype._onTimeout = function () {
   const handle = this._handle;
-  // kwriteCallback is set exactly while an async write is in flight (Node's
-  // kLastWriteQueueSize > 0 after kAfterAsyncWrite); suppress only if draining.
   if (this[kwriteCallback] && handle) {
     const writeQueueSize = getBufferedAmount(handle);
     if (this[kLastWriteQueueSize] !== writeQueueSize) {

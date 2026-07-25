@@ -698,9 +698,8 @@ impl ResolveMessage {
         use bstr::BStr;
         use bun_resolver::NodeModuleErrorKind as K;
         let is_esm = matches!(import_kind, ImportKind::Stmt | ImportKind::Dynamic);
-        let include_referrer = !referrer.is_empty()
-            && referrer != b"bun:main"
-            && (is_esm || err.referrer_in_require);
+        let include_referrer =
+            !referrer.is_empty() && referrer != b"bun:main" && (is_esm || err.referrer_in_require);
         let mut text = Vec::with_capacity(err.head.len() + referrer.len() + 32);
         text.extend_from_slice(&err.head[..err.insert_at]);
         if include_referrer {
@@ -715,11 +714,7 @@ impl ResolveMessage {
                 }
                 K::InvalidPackageConfigStructure => {
                     // Node passes the importer as a file URL in this shape.
-                    let _ = write!(
-                        &mut text,
-                        " while importing file://{}",
-                        BStr::new(referrer)
-                    );
+                    let _ = write!(&mut text, " while importing file://{}", BStr::new(referrer));
                 }
                 _ => {
                     let _ = write!(&mut text, " imported from {}", BStr::new(referrer));
@@ -754,7 +749,10 @@ impl ResolveMessage {
     /// unsupported URL schemes (ERR_UNSUPPORTED_ESM_URL_SCHEME) and `data:`
     /// MIME types no loader accepts (ERR_UNKNOWN_MODULE_FORMAT). Returns the
     /// Node-shaped `Msg` when the specifier can never load, `None` otherwise.
-    pub fn esm_specifier_precheck(specifier: &[u8], import_kind: ImportKind) -> Option<bun_ast::Msg> {
+    pub fn esm_specifier_precheck(
+        specifier: &[u8],
+        import_kind: ImportKind,
+    ) -> Option<bun_ast::Msg> {
         use bstr::BStr;
         if !matches!(import_kind, ImportKind::Stmt | ImportKind::Dynamic) {
             return None;

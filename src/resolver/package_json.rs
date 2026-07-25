@@ -1091,7 +1091,11 @@ impl<'a> Visitor<'a> {
                 let loc = vloc.resolve(&self.source.contents);
                 self.invalid(
                     js_lexer::range_of_identifier(self.source, loc),
-                    if *b { b"true".to_vec() } else { b"false".to_vec() },
+                    if *b {
+                        b"true".to_vec()
+                    } else {
+                        b"false".to_vec()
+                    },
                 )
             }
             js_ast::E::JsonValue::Number(n) => {
@@ -1133,9 +1137,7 @@ impl<'a> Visitor<'a> {
                         prev.key_range,
                     );
                 return Entry {
-                    data: EntryData::Invalid(
-                        Box::<[u8]>::from(&NODE_MIXED_KEYS_MESSAGE[..]),
-                    ),
+                    data: EntryData::Invalid(Box::<[u8]>::from(&NODE_MIXED_KEYS_MESSAGE[..])),
                 };
             }
 

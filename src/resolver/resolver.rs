@@ -2688,10 +2688,9 @@ impl<'a> Resolver<'a> {
                                 pkg_json_path.extend_from_slice(abs_package_path);
                                 pkg_json_path.push(SEP);
                                 pkg_json_path.extend_from_slice(b"package.json");
-                                self.node_module_error =
-                                    Some(crate::NodeModuleError::invalid_package_config(
-                                        &pkg_json_path,
-                                    ));
+                                self.node_module_error = Some(
+                                    crate::NodeModuleError::invalid_package_config(&pkg_json_path),
+                                );
                             }
 
                             if let Some(package_json) = pkg_dir_info.package_json() {
@@ -3727,7 +3726,11 @@ impl<'a> Resolver<'a> {
                     _ => (None, None, false),
                 };
                 NodeModuleError::invalid_package_target(
-                    pkg_json_path, key, target, is_imports, bare,
+                    pkg_json_path,
+                    key,
+                    target,
+                    is_imports,
+                    bare,
                 )
             }
             Status::InvalidModuleSpecifier => match esm_resolution.detail.as_deref() {

@@ -1800,4 +1800,38 @@ describe.concurrent("bun test forwards args after -- to process.argv", () => {
     expect(matches).toEqual([`["--flag","value"]`, `["--flag","value"]`]);
     expect(exitCode).toBe(0);
   });
+
+  test("a second -- after the first is literal, including through --parallel re-parse", async () => {
+    using dir = tempDir("test-passthrough-g", {
+      "a.test.ts": fixture,
+      "b.test.ts": fixture,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--parallel=2", "--", "a", "--", "b"],
+      env: { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "0" },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const out = stdout + stderr;
+    const matches = [...out.matchAll(/ARGV=(\[[^\]]*\])/g)].map(m => m[1]);
+    expect(matches).toEqual([`["a","--","b"]`, `["a","--","b"]`]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("hints when a passthrough arg looks like a test file", async () => {
+    using dir = tempDir("test-passthrough-h", { "argv.test.ts": fixture });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--", "argv.test.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toContain(`ARGV=["argv.test.ts"]`);
+    expect(stderr).toContain(`"argv.test.ts" after -- is placed in process.argv`);
+    expect(exitCode).toBe(0);
+  });
 });

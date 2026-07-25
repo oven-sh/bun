@@ -61,6 +61,13 @@ To run a specific file in the test runner, make sure the path starts with `./` o
 bun test ./test/specific-file.test.ts
 ```
 
+To pass arguments through to your tests, add them after a `--` separator. Everything after `--` is appended to `process.argv` inside the test process instead of being treated as a filter.
+
+```bash terminal icon="terminal"
+bun test ./my.test.ts -- --graphql-url http://localhost/graphql
+# inside my.test.ts: process.argv.slice(2) is ["--graphql-url", "http://localhost/graphql"]
+```
+
 The test runner runs all tests in a single process. It loads all `--preload` scripts (see [Lifecycle](/test/lifecycle)), then runs all tests. If a test fails, the test runner exits with a non-zero exit code.
 
 ## CI/CD integration

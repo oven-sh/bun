@@ -2358,6 +2358,22 @@ impl TestCommand {
         // But, don't block the main thread waiting if they used --inspect-wait.
         vm.ensure_debugger(false)?;
 
+        // `bun test -- foo.test.ts` used to treat `foo.test.ts` as a file filter;
+        // it now goes to process.argv. Warn once so the change is obvious.
+        if ctx.positionals.len() < 2 {
+            if let Some(arg) = ctx.passthrough.iter().find(|a| {
+                strings::contains(a, b".test.")
+                    || strings::contains(a, b".spec.")
+                    || strings::contains(a, b"_test_")
+                    || strings::contains(a, b"_spec_")
+            }) {
+                pretty_errorln!(
+                    "<blue>note<r><d>:<r> \"{}\" after <d>--<r> is placed in process.argv, not used as a test filter. Put it before <d>--<r> to use it as a filter.",
+                    bstr::BStr::new(arg),
+                );
+            }
+        }
+
         let mut scanner = Scanner::init(&vm.transpiler, ctx.positionals.len()).expect("oom");
         // SAFETY: lifetime-erase; `path_ignore_patterns_view` lives in this never-returning
         // frame, underlying bytes live in `ctx` (process-lifetime).

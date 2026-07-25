@@ -1566,34 +1566,41 @@ function throwEBADFIfNecessary(fn: string, fd) {
   }
 }
 
-async function writeFileAsyncIteratorInner(fd, iterable, encoding, signal: AbortSignal | null) {
-  const writer = Bun.file(fd).writer();
+// Node splits each chunk into writes of at most this many bytes so a single
+// huge chunk never pins the threadpool for the whole transfer.
+const kWriteFileMaxChunkSize = 512 * 1024;
 
-  const mustRencode = !(encoding === "utf8" || encoding === "utf-8" || encoding === "binary" || encoding === "buffer");
+async function writeFileAsyncIteratorInner(fd, iterable, encoding, signal: AbortSignal | null) {
+  // Write each chunk via the async fs.write binding (threadpool I/O) rather
+  // than Bun.file().writer(): FileSink writes to regular files synchronously
+  // and buffers pollable fds without bound, so a fast Readable drives a
+  // microtask-only loop that starves timers and (for an unbounded producer)
+  // grows memory until OOM. Awaiting fs.write per chunk is what Node's
+  // writeFileHandle does and naturally yields to the event loop.
   let totalBytesWritten = 0;
 
-  try {
-    for await (let chunk of iterable) {
+  for await (let chunk of iterable) {
+    if (signal?.aborted) {
+      throw $makeAbortError(undefined, { cause: signal.reason });
+    }
+
+    if (!types.isArrayBufferView(chunk)) {
+      if ($isUndefinedOrNull(chunk)) {
+        throw $ERR_INVALID_ARG_TYPE("chunk", ["string", "ArrayBufferView", "ArrayBuffer"], chunk);
+      }
+      chunk = Buffer.from(chunk, encoding);
+    }
+
+    let remaining = chunk.byteLength;
+    while (remaining > 0) {
+      const writeSize = remaining < kWriteFileMaxChunkSize ? remaining : kWriteFileMaxChunkSize;
+      const bytesWritten = await fs.write(fd, chunk, chunk.byteLength - remaining, writeSize, null);
+      totalBytesWritten += bytesWritten;
+      remaining -= bytesWritten;
       if (signal?.aborted) {
         throw $makeAbortError(undefined, { cause: signal.reason });
       }
-
-      if (mustRencode && typeof chunk === "string") {
-        $debug("Re-encoding chunk to", encoding);
-        chunk = Buffer.from(chunk, encoding);
-      } else if ($isUndefinedOrNull(chunk)) {
-        throw $ERR_INVALID_ARG_TYPE("chunk", ["string", "ArrayBufferView", "ArrayBuffer"], chunk);
-      }
-
-      const prom = writer.write(chunk);
-      if (prom && $isPromise(prom)) {
-        totalBytesWritten += await prom;
-      } else {
-        totalBytesWritten += prom;
-      }
     }
-  } finally {
-    await writer.end();
   }
 
   return totalBytesWritten;

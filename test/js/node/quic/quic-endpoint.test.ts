@@ -291,5 +291,5 @@ describe("node:quic in a Worker", () => {
     // a clean run and the ASAN report on regression; keep it in the received
     // object so the failure diff shows which callback UAF'd.
     expect({ stdout, stderr, exitCode }).toEqual({ stdout: "PASS\n", stderr: expect.any(String), exitCode: 0 });
-  }, 120000);
+  }, 30000);
 });

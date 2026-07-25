@@ -29,41 +29,39 @@ const src = `
     { sni: { "*": { keys: [key], certs: [cert] } }, alpn: "wq", transportParams: { maxIdleTimeout: 30 } },
   );
 
-  // Several concurrent sessions, each churning bidi streams with a large body
-  // so the lsquic stream is still open when terminate() lands. The sweep
-  // order between these wrappers and the endpoint is what the test exercises.
-  const payload = Buffer.alloc(1 << 20, 120);
-  for (let i = 0; i < 3; i++) (async () => {
-    for (;;) {
-      try {
-        const c = await connect(server.address, {
-          alpn: "wq",
-          servername: "localhost",
-          verifyPeer: "manual",
-          transportParams: { maxIdleTimeout: 30 },
-        });
-        c.closed.catch(() => {});
-        await c.createBidirectionalStream({ body: new Uint8Array(payload) });
-        await new Promise(r => setTimeout(r, 30));
-        try { c.close(); } catch {}
-      } catch {}
-    }
-  })();
+  // IsoSubspace lower-tier puts the first numberOfLowerTierPreciseCells (8)
+  // cells of each wrapper type into PreciseAllocations and the rest into a
+  // MarkedBlock; lastChanceToFinalize sweeps MarkedBlocks first. Twelve
+  // live sessions (twenty-four with the server side) push session and
+  // stream wrappers past the lower tier so their blocks are swept before
+  // the two endpoints, whose finalizer then runs lsquic_engine_destroy.
+  const held = [];
+  for (let i = 0; i < 12; i++) {
+    const c = await connect(server.address, {
+      alpn: "wq",
+      servername: "localhost",
+      verifyPeer: "manual",
+      transportParams: { maxIdleTimeout: 30 },
+    });
+    c.closed.catch(() => {});
+    await c.opened;
+    const st = await c.createBidirectionalStream({
+      body: new Uint8Array(Buffer.alloc(1 << 16, 120)),
+    });
+    st.closed.catch(() => {});
+    held.push(c, st);
+  }
 
   parentPort.postMessage("up");
   await new Promise(() => {});
 `;
 
-for (let round = 0; round < 10; round++) {
+for (let round = 0; round < 2; round++) {
   const w = new Worker(src, { eval: true, workerData });
   await new Promise<void>((resolve, reject) => {
     w.once("message", () => resolve());
     w.once("error", reject);
   });
-  // No observable signal to await: terminate() must land at a varied phase
-  // of the connect/stream churn so the sweep sees live wrappers; awaiting a
-  // specific worker event would collapse that distribution.
-  await Bun.sleep(200 + ((round * 53) % 300));
   await w.terminate();
 }
 

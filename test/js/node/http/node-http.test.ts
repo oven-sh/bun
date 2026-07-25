@@ -7,6 +7,7 @@
  */
 import { bunEnv, bunExe, exampleSite, isLinux, randomPort, tls as tlsCert } from "harness";
 import { createTest } from "node-harness";
+import { execFileSync } from "node:child_process";
 import { EventEmitter, once } from "node:events";
 import nodefs from "node:fs";
 import http, {
@@ -23,7 +24,6 @@ import http, {
   validateHeaderValue,
 } from "node:http";
 import https, { createServer as createHttpsServer } from "node:https";
-import { execFileSync } from "node:child_process";
 import type { AddressInfo } from "node:net";
 import { connect, createServer as createNetServer } from "node:net";
 import { tmpdir } from "node:os";
@@ -4085,20 +4085,23 @@ describe.skipIf(!isLinux)("http.Server SO_KEEPALIVE", () => {
     return client;
   };
 
-  it.skipIf(!hasSs)("createServer({ keepAlive, keepAliveInitialDelay }) sets SO_KEEPALIVE on accepted connections", async () => {
-    await using server = createServer({ keepAlive: true, keepAliveInitialDelay: 30000 }, (req, res) => res.end("ok"));
-    await once(server.listen(0, "127.0.0.1"), "listening");
-    const port = (server.address() as AddressInfo).port;
+  it.skipIf(!hasSs)(
+    "createServer({ keepAlive, keepAliveInitialDelay }) sets SO_KEEPALIVE on accepted connections",
+    async () => {
+      await using server = createServer({ keepAlive: true, keepAliveInitialDelay: 30000 }, (req, res) => res.end("ok"));
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      const port = (server.address() as AddressInfo).port;
 
-    expect({ keepAlive: server.keepAlive, noDelay: server.noDelay }).toEqual({ keepAlive: true, noDelay: true });
+      expect({ keepAlive: server.keepAlive, noDelay: server.noDelay }).toEqual({ keepAlive: true, noDelay: true });
 
-    const client = await openRequest(port);
-    try {
-      expect(readKeepAlive(port)).toEqual({ timer: "keepalive", idleWithinBound: true });
-    } finally {
-      client.destroy();
-    }
-  });
+      const client = await openRequest(port);
+      try {
+        expect(readKeepAlive(port)).toEqual({ timer: "keepalive", idleWithinBound: true });
+      } finally {
+        client.destroy();
+      }
+    },
+  );
 
   it.skipIf(!hasSs)("req.socket.setKeepAlive(true, ms) sets SO_KEEPALIVE on the connection", async () => {
     const handled = Promise.withResolvers<boolean>();

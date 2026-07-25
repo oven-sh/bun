@@ -111,8 +111,7 @@ export var __commonJS = (cb, mod) => () => (mod || cb((mod = { exports: {} }).ex
 
 // require("./dir/" + x) with the directory scanned at bundle time.
 export var __glob = map => path => {
-  var fn = map[path];
-  if (fn) return fn();
+  if (__hasOwnProp.call(map, path)) return map[path]();
   throw Object.assign(new Error(`Cannot find module '${path}'`), { code: "MODULE_NOT_FOUND" });
 };
 

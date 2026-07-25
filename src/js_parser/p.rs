@@ -802,7 +802,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         arg: Expr,
         buf: &'b mut BumpVec<'a, u8>,
     ) -> Result<&'b [u8], crate::Error> {
-        if self.append_specifier_shape(arg, buf)? {
+        if self.append_specifier_shape(arg, buf, 0)? {
             return Ok(buf.as_slice());
         }
         Ok(b"")
@@ -812,10 +812,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         &mut self,
         arg: Expr,
         buf: &'b mut BumpVec<'a, u8>,
+        depth: u32,
     ) -> Result<bool, crate::Error> {
+        if depth > 64 {
+            return Ok(false);
+        }
         if let Some(mut s) = arg.data.as_e_string() {
             s.resolve_rope_if_needed(self.arena);
-            buf.extend_from_slice(s.string(self.arena)?);
+            let bytes = s.string(self.arena)?;
+            if bytes.contains(&0) {
+                return Ok(false);
+            }
+            buf.extend_from_slice(bytes);
             return Ok(true);
         }
         if let Some(tmpl) = arg.data.e_template() {
@@ -825,17 +833,25 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let js_ast::e::TemplateContents::Cooked(head) = &tmpl.head else {
                 return Ok(false);
             };
-            buf.extend_from_slice(head.string(self.arena)?);
+            let head = head.string(self.arena)?;
+            if head.contains(&0) {
+                return Ok(false);
+            }
+            buf.extend_from_slice(head);
             for part in tmpl.parts().iter() {
                 let mark = buf.len();
-                if !self.append_specifier_shape(part.value, buf)? {
+                if !self.append_specifier_shape(part.value, buf, depth + 1)? {
                     buf.truncate(mark);
                     buf.push(0);
                 }
                 let js_ast::e::TemplateContents::Cooked(tail) = &part.tail else {
                     return Ok(false);
                 };
-                buf.extend_from_slice(tail.string(self.arena)?);
+                let tail = tail.string(self.arena)?;
+                if tail.contains(&0) {
+                    return Ok(false);
+                }
+                buf.extend_from_slice(tail);
             }
             return Ok(true);
         }
@@ -846,7 +862,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let mut saw_string = false;
             for side in [bin.left, bin.right] {
                 let mark = buf.len();
-                if self.append_specifier_shape(side, buf)? {
+                if self.append_specifier_shape(side, buf, depth + 1)? {
                     saw_string = true;
                 } else {
                     buf.truncate(mark);

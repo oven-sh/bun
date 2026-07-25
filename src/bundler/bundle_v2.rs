@@ -4796,12 +4796,12 @@ pub mod bv2_impl {
             // backed. The slab-only `MultiArrayList::drop` strands nothing on the
             // global heap; `mi_heap_destroy` on the AST arenas reclaims all of it.
             //
-            // Only `css` still needs an explicit pass: `BundlerStyleSheet` is the
-            // CSS crate's tree-of-`Vec`s/`Box`es and is not `AstAlloc`-parameterised
-            // (that refactor would touch every `CssRuleList`/selector/declaration
-            // type). The arena-allocated stylesheet never has `Drop` run by the
-            // slab. For JS-only bundles every `css` slot is `None`, so this loop
-            // is N×branch with no work; only CSS entries pay a real drop. The
+            // `css` and `glob_imports` still need explicit passes: `BundlerStyleSheet`
+            // is the CSS crate's tree-of-`Vec`s/`Box`es and is not `AstAlloc`-
+            // parameterised (that refactor would touch every `CssRuleList`/
+            // selector/declaration type), and `GlobImport.entries` is a global-
+            // heap `Vec` filled on the bundle thread. For JS-only bundles with
+            // no glob requires both loops are N×branch with no work. The
             // macro takes only one side (`linker.graph.ast` is a bitwise SoA
             // `memcpy` of `graph.ast`), and `CssChunk::asts` `forget()`s its
             // aliases, so this is the unique drop.
@@ -5824,8 +5824,7 @@ pub mod bv2_impl {
                 };
 
                 let kind = parent.kind;
-                let mut seen_stems: std::collections::HashSet<Vec<u8>> =
-                    std::collections::HashSet::new();
+                let mut seen_stems: Vec<&'static [u8]> = Vec::new();
 
                 let mut names: Vec<Vec<u8>> = dir_entries
                     .data
@@ -5872,15 +5871,16 @@ pub mod bv2_impl {
                     glob.entries
                         .push(bun_ast::ast_result::GlobImportEntry { key, source_index });
                     if suffix.is_empty() {
-                        let stem = &rel[..rel.len() - ext.len()];
-                        if seen_stems.insert(stem.to_vec()) {
+                        let stem: &'static [u8] = FilenameStore::instance()
+                            .append_slice(&rel[..rel.len() - ext.len()])
+                            .expect("oom");
+                        if !seen_stems.iter().any(|s| *s == stem) {
+                            seen_stems.push(stem);
                             let stem_idx = self
                                 .resolve_glob_child(source_dir, stem, kind, target, resolve_queue)
                                 .unwrap_or(source_index);
-                            let key: &'static [u8] =
-                                FilenameStore::instance().append_slice(stem).expect("oom");
                             glob.entries.push(bun_ast::ast_result::GlobImportEntry {
-                                key,
+                                key: stem,
                                 source_index: stem_idx,
                             });
                         }
@@ -5902,6 +5902,9 @@ pub mod bv2_impl {
                 .resolver
                 .resolve_with_framework(source_dir, rel, kind)
                 .ok()?;
+            if resolve_result.flags.is_external() {
+                return None;
+            }
             let path = resolve_result.path()?;
             if path.is_disabled {
                 return None;

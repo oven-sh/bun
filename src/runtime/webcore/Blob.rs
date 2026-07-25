@@ -119,12 +119,7 @@ const SERIALIZATION_VERSION: u8 = 4;
 pub use bun_jsc::generated::JSBlob as js;
 
 thread_local! {
-    /// Set while a `ReadFile` spawned by one of the `Bun.stdin` Blob read
-    /// helpers (`text()/json()/arrayBuffer()/bytes()`) is in flight. A second
-    /// concurrent call checks this and rejects with `ERR_INVALID_STATE`
-    /// instead of registering a second poll on fd 0 (which the kernel answers
-    /// with `EEXIST` from `epoll_ctl` after the loser has already consumed
-    /// bytes). Claimed in `do_read_file`; released in `NewReadFileHandler::run`.
+    /// Claimed in `do_read_file`, released in `NewReadFileHandler::run`.
     static STDIN_BLOB_READ_IN_FLIGHT: Cell<bool> = const { Cell::new(false) };
 }
 
@@ -145,8 +140,6 @@ pub(crate) fn release_stdin_blob_read_claim() {
     STDIN_BLOB_READ_IN_FLIGHT.set(false);
 }
 
-/// For an fd-backed Blob, return the `ReadableStream` cached on the JS wrapper
-/// by `get_stream_with_cache`, if one has been materialised.
 fn fd_cached_stream(blob: &Blob, this_value: JSValue) -> Option<JSValue> {
     let store = blob.store.get().as_deref()?;
     let store::Data::File(f) = &store.data else {

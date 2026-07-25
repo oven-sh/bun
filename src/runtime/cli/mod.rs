@@ -892,6 +892,7 @@ pub mod command {
         b"pack-destination",
         b"proxy",
         b"registry",
+        b"scope",
         b"script-shell",
         b"searchexclude",
         b"searchlimit",
@@ -953,6 +954,35 @@ pub mod command {
             b"-P" | b"--save-prod" => zstr!("--save"),
             _ => arg,
         }
+    }
+
+    /// npm flags that never take a value from the following token, so
+    /// dropping them must not consume it.
+    #[cold]
+    fn is_npm_bool_flag(arg: &[u8]) -> bool {
+        strings::has_prefix_comptime(arg, b"--no-")
+            || matches!(
+                arg,
+                b"-y"
+                    | b"--yes"
+                    | b"-s"
+                    | b"-q"
+                    | b"-d"
+                    | b"-dd"
+                    | b"-ddd"
+                    | b"-p"
+                    | b"-g"
+                    | b"--global"
+                    | b"--json"
+                    | b"--long"
+                    | b"--parseable"
+                    | b"--ignore-scripts"
+                    | b"--foreground-scripts"
+                    | b"--include-workspace-root"
+                    | b"--workspaces"
+                    | b"--if-present"
+                    | b"--silent"
+            )
     }
 
     #[cold]
@@ -1173,6 +1203,8 @@ pub mod command {
                     if matches!(b, b"--if-present" | b"--silent") {
                         hoisted.push(a);
                         i += 1;
+                    } else if is_npm_bool_flag(b) {
+                        i += 1;
                     } else {
                         let consumes_next = !strings::contains_char(b, b'=')
                             && tail.get(i + 1).is_some_and(|n| {
@@ -1190,18 +1222,29 @@ pub mod command {
         }
         if matches!(mapped.first().map(|z| z.as_bytes()), Some(b"create")) {
             pre_subcommand_flags.clear();
-            let mut past_separator = false;
-            tail.retain(|a| {
+            let mut new_tail: Vec<&'static ZStr> = Vec::with_capacity(tail.len());
+            let mut i = 0;
+            while i < tail.len() {
+                let a = tail[i];
                 let b = a.as_bytes();
-                if past_separator {
-                    return true;
-                }
                 if b == b"--" {
-                    past_separator = true;
-                    return true;
+                    new_tail.extend_from_slice(&tail[i..]);
+                    break;
                 }
-                b.first() != Some(&b'-')
-            });
+                if b.first() == Some(&b'-') {
+                    let consumes_next = !is_npm_bool_flag(b)
+                        && !strings::contains_char(b, b'=')
+                        && tail.get(i + 1).is_some_and(|n| {
+                            let nb = n.as_bytes();
+                            nb != b"--" && nb.first() != Some(&b'-')
+                        });
+                    i += if consumes_next { 2 } else { 1 };
+                    continue;
+                }
+                new_tail.push(a);
+                i += 1;
+            }
+            tail = new_tail;
         }
 
         let mut out: Vec<&'static ZStr> = Vec::with_capacity(

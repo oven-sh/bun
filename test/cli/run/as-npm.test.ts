@@ -328,6 +328,13 @@ describe("fake npm/npx cli", () => {
       const ws = await fakePmRun(String(dir), "npm", ["init", "nonexistent-template", "-w", "client"]);
       expect(ws.stdout + ws.stderr).toContain("create-nonexistent-template");
       expect(ws.stdout + ws.stderr).not.toContain("create-client");
+    });
+
+    test.concurrent("npm init separators and boolean flags do not leak into the template", async () => {
+      using dir = tempDir("fake-npm-init-sep", {
+        "package.json": "{}",
+        "bunfig.toml": `[install]\nregistry = "http://127.0.0.1:1/nope"\n`,
+      });
       // Everything after `--` is positional in npm, so it still names a
       // template, and a short boolean flag is not one.
       const dd = await fakePmRun(String(dir), "npm", ["init", "--", "nonexistent-template"]);
@@ -335,6 +342,10 @@ describe("fake npm/npx cli", () => {
       const y = await fakePmRun(String(dir), "npm", ["init", "-y", "nonexistent-template"]);
       expect(y.stdout + y.stderr).toContain("create-nonexistent-template");
       expect(y.stdout + y.stderr).not.toContain("create--y");
+      // `--scope` takes a value; it must not become the template.
+      const scoped = await fakePmRun(String(dir), "npm", ["init", "--scope", "@myorg", "nonexistent-template"]);
+      expect(scoped.stdout + scoped.stderr).toContain("create-nonexistent-template");
+      expect(scoped.stdout + scoped.stderr).not.toContain("@myorg");
     });
 
     test.concurrent("npm run -w <pkg> / --prefix <dir> are translated, not dropped", async () => {
@@ -389,6 +400,10 @@ describe("fake npm/npx cli", () => {
       expect(pair.stdout).toContain("ARGS:");
       expect(pair.stdout).not.toContain("3000");
       expect(pair.exitCode).toBe(0);
+      // A boolean npm flag before the script name must not eat it.
+      const short = await fakePmRun(String(dir), "npm", ["run", "-s", "go"]);
+      expect(short.stdout).toContain("ARGS:");
+      expect(short.exitCode).toBe(0);
     });
 
     test.concurrent("-- stops flag translation", async () => {

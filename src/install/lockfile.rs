@@ -228,6 +228,24 @@ impl<'a> DepSorter<'a> {
             Ordering::Less => true,
             Ordering::Greater => false,
             Ordering::Equal => {
+                // npm's hoister visits workspaces in path order, so the
+                // path-alphabetically-first workspace's direct deps win the
+                // root node_modules slot. Sorting by package name here breaks
+                // peer-sharing packages like @nestjs/core when a scoped
+                // workspace name (`@libs/...`) sorts ahead of the app that
+                // actually provides the peer (#9838).
+                if l_dep.behavior.is_workspace()
+                    && l_dep.version.tag == dependency::Tag::Workspace
+                    && r_dep.version.tag == dependency::Tag::Workspace
+                {
+                    let l_path = l_dep.version.workspace().slice(string_buf);
+                    let r_path = r_dep.version.workspace().slice(string_buf);
+                    match strings::order(l_path, r_path) {
+                        Ordering::Less => return true,
+                        Ordering::Greater => return false,
+                        Ordering::Equal => {}
+                    }
+                }
                 strings::order(l_dep.name.slice(string_buf), r_dep.name.slice(string_buf))
                     == Ordering::Less
             }

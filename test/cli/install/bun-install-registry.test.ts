@@ -3923,6 +3923,155 @@ describe("hoisting", async () => {
     assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
   });
 
+  // https://github.com/oven-sh/bun/issues/9838
+  test("conflicting workspace deps are hoisted in workspace-path order, not package-name order", async () => {
+    // `@libs/lib` sorts before `my-app` by name, but `apps/app` sorts before
+    // `libs/lib` by path. npm hoists by path, so the app's `no-deps@2.0.0`
+    // should win the root slot and `strict-peer-dep` (peer `no-deps@^2.0.0`)
+    // should dedupe onto it instead of nesting its own copy.
+    await Promise.all([
+      write(
+        packageJson,
+        JSON.stringify({
+          name: "root",
+          private: true,
+          workspaces: ["libs/*", "apps/*"],
+        }),
+      ),
+      write(
+        join(packageDir, "apps", "app", "package.json"),
+        JSON.stringify({
+          name: "my-app",
+          version: "1.0.0",
+          dependencies: {
+            "no-deps": "2.0.0",
+            "strict-peer-dep": "1.0.0",
+          },
+        }),
+      ),
+      write(
+        join(packageDir, "libs", "lib", "package.json"),
+        JSON.stringify({
+          name: "@libs/lib",
+          version: "1.0.0",
+          dependencies: {
+            "no-deps": "1.0.0",
+          },
+        }),
+      ),
+    ]);
+
+    async function checkLayout() {
+      expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toMatchObject({
+        name: "no-deps",
+        version: "2.0.0",
+      });
+      expect(await file(join(packageDir, "libs", "lib", "node_modules", "no-deps", "package.json")).json()).toMatchObject(
+        {
+          name: "no-deps",
+          version: "1.0.0",
+        },
+      );
+      expect(await exists(join(packageDir, "apps", "app", "node_modules"))).toBeFalse();
+      expect(await exists(join(packageDir, "node_modules", "strict-peer-dep", "node_modules"))).toBeFalse();
+    }
+
+    for (const cwd of [packageDir, join(packageDir, "apps", "app")]) {
+      await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+      await rm(join(packageDir, "apps", "app", "node_modules"), { recursive: true, force: true });
+      await rm(join(packageDir, "libs", "lib", "node_modules"), { recursive: true, force: true });
+      await rm(join(packageDir, "bun.lockb"), { force: true });
+      await rm(join(packageDir, "bun.lock"), { force: true });
+
+      let { stderr, exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd,
+        stdout: "ignore",
+        stderr: "pipe",
+        env,
+      });
+
+      let err = await stderr.text();
+      expect(err).not.toContain("error:");
+      expect(await exited).toBe(0);
+      await checkLayout();
+
+      // re-install with the saved lockfile + empty node_modules
+      await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+      await rm(join(packageDir, "libs", "lib", "node_modules"), { recursive: true, force: true });
+
+      ({ stderr, exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd,
+        stdout: "ignore",
+        stderr: "pipe",
+        env,
+      }));
+
+      err = await stderr.text();
+      expect(err).not.toContain("error:");
+      expect(await exited).toBe(0);
+      await checkLayout();
+    }
+  });
+
+  test("conflicting workspace deps are hoisted in workspace-path order (reversed)", async () => {
+    // Reversed: path-first workspace now wants `no-deps@1.0.0`, so that is
+    // what should hoist to root regardless of which name sorts first.
+    await Promise.all([
+      write(
+        packageJson,
+        JSON.stringify({
+          name: "root",
+          private: true,
+          workspaces: ["zed/*", "aah/*"],
+        }),
+      ),
+      write(
+        join(packageDir, "aah", "a", "package.json"),
+        JSON.stringify({
+          name: "zzz-lib",
+          version: "1.0.0",
+          dependencies: {
+            "no-deps": "1.0.0",
+          },
+        }),
+      ),
+      write(
+        join(packageDir, "zed", "z", "package.json"),
+        JSON.stringify({
+          name: "aaa-app",
+          version: "1.0.0",
+          dependencies: {
+            "no-deps": "2.0.0",
+          },
+        }),
+      ),
+    ]);
+
+    const { stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "ignore",
+      stderr: "pipe",
+      env,
+    });
+
+    const err = await stderr.text();
+    expect(err).not.toContain("error:");
+    expect(await exited).toBe(0);
+
+    expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toMatchObject({
+      name: "no-deps",
+      version: "1.0.0",
+    });
+    expect(await file(join(packageDir, "zed", "z", "node_modules", "no-deps", "package.json")).json()).toMatchObject({
+      name: "no-deps",
+      version: "2.0.0",
+    });
+    expect(await exists(join(packageDir, "aah", "a", "node_modules"))).toBeFalse();
+  });
+
   test("hoisting/using incorrect peer dep on initial install", async () => {
     await writeFile(
       packageJson,

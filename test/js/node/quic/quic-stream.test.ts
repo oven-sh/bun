@@ -187,15 +187,15 @@ describe("HTTP/3 header encoding", () => {
 // `closed` as ERR_QUIC_TRANSPORT_ERROR code 1.
 describe("HTTP/3 malformed request (content-length mismatch)", () => {
   test("resets only the offending stream; sibling streams and the session survive", async () => {
-    const resets: bigint[] = [];
+    const resets: unknown[] = [];
     const serverClosed = Promise.withResolvers<any>();
-    const sawReset = Promise.withResolvers<void>();
+    const sawResets = Promise.withResolvers<void>();
     await using server = await listen(
       async serverSession => {
         serverSession.onstream = (stream: any) => {
           stream.onreset = (err: any) => {
-            resets.push(typeof err?.code === "bigint" ? err.code : -1n);
-            sawReset.resolve();
+            resets.push(err?.errorCode);
+            if (resets.length === 2) sawResets.resolve();
           };
           stream.closed.catch(() => {});
         };
@@ -267,10 +267,11 @@ describe("HTTP/3 malformed request (content-length mismatch)", () => {
     const status = await Promise.race([goodAnswered.promise, serverClosed.promise.then(e => e ?? "closed")]);
     expect(status).toBe("200");
 
-    // Server surfaces the rejection as stream.onreset with H3_MESSAGE_ERROR.
-    await sawReset.promise;
-    expect(resets.every(c => c === 0x10en)).toBe(true);
-    expect(resets.length).toBeGreaterThanOrEqual(1);
+    // Server surfaces the rejection as stream.onreset with H3_MESSAGE_ERROR,
+    // once per patched lsquic verifier (verify_cl_on_fin and
+    // verify_cl_on_new_data_frame).
+    await Promise.race([sawResets.promise, serverClosed.promise]);
+    expect(resets).toEqual([0x10en, 0x10en]);
 
     client.close();
     expect(await serverClosed.promise).toBe(null);

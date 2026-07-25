@@ -5,15 +5,17 @@ verify_cl_on_fin / verify_cl_on_new_data_frame instead call
 ci_abort_error on the whole connection, so one bad request tears down
 every concurrent stream on the same QUIC connection.
 
-Replace the connection abort with a per-stream RESET_STREAM carrying
-HEC_MESSAGE_ERROR and report it via on_reset(how=0) so the application
-observes it the same way as a peer-initiated reset. STREAM_RST_RECVD is
-set so the read state machine reaches a final state and subsequent
-reads return -1 ECONNRESET.
+Replace the connection abort with a per-stream RESET_STREAM plus
+STOP_SENDING carrying HEC_MESSAGE_ERROR and report it via on_reset(how=0)
+so the application observes it the same way as a peer-initiated reset.
+STREAM_RST_RECVD is set so the read state machine reaches a final state
+and subsequent reads return -1 ECONNRESET.
+
+Applies after node-quic-accessors.patch (which adds ss_error_code).
 
 --- a/src/liblsquic/lsquic_stream.c
 +++ b/src/liblsquic/lsquic_stream.c
-@@ -1481,22 +1481,45 @@
+@@ -1481,22 +1481,51 @@
  }
  
  
@@ -29,9 +31,15 @@ reads return -1 ECONNRESET.
 +{
 +    stream->sm_bflags &= ~SMBF_VERIFY_CL;
 +    stream->error_code = HEC_MESSAGE_ERROR;
++    stream->ss_error_code = HEC_MESSAGE_ERROR;
 +    if (!(stream->stream_flags & STREAM_RST_SENT)
 +                                    && !(stream->sm_qflags & SMQF_SEND_RST))
 +        stream_reset(stream, HEC_MESSAGE_ERROR, 0);
++    /* stream_reset clears every SENDING flag and re-queues SEND_RST, so the
++     * STOP_SENDING goes on here afterwards.  RESET_STREAM only aborts our
++     * send side; without STOP_SENDING a peer mid-body keeps uploading. */
++    if (!(stream->stream_flags & (STREAM_FIN_RECVD|STREAM_SS_SENT)))
++        stream->sm_qflags |= SMQF_SEND_STOP_SENDING;
 +    stream->stream_flags |= STREAM_RST_RECVD;
 +    if (stream->stream_if->on_reset
 +                            && !(stream->stream_flags & STREAM_ONCLOSE_DONE)
@@ -66,7 +74,7 @@ reads return -1 ECONNRESET.
      }
  }
  
-@@ -4894,17 +4917,13 @@
+@@ -4893,17 +4922,13 @@
  verify_cl_on_new_data_frame (struct lsquic_stream *stream,
                                                      struct hq_filter *filter)
  {

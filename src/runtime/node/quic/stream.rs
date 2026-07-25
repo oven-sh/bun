@@ -357,13 +357,13 @@ impl QuicStream {
         if self.destroyed.get() {
             return;
         }
-        self.inbound.with_mut(|inbound| {
+        let enqueued = self.inbound.with_mut(|inbound| {
             // `on_reset` can fire from inside the same `lsquic_stream_read`
             // that produced `data` (a locally-detected malformed message
             // resets mid-read); once `mark_reset` has errored the queue the
             // bytes belong to the reset and never reach the reader.
             if inbound.errored {
-                return;
+                return false;
             }
             if !data.is_empty() {
                 inbound.chunks.push_back(data.to_vec());
@@ -371,8 +371,9 @@ impl QuicStream {
             if fin {
                 inbound.ended = true;
             }
+            true
         });
-        if !data.is_empty() {
+        if enqueued && !data.is_empty() {
             self.add_stat(IDX_STATS_BYTES_RECEIVED, data.len() as u64);
             self.write_stat(IDX_STATS_RECEIVED_AT, super::now_ns());
             let acc = self.read_stat(IDX_STATS_BYTES_ACCUMULATED) + data.len() as u64;

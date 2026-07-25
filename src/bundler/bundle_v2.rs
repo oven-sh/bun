@@ -4815,6 +4815,11 @@ pub mod bv2_impl {
                                 unsafe { core::ptr::drop_in_place(css_ref.as_ptr()) };
                             }
                         }
+                        for list in ast.items_glob_imports_mut() {
+                            for g in list.iter_mut() {
+                                drop(core::mem::take(&mut g.entries));
+                            }
+                        }
                     }};
                 }
                 if self.linker.graph.ast.len() != 0 {

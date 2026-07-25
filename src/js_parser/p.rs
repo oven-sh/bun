@@ -795,72 +795,67 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     /// Extracts a matchable "shape" from a dynamic import argument.
-    /// Template literals: static parts joined by \x00 placeholders.
-    /// String concatenation (`"./a" + x`) is treated the same way.
-    /// Everything else: empty string.
+    /// Template literals and string concatenation: static parts joined by \x00
+    /// placeholders. Everything else: empty string.
     fn extract_dynamic_specifier_shape<'b>(
         &mut self,
         arg: Expr,
         buf: &'b mut BumpVec<'a, u8>,
     ) -> Result<&'b [u8], crate::Error> {
-        if let Some(tmpl) = arg.data.e_template() {
-            if tmpl.tag.is_some() {
-                return Ok(b""); // tagged template — opaque
-            }
-            match &tmpl.head {
-                js_ast::e::TemplateContents::Cooked(head) => {
-                    buf.extend_from_slice(head.string(self.arena)?);
-                }
-                js_ast::e::TemplateContents::Raw(_) => return Ok(b""), // shouldn't happen post-visit but be safe
-            }
-            for part in tmpl.parts().iter() {
-                buf.push(0); // \x00 placeholder per interpolation
-                match &part.tail {
-                    js_ast::e::TemplateContents::Cooked(tail) => {
-                        buf.extend_from_slice(tail.string(self.arena)?);
-                    }
-                    js_ast::e::TemplateContents::Raw(_) => return Ok(b""), // raw tail — treat as opaque
-                }
-            }
-            return Ok(buf.as_slice());
-        }
-        if self.flatten_string_concat_shape(arg, buf)? {
+        if self.append_specifier_shape(arg, buf)? {
             return Ok(buf.as_slice());
         }
         Ok(b"")
     }
 
-    fn flatten_string_concat_shape<'b>(
+    fn append_specifier_shape<'b>(
         &mut self,
         arg: Expr,
         buf: &'b mut BumpVec<'a, u8>,
     ) -> Result<bool, crate::Error> {
-        let Some(bin) = arg.data.e_binary() else {
-            return Ok(false);
-        };
-        if bin.op != js_ast::OpCode::BinAdd {
-            return Ok(false);
+        if let Some(mut s) = arg.data.as_e_string() {
+            s.resolve_rope_if_needed(self.arena);
+            buf.extend_from_slice(s.string(self.arena)?);
+            return Ok(true);
         }
-        let mut saw_string = false;
-        let mut push = |p: &mut Self, side: Expr| -> Result<bool, crate::Error> {
-            if let Some(mut s) = side.data.as_e_string() {
-                s.resolve_rope_if_needed(p.arena);
-                buf.extend_from_slice(s.string(p.arena)?);
-                saw_string = true;
-                return Ok(true);
+        if let Some(tmpl) = arg.data.e_template() {
+            if tmpl.tag.is_some() {
+                return Ok(false);
             }
-            let mark = buf.len();
-            if p.flatten_string_concat_shape(side, buf)? {
-                saw_string = true;
-                return Ok(true);
+            let js_ast::e::TemplateContents::Cooked(head) = &tmpl.head else {
+                return Ok(false);
+            };
+            buf.extend_from_slice(head.string(self.arena)?);
+            for part in tmpl.parts().iter() {
+                let mark = buf.len();
+                if !self.append_specifier_shape(part.value, buf)? {
+                    buf.truncate(mark);
+                    buf.push(0);
+                }
+                let js_ast::e::TemplateContents::Cooked(tail) = &part.tail else {
+                    return Ok(false);
+                };
+                buf.extend_from_slice(tail.string(self.arena)?);
             }
-            buf.truncate(mark);
-            buf.push(0);
-            Ok(true)
-        };
-        push(self, bin.left)?;
-        push(self, bin.right)?;
-        Ok(saw_string)
+            return Ok(true);
+        }
+        if let Some(bin) = arg.data.e_binary() {
+            if bin.op != js_ast::OpCode::BinAdd {
+                return Ok(false);
+            }
+            let mut saw_string = false;
+            for side in [bin.left, bin.right] {
+                let mark = buf.len();
+                if self.append_specifier_shape(side, buf)? {
+                    saw_string = true;
+                } else {
+                    buf.truncate(mark);
+                    buf.push(0);
+                }
+            }
+            return Ok(saw_string);
+        }
+        Ok(false)
     }
 
     pub fn try_glob_require(&mut self, arg: Expr) -> Option<Expr> {

@@ -2763,7 +2763,7 @@ pub mod __gated_printer {
                     self.print_symbol(meta.exports_ref);
                     self.print(b")");
                 } else if !has_wrapper {
-                    self.print(b"{}");
+                    self.print(b"({})");
                 }
                 if wrap_comma {
                     self.print(b")");

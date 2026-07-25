@@ -502,6 +502,21 @@ declare var ErrorEvent: {
   new (type: string, eventInitDict?: Bun.ErrorEventInit): ErrorEvent;
 };
 
+/**
+ * The event dispatched to `globalThis` when a `Promise` is rejected and no
+ * handler is attached, or when a handler is attached to an already-rejected
+ * `Promise`.
+ */
+interface PromiseRejectionEvent extends Event {
+  readonly promise: Promise<any>;
+  readonly reason: any;
+}
+
+declare var PromiseRejectionEvent: {
+  prototype: PromiseRejectionEvent;
+  new (type: string, eventInitDict: Bun.PromiseRejectionEventInit): PromiseRejectionEvent;
+};
+
 /** A CloseEvent is sent to clients using WebSockets when the connection is closed. This is delivered to the listener indicated by the WebSocket object's onclose attribute. */
 interface CloseEvent extends Event {
   /** Returns the WebSocket connection close code provided by the server. */

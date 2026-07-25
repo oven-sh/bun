@@ -535,7 +535,7 @@ public:
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForPopStateEvent;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForProcessingInstruction;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForProgressEvent;
-    // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForPromiseRejectionEvent;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForPromiseRejectionEvent;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForRange;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForSecurityPolicyViolationEvent;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForShadowRoot;

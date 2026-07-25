@@ -15,6 +15,7 @@ test("exists", () => {
   expect(typeof ErrorEvent !== "undefined").toBe(true);
   expect(typeof CloseEvent !== "undefined").toBe(true);
   expect(typeof MessageEvent !== "undefined").toBe(true);
+  expect(typeof PromiseRejectionEvent !== "undefined").toBe(true);
   expect(typeof TextEncoder !== "undefined").toBe(true);
   expect(typeof WebSocket !== "undefined").toBe(true);
   expect(typeof Blob !== "undefined").toBe(true);

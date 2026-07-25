@@ -17,7 +17,6 @@ test("BuildMessage .stack is a string with name, message, and location", async (
   const lines = error.stack.split("\n");
   expect(lines[0]).toBe(`BuildMessage: ${error.message}`);
   expect(lines[1]).toMatch(/^ {4}at .+inspect-error-fixture-bad\.js:\d+:\d+$/);
-  expect(`${error.stack}`).not.toBe("undefined");
 
   expect(() => (error.stack = "custom")).not.toThrow();
   expect(error.stack).toBe("custom");

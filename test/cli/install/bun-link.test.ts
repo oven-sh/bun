@@ -519,7 +519,6 @@ describe.each(["hoisted", "isolated"])("link: with a filesystem path (%s)", link
       join(link_dir, "sibling", "package.json"),
       JSON.stringify({ name: "sibling-pkg", version: "2.0.0" }),
     );
-    await mkdir(join(package_dir, "app"), { recursive: true });
     await writeFile(
       join(package_dir, "package.json"),
       JSON.stringify({
@@ -592,17 +591,18 @@ describe.each(["hoisted", "isolated"])("link: with a filesystem path (%s)", link
       }),
     );
     await setLinker();
-    const { stderr, exited } = spawn({
+    await using proc = spawn({
       cmd: [bunExe(), "install"],
       cwd: package_dir,
       stdout: "pipe",
       stderr: "pipe",
       env,
     });
-    const errText = stderrForInstall(await new Response(stderr).text());
+    const [, stderr, exited] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const errText = stderrForInstall(stderr);
     expect(errText).toContain('Could not find package.json at "./does-not-exist"');
     expect(errText).not.toContain("is not linked");
     expect(errText).not.toContain("bun link my-pkg-name-from-package-json");
-    expect(await exited).toBe(1);
+    expect(exited).toBe(1);
   });
 });

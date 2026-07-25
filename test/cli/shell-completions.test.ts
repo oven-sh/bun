@@ -14,11 +14,6 @@ import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 
 const fishBin = Bun.which("fish");
 const bashBin = Bun.which("bash");
-// macOS ships /bin/bash 3.2; the functional driver exercises `_file_arguments`
-// (globstar/extglob) so only run it against bash 4+.
-const bashMajor = bashBin
-  ? parseInt(Bun.spawnSync([bashBin, "-c", "echo ${BASH_VERSINFO[0]}"]).stdout.toString().trim(), 10)
-  : 0;
 
 async function embeddedCompletions(shell: "fish" | "bash" | "zsh"): Promise<string> {
   // `bun completions` first tries to install a bunx symlink relative to the
@@ -140,7 +135,7 @@ describe.concurrent.skipIf(isWindows)("shell completions", () => {
     expect(exitCode).toBe(0);
   });
 
-  test.skipIf(!bashBin || bashMajor < 4)("bash: functionally completes the #2503 cases", async () => {
+  test.skipIf(!bashBin)("bash: functionally completes the #2503 cases", async () => {
     const bash = await embeddedCompletions("bash");
     const driver = `
 test_has() {

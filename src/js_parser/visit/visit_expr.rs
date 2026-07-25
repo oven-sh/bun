@@ -2035,7 +2035,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                     _ => {
                         // require(`./dir/${x}`) => __glob({"./dir/a": () => require_a(), ...})(`./dir/${x}`)
-                        if let Some(glob) = p.handle_glob_pattern(first, true) {
+                        if let Some(glob) = p.handle_glob_pattern(first, None) {
                             *e = glob;
                             return;
                         }

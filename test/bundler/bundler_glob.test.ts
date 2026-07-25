@@ -23,15 +23,10 @@ describe("bundler", () => {
     },
     run: { stdout: "boa,v8" },
     onAfterBundle(api) {
-      const out = api.readFile("/out.js");
       api.expectFile("/out.js").toContain("__glob");
       // Both matches bundled under the caller-visible relative key.
       api.expectFile("/out.js").toContain(`"./engines/boa.js"`);
       api.expectFile("/out.js").toContain(`"./engines/v8.js"`);
-      // Runtime require is not needed: everything is bundled.
-      if (out.includes("import.meta.require")) {
-        throw new Error("expected the glob map to replace the runtime require");
-      }
     },
   });
 
@@ -72,21 +67,62 @@ describe("bundler", () => {
     },
   });
 
-  itBundled("glob/RequireKeyNotInMap", {
+  // An extensionless key (`"./engines/" + "boa"`) is not in the bundled map;
+  // fall back to the runtime `require` so it resolves the same as before the
+  // files were bundled. Running from the source directory so the fallback
+  // can actually find the file on disk.
+  itBundled("glob/ExtensionlessFallbackRequire", {
     target: "bun",
     files: {
       "/entry.js": /* js */ `
-        const name = globalThis.__missing ?? "missing";
-        try {
-          require(\`./engines/\${name}.js\`);
-          console.log("unreachable");
-        } catch (e) {
-          console.log(e.message.startsWith("Module not found in bundle:") ? "caught" : e.message);
-        }
+        const name = globalThis.__which ?? "boa";
+        const e = require("./engines/" + name);
+        console.log(e.id);
       `,
-      "/engines/a.js": `module.exports = 1;`,
+      "/engines/boa.js": `module.exports = { id: "boa" };`,
+      "/engines/v8.js": `module.exports = { id: "v8" };`,
     },
-    run: { stdout: "caught" },
+    outfile: "/out.js",
+    run: { stdout: "boa", setCwd: true },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("__glob");
+      api.expectFile("/out.js").toContain(`"./engines/boa.js"`);
+    },
+  });
+
+  itBundled("glob/ExtensionlessFallbackImport", {
+    target: "bun",
+    files: {
+      "/entry.js": /* js */ `
+        const name = globalThis.__which ?? "boa";
+        const e = await import("./engines/" + name);
+        console.log(e.default.id);
+      `,
+      "/engines/boa.js": `export default { id: "boa" };`,
+    },
+    outfile: "/out.js",
+    run: { stdout: "boa", setCwd: true },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("(p) => import(p)");
+    },
+  });
+
+  // A second argument to `import()` carrying `with: { type }` must reach both
+  // the bundled matches and the runtime fallback.
+  itBundled("glob/ImportWithTypeOption", {
+    target: "bun",
+    files: {
+      "/entry.js": /* js */ `
+        const name = globalThis.__which ?? "a";
+        const m = await import(\`./data/\${name}.txt\`, { with: { type: "text" } });
+        console.log(m.default);
+      `,
+      "/data/a.txt": "hello-from-text",
+    },
+    run: { stdout: "hello-from-text" },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain(`{ with: { type: "text" } }`);
+    },
   });
 
   // No files match the pattern: leave the call as a runtime `require` so

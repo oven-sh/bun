@@ -1003,7 +1003,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             );
         }
 
-        if let Some(glob) = self.handle_glob_pattern(arg, false) {
+        if let Some(glob) = self.handle_glob_pattern(arg, Some(state)) {
             return glob;
         }
 
@@ -1247,7 +1247,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// see https://esbuild.github.io/api/#glob. Returns `None` when the pattern
     /// does not qualify (no `./`/`../` prefix, fully opaque arg, etc.), in which
     /// case the caller falls through to the unbundled runtime `require`.
-    pub fn handle_glob_pattern(&mut self, arg: Expr, is_require: bool) -> Option<Expr> {
+    ///
+    /// `import_state` is the surrounding `import()` visit state (`None` for
+    /// `require()`); it carries the second-argument options, the derived
+    /// loader override, and the `.then().catch()`/`await` error-handling info.
+    pub fn handle_glob_pattern(
+        &mut self,
+        arg: Expr,
+        import_state: Option<&TransposeState>,
+    ) -> Option<Expr> {
         if !self.options.bundle || self.is_control_flow_dead {
             return None;
         }
@@ -1327,7 +1335,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let loc = arg.loc;
         let arena = self.arena;
         let mut properties = BumpVec::<G::Property>::with_capacity_in(matches.len(), arena);
-        let handles_import_errors = self.fn_or_arrow_data_visit.try_body_count != 0;
+        let in_try = self.fn_or_arrow_data_visit.try_body_count != 0;
+        let handles_import_errors = match import_state {
+            None => in_try,
+            Some(s) => (s.is_await_target && in_try) || s.is_then_catch_target,
+        };
+        let import_options = import_state
+            .map(|s| s.import_options)
+            .unwrap_or(Expr::EMPTY);
+        let import_loader = import_state.and_then(|s| s.import_loader);
+        let import_tag = import_state.and_then(|s| s.import_record_tag);
 
         for abs in &matches {
             // Key in the map is the same relative form the caller will pass at
@@ -1348,26 +1365,35 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 buf.into_bump_slice()
             };
 
-            let abs_path: &'a [u8] = arena.alloc_slice_copy(abs);
+            // Record the relative specifier (not the absolute path we globbed)
+            // so `--external` patterns and `onResolve` plugins match it the same
+            // as if the user had written `require("./engines/boa.js")`.
             let import_record_index = self.add_import_record(
-                if is_require {
+                if import_state.is_none() {
                     ImportKind::Require
                 } else {
                     ImportKind::Dynamic
                 },
                 loc,
-                abs_path,
+                rel_with_dot,
             );
-            self.import_records.items_mut()[import_record_index as usize]
-                .flags
-                .set(
+            {
+                let rec = &mut self.import_records.items_mut()[import_record_index as usize];
+                rec.flags.set(
                     bun_ast::ImportRecordFlags::HANDLES_IMPORT_ERRORS,
                     handles_import_errors,
                 );
+                if let Some(loader) = import_loader {
+                    rec.loader = Some(loader);
+                }
+                if let Some(tag) = import_tag {
+                    rec.tag = tag;
+                }
+            }
             self.import_records_for_current_part
                 .push(import_record_index);
 
-            let value_expr = if is_require {
+            let value_expr = if import_state.is_none() {
                 self.new_expr(
                     E::RequireString {
                         import_record_index,
@@ -1381,7 +1407,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     E::Import {
                         expr: path_expr,
                         import_record_index,
-                        options: Expr::EMPTY,
+                        options: import_options,
                     },
                     loc,
                 )
@@ -1411,7 +1437,55 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             },
             loc,
         );
-        let glob_call = self.call_runtime(loc, b"__glob", ExprNodeList::init_one(map));
+
+        // `__glob` falls back to the runtime `require` / `import()` when the
+        // key is not in the map so extensionless or index-style specifiers
+        // (`"./engines/" + "boa"`) still resolve the way they did before the
+        // matching files were bundled.
+        let fallback = if !self.options.features.allow_runtime {
+            None
+        } else if import_state.is_none() {
+            self.record_usage_of_runtime_require();
+            Some(self.value_for_require(loc))
+        } else {
+            let param_ref = self.new_symbol(js_ast::symbol::Kind::Other, b"p");
+            let param_expr = self.new_expr(
+                E::Identifier {
+                    ref_: param_ref,
+                    ..Default::default()
+                },
+                loc,
+            );
+            let import_expr = self.new_expr(
+                E::Import {
+                    expr: param_expr,
+                    import_record_index: u32::MAX,
+                    options: import_options,
+                },
+                loc,
+            );
+            let body = bun_core::handle_oom(G::FnBody::init_return_expr(arena, import_expr));
+            let param_binding = self.b(B::Identifier { r#ref: param_ref }, loc);
+            let args: &mut [G::Arg] = arena.alloc_slice_fill_with(1, |_| G::Arg {
+                binding: param_binding,
+                ..Default::default()
+            });
+            Some(self.new_expr(
+                E::Arrow {
+                    args: bun_ast::StoreSlice::new_mut(args),
+                    body,
+                    prefer_expr: true,
+                    ..Default::default()
+                },
+                loc,
+            ))
+        };
+
+        let glob_args = match fallback {
+            Some(f) => ExprNodeList::from_slice(&[map, f]),
+            None => ExprNodeList::init_one(map),
+        };
+        let glob_call = self.call_runtime(loc, b"__glob", glob_args);
         Some(self.new_expr(
             E::Call {
                 target: glob_call,

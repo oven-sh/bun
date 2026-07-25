@@ -265,17 +265,26 @@ impl<'a> ImportScanner<'a> {
                         // e.g. `import 'fancy-stylesheet-thing/style.css';`
                         // This is a breaking change though. We can make it an option with some guardrail
                         // so maybe if it errors, it shows a suggestion "retry without trimming unused imports"
+                        //
+                        // The second arm covers imports whose bindings were all culled above
+                        // (use_count_estimate == 0). It applies to TypeScript too: an import
+                        // binding that was used as a value but only in dead code (DCE'd or
+                        // replace_exports'd) has ts_use_counts > 0 yet no surviving bindings.
+                        // Without this arm TypeScript would keep the statement as a bare
+                        // side-effect import while JavaScript drops it entirely (#12892).
                         if (is_typescript_enabled
                             && found_imports
                             && is_unused_in_typescript
                             && !p.options.preserve_unused_imports_ts)
-                            || (!is_typescript_enabled
-                                && p.options.features.trim_unused_imports
+                            || (p.options.features.trim_unused_imports
                                 && found_imports
                                 && st.star_name_loc.is_empty()
                                 // SAFETY: arena-owned slice; see above.
                                 && st.items.slice().is_empty()
-                                && st.default_name.is_none())
+                                && st.default_name.is_none()
+                                && !(is_typescript_enabled
+                                    && is_unused_in_typescript
+                                    && p.options.preserve_unused_imports_ts))
                         {
                             // internal imports are presumed to be always used
                             // require statements cannot be stripped

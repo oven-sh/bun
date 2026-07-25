@@ -1851,19 +1851,118 @@ export default class {
       trimUnusedImports: true,
     });
 
-    it("a deletes dead exports and any imports only referenced in dead regions", () => {
-      const out = transpiler.transformSync(`
-    import {getUserById} from './my-database';
+    // https://github.com/oven-sh/bun/issues/12892
+    describe.each(["jsx", "js", "tsx", "ts"])(`loader: %s`, loader => {
+      const t = new Bun.Transpiler({
+        loader,
+        exports: {
+          replace: {
+            getStaticProps: ["__N_SSG", true],
+          },
+          eliminate: ["loader"],
+        },
+        treeShaking: true,
+        trimUnusedImports: true,
+        define: { "process.env.NODE_ENV": '"production"' },
+      });
+      const jsx = loader.endsWith("x") ? `<div id='user'>{user.name}</div>` : `user.name`;
 
-    export async function getStaticProps(ctx){
-      return { props: { user: await getUserById(ctx.params.id)  } };
-    }
+      it("drops imports only used by a replaced export", () => {
+        const out = t.transformSync(`
+          import {getUserById} from './my-database';
 
-    export default function MyComponent({user}) {
-      getStaticProps();
-      return <div id='user'>{user.name}</div>;
-    }
-  `);
+          export async function getStaticProps(ctx){
+            return { props: { user: await getUserById(ctx.params.id)  } };
+          }
+
+          export default function MyComponent({user}) {
+            getStaticProps();
+            return ${jsx};
+          }
+        `);
+        expect(out).not.toContain("my-database");
+        expect(out).not.toContain("getUserById");
+        expect(out).toContain("__N_SSG");
+        expect(out).toContain("MyComponent");
+      });
+
+      it("drops default and namespace imports only used by a replaced export", () => {
+        const out = t.transformSync(`
+          import db from './my-database';
+          import * as ns from './other';
+
+          export async function getStaticProps(ctx){
+            return { props: { user: await db.getUserById(ns.params.id)  } };
+          }
+
+          export const live = 1;
+        `);
+        expect(out).not.toContain("my-database");
+        expect(out).not.toContain("./other");
+        expect(out).toContain("__N_SSG");
+        expect(out).toContain("live");
+      });
+
+      it("drops imports only used by an eliminated export", () => {
+        const out = t.transformSync(`
+          import {deadFS} from 'dead-fs';
+          import {liveFS} from 'live-fs';
+
+          export function loader() {
+            return deadFS.readFileSync("/etc/passwd");
+          }
+
+          export function action() {
+            return liveFS.readFileSync("/etc/passwd");
+          }
+        `);
+        expect(out).not.toContain("dead-fs");
+        expect(out).not.toContain("deadFS");
+        expect(out).not.toContain("loader");
+        expect(out).toContain("live-fs");
+        expect(out).toContain("liveFS");
+        expect(out).toContain("action");
+      });
+
+      it("drops imports only used in dead code", () => {
+        const out = t.transformSync(`
+          import {devOnly} from './dev-stuff';
+
+          if (process.env.NODE_ENV !== "production") {
+            devOnly();
+          }
+
+          export const x = 1;
+        `);
+        expect(out).not.toContain("dev-stuff");
+        expect(out).not.toContain("devOnly");
+        expect(out).toContain("export const x = 1");
+      });
+
+      it("keeps imports with live uses", () => {
+        const out = t.transformSync(`
+          import {shared} from './shared';
+
+          export async function getStaticProps(ctx){
+            return { props: { x: shared() } };
+          }
+
+          export const y = shared();
+        `);
+        expect(out).toContain("./shared");
+        expect(out).toContain("shared");
+      });
+
+      it("keeps originally-bare imports", () => {
+        const out = t.transformSync(`
+          import './side-effect';
+
+          export async function getStaticProps(ctx){
+            return { props: {} };
+          }
+        `);
+        expect(out).toContain("./side-effect");
+      });
     });
 
     it("deletes dead exports and any imports only referenced in dead regions", () => {

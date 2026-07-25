@@ -4786,11 +4786,7 @@ impl VirtualMachine {
         let global_ref = self.global();
 
         if value.is_aggregate_error(global_ref) {
-            // Stack-safety + cycle guard for the `.errors` recursion below
-            // (`agg_iter` → `print_errorlike_object`). An AggregateError may
-            // appear in its own `.errors` array, and `.errors` may nest
-            // arbitrarily deep; neither case should overflow the native stack.
-            // Mirrors the `cause`-chain guard in `print_error_instance_body`.
+            // Same stack + cycle guard the `cause` chain gets in `print_error_instance_body`.
             if !formatter.stack_check.is_safe_to_recurse() {
                 formatter.failed = true;
                 if formatter.can_throw_stack_overflow {

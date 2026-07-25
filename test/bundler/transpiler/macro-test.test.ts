@@ -133,10 +133,7 @@ test("ireturnapromise", async () => {
   expect(await ireturnapromise()).toEqual("aaa");
 });
 
-// #9613: a destructuring pattern whose key order differs from the macro's object literal must
-// keep every referenced property. The visitor previously compacted the object in place while
-// still looking keys up in it, so a write at `properties[end]` could overwrite an entry that a
-// later bound key needed.
+// https://github.com/oven-sh/bun/issues/9613
 describe("destructuring a macro object", () => {
   const files = {
     "m.ts": `
@@ -154,24 +151,30 @@ describe("destructuring a macro object", () => {
       { const { c, b, a } = obj(); out.push([a, b, c].join(",")); }
       { const { c, a } = obj(); out.push([a, c].join(",")); }
       { const { b, a: a2 } = obj(); out.push([a2, b].join(",")); }
+      { const { a, a: a2 } = obj(); out.push([a, a2].join(",")); }
       { const { c, missing } = obj(); out.push([c, String(missing)].join(",")); }
       { const { outer: { z, x } } = nested(); out.push([x, z].join(",")); }
       console.log(JSON.stringify(out));
     `,
   };
-  const expected = ["a,b,c", "a,b,c", "a,b,c", "a,b,c", "a,b,c", "a,b,c", "a,c", "a,b", "c,undefined", "1,3"];
+  const expected = ["a,b,c", "a,b,c", "a,b,c", "a,b,c", "a,b,c", "a,b,c", "a,c", "a,b", "a,a", "c,undefined", "1,3"];
 
   async function run(cmd: string[], cwd: string) {
     await using proc = Bun.spawn({ cmd, env: bunEnv, cwd, stdout: "pipe", stderr: "pipe" });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [rawStdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // Debug builds unconditionally print "[macro] call <name>" to stdout; drop those lines so the
+    // whole remaining output can be compared exactly.
+    const stdout = rawStdout
+      .split("\n")
+      .filter(l => !l.startsWith("[macro] "))
+      .join("\n");
     return { stdout, stderr, exitCode };
   }
 
   test.concurrent("bun run", async () => {
     using dir = tempDir("macro-destructure-run", files);
-    const { stdout, stderr, exitCode } = await run([bunExe(), "index.ts"], String(dir));
-    expect({ out: JSON.parse(stdout.trim().split("\n").pop()!), stderr, exitCode }).toEqual({
-      out: expected,
+    expect(await run([bunExe(), "index.ts"], String(dir))).toEqual({
+      stdout: JSON.stringify(expected) + "\n",
       stderr: "",
       exitCode: 0,
     });
@@ -181,9 +184,8 @@ describe("destructuring a macro object", () => {
     using dir = tempDir("macro-destructure-build", files);
     const build = await run([bunExe(), "build", "./index.ts", "--target", "bun", "--outfile", "out.js"], String(dir));
     expect(build).toMatchObject({ exitCode: 0 });
-    const { stdout, stderr, exitCode } = await run([bunExe(), "out.js"], String(dir));
-    expect({ out: JSON.parse(stdout.trim().split("\n").pop()!), stderr, exitCode }).toEqual({
-      out: expected,
+    expect(await run([bunExe(), "out.js"], String(dir))).toEqual({
+      stdout: JSON.stringify(expected) + "\n",
       stderr: "",
       exitCode: 0,
     });

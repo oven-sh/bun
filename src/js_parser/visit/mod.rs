@@ -452,12 +452,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 return;
                             }
                         }
-                        // First pass: resolve every bound key against the unmodified
-                        // property list. Writing `properties[end] = properties[query.i]`
-                        // here would clobber entries that later bound keys still need
-                        // to look up (e.g. `const { c, a } = { a, b, c }` overwrites
-                        // `a` before it is found). Record which source indices are
-                        // referenced instead, then compact in a second pass.
+                        // Mark referenced indices first; compacting during lookup would
+                        // overwrite entries later `as_property` calls still need (#9613).
                         let mut used: smallvec::SmallVec<[bool; 8]> =
                             smallvec::smallvec![false; object.properties.len()];
                         for property in bound_object.properties() {

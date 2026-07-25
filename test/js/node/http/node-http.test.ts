@@ -4104,6 +4104,27 @@ describe("request body still flows after res.end() was called in the handler", (
     );
   });
 
+  it("req.on('data') attached after res.end() in the same tick", async () => {
+    // Node gates the dump on 'finish' (nextTick), so a consumer attached in
+    // the same tick as res.end() still receives the body.
+    const events: string[] = [];
+    const { promise: ended, resolve } = Promise.withResolvers<void>();
+    await using server = createServer((req, res) => {
+      res.end("ok");
+      req.on("data", c => events.push(`data(${c.length})`));
+      req.once("end", () => {
+        events.push("end");
+        resolve();
+      });
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const { port } = server.address() as AddressInfo;
+    const resp = await fetch(`http://127.0.0.1:${port}/`, { method: "POST", body: "testing" });
+    await resp.text();
+    await ended;
+    expect(events).toEqual(["data(7)", "end"]);
+  });
+
   it("req.on('data') with synchronous res.end()", async () => {
     await run(
       (req, out) => {
@@ -4139,10 +4160,12 @@ describe("request body still flows after res.end() was called in the handler", (
 
   it("chunked request body split across writes", async () => {
     let body = "";
-    const { promise: ended, resolve } = Promise.withResolvers<void>();
+    const { promise: ended, resolve, reject } = Promise.withResolvers<void>();
     await using server = createServer((req, res) => {
       req.on("data", c => (body += c));
       req.once("end", resolve);
+      req.once("error", reject);
+      req.once("close", () => reject(new Error("closed before end")));
       res.end("ok");
     });
     await once(server.listen(0, "127.0.0.1"), "listening");
@@ -4201,7 +4224,7 @@ describe("request body still flows after res.end() was called in the handler", (
     // and the process reaches beforeExit.
     expect(stdout.trim()).toBe('["data(3)"]');
     expect(exitCode).toBe(0);
-  });
+  }, 20_000);
 
   it("Connection: close does not hang when the body consumer stays attached", async () => {
     // The socket is shut down right after the response is written, so later

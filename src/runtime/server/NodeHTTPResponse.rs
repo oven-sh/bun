@@ -610,7 +610,8 @@ impl NodeHTTPResponse {
             || flags.contains(Flags::ENDED))
             && (self.body_read_ref.get().has
                 || self.body_read_state.get() == BodyReadState::Pending)
-            && js::on_data_get_cached(this_value).is_none()
+            && (this_value.is_empty_or_undefined_or_null()
+                || js::on_data_get_cached(this_value).is_none())
         {
             let had_ref = self.body_read_ref.get().has;
             if !flags.contains(Flags::UPGRADED) && !flags.contains(Flags::SOCKET_CLOSED) {
@@ -2291,6 +2292,11 @@ impl NodeHTTPResponse {
                 self.body_read_ref
                     .with_mut(|r| r.unref(bun_vm_mut(global_object)));
             }
+            // The body-read state just left Pending: if the response had already
+            // ended (req._dump() from the 'finish' listener is the common path
+            // here), the request can be marked done now so IS_REQUEST_PENDING and
+            // the server's pending-request counter are released.
+            self.mark_request_as_done_if_necessary();
             return;
         }
 

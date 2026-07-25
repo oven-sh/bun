@@ -2446,10 +2446,17 @@ function stopServerResponsePerf(this: any) {
 // arm keep-alive) runs first because onResponseFinishHandleSocket's guards
 // read pre-detach state, then detach the socket and advance the pipeline.
 function emitResponseFinish() {
+  // Like Node.js's resOnFinish: if nothing is (or is about to be) reading the
+  // request body, dump it. Runs on 'finish' (nextTick after end()) so a
+  // consumer attached between res.end() and this tick is still honoured.
+  const req = this.req;
+  if (req && !req._consuming && !req._readableState?.resumeScheduled) {
+    req._dump();
+  }
   // req.socket is nulled by the stream destroyer (pipeline/compose cleanup);
   // the response's own socket (set by assignSocket, cleared only by
   // detachSocket) still references the connection then.
-  const socket = this.req?.socket ?? this.socket;
+  const socket = req?.socket ?? this.socket;
   onResponseFinishHandleSocket(socket?.server, socket, this);
   // The dispatcher detached a synchronously-finished response itself;
   // advancing the pipeline again here would skip a queued response.
@@ -3169,14 +3176,6 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
     // node.js will return true if the handle is closed but the internal state is not
     // and will not throw or emit an error
     return true;
-  }
-  // Like Node.js's resOnFinish: if nothing is (or is about to be) reading the
-  // request body, dump it. Runs before the native end so the cleared ondata
-  // lets the native side release the body-read ref; a set ondata means the
-  // body keeps flowing into the IncomingMessage after the response is sent.
-  const req = this.req;
-  if (req && !req._consuming && !req._readableState?.resumeScheduled) {
-    req._dump();
   }
   const sentState = NodeHTTPHeaderState.sent;
   if (headerState !== sentState) {

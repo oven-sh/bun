@@ -167,6 +167,16 @@ ImportMetaObject* ImportMetaObject::create(JSC::JSGlobalObject* globalObject, JS
 
 ImportMetaObject* ImportMetaObject::createFromSpecifier(JSC::JSGlobalObject* globalObject, const String& specifier)
 {
+    // A specifier that already carries a URL scheme (data:, blob:, file:, http:, ...)
+    // must be preserved so import.meta.url reflects the module's real identity.
+    // Only filesystem paths are wrapped as file:// URLs below.
+    if (!isAbsolutePath(specifier)) {
+        WTF::URL parsed(specifier);
+        if (parsed.isValid() && !parsed.protocol().isEmpty()) {
+            return create(globalObject, specifier);
+        }
+    }
+
     auto index = specifier.find('?');
     URL url;
     if (index != notFound) {

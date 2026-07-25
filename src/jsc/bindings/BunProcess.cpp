@@ -391,13 +391,42 @@ extern "C" void CrashHandler__setDlOpenAction(const char* action);
 extern "C" bool Bun__VM__allowAddons(void* vm);
 
 #if OS(WINDOWS)
-// Addons built with /DELAYLOAD:node.exe but without win_delay_load_hook.cc
-// (e.g. cmake-js projects that don't add ${CMAKE_JS_SRC}) will try to resolve
-// napi_* against a module literally named "node.exe". Under bun.exe that
-// either finds a real Node install on PATH and crashes with a mismatched env
-// layout, or raises 0xC06D007E when no node.exe exists. Pre-bind those delay
-// imports to the host process so the addon never calls into the loader.
-static void resolveNodeDelayLoadImports(HMODULE addon)
+// Addons that import napi_* from a module literally named "node.exe" work
+// under node.exe because the loader resolves that name to the process image.
+// Under bun.exe it resolves to whatever node.exe the search path finds, and
+// the addon ends up calling Node's napi functions with Bun's env pointer.
+//
+// Walk the addon's import tables after LoadLibrary and rebind any node.exe
+// entries to the host process. Covers /DELAYLOAD:node.exe without
+// win_delay_load_hook.cc (cmake-js projects that omit ${CMAKE_JS_SRC}) and
+// non-delay imports (Zig-built addons that link node.lib directly).
+static void rebindThunks(BYTE* base, HMODULE host, PIMAGE_THUNK_DATA iat, PIMAGE_THUNK_DATA names, bool keepUnresolved)
+{
+    size_t count = 0;
+    for (auto* n = names; n->u1.AddressOfData != 0; ++n) ++count;
+    if (count == 0) return;
+
+    // Regular IATs sit in a read-only page once the loader is done.
+    DWORD oldProtect = 0;
+    if (!VirtualProtect(iat, count * sizeof(*iat), PAGE_READWRITE, &oldProtect)) return;
+
+    for (size_t i = 0; i < count; ++i) {
+        FARPROC proc;
+        if (IMAGE_SNAP_BY_ORDINAL(names[i].u1.Ordinal)) {
+            proc = GetProcAddress(host, reinterpret_cast<LPCSTR>(static_cast<uintptr_t>(IMAGE_ORDINAL(names[i].u1.Ordinal))));
+        } else {
+            auto* byName = reinterpret_cast<PIMAGE_IMPORT_BY_NAME>(base + names[i].u1.AddressOfData);
+            proc = GetProcAddress(host, reinterpret_cast<LPCSTR>(byName->Name));
+        }
+        if (!proc && keepUnresolved) continue;
+        iat[i].u1.Function = reinterpret_cast<ULONGLONG>(proc);
+    }
+
+    DWORD ignore;
+    VirtualProtect(iat, count * sizeof(*iat), oldProtect, &ignore);
+}
+
+static void rebindNodeExeImports(HMODULE addon)
 {
     auto* base = reinterpret_cast<BYTE*>(addon);
     auto* dos = reinterpret_cast<PIMAGE_DOS_HEADER>(base);
@@ -405,39 +434,45 @@ static void resolveNodeDelayLoadImports(HMODULE addon)
 
     auto* nt = reinterpret_cast<PIMAGE_NT_HEADERS>(base + dos->e_lfanew);
     if (nt->Signature != IMAGE_NT_SIGNATURE) return;
-    if (nt->OptionalHeader.NumberOfRvaAndSizes <= IMAGE_DIRECTORY_ENTRY_DELAY_IMPORT) return;
-
-    auto& dir = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_DELAY_IMPORT];
-    if (dir.VirtualAddress == 0 || dir.Size == 0) return;
 
     HMODULE host = GetModuleHandleW(nullptr);
-    auto* desc = reinterpret_cast<PIMAGE_DELAYLOAD_DESCRIPTOR>(base + dir.VirtualAddress);
+    auto isHostName = [](const char* name) {
+        return _stricmp(name, "node.exe") == 0 || _stricmp(name, "bun.exe") == 0;
+    };
 
-    for (; desc->DllNameRVA != 0; ++desc) {
-        // Old VC6 delayimp used VAs here; MSVC has emitted RVAs since 2002.
-        if (!desc->Attributes.RvaBased) continue;
-
-        const char* dllName = reinterpret_cast<const char*>(base + desc->DllNameRVA);
-        if (_stricmp(dllName, "node.exe") != 0 && _stricmp(dllName, "bun.exe") != 0) continue;
-
-        auto* iat = reinterpret_cast<PIMAGE_THUNK_DATA>(base + desc->ImportAddressTableRVA);
-        auto* names = reinterpret_cast<PIMAGE_THUNK_DATA>(base + desc->ImportNameTableRVA);
-
-        for (; names->u1.AddressOfData != 0; ++iat, ++names) {
-            FARPROC proc;
-            if (IMAGE_SNAP_BY_ORDINAL(names->u1.Ordinal)) {
-                proc = GetProcAddress(host, reinterpret_cast<LPCSTR>(static_cast<uintptr_t>(IMAGE_ORDINAL(names->u1.Ordinal))));
-            } else {
-                auto* byName = reinterpret_cast<PIMAGE_IMPORT_BY_NAME>(base + names->u1.AddressOfData);
-                proc = GetProcAddress(host, reinterpret_cast<LPCSTR>(byName->Name));
+    if (nt->OptionalHeader.NumberOfRvaAndSizes > IMAGE_DIRECTORY_ENTRY_IMPORT) {
+        auto& dir = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT];
+        if (dir.VirtualAddress && dir.Size) {
+            auto* desc = reinterpret_cast<PIMAGE_IMPORT_DESCRIPTOR>(base + dir.VirtualAddress);
+            for (; desc->Name != 0; ++desc) {
+                if (!isHostName(reinterpret_cast<const char*>(base + desc->Name))) continue;
+                if (!desc->OriginalFirstThunk || !desc->FirstThunk) continue;
+                rebindThunks(base, host,
+                    reinterpret_cast<PIMAGE_THUNK_DATA>(base + desc->FirstThunk),
+                    reinterpret_cast<PIMAGE_THUNK_DATA>(base + desc->OriginalFirstThunk),
+                    false);
             }
-            // Leave unresolved slots pointing at their delay-load thunk so a
-            // missing symbol still surfaces as an error at the call site.
-            if (proc) iat->u1.Function = reinterpret_cast<ULONGLONG>(proc);
         }
+    }
 
-        if (desc->ModuleHandleRVA)
-            *reinterpret_cast<HMODULE*>(base + desc->ModuleHandleRVA) = host;
+    if (nt->OptionalHeader.NumberOfRvaAndSizes > IMAGE_DIRECTORY_ENTRY_DELAY_IMPORT) {
+        auto& dir = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_DELAY_IMPORT];
+        if (dir.VirtualAddress && dir.Size) {
+            auto* desc = reinterpret_cast<PIMAGE_DELAYLOAD_DESCRIPTOR>(base + dir.VirtualAddress);
+            for (; desc->DllNameRVA != 0; ++desc) {
+                // Old VC6 delayimp used VAs here; MSVC has emitted RVAs since 2002.
+                if (!desc->Attributes.RvaBased) continue;
+                if (!isHostName(reinterpret_cast<const char*>(base + desc->DllNameRVA))) continue;
+                // Leave unresolved delay slots pointing at their thunk so a
+                // missing symbol still surfaces at the call site.
+                rebindThunks(base, host,
+                    reinterpret_cast<PIMAGE_THUNK_DATA>(base + desc->ImportAddressTableRVA),
+                    reinterpret_cast<PIMAGE_THUNK_DATA>(base + desc->ImportNameTableRVA),
+                    true);
+                if (desc->ModuleHandleRVA)
+                    *reinterpret_cast<HMODULE*>(base + desc->ModuleHandleRVA) = host;
+            }
+        }
     }
 }
 #endif
@@ -636,7 +671,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
 
 #if OS(WINDOWS)
     tryToDeleteIfNecessary();
-    resolveNodeDelayLoadImports(handle);
+    rebindNodeExeImports(handle);
 #endif
 
     if (callCountAtStart != globalObject->napiModuleRegisterCallCount) {

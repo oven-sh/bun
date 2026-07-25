@@ -273,6 +273,45 @@ test.concurrent("load() picks the longest registered extension handler (#29253)"
   expect(exitCode).toBe(0);
 });
 
+test.concurrent("load() preserves caller-preset filename and paths (#29253)", async () => {
+  // Node's load() uses `??=` for filename/paths, so values the caller set
+  // before calling load() survive.
+  using dir = tempDir("module-load-preset", {
+    "leaf.js": `module.exports = "ok";`,
+    "driver.js": `
+      const Module = require("node:module");
+      const path = require("node:path");
+
+      const target = path.resolve(__dirname, "leaf.js");
+      const m = new Module(target, module);
+      m.filename = "/preset/filename.js";
+      m.paths = ["/my/custom/lookup/node_modules"];
+      m.load(target);
+
+      console.log(JSON.stringify({ filename: m.filename, paths: m.paths, exports: m.exports }));
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "driver.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  const result = JSON.parse(stdout.trim());
+  expect(result).toEqual({
+    filename: "/preset/filename.js",
+    paths: ["/my/custom/lookup/node_modules"],
+    exports: "ok",
+  });
+  expect(exitCode).toBe(0);
+});
+
 test("module.isPreloading is a boolean getter on the prototype", () => {
   // Node defines `isPreloading` as a getter on `Module.prototype`; before
   // the fix Bun returned `undefined` here.

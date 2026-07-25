@@ -439,10 +439,11 @@ export function modulePrototypeLoad(this: JSCommonJSModule, filename: string) {
   const path = require("node:path");
 
   const dirname = path.dirname(filename);
-  this.filename = filename;
+  // Like Node, preserve caller-preset filename/paths (`??=` in Node's load).
+  this.filename ??= filename;
   // `path` backs the `__dirname` the native .js handler passes to the module body.
   this.path = dirname;
-  this.paths = Module._nodeModulePaths(dirname);
+  this.paths ??= Module._nodeModulePaths(dirname);
 
   // findLongestRegisteredExtension: `path.extname` only returns the trailing
   // suffix, so it would miss compound extensions like `.test.js`.

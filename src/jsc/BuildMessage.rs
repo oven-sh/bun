@@ -45,8 +45,7 @@ impl BuildMessage {
         })
     }
 
-    /// `"<name>: <message>"` plus one `    at <file>:<line>:<column>` frame
-    /// when the message carries a location. Shared by ResolveMessage.
+    /// Builds the `.stack` string; also used by ResolveMessage.
     pub fn generate_stack_string(name: &[u8], msg: &bun_ast::Msg) -> Vec<u8> {
         let mut text: Vec<u8> = Vec::new();
         write!(

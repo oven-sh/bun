@@ -1151,3 +1151,77 @@ it("an inherited checkServerIdentity cannot become the hostname verifier", async
     failureDetail: "",
   });
 });
+
+describe("ecdhCurve", () => {
+  // Node: SecureContext::SetECDHCurve calls SSL_CTX_set1_groups_list and throws
+  // ERR_CRYPTO_OPERATION_FAILED("Failed to set ECDH curve") on failure; "auto"
+  // and "" keep the library defaults.
+  // https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_context.cc
+  it("createSecureContext rejects an unparsable curve list like Node", () => {
+    for (const accepted of ["auto", "", "X25519", "P-384", "X25519:P-384"]) {
+      expect(() => tls.createSecureContext({ ecdhCurve: accepted })).not.toThrow();
+    }
+    let err: any;
+    try {
+      tls.createSecureContext({ ecdhCurve: "not-a-curve" });
+    } catch (e) {
+      err = e;
+    }
+    expect({ code: err?.code, message: err?.message }).toEqual({
+      code: "ERR_CRYPTO_OPERATION_FAILED",
+      message: "Failed to set ECDH curve",
+    });
+  });
+
+  it("tls.connect rejects an unparsable curve list synchronously", () => {
+    let err: any;
+    let socket: tls.TLSSocket | undefined;
+    try {
+      socket = tls.connect({ host: "127.0.0.1", port: 1, ecdhCurve: "not-a-curve" });
+    } catch (e) {
+      err = e;
+    }
+    socket?.on("error", () => {});
+    socket?.destroy();
+    expect(err?.code).toBe("ERR_CRYPTO_OPERATION_FAILED");
+  });
+
+  // Narrow the client's and server's key-exchange groups to disjoint sets and
+  // assert the handshake fails: only if ecdhCurve reaches both SSL contexts can
+  // there be no overlap. BoringSSL's default list contains X25519, P-256 and
+  // P-384, so ignoring the option on either side would let them agree.
+  it("tls.connect/tls.createServer apply ecdhCurve to the SSL context", async () => {
+    const server = tls.createServer({ ...COMMON_CERT_, ecdhCurve: "P-384" }, socket => socket.end());
+    server.on("tlsClientError", () => {});
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const port = (server.address() as AddressInfo).port;
+
+    const probe = (ecdhCurve: string) =>
+      new Promise<string>(resolve => {
+        const s = tls.connect({ host: "127.0.0.1", port, rejectUnauthorized: false, ecdhCurve }, () => {
+          s.destroy();
+          resolve("connected");
+        });
+        s.on("error", e => resolve((e as NodeJS.ErrnoException).code || e.message));
+      });
+
+    try {
+      expect({
+        matching: await probe("P-384"),
+        noOverlapP256: await probe("P-256"),
+        noOverlapX25519: await probe("X25519"),
+        listWithOverlap: await probe("P-256:P-384"),
+        auto: await probe("auto"),
+      }).toEqual({
+        matching: "connected",
+        noOverlapP256: expect.stringContaining("HANDSHAKE_FAILURE"),
+        noOverlapX25519: expect.stringContaining("HANDSHAKE_FAILURE"),
+        listWithOverlap: "connected",
+        auto: "connected",
+      });
+    } finally {
+      server.close();
+    }
+  });
+});

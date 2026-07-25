@@ -76,6 +76,11 @@ private:
     OnSocketClosedCallback onSocketClosed = nullptr;
     OnSocketDrainCallback onSocketDrain = nullptr;
     OnSocketDataCallback onSocketData = nullptr;
+    /* node:http compat: tap of every TCP payload before HTTP parsing (Node's
+     * server socket emits 'data' with the raw request bytes to every listener,
+     * its parser included). The receiver gates on its own callback slot so this
+     * is a null-check when no user 'data' listener is attached. */
+    OnSocketDataCallback onSocketRawData = nullptr;
     OnSocketUpgradedCallback onSocketUpgraded = nullptr;
     OnClientErrorCallback onClientError = nullptr;
 

@@ -306,6 +306,23 @@ private:
             }
         }
 
+        /* node:http compat: Node's server socket is a net.Socket whose 'data'
+         * event carries the raw TCP payload (the parser is just another 'data'
+         * listener). Forward the raw bytes to the JS socket wrapper before
+         * parsing so a user 'data' listener on the 'connection' socket sees
+         * them. Tunnel mode routes through onSocketData instead. The receiver
+         * early-returns when no JS callback is installed, so the common path
+         * pays only the indirect call. */
+        if constexpr (IsNodeHttp) {
+            if (!httpResponseData->isConnectRequest && httpResponseData->socketData && httpContextData->onSocketRawData) {
+                httpContextData->onSocketRawData(httpResponseData->socketData, SSL, s, data, length, false);
+                if (us_socket_is_closed(s)) {
+                    us_socket_unref(s);
+                    return s;
+                }
+            }
+        }
+
         /* Cork this socket */
         ((AsyncSocket<SSL> *) s)->cork();
 

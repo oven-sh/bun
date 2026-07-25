@@ -128,6 +128,7 @@ public:
     mutable JSC::WriteBarrier<JSC::JSObject> functionToCallOnClose;
     mutable JSC::WriteBarrier<JSC::JSObject> functionToCallOnDrain;
     mutable JSC::WriteBarrier<JSC::JSObject> functionToCallOnData;
+    mutable JSC::WriteBarrier<JSC::JSObject> functionToCallOnRawData;
     mutable JSC::WriteBarrier<WebCore::JSNodeHTTPResponse> currentResponseObject;
     mutable JSC::WriteBarrier<JSC::JSObject> m_remoteAddress;
     mutable JSC::WriteBarrier<JSC::JSObject> m_localAddress;
@@ -160,6 +161,7 @@ public:
     void onClose();
     void onDrain();
     void onData(const char* data, int length, bool last);
+    void onRawData(const char* data, int length);
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject);
     void finishCreation(JSC::VM& vm);

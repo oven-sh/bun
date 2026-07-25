@@ -620,7 +620,7 @@ impl Loader {
         // `Source.contents: &'static [u8]` lifetime constraint (callers like
         // `node:util.parseEnv` pass JS-owned non-'static buffers).
         let mut value_buffer: Vec<u8> = Vec::new();
-        Parser::parse_bytes::<OVERWRITE, false, EXPAND, false>(
+        Parser::parse_bytes::<OVERWRITE, false, EXPAND, false, false>(
             str,
             &mut self.map,
             &mut value_buffer,
@@ -708,8 +708,10 @@ impl Loader {
             }
         }
 
+        // `.env.local` is gated on `suffix != Test`, so its presence in the
+        // child's load set depends on NODE_ENV — treat it as conditional.
         if suffix != DotEnvFileSuffix::Test {
-            self.try_load_default::<_, false>(dir, dir_handle, b".env.local", value_buffer)?;
+            self.try_load_default::<_, true>(dir, dir_handle, b".env.local", value_buffer)?;
         }
 
         match suffix {
@@ -927,7 +929,7 @@ impl Loader {
                 }
             }
             ReadEnvFile::Bytes(buf) => {
-                Parser::parse_bytes::<OVERRIDE, false, true, CONDITIONAL>(
+                Parser::parse_bytes::<OVERRIDE, false, true, CONDITIONAL, true>(
                     &buf,
                     &mut self.map,
                     value_buffer,
@@ -978,7 +980,7 @@ impl Loader {
                 }
             }
             ReadEnvFile::Bytes(buf) => {
-                Parser::parse_bytes::<OVERRIDE, false, true, false>(
+                Parser::parse_bytes::<OVERRIDE, false, true, false, false>(
                     &buf,
                     &mut self.map,
                     value_buffer,
@@ -1202,6 +1204,7 @@ impl<'a> Parser<'a> {
         &mut self,
         map: &Map,
         value: &[u8],
+        taint_unresolved: bool,
         touched_conditional: &mut bool,
     ) -> Result<Option<&[u8]>, AllocError> {
         if value.len() < 2 {
@@ -1243,7 +1246,7 @@ impl<'a> Parser<'a> {
                             Some(&*entry.value)
                         }
                         None => {
-                            if key_start < end {
+                            if taint_unresolved && key_start < end {
                                 *touched_conditional = true;
                             }
                             None
@@ -1295,6 +1298,7 @@ impl<'a> Parser<'a> {
         const IS_PROCESS: bool,
         const EXPAND: bool,
         const CONDITIONAL: bool,
+        const DEFAULT_FILE: bool,
     >(
         &mut self,
         map: &mut Map,
@@ -1335,7 +1339,7 @@ impl<'a> Parser<'a> {
                 let current: Box<[u8]> = Box::from(&*map.map.values()[idx].value);
                 let mut touched_conditional = false;
                 if let Some(expanded) =
-                    self.expand_value(map, &current, &mut touched_conditional)?
+                    self.expand_value(map, &current, DEFAULT_FILE, &mut touched_conditional)?
                 {
                     let slot = &mut map.map.values_mut()[idx];
                     slot.value = Box::from(expanded);
@@ -1359,6 +1363,7 @@ impl<'a> Parser<'a> {
         const IS_PROCESS: bool,
         const EXPAND: bool,
         const CONDITIONAL: bool,
+        const DEFAULT_FILE: bool,
     >(
         src: &[u8],
         map: &mut Map,
@@ -1373,7 +1378,7 @@ impl<'a> Parser<'a> {
             src: strings::without_utf8_bom(src),
             value_buffer,
         };
-        parser._parse::<OVERRIDE, IS_PROCESS, EXPAND, CONDITIONAL>(map)
+        parser._parse::<OVERRIDE, IS_PROCESS, EXPAND, CONDITIONAL, DEFAULT_FILE>(map)
     }
 }
 

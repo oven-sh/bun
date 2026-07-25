@@ -847,26 +847,28 @@ for (const shell of ["system", "bun"]) {
 
     // https://github.com/oven-sh/bun/issues/9877: running a package.json script
     // whose body spawns a non-bun tool (vite, node, cypress, psql, ...) should
-    // see values from `.env` and `.env.local`. Values that exist only in a
-    // NODE_ENV-specific file are withheld so a script that assigns its own
-    // NODE_ENV can re-derive them (the e2e tests below cover that).
+    // see values from `.env`. Values from NODE_ENV-dependent files are withheld
+    // so a script that assigns its own NODE_ENV can re-derive them (the e2e
+    // tests below cover that).
     const show_dotenv_script = isWindowsCMD
       ? "echo A=%BUNTEST_DOTENV_A%, B=%BUNTEST_DOTENV_B%, C=%BUNTEST_DOTENV_C%, D=%BUNTEST_DOTENV_D%"
       : "echo A=$BUNTEST_DOTENV_A, B=$BUNTEST_DOTENV_B, C=$BUNTEST_DOTENV_C, D=$BUNTEST_DOTENV_D";
 
-    test("passes .env and .env.local values into scripts", () => {
+    test("passes .env values into scripts", () => {
       const tmp = tempDirWithFiles("script-runner-dotenv", {
         "package.json": '{"scripts":{"show-env":"' + show_dotenv_script + '"}}',
         ".env": "BUNTEST_DOTENV_A=from-env\nBUNTEST_DOTENV_B=from-env",
-        ".env.local": "BUNTEST_DOTENV_B=from-local",
       });
       const unset = isWindowsCMD ? ["%BUNTEST_DOTENV_C%", "%BUNTEST_DOTENV_D%"] : ["", ""];
       expect(bunRunAsScript(tmp, "show-env", {}, ["--shell=" + shell]).stdout).toBe(
-        `A=from-env, B=from-local, C=${unset[0]}, D=${unset[1]}`,
+        `A=from-env, B=from-env, C=${unset[0]}, D=${unset[1]}`,
       );
     });
 
-    test("withholds .env.{NODE_ENV} values from scripts", () => {
+    test("withholds NODE_ENV-dependent file values from scripts", () => {
+      // .env.local is skipped under NODE_ENV=test, so forwarding it would
+      // shadow a .env.test value in a 'bun test' child; treat it the same as
+      // the .env.{NODE_ENV}[.local] files.
       const tmp = tempDirWithFiles("script-runner-dotenv", {
         "package.json": '{"scripts":{"show-env":"' + show_dotenv_script + '"}}',
         ".env": "BUNTEST_DOTENV_A=from-env",
@@ -874,27 +876,45 @@ for (const shell of ["system", "bun"]) {
         ".env.development": "BUNTEST_DOTENV_C=from-dev",
         ".env.development.local": "BUNTEST_DOTENV_D=from-dev-local",
       });
-      const unset = isWindowsCMD ? ["%BUNTEST_DOTENV_C%", "%BUNTEST_DOTENV_D%"] : ["", ""];
+      const unset = isWindowsCMD
+        ? ["%BUNTEST_DOTENV_B%", "%BUNTEST_DOTENV_C%", "%BUNTEST_DOTENV_D%"]
+        : ["", "", ""];
       expect(bunRunAsScript(tmp, "show-env", {}, ["--shell=" + shell]).stdout).toBe(
-        `A=from-env, B=from-local, C=${unset[0]}, D=${unset[1]}`,
+        `A=from-env, B=${unset[0]}, C=${unset[1]}, D=${unset[2]}`,
       );
     });
 
-    test("withholds .env values that expand a .env.{NODE_ENV} key", () => {
-      // An `.env` entry that references a key supplied by a NODE_ENV-specific
+    test("withholds .env values that expand a NODE_ENV-dependent key", () => {
+      // An `.env` entry that references a key supplied by a NODE_ENV-dependent
       // file is itself NODE_ENV-dependent and must not be forwarded, or a
       // script like "NODE_ENV=production bun ..." would inherit the
-      // development expansion.
+      // development expansion. An entry that expands only process-env /
+      // same-file keys stays forwarded.
       const tmp = tempDirWithFiles("script-runner-dotenv", {
         "package.json": '{"scripts":{"show-env":"' + show_dotenv_script + '"}}',
-        ".env": "BUNTEST_DOTENV_A=$BUNTEST_DOTENV_C\nBUNTEST_DOTENV_B=$BUNTEST_DOTENV_E",
+        ".env": "BUNTEST_DOTENV_A=$BUNTEST_DOTENV_C\nBUNTEST_DOTENV_B=b-$BUNTEST_DOTENV_PROC",
         ".env.development": "BUNTEST_DOTENV_C=from-dev",
-        ".env.local": "BUNTEST_DOTENV_E=from-local",
       });
       const unset = isWindowsCMD ? ["%BUNTEST_DOTENV_A%", "%BUNTEST_DOTENV_C%", "%BUNTEST_DOTENV_D%"] : ["", "", ""];
-      expect(bunRunAsScript(tmp, "show-env", {}, ["--shell=" + shell]).stdout).toBe(
-        `A=${unset[0]}, B=from-local, C=${unset[1]}, D=${unset[2]}`,
-      );
+      expect(
+        bunRunAsScript(tmp, "show-env", { BUNTEST_DOTENV_PROC: "proc" }, ["--shell=" + shell]).stdout,
+      ).toBe(`A=${unset[0]}, B=b-proc, C=${unset[1]}, D=${unset[2]}`);
+    });
+
+    test("forwards --env-file values that expand an unresolved key", () => {
+      // --env-file loads no default files, so an unresolved $VAR cannot be
+      // NODE_ENV-dependent here; the (possibly defaulted) expansion must be
+      // forwarded.
+      const tmp = tempDirWithFiles("script-runner-dotenv", {
+        "package.json": '{"scripts":{"show-env":"' + show_dotenv_script + '"}}',
+        "custom.env": "BUNTEST_DOTENV_A=${BUNTEST_DOTENV_UNSET:-fallback}",
+      });
+      const unset = isWindowsCMD
+        ? ["%BUNTEST_DOTENV_B%", "%BUNTEST_DOTENV_C%", "%BUNTEST_DOTENV_D%"]
+        : ["", "", ""];
+      expect(
+        bunRunAsScript(tmp, "show-env", {}, ["--env-file=custom.env", "--shell=" + shell]).stdout,
+      ).toBe(`A=fallback, B=${unset[0]}, C=${unset[1]}, D=${unset[2]}`);
     });
 
     for (const withDevFile of [true, false]) {
@@ -914,6 +934,18 @@ for (const shell of ["system", "bun"]) {
         },
       );
     }
+
+    test.skipIf(isWindowsCMD)("e2e: .env.local does not shadow .env.test in a 'bun test' child", () => {
+      const tmp = tempDirWithFiles("script-runner-dotenv", {
+        "package.json": `{"scripts":{"test":"'${bunExe().replaceAll("\\", "\\\\")}' test db.test.ts"}}`,
+        "db.test.ts":
+          "import {test,expect} from 'bun:test'; test('db', () => expect(process.env.DATABASE_URL).toBe('test-db'));",
+        ".env.local": "DATABASE_URL=dev-db",
+        ".env.test": "DATABASE_URL=test-db",
+      });
+      const { stdout, stderr } = bunRunAsScript(tmp, "test", {}, ["--shell=" + shell]);
+      expect(stderr + stdout).toContain("1 pass");
+    });
 
     test("--no-env-file disables .env loading for scripts", () => {
       const tmp = tempDirWithFiles("script-runner-dotenv", {

@@ -109,7 +109,10 @@ impl<'a> ProcessHandle<'a> {
                 let _ = unsafe { (*env_ptr).map.put(b"PATH", &original_path) };
             }
             // SAFETY: see above; reborrow through raw ptr to avoid overlapping &mut with guard.
-            let envp = unsafe { (*env_ptr).create_null_delimited_env_map()? };
+            // `script_forward` is NOT merged: it was loaded from the
+            // invocation cwd's `.env`, but each script runs in a different
+            // package cwd whose own `.env` a nested bun must be able to read.
+            let envp = unsafe { (*env_ptr).map.create_null_delimited_env_map()? };
             // SAFETY: `argv`/`envp` are local null-terminated C-string arrays
             // with argv[0] non-null; valid for this call.
             break 'brk unsafe {

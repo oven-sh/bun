@@ -811,12 +811,18 @@ impl RunCommand {
                         &target_path_buffer[..],
                         dir_slice_len + name.len() - 1,
                     );
-                    if bun_sys::unlink_w(path_w).is_err() {
-                        // Deleting fails with ERROR_ACCESS_DENIED while the
-                        // link's image is mapped by a running process (the
-                        // link targets this very binary). A mapped image can
-                        // still be renamed, and `npm.exe.stale` never matches
-                        // PATH resolution, so rename it out of the way.
+                    if let Err(e) = bun_sys::unlink_w(path_w)
+                        && matches!(
+                            e.get_errno(),
+                            bun_sys::E::EPERM | bun_sys::E::EACCES | bun_sys::E::EBUSY
+                        )
+                    {
+                        // Deleting fails while the link's image is mapped by a
+                        // running process (the link targets this very binary).
+                        // A mapped image can still be renamed, and
+                        // `npm.exe.stale` never matches PATH resolution, so
+                        // rename it out of the way. Other errors (ENOENT: no
+                        // stale link) need no fallback.
                         let mut stale_buf = bun_paths::w_path_buffer_pool::get();
                         stale_buf[..dir_slice_len]
                             .copy_from_slice(&target_path_buffer[..dir_slice_len]);

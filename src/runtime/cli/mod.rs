@@ -1063,7 +1063,7 @@ pub mod command {
         // pre-subcommand flags are processed: `npm --tag beta publish` keeps
         // `--tag beta` only because `publish` is found first. The scan
         // advances over value flags exactly like `copy_translating_npm_flags`.
-        let sub_idx = {
+        let scan_end = {
             let mut i = 1;
             while i < argv.len() {
                 let ab = argv[i].as_bytes();
@@ -1079,6 +1079,12 @@ pub mod command {
             }
             i
         };
+        // npm treats a leading `--` as end-of-options but still takes the
+        // next token as the subcommand: `npm -- upgrade` is `npm upgrade`.
+        // Without this skip the raw token would bypass the mapping and e.g.
+        // `upgrade` would dispatch bun's self-upgrader.
+        let sub_idx =
+            scan_end + usize::from(argv.get(scan_end).is_some_and(|a| a.as_bytes() == b"--"));
         let subcommand = argv.get(sub_idx).filter(|a| a.as_bytes() != b"--");
         let sub_bytes = subcommand.map(|z| z.as_bytes());
         let rest_start = sub_idx + usize::from(sub_idx < argv.len());
@@ -1115,7 +1121,7 @@ pub mod command {
             renames,
         );
         debug_assert_eq!(
-            first_pass_end, sub_idx,
+            first_pass_end, scan_end,
             "subcommand prescan must advance exactly like the copy pass"
         );
 

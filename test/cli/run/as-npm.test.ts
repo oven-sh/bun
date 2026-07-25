@@ -180,12 +180,18 @@ describe("fake npm/npx cli", () => {
       const r = await fakePmRun(String(dir), "npm", ["upgrade", "--help"]);
       expect(r.stdout).toContain("bun update");
       expect(r.exitCode).toBe(0);
+      // A leading `--` still names the subcommand in npm, so the mapping
+      // must apply to it too.
+      const dd = await fakePmRun(String(dir), "npm", ["--", "upgrade", "--help"]);
+      expect(dd.stdout).toContain("bun update");
+      expect(dd.exitCode).toBe(0);
     });
 
     test.concurrent("npm cache dispatches as bun pm cache", async () => {
       using dir = tempDir("fake-npm-cache", { "package.json": "{}" });
       const r = await fakePmRun(String(dir), "npm", ["cache"]);
-      expect(r.stdout.trim()).not.toBe("");
+      // `bun pm cache` prints the cache directory path.
+      expect(existsSync(r.stdout.trim())).toBe(true);
       expect(r.exitCode).toBe(0);
     });
 

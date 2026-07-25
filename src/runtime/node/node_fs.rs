@@ -2914,9 +2914,7 @@ pub mod args {
     fs_args_path_forwarders!(Truncate; path);
     impl Truncate {
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Truncate> {
-            let path = PathOrFileDescriptor::from_js(ctx, arguments)?.ok_or_else(|| {
-                ctx.throw_invalid_arguments(format_args!("path must be a string or TypedArray"))
-            })?;
+            let path = PathOrFileDescriptor::from_js_required(ctx, arguments, "path")?;
             let len: u64 = 'brk: {
                 let Some(len_value) = arguments.next() else {
                     break 'brk 0;
@@ -4320,11 +4318,7 @@ pub mod args {
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<ReadFile> {
             // `Drop` on `path` covers every
             // `?`-propagated JsError below.
-            let path = PathOrFileDescriptor::from_js(ctx, arguments)?.ok_or_else(|| {
-                ctx.throw_invalid_arguments(format_args!(
-                    "path must be a string or a file descriptor"
-                ))
-            })?;
+            let path = PathOrFileDescriptor::from_js_required(ctx, arguments, "path")?;
             let mut encoding = Encoding::Buffer;
             let mut flag = FileSystemFlags::R;
             let mut abort_signal = scopeguard::guard(None::<AbortSignalRef>, |s| {
@@ -4412,11 +4406,7 @@ pub mod args {
         ) -> JsResult<WriteFile> {
             // `Drop` on `path` covers every
             // `?`-propagated JsError below.
-            let path = PathOrFileDescriptor::from_js(ctx, arguments)?.ok_or_else(|| {
-                ctx.throw_invalid_arguments(format_args!(
-                    "path must be a string or a file descriptor"
-                ))
-            })?;
+            let path = PathOrFileDescriptor::from_js_required(ctx, arguments, "path")?;
             let data_value = arguments
                 .next_eat()
                 .ok_or_else(|| ctx.throw_invalid_arguments(format_args!("data is required")))?;

@@ -2287,7 +2287,8 @@ impl TestCommand {
                 ..Default::default()
             })?
         };
-        vm.argv = core::mem::take(&mut ctx.passthrough);
+        // Clone (not take): build_worker_argv reads ctx.passthrough to forward `-- <args>`.
+        vm.argv = ctx.passthrough.clone();
         // Clone (not take): build_worker_argv reads ctx.preloads to forward --preload.
         vm.preload = ctx.preloads.clone();
         vm.transpiler.options.rewrite_jest_for_tests = true;

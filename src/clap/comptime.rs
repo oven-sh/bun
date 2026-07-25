@@ -548,6 +548,17 @@ impl<Id> ComptimeClap<Id> {
         while let Some(arg) = stream.next()? {
             let param = arg.param;
             if param.names.long.is_none() && param.names.short.is_none() {
+                if opt.passthrough_after_double_dash
+                    && matches!(stream.state, streaming::State::RestArePositional)
+                {
+                    passthrough_positionals.push(arg.value.unwrap());
+                    let remaining_ = stream.iter.remain();
+                    passthrough_positionals.reserve_exact(remaining_.len());
+                    for arg_ in remaining_ {
+                        passthrough_positionals.push(*arg_);
+                    }
+                    break;
+                }
                 pos.push(arg.value.unwrap());
                 if opt.stop_after_positional_at > 0 && pos.len() >= opt.stop_after_positional_at {
                     let mut remaining_ = stream.iter.remain();

@@ -398,6 +398,13 @@ fn build_worker_argv(ctx: &Command::ContextData) -> crate::Result<Box<[bun_spawn
         argv.push(lit(b"--coverage\0"));
     }
 
+    if !ctx.passthrough.is_empty() {
+        argv.push(lit(b"--\0"));
+        for arg in ctx.passthrough.iter() {
+            argv.push(dupe_z(arg));
+        }
+    }
+
     argv.push(core::ptr::null());
     // Callers index by .len(), so keep the trailing null in the boxed slice.
     Ok(argv.into_boxed_slice())

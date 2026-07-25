@@ -94,41 +94,37 @@ async function buildShim(targetDir: string): Promise<Uint8Array> {
 }
 
 describe.skipIf(!havePrereqs)("bun_shim_impl.exe is reproducible", () => {
-  test(
-    "two clean builds in different target directories are byte-identical",
-    async () => {
-      using a = tempDir("shim-repro-a", {});
-      using b = tempDir("shim-repro-b", {});
-      const [pa, pb] = [join(String(a), "t"), join(String(b), "t")];
+  test("two clean builds in different target directories are byte-identical", async () => {
+    using a = tempDir("shim-repro-a", {});
+    using b = tempDir("shim-repro-b", {});
+    const [pa, pb] = [join(String(a), "t"), join(String(b), "t")];
 
-      const exeA = await buildShim(pa);
-      // Wall-clock TimeDateStamp has 1-second resolution; without /Brepro two
-      // back-to-back links can still agree by accident.
-      await Bun.sleep(1100);
-      const exeB = await buildShim(pb);
+    const exeA = await buildShim(pa);
+    // Wall-clock TimeDateStamp has 1-second resolution; without /Brepro two
+    // back-to-back links can still agree by accident.
+    await Bun.sleep(1100);
+    const exeB = await buildShim(pb);
 
-      const hashA = Bun.SHA256.hash(exeA, "hex");
-      const hashB = Bun.SHA256.hash(exeB, "hex");
-      expect({ size: exeB.length, sha256: hashB }).toEqual({ size: exeA.length, sha256: hashA });
+    const hashA = Bun.SHA256.hash(exeA, "hex");
+    const hashB = Bun.SHA256.hash(exeB, "hex");
+    expect({ size: exeB.length, sha256: hashB }).toEqual({ size: exeA.length, sha256: hashA });
 
-      // `/DEBUG:NONE`: no RSDS CodeView record (whose PDB-content-derived GUID
-      // encodes absolute object paths) and no `.pdb` reference in the image.
-      const bytes = Buffer.from(exeA);
-      expect(bytes.includes(Buffer.from("RSDS"))).toBe(false);
-      expect(bytes.includes(Buffer.from(".pdb"))).toBe(false);
+    // `/DEBUG:NONE`: no RSDS CodeView record (whose PDB-content-derived GUID
+    // encodes absolute object paths) and no `.pdb` reference in the image.
+    const bytes = Buffer.from(exeA);
+    expect(bytes.includes(Buffer.from("RSDS"))).toBe(false);
+    expect(bytes.includes(Buffer.from(".pdb"))).toBe(false);
 
-      // `/Brepro`: lld-link stamps the PE as reproducible by adding an
-      // IMAGE_DEBUG_TYPE_REPRO (16) debug-directory entry and replacing the
-      // COFF TimeDateStamp with a content hash. Scan for the entry's fixed
-      // tail (`MajorVersion=0, MinorVersion=0, Type=16, SizeOfData=0,
-      // AddressOfRawData=0, PointerToRawData=0`); `/DEBUG:NONE` leaves it as
-      // the only debug-directory entry.
-      // prettier-ignore
-      const reproEntryTail = Buffer.from([
+    // `/Brepro`: lld-link stamps the PE as reproducible by adding an
+    // IMAGE_DEBUG_TYPE_REPRO (16) debug-directory entry and replacing the
+    // COFF TimeDateStamp with a content hash. Scan for the entry's fixed
+    // tail (`MajorVersion=0, MinorVersion=0, Type=16, SizeOfData=0,
+    // AddressOfRawData=0, PointerToRawData=0`); `/DEBUG:NONE` leaves it as
+    // the only debug-directory entry.
+    // prettier-ignore
+    const reproEntryTail = Buffer.from([
         0, 0, 0, 0, 16, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
       ]);
-      expect(bytes.includes(reproEntryTail)).toBe(true);
-    },
-    120_000,
-  );
+    expect(bytes.includes(reproEntryTail)).toBe(true);
+  }, 120_000);
 });

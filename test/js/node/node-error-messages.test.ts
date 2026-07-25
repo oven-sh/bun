@@ -60,6 +60,36 @@ test("ERR_HTTP_CONTENT_LENGTH_MISMATCH message matches Node.js", () => {
   });
 });
 
+test("ERR_HTTP_CONTENT_LENGTH_MISMATCH message from http ServerResponse matches Node.js", async () => {
+  const { promise, resolve } = Promise.withResolvers<any>();
+  const server = http.createServer((req, res) => {
+    res.strictContentLength = true;
+    res.setHeader("Content-Length", "5");
+    try {
+      res.end("hello world");
+      resolve(undefined);
+    } catch (e) {
+      resolve(e);
+    }
+    try {
+      res.destroy();
+    } catch {}
+  });
+  server.listen(0);
+  await once(server, "listening");
+  const sock = net.connect((server.address() as net.AddressInfo).port);
+  sock.on("error", () => {});
+  sock.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n");
+  const err = await promise;
+  sock.destroy();
+  await new Promise<void>(r => server.close(() => r()));
+  expect({ code: err?.code, message: err?.message }).toEqual({
+    code: "ERR_HTTP_CONTENT_LENGTH_MISMATCH",
+    message:
+      "Response body's content-length of 11 byte(s) does not match the content-length of 5 byte(s) set in header",
+  });
+});
+
 test("ERR_STREAM_DESTROYED message from http ServerResponse matches Node.js", async () => {
   const { promise, resolve } = Promise.withResolvers<any>();
   const server = http.createServer((req, res) => {

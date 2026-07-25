@@ -289,6 +289,24 @@ fn err_throw<T>(global: &JSGlobalObject, code: ErrorCode, msg: &'static str) -> 
     Err(err_throw_cold(global, code, msg))
 }
 
+#[cold]
+#[inline(never)]
+fn err_throw_content_length_mismatch<T>(
+    global: &JSGlobalObject,
+    actual: u64,
+    expected: u64,
+) -> JsResult<T> {
+    Err(global
+        .err(
+            ErrorCode::ERR_HTTP_CONTENT_LENGTH_MISMATCH,
+            format_args!(
+                "Response body's content-length of {} byte(s) does not match the content-length of {} byte(s) set in header",
+                actual, expected
+            ),
+        )
+        .throw())
+}
+
 /// AnyResponse `is_ssl()` shim (upstream lacks this accessor).
 #[inline]
 fn any_response_is_ssl(r: &uws::AnyResponse) -> bool {
@@ -1989,17 +2007,17 @@ impl NodeHTTPResponse {
 
             if IS_END {
                 if bytes_written as u64 != content_length {
-                    return err_throw(
+                    return err_throw_content_length_mismatch(
                         global_object,
-                        ErrorCode::ERR_HTTP_CONTENT_LENGTH_MISMATCH,
-                        "Content-Length mismatch",
+                        bytes_written as u64,
+                        content_length,
                     );
                 }
             } else if bytes_written as u64 > content_length {
-                return err_throw(
+                return err_throw_content_length_mismatch(
                     global_object,
-                    ErrorCode::ERR_HTTP_CONTENT_LENGTH_MISMATCH,
-                    "Content-Length mismatch",
+                    bytes_written as u64,
+                    content_length,
                 );
             }
             self.bytes_written.set(bytes_written);

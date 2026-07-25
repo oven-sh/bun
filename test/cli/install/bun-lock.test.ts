@@ -870,6 +870,19 @@ it("prints an actionable error for a lockfile version newer than this build supp
   expect(await exited).toBe(0);
 });
 
+const makeInstallRunner = (cwd: string) => async (args: string[]) => {
+  await using proc = spawn({
+    cmd: [bunExe(), ...args],
+    cwd,
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [out, err, code] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ args, err, code }).toMatchObject({ args, err: expect.not.stringContaining("error:"), code: 0 });
+  return { out, err };
+};
+
 // https://github.com/oven-sh/bun/issues/8662#issuecomment-3379529330
 // `bun remove` of a package that also happened to satisfy some other package's
 // *optional* peer dependency must drop it from bun.lock. The optional peer's
@@ -877,19 +890,7 @@ it("prints an actionable error for a lockfile version newer than this build supp
 // the removed package (and its transitives) alive forever.
 it("bun remove drops a package that was only otherwise an optional peer", async () => {
   const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { saveTextLockfile: true } });
-
-  async function run(args: string[]) {
-    await using proc = spawn({
-      cmd: [bunExe(), ...args],
-      cwd: packageDir,
-      env,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [out, err, code] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ args, err, code }).toMatchObject({ args, err: expect.not.stringContaining("error:"), code: 0 });
-    return { out, err };
-  }
+  const run = makeInstallRunner(packageDir);
 
   // A `packages` entry for `no-deps` serializes as `"no-deps": ["no-deps@...`.
   // (The literal "no-deps" also appears inside optional-peer-deps's
@@ -921,19 +922,7 @@ it("bun remove drops a package that was only otherwise an optional peer", async 
 
 it("bun remove keeps an optional peer that is still reachable via a non-peer edge", async () => {
   const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { saveTextLockfile: true } });
-
-  async function run(args: string[]) {
-    await using proc = spawn({
-      cmd: [bunExe(), ...args],
-      cwd: packageDir,
-      env,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [out, err, code] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ args, err, code }).toMatchObject({ args, err: expect.not.stringContaining("error:"), code: 0 });
-    return { out, err };
-  }
+  const run = makeInstallRunner(packageDir);
 
   // optional-peer-deps: optional peer on no-deps
   // one-dep:            hard dependency on no-deps@1.0.1
@@ -965,19 +954,7 @@ it("bun remove keeps an optional peer that is still reachable via a non-peer edg
 
 it("bun install drops a once-resolved optional peer after the providing dependency leaves package.json", async () => {
   const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { saveTextLockfile: true } });
-
-  async function run(args: string[]) {
-    await using proc = spawn({
-      cmd: [bunExe(), ...args],
-      cwd: packageDir,
-      env,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [out, err, code] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ args, err, code }).toMatchObject({ args, err: expect.not.stringContaining("error:"), code: 0 });
-    return { out, err };
-  }
+  const run = makeInstallRunner(packageDir);
 
   // Same as the first test but via editing package.json + `bun install` instead
   // of `bun remove`, which is the other path into clean_with_logger.

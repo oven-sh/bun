@@ -114,6 +114,63 @@ describe("v8.getHeapStatistics", () => {
   }
 });
 
+// https://github.com/oven-sh/bun/issues/7684
+describe("v8.getHeapSpaceStatistics", () => {
+  const spaces = require("v8").getHeapSpaceStatistics();
+
+  test("returns V8's set of heap space names", () => {
+    expect(spaces.map(s => s.space_name).sort()).toEqual([
+      "code_large_object_space",
+      "code_space",
+      "large_object_space",
+      "new_large_object_space",
+      "new_space",
+      "old_space",
+      "read_only_space",
+      "shared_large_object_space",
+      "shared_space",
+      "shared_trusted_large_object_space",
+      "shared_trusted_space",
+      "trusted_large_object_space",
+      "trusted_space",
+    ]);
+  });
+
+  test("each entry has node's shape", () => {
+    for (const space of spaces) {
+      expect(Object.keys(space).sort()).toEqual([
+        "physical_space_size",
+        "space_available_size",
+        "space_name",
+        "space_size",
+        "space_used_size",
+      ]);
+      expect(typeof space.space_size).toBe("number");
+      expect(typeof space.space_used_size).toBe("number");
+      expect(typeof space.space_available_size).toBe("number");
+      expect(typeof space.physical_space_size).toBe("number");
+    }
+  });
+
+  test("old_space reports JSC's real heap totals", () => {
+    const oldSpace = spaces.find(s => s.space_name === "old_space");
+    expect(oldSpace.space_size).toBeGreaterThan(0);
+    expect(oldSpace.space_used_size).toBeGreaterThan(0);
+    expect(oldSpace.space_used_size).toBeLessThanOrEqual(oldSpace.space_size);
+  });
+});
+
+describe("v8.getHeapCodeStatistics", () => {
+  test("returns node's shape", () => {
+    expect(require("v8").getHeapCodeStatistics()).toEqual({
+      code_and_metadata_size: 0,
+      bytecode_and_metadata_size: 0,
+      external_script_source_size: 0,
+      cpu_profiler_metadata_size: 0,
+    });
+  });
+});
+
 describe("v8.startupSnapshot", () => {
   // https://github.com/oven-sh/bun/issues/32501
   test("isBuildingSnapshot() returns false", () => {

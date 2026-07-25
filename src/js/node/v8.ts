@@ -71,6 +71,7 @@ function getHeapStatistics() {
     total_physical_size: memory.peak,
     total_available_size: totalmem() - stats.heapSize,
     used_heap_size: stats.heapSize,
+    total_allocated_bytes: stats.heapCapacity,
     heap_size_limit: Math.min(memory.peak * 10, totalmem()),
     malloced_memory: stats.heapSize,
     peak_malloced_memory: memory.peak,
@@ -86,11 +87,52 @@ function getHeapStatistics() {
     external_memory: stats.extraMemorySize,
   };
 }
+// V8 partitions its heap into a fixed set of named spaces; JSC manages one
+// undivided heap. Report JSC's real totals under "old_space" and keep the
+// remaining V8 space names for shape compatibility with tools that iterate
+// this array (dd-trace, OpenTelemetry, Moleculer).
+const kHeapSpaces = [
+  "read_only_space",
+  "new_space",
+  "old_space",
+  "code_space",
+  "shared_space",
+  "trusted_space",
+  "shared_trusted_space",
+  "new_large_object_space",
+  "large_object_space",
+  "code_large_object_space",
+  "shared_large_object_space",
+  "shared_trusted_large_object_space",
+  "trusted_large_object_space",
+];
 function getHeapSpaceStatistics() {
-  notimpl("getHeapSpaceStatistics");
+  const stats = jsc.heapStats();
+  const spaces = $newArrayWithSize(kHeapSpaces.length);
+  for (let i = 0; i < kHeapSpaces.length; i++) {
+    const space_name = kHeapSpaces[i];
+    const isOldSpace = space_name === "old_space";
+    const used = isOldSpace ? stats.heapSize : 0;
+    const size = isOldSpace ? stats.heapCapacity : 0;
+    spaces[i] = {
+      space_name,
+      space_size: size,
+      space_used_size: used,
+      space_available_size: size > used ? size - used : 0,
+      physical_space_size: size,
+    };
+  }
+  return spaces;
 }
 function getHeapCodeStatistics() {
-  notimpl("getHeapCodeStatistics");
+  // JSC does not expose a code/bytecode size breakdown. Zeros match what
+  // node returns for counters V8 is not tracking.
+  return {
+    code_and_metadata_size: 0,
+    bytecode_and_metadata_size: 0,
+    external_script_source_size: 0,
+    cpu_profiler_metadata_size: 0,
+  };
 }
 function setFlagsFromString(flags) {
   // Validate before reporting the gap: node rejects a non-string argument

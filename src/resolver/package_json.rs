@@ -1087,13 +1087,17 @@ impl<'a> Visitor<'a> {
             },
             js_ast::E::JsonValue::Object(e_obj) => self.visit_object(e_obj.get()),
             js_ast::E::JsonValue::Array(e_array) => self.visit_array(e_array.get(), &vloc),
-            js_ast::E::JsonValue::Boolean(_) => {
+            js_ast::E::JsonValue::Boolean(b) => {
                 let loc = vloc.resolve(&self.source.contents);
-                self.invalid(js_lexer::range_of_identifier(self.source, loc))
+                self.invalid(
+                    js_lexer::range_of_identifier(self.source, loc),
+                    if *b { b"true".to_vec() } else { b"false".to_vec() },
+                )
             }
-            js_ast::E::JsonValue::Number(_) => {
+            js_ast::E::JsonValue::Number(n) => {
                 let loc = vloc.resolve(&self.source.contents);
-                self.invalid(bun_ast::Range { loc, len: 1 })
+                let rendered = format!("{}", n.value()).into_bytes();
+                self.invalid(bun_ast::Range { loc, len: 1 }, rendered)
             }
         }
     }
@@ -1129,7 +1133,9 @@ impl<'a> Visitor<'a> {
                         prev.key_range,
                     );
                 return Entry {
-                    data: EntryData::Invalid,
+                    data: EntryData::Invalid(
+                        Box::<[u8]>::from(&NODE_MIXED_KEYS_MESSAGE[..]),
+                    ),
                 };
             }
 
@@ -1204,18 +1210,18 @@ impl<'a> Visitor<'a> {
                 ..bun_ast::Range::NONE
             },
         };
-        self.invalid(first_token)
+        self.invalid(first_token, Vec::new())
     }
 
     #[cold]
-    fn invalid(&mut self, first_token: bun_ast::Range) -> Entry {
+    fn invalid(&mut self, first_token: bun_ast::Range, rendered: Vec<u8>) -> Entry {
         self.log.add_range_warning(
             Some(self.source),
             first_token,
             b"This value must be a string, an object, an array, or null",
         );
         Entry {
-            data: EntryData::Invalid,
+            data: EntryData::Invalid(rendered.into_boxed_slice()),
         }
     }
 }
@@ -1227,7 +1233,10 @@ pub struct Entry {
 
 #[derive(Clone)]
 pub enum EntryData {
-    Invalid,
+    /// Not a valid exports/imports value (number, boolean, or a mixed
+    /// subpath/condition object). Carries a rendering of the offending value
+    /// (or the structural reason for mixed keys) for Node-shaped errors.
+    Invalid(Box<[u8]>),
     Null,
     String(Box<[u8]>), // owned copy
     Array(Box<[Entry]>),
@@ -1286,6 +1295,30 @@ pub struct Resolution {
     // The source-buffer case (`EntryData::String(Box<[u8]>)`) is owned by a
     // possibly-temporary `Entry`, so borrowing would dangle. Copy out into an owned buffer.
     pub path: Box<[u8]>,
+    /// Context for Node-shaped error messages when `status` is a failure.
+    pub detail: Option<Box<ResolutionDetail>>,
+}
+
+/// Extra context for shaping Node's `ERR_INVALID_PACKAGE_TARGET` /
+/// `ERR_INVALID_MODULE_SPECIFIER` messages, attached where the failing
+/// `exports`/`imports` key and target are still in scope.
+#[derive(Clone)]
+pub enum ResolutionDetail {
+    /// The offending map key and target value. `bare_string_target` is
+    /// Node's `relError`: a non-empty string target not starting with "./"
+    /// (which for `exports` appends `; targets must start with "./"`).
+    InvalidTarget {
+        key: Option<Box<[u8]>>,
+        target: Option<Box<[u8]>>,
+        bare_string_target: bool,
+    },
+    /// The request was not a valid match in `pattern`.
+    PatternMismatch { pattern: Box<[u8]> },
+    /// The resolved path contains an encoded "/" or "\".
+    EncodedSeparator,
+    /// The package config shape itself is invalid; `message` is Node's
+    /// trailing explanation.
+    ConfigMessage { message: Box<[u8]> },
 }
 
 impl Default for Resolution {
@@ -1293,6 +1326,7 @@ impl Default for Resolution {
         Resolution {
             status: Status::Undefined,
             path: Box::default(),
+            detail: None,
         }
     }
 }
@@ -1524,6 +1558,9 @@ use bun_core::strings::{replace, replacement_size};
 
 const INVALID_PERCENT_CHARS: [&[u8]; 4] = [b"%2f", b"%2F", b"%5c", b"%5C"];
 
+/// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/modules/esm/resolve.js#L569-L573
+pub const NODE_MIXED_KEYS_MESSAGE: &[u8] = b"\"exports\" cannot contain some keys starting with '.' and some not. The exports object must either be an object of package subpath keys or an object of main entry condition name keys only.";
+
 struct ModuleBufs {
     resolved_path_buf_percent: PathBuffer,
     resolve_target_buf: PathBuffer,
@@ -1614,6 +1651,7 @@ impl<'a> ESModule<'a> {
             return Resolution {
                 status: Status::InvalidModuleSpecifier,
                 path: result.path,
+                detail: Some(Box::new(ResolutionDetail::EncodedSeparator)),
             };
         }
 
@@ -1630,6 +1668,7 @@ impl<'a> ESModule<'a> {
                 return Resolution {
                     status: Status::InvalidModuleSpecifier,
                     path: result.path,
+                    detail: Some(Box::new(ResolutionDetail::EncodedSeparator)),
                 };
             }
         };
@@ -1641,6 +1680,7 @@ impl<'a> ESModule<'a> {
             return Resolution {
                 status: Status::UnsupportedDirectoryImport,
                 path: result.path,
+                detail: None,
             };
         }
 
@@ -1655,13 +1695,18 @@ impl<'a> ESModule<'a> {
         subpath: &[u8],
         exports: &Entry,
     ) -> Resolution {
-        if matches!(exports.data, EntryData::Invalid) {
+        if let EntryData::Invalid(reason) = &exports.data {
             if let Some(logs) = self.debug_logs.as_deref_mut() {
                 logs.add_note(b"Invalid package configuration".to_vec());
             }
 
             return Resolution {
                 status: Status::InvalidPackageConfiguration,
+                detail: (!reason.is_empty()).then(|| {
+                    Box::new(ResolutionDetail::ConfigMessage {
+                        message: reason.clone(),
+                    })
+                }),
                 ..Default::default()
             };
         }
@@ -1678,7 +1723,7 @@ impl<'a> ESModule<'a> {
                 if !matches!(main_export.data, EntryData::Null) {
                     let result = self.resolve_target::<false>(package_url, main_export, b"", false);
                     if result.status != Status::Null && result.status != Status::Undefined {
-                        return result;
+                        return Self::attach_failure_key(result, b".");
                     }
                 }
             }
@@ -1730,7 +1775,8 @@ impl<'a> ESModule<'a> {
                     log.add_note_fmt(format_args!("Found \"{}\"", bstr::BStr::new(match_key)));
                 }
 
-                return self.resolve_target::<false>(package_url, target, b"", is_imports);
+                let result = self.resolve_target::<false>(package_url, target, b"", is_imports);
+                return Self::attach_failure_key(result, match_key);
             }
         }
 
@@ -1766,12 +1812,13 @@ impl<'a> ESModule<'a> {
                                     bstr::BStr::new(subpath)
                                 ));
                             }
-                            return self.resolve_target::<true>(
+                            let result = self.resolve_target::<true>(
                                 package_url,
                                 target,
                                 subpath,
                                 is_imports,
                             );
+                            return Self::attach_failure_key(result, &expansion.key);
                         }
                     }
                 } else {
@@ -1787,8 +1834,10 @@ impl<'a> ESModule<'a> {
                                 bstr::BStr::new(subpath)
                             ));
                         }
-                        let mut result =
-                            self.resolve_target::<false>(package_url, target, subpath, is_imports);
+                        let mut result = Self::attach_failure_key(
+                            self.resolve_target::<false>(package_url, target, subpath, is_imports),
+                            &expansion.key,
+                        );
                         if result.status == Status::Exact
                             || result.status == Status::ExactEndsWithStar
                         {
@@ -1819,6 +1868,33 @@ impl<'a> ESModule<'a> {
             status: Status::Null,
             ..Default::default()
         }
+    }
+
+    /// Fills the failing `exports`/`imports` map key into a failure
+    /// `Resolution` so Node-shaped messages can name it.
+    fn attach_failure_key(mut result: Resolution, key: &[u8]) -> Resolution {
+        match result.status {
+            Status::InvalidPackageTarget => match result.detail.as_deref_mut() {
+                Some(ResolutionDetail::InvalidTarget { key: k @ None, .. }) => {
+                    *k = Some(Box::<[u8]>::from(key));
+                }
+                None => {
+                    result.detail = Some(Box::new(ResolutionDetail::InvalidTarget {
+                        key: Some(Box::<[u8]>::from(key)),
+                        target: None,
+                        bare_string_target: false,
+                    }));
+                }
+                _ => {}
+            },
+            Status::InvalidModuleSpecifier if result.detail.is_none() => {
+                result.detail = Some(Box::new(ResolutionDetail::PatternMismatch {
+                    pattern: Box::<[u8]>::from(key),
+                }));
+            }
+            _ => {}
+        }
+        result
     }
 
     fn resolve_target<const PATTERN: bool>(
@@ -1871,6 +1947,7 @@ impl<'a> ESModule<'a> {
                             return Resolution {
                                 path: Box::<[u8]>::from(subpath),
                                 status: Status::InvalidModuleSpecifier,
+                                detail: None,
                             };
                         }
                     };
@@ -1887,6 +1964,11 @@ impl<'a> ESModule<'a> {
                     return Resolution {
                         path: Box::<[u8]>::from(str),
                         status: Status::InvalidPackageTarget,
+                        detail: Some(Box::new(ResolutionDetail::InvalidTarget {
+                            key: None,
+                            target: Some(Box::<[u8]>::from(str)),
+                            bare_string_target: !str.is_empty() && !strings::starts_with(str, b"./"),
+                        })),
                     };
                 }
 
@@ -1905,6 +1987,7 @@ impl<'a> ESModule<'a> {
                         return Resolution {
                             path: Box::<[u8]>::from(str),
                             status: Status::InvalidModuleSpecifier,
+                            detail: None,
                         };
                     }
                 }
@@ -1928,6 +2011,7 @@ impl<'a> ESModule<'a> {
                         return Resolution {
                             path: Box::<[u8]>::from(subpath),
                             status: Status::InvalidModuleSpecifier,
+                            detail: None,
                         };
                     }
                 }
@@ -1963,6 +2047,7 @@ impl<'a> ESModule<'a> {
                             return Resolution {
                                 path: Box::<[u8]>::from(result),
                                 status: Status::PackageResolve,
+                                detail: None,
                             };
                         } else {
                             // Latent Windows bug (#30839): this branch runs when an
@@ -1990,6 +2075,7 @@ impl<'a> ESModule<'a> {
                             return Resolution {
                                 path,
                                 status: Status::PackageResolve,
+                                detail: None,
                             };
                         }
                     }
@@ -1997,6 +2083,11 @@ impl<'a> ESModule<'a> {
                     return Resolution {
                         path: Box::<[u8]>::from(str),
                         status: Status::InvalidPackageTarget,
+                        detail: Some(Box::new(ResolutionDetail::InvalidTarget {
+                            key: None,
+                            target: Some(Box::<[u8]>::from(str)),
+                            bare_string_target: !str.is_empty(),
+                        })),
                     };
                 }
 
@@ -2014,6 +2105,11 @@ impl<'a> ESModule<'a> {
                     return Resolution {
                         path: Box::<[u8]>::from(str),
                         status: Status::InvalidPackageTarget,
+                        detail: Some(Box::new(ResolutionDetail::InvalidTarget {
+                            key: None,
+                            target: Some(Box::<[u8]>::from(str)),
+                            bare_string_target: false,
+                        })),
                     };
                 }
 
@@ -2037,6 +2133,7 @@ impl<'a> ESModule<'a> {
                     return Resolution {
                         path: Box::<[u8]>::from(str),
                         status: Status::InvalidModuleSpecifier,
+                        detail: None,
                     };
                 }
 
@@ -2067,6 +2164,7 @@ impl<'a> ESModule<'a> {
                         return Resolution {
                             path: Box::<[u8]>::from(result),
                             status: Status::InvalidModuleSpecifier,
+                            detail: None,
                         };
                     }
 
@@ -2082,6 +2180,7 @@ impl<'a> ESModule<'a> {
                     return Resolution {
                         path: Box::<[u8]>::from(result),
                         status,
+                        detail: None,
                     };
                 } else {
                     let parts2 = [package_url, str, subpath];
@@ -2101,6 +2200,7 @@ impl<'a> ESModule<'a> {
                     return Resolution {
                         path,
                         status: Status::Exact,
+                        detail: None,
                     };
                 }
             }
@@ -2153,6 +2253,7 @@ impl<'a> ESModule<'a> {
                 return Resolution {
                     path: Box::default(),
                     status: Status::UndefinedNoConditionsMatch,
+                    detail: None,
                 };
             }
             EntryData::Array(array) => {
@@ -2167,6 +2268,7 @@ impl<'a> ESModule<'a> {
                     return Resolution {
                         path: Box::default(),
                         status: Status::Null,
+                        detail: None,
                     };
                 }
 
@@ -2198,6 +2300,7 @@ impl<'a> ESModule<'a> {
                 return Resolution {
                     path: Box::default(),
                     status: last_exception,
+                    detail: None,
                 };
             }
             EntryData::Null => {
@@ -2211,6 +2314,7 @@ impl<'a> ESModule<'a> {
                 return Resolution {
                     path: Box::default(),
                     status: Status::Null,
+                    detail: None,
                 };
             }
             _ => {}

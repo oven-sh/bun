@@ -283,3 +283,164 @@ describe.concurrent("tsconfig paths wildcard with overlapping prefix/suffix", ()
     await run("xy*xy", "xy");
   });
 });
+
+// Node's ERR_* module-resolution error contract for exports/imports maps,
+// package-name validation, malformed package.json, URL schemes, and data:
+// MIME types. Oracle: node v26.3.0 run on the identical fixture tree.
+describe("Node ESM resolution error codes", () => {
+  const fixture = {
+    "node_modules/exp/package.json": JSON.stringify({
+      name: "exp",
+      exports: {
+        "./ok": "./ok.js",
+        "./sub/*": "./*",
+        "./bare": "bare.js",
+        "./null": null,
+        "./missing-file": "./no-such-file.js",
+        "./cond": { worker: "./ok.js" },
+      },
+    }),
+    "node_modules/exp/ok.js": "module.exports = 1;\n",
+    "node_modules/badjson/package.json": '{ "invalid" }',
+    "package.json": JSON.stringify({
+      name: "app",
+      imports: {
+        "#ok": "./ok.js",
+        "#bad": "some:url",
+        "#below": "../below.js",
+        "#sub/*": "./sub/*.js",
+      },
+    }),
+    "ok.js": "module.exports = 2;\n",
+    "probe.mjs": `for (const s of JSON.parse(process.env.SPECS)) {
+      try {
+        await import(s);
+        console.log(JSON.stringify({ s, ok: true }));
+      } catch (e) {
+        console.log(JSON.stringify({ s, name: e.name, code: e.code, msg: e.message }));
+      }
+    }
+    `,
+    "probe.cjs": `for (const s of JSON.parse(process.env.SPECS)) {
+      try {
+        require(s);
+        console.log(JSON.stringify({ s, ok: true }));
+      } catch (e) {
+        console.log(JSON.stringify({ s, name: e.name, code: e.code, msg: e.message }));
+      }
+    }
+    `,
+  };
+
+  async function run(entry: string, specs: string[]) {
+    using dir = tempDir("esm-err-codes", fixture);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), entry],
+      env: { ...bunEnv, SPECS: JSON.stringify(specs) },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(exitCode).toBe(0);
+    return stdout
+      .trim()
+      .split("\n")
+      .map(line => line.replaceAll(String(dir), "<dir>"))
+      .join("\n");
+  }
+
+  it("import: exports/imports map failures carry Node codes and messages", async () => {
+    expect(
+      await run("probe.mjs", [
+        "exp/missing",
+        "exp",
+        "exp/null",
+        "exp/cond",
+        "exp/bare",
+        "exp/sub/../../../x.js",
+        "exp/sub/x%2Fy.js",
+        "exp/missing-file",
+        "#missing",
+        "#bad",
+        "#below",
+        "#sub/../../../x",
+        "#",
+        "in%2Fvalid",
+        "@scope",
+        "badjson",
+      ]),
+    ).toMatchInlineSnapshot(`
+      "{"s":"exp/missing","name":"Error","code":"ERR_PACKAGE_PATH_NOT_EXPORTED","msg":"Package subpath './missing' is not defined by \\"exports\\" in <dir>/node_modules/exp/package.json imported from <dir>/probe.mjs"}
+      {"s":"exp","name":"Error","code":"ERR_PACKAGE_PATH_NOT_EXPORTED","msg":"No \\"exports\\" main defined in <dir>/node_modules/exp/package.json imported from <dir>/probe.mjs"}
+      {"s":"exp/null","name":"Error","code":"ERR_PACKAGE_PATH_NOT_EXPORTED","msg":"Package subpath './null' is not defined by \\"exports\\" in <dir>/node_modules/exp/package.json imported from <dir>/probe.mjs"}
+      {"s":"exp/cond","name":"Error","code":"ERR_PACKAGE_PATH_NOT_EXPORTED","msg":"Package subpath './cond' is not defined by \\"exports\\" in <dir>/node_modules/exp/package.json imported from <dir>/probe.mjs"}
+      {"s":"exp/bare","name":"Error","code":"ERR_INVALID_PACKAGE_TARGET","msg":"Invalid \\"exports\\" target \\"bare.js\\" defined for './bare' in the package config <dir>/node_modules/exp/package.json imported from <dir>/probe.mjs; targets must start with \\"./\\""}
+      {"s":"exp/sub/../../../x.js","name":"TypeError","code":"ERR_INVALID_MODULE_SPECIFIER","msg":"Invalid module \\"./sub/../../../x.js\\" request is not a valid match in pattern \\"./sub/*\\" for the \\"exports\\" resolution of <dir>/node_modules/exp/package.json imported from <dir>/probe.mjs"}
+      {"s":"exp/sub/x%2Fy.js","name":"TypeError","code":"ERR_INVALID_MODULE_SPECIFIER","msg":"Invalid module \\"<dir>/node_modules/exp/x%2Fy.js\\" must not include encoded \\"/\\" or \\"\\\\\\" characters imported from <dir>/probe.mjs"}
+      {"s":"exp/missing-file","name":"Error","code":"ERR_MODULE_NOT_FOUND","msg":"Cannot find module '<dir>/node_modules/exp/no-such-file.js' imported from <dir>/probe.mjs"}
+      {"s":"#missing","name":"TypeError","code":"ERR_PACKAGE_IMPORT_NOT_DEFINED","msg":"Package import specifier \\"#missing\\" is not defined in package <dir>/package.json imported from <dir>/probe.mjs"}
+      {"s":"#bad","name":"Error","code":"ERR_INVALID_PACKAGE_TARGET","msg":"Invalid \\"imports\\" target \\"some:url\\" defined for '#bad' in the package config <dir>/package.json imported from <dir>/probe.mjs"}
+      {"s":"#below","name":"Error","code":"ERR_INVALID_PACKAGE_TARGET","msg":"Invalid \\"imports\\" target \\"../below.js\\" defined for '#below' in the package config <dir>/package.json imported from <dir>/probe.mjs"}
+      {"s":"#sub/../../../x","name":"TypeError","code":"ERR_INVALID_MODULE_SPECIFIER","msg":"Invalid module \\"#sub/../../../x\\" request is not a valid match in pattern \\"#sub/*\\" for the \\"imports\\" resolution of <dir>/package.json imported from <dir>/probe.mjs"}
+      {"s":"#","name":"TypeError","code":"ERR_INVALID_MODULE_SPECIFIER","msg":"Invalid module \\"#\\" is not a valid internal imports specifier name imported from <dir>/probe.mjs"}
+      {"s":"in%2Fvalid","name":"TypeError","code":"ERR_INVALID_MODULE_SPECIFIER","msg":"Invalid module \\"in%2Fvalid\\" is not a valid package name imported from <dir>/probe.mjs"}
+      {"s":"@scope","name":"TypeError","code":"ERR_INVALID_MODULE_SPECIFIER","msg":"Invalid module \\"@scope\\" is not a valid package name imported from <dir>/probe.mjs"}
+      {"s":"badjson","name":"Error","code":"ERR_INVALID_PACKAGE_CONFIG","msg":"Invalid package config <dir>/node_modules/badjson/package.json while importing \\"badjson\\" from <dir>/probe.mjs."}"
+    `);
+  });
+
+  it("import: unsupported URL schemes and unknown data: formats", async () => {
+    expect(
+      await run("probe.mjs", ["ws://x/y.js", "http://example.com/foo.js", "data:text/plain,1", "data:text/css,.a{}"]),
+    ).toMatchInlineSnapshot(`
+      "{"s":"ws://x/y.js","name":"Error","code":"ERR_UNSUPPORTED_ESM_URL_SCHEME","msg":"Only URLs with a scheme in: file, data, and node are supported by the default ESM loader. Received protocol 'ws:'"}
+      {"s":"http://example.com/foo.js","name":"Error","code":"ERR_UNSUPPORTED_ESM_URL_SCHEME","msg":"Only URLs with a scheme in: file and data are supported by the default ESM loader. Received protocol 'http:'"}
+      {"s":"data:text/plain,1","name":"RangeError","code":"ERR_UNKNOWN_MODULE_FORMAT","msg":"Unknown module format: text/plain for URL data:text/plain,1"}
+      {"s":"data:text/css,.a{}","name":"RangeError","code":"ERR_UNKNOWN_MODULE_FORMAT","msg":"Unknown module format: text/css for URL data:text/css,.a{}"}"
+    `);
+  });
+
+  it("require: same failures spell MODULE_NOT_FOUND the CJS way and drop the referrer clause for exports", async () => {
+    expect(
+      await run("probe.cjs", [
+        "exp/missing",
+        "exp",
+        "exp/bare",
+        "exp/sub/../../../x.js",
+        "exp/sub/x%2Fy.js",
+        "exp/missing-file",
+        "#missing",
+        "#bad",
+        "#",
+        "badjson",
+      ]),
+    ).toMatchInlineSnapshot(`
+      "{"s":"exp/missing","name":"Error","code":"ERR_PACKAGE_PATH_NOT_EXPORTED","msg":"Package subpath './missing' is not defined by \\"exports\\" in <dir>/node_modules/exp/package.json"}
+      {"s":"exp","name":"Error","code":"ERR_PACKAGE_PATH_NOT_EXPORTED","msg":"No \\"exports\\" main defined in <dir>/node_modules/exp/package.json"}
+      {"s":"exp/bare","name":"Error","code":"ERR_INVALID_PACKAGE_TARGET","msg":"Invalid \\"exports\\" target \\"bare.js\\" defined for './bare' in the package config <dir>/node_modules/exp/package.json; targets must start with \\"./\\""}
+      {"s":"exp/sub/../../../x.js","name":"TypeError","code":"ERR_INVALID_MODULE_SPECIFIER","msg":"Invalid module \\"./sub/../../../x.js\\" request is not a valid match in pattern \\"./sub/*\\" for the \\"exports\\" resolution of <dir>/node_modules/exp/package.json"}
+      {"s":"exp/sub/x%2Fy.js","name":"TypeError","code":"ERR_INVALID_MODULE_SPECIFIER","msg":"Invalid module \\"file://<dir>/node_modules/exp/x%2Fy.js\\" must not include encoded \\"/\\" or \\"\\\\\\" characters"}
+      {"s":"exp/missing-file","name":"Error","code":"MODULE_NOT_FOUND","msg":"Cannot find module '<dir>/node_modules/exp/no-such-file.js'"}
+      {"s":"#missing","name":"TypeError","code":"ERR_PACKAGE_IMPORT_NOT_DEFINED","msg":"Package import specifier \\"#missing\\" is not defined in package <dir>/package.json imported from <dir>/probe.cjs"}
+      {"s":"#bad","name":"Error","code":"ERR_INVALID_PACKAGE_TARGET","msg":"Invalid \\"imports\\" target \\"some:url\\" defined for '#bad' in the package config <dir>/package.json imported from <dir>/probe.cjs"}
+      {"s":"#","name":"TypeError","code":"ERR_INVALID_MODULE_SPECIFIER","msg":"Invalid module \\"#\\" is not a valid internal imports specifier name imported from <dir>/probe.cjs"}
+      {"s":"badjson","name":"Error","code":"ERR_INVALID_PACKAGE_CONFIG","msg":"Invalid package config <dir>/node_modules/badjson/package.json."}"
+    `);
+  });
+
+  it("uncaught tagged resolve errors print the code property block", async () => {
+    using dir = tempDir("esm-err-uncaught", fixture);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", "import('exp/missing')"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("Error [ERR_PACKAGE_PATH_NOT_EXPORTED]: Package subpath './missing'");
+    expect(stderr).toContain("code: 'ERR_PACKAGE_PATH_NOT_EXPORTED'");
+    expect(exitCode).toBe(1);
+  });
+});

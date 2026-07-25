@@ -4468,6 +4468,31 @@ impl VirtualMachine {
             return Ok(());
         }
 
+        let import_kind = if is_esm {
+            bun_ast::ImportKind::Stmt
+        } else if is_user_require_resolve {
+            bun_ast::ImportKind::RequireResolve
+        } else {
+            bun_ast::ImportKind::Require
+        };
+
+        // Fail fast on specifiers the default ESM loader can never load
+        // (unsupported URL schemes, unloadable data: MIME types) with Node's
+        // error shape.
+        if let Some(msg) =
+            crate::ResolveMessage::esm_specifier_precheck(specifier_utf8.slice(), import_kind)
+        {
+            *res = ErrorableString::err(
+                ErrorCode(ErrorCode::JS_ERROR_OBJECT),
+                crate::ResolveMessage::create(global, &msg, source_utf8.slice())?,
+            );
+            return Ok(());
+        }
+
+        // Drop any capture left over from an earlier resolve so a failure
+        // below is attributed to this specifier only.
+        jsc_vm.transpiler.resolver.node_module_error = None;
+
         // Swap in a fresh log so resolver errors don't pollute the VM's main log.
         // `vm.log` is set unconditionally in `init` and never cleared,
         // so the `Option` is purely a
@@ -4530,23 +4555,29 @@ impl VirtualMachine {
         );
         if let Err(err_) = resolve_result {
             let err = err_;
-            let import_kind = if is_esm {
-                bun_ast::ImportKind::Stmt
-            } else if is_user_require_resolve {
-                bun_ast::ImportKind::RequireResolve
-            } else {
-                bun_ast::ImportKind::Require
-            };
-            // Find a `.resolve`-metadata msg if the log has one.
-            let msg = log
-                .msgs
-                .iter()
-                .find_map(|m| {
-                    if let bun_ast::Metadata::Resolve(_) = &m.metadata {
-                        Some(m.clone())
-                    } else {
-                        None
-                    }
+            // Prefer the resolver's Node-shaped capture, else a
+            // `.resolve`-metadata msg if the log has one.
+            let msg = jsc_vm
+                .transpiler
+                .resolver
+                .node_module_error
+                .take()
+                .map(|captured| {
+                    crate::ResolveMessage::msg_from_node_module_error(
+                        &captured,
+                        import_kind,
+                        specifier_utf8.slice(),
+                        source_utf8.slice(),
+                    )
+                })
+                .or_else(|| {
+                    log.msgs.iter().find_map(|m| {
+                        if let bun_ast::Metadata::Resolve(_) = &m.metadata {
+                            Some(m.clone())
+                        } else {
+                            None
+                        }
+                    })
                 })
                 .unwrap_or_else(|| {
                     let printed = crate::ResolveMessage::fmt(
@@ -5150,6 +5181,17 @@ impl VirtualMachine {
                         };
                     } else {
                         write_msg!(resolve_error.msg, writer, allow_ansi_color);
+                    }
+                    // Node appends the own-property block for its E()-style
+                    // module errors (`... {\n  code: 'ERR_...'\n}`).
+                    if formatter.node_uncaught_style {
+                        if let Some((code, ..)) = resolve_error.node_tag() {
+                            let _ = write!(
+                                writer,
+                                " {{\n  code: '{}'\n}}",
+                                bstr::BStr::new(code)
+                            );
+                        }
                     }
                     resolve_error.logged.set(true);
                     let _ = writer.write_all(b"\n");

@@ -106,7 +106,96 @@ fn esm_package_name(specifier: &[u8]) -> &[u8] {
     &specifier[..end]
 }
 
+/// Best-effort range of `specifier` inside the composed message (the
+/// Node-shaped texts don't always embed the specifier verbatim; `.specifier`
+/// then reads as empty).
+fn specifier_range_in(text: &[u8], specifier: &[u8]) -> bun_ast::BabyString {
+    if specifier.is_empty() || specifier.len() > u16::MAX as usize {
+        return bun_ast::BabyString::new(0, 0);
+    }
+    match strings::index_of(text, specifier) {
+        Some(off) if off <= u16::MAX as usize => {
+            bun_ast::BabyString::new(off as u16, specifier.len() as u16)
+        }
+        _ => bun_ast::BabyString::new(0, 0),
+    }
+}
+
+/// `code`, `err.name`, and the uncaught-printer display name for the
+/// Node-shaped resolve error tags (message text is preformatted by the
+/// resolver capture / specifier prechecks and passed through untouched).
+fn node_tag_info(
+    err: bun_ast::Error,
+    kind: ImportKind,
+) -> Option<(&'static [u8], &'static [u8], &'static [u8])> {
+    use bun_ast::Error as E;
+    Some(match err {
+        E::PackagePathNotExported => (
+            b"ERR_PACKAGE_PATH_NOT_EXPORTED",
+            b"Error",
+            b"Error [ERR_PACKAGE_PATH_NOT_EXPORTED]",
+        ),
+        E::PackageImportNotDefined => (
+            b"ERR_PACKAGE_IMPORT_NOT_DEFINED",
+            b"TypeError",
+            b"TypeError [ERR_PACKAGE_IMPORT_NOT_DEFINED]",
+        ),
+        E::InvalidPackageTarget => (
+            b"ERR_INVALID_PACKAGE_TARGET",
+            b"Error",
+            b"Error [ERR_INVALID_PACKAGE_TARGET]",
+        ),
+        E::InvalidPackageConfig => (
+            b"ERR_INVALID_PACKAGE_CONFIG",
+            b"Error",
+            b"Error [ERR_INVALID_PACKAGE_CONFIG]",
+        ),
+        E::InvalidModuleSpecifier => (
+            b"ERR_INVALID_MODULE_SPECIFIER",
+            b"TypeError",
+            b"TypeError [ERR_INVALID_MODULE_SPECIFIER]",
+        ),
+        E::UnsupportedDirImport => (
+            b"ERR_UNSUPPORTED_DIR_IMPORT",
+            b"Error",
+            b"Error [ERR_UNSUPPORTED_DIR_IMPORT]",
+        ),
+        E::UnsupportedEsmUrlScheme => (
+            b"ERR_UNSUPPORTED_ESM_URL_SCHEME",
+            b"Error",
+            b"Error [ERR_UNSUPPORTED_ESM_URL_SCHEME]",
+        ),
+        E::UnknownModuleFormat => (
+            b"ERR_UNKNOWN_MODULE_FORMAT",
+            b"RangeError",
+            b"RangeError [ERR_UNKNOWN_MODULE_FORMAT]",
+        ),
+        // require() spells this the historic un-prefixed way and prints as a
+        // plain Error.
+        E::ModuleNotFoundNode => match kind {
+            ImportKind::Require | ImportKind::RequireResolve => {
+                (b"MODULE_NOT_FOUND", b"Error", b"Error")
+            }
+            _ => (
+                b"ERR_MODULE_NOT_FOUND",
+                b"Error",
+                b"Error [ERR_MODULE_NOT_FOUND]",
+            ),
+        },
+        _ => return None,
+    })
+}
+
 impl ResolveMessage {
+    /// The `(code, name, display)` triple when this error carries one of the
+    /// Node-shaped resolve tags.
+    pub(crate) fn node_tag(&self) -> Option<(&'static [u8], &'static [u8], &'static [u8])> {
+        let bun_ast::Metadata::Resolve(resolve) = &self.msg.metadata else {
+            return None;
+        };
+        node_tag_info(resolve.err, resolve.import_kind)
+    }
+
     // `#[JsClass]` emits `ResolveMessageClass__construct` calling this.
     pub fn constructor(
         global: &JSGlobalObject,
@@ -117,6 +206,10 @@ impl ResolveMessage {
 
     #[crate::host_fn(getter)]
     pub fn get_code(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        if let Some((code, ..)) = this.node_tag() {
+            let atom = bun_core::String::create_atom(code);
+            return atom.to_js(global);
+        }
         match &this.msg.metadata {
             bun_ast::Metadata::Resolve(resolve) => {
                 let code: &'static [u8] = 'brk: {
@@ -387,6 +480,10 @@ impl ResolveMessage {
         let bun_ast::Metadata::Resolve(resolve) = &self.msg.metadata else {
             return None;
         };
+        // Preformatted Node-shaped tags keep their text verbatim.
+        if node_tag_info(resolve.err, resolve.import_kind).is_some() {
+            return None;
+        }
         match resolve.import_kind {
             ImportKind::Require
             | ImportKind::RequireResolve
@@ -434,6 +531,9 @@ impl ResolveMessage {
 
     /// `err.name` — Node throws module-resolution failures as plain `Error`.
     pub(crate) fn js_name(&self) -> &'static [u8] {
+        if let Some((_, name, _)) = self.node_tag() {
+            return name;
+        }
         if self.node_display_name().is_some() {
             b"Error"
         } else {
@@ -446,6 +546,9 @@ impl ResolveMessage {
     /// for its `E()`-constructed errors (`Error [ERR_MODULE_NOT_FOUND]: ...`),
     /// while CJS MODULE_NOT_FOUND is a plain `Error: ...`.
     pub(crate) fn node_display_name(&self) -> Option<&'static [u8]> {
+        if let Some((.., display)) = self.node_tag() {
+            return Some(display);
+        }
         if self.is_unknown_builtin() {
             return Some(b"Error [ERR_UNKNOWN_BUILTIN_MODULE]");
         }
@@ -581,5 +684,162 @@ impl ResolveMessage {
     pub fn finalize(self: Box<Self>) {
         // Dropping the Box drops `msg` and the owned `referrer` buffer.
         drop(self);
+    }
+
+    /// Assemble the final Node-shaped `Msg` from a resolver capture: splice
+    /// the referrer clause (whose wording depends on the error and import
+    /// kind) into the captured message head.
+    pub fn msg_from_node_module_error(
+        err: &bun_resolver::NodeModuleError,
+        import_kind: ImportKind,
+        specifier: &[u8],
+        referrer: &[u8],
+    ) -> bun_ast::Msg {
+        use bstr::BStr;
+        use bun_resolver::NodeModuleErrorKind as K;
+        let is_esm = matches!(import_kind, ImportKind::Stmt | ImportKind::Dynamic);
+        let include_referrer = !referrer.is_empty()
+            && referrer != b"bun:main"
+            && (is_esm || err.referrer_in_require);
+        let mut text = Vec::with_capacity(err.head.len() + referrer.len() + 32);
+        text.extend_from_slice(&err.head[..err.insert_at]);
+        if include_referrer {
+            match err.kind {
+                K::InvalidPackageConfig => {
+                    let _ = write!(
+                        &mut text,
+                        " while importing \"{}\" from {}",
+                        BStr::new(specifier),
+                        BStr::new(referrer)
+                    );
+                }
+                K::InvalidPackageConfigStructure => {
+                    // Node passes the importer as a file URL in this shape.
+                    let _ = write!(
+                        &mut text,
+                        " while importing file://{}",
+                        BStr::new(referrer)
+                    );
+                }
+                _ => {
+                    let _ = write!(&mut text, " imported from {}", BStr::new(referrer));
+                }
+            }
+        }
+        text.extend_from_slice(&err.head[err.insert_at..]);
+        let tag = match err.kind {
+            K::PackagePathNotExported => bun_ast::Error::PackagePathNotExported,
+            K::PackageImportNotDefined => bun_ast::Error::PackageImportNotDefined,
+            K::InvalidPackageTarget => bun_ast::Error::InvalidPackageTarget,
+            K::InvalidPackageConfig | K::InvalidPackageConfigStructure => {
+                bun_ast::Error::InvalidPackageConfig
+            }
+            K::InvalidModuleSpecifier => bun_ast::Error::InvalidModuleSpecifier,
+            K::ModuleNotFound => bun_ast::Error::ModuleNotFoundNode,
+            K::UnsupportedDirImport => bun_ast::Error::UnsupportedDirImport,
+        };
+        let specifier_range = specifier_range_in(&text, specifier);
+        bun_ast::Msg {
+            data: bun_ast::range_data(None, bun_ast::Range::NONE, text),
+            metadata: bun_ast::Metadata::Resolve(bun_ast::MetadataResolve {
+                specifier: specifier_range,
+                import_kind,
+                err: tag,
+            }),
+            ..Default::default()
+        }
+    }
+
+    /// Node's fail-fast specifier checks for the default ESM loader:
+    /// unsupported URL schemes (ERR_UNSUPPORTED_ESM_URL_SCHEME) and `data:`
+    /// MIME types no loader accepts (ERR_UNKNOWN_MODULE_FORMAT). Returns the
+    /// Node-shaped `Msg` when the specifier can never load, `None` otherwise.
+    pub fn esm_specifier_precheck(specifier: &[u8], import_kind: ImportKind) -> Option<bun_ast::Msg> {
+        use bstr::BStr;
+        if !matches!(import_kind, ImportKind::Stmt | ImportKind::Dynamic) {
+            return None;
+        }
+        let make = |text: Vec<u8>, err: bun_ast::Error| {
+            let specifier_range = specifier_range_in(&text, specifier);
+            bun_ast::Msg {
+                data: bun_ast::range_data(None, bun_ast::Range::NONE, text),
+                metadata: bun_ast::Metadata::Resolve(bun_ast::MetadataResolve {
+                    specifier: specifier_range,
+                    import_kind,
+                    err,
+                }),
+                ..Default::default()
+            }
+        };
+        if let Some(rest) = specifier.strip_prefix(b"data:".as_slice()) {
+            // Mirrors Node's mimeToFormat: only JS, JSON, and Wasm MIME
+            // types have a module format (Bun additionally derives the JSON
+            // flavor from the same categories).
+            // Comma-less data: URLs aren't data URLs at all; leave them to
+            // the resolver's invalid-data-URL error.
+            let Some(comma) = strings::index_of_char(rest, b',') else {
+                return None;
+            };
+            let mut mime = &rest[..comma as usize];
+            if let Some(stripped) = mime.strip_suffix(b";base64".as_slice()) {
+                mime = stripped;
+            }
+            use bun_http_types::MimeType::Category;
+            let category = bun_http_types::MimeType::MimeType::init(mime, false, None).category;
+            if matches!(
+                category,
+                Category::Javascript | Category::Json | Category::Wasm
+            ) {
+                return None;
+            }
+            let mut text = Vec::new();
+            let _ = write!(
+                &mut text,
+                "Unknown module format: {} for URL {}",
+                BStr::new(mime),
+                BStr::new(specifier)
+            );
+            return Some(make(text, bun_ast::Error::UnknownModuleFormat));
+        }
+        // A URL scheme (RFC 3986: ALPHA *( ALPHA / DIGIT / "+" / "-" / "." )
+        // followed by ":"). Single-letter schemes are skipped so Windows
+        // drive paths (`C:\x`) keep resolving as paths.
+        if specifier.first().is_some_and(u8::is_ascii_alphabetic) {
+            let mut scheme_len = 0usize;
+            for (i, &b) in specifier.iter().enumerate() {
+                if b == b':' && i >= 2 {
+                    scheme_len = i;
+                    break;
+                }
+                if !(b.is_ascii_alphanumeric() || b == b'+' || b == b'.' || b == b'-') {
+                    break;
+                }
+            }
+            if scheme_len >= 2 {
+                let scheme = &specifier[..scheme_len];
+                // Schemes Bun's runtime loader accepts: Node's file/data plus
+                // Bun's blob:, bun:, node:, and macro: namespaces.
+                const SUPPORTED: [&[u8]; 6] =
+                    [b"file", b"data", b"node", b"bun", b"blob", b"macro"];
+                if !SUPPORTED.iter().any(|s| *s == scheme) {
+                    // Node's network-import check lists "file and data" for
+                    // http(s); the general check lists "file, data, and node".
+                    let listed: &str = if scheme == b"http" || scheme == b"https" {
+                        "file and data"
+                    } else {
+                        "file, data, and node"
+                    };
+                    let mut text = Vec::new();
+                    let _ = write!(
+                        &mut text,
+                        "Only URLs with a scheme in: {} are supported by the default ESM loader. Received protocol '{}:'",
+                        listed,
+                        BStr::new(scheme)
+                    );
+                    return Some(make(text, bun_ast::Error::UnsupportedEsmUrlScheme));
+                }
+            }
+        }
+        None
     }
 }

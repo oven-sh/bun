@@ -6,23 +6,12 @@ use bun_core::Output;
 use bun_jsc::ZigStringJsc as _;
 use bun_jsc::zig_string::ZigString;
 
-/// RAII guard that forces stdin into canonical ("cooked") mode for the
-/// duration of a blocking line read and restores whatever termios were in
-/// effect afterwards.
-///
-/// `node:readline` (and anything else that calls `setRawMode(true)`) clears
-/// `ICANON`, `ECHO`, `ISIG` and `ICRNL`. While in that state, Enter delivers a
-/// bare `\r`, typed characters are not echoed, and Ctrl+C is not translated to
-/// `SIGINT`. `alert`/`confirm`/`prompt` all do a blocking read that waits for
-/// `\n`, so without this guard they hang with no visible feedback.
-///
-/// The guard must be installed before the prompt text is written: the line
-/// discipline applies `ICRNL` at receive time, so a `\r` that arrives in the
-/// window between the prompt becoming visible and `tcsetattr` applying stays a
-/// `\r` in the input queue and the canonical read never sees a line.
-///
-/// On non-TTY stdin `tcgetattr` fails and the guard is inert, so piped input
-/// keeps its existing behaviour.
+/// Force stdin into canonical mode for `alert`/`confirm`/`prompt`'s blocking
+/// line read and restore whatever termios were in effect on drop, so they work
+/// when `node:readline`/`bun repl` has put the tty in raw mode (#5267). Must
+/// be installed *before* the prompt text is written: n_tty applies `ICRNL` at
+/// receive time, so a `\r` that lands before `tcsetattr` stays a `\r` and the
+/// canonical read never sees a line. Inert on non-tty stdin.
 #[cfg(unix)]
 struct CookedStdinGuard {
     saved: Option<libc::termios>,
@@ -56,10 +45,6 @@ impl Drop for CookedStdinGuard {
     }
 }
 
-/// Windows equivalent of the cooked-mode guard: re-enable line input, echo and
-/// Ctrl+C processing on the console and clear `ENABLE_VIRTUAL_TERMINAL_INPUT`
-/// so Backspace edits the line instead of arriving as an escape sequence.
-/// `StdinModeGuard` is inert when stdin is not a console.
 #[cfg(windows)]
 struct CookedStdinGuard {
     _guard: bun_sys::windows::StdinModeGuard,

@@ -225,6 +225,7 @@ pub fn run_as_coordinator(
         junit_fragments: Vec::new(),
         coverage_fragments: Vec::new(),
         last_header_idx: None,
+        printed_scope_path: Vec::new(),
         frame: Frame::default(),
         files_done: 0,
         spawned_count: 0,
@@ -803,9 +804,10 @@ static WORKER_CMDS: bun_core::RacyCell<Option<*mut WorkerCommands>> = bun_core::
 // pointee outlives all callers (process exits before it's dropped).
 
 /// Called from `CommandLineReporter.handleTestCompleted` in the worker with the
-/// fully-formatted status line (✓/✗ + scopes + name + duration, including ANSI
-/// codes). The coordinator prints these bytes verbatim so output matches serial.
-pub fn worker_emit_test_done(file_idx: u32, formatted_line: &[u8]) {
+/// describe-scope path plus the fully-formatted status line (✓/✗ + indent + name
+/// + duration, including ANSI codes). The coordinator prints the scope headers it
+/// hasn't printed yet, then these bytes verbatim, so output matches serial.
+pub fn worker_emit_test_done(file_idx: u32, scope_path: &[u8], formatted_line: &[u8]) {
     // SAFETY: single-threaded worker; WORKER_CMDS only written/read on this thread.
     let Some(cmds_ptr) = (unsafe { WORKER_CMDS.read() }) else {
         return;
@@ -817,6 +819,7 @@ pub fn worker_emit_test_done(file_idx: u32, formatted_line: &[u8]) {
     let wf = unsafe { &mut *WORKER_FRAME.get() };
     wf.begin(frame::Kind::TestDone);
     wf.u32_(file_idx);
+    wf.str(scope_path);
     wf.str(formatted_line);
     cmds.send(wf.finish());
 }

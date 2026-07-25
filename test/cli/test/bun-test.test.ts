@@ -1,6 +1,6 @@
 import { spawnSync } from "bun";
 import { beforeAll, describe, expect, it, test } from "bun:test";
-import { bunEnv, bunExe, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
+import { bunEnv, bunExe, normalizeBunSnapshot, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 
@@ -985,8 +985,8 @@ describe("bun test", () => {
           `,
         });
 
-        expect(stderr).toContain("fs module > has $method");
-        expect(stderr).toContain("path module > has $method");
+        expect(stderr).toContain("fs module\n  (pass) has $method");
+        expect(stderr).toContain("path module\n  (pass) has $method");
         expect(stderr).toContain("2 pass");
       });
 
@@ -1314,8 +1314,10 @@ describe("bun test", () => {
         .trim(),
     ).toMatchInlineSnapshot(`
       "bun-test-*.test.ts:
-      (pass) group 1 > should match filter
-      (pass) group 2 > another test that should match filter
+      group 1
+        (pass) should match filter
+      group 2
+        (pass) another test that should match filter
 
        2 pass
        5 filtered out
@@ -1500,6 +1502,149 @@ describe("bun test", () => {
     expect(stdout).not.toContain("pass");
     expect(stderr).toContain("1 pass");
     expect(exitCode).toBe(1);
+  });
+});
+
+describe("nested describe output", () => {
+  const fixture = `
+    import { describe, expect, it } from "bun:test";
+    describe("group one", () => {
+      describe("sub A", () => {
+        it("zero", () => { expect(0).toBe(0); });
+        it("one", () => { expect(1).toBe(1); });
+      });
+      it("four", () => { expect(4).toBe(4); });
+    });
+    describe("group two", () => {
+      it("five", () => { expect(5).toBe(5); });
+      it.skip("six", () => {});
+      it.todo("seven");
+    });
+    it("top level", () => {});
+  `;
+
+  async function run(files: Record<string, string>, args: string[], dirName: string) {
+    using dir = tempDir(dirName, files);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", ...args],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    return { stderr: normalizeBunSnapshot(stderr, dir), exitCode };
+  }
+
+  test("describe scopes are printed once with tests indented beneath", async () => {
+    const { stderr, exitCode } = await run({ "a.test.ts": fixture }, ["a.test.ts"], "nested-output");
+
+    expect(stderr).toMatchInlineSnapshot(`
+      "a.test.ts:
+      group one
+        sub A
+          (pass) zero
+          (pass) one
+        (pass) four
+      group two
+        (pass) five
+        (skip) six
+        (todo) seven
+      (pass) top level
+
+       5 pass
+       1 skip
+       1 todo
+       0 fail
+       4 expect() calls
+      Ran 7 tests across 1 file."
+    `);
+    expect(exitCode).toBe(0);
+  });
+
+  test("unnamed describe scopes do not consume an indent level", async () => {
+    const { stderr, exitCode } = await run(
+      {
+        "a.test.ts": `
+          import { describe, it } from "bun:test";
+          describe("", () => { it("no scope", () => {}); });
+          describe("outer", () => {
+            describe("", () => { it("skips a level", () => {}); });
+          });
+        `,
+      },
+      ["a.test.ts"],
+      "nested-output-unnamed",
+    );
+
+    expect(stderr).toMatchInlineSnapshot(`
+      "a.test.ts:
+      (pass) no scope
+      outer
+        (pass) skips a level
+
+       2 pass
+       0 fail
+      Ran 2 tests across 1 file."
+    `);
+    expect(exitCode).toBe(0);
+  });
+
+  test("--only-failures prints headers only for the failures", async () => {
+    const { stderr, exitCode } = await run(
+      {
+        "a.test.ts": `
+          import { describe, expect, it } from "bun:test";
+          describe("passing group", () => { it("fine", () => {}); });
+          describe("failing group", () => {
+            describe("inner", () => { it("boom", () => { expect(1).toBe(2); }); });
+          });
+        `,
+      },
+      ["a.test.ts", "--only-failures"],
+      "nested-output-only-failures",
+    );
+
+    expect(stderr).toContain("failing group\n  inner\n    (fail) boom");
+    expect(stderr).not.toContain("\npassing group\n");
+    expect(exitCode).toBe(1);
+  });
+
+  test("each file re-announces its describe scopes under --parallel", async () => {
+    const { stderr, exitCode } = await run(
+      { "a.test.ts": fixture, "b.test.ts": fixture },
+      ["--parallel=2", "a.test.ts", "b.test.ts"],
+      "nested-output-parallel",
+    );
+
+    for (const file of ["a.test.ts", "b.test.ts"]) {
+      expect(stderr).toContain(`${file}:\ngroup one\n  sub A\n    (pass) zero`);
+    }
+    expect(exitCode).toBe(0);
+  });
+
+  test("the end-of-run recap keeps the flat scope path", async () => {
+    const passing = Array.from({ length: 21 }, (_, i) => `it("t${i}", () => {});`).join("\n");
+    const { stderr, exitCode } = await run(
+      {
+        "a.test.ts": `
+          import { describe, it } from "bun:test";
+          describe("outer", () => {
+            describe("inner", () => {
+              ${passing}
+              it.skip("skipped", () => {});
+              it.todo("pending");
+            });
+          });
+        `,
+      },
+      ["a.test.ts"],
+      "nested-output-recap",
+    );
+
+    expect(stderr).toContain("(skip) outer > inner > skipped");
+    expect(stderr).toContain("(todo) outer > inner > pending");
+    expect(exitCode).toBe(0);
   });
 });
 

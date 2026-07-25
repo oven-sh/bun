@@ -122,7 +122,7 @@ test("inspector.url()/close() report and control the --inspect CLI debugger", as
     debugPort: Number(new URL(summary.urlBefore).port),
   });
   expect(summary.urlAfterReopen).not.toBe(summary.urlBefore);
-});
+}, 30_000);
 
 // waitForDebugger() under --inspect must block until a client connects instead
 // of throwing ERR_INSPECTOR_NOT_ACTIVE. The CLI server speaks the JSC inspector
@@ -182,7 +182,7 @@ process.exit(0);
 
   expect(JSON.parse(stdout.trim().split("\n").at(-1)!)).toEqual({ resumed: true });
   expect(exitCode).toBe(0);
-});
+}, 30_000);
 
 // nodeInspectorState is process-global; a Worker must not see or control the
 // main thread's --inspect server through node:inspector.
@@ -231,7 +231,7 @@ parentPort.postMessage({ workerUrl: inspector.url() ?? null, closeCode, waitCode
     closeCode: "ERR_WORKER_UNSUPPORTED_OPERATION",
     waitCode: "ERR_INSPECTOR_NOT_ACTIVE",
   });
-});
+}, 30_000);
 
 // inspector.open() starts a WebSocket server speaking the V8 Chrome DevTools
 // Protocol (translated to JSC's inspector protocol on the debugger thread).

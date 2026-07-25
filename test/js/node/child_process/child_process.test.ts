@@ -1033,3 +1033,34 @@ describe("spawn/execFile({signal}) does not leak abort listeners on spawn failur
     expect(errors.map(e => e.code)).toEqual(["ENOENT"]);
   });
 });
+
+// A child killed by a real-time signal (SIGRTMIN..SIGRTMAX, no named
+// SignalCode variant) must not be reported with BOTH code and signal null.
+// SIGRTMIN is 34 on glibc and 35 on musl; SIGRTMAX is 64 on both.
+describe.if(isLinux)("real-time signals", () => {
+  for (const sig of [40, 64]) {
+    it.concurrent(`spawn 'exit'/'close' report real-time signal ${sig}`, async () => {
+      const child = spawn("bash", ["-c", `kill -${sig} $$`], { stdio: "ignore" });
+      const [[exitCode, exitSignal], [closeCode, closeSignal]] = await Promise.all([
+        once(child, "exit"),
+        once(child, "close"),
+      ]);
+      expect({
+        exit: { code: exitCode, signal: exitSignal },
+        close: { code: closeCode, signal: closeSignal },
+        exitCode: child.exitCode,
+        signalCode: child.signalCode,
+      }).toEqual({
+        exit: { code: null, signal: sig },
+        close: { code: null, signal: sig },
+        exitCode: null,
+        signalCode: sig,
+      });
+    });
+
+    it.concurrent(`spawnSync reports real-time signal ${sig}`, () => {
+      const r = spawnSync("bash", ["-c", `kill -${sig} $$`]);
+      expect({ status: r.status, signal: r.signal }).toEqual({ status: null, signal: sig });
+    });
+  }
+});

@@ -170,7 +170,7 @@ bun_spawn::link_impl_ProcessExit! {
     ChromeProcess for ChromeProcess => |this| {
         on_process_exit(_process, status, _rusage) => {
             scoped_log!(Chrome, "chrome exited: {}", status);
-            let signo: i32 = status.signal_code().map_or(0, |s| s as i32);
+            let signo: i32 = status.signal_code().map_or(0, |s| s.0 as i32);
             Bun__Chrome__died(signo);
             // `this` was heap-allocated in spawn(); process is the
             // intrusive-rc *mut Process whose strong ref we hold. `deref()`

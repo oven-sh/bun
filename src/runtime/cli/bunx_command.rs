@@ -1328,8 +1328,6 @@ impl BunxCommand {
 
         match &spawn_result.status {
             SpawnStatus::Exited(exited) => {
-                // Any non-zero byte (incl. RT signals >31) is a valid signal.
-                // `signal_code()` would drop RT signals, so check the raw byte directly.
                 if exited.signal != 0 {
                     if bun_core::env_var::feature_flag::BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN
                         .get()
@@ -1353,9 +1351,6 @@ impl BunxCommand {
                     bun_crash_handler::suppress_reporting();
                 }
 
-                // RT signals (>31) are valid payloads; forward the
-                // raw byte instead of lossy `signal_code()` so this arm always
-                // diverges with the *actual* signal.
                 Global::raise_ignoring_panic_handler_raw(core::ffi::c_int::from(*sig));
             }
             SpawnStatus::Err(err) => {

@@ -307,6 +307,23 @@ pub(crate) const RUNTIME_PARAMS_: &[ParamType] = &[
     parse_param!("--trace-exit"),
     parse_param!("--expose-internals"),
     parse_param!("--stack-trace-limit <STR>"),
+    // Node's permission model. Bun does not implement any of it, so these are
+    // recognized only to refuse to start (see `reject_permission_flags`):
+    // silently running unsandboxed when the caller asked for a sandbox is a
+    // fail-open security hole, and the unknown-flag skip path would do exactly
+    // that while also reporting the flags in `process.execArgv` as if applied.
+    parse_param!("--permission"),
+    parse_param!("--permission-audit"),
+    parse_param!("--experimental-permission"),
+    parse_param!("--allow-fs-read <STR>..."),
+    parse_param!("--allow-fs-write <STR>..."),
+    parse_param!("--allow-child-process"),
+    parse_param!("--allow-worker"),
+    parse_param!("--allow-addons"),
+    parse_param!("--allow-net <STR>?"),
+    parse_param!("--allow-wasi"),
+    parse_param!("--allow-inspector"),
+    parse_param!("--allow-ffi"),
 ];
 
 pub(crate) const AUTO_OR_RUN_PARAMS: &[ParamType] = &[
@@ -707,6 +724,39 @@ pub(crate) static Bun__Node__UseSystemCA: core::sync::atomic::AtomicBool =
 // `crate::cli::arguments::load_config*` callers are unaffected.
 pub use bun_bunfig::arguments::{load_config, load_config_path, load_config_with_cmd_args};
 
+/// Bun does not implement Node's permission model. Accepting any of its flags
+/// and running anyway would be a silent fail-open, so refuse to start instead.
+#[cold]
+fn reject_permission_flags(args: &clap::Args<clap::Help>) {
+    const FLAGS: &[&[u8]] = &[
+        b"--permission",
+        b"--permission-audit",
+        b"--experimental-permission",
+        b"--allow-child-process",
+        b"--allow-worker",
+        b"--allow-addons",
+        b"--allow-wasi",
+        b"--allow-inspector",
+        b"--allow-ffi",
+    ];
+    const MULTI: &[&[u8]] = &[b"--allow-fs-read", b"--allow-fs-write"];
+    let mut seen: Option<&[u8]> = FLAGS.iter().copied().find(|n| args.flag(n));
+    seen = seen.or_else(|| MULTI.iter().copied().find(|n| !args.options(n).is_empty()));
+    if seen.is_none() && args.option(b"--allow-net").is_some() {
+        seen = Some(b"--allow-net");
+    }
+    if let Some(name) = seen {
+        Output::err_generic(
+            "{} is not supported: Bun does not implement the Node.js permission model\n",
+            format_args!("{}", BStr::new(name)),
+        );
+        bun_core::note!(
+            "Running without enforcement would silently bypass the requested sandbox. Remove the flag to run without permission restrictions."
+        );
+        Global::exit(1);
+    }
+}
+
 /// Parse `argv` into `api::TransformOptions` for the given subcommand.
 ///
 /// `command::tag_params(cmd)` does a runtime lookup of the per-subcommand
@@ -994,6 +1044,8 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
             // for disabling export condition "node-addons"
             opts.allow_addons = Some(false);
         }
+
+        reject_permission_flags(&args);
 
         if let Some(unhandled_rejections) = args.option(b"--unhandled-rejections") {
             opts.unhandled_rejections = match api::UnhandledRejections::MAP

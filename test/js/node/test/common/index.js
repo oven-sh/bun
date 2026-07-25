@@ -177,6 +177,16 @@ if (process.argv.length === 2 &&
         // does not exist, so don't re-spawn just to pass the flag through.
         continue;
       }
+      if (process.versions.bun &&
+          (flag === "--permission" || flag === "--permission-audit" ||
+           flag === "--experimental-permission" || flag.startsWith("--allow-"))) {
+        // Bun does not implement the Node.js permission model and hard-errors
+        // on these flags at startup. Re-spawning would turn every vendored
+        // test whose `// Flags:` header names them into a CLI-error assertion.
+        // Run the test body without the sandbox instead; tests that actually
+        // exercise permission semantics fail on their own assertions.
+        continue;
+      }
       if (flag === "test") {
         process.env.SKIP_FLAG_CHECK = "1";
         break;

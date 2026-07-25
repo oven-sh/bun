@@ -3689,6 +3689,61 @@ it("statusCode = 204 with an empty first write still discards the body", async (
   }
 });
 
+it("res.shouldKeepAlive reflects the request's Connection header like Node's parserOnIncoming", async () => {
+  // Node.js sets res.shouldKeepAlive = llhttp_should_keep_alive(parser) in
+  // parserOnIncoming: HTTP/1.1 defaults to keep-alive unless Connection: close,
+  // HTTP/1.0 defaults to close unless Connection: keep-alive. Middleware
+  // (compression, on-headers) branches on this before writing headers.
+  const seen: Record<string, boolean> = {};
+  const wire: Record<string, string> = {};
+  const server = createServer((req, res) => {
+    seen[req.url!] = res.shouldKeepAlive;
+    res.end("x");
+  });
+  try {
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as AddressInfo;
+
+    const send = (path: string, raw: string) =>
+      new Promise<void>((resolve, reject) => {
+        const socket = connect(port, "127.0.0.1");
+        let data = "";
+        socket.on("data", chunk => (data += chunk));
+        socket.on("error", reject);
+        socket.on("close", () => {
+          wire[path] = data.match(/^Connection:.*$/im)?.[0] ?? "(none)";
+          resolve();
+        });
+        socket.write(raw);
+        // Only /11none keeps the connection open; close the writable side so
+        // the server answers and we observe its FIN instead of waiting.
+        socket.end();
+      });
+
+    await send("/11close", "GET /11close HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+    await send("/10keepalive", "GET /10keepalive HTTP/1.0\r\nHost: x\r\nConnection: Keep-Alive\r\n\r\n");
+    await send("/11none", "GET /11none HTTP/1.1\r\nHost: x\r\n\r\n");
+    await send("/10none", "GET /10none HTTP/1.0\r\nHost: x\r\n\r\n");
+
+    expect(seen).toEqual({
+      "/11close": false,
+      "/10keepalive": true,
+      "/11none": true,
+      "/10none": false,
+    });
+    // The property fix must not change what goes on the wire.
+    expect(wire).toEqual({
+      "/11close": "Connection: close",
+      "/10keepalive": "Connection: close",
+      "/11none": "Connection: keep-alive",
+      "/10none": "Connection: close",
+    });
+  } finally {
+    server.close();
+  }
+});
+
 it("res.shouldKeepAlive = false renders Connection: close and ends the socket", async () => {
   // Graceful-shutdown helpers (stoppable, http-terminator) clear
   // shouldKeepAlive on in-flight responses; the rendered header and the

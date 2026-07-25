@@ -177,6 +177,7 @@ static constexpr uint32_t kDispatchHasExpect = 1 << 4;
 static constexpr uint32_t kDispatchExpectContinue = 1 << 5;
 static constexpr uint32_t kDispatchHasContentLength = 1 << 6;
 static constexpr uint32_t kDispatchHasTransferEncoding = 1 << 7;
+static constexpr uint32_t kDispatchConnKeepAlive = 1 << 8;
 
 static bool svEqualsIgnoreCase(std::string_view a, std::string_view lower)
 {
@@ -284,6 +285,8 @@ static void assignHeadersFromUWebSocketsForCall(uWS::HttpRequest* request, JSVal
                     bits |= kDispatchConnClose;
                 if (svValueHasToken(value, "upgrade"))
                     bits |= kDispatchConnUpgrade;
+                if (svValueHasToken(value, "keep-alive"))
+                    bits |= kDispatchConnKeepAlive;
             }
             break;
         case 14:

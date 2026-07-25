@@ -573,10 +573,7 @@ it("should warn when linked package has peerDependencies", async () => {
   {
     for (const name of ["peer-one", "peer-two"]) {
       await mkdir(join(link_dir, "node_modules", name), { recursive: true });
-      await writeFile(
-        join(link_dir, "node_modules", name, "package.json"),
-        JSON.stringify({ name, version: "1.0.0" }),
-      );
+      await writeFile(join(link_dir, "node_modules", name, "package.json"), JSON.stringify({ name, version: "1.0.0" }));
     }
     await rm(join(package_dir, "node_modules"), { recursive: true, force: true });
     await rm(join(package_dir, "bun.lock"), { force: true });

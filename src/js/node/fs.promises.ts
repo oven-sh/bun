@@ -1587,10 +1587,14 @@ async function writeFileAsyncIteratorInner(fd, iterable, encoding, signal: Abort
 
       const prom = writer.write(chunk);
       if (prom && $isPromise(prom)) {
-        totalBytesWritten += await prom;
-      } else {
-        totalBytesWritten += prom;
+        await prom;
       }
+
+      // FileSink.write() may return the cumulative flushed byte count when a
+      // chunk triggers an auto-flush, so summing its return values double-counts
+      // buffered bytes. Count the chunk's own byte length instead; the ftruncate
+      // in the caller relies on this being exact.
+      totalBytesWritten += typeof chunk === "string" ? Buffer.byteLength(chunk) : chunk.byteLength;
     }
   } finally {
     await writer.end();

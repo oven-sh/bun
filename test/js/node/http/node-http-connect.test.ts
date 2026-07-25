@@ -880,17 +880,22 @@ describe("CONNECT/Upgrade on a kept-alive connection can write to the socket", (
     await once(server, "listening");
     const { port } = server.address() as AddressInfo;
 
-    const sock = net.connect({ port, host: "127.0.0.1" });
-    await once(sock, "connect");
-    let buf = "";
-    sock.on("data", d => (buf += d.toString()));
-    const closed = once(sock, "close");
-    for (let i = 0; i < 3; i++) {
-      sock.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n");
-      while (!sock.readableEnded && buf.split("body").length - 1 < i + 1) await once(sock, "data");
-    }
-    sock.end();
-    await closed;
+    let bodies = 0;
+    await new Promise<void>((resolve, reject) => {
+      const sock = net.connect({ port, host: "127.0.0.1" });
+      sock.on("error", reject);
+      sock.on("close", () => (bodies === 3 ? resolve() : reject(new Error(`closed after ${bodies}/3 responses`))));
+      sock.on("connect", () => sock.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n"));
+      let buf = "";
+      sock.on("data", d => {
+        buf += d.toString();
+        while (buf.includes("body")) {
+          buf = buf.slice(buf.indexOf("body") + 4);
+          if (++bodies < 3) sock.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n");
+          else sock.end();
+        }
+      });
+    });
     expect(seen).toEqual([0, 0, 0, 0, 0, 0]);
   });
 });

@@ -365,6 +365,23 @@ function returnCallSites(_error, sites) {
   return sites;
 }
 
+// Node's NetworkAgent captures the caller's stack for the event's initiator
+// (network_agent.cc: captureStackTrace(true)); frame urls are V8 script
+// names, so CommonJS files appear as absolute paths, not file:// URLs.
+// Skips through itself rather than the calling domain method: the
+// guardEventParams wrapper exits via a proper tail call, so its frame is
+// not on the stack to match against.
+function captureNetworkInitiator(): object {
+  let stack: object | undefined;
+  try {
+    stack = captureConsoleStackTrace(captureNetworkInitiator, true);
+  } catch {
+    stack = undefined;
+  }
+  if (stack === undefined) return { type: "script" };
+  return { type: "script", stack };
+}
+
 function dispatchInProcessBackendMessage(backendMessage: string) {
   // The command executes here, on this thread; hand every message it
   // produced (response + events) back through the adapters.
@@ -388,7 +405,7 @@ function settleLocalPost(callback, result) {
   }
 }
 
-function captureConsoleStackTrace(hook: Function) {
+function captureConsoleStackTrace(hook: Function, rawPaths: boolean = false) {
   const holder: { stack?: any } = {};
   const previousPrepare = ErrorObject.prepareStackTrace;
   const previousLimit = ErrorObject.stackTraceLimit;
@@ -414,7 +431,7 @@ function captureConsoleStackTrace(hook: Function) {
       }
       if (!fileName) continue;
       let url = fileName;
-      if (isAbsolute(fileName)) {
+      if (!rawPaths && isAbsolute(fileName)) {
         try {
           url = pathToFileURL(fileName).href;
         } catch {}
@@ -522,6 +539,10 @@ class NetworkState {
 }
 
 const networkEnabledSessions: Map<Session, NetworkState> = new SafeMap();
+
+// Loaded on the first Network.enable: hooks the http/http2/fetch clients up
+// to the events above while at least one session has the domain enabled.
+let networkTracking: { enable(): void; disable(): void } | undefined;
 
 function pushNetworkBlob(state: NetworkState, entry: NetworkRequestEntry, blobs: Uint8Array[], blob: Uint8Array) {
   if (entry.bufferSize + blob.byteLength > entry.maxResourceBufferSize) return;
@@ -678,7 +699,8 @@ const Network = {
     const request = requestFromObject(params);
     // The request charset sits at the top level, not inside `request`.
     const requestIsUTF8 = params.charset === "utf-8";
-    forEachNetworkSession(sessionRequestWillBeSent, { requestId, request, requestIsUTF8, timestamp, wallTime });
+    const initiator = captureNetworkInitiator();
+    forEachNetworkSession(sessionRequestWillBeSent, { requestId, request, requestIsUTF8, timestamp, wallTime, initiator });
   },
 
   responseReceived(params: any) {
@@ -734,7 +756,8 @@ const Network = {
     if (networkEnabledSessions.size === 0) return;
     const requestId = requireEventString(params, "requestId");
     const url = requireEventString(params, "url");
-    forEachNetworkSession(sessionWebSocketCreated, { requestId, url });
+    const initiator = captureNetworkInitiator();
+    forEachNetworkSession(sessionWebSocketCreated, { requestId, url, initiator });
   },
 
   webSocketClosed(params: any) {
@@ -766,7 +789,7 @@ function sessionRequestWillBeSent(session, state, ctx) {
     request,
     timestamp: ctx.timestamp,
     wallTime: ctx.wallTime,
-    initiator: { type: "script" },
+    initiator: ctx.initiator,
   });
 }
 
@@ -837,7 +860,7 @@ function sessionWebSocketCreated(session, _state, ctx) {
   emitToSession(session, "Network.webSocketCreated", {
     requestId: ctx.requestId,
     url: ctx.url,
-    initiator: { type: "script" },
+    initiator: ctx.initiator,
   });
 }
 
@@ -1207,6 +1230,7 @@ class Session extends EventEmitter {
     networkEnabledSessions.delete(this);
     domStorageEnabledSessions.delete(this);
     if (runtimeEnabledSessions.size === 0) removeConsoleHooks();
+    if (networkEnabledSessions.size === 0) networkTracking?.disable();
     if (this.#adapter !== undefined) {
       inProcessAdapters.delete(this.#adapter);
       this.#adapter = undefined;
@@ -1312,11 +1336,14 @@ class Session extends EventEmitter {
           if (v >= 0) state.maxResourceBufferSize = v;
         }
         networkEnabledSessions.set(this, state);
+        networkTracking ??= require("internal/inspector_network_tracking");
+        networkTracking.enable();
         return {};
       }
 
       case "Network.disable":
         networkEnabledSessions.delete(this);
+        if (networkEnabledSessions.size === 0) networkTracking?.disable();
         return {};
 
       case "DOMStorage.enable":

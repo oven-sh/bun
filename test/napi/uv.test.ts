@@ -155,23 +155,23 @@ describe.if(!isWindows)("uv stubs", () => {
     expect(exitCode).toBe(0);
   }
 
-  test("uv_async: napi_get_uv_event_loop, send from loop thread", async () => {
+  test.concurrent("uv_async: napi_get_uv_event_loop, send from loop thread", async () => {
     await runUvAsync(false, false);
   });
 
-  test("uv_async: napi_get_uv_event_loop, send from another thread", async () => {
+  test.concurrent("uv_async: napi_get_uv_event_loop, send from another thread", async () => {
     await runUvAsync(false, true);
   });
 
-  test("uv_async: uv_default_loop, send from loop thread", async () => {
+  test.concurrent("uv_async: uv_default_loop, send from loop thread", async () => {
     await runUvAsync(true, false);
   });
 
-  test("uv_async: uv_default_loop, send from another thread", async () => {
+  test.concurrent("uv_async: uv_default_loop, send from another thread", async () => {
     await runUvAsync(true, true);
   });
 
-  test("uv_async: ref'd handle keeps the process alive until unref", async () => {
+  test.concurrent("uv_async: ref'd handle keeps the process alive until unref", async () => {
     const addon = path.join(tempdir, "./build/Release/uv_test.node");
     // The timer is unref'd so the uv_async handle is the only thing keeping
     // the loop alive; if its loop ref is a no-op the process exits before the

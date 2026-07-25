@@ -429,10 +429,6 @@ describe("Bun.markdown buffer input", () => {
   });
 
   test("a resizable input is read at call time even if an option getter resizes it to 0", async () => {
-    // `StringOrBuffer::from_js` used to borrow the view; the `autolinks` getter
-    // runs before the parser touches the bytes and can `resize(0)` the backing
-    // store out from under the borrow, mprotecting the trimmed pages. The
-    // funnel now snapshots resizable non-shared inputs.
     const script = `
       const bytes = new TextEncoder().encode("# Hello\\n\\nworld\\n" + Buffer.alloc(1 << 16, 0x20).toString());
       const input = new Uint8Array(new ArrayBuffer(bytes.length, { maxByteLength: bytes.length }));

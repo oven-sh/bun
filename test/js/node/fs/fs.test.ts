@@ -5641,11 +5641,6 @@ it("fs.write keeps the source buffer attached while the write is in flight", asy
 });
 
 it("fs.write writes the bytes captured at call time when a resizable source is resized to 0 while in flight", async () => {
-  // `args::Write::from_js` captures the buffer via the sync `StringOrBuffer::from_js`
-  // and re-pins on the async path. Pinning guards `transfer()` but not
-  // `ArrayBuffer.prototype.resize()`, so the worker thread would read
-  // mprotected pages. Resizable inputs are now snapshotted and the re-pin
-  // guard skips owned snapshots so it does not swap the borrow back in.
   using dir = tempDir("fs-write-resizable", {
     "run.js": `
       const fs = require("node:fs");

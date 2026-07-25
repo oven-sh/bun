@@ -77,11 +77,7 @@ test("scrypt async does not leak callback/buffers when output allocation fails",
   expect(exitCode).toBe(0);
 });
 
-// `StringOrBuffer::from_js` borrowed the password/salt view, then a later
-// argument's getter ran `ArrayBuffer.prototype.resize(0)`, which mprotects
-// the trimmed pages PROT_NONE while the borrowed slice still spans them;
-// reading it SIGSEGVs. `pin()` only guards `transfer()`, so resizable
-// non-shared inputs are now snapshotted at capture time.
+// pin() guards transfer(), not ArrayBuffer.prototype.resize(); a later-arg getter calling resize(0) SIGSEGV'd the borrowed slice.
 test("scrypt reads resizable ArrayBuffer inputs at capture time even if a later arg resizes them", async () => {
   const script = `
     const crypto = require("node:crypto");

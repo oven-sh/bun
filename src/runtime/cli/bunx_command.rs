@@ -1273,7 +1273,7 @@ impl BunxCommand {
             .put(b"BUN_INTERNAL_BUNX_INSTALL", b"true")
             .expect("oom");
 
-        let envp = env_loader.map.create_null_delimited_env_map()?;
+        let envp = env_loader.create_null_delimited_env_map()?;
 
         let spawn_result = match proc_sync::spawn(&proc_sync::Options {
             argv: argv_to_use.iter().map(|s| Box::<[u8]>::from(*s)).collect(),

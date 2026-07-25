@@ -109,7 +109,7 @@ impl<'a> ProcessHandle<'a> {
                 let _ = unsafe { (*env_ptr).map.put(b"PATH", &original_path) };
             }
             // SAFETY: see above; reborrow through raw ptr to avoid overlapping &mut with guard.
-            let envp = unsafe { (*env_ptr).map.create_null_delimited_env_map()? };
+            let envp = unsafe { (*env_ptr).create_null_delimited_env_map()? };
             // SAFETY: `argv`/`envp` are local null-terminated C-string arrays
             // with argv[0] non-null; valid for this call.
             break 'brk unsafe {

@@ -150,7 +150,7 @@ impl<'a> ProcessHandle<'a> {
                 let _ = unsafe { (*env_ptr).map.put(b"PATH", &original_path) };
             });
             // SAFETY: same loader; the `_restore` guard's closure has not fired yet.
-            envp = unsafe { (*env_ptr).map.create_null_delimited_env_map()? };
+            envp = unsafe { (*env_ptr).create_null_delimited_env_map()? };
             // SAFETY: `argv`/`envp` are local null-terminated C-string arrays
             // with argv[0] non-null; valid for this call.
             unsafe {

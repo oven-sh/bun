@@ -119,6 +119,12 @@ pub struct Loader {
     /// only populated with files specified explicitly (e.g. --env-file arg)
     pub custom_files_loaded: StringArrayHashMap<bun_ast::Source>,
 
+    /// `.env` / `.env.local` entries the `bun run <script>` dispatcher moved
+    /// out of `map` via [`Self::take_script_dotenv`]; merged back into the
+    /// subprocess env by [`Self::create_null_delimited_env_map`] / the
+    /// bun-shell's export copy. Empty outside that path.
+    pub script_forward: Vec<(Box<[u8]>, Box<[u8]>)>,
+
     pub quiet: bool,
 
     pub did_load_process: bool,
@@ -573,6 +579,7 @@ impl Loader {
             env_test_local: None,
             env: None,
             custom_files_loaded: StringArrayHashMap::default(),
+            script_forward: Vec::new(),
             quiet: false,
             did_load_process: false,
             reject_unauthorized: Cell::new(None),
@@ -743,26 +750,52 @@ impl Loader {
         Ok(())
     }
 
-    /// Drop every entry whose value came from a NODE_ENV-specific default file
-    /// (`.env.{development,production,test}[.local]`). `bun run <script>`
-    /// calls this after `load_default_files` so the script's subprocess
-    /// environment carries `.env` / `.env.local` values (no NODE_ENV
-    /// dependency) while leaving NODE_ENV-specific keys for the script's own
-    /// `bun` instance to re-derive under whatever NODE_ENV it sets.
-    /// See https://github.com/oven-sh/bun/issues/9635#issuecomment-2021350123
-    /// and https://github.com/oven-sh/bun/issues/9877.
+    /// After `load_default_files`, move the `.env` / `.env.local`-sourced
+    /// entries (every non-conditional entry past `process_env_count`) into
+    /// `script_forward` and truncate the map back to the process-env prefix.
+    /// Clears every default-file slot.
     ///
-    /// The corresponding file slots are cleared so a later
-    /// `load_default_files` on the same `Loader` (the `bun run <file>` slow
-    /// path boots a VM that shares the process singleton) re-reads them.
-    pub fn remove_conditional(&mut self) {
-        self.map.map.retain(|_, v| !v.conditional);
+    /// `bun run <script>` calls this so the script's subprocess environment
+    /// carries `.env` / `.env.local` values (no NODE_ENV dependency, #9877)
+    /// while leaving `.env.{NODE_ENV}[.local]` keys for the script's own
+    /// `bun` instance to re-derive under whatever NODE_ENV it sets (#9635).
+    /// The map is restored to exactly the process-env state so the
+    /// `bun run <file>` slow path, which boots a VM on this same singleton,
+    /// observes what it would on a fresh loader.
+    pub fn take_script_dotenv(&mut self, process_env_count: usize) {
+        self.script_forward.clear();
+        {
+            let keys = self.map.map.keys();
+            let values = self.map.map.values();
+            for i in process_env_count..keys.len() {
+                if !values[i].conditional {
+                    self.script_forward
+                        .push((keys[i].clone(), values[i].value.clone()));
+                }
+            }
+        }
+        let mut i = 0usize;
+        self.map.map.retain(|_, _| {
+            let keep = i < process_env_count;
+            i += 1;
+            keep
+        });
+        self.env = None;
+        self.env_local = None;
         self.env_development = None;
         self.env_production = None;
         self.env_test = None;
         self.env_development_local = None;
         self.env_production_local = None;
         self.env_test_local = None;
+    }
+
+    /// `Map::create_null_delimited_env_map` plus the `.env` / `.env.local`
+    /// entries captured by [`Self::take_script_dotenv`]. Used by the
+    /// `bun run <script>` / `bunx` / `--filter` spawn sites.
+    pub fn create_null_delimited_env_map(&mut self) -> Result<NullDelimitedEnvMap, AllocError> {
+        self.map
+            .create_null_delimited_env_map_with_extra(&self.script_forward)
     }
 
     pub fn print_loaded(&self, start: i128) {
@@ -1171,7 +1204,12 @@ impl<'a> Parser<'a> {
         Ok(strings::trim(&self.src[start..end], WHITESPACE_CHARS))
     }
 
-    fn expand_value(&mut self, map: &Map, value: &[u8]) -> Result<Option<&[u8]>, AllocError> {
+    fn expand_value(
+        &mut self,
+        map: &Map,
+        value: &[u8],
+        touched_conditional: &mut bool,
+    ) -> Result<Option<&[u8]>, AllocError> {
         if value.len() < 2 {
             return Ok(None);
         }
@@ -1203,7 +1241,15 @@ impl<'a> Parser<'a> {
                             _ => break,
                         }
                     }
-                    let lookup_value = map.get(&value[key_start..end]);
+                    let lookup_value = match map.map.get(&value[key_start..end]) {
+                        Some(entry) => {
+                            if entry.conditional {
+                                *touched_conditional = true;
+                            }
+                            Some(&*entry.value)
+                        }
+                        None => None,
+                    };
                     let default_value: &[u8] = if value[end..].starts_with(b":-") {
                         end += b":-".len();
                         let value_start = end;
@@ -1288,8 +1334,15 @@ impl<'a> Parser<'a> {
             let mut idx = count;
             while idx < total {
                 let current: Box<[u8]> = Box::from(&*map.map.values()[idx].value);
-                if let Some(expanded) = self.expand_value(map, &current)? {
-                    map.map.values_mut()[idx].value = Box::from(expanded);
+                let mut touched_conditional = false;
+                if let Some(expanded) =
+                    self.expand_value(map, &current, &mut touched_conditional)?
+                {
+                    let slot = &mut map.map.values_mut()[idx];
+                    slot.value = Box::from(expanded);
+                    if touched_conditional {
+                        slot.conditional = true;
+                    }
                 }
                 idx += 1;
             }
@@ -1361,23 +1414,41 @@ impl Map {
     /// Builds a NULL-terminated `K=V\0` envp array. Returns an owning struct so
     /// dropping it frees the joined buffers (PORTING.md §Forbidden: no Box::leak).
     pub fn create_null_delimited_env_map(&mut self) -> Result<NullDelimitedEnvMap, AllocError> {
-        let envp_count = self.map.count();
+        self.create_null_delimited_env_map_with_extra(&[])
+    }
+
+    /// [`Self::create_null_delimited_env_map`] plus an `extra` tail of
+    /// `K`/`V` pairs appended after the map's own entries. Entries in `extra`
+    /// whose key already appears in `self` are skipped so process env keeps
+    /// winning.
+    pub fn create_null_delimited_env_map_with_extra(
+        &mut self,
+        extra: &[(Box<[u8]>, Box<[u8]>)],
+    ) -> Result<NullDelimitedEnvMap, AllocError> {
+        let envp_count = self.map.count() + extra.len();
         let mut storage: Vec<Box<[u8]>> = Vec::with_capacity(envp_count);
         let mut envp_buf: Vec<*const c_char> = Vec::with_capacity(envp_count + 1);
+        let mut push = |key: &[u8], value: &[u8]| {
+            let klen = key.len();
+            let vlen = value.len();
+            let mut env_buf = vec![0u8; klen + vlen + 2].into_boxed_slice();
+            env_buf[..klen].copy_from_slice(key);
+            env_buf[klen] = b'=';
+            env_buf[klen + 1..klen + 1 + vlen].copy_from_slice(value);
+            // env_buf[klen + 1 + vlen] = 0; (already zero-initialized)
+            envp_buf.push(env_buf.as_ptr().cast::<c_char>());
+            storage.push(env_buf);
+        };
         {
             let mut it = self.map.iterator();
             while let Some(pair) = it.next() {
-                let klen = pair.key_ptr.len();
-                let vlen = pair.value_ptr.value.len();
-                let mut env_buf = vec![0u8; klen + vlen + 2].into_boxed_slice();
-                env_buf[..klen].copy_from_slice(pair.key_ptr);
-                env_buf[klen] = b'=';
-                env_buf[klen + 1..klen + 1 + vlen].copy_from_slice(&pair.value_ptr.value);
-                // env_buf[klen + 1 + vlen] = 0; (already zero-initialized)
-                envp_buf.push(env_buf.as_ptr().cast::<c_char>());
-                storage.push(env_buf);
+                push(pair.key_ptr, &pair.value_ptr.value);
             }
-            debug_assert!(envp_buf.len() == envp_count);
+        }
+        for (k, v) in extra {
+            if !self.map.contains(k) {
+                push(k, v);
+            }
         }
         envp_buf.push(core::ptr::null()); // sentinel
         Ok(NullDelimitedEnvMap {

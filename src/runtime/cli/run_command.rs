@@ -376,7 +376,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 
         // TODO: remember to free this when we add --filter or --concurrent
         // in the meantime we don't need to free it.
-        let envp = env.map.create_null_delimited_env_map()?;
+        let envp = env.create_null_delimited_env_map()?;
 
         let spawn_result = match sync::spawn(&sync::Options {
             argv,
@@ -662,17 +662,21 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 
             // Load the default .env files so package.json scripts that spawn a
             // non-bun tool (vite, node, cypress, psql, ...) see them (#9877),
-            // then drop the entries that came from a NODE_ENV-specific file
-            // (`.env.{development,production,test}[.local]`) so a script that
-            // sets its own NODE_ENV (e.g. "NODE_ENV=production bun ...") can
-            // re-derive the right file instead of inheriting this process's
-            // choice (#9635). Keys that also appear in `.env` / `.env.local`
-            // but were first supplied by a NODE_ENV-specific file are dropped
-            // here and re-derived by the child; keys that appear only in
-            // `.env` / `.env.local` are forwarded.
+            // then move the `.env` / `.env.local` entries into `script_forward`
+            // and restore the map to the process-env prefix. Entries that came
+            // from a NODE_ENV-specific file (`.env.{development,production,
+            // test}[.local]`), or whose expansion resolved against one, are
+            // dropped so a script that sets its own NODE_ENV
+            // ("NODE_ENV=production bun ...") re-derives them under the right
+            // suffix (#9635). The map returning to process-env state keeps the
+            // slow `bun run <file>` path (which boots a VM on this singleton)
+            // observationally identical to the fast path.
+            let process_env_count = env_loader.map.map.count();
             let disable_default = this_transpiler.options.env.disable_default_env_files;
             let _ = this_transpiler.run_env_loader(disable_default);
-            this_transpiler.env_mut().remove_conditional();
+            this_transpiler
+                .env_mut()
+                .take_script_dotenv(process_env_count);
         }
 
         // Re-derive after `run_env_loader` — that call creates its own
@@ -2153,7 +2157,7 @@ impl RunCommand {
 
         // TODO: remember to free this when we add --filter or --concurrent
         // in the meantime we don't need to free it.
-        let envp = env.map.create_null_delimited_env_map()?;
+        let envp = env.create_null_delimited_env_map()?;
 
         let spawn_result = match sync::spawn(&sync::Options {
             argv,

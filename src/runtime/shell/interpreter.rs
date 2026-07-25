@@ -482,11 +482,21 @@ impl Interpreter {
             // `DotEnv::Loader`, which is set by `init_global()` and outlives
             // the interpreter (thread-lifetime singleton).
             let env_loader = unsafe { &mut *event_loop.env() };
-            let mut export_env = EnvMap::init_with_capacity(env_loader.map.map.count());
+            let mut export_env = EnvMap::init_with_capacity(
+                env_loader.map.map.count() + env_loader.script_forward.len(),
+            );
             let mut iter = env_loader.iterator();
             while let Some(entry) = iter.next() {
                 let key = crate::shell::EnvStr::init_slice(&entry.key_ptr[..]);
                 let value = crate::shell::EnvStr::init_slice(&entry.value_ptr.value[..]);
+                export_env.insert(key, value);
+            }
+            for (k, v) in &env_loader.script_forward {
+                if env_loader.map.map.contains(k) {
+                    continue;
+                }
+                let key = crate::shell::EnvStr::init_slice(k);
+                let value = crate::shell::EnvStr::init_slice(v);
                 export_env.insert(key, value);
             }
             export_env

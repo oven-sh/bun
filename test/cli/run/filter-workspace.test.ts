@@ -592,7 +592,7 @@ describe("bun", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("CI env enables colour but not the live-redraw UI", () => {
+  test("CI env does not enable the live-redraw UI on a pipe", () => {
     const dir = tempDirWithFiles("testworkspace", {
       packages: {
         dep0: {

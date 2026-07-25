@@ -1388,12 +1388,6 @@ function detachSocketListenersForHandoff(socket) {
   socket.removeListener("error", socketOnError);
   socket.removeListener("timeout", onNodeHTTPServerSocketTimeout);
   socket.on("end", onReadableStreamEnd);
-  // Hand the raw socket over uncorked, like Node.
-  const writableState = socket._writableState;
-  if (writableState && writableState.corked) {
-    writableState.corked = 1;
-    socket.uncork();
-  }
 }
 const kSocketTimeoutTimer = Symbol("socketTimeoutTimer");
 const kStreamingEnabled = Symbol("kStreamingEnabled");
@@ -3222,14 +3216,14 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
     }
   }
   this._header = " ";
-  const req = this.req;
-  const reqSocket = req?.socket;
-  const reqSocketWritableState = reqSocket?._writableState;
-  if (reqSocketWritableState && reqSocketWritableState.corked) {
-    // Like Node's OutgoingMessage.prototype.end: fully uncork the connection.
-    reqSocketWritableState.corked = 1;
-    reqSocket.uncork();
+  // Like Node's OutgoingMessage.prototype.end: fully uncork the connection.
+  const resSocket = this[fakeSocketSymbol];
+  const resSocketWritableState = resSocket?._writableState;
+  if (resSocketWritableState && resSocketWritableState.corked) {
+    resSocketWritableState.corked = 1;
+    resSocket.uncork();
   }
+  const req = this.req;
   if (!req._consuming && !req?._readableState?.resumeScheduled) {
     req._dump();
   }

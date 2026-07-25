@@ -793,6 +793,7 @@ describe("CONNECT/Upgrade on a kept-alive connection can write to the socket", (
       res.end("body");
     }) as http.Server & AsyncDisposable;
     let corkedAtHandoff: number | undefined;
+    let writableLengthAfterWrite: number | undefined;
     const handler = (req: http.IncomingMessage, socket: net.Socket) => {
       corkedAtHandoff = socket.writableCorked;
       const respond = () => {
@@ -801,10 +802,15 @@ describe("CONNECT/Upgrade on a kept-alive connection can write to the socket", (
             ? "HTTP/1.1 200 Connection Established\r\n\r\n"
             : "HTTP/1.1 101 Switching Protocols\r\nUpgrade: raw\r\nConnection: Upgrade\r\n\r\n",
         );
-        socket.end("tunnel-data");
+        // write() only (no end), matching an open proxy tunnel; Writable.end's
+        // force-uncork would flush the leaked cork and mask the regression.
+        socket.write("tunnel-data");
+        writableLengthAfterWrite = socket.writableLength;
       };
       if (writeAsync) setImmediate(respond);
       else respond();
+      // End once the client FINs so the received promise below never hangs.
+      socket.on("end", () => socket.end());
     };
     server.on(method === "CONNECT" ? "connect" : "upgrade", handler);
     server.listen(0, "127.0.0.1");
@@ -824,7 +830,7 @@ describe("CONNECT/Upgrade on a kept-alive connection can write to the socket", (
         if (phase === 0 && buf.includes("body")) {
           phase = 1;
           buf = "";
-          sock.write(
+          sock.end(
             method === "CONNECT"
               ? "CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n"
               : "GET / HTTP/1.1\r\nHost: x\r\nUpgrade: raw\r\nConnection: Upgrade\r\n\r\n",
@@ -834,8 +840,11 @@ describe("CONNECT/Upgrade on a kept-alive connection can write to the socket", (
       sock.on("close", () => resolve(buf));
     });
 
-    expect(corkedAtHandoff).toBe(0);
-    expect(received).toContain("tunnel-data");
+    expect({ received, corkedAtHandoff, writableLengthAfterWrite }).toEqual({
+      received: expect.stringContaining("tunnel-data"),
+      corkedAtHandoff: 0,
+      writableLengthAfterWrite: 0,
+    });
   }
 
   for (const method of ["CONNECT", "Upgrade"] as const) {

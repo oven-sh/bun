@@ -2165,9 +2165,7 @@ impl FetchTasklet {
         Ok(())
     }
 
-    /// Whether the request body should skip chunked transfer encoding framing.
-    /// fetch() owns framing (user CL/TE is dropped in `build_request`), so
-    /// only upgraded connections and HTTP/2 skip it.
+    /// fetch() owns framing (user CL/TE is dropped in `build_request`).
     fn skip_chunked_framing(&self) -> bool {
         self.upgraded_connection || self.result.is_http2
     }

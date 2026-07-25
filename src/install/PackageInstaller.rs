@@ -1584,20 +1584,10 @@ impl<'a> PackageInstaller<'a> {
                         }
                     }
                     resolution::Tag::Npm => {
+                        // An empty url is the lockfile shorthand for the
+                        // canonical path under the configured registry;
+                        // `NetworkTask::for_tarball` rebuilds it.
                         let npm = *resolution.npm();
-                        #[cfg(debug_assertions)]
-                        {
-                            // Very old versions of Bun didn't store the tarball url when it didn't seem necessary
-                            // This caused bugs. We can't assert on it because they could come from old lockfiles
-                            if npm.url.is_empty() {
-                                bun_core::debug_warn!(
-                                    "package {}@{} missing tarball_url",
-                                    bstr::BStr::new(pkg_name.slice(string_buf!())),
-                                    resolution.fmt(string_buf!(), PathSep::Posix),
-                                );
-                            }
-                        }
-
                         match package_manager::enqueue_package_for_download(
                             self.manager_mut(),
                             pkg_name.slice(string_buf!()),

@@ -921,7 +921,16 @@ it("keeps empty resolved fields of already-locked packages when updating the loc
         "no-deps": "1.0.0",
       },
     }),
-    "bunfig.toml": `[install]\nregistry = "http://127.0.0.1:${server.port}/"\n`,
+    "bunfig.toml": `[install]\nregistry = "http://127.0.0.1:${server.port}/"\n\n[install.security]\nscanner = "./scanner.ts"\n`,
+    // Security scanners are documented to receive the tarball URL bun
+    // downloads, so entries with the `""` shorthand must be materialized.
+    "scanner.ts": `export const scanner = {
+      version: "1",
+      scan: async ({ packages }) => {
+        await Bun.write(new URL("./scan-payload.json", import.meta.url), JSON.stringify(packages));
+        return [];
+      },
+    };`,
     // A committed lockfile using the registry-agnostic `""` resolved shorthand.
     "bun.lock": JSON.stringify({
       lockfileVersion: 2,
@@ -945,7 +954,7 @@ it("keeps empty resolved fields of already-locked packages when updating the loc
       cmd: [bunExe(), "install"],
       cwd: String(dir),
       env: { ...env, BUN_INSTALL_CACHE_DIR: join(String(dir), ".cache") },
-      stdout: "pipe",
+      stdout: "ignore",
       stderr: "pipe",
     });
 
@@ -959,6 +968,14 @@ it("keeps empty resolved fields of already-locked packages when updating the loc
       name: "no-deps",
       version: "1.0.0",
     });
+
+    const payload = await file(join(String(dir), "scan-payload.json")).json();
+    expect(payload).toContainEqual(
+      expect.objectContaining({
+        name: "no-deps",
+        tarball: `http://127.0.0.1:${server.port}/no-deps/-/no-deps-1.0.0.tgz`,
+      }),
+    );
   }
 
   // Update the lockfile by adding a dependency. The already-locked entry must

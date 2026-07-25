@@ -730,6 +730,28 @@ impl<'a> JSONBuilder<'a> {
             // whose resolution tag is `Tag::Npm` into `package_paths`, so the
             // `npm` union variant is the active field here.
             let npm = pkg_res.npm();
+
+            // An empty URL is the lockfile shorthand for the canonical tarball
+            // path under the configured registry; scanners are documented to
+            // receive the URL bun downloads, so materialize it.
+            let npm_url = npm.url.slice(string_buf);
+            let mut built_url: Vec<u8> = Vec::new();
+            let tarball_url: &[u8] = if npm_url.is_empty() {
+                crate::extract_tarball::build_url_into_vec(
+                    &mut built_url,
+                    self.manager
+                        .scope_for_package_name(pkg_name.slice(string_buf))
+                        .url
+                        .href(),
+                    &strings::StringOrTinyString::init(pkg_name.slice(string_buf)),
+                    npm.version,
+                    string_buf,
+                )?;
+                &built_url
+            } else {
+                npm_url
+            };
+
             if dep_id == invalid_dependency_id {
                 write!(
                     &mut json_buf,
@@ -737,7 +759,7 @@ impl<'a> JSONBuilder<'a> {
                     bun_core::fmt::format_json_string_utf8(pkg_name.slice(string_buf), json_opts),
                     npm.version.fmt(string_buf),
                     npm.version.fmt(string_buf),
-                    bun_core::fmt::format_json_string_utf8(npm.url.slice(string_buf), json_opts),
+                    bun_core::fmt::format_json_string_utf8(tarball_url, json_opts),
                 )?;
             } else {
                 let dep_version =
@@ -751,7 +773,7 @@ impl<'a> JSONBuilder<'a> {
                         dep_version.literal.slice(string_buf),
                         json_opts
                     ),
-                    bun_core::fmt::format_json_string_utf8(npm.url.slice(string_buf), json_opts),
+                    bun_core::fmt::format_json_string_utf8(tarball_url, json_opts),
                 )?;
             }
 

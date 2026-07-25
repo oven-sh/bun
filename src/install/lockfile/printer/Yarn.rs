@@ -216,15 +216,12 @@ fn packages(this: &mut Printer, writer: &mut impl bun_io::Write) -> Result<(), c
                 // An empty npm URL is bun.lock shorthand for the canonical
                 // tarball path under the configured registry; yarn.lock has no
                 // such shorthand, so materialize the URL here.
-                crate::extract_tarball::build_url_with_printer(
+                crate::extract_tarball::build_url_into_vec(
+                    &mut quoted_buf,
                     this.options.scope_for_package_name(name).url.href(),
                     &strings::StringOrTinyString::init(name),
                     resolution.npm().version,
                     string_buf,
-                    |args| -> Result<(), std::io::Error> {
-                        use std::io::Write;
-                        quoted_buf.write_fmt(args)
-                    },
                 )?;
             } else {
                 resolution.fmt_url(string_buf).write_to(&mut quoted_buf)?;

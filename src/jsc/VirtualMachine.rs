@@ -3287,7 +3287,7 @@ impl VirtualMachine {
     ) {
         use bun_options_types::schema::api::UnhandledRejections as Mode;
 
-        if self.is_shutting_down() {
+        if self.script_execution_status() != crate::ScriptExecutionStatus::Running {
             bun_core::debug_warn!("unhandledRejection during shutdown.");
             return;
         }

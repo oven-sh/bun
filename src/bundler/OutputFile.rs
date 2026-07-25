@@ -334,11 +334,13 @@ impl OutputFile {
                 // already written to disk
             }
             Value::Buffer { bytes } => {
-                let mut rel_path: &[u8] = &self.dest_path;
-                if self.dest_path.len() > root_dir_path.len() {
-                    rel_path = resolve_path::relative(root_dir_path, &self.dest_path);
-                }
-                // `dirname` returns `b""` when there's no separator.
+                let rel_path: &[u8] = if bun_paths::is_absolute(&self.dest_path)
+                    && self.dest_path.len() > root_dir_path.len()
+                {
+                    resolve_path::relative(root_dir_path, &self.dest_path)
+                } else {
+                    &self.dest_path
+                };
                 let parent = resolve_path::dirname::<platform::Auto>(rel_path);
                 if !parent.is_empty() && parent != b"." {
                     bun_sys::Dir::borrow(&root_dir).make_path(parent)?;

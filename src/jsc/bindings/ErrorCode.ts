@@ -364,5 +364,6 @@ const errors: ErrorCodeMapping = [
   ["ERR_WORKER_UNSERIALIZABLE_ERROR", Error],
   ["ERR_HEAP_PROFILE_HAVE_BEEN_STARTED", Error],
   ["ERR_CPU_PROFILE_TOO_MANY", Error],
+  ["ERR_WASI_ALREADY_STARTED", Error],
 ];
 export default errors;

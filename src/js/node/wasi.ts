@@ -807,11 +807,12 @@ var require_wasi = __commonJS({
         this.bindings = wasiConfig.bindings || defaultConfig.bindings;
         const bindings = this.bindings;
         fs = bindings.fs;
+        const [stdinFd, stdoutFd, stderrFd] = wasiConfig.stdio ?? [0, 1, 2];
         this.FD_MAP = /* @__PURE__ */ new Map([
           [
             constants_1.WASI_STDIN_FILENO,
             {
-              real: 0,
+              real: stdinFd,
               filetype: constants_1.WASI_FILETYPE_CHARACTER_DEVICE,
               rights: {
                 base: STDIN_DEFAULT_RIGHTS,
@@ -823,7 +824,7 @@ var require_wasi = __commonJS({
           [
             constants_1.WASI_STDOUT_FILENO,
             {
-              real: 1,
+              real: stdoutFd,
               filetype: constants_1.WASI_FILETYPE_CHARACTER_DEVICE,
               rights: {
                 base: STDOUT_DEFAULT_RIGHTS,
@@ -835,7 +836,7 @@ var require_wasi = __commonJS({
           [
             constants_1.WASI_STDERR_FILENO,
             {
-              real: 2,
+              real: stderrFd,
               filetype: constants_1.WASI_FILETYPE_CHARACTER_DEVICE,
               rights: {
                 base: STDERR_DEFAULT_RIGHTS,
@@ -847,7 +848,17 @@ var require_wasi = __commonJS({
         ]);
         const path = bindings.path;
         for (const [k, v] of Object.entries(preopens)) {
-          const real = fs.openSync(v, nodeFsConstants.O_RDONLY);
+          let real;
+          try {
+            real = fs.openSync(v, nodeFsConstants.O_RDONLY | (nodeFsConstants.O_DIRECTORY || 0));
+          } catch (openError) {
+            // Match uvwasi_init()'s failure shape: code UVWASI_<errno>,
+            // message "UVWASI_<errno>, uvwasi_init".
+            const code = `UVWASI_${openError?.code || "EIO"}`;
+            const err = new Error(`${code}, uvwasi_init`);
+            err.code = code;
+            throw err;
+          }
           const newfd = this.getUnusedFileDescriptor();
           this.FD_MAP.set(newfd, {
             real,
@@ -1032,6 +1043,7 @@ var require_wasi = __commonJS({
             return constants_1.WASI_ESUCCESS;
           },
           clock_res_get: (clockId, resolution) => {
+            this.refreshMemory();
             let res;
             switch (clockId) {
               case constants_1.WASI_CLOCK_MONOTONIC:
@@ -1376,9 +1388,13 @@ var require_wasi = __commonJS({
           fd_renumber: wrap((from, to) => {
             CHECK_FD(from, BigInt(0));
             CHECK_FD(to, BigInt(0));
-            fs.closeSync(this.FD_MAP.get(from).real);
-            this.FD_MAP.set(from, this.FD_MAP.get(to));
-            this.FD_MAP.delete(to);
+            // dup2(from, to): `to` ends up naming `from`'s file.
+            if (from === to) {
+              return constants_1.WASI_ESUCCESS;
+            }
+            fs.closeSync(this.FD_MAP.get(to).real);
+            this.FD_MAP.set(to, this.FD_MAP.get(from));
+            this.FD_MAP.delete(from);
             return constants_1.WASI_ESUCCESS;
           }),
           fd_seek: wrap((fd, offset, whence, newOffsetPtr) => {
@@ -1718,6 +1734,7 @@ var require_wasi = __commonJS({
             return constants_1.WASI_ESUCCESS;
           }),
           poll_oneoff: (sin, sout, nsubscriptions, neventsPtr) => {
+            const pollEntryNs = BigInt(Bun.nanoseconds());
             let nevents = 0;
             let name = "";
             let waitTimeNs = BigInt(0);
@@ -1779,6 +1796,12 @@ var require_wasi = __commonJS({
                   this.view.setUint8(sout, constants_1.WASI_EVENTTYPE_CLOCK);
                   sout += 1;
                   sout += 5;
+                  // preview1 event records are 32 bytes; zero fd_readwrite.
+                  this.view.setBigUint64(sout, BigInt(0), true);
+                  sout += 8;
+                  this.view.setUint16(sout, 0, true);
+                  sout += 2;
+                  sout += 6;
                   nevents += 1;
                   break;
                 }
@@ -1796,6 +1819,12 @@ var require_wasi = __commonJS({
                   this.view.setUint8(sout, type);
                   sout += 1;
                   sout += 5;
+                  // preview1 event records are 32 bytes; zero fd_readwrite.
+                  this.view.setBigUint64(sout, BigInt(0), true);
+                  sout += 8;
+                  this.view.setUint16(sout, 0, true);
+                  sout += 2;
+                  sout += 6;
                   nevents += 1;
                   if (fd == constants_1.WASI_STDIN_FILENO && constants_1.WASI_EVENTTYPE_FD_READ == type) {
                     this.shortPause();
@@ -1823,7 +1852,7 @@ var require_wasi = __commonJS({
               }
             }
             if (waitTimeNs > 0) {
-              waitTimeNs -= Bun.nanoseconds() - timeOrigin;
+              waitTimeNs -= BigInt(Bun.nanoseconds()) - pollEntryNs;
               if (waitTimeNs >= 1e6) {
                 const sleep = this.sleep;
                 if (sleep == null && !warnedAboutSleep) {
@@ -1863,6 +1892,10 @@ var require_wasi = __commonJS({
           sched_yield() {
             return constants_1.WASI_ESUCCESS;
           },
+          sock_accept: wrap((fd, _flags, _fdPtr) => {
+            CHECK_FD(fd, BigInt(0));
+            return constants_1.WASI_ENOTSUP;
+          }),
           sock_recv() {
             return constants_1.WASI_ENOSYS;
           },
@@ -1958,6 +1991,7 @@ var require_wasi = __commonJS({
       }
       setMemory(memory) {
         this.memory = memory;
+        this.view = void 0;
       }
       start(instance, memory) {
         const exports2 = instance.exports;
@@ -2046,4 +2080,191 @@ var require_wasi = __commonJS({
     exports.default = WASI;
   },
 });
-export default { WASI: require_wasi().default };
+const WASIEngine = require_wasi().default;
+
+const {
+  validateArray,
+  validateBoolean,
+  validateFunction,
+  validateInt32,
+  validateObject,
+  validateString,
+  validateUndefined,
+} = require("internal/validators");
+
+const kExitCode = Symbol("kExitCode");
+const kSetMemory = Symbol("kSetMemory");
+const kStarted = Symbol("kStarted");
+const kInstance = Symbol("kInstance");
+const kBindingName = Symbol("kBindingName");
+
+// Realm-independent brand check: the `buffer` getter throws unless the
+// receiver is a WebAssembly.Memory (instances may come from vm contexts).
+const memoryBufferGetter = Object.getOwnPropertyDescriptor(WebAssembly.Memory.prototype, "buffer").get;
+function isWebAssemblyMemory(memory) {
+  try {
+    memoryBufferGetter.$call(memory);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// https://github.com/nodejs/node/blob/v26.3.0/lib/wasi.js — recording the exit
+// code and throwing a value WebAssembly cannot catch sidesteps the wasm
+// runtime's "proc_exit returned" assertion.
+function wasiReturnOnProcExit(rval) {
+  this[kExitCode] = rval;
+  throw kExitCode;
+}
+
+function throwNotStarted() {
+  throw $ERR_WASI_NOT_STARTED("wasi.start() has not been called");
+}
+
+class WASI extends WASIEngine {
+  constructor(options = {}) {
+    validateObject(options, "options");
+
+    validateString(options.version, "options.version");
+    let bindingName;
+    switch (options.version) {
+      case "unstable":
+        bindingName = "wasi_unstable";
+        break;
+      case "preview1":
+        bindingName = "wasi_snapshot_preview1";
+        break;
+      default:
+        throw $ERR_INVALID_ARG_VALUE("options.version", options.version, "unsupported WASI version");
+    }
+
+    if (options.args !== undefined) {
+      validateArray(options.args, "options.args");
+    }
+    const args = (options.args || []).map(String);
+
+    const env = { __proto__: null };
+    if (options.env !== undefined) {
+      validateObject(options.env, "options.env");
+      for (const { 0: key, 1: value } of Object.entries(options.env)) {
+        if (value !== undefined) {
+          env[key] = `${value}`;
+        }
+      }
+    }
+
+    const preopens = { __proto__: null };
+    if (options.preopens !== undefined) {
+      validateObject(options.preopens, "options.preopens");
+      for (const { 0: key, 1: value } of Object.entries(options.preopens)) {
+        preopens[`${key}`] = `${value}`;
+      }
+    }
+
+    const { stdin = 0, stdout = 1, stderr = 2 } = options;
+    validateInt32(stdin, "options.stdin", 0);
+    validateInt32(stdout, "options.stdout", 0);
+    validateInt32(stderr, "options.stderr", 0);
+
+    super({ args, env, preopens, stdio: [stdin, stdout, stderr] });
+
+    let returnOnExit = true;
+    if (options.returnOnExit !== undefined) {
+      validateBoolean(options.returnOnExit, "options.returnOnExit");
+      returnOnExit = options.returnOnExit;
+    }
+
+    // Until start()/initialize() provides the instance memory, every host
+    // function reports ERR_WASI_NOT_STARTED, matching Node's uvwasi binding.
+    const wasiImport = this.wasiImport;
+    const self = this;
+    for (const key of Object.keys(wasiImport)) {
+      const hostFn = wasiImport[key];
+      wasiImport[key] = function (...hostArgs) {
+        if (self.memory === undefined) {
+          throwNotStarted();
+        }
+        return hostFn(...hostArgs);
+      };
+    }
+
+    if (returnOnExit) {
+      wasiImport.proc_exit = wasiReturnOnProcExit.bind(this);
+    }
+
+    this[kSetMemory] = function (memory) {
+      if (!isWebAssemblyMemory(memory)) {
+        // Node's native _setMemory throws this exact (unprefixed) message.
+        const err = new TypeError(`"instance.exports.memory" property must be a WebAssembly.Memory object`);
+        err.code = "ERR_INVALID_ARG_TYPE";
+        throw err;
+      }
+      self.setMemory(memory);
+    };
+    this[kStarted] = false;
+    this[kExitCode] = 0;
+    this[kInstance] = undefined;
+    this[kBindingName] = bindingName;
+  }
+
+  finalizeBindings(instance, { memory = instance?.exports?.memory } = {}) {
+    if (this[kStarted]) {
+      throw $ERR_WASI_ALREADY_STARTED("WASI instance has already started");
+    }
+
+    validateObject(instance, "instance");
+    validateObject(instance.exports, "instance.exports");
+
+    this[kSetMemory](memory);
+
+    this[kInstance] = instance;
+    this[kStarted] = true;
+  }
+
+  // Must not export _initialize, must export _start
+  start(instance) {
+    this.finalizeBindings(instance);
+
+    const { _start, _initialize } = this[kInstance].exports;
+
+    validateFunction(_start, "instance.exports._start");
+    validateUndefined(_initialize, "instance.exports._initialize");
+
+    try {
+      _start();
+    } catch (err) {
+      if (err !== kExitCode) {
+        throw err;
+      }
+    }
+
+    return this[kExitCode];
+  }
+
+  // Must not export _start, may optionally export _initialize
+  initialize(instance) {
+    this.finalizeBindings(instance);
+
+    const { _start, _initialize } = this[kInstance].exports;
+
+    validateUndefined(_start, "instance.exports._start");
+    if (_initialize !== undefined) {
+      validateFunction(_initialize, "instance.exports._initialize");
+      _initialize();
+    }
+  }
+
+  getImportObject() {
+    return { [this[kBindingName]]: this.wasiImport };
+  }
+}
+
+// Node emits this at `node:wasi` load. Skip it when Bun itself is running a
+// .wasm entry point through the built-in wasi runner, which predates this
+// warning and promises clean stderr.
+if (!Bun.main?.endsWith?.(".wasm")) {
+  process.emitWarning("WASI is an experimental feature and might change at any time", "ExperimentalWarning");
+}
+
+export default { WASI };

@@ -599,40 +599,6 @@ void addParameter(WTF::StringBuilder& result, const StringView& arg_name)
     }
 }
 
-WTF::String ERR_INVALID_ARG_TYPE(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, const StringView& arg_name, const StringView& expected_type, JSValue actual_value)
-{
-    WTF::StringBuilder result;
-    result.append("The "_s);
-    addParameter(result, arg_name);
-    result.append(" must be "_s);
-
-    // Node categorizes a free-form phrase like "Array of unique strings"
-    // (spaces, but not a flattened "X, Y, or Z" list) as neither a primitive
-    // type name nor a class name: it renders "must be an Array of unique
-    // strings", not "must be of type ...". Flattened lists keep the legacy
-    // "of type" rendering.
-    bool isPhrase = expected_type.contains(' ') && !expected_type.contains(", "_s) && !expected_type.contains(" or "_s);
-    if (isPhrase) {
-        bool hasUppercase = false;
-        for (unsigned i = 0; i < expected_type.length(); i++) {
-            if (isASCIIUpper(expected_type[i])) {
-                hasUppercase = true;
-                break;
-            }
-        }
-        if (hasUppercase)
-            result.append("an "_s);
-    } else {
-        result.append("of type "_s);
-    }
-
-    result.append(expected_type);
-    result.append(". Received "_s);
-    determineSpecificType(JSC::getVM(globalObject), globalObject, result, actual_value);
-    RETURN_IF_EXCEPTION(scope, {});
-    return result.toString();
-}
-
 // Matches Node's kTypes list: primitive type names accepted by ERR_INVALID_ARG_TYPE.
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/errors.js#L72
 static bool isPrimitiveTypeName(const WTF::String& type)
@@ -652,6 +618,42 @@ static bool isClassName(const WTF::String& type)
             return false;
     }
     return true;
+}
+
+WTF::String ERR_INVALID_ARG_TYPE(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, const StringView& arg_name, const StringView& expected_type, JSValue actual_value)
+{
+    WTF::StringBuilder result;
+    result.append("The "_s);
+    addParameter(result, arg_name);
+    result.append(" must be "_s);
+
+    // Bun-only call sites sometimes pass a pre-flattened "X, Y, or Z" list;
+    // those keep the legacy "of type" rendering. A single entry follows
+    // Node's bucket rules (lib/internal/errors.js formatList): primitive
+    // type names render "of type x" (lowercased), class names "an instance
+    // of X", and anything else bare, with "an " when it contains an
+    // uppercase letter ("an Array of unique strings", "must be undefined").
+    auto expected = expected_type.toString();
+    bool isFlattenedList = expected.contains(", "_s) || expected.contains(" or "_s);
+    if (isFlattenedList) {
+        result.append("of type "_s);
+        result.append(expected);
+    } else if (isPrimitiveTypeName(expected)) {
+        result.append("of type "_s);
+        result.append(expected.convertToASCIILowercase());
+    } else if (isClassName(expected)) {
+        result.append("an instance of "_s);
+        result.append(expected);
+    } else {
+        if (expected.convertToASCIILowercase() != expected)
+            result.append("an "_s);
+        result.append(expected);
+    }
+
+    result.append(". Received "_s);
+    determineSpecificType(JSC::getVM(globalObject), globalObject, result, actual_value);
+    RETURN_IF_EXCEPTION(scope, {});
+    return result.toString();
 }
 
 // Port of Node's ERR_INVALID_ARG_TYPE list rendering: expected entries are

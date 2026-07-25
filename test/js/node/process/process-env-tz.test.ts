@@ -32,8 +32,9 @@ describe.concurrent("process.env.TZ POSIX std+offset form", () => {
     ["UTC+5", 300, "Etc/GMT+5"],
     ["ABC5", 300, "Etc/GMT+5"],
     ["ABC-5", -300, "Etc/GMT-5"],
-    ["XXX-14", -840, "Etc/GMT-14"],
-    ["XXX+12", 720, "Etc/GMT+12"],
+    ["STD-14", -840, "Etc/GMT-14"],
+    ["STD+12", 720, "Etc/GMT+12"],
+    ["<+03>-3", -180, "Etc/GMT-3"],
     ["ABC0", 0, "UTC"],
   ] as const)("TZ=%s", async (tz, expectedOffset, expectedIntl) => {
     const { offset: off, intl } = await offset(tz);
@@ -53,14 +54,28 @@ describe.concurrent("process.env.TZ POSIX std+offset form", () => {
     expect(exitCode).toBe(0);
   });
 
-  // Forms the normalizer must NOT parse as an offset. The fall-through zone is
-  // host-dependent (registry on Windows, /etc/localtime for some of these on
-  // POSIX), so assert the override is not an Etc/GMT* zone rather than a fixed
-  // offset.
-  test.each(["IST-5:30", "FOO4BAR", "XX-3", "ABC-05:00"])("TZ=%s is not parsed as an offset", async tz => {
-    const { intl } = await offset(tz);
-    expect(intl).not.toMatch(/^Etc\/GMT[+-]/);
-  });
+  // Forms the normalizer must NOT map to an offset. Spawn with the OS TZ pinned
+  // to UTC and assign at runtime so the fall-through is deterministic on POSIX
+  // (Bun's setter doesn't setenv there, so getenv("TZ") stays "Etc/UTC").
+  test.skipIf(!isPosix).each(["IST-5:30", "FOO4BAR", "XX-3", "ABC-05:00", "<+03-3"])(
+    "TZ=%s is not parsed as an offset",
+    async tz => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `process.env.TZ = ${JSON.stringify(tz)};` +
+            `process.stdout.write(Intl.DateTimeFormat().resolvedOptions().timeZone);`,
+        ],
+        env: { ...bunEnv, TZ: "Etc/UTC" },
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("UTC");
+      expect(exitCode).toBe(0);
+    },
+  );
 });
 
 describe.concurrent("process.env.TZ leading colon", () => {
@@ -107,7 +122,9 @@ describe.concurrent("process.env.TZ IANA name unchanged", () => {
   });
 });
 
-test("runtime assignment of an unrecognized TZ clears a prior override", async () => {
+// On Windows `b` is the registry zone after the override is cleared, which the
+// test cannot pin, so this check is POSIX-only.
+test.skipIf(!isPosix)("runtime assignment of an unrecognized TZ clears a prior override", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -126,7 +143,6 @@ test("runtime assignment of an unrecognized TZ clears a prior override", async (
   expect(stderr).toBe("");
   const [host, a, b] = stdout.split(" ").map(Number);
   expect(a).toBe(-540);
-  expect(b).not.toBe(a);
-  if (isPosix) expect(b).toBe(host);
+  expect(b).toBe(host);
   expect(exitCode).toBe(0);
 });

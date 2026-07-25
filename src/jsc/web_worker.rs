@@ -1313,6 +1313,9 @@ impl WebWorker {
             if let Some(rare) = vm.rare_data.as_deref_mut() {
                 rare.release_js_handles();
             }
+            if let Some(hooks) = runtime_hooks() {
+                (hooks.release_runtime_state_js_handles)();
+            }
             exit_code = i32::from(vm.exit_handler.exit_code);
             global_object = Some(vm.global);
         }

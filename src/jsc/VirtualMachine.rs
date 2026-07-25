@@ -1596,6 +1596,9 @@ impl VirtualMachine {
             if let Some(rare) = self.rare_data.as_deref_mut() {
                 rare.release_js_handles();
             }
+            if let Some(hooks) = runtime_hooks() {
+                (hooks.release_runtime_state_js_handles)();
+            }
 
             Zig__GlobalObject__destructOnExit(self.global());
 
@@ -1820,6 +1823,14 @@ pub struct RuntimeHooks {
     /// never lazily created. Called from `WebWorker::shutdown` / `global_exit`
     /// right after `close_all_socket_groups`.
     pub close_dns_for_terminate: fn(),
+    /// Release every `Strong` JS handle owned by the high-tier `RuntimeState`
+    /// (currently `sql_rare`'s per-VM resolve/reject callbacks) while the JSC
+    /// `HandleSet` is still live. `deinit_runtime_state` drops the box after
+    /// `~VM` has freed the `HandleBlock`s, so deferring the `StrongOptional`
+    /// drops to it is a use-after-free in `Bun__StrongRef__delete`. Called
+    /// from `WebWorker::shutdown` / `global_exit` alongside
+    /// `RareData::release_js_handles`.
+    pub release_runtime_state_js_handles: fn(),
 }
 
 /// Canonical `EventLoopCtx` vtable for a `*mut VirtualMachine` owner — the JS

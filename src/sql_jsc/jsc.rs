@@ -279,6 +279,19 @@ pub struct RareData {
     pub postgresql_context: crate::postgres::PostgresSQLContext,
 }
 
+impl RareData {
+    /// Release every `Strong` JS handle so `Drop` becomes a no-op. Called from
+    /// `WebWorker::shutdown` / `global_exit` while the JSC `HandleSet` is still
+    /// live; the `RuntimeState` box this lives in is dropped after `~VM`, by
+    /// which point `Bun__StrongRef__delete` reads a freed `HandleBlock`.
+    pub fn release_js_handles(&mut self) {
+        self.mysql_context.on_query_resolve_fn.deinit();
+        self.mysql_context.on_query_reject_fn.deinit();
+        self.postgresql_context.on_query_resolve_fn.deinit();
+        self.postgresql_context.on_query_reject_fn.deinit();
+    }
+}
+
 /// SQL-specific accessors on [VirtualMachine] for state owned by the
 /// higher-tier bun_runtime::jsc_hooks::RuntimeState.
 pub(crate) trait VirtualMachineSqlExt {

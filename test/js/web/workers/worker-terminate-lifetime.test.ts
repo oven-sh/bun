@@ -121,6 +121,49 @@ test(
   timeout,
 );
 
+// Regression: the per-VM Bun.SQL resolve/reject callbacks (Strong handles on
+// RuntimeState.sql_rare) were dropped in deinit_runtime_state AFTER ~VM had
+// freed the HandleSet's blocks, so Bun__StrongRef__delete read a freed
+// HandleBlock. Without Malloc=1 this surfaced as racy null-HandleSet UBSan /
+// putDirect asserts / zero-page SEGVs in whichever later allocation reused the
+// 4 KB HandleBlock page; with Malloc=1 ASAN catches the heap-use-after-free
+// on the first terminated worker.
+test.skipIf(!isASAN)(
+  "terminate() after a worker touched Bun.SQL does not UAF in Bun__StrongRef__delete",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { Worker } = require("node:worker_threads");
+        const src =
+          // Constructing a Bun.SQL client loads the internal bun:sql module,
+          // whose init() stores two Strong handles on the per-VM SQL context.
+          // No server is needed: the Strong handles are populated before any
+          // connection attempt, and the worker is terminated immediately.
+          'new Bun.SQL({ url: "postgres://127.0.0.1:1/x", max: 1, connectionTimeout: 9999 });' +
+          'require("node:worker_threads").parentPort.postMessage("up");' +
+          'setInterval(() => {}, 1e6);';
+        for (let i = 0; i < 4; i++) {
+          const w = new Worker(src, { eval: true });
+          await new Promise(r => { w.once("message", r); w.once("error", r); });
+          await w.terminate();
+        }
+        console.log("ok");
+      `,
+      ],
+      env: { ...bunEnv, Malloc: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "ok\n", stderr: "", exitCode: 0 });
+  },
+  timeout,
+);
+
 // Regression: the per-VM c-ares channel was destroyed in deinit_runtime_state
 // (RuntimeState drop) AFTER JSC teardown and RareData.file_polls drop.
 // ares_destroy() synchronously fires EDESTRUCTION query callbacks and socket-

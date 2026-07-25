@@ -1487,6 +1487,7 @@ pub(crate) static __BUN_RUNTIME_HOOKS: RuntimeHooks = RuntimeHooks {
     retroactively_report_discovered_tests,
     cancel_all_timers,
     close_dns_for_terminate,
+    release_runtime_state_js_handles,
 };
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -1634,6 +1635,21 @@ fn close_dns_for_terminate() {
     if let Some(gd) = unsafe { &(*state).global_dns_data }.get() {
         gd.resolver.close_channel_for_terminate();
     }
+}
+
+/// `RuntimeHooks::release_runtime_state_js_handles` — release every `Strong`
+/// JS handle owned by [`RuntimeState`] while the JSC `HandleSet` is still
+/// live. The box itself is dropped in [`deinit_runtime_state`], which on
+/// worker teardown runs after `~VM`; any `StrongOptional` still populated at
+/// that point reads a freed `HandleBlock` in `Bun__StrongRef__delete`.
+fn release_runtime_state_js_handles() {
+    let state = runtime_state();
+    if state.is_null() {
+        return;
+    }
+    // SAFETY: `state` is the live boxed per-thread `RuntimeState`; JS thread,
+    // called before JSC teardown with no re-entrant `&mut RuntimeState` held.
+    unsafe { (*state).sql_rare.release_js_handles() };
 }
 
 pub(crate) fn close_isolation_handles(vm: &mut VirtualMachine) {

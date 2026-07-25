@@ -1,7 +1,9 @@
-import { beforeAll, describe, expect, it, setDefaultTimeout, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, it, setDefaultTimeout, test } from "bun:test";
 import { isWindows } from "harness";
+import dgram from "node:dgram";
 import * as dns from "node:dns";
 import * as dns_promises from "node:dns/promises";
+import { once } from "node:events";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as util from "node:util";
@@ -659,5 +661,92 @@ describe("dns.lookupService with a numeric-string port", () => {
     expect(() => dns_promises.lookupService("127.0.0.1", "nope")).toThrow(
       expect.objectContaining({ code: "ERR_SOCKET_BAD_PORT" }),
     );
+  });
+});
+
+describe("locally-rejected malformed hostnames report EBADNAME", () => {
+  // c-ares rejects these names client-side with ARES_EBADNAME before any packet
+  // leaves the process. Node.js reports that as EBADNAME; Bun used to relabel it
+  // to ENOTFOUND, making "bad input" indistinguishable from "domain not found".
+  //
+  // A local NXDOMAIN responder is used so that (a) the test is hermetic and
+  // (b) we can count wire queries: 0 proves the rejection was local.
+  let udp;
+  let wire = 0;
+  let resolver;
+  let promisesResolver;
+
+  beforeAll(async () => {
+    udp = dgram.createSocket("udp4");
+    udp.on("message", (msg, rinfo) => {
+      wire++;
+      // Copy the question section and reply NXDOMAIN (RCODE=3).
+      let i = 12;
+      while (msg[i]) i += msg[i] + 1;
+      const question = msg.slice(12, i + 5);
+      const header = Buffer.from([msg[0], msg[1], 0x81, 0x83, 0, 1, 0, 0, 0, 0, 0, 0]);
+      udp.send(Buffer.concat([header, question]), rinfo.port, rinfo.address);
+    });
+    udp.bind(0, "127.0.0.1");
+    await once(udp, "listening");
+
+    const servers = [`127.0.0.1:${udp.address().port}`];
+    resolver = new dns.Resolver({ timeout: 5000, tries: 1 });
+    resolver.setServers(servers);
+    promisesResolver = new dns_promises.Resolver({ timeout: 5000, tries: 1 });
+    promisesResolver.setServers(servers);
+  });
+
+  afterAll(() => {
+    udp?.close();
+  });
+
+  const longLabel = Buffer.alloc(64, "l").toString();
+  const longName =
+    Array.from({ length: 30 }, (_, i) => "seg" + String(i).padStart(6, "0")).join(".") + ".example";
+  const malformed = {
+    "label > 63 octets": longLabel + ".ex.example",
+    "name > 255 octets": longName,
+    "empty interior label": "a..example",
+    "leading dot": ".a.example",
+    "whitespace in label": "sp ace.example",
+  };
+
+  const callbackCode = (method, name) =>
+    new Promise((resolve, reject) => {
+      let sync = true;
+      resolver[method](name, err => {
+        if (sync) return reject(new Error("callback invoked synchronously"));
+        resolve(err?.code);
+      });
+      sync = false;
+    });
+
+  describe.each(Object.entries(malformed))("%s", (_label, name) => {
+    it("callback resolve4 reports EBADNAME asynchronously", async () => {
+      const before = wire;
+      expect(await callbackCode("resolve4", name)).toBe("EBADNAME");
+      expect(wire).toBe(before);
+    });
+
+    it("callback resolveTxt reports EBADNAME asynchronously", async () => {
+      const before = wire;
+      expect(await callbackCode("resolveTxt", name)).toBe("EBADNAME");
+      expect(wire).toBe(before);
+    });
+
+    it("promises resolve4 rejects with EBADNAME", async () => {
+      const before = wire;
+      await expect(promisesResolver.resolve4(name)).rejects.toThrow(
+        expect.objectContaining({ code: "EBADNAME" }),
+      );
+      expect(wire).toBe(before);
+    });
+  });
+
+  it("control: a well-formed name reaches the server and reports ENOTFOUND", async () => {
+    const before = wire;
+    expect(await callbackCode("resolve4", "good.example")).toBe("ENOTFOUND");
+    expect(wire).toBeGreaterThan(before);
   });
 });

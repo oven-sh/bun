@@ -142,18 +142,13 @@ unsafe extern "C" {
     ) -> i32;
 }
 
-/// Result of [`JSValue::borrow_array_buffer_bytes`] — mirrors
-/// `JSC__JSValue__borrowBytesForOffThread` (bindings.cpp).
+/// Result of [`JSValue::borrow_array_buffer_bytes`]. See `JSC__JSValue__borrowBytesForOffThread`.
 pub enum BorrowedBufferBytes {
-    /// Not a buffer, or detached / zero-length.
+    /// Not a buffer, or detached.
     None,
-    /// `FastTypedArray` (≤ `fastSizeLimit` elements, inline in the GC heap).
-    /// The storage is GC-movable so the slice is only valid until the next
-    /// allocation / safe-point; callers must copy immediately. No unpin.
+    /// `FastTypedArray`: GC-movable inline storage. Copy immediately; no unpin.
     Fast { ptr: *const u8, len: usize },
-    /// Every other mode: the backing `JSC::ArrayBuffer` has been `pin()`ed.
-    /// For `OversizeTypedArray` the helper adopted the existing storage in
-    /// place (zero byte copy). Caller MUST [`ArrayBuffer::unpin`] when done.
+    /// Backing `JSC::ArrayBuffer` is now `pin()`ed. Caller MUST [`ArrayBuffer::unpin`].
     Pinned(ArrayBuffer),
 }
 
@@ -164,9 +159,7 @@ impl JSValue {
         JSC__JSValue__unpinArrayBuffer(self);
     }
 
-    /// Classifies and borrows `self`'s byte storage without forcing a
-    /// `FastTypedArray` through `slowDownAndWasteMemory()` the way
-    /// [`JSValue::as_pinned_arraybuffer`] does. See [`BorrowedBufferBytes`].
+    /// [`JSValue::as_pinned_arraybuffer`] without forcing a `FastTypedArray` through `slowDownAndWasteMemory()`.
     pub fn borrow_array_buffer_bytes(self, global: &JSGlobalObject) -> BorrowedBufferBytes {
         let mut ptr: *const u8 = core::ptr::null();
         let mut len: usize = 0;

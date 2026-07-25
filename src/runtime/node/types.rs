@@ -309,21 +309,14 @@ impl bun_jsc::Unprotect for StringOrBuffer {
 }
 
 impl StringOrBuffer {
-    /// Borrow `value`'s byte storage for a call that may outlive later JS
-    /// coercions (async work, or a sync call whose later arguments can run
-    /// user code). `FastTypedArray` storage is duped into an owned
-    /// [`EncodedSlice`](Self::EncodedSlice) — pinning it would run
-    /// `slowDownAndWasteMemory()` (malloc + copy + butterfly) for a view that
-    /// cannot be detached anyway. Every other mode is pinned in place.
-    ///
-    /// `protect=true` GC-roots the JS value for the pinned case; the duped
-    /// case owns its bytes and never needs a root.
+    /// Pin-or-dupe `value`'s bytes for a call that may outlive later JS coercions.
+    /// `FastTypedArray` inputs are duped (pinning would `slowDownAndWasteMemory()`); every
+    /// other mode is pinned in place. `protect` GC-roots the JS value for the `Buffer` arms.
     fn pinned_buffer_from_js(global: &JSGlobalObject, value: JSValue, protect: bool) -> Self {
         use jsc::BorrowedBufferBytes;
         match value.borrow_array_buffer_bytes(global) {
             BorrowedBufferBytes::Fast { ptr, len } => {
-                // SAFETY: classifier guarantees `ptr[0..len]` is valid until
-                // the next GC safe-point; we copy immediately.
+                // SAFETY: `ptr[0..len]` valid until next GC safe-point; copy immediately.
                 let owned = unsafe { bun_core::ffi::slice(ptr, len) }.to_vec();
                 global.vm().report_extra_memory(owned.len());
                 Self::EncodedSlice(ZigStringSlice::init_owned(owned))

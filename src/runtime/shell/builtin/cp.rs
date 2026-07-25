@@ -799,7 +799,7 @@ impl FlagParser for Opts {
             b'i' => Some(ParseFlagResult::Unsupported(unsupported_flag(b"-i"))),
             b'L' => Some(ParseFlagResult::Unsupported(unsupported_flag(b"-L"))),
             b'P' => Some(ParseFlagResult::Unsupported(unsupported_flag(b"-P"))),
-            b'p' => Some(ParseFlagResult::Unsupported(unsupported_flag(b"-P"))),
+            b'p' => Some(ParseFlagResult::Unsupported(unsupported_flag(b"-p"))),
             b'r' | b'R' => {
                 self.recursive = true;
                 None
@@ -809,7 +809,10 @@ impl FlagParser for Opts {
                 None
             }
             // `force: true` is already the default (see `CpFlags` below).
-            b'f' | b'n' => None,
+            b'f' => None,
+            // `-n` (no-clobber) is accepted as a silent no-op for compatibility
+            // (pre-existing; dest is still overwritten).
+            b'n' => None,
             _ => Some(ParseFlagResult::IllegalOption(&raw const smallflags[i..])),
         }
     }

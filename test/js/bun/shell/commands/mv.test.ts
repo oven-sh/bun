@@ -1,5 +1,7 @@
 import { $ } from "bun";
-import { describe, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
+import { isPosix, tempDir } from "harness";
+import { readlinkSync } from "node:fs";
 import { join } from "path";
 import { createTestBuilder } from "../test_builder";
 import { sortedShellOutput } from "../util";
@@ -49,4 +51,94 @@ describe("mv", async () => {
     .exitCode(20 /* ENOTDIR */)
     .stderr("mv: a: Not a directory\n")
     .runAsTest("move dir -> file fails");
+
+  describe("-n (no-clobber)", () => {
+    TestBuilder.command`mv -n src dst`
+      .ensureTempDir()
+      .file("src", "NEW\n")
+      .file("dst", "OLD\n")
+      .exitCode(0)
+      .stderr("")
+      .fileEquals("dst", "OLD\n")
+      .fileEquals("src", "NEW\n")
+      .runAsTest("does not overwrite an existing file");
+
+    TestBuilder.command`mv -n src dst`
+      .ensureTempDir()
+      .file("src", "NEW\n")
+      .exitCode(0)
+      .fileEquals("dst", "NEW\n")
+      .doesNotExist("src")
+      .runAsTest("moves when destination does not exist");
+
+    TestBuilder.command`mkdir d; echo OLD > d/src; mv -n src d/`
+      .ensureTempDir()
+      .file("src", "NEW\n")
+      .exitCode(0)
+      .fileEquals("d/src", "OLD\n")
+      .fileEquals("src", "NEW\n")
+      .runAsTest("does not overwrite an existing file in a directory");
+
+    TestBuilder.command`mkdir d; echo OLD > d/a; mv -n a b d/; ls d`
+      .ensureTempDir()
+      .file("a", "NEW\n")
+      .file("b", "B\n")
+      .exitCode(0)
+      .stdout(str => expect(sortedShellOutput(str)).toEqual(["a", "b"]))
+      .fileEquals("d/a", "OLD\n")
+      .fileEquals("d/b", "B\n")
+      .fileEquals("a", "NEW\n")
+      .doesNotExist("b")
+      .runAsTest("skips existing but moves the rest into a directory");
+
+    TestBuilder.command`mv -f -n src dst`
+      .ensureTempDir()
+      .file("src", "NEW\n")
+      .file("dst", "OLD\n")
+      .exitCode(0)
+      .fileEquals("dst", "OLD\n")
+      .fileEquals("src", "NEW\n")
+      .runAsTest("-f -n: last option wins (-n)");
+
+    TestBuilder.command`mv -n -f src dst`
+      .ensureTempDir()
+      .file("src", "NEW\n")
+      .file("dst", "OLD\n")
+      .exitCode(0)
+      .fileEquals("dst", "NEW\n")
+      .doesNotExist("src")
+      .runAsTest("-n -f: last option wins (-f)");
+
+    TestBuilder.command`touch dst; mv -n nosuch dst`
+      .ensureTempDir()
+      .exitCode(c => expect(c).not.toBe(0))
+      .stderr(s => expect(s).toContain("nosuch"))
+      .runAsTest("still reports a missing source when destination exists");
+
+    test.if(isPosix)("does not overwrite a dangling symlink", async () => {
+      using dir = tempDir("mv-n-symlink", { src: "NEW\n" });
+      await $`ln -s nonexistent dst`.cwd(dir).throws(true).quiet();
+      await TestBuilder.command`mv -n src dst`.setTempdir(dir).exitCode(0).fileEquals("src", "NEW\n").run();
+      expect(readlinkSync(join(dir, "dst"))).toBe("nonexistent");
+    });
+  });
+
+  describe("-i (interactive)", () => {
+    TestBuilder.command`mv -i src dst`
+      .ensureTempDir()
+      .file("src", "NEW\n")
+      .file("dst", "OLD\n")
+      .exitCode(0)
+      .fileEquals("dst", "OLD\n")
+      .fileEquals("src", "NEW\n")
+      .runAsTest("does not overwrite without affirmative input");
+
+    TestBuilder.command`mv -i src dst`
+      .ensureTempDir()
+      .file("src", "NEW\n")
+      .exitCode(0)
+      .fileEquals("dst", "NEW\n")
+      .doesNotExist("src")
+      .runAsTest("moves when destination does not exist");
+  });
 });

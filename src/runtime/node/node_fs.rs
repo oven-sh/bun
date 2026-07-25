@@ -179,8 +179,9 @@ use bun_jsc::AbortSignalRef;
 use super::stat::Stats;
 use super::time_like::TimeLike;
 use super::types::{
-    ArgumentsSlice, Dirent, Encoding, FdArgExt as _, FileSystemFlags, FileSystemFlagsKind,
-    NameTooLong, PathLike, PathLikeExt as _, PathOrFdExt as _, StringOrBuffer, VectorArrayBuffer,
+    ArgumentsSlice, BUFFER_EXPECTED_TYPES, Dirent, Encoding, FdArgExt as _, FileSystemFlags,
+    FileSystemFlagsKind, NameTooLong, PathLike, PathLikeExt as _, PathOrFdExt as _, StringOrBuffer,
+    VectorArrayBuffer,
 };
 // Re-exported publicly: `crate::node::fs::PathOrFileDescriptor` is the
 // canonical path used by `cli/build_command.rs` et al.
@@ -2914,9 +2915,7 @@ pub mod args {
     fs_args_path_forwarders!(Truncate; path);
     impl Truncate {
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Truncate> {
-            let path = PathOrFileDescriptor::from_js(ctx, arguments)?.ok_or_else(|| {
-                ctx.throw_invalid_arguments(format_args!("path must be a string or TypedArray"))
-            })?;
+            let path = PathOrFileDescriptor::from_js_required(ctx, arguments, "path")?;
             let len: u64 = 'brk: {
                 let Some(len_value) = arguments.next() else {
                     break 'brk 0;
@@ -3977,14 +3976,35 @@ pub mod args {
                                 },
                             ));
                         }
-                        let max_len = ((buf_len as u64 - args.offset) as i64).min(i32::MAX as i64);
-                        if length > max_len || length < 0 {
+                        // validateOffsetLengthWrite then validateInt32(length, 'length', 0),
+                        // in that order — each stage words its range differently.
+                        let remaining = (buf_len as u64 - args.offset) as i64;
+                        if length > remaining {
+                            return Err(ctx.throw_range_error(
+                                length as f64,
+                                bun_jsc::RangeErrorOptions {
+                                    field_name: b"length",
+                                    max: remaining,
+                                    ..Default::default()
+                                },
+                            ));
+                        }
+                        if length < 0 {
                             return Err(ctx.throw_range_error(
                                 length as f64,
                                 bun_jsc::RangeErrorOptions {
                                     field_name: b"length",
                                     min: 0,
-                                    max: max_len,
+                                    ..Default::default()
+                                },
+                            ));
+                        }
+                        if length > i32::MAX as i64 {
+                            return Err(ctx.throw_range_error(
+                                length as f64,
+                                bun_jsc::RangeErrorOptions {
+                                    field_name: b"length",
+                                    msg: b">= 0 && <= 2147483647",
                                     ..Default::default()
                                 },
                             ));
@@ -4113,11 +4133,7 @@ pub mod args {
                 0.0
             };
             let buffer = Buffer::from_js(ctx, buffer_value).ok_or_else(|| {
-                ctx.throw_invalid_argument_type_list(
-                    b"buffer",
-                    &[b"Buffer", b"TypedArray", b"DataView"],
-                    buffer_value,
-                )
+                ctx.throw_invalid_argument_type_value2(b"buffer", BUFFER_EXPECTED_TYPES, buffer_value)
             })?;
 
             //   if (length === 0) {
@@ -4138,9 +4154,12 @@ pub mod args {
 
             let buf_len = buffer.slice().len();
             if buf_len == 0 {
+                let received = JSGlobalObject::inspect_for_error_message(ctx, buffer_value)?;
                 return Err(validators::throw_err_invalid_arg_value(
                     ctx,
-                    format_args!("The argument 'buffer' is empty and cannot be written."),
+                    format_args!(
+                        "The argument 'buffer' is empty and cannot be written. Received {received}"
+                    ),
                 ));
             }
             // validateOffsetLengthRead(offset, length, buffer.byteLength);
@@ -4320,11 +4339,7 @@ pub mod args {
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<ReadFile> {
             // `Drop` on `path` covers every
             // `?`-propagated JsError below.
-            let path = PathOrFileDescriptor::from_js(ctx, arguments)?.ok_or_else(|| {
-                ctx.throw_invalid_arguments(format_args!(
-                    "path must be a string or a file descriptor"
-                ))
-            })?;
+            let path = PathOrFileDescriptor::from_js_required(ctx, arguments, "path")?;
             let mut encoding = Encoding::Buffer;
             let mut flag = FileSystemFlags::R;
             let mut abort_signal = scopeguard::guard(None::<AbortSignalRef>, |s| {
@@ -4412,11 +4427,7 @@ pub mod args {
         ) -> JsResult<WriteFile> {
             // `Drop` on `path` covers every
             // `?`-propagated JsError below.
-            let path = PathOrFileDescriptor::from_js(ctx, arguments)?.ok_or_else(|| {
-                ctx.throw_invalid_arguments(format_args!(
-                    "path must be a string or a file descriptor"
-                ))
-            })?;
+            let path = PathOrFileDescriptor::from_js_required(ctx, arguments, "path")?;
             let data_value = arguments
                 .next_eat()
                 .ok_or_else(|| ctx.throw_invalid_arguments(format_args!("data is required")))?;

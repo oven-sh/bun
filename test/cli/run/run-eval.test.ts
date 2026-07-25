@@ -433,18 +433,17 @@ describe("node-style CLI errors", () => {
     expect(exitCode).toBe(1);
   });
 
-  test("--permission is rejected rather than silently ignored", async () => {
+  test("--permission enables the permission model", async () => {
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "--permission", "-e", "1"],
+      cmd: [bunExe(), "--permission", "-p", "process.permission.has('fs.write')"],
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(stdout).toBe("");
-    expect(stderr).toContain("--permission is not supported by Bun");
-    expect(exitCode).toBe(1);
+    expect(stdout).toBe("false\n");
+    expect(exitCode).toBe(0);
   });
 });
 

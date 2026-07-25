@@ -42,6 +42,40 @@ bun_output::declare_scope!(PackageInstaller, hidden);
 
 type Bitset = DynamicBitSet;
 
+#[cfg(windows)]
+#[derive(Clone, Copy, Default)]
+enum CachedVolumeIdState {
+    #[default]
+    Unchecked,
+    Unavailable,
+    Id(u64),
+}
+
+#[cfg(windows)]
+#[derive(Default)]
+pub(crate) struct CachedVolumeId {
+    state: core::cell::Cell<CachedVolumeIdState>,
+}
+
+#[cfg(windows)]
+impl CachedVolumeId {
+    fn get(&self, fd: Fd) -> Option<u64> {
+        let mut state = self.state.get();
+        if matches!(state, CachedVolumeIdState::Unchecked) {
+            state = match Syscall::fstat(fd) {
+                Ok(stat) if stat.st_dev != 0 => CachedVolumeIdState::Id(stat.st_dev),
+                _ => CachedVolumeIdState::Unavailable,
+            };
+            self.state.set(state);
+        }
+
+        match state {
+            CachedVolumeIdState::Id(id) => Some(id),
+            CachedVolumeIdState::Unchecked | CachedVolumeIdState::Unavailable => None,
+        }
+    }
+}
+
 pub struct PendingLifecycleScript {
     pub list: lockfile::package::scripts::List,
     pub tree_id: lockfile::tree::Id,
@@ -94,6 +128,9 @@ pub struct PackageInstaller<'a> {
     pub successfully_installed: Bitset,
     pub command_ctx: Command::Context<'a>,
     pub current_tree_id: lockfile::tree::Id,
+
+    #[cfg(windows)]
+    pub(crate) package_cache_volume: CachedVolumeId,
 
     // fields used for running lifecycle scripts when it's safe
     //
@@ -291,6 +328,9 @@ pub struct TreeContext {
 
     /// Number of installed dependencies. Could be successful or failure.
     pub install_count: usize,
+
+    #[cfg(windows)]
+    pub(crate) destination_volume: CachedVolumeId,
 }
 
 pub(crate) type TreeContextId = lockfile::tree::Id;
@@ -1146,6 +1186,52 @@ impl<'a> PackageInstaller<'a> {
         count
     }
 
+    fn get_install_method(
+        &self,
+        installer: &PackageInstall,
+        destination_dir: &Dir,
+        resolution_tag: resolution::Tag,
+    ) -> package_install::Method {
+        let method = installer.get_install_method();
+
+        #[cfg(not(windows))]
+        {
+            let _ = (destination_dir, resolution_tag);
+            return method;
+        }
+
+        #[cfg(windows)]
+        {
+            // Windows hardlink failures fall back per file, unlike Unix where the first
+            // EXDEV switches the process-wide backend. Cache the shared package-cache
+            // volume and each destination tree's volume to avoid that repeated failure.
+            if method != package_install::Method::Hardlink
+                || !matches!(
+                    resolution_tag,
+                    resolution::Tag::Npm
+                        | resolution::Tag::Git
+                        | resolution::Tag::Github
+                        | resolution::Tag::LocalTarball
+                        | resolution::Tag::RemoteTarball
+                )
+            {
+                return method;
+            }
+
+            let cache_volume = self.package_cache_volume.get(installer.cache_dir);
+            let destination_volume = self.trees[self.current_tree_id as usize]
+                .destination_volume
+                .get(destination_dir.fd());
+
+            match (cache_volume, destination_volume) {
+                (Some(cache), Some(destination)) if cache != destination => {
+                    package_install::Method::Copyfile
+                }
+                _ => method,
+            }
+        }
+    }
+
     pub(crate) fn install_package_with_name_and_resolution<
         // false when coming from download. if the package was downloaded
         // it was already determined to need an install
@@ -1732,10 +1818,15 @@ impl<'a> PackageInstaller<'a> {
                         if resolution.tag == resolution::Tag::Folder
                             && self.lockfile().is_folder_tree_id(self.current_tree_id)
                         {
+                            let method = self.get_install_method(
+                                &installer,
+                                &destination_dir,
+                                resolution.tag,
+                            );
                             break 'result installer.install(
                                 self.skip_delete,
                                 &destination_dir,
-                                installer.get_install_method(&destination_dir),
+                                method,
                                 resolution.tag,
                             );
                         }
@@ -1773,10 +1864,15 @@ impl<'a> PackageInstaller<'a> {
                         let result = if resolution.tag == resolution::Tag::Root {
                             installer.install_from_link(self.skip_delete, &destination_dir)
                         } else {
+                            let method = self.get_install_method(
+                                &installer,
+                                &destination_dir,
+                                resolution.tag,
+                            );
                             installer.install(
                                 self.skip_delete,
                                 &destination_dir,
-                                installer.get_install_method(&destination_dir),
+                                method,
                                 resolution.tag,
                             )
                         };
@@ -1796,10 +1892,12 @@ impl<'a> PackageInstaller<'a> {
                         break 'result result;
                     }
 
+                    let method =
+                        self.get_install_method(&installer, &destination_dir, resolution.tag);
                     break 'result installer.install(
                         self.skip_delete,
                         &destination_dir,
-                        installer.get_install_method(&destination_dir),
+                        method,
                         resolution.tag,
                     );
                 }

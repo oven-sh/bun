@@ -474,10 +474,6 @@ impl BlobExt for Blob {
         {
             let store = self.store().expect("infallible: store present").clone();
 
-            // For fd-backed stores (Bun.stdin, Bun.file(fd)), a second
-            // concurrent blob read would race `read()` on the shared fd and
-            // re-register it with epoll (EEXIST). Attach to the in-flight
-            // reader instead so every caller sees the same full byte stream.
             if read_file::ReadFile::try_coalesce_fd_read(
                 &store,
                 handler.cast::<c_void>(),

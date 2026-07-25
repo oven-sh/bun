@@ -517,12 +517,8 @@ pub mod store {
         pub mime_type: MimeType,
         pub ref_count: bun_ptr::ThreadSafeRefCount<Store>,
         pub is_all_ascii: Option<bool>,
-        /// JS-thread-only. For an fd-backed `File` store, points at the
-        /// `ReadFile` currently draining the fd (set before scheduling,
-        /// cleared in `ReadFile::then`). A second `.arrayBuffer()`/`.text()`
-        /// on the same store attaches to it instead of spawning a racing
-        /// reader — two readers on one pipe fd split the byte stream and the
-        /// loser's `epoll_ctl(ADD)` fails with `EEXIST`.
+        /// JS-thread-only. `*mut ReadFile` currently draining an fd-backed
+        /// store; concurrent blob reads attach to it instead of racing the fd.
         pub in_flight_blob_reader: core::sync::atomic::AtomicPtr<core::ffi::c_void>,
     }
 

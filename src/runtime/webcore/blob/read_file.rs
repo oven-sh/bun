@@ -133,14 +133,10 @@ impl<'a, F: ReadFileToJs> ReadFileCompletion for NewReadFileHandler<'a, F> {
 
 pub type ReadFileOnReadFileCallback = fn(ctx: *mut c_void, bytes: ReadFileResultType);
 
-/// Monomorphized `ReadFileCompletion::run` thunk matching
-/// [`ReadFileOnReadFileCallback`], so the same `(callback, ctx)` pair can be
-/// stored as the primary completion or pushed onto `extra_completions`.
 #[cfg(not(windows))]
 pub fn completion_thunk<C: ReadFileCompletion>(ctx: *mut c_void, bytes: ReadFileResultType) {
-    // SAFETY: `ctx` is the `*mut C` the caller passed through
-    // `on_complete_ctx`/`extra_completions`; ownership transfers per
-    // `ReadFileCompletion::run`.
+    // SAFETY: `ctx` is the `*mut C` passed through `on_complete_ctx` /
+    // `extra_completions`; ownership transfers per `ReadFileCompletion::run`.
     let _ = unsafe { C::run(ctx.cast::<C>(), bytes) };
 }
 
@@ -207,11 +203,8 @@ pub struct ReadFile {
     pub errno: Option<Error>,
     pub on_complete_ctx: *mut c_void,
     pub on_complete_callback: ReadFileOnReadFileCallback,
-    /// Additional `(callback, ctx)` pairs attached by concurrent reads on the
-    /// same fd-backed store (see `Store::in_flight_blob_reader`). Pushed on
-    /// the JS thread while the read runs on the work pool; drained in
-    /// `then()` on the JS thread. Guarded so the JS-thread push does not
-    /// alias the work-pool `&mut self`.
+    /// Completions attached via `Store::in_flight_blob_reader`; pushed and
+    /// drained on the JS thread only.
     pub extra_completions: bun_threading::Guarded<Vec<(ReadFileOnReadFileCallback, *mut c_void)>>,
     pub io_task: Option<*mut ReadFileTask>,
     pub io_poll: io::Poll,
@@ -415,9 +408,7 @@ impl ReadFile {
 
     pub const IO_TAG: io::Tag = io::Tag::ReadFile;
 
-    /// JS-thread-only. If `store` is fd-backed and already has a `ReadFile`
-    /// in flight, push `(callback, ctx)` onto its `extra_completions` so the
-    /// caller's promise resolves with the same bytes, and return `true`.
+    /// JS-thread-only. See `Store::in_flight_blob_reader`.
     #[cfg(not(windows))]
     pub fn try_coalesce_fd_read(
         store: &StoreRef,
@@ -441,8 +432,7 @@ impl ReadFile {
         true
     }
 
-    /// JS-thread-only. Publish `reader` as the in-flight reader on `store` so
-    /// subsequent fd-backed blob reads coalesce onto it.
+    /// JS-thread-only. See `Store::in_flight_blob_reader`.
     #[cfg(not(windows))]
     pub fn mark_in_flight(store: &StoreRef, reader: *mut ReadFile) {
         if matches!(&store.data, Data::File(f) if f.pathlike.is_fd()) {
@@ -612,10 +602,7 @@ impl ReadFile {
 
         let mut this = this;
 
-        // Clear the in-flight marker first so a read scheduled from a
-        // completion callback starts fresh instead of attaching to this
-        // (about-to-drop) ReadFile, and so a later read after an error does
-        // not see a stale pointer.
+        // Clear before the callbacks so a read they schedule starts fresh.
         let self_ptr = core::ptr::from_ref::<ReadFile>(&this)
             .cast_mut()
             .cast::<c_void>();

@@ -587,11 +587,37 @@ impl QuicStream {
         self.this_value.with_mut(|r| r.downgrade());
     }
 
+    /// Clears `raw` without touching `session`: `lastChanceToFinalize` sweeps
+    /// wrappers in unspecified order, so by the time `QuicEndpoint::finalize`
+    /// runs `lsquic_engine_destroy` the session box may already be freed.
+    pub(super) unsafe extern "C" fn on_close_detached(
+        ctx: *mut c_void,
+        _s: *mut lsquic::lsquic_stream,
+    ) {
+        // SAFETY: `ctx_ref` documents the shim's context-pointer contract;
+        // `finalize` below nulls the ctx, so a non-null ctx is a live box.
+        if let Some(qs) = unsafe { super::ffi::ctx_ref::<QuicStream>(ctx) } {
+            qs.raw.set(null_mut());
+        }
+    }
+
     #[expect(
         clippy::boxed_local,
         reason = "codegen's host_fn_finalize calls this as `|b| QuicStream::finalize(b)` and requires `self: Box<Self>`"
     )]
-    pub(crate) fn finalize(self: Box<Self>) {}
+    pub(crate) fn finalize(self: Box<Self>) {
+        // `lastChanceToFinalize` sweeps wrappers in unspecified order: when
+        // this box drops before its endpoint, `QuicEndpoint::finalize` ->
+        // `lsquic_engine_destroy` still fires `on_close` with this pointer as
+        // the stream ctx. `raw` non-null means the lsquic stream is still live
+        // (`on_close` nulls it before lsquic frees the stream, and teardown
+        // clears it explicitly), so clearing the ctx here is the remaining
+        // obligation before the box is freed.
+        if let Some(s) = self.ls() {
+            // SAFETY: null is always a valid ctx; the shim skips the callback.
+            unsafe { s.set_ctx(null_mut()) };
+        }
+    }
 
     pub(crate) fn get_reader(&self, _g: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         self.with_state(|s| s.has_reader = 1);

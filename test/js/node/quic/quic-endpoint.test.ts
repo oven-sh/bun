@@ -267,3 +267,27 @@ describe("endpoint.close() while a session is live", () => {
     expect({ announced, resolved }).toEqual({ announced: 1, resolved: true });
   });
 });
+
+// Worker VM teardown runs lastChanceToFinalize, which sweeps the QUIC wrappers
+// in unspecified order. QuicEndpoint::finalize -> lsquic_engine_destroy drives
+// on_close/on_conn_closed into per-stream/per-session ctx pointers; when those
+// wrappers were swept first the ctx is a freed box and ASAN reports
+// heap-use-after-free at nq_on_stream_close / nq_on_conn_closed.
+describe("node:quic in a Worker", () => {
+  test("worker.terminate() with a live endpoint + session does not UAF at VM teardown", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        join(import.meta.dir, "quic-worker-terminate-fixture.ts"),
+        join(keysDir, "agent1-key.pem"),
+        join(keysDir, "agent1-cert.pem"),
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, exitCode }).toEqual({ stdout: "PASS\n", exitCode: 0 });
+    void stderr;
+  }, 60000);
+});

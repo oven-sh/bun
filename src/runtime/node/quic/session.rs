@@ -2358,11 +2358,36 @@ impl QuicSession {
         Self::transport_params_to_js(global, &tp)
     }
 
+    /// Clears `conn` without touching `endpoint`/`streams`:
+    /// `lastChanceToFinalize` sweeps wrappers in unspecified order, so those
+    /// back-pointers may already be freed.
+    pub(super) unsafe extern "C" fn on_closed_detached(ctx: *mut c_void) {
+        // SAFETY: `ctx_ref` documents the shim's context-pointer contract;
+        // `finalize` below nulls the ctx, so a non-null ctx is a live box.
+        if let Some(session) = unsafe { super::ffi::ctx_ref::<QuicSession>(ctx) } {
+            session.conn.set(null_mut());
+        }
+    }
+
     #[expect(
         clippy::boxed_local,
         reason = "codegen's host_fn_finalize calls this as `|b| QuicSession::finalize(b)` and requires `self: Box<Self>`"
     )]
-    pub(crate) fn finalize(self: Box<Self>) {}
+    pub(crate) fn finalize(self: Box<Self>) {
+        // `lastChanceToFinalize` sweeps wrappers in unspecified order: when
+        // this box drops before its endpoint, `QuicEndpoint::finalize` ->
+        // `lsquic_engine_destroy` still fires `on_conn_closed` with this
+        // pointer as the conn ctx. `conn` non-null means the lsquic conn is
+        // still live (`on_conn_closed` nulls it before lsquic frees the conn,
+        // and teardown clears it explicitly), so clearing the ctx here is the
+        // remaining obligation before the box is freed.
+        let conn = self.conn.get();
+        if !conn.is_null() {
+            // SAFETY: `conn` is live per the invariant above; null is always a
+            // valid ctx and makes the shim skip every conn callback.
+            unsafe { lsquic::lsquic_conn_set_ctx(conn, null_mut()) };
+        }
+    }
 }
 
 lsquic_callback! {

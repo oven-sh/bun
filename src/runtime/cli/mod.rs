@@ -910,7 +910,11 @@ pub mod command {
     }
 
     #[cold]
-    fn translate_npm_value_flag(arg: &[u8], keep: &[&[u8]]) -> Option<NpmFlag> {
+    fn translate_npm_value_flag(
+        arg: &[u8],
+        keep: &[&[u8]],
+        renames: &[(&[u8], &'static bun_core::ZStr)],
+    ) -> Option<NpmFlag> {
         use bun_core::zstr;
         let name: &[u8] = if let Some(long) = arg.strip_prefix(b"--") {
             match strings::index_of_char(long, b'=') {
@@ -926,6 +930,9 @@ pub mod command {
         };
         if keep.contains(&name) {
             return None;
+        }
+        if let Some(&(_, to)) = renames.iter().find(|(n, _)| *n == name) {
+            return Some(NpmFlag::Rename(to));
         }
         match name {
             b"workspace" => Some(NpmFlag::Rename(zstr!("--filter"))),
@@ -969,6 +976,7 @@ pub mod command {
             from: usize,
             stop_at_positional: bool,
             keep: &[&[u8]],
+            renames: &[(&[u8], &'static ZStr)],
         ) -> usize {
             let mut i = from;
             while i < argv.len() {
@@ -988,7 +996,7 @@ pub mod command {
                     i += 1;
                     continue;
                 }
-                if let Some(tr) = translate_npm_value_flag(ab, keep) {
+                if let Some(tr) = translate_npm_value_flag(ab, keep, renames) {
                     let eq = strings::index_of_char(ab, b'=');
                     let consumes_next = eq.is_none()
                         && argv
@@ -1014,8 +1022,15 @@ pub mod command {
 
         let mut hoisted: Vec<&'static ZStr> = Vec::new();
         let mut pre_subcommand_flags: Vec<&'static ZStr> = Vec::new();
-        let sub_idx =
-            copy_translating_npm_flags(argv, &mut pre_subcommand_flags, &mut hoisted, 1, true, &[]);
+        let sub_idx = copy_translating_npm_flags(
+            argv,
+            &mut pre_subcommand_flags,
+            &mut hoisted,
+            1,
+            true,
+            &[],
+            &[],
+        );
         let subcommand = argv.get(sub_idx).filter(|a| a.as_bytes() != b"--");
         let sub_bytes = subcommand.map(|z| z.as_bytes());
         let rest_start = sub_idx + usize::from(sub_idx < argv.len());
@@ -1069,29 +1084,111 @@ pub mod command {
                 mapped.push(zstr!("pm"));
                 mapped.push(zstr!("version"));
             }
+            // Likewise `npm pack` is `bun pm pack`.
+            Some(b"pack") => {
+                mapped.push(zstr!("pm"));
+                mapped.push(zstr!("pack"));
+            }
             Some(_) => mapped.push(*subcommand.unwrap()),
             None => {}
         }
 
         // npm flags bun's own parser accepts for the mapped subcommand must
-        // reach it instead of being dropped.
-        let keep: &[&[u8]] = match sub_bytes {
-            Some(b"publish") => &[b"access", b"otp", b"tag"],
-            Some(b"version" | b"verison") => &[b"message"],
-            _ => &[],
+        // reach it instead of being dropped, either as-is (`keep`) or under
+        // bun's spelling (`renames`).
+        let (keep, renames): (&[&[u8]], &[(&[u8], &ZStr)]) = match sub_bytes {
+            Some(b"publish") => (&[b"access", b"otp", b"tag"], &[]),
+            Some(b"version" | b"verison") => (&[b"message"], &[]),
+            Some(b"pack") => (&[], &[(b"pack-destination", zstr!("--destination"))]),
+            _ => (&[], &[]),
         };
         let mut tail: Vec<&'static ZStr> =
             Vec::with_capacity(argv.len().saturating_sub(rest_start));
-        copy_translating_npm_flags(argv, &mut tail, &mut hoisted, rest_start, false, keep);
+        copy_translating_npm_flags(
+            argv,
+            &mut tail,
+            &mut hoisted,
+            rest_start,
+            false,
+            keep,
+            renames,
+        );
+
+        // The bunx parser skips flags it does not know without consuming
+        // their value, so a hoisted `--cwd <dir>` would make `<dir>` the
+        // package name; drop renamed flags for the bunx-mapped subcommands.
+        if matches!(sub_bytes, Some(b"exec" | b"x")) {
+            hoisted.clear();
+        }
 
         let mut out: Vec<&'static ZStr> = Vec::with_capacity(
             1 + pre_subcommand_flags.len() + mapped.len() + hoisted.len() + tail.len(),
         );
         out.push(argv0);
         out.extend_from_slice(&pre_subcommand_flags);
-        out.extend_from_slice(&mapped);
-        out.extend_from_slice(&hoisted);
+        // Hoisted flags go right after the first mapped token: `bun run`
+        // forwards everything after the script name to the script, so for the
+        // lifecycle shortcuts (`mapped = ["run", "test"]`) they must land
+        // between "run" and the script name.
+        if let Some((first, rest_mapped)) = mapped.split_first() {
+            out.push(*first);
+            out.extend_from_slice(&hoisted);
+            out.extend_from_slice(rest_mapped);
+        } else {
+            out.extend_from_slice(&hoisted);
+        }
         out.extend_from_slice(&tail);
+
+        static SLOT: std::sync::OnceLock<Box<[&'static ZStr]>> = std::sync::OnceLock::new();
+        let stored = SLOT.get_or_init(move || out.into_boxed_slice());
+        // SAFETY: per fn contract — single-threaded startup.
+        unsafe { bun::set_argv(stored) };
+    }
+
+    /// Rewrite argv when bun is invoked as `npx` via the shim. Since npm 7
+    /// `npx` accepts the same config flags as `npm`, so the npm-only
+    /// value-taking flags (plus npx's `-c`/`--call`) are dropped up to the
+    /// first positional; everything from the package name on belongs to the
+    /// executed package and is copied verbatim. Flags `translate_npm_argv`
+    /// would rename are dropped too: the bunx parser has no equivalent and
+    /// would take the stray value for the package name.
+    ///
+    /// # Safety
+    /// Single-threaded CLI startup; stores into the process-global argv slot.
+    #[cold]
+    #[inline(never)]
+    unsafe fn translate_npx_argv() {
+        use bun_core::ZStr;
+        let argv = bun::argv().as_slice();
+        let Some(&argv0) = argv.first() else { return };
+        let mut out: Vec<&'static ZStr> = Vec::with_capacity(argv.len());
+        out.push(argv0);
+        let mut i = 1;
+        while i < argv.len() {
+            let a = argv[i];
+            let ab = a.as_bytes();
+            if ab.first() != Some(&b'-') || ab == b"--" {
+                break;
+            }
+            if ab == b"-c"
+                || ab == b"--call"
+                || ab.starts_with(b"--call=")
+                || translate_npm_value_flag(ab, &[], &[]).is_some()
+            {
+                let consumes_next = !strings::contains_char(ab, b'=')
+                    && argv
+                        .get(i + 1)
+                        .is_some_and(|n| n.as_bytes().first() != Some(&b'-'));
+                i += if consumes_next { 2 } else { 1 };
+                continue;
+            }
+            out.push(a);
+            i += 1;
+        }
+        if out.len() == i {
+            return;
+        }
+        out.extend_from_slice(&argv[i..]);
 
         static SLOT: std::sync::OnceLock<Box<[&'static ZStr]>> = std::sync::OnceLock::new();
         let stored = SLOT.get_or_init(move || out.into_boxed_slice());
@@ -1196,6 +1293,9 @@ pub mod command {
         }
 
         if is_npx(argv0) {
+            // SAFETY: single-threaded startup; rewrites the process-global
+            // argv view.
+            unsafe { translate_npx_argv() };
             // SAFETY: single-threaded startup
             IS_BUNX_EXE.store(true, core::sync::atomic::Ordering::Relaxed);
             return Tag::BunxCommand;

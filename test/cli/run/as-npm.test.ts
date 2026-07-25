@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import { chmodSync, copyFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 // https://github.com/oven-sh/bun/issues/5995
@@ -95,48 +95,54 @@ describe("fake npm/npx cli", () => {
   // behave as its package manager / bunx, not try to run a file called
   // "install" or "some-pkg".
   describe("argv[0] dispatch", () => {
-    function fakePmRun(dir: string, argv0: "npm" | "npx", args: string[]) {
+    function linkAs(dir: string, argv0: string): string {
       const link = join(dir, argv0 + (isWindows ? ".exe" : ""));
-      try {
+      // A test may invoke the same link several times in the same dir.
+      if (!existsSync(link)) {
         if (isWindows) copyFileSync(bunExe(), link);
         else symlinkSync(bunExe(), link);
-      } catch {}
-      const r = Bun.spawnSync({
-        cmd: [link, ...args],
+      }
+      return link;
+    }
+
+    async function fakePmRun(dir: string, argv0: "npm" | "npx" | "pnpm", args: string[]) {
+      await using proc = Bun.spawn({
+        cmd: [linkAs(dir, argv0), ...args],
         cwd: dir,
         env: bunEnv,
         stderr: "pipe",
         stdout: "pipe",
       });
-      return { stdout: r.stdout.toString("utf8"), stderr: r.stderr.toString("utf8"), exitCode: r.exitCode };
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
     }
 
-    test.concurrent("npm test runs the package.json script, not bun's test runner", () => {
+    test.concurrent("npm test runs the package.json script, not bun's test runner", async () => {
       using dir = tempDir("fake-npm-test", {
         "package.json": JSON.stringify({ scripts: { test: "echo TEST-SCRIPT-RAN" } }),
       });
-      const r = fakePmRun(String(dir), "npm", ["test"]);
+      const r = await fakePmRun(String(dir), "npm", ["test"]);
       expect(r.stdout).toContain("TEST-SCRIPT-RAN");
       expect(r.stdout).not.toContain("bun test v");
       expect(r.exitCode).toBe(0);
     });
 
-    test.concurrent("npm start / npm run <script> run the package.json script", () => {
+    test.concurrent("npm start / npm run <script> run the package.json script", async () => {
       using dir = tempDir("fake-npm-start", {
         "package.json": JSON.stringify({ scripts: { start: "echo STARTED", other: "echo OTHER" } }),
       });
-      expect(fakePmRun(String(dir), "npm", ["start"]).stdout).toContain("STARTED");
-      expect(fakePmRun(String(dir), "npm", ["run", "other"]).stdout).toContain("OTHER");
+      expect((await fakePmRun(String(dir), "npm", ["start"])).stdout).toContain("STARTED");
+      expect((await fakePmRun(String(dir), "npm", ["run", "other"])).stdout).toContain("OTHER");
     });
 
-    test.concurrent("npm install drops npm-only value-taking flags", () => {
+    test.concurrent("npm install drops npm-only value-taking flags", async () => {
       using dir = tempDir("fake-npm-install", {
         "package.json": JSON.stringify({ name: "p", version: "0.0.0" }),
         "bunfig.toml": `[install]\nregistry = "http://127.0.0.1:1/nope"\n`,
       });
       // create-react-app's invocation shape. The `error` and `silent` tokens
       // are values for `--loglevel`/`--logs-dir`, not packages to install.
-      const r = fakePmRun(String(dir), "npm", [
+      const r = await fakePmRun(String(dir), "npm", [
         "install",
         "--no-audit",
         "--save",
@@ -154,20 +160,64 @@ describe("fake npm/npx cli", () => {
       expect(r.exitCode).toBe(0);
     });
 
-    test.concurrent("npm --version prints a version", () => {
+    test.concurrent("npm publish keeps --tag/--access/--otp", async () => {
+      using dir = tempDir("fake-npm-publish", {
+        "package.json": JSON.stringify({ name: "fake-npm-publish", version: "1.2.3" }),
+        // A token so publish gets past the auth check; --dry-run stops
+        // before any network request.
+        "bunfig.toml": `[install]\nregistry = { url = "http://127.0.0.1:1/", token = "fake" }\n`,
+      });
+      const r = await fakePmRun(String(dir), "npm", ["publish", "--dry-run", "--tag", "beta", "--access", "public"]);
+      expect(r.stdout).toContain("Tag: beta");
+      expect(r.stdout).toContain("Access: public");
+      expect(r.exitCode).toBe(0);
+    });
+
+    test.concurrent("npm version dispatches as bun pm version", async () => {
+      using dir = tempDir("fake-npm-version", {
+        "package.json": JSON.stringify({ name: "fake-npm-version", version: "1.2.3" }),
+      });
+      const r = await fakePmRun(String(dir), "npm", ["version", "patch", "--no-git-tag-version"]);
+      expect(r.stdout).toContain("v1.2.4");
+      expect(r.exitCode).toBe(0);
+      expect(JSON.parse(await Bun.file(join(String(dir), "package.json")).text()).version).toBe("1.2.4");
+    });
+
+    test.concurrent("npm pack dispatches as bun pm pack, rewriting --pack-destination", async () => {
+      using dir = tempDir("fake-npm-pack", {
+        "package.json": JSON.stringify({ name: "fake-npm-pack", version: "1.0.0" }),
+      });
+      const r = await fakePmRun(String(dir), "npm", ["pack", "--pack-destination", "./tarballs"]);
+      expect(r.exitCode).toBe(0);
+      expect(existsSync(join(String(dir), "tarballs", "fake-npm-pack-1.0.0.tgz"))).toBe(true);
+    });
+
+    test.concurrent("npm --version prints a version", async () => {
       using dir = tempDir("fake-npm-ver", { "package.json": "{}" });
-      const r = fakePmRun(String(dir), "npm", ["--version"]);
+      const r = await fakePmRun(String(dir), "npm", ["--version"]);
       expect(r.stdout.trim()).toMatch(/^\d+\.\d+\.\d+/);
       expect(r.exitCode).toBe(0);
     });
 
-    test.concurrent("npx / npm exec dispatch as bunx", () => {
+    test.concurrent("npx / npm exec dispatch as bunx", async () => {
       using dir = tempDir("fake-npx", { "package.json": "{}" });
-      expect(fakePmRun(String(dir), "npx", ["--help"]).stderr).toContain("Usage: bunx");
-      expect(fakePmRun(String(dir), "npm", ["exec", "--help"]).stderr).toContain("Usage: bunx");
+      expect((await fakePmRun(String(dir), "npx", ["--help"])).stderr).toContain("Usage: bunx");
+      expect((await fakePmRun(String(dir), "npm", ["exec", "--help"])).stderr).toContain("Usage: bunx");
     });
 
-    test.concurrent("npm init <x> / npm create <x> dispatch as bun create, not bun init", () => {
+    test.concurrent("npx drops npm config flags before the package name", async () => {
+      using dir = tempDir("fake-npx-flags", {
+        "package.json": "{}",
+        // `error` must not be taken for the package name; the registry
+        // override keeps an unfixed bun from reaching the network.
+        "bunfig.toml": `[install]\nregistry = "http://127.0.0.1:1/nope"\n`,
+      });
+      const r = await fakePmRun(String(dir), "npx", ["--loglevel", "error", "--version"]);
+      expect(r.stdout.trim()).toMatch(/^\d+\.\d+\.\d+/);
+      expect(r.exitCode).toBe(0);
+    });
+
+    test.concurrent("npm init <x> / npm create <x> dispatch as bun create, not bun init", async () => {
       using dir = tempDir("fake-npm-init", {
         "package.json": "{}",
         "bunfig.toml": `[install]\nregistry = "http://127.0.0.1:1/nope"\n`,
@@ -176,16 +226,16 @@ describe("fake npm/npx cli", () => {
       // registry that fails fast without scaffolding anything. `bun init
       // <name>` would instead mkdir `<name>/` and write index.ts into it.
       for (const cmd of ["init", "create"]) {
-        const r = fakePmRun(String(dir), "npm", [cmd, "nonexistent-template"]);
+        const r = await fakePmRun(String(dir), "npm", [cmd, "nonexistent-template"]);
         expect(r.stdout + r.stderr).toContain("create-nonexistent-template");
         expect(r.stdout + r.stderr).not.toContain("index.ts");
       }
       // Bare `npm init` still means `bun init`.
-      const bare = fakePmRun(String(dir), "npm", ["init", "--help"]);
+      const bare = await fakePmRun(String(dir), "npm", ["init", "--help"]);
       expect(bare.stdout + bare.stderr).toContain("bun init");
     });
 
-    test.concurrent("npm run -w <pkg> / --prefix <dir> are translated, not dropped", () => {
+    test.concurrent("npm run -w <pkg> / --prefix <dir> are translated, not dropped", async () => {
       using dir = tempDir("fake-npm-ws", {
         "package.json": JSON.stringify({
           name: "root",
@@ -194,38 +244,46 @@ describe("fake npm/npx cli", () => {
         }),
         "packages/a/package.json": JSON.stringify({ name: "a", scripts: { go: "echo FROM-A" } }),
       });
-      const r = fakePmRun(String(dir), "npm", ["run", "go", "-w", "a"]);
+      const r = await fakePmRun(String(dir), "npm", ["run", "go", "-w", "a"]);
       expect(r.stdout).toContain("FROM-A");
       expect(r.stdout).not.toContain("ROOT");
 
-      const r2 = fakePmRun(String(dir), "npm", ["run", "go", "--workspace=a"]);
+      const r2 = await fakePmRun(String(dir), "npm", ["run", "go", "--workspace=a"]);
       expect(r2.stdout).toContain("FROM-A");
 
       // `--prefix` → `--cwd`
-      const r3 = fakePmRun(String(dir), "npm", ["--prefix", join(String(dir), "packages", "a"), "run", "go"]);
+      const r3 = await fakePmRun(String(dir), "npm", ["--prefix", join(String(dir), "packages", "a"), "run", "go"]);
       expect(r3.stdout).toContain("FROM-A");
     });
 
-    test.concurrent("-- stops flag translation", () => {
+    test.concurrent("npm test --prefix <dir> runs the script in that directory", async () => {
+      using dir = tempDir("fake-npm-test-prefix", {
+        "package.json": JSON.stringify({ name: "root" }),
+        "client/package.json": JSON.stringify({ name: "client", scripts: { test: "echo CLIENT-TEST" } }),
+      });
+      // The translated --cwd must land between `run` and the script name;
+      // anything after the script name is forwarded to the script.
+      const r = await fakePmRun(String(dir), "npm", ["test", "--prefix", "./client"]);
+      expect(r.stdout).toContain("CLIENT-TEST");
+      expect(r.exitCode).toBe(0);
+    });
+
+    test.concurrent("-- stops flag translation", async () => {
       using dir = tempDir("fake-npm-dd", {
         "package.json": JSON.stringify({ scripts: { go: "echo ARGS:" } }),
       });
-      const r = fakePmRun(String(dir), "npm", ["run", "go", "--", "--loglevel", "error"]);
+      const r = await fakePmRun(String(dir), "npm", ["run", "go", "--", "--loglevel", "error"]);
       expect(r.stdout).toContain("ARGS: --loglevel error");
     });
 
-    test.concurrent("pnpm as argv0 is not treated as npm", () => {
+    test.concurrent("pnpm as argv0 is not treated as npm", async () => {
       using dir = tempDir("fake-pnpm", {
         "package.json": JSON.stringify({ scripts: { test: "echo SHOULD-NOT-RUN" } }),
       });
-      const link = join(String(dir), "pnpm" + (isWindows ? ".exe" : ""));
-      try {
-        if (isWindows) copyFileSync(bunExe(), link);
-        else symlinkSync(bunExe(), link);
-      } catch {}
-      const r = Bun.spawnSync({ cmd: [link, "test"], cwd: String(dir), env: bunEnv });
+      const r = await fakePmRun(String(dir), "pnpm", ["test"]);
       // falls through to bun's own `test` command, not `run test`
-      expect(r.stdout.toString()).not.toContain("SHOULD-NOT-RUN");
+      expect(r.stdout).toContain("bun test v");
+      expect(r.stdout).not.toContain("SHOULD-NOT-RUN");
     });
   });
 });

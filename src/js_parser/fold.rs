@@ -483,6 +483,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                             name,
                                         )
                                         && name != b"__proto__"
+                                        // "({ f: class {} }).f" assigns name "f"; inlining
+                                        // would drop that and expose the class to the outer
+                                        // NamedEvaluation position instead.
+                                        && !value.is_anonymous_named()
                                     {
                                         return Some(value);
                                     }

@@ -252,3 +252,74 @@ describe("unterminated string literals in large files", () => {
     expect(exitCode).toBe(1);
   });
 });
+
+describe("constant folding preserves NamedEvaluation semantics", () => {
+  // Folding a wrapper expression down to a bare anonymous class/function must
+  // not expose it to NamedEvaluation at the assignment/binding site.
+  test.concurrent("wrapped anonymous class/function .name stays empty", async () => {
+    const src = `
+      const A = (0, class {});
+      const B = true && class {};
+      const C = false || class {};
+      const D = null ?? class {};
+      const E = true ? class {} : 0;
+      const F = false ? 0 : class {};
+      const G = [class {}][0];
+      const fn = (0, function () {});
+      const ar = (0, () => {});
+      function param(P = (0, class {})) { return P.name; }
+      class Holder { field = (0, class {}); }
+      console.log(JSON.stringify({
+        A: A.name, B: B.name, C: C.name, D: D.name, E: E.name, F: F.name, G: G.name,
+        fn: fn.name, ar: ar.name, param: param(), field: new Holder().field.name,
+      }));
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      A: "",
+      B: "",
+      C: "",
+      D: "",
+      E: "",
+      F: "",
+      G: "",
+      fn: "",
+      ar: "",
+      param: "",
+      field: "",
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("({ prop: class {} }).prop keeps the property key as .name", async () => {
+    const src = `
+      const K = ({ prop: class {} }).prop;
+      const M = ({ prop: function () {} }).prop;
+      const N = ({ prop: () => {} }).prop;
+      const X = ({}).x ??= class {};
+      console.log(JSON.stringify({ K: K.name, M: M.name, N: N.name, X: X.name }));
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ K: "prop", M: "prop", N: "prop", X: "" });
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("direct anonymous class/function still gets the binding name", async () => {
+    const src = `
+      const A = class {};
+      const B = function () {};
+      const C = () => {};
+      const D = (0, class Named {});
+      console.log(JSON.stringify({ A: A.name, B: B.name, C: C.name, D: D.name }));
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ A: "A", B: "B", C: "C", D: "Named" });
+    expect(exitCode).toBe(0);
+  });
+});

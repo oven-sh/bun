@@ -1417,12 +1417,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         // Ensure the name ends in `.node` (the `bindings` package does the same).
-        let name: &'a [u8] = if strings::has_suffix_comptime(name, b".node") {
+        const NODE_EXT: &[u8] = b".node";
+        let name: &'a [u8] = if strings::has_suffix_comptime(name, NODE_EXT) {
             name
         } else {
-            let mut buf = bun_alloc::ArenaVec::<u8>::with_capacity_in(name.len() + 5, self.arena);
+            let mut buf =
+                bun_alloc::ArenaVec::<u8>::with_capacity_in(name.len() + NODE_EXT.len(), self.arena);
             buf.extend_from_slice(name);
-            buf.extend_from_slice(b".node");
+            buf.extend_from_slice(NODE_EXT);
             buf.into_bump_slice()
         };
 

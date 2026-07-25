@@ -1020,9 +1020,14 @@ fn step_sequence_one(
         group_log::log(format_args!("runOne: no more entries; sequence complete."));
         return Ok(Some(AdvanceSequenceStatus::Done));
     };
-    if this.bail_at_group.is_some() && sequence.test_entry.is_some() {
-        // --bail fired: drop this not-yet-run test sequence so the group can
-        // settle and step_group can advance to the afterAll unwind. Hook-only
+    if this.bail_at_group.is_some()
+        && sequence.test_entry.is_some()
+        && sequence.active_entry == sequence.first_entry
+    {
+        // --bail fired: drop this never-started test sequence so the group can
+        // settle and step_group can advance to the afterAll unwind. A sequence
+        // whose beforeEach/test already ran (active_entry past first_entry)
+        // falls through so its afterEach chain still executes. Hook-only
         // sequences (test_entry == None) are afterAll/beforeAll and are left
         // for step_group's scope check.
         sequence.active_entry = None;

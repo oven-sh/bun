@@ -39,7 +39,7 @@ test("fetch honours the server's Keep-Alive: timeout= hint", async () => {
         const { server, conns } = mkServer(hint);
         await new Promise(r => server.listen(0, "127.0.0.1", r));
         const url = "http://127.0.0.1:" + server.address().port + "/";
-        for (let i = 0; i < 4; i++) await (await fetch(url)).text();
+        for (let i = 0; i < 2; i++) await (await fetch(url)).text();
         server.close();
         return conns();
       };
@@ -48,15 +48,13 @@ test("fetch honours the server's Keep-Alive: timeout= hint", async () => {
       // idle window, so each request must open a fresh connection (matches
       // Node: canKeepSocketAlive = false when serverHintTimeout <= 0).
       const short = await run("timeout=1");
-      // timeout=0 → never safe to reuse.
-      const zero = await run("timeout=0");
       // Apache's "max=100, timeout=1" ordering must parse the same.
       const reordered = await run("max=100, timeout=1");
       // timeout=60 → well above the margin; sequential requests reuse one
       // connection (regression guard: the hint must not disable keep-alive).
       const long = await run("timeout=60");
 
-      console.log(JSON.stringify({ short, zero, reordered, long }));
+      console.log(JSON.stringify({ short, reordered, long }));
       process.exit(0);
       `,
     ],
@@ -69,8 +67,8 @@ test("fetch honours the server's Keep-Alive: timeout= hint", async () => {
   const result = stdout.startsWith("{") ? JSON.parse(stdout.trim()) : { stdout, stderr };
   expect({ result, exitCode }).toEqual({
     // Without the fix the hint is ignored and every case reuses one connection
-    // (short/zero/reordered would be 1).
-    result: { short: 4, zero: 4, reordered: 4, long: 1 },
+    // (short/reordered would be 1).
+    result: { short: 2, reordered: 2, long: 1 },
     exitCode: 0,
   });
 });

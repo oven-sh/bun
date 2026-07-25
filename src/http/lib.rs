@@ -4912,6 +4912,13 @@ impl<'a> HTTPClient<'a> {
                     }
                 }
                 h if h == hash_header_const(b"Keep-Alive") => {
+                    // RFC 9110 §9.3.6: the proxy's CONNECT 200 hint does not govern the opaque tunnel.
+                    if self.flags.proxy_tunneling
+                        && self.proxy_tunnel.is_none()
+                        && response.status_code == 200
+                    {
+                        continue;
+                    }
                     if let Some(secs) = parse_keepalive_timeout(header.value()) {
                         self.state.keepalive_timeout_seconds = Some(secs);
                     }

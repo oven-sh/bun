@@ -619,8 +619,8 @@ private:
 
             /* Bun.serve async pipelining: pipelined request bytes were buffered
              * because the current response is still pending. Pause reads so the
-             * buffer stays bounded by this single recv; markDone() resumes and
-             * replays once the response completes. */
+             * buffer stays bounded by this single recv; replayPipelinedRequests()
+             * resumes and replays once the response completes. */
             if constexpr (!IsNodeHttp) {
                 if (!httpResponseData->pipelinedBuffer.empty()) {
                     ((HttpResponse<SSL> *) s)->pause();

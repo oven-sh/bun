@@ -594,7 +594,8 @@ struct HttpResponseData;
         /* Bun.serve async pipelining: while a response on this connection is
          * still in flight (HTTP_RESPONSE_PENDING), the parse loop must stop
          * BEFORE getHeaders mutates the next request's bytes; those bytes are
-         * held in pipelinedBuffer and replayed from markDone() once the
+         * held in pipelinedBuffer and replayed via replayPipelinedRequests()
+         * (from the uws_res_end* wrappers) once the
          * in-flight response completes. node:http uses its own queue and
          * never sets this. */
         bool deferPipeline = false;
@@ -1555,7 +1556,7 @@ public:
         if (length) {
             if (deferPipeline) {
                 /* Pipelined request bytes held until the in-flight response
-                 * completes; replayed from markDone(). Reads are paused by the
+                 * completes; replayed via replayPipelinedRequests(). Reads are paused by the
                  * caller while this buffer is non-empty, so it is bounded by a
                  * single recv buffer's worth. Reserve post-padding so replay
                  * can hand this buffer straight back to getHeaders. */

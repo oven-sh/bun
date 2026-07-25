@@ -1556,7 +1556,7 @@ where
     fn on_file_stream_complete(ctx: *mut c_void, _resp: uws::AnyResponse) {
         // SAFETY: ctx is a *RequestContext registered with FileResponseStream
         let this: &mut Self = unsafe { bun_ptr::callback_ctx::<Self>(ctx) };
-        this.detach_response();
+        this.detach_response_after_end();
         this.end_request_streaming_and_drain();
         this.deref();
     }

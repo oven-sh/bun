@@ -1402,11 +1402,11 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
             total_written = chunk_len as u64;
 
             if self.requested_end {
-                if let Some(res) = self.any_res() {
-                    res.clear_on_writable();
-                }
-                // `send_readable` drained the parked `try_end`, so uWS has
-                // `markDone()`d the response and dropped its `onAborted`.
+                // `send_readable` drained the parked `try_end`/`end`, so uWS
+                // `markDone()`d the response (nulling its `onAborted`/
+                // `onWritable`) and the wrapper then replayed any buffered
+                // pipelined request; clearing `onWritable` here would null
+                // THAT request's handler.
                 self.ended_response = true;
                 self.signal.close(None);
                 let _ = self.flush_promise(); // TODO: properly propagate exception upwards

@@ -1015,7 +1015,8 @@ describe("dns.resolve IDNA-encodes internationalized hostnames", () => {
       wire.push(labels.join("."));
       const question = msg.slice(12, i + 5);
       const header = Buffer.from([msg[0], msg[1], 0x81, 0x80, 0, 1, 0, 1, 0, 0, 0, 0]);
-      const answer = Buffer.from([0xc0, 0x0c, 0, 1, 0, 1, 0, 0, 1, 44, 0, 4, 10, 7, 7, 7]);
+      // TTL=0 so c-ares does not cache across tests that share an ASCII qname.
+      const answer = Buffer.from([0xc0, 0x0c, 0, 1, 0, 1, 0, 0, 0, 0, 0, 4, 10, 7, 7, 7]);
       server.send(Buffer.concat([header, question, answer]), rinfo.port, rinfo.address);
     });
     const { promise, resolve, reject } = Promise.withResolvers();
@@ -1047,8 +1048,8 @@ describe("dns.resolve IDNA-encodes internationalized hostnames", () => {
 
   it("already-punycoded names pass through unchanged", async () => {
     wire.length = 0;
-    const result = await resolver.resolve4("xn--bcher-kva.example");
-    expect({ result, wire: [...wire] }).toEqual({ result: ["10.7.7.7"], wire: ["xn--bcher-kva.example"] });
+    const result = await resolver.resolve4("xn--nxasmq6b.example");
+    expect({ result, wire: [...wire] }).toEqual({ result: ["10.7.7.7"], wire: ["xn--nxasmq6b.example"] });
   });
 
   it("plain ASCII names pass through unchanged", async () => {

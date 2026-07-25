@@ -858,6 +858,7 @@ describe("node:inspector Runtime.consoleAPICalled", () => {
       console.timeEnd("tm");
       console.assert(true, "quiet");
       console.assert(false, "loud");
+      console.assert(false);
       console.dirxml({ x: 1 });
       console.clear();
     `);
@@ -875,10 +876,11 @@ describe("node:inspector Runtime.consoleAPICalled", () => {
     expect(timeEnd).toHaveLength(1);
     expect(timeEnd[0].args[0].value).toMatch(/^tm: [\d.]+ ms$/);
 
-    // assert only fires on falsy condition, args are the message arguments.
+    // assert: only on falsy; V8 substitutes "console.assert" when no message args were given.
     const asserts = byType("assert");
-    expect(asserts).toHaveLength(1);
+    expect(asserts).toHaveLength(2);
     expect(asserts[0].args).toEqual([{ type: "string", value: "loud" }]);
+    expect(asserts[1].args).toEqual([{ type: "string", value: "console.assert" }]);
 
     const dirxml = byType("dirxml");
     expect(dirxml).toHaveLength(1);
@@ -891,13 +893,15 @@ describe("node:inspector Runtime.consoleAPICalled", () => {
     const events = await collect(`
       const revoked = Proxy.revocable({}, {});
       revoked.revoke();
-      console.log(revoked.proxy, Object.create(null), new Proxy([1], {}));
+      let cyclic; cyclic = new Proxy({}, { getPrototypeOf: () => cyclic });
+      console.log(revoked.proxy, Object.create(null), new Proxy([1], {}), cyclic);
       process.stderr.write("reached\\n");
     `);
     expect(events).toHaveLength(1);
-    const [revoked, nullProto, arrayProxy] = events[0].args;
+    const [revoked, nullProto, arrayProxy, cyclic] = events[0].args;
     expect(revoked.type).toBe("object");
     expect(nullProto).toMatchObject({ type: "object", className: "Object", description: "Object" });
     expect(arrayProxy).toMatchObject({ type: "object", subtype: "proxy" });
+    expect(cyclic).toMatchObject({ type: "object", subtype: "proxy" });
   });
 });

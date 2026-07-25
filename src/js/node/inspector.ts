@@ -187,7 +187,8 @@ let nextRemoteObjectId = 1;
 function constructorName(value: object): string | undefined {
   try {
     let proto: object | null = value;
-    while (proto !== null) {
+    // Bounded: a Proxy getPrototypeOf trap may return itself (legal ES), which would loop forever.
+    for (let i = 0; proto !== null && i < 100; i++) {
       const descriptor = Object.getOwnPropertyDescriptor(proto, "constructor");
       if (descriptor !== undefined) {
         const ctor = descriptor.value;
@@ -587,7 +588,10 @@ function makeSpecialConsoleHook(method: string, original: Function): Function {
   switch (method) {
     case "assert": {
       const hook = function (this: unknown, ...args: unknown[]) {
-        if (!args[0]) emitConsoleAPICalled("assert", ArrayPrototypeSlice.$call(args, 1), hook);
+        if (!args[0]) {
+          const rest = ArrayPrototypeSlice.$call(args, 1);
+          emitConsoleAPICalled("assert", rest.length > 0 ? rest : ["console.assert"], hook);
+        }
         return original.$apply(this, args);
       };
       return hook;
@@ -614,13 +618,15 @@ function makeSpecialConsoleHook(method: string, original: Function): Function {
         return original.$call(this, label);
       };
     case "timeLog": {
-      const hook = function (this: unknown, label?: unknown, ...extra: unknown[]) {
-        const key = toLabel(label);
+      const hook = function (this: unknown) {
+        const key = toLabel(arguments[0]);
         const start = consoleTimers.get(key);
         if (start !== undefined) {
-          emitConsoleAPICalled("log", [`${key}: ${PerformanceNow() - start} ms`, ...extra], hook);
+          const emitArgs = ArrayPrototypeSlice.$call(arguments);
+          emitArgs[0] = `${key}: ${PerformanceNow() - start} ms`;
+          emitConsoleAPICalled("log", emitArgs, hook);
         }
-        return original.$call(this, label, ...extra);
+        return original.$apply(this, arguments);
       };
       return hook;
     }

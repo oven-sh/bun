@@ -338,7 +338,10 @@ function installExitTracing(): void {
   }
   // Last: nothing after this may assign to an intrinsic prototype property.
   if (frozenIntrinsics) {
-    process.emitWarning("Frozen intristics is an experimental feature and might change at any time", "ExperimentalWarning");
+    process.emitWarning(
+      "Frozen intristics is an experimental feature and might change at any time",
+      "ExperimentalWarning",
+    );
     require("internal/freeze_intrinsics")();
   }
 }

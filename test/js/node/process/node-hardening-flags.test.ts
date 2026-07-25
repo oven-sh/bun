@@ -1,4 +1,4 @@
-import { test as test_, expect, describe } from "bun:test";
+import { describe, expect, test as test_ } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
 const test = test_.concurrent;

@@ -330,6 +330,7 @@ export default function freezeIntrinsics(): void {
     const names = ObjectGetOwnPropertyNames(obj);
     for (let i = 0; i < names.length; i++) enableDerivedOverride(obj as object, names[i], descs[names[i]]);
     const syms = ObjectGetOwnPropertySymbols(obj);
-    for (let i = 0; i < syms.length; i++) enableDerivedOverride(obj as object, syms[i], descs[syms[i] as unknown as string]);
+    for (let i = 0; i < syms.length; i++)
+      enableDerivedOverride(obj as object, syms[i], descs[syms[i] as unknown as string]);
   }
 }

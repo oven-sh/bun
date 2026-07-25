@@ -199,10 +199,8 @@ test.concurrent.each([
   ],
   ["setter-only accessor", 'Object.defineProperty(e, "errors", { set(v) {}, configurable: true });'],
   ["self-referential data array", "e.errors = [e];"],
-] as const)(
-  "console.log / Bun.inspect of AggregateError with %s does not throw or crash",
-  async (_name, mutate) => {
-    const src = `
+] as const)("console.log / Bun.inspect of AggregateError with %s does not throw or crash", async (_name, mutate) => {
+  const src = `
       const e = new AggregateError([], "agg_boom");
       ${mutate}
       console.log(e);
@@ -210,20 +208,19 @@ test.concurrent.each([
       if (typeof s !== "string") throw new Error("Bun.inspect returned " + typeof s);
       process.stdout.write("done\\n");
     `;
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", src],
-      env: { ...bunEnv, NO_COLOR: "1" },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: { ...bunEnv, NO_COLOR: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect({ stderr, endsWithDone: stdout.endsWith("done\n") }).toEqual({ stderr: "", endsWithDone: true });
-    expect(stdout).toContain("agg_boom");
-    expect(proc.signalCode).toBeNull();
-    expect(exitCode).toBe(0);
-  },
-);
+  expect({ stderr, endsWithDone: stdout.endsWith("done\n") }).toEqual({ stderr: "", endsWithDone: true });
+  expect(stdout).toContain("agg_boom");
+  expect(proc.signalCode).toBeNull();
+  expect(exitCode).toBe(0);
+});
 
 test("uncaught AggregateError with intact `errors` still prints each sub-error", async () => {
   await using proc = Bun.spawn({

@@ -17,8 +17,6 @@ use crate::shell::states::cmd::{Cmd, CmdState};
 use crate::shell::yield_::Yield;
 
 pub struct Builtin {
-    /// Owning Cmd node.
-    pub cmd: NodeId,
     pub kind: Kind,
     /// argv[1..] as NUL-terminated strings (argv[0] is the builtin name).
     /// Points into the Cmd's `args` storage.
@@ -26,9 +24,6 @@ pub struct Builtin {
     pub stdin: BuiltinInput,
     pub stdout: BuiltinIO,
     pub stderr: BuiltinIO,
-    /// Set by `done()` and stashed by `write_failing_error` so the async
-    /// `on_io_writer_chunk` path can recover the intended exit code.
-    pub exit_code: Option<ExitCode>,
     /// Scratch for `fmt_error_arena`. One outstanding error string at a time.
     pub err_buf: Vec<u8>,
     pub impl_: Impl,
@@ -262,13 +257,7 @@ pub enum BuiltinIO {
 /// Input stream of a builtin.
 pub enum BuiltinInput {
     Fd(Arc<IOReader>),
-    /// Buffer not owned by the builtin. No producer wires this yet; reserved
-    /// for pipeline-from-builtin.
-    Buf(Vec<u8>),
-    ArrayBuf {
-        buf: PinnedArrayBuf,
-        i: u32,
-    },
+    ArrayBuf { buf: PinnedArrayBuf, i: u32 },
     Blob(Arc<BuiltinBlob>),
     Ignore,
 }
@@ -528,13 +517,11 @@ impl Builtin {
         };
 
         interp.as_cmd_mut(cmd).exec = Exec::Builtin(Box::new(Builtin {
-            cmd,
             kind,
             args,
             stdin,
             stdout,
             stderr,
-            exit_code: None,
             err_buf: Vec::new(),
             impl_: Self::make_impl(kind),
         }));
@@ -577,9 +564,6 @@ impl Builtin {
                 let perm: bun_sys::Mode = 0o666;
                 let cwd_fd = Self::cwd(interp, cmd);
                 let evtloop = interp.event_loop;
-
-                // Regular files are not pollable on linux/macos.
-                let is_pollable_default: bool = cfg!(windows);
 
                 let mut pollable = false;
                 let mut is_socket = false;
@@ -671,15 +655,13 @@ impl Builtin {
                     return None;
                 }
 
-                // The IOWriter receives the hardcoded platform const
-                // `is_pollable` (false on POSIX, true on Windows); the
-                // `pollable` out-param populated by `open_for_writing_impl`
-                // is intentionally ignored.
-                let _ = pollable;
+                // Honor the `pollable` computed by `open_for_writing_impl` on
+                // POSIX so a FIFO/socket target (whose fd is now O_NONBLOCK)
+                // takes the pollable path; Windows keeps the async writer.
                 let redirect_writer = IOWriter::init(
                     redirfd,
                     io_writer::Flags {
-                        pollable: is_pollable_default,
+                        pollable: if cfg!(windows) { true } else { pollable },
                         nonblock: is_nonblocking,
                         is_socket,
                         ..Default::default()
@@ -863,7 +845,6 @@ impl Builtin {
 
     /// Finish the builtin with `exit_code` and signal the owning Cmd.
     pub fn done(interp: &Interpreter, cmd: NodeId, exit_code: ExitCode) -> Yield {
-        Self::of_mut(interp, cmd).exit_code = Some(exit_code);
         // Output is written through immediately in `write_no_io`, so there
         // is nothing to flush here.
         Cmd::on_exec_done(interp, cmd, exit_code)
@@ -898,7 +879,6 @@ impl Builtin {
     pub fn read_stdin_no_io<'a>(interp: &'a Interpreter, cmd: NodeId) -> &'a [u8] {
         match &Self::of(interp, cmd).stdin {
             BuiltinInput::ArrayBuf { buf, .. } => buf.slice(),
-            BuiltinInput::Buf(b) => &b[..],
             BuiltinInput::Blob(b) => b.blob.shared_view(),
             BuiltinInput::Fd(_) | BuiltinInput::Ignore => b"",
         }
@@ -943,17 +923,6 @@ impl Builtin {
         interp.as_cmd(cmd).base.shell()
     }
 
-    /// The owning `Cmd` state node.
-    #[inline]
-    pub fn parent_cmd<'a>(interp: &'a Interpreter, cmd: NodeId) -> &'a Cmd {
-        interp.as_cmd(cmd)
-    }
-
-    #[inline]
-    pub fn parent_cmd_mut<'a>(interp: &'a Interpreter, cmd: NodeId) -> &'a mut Cmd {
-        interp.as_cmd_mut(cmd)
-    }
-
     /// Event loop handle (forwarded from the interpreter).
     #[inline]
     pub fn event_loop(
@@ -961,12 +930,6 @@ impl Builtin {
         _cmd: NodeId,
     ) -> crate::shell::interpreter::EventLoopHandle {
         interp.event_loop
-    }
-
-    /// The interpreter owns the throw path directly.
-    #[inline]
-    pub fn throw(interp: &Interpreter, _cmd: NodeId, err: crate::shell::ShellErr) {
-        interp.throw(err);
     }
 
     /// Cwd fd of the owning Cmd's shell env.
@@ -1124,17 +1087,12 @@ impl Builtin {
     /// Write `buf` to stderr (async if needed) then finish with `exit_code`.
     /// Shared helper for builtins whose only failure path is "print error and
     /// exit", so each builtin doesn't repeat the needs_io branch.
-    ///
-    /// Stashes `exit_code` on the `Builtin` so the async path
-    /// (`on_io_writer_chunk`) can finish with it; callers that need to mark a
-    /// per-builtin `state = WaitingWriteErr` must still do so before calling.
     pub fn write_failing_error(
         interp: &Interpreter,
         cmd: NodeId,
         buf: &[u8],
         exit_code: crate::shell::ExitCode,
     ) -> Yield {
-        Self::of_mut(interp, cmd).exit_code = Some(exit_code);
         if let Some(safeguard) = Self::of(interp, cmd).stderr.needs_io() {
             let child = io_writer::ChildPtr::new(cmd, io_writer::WriterTag::Builtin);
             // Clone buf so the &mut on

@@ -180,7 +180,6 @@ impl AtomicSync {
 }
 
 pub struct ThreadPool {
-    pub sleep_on_idle_network_thread: bool,
     /// When `true` (default), each worker calls
     /// [`Output::Source::configure_named_thread`] on startup, which initializes
     /// the WTF `StackBounds` thread-local via `Bun__StackCheck__initialize`.
@@ -200,8 +199,6 @@ pub struct ThreadPool {
     join_event: Event,
     run_queue: node::Queue,
     threads: AtomicPtr<Thread>,
-    pub name: &'static [u8],
-    pub spawned_thread_count: AtomicU32,
     wait_group: WaitGroup,
     /// Used by `schedule` to optimize for the case where the thread pool isn't running yet.
     is_running: AtomicBool,
@@ -229,7 +226,6 @@ impl ThreadPool {
     /// Statically initialize the thread pool using the configuration.
     pub fn init(config: Config) -> ThreadPool {
         ThreadPool {
-            sleep_on_idle_network_thread: true,
             needs_stack_bounds: true,
             stack_size: 1.max(config.stack_size),
             max_threads: 1.max(config.max_threads),
@@ -238,8 +234,6 @@ impl ThreadPool {
             join_event: Event::default(),
             run_queue: node::Queue::default(),
             threads: AtomicPtr::new(ptr::null_mut()),
-            name: b"",
-            spawned_thread_count: AtomicU32::new(0),
             wait_group: WaitGroup::init(),
             is_running: AtomicBool::new(false),
             stats: PoolStats {
@@ -822,7 +816,6 @@ impl ThreadPool {
                                     return unsafe { Self::unregister(self, ptr::null_mut()) };
                                 }
                             }
-                            // if (self.name.len > 0) thread.setName(self.name) catch {};
                             return;
                         }
 
@@ -901,6 +894,7 @@ impl ThreadPool {
                 if stats_enabled() {
                     self.stats.sleeps.fetch_add(1, Ordering::Relaxed);
                 }
+
                 self.idle_event.wait();
                 sync = self.sync.load(Ordering::Relaxed);
             }
@@ -1362,7 +1356,7 @@ impl Event {
     fn wait(&self) {
         let mut acquire_with: u32 = Self::EMPTY;
         let mut state = self.state.load(Ordering::Relaxed);
-        let mut has_shrunk_memory: bool = false;
+        let mut has_swept: bool = false;
 
         loop {
             // If we're shutdown then exit early.
@@ -1412,15 +1406,17 @@ impl Event {
             // Acquiring to WAITING will make the next notify() or shutdown() wake a sleeping futex thread
             // who will either exit on SHUTDOWN or acquire with WAITING again, ensuring all threads are awoken.
             // This unfortunately results in the last notify() or shutdown() doing an extra futex wake but that's fine.
-            let timeout_ns: Option<u64> = if !has_shrunk_memory {
-                Some(10_000_000_000) // 10 seconds
+            // Sweep only when the wait TIMED OUT: genuinely idle for 100ms, not parking
+            // between tasks (that cost ~13% of vite preview rps). `has_swept` is a local,
+            // reset when notify() returns; a racing notify() stays NOTIFIED, never lost.
+            let timeout_ns: Option<u64> = if !has_swept {
+                Some(100_000_000) // 100ms
             } else {
                 None
             };
             if Futex::wait(&self.state, Self::WAITING, timeout_ns).is_err() {
-                has_shrunk_memory = true;
-                bun_core::Global::mimalloc_cleanup(false);
-                bun_alloc::wtf::release_fast_malloc_free_memory_for_this_thread();
+                has_swept = true;
+                bun_alloc::mimalloc::mi_on_thread_idle();
             }
             state = self.state.load(Ordering::Relaxed);
             acquire_with = Self::WAITING;
@@ -1444,9 +1440,21 @@ impl Event {
         // Release barrier to ensure any operations before this are this to happen before the wait() in the other threads.
         let state = self.state.swap(release_with, Ordering::Release);
 
-        // Only wake threads sleeping in futex if the state is WAITING.
-        // Avoids unnecessary wake ups.
-        if state == Self::WAITING {
+        // Normally we only wake futex sleepers when the prior state was WAITING,
+        // which avoids a syscall when there is definitely nobody parked.
+        //
+        // That optimization is unsound for the one-shot "wake everyone" paths
+        // (`shutdown`, `wake_for_idle_events`, both `wake_threads == u32::MAX`).
+        // A worker can be genuinely parked in `Futex::wait(WAITING)` while
+        // `state` is transiently EMPTY or NOTIFIED: a concurrent consumer that
+        // took a notification without ever parking clears `state` back to EMPTY
+        // via the `acquire_with == EMPTY` path (see `wait`). For a normal
+        // single `notify()` that is fine, because a later `notify()` re-arms and
+        // wakes the sleeper. A teardown wake happens once, so a skipped wake
+        // here strands the parked worker: only its first wait has a timeout (the
+        // 100ms idle sweep), later waits are indefinite. Always wake in that
+        // case; the extra syscall is negligible once at teardown.
+        if state == Self::WAITING || wake_threads == u32::MAX {
             Futex::wake(&self.state, wake_threads);
         }
     }

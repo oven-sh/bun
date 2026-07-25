@@ -114,12 +114,10 @@ pub struct StdAllocator {
     pub ptr: *mut core::ffi::c_void,
     pub vtable: &'static AllocatorVTable,
 }
-/// Legacy alias for `AllocatorVTable`.
-pub type VTable = AllocatorVTable;
 
 // SAFETY: `ptr` is an opaque tag/context handle; the vtable is `&'static`.
 // Thread-safety of dispatch is the implementor's concern (mimalloc is
-// thread-safe; FixedBufferAllocator is not).
+// thread-safe).
 unsafe impl Send for StdAllocator {}
 // SAFETY: see the `Send` impl directly above.
 unsafe impl Sync for StdAllocator {}
@@ -181,86 +179,12 @@ impl StdAllocator {
     }
 }
 
-/// Bump allocator over a caller-owned buffer.
-pub struct FixedBufferAllocator<'a> {
-    end: usize,
-    buffer: &'a mut [u8],
-}
-impl<'a> FixedBufferAllocator<'a> {
-    #[inline]
-    pub fn init(buffer: &'a mut [u8]) -> Self {
-        Self { end: 0, buffer }
-    }
-    #[inline]
-    pub fn reset(&mut self) {
-        self.end = 0;
-    }
-    #[inline]
-    pub fn owns_ptr(&self, p: *const u8) -> bool {
-        let base = self.buffer.as_ptr() as usize;
-        let q = p as usize;
-        q >= base && q < base + self.buffer.len()
-    }
-    pub fn alloc(&mut self, len: usize, alignment: Alignment, _ra: usize) -> Option<*mut u8> {
-        let base = self.buffer.as_mut_ptr() as usize;
-        let aligned =
-            (base + self.end + alignment.to_byte_units() - 1) & !(alignment.to_byte_units() - 1);
-        let new_end = (aligned - base).checked_add(len)?;
-        if new_end > self.buffer.len() {
-            return None;
-        }
-        self.end = new_end;
-        Some(aligned as *mut u8)
-    }
-    pub fn resize(&mut self, buf: &mut [u8], _a: Alignment, new_len: usize, _ra: usize) -> bool {
-        // Only the last allocation can grow; shrinks always succeed.
-        let buf_end = buf.as_ptr() as usize - self.buffer.as_ptr() as usize + buf.len();
-        if buf_end != self.end {
-            return new_len <= buf.len();
-        }
-        let new_end = buf_end - buf.len() + new_len;
-        if new_end > self.buffer.len() {
-            return false;
-        }
-        self.end = new_end;
-        true
-    }
-    #[inline]
-    pub fn remap(
-        &mut self,
-        buf: &mut [u8],
-        a: Alignment,
-        new_len: usize,
-        ra: usize,
-    ) -> Option<*mut u8> {
-        if self.resize(buf, a, new_len, ra) {
-            Some(buf.as_mut_ptr())
-        } else {
-            None
-        }
-    }
-    #[inline]
-    pub fn free(&mut self, buf: &mut [u8], _a: Alignment, _ra: usize) {
-        // Only the last allocation can be freed.
-        let buf_end = buf.as_ptr() as usize - self.buffer.as_ptr() as usize + buf.len();
-        if buf_end == self.end {
-            self.end -= buf.len();
-        }
-    }
-}
-
 // PORTING.md §Allocators: AST crates thread an `Arena`; non-AST use Vec/Box
 // (global mimalloc). `Arena` is the real per-heap `MimallocArena` — unlike
 // `bumpalo::Bump`, it supports per-allocation free + realloc, so `ArenaVec`
 // no longer leaks on grow.
-//
-// `bumpalo::Bump` is kept as `Bump` for genuinely bump-only scratch (parser
-// node stores that are never resized and where the no-op `deallocate` is the
-// point).
 pub use mimalloc_arena::MimallocArena;
 pub type Arena = MimallocArena;
-/// `bumpalo::Bump` — kept for genuinely bump-only scratch that's never resized.
-pub type Bump = bumpalo::Bump;
 mod baby_vec;
 pub use baby_vec::BabyVec;
 /// Arena-backed `Vec` with `u32` length/capacity.
@@ -321,9 +245,6 @@ pub const USE_MIMALLOC: bool = cfg!(not(bun_asan));
 //   MimallocArena            → prefer `bun_alloc::Arena` (= bumpalo::Bump)
 //   NullableAllocator        → prefer `Option<&Arena>` or drop the param
 //   MaxHeapAllocator         → debug-only cap (single-allocation arena)
-//   BufferFallbackAllocator  → PORTING.md "StackFallbackAllocator → just use the heap"
-//   fallback                 → libc-malloc + zeroing wrapper
-//   maybe_owned              → prefer `std::borrow::Cow` / `bun_ptr::Owned`
 //   heap_breakdown           → macOS malloc_zone_* per-tag heaps (debug builds)
 //   basic                    → `impl GlobalAlloc for Mimalloc` above is the canonical impl
 //
@@ -332,12 +253,8 @@ pub const USE_MIMALLOC: bool = cfg!(not(bun_asan));
 //   `bun_runtime::allocators`; callers import from
 //   there directly.
 //
-#[path = "BufferFallbackAllocator.rs"]
-pub mod buffer_fallback_allocator;
-pub mod fallback;
 #[path = "MaxHeapAllocator.rs"]
 pub mod max_heap_allocator;
-pub mod maybe_owned;
 #[path = "NullableAllocator.rs"]
 pub mod nullable_allocator;
 pub mod stack_fallback;
@@ -501,17 +418,15 @@ pub mod default_alloc {
     }
 }
 
-pub use buffer_fallback_allocator::BufferFallbackAllocator;
 pub use max_heap_allocator::MaxHeapAllocator;
-pub use maybe_owned::MaybeOwned;
 pub use nullable_allocator::NullableAllocator;
-pub use stack_fallback::{ArenaPtr, StackFallback};
+pub use stack_fallback::ArenaPtr;
 
 #[path = "MimallocArena.rs"]
 pub mod mimalloc_arena;
 
 pub mod ast_alloc;
-pub use ast_alloc::{AstAlloc, AstVec};
+pub use ast_alloc::{AstAlloc, AstBox, AstVec, ast_box};
 mod hashbrown_bridge;
 /// Re-export so `bun_collections` can name the polyfill trait in
 /// `StringHashMap`'s `A` bound without taking its own direct dep on
@@ -560,10 +475,8 @@ pub fn trim<'a>(s: &'a [u8], chars: &[u8]) -> &'a [u8] {
 
 // ─── ascii-lowercase helpers ──────────────────────────────────────────────
 // Sunk from bun_core::strings so bun_alloc::BSSList::append_lower_case can call
-// it without a dep cycle (bun_core → bun_alloc, not the reverse). bun_core
-// re-exports both names so all existing callers of
-// `bun_core::strings::copy_lowercase` / `bun_core::immutable::copy_lowercase`
-// keep compiling unchanged.
+// them without a dep cycle (bun_core → bun_alloc, not the reverse).
+// `bun_core::strings` re-exports `copy_lowercase` and `ascii_lowercase_buf`.
 
 /// ASCII-lowercase
 /// `in_` into `out` (which must be at least `in_.len()`), returning the
@@ -591,19 +504,6 @@ pub fn copy_lowercase<'a>(in_: &[u8], out: &'a mut [u8]) -> &'a [u8] {
     }
 
     &out[0..in_.len()]
-}
-
-/// If
-/// `in_` contains no ASCII uppercase byte, returns `in_` unchanged and leaves
-/// `out` UNTOUCHED. Otherwise identical to [`copy_lowercase`]: writes the
-/// lowercased bytes into `out[..in_.len()]` and returns that prefix. Both
-/// borrows share `'a` so the return may alias either.
-pub fn copy_lowercase_if_needed<'a>(in_: &'a [u8], out: &'a mut [u8]) -> &'a [u8] {
-    if in_.iter().any(u8::is_ascii_uppercase) {
-        copy_lowercase(in_, out)
-    } else {
-        in_
-    }
 }
 
 /// Lowercase `input` into a fresh `[u8; N]` stack buffer, returning
@@ -766,6 +666,13 @@ impl AllocError {
         "OutOfMemory"
     }
 }
+
+impl core::fmt::Display for AllocError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str("OutOfMemory")
+    }
+}
+impl core::error::Error for AllocError {}
 
 /// Stamp out `impl From<AllocError> for $t { → $t::OutOfMemory }` for one or
 /// more local error enums. Expansion is byte-identical to the hand-written
@@ -970,21 +877,6 @@ pub fn page_size() -> usize {
             info.dw_page_size as usize
         }
     })
-}
-
-// ── wtf (FastMalloc thread-cache release) ─────────────────────────────────
-// MOVE_DOWN from bun_jsc so bun_threading (T2) can call it without a T6 dep.
-pub mod wtf {
-    unsafe extern "C" {
-        // Defined in WebKit's WTF (linked into the final binary).
-        // No preconditions; thread-safe.
-        safe fn WTF__releaseFastMallocFreeMemoryForThisThread();
-    }
-
-    #[inline]
-    pub fn release_fast_malloc_free_memory_for_this_thread() {
-        WTF__releaseFastMallocFreeMemoryForThisThread()
-    }
 }
 
 // ── String — TYPE_ONLY landing ─────────────────────────────────────────────
@@ -1700,8 +1592,8 @@ pub unsafe fn free_sensitive_cstr(p: *const core::ffi::c_char) {
     // size-agnostic).
     unsafe {
         let len = libc::strlen(p);
-        secure_zero(p as *mut u8, len);
-        crate::default_alloc::free(p as *mut core::ffi::c_void);
+        secure_zero(p.cast::<u8>().cast_mut(), len);
+        crate::default_alloc::free(p.cast::<core::ffi::c_void>().cast_mut());
     }
 }
 
@@ -2125,7 +2017,6 @@ impl core::hash::Hasher for IdentityU64Hasher {
 type IndexMapHasher = core::hash::BuildHasherDefault<IdentityU64Hasher>;
 
 pub type IndexMap = HashMap<HashKeyType, IndexType, IndexMapHasher>;
-pub type IndexMapManaged = HashMap<HashKeyType, IndexType, IndexMapHasher>;
 
 #[derive(Clone, Copy)]
 pub struct Result {
@@ -3398,12 +3289,10 @@ impl<
     ) -> core::result::Result<(), AllocError> {
         let _guard = self.map().mutex.lock();
 
-        let slice: &'static [u8];
-
         // Is this actually a slice into the map? Don't free it.
-        if self.is_key_statically_allocated(key) {
+        let slice: &'static [u8] = if self.is_key_statically_allocated(key) {
             // SAFETY: key points into self.key_list_buffer which lives for the singleton's life.
-            slice = unsafe { core::slice::from_raw_parts(key.as_ptr(), key.len()) };
+            unsafe { core::slice::from_raw_parts(key.as_ptr(), key.len()) }
         } else if self.key_list_buffer_used + key.len() < self.key_list_buffer.len() {
             let start = self.key_list_buffer_used;
             self.key_list_buffer_used += key.len();
@@ -3419,7 +3308,7 @@ impl<
             };
             dst.copy_from_slice(key);
             // SAFETY: points into self.key_list_buffer (singleton-static lifetime).
-            slice = unsafe { core::slice::from_raw_parts(dst.as_ptr(), dst.len()) };
+            unsafe { core::slice::from_raw_parts(dst.as_ptr(), dst.len()) }
         } else {
             // Propagate OOM. Route
             // through mimalloc directly (PORTING.md forbids `Box::leak`) so the
@@ -3433,8 +3322,8 @@ impl<
             unsafe { core::ptr::copy_nonoverlapping(key.as_ptr(), ptr, key.len()) };
             // SAFETY: allocation is owned by this singleton for process lifetime (or until
             // freed below on overwrite).
-            slice = unsafe { core::slice::from_raw_parts(ptr, key.len()) };
-        }
+            unsafe { core::slice::from_raw_parts(ptr, key.len()) }
+        };
 
         let slice = if REMOVE_TRAILING_SLASHES {
             trim_right(slice, b"/")
@@ -3576,4 +3465,3 @@ pub fn default_allocator() -> &'static dyn Allocator {
 // The real impl is `impl GlobalAlloc for Mimalloc` above.
 #[path = "basic.rs"]
 pub mod basic;
-pub mod memory;

@@ -4,12 +4,9 @@ sidebarTitle: Express with Bun
 mode: center
 ---
 
-Express and other major Node.js HTTP libraries should work out of the box. Bun implements the [`node:http`](https://nodejs.org/api/http.html) and [`node:https`](https://nodejs.org/api/https.html) modules that these libraries rely on.
+Express and other major Node.js HTTP libraries should work in Bun without changes. Bun implements the [`node:http`](https://nodejs.org/api/http.html) and [`node:https`](https://nodejs.org/api/https.html) modules that these libraries rely on.
 
-<Note>
-  Refer to the [Runtime > Node.js APIs](/runtime/nodejs-compat#node-http) page for more detailed compatibility
-  information.
-</Note>
+<Note>See [Node.js compatibility](/runtime/nodejs-compat#node-http) for details.</Note>
 
 ```sh terminal icon="terminal"
 bun add express

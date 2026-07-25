@@ -10,7 +10,7 @@ import { bunEnv, bunExe, isWindows } from "harness";
 // This broke all Python MCP servers using the model_context_protocol SDK
 // whenever they took more than a few seconds to initialize.
 
-test("subprocess stdout pipe stays writable after idle delay", async () => {
+test.concurrent("subprocess stdout pipe stays writable after idle delay", async () => {
   // Spawn a child that delays before writing to stdout.
   // The child uses poll() on stdout to detect if the read end was shutdown.
   await using proc = Bun.spawn({
@@ -42,7 +42,7 @@ test("subprocess stdout pipe stays writable after idle delay", async () => {
 // Skip on Windows: Python's asyncio connect_write_pipe uses
 // CreateIoCompletionPort internally, which doesn't work with
 // subprocess pipe handles on Windows (OSError: [WinError 6]).
-test.skipIf(isWindows)("subprocess stdout pipe works with Python asyncio connect_write_pipe", async () => {
+test.concurrent.skipIf(isWindows)("subprocess stdout pipe works with Python asyncio connect_write_pipe", async () => {
   // This is the exact scenario from the bug report: Python's asyncio
   // connect_write_pipe registers stdout with epoll for read-readiness
   // monitoring. If shutdown(SHUT_WR) was called on the parent's end,
@@ -90,7 +90,7 @@ asyncio.run(main())
   expect(exitCode).toBe(0);
 });
 
-test("subprocess stdin pipe stays readable for child after idle delay", async () => {
+test.concurrent("subprocess stdin pipe stays readable for child after idle delay", async () => {
   // Also verify stdin works correctly after idle delay
   await using proc = Bun.spawn({
     cmd: [

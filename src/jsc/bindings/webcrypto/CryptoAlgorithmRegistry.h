@@ -60,12 +60,6 @@ private:
     {
         registerAlgorithm(AlgorithmClass::s_name, AlgorithmClass::s_identifier, AlgorithmClass::create);
     }
-    template<typename AlgorithmClass> void registerAlgorithmWithAlternativeName()
-    {
-        registerAlgorithm(AlgorithmClass::s_name, AlgorithmClass::s_identifier, AlgorithmClass::create);
-        registerAlgorithm(AlgorithmClass::s_alternative_name, AlgorithmClass::s_identifier, AlgorithmClass::create);
-    }
-
     void registerAlgorithm(const String& name, CryptoAlgorithmIdentifier, CryptoAlgorithmConstructor);
 
     Lock m_lock;

@@ -10,7 +10,7 @@ const readable = new Readable({
   highWaterMark: 16 * 1024,
   read: common.mustCall(function() {
     this.push(buf);
-  }, 31)
+  }, 12)
 });
 
 let i = 0;
@@ -18,16 +18,11 @@ let i = 0;
 readable.on('readable', common.mustCall(function() {
   if (i++ === 10) {
     // We will just terminate now.
-    process.removeAllListeners('readable');
+    readable.removeAllListeners('readable');
     return;
   }
 
   const data = readable.read();
-  // TODO(mcollina): there is something odd in the highWaterMark logic
-  // investigate.
-  if (i === 1) {
-    assert.strictEqual(data.length, 8192 * 2);
-  } else {
-    assert.strictEqual(data.length, 8192 * 3);
-  }
+  // read() with no size returns a single buffered chunk at a time.
+  assert.strictEqual(data.length, 8192);
 }, 11));

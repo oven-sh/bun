@@ -112,10 +112,18 @@ pub struct BunSocketContextOptions {
     pub ca: *const *const c_char,
     pub ca_count: u32,
     pub secure_options: u32,
+    pub ssl_min_version: i32,
+    pub ssl_max_version: i32,
     pub reject_unauthorized: i32,
     pub request_cert: i32,
     pub client_renegotiation_limit: u32,
     pub client_renegotiation_window: u32,
+    pub session_timeout: i32,
+    pub crl: *const *const c_char,
+    pub crl_count: u32,
+    pub allow_partial_trust_chain: i32,
+    pub sigalgs: *const c_char,
+    pub ecdh_curve: *const c_char,
 }
 
 impl Default for BunSocketContextOptions {
@@ -135,10 +143,18 @@ impl Default for BunSocketContextOptions {
             ca: ptr::null(),
             ca_count: 0,
             secure_options: 0,
+            ssl_min_version: 0,
+            ssl_max_version: 0,
             reject_unauthorized: 0,
             request_cert: 0,
             client_renegotiation_limit: 3,
             client_renegotiation_window: 600,
+            session_timeout: 0,
+            crl: ptr::null(),
+            crl_count: 0,
+            allow_partial_trust_chain: 0,
+            sigalgs: ptr::null(),
+            ecdh_curve: ptr::null(),
         }
     }
 }
@@ -233,10 +249,17 @@ impl BunSocketContextOptions {
         feed_arr(&mut h, self.cert, self.cert_count);
         feed_arr(&mut h, self.ca, self.ca_count);
         h.update(bun_core::bytes_of(&self.secure_options));
+        h.update(bun_core::bytes_of(&self.ssl_min_version));
+        h.update(bun_core::bytes_of(&self.ssl_max_version));
         h.update(bun_core::bytes_of(&self.reject_unauthorized));
         h.update(bun_core::bytes_of(&self.request_cert));
         h.update(bun_core::bytes_of(&self.client_renegotiation_limit));
         h.update(bun_core::bytes_of(&self.client_renegotiation_window));
+        h.update(bun_core::bytes_of(&self.session_timeout));
+        feed_arr(&mut h, self.crl, self.crl_count);
+        h.update(bun_core::bytes_of(&self.allow_partial_trust_chain));
+        feed_z(&mut h, self.sigalgs);
+        feed_z(&mut h, self.ecdh_curve);
         let mut out = [0u8; 32];
         h.final_(&mut out);
         out
@@ -262,6 +285,7 @@ impl BunSocketContextOptions {
         sum(self.key, self.key_count, &mut n);
         sum(self.cert, self.cert_count, &mut n);
         sum(self.ca, self.ca_count, &mut n);
+        sum(self.crl, self.crl_count, &mut n);
         n
     }
 }
@@ -304,5 +328,26 @@ pub mod c {
         ) -> *mut SSL_CTX;
         // safe: no args; reads a process-global counter — no preconditions.
         pub safe fn us_ssl_ctx_live_count() -> c_long;
+        /// Appends the certificates in the NUL-terminated PEM `content` to
+        /// `ctx`'s trust store; returns 0 when nothing could be added.
+        pub fn us_ssl_ctx_add_ca_cert(
+            ctx: *mut SSL_CTX,
+            content: *const core::ffi::c_char,
+        ) -> core::ffi::c_int;
+        /// Parses a PKCS#12 blob into malloc'd PEM key/cert/ca strings (the
+        /// caller frees them with libc free); returns 0 with a static
+        /// `err_reason` tag on failure.
+        pub fn us_ssl_parse_pkcs12(
+            data: *const core::ffi::c_char,
+            len: usize,
+            pass: *const core::ffi::c_char,
+            out_key: *mut *mut core::ffi::c_char,
+            out_key_len: *mut usize,
+            out_cert: *mut *mut core::ffi::c_char,
+            out_cert_len: *mut usize,
+            out_ca: *mut *mut core::ffi::c_char,
+            out_ca_len: *mut usize,
+            err_reason: *mut *const core::ffi::c_char,
+        ) -> core::ffi::c_int;
     }
 }

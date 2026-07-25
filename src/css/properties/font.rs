@@ -3,17 +3,10 @@
 // The data types (FontWeight / AbsoluteFontWeight / FontSize /
 // AbsoluteFontSize / RelativeFontSize /
 // FontStretch / FontStretchKeyword / FontFamily / GenericFontFamily /
-// FontStyle / FontVariantCaps / LineHeight / Font / VerticalAlign /
-// VerticalAlignKeyword / FontProperty / FontHandler) are real and referenced
+// FontStyle / FontVariantCaps / LineHeight / Font /
+// FontProperty / FontHandler) are real and referenced
 // by `properties_generated.rs`, `declaration.rs`, and
 // `rules/{font_face,font_palette_values}.rs`.
-//
-// Most `parse` / `to_css` *bodies* remain ``-gated below
-// because they bottom out on still-unported leaf surface (DeriveParse /
-// DeriveToCss proc-macros, EnumProperty derive over strum, Vec::parse,
-// parse_utility::parse_string, generics::is_compatible blanket). Each gate
-// carries a `blocked_on:` note so the next round can lift bodies as their
-// deps land.
 
 #![warn(unused_must_use)]
 
@@ -826,27 +819,6 @@ impl Font {
     // deepClone → css::implementDeepClone (generics blanket impl)
 }
 
-/// A keyword for the [vertical align](https://drafts.csswg.org/css2/#propdef-vertical-align) property.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, css::DefineEnumProperty)]
-pub(crate) enum VerticalAlignKeyword {
-    /// Align the baseline of the box with the baseline of the parent box.
-    Baseline,
-    /// Lower the baseline of the box to the proper position for subscripts of the parent's box.
-    Sub,
-    /// Raise the baseline of the box to the proper position for superscripts of the parent's box.
-    Super,
-    /// Align the top of the aligned subtree with the top of the line box.
-    Top,
-    /// Align the top of the box with the top of the parent's content area.
-    TextTop,
-    /// Align the vertical midpoint of the box with the baseline of the parent box plus half the x-height of the parent.
-    Middle,
-    /// Align the bottom of the aligned subtree with the bottom of the line box.
-    Bottom,
-    /// Align the bottom of the box with the bottom of the parent's content area.
-    TextBottom,
-}
-
 bitflags::bitflags! {
     #[derive(Default, Clone, Copy, PartialEq, Eq)]
     pub(crate) struct FontProperty: u8 {
@@ -897,9 +869,6 @@ pub struct FontHandler {
 }
 
 impl FontHandler {
-    // blocked_on: generics::is_compatible/eql/deepClone blankets,
-    // PropertyHandlerContext::arena(), DeclarationList::push,
-    // Property::Font*/Unparsed payloads, FontFamilyHashMap.
     pub(crate) fn handle_property(
         &mut self,
         property: &crate::properties::Property,
@@ -988,8 +957,6 @@ impl FontHandler {
         self.flushed_properties = FontProperty::empty();
     }
 
-    // blocked_on: FontFamilyHashMap, PropertyHandlerContext::arena(),
-    // Vec::ordered_remove/insert/at, generics::is_compatible.
     fn flush(
         &mut self,
         decls: &mut crate::DeclarationList<'_>,
@@ -1135,7 +1102,6 @@ const DEFAULT_SYSTEM_FONTS: &[&[u8]] = &[
     b"Helvetica Neue",
 ];
 
-// blocked_on: Vec::insert arena threading + arena Bump param.
 #[inline]
 fn compatible_font_family(
     _family: Option<Vec<FontFamily>>,

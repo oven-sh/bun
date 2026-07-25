@@ -32,6 +32,14 @@ pub enum CloseCode {
     fast_shutdown = 2,
 }
 
+/// Layout-compatible with `struct us_iovec_t` in libusockets.h (== POSIX iovec).
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct UsIoVec {
+    pub base: *const core::ffi::c_void,
+    pub len: usize,
+}
+
 impl us_socket_t {
     pub fn open(&mut self, is_client: bool, ip_addr: Option<&[u8]>) {
         bun_core::scoped_log!(uws, "us_socket_open({:p}, is_client: {})", self, is_client);
@@ -90,24 +98,42 @@ impl us_socket_t {
         c::us_socket_is_closed(self) > 0
     }
 
+    /// Write that also reports a fatal (non-would-block) send error so the
+    /// node:net path can fail the pending write instead of waiting forever.
+    /// The second element is 0 on success, otherwise the positive errno of
+    /// the failed `send()` on POSIX, or 1 on Windows (WSA→errno mapping is
+    /// not wired up here yet).
+    pub fn write_check_error(&self, data: &[u8]) -> (i32, i32) {
+        let mut fatal: i32 = 0;
+        // SAFETY: `self` is a live `us_socket_t`; `data` is valid for its length
+        // (clamped to i32) and `fatal` outlives the call as the out-parameter.
+        let written = unsafe {
+            c::us_socket_write_check_error(
+                self,
+                data.as_ptr().cast(),
+                i32::try_from(data.len().min(MAX_I32)).expect("int cast"),
+                &raw mut fatal,
+            )
+        };
+        (written, fatal)
+    }
+
     pub fn is_shutdown(&self) -> bool {
         c::us_socket_is_shut_down(self) > 0
     }
 
-    pub fn is_tls(&self) -> bool {
-        c::us_socket_is_tls(self) > 0
+    /// `None` when `getsockname()` fails or the address family has no port.
+    pub fn local_port(&self) -> Option<u16> {
+        u16::try_from(c::us_socket_local_port(self)).ok()
     }
 
-    pub fn local_port(&self) -> i32 {
-        c::us_socket_local_port(self)
-    }
-
-    pub fn remote_port(&self) -> i32 {
-        c::us_socket_remote_port(self)
+    /// `None` when `getpeername()` fails or the address family has no port.
+    pub fn remote_port(&self) -> Option<u16> {
+        u16::try_from(c::us_socket_remote_port(self)).ok()
     }
 
     /// Returned slice is a view into `buf`.
-    pub fn local_address<'a>(&self, buf: &'a mut [u8]) -> Result<&'a [u8], bun_core::Error> {
+    pub fn local_address<'a>(&self, buf: &'a mut [u8]) -> Result<&'a [u8], crate::Error> {
         let mut length: i32 = i32::try_from(buf.len().min(MAX_I32)).expect("int cast");
         unsafe {
             // SAFETY: buf.as_mut_ptr() valid for `length` bytes; length is in/out
@@ -116,14 +142,16 @@ impl us_socket_t {
         if length < 0 {
             let errno = bun_errno::get_errno(length);
             debug_assert!(errno != bun_errno::E::SUCCESS);
-            return Err(bun_core::errno_to_zig_err(errno as i32));
+            return Err(crate::Error::Sys(
+                bun_errno::SystemErrno::init(errno as i64).unwrap_or(bun_errno::SystemErrno::EIO),
+            ));
         }
         debug_assert!(buf.len() >= length as usize);
         Ok(&buf[..usize::try_from(length).expect("int cast")])
     }
 
     /// Returned slice is a view into `buf`. On error, `errno` should be set.
-    pub fn remote_address<'a>(&self, buf: &'a mut [u8]) -> Result<&'a [u8], bun_core::Error> {
+    pub fn remote_address<'a>(&self, buf: &'a mut [u8]) -> Result<&'a [u8], crate::Error> {
         let mut length: i32 = i32::try_from(buf.len().min(MAX_I32)).expect("int cast");
         unsafe {
             // SAFETY: buf.as_mut_ptr() valid for `length` bytes; length is in/out
@@ -132,7 +160,9 @@ impl us_socket_t {
         if length < 0 {
             let errno = bun_errno::get_errno(length);
             debug_assert!(errno != bun_errno::E::SUCCESS);
-            return Err(bun_core::errno_to_zig_err(errno as i32));
+            return Err(crate::Error::Sys(
+                bun_errno::SystemErrno::init(errno as i64).unwrap_or(bun_errno::SystemErrno::EIO),
+            ));
         }
         debug_assert!(buf.len() >= length as usize);
         Ok(&buf[..usize::try_from(length).expect("int cast")])
@@ -154,17 +184,32 @@ impl us_socket_t {
         c::us_socket_keepalive(self, enabled as c_int, delay)
     }
 
-    /// `SSL*` if TLS, else null. Use `get_fd()` for the descriptor.
-    pub fn ssl(&mut self) -> Option<&mut bun_boringssl_sys::SSL> {
-        if !self.is_tls() {
-            return None;
-        }
-        unsafe {
-            // SAFETY: is_tls() guarantees the native handle is a non-null SSL*
-            c::us_socket_get_native_handle(self)
-                .cast::<bun_boringssl_sys::SSL>()
-                .as_mut()
-        }
+    /// Set the IP type-of-service / traffic class. Returns 0 on success or a
+    /// negative platform errno.
+    pub fn set_tos(&mut self, tos: i32) -> i32 {
+        c::us_socket_set_tos(self, tos)
+    }
+
+    /// Get the IP type-of-service / traffic class (>= 0) or a negative errno.
+    pub fn get_tos(&mut self) -> i32 {
+        c::us_socket_get_tos(self)
+    }
+
+    /// Resume a handshake suspended by an asynchronous SNICallback. `ctx`
+    /// carries an owned SSL_CTX reference that the call consumes (may be
+    /// null = fall through to the default context); `error` aborts instead.
+    pub fn sni_resolve(&mut self, ctx: *mut SslCtx, error: bool) {
+        c::us_socket_sni_resolve(self, ctx, error as c_int);
+    }
+
+    /// Install a socket-level SNI resolver on an already-adopted server-side
+    /// TLS socket (there is no listen socket to hang it off). Must run before
+    /// the handshake is driven.
+    pub fn on_server_name(
+        &mut self,
+        cb: extern "C" fn(*mut us_socket_t, *const core::ffi::c_char, *mut c_int) -> *mut SslCtx,
+    ) {
+        c::us_socket_on_server_name(self, cb);
     }
 
     /// Node-compat `_handle` shape: `SSL*` for TLS sockets, fd-as-pointer for
@@ -211,20 +256,6 @@ impl us_socket_t {
         c::us_socket_set_kind(self, k as u8);
     }
 
-    /// Move this socket to a new group/kind, optionally resizing its ext.
-    /// Returns the (possibly relocated) socket; `self` is invalid after.
-    // TODO: take `self` by value — it is consumed/invalidated; the returned ptr may be a different allocation
-    pub fn adopt(
-        &mut self,
-        g: &mut SocketGroup,
-        k: SocketKind,
-        old_ext: i32,
-        new_ext: i32,
-    ) -> Option<NonNull<us_socket_t>> {
-        // SAFETY: self and g are live; C may realloc and return a different us_socket_t*
-        unsafe { NonNull::new(c::us_socket_adopt(self, g, k as u8, old_ext, new_ext)) }
-    }
-
     /// `adopt` + attach a fresh `SSL*` from `ssl_ctx` (refcounted by the C
     /// side for the socket's lifetime). Does NOT kick the handshake — the
     /// caller must repoint `ext` first (so any dispatch lands in the new
@@ -237,6 +268,9 @@ impl us_socket_t {
         k: SocketKind,
         ssl_ctx: &mut SslCtx,
         sni: Option<&core::ffi::CStr>,
+        is_client: bool,
+        request_cert: bool,
+        reject_unauthorized: bool,
         old_ext: i32,
         new_ext: i32,
     ) -> Option<NonNull<us_socket_t>> {
@@ -249,6 +283,9 @@ impl us_socket_t {
                 k as u8,
                 ssl_ctx,
                 sni.map_or(ptr::null(), |s| s.as_ptr()),
+                is_client as i32,
+                request_cert as i32,
+                reject_unauthorized as i32,
                 old_ext,
                 new_ext,
             ))
@@ -259,6 +296,29 @@ impl us_socket_t {
     /// repointed before any handshake/close dispatch can fire.
     pub fn start_tls_handshake(&mut self) {
         c::us_socket_start_tls_handshake(self);
+    }
+
+    /// Feed bytes that were already read off the wire (e.g. a ClientHello the
+    /// plain-TCP layer consumed before the upgrade) through the same decrypt
+    /// path as bytes arriving from the kernel.
+    pub fn tls_feed(&mut self, data: &[u8]) {
+        if data.is_empty() {
+            return;
+        }
+        // The C side takes an `int` length: feed in i32-sized chunks instead of
+        // truncating the cast (a clamp would silently drop the tail and there is
+        // no return value to report a partial feed). Each chunk can re-enter the
+        // data dispatch, which may close the socket — stop feeding once it does.
+        for chunk in data.chunks(MAX_I32) {
+            if self.is_closed() {
+                return;
+            }
+            // SAFETY: `self` is a live TLS `us_socket_t`; `chunk` is valid for its
+            // length, which fits in an i32 by construction.
+            unsafe {
+                c::us_socket_tls_feed(self, chunk.as_ptr().cast(), chunk.len() as i32);
+            }
+        }
     }
 
     /// Tee inbound ciphertext to `us_dispatch_ssl_raw_tap` before `SSL_read`
@@ -330,6 +390,23 @@ impl us_socket_t {
             rc
         );
         rc
+    }
+
+    /// Vectored raw write — all chunks reach the fd in one writev (sequential
+    /// sends on platforms without it). Same closed/shutdown gating and
+    /// partial-write poll handling as `raw_write`. Plain-TCP only by contract:
+    /// raw writes bypass TLS framing.
+    pub fn raw_writev(&mut self, iov: &[UsIoVec]) -> i32 {
+        bun_core::scoped_log!(uws, "us_socket_raw_writev({:p}, {})", self, iov.len());
+        // SAFETY: iov entries reference memory owned by the caller for the
+        // duration of this call; the C side only reads them synchronously.
+        unsafe {
+            c::us_socket_raw_writev(
+                self,
+                iov.as_ptr(),
+                i32::try_from(iov.len()).expect("int cast"),
+            )
+        }
     }
 
     /// Bypass TLS — raw bytes to the fd even if `is_tls()`.
@@ -412,6 +489,21 @@ mod c {
         pub(super) safe fn us_socket_timeout(s: &mut us_socket_t, seconds: c_uint);
         pub(super) safe fn us_socket_long_timeout(s: &mut us_socket_t, minutes: c_uint);
         pub(super) safe fn us_socket_nodelay(s: &mut us_socket_t, enable: c_int);
+        pub(super) safe fn us_socket_set_tos(s: &mut us_socket_t, tos: c_int) -> c_int;
+        pub(super) safe fn us_socket_get_tos(s: &mut us_socket_t) -> c_int;
+        pub(super) safe fn us_socket_sni_resolve(
+            s: &mut us_socket_t,
+            ctx: *mut SslCtx,
+            error: c_int,
+        );
+        pub(super) safe fn us_socket_on_server_name(
+            s: &mut us_socket_t,
+            cb: extern "C" fn(
+                *mut us_socket_t,
+                *const core::ffi::c_char,
+                *mut c_int,
+            ) -> *mut SslCtx,
+        );
         pub(super) safe fn us_socket_keepalive(
             s: &mut us_socket_t,
             enable: c_int,
@@ -423,7 +515,6 @@ mod c {
         pub(super) safe fn us_socket_kind(s: &us_socket_t) -> u8;
         pub(super) safe fn us_socket_set_kind(s: &mut us_socket_t, kind: u8);
         pub(super) safe fn us_socket_set_ssl_raw_tap(s: &mut us_socket_t, enabled: c_int);
-        pub(super) safe fn us_socket_is_tls(s: &us_socket_t) -> i32;
 
         pub(super) fn us_socket_write(s: *mut us_socket_t, data: *const u8, length: i32) -> i32;
         #[cfg(not(windows))]
@@ -439,6 +530,11 @@ mod c {
             len: usize,
             payload: *const u8,
             len2: usize,
+        ) -> i32;
+        pub(super) fn us_socket_raw_writev(
+            s: *mut us_socket_t,
+            iov: *const super::UsIoVec,
+            count: i32,
         ) -> i32;
         pub(super) fn us_socket_raw_write(s: *mut us_socket_t, data: *const u8, length: i32)
         -> i32;
@@ -459,6 +555,12 @@ mod c {
         ) -> *mut us_socket_t;
         pub(super) safe fn us_socket_shutdown(s: &mut us_socket_t);
         pub(super) safe fn us_socket_is_closed(s: &us_socket_t) -> i32;
+        pub(super) fn us_socket_write_check_error(
+            s: &us_socket_t,
+            data: *const core::ffi::c_char,
+            length: i32,
+            fatal_write_error: *mut i32,
+        ) -> i32;
         pub(super) safe fn us_socket_shutdown_read(s: &mut us_socket_t);
         pub(super) safe fn us_socket_is_shut_down(s: &us_socket_t) -> i32;
         pub(super) safe fn us_socket_sendfile_needs_more(socket: &mut us_socket_t);
@@ -467,13 +569,6 @@ mod c {
         pub(super) safe fn us_socket_get_error(s: &us_socket_t) -> c_int;
         pub(super) safe fn us_socket_is_established(s: &us_socket_t) -> i32;
 
-        pub(super) fn us_socket_adopt(
-            s: *mut us_socket_t,
-            group: *mut SocketGroup,
-            kind: u8,
-            old_ext_size: i32,
-            ext_size: i32,
-        ) -> *mut us_socket_t;
         /// ssl_ctx is required (the whole point); sni may be null.
         pub(super) fn us_socket_adopt_tls(
             s: *mut us_socket_t,
@@ -481,8 +576,17 @@ mod c {
             kind: u8,
             ssl_ctx: *mut SslCtx,
             sni: *const c_char,
+            is_client: i32,
+            request_cert: i32,
+            reject_unauthorized: i32,
             old_ext_size: i32,
             ext_size: i32,
+        ) -> *mut us_socket_t;
+        /// Feed already-read bytes through the TLS decrypt path.
+        pub(super) fn us_socket_tls_feed(
+            s: *mut us_socket_t,
+            data: *const c_char,
+            length: i32,
         ) -> *mut us_socket_t;
         pub(super) safe fn us_socket_start_tls_handshake(s: &mut us_socket_t);
     }

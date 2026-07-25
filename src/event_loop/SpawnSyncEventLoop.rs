@@ -173,8 +173,7 @@ impl SpawnSyncEventLoop {
         // Set up the loop's internal data to point to this isolated event loop
         // SAFETY: `this` was fully written immediately above so `assume_init_mut` is sound.
         let this = unsafe { this.assume_init_mut() };
-        // sys-level API is `set_parent_raw(tag, ptr)`; the typed
-        // `set_parent_event_loop` lives in a higher tier. Tag 1 = JS, tag 2 = mini.
+        // sys-level API is `set_parent_raw(tag, ptr)`. Tag 1 = JS, tag 2 = mini.
         // `this.event_loop` is the live heap-owned `*mut jsc::EventLoop`
         // returned by `__bun_spawn_sync_create_event_loop` immediately above —
         // never null on a successful create.
@@ -196,17 +195,6 @@ impl SpawnSyncEventLoop {
     #[inline]
     pub fn event_loop_ptr(&self) -> *mut () {
         self.event_loop
-    }
-
-    /// Erased `*mut jsc::VirtualMachine` backref (set in `init`/`prepare`).
-    ///
-    /// Intentionally raw-ptr (no `&`-returning variant): the pointee type is
-    /// erased at this layer, and the VM is mutated re-entrantly during
-    /// `tick_with_timeout` (subprocess callbacks → JS) — a `&VirtualMachine`
-    /// here would alias under Stacked Borrows.
-    #[inline]
-    pub fn vm_ptr(&self) -> *mut () {
-        self.vm
     }
 
     /// Shared borrow of the isolated `uws::Loop`.
@@ -332,14 +320,6 @@ impl SpawnSyncEventLoop {
             }
         }
     }
-
-    /// Get an EventLoopHandle for this isolated loop
-    pub fn handle(&mut self) -> EventLoopHandle {
-        // `self.event_loop` is the live heap-owned `*mut jsc::EventLoop`
-        // created in `init` and freed only in `Drop` — never null while `self` exists.
-        debug_assert!(!self.event_loop.is_null(), "spawn-sync event loop");
-        EventLoopHandle::init(self.event_loop)
-    }
 }
 
 #[cfg(windows)]
@@ -383,6 +363,12 @@ impl SpawnSyncEventLoop {
             let uv_loop = self.uws_loop().uv_loop;
             self.uv_timer_mut().expect("just set").init(uv_loop);
         }
+
+        // Refresh the loop's cached clock: this loop only runs while a spawnSync call is in
+        // flight, so `loop->time` (which `uv_timer_start` computes the due time from) can be
+        // staler than the timeout, which would make the timer fire immediately.
+        // SAFETY: `uv_loop` is the live initialized loop owned by `self.uws_loop`.
+        unsafe { libuv::uv_update_time(self.uws_loop().uv_loop) };
 
         // NOTE: `timer.data` is assigned later in `tick_with_timeout`, immediately before the
         // uws tick, so the stored `*mut Self` derives directly from that frame's live `&mut self`
@@ -446,7 +432,7 @@ impl SpawnSyncEventLoop {
         }
         // SAFETY: `uws_loop` is non-null and exclusively owned by `self` (created in `init`,
         // freed in `Drop`); `&mut self` guarantees no other safe borrow of the loop is live.
-        unsafe { (*loop_.as_ptr()).tick_with_timeout(duration) };
+        unsafe { (*loop_.as_ptr()).tick_with_timeout(duration, uws::NOW_NS_UNKNOWN) };
 
         if let Some(ts) = timeout {
             #[cfg(windows)]
@@ -483,10 +469,5 @@ impl SpawnSyncEventLoop {
         }
 
         TickState::Completed
-    }
-
-    /// Check if the loop has any active handles
-    pub fn is_active(&self) -> bool {
-        self.uws_loop().is_active()
     }
 }

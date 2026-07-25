@@ -206,10 +206,6 @@ pub fn event_loop_handle_to_ctx(handle: EventLoopHandle) -> bun_io::EventLoopCtx
 }
 
 // ─── posix_spawn / FilePoll / uv-backed Process methods ──────────────────────
-// Un-gated: `super::bun_spawn::posix_spawn` (Actions/Attr/wait4) and the
-// `bun_io::FilePoll` method surface are stable. `EventLoopHandle` →
-// `EventLoopCtx` bridging is local (`event_loop_handle_to_ctx`) until a
-// JS-side ctx vtable lands.
 impl Process {
     #[cfg(windows)]
     /// SAFETY: `this` must be the live heap-allocated `Process` (the same
@@ -950,10 +946,9 @@ impl PollerWindows {
     }
 
     pub fn disable_keeping_event_loop_alive(&mut self, _event_loop: bun_io::EventLoopCtx) {
-        // This is disabled on Windows
-        // uv_unref() causes the onExitUV callback to *never* be called
-        // This breaks a lot of stuff...
-        // Once fixed, re-enable "should not hang after unref" test in spawn.test
+        // uv_unref() drops this handle from loop->active_handles. us_loop_pump
+        // forces a non-blocking uv_run iteration regardless, so the
+        // wait-thread's IOCP exit packet is still dequeued and on_exit_uv fires.
         match self {
             PollerWindows::Uv(p) => {
                 p.unref();
@@ -1570,6 +1565,12 @@ pub struct WindowsSpawnOptions {
     pub extra_fds: Box<[WindowsStdio]>,
     pub cwd: Box<[u8]>,
     pub detached: bool,
+    /// `uv_process_options_t.uid` + `UV_PROCESS_SETUID`; libuv returns
+    /// `UV_ENOTSUP` on Windows, exactly like Node.
+    pub uid: Option<u32>,
+    /// `uv_process_options_t.gid` + `UV_PROCESS_SETGID`; libuv returns
+    /// `UV_ENOTSUP` on Windows, exactly like Node.
+    pub gid: Option<u32>,
     pub windows: WindowsOptions,
     pub argv0: Option<*const c_char>,
     pub stream: bool,
@@ -1597,6 +1598,8 @@ impl Default for WindowsSpawnOptions {
             extra_fds: Box::new([]),
             cwd: Box::new([]),
             detached: false,
+            uid: None,
+            gid: None,
             windows: WindowsOptions::default(),
             argv0: None,
             stream: true,
@@ -1782,11 +1785,11 @@ mod spawn_process_body {
         options: &SpawnOptions,
         argv: Argv, // [*:null]?[*:0]const u8
         envp: Envp,
-    ) -> Result<bun_sys::Result<SpawnProcessResult>, bun_core::Error> {
+    ) -> Result<bun_sys::Result<SpawnProcessResult>, crate::Error> {
         #[cfg(unix)]
         {
             // SAFETY: forwarded from this function's safety contract.
-            unsafe { spawn_process_posix(options, argv, envp) }
+            unsafe { spawn_process_posix(options, argv, envp) }.map_err(Into::into)
         }
         #[cfg(not(unix))]
         {
@@ -1799,7 +1802,7 @@ mod spawn_process_body {
         options: &WindowsSpawnOptions,
         argv: *const *const c_char,
         envp: *const *const c_char,
-    ) -> Result<bun_sys::Result<WindowsSpawnResult>, bun_core::Error> {
+    ) -> Result<bun_sys::Result<WindowsSpawnResult>, crate::Error> {
         bun_analytics::features::spawn.fetch_add(1, Ordering::Relaxed);
 
         // SAFETY: all-zero is a valid uv_process_options_t
@@ -1868,6 +1871,17 @@ mod spawn_process_body {
             uv_process_options.flags |= uv::UV_PROCESS_DETACHED;
         }
 
+        // libuv's uv_spawn rejects UV_PROCESS_SETUID/SETGID with UV_ENOTSUP on
+        // Windows — the same error Node reports for uid/gid there.
+        if let Some(uid) = options.uid {
+            uv_process_options.uid = uid as uv::uv_uid_t;
+            uv_process_options.flags |= uv::UV_PROCESS_SETUID;
+        }
+        if let Some(gid) = options.gid {
+            uv_process_options.gid = gid as uv::uv_gid_t;
+            uv_process_options.flags |= uv::UV_PROCESS_SETGID;
+        }
+
         let mut stdio_containers: Vec<uv::uv_stdio_container_t> =
             Vec::with_capacity(3 + options.extra_fds.len());
         // SAFETY: all-zero is valid uv_stdio_container_t
@@ -1930,7 +1944,7 @@ mod spawn_process_body {
                             Ok(p) => p,
                             Err(e) => {
                                 cleanup_uv_files(&uv_files_to_close, loop_);
-                                return Err(e);
+                                return Err(crate::Error::Sys(e));
                             }
                         };
                         // SAFETY: `req` is a fresh `fs_t`, `loop_` is the live uv
@@ -2014,7 +2028,7 @@ mod spawn_process_body {
                         Ok(p) => p,
                         Err(e) => {
                             cleanup_uv_files(&uv_files_to_close, loop_);
-                            return Err(e);
+                            return Err(crate::Error::Sys(e));
                         }
                     };
                     // SAFETY: `req` is a fresh `fs_t`, `loop_` is the live uv loop,
@@ -2106,9 +2120,7 @@ mod spawn_process_body {
         // defer dup_fds cleanup — handled below at each exit
         let cleanup_dup = |failed: bool| {
             if dup_src.is_some() {
-                if cfg!(debug_assertions) {
-                    debug_assert!(dup_src.is_some() && dup_tgt.is_some());
-                }
+                debug_assert!(dup_src.is_some() && dup_tgt.is_some());
             }
             if failed && dup_fds[0] != -1 {
                 Fd::from_uv(dup_fds[0]).close();
@@ -2633,7 +2645,7 @@ mod spawn_process_body {
             options: &Options,
             argv: *const *const c_char,
             envp: *const *const c_char,
-        ) -> core::result::Result<Maybe<Result>, bun_core::Error> {
+        ) -> core::result::Result<Maybe<Result>, crate::Error> {
             let loop_ = options.windows.loop_.platform_event_loop();
             let mut spawned =
                 match spawn_process_windows(&options.to_spawn_options(false), argv, envp)? {
@@ -2677,7 +2689,7 @@ mod spawn_process_body {
             options: &Options,
             argv: *const *const c_char,
             envp: *const *const c_char,
-        ) -> core::result::Result<Maybe<Result>, bun_core::Error> {
+        ) -> core::result::Result<Maybe<Result>, crate::Error> {
             let loop_: EventLoopHandle = options.windows.loop_;
             let mut spawned =
                 match spawn_process_windows(&options.to_spawn_options(false), argv, envp)? {
@@ -2785,7 +2797,7 @@ mod spawn_process_body {
             options: &Options,
             argv: *const *const c_char,
             envp: *const *const c_char,
-        ) -> core::result::Result<Maybe<Result>, bun_core::Error> {
+        ) -> core::result::Result<Maybe<Result>, crate::Error> {
             #[cfg(windows)]
             {
                 if options.stdin != SyncStdio::Buffer
@@ -2801,7 +2813,7 @@ mod spawn_process_body {
             spawn_posix(options, argv, envp)
         }
 
-        pub fn spawn(options: &Options) -> core::result::Result<Maybe<Result>, bun_core::Error> {
+        pub fn spawn(options: &Options) -> core::result::Result<Maybe<Result>, crate::Error> {
             // SAFETY: `bun_sys::environ_ptr` returns the live, NULL-terminated C
             // `environ` array when no envp override is provided.
             let envp: *const *const c_char = options.envp.unwrap_or_else(bun_sys::environ_ptr);
@@ -2992,7 +3004,7 @@ mod spawn_process_body {
             options: &Options,
             argv: *const *const c_char,
             envp: *const *const c_char,
-        ) -> core::result::Result<Maybe<Result>, bun_core::Error> {
+        ) -> core::result::Result<Maybe<Result>, crate::Error> {
             // --no-orphans: put the script in its own process group so we can
             // `kill(-pgid, SIGKILL)` on every exit path. Pgroup membership is
             // inherited recursively and survives reparenting to launchd/init, so

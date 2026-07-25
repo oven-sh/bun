@@ -1,15 +1,8 @@
 use crate::css_parser as css;
 use bun_alloc::Arena as Bump;
 use bun_alloc::ArenaVecExt as _;
-pub use css::Error;
 use css::{CssResult as Result, PrintErr, Printer};
 
-// The `*Handler` types imported below are the real per-shorthand-group
-// implementations from their leaf modules (BackgroundHandler, BoxShadowHandler,
-// BorderRadiusHandler, …). A few leaf modules still keep individual method
-// bodies internally gated until their deps land — see the per-module status
-// notes at the top of properties/mod.rs; this file composes over whichever
-// surface is live.
 use crate::css_properties::align::AlignHandler;
 use crate::css_properties::background::BackgroundHandler;
 use crate::css_properties::border::BorderHandler;
@@ -26,7 +19,6 @@ use crate::css_properties::text::Direction;
 use crate::css_properties::transform::TransformHandler;
 use crate::css_properties::transition::TransitionHandler;
 use crate::css_properties::ui::ColorSchemeHandler;
-// const GridHandler = css.css_properties.g
 
 pub type DeclarationList<'bump> = bun_alloc::ArenaVec<'bump, css::Property>;
 
@@ -45,44 +37,7 @@ pub struct DeclarationBlock<'bump> {
     pub declarations: DeclarationList<'bump>,
 }
 
-pub struct DebugFmt<'a, 'bump>(&'a DeclarationBlock<'bump>);
-
-// blocked_on: Printer::new signature (the ctor shape is unsettled).
-
-impl<'a, 'bump> core::fmt::Display for DebugFmt<'a, 'bump> {
-    fn fmt(&self, writer: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        // Debug formatter: uses a throwaway local arena for the printer's
-        // scratch buffers.
-        let bump = Bump::new();
-        let mut arraylist: Vec<u8> = Vec::new();
-        let symbols = bun_ast::symbol::Map::init_list(Default::default());
-        let mut printer = css::Printer::new(
-            &bump,
-            bun_alloc::ArenaVec::<u8>::new_in(&bump),
-            &mut arraylist,
-            &css::PrinterOptions::default(),
-            None,
-            None,
-            &symbols,
-        );
-        let res = self.0.to_css(&mut printer);
-        // Release the printer's `&mut arraylist` borrow before reading it back.
-        drop(printer);
-        match res {
-            Ok(()) => {}
-            Err(e) => {
-                return writeln!(writer, "<error writing declaration block: {}>", e.name());
-            }
-        }
-        write!(writer, "{}", bstr::BStr::new(&arraylist))
-    }
-}
-
 impl<'bump> DeclarationBlock<'bump> {
-    pub fn debug(&self) -> DebugFmt<'_, 'bump> {
-        DebugFmt(self)
-    }
-
     pub fn is_empty(&self) -> bool {
         self.declarations.is_empty() && self.important_declarations.is_empty()
     }
@@ -183,37 +138,6 @@ impl<'bump> DeclarationBlock<'bump> {
 
         Ok(())
     }
-
-    /// Writes the declarations to a CSS block, including starting and ending braces.
-    pub fn to_css_block(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
-        dest.whitespace()?;
-        dest.write_char(b'{')?;
-        dest.indent();
-
-        let mut i: usize = 0;
-        let length = self.len();
-
-        for decl in self.declarations.iter() {
-            dest.newline()?;
-            decl.to_css(dest, false)?;
-            if i != length - 1 || !dest.minify {
-                dest.write_char(b';')?;
-            }
-            i += 1;
-        }
-        for decl in self.important_declarations.iter() {
-            dest.newline()?;
-            decl.to_css(dest, true)?;
-            if i != length - 1 || !dest.minify {
-                dest.write_char(b';')?;
-            }
-            i += 1;
-        }
-
-        dest.dedent();
-        dest.newline()?;
-        dest.write_char(b'}')
-    }
 }
 
 // ─── parse ────────────────────────────────────────────────────────────────
@@ -263,23 +187,9 @@ impl DeclarationBlock<'static> {
     }
 }
 
-// ─── hash / eql / deep_clone (gated) ──────────────────────────────────────
-// blocked_on: properties_generated — `Property` lacks `DeepClone`/`CssEql`
-// derives and `PropertyId` lacks a `hash(&mut Wyhash)` method. The bodies
-// below un-gate the moment the
-// per-variant trait impls land in `properties_generated.rs`.
+// ─── hash / eql / deep_clone ──────────────────────────────────────────────
 
 impl<'bump> DeclarationBlock<'bump> {
-    pub fn hash_property_ids(&self, hasher: &mut bun_wyhash::Wyhash) {
-        use std::hash::Hash;
-        for decl in self.declarations.iter() {
-            decl.property_id().hash(hasher);
-        }
-        for decl in self.important_declarations.iter() {
-            decl.property_id().hash(hasher);
-        }
-    }
-
     pub fn eql(&self, other: &Self) -> bool {
         if self.declarations.len() != other.declarations.len()
             || self.important_declarations.len() != other.important_declarations.len()
@@ -467,17 +377,16 @@ where
                     );
                 }
                 css::ComposesState::DisallowNotSingleClass(info) => {
-                    // blocked_on: ParserOptions::warn_fmt_with_notes
-                    // (`bun_ast::Log` notes-ownership API). Until that
-                    // lands the note ("The parent selector is not a single
-                    // class selector because of the syntax here:" at
-                    // `info.to_logger_location(options.filename)`) is dropped;
-                    // the primary warning still fires at the right location.
-                    let _ = info;
-                    options.warn_fmt(
+                    options.warn_fmt_with_notes(
                         format_args!("\"composes\" only works inside single class selectors"),
                         source_location.line,
                         source_location.column,
+                        Box::new([bun_ast::Data {
+                            text: b"The parent selector is not a single class selector because of the syntax here:"
+                                .as_slice()
+                                .into(),
+                            location: Some(info.to_logger_location(options.filename)),
+                        }]),
                     );
                 }
             }
@@ -493,10 +402,6 @@ where
 }
 
 /// Per-shorthand-group handler state used by `DeclarationBlock::minify`.
-///
-/// Each `*Handler` is the real implementation from its leaf module (see the
-/// per-module status notes in properties/mod.rs for any internally-gated
-/// bodies); `Direction` is the data-only `properties::text` enum.
 pub struct DeclarationHandler<'bump> {
     pub background: BackgroundHandler,
     pub border: BorderHandler,

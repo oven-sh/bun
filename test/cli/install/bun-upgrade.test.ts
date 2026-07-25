@@ -294,3 +294,75 @@ it("recreates the staging directory in the temp dir instead of reusing a pre-exi
   // The bogus archive must not be installed; the upgrade fails cleanly.
   expect(exitCode).toBe(1);
 });
+
+it("verifies the downloaded release archive against the digest reported by the release asset", async () => {
+  const archiveBody = "this is not a real zip archive";
+  const correctDigest = `sha256:${new Bun.CryptoHasher("sha256").update(archiveBody).digest("hex")}`;
+  const wrongDigest = `sha256:${Buffer.alloc(32, 0xab).toString("hex")}`;
+
+  const assetNames: string[] = [];
+  for (const os of ["windows", "linux", "darwin"]) {
+    for (const arch of ["x64", "aarch64"]) {
+      for (const abi of ["", "-musl"]) {
+        for (const cpu of ["", "-baseline"]) {
+          assetNames.push(`bun-${os}-${arch}${abi}${cpu}.zip`);
+        }
+      }
+    }
+  }
+
+  const runUpgrade = async (tagName: string, digest: string) => {
+    using server = Bun.serve({
+      tls: tls,
+      port: 0,
+      async fetch(req) {
+        const { pathname } = new URL(req.url);
+        if (pathname.startsWith("/releases/")) {
+          return new Response(archiveBody);
+        }
+        return new Response(
+          JSON.stringify({
+            "tag_name": tagName,
+            "assets": assetNames.map(name => ({
+              "url": "foo",
+              "content_type": "application/zip",
+              "name": name,
+              "digest": digest,
+              "browser_download_url": `https://${server.hostname}:${server.port}/releases/${tagName}/${name}`,
+            })),
+          }),
+        );
+      },
+    });
+
+    const cwd = tmpdirSync();
+    const execPath = join(cwd, basename(bunExe()));
+    await copyFile(bunExe(), execPath);
+
+    await using proc = Bun.spawn({
+      cmd: [execPath, "upgrade", "--stable"],
+      cwd,
+      stdout: null,
+      stdin: "pipe",
+      stderr: "pipe",
+      env: {
+        ...env,
+        NODE_TLS_REJECT_UNAUTHORIZED: "0",
+        GITHUB_API_DOMAIN: `${server.hostname}:${server.port}`,
+        ASAN_OPTIONS: [env.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":"),
+      },
+    });
+
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    return { stderr, exitCode };
+  };
+
+  const mismatched = await runUpgrade("bun-v9.9.7", wrongDigest);
+  expect(mismatched.stderr).toContain("did not match the checksum reported by the GitHub API for this release");
+  expect(mismatched.exitCode).toBe(1);
+
+  const matched = await runUpgrade("bun-v9.9.8", correctDigest);
+  expect(matched.stderr).toContain("9.9.8");
+  expect(matched.stderr).not.toContain("did not match the checksum reported by the GitHub API for this release");
+  expect(matched.exitCode).toBe(1);
+});

@@ -1,6 +1,6 @@
 declare module "bun:jsc" {
   /**
-   * This used to be called "describe" but it could be confused with the test runner.
+   * Renamed from "describe" to avoid confusion with the test runner.
    */
   function jscDescribe(value: any): string;
   function jscDescribeArray(args: any[]): string;
@@ -24,41 +24,40 @@ declare module "bun:jsc" {
   function drainMicrotasks(): void;
 
   /**
-   * Convert a JavaScript value to a binary representation that can be sent to another Bun instance.
+   * Serializes a JavaScript value into a binary representation that can be sent to another Bun instance.
    *
    * Internally, this uses the serialization format from WebKit/Safari.
    *
-   * @param value A JavaScript value, usually an object or array, to be converted.
-   * @returns A SharedArrayBuffer that can be sent to another Bun instance.
+   * @param value The value to serialize, usually an object or array
+   * @returns A SharedArrayBuffer that can be sent to another Bun instance
    */
   function serialize(value: any, options?: { binaryType?: "arraybuffer" }): SharedArrayBuffer;
 
   /**
-   * Convert a JavaScript value to a binary representation that can be sent to another Bun instance.
+   * Serializes a JavaScript value into a binary representation that can be sent to another Bun instance.
    *
    * Internally, this uses the serialization format from WebKit/Safari.
    *
-   * @param value A JavaScript value, usually an object or array, to be converted.
-   * @returns A Buffer that can be sent to another Bun instance.
+   * @param value The value to serialize, usually an object or array
+   * @returns A Buffer that can be sent to another Bun instance
    */
   function serialize(value: any, options?: { binaryType: "nodebuffer" }): Buffer;
 
   /**
-   * Convert an ArrayBuffer or Buffer to a JavaScript value compatible with the HTML Structured Clone Algorithm.
+   * Converts an ArrayBuffer or Buffer to a JavaScript value compatible with the HTML Structured Clone Algorithm.
    *
-   * @param value A serialized value, usually an ArrayBuffer or Buffer, to be converted.
+   * @param value The serialized value to convert, usually an ArrayBuffer or Buffer
    */
   function deserialize(value: ArrayBufferLike | NodeJS.TypedArray | Buffer): any;
 
   /**
-   * Set the timezone used by Intl, Date, etc.
+   * Sets the time zone used by `Intl`, `Date`, and other date and time APIs.
    *
-   * @param timeZone A string representing the time zone to use, such as "America/Los_Angeles"
+   * You can also set the time zone with the `TZ` environment variable, and read
+   * the current one with `Intl.DateTimeFormat().resolvedOptions().timeZone`.
    *
+   * @param timeZone The time zone to use, such as "America/Los_Angeles"
    * @returns The normalized time zone string
-   *
-   * You can also set process.env.TZ to the time zone you want to use.
-   * You can also view the current timezone with `Intl.DateTimeFormat().resolvedOptions().timeZone`
    */
   function setTimeZone(timeZone: string): string;
 
@@ -176,15 +175,13 @@ declare module "bun:jsc" {
   }
 
   /**
-   * Run JavaScriptCore's sampling profiler for a particular function
+   * Runs JavaScriptCore's sampling profiler on a function and returns the profile.
    *
-   * This is pretty low-level.
-   *
-   * Things to know:
-   * - LLint means "Low Level Interpreter", which is the interpreter that runs before any JIT compilation
-   * - Baseline is the first JIT compilation tier. It's the least optimized, but the fastest to compile
-   * - DFG means "Data Flow Graph", which is the second JIT compilation tier. It has some optimizations, but is slower to compile
-   * - FTL means "Faster Than Light", which is the third JIT compilation tier. It has the most optimizations, but is the slowest to compile
+   * Tier names in the output:
+   * - LLInt ("Low Level Interpreter") is the interpreter that runs before any JIT compilation
+   * - Baseline is the first JIT compilation tier: the least optimized, but the fastest to compile
+   * - DFG ("Data Flow Graph") is the second JIT compilation tier: some optimizations, but slower to compile
+   * - FTL ("Faster Than Light") is the third JIT compilation tier: the most optimizations, but the slowest to compile
    */
   function profile<T extends (...args: any[]) => any>(
     callback: T,
@@ -193,39 +190,39 @@ declare module "bun:jsc" {
   ): ReturnType<T> extends Promise<infer U> ? Promise<SamplingProfile> : SamplingProfile;
 
   /**
-   * This returns objects which native code has explicitly protected from being
-   * garbage collected
+   * Returns objects that native code has explicitly protected from being
+   * garbage collected.
    *
-   * By calling this function you create another reference to the object, which
-   * will further prevent it from being garbage collected
+   * Calling this function creates another reference to each object, which
+   * further prevents it from being garbage collected.
    *
-   * This function is mostly a debugging tool for bun itself.
+   * This is mostly a debugging tool for Bun itself.
    *
-   * Warning: not all objects returned are supposed to be observable from JavaScript
+   * Warning: not all of the returned objects are supposed to be observable from JavaScript.
    */
   function getProtectedObjects(): any[];
 
   /**
-   * Start a remote debugging socket server on the given port.
+   * Starts a remote debugging socket server on the given port.
    *
    * This exposes JavaScriptCore's built-in debugging server.
    *
-   * This is untested. May not be supported yet on macOS
+   * This is untested and may not be supported on macOS.
    */
   function startRemoteDebugger(host?: string, port?: number): void;
 
   /**
-   * Run JavaScriptCore's sampling profiler
+   * Runs JavaScriptCore's sampling profiler.
    */
   function startSamplingProfiler(optionalDirectory?: string): void;
 
   /**
-   * Non-recursively estimate the memory usage of an object, excluding the memory usage of
+   * Non-recursively estimates the memory usage of an object, excluding the memory usage of
    * properties or other objects it references. For more accurate per-object
    * memory usage, use {@link Bun.generateHeapSnapshot}.
    *
-   * This is a best-effort estimate. It may not be 100% accurate. When it's
-   * wrong, it may mean the memory is non-contiguous (such as a large array).
+   * The estimate is best-effort. When it's wrong, the memory may be
+   * non-contiguous (such as a large array).
    *
    * Passing a primitive type that isn't heap allocated returns 0.
    */

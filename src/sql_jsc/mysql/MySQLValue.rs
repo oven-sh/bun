@@ -4,7 +4,7 @@
 
 use crate::jsc::{
     IntegerRange, JSGlobalObject, JSGlobalObjectSqlExt as _, JSType, JSValue, JsError, JsResult,
-    MarkedArgumentBuffer, StringJsc as _, bun_string_jsc, js_error_to_mysql,
+    MarkedArgumentBuffer, StringJsc as _, js_error_to_mysql,
 };
 use bun_core::zig_string::Slice as ZigStringSlice;
 use bun_core::{OwnedString, String as BunString};
@@ -137,7 +137,6 @@ pub enum Value {
     BytesData(Data),
     Date(DateTime),
     Time(Time),
-    // Decimal(Decimal),
 }
 
 /// BLOB parameter bytes. `MySQLQuery.bind()` fills every `Value` before
@@ -183,55 +182,82 @@ impl Drop for Bytes {
 
 // No explicit Drop for Value: the enum payloads (ZigStringSlice, Bytes, Data) all impl Drop.
 
+/// The integer branches of `Value::from_js` validate against the full range of
+/// the target type, so the bounds are derived from `T` rather than repeated at
+/// every call site.
+fn int_range<T: bun_core::Integer>(field_name: &'static [u8]) -> IntegerRange {
+    IntegerRange {
+        min: T::MIN_I128,
+        max: T::MAX_I128,
+        field_name,
+        ..Default::default()
+    }
+}
+
+fn validate_int<T: bun_core::Integer>(
+    global_object: &JSGlobalObject,
+    value: JSValue,
+    field_name: &'static [u8],
+) -> Result<T, any_mysql_error::Error> {
+    global_object
+        .validate_integer_range::<T>(value, T::ZERO, int_range::<T>(field_name))
+        .map_err(js_error_to_mysql)
+}
+
+fn validate_bigint<T: bun_core::Integer>(
+    global_object: &JSGlobalObject,
+    value: JSValue,
+    field_name: &'static [u8],
+) -> Result<T, any_mysql_error::Error> {
+    global_object
+        .validate_big_int_range::<T>(value, T::ZERO, int_range::<T>(field_name))
+        .map_err(js_error_to_mysql)
+}
+
 impl Value {
     pub fn to_data(&self, field_type: FieldType) -> Result<Data, any_mysql_error::Error> {
         let mut buffer = [0u8; 15]; // Large enough for all fixed-size types
-        let pos: usize;
-        match self {
+
+        let pos: usize = match self {
             Value::Null => return Ok(Data::Empty),
             Value::Bool(b) => {
                 buffer[0] = if *b { 1 } else { 0 };
-                pos = 1;
+                1
             }
             Value::Short(s) => {
                 buffer[0..2].copy_from_slice(&s.to_le_bytes());
-                pos = 2;
+                2
             }
             Value::Ushort(s) => {
                 buffer[0..2].copy_from_slice(&s.to_le_bytes());
-                pos = 2;
+                2
             }
             Value::Int(i) => {
                 buffer[0..4].copy_from_slice(&i.to_le_bytes());
-                pos = 4;
+                4
             }
             Value::Uint(i) => {
                 buffer[0..4].copy_from_slice(&i.to_le_bytes());
-                pos = 4;
+                4
             }
             Value::Long(l) => {
                 buffer[0..8].copy_from_slice(&l.to_le_bytes());
-                pos = 8;
+                8
             }
             Value::Ulong(l) => {
                 buffer[0..8].copy_from_slice(&l.to_le_bytes());
-                pos = 8;
+                8
             }
             Value::Float(f) => {
                 buffer[0..4].copy_from_slice(&f.to_bits().to_le_bytes());
-                pos = 4;
+                4
             }
             Value::Double(d) => {
                 buffer[0..8].copy_from_slice(&d.to_bits().to_le_bytes());
-                pos = 8;
+                8
             }
-            Value::Date(d) => {
-                pos = d.to_binary(field_type, &mut buffer) as usize;
-            }
-            Value::Time(d) => {
-                pos = d.to_binary(field_type, &mut buffer) as usize;
-            }
-            // Value::Decimal(dec) => return dec.to_binary(field_type),
+            Value::Date(d) => d.to_binary(field_type, &mut buffer) as usize,
+            Value::Time(d) => d.to_binary(field_type, &mut buffer) as usize,
             Value::StringData(data) | Value::BytesData(data) => {
                 // `bun_sql::shared::Data` is not
                 // `Clone`, so return a `Temporary` aliasing the
@@ -260,7 +286,7 @@ impl Value {
                     Data::Temporary(bun_ptr::RawSlice::new(s))
                 });
             }
-        }
+        };
 
         Data::create(&buffer[0..pos]).map_err(|_| any_mysql_error::Error::OutOfMemory)
     }
@@ -279,99 +305,24 @@ impl Value {
             FieldType::MYSQL_TYPE_TINY => Ok(Value::Bool(value.to_boolean())),
             FieldType::MYSQL_TYPE_SHORT => {
                 if unsigned {
-                    return Ok(Value::Ushort(
-                        global_object
-                            .validate_integer_range::<u16>(
-                                value,
-                                0,
-                                IntegerRange {
-                                    min: u16::MIN as i128,
-                                    max: u16::MAX as i128,
-                                    field_name: b"u16",
-                                    ..Default::default()
-                                },
-                            )
-                            .map_err(js_error_to_mysql)?,
-                    ));
+                    Ok(Value::Ushort(validate_int(global_object, value, b"u16")?))
+                } else {
+                    Ok(Value::Short(validate_int(global_object, value, b"i16")?))
                 }
-                Ok(Value::Short(
-                    global_object
-                        .validate_integer_range::<i16>(
-                            value,
-                            0,
-                            IntegerRange {
-                                min: i16::MIN as i128,
-                                max: i16::MAX as i128,
-                                field_name: b"i16",
-                                ..Default::default()
-                            },
-                        )
-                        .map_err(js_error_to_mysql)?,
-                ))
             }
             FieldType::MYSQL_TYPE_LONG => {
                 if unsigned {
-                    return Ok(Value::Uint(
-                        global_object
-                            .validate_integer_range::<u32>(
-                                value,
-                                0,
-                                IntegerRange {
-                                    min: u32::MIN as i128,
-                                    max: u32::MAX as i128,
-                                    field_name: b"u32",
-                                    ..Default::default()
-                                },
-                            )
-                            .map_err(js_error_to_mysql)?,
-                    ));
+                    Ok(Value::Uint(validate_int(global_object, value, b"u32")?))
+                } else {
+                    Ok(Value::Int(validate_int(global_object, value, b"i32")?))
                 }
-                Ok(Value::Int(
-                    global_object
-                        .validate_integer_range::<i32>(
-                            value,
-                            0,
-                            IntegerRange {
-                                min: i32::MIN as i128,
-                                max: i32::MAX as i128,
-                                field_name: b"i32",
-                                ..Default::default()
-                            },
-                        )
-                        .map_err(js_error_to_mysql)?,
-                ))
             }
             FieldType::MYSQL_TYPE_LONGLONG => {
                 if unsigned {
-                    return Ok(Value::Ulong(
-                        global_object
-                            .validate_big_int_range::<u64>(
-                                value,
-                                0,
-                                IntegerRange {
-                                    min: 0,
-                                    max: u64::MAX as i128,
-                                    field_name: b"u64",
-                                    ..Default::default()
-                                },
-                            )
-                            .map_err(js_error_to_mysql)?,
-                    ));
+                    Ok(Value::Ulong(validate_bigint(global_object, value, b"u64")?))
+                } else {
+                    Ok(Value::Long(validate_bigint(global_object, value, b"i64")?))
                 }
-                Ok(Value::Long(
-                    global_object
-                        .validate_big_int_range::<i64>(
-                            value,
-                            0,
-                            IntegerRange {
-                                min: i64::MIN as i128,
-                                max: i64::MAX as i128,
-                                field_name: b"i64",
-                                ..Default::default()
-                            },
-                        )
-                        .map_err(js_error_to_mysql)?,
-                ))
             }
 
             FieldType::MYSQL_TYPE_FLOAT => Ok(Value::Float(
@@ -493,7 +444,7 @@ pub struct DateTime {
 }
 
 impl DateTime {
-    pub fn from_data(data: &Data) -> Result<DateTime, bun_core::Error> {
+    pub fn from_data(data: &Data) -> Result<DateTime, crate::Error> {
         Ok(Self::from_binary(data.slice()))
     }
 
@@ -792,16 +743,7 @@ impl Time {
         }
     }
 
-    pub fn to_unix_timestamp(&self) -> i64 {
-        let mut total_ms: i64 = 0;
-        total_ms = total_ms.saturating_add((self.days as i64).saturating_mul(86400000));
-        total_ms = total_ms.saturating_add((self.hours as i64).saturating_mul(3600000));
-        total_ms = total_ms.saturating_add((self.minutes as i64).saturating_mul(60000));
-        total_ms = total_ms.saturating_add((self.seconds as i64).saturating_mul(1000));
-        total_ms
-    }
-
-    pub fn from_data(data: &Data) -> Result<Time, bun_core::Error> {
+    pub fn from_data(data: &Data) -> Result<Time, crate::Error> {
         Ok(Self::from_binary(data.slice()))
     }
 
@@ -826,26 +768,6 @@ impl Time {
 
         time
     }
-
-    pub fn to_js_timestamp(&self) -> f64 {
-        let mut total_ms: i64 = 0;
-        total_ms = total_ms.saturating_add((self.days as i64) * 86400000);
-        total_ms = total_ms.saturating_add((self.hours as i64) * 3600000);
-        total_ms = total_ms.saturating_add((self.minutes as i64) * 60000);
-        total_ms = total_ms.saturating_add((self.seconds as i64) * 1000);
-        total_ms = total_ms.saturating_add((self.microseconds / 1000) as i64);
-
-        if self.negative {
-            total_ms = -total_ms;
-        }
-
-        total_ms as f64
-    }
-
-    pub fn to_js(self, _global_object: &JSGlobalObject) -> JSValue {
-        JSValue::js_double_number(self.to_js_timestamp())
-    }
-
     pub fn to_binary(&self, field_type: FieldType, buffer: &mut [u8]) -> u8 {
         match field_type {
             FieldType::MYSQL_TYPE_TIME | FieldType::MYSQL_TYPE_TIME2 => {
@@ -866,47 +788,6 @@ impl Time {
             _ => unreachable!(),
         }
     }
-}
-
-pub struct Decimal {
-    // MySQL DECIMAL is stored as a sequence of base-10 digits
-    pub digits: Box<[u8]>,
-    pub scale: u8,
-    pub negative: bool,
-}
-
-impl Decimal {
-    pub fn to_js(&self, global_object: &JSGlobalObject) -> JSValue {
-        let mut str: Vec<u8> = Vec::new();
-
-        if self.negative {
-            str.push(b'-');
-        }
-
-        let decimal_pos = self.digits.len() - self.scale as usize;
-        for (i, digit) in self.digits.iter().enumerate() {
-            if i == decimal_pos && self.scale > 0 {
-                str.push(b'.');
-            }
-            str.push(digit + b'0');
-        }
-
-        bun_string_jsc::create_utf8_for_js(global_object, &str).unwrap_or(JSValue::ZERO)
-    }
-
-    pub fn to_binary(&self, _field_type: FieldType) -> Result<Data, bun_core::Error> {
-        // Intentional runtime "feature not yet implemented". The `Decimal` arm
-        // of `Value` is commented out, so this is unreachable today.
-        bun_core::todo_panic!("Decimal.toBinary not implemented")
-    }
-
-    // pub fn from_data(data: &Data) -> Result<Decimal, bun_core::Error> {
-    //     Ok(Self::from_binary(data.slice()))
-    // }
-
-    // pub fn from_binary(_: &[u8]) -> Decimal {
-    //     bun_core::todo_panic!("Decimal.fromBinary not implemented")
-    // }
 }
 
 // Helper functions for date calculations

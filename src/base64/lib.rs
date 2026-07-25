@@ -106,7 +106,6 @@ pub enum DecodeAllocError {
     #[error("DecodingFailed")]
     DecodingFailed,
 }
-bun_core::named_error_set!(DecodeAllocError);
 
 pub fn decode_alloc(input: &[u8]) -> Result<Vec<u8>, DecodeAllocError> {
     let mut dest = vec![0u8; decode_len(input)];
@@ -151,16 +150,6 @@ pub fn simdutf_encode_url_safe_alloc(source: &[u8]) -> Vec<u8> {
     let encoded_len = encode_url_safe(&mut destination, source);
     destination.truncate(encoded_len);
     destination
-}
-
-pub fn decode_len_upper_bound(len: usize) -> usize {
-    match zig_base64::STANDARD.decoder.calc_size_upper_bound(len) {
-        Ok(v) => v,
-        Err(_) => {
-            // fallback
-            len / 4 * 3
-        }
-    }
 }
 
 pub fn decode_len(source: &[u8]) -> usize {
@@ -231,13 +220,6 @@ pub mod vlq {
         #[inline]
         pub fn slice(&self) -> &[u8] {
             &self.bytes[0..self.len as usize]
-        }
-
-        // `std::io::Write` is used as the byte-sink trait so base64 stays a
-        // tier-0 leaf with no bun_io dep.
-        pub fn write_to(self, writer: &mut impl std::io::Write) -> Result<(), bun_core::Error> {
-            writer.write_all(&self.bytes[0..self.len as usize])?;
-            Ok(())
         }
 
         pub const ZERO: VLQ = VLQ_LOOKUP_TABLE[0];
@@ -438,7 +420,6 @@ pub mod zig_base64 {
         #[error("NoSpaceLeft")]
         NoSpaceLeft,
     }
-    bun_core::named_error_set!(Error);
 
     pub(crate) type DecoderWithIgnoreProto = fn(ignore: &[u8]) -> Base64DecoderWithIgnore;
 
@@ -510,7 +491,6 @@ pub mod zig_base64 {
         }
 
         /// Compute the encoded length
-        /// Note: this is wrong for base64url encoding. Do not use it for that.
         pub fn calc_size(&self, source_len: usize) -> usize {
             if self.pad_char.is_some() {
                 source_len.div_ceil(3) * 4

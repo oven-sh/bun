@@ -120,14 +120,17 @@ template<> std::optional<BufferEncodingType> parseEnumerationFromView<BufferEnco
             return BufferEncodingType::utf8;
         if (WTF::equalIgnoringASCIICase(encoding, "utf-8"_s))
             return BufferEncodingType::utf8;
+        // Node's normalizeEncoding() maps every UTF-16LE alias (including
+        // ucs2/ucs-2) to the canonical name "utf16le", and so does the Rust
+        // parser (ENCODING_MAP in src/runtime/node/types.rs). Match both.
         if (WTF::equalIgnoringASCIICase(encoding, "ucs2"_s))
-            return BufferEncodingType::ucs2;
+            return BufferEncodingType::utf16le;
         if (WTF::equalIgnoringASCIICase(encoding, "ucs-2"_s))
-            return BufferEncodingType::ucs2;
+            return BufferEncodingType::utf16le;
         if (WTF::equalIgnoringASCIICase(encoding, "utf16le"_s))
-            return BufferEncodingType::ucs2;
+            return BufferEncodingType::utf16le;
         if (WTF::equalIgnoringASCIICase(encoding, "utf-16le"_s))
-            return BufferEncodingType::ucs2;
+            return BufferEncodingType::utf16le;
         break;
     }
 

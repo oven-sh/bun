@@ -1,203 +1,14 @@
 use core::ffi::{c_uint, c_ushort, c_void};
-use core::marker::{PhantomData, PhantomPinned};
+use core::marker::PhantomData;
 
 use crate as uws;
 use crate::app::uws_app_t;
 use crate::thunk;
-use crate::{Opcode, Request, SendStatus, Socket, WebSocketUpgradeContext, uws_res};
+use crate::{Opcode, Request, SendStatus, WebSocketUpgradeContext, uws_res};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // WebSocket — opaque handle, monomorphized on the SSL flag
 // ─────────────────────────────────────────────────────────────────────────────
-
-/// Opaque uWS WebSocket handle, parameterized by the SSL flag passed to the C
-/// shims.
-#[repr(C)]
-pub struct NewWebSocket<const SSL_FLAG: i32> {
-    _p: core::cell::UnsafeCell<[u8; 0]>,
-    _m: PhantomData<(*mut u8, PhantomPinned)>,
-}
-
-impl<const SSL_FLAG: i32> NewWebSocket<SSL_FLAG> {
-    /// Reborrow as the un-parameterized handle type. Both `NewWebSocket<_>` and
-    /// `RawWebSocket` are `#[repr(C)]` opaque ZSTs over `UnsafeCell<[u8; 0]>`,
-    /// so this is a same-address, same-layout reborrow with no `noalias`
-    /// implications.
-    #[inline]
-    pub fn raw(&mut self) -> &mut RawWebSocket {
-        // SAFETY: layout-identical opaque ZSTs (see doc comment); the reborrow
-        // covers zero bytes and `UnsafeCell` suppresses `noalias`.
-        unsafe { &mut *std::ptr::from_mut::<Self>(self).cast::<RawWebSocket>() }
-    }
-
-    /// Cast the C-side user data pointer to `&mut T`.
-    ///
-    /// # Safety
-    /// Caller must guarantee the user data was set to a `*mut T` for this socket.
-    #[inline]
-    pub unsafe fn as_<T>(&mut self) -> Option<&mut T> {
-        // SAFETY: casts the opaque user-data pointer to `*mut T`; caller
-        // upholds the type invariant.
-        unsafe {
-            let p = c::uws_ws_get_user_data(SSL_FLAG, self.raw());
-            p.cast::<T>().as_mut()
-        }
-    }
-
-    pub fn close(&mut self) {
-        c::uws_ws_close(SSL_FLAG, self.raw())
-    }
-
-    pub fn send(&mut self, message: &[u8], opcode: Opcode) -> SendStatus {
-        // SAFETY: self.raw() is a live uWS-owned socket; ptr+len from &[u8].
-        unsafe {
-            c::uws_ws_send(
-                SSL_FLAG,
-                self.raw(),
-                message.as_ptr(),
-                message.len(),
-                opcode,
-            )
-        }
-    }
-
-    pub fn send_with_options(
-        &mut self,
-        message: &[u8],
-        opcode: Opcode,
-        compress: bool,
-        fin: bool,
-    ) -> SendStatus {
-        // SAFETY: self.raw() is a live uWS-owned socket; ptr+len from &[u8].
-        unsafe {
-            c::uws_ws_send_with_options(
-                SSL_FLAG,
-                self.raw(),
-                message.as_ptr(),
-                message.len(),
-                opcode,
-                compress,
-                fin,
-            )
-        }
-    }
-
-    pub fn memory_cost(&mut self) -> usize {
-        self.raw().memory_cost(SSL_FLAG)
-    }
-
-    pub fn send_last_fragment(&mut self, message: &[u8], compress: bool) -> SendStatus {
-        // SAFETY: self.raw() is a live uWS-owned socket; ptr+len from &[u8].
-        unsafe {
-            c::uws_ws_send_last_fragment(
-                SSL_FLAG,
-                self.raw(),
-                message.as_ptr(),
-                message.len(),
-                compress,
-            )
-        }
-    }
-
-    pub fn end(&mut self, code: i32, message: &[u8]) {
-        // SAFETY: self.raw() is a live uWS-owned socket; ptr+len from &[u8].
-        unsafe { c::uws_ws_end(SSL_FLAG, self.raw(), code, message.as_ptr(), message.len()) }
-    }
-
-    /// Run `callback(ctx)` while the socket is corked.
-    ///
-    /// Rust cannot const-generic over a fn value, so we tunnel
-    /// `(ctx, callback)` through the user-data pointer.
-    pub fn cork<C>(&mut self, ctx: &mut C, callback: fn(&mut C)) {
-        // Safe fn item: nested local thunk, only coerced to the C-ABI
-        // fn-pointer type passed to C; body wraps its raw-ptr ops explicitly.
-        extern "C" fn wrap<C>(user_data: *mut c_void) {
-            // SAFETY: user_data is &mut (ptr, fn) on the caller's stack frame,
-            // which outlives the synchronous uws_ws_cork call.
-            let data = unsafe { bun_core::callback_ctx::<(*mut C, fn(&mut C))>(user_data) };
-            // SAFETY: `data.0` was set from `&mut C` on the enclosing `cork`
-            // stack frame, which outlives this synchronous callback.
-            (data.1)(unsafe { &mut *data.0 });
-        }
-        let mut data: (*mut C, fn(&mut C)) = (std::ptr::from_mut::<C>(ctx), callback);
-        // `data` lives on this stack frame for the duration of the synchronous
-        // uws_ws_cork call; the shim only forwards the pointer back to `wrap`.
-        c::uws_ws_cork(
-            SSL_FLAG,
-            self.raw(),
-            Some(wrap::<C>),
-            (&raw mut data).cast::<c_void>(),
-        )
-    }
-
-    pub fn subscribe(&mut self, topic: &[u8]) -> bool {
-        // SAFETY: self.raw() is a live uWS-owned socket; ptr+len from &[u8].
-        unsafe { c::uws_ws_subscribe(SSL_FLAG, self.raw(), topic.as_ptr(), topic.len()) }
-    }
-
-    pub fn unsubscribe(&mut self, topic: &[u8]) -> bool {
-        // SAFETY: self.raw() is a live uWS-owned socket; ptr+len from &[u8].
-        unsafe { c::uws_ws_unsubscribe(SSL_FLAG, self.raw(), topic.as_ptr(), topic.len()) }
-    }
-
-    pub fn is_subscribed(&mut self, topic: &[u8]) -> bool {
-        // SAFETY: self.raw() is a live uWS-owned socket; ptr+len from &[u8].
-        unsafe { c::uws_ws_is_subscribed(SSL_FLAG, self.raw(), topic.as_ptr(), topic.len()) }
-    }
-
-    // getTopicsAsJSArray: use AnyWebSocket::get_topics_as_js_array (src/runtime/socket/uws_jsc.rs)
-
-    pub fn publish(&mut self, topic: &[u8], message: &[u8]) -> bool {
-        // SAFETY: self.raw() is a live uWS-owned socket; ptr+len from &[u8].
-        unsafe {
-            c::uws_ws_publish(
-                SSL_FLAG,
-                self.raw(),
-                topic.as_ptr(),
-                topic.len(),
-                message.as_ptr(),
-                message.len(),
-            )
-        }
-    }
-
-    pub fn publish_with_options(
-        &mut self,
-        topic: &[u8],
-        message: &[u8],
-        opcode: Opcode,
-        compress: bool,
-    ) -> bool {
-        // SAFETY: self.raw() is a live uWS-owned socket; ptr+len from &[u8].
-        unsafe {
-            c::uws_ws_publish_with_options(
-                SSL_FLAG,
-                self.raw(),
-                topic.as_ptr(),
-                topic.len(),
-                message.as_ptr(),
-                message.len(),
-                opcode,
-                compress,
-            )
-        }
-    }
-
-    pub fn get_buffered_amount(&mut self) -> usize {
-        // The C shim returns `size_t` (libuwsockets.cpp `uws_ws_get_buffered_amount`);
-        // pass it through untruncated, matching `AnyWebSocket::get_buffered_amount`.
-        c::uws_ws_get_buffered_amount(SSL_FLAG, self.raw())
-    }
-
-    pub fn get_remote_address<'a>(&mut self, buf: &'a mut [u8]) -> &'a mut [u8] {
-        let mut ptr: *mut u8 = core::ptr::null_mut();
-        let len = c::uws_ws_get_remote_address(SSL_FLAG, self.raw(), &mut ptr);
-        // SAFETY: uWS returns a pointer+len into its internal buffer.
-        let src = unsafe { bun_core::ffi::slice(ptr, len) };
-        buf[..len].copy_from_slice(src);
-        &mut buf[..len]
-    }
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // RawWebSocket
@@ -208,15 +19,6 @@ bun_opaque::opaque_ffi! { pub struct RawWebSocket; }
 impl RawWebSocket {
     pub fn memory_cost(&mut self, ssl_flag: i32) -> usize {
         c::uws_ws_memory_cost(ssl_flag, self)
-    }
-
-    /// They're the same memory address.
-    ///
-    /// Equivalent to:
-    ///
-    ///   (struct us_socket_t *)socket
-    pub fn as_socket(&mut self) -> *mut Socket {
-        std::ptr::from_mut::<RawWebSocket>(self).cast::<Socket>()
     }
 }
 
@@ -300,12 +102,6 @@ impl AnyWebSocket {
         }
     }
 
-    pub fn send_last_fragment(self, message: &[u8], compress: bool) -> SendStatus {
-        let (ssl, ws) = self.split();
-        // SAFETY: `ws` is a live uWS-owned socket (S012 opaque); ptr+len from &[u8].
-        unsafe { c::uws_ws_send_last_fragment(ssl, ws, message.as_ptr(), message.len(), compress) }
-    }
-
     pub fn end(self, code: i32, message: &[u8]) {
         let (ssl, ws) = self.split();
         // SAFETY: `ws` is a live uWS-owned socket (S012 opaque); ptr+len from &[u8].
@@ -357,7 +153,13 @@ impl AnyWebSocket {
     //     return uws_ws_iterate_topics(ssl_flag, self.raw(), callback, user_data);
     // }
 
-    pub fn publish(self, topic: &[u8], message: &[u8], opcode: Opcode, compress: bool) -> bool {
+    pub fn publish(
+        self,
+        topic: &[u8],
+        message: &[u8],
+        opcode: Opcode,
+        compress: bool,
+    ) -> SendStatus {
         let (ssl, ws) = self.split();
         // SAFETY: `ws` is a live uWS-owned socket (S012 opaque); ptr+len from &[u8].
         unsafe {
@@ -381,7 +183,7 @@ impl AnyWebSocket {
         message: &[u8],
         opcode: Opcode,
         compress: bool,
-    ) -> bool {
+    ) -> SendStatus {
         // S012: `NewApp<SSL>` is a ZST opaque — route the `*mut → &mut` deref
         // through `bun_opaque::opaque_deref_mut` (caller still vouches that
         // `app` is the matching `uws_app_t*`; the `ssl` flag selects the
@@ -728,13 +530,6 @@ pub mod c {
         );
         pub(crate) safe fn uws_ws_get_user_data(ssl: i32, ws: &mut RawWebSocket) -> *mut c_void;
         pub(crate) safe fn uws_ws_close(ssl: i32, ws: &mut RawWebSocket);
-        pub(crate) fn uws_ws_send(
-            ssl: i32,
-            ws: *mut RawWebSocket,
-            message: *const u8,
-            length: usize,
-            opcode: Opcode,
-        ) -> SendStatus;
         pub(crate) fn uws_ws_send_with_options(
             ssl: i32,
             ws: *mut RawWebSocket,
@@ -764,13 +559,6 @@ pub mod c {
             message: *const u8,
             length: usize,
             opcode: Opcode,
-            compress: bool,
-        ) -> SendStatus;
-        pub(crate) fn uws_ws_send_last_fragment(
-            ssl: i32,
-            ws: *mut RawWebSocket,
-            message: *const u8,
-            length: usize,
             compress: bool,
         ) -> SendStatus;
         pub(crate) fn uws_ws_end(
@@ -815,14 +603,6 @@ pub mod c {
             user_data: *mut c_void,
         );
         // uws_ws_get_topics_as_js_array: see src/runtime/socket/uws_jsc.rs
-        pub(crate) fn uws_ws_publish(
-            ssl: i32,
-            ws: *mut RawWebSocket,
-            topic: *const u8,
-            topic_length: usize,
-            message: *const u8,
-            message_length: usize,
-        ) -> bool;
         pub(crate) fn uws_ws_publish_with_options(
             ssl: i32,
             ws: *mut RawWebSocket,
@@ -832,7 +612,7 @@ pub mod c {
             message_length: usize,
             opcode: Opcode,
             compress: bool,
-        ) -> bool;
+        ) -> SendStatus;
         pub(crate) safe fn uws_ws_get_buffered_amount(ssl: i32, ws: &mut RawWebSocket) -> usize;
         // Out-param `dest` is `&mut *mut u8` (non-null, valid for write); the C
         // shim only stores a pointer into socket-owned storage and returns its

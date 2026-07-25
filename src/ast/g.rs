@@ -10,7 +10,6 @@ use crate::{ExprData, ExprNodeList, LocRef, StmtNodeList, StoreSlice, StoreStr, 
 /// Downstream crates address the flag enum via `G::FnFlags::IsExport` etc.;
 /// re-export the enum + set type here.
 pub use crate::flags::Function as FnFlags;
-pub use crate::flags::FunctionSet as FnFlagsSet;
 
 // All `&'ast mut [T]` arena slices are `StoreSlice<T>` (lifetime-
 // erased arena-slice newtype). 'ast/'bump can be threaded crate-wide later by
@@ -280,7 +279,7 @@ pub struct Fn {
     // This was originally nullable, but doing so I believe caused a miscompilation
     // Specifically, the body was always null.
     pub body: FnBody,
-    pub arguments_ref: Option<Ref>,
+    pub arguments_ref: Ref,
 
     pub flags: flags::FunctionSet,
 
@@ -297,7 +296,7 @@ impl Default for Fn {
                 loc: crate::Loc::EMPTY,
                 stmts: StmtNodeList::EMPTY,
             },
-            arguments_ref: None,
+            arguments_ref: Ref::NONE,
             flags: flags::FUNCTION_NONE,
             return_ts_metadata: TypeScript::Metadata::MNone,
         }

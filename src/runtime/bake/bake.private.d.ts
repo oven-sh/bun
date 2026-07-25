@@ -152,4 +152,6 @@ declare module "bun:wrap" {
   export const __legacyMetadataTS: unique symbol;
   export const __using: unique symbol;
   export const __callDispose: unique symbol;
+  export const __MEMO_CACHE_SENTINEL: unique symbol;
+  export const __EARLY_RETURN_SENTINEL: unique symbol;
 }

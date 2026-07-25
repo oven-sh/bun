@@ -10,19 +10,21 @@
 // crate::StandaloneModuleGraph trait; HardcodedModule -> bun_resolve_builtins.
 // ──────────────────────────────────────────────────────────────────────────
 
-// Submodules. `fs.rs` (full RealFS readdir/stat/kind path) is now un-gated as
+// Submodules. `fs.rs` (full RealFS readdir/stat/kind path) is mounted as
 // `fs_full`; the inline `pub mod fs` below remains the canonical type surface
 // (FileSystem, RealFS, Path, PathName, Entry, DirEntry, EntryLookup,
-// EntriesOption, Implementation) until the body switches to `fs_full::*`
-// wholesale. `fs_full` compiles to validate the port and is link-dead until
-// re-exported.
+// EntriesOption, Implementation) and re-exports from `fs_full`.
 pub mod data_url;
 pub mod dir_info;
+pub mod error;
 #[path = "fs.rs"]
 mod fs_full;
 pub mod node_fallbacks;
 pub mod package_json;
 pub mod tsconfig_json;
+
+pub use error::Error;
+pub use error::Result as CrateResult;
 
 // ── Re-exported resolver surface ──────────────────────────────────────────
 // Real types live in the `resolver` / `result` / `options` /
@@ -48,17 +50,15 @@ pub use tsconfig_json::TSConfigJSON;
 // `result` / `standalone_module_graph` sibling modules.
 /// Re-export so dependents can spell `bun_resolver::install_types::AutoInstaller`.
 pub use ::bun_install_types::resolver_hooks as install_types;
-pub use resolver::{AnyResolveWatcher, BrowserMapPathKind, Bufs, Dirname, Resolver, RootPathPair};
+pub use resolver::{AnyResolveWatcher, BrowserMapPathKind, Bufs, Dirname, Resolver};
 pub use result::{
-    DebugLogs, DebugMeta, DirEntryResolveQueueItem, FlushMode, LoadResult, MatchResult,
-    MatchStatus, PathPair, PendingResolution, PendingResolutionTag, Result, ResultFlags,
-    ResultUnion, SideEffectsData,
+    DebugLogs, DirEntryResolveQueueItem, FlushMode, LoadResult, MatchResult, MatchStatus, PathPair,
+    PendingResolution, PendingResolutionTag, Result, ResultFlags, ResultUnion,
 };
 pub use standalone_module_graph::StandaloneModuleGraph;
 
-/// Minimal real subset of `fs.rs` so `bun_resolver::fs::X` paths
-/// resolve for downstream crates. The full draft remains in `fs.rs` (gated)
-/// until bun_alloc::BSSStringList / bun_output land.
+/// `bun_resolver::fs` namespace; re-exports from `fs_full` plus the
+/// in-tree types (`FileSystem`, `RealFS`, `Entry`, ...).
 pub mod fs {
     use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
     use std::io::Write as _;
@@ -90,10 +90,7 @@ pub mod fs {
                 pub fn instance() -> &'static Self {
                     &$zst
                 }
-                pub fn append_slice(
-                    &self,
-                    value: &[u8],
-                ) -> core::result::Result<&'static [u8], bun_core::Error> {
+                pub fn append_slice(&self, value: &[u8]) -> crate::CrateResult<&'static [u8]> {
                     // SAFETY: `$backing()` returns the raw `*mut` process-lifetime singleton;
                     // `BSSStringList::append` takes `*mut Self` and serializes
                     // all mutation through its internal `mutex` (no aliased `&mut` is ever
@@ -101,15 +98,12 @@ pub mod fs {
                     // (heap-owned by a `'static` `BSSStringList` or a leaked mi_malloc), so
                     // widening to `'static` is sound.
                     unsafe { bun_alloc::BSSStringList::append($backing(), &value) }
-                        .map_err(|_| bun_core::err!("OutOfMemory"))
+                        .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))
                 }
-                pub fn append_parts(
-                    &self,
-                    parts: &[&[u8]],
-                ) -> core::result::Result<&'static [u8], bun_core::Error> {
+                pub fn append_parts(&self, parts: &[&[u8]]) -> crate::CrateResult<&'static [u8]> {
                     // SAFETY: see `append_slice`.
                     unsafe { bun_alloc::BSSStringList::append($backing(), &parts) }
-                        .map_err(|_| bun_core::err!("OutOfMemory"))
+                        .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))
                 }
                 /// Format directly into the store's tail; no intermediate `String`.
                 pub fn print(
@@ -204,7 +198,7 @@ pub mod fs {
             extname: &[u8],
             buf: &'b mut [u8],
             hash: u64,
-        ) -> core::result::Result<&'b mut ZStr, bun_core::Error> {
+        ) -> crate::CrateResult<&'b mut ZStr> {
             // bun_core has no `time` module yet; use std directly.
             let nanos: u128 = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -221,10 +215,10 @@ pub mod fs {
                 TMPNAME_ID_NUMBER.fetch_add(1, Ordering::Relaxed),
                 bstr::BStr::new(extname),
             )
-            .map_err(|_| bun_core::err!("NoSpaceLeft"))?;
+            .map_err(|_| crate::Error::Sys(bun_errno::SystemErrno::ENOSPC))?;
             let written = len - cursor.len();
             if written >= len {
-                return Err(bun_core::err!("NoSpaceLeft"));
+                return Err(crate::Error::Sys(bun_errno::SystemErrno::ENOSPC));
             }
             buf[written] = 0;
             Ok(ZStr::from_buf_mut(buf, written))
@@ -262,9 +256,7 @@ pub mod fs {
         /// RLIMIT_NOFILE is raised and `file_limit`/`file_quota` carry the
         /// real fd budget — `need_to_close_files` depends on that to enable
         /// directory-fd caching.
-        pub fn init(
-            top_level_dir: Option<&[u8]>,
-        ) -> core::result::Result<*mut FileSystem, bun_core::Error> {
+        pub fn init(top_level_dir: Option<&[u8]>) -> crate::CrateResult<*mut FileSystem> {
             Self::init_with_force::<false>(top_level_dir)
         }
 
@@ -274,7 +266,7 @@ pub mod fs {
         /// `top_level_dir`.
         pub fn init_with_force<const FORCE: bool>(
             top_level_dir: Option<&[u8]>,
-        ) -> core::result::Result<*mut FileSystem, bun_core::Error> {
+        ) -> crate::CrateResult<*mut FileSystem> {
             // SAFETY: single-threaded startup; called from
             // `Transpiler::init` before any worker spawn.
             unsafe {
@@ -407,12 +399,6 @@ pub mod fs {
             bun_paths::resolve_path::relative(self.top_level_dir, to)
         }
 
-        /// Relative path from `from` to `top_level_dir`; same threadlocal
-        /// buffer caveat as `relative`.
-        pub fn relative_from(&self, from: &[u8]) -> &'static [u8] {
-            bun_paths::resolve_path::relative(from, self.top_level_dir)
-        }
-
         /// Cached cwd captured at `FileSystem::init`.
         #[inline]
         pub fn top_level_dir(&self) -> &'static [u8] {
@@ -476,7 +462,7 @@ pub mod fs {
             dir: &[u8],
             generation: Generation,
             store_fd: bool,
-        ) -> core::result::Result<&'static mut EntriesOption, bun_core::Error> {
+        ) -> crate::CrateResult<&'static mut EntriesOption> {
             let r = self.fs.read_directory(dir, None, generation, store_fd)?;
             // SAFETY: `r` borrows the BSSMap singleton (process-lifetime); re-erase
             // to `'static` so `&mut self` is dropped before the caller binds the slot.
@@ -495,7 +481,7 @@ pub mod fs {
     /// namespace is a static literal (no allocation); anything else is interned
     /// into the process-lifetime `FilenameStore`.
     #[inline]
-    fn dupe_namespace(namespace: &[u8]) -> Result<&'static [u8], bun_core::Error> {
+    fn dupe_namespace(namespace: &[u8]) -> crate::CrateResult<&'static [u8]> {
         match namespace {
             b"" | b"file" => Ok(b"file"),
             ns => FilenameStore::instance().append_slice(ns),
@@ -503,24 +489,19 @@ pub mod fs {
     }
 
     /// Resolver-tier `Path` methods that pull deps `bun_paths` can't
-    /// reach (`FilenameStore`/`DirnameStore`, `bun_wyhash`, `bun_options_types`,
-    /// `bun_string`). Import this trait to call `.loader()` / `.dupe_alloc()` /
-    /// `.hash_key()` on a `Path`.
+    /// reach (`FilenameStore`/`DirnameStore`, `bun_options_types`,
+    /// `bun_string`). Import this trait to call `.loader()` / `.dupe_alloc()`
+    /// on a `Path`.
     pub trait PathResolverExt<'a> {
         /// Intern `text`/`pretty` into the process-lifetime `FilenameStore`,
         /// falling back to `alloc` (the per-build bundle arena) for the
         /// disjoint-`text`/`pretty` case — see the impl for why.
-        fn dupe_alloc(
-            &self,
-            alloc: &bun_alloc::MimallocArena,
-        ) -> Result<Path<'static>, bun_core::Error>;
+        fn dupe_alloc(&self, alloc: &bun_alloc::MimallocArena)
+        -> crate::CrateResult<Path<'static>>;
         fn dupe_alloc_fix_pretty(
             &self,
             alloc: &bun_alloc::MimallocArena,
-        ) -> Result<Path<'static>, bun_core::Error>;
-        fn hash_key(&self) -> u64;
-        fn hash_for_kit(&self) -> u64;
-        fn package_name(&self) -> Option<&[u8]>;
+        ) -> crate::CrateResult<Path<'static>>;
         fn loader(&self, loaders: &bun_ast::LoaderHashTable) -> Option<bun_ast::Loader>;
     }
 
@@ -539,7 +520,7 @@ pub mod fs {
         fn dupe_alloc(
             &self,
             alloc: &bun_alloc::MimallocArena,
-        ) -> Result<Path<'static>, bun_core::Error> {
+        ) -> crate::CrateResult<Path<'static>> {
             let is_interned = |slice: &[u8]| {
                 FilenameStore::instance().exists(slice) || DirnameStore::instance().exists(slice)
             };
@@ -639,7 +620,7 @@ pub mod fs {
         fn dupe_alloc_fix_pretty(
             &self,
             alloc: &bun_alloc::MimallocArena,
-        ) -> Result<Path<'static>, bun_core::Error> {
+        ) -> crate::CrateResult<Path<'static>> {
             #[cfg(not(windows))]
             {
                 self.dupe_alloc(alloc)
@@ -666,48 +647,6 @@ pub mod fs {
                 new.assert_pretty_is_valid();
                 Ok(new)
             }
-        }
-
-        fn hash_key(&self) -> u64 {
-            if self.is_file() {
-                return bun_wyhash::hash(self.text);
-            }
-
-            // PERF: bun_wyhash
-            // exposes only the stateless `WyhashStateless` (aligned-chunk update +
-            // tail final) and one-shot `hash`. Concat to a temp and one-shot.
-            let mut buf = Vec::with_capacity(self.namespace.len() + 8 + self.text.len());
-            buf.extend_from_slice(self.namespace);
-            buf.extend_from_slice(b"::::::::");
-            buf.extend_from_slice(self.text);
-            bun_wyhash::hash(&buf)
-        }
-
-        /// This hash is used by the hot-module-reloading client in order to
-        /// identify modules. Since that code is JavaScript, the hash must remain in
-        /// range [-MAX_SAFE_INTEGER, MAX_SAFE_INTEGER] or else information is lost
-        /// due to floating-point precision.
-        fn hash_for_kit(&self) -> u64 {
-            // u52 — truncate to 52 bits
-            self.hash_key() & ((1u64 << 52) - 1)
-        }
-
-        fn package_name(&self) -> Option<&[u8]> {
-            let mut name_to_use = self.pretty;
-            // SEP_STR ++ "node_modules" ++ SEP_STR
-            let needle =
-                const_format::concatcp!(bun_paths::SEP_STR, "node_modules", bun_paths::SEP_STR)
-                    .as_bytes();
-            if let Some(node_modules) = bun_core::strings::last_index_of(self.text, needle) {
-                name_to_use = &self.text[node_modules + 14..];
-            }
-
-            let pkgname = parse_package_name(name_to_use);
-            if pkgname.is_empty() || !pkgname[0].is_ascii_alphanumeric() {
-                return None;
-            }
-
-            Some(pkgname)
         }
 
         fn loader(&self, loaders: &bun_ast::LoaderHashTable) -> Option<bun_ast::Loader> {
@@ -743,19 +682,12 @@ pub mod fs {
         }
     }
 
-    /// Port of `options.JSX.Pragma.parsePackageName` (a pure byte-slice helper).
-    /// D042: canonical body lives in `bun_options_types::jsx::Pragma`.
-    #[inline]
-    pub fn parse_package_name(str: &[u8]) -> &[u8] {
-        bun_options_types::jsx::Pragma::parse_package_name(str)
-    }
-
     // ── Entry / DirEntry / EntryKind ─────────────────────────────────────
     // Canonical definitions live in `fs.rs` (mounted as `crate::fs_full`).
     // Re-exported here so the public path `bun_resolver::fs::*` is preserved.
     pub use crate::fs_full::{
-        DifferentCase, DirEntry, DirEntryErr, DirEntryIterator, Entry, EntryCache, EntryKind,
-        EntryKindResolver, EntryLookup, FilenameStoreAppender, FsEntryKind, dir_entry,
+        DifferentCase, DirEntry, DirEntryIterator, Entry, EntryCache, EntryKind, EntryKindResolver,
+        EntryLookup, FilenameStoreAppender, dir_entry,
     };
 
     use bun_core::Generation;
@@ -836,7 +768,7 @@ pub mod fs {
 
         /// POSIX path opens at cwd; Windows opens under the
         /// process temp dir.
-        pub fn create(&mut self, name: &ZStr) -> core::result::Result<(), bun_core::Error> {
+        pub fn create(&mut self, name: &ZStr) -> crate::CrateResult<()> {
             #[cfg(not(windows))]
             {
                 // We originally used a temporary directory, but it caused EXDEV.
@@ -860,7 +792,6 @@ pub mod fs {
                     bun_sys::WindowsOpenDirOptions {
                         iterable: true,
                         can_rename_or_delete: false,
-                        read_only: true,
                         ..Default::default()
                     },
                 )?;
@@ -868,7 +799,10 @@ pub mod fs {
                 // local. Close it once we've captured the absolute path so we
                 // don't leak a directory HANDLE per tmpfile.
                 scopeguard::defer! { let _ = bun_sys::close(tmp_dir); }
-                let flags = bun_sys::O::CREAT | bun_sys::O::WRONLY | bun_sys::O::CLOEXEC;
+                let flags = bun_sys::O::CREAT
+                    | bun_sys::O::WRONLY
+                    | bun_sys::O::TRUNC
+                    | bun_sys::O::CLOEXEC;
                 self.fd = bun_sys::openat(tmp_dir, name, flags, 0)?;
                 let mut buf = bun_paths::PathBuffer::uninit();
                 let existing_path = bun_sys::get_fd_path(self.fd, &mut buf)?;
@@ -879,11 +813,7 @@ pub mod fs {
 
         /// Renames the temp file from `from_name` to `name` relative to the
         /// current working directory.
-        pub fn promote_to_cwd(
-            &mut self,
-            from_name: &ZStr,
-            name: &ZStr,
-        ) -> core::result::Result<(), bun_core::Error> {
+        pub fn promote_to_cwd(&mut self, from_name: &ZStr, name: &ZStr) -> crate::CrateResult<()> {
             #[cfg(not(windows))]
             {
                 debug_assert!(self.fd != bun_sys::Fd::INVALID);
@@ -954,8 +884,6 @@ pub mod fs {
         bun_core::enum_unwrap!(pub EntriesOption, Entries => fn entries / entries_mut -> DirEntry);
     }
 
-    pub type ReadDirResult = EntriesOption;
-
     // SAFETY: ARENA — `EntriesOption` holds an unbounded `&mut DirEntry` (whose `data`
     // map stores `*mut Entry` into the BSSMap singleton). All access is serialized
     // through `RealFS.entries_mutex`. The
@@ -1015,13 +943,10 @@ pub mod fs {
         pub fn get(&mut self, key: &[u8]) -> Option<&mut EntriesOption> {
             self.inner().get(key)
         }
-        pub fn get_or_put(
-            &mut self,
-            key: &[u8],
-        ) -> core::result::Result<bun_alloc::Result, bun_core::Error> {
+        pub fn get_or_put(&mut self, key: &[u8]) -> crate::CrateResult<bun_alloc::Result> {
             self.inner()
                 .get_or_put(key)
-                .map_err(|_| bun_core::err!("OutOfMemory"))
+                .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))
         }
         pub fn at_index(&mut self, index: bun_alloc::IndexType) -> Option<&mut EntriesOption> {
             self.inner().at_index(index)
@@ -1030,14 +955,14 @@ pub mod fs {
             &mut self,
             result: &mut bun_alloc::Result,
             value: EntriesOption,
-        ) -> core::result::Result<*mut EntriesOption, bun_core::Error> {
+        ) -> crate::CrateResult<*mut EntriesOption> {
             // `BSSMapInner::put` mutates `result.index` to record placement; callers
             // (e.g. `dir_info_cached_maybe_log`) re-read `result.index` post-`put`, so the
             // mutation must be visible — pass through directly.
             self.inner()
                 .put(result, value)
                 .map(std::ptr::from_mut::<EntriesOption>)
-                .map_err(|_| bun_core::err!("OutOfMemory"))
+                .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))
         }
         pub fn mark_not_found(&mut self, result: bun_alloc::Result) {
             self.inner().mark_not_found(result)
@@ -1058,7 +983,7 @@ pub mod fs {
         pub entries_mutex: Mutex,
         /// Port of `entries: *EntriesOption.Map`. The resolver body addresses
         /// this directly (`rfs.entries.get_or_put(..)`); modeled as the wrapper
-        /// `EntriesMap` until bun_alloc un-gates BSSMap.
+        /// `EntriesMap` (bun_alloc has no BSSMap equivalent).
         pub entries: EntriesMap,
         pub cwd: &'static [u8],
         pub file_limit: usize,
@@ -1082,7 +1007,7 @@ pub mod fs {
 
         /// Port of `RealFS.adjustUlimit` — always try to max out how many
         /// files we can keep open.
-        pub fn adjust_ulimit() -> core::result::Result<usize, bun_core::Error> {
+        pub fn adjust_ulimit() -> crate::CrateResult<usize> {
             #[cfg(not(unix))]
             {
                 Ok(usize::MAX)
@@ -1118,10 +1043,7 @@ pub mod fs {
         }
 
         /// `open(path, O_DIRECTORY)`.
-        pub fn open_dir(
-            &self,
-            unsafe_dir_string: &[u8],
-        ) -> core::result::Result<Fd, bun_core::Error> {
+        pub fn open_dir(&self, unsafe_dir_string: &[u8]) -> crate::CrateResult<Fd> {
             #[cfg(windows)]
             {
                 // NtCreateFile with FILE_DIRECTORY_FILE/FILE_LIST_DIRECTORY so
@@ -1132,7 +1054,6 @@ pub mod fs {
                     bun_sys::WindowsOpenDirOptions {
                         iterable: true,
                         no_follow: false,
-                        read_only: true,
                         ..Default::default()
                     },
                 )
@@ -1156,7 +1077,7 @@ pub mod fs {
             generation: Generation,
             handle: Fd,
             iterator: I,
-        ) -> core::result::Result<DirEntry, bun_core::Error> {
+        ) -> crate::CrateResult<DirEntry> {
             let mut iter = bun_sys::iterate_dir(handle);
             let mut dir = DirEntry::init(dir_, generation);
 
@@ -1186,11 +1107,11 @@ pub mod fs {
         fn read_directory_error(
             &mut self,
             dir: &[u8],
-            err: bun_core::Error,
-        ) -> core::result::Result<&'static mut EntriesOption, bun_core::Error> {
+            err: crate::Error,
+        ) -> crate::CrateResult<&'static mut EntriesOption> {
             if bun_core::FeatureFlags::ENABLE_ENTRY_CACHE {
                 let mut get_or_put_result = self.entries.get_or_put(dir)?;
-                if err == bun_core::err!("ENOENT") || err == bun_core::err!("FileNotFound") {
+                if err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
                     self.entries.mark_not_found(get_or_put_result);
                     return Ok(temp_entries_option_write(EntriesOption::Err(
                         dir_entry::Err {
@@ -1225,7 +1146,7 @@ pub mod fs {
             handle_: Option<Fd>,
             generation: Generation,
             store_fd: bool,
-        ) -> core::result::Result<&mut EntriesOption, bun_core::Error> {
+        ) -> crate::CrateResult<&mut EntriesOption> {
             self.read_directory_with_iterator(dir_, handle_, generation, store_fd, ())
         }
 
@@ -1246,7 +1167,7 @@ pub mod fs {
             generation: Generation,
             store_fd: bool,
             iterator: I,
-        ) -> core::result::Result<&'static mut EntriesOption, bun_core::Error> {
+        ) -> crate::CrateResult<&'static mut EntriesOption> {
             let dir = strings::paths::without_trailing_slash_windows_path(dir_maybe_trail_slash);
 
             crate::Resolver::assert_valid_cache_key(dir);
@@ -1281,8 +1202,8 @@ pub mod fs {
                     } else if cr.status == bun_alloc::ItemStatus::NotFound && generation == 0 {
                         return Ok(temp_entries_option_write(EntriesOption::Err(
                             dir_entry::Err {
-                                original_err: bun_core::err!("ENOENT"),
-                                canonical_error: bun_core::err!("ENOENT"),
+                                original_err: crate::Error::Sys(bun_errno::SystemErrno::ENOENT),
+                                canonical_error: crate::Error::Sys(bun_errno::SystemErrno::ENOENT),
                             },
                         )));
                     }
@@ -1308,14 +1229,15 @@ pub mod fs {
             });
 
             // if we get this far, it's a real directory, so we can just store the dir name.
-            let dir: &'static [u8] = if !had_handle {
-                if let Some(existing) = in_place {
-                    // SAFETY: `in_place` points to a `DirEntry` inside the BSSMap singleton;
-                    // its `dir` field is DirnameStore-interned (&'static).
-                    unsafe { (*existing).dir }
-                } else {
-                    DirnameStore::instance().append_slice(dir_maybe_trail_slash)?
-                }
+            // An in-place refresh always keeps the slot's existing interned name: callers
+            // spell the same directory with and without a trailing slash, and rewriting
+            // `dir` to the other spelling races every unlocked `Entry::dir()` reader.
+            let dir: &'static [u8] = if let Some(existing) = in_place {
+                // SAFETY: `in_place` points to a `DirEntry` inside the BSSMap singleton;
+                // its `dir` field is DirnameStore-interned (&'static).
+                unsafe { (*existing).dir }
+            } else if !had_handle {
+                DirnameStore::instance().append_slice(dir_maybe_trail_slash)?
             } else {
                 // Intern into DirnameStore so the cache entry never dangles —
                 // `append_slice` is a bump-pointer copy, cost is bounded.
@@ -1401,7 +1323,7 @@ pub mod fs {
             base: &[u8],
             existing_fd: Fd,
             store_fd: bool,
-        ) -> core::result::Result<EntryCache, bun_core::Error> {
+        ) -> crate::CrateResult<EntryCache> {
             use bun_paths::resolve_path::{join_abs_string_buf, platform};
             #[cfg(not(windows))]
             use bun_sys::{FileKind, kind_from_mode};
@@ -1426,7 +1348,7 @@ pub mod fs {
                 use bun_sys::windows as w;
                 let _ = (existing_fd, store_fd);
                 let file = bun_sys::get_file_attributes(absolute_path_c)
-                    .ok_or(bun_core::err!("FileNotFound"))?;
+                    .ok_or(crate::Error::Sys(bun_errno::SystemErrno::ENOENT))?;
                 // A Windows reparse point carries FILE_ATTRIBUTE_DIRECTORY iff
                 // the link is a directory link (junctions always do; symlinks
                 // do iff created with SYMBOLIC_LINK_FLAG_DIRECTORY; AppExec
@@ -1582,7 +1504,7 @@ pub mod fs {
             base: &[u8],
             existing_fd: bun_sys::Fd,
             store_fd: bool,
-        ) -> core::result::Result<EntryCache, bun_core::Error> {
+        ) -> crate::CrateResult<EntryCache> {
             self.kind(dir, base, existing_fd, store_fd)
         }
     }
@@ -1615,14 +1537,37 @@ pub mod fs {
 
         /// Index lookup with generation-check
         /// re-read (open + readdir + cache replace) when the cached listing is stale.
+        ///
+        /// Takes `entries_mutex` for the whole lookup: the generation-stale branch
+        /// drops the existing `DirEntry` (and the bucket allocation behind its
+        /// `data` map) in place, and the route loaders iterate that map under the
+        /// same lock. Call [`entries_at_locked`](Self::entries_at_locked) instead
+        /// from inside a critical section that already holds `entries_mutex`.
         pub fn entries_at(
             &mut self,
             index: bun_alloc::IndexType,
             generation: Generation,
         ) -> Option<&mut EntriesOption> {
+            // `MutexGuard` stores the mutex by raw pointer (see `EntriesGuard`),
+            // so holding it does not keep `&mut self` borrowed.
+            let _g = self.entries_mutex.lock_guard();
+            self.entries_at_locked(index, generation)
+        }
+
+        /// [`entries_at`](Self::entries_at) for call sites that already hold
+        /// `entries_mutex` (the mutex is non-recursive).
+        pub fn entries_at_locked(
+            &mut self,
+            index: bun_alloc::IndexType,
+            generation: Generation,
+        ) -> Option<&mut EntriesOption> {
+            debug_assert!(
+                self.entries_mutex.is_held_by_current_thread(),
+                "entries_at_locked: caller must hold entries_mutex",
+            );
             // erase to raw immediately so re-borrowing `&mut self` for
             // `open_dir`/`readdir`/`read_directory_error` doesn't conflict.
-            // `entries_mutex` held by caller; sole `&mut` to this slot.
+            // `entries_mutex` held (by `entries_at` or the caller); sole `&mut` to this slot.
             let result_ptr = std::ptr::from_mut::<EntriesOption>(self.entries.at_index(index)?);
             // SAFETY: BSSMap-owned slot; uniquely held under `entries_mutex`.
             if let EntriesOption::Entries(existing) = unsafe { &mut *result_ptr } {
@@ -1630,12 +1575,8 @@ pub mod fs {
                     let e_ptr: *mut DirEntry = std::ptr::from_mut::<DirEntry>(*existing);
                     // SAFETY: BSSMap-owned `DirEntry` (boxed/leaked into `EntriesOption`); `entries_mutex` held.
                     let dir = unsafe { (*e_ptr).dir };
-                    // `open_dir_for_iteration`, NOT
-                    // `RealFS.openDir`. On Windows the two diverge: `open_dir` passes
-                    // `read_only: true` (no DELETE access on the handle), whereas
-                    // `openDirForIteration` uses the default `WindowsOpenDirOptions`
-                    // (`can_rename_or_delete: true`). On POSIX it's `O_DIRECTORY` only
-                    // vs `O_RDONLY|O_DIRECTORY`.
+                    // `open_dir_for_iteration`, NOT `RealFS.openDir`. On POSIX
+                    // the two diverge: `O_DIRECTORY` only vs `O_RDONLY|O_DIRECTORY`.
                     let handle = match bun_sys::open_dir_for_iteration(Fd::cwd(), dir) {
                         Ok(h) => h,
                         Err(err) => {
@@ -1774,17 +1715,11 @@ pub mod fs {
     pub use super::fs_full::stat_hash::StatHash;
 
     /// Re-export `ModKey` from the full `fs.rs` port so `linker::get_mod_key`
-    /// can hash files without depending on `fs_full::RealFS` (a distinct type
-    /// from this inline `RealFS`).
+    /// can hash files.
     pub use super::fs_full::ModKey;
     impl ModKey {
-        /// RealFS-agnostic constructor. `fs_full::ModKey::generate`'s
-        /// `&mut RealFS` / `path` args are unread (fs.rs:1386); callers
-        /// reaching `ModKey` via this re-export hold the inline-`fs` `RealFS`,
-        /// which is a different type, so they need an entry point that doesn't
-        /// require `fs_full::RealFS`. Body is the spec `generate` minus the
-        /// dead args.
-        pub fn from_file(file: &bun_sys::File) -> core::result::Result<Self, bun_core::Error> {
+        /// Builds a `ModKey` from an open file's stat.
+        pub fn from_file(file: &bun_sys::File) -> crate::CrateResult<Self> {
             let stat = file.stat()?;
 
             const NS_PER_S: i128 = 1_000_000_000;
@@ -1802,7 +1737,7 @@ pub mod fs {
             // We can't detect changes if the file system zeros out the
             // modification time
             if seconds == 0 && NS_PER_S == 0 {
-                return Err(bun_core::err!("Unusable"));
+                return Err(crate::Error::Unusable);
             }
 
             // Don't generate a modification key if the file is too new
@@ -1811,7 +1746,7 @@ pub mod fs {
             // `seconds > seconds` is always false — intentionally kept
             #[allow(clippy::eq_op)]
             if seconds > seconds || (seconds == now_seconds && mtime > now) {
-                return Err(bun_core::err!("Unusable"));
+                return Err(crate::Error::Unusable);
             }
 
             Ok(ModKey {
@@ -1893,6 +1828,9 @@ pub mod dir_entry_accessor {
     pub struct DirEntryIterResult {
         pub name: DirEntryNameWrapper,
         pub kind: bun_sys::FileKind,
+        /// Resolver-cached real path of a symlink entry's target
+        /// (`Interned::EMPTY` for non-symlinks).
+        pub symlink_target: bun_ptr::Interned,
     }
 
     pub(crate) struct DirEntryNameWrapper {
@@ -1924,6 +1862,10 @@ pub mod dir_entry_accessor {
         fn kind(&self) -> bun_sys::FileKind {
             self.kind
         }
+        fn symlink_target(&self) -> Option<&[u8]> {
+            let target = self.symlink_target.as_bytes();
+            (!target.is_empty()).then_some(target)
+        }
     }
 
     impl AccessorDirIter for DirEntryDirIter {
@@ -1950,6 +1892,9 @@ pub mod dir_entry_accessor {
                     EntryKind::File => bun_sys::FileKind::File,
                     EntryKind::Dir => bun_sys::FileKind::Directory,
                 };
+                // `Entry::kind` resolved through symlinks above; a non-empty
+                // cached realpath is what records the entry as a symlink.
+                let symlink_target = entry.cache().symlink;
                 // BACKREF: wrap the HashMap key's bytes in a `RawSlice`
                 // instead of fabricating `&'static [u8]` (PORTING.md §Forbidden).
                 // The key is a `Box<[u8]>` owned by `DirEntry.data` and valid
@@ -1960,6 +1905,7 @@ pub mod dir_entry_accessor {
                         value: bun_ptr::RawSlice::new(&**key),
                     },
                     kind: fskind,
+                    symlink_target,
                 }))
             } else {
                 Ok(None)
@@ -2051,7 +1997,10 @@ pub mod dir_entry_accessor {
             // TODO do we want to propagate ENOTDIR through the 'Maybe' to match the SyscallAccessor?
             // The glob implementation specifically checks for this error when dealing with symlinks
             // return Err(SysError::from_code(E::NOTDIR, Syscall::Tag::open));
-            let res = FS::instance().fs.read_directory(path, None, 0, false)?;
+            let res = FS::instance()
+                .fs
+                .read_directory(path, None, 0, false)
+                .map_err(crate::Error::into_core)?;
             match res {
                 EntriesOption::Entries(entry) => {
                     let p: *const DirEntry = &raw const **entry;
@@ -2060,7 +2009,7 @@ pub mod dir_entry_accessor {
                     let value = unsafe { &*p };
                     Ok(Ok(DirEntryHandle { value: Some(value) }))
                 }
-                EntriesOption::Err(err) => Err(err.original_err),
+                EntriesOption::Err(err) => Err(err.original_err.into_core()),
             }
         }
 
@@ -2069,20 +2018,12 @@ pub mod dir_entry_accessor {
             // TODO is this a noop?
             None
         }
-
-        fn getcwd(path_buf: &mut PathBuffer) -> Maybe<&[u8]> {
-            let cwd = FS::instance().fs.cwd;
-            path_buf[..cwd.len()].copy_from_slice(cwd);
-            // Returning the copied slice is what every Accessor caller expects
-            // (it matches the syscall-backed Accessor's contract).
-            Ok(&path_buf[..cwd.len()])
-        }
     }
 }
 pub use dir_entry_accessor::DirEntryAccessor;
 
 // ──────────────────────────────────────────────────────────────────────────
-// `cache` — `Set`/`Fs`/`Entry`/`JavaScript`/
+// `cache` — `Set`/`Fs`/`Entry`/
 // `Json`). These types live below `bun_bundler` in
 // the crate graph because `Resolver.caches` is typed by them and the bundler
 // constructs/assigns it (`transpiler.resolver.caches = Set::init()`). The
@@ -2100,10 +2041,8 @@ pub mod cache {
 
     bun_core::declare_scope!(CacheFs, visible);
 
-    /// Bundle of the per-transpiler caches: JavaScript parse cache, file
-    /// cache, and JSON cache.
+    /// Bundle of the per-transpiler caches: file cache and JSON cache.
     pub struct Set {
-        pub js: JavaScript,
         pub fs: Fs,
         pub json: Json,
     }
@@ -2111,7 +2050,6 @@ pub mod cache {
     impl Set {
         pub fn init() -> Set {
             Set {
-                js: JavaScript::init(),
                 fs: Fs {
                     shared_buffer: MutableString::init(0).expect("unreachable"),
                     macro_shared_buffer: MutableString::init(0).expect("unreachable"),
@@ -2144,8 +2082,8 @@ pub mod cache {
         }
     }
 
-    /// Optional external destructor (`function(ctx)`) invoked when an entry's
-    /// contents are released; `NONE` when the entry owns its bytes.
+    /// Optional external destructor (`function(ctx)`) for foreign-owned
+    /// source bytes; `NONE` when there is nothing external to free.
     #[repr(C)]
     pub struct ExternalFreeFunction {
         pub ctx: *mut c_void,
@@ -2204,7 +2142,9 @@ pub mod cache {
         /// storage). Caller guarantees the pointee outlives all reads through
         /// this `Entry`. NOT freed on `deinit`.
         SharedBuffer { ptr: *const u8, len: usize },
-        /// Native-plugin memory; freed via `Entry.external_free_function.call()`.
+        /// Externally-owned bytes the producer keeps alive past this `Entry`
+        /// (native-plugin buffers are freed by the bundler's
+        /// `BundleV2.finalizers`); NOT freed on `deinit`.
         External { ptr: *const u8, len: usize },
     }
 
@@ -2217,8 +2157,10 @@ pub mod cache {
                 // SAFETY: FFI/ARENA — single encapsulation point for foreign-
                 // owned bytes. `SharedBuffer` points into the caller-owned
                 // per-thread `MutableString` (reset only after this `Entry` is
-                // dropped); `External` is native-plugin memory kept live until
-                // `external_free_function` runs in `deinit`. In both cases
+                // dropped); `External` is producer-owned memory the producer
+                // keeps alive past the `Entry` (native-plugin buffers are
+                // freed later by the bundler's `BundleV2.finalizers`, via
+                // `ParseTask.external_free_function`). In both cases
                 // `ptr` is non-null, aligned, and `ptr[..len]` is initialized
                 // and valid for shared reads for at least `'_`. Cannot be a
                 // `bun_ptr::RawSlice` field without breaking `src/bundler/`
@@ -2234,33 +2176,6 @@ pub mod cache {
                     core::slice::from_raw_parts(ptr.as_ptr(), *len)
                 },
             }
-        }
-
-        #[inline]
-        pub fn is_empty(&self) -> bool {
-            match self {
-                Contents::Empty => true,
-                Contents::Owned(v) => v.is_empty(),
-                Contents::Arena { len, .. }
-                | Contents::SharedBuffer { len, .. }
-                | Contents::External { len, .. } => *len == 0,
-            }
-        }
-
-        #[inline]
-        pub fn len(&self) -> usize {
-            match self {
-                Contents::Empty => 0,
-                Contents::Owned(v) => v.len(),
-                Contents::Arena { len, .. }
-                | Contents::SharedBuffer { len, .. }
-                | Contents::External { len, .. } => *len,
-            }
-        }
-
-        #[inline]
-        pub fn as_ptr(&self) -> *const u8 {
-            self.as_slice().as_ptr()
         }
     }
 
@@ -2309,9 +2224,6 @@ pub mod cache {
     pub struct Entry {
         pub contents: Contents,
         pub fd: Fd,
-        /// When `contents` comes from a native plugin, this field is populated
-        /// with information on how to free it.
-        pub external_free_function: ExternalFreeFunction,
     }
 
     impl Default for Entry {
@@ -2319,25 +2231,11 @@ pub mod cache {
             Entry {
                 contents: Contents::Empty,
                 fd: Fd::INVALID,
-                external_free_function: ExternalFreeFunction::NONE,
             }
         }
     }
 
     impl Entry {
-        /// Convenience: take ownership of a heap buffer.
-        pub fn new(
-            contents: Box<[u8]>,
-            fd: Fd,
-            external_free_function: ExternalFreeFunction,
-        ) -> Entry {
-            Entry {
-                contents: Contents::from(contents),
-                fd,
-                external_free_function,
-            }
-        }
-
         #[inline]
         pub fn contents(&self) -> &[u8] {
             self.contents.as_slice()
@@ -2347,10 +2245,6 @@ pub mod cache {
         /// explicitly (and frequently hand `contents` off to a `Source` that
         /// outlives the `Entry`).
         pub fn deinit(&mut self) {
-            if let Some(func) = self.external_free_function.function {
-                // SAFETY: ctx/function pair was supplied together by the native plugin.
-                unsafe { func(self.external_free_function.ctx) };
-            }
             self.contents = Contents::Empty;
         }
 
@@ -2398,88 +2292,6 @@ pub mod cache {
             }
         }
 
-        /// Read `path` into the
-        /// caller's `shared` buffer (HMR / dev-server path).
-        pub fn read_file_shared(
-            &mut self,
-            _fs: &mut fs_mod::FileSystem,
-            path: &bun_core::ZStr,
-            cached_file_descriptor: Option<Fd>,
-            shared: &mut MutableString,
-        ) -> Result<Entry, bun_core::Error> {
-            let rfs = &_fs.fs;
-
-            let mut owned: Option<bun_sys::File> = None;
-            let fd: Fd = if let Some(fd) = cached_file_descriptor {
-                // `try handle.seekTo(0)` — rewind a cached fd before re-reading.
-                bun_sys::lseek(fd, 0, libc::SEEK_SET).map_err(bun_core::Error::from)?;
-                fd
-            } else {
-                let f = bun_sys::open_file_absolute_z(path, bun_sys::OpenFlags::READ_ONLY)
-                    .map_err(bun_core::Error::from)?;
-                let raw = f.handle();
-                owned = Some(f);
-                raw
-            };
-            let file_handle = bun_sys::File::borrow(&fd);
-
-            let contents = match fs_mod::read_file_contents(
-                file_handle,
-                path.as_bytes(),
-                true,
-                shared,
-                self.stream,
-            )
-            .map(Contents::from)
-            {
-                Ok(c) => c,
-                Err(err) => {
-                    if cfg!(debug_assertions) {
-                        Output::print_error(format_args!(
-                            "{}: readFile error -- {}",
-                            bstr::BStr::new(path.as_bytes()),
-                            bstr::BStr::new(err.name()),
-                        ));
-                    }
-                    return Err(err);
-                }
-            };
-
-            let will_close = cached_file_descriptor.is_none() && rfs.need_to_close_files();
-            let publish_fd = feature_flags::STORE_FILE_DESCRIPTORS && !will_close;
-            if publish_fd {
-                if let Some(f) = owned.take() {
-                    let _ = f.into_raw();
-                }
-            }
-            Ok(Entry {
-                contents,
-                fd: if publish_fd { fd } else { Fd::INVALID },
-                external_free_function: ExternalFreeFunction::NONE,
-            })
-        }
-
-        /// Opens and reads `path` (relative to `dirname_fd`), optionally into
-        /// the shared buffer, returning a cache `Entry` with the contents and
-        /// possibly the kept-open fd.
-        pub fn read_file(
-            &mut self,
-            _fs: &mut fs_mod::FileSystem,
-            path: &[u8],
-            dirname_fd: Fd,
-            use_shared_buffer: bool,
-            _file_handle: Option<Fd>,
-        ) -> Result<Entry, bun_core::Error> {
-            self.read_file_with_allocator(
-                _fs,
-                path,
-                dirname_fd,
-                use_shared_buffer,
-                _file_handle,
-                None,
-            )
-        }
-
         /// `use_shared_buffer` is taken at runtime — the live
         /// callers (`ParseTask::get_code_for_parse_task_without_plugins`,
         /// `Transpiler::parse`) pass a value computed from runtime state, and the
@@ -2501,7 +2313,7 @@ pub mod cache {
             use_shared_buffer: bool,
             _file_handle: Option<Fd>,
             arena: Option<&bun_alloc::Arena>,
-        ) -> Result<Entry, bun_core::Error> {
+        ) -> crate::CrateResult<Entry> {
             let rfs = &_fs.fs;
 
             let will_close = rfs.need_to_close_files() && _file_handle.is_none();
@@ -2509,7 +2321,7 @@ pub mod cache {
             // A single let-expression avoids `mem::zeroed()` on a
             // type that may have niche (NonZero) fields.
             let file_handle: bun_sys::File = if let Some(f) = _file_handle {
-                bun_sys::lseek(f, 0, libc::SEEK_SET).map_err(bun_core::Error::from)?;
+                bun_sys::lseek(f, 0, libc::SEEK_SET).map_err(crate::Error::from)?;
                 bun_sys::File::from_fd(f)
             } else if feature_flags::STORE_FILE_DESCRIPTORS && dirname_fd.is_valid() {
                 match bun_sys::openat_a(
@@ -2521,7 +2333,7 @@ pub mod cache {
                     Ok(fd) => bun_sys::File::from_fd(fd),
                     Err(err) if err.get_errno() == bun_sys::E::ENOENT => {
                         let handle = bun_sys::open_file(path, bun_sys::OpenFlags::READ_ONLY)
-                            .map_err(bun_core::Error::from)?;
+                            .map_err(crate::Error::from)?;
                         bun_core::pretty_errorln!(
                             "<r><d>Internal error: directory mismatch for directory \"{}\", fd {}<r>. You don't need to do anything, but this indicates a bug.",
                             bstr::BStr::new(path),
@@ -2533,7 +2345,7 @@ pub mod cache {
                 }
             } else {
                 bun_sys::open_file(path, bun_sys::OpenFlags::READ_ONLY)
-                    .map_err(bun_core::Error::from)?
+                    .map_err(crate::Error::from)?
             };
 
             let mut owned: Option<bun_sys::File> = None;
@@ -2616,27 +2428,7 @@ pub mod cache {
             Ok(Entry {
                 contents,
                 fd: if publish_fd { fd } else { Fd::INVALID },
-                external_free_function: ExternalFreeFunction::NONE,
             })
-        }
-    }
-
-    /// Unit struct; AST caching is
-    /// probably only relevant when bundling for production,
-    /// so the struct is empty and `parse`/`scan` are stateless.
-    ///
-    /// CYCLEBREAK: `parse`/`scan` need `bun_js_parser::Parser::init` + the
-    /// `Define` table type, both of which are mid-unification with the bundler's
-    /// `defines.rs`. Until that lands, the bodies live in
-    /// `bun_bundler::cache::JavaScript` (which can name those types directly);
-    /// the resolver only needs the field shape so `Resolver.caches.js` exists.
-    #[derive(Default)]
-    pub(crate) struct JavaScript {}
-
-    impl JavaScript {
-        #[inline]
-        pub(crate) fn init() -> JavaScript {
-            JavaScript {}
         }
     }
 }

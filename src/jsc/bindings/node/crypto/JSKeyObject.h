@@ -57,6 +57,7 @@ public:
     static void destroy(JSC::JSCell* cell) { static_cast<JSKeyObject*>(cell)->~JSKeyObject(); }
 
     KeyObject m_handle;
+    size_t m_sizeForGC { 0 };
 
     DECLARE_INFO;
     DECLARE_VISIT_CHILDREN;

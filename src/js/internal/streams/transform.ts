@@ -76,9 +76,10 @@ function Transform(options): void {
   this[kCallback] = null;
 
   if (options) {
-    if (typeof options.transform === "function") this._transform = options.transform;
+    const { transform, flush } = options;
+    if (typeof transform === "function") this._transform = transform;
 
-    if (typeof options.flush === "function") this._flush = options.flush;
+    if (typeof flush === "function") this._flush = flush;
   }
 
   // When the writable side finishes, then flush out anything remaining.

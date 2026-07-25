@@ -78,7 +78,6 @@ leak:JSC::intlSegmenterAvailableLocales
 leak:URL__getHref
 leak:runtime.dns_jsc.dns.Resolver.globalLookupService
 leak:jsHTTPParser_execute
-leak:Resolver__nodeModulePathsJSValue
 leak:URL__host
 leak:runtime.node.node_os.version
 leak:runtime.node.node_os.release
@@ -86,6 +85,7 @@ leak:JSC::stringProtoFuncReplaceUsingRegExp
 leak:WebCore::parseTypeAndSubtype
 leak:runtime.node.util.parse_args.parseArgs
 leak:JSC::IntlDateTimeFormat::initializeDateTimeFormat
+leak:JSC::TemporalCore::withTimeZone
 leak:WebCore__DOMURL__fileSystemPath
 leak:runtime.node.node_fs_watcher.FSWatcher.Arguments.fromJS
 leak:jsc.web_worker.create
@@ -98,7 +98,6 @@ leak:fse_run_loop
 leak:Zig::NapiClass_ConstructorFunction
 leak:runtime.webcore.fetch.FetchTasklet.toResponse
 leak:JSC::jsonProtoFuncStringify
-leak:lolhtml_sys.lol_html.HTMLString.toString
 leak:libarchive_sys.bindings.Archive.readNew
 leak:Zig::SourceProvider::create
 
@@ -110,8 +109,6 @@ leak:WebCore::JSReadableStreamDefaultReaderPrototype::finishCreation
 leak:WebCore::JSReadableStreamDefaultControllerPrototype::finishCreation
 
 # file comments below are where it was first seen, not an exhaustive list
-# test/js/node/tls/node-tls-cert.test.ts
-leak:create_ssl_context_from_bun_options
 # test/js/node/test/parallel/test-inspector-enabled.js
 leak:jsc.Debugger.startJSDebuggerThread
 # test/js/sql/sqlite-sql.test.ts
@@ -121,3 +118,14 @@ leak:WebCore::jsSQLStatementOpenStatementFunction
 # is called before firing (WaiterListManager::clearTimer on notify/unregister),
 # the DispatchTimer and its Bun-side WTFTimer Box leak. JSC-owned ref-cycle.
 leak:WTF::RunLoop::dispatchAfter
+# test/cli/run/workspaces.test.ts, test/regression/issue/26207.test.ts —
+# run_scripts_with_filter ends with Global::exit() so pre_script_name /
+# post_script_name / script_name_owned locals never Drop (intentional per the
+# inline comment). With debug-assertions on the codegen differs enough that
+# LSAN's conservative stack scan no longer finds the pointers.
+leak:bun_runtime::cli::filter_run::run_scripts_with_filter
+leak:bun_runtime::cli::multi_run::run
+# test/regression/issue/30205.test.ts — global_exit's final GC sweep fires
+# NAPI weak finalizers which enqueue Box<NapiFinalizerTask> into the event
+# loop; the loop is already exiting so they never drain.
+leak:napi_internal_enqueue_finalizer

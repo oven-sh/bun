@@ -39,11 +39,12 @@ pub mod compat;
 pub mod logical;
 #[path = "prefixes.rs"]
 pub mod prefixes;
-#[path = "sourcemap.rs"]
-pub mod sourcemap;
 #[path = "targets.rs"]
 pub mod targets;
 
+#[path = "crate_error.rs"]
+pub mod crate_error;
+pub use crate_error::{Error as CrateError, Result as CrateResult};
 #[path = "css_modules.rs"]
 pub mod css_modules;
 #[path = "dependencies.rs"]
@@ -87,7 +88,7 @@ pub use values as css_values;
 // selector/property/media_query bodies via `css::*`.
 pub use css_parser::{
     CssRef, CssRefTag, CssResult as Result, Delimiters, EnumProperty, IntoParserError, Maybe,
-    ParserState, enum_property_util, nth, parse_utility, signfns, void_wrap,
+    ParserState, enum_property_util, nth, parse_utility, signfns,
 };
 
 // ─── selectors/ crate-root surface ────────────────────────────────────────
@@ -119,7 +120,6 @@ pub(crate) unsafe fn arena_str(p: Str) -> &'static [u8] {
 pub use compat::Feature;
 /// Alias of `error::ParserErrorKind`.
 pub use error::ParserErrorKind as ParseErrorKind;
-pub use error::ParserErrorKind as ErrorKind;
 pub use properties::custom::{TokenList, TokenListFns};
 pub use values::ident::{CustomIdentFns, DashedIdentFns, IdentFns};
 pub use values::string::{CssString as CSSString, CssStringFns as CSSStringFns};
@@ -151,41 +151,11 @@ pub mod printer;
 #[path = "values/mod.rs"]
 pub mod values;
 
-/// Data-only value-type stubs re-exported through `values::{color,ident,url}`
-/// while the real `values/*.rs` files stay gated on the calc lattice. These
-/// were the previous `gated_mod!(values, ...)` body — now a real module so
-/// printer.rs / css_parser.rs can name the types.
-pub mod values_stub {
-    /// Re-export the real `values/color.rs` surface so any remaining
-    /// `values_stub::color::*` paths resolve to the canonical types.
-    pub mod color {
-        pub use crate::values::color::*;
-
-        /// `Maybe` is now un-gated as `core::result::Result`, so this is a
-        /// straight type alias to the real `values::color::ParseResult`.
-        pub type CssColorParseResult = crate::values::color::ParseResult;
-
-        /// https://drafts.csswg.org/css-color/#hsl-to-rgb (`hue` is 0..1 here).
-        /// Real body lives in `css_parser::color::hsl_to_rgb`; re-exported for
-        /// any callers that reached it via the stub path.
-        pub use crate::css_parser::color::hsl_to_rgb;
-    }
-
-    /// Re-export of the real `values/ident.rs` — the data-only stub that used
-    /// to live here (so `generics::ident_eql` could compile) is obsolete:
-    /// `values::ident` is un-gated and `generics.rs` imports it directly.
-    /// The stub `IdentOrRef` had diverged (tagged enum vs packed-u128), so
-    /// this also removes a latent type-confusion hazard.
-    pub mod ident {
-        pub use crate::values::ident::*;
-    }
-}
-
 // ─── stub re-exports referenced cross-crate ────────────────────────────────
 
-/// Hoisted from `css_parser.rs` (gated). Single-variant error type returned by
-/// every `to_css` path; the *kind* lives in `Printer.error_kind` (PrinterError)
-/// — this is just the bubbled signal.
+/// Single-variant error type returned by every `to_css` path; the *kind*
+/// lives in `Printer.error_kind` (PrinterError) — this is just the bubbled
+/// signal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PrintErr {
     CSSPrintError,
@@ -222,15 +192,15 @@ pub use printer::{ImportInfo, Printer, PrinterOptions, PseudoClasses};
 /// `printer::ImportInfo`, exposed under both names.
 pub type ImportRecordHandler<'a> = printer::ImportInfo<'a>;
 pub use values::color::{CssColor, FloatColor, LABColor, LabColor, PredefinedColor, RGBA};
-pub use values_stub::color::CssColorParseResult;
+pub type CssColorParseResult = values::color::ParseResult;
 
-// Real re-exports from un-gated modules (cross-crate surface).
+// Cross-crate re-exports.
 pub use error::{
     BasicParseError, BasicParseErrorKind, Err, ErrorLocation, MinifyError, MinifyErrorKind,
     ParseError, ParserError, ParserErrorKind, PrinterError, PrinterErrorKind, SelectorError,
 };
 pub type Error = Err<ParserError>;
-pub use logical::{LogicalGroup, PropertyCategory};
+pub use logical::PropertyCategory;
 pub use targets::{Browsers, Features, Targets};
 
 // Bundler-facing surface (`bun_bundler::Chunk` / `scanImportsAndExports`
@@ -241,8 +211,7 @@ pub use rules::import::ImportConditions;
 
 // ───────────────────────────── VendorPrefix ─────────────────────────────
 // Hoisted from css_parser.rs so leaf modules (targets, prefixes) can compile
-// without pulling in the 6k-line parser hub. css_parser.rs re-exports this
-// when it un-gates.
+// without pulling in the 6k-line parser hub.
 
 bitflags::bitflags! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
@@ -261,9 +230,6 @@ bitflags::bitflags! {
 }
 
 impl VendorPrefix {
-    pub const EMPTY: VendorPrefix = VendorPrefix::empty();
-    pub const ALL_PREFIXES: VendorPrefix = VendorPrefix::all();
-
     /// Fields listed here so we can iterate them in the order we want
     pub const FIELDS: &'static [VendorPrefix] = &[
         VendorPrefix::WEBKIT,
@@ -299,15 +265,6 @@ impl VendorPrefix {
         if self.is_empty() { other } else { self }
     }
 
-    pub fn difference_(left: Self, right: Self) -> Self {
-        // Arithmetic subtraction on bits, not set difference; callers depend on it.
-        Self::from_bits_retain(left.bits().wrapping_sub(right.bits()))
-    }
-
-    pub fn bitwise_and(self, b: Self) -> Self {
-        self & b
-    }
-
     pub fn as_bits(self) -> u8 {
         self.bits()
     }
@@ -338,8 +295,7 @@ impl VendorPrefix {
 
 // ───────────────────────── Core lexer/location types ─────────────────────────
 // Hoisted from css_parser.rs / rules/mod.rs so leaf modules (error, dependencies)
-// compile without the 6k-line parser hub. css_parser.rs `pub use crate::{..}`s
-// these when it un-gates.
+// compile without the 6k-line parser hub.
 
 /// Line/column within a single source. Column is 1-based, line is 0-based.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -385,8 +341,8 @@ pub struct Dimension {
 }
 
 /// CSS lexer token. Data-only definition hoisted out of `css_parser.rs`; the
-/// `to_css*`/`eql`/`hash` impls stay in `css_parser.rs` (gated) since they
-/// depend on `serializer::*` and `generics`.
+/// `to_css*`/`eql`/`hash` impls stay in `css_parser.rs` since they depend on
+/// `serializer::*` and `generics`.
 // Every `&'static [u8]` payload actually borrows the parser arena/source text and
 // must not outlive the arena; `&'static` is the crate-wide placeholder until the
 // bumpalo arena lifetime is plumbed through.

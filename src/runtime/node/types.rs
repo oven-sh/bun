@@ -85,13 +85,6 @@ impl BlobOrStringOrBuffer {
         }
     }
 
-    pub fn protect(&self) {
-        match self {
-            Self::StringOrBuffer(sob) => sob.protect(),
-            _ => {}
-        }
-    }
-
     pub fn byte_length(&self) -> usize {
         self.slice().len()
     }
@@ -158,17 +151,24 @@ impl BlobOrStringOrBuffer {
         Self::from_js_maybe_file_maybe_async(global, value, true, true)
     }
 
-    pub fn from_js_with_encoding_value(
+    /// Like [`from_js_with_encoding_value_allow_request_response`] but takes an
+    /// already-parsed [`Encoding`], so callers that must inspect the encoding
+    /// first (e.g. to validate odd-length hex) don't coerce `encoding_value`
+    /// twice.
+    pub fn from_js_with_encoding(
         global: &JSGlobalObject,
         value: JSValue,
-        encoding_value: JSValue,
+        encoding: Encoding,
     ) -> JsResult<Option<BlobOrStringOrBuffer>> {
-        Self::from_js_with_encoding_value_allow_request_response(
-            global,
-            value,
-            encoding_value,
-            false,
-        )
+        if value.js_type() == jsc::JSType::DOMWrapper {
+            if let Some(blob) = value.as_class_ref::<Blob>() {
+                return Ok(Some(Self::Blob(Box::new(blob.dupe()))));
+            }
+        }
+        match StringOrBuffer::from_js_with_encoding(global, value, encoding)? {
+            Some(s) => Ok(Some(Self::StringOrBuffer(s))),
+            None => Ok(None),
+        }
     }
 
     pub fn from_js_with_encoding_value_allow_request_response(
@@ -324,13 +324,6 @@ impl StringOrBuffer {
         }
     }
 
-    /// Consuming `to_thread_safe()` — see [`PathLike::into_thread_safe`].
-    #[inline]
-    pub fn into_thread_safe(mut self) -> bun_jsc::ThreadSafe<Self> {
-        self.to_thread_safe();
-        bun_jsc::ThreadSafe::adopt(self)
-    }
-
     pub fn from_js_to_owned_slice(
         global_object: &JSGlobalObject,
         value: JSValue,
@@ -365,15 +358,6 @@ impl StringOrBuffer {
                 }
                 Ok(buffer.to_node_buffer(ctx))
             }
-        }
-    }
-
-    /// Mirrors `to_thread_safe` but only
-    /// protects the JS-side buffer value (no string conversion).
-    #[inline]
-    pub fn protect(&self) {
-        if let Self::Buffer(buffer) = self {
-            buffer.buffer.value.protect();
         }
     }
 
@@ -593,21 +577,6 @@ impl StringOrBuffer {
         }
     }
 
-    pub fn from_js_with_encoding_value(
-        global: &JSGlobalObject,
-        value: JSValue,
-        encoding_value: JSValue,
-    ) -> JsResult<Option<StringOrBuffer>> {
-        let encoding: Encoding = 'brk: {
-            if !encoding_value.is_cell() {
-                break 'brk Encoding::Utf8;
-            }
-            break 'brk Encoding::from_js(encoding_value, global)?.unwrap_or(Encoding::Utf8);
-        };
-
-        Self::from_js_with_encoding(global, value, encoding)
-    }
-
     pub fn from_js_with_encoding_value_allow_string_object(
         global: &JSGlobalObject,
         value: JSValue,
@@ -711,11 +680,16 @@ impl From<bun_core::NodeEncoding> for Encoding {
     }
 }
 
-impl Encoding {
-    pub fn is_binary_to_text(self) -> bool {
-        matches!(self, Self::Hex | Self::Base64 | Self::Base64url)
-    }
+pub fn js_assert_encoding_valid(
+    global: &JSGlobalObject,
+    call_frame: &CallFrame,
+) -> JsResult<JSValue> {
+    let value = call_frame.argument(0);
+    let _ = Encoding::assert(value, global, Encoding::Utf8)?;
+    Ok(JSValue::UNDEFINED)
+}
 
+impl Encoding {
     /// Caller must verify the value is a string
     pub fn from(slice: &[u8]) -> Option<Encoding> {
         ENCODING_MAP.get_ascii_case_insensitive(slice).copied()
@@ -779,19 +753,6 @@ impl Encoding {
                 ),
             )
             .throw()
-    }
-
-    /// Thin assertion wrapper over `encode_with_max_size`; currently has no
-    /// callers (CryptoHasher.rs uses `encode_with_max_size` directly).
-    #[inline]
-    pub fn encode_with_size(
-        self,
-        global_object: &JSGlobalObject,
-        size: usize,
-        input: &[u8],
-    ) -> JsResult<JSValue> {
-        debug_assert_eq!(input.len(), size);
-        self.encode_with_max_size(global_object, size, input)
     }
 
     /// `max_size` is a runtime arg (see `encode_with_size`); callers pass
@@ -859,62 +820,6 @@ unsafe extern "C" {
         global_object: &JSGlobalObject,
         encoding: Encoding,
     ) -> JSValue;
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-
-/// This is used on the windows implementation of realpath, which is in javascript
-
-pub fn js_assert_encoding_valid(
-    global: &JSGlobalObject,
-    call_frame: &CallFrame,
-) -> JsResult<JSValue> {
-    let value = call_frame.argument(0);
-    let _ = Encoding::assert(value, global, Encoding::Utf8)?;
-    Ok(JSValue::UNDEFINED)
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-
-pub enum PathOrBuffer {
-    Path(bun_core::RawSlice<u8>),
-    Buffer(Buffer),
-}
-
-impl PathOrBuffer {
-    #[inline]
-    pub fn slice(&self) -> &[u8] {
-        match self {
-            Self::Path(p) => p.slice(),
-            Self::Buffer(_) => unreachable!("Zig accessed .path unconditionally"),
-        }
-    }
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-
-pub struct CallbackTask<Result> {
-    pub callback: jsc::C::JSObjectRef,
-    pub option: CallbackTaskOption<Result>,
-}
-
-pub enum CallbackTaskOption<Result> {
-    Err(Box<bun_sys::SystemError>),
-    Result(Result),
-}
-
-impl<Result> Default for CallbackTask<Result>
-where
-    CallbackTaskOption<Result>: Default,
-{
-    fn default() -> Self {
-        // Zero the callback handle
-        // and lean on the `CallbackTaskOption<Result>: Default` bound.
-        Self {
-            callback: core::ptr::null_mut(),
-            option: Default::default(),
-        }
-    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1059,7 +964,7 @@ impl PathLikeExt for PathLike {
                     // The cwd root + path don't fit `buf` (UNC cwds can push
                     // a near-MAX_PATH_BYTES path over); fall through to the
                     // plain copy / too-long handling below.
-                    Err(e) if e == bun_core::err!("NameTooLong") => None,
+                    Err(bun_paths::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG)) => None,
                     Err(e) => panic!("Error while resolving path: {e:?}"),
                 };
                 if let Some(len) = resolved_len {
@@ -1181,7 +1086,7 @@ impl PathLikeExt for PathLike {
                     // The cwd root + path don't fit the resolution buffer
                     // (UNC cwds can push a near-MAX_PATH_BYTES path over) —
                     // such a path can't exist on NT.
-                    Err(e) if e == bun_core::err!("NameTooLong") => return Err(NameTooLong),
+                    Err(bun_paths::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG)) => return Err(NameTooLong),
                     Err(e) => panic!("Error while resolving path: {e:?}"),
                 };
                 let normal = bun_paths::resolve_path::normalize_buf::<bun_paths::platform::Windows>(
@@ -1235,12 +1140,8 @@ impl PathLikeExt for PathLike {
         use jsc::JSType;
         match arg.js_type() {
             JSType::Uint8Array | JSType::DataView => {
-                let mut buffer = if arguments.will_be_async {
-                    Buffer::from_js_pinned(ctx, arg)
-                        .unwrap_or_else(|| Buffer::from_typed_array(ctx, arg))
-                } else {
-                    Buffer::from_typed_array(ctx, arg)
-                };
+                let mut buffer = Buffer::from_js_pinned(ctx, arg)
+                    .unwrap_or_else(|| Buffer::from_typed_array(ctx, arg));
                 if let Err(err) = Valid::path_buffer(&buffer, ctx)
                     .and_then(|_| Valid::path_null_bytes(buffer.slice(), ctx))
                 {
@@ -1256,12 +1157,8 @@ impl PathLikeExt for PathLike {
             }
 
             JSType::ArrayBuffer => {
-                let mut buffer = if arguments.will_be_async {
-                    Buffer::from_js_pinned(ctx, arg)
-                        .unwrap_or_else(|| Buffer::from_array_buffer(ctx, arg))
-                } else {
-                    Buffer::from_array_buffer(ctx, arg)
-                };
+                let mut buffer = Buffer::from_js_pinned(ctx, arg)
+                    .unwrap_or_else(|| Buffer::from_array_buffer(ctx, arg));
                 if let Err(err) = Valid::path_buffer(&buffer, ctx)
                     .and_then(|_| Valid::path_null_bytes(buffer.slice(), ctx))
                 {
@@ -1394,35 +1291,19 @@ impl PathLikeExt for PathLike {
 pub struct Valid;
 
 impl Valid {
-    pub fn path_slice(zig_str: &ZigStringSlice, ctx: &JSGlobalObject) -> JsResult<()> {
-        match zig_str.slice().len() {
-            0..=MAX_PATH_BYTES => Ok(()),
-            _ => {
-                let mut system_error =
-                    bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::open)
-                        .with_path(zig_str.slice())
-                        .to_system_error();
-                system_error.syscall = bun_core::String::DEAD;
-                Err(ctx.throw_value(system_error.to_error_instance(ctx)))
-            }
-        }
-    }
-
     pub fn path_string_length(len: usize, ctx: &JSGlobalObject) -> JsResult<()> {
         match len {
-            0..=MAX_PATH_BYTES => Ok(()),
+            // Exclusive: `PathBuffer` is `[u8; MAX_PATH_BYTES]` and
+            // `slice_z_with_force_copy` needs `len + NUL ≤ MAX_PATH_BYTES`.
+            0..MAX_PATH_BYTES => Ok(()),
             _ => {
                 let mut system_error =
                     bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::open)
                         .to_system_error();
-                system_error.syscall = bun_core::String::DEAD;
+                system_error.syscall = bun_core::String::DEAD.into();
                 Err(ctx.throw_value(system_error.to_error_instance(ctx)))
             }
         }
-    }
-
-    pub fn path_string(zig_str: &ZigString, ctx: &JSGlobalObject) -> JsResult<()> {
-        Self::path_string_length(zig_str.len, ctx)
     }
 
     pub fn path_buffer(buffer: &Buffer, ctx: &JSGlobalObject) -> JsResult<()> {
@@ -1432,12 +1313,14 @@ impl Valid {
                 Err(ctx
                     .throw_invalid_arguments(format_args!("Invalid path buffer: can't be empty")))
             }
-            1..=MAX_PATH_BYTES => Ok(()),
+            // Exclusive: `PathBuffer` is `[u8; MAX_PATH_BYTES]` and
+            // `slice_z_with_force_copy` needs `len + NUL ≤ MAX_PATH_BYTES`.
+            1..MAX_PATH_BYTES => Ok(()),
             _ => {
                 let mut system_error =
                     bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::open)
                         .to_system_error();
-                system_error.syscall = bun_core::String::DEAD;
+                system_error.syscall = bun_core::String::DEAD.into();
                 Err(ctx.throw_value(system_error.to_error_instance(ctx)))
             }
         }
@@ -1600,7 +1483,9 @@ pub fn mode_from_js(ctx: &JSGlobalObject, value: JSValue) -> JsResult<Option<Mod
             return Ok(None);
         }
 
-        if !value.is_string() {
+        // Node gates on `typeof value === 'string'`, so a `new String(...)`
+        // wrapper falls through to the number-only validator.
+        if !value.is_string_literal() {
             return Err(ctx.throw_invalid_argument_type_value(b"mode", b"number", value));
         }
 
@@ -1612,31 +1497,39 @@ pub fn mode_from_js(ctx: &JSGlobalObject, value: JSValue) -> JsResult<Option<Mod
 
         let mut zig_str = ZigString::EMPTY;
         value.to_zig_string(&mut zig_str, ctx)?;
-        let mut slice = zig_str.slice();
-        if slice.starts_with(b"0o") {
-            slice = &slice[2..];
+        // `to_slice()` handles both storage forms: the 8-bit-only `slice()`
+        // would misread a UTF-16 buffer, and JSC can store pure-ASCII content
+        // 16-bit, so bitness cannot be used to pre-filter.
+        let utf8 = zig_str.to_slice();
+        let slice = utf8.slice();
+
+        // Node validates mode strings against /^[0-7]+$/ before parsing.
+        if slice.is_empty() || !slice.iter().all(|b| (b'0'..=b'7').contains(b)) {
+            let actual = JSGlobalObject::inspect_for_error_message(ctx, value)?;
+            return Err(ctx
+                .err(
+                    jsc::ErrorCode::INVALID_ARG_VALUE,
+                    format_args!(
+                        "The argument 'mode' must be a 32-bit unsigned integer or an octal string. Received {}",
+                        actual
+                    ),
+                )
+                .throw());
         }
 
-        match strings::parse_int::<Mode>(slice, 8) {
-            Ok(v) => v as u32,
-            Err(_) => {
-                let mut formatter = jsc::console_object::Formatter::new(ctx);
-                // formatter.deinit() on Drop
-                return Err(ctx.throw_value(
-                    ctx.err(
-                        jsc::ErrorCode::INVALID_ARG_VALUE,
-                        format_args!(
-                            "The argument 'mode' must be a 32-bit unsigned integer or an octal string. Received {}",
-                            value.to_fmt(&mut formatter)
-                        ),
-                    )
-                    .to_js(),
-                ));
-            }
-        }
+        // Node range-checks the parsed octal string with the same validateUint32
+        // as numeric modes (> u32::MAX is ERR_OUT_OF_RANGE). `slice` is already
+        // [0-7]+, so the only parse error is Overflow; u64::MAX stays out of range.
+        let parsed = strings::parse_int::<u64>(slice, 8).unwrap_or(u64::MAX);
+        validators::validate_uint32(
+            ctx,
+            JSValue::js_number_from_uint64(parsed),
+            format_args!("mode"),
+            false,
+        )?
     };
 
-    Ok(Some((mode_int & 0o777) as Mode))
+    Ok(Some(mode_int as Mode))
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1700,7 +1593,7 @@ impl FileSystemFlags {
     /// Open file for reading. An exception occurs if the file does not exist.
     pub const R: Self = Self(O::RDONLY);
     /// Open file for writing. The file is created (if it does not exist) or truncated (if it exists).
-    pub const W: Self = Self(O::WRONLY | O::CREAT);
+    pub const W: Self = Self(O::TRUNC | O::CREAT | O::WRONLY);
 
     #[inline]
     pub fn as_int(self) -> c_int {
@@ -1711,19 +1604,13 @@ impl FileSystemFlags {
 impl FileSystemFlags {
     pub fn from_js(ctx: &JSGlobalObject, val: JSValue) -> JsResult<Option<FileSystemFlags>> {
         if val.is_number() {
-            if !val.is_int32() {
-                return Err(ctx.throw_value(
-                    ctx.err(
-                        jsc::ErrorCode::OUT_OF_RANGE,
-                        format_args!(
-                            "The value of \"flags\" is out of range. It must be an integer. Received {}",
-                            val.as_number()
-                        ),
-                    )
-                    .to_js(),
-                ));
-            }
-            let number = val.coerce_to_i32(ctx)?;
+            // Match Node's stringToFlags, which runs validateInt32 on a numeric
+            // `flags`: accept any integer-valued number in the int32 range,
+            // regardless of whether JSC boxed it as an int32 or a double. Go's
+            // `syscall/js` bridge reads arguments out of wasm memory with
+            // getFloat64, so valid flags like 578 (O_RDWR|O_CREAT|O_TRUNC)
+            // arrive double-boxed and must not be rejected.
+            let number = validators::validate_int32(ctx, val, "flags", None, None)?;
             let flags = number.max(0);
             // On Windows, numeric flags from fs.constants (e.g. O_CREAT=0x100)
             // use the platform's native MSVC/libuv values which differ from the
@@ -1739,57 +1626,30 @@ impl FileSystemFlags {
             }
         }
 
-        let js_type = val.js_type();
-        if js_type.is_string_like() {
-            let str = val.get_zig_string(ctx)?;
-            if str.len == 0 {
-                return Err(ctx.throw_invalid_arguments(format_args!(
-                    "Expected flags to be a non-empty string. Learn more at https://nodejs.org/api/fs.html#fs_file_system_flags",
-                )));
-            }
-            // it's definitely wrong when the string is super long
-            else if str.len > 12 {
-                return Err(ctx.throw_invalid_arguments(format_args!(
-                    "Invalid flag '{}'. Learn more at https://nodejs.org/api/fs.html#fs_file_system_flags",
-                    str
-                )));
-            }
-
-            let flags: Option<i32> = 'brk: {
-                if str.is_16bit() {
-                    let chars = str.utf16_slice_aligned();
-                    if (chars[0] as u8).is_ascii_digit() {
-                        // node allows "0o644" as a string :(
-                        let slice = str.to_slice();
-                        // slice.deinit() on Drop
-                        break 'brk strings::parse_int::<Mode>(slice.slice(), 10)
-                            .ok()
-                            .map(|v| v as i32);
-                    }
-                } else {
-                    let chars = str.slice();
-                    if chars[0].is_ascii_digit() {
-                        break 'brk strings::parse_int::<Mode>(chars, 10).ok().map(|v| v as i32);
-                    }
-                }
-
-                // Convert the ZigString (≤12 bytes here) to a UTF-8 slice for
-                // the map lookup.
-                let key_slice = str.to_slice();
-                break 'brk FILE_SYSTEM_FLAGS_MAP.get(key_slice.slice()).copied();
-            };
-
-            let Some(flags) = flags else {
-                return Err(ctx.throw_invalid_arguments(format_args!(
-                    "Invalid flag '{}'. Learn more at https://nodejs.org/api/fs.html#fs_file_system_flags",
-                    str
-                )));
-            };
-
-            return Ok(Some(FileSystemFlags(flags)));
+        if val.is_undefined_or_null() {
+            return Ok(None);
         }
 
-        Ok(None)
+        // Node switches on the value with strict equality, so only primitive
+        // strings can match; `new String("w")` and every other object throw.
+        if val.is_string_literal() {
+            let str = val.get_zig_string(ctx)?;
+            // The longest valid flag string is 3 bytes ("as+" etc).
+            if str.len >= 1 && str.len <= 3 {
+                let key_slice = str.to_slice();
+                if let Some(flags) = FILE_SYSTEM_FLAGS_MAP.get(key_slice.slice()).copied() {
+                    return Ok(Some(FileSystemFlags(flags)));
+                }
+            }
+        }
+
+        let actual = JSGlobalObject::inspect_for_error_message(ctx, val)?;
+        Err(ctx
+            .err(
+                jsc::ErrorCode::INVALID_ARG_VALUE,
+                format_args!("The argument 'flags' is invalid. Received {}", actual),
+            )
+            .throw())
     }
 
     /// Equivalent of GetValidFileMode, which is used to implement fs.access and copyFile
@@ -1842,55 +1702,31 @@ impl FileSystemFlags {
 }
 
 bun_core::comptime_string_map! {
-    /// Node's fs flag strings → `bun.O` bits: 22 distinct flags × {lower,
-    /// UPPER}. Mixed case (e.g. "Rs") is *not* accepted, so every accepted
-    /// spelling is listed explicitly rather than going through
-    /// `get_ascii_case_insensitive`.
+    /// Node's `stringToFlags` table. Case-sensitive: uppercase spellings
+    /// ("W", "A+", ...) are rejected by Node with ERR_INVALID_ARG_VALUE.
     static FILE_SYSTEM_FLAGS_MAP: c_int = {
         b"r" => O::RDONLY,
-        b"R" => O::RDONLY,
         b"w" => O::TRUNC | O::CREAT | O::WRONLY,
-        b"W" => O::TRUNC | O::CREAT | O::WRONLY,
         b"a" => O::APPEND | O::CREAT | O::WRONLY,
-        b"A" => O::APPEND | O::CREAT | O::WRONLY,
         b"r+" => O::RDWR,
-        b"R+" => O::RDWR,
         b"w+" => O::TRUNC | O::CREAT | O::RDWR,
-        b"W+" => O::TRUNC | O::CREAT | O::RDWR,
         b"a+" => O::APPEND | O::CREAT | O::RDWR,
-        b"A+" => O::APPEND | O::CREAT | O::RDWR,
         b"rs" => O::RDONLY | O::SYNC,
-        b"RS" => O::RDONLY | O::SYNC,
         b"sr" => O::RDONLY | O::SYNC,
-        b"SR" => O::RDONLY | O::SYNC,
         b"wx" => O::TRUNC | O::CREAT | O::WRONLY | O::EXCL,
-        b"WX" => O::TRUNC | O::CREAT | O::WRONLY | O::EXCL,
         b"xw" => O::TRUNC | O::CREAT | O::WRONLY | O::EXCL,
-        b"XW" => O::TRUNC | O::CREAT | O::WRONLY | O::EXCL,
         b"ax" => O::APPEND | O::CREAT | O::WRONLY | O::EXCL,
-        b"AX" => O::APPEND | O::CREAT | O::WRONLY | O::EXCL,
         b"xa" => O::APPEND | O::CREAT | O::WRONLY | O::EXCL,
-        b"XA" => O::APPEND | O::CREAT | O::WRONLY | O::EXCL,
         b"as" => O::APPEND | O::CREAT | O::WRONLY | O::SYNC,
-        b"AS" => O::APPEND | O::CREAT | O::WRONLY | O::SYNC,
         b"sa" => O::APPEND | O::CREAT | O::WRONLY | O::SYNC,
-        b"SA" => O::APPEND | O::CREAT | O::WRONLY | O::SYNC,
         b"rs+" => O::RDWR | O::SYNC,
-        b"RS+" => O::RDWR | O::SYNC,
         b"sr+" => O::RDWR | O::SYNC,
-        b"SR+" => O::RDWR | O::SYNC,
         b"wx+" => O::TRUNC | O::CREAT | O::RDWR | O::EXCL,
-        b"WX+" => O::TRUNC | O::CREAT | O::RDWR | O::EXCL,
         b"xw+" => O::TRUNC | O::CREAT | O::RDWR | O::EXCL,
-        b"XW+" => O::TRUNC | O::CREAT | O::RDWR | O::EXCL,
         b"ax+" => O::APPEND | O::CREAT | O::RDWR | O::EXCL,
-        b"AX+" => O::APPEND | O::CREAT | O::RDWR | O::EXCL,
         b"xa+" => O::APPEND | O::CREAT | O::RDWR | O::EXCL,
-        b"XA+" => O::APPEND | O::CREAT | O::RDWR | O::EXCL,
         b"as+" => O::APPEND | O::CREAT | O::RDWR | O::SYNC,
-        b"AS+" => O::APPEND | O::CREAT | O::RDWR | O::SYNC,
         b"sa+" => O::APPEND | O::CREAT | O::RDWR | O::SYNC,
-        b"SA+" => O::APPEND | O::CREAT | O::RDWR | O::SYNC,
     };
 }
 

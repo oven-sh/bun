@@ -18,7 +18,7 @@ pub fn is_identifier_part(codepoint: i32) -> bool {
     }
 }
 
-use crate::string::strings::{CodePoint, CodepointIterator, Cursor};
+use crate::strings::{CodePoint, CodepointIterator, Cursor};
 
 /// Whole-string ES identifier check over WTF-8 bytes.
 ///
@@ -46,7 +46,7 @@ pub fn is_identifier(text: &[u8]) -> bool {
 ///
 /// Surrogate decoding is open-coded on purpose: an unpaired high surrogate
 /// (0xD800..=0xDBFF not followed by a low surrogate) advances ONE unit and is
-/// fed raw to `is_identifier_start/part`. `crate::string::strings::utf16_codepoint` (defined in
+/// fed raw to `is_identifier_start/part`. `crate::strings::utf16_codepoint` (defined in
 /// `immutable/unicode.rs`, re-exported through `immutable.rs`) would advance
 /// TWO units in that case — its lead-surrogate arm returns `len: 2` even when
 /// the next unit is not a trail surrogate — so do NOT swap it in here.
@@ -58,7 +58,7 @@ pub fn is_identifier_utf16(text: &[u16]) -> bool {
     let mut i: usize = 0;
     while i < n {
         let is_start = i == 0;
-        let (cp, adv) = crate::string::strings::decode_wtf16_raw(&text[i..]);
+        let (cp, adv) = crate::strings::decode_wtf16_raw(&text[i..]);
         i += adv as usize;
         let codepoint = cp as CodePoint;
         if is_start {

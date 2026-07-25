@@ -1,10 +1,13 @@
 // This is close to WHATWG URL, but we don't want the validation errors
 #![warn(unused_must_use)]
+pub mod error;
+pub use error::{Error, Result};
+
 use core::cell::RefCell;
 
 use bun_collections::bit_set::{ArrayBitSet, num_masks_for};
 use bun_core::{self, fmt as bun_fmt};
-use bun_core::{String as BunString, Tag as BunStringTag, immutable as strings};
+use bun_core::{String as BunString, Tag as BunStringTag, strings};
 use bun_paths::resolve_path::{self, platform};
 use bun_wyhash::hash as wyhash;
 
@@ -61,9 +64,6 @@ pub mod whatwg {
         safe fn URL__fromString(str: &mut String) -> Option<core::ptr::NonNull<URL>>;
         safe fn URL__protocol(url: &URL) -> String;
         safe fn URL__href(url: &URL) -> String;
-        safe fn URL__username(url: &URL) -> String;
-        safe fn URL__password(url: &URL) -> String;
-        safe fn URL__search(url: &URL) -> String;
         safe fn URL__host(url: &URL) -> String;
         safe fn URL__hostname(url: &URL) -> String;
         safe fn URL__port(url: &URL) -> u32;
@@ -142,15 +142,6 @@ pub mod whatwg {
         }
         pub fn href(&self) -> String {
             URL__href(self)
-        }
-        pub fn username(&self) -> String {
-            URL__username(self)
-        }
-        pub fn password(&self) -> String {
-            URL__password(self)
-        }
-        pub fn search(&self) -> String {
-            URL__search(self)
         }
         /// Returns the host WITHOUT the port.
         ///
@@ -319,7 +310,7 @@ impl<'a> URL<'a> {
     }
 
     pub fn is_file(&self) -> bool {
-        self.protocol == b"file"
+        strings::eql_case_insensitive_ascii(self.protocol, b"file", true)
     }
 
     /// host + path without the ending slash, protocol, searchParams and hash
@@ -356,10 +347,10 @@ impl<'a> URL<'a> {
 
     // Ownership: returns an `OwnedURL` that owns the buffer; callers borrow
     // via `.url()` and Drop frees it.
-    pub fn from_string(input: &BunString) -> Result<OwnedURL, bun_core::Error> {
+    pub fn from_string(input: &BunString) -> crate::Result<OwnedURL> {
         let href = whatwg::href_from_string(input);
         if href.tag() == BunStringTag::Dead {
-            return Err(bun_core::err!("InvalidURL"));
+            return Err(crate::Error::InvalidURL);
         }
         // `to_owned_slice` is infallible so explicit
         // ordering suffices (no error path between alloc and deref).
@@ -368,17 +359,8 @@ impl<'a> URL<'a> {
         Ok(OwnedURL { href: owned })
     }
 
-    pub fn from_utf8(input: &[u8]) -> Result<OwnedURL, bun_core::Error> {
+    pub fn from_utf8(input: &[u8]) -> crate::Result<OwnedURL> {
         Self::from_string(&BunString::borrow_utf8(input))
-    }
-
-    pub fn is_localhost(&self) -> bool {
-        self.hostname.is_empty() || self.hostname == b"localhost" || self.hostname == b"0.0.0.0"
-    }
-
-    #[inline]
-    pub fn is_unix(&self) -> bool {
-        self.protocol.starts_with(b"unix")
     }
 
     pub fn display_protocol(&self) -> &[u8] {
@@ -395,17 +377,19 @@ impl<'a> URL<'a> {
         b"http"
     }
 
+    // RFC 3986 §3.1: the scheme is case-insensitive. `URL::parse` borrows
+    // `protocol` from the input without normalizing, so compare accordingly.
     #[inline]
     pub fn is_https(&self) -> bool {
-        self.protocol == b"https"
+        strings::eql_case_insensitive_ascii(self.protocol, b"https", true)
     }
     #[inline]
     pub fn is_s3(&self) -> bool {
-        self.protocol == b"s3"
+        strings::eql_case_insensitive_ascii(self.protocol, b"s3", true)
     }
     #[inline]
     pub fn is_http(&self) -> bool {
-        self.protocol == b"http"
+        strings::eql_case_insensitive_ascii(self.protocol, b"http", true)
     }
 
     pub fn display_hostname(&self) -> &[u8] {
@@ -463,7 +447,7 @@ impl<'a> URL<'a> {
     }
 
     pub fn has_http_like_protocol(&self) -> bool {
-        self.protocol == b"http" || self.protocol == b"https"
+        self.is_http() || self.is_https()
     }
 
     pub fn get_port(&self) -> Option<u16> {
@@ -494,6 +478,16 @@ impl<'a> URL<'a> {
         !self.hostname.is_empty() && !self.pathname.is_empty()
     }
 
+    #[inline]
+    #[allow(
+        invalid_value,
+        clippy::uninit_assumed_init,
+        clippy::undocumented_unsafe_blocks
+    )]
+    fn join_buf_uninit() -> [u8; 2048] {
+        unsafe { core::mem::MaybeUninit::uninit().assume_init() }
+    }
+
     pub fn join_normalize<'b>(
         out: &'b mut [u8],
         prefix: &[u8],
@@ -501,7 +495,7 @@ impl<'a> URL<'a> {
         basename: &[u8],
         extname: &[u8],
     ) -> &'b [u8] {
-        let mut buf = [0u8; 2048];
+        let mut buf = Self::join_buf_uninit();
 
         let mut path_parts: [&[u8]; 10] = [b""; 10];
         let mut path_end: usize = 0;
@@ -549,8 +543,8 @@ impl<'a> URL<'a> {
         dirname: &[u8],
         basename: &[u8],
         extname: &[u8],
-    ) -> Result<(), bun_core::Error> {
-        let mut out = [0u8; 2048];
+    ) -> crate::Result<()> {
+        let mut out = Self::join_buf_uninit();
         let normalized_path = Self::join_normalize(&mut out, prefix, dirname, basename, extname);
 
         writer.write_all(self.origin)?;
@@ -566,7 +560,7 @@ impl<'a> URL<'a> {
         basename: &[u8],
         extname: &[u8],
         absolute_path: &[u8],
-    ) -> Result<Box<[u8]>, bun_core::Error> {
+    ) -> crate::Result<Box<[u8]>> {
         let has_uplevels = strings::index_of(dirname, b"../").is_some();
 
         if has_uplevels {
@@ -576,7 +570,7 @@ impl<'a> URL<'a> {
             v.extend_from_slice(absolute_path);
             Ok(v.into_boxed_slice())
         } else {
-            let mut out = [0u8; 2048];
+            let mut out = Self::join_buf_uninit();
             let normalized_path =
                 Self::join_normalize(&mut out, prefix, dirname, basename, extname);
             let mut v = Vec::with_capacity(self.origin.len() + 1 + normalized_path.len());
@@ -772,13 +766,11 @@ impl<'a> URL<'a> {
                 b'@' => {
                     // we found a password, everything before this point in the slice is a password
                     self.password = &str[0..i];
-                    if cfg!(debug_assertions) {
-                        debug_assert!(
-                            str[i..].len() < 2
-                                || u16::from_le_bytes([str[i], str[i + 1]])
-                                    != u16::from_le_bytes(*b"//")
-                        );
-                    }
+                    debug_assert!(
+                        str[i..].len() < 2
+                            || u16::from_le_bytes([str[i], str[i + 1]])
+                                != u16::from_le_bytes(*b"//")
+                    );
                     return Some(u32::try_from(i + 1).expect("int cast"));
                 }
                 // if we reach a slash or "?", there's no password
@@ -970,30 +962,6 @@ impl QueryStringMap {
         self.get_index(input).is_some()
     }
 
-    pub fn get_all<'s>(&'s self, input: &[u8], target: &mut [&'s [u8]]) -> usize {
-        let hash = wyhash(input);
-        self.get_all_with_hash_from_offset(target, hash, 0)
-    }
-
-    pub fn get_all_with_hash_from_offset<'s>(
-        &'s self,
-        target: &mut [&'s [u8]],
-        hash: u64,
-        offset: usize,
-    ) -> usize {
-        let mut remainder = &self.list[offset..];
-        let mut target_i: usize = 0;
-        while !remainder.is_empty() && target_i < target.len() {
-            let Some(i) = remainder.iter().position(|p| p.name_hash == hash) else {
-                break;
-            };
-            target[target_i] = self.str(remainder[i].value);
-            remainder = &remainder[i + 1..];
-            target_i += 1;
-        }
-        target_i
-    }
-
     pub fn init_with_scanner(
         mut scanner: CombinedScanner<'_>,
     ) -> Result<Option<QueryStringMap>, bun_alloc::AllocError> {
@@ -1052,14 +1020,10 @@ impl QueryStringMap {
 
             let name_hash: u64 = wyhash(name_slice);
 
-            value.length = match PercentEncoding::decode(
-                &mut buf,
-                result.raw_value(scanner.pathname.pathname),
-            ) {
-                Ok(n) => n,
-                Err(_) => continue,
-            };
+            let value_slice = result.raw_value(scanner.pathname.pathname);
+            value.length = u32::try_from(value_slice.len()).unwrap();
             value.offset = buf_writer_pos;
+            buf.extend_from_slice(value_slice);
             buf_writer_pos += value.length;
 
             list.push(Param {
@@ -1260,9 +1224,8 @@ impl QueryStringMap {
     }
 }
 
-// Browsers typically limit URL lengths to around 64k
-// bun_collections::StaticBitSet currently aliases IntegerBitSet (≤64 bits), so
-// pick ArrayBitSet directly. 2048 / 64 == 32 masks.
+// Browsers typically limit URL lengths to around 64k.
+// IntegerBitSet caps at ≤64 bits, so pick ArrayBitSet directly. 2048 / 64 == 32 masks.
 /// Hard cap on parsed query-string parameters, enforced in `init` /
 /// `init_with_scanner` so the fixed-size `VisitedMap` bitset is never indexed
 /// out of bounds.
@@ -1322,9 +1285,7 @@ impl<'a> Iterator<'a> {
             .position(|p| p.name_hash == hash)
         {
             let real_i = current_i + next_index + self.i;
-            if cfg!(debug_assertions) {
-                debug_assert!(!self.visited.is_set(real_i));
-            }
+            debug_assert!(!self.visited.is_set(real_i));
 
             self.visited.set(real_i);
             target[target_i] = self.map.str(remainder[current_i + next_index].value);
@@ -1368,11 +1329,11 @@ impl From<bun_core::Error> for DecodeError {
         DecodeError::Write(e)
     }
 }
-impl From<DecodeError> for bun_core::Error {
+impl From<DecodeError> for crate::Error {
     fn from(e: DecodeError) -> Self {
         match e {
-            DecodeError::DecodingError => bun_core::err!("DecodingError"),
-            DecodeError::Write(inner) => inner,
+            DecodeError::DecodingError => crate::Error::DecodingError,
+            DecodeError::Write(inner) => crate::Error::Core(inner),
         }
     }
 }
@@ -1600,7 +1561,7 @@ impl<'a> PathnameScanner<'a> {
             name_needs_decoding: false,
             // TODO: fix this technical debt
             value: string_pointer_from_strings(self.pathname, param.value),
-            value_needs_decoding: strings::index_of_char(param.value, b'%').is_some(),
+            value_needs_decoding: false,
         })
     }
 }
@@ -1675,13 +1636,12 @@ impl<'a> Scanner<'a> {
                             relative_i += 1;
                         }
                         value.length = u32::try_from(relative_i - offset).unwrap();
+                        self.i += relative_i;
                         // If the name is empty and it's just a value, skip it.
                         // This is kind of an opinion. But, it's hard to see where that might be intentional.
                         if name.length == 0 {
-                            self.i += relative_i;
-                            return None;
+                            continue 'outer;
                         }
-                        self.i += relative_i;
                         return Some(ScannerResult {
                             name,
                             value,

@@ -56,17 +56,11 @@ export abstract class NamedType extends Type {
   get cppSource(): string | null {
     return null;
   }
-  get zigSource(): string | null {
-    return null;
-  }
   // These getters are faster than `.cppHeader != null` etc.
   get hasCppHeader(): boolean {
     return false;
   }
   get hasCppSource(): boolean {
-    return false;
-  }
-  get hasZigSource(): boolean {
     return false;
   }
   getHeaders(result: Set<string>): void {

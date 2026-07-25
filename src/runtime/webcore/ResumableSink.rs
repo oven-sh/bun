@@ -133,7 +133,7 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
     }
 
     pub fn constructor(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<*mut Self> {
-        Err(global.throw_illegal_constructor("ResumableSink"))
+        Err(global.throw_illegal_constructor())
     }
 
     pub fn init(
@@ -166,17 +166,11 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
         let this_ref = unsafe { &mut *this };
 
         if stream.is_locked(global_this) || stream.is_disturbed(global_this) {
-            // `SystemError` has no `Default` impl upstream — spell out
-            // every field explicitly.
             let err = SystemError {
-                errno: 0,
-                code: BunString::static_(<&'static str>::from(ErrorCode::ERR_STREAM_CANNOT_PIPE)),
-                message: BunString::static_("Stream already used, please create a new one"),
-                path: BunString::EMPTY,
-                syscall: BunString::EMPTY,
-                hostname: BunString::EMPTY,
-                fd: core::ffi::c_int::MIN,
-                dest: BunString::EMPTY,
+                code: BunString::static_(<&'static str>::from(ErrorCode::ERR_STREAM_CANNOT_PIPE))
+                    .into(),
+                message: BunString::static_("Stream already used, please create a new one").into(),
+                ..Default::default()
             };
             let err_instance = err.to_error_instance(global_this);
             err_instance.ensure_still_alive();
@@ -200,11 +194,8 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
                     let err: Option<JSValue> = 'brk_err: {
                         let pending = &byte_stream.pending.get().result;
                         if let StreamResult::Err(e) = pending {
-                            let (js_err, was_strong) = e.to_js_weak(global_this);
+                            let js_err = e.to_js(global_this);
                             js_err.ensure_still_alive();
-                            if was_strong == crate::webcore::streams::WasStrong::Strong {
-                                js_err.unprotect();
-                            }
                             break 'brk_err Some(js_err);
                         }
                         None
@@ -441,9 +432,10 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
     /// slots and downgrade `js_this` from a strong to a weak handle so the
     /// wrapper (and the `drainReaderIntoSink` closure it caches, which captures
     /// the reader/stream graph) becomes collectible. Unlike [`Self::cancel`]
-    /// this does NOT run any JS callbacks or invoke `on_end`, so it is safe to
-    /// call from contexts where executing JS is not allowed (e.g. teardown /
-    /// finalizers).
+    /// this does NOT run any JS callbacks or invoke `on_end`.
+    ///
+    /// NOT safe during GC sweep (Weak/cell finalizers): the cached-value
+    /// setters downcast the wrapper cell and issue a write barrier.
     pub fn detach_js(&mut self) {
         if let Some(js_this) = self.js_this.try_get() {
             let global = self.global_this;
@@ -483,11 +475,8 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
         if is_done {
             let err: Option<JSValue> = 'brk_err: {
                 if let StreamResult::Err(e) = &stream {
-                    let (js_err, was_strong) = e.to_js_weak(self.global_this.get());
+                    let js_err = e.to_js(self.global_this.get());
                     js_err.ensure_still_alive();
-                    if was_strong == crate::webcore::streams::WasStrong::Strong {
-                        js_err.unprotect();
-                    }
                     break 'brk_err Some(js_err);
                 }
                 None

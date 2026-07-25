@@ -43,19 +43,31 @@ type BraceStack = BoundedArray<Brace, 10>;
 /// alternatives. Patterns that exceed this budget fail to match.
 const BRACE_BRANCH_BUDGET: u32 = 10_000;
 
-// `pub` because it appears in the signature of `pub fn match` (private-in-public is forbidden).
+/// Result of [`match`](r#match). Two independent bits: whether the path matched
+/// (after applying any leading `!` negation), and whether the pattern was negated.
+/// Most callers only want [`matches()`](Self::matches); the negation bit is for
+/// multi-pattern filter loops where a `!pattern` hit is a hard veto.
 #[derive(Copy, Clone, Eq, PartialEq)]
-pub enum MatchResult {
-    NoMatch,
-    Match,
-
-    NegateNoMatch,
-    NegateMatch,
+pub struct MatchResult {
+    matches: bool,
+    negated: bool,
 }
 
 impl MatchResult {
+    /// Overall result: did the path match the pattern? Leading `!`s are already
+    /// applied, so `!foo` against `bar` matches and `!foo` against `foo` does not.
+    #[inline]
     pub fn matches(self) -> bool {
-        self == MatchResult::Match || self == MatchResult::NegateMatch
+        self.matches
+    }
+
+    /// Was the pattern `!`-prefixed (an odd number of times)? Combine with
+    /// `!matches()` to detect an explicit rejection by a negated pattern.
+    /// Callers can't derive this from the pattern string because leading `!`s
+    /// toggle (`!!foo` is un-negated).
+    #[inline]
+    pub fn is_negated(self) -> bool {
+        self.negated
     }
 }
 
@@ -147,30 +159,21 @@ pub fn r#match(glob: &[u8], path: &[u8]) -> MatchResult {
 
     let mut brace_stack = BraceStack::default();
     let mut brace_budget = BRACE_BRANCH_BUDGET;
+    // glob_start must point past the consumed `!` prefix so that a pattern-initial
+    // `**` is still recognized as being at the start of a path segment.
+    let glob_start = state.glob_index;
     let matched = glob_match_impl(
         &mut state,
         glob,
-        0,
+        glob_start,
         path,
         &mut brace_stack,
         &mut brace_budget,
     );
 
-    // TODO: consider just returning a bool
-    // return matched != negated;
-    if negated {
-        // FIXME(@DonIsaac): This looks backwards to me
-        if matched {
-            MatchResult::NegateNoMatch
-        } else {
-            MatchResult::NegateMatch
-        }
-    } else {
-        if matched {
-            MatchResult::Match
-        } else {
-            MatchResult::NoMatch
-        }
+    MatchResult {
+        matches: matched != negated,
+        negated,
     }
 }
 
@@ -435,7 +438,7 @@ fn match_brace(
     brace_stack: &mut BraceStack,
     brace_budget: &mut u32,
 ) -> bool {
-    let mut brace_depth: i16 = 0;
+    let mut brace_depth: i32 = 0;
     let mut in_brackets = false;
 
     let open_brace_index = state.glob_index;
@@ -548,21 +551,24 @@ fn match_brace_branch(
 
 fn skip_branch(state: &mut State, glob: &[u8]) {
     let mut in_brackets = false;
-    let end_brace_depth = state.brace_depth - 1;
+    // `state.brace_depth` only counts groups entered via `match_brace_branch`,
+    // so nesting merely scanned over while skipping is tracked locally, not in state.
+    let mut nested: u32 = 0;
     while (state.glob_index as usize) < glob.len() {
         match glob[state.glob_index as usize] {
             b'{' => {
                 if !in_brackets {
-                    state.brace_depth += 1;
+                    nested += 1;
                 }
             }
             b'}' => {
                 if !in_brackets {
-                    state.brace_depth -= 1;
-                    if state.brace_depth == end_brace_depth {
+                    if nested == 0 {
+                        state.brace_depth -= 1;
                         state.glob_index += 1;
                         return;
                     }
+                    nested -= 1;
                 }
             }
             b'[' => {

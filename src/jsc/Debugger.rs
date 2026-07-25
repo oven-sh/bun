@@ -7,7 +7,7 @@
 //! (`bun_runtime::test_runner`) — a forward-dep cycle — so it dispatches
 //! through [`RuntimeHooks::retroactively_report_discovered_tests`].
 
-use core::cell::{Cell, UnsafeCell};
+use core::cell::Cell;
 use core::ffi::{c_int, c_void};
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
@@ -24,261 +24,59 @@ bun_core::declare_scope!(LifecycleAgent, visible);
 
 // ──────────────────────────────────────────────────────────────────────────
 // Agent types. `HTTPServerAgent` is the real sibling definition (re-exported
-// so `Debugger.http_server_agent` carries `next_server_id` state).
-// `BunFrontendDevServerAgent` is defined HERE (the canonical definition) —
-// it carries `next_inspector_connection_id` state inline in `Debugger`, so
-// it must live in this crate.
+// so `Debugger.http_server_agent` carries `next_server_id` state). Agents
+// implemented in higher-tier crates store their per-VM state in the
+// type-erased [`ErasedAgentSlot`] below.
 // ──────────────────────────────────────────────────────────────────────────
 
 pub use crate::http_server_agent::HTTPServerAgent;
 
-bun_opaque::opaque_ffi! {
-    /// Opaque C++ `InspectorBunFrontendDevServerAgent` handle.
-    pub struct InspectorBunFrontendDevServerAgentHandle;
-}
-
-/// `BunFrontendDevServerAgent` — stored inline in `Debugger`. The two
-/// high-tier types involved (`DevServer.RouteBundle.Index` in
-/// `notifyClientNavigated`, `DevServer.ConsoleLogKind` in `notifyConsoleLog`)
-/// are forward deps; both reduce to `i32` / `u8` at the C++ FFI boundary, so
-/// callers in `bun_runtime` resolve them before calling.
+/// Type-erased per-`Debugger` slot for an inspector agent implemented in a
+/// higher-tier crate (a forward dep this crate cannot name).
+///
+/// `agent` is the opaque C++ inspector-agent pointer the backend pushes on
+/// domain enable (null while disabled) through a `HOST_EXPORT` defined next
+/// to the slot's owner; `sequence` is a free-running counter for the owner's
+/// use. `Debugger` only stores the slot — it never interprets either field.
+/// The fields are private so every outside access flows through the named
+/// accessors below, keeping the owning module's interpretation the only one.
 ///
 /// Both fields are `Copy`, so `Cell<T>` gives interior mutability with zero
-/// `unsafe` — every method takes `&self`, and callers reaching this through a
-/// shared `&Debugger` borrow no longer need `&mut` (or the `UnsafeCell` deref
-/// in `DevServer::inspector`).
-pub struct BunFrontendDevServerAgent {
-    pub next_inspector_connection_id: Cell<i32>,
-    pub handle: Cell<*mut InspectorBunFrontendDevServerAgentHandle>,
+/// `unsafe`.
+pub struct ErasedAgentSlot {
+    agent: Cell<*mut c_void>,
+    sequence: Cell<i32>,
 }
 
-impl Default for BunFrontendDevServerAgent {
-    fn default() -> Self {
-        Self {
-            next_inspector_connection_id: Cell::new(0),
-            handle: Cell::new(core::ptr::null_mut()),
-        }
+impl ErasedAgentSlot {
+    /// The opaque agent pointer (null while the inspector domain is disabled).
+    #[inline]
+    pub fn agent_ptr(&self) -> *mut c_void {
+        self.agent.get()
     }
-}
 
-impl BunFrontendDevServerAgent {
-    /// `nextConnectionID` — wrapping post-increment.
-    pub fn next_connection_id(&self) -> i32 {
-        let id = self.next_inspector_connection_id.get();
-        self.next_inspector_connection_id.set(id.wrapping_add(1));
+    /// Set the opaque agent pointer. Called by the slot owner's `HOST_EXPORT`
+    /// on domain enable/disable.
+    #[inline]
+    pub fn set_agent_ptr(&self, ptr: *mut c_void) {
+        self.agent.set(ptr);
+    }
+
+    /// Wrapping post-increment of the owner's free-running counter.
+    #[inline]
+    pub fn post_increment_sequence(&self) -> i32 {
+        let id = self.sequence.get();
+        self.sequence.set(id.wrapping_add(1));
         id
     }
-
-    #[inline]
-    pub fn is_enabled(&self) -> bool {
-        !self.handle.get().is_null()
-    }
-
-    /// `&mut Handle` accessor for the FFI shims. `handle` is set by the C++
-    /// inspector backend (`frontend_dev_server_agent_set_enabled`) and stays
-    /// live while the agent is enabled. Returns `None` when disabled.
-    #[inline]
-    #[allow(clippy::mut_from_ref)]
-    fn handle_mut(&self) -> Option<&mut InspectorBunFrontendDevServerAgentHandle> {
-        let handle = self.handle.get();
-        if handle.is_null() {
-            return None;
-        }
-        // `opaque_mut` is the audited safe `*mut → &mut` for opaque ZST
-        // handles (zero-byte deref; see `bun_opaque::opaque_deref_mut`).
-        Some(InspectorBunFrontendDevServerAgentHandle::opaque_mut(handle))
-    }
-
-    pub fn notify_client_connected(&self, dev_server_id: DebuggerId, connection_id: i32) {
-        if let Some(handle) = self.handle_mut() {
-            ffi::InspectorBunFrontendDevServerAgent__notifyClientConnected(
-                handle,
-                dev_server_id.get(),
-                connection_id,
-            )
-        }
-    }
-
-    pub fn notify_client_disconnected(&self, dev_server_id: DebuggerId, connection_id: i32) {
-        if let Some(handle) = self.handle_mut() {
-            ffi::InspectorBunFrontendDevServerAgent__notifyClientDisconnected(
-                handle,
-                dev_server_id.get(),
-                connection_id,
-            )
-        }
-    }
-
-    pub fn notify_bundle_start(&self, dev_server_id: DebuggerId, trigger_files: &mut [BunString]) {
-        if let Some(handle) = self.handle_mut() {
-            // SAFETY: `trigger_files` is a valid contiguous slice for the call;
-            // `(ptr, len)` pair derived from it.
-            unsafe {
-                ffi::InspectorBunFrontendDevServerAgent__notifyBundleStart(
-                    handle,
-                    dev_server_id.get(),
-                    trigger_files.as_mut_ptr(),
-                    trigger_files.len(),
-                )
-            }
-        }
-    }
-
-    pub fn notify_bundle_complete(&self, dev_server_id: DebuggerId, duration_ms: f64) {
-        if let Some(handle) = self.handle_mut() {
-            ffi::InspectorBunFrontendDevServerAgent__notifyBundleComplete(
-                handle,
-                dev_server_id.get(),
-                duration_ms,
-            )
-        }
-    }
-
-    pub fn notify_bundle_failed(
-        &self,
-        dev_server_id: DebuggerId,
-        build_errors_payload_base64: &mut BunString,
-    ) {
-        if let Some(handle) = self.handle_mut() {
-            ffi::InspectorBunFrontendDevServerAgent__notifyBundleFailed(
-                handle,
-                dev_server_id.get(),
-                build_errors_payload_base64,
-            )
-        }
-    }
-
-    /// `notifyClientNavigated`. `route_bundle_id` is the pre-resolved
-    /// `DevServer.RouteBundle.Index` (`-1` for `None`) — caller in
-    /// `bun_runtime` does `rbi.map(|i| i.get() as i32).unwrap_or(-1)`.
-    pub fn notify_client_navigated(
-        &self,
-        dev_server_id: DebuggerId,
-        connection_id: i32,
-        url: &mut BunString,
-        route_bundle_id: i32,
-    ) {
-        if let Some(handle) = self.handle_mut() {
-            ffi::InspectorBunFrontendDevServerAgent__notifyClientNavigated(
-                handle,
-                dev_server_id.get(),
-                connection_id,
-                url,
-                route_bundle_id,
-            )
-        }
-    }
-
-    pub fn notify_client_error_reported(
-        &self,
-        dev_server_id: DebuggerId,
-        client_error_payload_base64: &mut BunString,
-    ) {
-        if let Some(handle) = self.handle_mut() {
-            ffi::InspectorBunFrontendDevServerAgent__notifyClientErrorReported(
-                handle,
-                dev_server_id.get(),
-                client_error_payload_base64,
-            )
-        }
-    }
-
-    pub fn notify_graph_update(
-        &self,
-        dev_server_id: DebuggerId,
-        visualizer_payload_base64: &mut BunString,
-    ) {
-        if let Some(handle) = self.handle_mut() {
-            ffi::InspectorBunFrontendDevServerAgent__notifyGraphUpdate(
-                handle,
-                dev_server_id.get(),
-                visualizer_payload_base64,
-            )
-        }
-    }
-
-    /// `notifyConsoleLog`. `kind` is `DevServer.ConsoleLogKind as u8` (`b'l'`
-    /// / `b'e'`) — caller in `bun_runtime` does `kind as u8`.
-    pub fn notify_console_log(&self, dev_server_id: DebuggerId, kind: u8, data: &mut BunString) {
-        if let Some(handle) = self.handle_mut() {
-            ffi::InspectorBunFrontendDevServerAgent__notifyConsoleLog(
-                handle,
-                dev_server_id.get(),
-                kind,
-                data,
-            )
-        }
-    }
 }
 
-// HOST_EXPORT(Bun__InspectorBunFrontendDevServerAgent__setEnabled, c)
-pub fn frontend_dev_server_agent_set_enabled(agent: *mut InspectorBunFrontendDevServerAgentHandle) {
-    // SAFETY: called on the JS thread with a live VM (C++ inspector agent
-    // invokes this only after the VM is initialized).
-    if let Some(dbg) = VirtualMachine::get().as_mut().debugger.as_deref_mut() {
-        // `dbg: &mut Debugger`, so safe `UnsafeCell::get_mut` applies — no
-        // raw-pointer deref needed.
-        dbg.frontend_dev_server_agent.get_mut().handle.set(agent);
-    }
-}
-
-mod ffi {
-    use super::{BunString, InspectorBunFrontendDevServerAgentHandle};
-    // SAFETY (safe fn): `InspectorBunFrontendDevServerAgentHandle` is an
-    // `opaque_ffi!` ZST handle (`!Freeze` via `UnsafeCell`); `BunString` is a
-    // `#[repr(C)]` in-param the C++ side reads/consumes in-place. `&mut T` is
-    // ABI-identical to a non-null `*mut T`. `notifyBundleStart` keeps a raw
-    // `(ptr, len)` pair (slice not FFI-safe) and stays `unsafe`.
-    unsafe extern "C" {
-        pub(super) safe fn InspectorBunFrontendDevServerAgent__notifyClientConnected(
-            agent: &mut InspectorBunFrontendDevServerAgentHandle,
-            dev_server_id: i32,
-            connection_id: i32,
-        );
-        pub(super) safe fn InspectorBunFrontendDevServerAgent__notifyClientDisconnected(
-            agent: &mut InspectorBunFrontendDevServerAgentHandle,
-            dev_server_id: i32,
-            connection_id: i32,
-        );
-        pub(super) fn InspectorBunFrontendDevServerAgent__notifyBundleStart(
-            agent: &mut InspectorBunFrontendDevServerAgentHandle,
-            dev_server_id: i32,
-            trigger_files: *mut BunString,
-            trigger_files_len: usize,
-        );
-        pub(super) safe fn InspectorBunFrontendDevServerAgent__notifyBundleComplete(
-            agent: &mut InspectorBunFrontendDevServerAgentHandle,
-            dev_server_id: i32,
-            duration_ms: f64,
-        );
-        pub(super) safe fn InspectorBunFrontendDevServerAgent__notifyBundleFailed(
-            agent: &mut InspectorBunFrontendDevServerAgentHandle,
-            dev_server_id: i32,
-            build_errors_payload_base64: &mut BunString,
-        );
-        pub(super) safe fn InspectorBunFrontendDevServerAgent__notifyClientNavigated(
-            agent: &mut InspectorBunFrontendDevServerAgentHandle,
-            dev_server_id: i32,
-            connection_id: i32,
-            url: &mut BunString,
-            route_bundle_id: i32,
-        );
-        pub(super) safe fn InspectorBunFrontendDevServerAgent__notifyClientErrorReported(
-            agent: &mut InspectorBunFrontendDevServerAgentHandle,
-            dev_server_id: i32,
-            client_error_payload_base64: &mut BunString,
-        );
-        pub(super) safe fn InspectorBunFrontendDevServerAgent__notifyGraphUpdate(
-            agent: &mut InspectorBunFrontendDevServerAgentHandle,
-            dev_server_id: i32,
-            visualizer_payload_base64: &mut BunString,
-        );
-        pub(super) safe fn InspectorBunFrontendDevServerAgent__notifyConsoleLog(
-            agent: &mut InspectorBunFrontendDevServerAgentHandle,
-            dev_server_id: i32,
-            kind: u8,
-            data: &mut BunString,
-        );
+impl Default for ErasedAgentSlot {
+    fn default() -> Self {
+        Self {
+            agent: Cell::new(core::ptr::null_mut()),
+            sequence: Cell::new(0),
+        }
     }
 }
 
@@ -301,6 +99,16 @@ pub enum Mode {
     Connect,
 }
 
+#[derive(Copy, Clone, Eq, PartialEq)]
+pub enum Protocol {
+    /// WebKit inspector protocol, spoken by debug.bun.sh and the VSCode extension.
+    Jsc,
+    /// V8 Chrome DevTools Protocol, spoken by clients of `node:inspector`'s
+    /// `inspector.open()` (Chrome DevTools, vscode-js-debug, ...). The
+    /// debugger-thread server translates CDP to the JSC protocol.
+    NodeInspector,
+}
+
 pub struct Debugger {
     // `'static` is genuine: set from `cli::cli_dupe` (process-lifetime CLI
     // arena) — see jsc_hooks.rs. Never freed.
@@ -315,13 +123,13 @@ pub struct Debugger {
     // wait_for_connection: bool = false,
     pub set_breakpoint_on_first_line: bool,
     pub mode: Mode,
+    pub protocol: Protocol,
 
     pub test_reporter_agent: TestReporterAgent,
     pub lifecycle_reporter_agent: LifecycleAgent,
-    /// `UnsafeCell` because `DevServer::inspector()` hands out `&mut` to this
-    /// agent through a shared `&VirtualMachine` borrow. JS-thread
-    /// only; callers must not hold overlapping `&mut` borrows.
-    pub frontend_dev_server_agent: UnsafeCell<BunFrontendDevServerAgent>,
+    /// Reached through a shared `&Debugger` borrow; the slot's `Cell` fields
+    /// provide the interior mutability. JS-thread only.
+    pub extension_agent: ErasedAgentSlot,
     pub http_server_agent: HTTPServerAgent,
     pub must_block_until_connected: bool,
 }
@@ -337,9 +145,10 @@ impl Default for Debugger {
             wait_for_connection: Wait::Off,
             set_breakpoint_on_first_line: false,
             mode: Mode::Listen,
+            protocol: Protocol::Jsc,
             test_reporter_agent: TestReporterAgent::default(),
             lifecycle_reporter_agent: LifecycleAgent::default(),
-            frontend_dev_server_agent: UnsafeCell::new(BunFrontendDevServerAgent::default()),
+            extension_agent: ErasedAgentSlot::default(),
             http_server_agent: HTTPServerAgent::default(),
             must_block_until_connected: false,
         }
@@ -358,6 +167,7 @@ unsafe extern "C" {
         url: &mut BunString,
         from_env: c_int,
         is_connect: bool,
+        is_node_inspector: bool,
     );
 }
 
@@ -518,7 +328,8 @@ impl Debugger {
                         }
                     }
 
-                    this.uws_loop_mut().tick_with_timeout(Some(&deadline));
+                    this.uws_loop_mut()
+                        .tick_with_timeout(Some(&deadline), bun_uws::NOW_NS_UNKNOWN);
 
                     if bun_core::Environment::ENABLE_LOGS {
                         bun_core::scoped_log!(
@@ -549,7 +360,7 @@ impl Debugger {
     pub fn create(
         this: *mut VirtualMachine,
         global_object: &JSGlobalObject,
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::CrateResult<()> {
         bun_core::scoped_log!(debugger, "create");
         jsc::mark_binding();
         if HAS_CREATED_DEBUGGER.swap(true, Ordering::Relaxed) {
@@ -592,7 +403,7 @@ impl Debugger {
                     let send_vm = send_vm;
                     Debugger::start_js_debugger_thread(send_vm.0);
                 })
-                .map_err(|_| bun_core::err!("ThreadSpawnFailed"))?;
+                .map_err(|_| crate::CrateError::ThreadSpawnFailed)?;
             // The `JoinHandle` is dropped here, detaching the thread.
         }
         this_ref.event_loop_mut().ensure_waker();
@@ -691,11 +502,12 @@ impl Debugger {
         // practice; `create()` always populates `debugger` before spawning).
         // SAFETY: `other_vm` live; short-lived shared borrow of `debugger`
         // ends before any other access to `*other_vm`.
-        let (ctx_id, is_connect, from_env, path_or_port) =
+        let (ctx_id, is_connect, is_node_inspector, from_env, path_or_port) =
             match unsafe { (*other_vm).debugger.as_deref() } {
                 Some(d) => (
                     d.script_execution_context_id,
                     d.mode == Mode::Connect,
+                    d.protocol == Protocol::NodeInspector,
                     d.from_environment_variable,
                     d.path_or_port,
                 ),
@@ -709,13 +521,13 @@ impl Debugger {
         if !from_env.is_empty() {
             let mut url = BunString::clone_utf8(from_env);
             let _scope = this.enter_event_loop_scope();
-            Bun__startJSDebuggerThread(global, ctx_id, &mut url, 1, is_connect);
+            Bun__startJSDebuggerThread(global, ctx_id, &mut url, 1, is_connect, false);
         }
 
         if let Some(path_or_port) = path_or_port {
             let mut url = BunString::clone_utf8(path_or_port);
             let _scope = this.enter_event_loop_scope();
-            Bun__startJSDebuggerThread(global, ctx_id, &mut url, 0, is_connect);
+            Bun__startJSDebuggerThread(global, ctx_id, &mut url, 0, is_connect, is_node_inspector);
         }
 
         this.global().handle_rejected_promises();
@@ -755,6 +567,109 @@ impl Debugger {
             }
             this.event_loop_mut().tick_possibly_forever();
         }
+    }
+}
+
+/// `inspector.open()` from `node:inspector` — start the debugger thread and
+/// its WebSocket server at runtime, speaking the V8 Chrome DevTools Protocol.
+/// Returns false when an inspector is already configured (CLI `--inspect`,
+/// `BUN_INSPECT`, or a previous `inspector.open()`), when called off the main
+/// thread, or when the debugger thread could not be started.
+// HOST_EXPORT(Debugger__startNodeInspectorServer, c)
+pub fn start_node_inspector_server(url: &mut BunString, wait_for_connection: bool) -> bool {
+    // Short-lived borrows only — `Debugger::create` re-enters JS and forms its
+    // own `&mut VirtualMachine` (see the aliasing note on
+    // `wait_for_debugger_if_necessary`).
+    let this: &VirtualMachine = VirtualMachine::get();
+    if !this.is_main_thread {
+        return false;
+    }
+    if this.debugger.is_some() || HAS_CREATED_DEBUGGER.load(Ordering::Relaxed) {
+        return false;
+    }
+
+    // The URL outlives the process: the debugger struct stores `'static` slices
+    // (CLI-arena lifetimes), so leak the runtime-provided URL the same way.
+    let url_bytes: &'static [u8] = Box::leak(url.to_utf8_bytes().into_boxed_slice());
+    this.as_mut().debugger = Some(Box::new(Debugger {
+        path_or_port: Some(url_bytes),
+        wait_for_connection: if wait_for_connection {
+            Wait::Forever
+        } else {
+            Wait::Off
+        },
+        protocol: Protocol::NodeInspector,
+        ..Default::default()
+    }));
+
+    // Frontends need positions that map back to the original source, so stop
+    // minifying and caching transpiled output for code loaded from now on.
+    // Left in place after inspector.close(): the debugger thread persists for
+    // reopen, so modules loaded between close() and a later open() must still
+    // have unminified positions.
+    crate::runtime_transpiler_cache::IS_DISABLED.store(true, Ordering::Relaxed);
+    {
+        let opts = &mut this.as_mut().transpiler.options;
+        opts.minify_identifiers = false;
+        opts.minify_syntax = false;
+        opts.minify_whitespace = false;
+        opts.debugger = true;
+    }
+
+    let global = this.global;
+    // SAFETY: `global` is set during `VirtualMachine::init` and outlives the VM.
+    if Debugger::create(VirtualMachine::get_mut_ptr(), unsafe { &*global }).is_err() {
+        this.as_mut().debugger = None;
+        return false;
+    }
+
+    // Install Bun's controller before any yield can let a client
+    // connectFrontend() to JSC's default one; the waiting path's later call
+    // from wait_for_debugger_if_necessary is then a bunControllerInstalled
+    // no-op that only handles the block.
+    let ctx_id = match this.debugger.as_deref() {
+        Some(d) => d.script_execution_context_id,
+        None => return false,
+    };
+    Bun__ensureDebugger(ctx_id, false);
+
+    true
+}
+
+/// `inspector.open(port, host, true)` / `inspector.waitForDebugger()` — block,
+/// ticking the event loop, until a frontend connects to the inspector.
+// HOST_EXPORT(Debugger__waitForNodeInspectorConnection, c)
+pub fn wait_for_node_inspector_connection() {
+    // Node blocks on every waitForDebugger() call for a fresh
+    // Runtime.runIfWaitingForDebugger, even if a frontend already resolved a
+    // previous wait — see test-inspector-wait-for-connection.js.
+    let this = VirtualMachine::get();
+    {
+        let Some(dbg) = this.debugger_mut() else {
+            return;
+        };
+        if dbg.wait_for_connection == Wait::Off {
+            // Mirror `create()`: the ref pairs with the unref in `did_connect`.
+            dbg.wait_for_connection = Wait::Forever;
+            dbg.poll_ref.ref_(get_vm_ctx(AllocatorType::Js));
+        }
+        dbg.must_block_until_connected = true;
+    }
+    Debugger::wait_for_debugger_if_necessary(VirtualMachine::get_mut_ptr());
+}
+
+/// The debugger thread reported that `Bun.serve` failed (e.g. EADDRINUSE) —
+/// undo `create()`'s `poll_ref.ref_()` so the process can exit. Without this
+/// the ref leaks and the event loop never drains.
+// HOST_EXPORT(Debugger__abandonNodeInspectorWait, c)
+pub fn abandon_node_inspector_wait() {
+    let Some(dbg) = VirtualMachine::get().debugger_mut() else {
+        return;
+    };
+    if dbg.wait_for_connection != Wait::Off {
+        dbg.wait_for_connection = Wait::Off;
+        dbg.must_block_until_connected = false;
+        dbg.poll_ref.unref(get_vm_ctx(AllocatorType::Js));
     }
 }
 
@@ -1079,29 +994,13 @@ bun_opaque::opaque_ffi! { pub struct LifecycleHandle; }
 // via `UnsafeCell`); `ZigException` is a `#[repr(C)]` out-param the C++ side
 // reads/fills in-place.
 unsafe extern "C" {
-    safe fn Bun__LifecycleAgentReportReload(agent: &mut LifecycleHandle);
     safe fn Bun__LifecycleAgentReportError(
         agent: &mut LifecycleHandle,
         exception: &mut ZigException,
     );
-    safe fn Bun__LifecycleAgentPreventExit(agent: &mut LifecycleHandle);
-    safe fn Bun__LifecycleAgentStopPreventingExit(agent: &mut LifecycleHandle);
 }
 
 impl LifecycleHandle {
-    pub fn prevent_exit(&mut self) {
-        Bun__LifecycleAgentPreventExit(self)
-    }
-
-    pub fn stop_preventing_exit(&mut self) {
-        Bun__LifecycleAgentStopPreventingExit(self)
-    }
-
-    pub fn report_reload(&mut self) {
-        bun_core::scoped_log!(LifecycleAgent, "reportReload");
-        Bun__LifecycleAgentReportReload(self)
-    }
-
     pub fn report_error(&mut self, exception: &mut ZigException) {
         bun_core::scoped_log!(LifecycleAgent, "reportError");
         Bun__LifecycleAgentReportError(self, exception)

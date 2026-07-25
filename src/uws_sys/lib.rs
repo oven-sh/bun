@@ -108,6 +108,8 @@ pub enum create_bun_socket_error_t {
     invalid_ca_file,
     invalid_ca,
     invalid_ciphers,
+    invalid_crl,
+    invalid_ecdh_curve,
 }
 
 impl create_bun_socket_error_t {
@@ -118,6 +120,8 @@ impl create_bun_socket_error_t {
             Self::invalid_ca_file => Some(b"Invalid CA file"),
             Self::invalid_ca => Some(b"Invalid CA"),
             Self::invalid_ciphers => Some(b"Invalid ciphers"),
+            Self::invalid_crl => Some(b"Invalid CRL"),
+            Self::invalid_ecdh_curve => Some(b"Failed to set ECDH curve"),
         }
     }
 }
@@ -133,7 +137,6 @@ impl create_bun_socket_error_t {
 pub struct Opcode(pub i32);
 
 impl Opcode {
-    pub const Continuation: Opcode = Opcode(0);
     pub const Text: Opcode = Opcode(1);
     pub const Binary: Opcode = Opcode(2);
     pub const Close: Opcode = Opcode(8);
@@ -142,12 +145,7 @@ impl Opcode {
     // Upper-case aliases for callers that use the screaming-snake names
     // (`uWS::OpCode::TEXT` etc.). Same bit values; both spellings are accepted
     // so the merge of `bun_uws::Opcode` into this type doesn't ripple.
-    pub const CONTINUATION: Opcode = Opcode(0);
-    pub const TEXT: Opcode = Opcode(1);
     pub const BINARY: Opcode = Opcode(2);
-    pub const CLOSE: Opcode = Opcode(8);
-    pub const PING: Opcode = Opcode(9);
-    pub const PONG: Opcode = Opcode(10);
 }
 
 /// `uWS::WebSocket::SendStatus`.
@@ -351,6 +349,9 @@ impl WindowsNamedPipe {
 // Snake-case names are what `bun_uws` imports; `#[path]` points at the
 // PascalCase source files on disk.
 
+pub mod error;
+pub use error::{Error, Result};
+
 #[path = "App.rs"]
 pub mod app;
 #[path = "BodyReaderMixin.rs"]
@@ -379,6 +380,8 @@ pub mod socket_group;
 pub mod socket_kind;
 #[path = "thunk.rs"]
 pub mod thunk;
+// libuv only — use `bun_event_loop::EventLoopTimer` elsewhere.
+#[cfg(windows)]
 #[path = "Timer.rs"]
 pub mod timer;
 #[path = "udp.rs"]
@@ -392,6 +395,48 @@ pub mod web_socket;
 
 #[path = "socket.rs"]
 pub mod socket;
+
+#[cfg(socket_fault_injection)]
+pub mod fault_inject {
+    use core::ffi::c_int;
+
+    pub const RECV: c_int = 0;
+    pub const SEND: c_int = 1;
+    pub const WRITEV: c_int = 2;
+    pub const SENDMSG: c_int = 3;
+    pub const RECVMSG: c_int = 4;
+    pub const CONNECT: c_int = 5;
+    pub const ACCEPT: c_int = 6;
+    pub const SHUTDOWN: c_int = 9;
+    /// Not a syscall: the per-loop TLS plaintext buffer allocation in
+    /// `us_internal_init_loop_ssl_data`.
+    pub const SSL_LOOP_BUFFER: c_int = 10;
+    /// Not a syscall: poll registration in `us_poll_start_rc`
+    /// (`uv_poll_init_socket` on Windows, `EPOLL_CTL_ADD` / `kevent` on
+    /// epoll/kqueue).
+    pub const POLL_START: c_int = 11;
+
+    pub const ACTION_NONE: c_int = 0;
+    pub const ACTION_ERRNO: c_int = 1;
+    pub const ACTION_SHORT: c_int = 2;
+    pub const ACTION_ZERO: c_int = 3;
+
+    #[repr(C)]
+    pub struct UsFaultRule {
+        pub action: c_int,
+        pub errno_value: c_int,
+        pub clamp_bytes: c_int,
+        pub after_n_calls: c_int,
+        pub repeat: c_int,
+        pub target_fd: c_int,
+    }
+
+    unsafe extern "C" {
+        pub fn us_fault_set(syscall: c_int, rule: *const UsFaultRule);
+        pub safe fn us_fault_clear(syscall: c_int);
+        pub safe fn us_fault_clear_all();
+    }
+}
 pub use socket::{
     AnySocket, ConnectError, InternalSocket, NewSocketHandler, SocketHandler, SocketTCP, SocketTLS,
     SocketTcp, SocketTls,
@@ -402,8 +447,9 @@ pub use socket::{
 pub use internal_loop_data::InternalLoopData;
 #[cfg(windows)]
 pub use loop_::WindowsLoop;
-pub use loop_::{Loop, PosixLoop};
+pub use loop_::{Loop, NOW_NS_UNKNOWN, PosixLoop};
 pub use socket_kind::SocketKind;
+#[cfg(windows)]
 pub use timer::Timer;
 #[cfg(not(windows))]
 pub type WindowsLoop = loop_::PosixLoop; // unified on non-Windows
@@ -417,11 +463,10 @@ pub use response::{AnyResponse, SocketAddress, WebSocketUpgradeContext};
 pub use socket_context::BunSocketContextOptions;
 pub use socket_group::ConnectResult;
 pub use socket_group::SocketGroup;
-pub use us_socket::{CloseCode, us_socket_stream_buffer_t, us_socket_t};
+pub use us_socket::{CloseCode, UsIoVec, us_socket_stream_buffer_t, us_socket_t};
 pub use web_socket::{AnyWebSocket, RawWebSocket, WebSocketBehavior};
 
 /// Legacy aliases for `App<SSL>` / `Response<SSL>`.
 pub type NewApp<const SSL: bool> = app::App<SSL>;
 pub type NewAppResponse<const SSL: bool> = response::Response<SSL>;
 pub type Socket = us_socket::us_socket_t;
-pub type SocketContext = us_socket_context_t;

@@ -34,6 +34,31 @@ bool Value::IsUndefined() const
     return localToJSValue().isUndefined();
 }
 
+// The QuickIs* functions are V8_INLINE with out-of-class bodies in
+// v8-value.h. MSVC debug builds (/Ob0) import such members of a dllimport
+// class instead of emitting them, so addons compiled --debug on Windows
+// need them as real exports. Semantically they are the corresponding Is*
+// checks (the "quick" part only matters for real V8's object layout).
+bool Value::QuickIsUndefined() const
+{
+    return localToJSValue().isUndefined();
+}
+
+bool Value::QuickIsNull() const
+{
+    return localToJSValue().isNull();
+}
+
+bool Value::QuickIsNullOrUndefined() const
+{
+    return localToJSValue().isUndefinedOrNull();
+}
+
+bool Value::QuickIsString() const
+{
+    return localToJSValue().isString();
+}
+
 bool Value::IsNull() const
 {
     return localToJSValue().isNull();
@@ -72,11 +97,11 @@ bool Value::IsMap() const
 
 bool Value::IsArray() const
 {
+    // V8's IsArray is a JS_ARRAY_TYPE instance check that never unwraps proxies
+    // and cannot throw, so use a JSArray type check (ArrayType/DerivedArrayType)
+    // rather than JSC::isArray (spec IsArray: proxy-transparent, may throw).
     JSC::JSValue value = localToJSValue();
-    if (!value.isObject()) {
-        return false;
-    }
-    return JSC::isArray(defaultGlobalObject(), value);
+    return value.isCell() && value.inherits<JSC::JSArray>();
 }
 
 bool Value::IsInt32() const

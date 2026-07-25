@@ -39,19 +39,14 @@ pub struct OutputFileList {
     pub total_insertions: u32,
 }
 
-#[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
+#[derive(thiserror::Error, Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
 pub enum OutputFileListError {
     #[error("NoSourceMapsOrBytecode")]
     NoSourceMapsOrBytecode,
 }
-bun_core::named_error_set!(OutputFileListError);
 
 impl OutputFileList {
-    pub fn init(
-        c: &LinkerContext,
-        chunks: &[Chunk],
-        _unused: usize,
-    ) -> Result<Self, bun_core::Error> {
+    pub fn init(c: &LinkerContext, chunks: &[Chunk], _unused: usize) -> Result<Self, crate::Error> {
         let (length, supplementary_file_count) =
             OutputFileList::calculate_output_file_list_capacity(c, chunks);
         let mut output_files: Vec<options::OutputFile> = Vec::with_capacity(length as usize);
@@ -156,7 +151,7 @@ impl OutputFileList {
         let index = self.index_for_chunk();
         debug_assert!(
             index < self.index_for_sourcemaps_and_bytecode.unwrap_or(u32::MAX),
-            "index ({}) \\< index_for_sourcemaps_and_bytecode ({})",
+            "index ({}) < index_for_sourcemaps_and_bytecode ({})",
             index,
             self.index_for_sourcemaps_and_bytecode.unwrap_or(u32::MAX),
         );
@@ -174,7 +169,7 @@ impl OutputFileList {
         };
         debug_assert!(
             index < self.additional_output_files_start,
-            "index ({}) \\< additional_output_files_start ({})",
+            "index ({}) < additional_output_files_start ({})",
             index,
             self.additional_output_files_start,
         );
@@ -190,7 +185,7 @@ impl OutputFileList {
         debug_assert!(
             self.index_for_sourcemaps_and_bytecode.unwrap_or(0)
                 <= self.additional_output_files_start,
-            "index_for_sourcemaps_and_bytecode ({}) \\< additional_output_files_start ({})",
+            "index_for_sourcemaps_and_bytecode ({}) <= additional_output_files_start ({})",
             self.index_for_sourcemaps_and_bytecode.unwrap_or(0),
             self.additional_output_files_start,
         );

@@ -43,7 +43,7 @@ CryptoAlgorithmIdentifier CryptoAlgorithmX25519::identifier() const
 
 void CryptoAlgorithmX25519::generateKey(const CryptoAlgorithmParameters&, bool extractable, CryptoKeyUsageBitmap usages, KeyOrKeyPairCallback&& callback, ExceptionCallback&& exceptionCallback, ScriptExecutionContext&)
 {
-    if (usages & (CryptoKeyUsageEncrypt | CryptoKeyUsageDecrypt | CryptoKeyUsageSign | CryptoKeyUsageVerify | CryptoKeyUsageWrapKey | CryptoKeyUsageUnwrapKey)) {
+    if (usages & (CryptoKeyUsageEncrypt | CryptoKeyUsageDecrypt | CryptoKeyUsageSign | CryptoKeyUsageVerify | CryptoKeyUsageWrapKey | CryptoKeyUsageUnwrapKey | CryptoKeyUsageKemMask)) {
         exceptionCallback(ExceptionCode::SyntaxError, ""_s);
         return;
     }
@@ -70,7 +70,7 @@ std::optional<Vector<uint8_t>> CryptoAlgorithmX25519::platformDeriveBits(const C
 }
 #endif
 
-void CryptoAlgorithmX25519::deriveBits(const CryptoAlgorithmParameters& parameters, Ref<CryptoKey>&& baseKey, size_t length, VectorCallback&& callback, ExceptionCallback&& exceptionCallback, ScriptExecutionContext& context, WorkQueue& workQueue)
+void CryptoAlgorithmX25519::deriveBits(const CryptoAlgorithmParameters& parameters, Ref<CryptoKey>&& baseKey, std::optional<size_t> length, VectorCallback&& callback, ExceptionCallback&& exceptionCallback, ScriptExecutionContext& context, WorkQueue& workQueue)
 {
     if (baseKey->type() != CryptoKey::Type::Private) {
         exceptionCallback(ExceptionCode::InvalidAccessError, ""_s);
@@ -83,13 +83,13 @@ void CryptoAlgorithmX25519::deriveBits(const CryptoAlgorithmParameters& paramete
         return;
     }
     if (baseKey->algorithmIdentifier() != ecParameters.publicKey->algorithmIdentifier()) {
-        exceptionCallback(ExceptionCode::InvalidAccessError, ""_s);
+        exceptionCallback(ExceptionCode::InvalidAccessError, "key algorithm mismatch"_s);
         return;
     }
     auto& ecBaseKey = downcast<CryptoKeyOKP>(baseKey.get());
     auto& ecPublicKey = downcast<CryptoKeyOKP>(*(ecParameters.publicKey.get()));
     if (ecBaseKey.namedCurve() != ecPublicKey.namedCurve()) {
-        exceptionCallback(ExceptionCode::InvalidAccessError, ""_s);
+        exceptionCallback(ExceptionCode::InvalidAccessError, "Named curve mismatch"_s);
         return;
     }
 
@@ -107,17 +107,12 @@ void CryptoAlgorithmX25519::deriveBits(const CryptoAlgorithmParameters& paramete
             return;
         }
 #endif
-        if (!length) {
-            callback(WTF::move(*derivedKey));
+        auto result = extractDerivedBits(length, WTF::move(*derivedKey));
+        if (!result) {
+            exceptionCallback(ExceptionCode::OperationError, "derived bit length is too small"_s);
             return;
         }
-        auto lengthInBytes = static_cast<size_t>(std::ceil(length / 8.));
-        if (lengthInBytes > (*derivedKey).size()) {
-            exceptionCallback(ExceptionCode::OperationError, ""_s);
-            return;
-        }
-        (*derivedKey).shrink(lengthInBytes);
-        callback(WTF::move(*derivedKey));
+        callback(WTF::move(*result));
     };
     // This is a special case that can't use dispatchOperation() because it bundles
     // the result validation and callback dispatch into unifiedCallback.
@@ -134,7 +129,13 @@ void CryptoAlgorithmX25519::deriveBits(const CryptoAlgorithmParameters& paramete
 void CryptoAlgorithmX25519::importKey(CryptoKeyFormat format, KeyData&& data, const CryptoAlgorithmParameters&, bool extractable, CryptoKeyUsageBitmap usages, KeyCallback&& callback, ExceptionCallback&& exceptionCallback)
 {
     RefPtr<CryptoKeyOKP> result;
+    bool keyTypeMismatch = false;
     switch (format) {
+    case CryptoKeyFormat::RawSecret:
+    case CryptoKeyFormat::RawPublic: // aliased to Raw in SubtleCrypto when applicable
+    case CryptoKeyFormat::RawSeed:
+        exceptionCallback(NotSupportedError, ""_s);
+        return;
     case CryptoKeyFormat::Jwk: {
         JsonWebKey key = WTF::move(std::get<JsonWebKey>(data));
 
@@ -146,12 +147,18 @@ void CryptoAlgorithmX25519::importKey(CryptoKeyFormat format, KeyData&& data, co
         }
         isUsagesAllowed = isUsagesAllowed || !usages;
         if (!isUsagesAllowed) {
-            exceptionCallback(ExceptionCode::SyntaxError, ""_s);
+            exceptionCallback(ExceptionCode::SyntaxError, "Unsupported key usage for an X25519 key"_s);
             return;
         }
 
         if (usages && !key.use.isNull() && key.use != "enc"_s) {
-            exceptionCallback(ExceptionCode::DataError, ""_s);
+            exceptionCallback(ExceptionCode::DataError, "Invalid JWK \"use\" Parameter"_s);
+            return;
+        }
+
+        // RFC 8037: "crv" must name the requested curve.
+        if (!key.crv.isNull() && key.crv != "X25519"_s) {
+            exceptionCallback(ExceptionCode::DataError, "JWK \"crv\" Parameter and algorithm name mismatch"_s);
             return;
         }
 
@@ -160,28 +167,28 @@ void CryptoAlgorithmX25519::importKey(CryptoKeyFormat format, KeyData&& data, co
     }
     case CryptoKeyFormat::Raw:
         if (usages) {
-            exceptionCallback(ExceptionCode::SyntaxError, ""_s);
+            exceptionCallback(ExceptionCode::SyntaxError, "Unsupported key usage for an X25519 key"_s);
             return;
         }
         result = CryptoKeyOKP::importRaw(CryptoAlgorithmIdentifier::X25519, CryptoKeyOKP::NamedCurve::X25519, WTF::move(std::get<Vector<uint8_t>>(data)), extractable, usages);
         break;
     case CryptoKeyFormat::Spki:
         if (usages) {
-            exceptionCallback(ExceptionCode::SyntaxError, ""_s);
+            exceptionCallback(ExceptionCode::SyntaxError, "Unsupported key usage for an X25519 key"_s);
             return;
         }
-        result = CryptoKeyOKP::importSpki(CryptoAlgorithmIdentifier::X25519, CryptoKeyOKP::NamedCurve::X25519, WTF::move(std::get<Vector<uint8_t>>(data)), extractable, usages);
+        result = CryptoKeyOKP::importSpki(CryptoAlgorithmIdentifier::X25519, CryptoKeyOKP::NamedCurve::X25519, WTF::move(std::get<Vector<uint8_t>>(data)), extractable, usages, &keyTypeMismatch);
         break;
     case CryptoKeyFormat::Pkcs8:
         if (usages && (usages ^ CryptoKeyUsageDeriveKey) && (usages ^ CryptoKeyUsageDeriveBits) && (usages ^ (CryptoKeyUsageDeriveKey | CryptoKeyUsageDeriveBits))) {
-            exceptionCallback(ExceptionCode::SyntaxError, ""_s);
+            exceptionCallback(ExceptionCode::SyntaxError, "Unsupported key usage for an X25519 key"_s);
             return;
         }
-        result = CryptoKeyOKP::importPkcs8(CryptoAlgorithmIdentifier::X25519, CryptoKeyOKP::NamedCurve::X25519, WTF::move(std::get<Vector<uint8_t>>(data)), extractable, usages);
+        result = CryptoKeyOKP::importPkcs8(CryptoAlgorithmIdentifier::X25519, CryptoKeyOKP::NamedCurve::X25519, WTF::move(std::get<Vector<uint8_t>>(data)), extractable, usages, &keyTypeMismatch);
         break;
     }
     if (!result) {
-        exceptionCallback(ExceptionCode::DataError, ""_s);
+        exceptionCallback(ExceptionCode::DataError, keyTypeMismatch ? "Invalid key type"_s : "Invalid keyData"_s);
         return;
     }
 
@@ -199,6 +206,11 @@ void CryptoAlgorithmX25519::exportKey(CryptoKeyFormat format, Ref<CryptoKey>&& k
 
     KeyData result;
     switch (format) {
+    case CryptoKeyFormat::RawSecret:
+    case CryptoKeyFormat::RawPublic: // aliased to Raw in SubtleCrypto when applicable
+    case CryptoKeyFormat::RawSeed:
+        exceptionCallback(NotSupportedError, ""_s);
+        return;
     case CryptoKeyFormat::Jwk: {
         auto jwk = ecKey.exportJwk();
         if (jwk.hasException()) {

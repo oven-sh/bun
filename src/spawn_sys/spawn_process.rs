@@ -308,6 +308,10 @@ pub struct PosixSpawnOptions {
     pub extra_fds: Box<[PosixStdio]>,
     pub cwd: Box<[u8]>,
     pub detached: bool,
+    /// Run the child as this user id (`setuid` after fork, like libuv/Node).
+    pub uid: Option<u32>,
+    /// Run the child as this group id (`setgid` after fork, like libuv/Node).
+    pub gid: Option<u32>,
     pub windows: (),
     pub argv0: Option<*const c_char>,
     pub stream: bool,
@@ -351,6 +355,8 @@ impl Default for PosixSpawnOptions {
             extra_fds: Box::default(),
             cwd: Box::default(),
             detached: false,
+            uid: None,
+            gid: None,
             windows: (),
             argv0: None,
             stream: true,
@@ -412,6 +418,10 @@ pub enum PosixStdio {
     Inherit,
     Ignore,
     Buffer,
+    /// Like `Buffer` at indices >= 3 (creates a socketpair) but the parent
+    /// end is returned as `ExtraPipe::UnownedFd`: the caller owns and closes
+    /// it. Only valid in `extra_fds`.
+    SocketFd,
     Ipc,
     Pipe(Fd),
     // TODO: remove this entry, it doesn't seem to be used
@@ -451,8 +461,9 @@ pub struct PosixSpawnResult {
 
 /// Entry in `extra_pipes` for a stdio slot at index >= 3.
 pub enum ExtraPipe {
-    /// We created this fd (e.g. socketpair for `"pipe"`); expose it via
-    /// `Subprocess.stdio[N]` and close it in `finalizeStreams`.
+    /// We created this fd (e.g. socketpair for `"pipe"`); `finalizeStreams`
+    /// closes it. Downgraded to `UnownedFd` once `.stdio` is read (the caller
+    /// then owns the raw number and is responsible for closing it).
     OwnedFd(Fd),
     /// The caller supplied this fd in the stdio array; expose it via
     /// `Subprocess.stdio[N]` but never close it — the caller retains ownership.
@@ -627,7 +638,7 @@ pub unsafe fn spawn_process_posix(
     options: &PosixSpawnOptions,
     argv: Argv,
     envp: Envp,
-) -> Result<bun_sys::Result<PosixSpawnResult>, bun_core::Error> {
+) -> crate::Result<bun_sys::Result<PosixSpawnResult>> {
     bun_analytics::features::spawn.fetch_add(1, Ordering::Relaxed);
     let mut actions = PosixSpawnActions::init()?;
     // defer actions.deinit() — Drop
@@ -686,6 +697,8 @@ pub unsafe fn spawn_process_posix(
     // Pass PTY slave fd to attr for controlling terminal setup
     attr.pty_slave_fd = options.pty_slave_fd;
     attr.new_process_group = options.new_process_group;
+    attr.uid = options.uid;
+    attr.gid = options.gid;
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
     {
@@ -878,6 +891,10 @@ pub unsafe fn spawn_process_posix(
                 actions.dup2(*fd, fileno)?;
                 set_spawned_stdio(&mut spawned, i, *fd);
             }
+            PosixStdio::SocketFd => {
+                // Rejected at i < 3 in Stdio::extract(); unreachable here.
+                unreachable!("SocketFd at stdin/stdout/stderr");
+            }
         }
     }
 
@@ -897,7 +914,10 @@ pub unsafe fn spawn_process_posix(
                 extra_fds.push(ExtraPipe::Unavailable);
             }
             PosixStdio::Ignore => {
-                actions.open_z(fileno, c"/dev/null", bun_sys::O::RDWR as u32, 0o664)?;
+                // Node leaves "ignore" at an extra slot closed in the child;
+                // only fds 0-2 need a /dev/null placeholder. Close explicitly:
+                // the post-exec close-range floor only covers higher fds.
+                actions.close(fileno)?;
                 extra_fds.push(ExtraPipe::Unavailable);
             }
             PosixStdio::Path(path) => {
@@ -909,7 +929,7 @@ pub unsafe fn spawn_process_posix(
                 )?;
                 extra_fds.push(ExtraPipe::Unavailable);
             }
-            PosixStdio::Ipc | PosixStdio::Buffer => {
+            PosixStdio::Ipc | PosixStdio::Buffer | PosixStdio::SocketFd => {
                 let is_ipc = matches!(ipc, PosixStdio::Ipc);
                 let fds: [Fd; 2] =
                     match bun_sys::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, is_ipc) {
@@ -930,6 +950,13 @@ pub unsafe fn spawn_process_posix(
                 if fds[1] != fileno {
                     actions.close(fds[1])?;
                 }
+                // SocketFd: push as OwnedFd here so every error path between
+                // spawn and returning the JS Subprocess (to_close_on_error
+                // above, and the Writable::init error arm's finalize_streams
+                // in js_bun_spawn_bindings.rs) still closes it. The caller's
+                // "I own this fd" contract only begins once they can read
+                // .stdio[i]; the OwnedFd -> UnownedFd downgrade happens in
+                // js_bun_spawn_bindings.rs after all fallible init succeeds.
                 extra_fds.push(ExtraPipe::OwnedFd(fds[0]));
             }
             PosixStdio::Pipe(fd) => {

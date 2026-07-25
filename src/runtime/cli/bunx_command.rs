@@ -1,7 +1,6 @@
 //! `bun x` / `bunx`: resolves a package's executable — installing it into a
 //! shared cache when not already present — and execs it with the given args.
 
-use bun_collections::VecExt;
 use std::io::Write as _;
 
 use bstr::BStr;
@@ -214,8 +213,6 @@ pub(crate) enum GetBinNameError {
     NeedToInstall,
 }
 
-bun_core::named_error_set!(GetBinNameError);
-
 impl BunxCommand {
     /// Adds `create-` to the string, but also handles scoped packages correctly.
     /// Always clones the string in the process.
@@ -289,7 +286,7 @@ impl BunxCommand {
         transpiler: &mut Transpiler,
         dir_fd: Fd,
         subpath_z: &ZStr,
-    ) -> Result<Box<[u8]>, bun_core::Error> {
+    ) -> crate::Result<Box<[u8]>> {
         let target_package_json_fd = bun_sys::openat(dir_fd, subpath_z, O::RDONLY, 0)?;
         let target_package_json = bun_sys::File::from_fd(target_package_json_fd);
 
@@ -301,29 +298,24 @@ impl BunxCommand {
         bun_ast::initialize_store();
 
         let log = transpiler.log_mut();
-        // The JSON parser takes a bump arena; everything we keep is cloned
-        // into `Box<[u8]>` before returning, so a local arena suffices.
-        let bump = bun_alloc::Arena::new();
-        let expr = json::parse_package_json_utf8(&source, log, &bump)?;
+        let parsed = json::ParsedJson::parse_package_json(&source, log)?;
+        let expr = parsed.root;
 
         // choose the first package that fits
         if let Some(bin_expr) = expr.get(b"bin") {
             match &bin_expr.data {
-                ExprData::EObject(object) => {
-                    for prop in object.properties.slice() {
-                        if let Some(key) = &prop.key {
-                            if let Some(bin_name) = key.as_string(&bump) {
-                                if !Self::is_safe_bin_name(bin_name) {
-                                    continue;
-                                }
-                                return Ok(Box::<[u8]>::from(bin_name));
-                            }
+                ExprData::EObjectJSON(object) => {
+                    for prop in object.get().properties() {
+                        let bin_name = prop.key.slice();
+                        if !Self::is_safe_bin_name(bin_name) {
+                            continue;
                         }
+                        return Ok(Box::<[u8]>::from(bin_name));
                     }
                 }
                 ExprData::EString(_) => {
                     if let Some(name_expr) = expr.get(b"name") {
-                        if let Some(name) = name_expr.as_string(&bump) {
+                        if let Some(name) = name_expr.as_utf8_string_literal() {
                             // A scoped `name` (`@scope/pkg`) is legitimate here;
                             // the command name is its unscoped portion.
                             let bin_name = if name.is_empty() {
@@ -343,7 +335,7 @@ impl BunxCommand {
 
         if let Some(dirs) = expr.as_property(b"directories") {
             if let Some(bin_prop) = dirs.expr.as_property(b"bin") {
-                if let Some(dir_name) = bin_prop.expr.as_string(&bump) {
+                if let Some(dir_name) = bin_prop.expr.as_utf8_string_literal() {
                     let bin_dir = bun_sys::openat_a(dir_fd, dir_name, O::RDONLY | O::DIRECTORY, 0)?;
                     // Fd is non-owning Copy; guard it.
                     let _close_bin_dir = bun_sys::CloseOnDrop::new(bin_dir);
@@ -372,14 +364,14 @@ impl BunxCommand {
             }
         }
 
-        Err(bun_core::err!("NoBinFound"))
+        Err(crate::Error::NoBinFound)
     }
 
     fn get_bin_name_from_project_directory(
         transpiler: &mut Transpiler,
         dir_fd: Fd,
         package_name: &[u8],
-    ) -> Result<Box<[u8]>, bun_core::Error> {
+    ) -> crate::Result<Box<[u8]>> {
         let mut subpath = PathBuffer::uninit();
         let len = {
             let total = subpath.len();
@@ -407,7 +399,7 @@ impl BunxCommand {
         tempdir_name: &[u8],
         package_name: &[u8],
         with_stale_check: bool,
-    ) -> Result<Box<[u8]>, bun_core::Error> {
+    ) -> crate::Result<Box<[u8]>> {
         let mut subpath = PathBuffer::uninit();
         if with_stale_check {
             let len = {
@@ -427,7 +419,7 @@ impl BunxCommand {
             let subpath_z = ZStr::from_buf(&subpath[..], len);
             let target_package_json_fd = match bun_sys::openat(Fd::cwd(), subpath_z, O::RDONLY, 0) {
                 Ok(fd) => fd,
-                Err(_) => return Err(bun_core::err!("NeedToInstall")),
+                Err(_) => return Err(crate::Error::NeedToInstall),
             };
             let target_package_json = bun_sys::File::from_fd(target_package_json_fd);
 
@@ -473,7 +465,7 @@ impl BunxCommand {
                 let _ = target_package_json.close();
                 // If delete fails, oh well. Hope installation takes care of it.
                 let _ = bun_sys::Dir::cwd().delete_tree(tempdir_name);
-                return Err(bun_core::err!("NeedToInstall"));
+                return Err(crate::Error::NeedToInstall);
             }
             let _ = target_package_json.close();
         }
@@ -510,7 +502,7 @@ impl BunxCommand {
         match Self::get_bin_name_from_project_directory(transpiler, toplevel_fd, package_name) {
             Ok(v) => Ok(v),
             Err(err) => {
-                if err == bun_core::err!("NoBinFound") {
+                if matches!(err, crate::Error::NoBinFound) {
                     return Err(GetBinNameError::NoBinFound);
                 }
 
@@ -522,7 +514,7 @@ impl BunxCommand {
                 ) {
                     Ok(v) => Ok(v),
                     Err(err2) => {
-                        if err2 == bun_core::err!("NoBinFound") {
+                        if matches!(err2, crate::Error::NoBinFound) {
                             return Err(GetBinNameError::NoBinFound);
                         }
 
@@ -597,10 +589,7 @@ impl BunxCommand {
         Global::exit(1);
     }
 
-    pub(crate) fn exec(
-        ctx: &mut ContextData,
-        argv: &[&'static ZStr],
-    ) -> Result<(), bun_core::Error> {
+    pub(crate) fn exec(ctx: &mut ContextData, argv: &[&'static ZStr]) -> crate::Result<()> {
         // Don't log stuff
         ctx.debug.silent = true;
 
@@ -773,7 +762,7 @@ impl BunxCommand {
                     <&'static str>::from(update_request.version.tag),
                     hash(update_request.name).wrapping_add(hash(display_version)),
                 )
-                .map_err(|_| bun_core::err!("OutOfMemory"))?;
+                .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
             } else {
                 write!(
                     &mut v,
@@ -781,7 +770,7 @@ impl BunxCommand {
                     BStr::new(&update_request.name),
                     BStr::new(display_version),
                 )
-                .map_err(|_| bun_core::err!("OutOfMemory"))?;
+                .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
             }
             break 'brk v;
         };
@@ -798,7 +787,7 @@ impl BunxCommand {
                     BStr::new(&update_request.name),
                     BStr::new(display_version),
                 )
-                .map_err(|_| bun_core::err!("OutOfMemory"))?;
+                .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
                 (v, update_request.name)
             } else {
                 // When there is not a clear package name (URL/GitHub/etc), we force the package name
@@ -811,7 +800,7 @@ impl BunxCommand {
                     BStr::new(initial_bin_name),
                     BStr::new(display_version),
                 )
-                .map_err(|_| bun_core::err!("OutOfMemory"))?;
+                .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
                 (v, initial_bin_name)
             };
         bun_output::scoped_log!(bunx, "install_param: {}", BStr::new(&install_param));
@@ -888,7 +877,7 @@ impl BunxCommand {
                 uid = uid,
                 pkg = BStr::new(&package_fmt),
             )
-            .map_err(|_| bun_core::err!("OutOfMemory"))?;
+            .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
             if path_is_nonzero {
                 v.push(DELIMITER);
                 v.extend_from_slice(&path);
@@ -922,7 +911,7 @@ impl BunxCommand {
                 bin = BStr::new(initial_bin_name),
                 exe = EXE_SUFFIX,
             )
-            .map_err(|_| bun_core::err!("PathTooLong"))?;
+            .map_err(|_| crate::Error::PathTooLong)?;
             let written = buf_total - cursor.len();
             // Re-slice from the buffer so the borrow on `cursor` ends here.
             // SAFETY: `written` bytes were just initialized above

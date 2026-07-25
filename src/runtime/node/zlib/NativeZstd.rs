@@ -46,7 +46,6 @@ mod _impl {
         pub this_value: JsCell<StrongOptional>, // jsc.Strong.Optional
         pub write_in_progress: Cell<bool>,
         pub pending_close: Cell<bool>,
-        pub pending_reset: Cell<bool>,
         pub closed: Cell<bool>,
         pub task: JsCell<WorkPoolTask>,
         /// External-allocation footprint reported to the GC, fixed at
@@ -111,7 +110,6 @@ mod _impl {
                 this_value: JsCell::new(StrongOptional::empty()),
                 write_in_progress: Cell::new(false),
                 pending_close: Cell::new(false),
-                pending_reset: Cell::new(false),
                 closed: Cell::new(false),
                 // WorkPoolTask { callback: undefined } — callback is overwritten by
                 // CompressionStream::write before scheduling; placeholder here.
@@ -140,18 +138,21 @@ mod _impl {
 
         #[bun_jsc::host_fn(method)]
         pub fn init(&self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-            let arguments = frame.arguments_as_array::<4>();
+            let arguments = frame.arguments_as_array::<5>();
             let this_value = frame.this();
-            if frame.arguments_count() != 4 {
+            if frame.arguments_count() != 4 && frame.arguments_count() != 5 {
                 return Err(global
                     .err(
                         jsc::ErrorCode::MISSING_ARGS,
                         format_args!(
-                            "init(initParamsArray, pledgedSrcSize, writeState, processCallback)"
+                            "init(initParamsArray, pledgedSrcSize, writeState, processCallback[, dictionary])"
                         ),
                     )
                     .throw());
             }
+            // Racing an in-flight async write would alias `&mut Context`
+            // across threads; a closed `Context` cannot be re-initialized.
+            CompressionStream::<Self>::throw_unless_idle(self, global)?;
 
             let init_params_array_value = arguments[0];
             let pledged_src_size_value = arguments[1];
@@ -204,7 +205,29 @@ mod _impl {
                 )?);
             }
 
-            let err = self.stream.with_mut(|s| s.init(pledged_src_size));
+            // Bind the ArrayBuffer view to a local so the borrowed byte_slice()
+            // outlives the `stream.init` call below (E0716 otherwise).
+            let dictionary_buf;
+            let dictionary = if arguments[4].is_undefined() {
+                None
+            } else {
+                let dictionary_value = arguments[4];
+                dictionary_buf = match dictionary_value.as_array_buffer(global) {
+                    Some(buf) => buf,
+                    None => {
+                        return Err(global.throw_invalid_argument_type_value(
+                            "dictionary",
+                            "Buffer, TypedArray, or DataView",
+                            dictionary_value,
+                        ));
+                    }
+                };
+                Some(dictionary_buf.byte_slice())
+            };
+
+            let err = self
+                .stream
+                .with_mut(|s| s.init(pledged_src_size, dictionary));
             if err.is_error() {
                 CompressionStream::<Self>::emit_error(self, global, this_value, err);
                 return Ok(JSValue::FALSE);
@@ -233,6 +256,9 @@ mod _impl {
                     .with_mut(|s| s.set_params(c_uint::try_from(i).expect("int cast"), x));
                 if err_.is_error() {
                     self.stream.with_mut(|s| s.close());
+                    // The Context is torn down (`mode` is `NONE`); reject any
+                    // further operation the way `close()` does.
+                    self.closed.set(true);
                     // SAFETY: is_error() ⇔ msg is non-null; it points at a NUL-terminated C string.
                     let msg = unsafe { bun_core::ffi::cstr(err_.msg) }.to_bytes();
                     return Err(global
@@ -300,7 +326,32 @@ mod _impl {
     }
 
     impl Context {
-        pub fn init(&mut self, pledged_src_size: u64) -> Error {
+        /// zstd copies the dictionary into the context, so `dictionary` does not
+        /// need to outlive this call (unlike brotli's attach APIs).
+        fn load_dictionary(
+            dictionary: Option<&[u8]>,
+            load: impl FnOnce(*const c_void, usize) -> usize,
+        ) -> Error {
+            let Some(dict) = dictionary.filter(|d| !d.is_empty()) else {
+                return Error::OK;
+            };
+            let result = load(dict.as_ptr().cast(), dict.len());
+            if c::ZSTD_isError(result) > 0 {
+                return Error::init(
+                    c"Failed to load zstd dictionary".as_ptr(),
+                    -1,
+                    c"ERR_ZLIB_DICTIONARY_LOAD_FAILED".as_ptr(),
+                );
+            }
+            Error::OK
+        }
+
+        pub fn init(&mut self, pledged_src_size: u64, dictionary: Option<&[u8]>) -> Error {
+            // Mirrors node's `state_.reset(ZSTD_createCCtx())`: free the previous
+            // context first. `init` is JS-reachable twice on one handle.
+            if self.state.is_some() {
+                self.deinit_state();
+            }
             match self.mode {
                 NodeMode::ZSTD_COMPRESS => {
                     self.pledged_src_size = pledged_src_size;
@@ -313,6 +364,17 @@ mod _impl {
                         );
                     }
                     self.state = Some(state.cast());
+                    // Node loads the dictionary before setting the pledged size.
+                    // SAFETY: FFI — state is a valid CCtx allocated above.
+                    let err = Self::load_dictionary(dictionary, |d, n| unsafe {
+                        c::ZSTD_CCtx_loadDictionary(state, d, n)
+                    });
+                    if err.is_error() {
+                        // SAFETY: state is a valid CCtx allocated above.
+                        let _ = unsafe { c::ZSTD_freeCCtx(state) };
+                        self.state = None;
+                        return err;
+                    }
                     // SAFETY: state is non-null (checked above).
                     let result =
                         unsafe { c::ZSTD_CCtx_setPledgedSrcSize(state, pledged_src_size as _) };
@@ -338,6 +400,16 @@ mod _impl {
                         );
                     }
                     self.state = Some(state.cast());
+                    // SAFETY: FFI — state is a valid DCtx allocated above.
+                    let err = Self::load_dictionary(dictionary, |d, n| unsafe {
+                        c::ZSTD_DCtx_loadDictionary(state, d, n)
+                    });
+                    if err.is_error() {
+                        // SAFETY: state is a valid DCtx allocated above.
+                        let _ = unsafe { c::ZSTD_freeDCtx(state) };
+                        self.state = None;
+                        return err;
+                    }
                     Error::OK
                 }
                 _ => unreachable!(),
@@ -379,10 +451,10 @@ mod _impl {
         }
 
         pub fn reset(&mut self) -> Error {
-            if self.state.is_some() {
-                self.deinit_state();
-            }
-            self.init(self.pledged_src_size)
+            // Matches node's `ZstdContext::ResetStream()`, which calls `Init()`
+            // with its default (empty) dictionary — a reset drops the dictionary.
+            // `init` frees the previous context itself.
+            self.init(self.pledged_src_size, None)
         }
 
         /// Frees the Zstd encoder/decoder state without changing mode.
@@ -420,6 +492,11 @@ mod _impl {
         }
 
         pub fn do_work(&mut self) {
+            // A handle driven before `init()` has no CCtx/DCtx; zstd
+            // dereferences the context pointer unconditionally.
+            if self.state.is_none() {
+                return;
+            }
             self.remaining = match self.mode {
                 // SAFETY: state is a valid CCtx; input/output point to caller-kept-alive buffers (set_buffers).
                 NodeMode::ZSTD_COMPRESS => unsafe {
@@ -514,6 +591,12 @@ mod _impl {
         }
 
         pub fn close(&mut self) {
+            // Idempotent: a handle that was never (successfully) initialized,
+            // or that was already closed, has no CCtx/DCtx to reset or free.
+            if self.state.is_none() {
+                self.mode = NodeMode::NONE;
+                return;
+            }
             let _ = match self.mode {
                 // SAFETY: state is a valid CCtx/DCtx for this mode.
                 NodeMode::ZSTD_COMPRESS => unsafe {

@@ -4,7 +4,7 @@ sidebarTitle: Configure TLS
 mode: center
 ---
 
-Set the `tls` key to configure TLS. Both `key` and `cert` are required. The `key` should be the contents of your private key; `cert` should be the contents of your issued certificate. Use [`Bun.file()`](/runtime/file-io#reading-files-bun-file) to read the contents.
+Set the `tls` key to configure TLS. Both `key` and `cert` are required: `key` is the contents of your private key and `cert` is the contents of your issued certificate. Use [`Bun.file()`](/runtime/file-io#reading-files-bun-file) to read them.
 
 ```ts server.ts icon="/icons/typescript.svg"
 const server = Bun.serve({
@@ -18,7 +18,7 @@ const server = Bun.serve({
 
 ---
 
-By default Bun trusts the default Mozilla-curated list of well-known root CAs. To override this list, pass an array of certificates as `ca`.
+By default, Bun trusts the Mozilla-curated list of well-known root CAs. To override this list, pass an array of certificates as `ca`.
 
 ```ts server.ts icon="/icons/typescript.svg"
 const server = Bun.serve({

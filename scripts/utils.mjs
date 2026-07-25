@@ -2787,6 +2787,31 @@ export function reportAnnotationToBuildKite({ context, label, content, style = "
 }
 
 /**
+ * Mark this Buildkite job as having handled its own failure reporting.
+ *
+ * The repository `.buildkite/hooks/pre-exit` hook posts a generic fallback
+ * annotation for any step that exits non-zero without this marker set, so
+ * infra failures that happen before (or crash) the runner/build scripts are
+ * still surfaced in the build's annotation list instead of being visible only
+ * in the raw job log. Call this from every controlled exit path that has
+ * already posted (or had nothing to post) so the fallback stays quiet. The
+ * marker is build meta-data, which is server-side and so remains visible to
+ * the host pre-exit hook even when the reporter ran inside an ephemeral VM.
+ */
+export function markBuildkiteStepReported() {
+  if (!isBuildkite) return;
+  const jobId = getEnv("BUILDKITE_JOB_ID", false);
+  if (!jobId) return;
+  const { status } = nodeSpawnSync("buildkite-agent", ["meta-data", "set", `reported-${jobId}`, "1"], {
+    stdio: "ignore",
+    timeout: 30_000,
+  });
+  if (status !== 0) {
+    console.error(`buildkite-agent meta-data set reported-${jobId} failed (non-fatal)`);
+  }
+}
+
+/**
  * @param {object} obj
  * @param {number} indent
  * @returns {string}
@@ -3026,15 +3051,18 @@ export function getLoggedInUserCountOrDetails() {
     const users = stdout
       .split("\n")
       .filter(line => /tty|pts/i.test(line))
+      // Only count REMOTE logins (have an `(ip)` suffix from sshd). A local
+      // console/auto-login (e.g. cirruslabs CI VM images log the admin user in
+      // on ttys000 at boot) has no source host and isn't a human debugging the
+      // job — waiting for it would hang the runner forever.
+      .filter(line => /\([^)]+\)\s*$/.test(line))
       .map(line => {
-        // who output format: username terminal date/time (ip)
-        const [username, terminal, datetime, ip] = line.split(/\s+/);
-        return {
-          username,
-          terminal,
-          datetime,
-          ip: (ip || "").replace(/[()]/g, ""), // Remove parentheses from IP
-        };
+        // `who` output: `username terminal date time (host)`. The date/time
+        // field has spaces, so a plain split() can't slice it cleanly — take
+        // the first two tokens and pull the host from the trailing `(...)`.
+        const [username, terminal] = line.split(/\s+/);
+        const ip = line.match(/\(([^)]+)\)\s*$/)?.[1] || "";
+        return { username, terminal, ip };
       });
 
     if (users.length === 0) {
@@ -3044,7 +3072,7 @@ export function getLoggedInUserCountOrDetails() {
     let message = `${users.length} currently logged in users:`;
 
     for (const user of users) {
-      message += `\n- ${user.username} on ${user.terminal} since ${user.datetime}${user.ip ? ` from ${user.ip}` : ""}`;
+      message += `\n- ${user.username} on ${user.terminal}${user.ip ? ` from ${user.ip}` : ""}`;
     }
 
     return message;

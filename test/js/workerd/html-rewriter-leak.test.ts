@@ -1,5 +1,46 @@
+import { heapStats } from "bun:jsc";
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isDebug } from "harness";
+
+// Every `element.onEndTag(fn)` call JSValue::protect()s its callback. The old
+// lol-html C-API binding parked that protection in a per-call heap handler it
+// handed to lol-html as raw userdata and never freed on the success path, so
+// every registered end-tag callback (and whatever its closure captured) stayed
+// GC-rooted for the life of the process. The lol_html Rust-crate binding hands
+// lol-html an owning `FnOnce` box, which is dropped (releasing the protection)
+// whether or not the end tag is ever reached.
+//
+// `heapStats().protectedObjectTypeCounts` reports the exact count of
+// protect()'d objects by type, so unlike an RSS high-water mark this needs no
+// threshold and is stable on debug builds.
+test("onEndTag callbacks are released after the rewrite", () => {
+  const rewriteWithEndTagHandlers = (count: number) => {
+    let document = "";
+    for (let i = 0; i < count; i++) document += "<p></p>";
+    new HTMLRewriter()
+      .on("p", {
+        element(element) {
+          element.onEndTag(() => {});
+        },
+      })
+      .transform(document);
+  };
+
+  const protectedFunctions = () => {
+    Bun.gc(true);
+    return heapStats().protectedObjectTypeCounts.Function ?? 0;
+  };
+
+  rewriteWithEndTagHandlers(400);
+  const before = protectedFunctions();
+  rewriteWithEndTagHandlers(400);
+  rewriteWithEndTagHandlers(400);
+  const after = protectedFunctions();
+
+  // Unfixed, every one of the 800 callbacks registered after the baseline was
+  // still protected here.
+  expect(after - before).toBe(0);
+});
 
 // Each .on() / .onDocument() call heap-allocates an ElementHandler / DocumentHandler
 // struct via bun.default_allocator. When the HTMLRewriter is garbage-collected,

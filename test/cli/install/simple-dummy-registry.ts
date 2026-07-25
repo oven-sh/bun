@@ -66,6 +66,10 @@ export class SimpleRegistry {
     }
   }
 
+  [Symbol.dispose]() {
+    this.stop();
+  }
+
   private handleMetadata(packageName: string): Response {
     const versions = SimpleRegistry.packages[packageName];
     if (!versions) {

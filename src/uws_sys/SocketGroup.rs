@@ -133,14 +133,6 @@ impl SocketGroup {
         unsafe { us_socket_group_close_all(self) }
     }
 
-    /// Non-null after `init`. The fields stay nullable raw pointers only because
-    /// the struct is zero-init'd by default and read directly by C; these
-    /// accessors encode the post-init invariant.
-    pub fn get_loop(&self) -> *mut Loop {
-        debug_assert!(!self.loop_.is_null());
-        self.loop_
-    }
-
     /// Recover the embedding owner. Only valid for groups whose `init` passed a
     /// non-null owner (Listener, uWS App/Context). Per-kind VM groups in
     /// `RareData` pass null, so callers must know which they have.
@@ -216,6 +208,7 @@ impl SocketGroup {
         ssl_ctx: Option<*mut SslCtx>,
         host: &core::ffi::CStr,
         port: c_int,
+        local_binding: Option<(&core::ffi::CStr, u16)>,
         options: c_int,
         socket_ext_size: c_int,
     ) -> ConnectResult {
@@ -232,6 +225,8 @@ impl SocketGroup {
                 ssl_ctx.unwrap_or(ptr::null_mut()),
                 host.as_ptr(),
                 port,
+                local_binding.map_or(ptr::null(), |(h, _)| h.as_ptr()),
+                local_binding.map_or(0, |(_, p)| c_int::from(p)),
                 options,
                 socket_ext_size,
                 &raw mut has_dns_resolved,
@@ -299,12 +294,6 @@ impl SocketGroup {
         // SAFETY: forwarding to C; `fds` is a valid 2-element array.
         unsafe { us_socket_pair(self, kind as u8, ext_size, fds.as_mut_ptr().cast()) }
     }
-
-    pub fn next_in_loop(&mut self) -> *mut SocketGroup {
-        // `us_socket_group_next` is `return group->next` (context.c:165); this
-        // struct is a full `#[repr(C)]` mirror, so read the field directly.
-        self.next
-    }
 }
 
 unsafe extern "C" {
@@ -349,6 +338,8 @@ unsafe extern "C" {
         ssl_ctx: *mut SslCtx,
         host: *const c_char,
         port: c_int,
+        local_host: *const c_char,
+        local_port: c_int,
         options: c_int,
         socket_ext_size: c_int,
         is_connecting: *mut c_int,

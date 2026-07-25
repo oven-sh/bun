@@ -65,8 +65,6 @@ private:
     {
     }
 
-    void finishCreation(JSC::VM&, JSC::NativeExecutable*, unsigned length, const String& name);
-
     DECLARE_VISIT_CHILDREN;
 
     JSC::WriteBarrier<JSC::JSObject> m_wrappedFn;

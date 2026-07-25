@@ -78,6 +78,12 @@ struct Handle {
         if (m_toV8Object.tag() == TaggedPointer::Tag::Smi) {
             return false;
         }
+        if (m_toV8Object.getPtr<ObjectLayout>() != &m_object) {
+            // This slot was written directly by V8's inline CreateHandle code (see
+            // HandleScope::Extend): it aliases an ObjectLayout owned by some other handle (or an
+            // oddball/root), and that owner is the one responsible for keeping the cell alive.
+            return false;
+        }
         const Map* map_ptr = m_object.map();
         // TODO(@190n) exhaustively switch on InstanceType
         if (map_ptr == &Map::object_map() || map_ptr == &Map::string_map()) {

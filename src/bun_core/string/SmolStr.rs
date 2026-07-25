@@ -62,13 +62,6 @@ impl SmolStr {
 
     // ---- public API -------------------------------------------------------
 
-    pub fn json_stringify<W>(&self, writer: &mut W) -> Result<(), crate::Error>
-    where
-        W: JsonWriter,
-    {
-        writer.write(self.slice())
-    }
-
     pub fn empty() -> SmolStr {
         SmolStr::from_inlined(Inlined::EMPTY)
     }
@@ -158,37 +151,6 @@ impl SmolStr {
         unsafe { core::slice::from_raw_parts(self.ptr_const(), self.raw_len() as usize) }
     }
 
-    pub fn append_char(&mut self, char: u8) -> Result<(), AllocError> {
-        if self.is_inlined() {
-            let mut inlined = self.to_inlined();
-            if inlined.len() as usize + 1 > Inlined::MAX_LEN {
-                let mut baby_list = Vec::<u8>::with_capacity(inlined.len() as usize + 1);
-                baby_list.extend_from_slice(inlined.slice());
-                baby_list.push(char);
-                // Old value is inlined (no heap) so `Drop` is a no-op; plain assign is fine.
-                *self = SmolStr::from_baby_list(baby_list);
-                return Ok(());
-            }
-            let old_len = inlined.len() as usize;
-            inlined.all_chars()[old_len] = char;
-            inlined.set_len(u8::try_from(old_len + 1).expect("int cast"));
-            self.0 = inlined.0;
-            self.mark_inlined();
-            return Ok(());
-        }
-
-        // SAFETY: ptr/len/cap were produced by a prior Vec<u8> allocation.
-        let mut baby_list = unsafe {
-            Vec::<u8>::from_raw_parts(self.ptr(), self.raw_len() as usize, self.raw_cap() as usize)
-        };
-        // Ownership of the allocation has moved into `baby_list`; neutralize self so an
-        // error return below (which drops `baby_list`) does not double-free via SmolStr::drop.
-        self.0 = Inlined::EMPTY.0;
-        baby_list.push(char);
-        *self = SmolStr::from_baby_list(baby_list);
-        Ok(())
-    }
-
     pub fn append_slice(&mut self, values: &[u8]) -> Result<(), AllocError> {
         if self.is_inlined() {
             let mut inlined = self.to_inlined();
@@ -240,11 +202,6 @@ impl Drop for SmolStr {
     }
 }
 
-/// Minimal byte-writer protocol used by `json_stringify`.
-pub trait JsonWriter {
-    fn write(&mut self, bytes: &[u8]) -> Result<(), crate::Error>;
-}
-
 // ---------------------------------------------------------------------------
 
 /// Layout (packed u128, little-endian bit order):
@@ -261,9 +218,11 @@ pub(crate) enum InlinedError {
     StringTooLong,
 }
 
-impl From<InlinedError> for crate::Error {
+impl From<InlinedError> for crate::CrateError {
     fn from(e: InlinedError) -> Self {
-        crate::err!(from e)
+        match e {
+            InlinedError::StringTooLong => crate::CrateError::StringTooLong,
+        }
     }
 }
 

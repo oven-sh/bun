@@ -101,115 +101,114 @@ static std::optional<CookieInit> cookieInitFromJS(JSC::VM& vm, JSGlobalObject* l
     auto& names = builtinNames(vm);
 
     if (!options.isUndefinedOrNull()) {
-        if (!options.isObject()) {
+        auto* optionsObj = options.getObject();
+        if (!optionsObj) {
             throwVMTypeError(lexicalGlobalObject, throwScope, "Options must be an object"_s);
             return std::nullopt;
         }
 
-        if (auto* optionsObj = options.getObject()) {
-            if (checkName) {
-                auto nameValue = optionsObj->getIfPropertyExists(lexicalGlobalObject, vm.propertyNames->name);
-                RETURN_IF_EXCEPTION(throwScope, std::nullopt);
-                if (nameValue) {
-                    name = convert<IDLUSVString>(*lexicalGlobalObject, nameValue);
-                    RETURN_IF_EXCEPTION(throwScope, std::nullopt);
-                }
-
-                if (name.isEmpty()) {
-                    throwVMTypeError(lexicalGlobalObject, throwScope, "name is required"_s);
-                    return std::nullopt;
-                }
-
-                auto valueValue = optionsObj->getIfPropertyExists(lexicalGlobalObject, vm.propertyNames->value);
-                RETURN_IF_EXCEPTION(throwScope, std::nullopt);
-                if (valueValue) {
-                    value = convert<IDLUSVString>(*lexicalGlobalObject, valueValue);
-                    RETURN_IF_EXCEPTION(throwScope, std::nullopt);
-                }
-            }
-
-            // domain
-            auto domainValue = optionsObj->getIfPropertyExists(lexicalGlobalObject, names.domainPublicName());
+        if (checkName) {
+            auto nameValue = optionsObj->getIfPropertyExists(lexicalGlobalObject, vm.propertyNames->name);
             RETURN_IF_EXCEPTION(throwScope, std::nullopt);
-            if (domainValue) {
-                if (!domainValue.isUndefined() && !domainValue.isNull()) {
-                    domain = convert<IDLUSVString>(*lexicalGlobalObject, domainValue);
-                    RETURN_IF_EXCEPTION(throwScope, std::nullopt);
-                }
-            }
-
-            // path
-            auto pathValue = optionsObj->getIfPropertyExists(lexicalGlobalObject, names.pathPublicName());
-            RETURN_IF_EXCEPTION(throwScope, std::nullopt);
-            if (pathValue) {
-                if (!pathValue.isUndefined() && !pathValue.isNull()) {
-                    path = convert<IDLUSVString>(*lexicalGlobalObject, pathValue);
-                    RETURN_IF_EXCEPTION(throwScope, std::nullopt);
-                }
-            }
-
-            // expires
-            auto expiresValue = optionsObj->getIfPropertyExists(lexicalGlobalObject, names.expiresPublicName());
-            RETURN_IF_EXCEPTION(throwScope, std::nullopt);
-            if (expiresValue) {
-                expires = getExpiresValue(lexicalGlobalObject, throwScope, expiresValue);
+            if (nameValue) {
+                name = convert<IDLUSVString>(*lexicalGlobalObject, nameValue);
                 RETURN_IF_EXCEPTION(throwScope, std::nullopt);
             }
 
-            // maxAge
-            auto maxAgeValue = optionsObj->getIfPropertyExists(lexicalGlobalObject, names.maxAgePublicName());
-            RETURN_IF_EXCEPTION(throwScope, std::nullopt);
-            if (maxAgeValue) {
-                if (!maxAgeValue.isUndefined() && !maxAgeValue.isNull() && maxAgeValue.isNumber()) {
-                    maxAge = maxAgeValue.asNumber();
-                }
+            if (name.isEmpty()) {
+                throwVMTypeError(lexicalGlobalObject, throwScope, "name is required"_s);
+                return std::nullopt;
             }
 
-            // secure
-            auto secureValue = optionsObj->getIfPropertyExists(lexicalGlobalObject, names.securePublicName());
+            auto valueValue = optionsObj->getIfPropertyExists(lexicalGlobalObject, vm.propertyNames->value);
             RETURN_IF_EXCEPTION(throwScope, std::nullopt);
-            if (secureValue) {
-                if (!secureValue.isUndefined()) {
-                    secure = secureValue.toBoolean(lexicalGlobalObject);
-                }
+            if (valueValue) {
+                value = convert<IDLUSVString>(*lexicalGlobalObject, valueValue);
+                RETURN_IF_EXCEPTION(throwScope, std::nullopt);
             }
+        }
 
-            // httpOnly
-            auto httpOnlyValue = optionsObj->getIfPropertyExists(lexicalGlobalObject, names.httpOnlyPublicName());
-            RETURN_IF_EXCEPTION(throwScope, std::nullopt);
-            if (httpOnlyValue) {
-                if (!httpOnlyValue.isUndefined()) {
-                    httpOnly = httpOnlyValue.toBoolean(lexicalGlobalObject);
-                }
+        // domain
+        auto domainValue = optionsObj->getIfPropertyExists(lexicalGlobalObject, names.domainPublicName());
+        RETURN_IF_EXCEPTION(throwScope, std::nullopt);
+        if (domainValue) {
+            if (!domainValue.isUndefined() && !domainValue.isNull()) {
+                domain = convert<IDLUSVString>(*lexicalGlobalObject, domainValue);
+                RETURN_IF_EXCEPTION(throwScope, std::nullopt);
             }
+        }
 
-            // partitioned
-            auto partitionedValue = optionsObj->getIfPropertyExists(lexicalGlobalObject, names.partitionedPublicName());
-            RETURN_IF_EXCEPTION(throwScope, std::nullopt);
-            if (partitionedValue) {
-                if (!partitionedValue.isUndefined()) {
-                    partitioned = partitionedValue.toBoolean(lexicalGlobalObject);
-                }
+        // path
+        auto pathValue = optionsObj->getIfPropertyExists(lexicalGlobalObject, names.pathPublicName());
+        RETURN_IF_EXCEPTION(throwScope, std::nullopt);
+        if (pathValue) {
+            if (!pathValue.isUndefined() && !pathValue.isNull()) {
+                path = convert<IDLUSVString>(*lexicalGlobalObject, pathValue);
+                RETURN_IF_EXCEPTION(throwScope, std::nullopt);
             }
+        }
 
-            // sameSite
-            auto sameSiteValue = optionsObj->getIfPropertyExists(lexicalGlobalObject, names.sameSitePublicName());
+        // expires
+        auto expiresValue = optionsObj->getIfPropertyExists(lexicalGlobalObject, names.expiresPublicName());
+        RETURN_IF_EXCEPTION(throwScope, std::nullopt);
+        if (expiresValue) {
+            expires = getExpiresValue(lexicalGlobalObject, throwScope, expiresValue);
             RETURN_IF_EXCEPTION(throwScope, std::nullopt);
-            if (sameSiteValue) {
-                if (!sameSiteValue.isUndefined() && !sameSiteValue.isNull()) {
-                    String sameSiteStr = convert<IDLUSVString>(*lexicalGlobalObject, sameSiteValue);
-                    RETURN_IF_EXCEPTION(throwScope, std::nullopt);
+        }
 
-                    if (sameSiteStr == "strict"_s)
-                        sameSite = CookieSameSite::Strict;
-                    else if (sameSiteStr == "lax"_s)
-                        sameSite = CookieSameSite::Lax;
-                    else if (sameSiteStr == "none"_s)
-                        sameSite = CookieSameSite::None;
-                    else
-                        throwVMTypeError(lexicalGlobalObject, throwScope, "Invalid sameSite value. Must be 'strict', 'lax', or 'none'"_s);
-                    RETURN_IF_EXCEPTION(throwScope, std::nullopt);
-                }
+        // maxAge
+        auto maxAgeValue = optionsObj->getIfPropertyExists(lexicalGlobalObject, names.maxAgePublicName());
+        RETURN_IF_EXCEPTION(throwScope, std::nullopt);
+        if (maxAgeValue) {
+            if (!maxAgeValue.isUndefined() && !maxAgeValue.isNull() && maxAgeValue.isNumber()) {
+                maxAge = maxAgeValue.asNumber();
+            }
+        }
+
+        // secure
+        auto secureValue = optionsObj->getIfPropertyExists(lexicalGlobalObject, names.securePublicName());
+        RETURN_IF_EXCEPTION(throwScope, std::nullopt);
+        if (secureValue) {
+            if (!secureValue.isUndefined()) {
+                secure = secureValue.toBoolean(lexicalGlobalObject);
+            }
+        }
+
+        // httpOnly
+        auto httpOnlyValue = optionsObj->getIfPropertyExists(lexicalGlobalObject, names.httpOnlyPublicName());
+        RETURN_IF_EXCEPTION(throwScope, std::nullopt);
+        if (httpOnlyValue) {
+            if (!httpOnlyValue.isUndefined()) {
+                httpOnly = httpOnlyValue.toBoolean(lexicalGlobalObject);
+            }
+        }
+
+        // partitioned
+        auto partitionedValue = optionsObj->getIfPropertyExists(lexicalGlobalObject, names.partitionedPublicName());
+        RETURN_IF_EXCEPTION(throwScope, std::nullopt);
+        if (partitionedValue) {
+            if (!partitionedValue.isUndefined()) {
+                partitioned = partitionedValue.toBoolean(lexicalGlobalObject);
+            }
+        }
+
+        // sameSite
+        auto sameSiteValue = optionsObj->getIfPropertyExists(lexicalGlobalObject, names.sameSitePublicName());
+        RETURN_IF_EXCEPTION(throwScope, std::nullopt);
+        if (sameSiteValue) {
+            if (!sameSiteValue.isUndefined() && !sameSiteValue.isNull()) {
+                String sameSiteStr = convert<IDLUSVString>(*lexicalGlobalObject, sameSiteValue);
+                RETURN_IF_EXCEPTION(throwScope, std::nullopt);
+
+                if (sameSiteStr == "strict"_s)
+                    sameSite = CookieSameSite::Strict;
+                else if (sameSiteStr == "lax"_s)
+                    sameSite = CookieSameSite::Lax;
+                else if (sameSiteStr == "none"_s)
+                    sameSite = CookieSameSite::None;
+                else
+                    throwVMTypeError(lexicalGlobalObject, throwScope, "Invalid sameSite value. Must be 'strict', 'lax', or 'none'"_s);
+                RETURN_IF_EXCEPTION(throwScope, std::nullopt);
             }
         }
     }

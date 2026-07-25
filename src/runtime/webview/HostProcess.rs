@@ -22,7 +22,7 @@ use bun_spawn::{self, Process};
 
 #[cfg(target_os = "macos")]
 use {
-    bun_core::Error,
+    crate::Error,
     bun_jsc::virtual_machine::VirtualMachine,
     bun_spawn::{
         EventLoopHandle, ProcessExit, ProcessExitKind, SpawnOptions, SpawnResultExt as _, Stdio,
@@ -133,7 +133,7 @@ fn spawn(vm: *mut VirtualMachine, stdout_inherit: bool, stderr_inherit: bool) ->
     #[cfg(not(target_os = "macos"))]
     {
         let _ = (vm, stdout_inherit, stderr_inherit);
-        return Err(bun_core::err!("Unsupported"));
+        return Err(crate::Error::Unsupported);
     }
     #[cfg(target_os = "macos")]
     {
@@ -223,7 +223,7 @@ fn spawn(vm: *mut VirtualMachine, stdout_inherit: bool, stderr_inherit: bool) ->
                     drop(bun_core::heap::take(self_ptr));
                 }
                 // fd0_guard (declared at the top) closes fds[0]; don't double-close here.
-                return Err(bun_core::err!("WatchFailed"));
+                return Err(crate::Error::WatchFailed);
             }
         }
         INSTANCE.store(self_ptr, core::sync::atomic::Ordering::Relaxed);

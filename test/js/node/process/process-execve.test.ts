@@ -79,12 +79,32 @@ describe.concurrent("process.execve", () => {
     expect(exitCode).toBe(0);
   });
 
-  test.skipIf(isWindows)("aborts with ENOENT when the path does not exist", async () => {
+  // https://github.com/nodejs/node/pull/62878: a failed execve(2) throws an
+  // ErrnoException back to JS instead of printing to stderr and aborting.
+  test.skipIf(isWindows)("throws ENOENT when the path does not exist", async () => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
         "-e",
-        `process.execve(process.execPath + "_does_not_exist", [process.execPath], { ...process.env });`,
+        `
+          let err;
+          try {
+            process.execve(process.execPath + "_does_not_exist", [process.execPath], { ...process.env });
+          } catch (e) {
+            err = e;
+          }
+          console.log(JSON.stringify({
+            isError: err instanceof Error,
+            name: err.name,
+            message: err.message,
+            code: err.code,
+            errno: err.errno,
+            syscall: err.syscall,
+            path: err.path,
+            stdoutWritable: process.stdout.writable,
+            stderrWritable: process.stderr.writable,
+          }));
+        `,
       ],
       env: bunEnv,
       stdout: "pipe",
@@ -93,8 +113,59 @@ describe.concurrent("process.execve", () => {
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(stderr).toContain("process.execve failed with error code ENOENT");
-    expect(exitCode).not.toBe(0);
+    // On the pre-fix abort path stdout is empty and the crash report is in
+    // stderr; surface it so the diff shows the actual cause.
+    if (exitCode !== 0) console.error("stderr:", stderr);
+    expect(JSON.parse(stdout.trim())).toEqual({
+      isError: true,
+      name: "Error",
+      message: expect.stringMatching(/^ENOENT, .+ '.*_does_not_exist'$/),
+      code: "ENOENT",
+      errno: 2,
+      syscall: "execve",
+      path: expect.stringMatching(/_does_not_exist$/),
+      stdoutWritable: true,
+      stderrWritable: true,
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test.skipIf(isWindows)("a caught failure leaves the process able to execve again", async () => {
+    using dir = tempDir("process-execve-retry", {
+      "index.js": `
+        if (process.argv[2] === "replaced") {
+          console.log("REPLACED_AFTER:" + process.env.FIRST_ERR_CODE);
+        } else {
+          let caught;
+          try {
+            process.execve(process.execPath + "_does_not_exist", [process.execPath], { ...process.env });
+          } catch (e) {
+            caught = e;
+          }
+          if (caught?.code !== "ENOENT") throw new Error("expected ENOENT, got " + caught);
+          process.execve(
+            process.execPath,
+            [process.execPath, __filename, "replaced"],
+            { ...process.env, FIRST_ERR_CODE: caught.code },
+          );
+          throw new Error("second execve returned unexpectedly");
+        }
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).not.toContain("second execve returned unexpectedly");
+    expect(stdout.trim()).toBe("REPLACED_AFTER:ENOENT");
+    expect(exitCode).toBe(0);
   });
 
   test.skipIf(isWindows)("closes listening sockets in the replacement process", async () => {

@@ -506,9 +506,6 @@ impl<R> StyleRule<R> {
         R: crate::generics::DeepClone<'bump>,
     {
         // css is an AST crate (PORTING.md §Allocators): the allocator is &'bump Bump, threaded.
-        // `declarations` routes through `dc::decl_block` until
-        // `DeclarationBlock::deep_clone` un-gates (declaration.rs — bottoms out
-        // on `Property: DeepClone`).
         Self {
             selectors: self.selectors.deep_clone(),
             vendor_prefix: self.vendor_prefix,

@@ -7,7 +7,7 @@ bun publish dist
 ### Publishing Options
 
 <ParamField path="--access" type="string">
-  The `--access` flag can be used to set the access level of the package being published. The access level can be one of `public` or `restricted`. Unscoped packages are always public, and attempting to publish an unscoped package with `--access restricted` will result in an error.
+  Set the access level of the package being published, either `public` or `restricted`. Unscoped packages are always public; publishing an unscoped package with `--access restricted` is an error.
 
 ```sh terminal icon="terminal"
 bun publish --access public
@@ -44,8 +44,8 @@ bun publish --tag alpha
 
 </ParamField>
 
-<ParamField path="--dry-run=<val>" type="string">
-The `--dry-run` flag can be used to simulate the publish process without actually publishing the package. This is useful for verifying the contents of the published package without actually publishing the package.
+<ParamField path="--dry-run" type="boolean">
+Simulate the publish process without publishing the package, to verify its contents first.
 
 ```sh
 bun publish --dry-run
@@ -60,7 +60,7 @@ bun publish --dry-run
 
 <ParamField path="--auth-type" type="string" default="web">
 
-If you have 2FA enabled for your npm account, `bun publish` will prompt you for a one-time password. This can be done through a browser or the CLI. The `--auth-type` flag can be used to tell the npm registry which method you prefer. The possible values are `web` and `legacy`, with `web` being the default.
+If you have 2FA enabled for your npm account, `bun publish` prompts you for a one-time password, either through a browser or the CLI. `--auth-type` tells the npm registry which method you prefer: `web` (the default) or `legacy`.
 
 ```sh terminal icon="terminal"
 bun publish --auth-type legacy
@@ -72,17 +72,17 @@ Enter OTP: 123456
 
 </ParamField>
 
-<ParamField path="--otp" type="string" default="web">
+<ParamField path="--otp" type="string">
 
-Provide a one-time password directly to the CLI. If the password is valid, this will skip the extra prompt for a one-time password before publishing. Example usage:
+Provide a one-time password directly to the CLI. A valid password skips the extra one-time password prompt before publishing.
 
 ```sh terminal icon="terminal"
 bun publish --otp 123456
 ```
 
 <Note>
-  `bun publish` respects the `NPM_CONFIG_TOKEN` environment variable which can be used when publishing in github actions
-  or automated workflows.
+  `bun publish` respects the `NPM_CONFIG_TOKEN` environment variable, so you can publish from GitHub Actions or other
+  automated workflows.
 </Note>
 
 </ParamField>
@@ -147,8 +147,8 @@ bun publish --cafile ./ca-cert.pem
 </ParamField>
 
 <Note>
-  **Lifecycle Scripts** — When providing a pre-built tarball, lifecycle scripts (prepublishOnly, prepack, etc.) are not
-  executed. Scripts only run when Bun packs the package itself.
+  **Lifecycle Scripts** — When you publish a pre-built tarball, Bun does not run lifecycle scripts such as
+  `prepublishOnly` and `prepack`; they only run when Bun packs the package itself.
 </Note>
 
 #### File Management
@@ -175,8 +175,8 @@ bun publish --cafile ./ca-cert.pem
   Maximum concurrent network requests
 </ParamField>
 
-<ParamField path="--concurrent-scripts" type="number" default="5">
-  Maximum concurrent lifecycle scripts
+<ParamField path="--concurrent-scripts" type="number">
+  Maximum concurrent lifecycle scripts (default: 2x CPU cores)
 </ParamField>
 
 #### Output Control

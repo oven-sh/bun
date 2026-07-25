@@ -122,22 +122,56 @@ private:
         }
 
         if (canUseFastPath) {
+            // Only the identifiers and offsets are snapshotted here: no user code runs inside
+            // forEachProperty, so the property table cannot be mutated out from under it.
+            Vector<JSC::Identifier, 8> identifiers;
+            Vector<JSC::PropertyOffset, 8> offsets;
             structure->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
                 if (entry.attributes() & PropertyAttribute::DontEnum) {
                     return true;
                 }
 
+                identifiers.append(Identifier::fromUid(vm, entry.key()));
+                offsets.append(entry.offset());
+                return true;
+            });
+
+            for (size_t i = 0; i < identifiers.size(); ++i) {
+                const auto& identifier = identifiers[i];
+
+                // Converter<V>::convert below can run user code. The snapshotted offsets are only
+                // valid while the object keeps its original structure; any mutation transitions it.
+                bool structureIsUnchanged = object->structure() == structure;
+                JSC::PropertySlot slot(object, JSC::PropertySlot::InternalMethodType::GetOwnProperty);
+                if (!structureIsUnchanged) [[unlikely]] {
+                    // 1. Let desc be ? O.[[GetOwnProperty]](key).
+                    bool hasProperty = object->methodTable()->getOwnPropertySlot(object, &lexicalGlobalObject, identifier, slot);
+                    RETURN_IF_EXCEPTION(scope, {});
+
+                    // 2. If desc is not undefined and desc.[[Enumerable]] is true:
+                    if (!hasProperty || (slot.attributes() & JSC::PropertyAttribute::DontEnum))
+                        continue;
+                }
+
                 // 1. Let typedKey be key converted to an IDL value of type K.
-                auto typedKey = Detail::IdentifierConverter<K>::convert(lexicalGlobalObject, Identifier::fromUid(vm, entry.key()));
-                RETURN_IF_EXCEPTION(scope, false);
+                auto typedKey = Detail::IdentifierConverter<K>::convert(lexicalGlobalObject, identifier);
+                RETURN_IF_EXCEPTION(scope, {});
 
                 // 2. Let value be ? Get(O, key).
-                JSC::JSValue value = object->getDirect(entry.offset());
-                scope.assertNoException();
+                JSC::JSValue value;
+                if (structureIsUnchanged) [[likely]]
+                    value = object->getDirect(offsets[i]);
+                else {
+                    if (!slot.isTaintedByOpaqueObject()) [[likely]]
+                        value = slot.getValue(&lexicalGlobalObject, identifier);
+                    else
+                        value = object->get(&lexicalGlobalObject, identifier);
+                    RETURN_IF_EXCEPTION(scope, {});
+                }
 
                 // 3. Let typedValue be value converted to an IDL value of type V.
                 auto typedValue = Converter<V>::convert(lexicalGlobalObject, value, args...);
-                RETURN_IF_EXCEPTION(scope, false);
+                RETURN_IF_EXCEPTION(scope, {});
 
                 // 4. Set result[typedKey] to typedValue.
                 // Note: It's possible that typedKey is already in result if K is USVString and key contains unpaired surrogates.
@@ -147,7 +181,7 @@ private:
                         if (!addResult.isNewEntry) {
                             ASSERT(result[addResult.iterator->value].key == typedKey);
                             result[addResult.iterator->value].value = WTF::move(typedValue);
-                            return true;
+                            continue;
                         }
                     }
                 } else
@@ -155,10 +189,7 @@ private:
 
                 // 5. Otherwise, append to result a mapping (typedKey, typedValue).
                 result.append({ WTF::move(typedKey), WTF::move(typedValue) });
-                return true;
-            });
-
-            RETURN_IF_EXCEPTION(scope, {});
+            }
 
             return result;
         }

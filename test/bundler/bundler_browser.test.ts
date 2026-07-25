@@ -118,6 +118,22 @@ describe("bundler", () => {
       api.expectFile("out.js").not.toInclude("import ");
     },
   });
+  itBundled("browser/NodeUrlProtocolTablesIgnorePrototype", {
+    files: {
+      "/entry.js": /* js */ `
+        import { parse } from "node:url";
+        const clean = parse("evil://h/p").slashes;
+        Object.prototype["evil:"] = true;
+        const polluted = parse("evil://h/p").slashes;
+        delete Object.prototype["evil:"];
+        console.log(clean === true && polluted === true ? "PASS" : "FAIL " + clean + " " + polluted);
+      `,
+    },
+    target: "browser",
+    run: {
+      stdout: "PASS",
+    },
+  });
   // TODO: use nodePolyfillList to generate the code in here.
   const NodePolyfills = itBundled("browser/NodePolyfills", {
     files: {

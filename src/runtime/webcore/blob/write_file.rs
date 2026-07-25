@@ -4,7 +4,7 @@ use core::sync::atomic::AtomicU8;
 #[cfg(not(windows))]
 use core::sync::atomic::Ordering;
 
-use bun_core::Error;
+use crate::Error;
 use bun_core::ZigString;
 use bun_io::{self as io, IntrusiveIoRequest as _};
 use bun_jsc::ZigStringJsc as _;
@@ -163,9 +163,6 @@ impl FileCloser for WriteFile {
     fn close_after_io(&self) -> bool {
         self.close_after_io
     }
-    fn set_close_after_io(&mut self, v: bool) {
-        self.close_after_io = v;
-    }
     fn state(&self) -> &AtomicU8 {
         &self.state
     }
@@ -225,9 +222,6 @@ impl FileCloser for WriteFile {
 impl WriteFile {
     pub const IO_TAG: io::Tag = io::Tag::WriteFile;
 
-    pub const OPEN_FLAGS: i32 =
-        bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC | bun_sys::O::NONBLOCK;
-
     pub fn on_writable(request: &mut io::Request) {
         // SAFETY: request points to WriteFile.io_request
         let this = unsafe { &mut *WriteFile::from_io_request(std::ptr::from_mut(request)) };
@@ -247,7 +241,7 @@ impl WriteFile {
         bun_output::scoped_log!(WriteFile, "WriteFile.onIOError()");
         // SAFETY: ctx was set to `self as *mut WriteFile` in `on_request_writable`.
         let this = unsafe { bun_ptr::callback_ctx::<WriteFile>(this.cast()) };
-        this.errno = Some(bun_core::errno_to_zig_err(err.errno as i32));
+        this.errno = Some(bun_errno::from_errno(err.errno as i32).into());
         this.system_error = Some(err.to_system_error().into());
         this.task = WorkPoolTask {
             node: Default::default(),
@@ -363,7 +357,7 @@ impl WriteFile {
                         self.wait_for_writable();
                         return false;
                     } else {
-                        self.errno = Some(bun_core::errno_to_zig_err(err.errno as i32));
+                        self.errno = Some(bun_errno::from_errno(err.errno as i32).into());
                         self.system_error = Some(err.to_system_error().into());
                         return false;
                     }
@@ -648,8 +642,8 @@ mod windows_impl {
         }
     }
 
-    impl PartialEq<bun_core::Error> for WriteFileWindowsError {
-        fn eq(&self, other: &bun_core::Error) -> bool {
+    impl PartialEq<crate::Error> for WriteFileWindowsError {
+        fn eq(&self, other: &crate::Error) -> bool {
             <&'static str>::from(self) == other.name()
         }
     }
@@ -958,27 +952,17 @@ mod windows_impl {
                 .pathlike
                 .path()
                 .slice();
-            // LIFETIME: `AsyncMkdirp::new` returns `Box<Self>`. The allocation
-            // is intentionally leaked here and freed by `work_pool_callback`
-            // after invoking `completion`. A temporary
-            // `Box` would drop at end-of-statement, freeing the allocation immediately
-            // after `schedule()` stashes a raw `*mut WorkPoolTask` into the work pool,
-            // so the worker thread would dereference freed memory. `Box::leak` hands
-            // ownership to the work-pool/completion path.
-            Box::leak(crate::node::fs::async_::AsyncMkdirp::new(
-                crate::node::fs::async_::AsyncMkdirp {
-                    completion: Self::on_mkdirp_complete_concurrent,
-                    completion_ctx: ctx,
-                    // BORROW: AsyncMkdirp.path is `*const [u8]` (not owned); `path`
-                    // points into `self.file_blob.store`, which outlives the mkdirp
-                    // task (it's released only in `deinit()`).
-                    path: bun_core::dirname(path)
-                        // this shouldn't happen
-                        .unwrap_or(path) as *const [u8],
-                    ..Default::default()
-                },
-            ))
-            .schedule();
+            crate::node::fs::async_::AsyncMkdirp::schedule(crate::node::fs::async_::AsyncMkdirp {
+                completion: Self::on_mkdirp_complete_concurrent,
+                completion_ctx: ctx,
+                // BORROW: AsyncMkdirp.path is `*const [u8]` (not owned); `path`
+                // points into `self.file_blob.store`, which outlives the mkdirp
+                // task (it's released only in `deinit()`).
+                path: bun_core::dirname(path)
+                    // this shouldn't happen
+                    .unwrap_or(path) as *const [u8],
+                ..Default::default()
+            });
         }
 
         /// # Safety

@@ -28,8 +28,6 @@ pub const ATOMIC_FILE_WATCHER: bool = env::IS_LINUX;
 
 pub const HTTP_BUFFER_POOLING: bool = true;
 
-pub const DISABLE_LOLHTML: bool = false;
-
 /// There is, what I think is, a bug in getaddrinfo()
 /// on macOS that specifically impacts localhost and not
 /// other ipv4 hosts. This is a workaround for that.

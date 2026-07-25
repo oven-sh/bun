@@ -36,15 +36,15 @@
 namespace WebCore {
 
 // Per X.690 08/2015: https://www.itu.int/rec/T-REC-X.680-X.693/en
-static const unsigned char BitStringMark = 0x03;
-static const unsigned char IntegerMark = 0x02;
-static const unsigned char OctetStringMark = 0x04;
-static const unsigned char SequenceMark = 0x30;
+inline constexpr unsigned char BitStringMark = 0x03;
+inline constexpr unsigned char IntegerMark = 0x02;
+inline constexpr unsigned char OctetStringMark = 0x04;
+inline constexpr unsigned char SequenceMark = 0x30;
 // Version 0. Per https://tools.ietf.org/html/rfc5208#section-5
-static const unsigned char Version[] = { 0x02, 0x01, 0x00 };
+inline constexpr unsigned char Version[] = { 0x02, 0x01, 0x00 };
 
-static const unsigned char InitialOctet = 0x00;
-static const size_t MaxLengthInOneByte = 128;
+inline constexpr unsigned char InitialOctet = 0x00;
+inline constexpr size_t MaxLengthInOneByte = 128;
 
 size_t bytesUsedToEncodedLength(uint8_t);
 size_t extraBytesNeededForEncodedLength(size_t);

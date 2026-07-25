@@ -69,7 +69,7 @@ var ffi = globalThis.Bun.FFI;
 const ptr = (arg1, arg2) => (typeof arg2 === "undefined" ? ffi.ptr(arg1) : ffi.ptr(arg1, arg2));
 const toBuffer = ffi.toBuffer;
 const toArrayBuffer = ffi.toArrayBuffer;
-const viewSource = ffi.viewSource;
+const nativeViewSource = ffi.viewSource;
 
 const BunCString = ffi.CString;
 const nativeLinkSymbols = ffi.linkSymbols;
@@ -81,7 +81,9 @@ delete ffi.closeCallback;
 
 class JSCallback {
   constructor(cb, options) {
-    const { ctx, ptr } = nativeCallback(options, cb);
+    const result = nativeCallback(options, cb);
+    if (Error.isError(result)) throw result;
+    const { ctx, ptr } = result;
     this.#ctx = ctx;
     this.ptr = ptr;
     this.#threadsafe = !!options?.threadsafe;
@@ -255,18 +257,15 @@ ffiWrappers[FFIType.uint16_t] = `{
   return ret <= 0 ? 0 : ret > 0xffff ? 0xffff : ret;
 }`;
 
+// Plain numbers pass through untouched: NaN, -0.0, and every other double are
+// already in the representation the compiled stub reads. Everything else
+// (BigInt included) is converted with Number().
 ffiWrappers[FFIType.double] = `{
-  if (typeof val === "bigint") {
-    if (val.valueOf() < BigInt(Number.MAX_VALUE)) {
-      return Math.abs(Number(val).valueOf()) + (0.00 - 0.00);
-    }
+  if (typeof val === "number") {
+    return val;
   }
 
-  if (!val) {
-    return 0 + (0.00 - 0.00);
-  }
-
-  return val + (0.00 - 0.00);
+  return Number(val);
 }`;
 
 ffiWrappers[FFIType.float] = ffiWrappers[10] = `{
@@ -421,7 +420,7 @@ const native = {
   },
 };
 
-const ccFn = $newZigFunction("ffi.zig", "Bun__FFI__cc", 1);
+const ccFn = $newRustFunction("ffi.rs", "Bun__FFI__cc", 1);
 
 function normalizePath(path) {
   if (typeof path === "string" && path?.startsWith?.("file:")) {
@@ -521,6 +520,12 @@ function cc(options) {
   // Previously, it didn't need to be bound
   result.close = result.close.bind(result);
 
+  return result;
+}
+
+function viewSource(symbols, isCallback?) {
+  const result = nativeViewSource(symbols, isCallback);
+  if (Error.isError(result)) throw result;
   return result;
 }
 

@@ -59,7 +59,7 @@ SyntaxError: JSON Parse error: Unexpected identifier "oops"
 
 ## Top-level `await`
 
-Promises are automatically awaited. You can `await` any expression directly at the prompt.
+You can `await` any expression directly at the prompt.
 
 ```txt
 > await fetch("https://api.github.com/repos/oven-sh/bun").then(r => r.json()).then(r => r.stargazers_count)
@@ -74,7 +74,7 @@ undefined
 
 ## Importing modules
 
-Just like Bun's runtime, you can use either `require` or `import` in the REPL and it Just Works — mix ESM and CommonJS freely at the prompt. Module resolution uses the same rules as `bun run`, so you can import from `node_modules`, relative paths, or `node:` builtins.
+Just like Bun's runtime, the REPL accepts both `require` and `import`: mix ES modules and CommonJS freely at the prompt. Module resolution uses the same rules as `bun run`, so you can import from `node_modules`, relative paths, or `node:` builtins.
 
 ```txt
 > import { z } from "zod"
@@ -85,7 +85,7 @@ undefined
 '/tmp/file.txt'
 ```
 
-Declarations persist for the rest of the session, and `const`/`let` can be redeclared across evaluations (unlike in regular scripts) so you can re-run `import` and `require` statements while iterating.
+Declarations persist for the rest of the session, and `const`/`let` can be redeclared across evaluations (unlike in regular scripts), so you can re-run `import` and `require` statements while iterating.
 
 ---
 
@@ -173,4 +173,4 @@ bun repl -p "{ a: 1, b: 2 }"
 # { a: 1, b: 2 }
 ```
 
-This uses the same transforms as the interactive REPL, so a bare object literal like `{ a: 1 }` is treated as an object expression instead of a block statement. The process exits after the event loop drains (pending timers and I/O complete first). On error, the process exits with code `1`.
+Both flags use the same transforms as the interactive REPL, so a bare object literal like `{ a: 1 }` is treated as an object expression instead of a block statement. The process exits after the event loop drains (pending timers and I/O complete first). On error, the process exits with code `1`.

@@ -6,15 +6,14 @@
 //! crate-wide `'bump` and rewrite these to `&'bump [T]` / `&'bump mut [T]`.
 
 // `lexer::NewLexer<J: JsonOptionsT>` projects trait associated consts into
-// eight `const bool` slots. Field
-// access on a `const J: JSONOptions` param is rejected by nightly-2025-12-10
-// ("overly complex generic constant"); assoc-const projection on a *type*
-// param works under `generic_const_exprs`. `adt_const_params` keeps
-// `JSONOptions: ConstParamTy` for value-level reification.
+// eight `const bool` slots; assoc-const projection on a *type*
+// param works under `generic_const_exprs`.
 #![feature(adt_const_params, generic_const_exprs)]
 #![allow(incomplete_features)]
 
-pub use bun_collections::VecExt as _VecExtReexport;
+pub mod error;
+pub use error::Error;
+pub use error::Result as CrateResult;
 
 // ─── module layout (see docs/REFACTOR_BUN_AST.md) ───────────────────────────
 pub mod parser;
@@ -26,6 +25,7 @@ pub mod fold;
 pub mod lower;
 pub mod p;
 pub mod parse;
+pub mod react_compiler_host;
 pub mod repl_transforms;
 pub mod scan;
 pub mod typescript;
@@ -119,7 +119,7 @@ pub mod Macro {
             import_range: bun_ast::Range,
             caller: bun_ast::Expr,
             function_name: &[u8],
-        ) -> Result<bun_ast::Expr, bun_core::Error>;
+        ) -> Result<bun_ast::Expr, crate::Error>;
         // NOT `safe fn`: callee derefs `data` unconditionally as
         // `&MacroContext` — caller must guarantee non-null + produced by
         // `__bun_macro_context_init` + the backing `Transpiler.options` table
@@ -156,7 +156,7 @@ pub mod Macro {
             import_range: bun_ast::Range,
             caller: bun_ast::Expr,
             function_name: &[u8],
-        ) -> Result<bun_ast::Expr, bun_core::Error> {
+        ) -> Result<bun_ast::Expr, crate::Error> {
             __bun_macro_context_call(
                 self,
                 import_record_path,
@@ -535,8 +535,6 @@ pub mod defines {
                 }
                 parts.push(Box::from(tail));
 
-                let mut initial_values: &[DotDefine] = &[];
-                // Note: reshaped for borrowck — getOrPut split into get/insert.
                 if let Some(existing) = self.dots.get_mut(tail) {
                     for part in existing.iter_mut() {
                         if are_parts_equal(&part.parts, &parts) {
@@ -544,15 +542,12 @@ pub mod defines {
                             return Ok(());
                         }
                     }
-                    initial_values = existing.as_slice();
+                    existing.push(DotDefine { data: value, parts });
+                    return Ok(());
                 }
 
-                let mut list: Vec<DotDefine> = Vec::with_capacity(initial_values.len() + 1);
-                if !initial_values.is_empty() {
-                    list.extend_from_slice(initial_values);
-                }
-                list.push(DotDefine { data: value, parts });
-                self.dots.put_assume_capacity(tail, list);
+                self.dots
+                    .put_assume_capacity(tail, vec![DotDefine { data: value, parts }]);
             } else {
                 // e.g. IS_BROWSER
                 self.identifiers.put_assume_capacity(key, value);
@@ -581,7 +576,6 @@ pub use defines::{Define, DefineData};
 // (it depends on the printer's name-buffer and reserved-names tables).
 pub mod renamer {
     use bun_ast::SlotCounts;
-    use bun_ast::base::Ref;
     use bun_ast::scope::Scope;
     use bun_ast::symbol::{INVALID_NESTED_SCOPE_SLOT, SlotNamespace, Symbol};
     use bun_collections::VecExt;
@@ -670,7 +664,7 @@ pub mod renamer {
         }
 
         // Labels are always declared in a nested scope, so we don't need to check.
-        if let Some(ref_) = scope.label_ref {
+        if let Some(ref_) = scope.label_ref.to_nullable() {
             let symbol = &mut symbols[ref_.inner_index() as usize];
             let ns = SlotNamespace::Label;
             symbol.nested_scope_slot = slot.slots[ns];
@@ -690,31 +684,6 @@ pub mod renamer {
         }
 
         slot_counts
-    }
-
-    #[derive(Copy, Clone)]
-    pub struct StableSymbolCount {
-        pub stable_source_index: u32,
-        pub ref_: Ref,
-        pub count: u32,
-    }
-
-    impl StableSymbolCount {
-        pub fn less_than(i: &StableSymbolCount, j: &StableSymbolCount) -> bool {
-            if i.count > j.count {
-                return true;
-            }
-            if i.count < j.count {
-                return false;
-            }
-            if i.stable_source_index < j.stable_source_index {
-                return true;
-            }
-            if i.stable_source_index > j.stable_source_index {
-                return false;
-            }
-            i.ref_.inner_index() < j.ref_.inner_index()
-        }
     }
 
     // The remaining renamer types are only consumed by the printer and bundler

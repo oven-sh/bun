@@ -43,6 +43,10 @@ Local<Context> Isolate::GetCurrentContext()
 Isolate::Isolate(shim::GlobalInternals* globalInternals)
     : m_globalInternals(globalInternals)
     , m_globalObject(globalInternals->m_globalObject)
+    // Zero the padding: V8 14's inline HandleScope code keeps the isolate's HandleScopeData
+    // (next/limit/level, see HandleScope::Extend) inside this region, and relies on it starting
+    // out zeroed just like real V8's HandleScopeData::Initialize() leaves it.
+    , m_padding {}
 {
     m_roots[kUndefinedValueRootIndex] = TaggedPointer(&globalInternals->m_undefinedValue);
     m_roots[kNullValueRootIndex] = TaggedPointer(&globalInternals->m_nullValue);

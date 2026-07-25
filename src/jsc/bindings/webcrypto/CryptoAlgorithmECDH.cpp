@@ -49,7 +49,7 @@ void CryptoAlgorithmECDH::generateKey(const CryptoAlgorithmParameters& parameter
 {
     const auto& ecParameters = downcast<CryptoAlgorithmEcKeyParams>(parameters);
 
-    if (usages & (CryptoKeyUsageEncrypt | CryptoKeyUsageDecrypt | CryptoKeyUsageSign | CryptoKeyUsageVerify | CryptoKeyUsageWrapKey | CryptoKeyUsageUnwrapKey)) {
+    if (usages & (CryptoKeyUsageEncrypt | CryptoKeyUsageDecrypt | CryptoKeyUsageSign | CryptoKeyUsageVerify | CryptoKeyUsageWrapKey | CryptoKeyUsageUnwrapKey | CryptoKeyUsageKemMask)) {
         exceptionCallback(SyntaxError, ""_s);
         return;
     }
@@ -66,7 +66,7 @@ void CryptoAlgorithmECDH::generateKey(const CryptoAlgorithmParameters& parameter
     callback(WTF::move(pair));
 }
 
-void CryptoAlgorithmECDH::deriveBits(const CryptoAlgorithmParameters& parameters, Ref<CryptoKey>&& baseKey, size_t length, VectorCallback&& callback, ExceptionCallback&& exceptionCallback, ScriptExecutionContext& context, WorkQueue& workQueue)
+void CryptoAlgorithmECDH::deriveBits(const CryptoAlgorithmParameters& parameters, Ref<CryptoKey>&& baseKey, std::optional<size_t> length, VectorCallback&& callback, ExceptionCallback&& exceptionCallback, ScriptExecutionContext& context, WorkQueue& workQueue)
 {
     auto& ecParameters = downcast<CryptoAlgorithmEcdhKeyDeriveParams>(parameters);
 
@@ -80,32 +80,27 @@ void CryptoAlgorithmECDH::deriveBits(const CryptoAlgorithmParameters& parameters
         return;
     }
     if (baseKey->algorithmIdentifier() != ecParameters.publicKey->algorithmIdentifier()) {
-        exceptionCallback(InvalidAccessError, ""_s);
+        exceptionCallback(InvalidAccessError, "key algorithm mismatch"_s);
         return;
     }
     auto& ecBaseKey = downcast<CryptoKeyEC>(baseKey.get());
     auto& ecPublicKey = downcast<CryptoKeyEC>(*(ecParameters.publicKey.get()));
     if (ecBaseKey.namedCurve() != ecPublicKey.namedCurve()) {
-        exceptionCallback(InvalidAccessError, ""_s);
+        exceptionCallback(InvalidAccessError, "Named curve mismatch"_s);
         return;
     }
 
-    auto unifiedCallback = [callback = WTF::move(callback), exceptionCallback = WTF::move(exceptionCallback)](std::optional<Vector<uint8_t>>&& derivedKey, size_t length) mutable {
+    auto unifiedCallback = [callback = WTF::move(callback), exceptionCallback = WTF::move(exceptionCallback)](std::optional<Vector<uint8_t>>&& derivedKey, std::optional<size_t> length) mutable {
         if (!derivedKey) {
             exceptionCallback(OperationError, ""_s);
             return;
         }
-        if (!length) {
-            callback(WTF::move(*derivedKey));
+        auto result = extractDerivedBits(length, WTF::move(*derivedKey));
+        if (!result) {
+            exceptionCallback(OperationError, "derived bit length is too small"_s);
             return;
         }
-        auto lengthInBytes = std::ceil(length / 8.);
-        if (lengthInBytes > (*derivedKey).size()) {
-            exceptionCallback(OperationError, ""_s);
-            return;
-        }
-        (*derivedKey).shrink(lengthInBytes);
-        callback(WTF::move(*derivedKey));
+        callback(WTF::move(*result));
     };
 
     // This is a special case that can't use dispatchOperation() because it bundles
@@ -124,7 +119,14 @@ void CryptoAlgorithmECDH::importKey(CryptoKeyFormat format, KeyData&& data, cons
     const auto& ecParameters = downcast<CryptoAlgorithmEcKeyParams>(parameters);
 
     RefPtr<CryptoKeyEC> result;
+    bool keyTypeMismatch = false;
+    bool curveMismatch = false;
     switch (format) {
+    case CryptoKeyFormat::RawSecret:
+    case CryptoKeyFormat::RawPublic: // aliased to Raw in SubtleCrypto when applicable
+    case CryptoKeyFormat::RawSeed:
+        exceptionCallback(NotSupportedError, ""_s);
+        return;
     case CryptoKeyFormat::Jwk: {
         JsonWebKey key = WTF::move(std::get<JsonWebKey>(data));
 
@@ -136,12 +138,19 @@ void CryptoAlgorithmECDH::importKey(CryptoKeyFormat format, KeyData&& data, cons
         }
         isUsagesAllowed = isUsagesAllowed || !usages;
         if (!isUsagesAllowed) {
-            exceptionCallback(SyntaxError, ""_s);
+            exceptionCallback(SyntaxError, "Unsupported key usage for an ECDH key"_s);
             return;
         }
 
         if (usages && !key.use.isNull() && key.use != "enc"_s) {
-            exceptionCallback(DataError, ""_s);
+            exceptionCallback(DataError, "Invalid JWK \"use\" Parameter"_s);
+            return;
+        }
+
+        // A present-but-wrong "crv" is a curve mismatch; an absent "crv" falls through
+        // to importJwk's "Invalid keyData".
+        if (!key.crv.isNull() && key.crv != ecParameters.namedCurve) {
+            exceptionCallback(DataError, "JWK \"crv\" does not match the requested algorithm"_s);
             return;
         }
 
@@ -150,28 +159,29 @@ void CryptoAlgorithmECDH::importKey(CryptoKeyFormat format, KeyData&& data, cons
     }
     case CryptoKeyFormat::Raw:
         if (usages) {
-            exceptionCallback(SyntaxError, ""_s);
+            exceptionCallback(SyntaxError, "Unsupported key usage for an ECDH key"_s);
             return;
         }
         result = CryptoKeyEC::importRaw(ecParameters.identifier, ecParameters.namedCurve, WTF::move(std::get<Vector<uint8_t>>(data)), extractable, usages);
         break;
     case CryptoKeyFormat::Spki:
         if (usages) {
-            exceptionCallback(SyntaxError, ""_s);
+            exceptionCallback(SyntaxError, "Unsupported key usage for an ECDH key"_s);
             return;
         }
-        result = CryptoKeyEC::importSpki(ecParameters.identifier, ecParameters.namedCurve, WTF::move(std::get<Vector<uint8_t>>(data)), extractable, usages);
+        result = CryptoKeyEC::importSpki(ecParameters.identifier, ecParameters.namedCurve, WTF::move(std::get<Vector<uint8_t>>(data)), extractable, usages, &keyTypeMismatch, &curveMismatch);
         break;
     case CryptoKeyFormat::Pkcs8:
         if (usages && (usages ^ CryptoKeyUsageDeriveKey) && (usages ^ CryptoKeyUsageDeriveBits) && (usages ^ (CryptoKeyUsageDeriveKey | CryptoKeyUsageDeriveBits))) {
-            exceptionCallback(SyntaxError, ""_s);
+            exceptionCallback(SyntaxError, "Unsupported key usage for an ECDH key"_s);
             return;
         }
-        result = CryptoKeyEC::importPkcs8(ecParameters.identifier, ecParameters.namedCurve, WTF::move(std::get<Vector<uint8_t>>(data)), extractable, usages);
+        result = CryptoKeyEC::importPkcs8(ecParameters.identifier, ecParameters.namedCurve, WTF::move(std::get<Vector<uint8_t>>(data)), extractable, usages, &keyTypeMismatch, &curveMismatch);
         break;
     }
     if (!result) {
-        exceptionCallback(DataError, ""_s);
+        exceptionCallback(DataError, keyTypeMismatch ? "Invalid key type"_s : curveMismatch ? "Named curve mismatch"_s
+                                                                                            : "Invalid keyData"_s);
         return;
     }
 
@@ -189,6 +199,11 @@ void CryptoAlgorithmECDH::exportKey(CryptoKeyFormat format, Ref<CryptoKey>&& key
 
     KeyData result;
     switch (format) {
+    case CryptoKeyFormat::RawSecret:
+    case CryptoKeyFormat::RawPublic: // aliased to Raw in SubtleCrypto when applicable
+    case CryptoKeyFormat::RawSeed:
+        exceptionCallback(NotSupportedError, ""_s);
+        return;
     case CryptoKeyFormat::Jwk: {
         auto jwk = ecKey.exportJwk();
         if (jwk.hasException()) {

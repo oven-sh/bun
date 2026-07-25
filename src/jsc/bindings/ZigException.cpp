@@ -447,10 +447,8 @@ static void populateStackTrace(JSC::VM& vm, const WTF::Vector<JSC::StackFrame>& 
     } else if (flags == PopulateStackTraceFlags::OnlySourceLines) {
         for (uint8_t i = 0; i < trace.frames_len; i++) {
             ZigStackFrame& frame = trace.frames_ptr[i];
-            // A call with flags set to OnlySourceLines always follows a call with flags set to OnlyPosition,
-            // so jsc_stack_frame_index is always a valid value here.
-            ASSERT(frame.jsc_stack_frame_index >= 0);
-            ASSERT(static_cast<size_t>(frame.jsc_stack_frame_index) < frames.size());
+            if (frame.jsc_stack_frame_index < 0 || static_cast<size_t>(frame.jsc_stack_frame_index) >= frames.size())
+                continue;
             populateStackFrame(vm, trace, frames[frame.jsc_stack_frame_index], frame, i == 0, &trace.referenced_source_provider, globalObject, flags, finalizerSafety);
         }
     }

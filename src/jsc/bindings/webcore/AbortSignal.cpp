@@ -122,7 +122,7 @@ JSValue AbortSignal::jsReason(JSC::JSGlobalObject& globalObject)
         if (m_commonReason != CommonAbortReason::None) {
             existingValue = toJS(&globalObject, m_commonReason);
             m_commonReason = CommonAbortReason::None;
-            m_reason.setWeakly(existingValue);
+            m_reason.set(globalObject.vm(), wrapper(), existingValue);
         }
     }
 
@@ -159,10 +159,11 @@ void AbortSignal::markAborted(JSC::JSValue reason)
     applyFlags(static_cast<uint8_t>(AbortSignalFlags::Aborted) | static_cast<uint8_t>(AbortSignalFlags::IsFiringEventListeners));
     m_sourceSignals.clear();
 
-    // FIXME: This code is wrong: we should emit a write-barrier. Otherwise, GC can collect it.
-    // https://bugs.webkit.org/show_bug.cgi?id=236353
     ASSERT(reason);
-    m_reason.setWeakly(reason);
+    if (auto* context = scriptExecutionContext())
+        m_reason.set(context->vm(), wrapper(), reason);
+    else
+        m_reason.setWeakly(reason);
 
     cancelTimer();
 }
@@ -173,10 +174,14 @@ void AbortSignal::runAbortSteps()
     ASSERT(reason);
 
     auto callbacks = std::exchange(m_native_callbacks, {});
-    for (auto callback : callbacks) {
+    m_nativeCallbacksBeingDispatched = &callbacks;
+    for (auto& callback : callbacks) {
         const auto [ctx, func] = callback;
+        if (!func)
+            continue;
         func(ctx, JSC::JSValue::encode(reason));
     }
+    m_nativeCallbacksBeingDispatched = nullptr;
 
     // 1. For each algorithm of signal's abort algorithms: run algorithm.
     //    2. Empty signal's abort algorithms. (std::exchange empties)
@@ -248,6 +253,13 @@ void AbortSignal::signalAbort(JSC::JSGlobalObject* globalObject, CommonAbortReas
 
 void AbortSignal::cleanNativeBindings(void* ref)
 {
+    if (m_nativeCallbacksBeingDispatched) {
+        for (auto& callback : *m_nativeCallbacksBeingDispatched) {
+            if (std::get<0>(callback) == ref)
+                std::get<1>(callback) = nullptr;
+        }
+    }
+
     auto callbacks = std::exchange(m_native_callbacks, {});
 
     callbacks.removeAllMatching([=](auto callback) {

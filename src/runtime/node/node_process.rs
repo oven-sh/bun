@@ -2,6 +2,7 @@
 
 use core::ffi::c_char;
 
+use bun_core::env_var;
 use bun_core::env_var::feature_flag;
 use bun_core::{self, Environment, Global};
 use bun_jsc::zig_string::ZigString;
@@ -66,7 +67,7 @@ pub extern "C" fn exit(global_object: &JSGlobalObject, code: u8) {
 
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Bun__NODE_NO_WARNINGS() -> bool {
-    feature_flag::NODE_NO_WARNINGS.get().unwrap_or(false)
+    env_var::NODE_NO_WARNINGS.get() == Some(b"1")
 }
 
 #[unsafe(no_mangle)]
@@ -141,6 +142,15 @@ mod _impl {
     }
 
     // ───────────────────────────── title ─────────────────────────────
+
+    // Windows `process.title` getter support: the C++ getter needs to know
+    // whether a title was explicitly set (CLI `--title` or assignment) so it
+    // can prefer the store over `uv_get_process_title` without comparing
+    // against the "bun" default string.
+    #[unsafe(export_name = "Bun__Process__hasTitle")]
+    pub(super) extern "C" fn has_title() -> bool {
+        crate::cli::Bun__Node__ProcessTitle.lock().is_some()
+    }
 
     #[unsafe(export_name = "Bun__Process__getTitle")]
     pub(super) extern "C" fn get_title(_global: *const JSGlobalObject, title: *mut BunString) {
@@ -380,8 +390,19 @@ mod _impl {
     pub(super) extern "C" fn get_eval(global_object: &JSGlobalObject) -> JSValue {
         // SAFETY: `bun_vm()` returns the live per-thread VM for this global.
         let vm = global_object.bun_vm();
+        // `--interactive` boots the bootstrap through `eval_source`, so read
+        // the user's real `-e` bytes from `interactive_eval_script` instead
+        // (`undefined` when empty, matching `node -i` without `-e`).
+        if let Some(script) = vm.module_loader.interactive_eval_script.as_deref() {
+            if script.is_empty() {
+                return JSValue::UNDEFINED;
+            }
+            return ZigString::init(script).with_encoding().to_js(global_object);
+        }
         if let Some(source) = vm.module_loader.eval_source.as_deref() {
-            return ZigString::init(source.contents()).to_js(global_object);
+            return ZigString::init(source.contents())
+                .with_encoding()
+                .to_js(global_object);
         }
         JSValue::UNDEFINED
     }

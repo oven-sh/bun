@@ -84,7 +84,7 @@ fn deregistration_already_gone(errno: sys::E) -> bool {
     matches!(errno, sys::E::ENOENT | sys::E::EBADF)
 }
 
-pub use crate::{EventLoopCtx, EventLoopCtxKind, EventLoopKind, OpaqueCallback};
+pub use crate::{EventLoopCtx, EventLoopCtxKind, OpaqueCallback};
 
 unsafe extern "Rust" {
     /// Defined `#[no_mangle]` in `bun_runtime::jsc_hooks`.
@@ -108,13 +108,6 @@ pub enum FileType {
 }
 
 impl FileType {
-    pub fn is_pollable(self) -> bool {
-        matches!(
-            self,
-            FileType::Pipe | FileType::NonblockingPipe | FileType::Socket
-        )
-    }
-
     pub fn is_blocking(self) -> bool {
         self == FileType::Pipe
     }
@@ -221,6 +214,7 @@ pub enum PollTag {
     TerminalPoll,
     ParentDeathWatchdog,
     LifecycleScriptSubprocessOutputReader,
+    MemoryPressure,
 }
 
 /// Compatibility module — call sites in `bun_runtime`/`bun_install` still spell
@@ -244,6 +238,7 @@ pub mod poll_tag {
     pub const PARENT_DEATH_WATCHDOG: PollTag = PollTag::ParentDeathWatchdog;
     pub const LIFECYCLE_SCRIPT_SUBPROCESS_OUTPUT_READER: PollTag =
         PollTag::LifecycleScriptSubprocessOutputReader;
+    pub const MEMORY_PRESSURE: PollTag = PollTag::MemoryPressure;
 }
 
 #[derive(Copy, Clone)]
@@ -330,6 +325,7 @@ impl FilePoll {
         flags.remove(Flags::Writable);
         flags.remove(Flags::Process);
         flags.remove(Flags::Machport);
+        flags.remove(Flags::MemoryPressure);
         flags.remove(Flags::Eof);
         flags.remove(Flags::Hup);
 
@@ -361,6 +357,14 @@ impl FilePoll {
         #[cfg(all(target_os = "macos", debug_assertions))]
         debug_assert!(self.generation_number == kqueue_event.ext[0] as usize);
 
+        // EVFILT_MEMORYSTATUS reports the pressure level in `fflags`, not `data`;
+        // thread it through `size_or_offset` so the dispatch arm can read it.
+        #[cfg(target_os = "macos")]
+        if kqueue_event.filter == bun_sys::darwin::EVFILT::MEMORYSTATUS {
+            self.on_update(kqueue_event.fflags as i64);
+            return;
+        }
+
         self.on_update(kqueue_event.data as i64);
     }
 
@@ -370,25 +374,9 @@ impl FilePoll {
         self.on_update(0);
     }
 
-    pub fn clear_event(&mut self, flag: Flags) {
-        self.flags.remove(flag);
-    }
-
     pub fn is_readable(&mut self) -> bool {
         let readable = self.flags.contains(Flags::Readable);
         self.flags.remove(Flags::Readable);
-        readable
-    }
-
-    pub fn is_hup(&mut self) -> bool {
-        let readable = self.flags.contains(Flags::Hup);
-        self.flags.remove(Flags::Hup);
-        readable
-    }
-
-    pub fn is_eof(&mut self) -> bool {
-        let readable = self.flags.contains(Flags::Eof);
-        self.flags.remove(Flags::Eof);
         readable
     }
 
@@ -442,6 +430,7 @@ impl FilePoll {
             || self.flags.contains(Flags::PollReadable)
             || self.flags.contains(Flags::PollProcess)
             || self.flags.contains(Flags::PollMachport)
+            || self.flags.contains(Flags::PollMemoryPressure)
     }
 
     pub fn on_update(&mut self, size_or_offset: i64) {
@@ -581,16 +570,6 @@ impl FilePoll {
         poll
     }
 
-    #[inline]
-    pub fn can_ref(&self) -> bool {
-        !self.flags.contains(Flags::HasIncrementedPollCount)
-    }
-
-    #[inline]
-    pub fn can_unref(&self) -> bool {
-        self.flags.contains(Flags::HasIncrementedPollCount)
-    }
-
     /// Prevent a poll from keeping the process alive.
     pub fn unref(&mut self, event_loop_ctx: EventLoopCtx) {
         syslog!("unref");
@@ -604,19 +583,6 @@ impl FilePoll {
         }
         syslog!("ref");
         self.enable_keeping_process_alive(event_loop_ctx);
-    }
-
-    pub fn on_ended(&mut self, event_loop_ctx: EventLoopCtx) {
-        self.flags.remove(Flags::KeepsEventLoopAlive);
-        self.flags.insert(Flags::Closed);
-        // `loop_mut()` — crate-private nonnull-asref accessor; `deactivate` is
-        // a leaf counter op so the `&mut Loop` borrow does not escape.
-        self.deactivate(event_loop_ctx.loop_mut());
-    }
-
-    #[inline]
-    pub fn file_descriptor(&self) -> Fd {
-        self.fd
     }
 
     pub fn register(&mut self, loop_: &mut Loop, flag: Flags, one_shot: bool) -> sys::Result<()> {
@@ -699,6 +665,8 @@ impl FilePoll {
             let mut flags: u32 = match flag {
                 Flags::Process | Flags::Readable => EPOLL::IN | EPOLL::HUP | one_shot_flag,
                 Flags::Writable => EPOLL::OUT | EPOLL::HUP | EPOLL::ERR | one_shot_flag,
+                // PSI trigger fds signal via POLLPRI only.
+                Flags::MemoryPressure => EPOLL::PRI | EPOLL::ERR | one_shot_flag,
                 _ => unreachable!(),
             };
             // epoll keys on fd alone; if the other direction is already
@@ -784,6 +752,17 @@ impl FilePoll {
                     flags: EV::ADD | one_shot_flag,
                     ext: [self.generation_number as u64, 0],
                 },
+                // System-wide memory pressure. ident is always 0; EV_CLEAR so each
+                // transition delivers once (matches libdispatch's registration).
+                Flags::MemoryPressure => kevent64_s {
+                    ident: 0,
+                    filter: EVFILT::MEMORYSTATUS,
+                    data: 0,
+                    fflags: NOTE::MEMORYSTATUS_PRESSURE_WARN | NOTE::MEMORYSTATUS_PRESSURE_CRITICAL,
+                    udata: Pollable::init(self).ptr() as u64,
+                    flags: EV::ADD | EV::CLEAR | one_shot_flag,
+                    ext: [self.generation_number as u64, 0],
+                },
                 _ => unreachable!(),
             };
 
@@ -863,7 +842,7 @@ impl FilePoll {
                     NOTE::EXIT,
                     udata,
                 ),
-                Flags::Machport => {
+                Flags::Machport | Flags::MemoryPressure => {
                     return sys::Result::Err(sys::Error::from_code(
                         sys::E::EOPNOTSUPP,
                         sys::Tag::kevent,
@@ -914,6 +893,7 @@ impl FilePoll {
             }
             Flags::Writable => Flags::PollWritable,
             Flags::Machport => Flags::PollMachport,
+            Flags::MemoryPressure => Flags::PollMemoryPressure,
             _ => unreachable!(),
         });
         self.flags.remove(Flags::NeedsRearm);
@@ -966,13 +946,13 @@ impl FilePoll {
         fd: Fd,
         force_unregister: bool,
     ) -> sys::Result<()> {
-        #[cfg(debug_assertions)]
         debug_assert!(fd.native() >= 0 && fd != INVALID_FD);
 
         if !(self.flags.contains(Flags::PollReadable)
             || self.flags.contains(Flags::PollWritable)
             || self.flags.contains(Flags::PollProcess)
-            || self.flags.contains(Flags::PollMachport))
+            || self.flags.contains(Flags::PollMachport)
+            || self.flags.contains(Flags::PollMemoryPressure))
         {
             // no-op
             return sys::Result::Ok(());
@@ -995,6 +975,9 @@ impl FilePoll {
             if self.flags.contains(Flags::PollMachport) {
                 break 'brk Flags::Machport;
             }
+            if self.flags.contains(Flags::PollMemoryPressure) {
+                break 'brk Flags::MemoryPressure;
+            }
             return sys::Result::Ok(());
         };
 
@@ -1008,6 +991,7 @@ impl FilePoll {
             self.flags.remove(Flags::PollReadable);
             self.flags.remove(Flags::PollWritable);
             self.flags.remove(Flags::PollMachport);
+            self.flags.remove(Flags::PollMemoryPressure);
             return sys::Result::Ok(());
         }
 
@@ -1074,6 +1058,15 @@ impl FilePoll {
                     filter: EVFILT::PROC,
                     data: 0,
                     fflags: NOTE::EXIT,
+                    udata: Pollable::init(self).ptr() as u64,
+                    flags: EV::DELETE,
+                    ext: [0, 0],
+                },
+                Flags::MemoryPressure => kevent64_s {
+                    ident: 0,
+                    filter: EVFILT::MEMORYSTATUS,
+                    data: 0,
+                    fflags: 0,
                     udata: Pollable::init(self).ptr() as u64,
                     flags: EV::DELETE,
                     ext: [0, 0],
@@ -1154,7 +1147,7 @@ impl FilePoll {
                 Flags::Readable => make_kevent(ident, EVFILT::READ, EV::DELETE, 0, udata),
                 Flags::Writable => make_kevent(ident, EVFILT::WRITE, EV::DELETE, 0, udata),
                 Flags::Process => make_kevent(ident, EVFILT::PROC, EV::DELETE, NOTE::EXIT, udata),
-                Flags::Machport => {
+                Flags::Machport | Flags::MemoryPressure => {
                     return sys::Result::Err(sys::Error::from_code(
                         sys::E::EOPNOTSUPP,
                         sys::Tag::kevent,
@@ -1196,6 +1189,7 @@ impl FilePoll {
         self.flags.remove(Flags::PollWritable);
         self.flags.remove(Flags::PollProcess);
         self.flags.remove(Flags::PollMachport);
+        self.flags.remove(Flags::PollMemoryPressure);
 
         sys::Result::Ok(())
     }
@@ -1230,6 +1224,8 @@ pub enum Flags {
     PollProcess,
     /// Poll for machport events
     PollMachport,
+    /// Poll for memory-pressure events (Darwin `EVFILT_MEMORYSTATUS`, Linux PSI `EPOLLPRI`)
+    PollMemoryPressure,
 
     // What did the event loop tell us?
     Readable,
@@ -1238,10 +1234,10 @@ pub enum Flags {
     Eof,
     Hup,
     Machport,
+    MemoryPressure,
 
     // What is the type of file descriptor?
     Fifo,
-    Tty,
 
     OneShot,
     NeedsRearm,
@@ -1257,26 +1253,12 @@ pub enum Flags {
     WasEverRegistered,
     IgnoreUpdates,
 
-    /// Was O_NONBLOCK set on the file descriptor?
-    Nonblock,
-
     Socket,
 }
 
 pub type FlagsSet = enumset::EnumSet<Flags>;
-pub type FlagsStruct = FlagsSet;
 
 impl Flags {
-    pub fn poll(self) -> Flags {
-        match self {
-            Flags::Readable => Flags::PollReadable,
-            Flags::Writable => Flags::PollWritable,
-            Flags::Process => Flags::PollProcess,
-            Flags::Machport => Flags::PollMachport,
-            other => other,
-        }
-    }
-
     #[cfg(any(target_os = "macos", target_os = "freebsd"))]
     pub fn from_kqueue_event(kqueue_event: &KQueueEvent) -> FlagsSet {
         #[cfg(target_os = "macos")]
@@ -1301,6 +1283,10 @@ impl Flags {
             if kqueue_event.filter == EVFILT::MACHPORT {
                 flags.insert(Flags::Machport);
             }
+            #[cfg(target_os = "macos")]
+            if kqueue_event.filter == EVFILT::MEMORYSTATUS {
+                flags.insert(Flags::MemoryPressure);
+            }
         }
         flags
     }
@@ -1314,6 +1300,9 @@ impl Flags {
         }
         if epoll.events & EPOLL::OUT != 0 {
             flags.insert(Flags::Writable);
+        }
+        if epoll.events & EPOLL::PRI != 0 {
+            flags.insert(Flags::MemoryPressure);
         }
         if epoll.events & EPOLL::ERR != 0 {
             flags.insert(Flags::Eof);
@@ -1469,7 +1458,7 @@ impl Store {
 #[derive(Copy, Clone)]
 #[allow(dead_code)]
 pub(crate) struct Pollable {
-    repr: bun_collections::TaggedPointer,
+    repr: bun_collections::TaggedPtr,
 }
 
 impl Pollable {
@@ -1481,7 +1470,7 @@ impl Pollable {
     #[allow(dead_code)]
     pub(crate) fn init(ptr: *const crate::FilePoll) -> Self {
         Self {
-            repr: bun_collections::TaggedPointer::init(ptr, Self::FILE_POLL_TAG),
+            repr: bun_collections::TaggedPtr::init(ptr, Self::FILE_POLL_TAG),
         }
     }
 
@@ -1489,7 +1478,7 @@ impl Pollable {
     #[allow(dead_code)]
     pub(crate) fn from(val: *mut c_void) -> Self {
         Self {
-            repr: bun_collections::TaggedPointer::from(val),
+            repr: bun_collections::TaggedPtr::from(val),
         }
     }
 

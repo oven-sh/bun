@@ -119,9 +119,7 @@ pub mod api {
             __ComptimeStringMap_UNHANDLED_REJECTIONS_MAP(());
     }
 
-    /// peechy `message TransformOptions`. Full field set,
-    /// hand-expanded so `bundler::options::BundleOptions::from_api` and the
-    /// bunfig/CLI parsers can un-gate.
+    /// peechy `message TransformOptions`. Full field set.
     ///
     /// Type map (matches the convention block below):
     ///   `?T`                  → `Option<T>`
@@ -432,22 +430,6 @@ pub mod api {
         }
     }
 
-    /// Open `enum(u8)` in the wire schema. Kept closed.
-    #[repr(u8)]
-    #[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
-    pub enum ImportKind {
-        #[default]
-        _none = 0,
-        entry_point = 1,
-        stmt = 2,
-        require = 3,
-        dynamic = 4,
-        require_resolve = 5,
-        at = 6,
-        url = 7,
-        internal = 8,
-    }
-
     // ─── peechy batch 2: hand-expanded for downstream wfs ────────────────
     // Jsx / JsxRuntime / StringMap / EnvConfig / LoadedEnvConfig /
     // LoadedRouteConfig / RouteConfig / FrameworkEntryPoint{,Type,Map,Message} /
@@ -598,8 +580,6 @@ pub mod api {
     }
 
     // ── Fallback error-page wire types ──────────────────────────────────────
-    // Hand-stubbed subset so `js_parser::runtime::Fallback` un-gates. Full
-    // bodies (with `decode`) arrive from the peechy generator.
 
     /// Open `enum(u8)` in the wire schema.
     #[repr(u8)]

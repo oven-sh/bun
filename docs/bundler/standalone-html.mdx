@@ -9,7 +9,7 @@ Bun can bundle your entire frontend into a **single `.html` file** with zero ext
 bun build --compile --target=browser ./index.html --outdir=dist
 ```
 
-The output is a completely self-contained HTML document. No relative paths. No external files. No server required. Just one `.html` file that works anywhere a browser can open it.
+The output is a self-contained HTML document: no relative paths, no external files, no server required.
 
 ## One file. Upload anywhere.
 
@@ -17,19 +17,19 @@ The output is a single `.html` file you can put anywhere:
 
 - **Upload it to S3** or any static file host — no directory structure to maintain, one file
 - **Double-click it from your desktop** — it opens in the browser and works offline, no localhost server needed
-- **Embed it in your webview** — No need to deal with relative files
+- **Embed it in your webview** — no relative files to deal with
 - **Insert it in an `<iframe>`** — embed interactive content in another page with a single file URL
-- **Serve it from anywhere** — any HTTP server, CDN, or file share. One file, zero configuration.
+- **Serve it from anywhere** — any HTTP server, CDN, or file share
 
-There's nothing to install, no `node_modules` to deploy, no build artifacts to coordinate, no relative paths to think about. The entire app — framework code, stylesheets, images, everything — lives in that one file.
+There's nothing to install, no `node_modules` to deploy, no build artifacts to coordinate, no relative paths to think about.
 
 ## Truly one file
 
 Normally, distributing a web page means managing a folder of assets — the HTML, the JavaScript bundles, the CSS files, the images. Move the HTML without the rest and everything breaks. Browsers have tried to solve this before: Safari's `.webarchive` and `.mhtml` are supposed to save a page as a single file, but in practice they unpack into a folder of loose files on your computer — defeating the purpose.
 
-Standalone HTML is different. The output is a plain `.html` file. Not an archive. Not a folder. One file, with everything inside it. Every image, every font, every line of CSS and JavaScript is embedded directly in the HTML using standard `<style>` tags, `<script>` tags, and `data:` URIs. Any browser can open it. Any server can host it. Any file host can store it.
+Standalone HTML output is a plain `.html` file: not an archive, not a folder. Every image, every font, every line of CSS and JavaScript is embedded directly in the HTML using standard `<style>` tags, `<script>` tags, and `data:` URIs. Any browser can open it and any server can host it.
 
-This makes it practical to distribute web pages the same way you'd distribute a PDF — as a single file you can move, copy, upload, or share without worrying about broken paths or missing assets.
+You can distribute the page the same way you'd distribute a PDF: a single file you can move, copy, upload, or share without worrying about broken paths or missing assets.
 
 ## Quick start
 
@@ -77,7 +77,7 @@ Open `dist/index.html` — the React app works with no server.
 
 ## Everything gets inlined
 
-Bun inlines every local asset it finds in your HTML. If it has a relative path, it gets embedded into the output file. This isn't limited to images and stylesheets — it works with any file type.
+Bun inlines every local asset it finds in your HTML: anything with a relative path, of any file type, is embedded into the output file.
 
 ### What gets inlined
 
@@ -88,7 +88,7 @@ Bun inlines every local asset it finds in your HTML. If it has a relative path, 
 | `<img src="./logo.png">`                         | `<img src="data:image/png;base64,...">`                                  |
 | `<img src="./icon.svg">`                         | `<img src="data:image/svg+xml;base64,...">`                              |
 | `<video src="./demo.mp4">`                       | `<video src="data:video/mp4;base64,...">`                                |
-| `<audio src="./click.wav">`                      | `<audio src="data:audio/wav;base64,...">`                                |
+| `<audio src="./click.wav">`                      | `<audio src="data:audio/x-wav;base64,...">`                              |
 | `<source src="./clip.webm">`                     | `<source src="data:video/webm;base64,...">`                              |
 | `<video poster="./thumb.jpg">`                   | `<video poster="data:image/jpeg;base64,...">`                            |
 | `<link rel="icon" href="./favicon.ico">`         | `<link rel="icon" href="data:image/x-icon;base64,...">`                  |
@@ -98,13 +98,13 @@ Bun inlines every local asset it finds in your HTML. If it has a relative path, 
 | CSS `url("./font.woff2")`                        | CSS `url(data:font/woff2;base64,...)`                                    |
 | JS `import "./styles.css"`                       | Merged into the `<style>` tag                                            |
 
-Images, fonts, WASM binaries, videos, audio files, SVGs — any file referenced by a relative path gets base64-encoded into a `data:` URI and embedded directly in the HTML. The MIME type is automatically detected from the file extension.
+Images, fonts, WASM binaries, videos, audio files, SVGs — any file referenced by a relative path gets base64-encoded into a `data:` URI and embedded directly in the HTML. Bun detects the MIME type from the file extension.
 
 External URLs (like CDN links or absolute URLs) are left untouched.
 
 ## Using with React
 
-React apps work out of the box. Bun handles JSX transpilation and npm package resolution automatically.
+React apps need no extra configuration: Bun transpiles JSX and resolves npm packages.
 
 ```bash terminal icon="terminal"
 bun install react react-dom
@@ -241,7 +241,7 @@ Add `--minify` to minify the JavaScript and CSS:
 bun build --compile --target=browser --minify ./index.html --outdir=dist
 ```
 
-Or via the API:
+Or with the JavaScript API:
 
 ```ts build.ts icon="/icons/typescript.svg"
 await Bun.build({
@@ -255,7 +255,7 @@ await Bun.build({
 
 ## JavaScript API
 
-You can use `Bun.build()` to produce standalone HTML programmatically:
+Use `Bun.build()` to produce standalone HTML programmatically:
 
 ```ts build.ts icon="/icons/typescript.svg"
 const result = await Bun.build({
@@ -305,7 +305,7 @@ Use `--env` to inline environment variables into the bundled JavaScript:
 API_URL=https://api.example.com bun build --compile --target=browser --env=inline ./index.html --outdir=dist
 ```
 
-References to `process.env.API_URL` in your JavaScript are replaced with the literal value at build time.
+Bun replaces references to `process.env.API_URL` in your JavaScript with the literal value at build time.
 
 ## Limitations
 

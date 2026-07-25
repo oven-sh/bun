@@ -35,7 +35,7 @@ config.features.auth; // => true
 
 ---
 
-You can also use named imports to destructure top-level properties:
+You can also destructure top-level properties with named imports:
 
 ```ts config.ts icon="/icons/typescript.svg"
 import { database, server, features } from "./config.yaml";
@@ -77,7 +77,7 @@ console.log(data.hobbies); // => ["reading", "coding"]
 
 ## TypeScript Support
 
-To add TypeScript support for your YAML imports, create a declaration file with `.d.ts` appended to the YAML filename (e.g., `config.yaml` → `config.yaml.d.ts`);
+To add TypeScript support for your YAML imports, create a declaration file with `.d.ts` appended to the YAML filename (for example, `config.yaml` → `config.yaml.d.ts`):
 
 ```ts config.yaml.d.ts icon="/icons/typescript.svg"
 const contents: {
@@ -101,4 +101,4 @@ export = contents;
 
 ---
 
-See [Docs > API > YAML](/runtime/yaml) for complete documentation on YAML support in Bun.
+See [YAML](/runtime/yaml).

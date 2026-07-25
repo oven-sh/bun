@@ -6,12 +6,11 @@
 #![allow(non_camel_case_types, non_snake_case, clippy::too_many_arguments)]
 
 use core::fmt;
-use core::mem::size_of;
 use std::io::Write as _;
 
 use bun_alloc::Arena as Bump;
 use bun_alloc::ArenaVecExt as _;
-use bun_core::{String as BunString, immutable as strings};
+use bun_core::{String as BunString, strings};
 
 // `strings::Cursor` aliased as `CodepointCursor` for readability.
 type CodepointCursor = strings::Cursor;
@@ -42,14 +41,14 @@ pub enum ParseError {
     Lex,
 }
 
-impl From<ParseError> for bun_core::Error {
+impl From<ParseError> for crate::Error {
     fn from(e: ParseError) -> Self {
         match e {
-            ParseError::Unsupported => bun_core::err!("Unsupported"),
-            ParseError::Expected => bun_core::err!("Expected"),
-            ParseError::Unexpected => bun_core::err!("Unexpected"),
-            ParseError::Unknown => bun_core::err!("Unknown"),
-            ParseError::Lex => bun_core::err!("Lex"),
+            ParseError::Unsupported => crate::Error::Unsupported,
+            ParseError::Expected => crate::Error::Expected,
+            ParseError::Unexpected => crate::Error::Unexpected,
+            ParseError::Unknown => crate::Error::Unknown,
+            ParseError::Lex => crate::Error::Lex,
         }
     }
 }
@@ -58,9 +57,6 @@ impl From<ParseError> for bun_core::Error {
 
 pub mod ast {
     use super::*;
-
-    // Re-export so `ast::SmolList<T, N>` resolves for downstream state nodes.
-    pub use super::SmolList;
 
     // AST nodes hold `&'arena [T]` slices so the whole tree is
     // `Clone`/`Copy`-able — required by `Atom::merge` and
@@ -71,28 +67,8 @@ pub mod ast {
         pub stmts: &'arena [Stmt<'arena>],
     }
 
-    impl<'arena> Script<'arena> {
-        pub fn memory_cost(&self) -> usize {
-            let mut cost = 0usize;
-            for stmt in self.stmts.iter() {
-                cost += stmt.memory_cost();
-            }
-            cost
-        }
-    }
-
     pub struct Stmt<'arena> {
         pub exprs: &'arena [Expr<'arena>],
-    }
-
-    impl<'arena> Stmt<'arena> {
-        pub fn memory_cost(&self) -> usize {
-            let mut cost = 0usize;
-            for expr in self.exprs.iter() {
-                cost += expr.memory_cost();
-            }
-            cost
-        }
     }
 
     #[derive(Clone, Copy, strum::IntoStaticStr, bun_core::EnumTag)]
@@ -129,25 +105,6 @@ pub mod ast {
     }
 
     impl<'arena> Expr<'arena> {
-        pub fn memory_cost(&self) -> usize {
-            match self {
-                Expr::Assign(assign) => {
-                    let mut cost = 0usize;
-                    for expr in assign.iter() {
-                        cost += expr.memory_cost();
-                    }
-                    cost
-                }
-                Expr::Binary(b) => b.memory_cost(),
-                Expr::Pipeline(p) => p.memory_cost(),
-                Expr::Cmd(c) => c.memory_cost(),
-                Expr::Subshell(s) => s.memory_cost(),
-                Expr::If(i) => i.memory_cost(),
-                Expr::CondExpr(c) => c.memory_cost(),
-                Expr::Async(a) => a.memory_cost(),
-            }
-        }
-
         pub fn as_pipeline_item(&self) -> Option<PipelineItem<'arena>> {
             match self {
                 Expr::Assign(a) => Some(PipelineItem::Assigns(*a)),
@@ -169,12 +126,6 @@ pub mod ast {
     pub(crate) type CondExprArgList<'arena> = SmolList<Atom<'arena>, 2>;
 
     impl<'arena> CondExpr<'arena> {
-        pub fn memory_cost(&self) -> usize {
-            let mut cost = size_of::<CondExprOp>();
-            cost += self.args.memory_cost();
-            cost
-        }
-
         pub fn to_expr(self, bump: &'arena Bump) -> Result<Expr<'arena>, bun_alloc::AllocError> {
             let condexpr = bump.alloc(self);
             Ok(Expr::CondExpr(condexpr))
@@ -371,17 +322,6 @@ pub mod ast {
         pub redirect_flags: RedirectFlags,
     }
 
-    impl<'arena> Subshell<'arena> {
-        pub fn memory_cost(&self) -> usize {
-            let mut cost = size_of::<Subshell>();
-            cost += self.script.memory_cost();
-            if let Some(redirect) = &self.redirect {
-                cost += redirect.memory_cost();
-            }
-            cost
-        }
-    }
-
     /// TODO: If we know cond/then/elif/else is just a single command we don't need to store the stmt
     pub struct If<'arena> {
         pub cond: SmolList<Stmt<'arena>, 1>,
@@ -414,14 +354,6 @@ pub mod ast {
             let i = bump.alloc(self);
             Ok(Expr::If(i))
         }
-
-        pub fn memory_cost(&self) -> usize {
-            let mut cost = size_of::<If>();
-            cost += self.cond.memory_cost();
-            cost += self.then.memory_cost();
-            cost += self.else_parts.memory_cost();
-            cost
-        }
     }
 
     pub struct Binary<'arena> {
@@ -436,27 +368,8 @@ pub mod ast {
         Or,
     }
 
-    impl<'arena> Binary<'arena> {
-        pub fn memory_cost(&self) -> usize {
-            let mut cost = size_of::<Binary>();
-            cost += self.left.memory_cost();
-            cost += self.right.memory_cost();
-            cost
-        }
-    }
-
     pub struct Pipeline<'arena> {
         pub items: &'arena [PipelineItem<'arena>],
-    }
-
-    impl<'arena> Pipeline<'arena> {
-        pub fn memory_cost(&self) -> usize {
-            let mut cost = 0usize;
-            for item in self.items.iter() {
-                cost += item.memory_cost();
-            }
-            cost
-        }
     }
 
     #[derive(Clone, Copy)]
@@ -468,40 +381,12 @@ pub mod ast {
         CondExpr(&'arena CondExpr<'arena>),
     }
 
-    impl<'arena> PipelineItem<'arena> {
-        pub fn memory_cost(&self) -> usize {
-            let mut cost = 0usize;
-            match self {
-                PipelineItem::Cmd(cmd) => cost += cmd.memory_cost(),
-                PipelineItem::Assigns(assigns) => {
-                    for assign in assigns.iter() {
-                        cost += assign.memory_cost();
-                    }
-                }
-                PipelineItem::Subshell(s) => cost += s.memory_cost(),
-                PipelineItem::If(i) => cost += i.memory_cost(),
-                PipelineItem::CondExpr(c) => cost += c.memory_cost(),
-            }
-            cost
-        }
-    }
-
     pub enum CmdOrAssigns<'arena> {
         Cmd(Cmd<'arena>),
         Assigns(&'arena [Assign<'arena>]),
     }
 
     impl<'arena> CmdOrAssigns<'arena> {
-        pub fn to_pipeline_item(self, bump: &'arena Bump) -> PipelineItem<'arena> {
-            match self {
-                CmdOrAssigns::Cmd(cmd) => {
-                    let cmd_ptr = bump.alloc(cmd);
-                    PipelineItem::Cmd(cmd_ptr)
-                }
-                CmdOrAssigns::Assigns(assigns) => PipelineItem::Assigns(assigns),
-            }
-        }
-
         pub fn to_expr(self, bump: &'arena Bump) -> Result<Expr<'arena>, bun_alloc::AllocError> {
             match self {
                 CmdOrAssigns::Cmd(cmd) => {
@@ -532,40 +417,11 @@ pub mod ast {
         pub value: Atom<'arena>,
     }
 
-    impl<'arena> Assign<'arena> {
-        pub fn new(label: &'arena [u8], value: Atom<'arena>) -> Self {
-            Self { label, value }
-        }
-
-        pub fn memory_cost(&self) -> usize {
-            let mut cost = size_of::<Assign>();
-            cost += self.label.len();
-            cost += self.value.memory_cost();
-            cost
-        }
-    }
-
     pub struct Cmd<'arena> {
         pub assigns: &'arena [Assign<'arena>],
         pub name_and_args: &'arena [Atom<'arena>],
         pub redirect: RedirectFlags,
         pub redirect_file: Option<Redirect<'arena>>,
-    }
-
-    impl<'arena> Cmd<'arena> {
-        pub fn memory_cost(&self) -> usize {
-            let mut cost = size_of::<Cmd>();
-            for assign in self.assigns.iter() {
-                cost += assign.memory_cost();
-            }
-            for atom in self.name_and_args.iter() {
-                cost += atom.memory_cost();
-            }
-            if let Some(rf) = &self.redirect_file {
-                cost += rf.memory_cost();
-            }
-            cost
-        }
     }
 
     bitflags::bitflags! {
@@ -594,7 +450,6 @@ pub mod ast {
 
     #[derive(Clone, Copy, PartialEq, Eq)]
     pub enum IoKind {
-        Stdin,
         Stdout,
         Stderr,
     }
@@ -623,14 +478,9 @@ pub mod ast {
 
         // bitflags already generates `is_empty()`; expose under this
         // spelling too for callers that use it.
-        #[inline]
-        pub fn isEmpty(self) -> bool {
-            self.bits() == 0
-        }
 
         pub fn redirects_elsewhere(self, io_kind: IoKind) -> bool {
             match io_kind {
-                IoKind::Stdin => self.stdin(),
                 IoKind::Stdout => {
                     if self.duplicate_out() {
                         !self.stdout()
@@ -709,24 +559,11 @@ pub mod ast {
         pub fn amp_gt_gt() -> RedirectFlags {
             Self::APPEND | Self::STDOUT | Self::STDERR
         }
-
-        pub fn merge(a: RedirectFlags, b: RedirectFlags) -> RedirectFlags {
-            RedirectFlags::from_bits_retain(a.bits() | b.bits())
-        }
     }
 
     pub enum Redirect<'arena> {
         Atom(Atom<'arena>),
         JsBuf(JSBuf),
-    }
-
-    impl<'arena> Redirect<'arena> {
-        pub fn memory_cost(&self) -> usize {
-            match self {
-                Redirect::Atom(a) => a.memory_cost(),
-                Redirect::JsBuf(_) => size_of::<JSBuf>(),
-            }
-        }
     }
 
     #[derive(Clone)]
@@ -736,13 +573,6 @@ pub mod ast {
     }
 
     impl<'arena> Atom<'arena> {
-        pub fn memory_cost(&self) -> usize {
-            match self {
-                Atom::Simple(s) => s.memory_cost(),
-                Atom::Compound(c) => c.memory_cost(),
-            }
-        }
-
         pub fn merge(
             self,
             right: &Atom<'arena>,
@@ -825,14 +655,6 @@ pub mod ast {
             Atom::Simple(atom)
         }
 
-        pub fn is_compound(&self) -> bool {
-            matches!(self, Atom::Compound(_))
-        }
-
-        pub fn has_expansions(&self) -> bool {
-            self.has_glob_expansion() || self.has_brace_expansion()
-        }
-
         pub fn has_glob_expansion(&self) -> bool {
             match self {
                 Atom::Simple(s) => s.glob_hint(),
@@ -844,13 +666,6 @@ pub mod ast {
             match self {
                 Atom::Simple(_) => false,
                 Atom::Compound(c) => c.brace_expansion_hint,
-            }
-        }
-
-        pub fn has_tilde_expansion(&self) -> bool {
-            match self {
-                Atom::Simple(s) => matches!(s, SimpleAtom::Tilde),
-                Atom::Compound(c) => !c.atoms.is_empty() && matches!(c.atoms[0], SimpleAtom::Tilde),
             }
         }
     }
@@ -877,26 +692,10 @@ pub mod ast {
         pub script: Script<'arena>,
         pub quoted: bool,
     }
-    impl<'arena> CmdSubst<'arena> {
-        pub fn memory_cost(&self) -> usize {
-            let mut cost = size_of::<Self>();
-            cost += self.script.memory_cost();
-            cost
-        }
-    }
 
     impl<'arena> SimpleAtom<'arena> {
         pub fn glob_hint(&self) -> bool {
             matches!(self, SimpleAtom::Asterisk | SimpleAtom::DoubleAsterisk)
-        }
-
-        pub fn memory_cost(&self) -> usize {
-            (match self {
-                SimpleAtom::Var(v) => v.len(),
-                SimpleAtom::Text(t) => t.len(),
-                SimpleAtom::CmdSubst(c) => c.memory_cost(),
-                _ => 0,
-            }) + size_of::<SimpleAtom>()
         }
     }
 
@@ -906,25 +705,7 @@ pub mod ast {
         pub brace_expansion_hint: bool,
         pub glob_hint: bool,
     }
-
-    impl<'arena> CompoundAtom<'arena> {
-        pub fn memory_cost(&self) -> usize {
-            let mut cost = size_of::<CompoundAtom>();
-            cost += self.atoms_memory_cost();
-            cost
-        }
-
-        fn atoms_memory_cost(&self) -> usize {
-            let mut cost = 0usize;
-            for atom in self.atoms.iter() {
-                cost += atom.memory_cost();
-            }
-            cost
-        }
-    }
 }
-
-pub use ast as AST;
 
 // ───────────────────────────── Parser ─────────────────────────────
 
@@ -961,7 +742,7 @@ pub struct ParserError<'bump> {
     pub msg: &'bump [u8],
 }
 
-type ParseResult<T> = Result<T, bun_core::Error>;
+type ParseResult<T> = crate::Result<T>;
 
 impl<'bump> Parser<'bump> {
     pub fn new(
@@ -1157,9 +938,7 @@ impl<'bump> Parser<'bump> {
 
     fn expect_if_clause_text_token(&mut self, if_clause_token: IfClauseTok) -> Token {
         let tagname = Self::extract_if_clause_text_token(if_clause_token);
-        if cfg!(debug_assertions) {
-            debug_assert!(self.peek().tag() == TokenTag::Text);
-        }
+        debug_assert!(self.peek().tag() == TokenTag::Text);
         if let Token::Text(range) = self.peek() {
             if self.delimits(self.peek_n(1)) && self.text(range) == tagname {
                 let tok = self.advance();
@@ -1181,8 +960,7 @@ impl<'bump> Parser<'bump> {
     }
 
     fn is_if_clause_text_token_impl(&self, range: TextRange, if_clause_token: IfClauseTok) -> bool {
-        let tagname = Self::extract_if_clause_text_token(if_clause_token);
-        self.text(range) == tagname
+        self.if_clause_tok_at(range) == Some(if_clause_token)
     }
 
     fn skip_newlines(&mut self) {
@@ -1913,6 +1691,13 @@ impl<'bump> Parser<'bump> {
             .any(|r| pos >= r.start && pos < r.end)
     }
 
+    fn if_clause_tok_at(&self, range: TextRange) -> Option<IfClauseTok> {
+        if self.is_interpolated_position(range.start) {
+            return None;
+        }
+        IfClauseTok::from_text(self.text(range))
+    }
+
     fn advance(&mut self) -> Token {
         if !self.is_at_end() {
             self.current += 1;
@@ -1952,7 +1737,6 @@ impl<'bump> Parser<'bump> {
         let tag = tok.tag();
         tag == TokenTag::Delimit
             || tag == TokenTag::Semicolon
-            || tag == TokenTag::Semicolon
             || tag == TokenTag::Eof
             || tag == TokenTag::Newline
             || (self.inside_subshell.is_some()
@@ -1983,9 +1767,7 @@ impl<'bump> Parser<'bump> {
 
     fn match_if_clausetok(&mut self, toktag: IfClauseTok) -> bool {
         if let Token::Text(range) = self.peek() {
-            if self.delimits(self.peek_n(1))
-                && self.text(range) == <&'static str>::from(toktag).as_bytes()
-            {
+            if self.delimits(self.peek_n(1)) && self.if_clause_tok_at(range) == Some(toktag) {
                 let _ = self.advance();
                 let _ = self.expect_delimit();
                 return true;
@@ -2037,13 +1819,10 @@ impl<'bump> Parser<'bump> {
         if !self.delimits(self.peek_n(1)) {
             return false;
         }
-        let txt = self.text(range);
-        for &tag in toktags {
-            if txt == <&'static str>::from(tag).as_bytes() {
-                return true;
-            }
-        }
-        false
+        let Some(tok) = self.if_clause_tok_at(range) else {
+            return false;
+        };
+        toktags.contains(&tok)
     }
 
     fn peek_any_comptime_ifclausetok(&self, toktags: &[IfClauseTok]) -> bool {
@@ -2092,24 +1871,7 @@ impl<'bump> Parser<'bump> {
     }
 
     pub fn combine_errors(&self) -> &'bump [u8] {
-        let errors = &self.errors[..];
-
-        ({
-            let size = {
-                let mut i = 0usize;
-                for e in errors {
-                    i += e.msg.len();
-                }
-                i
-            };
-            let buf = self.alloc.alloc_slice_fill_copy(size, 0u8);
-            let mut i = 0usize;
-            for e in errors {
-                buf[i..i + e.msg.len()].copy_from_slice(e.msg);
-                i += e.msg.len();
-            }
-            buf
-        }) as _
+        join_error_msgs(self.alloc, self.errors[..].iter().map(|e| e.msg))
     }
 
     fn add_error(&mut self, args: fmt::Arguments<'_>) -> ParseResult<()> {
@@ -2128,6 +1890,26 @@ impl<'bump> Parser<'bump> {
             <&'static str>::from(kind)
         ))
     }
+}
+
+/// Join error messages with a newline so each one renders on its own line in
+/// `ShellError.message` and in the CLI error output.
+fn join_error_msgs<'bump>(
+    bump: &'bump Bump,
+    msgs: impl ExactSizeIterator<Item = &'bump [u8]> + Clone,
+) -> &'bump [u8] {
+    let size = msgs.clone().map(|m| m.len()).sum::<usize>() + msgs.len().saturating_sub(1);
+    let buf = bump.alloc_slice_fill_copy(size, 0u8);
+    let mut i = 0usize;
+    for (n, msg) in msgs.enumerate() {
+        if n > 0 {
+            buf[i] = b'\n';
+            i += 1;
+        }
+        buf[i..i + msg.len()].copy_from_slice(msg);
+        i += msg.len();
+    }
+    buf
 }
 
 #[derive(Default)]
@@ -2164,7 +1946,7 @@ impl IfClauseTok {
     /// `expect_if_clause_text_token`.
     pub fn from_tok(p: &Parser<'_>, tok: Token) -> Option<IfClauseTok> {
         match tok {
-            Token::Text(range) if p.delimits(p.peek_n(1)) => Self::from_text(p.text(range)),
+            Token::Text(range) if p.delimits(p.peek_n(1)) => p.if_clause_tok_at(range),
             _ => None,
         }
     }
@@ -2356,25 +2138,8 @@ pub struct LexResult<'bump> {
 
 impl<'bump> LexResult<'bump> {
     pub fn combine_errors(&self, bump: &'bump Bump) -> &'bump [u8] {
-        let errors = self.errors;
-
-        ({
-            let size = {
-                let mut i = 0usize;
-                for e in errors {
-                    i += e.msg.len() as usize;
-                }
-                i
-            };
-            let buf = bump.alloc_slice_fill_copy(size, 0u8);
-            let mut i = 0usize;
-            for e in errors {
-                let s = e.msg.slice(self.strpool);
-                buf[i..i + s.len()].copy_from_slice(s);
-                i += s.len();
-            }
-            buf
-        }) as _
+        let strpool = self.strpool;
+        join_error_msgs(bump, self.errors.iter().map(move |e| e.msg.slice(strpool)))
     }
 }
 
@@ -2398,19 +2163,10 @@ pub const LEX_JS_STRING_PREFIX: &[u8] = b"\x08__bunstr_";
 pub enum StringEncoding {
     Ascii,
     Wtf8,
-    Utf16,
 }
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
 pub enum LexerError {
-    #[error("OutOfMemory")]
-    OutOfMemory,
-    #[error("Utf8CannotEncodeSurrogateHalf")]
-    Utf8CannotEncodeSurrogateHalf,
-    #[error("Utf8InvalidStartByte")]
-    Utf8InvalidStartByte,
-    #[error("CodepointTooLarge")]
-    CodepointTooLarge,
     #[error("Subshell nesting depth exceeded")]
     SubshellDepthExceeded,
 }
@@ -2472,8 +2228,6 @@ pub struct Lexer<'bump, const ENCODING: StringEncoding> {
 }
 
 impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
-    pub const JS_OBJREF_PREFIX: &'static str = "$__bun_";
-
     pub fn new(
         bump: &'bump Bump,
         src: &'bump [u8],
@@ -3020,7 +2774,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                             }
                             if next.escaped || next.char != u32::from(b'|') {
                                 self.tokens.push(Token::Pipe);
-                            } else if next.char == u32::from(b'|') {
+                            } else {
                                 self.eat().expect("unreachable");
                                 self.tokens.push(Token::DoublePipe);
                             }
@@ -3079,13 +2833,9 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                                 self.tokens.push(Token::Redirect(inner));
                             } else if next.escaped || next.char != u32::from(b'&') {
                                 self.tokens.push(Token::Ampersand);
-                            } else if next.char == u32::from(b'&') {
+                            } else {
                                 self.eat().expect("unreachable");
                                 self.tokens.push(Token::DoubleAmpersand);
-                            } else {
-                                self.tokens.push(Token::Ampersand);
-                                fell_through = true;
-                                break 'escaped;
                             }
                             fell_through = true;
                         }
@@ -3440,7 +3190,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
             if is_all_ascii(bytes) {
                 self.strpool.extend_from_slice(bytes);
             } else {
-                let non_ascii_idx = bun_core::first_non_ascii(bytes).unwrap_or(0) as usize;
+                let non_ascii_idx = bun_core::strings::first_non_ascii(bytes).unwrap_or(0) as usize;
                 if non_ascii_idx > 0 {
                     self.strpool.extend_from_slice(&bytes[..non_ascii_idx]);
                 }
@@ -3829,7 +3579,6 @@ pub struct SrcUnicode<'a> {
 #[derive(Clone, Copy)]
 pub(crate) struct SrcUnicodeIndexValue {
     pub char: u32,
-    pub width: u8,
 }
 
 impl<'a> SrcUnicode<'a> {
@@ -3862,7 +3611,6 @@ impl<'a> SrcUnicode<'a> {
         }
         Some(SrcUnicodeIndexValue {
             char: self.cursor.c as u32,
-            width: self.cursor.width,
         })
     }
 
@@ -3873,7 +3621,6 @@ impl<'a> SrcUnicode<'a> {
         }
         Some(SrcUnicodeIndexValue {
             char: self.next_cursor.c as u32,
-            width: self.next_cursor.width,
         })
     }
 
@@ -4002,15 +3749,9 @@ impl<'a, const ENCODING: StringEncoding> ShellCharIter<'a, ENCODING> {
     }
 
     pub fn read_char(&mut self) -> Option<InputChar> {
-        let (mut char, _width): (u32, u8) = match &self.src {
-            Src::Ascii(a) => {
-                let iv = a.index()?;
-                (iv.char() as u32, 1)
-            }
-            Src::Unicode(u) => {
-                let iv = u.index()?;
-                (iv.char, iv.width)
-            }
+        let mut char: u32 = match &self.src {
+            Src::Ascii(a) => a.index()?.char() as u32,
+            Src::Unicode(u) => u.index()?.char,
         };
         if char != u32::from(b'\\') || self.state == CharState::Single {
             return Some(InputChar {
@@ -4160,14 +3901,17 @@ fn is_all_ascii(s: &[u8]) -> bool {
 // ───────────────────────────── escaping ─────────────────────────────
 
 /// Characters that need to be escaped
-pub const SPECIAL_CHARS: [u8; 34] = [
+pub const SPECIAL_CHARS: [u8; 37] = [
     b'~',
     b'[',
     b']',
     b'#',
     b';',
     b'\n',
+    b'\t',
+    b'\r',
     b'*',
+    b'?',
     b'{',
     b',',
     b'}',
@@ -4217,10 +3961,6 @@ pub const SPECIAL_CHARS_TABLE: ByteTable = {
     ByteTable(table)
 };
 
-pub fn assert_special_char(c: u8) {
-    debug_assert!(SPECIAL_CHARS_TABLE.is_set(c as usize));
-}
-
 /// Characters that need to be backslashed inside double quotes
 pub const BACKSLASHABLE_CHARS: [u8; 4] = *b"$`\"\\";
 
@@ -4232,13 +3972,20 @@ pub fn escape_bun_str<const ADD_QUOTES: bool>(
         let res = escape_utf16::<ADD_QUOTES>(bunstr.utf16(), outbuf)?;
         return Ok(!res.is_invalid);
     }
-    // otherwise should be utf-8, latin-1, or ascii
-    escape_8bit::<ADD_QUOTES>(bunstr.byte_slice(), outbuf)?;
+    if bunstr.is_utf8() {
+        escape_8bit::<ADD_QUOTES, false>(bunstr.byte_slice(), outbuf)?;
+        return Ok(true);
+    }
+    // Otherwise 8-bit (Latin-1/ASCII). `outbuf` is consumed as UTF-8, so
+    // Latin-1 code units 0x80..=0xFF must be re-encoded, not copied verbatim.
+    escape_8bit::<ADD_QUOTES, true>(bunstr.byte_slice(), outbuf)?;
     Ok(true)
 }
 
-/// works for utf-8, latin-1, and ascii
-pub fn escape_8bit<const ADD_QUOTES: bool>(
+/// Escapes an 8-bit byte string into UTF-8 output. `LATIN1` selects how bytes
+/// >= 0x80 are interpreted: Latin-1 code units (re-encoded as 2-byte UTF-8) or
+/// bytes of an already-UTF-8 string (copied verbatim).
+pub fn escape_8bit<const ADD_QUOTES: bool, const LATIN1: bool>(
     str: &[u8],
     outbuf: &mut Vec<u8>,
 ) -> Result<(), bun_alloc::AllocError> {
@@ -4257,6 +4004,10 @@ pub fn escape_8bit<const ADD_QUOTES: bool>(
         }
         if c == SPECIAL_JS_CHAR {
             outbuf.extend_from_slice(&[SPECIAL_JS_CHAR, b'"', b'"']);
+            continue;
+        }
+        if LATIN1 && c >= 0x80 {
+            outbuf.extend_from_slice(&[0xC0 | (c >> 6), 0x80 | (c & 0x3F)]);
             continue;
         }
         outbuf.push(c);
@@ -4280,7 +4031,7 @@ pub fn escape_utf16<const ADD_QUOTES: bool>(
         outbuf.push(b'"');
     }
 
-    let non_ascii = bun_core::first_non_ascii16(str).unwrap_or(0);
+    let non_ascii = bun_core::strings::first_non_ascii16(str).unwrap_or(0);
     let mut cp_buf = [0u8; 4];
 
     let mut i: usize = 0;
@@ -4328,6 +4079,9 @@ pub fn needs_escape_bunstr(bunstr: BunString) -> bool {
 }
 
 pub fn needs_escape_utf16(str: &[u16]) -> bool {
+    if str.is_empty() {
+        return true;
+    }
     for &codeunit in str {
         if codeunit < 0xff && SPECIAL_CHARS_TABLE.is_set(codeunit as usize) {
             return true;
@@ -4339,14 +4093,25 @@ pub fn needs_escape_utf16(str: &[u16]) -> bool {
 /// Checks for the presence of any char from `SPECIAL_CHARS` in `str`. This
 /// indicates the *possibility* that the string must be escaped, so it can have
 /// false positives, but it is faster than running the shell lexer through the
-/// input string for a more correct implementation.
+/// input string for a more correct implementation. An empty string always
+/// needs escaping: quoting is the only way it becomes a shell word at all.
 pub fn needs_escape_utf8_ascii_latin1(str: &[u8]) -> bool {
+    if str.is_empty() {
+        return true;
+    }
     for &c in str {
         if SPECIAL_CHARS_TABLE.is_set(c as usize) {
             return true;
         }
     }
     false
+}
+
+pub fn is_if_clause_keyword_bunstr(bunstr: BunString) -> bool {
+    use IfClauseTok::{Elif, Else, Fi, If, Then};
+    [If, Else, Elif, Then, Fi]
+        .iter()
+        .any(|&kw| bunstr.eql_comptime(<&'static str>::from(kw)))
 }
 
 // ───────────────────────────── SmolList ─────────────────────────────
@@ -4458,57 +4223,6 @@ impl<T, const INLINED_MAX: usize> SmolListInlined<T, INLINED_MAX> {
         list.push(new);
         list
     }
-
-    pub(crate) fn ordered_remove(&mut self, idx: usize) -> T {
-        if self.len as usize - 1 == idx {
-            return self.pop();
-        }
-        // Rotate the target to the tail of the live slice, then pop it. Safe
-        // equivalent of the previous `assume_init_read` + `ptr::copy` shift.
-        self.slice_mut()[idx..].rotate_left(1);
-        self.pop()
-    }
-
-    pub(crate) fn swap_remove(&mut self, idx: usize) -> T {
-        if self.len as usize - 1 == idx {
-            return self.pop();
-        }
-        // Swap target with last (both initialized), then pop the now-last
-        // target — safe equivalent of `assume_init_read` + write-back.
-        let last = self.len as usize - 1;
-        self.slice_mut().swap(idx, last);
-        self.pop()
-    }
-
-    pub(crate) fn pop(&mut self) -> T {
-        // SAFETY: caller guarantees self.len > 0; slot at len-1 is initialized.
-        let ret = unsafe { self.items[self.len as usize - 1].assume_init_read() };
-        self.len -= 1;
-        ret
-    }
-}
-
-// Per-type memory-cost dispatch is expressed as a trait + forwarding impls below.
-pub trait MemoryCost {
-    fn memory_cost(&self) -> usize;
-}
-impl<'a> MemoryCost for ast::Atom<'a> {
-    #[inline]
-    fn memory_cost(&self) -> usize {
-        self.memory_cost()
-    }
-}
-impl<'a> MemoryCost for ast::Stmt<'a> {
-    #[inline]
-    fn memory_cost(&self) -> usize {
-        self.memory_cost()
-    }
-}
-impl<T: MemoryCost, const N: usize> MemoryCost for SmolList<T, N> {
-    #[inline]
-    fn memory_cost(&self) -> usize {
-        self.memory_cost()
-    }
 }
 
 impl<T, const INLINED_MAX: usize> SmolList<T, INLINED_MAX> {
@@ -4517,33 +4231,10 @@ impl<T, const INLINED_MAX: usize> SmolList<T, INLINED_MAX> {
     }
 
     pub fn init_with(val: T) -> Self {
-        let mut this = Self::zeroes();
-        if let SmolList::Inlined(inlined) = &mut this {
-            inlined.items[0].write(val);
-            inlined.len += 1;
-        }
-        this
-    }
-
-    pub fn memory_cost(&self) -> usize
-    where
-        T: MemoryCost,
-    {
-        let mut cost = size_of::<Self>();
-        match self {
-            SmolList::Inlined(inlined) => {
-                for item in inlined.slice() {
-                    cost += item.memory_cost();
-                }
-            }
-            SmolList::Heap(heap) => {
-                for item in heap.iter() {
-                    cost += item.memory_cost();
-                }
-                cost += heap.capacity() * size_of::<T>();
-            }
-        }
-        cost
+        let mut inlined = SmolListInlined::<T, INLINED_MAX>::default();
+        inlined.items[0].write(val);
+        inlined.len = 1;
+        SmolList::Inlined(inlined)
     }
 
     pub fn init_with_slice(vals: &[T], bump: &Bump) -> Self
@@ -4552,14 +4243,12 @@ impl<T, const INLINED_MAX: usize> SmolList<T, INLINED_MAX> {
     {
         debug_assert!(vals.len() <= u32::MAX as usize);
         if vals.len() <= INLINED_MAX {
-            let mut this = Self::zeroes();
-            if let SmolList::Inlined(inlined) = &mut this {
-                for (i, v) in vals.iter().enumerate() {
-                    inlined.items[i].write(v.clone());
-                }
-                inlined.len += u32::try_from(vals.len()).expect("int cast");
+            let mut inlined = SmolListInlined::<T, INLINED_MAX>::default();
+            for (i, v) in vals.iter().enumerate() {
+                inlined.items[i].write(v.clone());
             }
-            return this;
+            inlined.len = u32::try_from(vals.len()).expect("int cast");
+            return SmolList::Inlined(inlined);
         }
         let mut heap = Vec::with_capacity_in(vals.len(), SmolListAlloc::new(bump));
         heap.extend_from_slice(vals);
@@ -4574,82 +4263,6 @@ impl<T, const INLINED_MAX: usize> SmolList<T, INLINED_MAX> {
         match self {
             SmolList::Inlined(i) => i.len as usize,
             SmolList::Heap(h) => h.len(),
-        }
-    }
-
-    pub fn ordered_remove(&mut self, idx: usize) {
-        match self {
-            SmolList::Heap(h) => {
-                let _ = h.remove(idx);
-            }
-            SmolList::Inlined(i) => {
-                let _ = i.ordered_remove(idx);
-            }
-        }
-    }
-
-    pub fn pop(&mut self) -> T {
-        match self {
-            SmolList::Heap(h) => h.pop().unwrap(),
-            SmolList::Inlined(i) => i.pop(),
-        }
-    }
-
-    pub fn swap_remove(&mut self, idx: usize) {
-        match self {
-            SmolList::Heap(h) => {
-                let _ = h.swap_remove(idx);
-            }
-            SmolList::Inlined(i) => {
-                let _ = i.swap_remove(idx);
-            }
-        }
-    }
-
-    pub fn truncate(&mut self, starting_idx: usize) {
-        match self {
-            SmolList::Inlined(inlined) => {
-                if starting_idx >= inlined.len as usize {
-                    return;
-                }
-                let new_len = inlined.len as usize - starting_idx;
-                // Rotate the suffix to the front; the rotated-out prefix
-                // lands at `[new_len..]` and must be dropped before the len
-                // adjust so `T: Drop` elements are not leaked (matching
-                // `clear_retaining_capacity` and the `Drop` impl).
-                inlined.slice_mut().rotate_left(starting_idx);
-                // SAFETY: `slice_mut` covers exactly the initialized prefix;
-                // `[new_len..]` are the elements being discarded, and the len
-                // adjust below makes them unobservable afterwards.
-                unsafe { core::ptr::drop_in_place(&raw mut inlined.slice_mut()[new_len..]) };
-                inlined.len = u32::try_from(new_len).expect("int cast");
-            }
-            SmolList::Heap(heap) => {
-                // `Vec::drain` shifts the tail down and drops the prefix.
-                // The previous `ptr::copy + set_len` overwrote the prefix
-                // without dropping it; for the arena-backed `!Drop` `T` used
-                // here that's identical, and for `Drop` `T` this is the
-                // non-leaking behaviour the spec intended.
-                heap.drain(0..starting_idx);
-            }
-        }
-    }
-
-    #[inline]
-    pub fn slice_mutable(&mut self) -> &mut [T] {
-        match self {
-            SmolList::Inlined(i) => {
-                if i.len == 0 {
-                    return &mut [];
-                }
-                i.slice_mut()
-            }
-            SmolList::Heap(h) => {
-                if h.is_empty() {
-                    return &mut [];
-                }
-                h.as_mut_slice()
-            }
         }
     }
 
@@ -4672,14 +4285,6 @@ impl<T, const INLINED_MAX: usize> SmolList<T, INLINED_MAX> {
     }
 
     #[inline]
-    pub fn get(&mut self, idx: usize) -> &mut T {
-        // Route through the safe live-slice view; bounds-check is now
-        // unconditional (was debug-only over `assume_init_mut`, i.e. UB on
-        // OOB in release — slice indexing makes it a defined panic instead).
-        &mut self.slice_mutable()[idx]
-    }
-
-    #[inline]
     pub fn get_const(&self, idx: usize) -> &T {
         &self.slice()[idx]
     }
@@ -4699,36 +4304,6 @@ impl<T, const INLINED_MAX: usize> SmolList<T, INLINED_MAX> {
                 heap.push(new);
             }
         }
-    }
-
-    pub fn clear_retaining_capacity(&mut self) {
-        match self {
-            SmolList::Inlined(i) => {
-                // SAFETY: `slice_mut` covers exactly the initialized prefix
-                // (first `len` elements); dropping it then resetting `len`
-                // leaves no element observable twice.
-                unsafe { core::ptr::drop_in_place(i.slice_mut()) };
-                i.len = 0;
-            }
-            SmolList::Heap(h) => h.clear(),
-        }
-    }
-
-    pub fn last(&mut self) -> Option<&mut T> {
-        if self.len() == 0 {
-            return None;
-        }
-        let idx = self.len() - 1;
-        Some(self.get(idx))
-    }
-
-    pub fn last_unchecked(&mut self) -> &mut T {
-        let idx = self.len() - 1;
-        self.get(idx)
-    }
-
-    pub fn last_unchecked_const(&self) -> &T {
-        self.get_const(self.len() - 1)
     }
 }
 

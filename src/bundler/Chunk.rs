@@ -14,7 +14,7 @@ use bun_core::{FeatureFlags, Output};
 // flavor because its sole producer (`findImportedFilesInCSSOrder`) constructs
 // it from parser-side indices; all consumers only call `.get()`.
 use bun_ast::Index;
-use bun_core::{immutable as strings, string_joiner::StringJoiner};
+use bun_core::{string_joiner::StringJoiner, strings};
 use bun_sourcemap as source_map;
 
 use crate::analyze_transpiled_module;
@@ -284,12 +284,16 @@ impl Chunk {
     }
 
     pub fn get_js_chunk_for_html<'a>(&self, chunks: &'a mut [Chunk]) -> Option<&'a mut Chunk> {
+        // Non-entry chunks created under code splitting carry a default
+        // entry_point_id of 0, so the id alone is ambiguous; require
+        // is_entry_point to find the actual entry chunk.
         let entry_point_id = self.entry_point.entry_point_id();
         for other in chunks.iter_mut() {
-            if matches!(other.content, Content::Javascript(_)) {
-                if other.entry_point.entry_point_id() == entry_point_id {
-                    return Some(other);
-                }
+            if matches!(other.content, Content::Javascript(_))
+                && other.entry_point.is_entry_point()
+                && other.entry_point.entry_point_id() == entry_point_id
+            {
+                return Some(other);
             }
         }
         None
@@ -305,7 +309,9 @@ impl Chunk {
         let css_idx: Option<usize> = 'find: {
             for other in chunks.iter() {
                 if let Content::Javascript(js) = &other.content {
-                    if other.entry_point.entry_point_id() == entry_point_id {
+                    if other.entry_point.is_entry_point()
+                        && other.entry_point.entry_point_id() == entry_point_id
+                    {
                         let css_chunk_indices = &js.css_chunks[..];
                         if !css_chunk_indices.is_empty() {
                             break 'find Some(css_chunk_indices[0] as usize);
@@ -321,10 +327,11 @@ impl Chunk {
         }
         // Fallback: match by entry_point_id for cases without a JS chunk.
         for other in chunks.iter_mut() {
-            if matches!(other.content, Content::Css(_)) {
-                if other.entry_point.entry_point_id() == entry_point_id {
-                    return Some(other);
-                }
+            if matches!(other.content, Content::Css(_))
+                && other.entry_point.is_entry_point()
+                && other.entry_point.entry_point_id() == entry_point_id
+            {
+                return Some(other);
             }
         }
         None
@@ -682,6 +689,12 @@ impl IntermediateOutput {
                     from_chunk_dir = b"";
                 }
 
+                // esbuild's `pathBetweenChunks`: with a public path configured, every
+                // reference is `publicPath + outdir-relative path`. Importer-relative
+                // paths would escape the prefix from chunks in subdirectories.
+                let use_outdir_relative_path =
+                    from_chunk_dir.is_empty() || force_absolute_path || !import_prefix.is_empty();
+
                 let urls_for_css: &[&[u8]] = if standalone_chunk_contents.is_some() {
                     graph.ast.items_url_for_css()
                 } else {
@@ -763,7 +776,7 @@ impl IntermediateOutput {
 
                             let cheap_normalizer = cheap_prefix_normalizer(
                                 import_prefix,
-                                if from_chunk_dir.is_empty() || force_absolute_path {
+                                if use_outdir_relative_path {
                                     file_path
                                 } else {
                                     bun_paths::resolve_path::relative_platform_buf::<
@@ -944,7 +957,7 @@ impl IntermediateOutput {
                             };
                             let cheap_normalizer = cheap_prefix_normalizer(
                                 import_prefix,
-                                if from_chunk_dir.is_empty() || force_absolute_path {
+                                if use_outdir_relative_path {
                                     file_path
                                 } else {
                                     bun_paths::resolve_path::relative_platform_buf::<
@@ -1238,30 +1251,10 @@ impl EntryPoint {
     }
 
     #[inline]
-    pub fn is_html(self) -> bool {
-        (self.0 >> 63) & 1 != 0
-    }
-
-    #[inline]
-    pub fn set_source_index(&mut self, v: u32) {
-        self.0 = (self.0 & !0xFFFF_FFFF) | (v as u64);
-    }
-
-    #[inline]
     pub fn set_entry_point_id(&mut self, v: EntryPointId) {
         debug_assert!((v as u64) <= Self::ENTRY_POINT_ID_MASK);
         self.0 = (self.0 & !(Self::ENTRY_POINT_ID_MASK << 32))
             | (((v as u64) & Self::ENTRY_POINT_ID_MASK) << 32);
-    }
-
-    #[inline]
-    pub fn set_is_entry_point(&mut self, v: bool) {
-        self.0 = (self.0 & !(1 << 62)) | ((v as u64) << 62);
-    }
-
-    #[inline]
-    pub fn set_is_html(&mut self, v: bool) {
-        self.0 = (self.0 & !(1 << 63)) | ((v as u64) << 63);
     }
 }
 
@@ -1316,10 +1309,6 @@ impl Drop for CssChunk {
         unsafe { asts.set_len(0) };
     }
 }
-
-/// Alias for `CssImportOrderKind`; callers that switch on `css_import.kind`
-/// reference it via this name, so re-export it here.
-pub type CssImportKind = CssImportOrderKind;
 
 pub struct CssImportOrder {
     pub conditions: Vec<bun_css::ImportConditions>,
@@ -1519,22 +1508,12 @@ pub mod cross_chunk_import {
     pub(crate) type ItemList = super::CrossChunkImportItemList;
 }
 
-impl CrossChunkImportItem {
-    pub fn less_than(_: (), a: &CrossChunkImportItem, b: &CrossChunkImportItem) -> bool {
-        strings::order(&a.export_alias, &b.export_alias) == core::cmp::Ordering::Less
-    }
-}
-
 impl CrossChunkImport {
-    pub fn less_than(_: (), a: &CrossChunkImport, b: &CrossChunkImport) -> bool {
-        a.chunk_index < b.chunk_index
-    }
-
     pub fn sorted_cross_chunk_imports(
         list: &mut Vec<CrossChunkImport>,
         chunks: &mut [Chunk],
         imports_from_other_chunks: &mut ImportsFromOtherChunks,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         list.clear();
         list.reserve(imports_from_other_chunks.count());
 
@@ -1581,10 +1560,6 @@ impl Content {
     pub fn is_css(&self) -> bool {
         matches!(self, Content::Css(_))
     }
-    #[inline]
-    pub fn is_html(&self) -> bool {
-        matches!(self, Content::Html)
-    }
     bun_core::enum_unwrap!(pub Content, Javascript => fn javascript / javascript_mut -> JavaScriptChunk);
     bun_core::enum_unwrap!(pub Content, Css        => fn css        / css_mut        -> CssChunk);
 
@@ -1612,11 +1587,6 @@ impl Content {
         }
     }
 }
-
-// Re-exports
-pub use crate::DeferredBatchTask::DeferredBatchTask;
-pub use crate::ParseTask;
-pub use crate::ThreadPool;
 
 pub mod bun_renamer {
     pub use bun_js_printer::renamer::*;

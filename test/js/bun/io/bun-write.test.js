@@ -127,6 +127,85 @@ const IS_UV_FS_COPYFILE_DISABLED =
     }
   });
 
+  describe.each(["plain-ascii-missing.txt", "surro-\ud800-gate.txt"])(
+    "Bun.write(dest, Bun.file(missing source)) rejects with ENOENT (%s)",
+    basename => {
+      it("rejects instead of crashing", async () => {
+        using dir = tempDir("bun-write-missing-src", {});
+        const fixture = `
+          const { join } = require("path");
+          const dir = ${JSON.stringify(String(dir))};
+          const src = Bun.file(join(dir, ${JSON.stringify(basename)}));
+          try {
+            await Bun.write(join(dir, "dest.txt"), src);
+            console.log("UNEXPECTED: write resolved");
+          } catch (e) {
+            console.log("CODE=" + e.code);
+            console.log("PATH_IS_SRC=" + (e.path === src.name));
+          }
+        `;
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "-e", fixture],
+          env: bunEnv,
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stdout).toContain("CODE=ENOENT");
+        if (isWindows && !IS_UV_FS_COPYFILE_DISABLED) {
+          expect(stdout).toContain("PATH_IS_SRC=true");
+        }
+        expect(stderr).toBe("");
+        expect(exitCode).toBe(0);
+      });
+
+      it("with destination directory that does not exist", async () => {
+        using dir = tempDir("bun-write-missing-src-dest", {});
+        const fixture = `
+          const { join } = require("path");
+          const dir = ${JSON.stringify(String(dir))};
+          const src = Bun.file(join(dir, ${JSON.stringify(basename)}));
+          try {
+            await Bun.write(join(dir, "sub", "dir", "dest.txt"), src);
+            console.log("UNEXPECTED: write resolved");
+          } catch (e) {
+            console.log("CODE=" + e.code);
+          }
+        `;
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "-e", fixture],
+          env: bunEnv,
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stdout).toContain("CODE=ENOENT");
+        expect(stderr).toBe("");
+        expect(exitCode).toBe(0);
+      });
+    },
+  );
+
+  it("Bun.write(dest, Bun.file(src)) creates missing destination directory", async () => {
+    using dir = tempDir("bun-write-mkdirp-dest", {
+      "src.txt": "copy me",
+    });
+    const fixture = `
+      const { join } = require("path");
+      const dir = ${JSON.stringify(String(dir))};
+      const dest = join(dir, "a", "b", "dest.txt");
+      await Bun.write(dest, Bun.file(join(dir, "src.txt")));
+      console.log(await Bun.file(dest).text());
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim()).toBe("copy me");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
   it("Bun.write('out.txt', 'string')", async () => {
     using tmpbase = tempDir("bun-write-string", {});
     const outpath = path.join(tmpbase, "out." + ((Math.random() * 102400) | 0).toString(32) + "txt");
@@ -465,6 +544,60 @@ const IS_UV_FS_COPYFILE_DISABLED =
         }
       });
     });
+
+    it.skipIf(!(Bun.which("cc") || Bun.which("gcc") || Bun.which("clang")))(
+      "read/write fallback hints POSIX_FADV_SEQUENTIAL on the source fd",
+      async () => {
+        const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
+        using dir = tempDir("bun-write-fadvise", {
+          "shim.c": `
+#define _GNU_SOURCE
+#include <dlfcn.h>
+#include <stdio.h>
+#include <sys/types.h>
+static int (*real)(int, off_t, off_t, int);
+int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
+  if (!real) real = dlsym(RTLD_NEXT, "posix_fadvise");
+  fprintf(stderr, "[fadvise] fd=%d advice=%d\\n", fd, advice);
+  return real(fd, offset, len, advice);
+}
+`,
+          "src.bin": Buffer.alloc(128 * 1024, 0x41).toString(),
+        });
+        const shim = join(String(dir), "shim.so");
+        await using ccProc = Bun.spawn({
+          cmd: [cc, "-shared", "-fPIC", "-o", shim, join(String(dir), "shim.c"), "-ldl"],
+          env: bunEnv,
+          stderr: "pipe",
+        });
+        const [ccErr, ccExit] = await Promise.all([ccProc.stderr.text(), ccProc.exited]);
+        if (ccExit !== 0) throw new Error(`shim compile failed: ${ccErr}`);
+
+        const existing = bunEnv.LD_PRELOAD;
+        await using proc = Bun.spawn({
+          cmd: [
+            bunExe(),
+            join(import.meta.dir, "./bun-write-exdev-fixture.js"),
+            join(String(dir), "src.bin"),
+            join(String(dir), "dst.bin"),
+          ],
+          env: {
+            ...bunEnv,
+            BUN_CONFIG_DISABLE_COPY_FILE_RANGE: "1",
+            LD_PRELOAD: existing ? `${shim}:${existing}` : shim,
+          },
+          stderr: "pipe",
+          stdout: "pipe",
+        });
+        const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+        expect({ stderr, stdout }).toEqual({
+          stderr: expect.stringMatching(/\[fadvise\] fd=\d+ advice=2/),
+          stdout: "",
+        });
+        expect(fs.readFileSync(join(String(dir), "dst.bin"))).toEqual(Buffer.alloc(128 * 1024, 0x41));
+        expect(exitCode).toBe(0);
+      },
+    );
   }
 
   describe("ENOENT", () => {

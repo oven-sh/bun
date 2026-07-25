@@ -5,6 +5,7 @@ use bun_core::fmt as bun_fmt;
 use bun_sql::postgres::PostgresProtocol as protocol;
 use bun_sql::postgres::PostgresTypes as types;
 use bun_sql::postgres::PostgresTypes::{AnyPostgresError, Int4, Short};
+use bun_sql::postgres::Status;
 use bun_sql::postgres::protocol::{ReaderContext, WriterContext};
 
 use crate::jsc::js_error_to_postgres;
@@ -423,9 +424,11 @@ pub(crate) fn execute_query<Context: WriterContext>(
     query: &[u8],
     mut writer: protocol::NewWriter<Context>,
 ) -> Result<(), AnyPostgresError> {
+    // A simple Query ('Q') is its own sync point: the backend always answers it
+    // with exactly one ReadyForQuery. Do not append a Sync here: it would elicit
+    // a second, unaccounted ReadyForQuery that re-arms advance() mid-prepare.
     protocol::write_query(query, &mut writer)?;
     writer.write(&protocol::FLUSH)?;
-    writer.write(&protocol::SYNC)?;
     Ok(())
 }
 
@@ -435,43 +438,28 @@ pub(crate) fn on_data<Context: ReaderContext>(
 ) -> Result<(), AnyPostgresError> {
     use MessageType as M;
     loop {
+        // `fail()` inside a handler tears the connection down (status = Failed,
+        // socket closed, queue rejected). Stop dispatching: later messages in
+        // the same read must not act on the dead connection.
+        if connection.status.get() == Status::Failed {
+            return Ok(());
+        }
         reader.mark_message_start();
         let c = reader.int::<u8>()?;
         bun_core::scoped_log!(Postgres, "read: {}", c as char);
-        if matches!(connection.tls_status.get(), TlsStatus::MessageSent(_))
-            && c != b'S'
-            && c != b'N'
-        {
-            return Err(AnyPostgresError::UnexpectedMessage);
-        }
-        match c {
-            b'D' => connection.on(M::DataRow, reader.reborrow())?,
-            b'd' => connection.on(M::CopyData, reader.reborrow())?,
-            b'S' => {
-                if let TlsStatus::MessageSent(n) = connection.tls_status.get() {
+
+        // The SSLRequest reply is a bare Byte1('S'|'N') with no Int32 length;
+        // it is the only unframed backend byte and must be handled before the
+        // frame peek below.
+        if let TlsStatus::MessageSent(n) = connection.tls_status.get() {
+            match c {
+                b'S' => {
                     debug_assert!(n == 8);
                     connection.tls_status.set(TlsStatus::SslOk);
                     connection.setup_tls();
                     return Ok(());
                 }
-
-                connection.on(M::ParameterStatus, reader.reborrow())?;
-            }
-            b'Z' => connection.on(M::ReadyForQuery, reader.reborrow())?,
-            b'C' => connection.on(M::CommandComplete, reader.reborrow())?,
-            b'2' => connection.on(M::BindComplete, reader.reborrow())?,
-            b'1' => connection.on(M::ParseComplete, reader.reborrow())?,
-            b't' => connection.on(M::ParameterDescription, reader.reborrow())?,
-            b'T' => connection.on(M::RowDescription, reader.reborrow())?,
-            b'R' => connection.on(M::Authentication, reader.reborrow())?,
-            b'n' => connection.on(M::NoData, reader.reborrow())?,
-            b'K' => connection.on(M::BackendKeyData, reader.reborrow())?,
-            b'E' => connection.on(M::ErrorResponse, reader.reborrow())?,
-            b's' => connection.on(M::PortalSuspended, reader.reborrow())?,
-            b'3' => connection.on(M::CloseComplete, reader.reborrow())?,
-            b'G' => connection.on(M::CopyInResponse, reader.reborrow())?,
-            b'N' => {
-                if matches!(connection.tls_status.get(), TlsStatus::MessageSent(_)) {
+                b'N' => {
                     connection.tls_status.set(TlsStatus::SslNotAvailable);
                     bun_core::scoped_log!(Postgres, "Server does not support SSL");
                     if matches!(
@@ -486,9 +474,38 @@ pub(crate) fn on_data<Context: ReaderContext>(
                     }
                     continue;
                 }
-
-                connection.on(M::NoticeResponse, reader.reborrow())?;
+                _ => return Err(AnyPostgresError::UnexpectedMessage),
             }
+        }
+
+        // Every other backend message is Byte1(type) Int32(length) body[length-4].
+        // Peek the length here (each handler reads it again) so the handler's
+        // net consumption can be checked against it: a handler that leaves the
+        // cursor anywhere but the next message's type byte has either scanned a
+        // string past the frame or returned with tail bytes still in it, and
+        // the stream is unrecoverable (libpq: "message contents do not agree
+        // with length in message").
+        let (before, length) = reader.peek_length()?;
+        let after = before - length;
+
+        match c {
+            b'D' => connection.on(M::DataRow, reader.reborrow())?,
+            b'd' => connection.on(M::CopyData, reader.reborrow())?,
+            b'S' => connection.on(M::ParameterStatus, reader.reborrow())?,
+            b'Z' => connection.on(M::ReadyForQuery, reader.reborrow())?,
+            b'C' => connection.on(M::CommandComplete, reader.reborrow())?,
+            b'2' => connection.on(M::BindComplete, reader.reborrow())?,
+            b'1' => connection.on(M::ParseComplete, reader.reborrow())?,
+            b't' => connection.on(M::ParameterDescription, reader.reborrow())?,
+            b'T' => connection.on(M::RowDescription, reader.reborrow())?,
+            b'R' => connection.on(M::Authentication, reader.reborrow())?,
+            b'n' => connection.on(M::NoData, reader.reborrow())?,
+            b'K' => connection.on(M::BackendKeyData, reader.reborrow())?,
+            b'E' => connection.on(M::ErrorResponse, reader.reborrow())?,
+            b's' => connection.on(M::PortalSuspended, reader.reborrow())?,
+            b'3' => connection.on(M::CloseComplete, reader.reborrow())?,
+            b'G' => connection.on(M::CopyInResponse, reader.reborrow())?,
+            b'N' => connection.on(M::NoticeResponse, reader.reborrow())?,
             b'I' => connection.on(M::EmptyQueryResponse, reader.reborrow())?,
             b'H' => connection.on(M::CopyOutResponse, reader.reborrow())?,
             b'c' => connection.on(M::CopyDone, reader.reborrow())?,
@@ -497,14 +514,23 @@ pub(crate) fn on_data<Context: ReaderContext>(
 
             _ => {
                 bun_core::scoped_log!(Postgres, "Unknown message: {}", c as char);
-                let length = reader.length()?;
-                if length < 4 {
-                    return Err(AnyPostgresError::InvalidMessageLength);
-                }
-                let to_skip = length.saturating_sub(4);
-                bun_core::scoped_log!(Postgres, "to_skip: {}", to_skip);
-                reader.skip(usize::try_from(to_skip).expect("int cast"))?;
+                reader.skip_message()?;
             }
+        }
+
+        if connection.status.get() == Status::Failed {
+            return Ok(());
+        }
+        if reader.peek().len() != after {
+            bun_core::scoped_log!(
+                Postgres,
+                "message contents do not agree with length ({}): '{}' left {} of {}",
+                length,
+                c as char,
+                reader.peek().len(),
+                after,
+            );
+            return Err(AnyPostgresError::InvalidMessage);
         }
     }
 }

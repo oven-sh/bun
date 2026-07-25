@@ -139,14 +139,15 @@ impl ProgressBuf {
         static BUF_INDEX: Cell<usize> = const { Cell::new(0) };
     }
 
-    pub(crate) fn print(args: core::fmt::Arguments<'_>) -> Result<&'static [u8], bun_core::Error> {
+    pub(crate) fn print(args: core::fmt::Arguments<'_>) -> crate::Result<&'static [u8]> {
         Self::BUF_INDEX.with(|i| i.set(i.get() + 1));
         let idx = Self::BUF_INDEX.with(|i| i.get()) % 2;
         Self::BUFS.with_borrow_mut(|bufs| {
             let buf = &mut bufs[idx];
             let mut cursor: &mut [u8] = &mut buf[..];
             let cap = cursor.len();
-            write!(&mut cursor, "{}", args).map_err(|_| bun_core::err!("NoSpaceLeft"))?;
+            write!(&mut cursor, "{}", args)
+                .map_err(|_| crate::Error::Sys(bun_errno::SystemErrno::ENOSPC))?;
             let written = cap - cursor.len();
             // SAFETY: the slice points into a thread-local static buffer that
             // lives for the thread's lifetime; CLI usage prints/copies it before
@@ -160,7 +161,7 @@ impl ProgressBuf {
     /// color template into `args` directly. Note: `<tag>` sequences inside
     /// interpolated arguments (e.g. a user-supplied template name) are also
     /// rewritten here. Cosmetic-only on adversarial input.
-    pub(crate) fn pretty(args: core::fmt::Arguments<'_>) -> Result<&'static [u8], bun_core::Error> {
+    pub(crate) fn pretty(args: core::fmt::Arguments<'_>) -> crate::Result<&'static [u8]> {
         if Output::enable_ansi_colors_stdout() {
             ProgressBuf::print(format_args!("{}", Output::pretty_fmt::<true>(args)))
         } else {
@@ -197,7 +198,7 @@ impl CreateOptions {
         PARAMS
     }
 
-    pub(crate) fn parse(_ctx: &Command::Context<'_>) -> Result<CreateOptions, bun_core::Error> {
+    pub(crate) fn parse(_ctx: &Command::Context<'_>) -> crate::Result<CreateOptions> {
         // The `is_verbose()` accessor reads the env directly each call, so this is a no-op.
         let _ = Output::is_verbose();
 
@@ -214,7 +215,7 @@ impl CreateOptions {
             Err(err) => {
                 // Report useful error and exit
                 let _ = diag.report(Output::error_writer(), err);
-                return Err(err);
+                return Err(err.into());
             }
         };
 
@@ -263,7 +264,7 @@ impl CreateCommand {
         ctx: &Command::Context<'_>,
         example_tag: ExampleTag,
         template: &[u8],
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::Result<()> {
         Global::configure_allocator(Global::AllocatorConfiguration {
             long_running: false,
             ..Default::default()
@@ -279,8 +280,7 @@ impl CreateCommand {
 
         // SAFETY: `fs::FileSystem::init` returns a process-global singleton pointer.
         let filesystem: &mut fs::FileSystem = unsafe { &mut *fs::FileSystem::init(None)? };
-        let mut env_loader: DotEnv::Loader =
-            { DotEnv::Loader::init(crate::cli::cli_arena().alloc(DotEnv::Map::init())) };
+        let mut env_loader = DotEnv::Loader::init();
 
         env_loader.load_process()?;
 
@@ -355,9 +355,10 @@ impl CreateCommand {
                         match Example::fetch(ctx, &mut env_loader, template, &mut progress, node) {
                             Ok(b) => b,
                             Err(err) => {
-                                if err == bun_core::err!("HTTPForbidden")
-                                    || err == bun_core::err!("ExampleNotFound")
-                                {
+                                if matches!(
+                                    err,
+                                    crate::Error::HTTPForbidden | crate::Error::ExampleNotFound
+                                ) {
                                     node.end();
                                     progress.refresh();
 
@@ -395,15 +396,32 @@ impl CreateCommand {
                     ) {
                         Ok(b) => b,
                         Err(err) => {
-                            if err == bun_core::err!("HTTPForbidden") {
+                            if matches!(
+                                err,
+                                crate::Error::HTTPForbidden | crate::Error::HTTPTooManyRequests
+                            ) {
                                 node.end();
                                 progress.refresh();
 
                                 pretty_error!(
-                                    "\n<r><red>error:<r> GitHub returned 403. This usually means GitHub is rate limiting your requests.\nTo fix this, either:<r>  <b>A) pass a <r><cyan>GITHUB_ACCESS_TOKEN<r> environment variable to bun<r>\n  <b>B)Wait a little and try again<r>\n",
+                                    "\n<r><red>error:<r> GitHub returned {}. This usually means GitHub is rate limiting your requests.\nTo fix this, either:<r>  <b>A) pass a <r><cyan>GITHUB_ACCESS_TOKEN<r> environment variable to bun<r>\n  <b>B)Wait a little and try again<r>\n",
+                                    if matches!(err, crate::Error::HTTPForbidden) {
+                                        "403"
+                                    } else {
+                                        "429"
+                                    },
                                 );
                                 Global::crash();
-                            } else if err == bun_core::err!("GitHubRepositoryNotFound") {
+                            } else if matches!(err, crate::Error::GitHubIsDown) {
+                                node.end();
+                                progress.refresh();
+
+                                pretty_error!(
+                                    "\n<r><red>error:<r> GitHub returned a server error while fetching the tarball for <b>\"{}\"<r>. GitHub may be temporarily unavailable; wait a moment and try again.\n",
+                                    bstr::BStr::new(template),
+                                );
+                                Global::crash();
+                            } else if matches!(err, crate::Error::GitHubRepositoryNotFound) {
                                 node.end();
                                 progress.refresh();
 
@@ -486,7 +504,7 @@ impl CreateCommand {
                         buf: Vec<u8>,
                     }
                     impl bun_libarchive::ArchiveAppender for OverwriteListAppender {
-                        fn append(&mut self, path: &[u8]) -> Result<&[u8], bun_core::Error> {
+                        fn append(&mut self, path: &[u8]) -> Result<&[u8], bun_libarchive::Error> {
                             self.buf.clear();
                             self.buf.extend_from_slice(path);
                             Ok(&self.buf)
@@ -591,7 +609,7 @@ impl CreateCommand {
 
                         pretty_errorln!(
                             "<r><red>{}<r>: creating dir {}",
-                            err.name(),
+                            bstr::BStr::new(err.name()),
                             bstr::BStr::new(destination),
                         );
                         Global::exit(1);
@@ -775,10 +793,13 @@ impl CreateCommand {
                 // SAFETY: single-threaded CLI dispatch; no other borrow of the
                 // process-static `Cli::LOG_` is live across this scope.
                 let log: &mut bun_ast::Log = unsafe { ctx.log_mut() };
-                let bump = bun_alloc::Arena::new();
-                let mut package_json_expr = match JSON::parse_utf8(&source, log, &bump) {
+                let bump: &'static bun_alloc::Arena = crate::cli::cli_arena();
+                let mut package_json_expr = match JSON::parse_utf8(&source, log, bump) {
                     Ok(e) => e,
                     Err(_) => {
+                        if log.errors > 0 {
+                            let _ = log.print(std::ptr::from_mut(Output::error_writer()));
+                        }
                         break 'process_package_json;
                     }
                 };
@@ -812,58 +833,8 @@ impl CreateCommand {
                     }
                 }
 
-                // const Needs = struct {
-                //     bun_bun_for_nextjs: bool = false,
-                //     bun_macro_relay: bool = false,
-                //     bun_macro_relay_dependency: bool = false,
-                //     bun_framework_next: bool = false,
-                //     react_refresh: bool = false,
-                // };
-                // var needs = Needs{};
-                // var has_relay = false;
-                // var has_bun_framework_next = false;
-                // var has_react_refresh = false;
-                // var has_bun_macro_relay = false;
-                // var has_react = false;
-                // var has_react_scripts = false;
-
-                // const Prune = struct {
-                //     pub const packages = ComptimeStringMap(void, .{
-                //         .{ "@parcel/babel-preset", {} },
-                //         .{ "@parcel/core", {} },
-                //         .{ "@swc/cli", {} },
-                //         .{ "@swc/core", {} },
-                //         .{ "@webpack/cli", {} },
-                //         .{ "react-scripts", {} },
-                //         .{ "webpack-cli", {} },
-                //         .{ "webpack", {} },
-                //         // one of cosmic config's imports breaks stuff
-                //         .{ "cosmiconfig", {} },
-                //     });
-                //     pub var prune_count: u16 = 0;
-                //
-                //     pub fn prune(list: []js_ast.G.Property) []js_ast.G.Property {
-                //         var i: usize = 0;
-                //         var out_i: usize = 0;
-                //         while (i < list.len) : (i += 1) {
-                //             const key = list[i].key.?.data.e_string.data;
-                //             const do_prune = packages.has(key);
-                //             prune_count += @as(u16, @intCast(@intFromBool(do_prune)));
-                //             if (!do_prune) {
-                //                 list[out_i] = list[i];
-                //                 out_i += 1;
-                //             }
-                //         }
-                //         return list[0..out_i];
-                //     }
-                // };
-
-                let mut dev_dependencies: Option<bun_ast::Expr> = None;
-                let mut dependencies: Option<bun_ast::Expr> = None;
-
                 if let Some(q) = package_json_expr.as_property(b"devDependencies") {
                     let property = q.expr;
-
                     if property.data.is_e_object()
                         && property
                             .data
@@ -873,32 +844,12 @@ impl CreateCommand {
                             .len_u32()
                             > 0
                     {
-                        // unsupported_packages.update(property);
-                        // has_react_scripts = has_react_scripts or property.hasAnyPropertyNamed(&.{"react-scripts"});
-                        // has_relay = has_relay or property.hasAnyPropertyNamed(&.{ "react-relay", "relay-runtime", "babel-plugin-relay" });
-                        // property.data.e_object.properties = js_ast.G.Property.List.fromBorrowedSliceDangerous(Prune.prune(property.data.e_object.properties.slice()));
-                        if property
-                            .data
-                            .e_object()
-                            .expect("infallible: variant checked")
-                            .properties
-                            .len_u32()
-                            > 0
-                        {
-                            has_dependencies = true;
-                            dev_dependencies = Some(q.expr);
-
-                            // has_bun_framework_next = has_bun_framework_next or property.hasAnyPropertyNamed(&.{"bun-framework-next"});
-                            // has_react = has_react or property.hasAnyPropertyNamed(&.{ "react", "react-dom", "react-relay", "@emotion/react" });
-                            // has_bun_macro_relay = has_bun_macro_relay or property.hasAnyPropertyNamed(&.{"bun-macro-relay"});
-                            // has_react_refresh = has_react_refresh or property.hasAnyPropertyNamed(&.{"react-refresh"});
-                        }
+                        has_dependencies = true;
                     }
                 }
 
                 if let Some(q) = package_json_expr.as_property(b"dependencies") {
                     let property = q.expr;
-
                     if property.data.is_e_object()
                         && property
                             .data
@@ -908,181 +859,11 @@ impl CreateCommand {
                             .len_u32()
                             > 0
                     {
-                        // unsupported_packages.update(property);
-                        // has_react_scripts = has_react_scripts or property.hasAnyPropertyNamed(&.{"react-scripts"});
-                        // has_relay = has_relay or property.hasAnyPropertyNamed(&.{ "react-relay", "relay-runtime", "babel-plugin-relay" });
-                        // property.data.e_object.properties = js_ast.G.Property.List.fromBorrowedSliceDangerous(Prune.prune(property.data.e_object.properties.slice()));
-                        if property
-                            .data
-                            .e_object()
-                            .expect("infallible: variant checked")
-                            .properties
-                            .len_u32()
-                            > 0
-                        {
-                            has_dependencies = true;
-                            dependencies = Some(q.expr);
-
-                            // if (property.asProperty("next")) |next_q| {
-                            //     is_nextjs = true;
-                            //     needs.bun_bun_for_nextjs = true;
-                            //     next_q.expr.data.e_string.data = @constCast(target_nextjs_version);
-                            // }
-                            // has_bun_framework_next = has_bun_framework_next or property.hasAnyPropertyNamed(&.{"bun-framework-next"});
-                            // has_react = has_react or is_nextjs or property.hasAnyPropertyNamed(&.{ "react", "react-dom", "react-relay", "@emotion/react" });
-                            // has_react_refresh = has_react_refresh or property.hasAnyPropertyNamed(&.{"react-refresh"});
-                            // has_bun_macro_relay = has_bun_macro_relay or property.hasAnyPropertyNamed(&.{"bun-macro-relay"});
-                        }
+                        has_dependencies = true;
                     }
                 }
 
-                let _ = (dev_dependencies, dependencies);
-
-                // needs.bun_macro_relay = !has_bun_macro_relay and has_relay;
-                // needs.react_refresh = !has_react_refresh and has_react;
-                // needs.bun_framework_next = is_nextjs and !has_bun_framework_next;
-                // needs.bun_bun_for_nextjs = is_nextjs;
-                // needs.bun_macro_relay_dependency = needs.bun_macro_relay;
-                // var bun_bun_for_react_scripts = false;
-                //
-                // var bun_macros_prop: ?js_ast.Expr = null;
-                // var bun_prop: ?js_ast.Expr = null;
-                // var bun_relay_prop: ?js_ast.Expr = null;
-                //
-                // var needs_bun_prop = needs.bun_macro_relay or has_bun_macro_relay;
-                // var needs_bun_macros_prop = needs_bun_prop;
-                //
-                // if (needs_bun_macros_prop) {
-                //     if (package_json_expr.asProperty("bun")) |bun_| {
-                //         needs_bun_prop = false;
-                //         bun_prop = bun_.expr;
-                //         if (bun_.expr.asProperty("macros")) |macros_q| {
-                //             bun_macros_prop = macros_q.expr;
-                //             needs_bun_macros_prop = false;
-                //             if (macros_q.expr.asProperty("react-relay")) |react_relay_q| {
-                //                 bun_relay_prop = react_relay_q.expr;
-                //                 needs.bun_macro_relay = react_relay_q.expr.asProperty("graphql") == null;
-                //             }
-                //             if (macros_q.expr.asProperty("babel-plugin-relay/macro")) |react_relay_q| {
-                //                 bun_relay_prop = react_relay_q.expr;
-                //                 needs.bun_macro_relay = react_relay_q.expr.asProperty("graphql") == null;
-                //             }
-                //         }
-                //     }
-                // }
-                //
-                // if (Prune.prune_count > 0) {
-                //     Output.prettyErrorln("<r><d>[package.json] Pruned {d} unnecessary packages<r>", .{Prune.prune_count});
-                // }
-                //
-                // if (create_options.verbose) {
-                //   if (needs.bun_macro_relay) {
-                //       Output.prettyErrorln("<r><d>[package.json] Detected Relay -> added \"bun-macro-relay\"<r>", .{});
-                //   }
-                //   if (needs.react_refresh) {
-                //       Output.prettyErrorln("<r><d>[package.json] Detected React -> added \"react-refresh\"<r>", .{});
-                //   }
-                //   if (needs.bun_framework_next) {
-                //       Output.prettyErrorln("<r><d>[package.json] Detected Next -> added \"bun-framework-next\"<r>", .{});
-                //   } else if (is_nextjs) {
-                //       Output.prettyErrorln("<r><d>[package.json] Detected Next.js<r>", .{});
-                //   }
-                // }
-                //
-                // var needs_to_inject_dev_dependency = needs.react_refresh or needs.bun_macro_relay;
-                // var needs_to_inject_dependency = needs.bun_framework_next;
-                //
-                // const dependencies_to_inject_count = @as(usize, @intCast(@intFromBool(needs.bun_framework_next)));
-                //
-                // const dev_dependencies_to_inject_count = @as(usize, @intCast(@intFromBool(needs.react_refresh))) +
-                //     @as(usize, @intCast(@intFromBool(needs.bun_macro_relay)));
-                //
-                // const new_properties_count = @as(usize, @intCast(@intFromBool(needs_to_inject_dev_dependency and dev_dependencies == null))) +
-                //     @as(usize, @intCast(@intFromBool(needs_to_inject_dependency and dependencies == null))) +
-                //     @as(usize, @intCast(@intFromBool(needs_bun_prop)));
-                //
-                // if (new_properties_count != 0) {
-                //     try properties_list.ensureUnusedCapacity(new_properties_count);
-                // }
-
-                // InjectionPrefill — AST nodes used to inject "bun"/"macros"/dependency
-                // properties into package.json. Every consumer of it below is
-                // commented out except `npx_react_scripts_build`, so the module is
-                // stubbed here with the full structure preserved as a comment for
-                // reference; if the commented-out injection code is ever revived, the
-                // statics should be rebuilt on the stack/arena per call rather than as
-                // mutable statics of non-Sync AST types.
                 mod injection_prefill {
-                    // pub var dependencies_e_string = E.String.init(dependencies_string);
-                    // pub var devDependencies_e_string = E.String.init(dev_dependencies_string);
-                    // pub var bun_e_string = E.String.init(bun_string);
-                    // pub var macros_e_string = E.String.init(macros_string);
-                    // pub var react_relay_string = E.String.init("react-relay");
-                    // pub var bun_macros_relay_path_string = E.String.init("bun-macro-relay");
-                    // pub var babel_plugin_relay_macro = E.String.init("babel-plugin-relay/macro");
-                    // pub var babel_plugin_relay_macro_js = E.String.init("babel-plugin-relay/macro.js");
-                    // pub var graphql_string = E.String.init("graphql");
-                    //
-                    // var npx_react_scripts_build_str = E.String.init("npx react-scripts build");
-                    // pub const npx_react_scripts_build = js_ast.Expr{ .data = .{ .e_string = &npx_react_scripts_build_str }, .loc = logger.Loc.Empty };
-                    //
-                    // var bun_macro_relay_properties = [_]js_ast.G.Property{
-                    //     js_ast.G.Property{
-                    //         .key   = js_ast.Expr{ .data = .{ .e_string = &graphql_string }, .loc = logger.Loc.Empty },
-                    //         .value = js_ast.Expr{ .data = .{ .e_string = &bun_macros_relay_path_string }, .loc = logger.Loc.Empty },
-                    //     },
-                    // };
-                    // var bun_macro_relay_object = js_ast.E.Object{ .properties = undefined };
-                    //
-                    // var bun_macros_relay_object_properties = [_]js_ast.G.Property{
-                    //     .{ .key = Expr{ .e_string = &react_relay_string },           .value = Expr{ .e_object = &bun_macro_relay_object } },
-                    //     .{ .key = Expr{ .e_string = &babel_plugin_relay_macro },     .value = Expr{ .e_object = &bun_macro_relay_object } },
-                    //     .{ .key = Expr{ .e_string = &babel_plugin_relay_macro_js },  .value = Expr{ .e_object = &bun_macro_relay_object } },
-                    // };
-                    // pub var bun_macros_relay_object = E.Object{ .properties = undefined };
-                    //
-                    // var bun_macros_relay_only_object_string = js_ast.E.String.init("macros");
-                    // pub var bun_macros_relay_only_object_properties = [_]js_ast.G.Property{
-                    //     .{ .key = Expr{ .e_string = &bun_macros_relay_only_object_string }, .value = Expr{ .e_object = &bun_macros_relay_object } },
-                    // };
-                    // pub var bun_macros_relay_only_object = E.Object{ .properties = undefined };
-                    //
-                    // var bun_only_macros_string = js_ast.E.String.init("bun");
-                    // pub var bun_only_macros_relay_property = js_ast.G.Property{
-                    //     .key   = Expr{ .e_string = &bun_only_macros_string },
-                    //     .value = Expr{ .e_object = &bun_macros_relay_only_object },
-                    // };
-                    //
-                    // pub var bun_framework_next_string  = js_ast.E.String.init("bun-framework-next");
-                    // pub var bun_framework_next_version = js_ast.E.String.init("latest");
-                    // pub var bun_framework_next_property = js_ast.G.Property{
-                    //     .key   = Expr{ .e_string = &bun_framework_next_string },
-                    //     .value = Expr{ .e_string = &bun_framework_next_version },
-                    // };
-                    //
-                    // pub var bun_macro_relay_dependency_string  = js_ast.E.String.init("bun-macro-relay");
-                    // pub var bun_macro_relay_dependency_version = js_ast.E.String.init("latest");
-                    // pub var bun_macro_relay_dependency = js_ast.G.Property{
-                    //     .key   = Expr{ .e_string = &bun_macro_relay_dependency_string },
-                    //     .value = Expr{ .e_string = &bun_macro_relay_dependency_version },
-                    // };
-                    //
-                    // pub var refresh_runtime_string  = js_ast.E.String.init("react-refresh");
-                    // pub var refresh_runtime_version = js_ast.E.String.init("0.10.0");
-                    // pub var react_refresh_dependency = js_ast.G.Property{
-                    //     .key   = Expr{ .e_string = &refresh_runtime_string },
-                    //     .value = Expr{ .e_string = &refresh_runtime_version },
-                    // };
-                    //
-                    // pub var dev_dependencies_key = js_ast.Expr{ .data = .{ .e_string = &devDependencies_e_string }, .loc = logger.Loc.Empty };
-                    // pub var dependencies_key     = js_ast.Expr{ .data = .{ .e_string = &dependencies_e_string },    .loc = logger.Loc.Empty };
-
-                    // The static objects above were wired together at runtime; that
-                    // wiring only feeds the commented-out injection code below:
-                    // InjectionPrefill.bun_macro_relay_object.properties = ...fromBorrowedSliceDangerous(bun_macro_relay_properties[0..]);
-                    // InjectionPrefill.bun_macros_relay_object.properties = ...fromBorrowedSliceDangerous(&bun_macros_relay_object_properties);
-                    // InjectionPrefill.bun_macros_relay_only_object.properties = ...fromBorrowedSliceDangerous(&bun_macros_relay_only_object_properties);
-
                     pub(crate) fn npx_react_scripts_build() -> bun_ast::Expr {
                         bun_ast::Expr::init(
                             bun_ast::E::EString::init(b"npx react-scripts build"),
@@ -1091,120 +872,12 @@ impl CreateCommand {
                     }
                 }
 
-                // if (needs_to_inject_dev_dependency and dev_dependencies == null) {
-                //     var e_object = try ctx.allocator.create(E.Object);
-                //     e_object.* = E.Object{};
-                //     const value = js_ast.Expr{ .data = .{ .e_object = e_object }, .loc = logger.Loc.Empty };
-                //     properties_list.appendAssumeCapacity(js_ast.G.Property{
-                //         .key = InjectionPrefill.dev_dependencies_key,
-                //         .value = value,
-                //     });
-                //     dev_dependencies = value;
-                // }
-                //
-                // if (needs_to_inject_dependency and dependencies == null) {
-                //     var e_object = try ctx.allocator.create(E.Object);
-                //     e_object.* = E.Object{};
-                //     const value = js_ast.Expr{ .data = .{ .e_object = e_object }, .loc = logger.Loc.Empty };
-                //     properties_list.appendAssumeCapacity(js_ast.G.Property{
-                //         .key = InjectionPrefill.dependencies_key,
-                //         .value = value,
-                //     });
-                //     dependencies = value;
-                // }
-
-                // inject an object like this, handling each permutation of what may or may not exist:
-                // {
-                //    "bun": {
-                //       "macros": {
-                //          "react-relay": {
-                //              "graphql": "bun-macro-relay"
-                //          }
-                //        }
-                //    }
-                // }
-                // bun_section: {
-                //   // "bun.macros.react-relay.graphql"
-                //   if (needs.bun_macro_relay and !needs_bun_prop and !needs_bun_macros_prop) {
-                //       bun_relay_prop.?.data.e_object = InjectionPrefill.bun_macros_relay_object.properties.ptr[0].value.?.data.e_object;
-                //       needs_bun_macros_prop = false; needs_bun_prop = false; needs.bun_macro_relay = false;
-                //       break :bun_section;
-                //   }
-                //   // "bun.macros"
-                //   if (needs_bun_macros_prop and !needs_bun_prop) {
-                //       var obj = bun_prop.?.data.e_object;
-                //       var properties = try std.ArrayList(js_ast.G.Property).initCapacity(ctx.allocator,
-                //           obj.properties.len + InjectionPrefill.bun_macros_relay_object.properties.len);
-                //       defer obj.properties.update(properties);
-                //       try properties.insertSlice(0, obj.properties.slice());
-                //       try properties.insertSlice(0, InjectionPrefill.bun_macros_relay_object.properties.slice());
-                //       needs_bun_macros_prop = false; needs_bun_prop = false; needs.bun_macro_relay = false;
-                //       break :bun_section;
-                //   }
-                //   // "bun"
-                //   if (needs_bun_prop) {
-                //       try properties_list.append(InjectionPrefill.bun_only_macros_relay_property);
-                //       needs_bun_macros_prop = false; needs_bun_prop = false; needs.bun_macro_relay = false;
-                //       break :bun_section;
-                //   }
-                // }
-                //
-                // if (needs_to_inject_dependency) {
-                //     defer needs_to_inject_dependency = false;
-                //     var obj = dependencies.?.data.e_object;
-                //     var properties = try std.ArrayList(js_ast.G.Property).initCapacity(ctx.allocator,
-                //         obj.properties.len + dependencies_to_inject_count);
-                //     try properties.insertSlice(0, obj.properties.slice());
-                //     defer obj.properties.update(properties);
-                //     if (needs.bun_framework_next) {
-                //         properties.appendAssumeCapacity(InjectionPrefill.bun_framework_next_property);
-                //         needs.bun_framework_next = false;
-                //     }
-                // }
-                //
-                // if (needs_to_inject_dev_dependency) {
-                //     defer needs_to_inject_dev_dependency = false;
-                //     var obj = dev_dependencies.?.data.e_object;
-                //     var properties = try std.ArrayList(js_ast.G.Property).initCapacity(ctx.allocator,
-                //         obj.properties.len + dev_dependencies_to_inject_count);
-                //     try properties.insertSlice(0, obj.properties.slice());
-                //     defer obj.properties.update(properties);
-                //     if (needs.bun_macro_relay_dependency) {
-                //         properties.appendAssumeCapacity(InjectionPrefill.bun_macro_relay_dependency);
-                //         needs.bun_macro_relay_dependency = false;
-                //     }
-                //     if (needs.react_refresh) {
-                //         properties.appendAssumeCapacity(InjectionPrefill.react_refresh_dependency);
-                //         needs.react_refresh = false;
-                //     }
-                // }
-
-                // this is a little dicey
-                // The idea is:
-                // Before the closing </body> tag of Create React App's public/index.html
-                // Inject "<script type="module" src="/src/index.js" async></script>"
-                // Only do this for create-react-app
-                // Which we define as:
-                // 1. has a "public/index.html"
-                // 2. "react-scripts" in package.json dependencies or devDependencies
-                // 3. has a src/index.{jsx,tsx,ts,mts,mcjs}
-                // If at any point those expectations are not matched OR the string /src/index.js already exists in the HTML
-                // don't do it!
-                // if (has_react_scripts) {
-                //     bail: {
-                //         // ... (large CRA index.html injection block)
-                //     }
-                // }
-
                 package_json_expr
                     .data
                     .e_object_mut()
                     .expect("infallible: variant checked")
                     .is_single_line = false;
 
-                // (See note above; the aliasing round-trip is a no-op while the
-                // injection appends remain commented out, so `properties` is
-                // already current.)
                 {
                     use bun_ast::ExprData as LExprData;
                     let mut i: usize = 0;
@@ -1319,21 +992,6 @@ impl CreateCommand {
                                     let items = tasks.slice();
                                     for task in items {
                                         if let Some(task_entry) = task.as_utf8_string_literal() {
-                                            // if (needs.bun_bun_for_nextjs or bun_bun_for_react_scripts) {
-                                            //     var iter = std.mem.splitScalar(u8, task_entry, ' ');
-                                            //     var last_was_bun = false;
-                                            //     while (iter.next()) |current| {
-                                            //         if (strings.eqlComptime(current, "bun")) {
-                                            //             if (last_was_bun) {
-                                            //                 needs.bun_bun_for_nextjs = false;
-                                            //                 bun_bun_for_react_scripts = false;
-                                            //                 break;
-                                            //             }
-                                            //             last_was_bun = true;
-                                            //         }
-                                            //     }
-                                            // }
-
                                             postinstall_tasks.push(arena_str(task_entry));
                                         }
                                     }
@@ -1469,7 +1127,7 @@ impl CreateCommand {
             bun_core::pretty!("<r>\n");
             Output::flush();
             scopeguard::defer! {
-                Output::print_errorln("\n");
+                Output::print_errorln("");
                 Output::print_start_end(start_time, bun_core::time::nano_timestamp());
                 bun_core::pretty_error!(
                     " <r><d>{} install<r>\n",
@@ -1546,10 +1204,10 @@ impl CreateCommand {
         if example_tag == ExampleTag::GithubRepository {
             let mut display_name = template;
 
-            if let Some(first_slash) = bun_core::index_of_char(display_name, b'/') {
+            if let Some(first_slash) = bun_core::strings::index_of_char_usize(display_name, b'/') {
                 let first_slash = first_slash as usize;
                 if let Some(second_slash) =
-                    bun_core::index_of_char(&display_name[first_slash + 1..], b'/')
+                    bun_core::strings::index_of_char_usize(&display_name[first_slash + 1..], b'/')
                 {
                     display_name = &template[0..first_slash + 1 + second_slash as usize];
                 }
@@ -1630,9 +1288,7 @@ impl CreateCommand {
         Ok(())
     }
 
-    pub(crate) fn extract_info(
-        ctx: &Command::Context<'_>,
-    ) -> Result<ExtractedInfo, bun_core::Error> {
+    pub(crate) fn extract_info(ctx: &Command::Context<'_>) -> crate::Result<ExtractedInfo> {
         let example_tag;
         // SAFETY: process-lifetime singleton; init returns *mut.
         let filesystem = unsafe { &*fs::FileSystem::init(None)? };
@@ -1644,8 +1300,7 @@ impl CreateCommand {
             Global::crash();
         }
 
-        let mut env_loader: DotEnv::Loader =
-            { DotEnv::Loader::init(crate::cli::cli_arena().alloc(DotEnv::Map::init())) };
+        let mut env_loader = DotEnv::Loader::init();
 
         env_loader.load_process()?;
 
@@ -1761,9 +1416,13 @@ impl CreateCommand {
                 }
 
                 if repo_begin == usize::MAX && positional[0] != b'/' {
-                    if let Some(first_slash_index) = bun_core::index_of_char(positional, b'/') {
+                    if let Some(first_slash_index) =
+                        bun_core::strings::index_of_char_usize(positional, b'/')
+                    {
                         let first_slash_index = first_slash_index as usize;
-                        if let Some(last_slash_index) = bun_core::index_of_char(positional, b'/') {
+                        if let Some(last_slash_index) =
+                            bun_core::strings::index_of_char_usize(positional, b'/')
+                        {
                             let last_slash_index = last_slash_index as usize;
                             if first_slash_index == last_slash_index
                                 && !positional[last_slash_index..].is_empty()
@@ -1777,11 +1436,11 @@ impl CreateCommand {
 
                 if repo_begin != usize::MAX {
                     let remainder = &positional[repo_begin..];
-                    if let Some(i) = bun_core::index_of_char(remainder, b'/') {
+                    if let Some(i) = bun_core::strings::index_of_char_usize(remainder, b'/') {
                         let i = i as usize;
                         if i > 0 && !remainder[i + 1..].is_empty() {
                             if let Some(last_slash) =
-                                bun_core::index_of_char(&remainder[i + 1..], b'/')
+                                bun_core::strings::index_of_char_usize(&remainder[i + 1..], b'/')
                             {
                                 let last_slash = last_slash as usize;
                                 example_tag = ExampleTag::GithubRepository;
@@ -1825,7 +1484,7 @@ fn file_copier_copy(
     #[cfg(windows)] dst_buf: &mut bun_paths::WPathBuffer,
     #[cfg(windows)] src_base_len: usize,
     #[cfg(windows)] src_buf: &mut bun_paths::WPathBuffer,
-) -> Result<(), bun_core::Error> {
+) -> crate::Result<()> {
     while let Some(entry) = walker.next()? {
         #[cfg(windows)]
         {
@@ -2000,11 +1659,12 @@ impl bun_bundler::bundle_v2::OnDependenciesAnalyze for Analyzer<'_> {
     fn on_analyze(
         &mut self,
         result: &mut bun_bundler::bundle_v2::DependenciesScannerResult<'_, '_>,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), bun_bundler::Error> {
         let this = self;
         this.node.end();
 
         SourceFileProjectGenerator::generate(this.ctx, this.example_tag, this.entry_point, result)
+            .map_err(Into::into)
     }
 }
 
@@ -2013,7 +1673,7 @@ fn run_on_entry_point(
     example_tag: ExampleTag,
     entry_point: &[u8],
     node: &mut ProgressNode,
-) -> Result<(), bun_core::Error> {
+) -> crate::Result<()> {
     let mut analyzer = Analyzer {
         ctx,
         example_tag,
@@ -2126,7 +1786,7 @@ impl Example {
         mut node: Option<&mut ProgressNode>,
         env_loader: &mut DotEnv::Loader,
         filesystem: &mut fs::FileSystem,
-    ) -> Result<Vec<Example>, bun_core::Error> {
+    ) -> crate::Result<Vec<Example>> {
         let remote_examples = Example::fetch_all(ctx, env_loader, node.as_deref_mut())?;
         if let Some(node_) = node {
             node_.end();
@@ -2220,12 +1880,12 @@ impl Example {
         name: &[u8],
         refresher: &mut Progress,
         progress: &mut ProgressNode,
-    ) -> Result<MutableString, bun_core::Error> {
-        let owner_i = bun_core::index_of_char(name, b'/').unwrap() as usize;
+    ) -> crate::Result<MutableString> {
+        let owner_i = bun_core::strings::index_of_char_usize(name, b'/').unwrap() as usize;
         let owner = &name[0..owner_i];
         let mut repository = &name[owner_i + 1..];
 
-        if let Some(i) = bun_core::index_of_char(repository, b'/') {
+        if let Some(i) = bun_core::strings::index_of_char_usize(repository, b'/') {
             repository = &repository[0..i as usize];
         }
 
@@ -2311,12 +1971,12 @@ impl Example {
         let response = async_http.send_sync()?;
 
         match response.status_code {
-            404 => return Err(bun_core::err!("GitHubRepositoryNotFound")),
-            403 => return Err(bun_core::err!("HTTPForbidden")),
-            429 => return Err(bun_core::err!("HTTPTooManyRequests")),
-            499..=599 => return Err(bun_core::err!("NPMIsDown")),
+            404 => return Err(crate::Error::GitHubRepositoryNotFound),
+            403 => return Err(crate::Error::HTTPForbidden),
+            429 => return Err(crate::Error::HTTPTooManyRequests),
+            499..=599 => return Err(crate::Error::GitHubIsDown),
             200 => {}
-            _ => return Err(bun_core::err!("HTTPError")),
+            _ => return Err(crate::Error::HTTPError),
         }
 
         let content_type: &[u8] = response.headers.get(b"content-type").unwrap_or(b"");
@@ -2359,7 +2019,7 @@ impl Example {
         name: &[u8],
         refresher: &mut Progress,
         progress: &mut ProgressNode,
-    ) -> Result<MutableString, bun_core::Error> {
+    ) -> crate::Result<MutableString> {
         progress.name = b"Fetching package.json";
         refresher.refresh();
 
@@ -2387,9 +2047,10 @@ impl Example {
             *URL_.get() = Some(api_url.erase_lifetime());
         }
 
-        // SAFETY: `http_proxy` borrows from `env_loader`'s arena-backed map
-        // (see `DotEnv::Loader::init(cli_arena().alloc(...))` in `exec`); erase
-        // to `'static` for `AsyncHTTP::init_sync` — same as `fetch_from_github`.
+        // SAFETY: `http_proxy` borrows from `env_loader`, which outlives this
+        // fn. Erased to `'static` because `async_http` is `cli_arena()`-backed
+        // (so its type parameter is `'static`), but the proxy URL is only read
+        // during the `send_sync()` calls below while `env_loader` is live.
         let mut http_proxy: Option<URL<'static>> = env_loader
             .get_http_proxy_for(unsafe { (*URL_.get()).as_ref().unwrap() })
             .map(|u| unsafe { u.erase_lifetime() });
@@ -2414,12 +2075,12 @@ impl Example {
         let mut response = async_http.send_sync()?;
 
         match response.status_code {
-            404 => return Err(bun_core::err!("ExampleNotFound")),
-            403 => return Err(bun_core::err!("HTTPForbidden")),
-            429 => return Err(bun_core::err!("HTTPTooManyRequests")),
-            499..=599 => return Err(bun_core::err!("NPMIsDown")),
+            404 => return Err(crate::Error::ExampleNotFound),
+            403 => return Err(crate::Error::HTTPForbidden),
+            429 => return Err(crate::Error::HTTPTooManyRequests),
+            499..=599 => return Err(crate::Error::NPMIsDown),
             200 => {}
-            _ => return Err(bun_core::err!("HTTPError")),
+            _ => return Err(crate::Error::HTTPError),
         }
 
         progress.name = b"Parsing package.json";
@@ -2486,7 +2147,7 @@ impl Example {
         // ensure very stable memory address
         let parsed_tarball_url = URL::parse(tarball_url);
 
-        // SAFETY: see note on `http_proxy` above — env-loader-backed `'static`.
+        // SAFETY: see note on `http_proxy` above.
         http_proxy = env_loader
             .get_http_proxy_for(&parsed_tarball_url)
             .map(|u| unsafe { u.erase_lifetime() });
@@ -2530,7 +2191,7 @@ impl Example {
         ctx: &Command::Context,
         env_loader: &mut DotEnv::Loader,
         progress_node: Option<&mut ProgressNode>,
-    ) -> Result<Box<[Example]>, bun_core::Error> {
+    ) -> crate::Result<Box<[Example]>> {
         let url = URL::parse(Self::EXAMPLES_URL);
         let http_proxy = env_loader.get_http_proxy_for(&url);
 
@@ -2557,7 +2218,7 @@ impl Example {
         let response = match async_http.send_sync() {
             Ok(r) => r,
             Err(err) => {
-                if err == bun_core::err!("WouldBlock") {
+                if err.name() == "EAGAIN" {
                     bun_core::pretty_errorln!(
                         "Request timed out while trying to fetch examples list. Please try again",
                     );
@@ -2636,34 +2297,24 @@ impl Example {
                         .expect("infallible: variant checked")
                         .data
                         .slice();
+                    let string_prop = |key: &[u8]| -> &'static [u8] {
+                        property
+                            .value
+                            .and_then(|v| v.as_property(key))
+                            .and_then(|q| q.expr.data.e_string())
+                            .map(|s| s.data.slice())
+                            .unwrap_or(b"")
+                    };
                     list[i] = Example {
-                        name: if let Some(slash) = bun_core::index_of_char(name, b'/') {
+                        name: if let Some(slash) =
+                            bun_core::strings::index_of_char_usize(name, b'/')
+                        {
                             &name[slash as usize + 1..]
                         } else {
                             name
                         },
-                        version: property
-                            .value
-                            .unwrap()
-                            .as_property(b"version")
-                            .unwrap()
-                            .expr
-                            .data
-                            .e_string()
-                            .unwrap()
-                            .data
-                            .slice(),
-                        description: property
-                            .value
-                            .unwrap()
-                            .as_property(b"description")
-                            .unwrap()
-                            .expr
-                            .data
-                            .e_string()
-                            .unwrap()
-                            .data
-                            .slice(),
+                        version: string_prop(b"version"),
+                        description: string_prop(b"description"),
                         local: false,
                     };
                 }
@@ -2682,10 +2333,9 @@ impl Example {
 pub(crate) struct CreateListExamplesCommand;
 
 impl CreateListExamplesCommand {
-    pub(crate) fn exec(ctx: &Command::Context) -> Result<(), bun_core::Error> {
+    pub(crate) fn exec(ctx: &Command::Context) -> crate::Result<()> {
         let filesystem = fs::FileSystem::init(None)?;
-        let mut env_loader: DotEnv::Loader =
-            { DotEnv::Loader::init(crate::cli::cli_arena().alloc(DotEnv::Map::init())) };
+        let mut env_loader = DotEnv::Loader::init();
 
         env_loader.load_process()?;
 
@@ -2780,7 +2430,7 @@ impl GitHandler {
 
     pub(crate) fn wait() -> bool {
         while SUCCESS.load(Ordering::Acquire) == 0 {
-            let _ = Futex::wait(&SUCCESS, 0, Some(1000));
+            Futex::wait_forever(&SUCCESS, 0);
         }
 
         let outcome = SUCCESS.load(Ordering::Acquire) == 1;
@@ -2789,10 +2439,7 @@ impl GitHandler {
         outcome
     }
 
-    pub(crate) fn run<const VERBOSE: bool>(
-        destination: &[u8],
-        path: &[u8],
-    ) -> Result<bool, bun_core::Error> {
+    pub(crate) fn run<const VERBOSE: bool>(destination: &[u8], path: &[u8]) -> crate::Result<bool> {
         let git_start = bun_core::time::nano_timestamp();
 
         // Not sure why...

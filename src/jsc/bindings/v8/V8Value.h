@@ -35,6 +35,13 @@ private:
     // non-inlined versions of these
     BUN_EXPORT bool FullIsTrue() const;
     BUN_EXPORT bool FullIsFalse() const;
+    // V8_INLINE in the headers but with out-of-class bodies, which MSVC debug
+    // builds import instead of emitting locally; private to match V8's
+    // declarations (affects the MSVC mangling).
+    BUN_EXPORT bool QuickIsUndefined() const;
+    BUN_EXPORT bool QuickIsNull() const;
+    BUN_EXPORT bool QuickIsNullOrUndefined() const;
+    BUN_EXPORT bool QuickIsString() const;
 };
 
 } // namespace v8

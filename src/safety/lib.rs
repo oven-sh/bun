@@ -5,11 +5,11 @@ pub mod alloc;
 mod critical_section;
 pub use critical_section::CriticalSection;
 
-#[path = "ThreadLock.rs"]
-mod thread_lock;
-pub use thread_lock::{ThreadLock, ThreadLockGuard};
-
-pub mod thread_id;
+// `ThreadLock` and `thread_id` live in `bun_core` (tier-0) so `bun_ptr` /
+// `bun_threading` can use them without an upward dep. Re-exported here for
+// `bun_safety::*` callers.
+pub use bun_core::thread_id;
+pub use bun_core::{ThreadLock, ThreadLockGuard};
 
 // ──────────────────────────────────────────────────────────────────────────
 // Allocator-identity registry (storage moved DOWN — data, not fn-ptrs).
@@ -70,14 +70,6 @@ pub(crate) fn known_alloc_vtable(alloc: bun_alloc::StdAllocator) -> bool {
     KNOWN_ALLOC_VTABLES[..n]
         .iter()
         .any(|s| s.load(Ordering::Relaxed) == needle)
-}
-
-/// `MimallocArena.isInstance` — `bun_alloc` is below us, so call it directly
-/// (no registry needed for this one).
-#[cfg(debug_assertions)]
-#[inline]
-pub(crate) fn is_mimalloc_arena(alloc: bun_alloc::StdAllocator) -> bool {
-    bun_alloc::MimallocArena::is_instance(&alloc)
 }
 
 /// Dump a captured trace via the T0 fallback (raw addresses / std::backtrace).

@@ -11,7 +11,6 @@ use bstr::BStr;
 use bun_bundler::options;
 use bun_clap as clap;
 use bun_clap::parse_param;
-use bun_core::ZStr;
 use bun_core::env::OperatingSystem;
 use bun_core::strings;
 use bun_core::{self, FeatureFlags, Global, Output, env_var};
@@ -36,31 +35,12 @@ fn slice_to_owned(input: &[&[u8]]) -> Vec<Box<[u8]>> {
     input.iter().map(|s| Box::<[u8]>::from(*s)).collect()
 }
 
-pub(crate) fn loader_resolver(input: &[u8]) -> Result<api::Loader, bun_core::Error> {
-    let option_loader =
-        bun_ast::Loader::from_string(input).ok_or_else(|| bun_core::err!("InvalidLoader"))?;
+pub(crate) fn loader_resolver(input: &[u8]) -> crate::Result<api::Loader> {
+    let option_loader = bun_ast::Loader::from_string(input).ok_or(crate::Error::InvalidLoader)?;
     Ok(option_loader.to_api())
 }
 
-/// Resolve `filename` against `cwd`, open it, read its full contents, close it,
-/// and return the buffer.
-///
-/// Built on `bun_paths::resolve_path` + `bun_sys::File::read_from`, which is
-/// the cross-platform path the rest of the runtime uses.
-pub fn read_file(cwd: &[u8], filename: &[u8]) -> Result<Vec<u8>, bun_core::Error> {
-    let mut buf = PathBuffer::uninit();
-    let outpath = resolve_path::join_abs_string_buf::<platform::Auto>(cwd, &mut *buf, &[filename]);
-    let len = outpath.len();
-    buf[len] = 0;
-    // SAFETY: `buf[len] == 0` written above; `buf` outlives the call.
-    let path_z = ZStr::from_buf(&buf[..], len);
-    match bun_sys::File::read_from(bun_sys::Fd::cwd(), path_z) {
-        bun_sys::Result::Ok(bytes) => Ok(bytes),
-        bun_sys::Result::Err(err) => Err(err.into()),
-    }
-}
-
-pub(crate) fn resolve_jsx_runtime(s: &[u8]) -> Result<api::JsxRuntime, bun_core::Error> {
+pub(crate) fn resolve_jsx_runtime(s: &[u8]) -> crate::Result<api::JsxRuntime> {
     if s == b"automatic" {
         Ok(api::JsxRuntime::Automatic)
     } else if s == b"fallback" || s == b"classic" {
@@ -68,7 +48,7 @@ pub(crate) fn resolve_jsx_runtime(s: &[u8]) -> Result<api::JsxRuntime, bun_core:
     } else if s == b"solid" {
         Ok(api::JsxRuntime::Solid)
     } else {
-        Err(bun_core::err!("InvalidJSXRuntime"))
+        Err(crate::Error::InvalidJSXRuntime)
     }
 }
 
@@ -196,6 +176,9 @@ pub(crate) const RUNTIME_PARAMS_: &[ParamType] = &[
         "--smol                            Use less memory, but run garbage collection more often"
     ),
     parse_param!(
+        "--interactive                     Start a Node.js-compatible REPL, like node --interactive"
+    ),
+    parse_param!(
         "-r, --preload <STR>...            Import a module before other modules are loaded"
     ),
     parse_param!("--require <STR>...                Alias of --preload, for Node.js compatibility"),
@@ -267,6 +250,9 @@ pub(crate) const RUNTIME_PARAMS_: &[ParamType] = &[
         "--dns-result-order <STR>          Set the default order of DNS lookup results. Valid orders: verbatim (default), ipv4first, ipv6first"
     ),
     parse_param!(
+        "--experimental-stream-iter        Enable the experimental stream/iter API (node:stream/iter, node:zlib/iter)."
+    ),
+    parse_param!(
         "--expose-gc                       Expose gc() on the global object. Has no effect on Bun.gc()."
     ),
     parse_param!(
@@ -284,6 +270,12 @@ pub(crate) const RUNTIME_PARAMS_: &[ParamType] = &[
     ),
     parse_param!("--use-openssl-ca                  Use OpenSSL's default CA store"),
     parse_param!("--use-bundled-ca                  Use bundled CA store"),
+    parse_param!("--tls-min-v1.0                    Set the default TLS minimum to TLSv1.0"),
+    parse_param!("--tls-min-v1.1                    Set the default TLS minimum to TLSv1.1"),
+    parse_param!("--tls-min-v1.2                    Set the default TLS minimum to TLSv1.2"),
+    parse_param!("--tls-min-v1.3                    Set the default TLS minimum to TLSv1.3"),
+    parse_param!("--tls-max-v1.2                    Set the default TLS maximum to TLSv1.2"),
+    parse_param!("--tls-max-v1.3                    Set the default TLS maximum to TLSv1.3"),
     parse_param!("--redis-preconnect                Preconnect to $REDIS_URL at startup"),
     parse_param!("--sql-preconnect                  Preconnect to PostgreSQL at startup"),
     parse_param!(
@@ -300,6 +292,21 @@ pub(crate) const RUNTIME_PARAMS_: &[ParamType] = &[
     ),
     parse_param!("--cron-title <STR>               Title for cron execution mode"),
     parse_param!("--cron-period <STR>              Cron period for cron execution mode"),
+    // Node.js trace/diagnostics flags. Intentionally no help text: params with
+    // an empty description are hidden from `--help` (see `simple_help`).
+    // Declaring them (vs. relying on unknown-flag skipping) matters for the
+    // value-taking ones — otherwise the value argument is parsed as the
+    // entrypoint — and for `process.execArgv`'s re-parser, which derives its
+    // value-consuming set from `AUTO_PARAMS`.
+    parse_param!("--trace-events-enabled"),
+    parse_param!("--trace-event-categories <STR>"),
+    parse_param!("--trace-event-file-pattern <STR>"),
+    parse_param!("--trace-env"),
+    parse_param!("--trace-env-js-stack"),
+    parse_param!("--trace-env-native-stack"),
+    parse_param!("--trace-exit"),
+    parse_param!("--expose-internals"),
+    parse_param!("--stack-trace-limit <STR>"),
 ];
 
 pub(crate) const AUTO_OR_RUN_PARAMS: &[ParamType] = &[
@@ -310,7 +317,7 @@ pub(crate) const AUTO_OR_RUN_PARAMS: &[ParamType] = &[
         "-b, --bun                         Force a script or package to use Bun's runtime instead of Node.js (via symlinking node)"
     ),
     parse_param!(
-        "--no-orphans                      Exit when the parent process dies, and on exit SIGKILL every descendant. Linux/macOS only."
+        "--no-orphans                      Exit when the parent process dies, and on exit kill every descendant."
     ),
     parse_param!(
         "--shell <STR>                     Control the shell used for package.json scripts. Supports either 'bun' or 'system'"
@@ -479,6 +486,9 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
         parse_param!(
             "--react-fast-refresh             Enable React Fast Refresh transform (does not emit hot-module code, use this for testing)"
         ),
+        parse_param!(
+            "--react-compiler                 Enable the React Compiler optimizing transform"
+        ),
         parse_param!("--no-bundle                      Transpile file only, do not bundle"),
         parse_param!(
             "--emit-dce-annotations           Re-emit DCE annotations in bundles. Enabled by default unless --minify-whitespace is passed."
@@ -532,7 +542,7 @@ pub(crate) const BUILD_PARAMS: &[ParamType] =
 // TODO: update test completions
 pub(crate) const TEST_ONLY_PARAMS: &[ParamType] = &[
     parse_param!(
-        "--no-orphans                     Exit when the parent process dies, and on exit SIGKILL every descendant. Linux/macOS only."
+        "--no-orphans                     Exit when the parent process dies, and on exit kill every descendant."
     ),
     parse_param!(
         "--timeout <NUMBER>               Set the per-test timeout in milliseconds, default is 5000."
@@ -702,7 +712,7 @@ pub use bun_bunfig::arguments::{load_config, load_config_path, load_config_with_
 /// `command::tag_params(cmd)` does a runtime lookup of the per-subcommand
 /// param table, and the per-`cmd` blocks below are guarded by
 /// `if matches!(cmd, …)`.
-pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions, bun_core::Error> {
+pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformOptions> {
     let mut diag = clap::Diagnostic::default();
     let table = tag_table(cmd);
 
@@ -1055,7 +1065,9 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
 
         if args.flag(b"--no-install") {
             ctx.debug.global_cache = options::GlobalCache::disable;
-        } else if args.flag(b"-i") {
+        } else if args.flag(b"-i") && cmd != CommandTag::RunAsNodeCommand {
+            // Under node emulation `-i` is node's --interactive alias, not
+            // --install=fallback (auto-install is meaningless there).
             ctx.debug.global_cache = options::GlobalCache::fallback;
         } else if let Some(enum_value) = args.option(b"--install") {
             // -i=auto --install=force, --install=disable
@@ -1081,10 +1093,22 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
         }
         ctx.runtime_options.if_present = args.flag(b"--if-present");
         ctx.runtime_options.smol = args.flag(b"--smol");
+        // node's `-i` is an alias for --interactive; elsewhere `-i` is --install=fallback.
+        ctx.runtime_options.interactive = args.flag(b"--interactive")
+            || (cmd == CommandTag::RunAsNodeCommand && args.flag(b"-i"));
         ctx.runtime_options.preconnect = slice_to_owned(args.options(b"--fetch-preconnect"));
         ctx.runtime_options.experimental_http2_fetch = args.flag(b"--experimental-http2-fetch");
         ctx.runtime_options.experimental_http3_fetch = args.flag(b"--experimental-http3-fetch");
         ctx.runtime_options.expose_gc = args.flag(b"--expose-gc");
+        if args.flag(b"--expose-internals") {
+            // Same gate the env var `BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING`
+            // sets (VirtualMachine::configure_from_env): allows resolving
+            // `bun:internal-for-testing` / `internal/test/binding` in release
+            // builds. Debug builds always allow them.
+            bun_jsc::module_loader::IS_ALLOWED_TO_USE_INTERNAL_TESTING_APIS
+                .store(true, core::sync::atomic::Ordering::Relaxed);
+            bun_resolve_builtins::set_expose_internals_enabled(true);
+        }
 
         if let Some(depth_str) = args.option(b"--console-depth") {
             let depth = match strings::parse_int::<u16>(depth_str, 10) {
@@ -1247,6 +1271,9 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
             }
         }
 
+        if args.flag(b"--experimental-stream-iter") {
+            bun_resolve_builtins::set_stream_iter_enabled(true);
+        }
         if args.flag(b"--no-deprecation") {
             Bun__Node__ProcessNoDeprecation.store(true, core::sync::atomic::Ordering::Relaxed);
         }
@@ -1298,6 +1325,13 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
             // `Bun__Node__UseSystemCA` is written unconditionally,
             // even when no CA flag/env was supplied (default bundled ⇒ false).
             Bun__Node__UseSystemCA.store(false, core::sync::atomic::Ordering::Relaxed);
+        }
+
+        if args.flag(b"--tls-min-v1.3") && args.flag(b"--tls-max-v1.2") {
+            bun_core::pretty_errorln!(
+                "<r><red>error<r>: --tls-min-v1.3 sets default TLS minimum to TLSv1.3 and is not compatible with --tls-max-v1.2, which sets default TLS maximum to TLSv1.2; use one or the other, not both"
+            );
+            Global::exit(1);
         }
     }
 
@@ -2282,7 +2316,10 @@ fn parse_build_command_options(
 
     if let Some(format_str) = args.option(b"--format") {
         let Some(format) = options::Format::from_string(format_str) else {
-            Output::err_generic("Invalid format - must be esm, cjs, or iife", ());
+            Output::err_generic(
+                "Invalid value for --format: {}. Must be 'esm', 'cjs', or 'iife'.",
+                (bun_core::fmt::quote(format_str),),
+            );
             Global::crash();
         };
 
@@ -2364,6 +2401,10 @@ fn parse_build_command_options(
         ctx.bundler_options.react_fast_refresh = true;
     }
 
+    if args.flag(b"--react-compiler") {
+        ctx.bundler_options.react_compiler = true;
+    }
+
     if let Some(setting) = args.option(b"--sourcemap") {
         if setting.is_empty() {
             // In the future, Bun is going to make this default to .linked
@@ -2384,11 +2425,10 @@ fn parse_build_command_options(
             Global::crash();
         }
 
-        // when using --compile, only `external` works, as we do not
-        // look at the source map comment. so after we validate the
-        // user's choice was in the list, we secretly override it
-        if ctx.bundler_options.compile {
-            opts.source_map = Some(api::SourceMap::External);
-        }
+        // When using --compile, only `external` sourcemaps work, as the
+        // runtime does not look at the source map comment. That override
+        // happens in build_command.rs once it's known whether --compile
+        // produces an executable or a standalone HTML file (browsers do read
+        // the comment, so standalone HTML keeps the user's choice).
     }
 }

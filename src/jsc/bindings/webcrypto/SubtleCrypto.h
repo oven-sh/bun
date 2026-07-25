@@ -29,7 +29,10 @@
 
 #include "ContextDestructionObserver.h"
 #include "CryptoKeyFormat.h"
+#include "CryptoKeyUsage.h"
+#include "ExceptionOr.h"
 #include <JavaScriptCore/Strong.h>
+#include <optional>
 #include <variant>
 #include <wtf/Ref.h>
 #include <wtf/RefCounted.h>
@@ -49,11 +52,11 @@ using WorkQueue = Bun::PhonyWorkQueue;
 struct JsonWebKey;
 
 class BufferSource;
+class CryptoAlgorithmParameters;
 class CryptoKey;
 class DeferredPromise;
 
 enum class CryptoAlgorithmIdentifier : uint8_t;
-enum class CryptoKeyUsage;
 
 class SubtleCrypto : public ContextDestructionObserver, public RefCounted<SubtleCrypto>, public CanMakeWeakPtr<SubtleCrypto> {
 public:
@@ -73,11 +76,26 @@ public:
     void digest(JSC::JSGlobalObject&, AlgorithmIdentifier&&, BufferSource&& data, Ref<DeferredPromise>&&);
     void generateKey(JSC::JSGlobalObject&, AlgorithmIdentifier&&, bool extractable, Vector<CryptoKeyUsage>&& keyUsages, Ref<DeferredPromise>&&);
     void deriveKey(JSC::JSGlobalObject&, AlgorithmIdentifier&&, CryptoKey& baseKey, AlgorithmIdentifier&& derivedKeyType, bool extractable, Vector<CryptoKeyUsage>&&, Ref<DeferredPromise>&&);
-    void deriveBits(JSC::JSGlobalObject&, AlgorithmIdentifier&&, CryptoKey& baseKey, unsigned length, Ref<DeferredPromise>&&);
+    void deriveBits(JSC::JSGlobalObject&, AlgorithmIdentifier&&, CryptoKey& baseKey, std::optional<unsigned> length, Ref<DeferredPromise>&&);
     void importKey(JSC::JSGlobalObject&, KeyFormat, KeyDataVariant&&, AlgorithmIdentifier&&, bool extractable, Vector<CryptoKeyUsage>&&, Ref<DeferredPromise>&&);
     void exportKey(KeyFormat, CryptoKey&, Ref<DeferredPromise>&&);
     void wrapKey(JSC::JSGlobalObject&, KeyFormat, CryptoKey&, CryptoKey& wrappingKey, AlgorithmIdentifier&& wrapAlgorithm, Ref<DeferredPromise>&&);
     void unwrapKey(JSC::JSGlobalObject&, KeyFormat, BufferSource&& wrappedKey, CryptoKey& unwrappingKey, AlgorithmIdentifier&& unwrapAlgorithm, AlgorithmIdentifier&& unwrappedKeyAlgorithm, bool extractable, Vector<CryptoKeyUsage>&&, Ref<DeferredPromise>&&);
+    void getPublicKey(JSC::JSGlobalObject&, CryptoKey&, Vector<CryptoKeyUsage>&&, Ref<DeferredPromise>&&);
+    void encapsulateBits(JSC::JSGlobalObject&, AlgorithmIdentifier&&, CryptoKey& encapsulationKey, Ref<DeferredPromise>&&);
+    void encapsulateKey(JSC::JSGlobalObject&, AlgorithmIdentifier&&, CryptoKey& encapsulationKey, AlgorithmIdentifier&& sharedKeyAlgorithm, bool extractable, Vector<CryptoKeyUsage>&&, Ref<DeferredPromise>&&);
+    void decapsulateBits(JSC::JSGlobalObject&, AlgorithmIdentifier&&, CryptoKey& decapsulationKey, BufferSource&& ciphertext, Ref<DeferredPromise>&&);
+    void decapsulateKey(JSC::JSGlobalObject&, AlgorithmIdentifier&&, CryptoKey& decapsulationKey, BufferSource&& ciphertext, AlgorithmIdentifier&& sharedKeyAlgorithm, bool extractable, Vector<CryptoKeyUsage>&&, Ref<DeferredPromise>&&);
+
+    // https://wicg.github.io/webcrypto-modern-algos/#SubtleCrypto-method-supports
+    static bool supports(JSC::JSGlobalObject&, const String& operation, AlgorithmIdentifier&&, JSC::JSValue lengthOrAdditionalAlgorithm);
+
+    // KeyObject.prototype.toCryptoKey needs Node's "importKey" normalization
+    // from outside this file.
+    static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeImportParameters(JSC::JSGlobalObject&, AlgorithmIdentifier&&);
+
+    // KeyObject.prototype.toCryptoKey also reuses the usage-bitmap mapping.
+    static CryptoKeyUsageBitmap toCryptoKeyUsageBitmap(const Vector<CryptoKeyUsage>&);
 
 private:
     explicit SubtleCrypto(ScriptExecutionContext*);

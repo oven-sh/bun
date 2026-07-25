@@ -33,13 +33,14 @@ public:
     JSValue createModuleRecord(JSGlobalObject* globalObject);
     void ensureModuleRecord(JSGlobalObject* globalObject);
     bool hasModuleRecord() const { return !!m_moduleRecord; }
+    JSModuleRecord* moduleRecordIfExists() const { return m_moduleRecord.get(); }
     AbstractModuleRecord* moduleRecord(JSGlobalObject* globalObject);
     JSValue link(JSGlobalObject* globalObject, JSArray* specifiers, JSArray* moduleNatives, JSValue scriptFetcher);
     JSValue instantiate(JSGlobalObject* globalObject);
     RefPtr<CachedBytecode> bytecode(JSGlobalObject* globalObject);
     JSUint8Array* cachedData(JSGlobalObject* globalObject);
-    JSC::Exception* evaluationException() const { return m_evaluationException.get(); }
     void initializeImportMeta(JSGlobalObject* globalObject);
+    bool hasTopLevelAwait() const { return m_hasTopLevelAwait; }
 
     const SourceCode& sourceCode() const { return m_sourceCode; }
     ModuleProgramExecutable* cachedExecutable() const { return m_cachedExecutable.get(); }
@@ -52,10 +53,11 @@ private:
     WriteBarrier<JSArray> m_moduleRequestsArray;
     WriteBarrier<ModuleProgramExecutable> m_cachedExecutable;
     WriteBarrier<JSUint8Array> m_cachedBytecodeBuffer;
-    WriteBarrier<JSC::Exception> m_evaluationException;
     WriteBarrier<Unknown> m_initializeImportMeta;
     RefPtr<CachedBytecode> m_bytecode;
     SourceCode m_sourceCode;
+    bool m_hasTopLevelAwait { false };
+    bool m_linkCalled { false };
 
     NodeVMSourceTextModule(JSC::VM& vm, JSC::Structure* structure, WTF::String identifier, JSValue context, SourceCode sourceCode, JSValue moduleWrapper, JSValue initializeImportMeta)
         : Base(vm, structure, WTF::move(identifier), context, moduleWrapper)

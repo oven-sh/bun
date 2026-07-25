@@ -9,8 +9,9 @@
 //! here, and the crate-local body re-enters `bun_install` via the public
 //! `update_package_json_and_install_and_cli`.
 
+use crate::Error;
 use bun_bundler::bundle_v2::{DependenciesScanner, DependenciesScannerResult};
-use bun_core::{Error, Global, Output, err};
+use bun_core::{Global, Output};
 use bun_install::package_manager_real::command_line_arguments::CommandLineArguments;
 use bun_install::package_manager_real::{Subcommand, update_package_json_and_install_and_cli};
 
@@ -24,7 +25,13 @@ pub fn update_package_json_and_install_catch_error(
 ) -> Result<(), Error> {
     match update_package_json_and_install(ctx, subcommand) {
         Ok(()) => Ok(()),
-        Err(e) if e == err!("InstallFailed") || e == err!("InvalidPackageJSON") => {
+        Err(
+            crate::Error::InstallFailed
+            | crate::Error::InvalidPackageJSON
+            | crate::Error::Install(
+                bun_install::Error::InstallFailed | bun_install::Error::InvalidPackageJSON,
+            ),
+        ) => {
             // SAFETY: `Cli::LOG_` is initialised once during single-threaded startup in
             // `Cli::start()` before any command (including this one) is dispatched; we
             // are on the single CLI thread in the install error path and no other
@@ -62,7 +69,7 @@ pub fn update_package_json_and_install(ctx: Context, subcommand: Subcommand) -> 
             fn on_analyze(
                 &mut self,
                 result: &mut DependenciesScannerResult<'_, '_>,
-            ) -> Result<(), Error> {
+            ) -> Result<(), bun_bundler::Error> {
                 let this = self;
                 // TODO: add separate argument that makes it so positionals[1..] is not done and instead the positionals are passed
                 //
@@ -104,7 +111,8 @@ pub fn update_package_json_and_install(ctx: Context, subcommand: Subcommand) -> 
                 // the remainder of the process.
                 let ctx = unsafe { &mut *this.ctx };
 
-                update_package_json_and_install_and_cli(ctx, this.subcommand, cli.clone())?;
+                update_package_json_and_install_and_cli(ctx, this.subcommand, cli.clone())
+                    .map_err(crate::Error::from)?;
 
                 Global::exit(0);
             }
@@ -132,5 +140,5 @@ pub fn update_package_json_and_install(ctx: Context, subcommand: Subcommand) -> 
         return Ok(());
     }
 
-    update_package_json_and_install_and_cli(ctx, subcommand, cli)
+    update_package_json_and_install_and_cli(ctx, subcommand, cli).map_err(Into::into)
 }

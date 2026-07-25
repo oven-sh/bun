@@ -126,8 +126,7 @@ pub enum Specifier {
 
 // `generics::CssEql` so the `Option<Specifier>` blanket (used by
 // `DashedIdentReference::eql` in values/ident.rs) resolves. Forwards to the
-// inherent `eql` below — same shape the old data-only stub in `values/mod.rs`
-// carried before this leaf un-gated.
+// inherent `eql` below.
 impl crate::generics::CssEql for Specifier {
     #[inline]
     fn eql(&self, other: &Self) -> bool {

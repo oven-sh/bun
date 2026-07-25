@@ -48,6 +48,91 @@ macro_rules! unary_predicate_matcher {
     };
 }
 
+/// `expect_throw!(this, global, signature, "<template>", args...)` — matcher
+/// failure sink. Applies the `<tag>` → ANSI/strip rewrite to the *template
+/// literal* at compile time via `pretty_fmt!`, then substitutes the positional
+/// `args` via `format_args!`. User data in `args` (and in any `{named}`
+/// captures) is never scanned for `<…>` markup, so angle-bracketed strings in
+/// Received/Expected render verbatim.
+///
+/// Each `$arg` is evaluated once, bound by `&` into a `match` tuple, and the
+/// bound idents feed both colour branches; side-effecting args are not
+/// duplicated. The template must use positional `{}` only — `format_args!`
+/// refuses implicit `{name}` captures when the template literal comes from a
+/// macro expansion.
+///
+/// Exported at the crate root (like `unary_predicate_matcher!`) so both
+/// `expect_core` (expect.rs) and the `expect/to*.rs` submodules can invoke it
+/// without a module cycle; re-exported as `throw!` inside the `expect` façade.
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __expect_throw_dispatch {
+    // peel: pair next arg with next pool name
+    (@go $this:expr, $global:expr, $sig:expr, $fmt:expr;
+        bound = [$(($n:ident $v:expr))*];
+        args  = [$a:expr, $($rest:expr,)*];
+        pool  = [$name:ident $($pool:ident)*]
+    ) => {
+        $crate::__expect_throw_dispatch!(@go $this, $global, $sig, $fmt;
+            bound = [$(($n $v))* ($name $a)];
+            args  = [$($rest,)*];
+            pool  = [$($pool)*]
+        )
+    };
+    // base: no positional args left. `$this`/`$global` are always plain idents
+    // at every call site (this/self, global/global_this); duplicating them
+    // across the two colour branches is side-effect-free and avoids moving a
+    // `PostMatchGuard`/`scopeguard` before its natural scope end.
+    (@go $this:expr, $global:expr, $sig:expr, $fmt:expr;
+        bound = [$(($n:ident $v:expr))*];
+        args  = [];
+        pool  = [$($pool:ident)*]
+    ) => {
+        match ($sig, $( &($v), )*) {
+            (__sig, $($n,)*) => {
+                if ::bun_core::Output::enable_ansi_colors_stderr() {
+                    ($this).throw_rendered(
+                        $global, __sig,
+                        ::core::format_args!(::bun_core::pretty_fmt!($fmt, true) $(, $n)*),
+                    )
+                } else {
+                    ($this).throw_rendered(
+                        $global, __sig,
+                        ::core::format_args!(::bun_core::pretty_fmt!($fmt, false) $(, $n)*),
+                    )
+                }
+            }
+        }
+    };
+}
+
+#[macro_export]
+macro_rules! expect_throw {
+    ($this:expr, $global:expr, $sig:expr, $fmt:expr $(, $arg:expr)* $(,)?) => {
+        $crate::__expect_throw_dispatch!(@go $this, $global, $sig, $fmt;
+            bound = [];
+            args  = [$($arg,)*];
+            pool  = [__p0 __p1 __p2 __p3 __p4 __p5 __p6 __p7
+                     __p8 __p9 __p10 __p11 __p12 __p13 __p14 __p15]
+        )
+    };
+}
+
+/// `throw_pretty_static!(global, "<template>")` — throw a colour-marked error
+/// whose template has no user-data substitutions. The `<tag>` → ANSI rewrite
+/// is done at compile time for both colour states; nothing is scanned at
+/// runtime. Replacement for `global.throw_pretty(format_args!("…"))`.
+#[macro_export]
+macro_rules! throw_pretty_static {
+    ($global:expr, $fmt:expr $(,)?) => {
+        if ::bun_core::Output::enable_ansi_colors_stderr() {
+            ($global).throw(::core::format_args!(::bun_core::pretty_fmt!($fmt, true)))
+        } else {
+            ($global).throw(::core::format_args!(::bun_core::pretty_fmt!($fmt, false)))
+        }
+    };
+}
+
 cfg_jsc! {
     #[path = "bun_test.rs"]       pub mod bun_test;
     #[path = "Collection.rs"]     pub mod collection;
@@ -73,11 +158,6 @@ cfg_jsc! {
 }
 
 cfg_jsc! {
-    pub mod harness {
-        #[path = "fixtures.rs"] pub mod fixtures;
-        #[path = "recover.rs"]  pub mod recover;
-    }
-
     pub mod timers {
         #[path = "FakeTimers.rs"] pub mod fake_timers;
         pub use fake_timers::FakeTimers;
@@ -112,27 +192,8 @@ pub mod expect {
         Expect::get_signature(matcher_name, args, not)
     }
 
-    /// Const-context twin of `get_signature`. Rust
-    /// has no const-fn string concat, so call sites that need a `&'static
-    /// str` constant (e.g. inside `const_format::concatcp!`) use this macro
-    /// instead. `use super::get_signature;` imports both the fn (value
-    /// namespace) and this macro (macro namespace), so runtime callers keep
-    /// `get_signature(...)` and const callers write `get_signature!(...)`.
-    macro_rules! __get_signature {
-        ($matcher:expr, $args:expr, true $(,)?) => {
-            ::const_format::concatcp!(
-                "<d>expect(<r><red>received<r><d>).<r>not<d>.<r>",
-                $matcher, "<d>(<r>", $args, "<d>)<r>",
-            )
-        };
-        ($matcher:expr, $args:expr, false $(,)?) => {
-            ::const_format::concatcp!(
-                "<d>expect(<r><red>received<r><d>).<r>",
-                $matcher, "<d>(<r>", $args, "<d>)<r>",
-            )
-        };
-    }
-    pub(crate) use __get_signature as get_signature;
+    // Matcher failure sink — see `expect_throw!` at the top of this file.
+    pub(crate) use crate::expect_throw as throw;
 
     // ── call-convention adapters over `bun_jsc` inherents ────────────
     // The matcher modules were written against a slightly different
@@ -312,28 +373,17 @@ pub mod expect {
     pub enum BigIntCompare { LessThan, Equal, GreaterThan, Undefined }
 
     /// Two-argument `throw_*` adapters — matcher modules call
-    /// `global.throw_pretty(FMT, format_args!(FMT, ..))`.
+    /// `global.throw2(FMT, format_args!(FMT, ..))`.
     /// Rust's `Arguments<'_>` already encloses the format string,
     /// so the leading `&str` is redundant; these shims drop it and forward to
-    /// the bun_jsc inherents (`throw_pretty` runs the `<r>/<d>` → ANSI/strip
-    /// pass at runtime; `throw`/`throw_invalid_arguments` do not).
+    /// the bun_jsc inherents.
     pub trait JSGlobalObjectTestExt {
-        fn throw_pretty(&self, fmt: &str, args: core::fmt::Arguments<'_>) -> JsError;
         fn throw2(&self, fmt: &str, args: core::fmt::Arguments<'_>) -> JsError;
-        fn throw_invalid_arguments2(&self, fmt: &str, args: core::fmt::Arguments<'_>) -> JsError;
     }
     impl JSGlobalObjectTestExt for JSGlobalObject {
         #[inline]
-        fn throw_pretty(&self, _fmt: &str, args: core::fmt::Arguments<'_>) -> JsError {
-            JSGlobalObject::throw_pretty(self, args)
-        }
-        #[inline]
         fn throw2(&self, _fmt: &str, args: core::fmt::Arguments<'_>) -> JsError {
             self.throw(args)
-        }
-        #[inline]
-        fn throw_invalid_arguments2(&self, _fmt: &str, args: core::fmt::Arguments<'_>) -> JsError {
-            self.throw_invalid_arguments(args)
         }
     }
 
@@ -356,15 +406,15 @@ pub mod expect {
     pub(super) enum OrderingRelation { Gt, Ge, Lt, Le }
 
     impl OrderingRelation {
-        /// Operator glyph pre-escaped for `throw_pretty` (`<`/`>` would
-        /// otherwise be parsed as colour-tag delimiters).
+        /// Operator glyph for the failure message. Substituted as a positional
+        /// arg (never scanned for `<tag>` markup), so `<`/`>` are literal.
         #[inline]
         fn glyph(self) -> &'static str {
             match self {
-                Self::Gt => r"\>",
-                Self::Ge => r"\>=",
-                Self::Lt => r"\<",
-                Self::Le => r"\<=",
+                Self::Gt => ">",
+                Self::Ge => ">=",
+                Self::Lt => "<",
+                Self::Le => "<=",
             }
         }
         /// number×number arm.
@@ -418,8 +468,7 @@ pub mod expect {
             let this = scopeguard::guard(self, |this| this.post_match(global));
 
             let this_value = frame.this();
-            let args_buf = frame.arguments_old::<1>();
-            let arguments: &[JSValue] = args_buf.slice();
+            let arguments: &[JSValue] = frame.arguments();
 
             if arguments.is_empty() {
                 return Err(global.throw_invalid_arguments(format_args!(
@@ -463,20 +512,16 @@ pub mod expect {
             let glyph = rel.glyph();
             let signature = Expect::get_signature(name, "<green>expected<r>", not);
             if not {
-                return this.throw(
-                    global,
-                    signature,
-                    format_args!(
-                        "\n\nExpected: not {glyph} <green>{expected_fmt}<r>\nReceived: <red>{value_fmt}<r>\n"
-                    ),
+                return throw!(
+                    this, global, signature,
+                    "\n\nExpected: not {} <green>{}<r>\nReceived: <red>{}<r>\n",
+                    glyph, expected_fmt, value_fmt,
                 );
             }
-            this.throw(
-                global,
-                signature,
-                format_args!(
-                    "\n\nExpected: {glyph} <green>{expected_fmt}<r>\nReceived: <red>{value_fmt}<r>\n"
-                ),
+            throw!(
+                this, global, signature,
+                "\n\nExpected: {} <green>{}<r>\nReceived: <red>{}<r>\n",
+                glyph, expected_fmt, value_fmt,
             )
         }
     }
@@ -493,54 +538,28 @@ pub mod expect {
         fn with_quote_strings(mut self, b: bool) -> Self { self.quote_strings = b; self }
     }
 
-    // ── matcher modules (75) ──────────────────────────────────────────
+    // ── matcher modules ───────────────────────────────────────────────
     // Each file is `impl Expect { pub fn to_*(..) }` or a free
     // `#[bun_jsc::host_fn(method)] pub fn to_*(this: &mut Expect, ..)`.
-    // Bodies are real (un-gated); they exercise the full bun_jsc::JSValue
-    // method surface (is_null/is_string/deep_equals/to_fmt/array_iterator
-    // /get_length/...). Any method gap surfaces here when `cfg_jsc!` is
-    // flipped.
+    // Trivial one-liners live together in `simple_matchers`.
     macro_rules! matchers {
         ( $( $file:literal => $mod:ident ),* $(,)? ) => {
             $( #[path = $file] pub mod $mod; )*
         };
     }
     matchers! {
+        "simple_matchers.rs"                    => simple_matchers,
         "toBe.rs"                               => to_be,
-        "toBeArray.rs"                          => to_be_array,
         "toBeArrayOfSize.rs"                    => to_be_array_of_size,
-        "toBeBoolean.rs"                        => to_be_boolean,
         "toBeCloseTo.rs"                        => to_be_close_to,
-        "toBeDate.rs"                           => to_be_date,
-        "toBeDefined.rs"                        => to_be_defined,
         "toBeEmpty.rs"                          => to_be_empty,
         "toBeEmptyObject.rs"                    => to_be_empty_object,
         "toBeEven.rs"                           => to_be_even,
-        "toBeFalse.rs"                          => to_be_false,
-        "toBeFalsy.rs"                          => to_be_falsy,
-        "toBeFinite.rs"                         => to_be_finite,
-        "toBeFunction.rs"                       => to_be_function,
-        "toBeGreaterThan.rs"                    => to_be_greater_than,
-        "toBeGreaterThanOrEqual.rs"             => to_be_greater_than_or_equal,
         "toBeInstanceOf.rs"                     => to_be_instance_of,
-        "toBeInteger.rs"                        => to_be_integer,
-        "toBeLessThan.rs"                       => to_be_less_than,
-        "toBeLessThanOrEqual.rs"                => to_be_less_than_or_equal,
-        "toBeNaN.rs"                            => to_be_nan,
-        "toBeNegative.rs"                       => to_be_negative,
-        "toBeNil.rs"                            => to_be_nil,
-        "toBeNull.rs"                           => to_be_null,
-        "toBeNumber.rs"                         => to_be_number,
         "toBeObject.rs"                         => to_be_object,
         "toBeOdd.rs"                            => to_be_odd,
         "toBeOneOf.rs"                          => to_be_one_of,
-        "toBePositive.rs"                       => to_be_positive,
-        "toBeString.rs"                         => to_be_string,
-        "toBeSymbol.rs"                         => to_be_symbol,
-        "toBeTrue.rs"                           => to_be_true,
-        "toBeTruthy.rs"                         => to_be_truthy,
         "toBeTypeOf.rs"                         => to_be_type_of,
-        "toBeUndefined.rs"                      => to_be_undefined,
         "toBeValidDate.rs"                      => to_be_valid_date,
         "toBeWithin.rs"                         => to_be_within,
         "toContain.rs"                          => to_contain,
@@ -553,7 +572,6 @@ pub mod expect {
         "toContainKeys.rs"                      => to_contain_keys,
         "toContainValue.rs"                     => to_contain_value,
         "toContainValues.rs"                    => to_contain_values,
-        "toEndWith.rs"                          => to_end_with,
         "toEqual.rs"                            => to_equal,
         "toEqualIgnoringWhitespace.rs"          => to_equal_ignoring_whitespace,
         "toHaveBeenCalled.rs"                   => to_have_been_called,
@@ -567,16 +585,13 @@ pub mod expect {
         "toHaveNthReturnedWith.rs"              => to_have_nth_returned_with,
         "toHaveProperty.rs"                     => to_have_property,
         "toHaveReturned.rs"                     => to_have_returned,
-        "toHaveReturnedTimes.rs"                => to_have_returned_times,
         "toHaveReturnedWith.rs"                 => to_have_returned_with,
-        "toInclude.rs"                          => to_include,
         "toIncludeRepeated.rs"                  => to_include_repeated,
         "toMatch.rs"                            => to_match,
         "toMatchInlineSnapshot.rs"              => to_match_inline_snapshot,
         "toMatchObject.rs"                      => to_match_object,
         "toMatchSnapshot.rs"                    => to_match_snapshot,
         "toSatisfy.rs"                          => to_satisfy,
-        "toStartWith.rs"                        => to_start_with,
         "toStrictEqual.rs"                      => to_strict_equal,
         "toThrow.rs"                            => to_throw,
         "toThrowErrorMatchingInlineSnapshot.rs" => to_throw_error_matching_inline_snapshot,
@@ -587,17 +602,11 @@ pub mod expect {
 
 // public surface for `crate::test_runner::*` consumers
 cfg_jsc! {
-    pub use bun_test::BunTest;
-    pub use diff_format::DiffFormatter;
     pub use done_callback::DoneCallback;
-    pub use execution::Execution;
     pub use expect::{
         Expect, ExpectAny, ExpectAnything, ExpectArrayContaining, ExpectCloseTo,
         ExpectCustomAsymmetricMatcher, ExpectMatcherContext, ExpectMatcherUtils,
         ExpectObjectContaining, ExpectStatic, ExpectStringContaining, ExpectStringMatching,
-        ExpectTypeOf, Flags as ExpectFlags,
+        ExpectTypeOf,
     };
-    pub use jest::Jest;
-    pub use pretty_format::JestPrettyFormat;
-    pub use snapshot::Snapshots;
 }

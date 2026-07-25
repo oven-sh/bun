@@ -6,13 +6,12 @@
 //! inside of `js_parser`
 
 use core::mem::MaybeUninit;
-use core::ptr::NonNull;
 
 use bun_alloc::Arena as Bump;
 
 use bun_alloc::AllocError as OOM;
 use bun_ast::{ImportKind, ImportRecord};
-use bun_ast::{Loc, Log, Range, Source};
+use bun_ast::{Loc, Range, Source};
 use bun_collections::VecExt;
 use bun_core::Output;
 use bun_core::{MutableString, strings};
@@ -29,7 +28,6 @@ use bun_ast::{
     NamedExport, Part, PartSymbolUseMap, Scope, Stmt, Symbol,
 };
 use bun_ast::{E, G, S};
-use bun_js_parser as js_parser;
 
 use crate::options;
 
@@ -46,9 +44,7 @@ pub struct AstBuilder<'a, 'bump> {
     pub named_imports: NamedImports,
     pub named_exports: NamedExports,
     pub import_records_for_current_part: Vec<u32>,
-    pub export_star_import_records: Vec<u32>,
     pub current_scope: *mut Scope,
-    pub log: Log,
     pub module_ref: Ref,
     pub declared_symbols: DeclaredSymbolList,
     /// When set, codegen is altered
@@ -62,18 +58,10 @@ pub struct AstBuilder<'a, 'bump> {
 // AstBuilder emits; if `ImportScanner` ever grows a host trait in
 // `bun_js_parser`, these stubs are the surface it would formalize.
 impl<'a, 'bump> AstBuilder<'a, 'bump> {
-    // stub for ImportScanner duck typing
-    pub fn import_items_for_namespace_get(
-        &self,
-        _ref: Ref,
-    ) -> Option<&js_parser::parser::ImportItemForNamespaceMap> {
-        None
-    }
-
     pub fn init(bump: &'bump Bump, source: &'a Source, hot_reloading: bool) -> Result<Self, OOM> {
         let scope: *mut Scope = bump.alloc(Scope {
             kind: ScopeKind::Entry,
-            label_ref: None,
+            label_ref: Ref::NONE,
             parent: None,
             ..Default::default()
         });
@@ -89,8 +77,6 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
             import_records_for_current_part: Vec::new(),
             named_imports: Default::default(),
             named_exports: Default::default(),
-            log: Log::init(),
-            export_star_import_records: Vec::new(),
             declared_symbols: Default::default(),
             hot_reloading,
             module_ref: Ref::NONE,  // overwritten below
@@ -120,29 +106,6 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
         // SAFETY: see fn doc — non-null bump-arena slot, exclusively borrowed
         // through `&mut self`.
         unsafe { &mut *self.current_scope }
-    }
-
-    pub fn push_scope(&mut self, kind: ScopeKind) -> Result<*mut Scope, OOM> {
-        self.scopes.reserve(1);
-        self.current_scope_mut().children.ensure_unused_capacity(1);
-        let scope: *mut Scope = self.bump.alloc(Scope {
-            kind,
-            label_ref: None,
-            parent: NonNull::new(self.current_scope).map(bun_ast::StoreRef::from),
-            ..Default::default()
-        });
-        // `scope` came from `bump.alloc`, so it is non-null and distinct from
-        // `current_scope` (fresh allocation).
-        self.current_scope_mut()
-            .children
-            .append_assume_capacity(NonNull::new(scope).expect("bump alloc non-null").into());
-        self.scopes.push(self.current_scope);
-        self.current_scope = scope;
-        Ok(scope)
-    }
-
-    pub fn pop_scope(&mut self) {
-        self.current_scope = self.scopes.pop().unwrap();
     }
 
     pub fn new_symbol(&mut self, kind: SymbolKind, identifier: &[u8]) -> Result<Ref, OOM> {
@@ -176,7 +139,6 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
             tag: Default::default(),
             loader: None,
             source_index: Default::default(),
-            module_id: 0,
             original_path: b"",
             flags: Default::default(),
         });
@@ -211,12 +173,13 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
             let import_id: &[u8] = *import_id; // must be given '[N][]const u8'
             let ref_ = self.new_symbol(SymbolKind::Import, import_id)?;
             if self.hot_reloading {
-                self.get_symbol(ref_).namespace_alias = Some(G::NamespaceAlias {
-                    namespace_ref,
-                    alias: bun_ast::StoreStr::new(import_id),
-                    import_record_index: record,
-                    ..Default::default()
-                });
+                self.get_symbol(ref_).namespace_alias =
+                    Some(bun_alloc::ast_box(G::NamespaceAlias {
+                        namespace_ref,
+                        alias: bun_ast::StoreStr::new(import_id),
+                        import_record_index: record,
+                        ..Default::default()
+                    }));
             }
             out_ref.write(self.new_expr(E::ImportIdentifier {
                 ref_,
@@ -225,7 +188,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
             *clause = ClauseItem {
                 name: LocRef {
                     loc: Loc::EMPTY,
-                    ref_: Some(ref_),
+                    ref_,
                 },
                 original_name: bun_ast::StoreStr::new(import_id),
                 alias: bun_ast::StoreStr::new(import_id),
@@ -264,7 +227,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
     pub fn new_external_symbol(&mut self, name: &[u8]) -> Result<Ref, OOM> {
         let ref_ = self.new_symbol(SymbolKind::Other, name)?;
         let sym = self.get_symbol(ref_);
-        sym.must_not_be_renamed = true;
+        sym.set_must_not_be_renamed(true);
         Ok(ref_)
     }
 
@@ -364,13 +327,13 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
                         self.import_records_for_current_part
                             .push(st.import_record_index);
                         for item in st.items.slice() {
-                            let ref_ = item.name.ref_.expect("infallible: ref bound");
+                            let ref_ = item.name.ref_;
                             self.named_imports.put(
                                 ref_,
                                 bun_ast::NamedImport {
                                     alias: Some(item.alias),
-                                    alias_loc: Some(item.alias_loc),
-                                    namespace_ref: Some(st.namespace_ref),
+                                    alias_loc: item.alias_loc,
+                                    namespace_ref: st.namespace_ref,
                                     import_record_index: st.import_record_index,
                                     alias_is_star: false,
                                     is_exported: false,
@@ -412,7 +375,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
                     }
                     bun_ast::StmtData::SExportDefault(st) => {
                         // ImportScanner: recordExport("default", default_name.ref)
-                        let default_ref = st.default_name.ref_.expect("infallible: ref bound");
+                        let default_ref = st.default_name.ref_;
                         self.record_export(st.default_name.loc, b"default", default_ref)?;
                         // convertStmt: AstBuilder only emits the `.expr` arm
                         // (`registerClientReference(...)`), which is not
@@ -517,13 +480,13 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
                         self.import_records_for_current_part
                             .push(st.import_record_index);
                         for item in st.items.slice() {
-                            let ref_ = item.name.ref_.expect("infallible: ref bound");
+                            let ref_ = item.name.ref_;
                             self.named_imports.put(
                                 ref_,
                                 bun_ast::NamedImport {
                                     alias: Some(item.alias),
-                                    alias_loc: Some(item.name.loc),
-                                    namespace_ref: Some(st.namespace_ref),
+                                    alias_loc: item.name.loc,
+                                    namespace_ref: st.namespace_ref,
                                     import_record_index: st.import_record_index,
                                     alias_is_star: false,
                                     is_exported: false,
@@ -539,7 +502,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
                         }
                     }
                     bun_ast::StmtData::SExportDefault(st) => {
-                        let default_ref = st.default_name.ref_.expect("infallible: ref bound");
+                        let default_ref = st.default_name.ref_;
                         self.record_export(st.default_name.loc, b"default", default_ref)?;
                     }
                     _ => {}
@@ -645,29 +608,6 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
             }
         }
     }
-
-    pub fn ignore_usage(&mut self, _ref: Ref) {}
-
-    pub fn panic(&self, args: core::fmt::Arguments<'_>) -> ! {
-        Output::panic(args);
-    }
-
-    /// Builds the `module.exports` member expression.
-    pub fn module_exports(&self, loc: Loc) -> Expr {
-        self.new_expr(E::Dot {
-            name: b"exports".into(),
-            name_loc: loc,
-            target: self.new_expr(E::Identifier {
-                ref_: self.module_ref,
-                ..Default::default()
-            }),
-            ..Default::default()
-        })
-    }
 }
 
 use bun_ast::Ref;
-
-pub use crate::DeferredBatchTask::DeferredBatchTask;
-pub use crate::ParseTask;
-pub use crate::ThreadPool;

@@ -14,10 +14,9 @@ impl TestingAPIs {
     // `fn_name(g, f)` call, so it cannot wrap an associated fn. The C-ABI
     // shim is emitted at module scope below (`__jsc_host_*`).
     pub fn make_diff(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        let arguments_ = frame.arguments_old::<2>();
         // SAFETY: `bun_vm()` never returns null for a Bun-owned global; the VM
         // outlives this call frame.
-        let mut arguments = ArgumentsSlice::init(global.bun_vm(), arguments_.slice());
+        let mut arguments = ArgumentsSlice::init(global.bun_vm(), frame.arguments());
 
         let Some(old_folder_jsval) = arguments.next_eat() else {
             return Err(global.throw(format_args!("expected 2 strings")));
@@ -74,10 +73,9 @@ impl TestingAPIs {
 
     /// Used in JS tests, see `internal-for-testing.ts` and patch tests.
     pub fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        let arguments_ = frame.arguments_old::<2>();
         // SAFETY: `bun_vm()` never returns null for a Bun-owned global; the VM
         // outlives this call frame.
-        let mut arguments = ArgumentsSlice::init(global.bun_vm(), arguments_.slice());
+        let mut arguments = ArgumentsSlice::init(global.bun_vm(), frame.arguments());
 
         let Some(patchfile_src_js) = arguments.next_eat() else {
             return Err(global.throw(format_args!(
@@ -91,9 +89,11 @@ impl TestingAPIs {
             Ok(p) => p,
             Err(e) => {
                 if e == ParseErr::hunk_header_integrity_check_failed {
-                    return Err(global.throw_error(e.into(), "this indicates either that the supplied patch file was incorrect, or there is a bug in Bun. Please check your .patch file, or open a GitHub issue :)"));
+                    return Err(global.throw_error(bun_patch::Error::from(e), "this indicates either that the supplied patch file was incorrect, or there is a bug in Bun. Please check your .patch file, or open a GitHub issue :)"));
                 } else {
-                    return Err(global.throw_error(e.into(), "failed to parse patch file"));
+                    return Err(
+                        global.throw_error(bun_patch::Error::from(e), "failed to parse patch file")
+                    );
                 }
             }
         };
@@ -110,10 +110,9 @@ impl TestingAPIs {
     }
 
     pub fn parse_apply_args(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<ApplyArgs> {
-        let arguments_ = frame.arguments_old::<2>();
         // SAFETY: `bun_vm()` never returns null for a Bun-owned global; the VM
         // outlives this call frame.
-        let mut arguments = ArgumentsSlice::init(global.bun_vm(), arguments_.slice());
+        let mut arguments = ArgumentsSlice::init(global.bun_vm(), frame.arguments());
 
         let Some(patchfile_js) = arguments.next_eat() else {
             return Err(global.throw(format_args!("apply: expected at least 1 argument, got 0")));
@@ -166,7 +165,7 @@ impl TestingAPIs {
             }
 
             drop(patchfile_src);
-            return Err(global.throw_error(e.into(), "failed to parse patchfile"));
+            return Err(global.throw_error(bun_patch::Error::from(e), "failed to parse patchfile"));
         }
 
         Ok(ApplyArgs {

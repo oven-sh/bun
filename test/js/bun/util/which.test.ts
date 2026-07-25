@@ -1,7 +1,8 @@
 import { $, which } from "bun";
+import { dlopen, ptr } from "bun:ffi";
 import { expect, test } from "bun:test";
-import { isIntelMacOS, isWindows, tempDirWithFiles, tmpdirSync } from "harness";
-import { chmodSync, mkdirSync, realpathSync, rmdirSync, rmSync } from "node:fs";
+import { isArm64, isIntelMacOS, isWindows, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
+import { chmodSync, existsSync, mkdirSync, realpathSync, rmdirSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 
@@ -44,6 +45,94 @@ if (isWindows) {
     expect(which(exe, { PATH: dir + ";C:\\Windows\\system32" })).toBe(process.execPath);
     expect(which(exe, { PATH: dir })).toBe(process.execPath);
   });
+
+  // Non-name-surrogate reparse tags (APPEXECLINK) must be treated as existing;
+  // only name surrogates (symlinks, mount points) are followed. bun:ffi is
+  // unavailable on Windows arm64.
+  test.skipIf(isArm64)("which resolves Windows app-execution aliases (#17328)", () => {
+    using dir = tempDir("which-appexeclink", { "real.exe": "" });
+    const base = String(dir);
+    const alias = join(base, "myalias.exe");
+    const dangling = join(base, "dangling.exe");
+    const goodlink = join(base, "goodlink.exe");
+
+    makeAppExecLink(alias);
+    symlinkSync(join(base, "no-such-target.exe"), dangling, "file");
+    symlinkSync(join(base, "real.exe"), goodlink, "file");
+
+    expect({
+      which_bare: which("myalias", { PATH: base }),
+      which_ext: which("myalias.exe", { PATH: base }),
+      which_dangling: which("dangling.exe", { PATH: base }),
+      which_goodlink: which("goodlink.exe", { PATH: base }),
+      existsSync_alias: existsSync(alias),
+      existsSync_dangling: existsSync(dangling),
+      existsSync_goodlink: existsSync(goodlink),
+    }).toEqual({
+      which_bare: alias,
+      which_ext: alias,
+      which_dangling: null,
+      which_goodlink: goodlink,
+      existsSync_alias: true,
+      existsSync_dangling: false,
+      existsSync_goodlink: true,
+    });
+  });
+
+  function makeAppExecLink(target: string) {
+    const k32 = dlopen("kernel32.dll", {
+      CreateFileW: { args: ["ptr", "u32", "u32", "ptr", "u32", "u32", "ptr"], returns: "u64" },
+      DeviceIoControl: { args: ["u64", "u32", "ptr", "u32", "ptr", "u32", "ptr", "ptr"], returns: "i32" },
+      CloseHandle: { args: ["u64"], returns: "i32" },
+      GetLastError: { args: [], returns: "u32" },
+    });
+
+    const INVALID_HANDLE_VALUE = 0xffffffffffffffffn;
+    const GENERIC_WRITE = 0x40000000;
+    const SHARE_ALL = 0x7;
+    const CREATE_NEW = 1;
+    const FILE_FLAG_BACKUP_SEMANTICS = 0x02000000;
+    const FILE_FLAG_OPEN_REPARSE_POINT = 0x00200000;
+    const FSCTL_SET_REPARSE_POINT = 0x000900a4;
+    const IO_REPARSE_TAG_APPEXECLINK = 0x8000001b;
+
+    const wpath = Buffer.from(target + "\0", "utf16le");
+    const h = k32.symbols.CreateFileW(
+      ptr(wpath),
+      GENERIC_WRITE,
+      SHARE_ALL,
+      null,
+      CREATE_NEW,
+      FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
+      null,
+    );
+    if (h === INVALID_HANDLE_VALUE) throw new Error(`CreateFileW failed: ${k32.symbols.GetLastError()}`);
+
+    const strings = ["Bun.Test_1.0.0.0_x64__fake", "Bun.Test_fake!App", "C:\\Windows\\System32\\cmd.exe", "0"];
+    const strbuf = Buffer.concat(strings.map(s => Buffer.from(s + "\0", "utf16le")));
+    const dataLen = 4 + strbuf.length;
+    const buf = Buffer.alloc(8 + dataLen);
+    buf.writeUInt32LE(IO_REPARSE_TAG_APPEXECLINK, 0);
+    buf.writeUInt16LE(dataLen, 4);
+    buf.writeUInt16LE(0, 6);
+    buf.writeUInt32LE(3, 8);
+    strbuf.copy(buf, 12);
+
+    const bytesReturned = Buffer.alloc(4);
+    const ok = k32.symbols.DeviceIoControl(
+      h,
+      FSCTL_SET_REPARSE_POINT,
+      ptr(buf),
+      buf.length,
+      null,
+      0,
+      ptr(bytesReturned),
+      null,
+    );
+    const err = k32.symbols.GetLastError();
+    k32.symbols.CloseHandle(h);
+    if (!ok) throw new Error(`DeviceIoControl(FSCTL_SET_REPARSE_POINT) failed: ${err}`);
+  }
 } else {
   test("which", () => {
     {

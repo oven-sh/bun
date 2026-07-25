@@ -2,8 +2,6 @@
 //!
 //! Lives in `bun_ast` so `Ast` (which holds `Vec<ImportRecord>`) is
 //! self-contained and `bun_js_printer` can drop its `bun_js_parser` dep.
-//! `ImportKind::to_api()` lives in `bun_ast::ImportKindExt` (would
-//! back-edge into the schema crate).
 
 use crate::Range;
 use bun_paths::fs::Path;
@@ -22,11 +20,6 @@ pub struct ImportRecord {
     pub loader: Option<Loader>,
 
     pub source_index: Index,
-
-    /// Dead field: the only reader (`js_printer`'s `print_bundled_import`)
-    /// has been deleted. Always 0. Remove together with the `module_id: 0` initializers
-    /// in the parser/bundler/css constructors when those files are next touched.
-    pub module_id: u32,
 
     /// The original import specifier as written in source code (e.g., "./foo.js").
     /// This is preserved before resolution overwrites `path` with the resolved path.
@@ -77,17 +70,10 @@ bitflags::bitflags! {
         /// calling the "__reExport()" helper function
         const CALLS_RUNTIME_RE_EXPORT_FN = 1 << 6;
 
-        /// True for require calls like this: "try { require() } catch {}". In this
-        /// case we shouldn't generate an error if the path could not be resolved.
-        const IS_INSIDE_TRY_BODY = 1 << 7;
-
         /// If true, this was originally written as a bare "import 'file'" statement
         const WAS_ORIGINALLY_BARE_IMPORT = 1 << 8;
 
         const WAS_ORIGINALLY_REQUIRE = 1 << 9;
-
-        /// If a macro used <import>, it will be tracked here.
-        const WAS_INJECTED_BY_MACRO = 1 << 10;
 
         /// If true, this import can be removed if it's unused
         const IS_EXTERNAL_WITHOUT_SIDE_EFFECTS = 1 << 11;
@@ -134,22 +120,9 @@ pub enum Tag {
 
 impl Tag {
     #[inline]
-    pub fn is_runtime(self) -> bool {
-        self == Tag::Runtime
-    }
-
-    #[inline]
     pub fn is_internal(self) -> bool {
         (self as u8) >= (Tag::Runtime as u8)
     }
-}
-
-#[derive(Copy, Clone, Eq, PartialEq, Debug)]
-pub enum PrintMode {
-    Normal,
-    ImportPath,
-    Css,
-    NapiModule,
 }
 
 // NOTE: no `impl Default for ImportRecord` — `range`, `path`, `kind` have no

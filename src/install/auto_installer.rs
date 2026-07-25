@@ -182,10 +182,7 @@ impl hooks::AutoInstaller for PackageManager {
         self.lockfile
             .buffers
             .legacy_package_to_dependency_id(None, package_id)
-    }
-
-    fn lockfile_str<'a>(&'a self, s: &'a SemverString) -> &'a [u8] {
-        self.lockfile.str(s)
+            .map_err(Into::into)
     }
 
     // ── Lockfile writes ───────────────────────────────────────────────────
@@ -262,7 +259,7 @@ impl hooks::AutoInstaller for PackageManager {
                     // (and any already-written deps) before restoring length.
                     dependencies_list.truncate(dep_start);
                     string_builder.clamp();
-                    return Err(e);
+                    return Err(e.into());
                 }
             }
             dependencies = &mut dependencies[1..];
@@ -330,7 +327,8 @@ impl hooks::AutoInstaller for PackageManager {
         let path_buf: &mut bun_paths::PathBuffer =
             unsafe { &mut *buf.as_mut_ptr().cast::<bun_paths::PathBuffer>() };
         let r = resolution_from_hooks(resolution);
-        let out = directories::path_for_resolution(self, package_id, &r, path_buf)?;
+        let out = directories::path_for_resolution(self, package_id, &r, path_buf)
+            .map_err(bun_core::Error::from)?;
         Ok(&*out)
     }
 
@@ -364,7 +362,7 @@ impl hooks::AutoInstaller for PackageManager {
             crate::TaskCallbackContext::RootRequestId(ctx.root_request_id),
             patch_name_and_version_hash,
         )
-        .map_err(Into::into)
+        .map_err(|e| crate::Error::from(e).into())
     }
 
     fn resolve_from_disk_cache(
@@ -392,7 +390,7 @@ impl hooks::AutoInstaller for PackageManager {
             },
             enqueue::DependencyToEnqueue::Pending(id) => hooks::EnqueueResult::Pending(id),
             enqueue::DependencyToEnqueue::NotFound => hooks::EnqueueResult::NotFound,
-            enqueue::DependencyToEnqueue::Failure(e) => hooks::EnqueueResult::Failure(e),
+            enqueue::DependencyToEnqueue::Failure(e) => hooks::EnqueueResult::Failure(e.into()),
         }
     }
 
@@ -449,14 +447,18 @@ impl hooks::AutoInstaller for PackageManager {
 //   • `install` is `BundleOptions.install` (`?*Api.BunInstall`). The pointee is
 //     the CLI-owned `Box<BunInstall>` (process-lifetime), read-only.
 //   • `env` is the resolver's unwrapped `env_loader` (Transpiler-owned,
-//     process-lifetime). `init_with_runtime` stores it as
-//     `NonNull<Loader<'static>>`.
+//     process-lifetime). `init_with_runtime` stores it as `NonNull<Loader>`.
 #[unsafe(no_mangle)]
 pub(crate) unsafe fn __bun_resolver_init_package_manager(
     mut log: core::ptr::NonNull<bun_ast::Log>,
     install: Option<core::ptr::NonNull<crate::bun_schema::api::BunInstall>>,
-    mut env: core::ptr::NonNull<bun_dotenv::Loader<'static>>,
-) -> Result<core::ptr::NonNull<dyn hooks::AutoInstaller>, bun_core::Error> {
+    mut env: core::ptr::NonNull<bun_dotenv::Loader>,
+) -> core::result::Result<core::ptr::NonNull<dyn hooks::AutoInstaller>, bun_errno::SystemErrno> {
+    // ABI: the resolver-side `extern "Rust"` declaration names
+    // `bun_errno::SystemErrno` (both crates depend on bun_errno; carries the
+    // real errno name so resolve.test.ts sees `EACCES` not `Unexpected`). Keep
+    // both sides byte-identical or the `Result` layout diverges.
+    //
     // Idempotent.
     bun_http::http_thread::init(&Default::default());
 
@@ -466,7 +468,7 @@ pub(crate) unsafe fn __bun_resolver_init_package_manager(
         install.map(|p| unsafe { p.as_ref() });
     // SAFETY: caller guarantees `log` / `env` point at process-lifetime
     // Transpiler-owned storage with no aliasing `&mut` live across this call.
-    let (log_ref, env_ref): (&mut bun_ast::Log, &mut bun_dotenv::Loader<'static>) =
+    let (log_ref, env_ref): (&mut bun_ast::Log, &mut bun_dotenv::Loader) =
         unsafe { (log.as_mut(), env.as_mut()) };
 
     let pm: *mut PackageManager = crate::package_manager::init_with_runtime(
@@ -474,7 +476,18 @@ pub(crate) unsafe fn __bun_resolver_init_package_manager(
         bun_install,
         crate::package_manager::CommandLineArguments::default(),
         env_ref,
-    )?;
+    )
+    .map_err(|e| match e {
+        crate::Error::Sys(errno) => errno,
+        crate::Error::Resolver(bun_resolver::Error::Sys(errno)) => errno,
+        other => {
+            log_ref.add_zig_error_with_note(
+                other.name(),
+                format_args!("while initializing the auto-install package manager"),
+            );
+            bun_errno::SystemErrno::EIO
+        }
+    })?;
     // On success `init_with_runtime` returns the non-null `holder::RAW_PTR`
     // singleton; upcast to the trait object the resolver stores.
     Ok(core::ptr::NonNull::new(pm as *mut dyn hooks::AutoInstaller)

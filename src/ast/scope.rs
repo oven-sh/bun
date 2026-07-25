@@ -33,7 +33,7 @@ pub struct Scope {
     pub generated: AstVec<Ref>,
 
     // This is used to store the ref of the label symbol for ScopeLabel scopes.
-    pub label_ref: Option<Ref>,
+    pub label_ref: Ref,
     pub label_stmt_is_loop: bool,
 
     // If a scope contains a direct eval() expression, then none of the symbols
@@ -70,7 +70,7 @@ impl Scope {
         children: AstAlloc::vec(),
         members: MemberHashMap::new_in(AstAlloc),
         generated: AstAlloc::vec(),
-        label_ref: None,
+        label_ref: Ref::NONE,
         label_stmt_is_loop: false,
         contains_direct_eval: false,
         forbid_arguments: false,
@@ -121,28 +121,6 @@ impl Scope {
         // This avoids one `mi_heap_malloc` per declared identifier per scope,
         // which profiling showed as the parser's hottest slow-path allocation.
         unsafe { self.members.get_or_put_borrowed(name) }
-    }
-
-    pub fn reset(&mut self) {
-        self.children.clear_retaining_capacity();
-        self.generated.clear_retaining_capacity();
-        self.members.clear();
-        self.parent = None;
-        self.id = 0;
-        self.label_ref = None;
-        self.label_stmt_is_loop = false;
-        self.contains_direct_eval = false;
-        self.strict_mode = StrictModeKind::SloppyMode;
-        self.kind = Kind::Block;
-    }
-
-    #[inline]
-    pub fn can_merge_symbols<const IS_TYPESCRIPT_ENABLED: bool>(
-        &self,
-        existing: symbol::Kind,
-        new: symbol::Kind,
-    ) -> SymbolMergeResult {
-        Self::can_merge_symbol_kinds::<IS_TYPESCRIPT_ENABLED>(self.kind, existing, new)
     }
 
     /// Associated-fn form of [`can_merge_symbols`] taking the scope's [`Kind`]
@@ -260,13 +238,6 @@ impl Scope {
 pub struct Member {
     pub ref_: Ref,
     pub loc: crate::Loc,
-}
-
-impl Member {
-    #[inline]
-    pub fn eql(a: Member, b: Member) -> bool {
-        a.ref_.eql(b.ref_) && a.loc.start == b.loc.start
-    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]

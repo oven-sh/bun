@@ -136,6 +136,9 @@ public:
     BunPluginTarget target { BunPluginTargetBrowser };
 
     WriteBarrierList<JSC::JSPromise> deferredPromises = {};
+    // The raw `NapiExternal*` stored in `NativePluginCallback` is dereferenced
+    // off the JS thread; this list keeps those cells alive for GC.
+    WriteBarrierList<NapiExternal> onBeforeParseExternals = {};
 
     JSBundlerPluginAddErrorCallback addError;
     JSBundlerPluginOnLoadAsyncCallback onLoadAsync;

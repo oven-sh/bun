@@ -172,9 +172,7 @@ pub(crate) fn map() -> &'static bun_collections::StringHashMap<FallbackModule> {
 }
 
 pub fn contents_from_path(path: &[u8]) -> Option<&'static [u8]> {
-    if cfg!(debug_assertions) {
-        debug_assert!(path.starts_with(IMPORT_PATH));
-    }
+    debug_assert!(path.starts_with(IMPORT_PATH));
 
     let module_name = &path[IMPORT_PATH.len()..];
     let module_name = &module_name[..module_name

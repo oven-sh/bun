@@ -597,10 +597,18 @@ JSC_DEFINE_HOST_FUNCTION(jsFetchHeaders_getRawKeys, (JSC::JSGlobalObject * lexic
     }
 
     FetchHeaders& headers = thisObject->wrapped();
-    JSArray* outArray = JSC::JSArray::create(vm, lexicalGlobalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous), headers.size());
+    // HTTPHeaderMap's iterator covers only the common and uncommon segments;
+    // set-cookie values live in their own segment, so size() (which counts
+    // every cookie) used to leave trailing holes in the array. Size for one
+    // entry per unique name and append "set-cookie" explicitly.
+    JSArray* outArray = JSC::JSArray::create(vm, lexicalGlobalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous), headers.sizeAfterJoiningSetCookieHeader());
 
-    for (unsigned int i = 0; const auto& header : headers.internalHeaders()) {
+    unsigned int i = 0;
+    for (const auto& header : headers.internalHeaders()) {
         outArray->putDirectIndex(lexicalGlobalObject, i++, jsString(vm, header.name()));
+    }
+    if (!headers.internalHeaders().getSetCookieHeaders().isEmpty()) {
+        outArray->putDirectIndex(lexicalGlobalObject, i++, jsString(vm, WTF::httpHeaderNameDefaultCaseStringImpl(HTTPHeaderName::SetCookie)));
     }
 
     RELEASE_AND_RETURN(scope, JSValue::encode(outArray));

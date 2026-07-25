@@ -63,7 +63,7 @@ NodeVMSourceTextModule* NodeVMSourceTextModule::create(VM& vm, JSGlobalObject* g
     JSValue cachedDataValue = args.at(5);
     WTF::Vector<uint8_t> cachedData;
     if (!cachedDataValue.isUndefined() && !extractCachedData(cachedDataValue, cachedData)) {
-        Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "options.cachedData"_s, "Buffer, TypedArray, or DataView"_s, cachedDataValue);
+        Bun::ERR::INVALID_ARG_INSTANCE(scope, globalObject, "options.cachedData"_s, "Buffer, TypedArray, or DataView"_s, cachedDataValue);
         return nullptr;
     }
 
@@ -199,6 +199,7 @@ JSValue NodeVMSourceTextModule::createModuleRecord(JSGlobalObject* globalObject)
     }
 
     m_moduleRecord.set(vm, this, moduleRecord);
+    m_hasTopLevelAwait = node->features() & AwaitFeature;
     m_moduleRequests.clear();
 
     const auto& requests = moduleRecord->requestedModules();
@@ -317,10 +318,13 @@ JSValue NodeVMSourceTextModule::link(JSGlobalObject* globalObject, JSArray* spec
 {
     const unsigned length = specifiers->getArrayLength();
 
-    ASSERT(length == moduleNatives->getArrayLength());
-
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (length != moduleNatives->getArrayLength()) {
+        Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "moduleNatives"_s, moduleNatives, "must have the same length as \"specifiers\""_str);
+        return {};
+    }
 
     if (m_status != Status::Unlinked) {
         throwError(globalObject, scope, ErrorCode::ERR_VM_MODULE_STATUS, "Module must be unlinked before linking"_s);
@@ -337,11 +341,16 @@ JSValue NodeVMSourceTextModule::link(JSGlobalObject* globalObject, JSArray* spec
             JSValue moduleNativeValue = moduleNatives->getDirectIndex(globalObject, i);
             RETURN_IF_EXCEPTION(scope, {});
 
-            ASSERT(specifierValue.isString());
+            // getDirectIndex returns an empty JSValue for holes; empty passes
+            // isCell() with a null cell, so it must be rejected before any use.
+            if (specifierValue.isEmpty() || !specifierValue.isString()) {
+                Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "specifiers"_str, "Array<string>"_str, specifierValue.isEmpty() ? jsUndefined() : specifierValue);
+                return {};
+            }
 
             WTF::String specifier = specifierValue.toWTFString(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
-            NodeVMModule* moduleNative = dynamicDowncast<NodeVMModule>(moduleNativeValue);
+            NodeVMModule* moduleNative = moduleNativeValue.isEmpty() ? nullptr : dynamicDowncast<NodeVMModule>(moduleNativeValue);
             if (!moduleNative) {
                 Bun::ERR::INVALID_THIS(scope, globalObject, "Module"_s);
                 return {};
@@ -390,7 +399,10 @@ JSValue NodeVMSourceTextModule::link(JSGlobalObject* globalObject, JSArray* spec
         record->setStatus(JSC::CyclicModuleRecord::Status::Unlinked);
 
     UNUSED_PARAM(scriptFetcher);
-    status(Status::Linked);
+    m_linkCalled = true;
+    // Status stays Unlinked: matching Node, only instantiate() flips a
+    // SourceTextModule to "linked" (linkRequests() alone must leave the
+    // module unlinked, and a failed instantiate() must remain retryable).
     return jsUndefined();
 }
 
@@ -443,6 +455,11 @@ JSValue NodeVMSourceTextModule::instantiate(JSGlobalObject* globalObject)
     if (!record)
         return jsUndefined();
 
+    if (!m_linkCalled) {
+        throwError(globalObject, scope, ErrorCode::ERR_VM_MODULE_LINK_FAILURE, "module is not linked"_s);
+        return {};
+    }
+
     NodeVMGlobalObject* nodeVmGlobalObject = getGlobalObjectFromContext(globalObject, m_context.get(), false);
     RETURN_IF_EXCEPTION(scope, {});
     if (nodeVmGlobalObject)
@@ -454,9 +471,18 @@ JSValue NodeVMSourceTextModule::instantiate(JSGlobalObject* globalObject)
         return {};
     }
 
+    // A record that never went through link() (e.g. a module with no
+    // dependencies instantiated directly) is still Status::New; record->link
+    // asserts the record is past New, and only the loader's
+    // continueModuleLoading would normally flip it.
+    if (record->status() == JSC::CyclicModuleRecord::Status::New)
+        record->setStatus(JSC::CyclicModuleRecord::Status::Unlinked);
+
     record->link(globalObject, nullptr);
     RETURN_IF_EXCEPTION(scope, {});
 
+    status(Status::Linked);
+    propagateLinked();
     return jsUndefined();
 }
 
@@ -543,7 +569,6 @@ void NodeVMSourceTextModule::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(vmModule->m_moduleRequestsArray);
     visitor.append(vmModule->m_cachedExecutable);
     visitor.append(vmModule->m_cachedBytecodeBuffer);
-    visitor.append(vmModule->m_evaluationException);
     visitor.append(vmModule->m_initializeImportMeta);
 }
 

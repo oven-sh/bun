@@ -10,10 +10,6 @@
 #include "GeneratedJS2Native.h"
 #include "wtf/Assertions.h"
 
-extern "C" JSC::EncodedJSValue ByteBlob__JSReadableStreamSource__load(JSC::JSGlobalObject* global);
-extern "C" JSC::EncodedJSValue FileReader__JSReadableStreamSource__load(JSC::JSGlobalObject* global);
-extern "C" JSC::EncodedJSValue ByteStream__JSReadableStreamSource__load(JSC::JSGlobalObject* global);
-
 namespace Bun {
 namespace JS2Native {
 

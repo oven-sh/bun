@@ -1,5 +1,5 @@
 const { Duplex } = require("node:stream");
-const upgradeDuplexToTLS = $newZigFunction("runtime/socket/socket.zig", "jsUpgradeDuplexToTLS", 2);
+const upgradeDuplexToTLS = $newRustFunction("runtime/socket/socket.rs", "jsUpgradeDuplexToTLS", 2);
 
 interface NativeHandle {
   resume(): void;
@@ -216,17 +216,19 @@ function socketHandshake(
   tlsSocket.alpnProtocol = nativeHandle?.alpnProtocol ?? null;
 
   // Handle mutual TLS: if the server requested a client cert, check for errors
-  if (tlsSocket._requestCert || tlsSocket._rejectUnauthorized) {
+  const requestCert = tlsSocket._requestCert;
+  let rejectUnauthorized;
+  if (requestCert || (rejectUnauthorized = tlsSocket._rejectUnauthorized)) {
     if (verifyError) {
       tlsSocket.authorized = false;
       tlsSocket.authorizationError = verifyError.code || verifyError.message;
       ctx.server.emit("tlsClientError", verifyError, tlsSocket);
-      if (tlsSocket._rejectUnauthorized) {
+      if (rejectUnauthorized ?? tlsSocket._rejectUnauthorized) {
         tlsSocket.emit("secure", tlsSocket);
         tlsSocket.destroy(verifyError);
         return;
       }
-    } else if (tlsSocket._requestCert) {
+    } else if (requestCert) {
       tlsSocket.authorized = true;
     }
   }
@@ -236,8 +238,9 @@ function socketHandshake(
   // and is what normally fires on the 'secureConnection' event.
   ctx.connectionListener.$call(ctx.server, tlsSocket);
 
-  // Resume the Duplex so the H2 session can read frames from it.
-  // Mirrors net.ts ServerHandlers.handshake line 438: `self.resume()`.
+  // Resume the Duplex so the H2 session can read frames from it. The accept
+  // path in net.ts ServerHandlers.handshake only read(0)s (node's manualStart
+  // server socket); the H2 session is the consumer here, so it flows.
   tlsSocket.resume();
 }
 

@@ -41,7 +41,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
 } // end impl P (can_follow_type_arguments_in_expression)
 
 impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
-    pub fn is_ts_arrow_fn_jsx(&mut self) -> Result<bool, bun_core::Error> {
+    pub fn is_ts_arrow_fn_jsx(&mut self) -> crate::CrateResult<bool> {
         let p = self;
         // Lexer holds `&mut Log` so it cannot Clone; use the LexerSnapshot POD
         // via `snapshot()`/`restore()`.

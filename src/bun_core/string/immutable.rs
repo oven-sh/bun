@@ -5,15 +5,15 @@ use core::cmp::Ordering;
 use core::ffi::c_int;
 
 use crate::BoundedArray;
-use crate::Error;
+use crate::CrateError as Error;
 use bun_alloc::AllocError;
 use bun_highway as highway;
 use bun_simdutf_sys::simdutf;
 
 pub use self::unicode::{
     CodepointIterator, Cursor, NewCodePointIterator, UnsignedCodepointIterator, codepoint_size,
-    contains_non_bmp_code_point, contains_non_bmp_code_point_or_is_invalid_identifier,
-    decode_wtf8_rune_t, decode_wtf8_rune_t_multibyte, wtf8_byte_sequence_length,
+    contains_non_bmp_code_point_or_is_invalid_identifier, decode_wtf8_rune_t,
+    decode_wtf8_rune_t_multibyte, wtf8_byte_sequence_length,
     wtf8_byte_sequence_length_with_invalid,
 };
 pub use unicode_draft::CodePointZero;
@@ -29,20 +29,21 @@ mod unicode_draft;
 #[path = "immutable/visible.rs"]
 mod visible_impl;
 
-// Transcoding helpers from `unicode_draft` that have no T0 `crate::strings`
-// equivalent yet — re-export so downstream `bun_core::strings::*` callers (e.g.
-// runtime/webcore/encoding.rs) resolve. These return `crate::strings::EncodeIntoResult`.
-pub use crate::strings::{
+// UTF-16 surrogate primitives. The single implementation lives in the
+// tier-0 `crate::strings_impl`; re-exported here as part of `bun.strings`.
+pub use crate::strings_impl::{
     U16_SURROGATE_OFFSET, decode_surrogate_pair, decode_utf16_with_fffd, decode_wtf16_raw,
-    u16_get_supplementary, u16_is_surrogate,
+    u16_get_supplementary,
 };
+// Transcoding helpers from `unicode_draft` — re-exported so downstream
+// `bun_core::strings::*` callers (e.g. runtime/webcore/encoding.rs) resolve.
 pub use unicode_draft::{
     BOM, UTF16Replacement, allocate_latin1_into_utf8, copy_cp1252_into_utf16,
     copy_latin1_into_ascii, copy_latin1_into_utf8_stop_on_non_ascii, copy_latin1_into_utf16,
     copy_u8_into_u16, copy_u16_into_u8, copy_utf16_into_utf8_impl,
-    element_length_cp1252_into_utf16, element_length_utf8_into_utf16, replace_latin1_with_utf8,
-    to_utf8_list_with_type_bun, to_utf16_alloc_maybe_buffered, u16_is_lead, u16_is_trail,
-    utf16_codepoint, utf16_codepoint_with_fffd, wtf8_sequence,
+    element_length_cp1252_into_utf16, element_length_utf8_into_utf16, to_utf8_list_with_type_bun,
+    to_utf16_alloc_maybe_buffered, u16_is_lead, u16_is_trail, utf16_codepoint,
+    utf16_codepoint_with_fffd, wtf8_sequence,
 };
 
 /// `bun.strings.visible` — terminal-visible-width helpers. The implementation
@@ -50,13 +51,14 @@ pub use unicode_draft::{
 /// surface for the remaining Rust callers.
 pub use visible_impl::visible;
 
-/// Minimal `unicode` surface needed by `immutable.rs` itself (CodepointIterator
-/// + WTF-8 decode). Full transcoding suite (to_utf8_*, convert_utf16_*) lives
-/// in the gated `unicode_draft` module — un-gate after simdutf wiring.
+/// `unicode` surface needed by `immutable.rs` itself (CodepointIterator +
+/// WTF-8 decode). Full transcoding suite lives in `unicode_draft`.
 pub mod unicode {
     use super::CodePoint;
 
-    pub use crate::strings::{wtf8_byte_sequence_length, wtf8_byte_sequence_length_with_invalid};
+    pub use crate::strings_impl::{
+        wtf8_byte_sequence_length, wtf8_byte_sequence_length_with_invalid,
+    };
 
     pub use super::unicode_draft::{
         codepoint_size, decode_wtf8_rune_t, decode_wtf8_rune_t_multibyte,
@@ -89,20 +91,6 @@ pub mod unicode {
                 width: 0,
                 c: 0,
             }
-        }
-        pub fn next_codepoint(&mut self) -> CodePoint {
-            if self.i >= self.bytes.len() {
-                return -1;
-            }
-            let len = wtf8_byte_sequence_length(self.bytes[self.i]);
-            let mut buf = [0u8; 4];
-            let avail = (self.bytes.len() - self.i).min(4);
-            buf[..avail].copy_from_slice(&self.bytes[self.i..self.i + avail]);
-            let cp = decode_wtf8_rune_t::<CodePoint>(buf, len, -1);
-            self.width = len;
-            self.i += len as usize;
-            self.c = cp;
-            cp
         }
 
         /// True iff any byte in `slice` begins a multi-byte WTF-8 sequence.
@@ -169,19 +157,6 @@ pub mod unicode {
         }
     }
 
-    /// `true` iff `text` contains any
-    /// codepoint above U+FFFF (i.e. would need a UTF-16 surrogate pair).
-    pub fn contains_non_bmp_code_point(text: &[u8]) -> bool {
-        let iter = CodepointIterator::init(text);
-        let mut curs = Cursor::default();
-        while iter.next(&mut curs) {
-            if curs.c > 0xFFFF {
-                return true;
-            }
-        }
-        false
-    }
-
     /// Fused
     /// "must I quote this import/export alias?" predicate for `js_printer`.
     ///
@@ -204,26 +179,6 @@ pub mod unicode {
         }
         false
     }
-
-    /// `toUTF16Literal` — returns an owned `Box<[u16]>`. Prefer the const
-    /// `crate::string::w!("…")` macro at call sites with literal inputs —
-    /// this fn exists for the residual runtime callers that thread `&[u8]`
-    /// through.
-    pub fn to_utf16_literal(s: &[u8]) -> Box<[u16]> {
-        if s.is_empty() {
-            return Box::new([]);
-        }
-        // Input must be valid UTF-8. simdutf gives us the exact
-        // UTF-16 code-unit length, then a validating convert.
-        let out_len = super::simdutf::length::utf16::from::utf8(s);
-        let mut out = vec![0u16; out_len].into_boxed_slice();
-        let written = super::simdutf::convert::utf8::to::utf16::le(s, &mut out);
-        debug_assert_eq!(
-            written, out_len,
-            "to_utf16_literal: input must be valid UTF-8 (was comptime-checked in Zig)",
-        );
-        out
-    }
 }
 
 /// Peek `n` WTF-8 codepoints from `bytes[at..]` and return the spanning slice
@@ -231,7 +186,7 @@ pub mod unicode {
 /// (invalid lead byte → 1). Stops early at EOF or a truncated trailing sequence,
 /// returning the slice up to the last complete codepoint boundary.
 ///
-/// Shared body of `js_parser::Lexer::peek` / `toml::Lexer::peek`.
+/// Shared body of `js_parser::Lexer::peek`.
 #[inline]
 pub fn peek_n_codepoints_wtf8(bytes: &[u8], at: usize, n: usize) -> &[u8] {
     let mut end = at;
@@ -248,9 +203,9 @@ pub fn peek_n_codepoints_wtf8(bytes: &[u8], at: usize, n: usize) -> &[u8] {
     &bytes[at..end]
 }
 
-/// WTF-8 codepoint stepper shared by the JS / JSON / TOML lexers.
+/// WTF-8 codepoint stepper shared by the JS and JSON lexers.
 ///
-/// The JS, JSON, and TOML lexers all call the same
+/// The JS and JSON lexers call the same
 /// `wtf8_byte_sequence_length_with_invalid` / `decode_wtf8_rune_t_multibyte`
 /// pair defined alongside this module, so the stepper belongs here.
 ///
@@ -262,44 +217,6 @@ pub mod lexer_step {
         CodePoint, UNICODE_REPLACEMENT, decode_wtf8_rune_t_multibyte,
         wtf8_byte_sequence_length_with_invalid,
     };
-
-    /// `nextCodepointSlice` — slice of the next codepoint at `current`, or
-    /// `b""` on EOF / truncated trailing sequence.
-    #[inline]
-    pub fn next_codepoint_slice(contents: &[u8], current: usize) -> &[u8] {
-        if current >= contents.len() {
-            return b"";
-        }
-        let cp_len = wtf8_byte_sequence_length_with_invalid(contents[current]) as usize;
-        if cp_len + current <= contents.len() {
-            &contents[current..current + cp_len]
-        } else {
-            b""
-        }
-    }
-
-    /// `nextCodepoint` — decode the codepoint at `*current`, advance
-    /// `*current`, and write the pre-advance offset to `*end`. Returns `-1` on
-    /// EOF or a truncated trailing multibyte sequence.
-    ///
-    /// Split into an `#[inline(always)]` ASCII/EOF fast path plus an outlined
-    /// multibyte tail so the hot per-byte loop folds into every `step()` site.
-    #[inline(always)]
-    pub fn next_codepoint(contents: &[u8], current: &mut usize, end: &mut usize) -> CodePoint {
-        let len = contents.len();
-        if *current >= len {
-            *end = len;
-            return -1;
-        }
-        // SAFETY: `*current < len` was checked immediately above.
-        let first = unsafe { *contents.get_unchecked(*current) };
-        *end = *current;
-        if first < 0x80 {
-            *current += 1;
-            return first as CodePoint;
-        }
-        next_codepoint_multibyte(contents, current, first)
-    }
 
     /// Non-ASCII tail of [`next_codepoint`]. Kept out-of-line so the hot
     /// ASCII path stays small enough to inline into every `step()` site.
@@ -363,42 +280,21 @@ pub fn without_utf8_bom(bytes: &[u8]) -> &[u8] {
 }
 
 // Transcoding suite re-exported from bun_core (T0).
-pub use self::unicode::to_utf16_literal;
 /// Compile-time UTF-8→UTF-16 literal. This **must** be a
 /// macro (callers write `bun_core::strings::w!("…")`); a `fn` returning
 /// `&'static [u16]` would require leaking. Re-export of the crate-root `w!`.
 pub use crate::string::w;
-pub use crate::strings::{
-    EncodeIntoResult, copy_latin1_into_utf8, copy_utf16_into_utf8, element_length_latin1_into_utf8,
+pub use crate::strings_impl::{
+    EncodeIntoResult, copy_latin1_into_utf8, copy_utf16_into_utf8,
+    copy_utf16_into_utf8_with_utf8_len, element_length_latin1_into_utf8,
     element_length_utf16_into_utf8, encode_surrogate_pair, push_codepoint_utf16, to_utf8_alloc_z,
     to_utf8_from_latin1_z, u16_lead, u16_trail,
 };
 
-/// memmem — libc on posix, scalar fallback on windows.
-#[cfg(not(windows))]
+/// memmem — `highway_memmem` (HWY_DYNAMIC_DISPATCH MemMemImpl), same on all platforms.
+#[inline]
 pub fn memmem(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    if needle.is_empty() {
-        return Some(0);
-    }
-    // SAFETY: `&[u8]` guarantees both (ptr,len) pairs are valid for reads;
-    // libc memmem only reads within those bounds.
-    let p = unsafe {
-        libc::memmem(
-            haystack.as_ptr().cast(),
-            haystack.len(),
-            needle.as_ptr().cast(),
-            needle.len(),
-        )
-    };
-    if p.is_null() {
-        None
-    } else {
-        Some(p as usize - haystack.as_ptr() as usize)
-    }
-}
-#[cfg(windows)]
-pub fn memmem(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    bstr::ByteSlice::find(haystack, needle)
+    highway::memmem(haystack, needle)
 }
 
 /// `bun.reinterpretSlice` — `&[T]` → `&[u8]` view (T must be u8/u16 in practice).
@@ -464,42 +360,30 @@ pub fn contains(self_: &[u8], str: &[u8]) -> bool {
     index_of(self_, str).is_some()
 }
 
-#[inline]
-pub fn contains_t<T: Eq>(self_: &[T], str: &[T]) -> bool {
-    index_of_t(self_, str).is_some()
-}
-
-// Canonical impl lives in tier-0 `crate::strings` (which `bun_paths` etc.
+// Canonical impl lives in tier-0 `crate::strings_impl` (which `bun_paths` etc.
 // reach without depending on this crate); re-export to avoid a second copy.
-pub use crate::strings::contains_case_insensitive_ascii;
+pub use crate::strings_impl::contains_case_insensitive_ascii;
 
-/// `Option<u32>` already niches; keep
-/// `u32` to match call sites that take `u32` indices throughout this module.
-pub type OptionalUsize = u32;
-
-pub fn index_of_any(slice: &[u8], str: &'static [u8]) -> Option<OptionalUsize> {
-    match str.len() {
-        0 => unreachable!("str cannot be empty"),
-        1 => index_of_char(slice, str[0]),
-        _ => highway::index_of_any_char(slice, str).map(|i| OptionalUsize::try_from(i).unwrap()),
+/// Index of the first byte in `slice` that appears in `chars` (SIMD via
+/// highway). Returns `usize` (unlike the `u32`-returning single-char
+/// scanners above) so callers can index with the result directly.
+#[inline]
+pub fn index_of_any(slice: &[u8], chars: &[u8]) -> Option<usize> {
+    match chars.len() {
+        0 => None,
+        1 => index_of_char_usize(slice, chars[0]),
+        _ => highway::index_of_any_char(slice, chars),
     }
 }
 
-pub fn index_of_any16(self_: &[u16], str: &'static [u16]) -> Option<OptionalUsize> {
-    index_of_any_t(self_, str)
+pub fn index_of_any16(self_: &[u16], chars: &[u16]) -> Option<usize> {
+    index_of_any_t(self_, chars)
 }
 
-pub fn index_of_any_t<T: Copy + Eq>(str: &[T], chars: &'static [T]) -> Option<OptionalUsize> {
+pub fn index_of_any_t<T: Copy + Eq>(str: &[T], chars: &[T]) -> Option<usize> {
     // Rust cannot dispatch on type identity without specialization;
     // callers with u8 should call index_of_any directly (highway-accelerated).
-    for (i, c) in str.iter().enumerate() {
-        for a in chars {
-            if *c == *a {
-                return Some(OptionalUsize::try_from(i).unwrap());
-            }
-        }
-    }
-    None
+    str.iter().position(|c| chars.contains(c))
 }
 
 #[inline]
@@ -525,17 +409,6 @@ pub fn contains_comptime(self_: &[u8], str: &'static [u8]) -> bool {
 
 pub use contains as includes;
 
-/// Lowercase `probe` (ASCII fold only) into a 256-byte stack buffer and hand
-/// the lowered slice to `f`. Returns `None` when `probe.len() > 256` — every
-/// caller's key set is shorter, so an oversize probe is a guaranteed miss.
-/// Bytes ≥ 0x80 pass through `to_ascii_lowercase` unchanged; all callers' keys
-/// are pure lowercase ASCII, so such probes miss regardless.
-#[inline]
-pub fn with_ascii_lowercase<R>(probe: &[u8], f: impl FnOnce(&[u8]) -> R) -> Option<R> {
-    let (buf, len) = crate::strings::ascii_lowercase_buf::<256>(probe)?;
-    Some(f(&buf[..len]))
-}
-
 /// Case-insensitive ASCII lookup in a comptime string map whose keys are
 /// already lowercase ASCII.
 #[inline]
@@ -547,17 +420,6 @@ where
     M::Value: Copy,
 {
     map.lookup_ascii_case_insensitive(self_).copied()
-}
-
-#[inline]
-pub fn contains_any(in_: &[&[u8]], target: &[u8]) -> bool {
-    // Callers pass slices — use `contains_char` for single-byte targets.
-    for str in in_ {
-        if contains(str, target) {
-            return true;
-        }
-    }
-    false
 }
 
 /// https://docs.npmjs.com/cli/v8/configuring-npm/package-json
@@ -615,29 +477,16 @@ pub fn is_npm_package_name_ignore_length(target: &[u8]) -> bool {
     !scoped || (slash_index > 0 && slash_index + 1 < target.len())
 }
 
-// Secret-redaction scanners are canonical in crate::strings (only callers
+// Secret-redaction scanners are canonical in crate::strings_impl (only callers
 // live in bun_core/fmt.rs). Re-exported here to preserve the bun.strings.* path.
-pub use crate::strings::{
+pub use crate::strings_impl::{
     find_url_password, is_uuid, starts_with_npm_secret, starts_with_secret, starts_with_uuid,
 };
-
-pub const UUID_LEN: usize = 36;
 
 pub fn index_any_comptime(target: &[u8], chars: &'static [u8]) -> Option<usize> {
     for (i, &parent) in target.iter().enumerate() {
         for &char in chars {
             if char == parent {
-                return Some(i);
-            }
-        }
-    }
-    None
-}
-
-pub fn index_any_comptime_t<T: Copy + Eq>(target: &[T], chars: &'static [T]) -> Option<usize> {
-    for (i, parent) in target.iter().enumerate() {
-        for char in chars {
-            if *char == *parent {
                 return Some(i);
             }
         }
@@ -659,10 +508,6 @@ pub fn repeating_alloc(count: usize, char: u8) -> Result<Box<[u8]>, AllocError> 
     Ok(vec![char; count].into_boxed_slice())
 }
 
-pub fn repeating_buf(self_: &mut [u8], char: u8) {
-    self_.fill(char);
-}
-
 pub fn index_of_char_neg(self_: &[u8], char: u8) -> i32 {
     for (i, &c) in self_.iter().enumerate() {
         if c == char {
@@ -670,17 +515,6 @@ pub fn index_of_char_neg(self_: &[u8], char: u8) -> i32 {
         }
     }
     -1
-}
-
-pub fn index_of_signed(self_: &[u8], str: &[u8]) -> i32 {
-    // bun's `index_of` returns None for an empty needle; this fn returns 0.
-    if str.is_empty() {
-        return 0;
-    }
-    match index_of(self_, str) {
-        Some(i) => i32::try_from(i).expect("int cast"),
-        None => -1,
-    }
 }
 
 /// Returns last index of `char` before a character `before`.
@@ -896,19 +730,6 @@ impl StringOrTinyString {
         Ok(StringOrTinyString::init(appendy.append(stringy)?))
     }
 
-    #[inline]
-    pub fn init_lower_case_append_if_needed<A: Appender>(
-        stringy: &[u8],
-        appendy: &mut A,
-    ) -> Result<StringOrTinyString, AllocError> {
-        if stringy.len() <= StringOrTinyString::MAX {
-            return Ok(StringOrTinyString::init_lower_case(stringy));
-        }
-        Ok(StringOrTinyString::init(
-            appendy.append_lower_case(stringy)?,
-        ))
-    }
-
     pub fn init(stringy: &[u8]) -> StringOrTinyString {
         let mut buf = core::mem::MaybeUninit::<[u8; Self::MAX]>::uninit();
         match stringy.len() {
@@ -953,51 +774,6 @@ impl StringOrTinyString {
             }
         }
     }
-
-    pub fn init_lower_case(stringy: &[u8]) -> StringOrTinyString {
-        let mut buf = core::mem::MaybeUninit::<[u8; Self::MAX]>::uninit();
-        match stringy.len() {
-            0 => StringOrTinyString {
-                remainder_buf: buf,
-                meta: StringOrTinyStringMeta::new(0, 1),
-            },
-            1..=Self::MAX => {
-                // Inline ASCII-lowercase loop (≤31 iters). Avoids forming `&mut [u8]`
-                // over uninit storage that `copy_lowercase` would need; semantics are
-                // identical (`copy_lowercase` only ASCII-lowercases).
-                let dst = buf.as_mut_ptr().cast::<u8>();
-                for (i, &c) in stringy.iter().enumerate() {
-                    // SAFETY: i < stringy.len() <= 31 == MAX.
-                    unsafe { *dst.add(i) = c.to_ascii_lowercase() };
-                }
-                StringOrTinyString {
-                    remainder_buf: buf,
-                    meta: StringOrTinyStringMeta::new(stringy.len() as u8, 1),
-                }
-            }
-            _ => {
-                const USZ: usize = core::mem::size_of::<usize>();
-                let dst = buf.as_mut_ptr().cast::<u8>();
-                // SAFETY: 2*USZ <= 16 <= 31 == MAX; src/dst don't overlap.
-                unsafe {
-                    core::ptr::copy_nonoverlapping(
-                        (stringy.as_ptr() as usize).to_le_bytes().as_ptr(),
-                        dst,
-                        USZ,
-                    );
-                    core::ptr::copy_nonoverlapping(
-                        stringy.len().to_le_bytes().as_ptr(),
-                        dst.add(USZ),
-                        USZ,
-                    );
-                }
-                StringOrTinyString {
-                    remainder_buf: buf,
-                    meta: StringOrTinyStringMeta::new(0, 0),
-                }
-            }
-        }
-    }
 }
 
 /// Trait for the `Appender` parameter on `StringOrTinyString::init*_append_if_needed`.
@@ -1006,8 +782,12 @@ pub trait Appender {
     fn append_lower_case(&mut self, s: &[u8]) -> Result<&[u8], AllocError>;
 }
 
-pub use crate::strings::copy_lowercase;
+pub use crate::strings_impl::{ascii_lowercase_buf, copy_lowercase};
 
+/// Single-pass `copy_lowercase` that avoids the copy when `in_` has no ASCII
+/// uppercase byte: returns `in_` unchanged and leaves `out` UNTOUCHED.
+/// Otherwise writes the lowercased bytes into `out[..in_.len()]` and returns
+/// that prefix. Both borrows share `'a` so the return may alias either.
 pub fn copy_lowercase_if_needed<'a>(in_: &'a [u8], out: &'a mut [u8]) -> &'a [u8] {
     let mut in_slice = in_;
     let mut out_off: usize = 0;
@@ -1094,16 +874,14 @@ pub fn starts_with_case_insensitive_ascii(self_: &[u8], prefix: &[u8]) -> bool {
         && eql_case_insensitive_ascii(&self_[0..prefix.len()], prefix, false)
 }
 
-pub use crate::strings::{has_prefix_t as starts_with_generic, has_suffix_t as ends_with_generic};
+pub use crate::strings_impl::{
+    has_prefix_t, has_prefix_t as starts_with_generic, has_suffix_t,
+    has_suffix_t as ends_with_generic,
+};
 
 #[inline]
 pub fn ends_with(self_: &[u8], str: &[u8]) -> bool {
     str.is_empty() || self_.ends_with(str)
-}
-
-#[inline]
-pub fn ends_with_comptime(self_: &[u8], str: &'static [u8]) -> bool {
-    self_.len() >= str.len() && eql_comptime_ignore_len(&self_[self_.len() - str.len()..], str)
 }
 
 #[inline]
@@ -1131,30 +909,6 @@ pub fn ends_with_any(self_: &[u8], str: &[u8]) -> bool {
     false
 }
 
-pub fn quoted_alloc(self_: &[u8]) -> Result<Box<[u8]>, AllocError> {
-    let mut count: usize = 0;
-    for &char in self_ {
-        count += (char == b'"') as usize;
-    }
-
-    if count == 0 {
-        return Ok(Box::<[u8]>::from(self_));
-    }
-
-    let mut i: usize = 0;
-    let mut out = vec![0u8; self_.len() + count].into_boxed_slice();
-    for &char in self_ {
-        if char == b'"' {
-            out[i] = b'\\';
-            i += 1;
-        }
-        out[i] = char;
-        i += 1;
-    }
-
-    Ok(out)
-}
-
 pub fn eql_any_comptime(self_: &[u8], list: &'static [&'static [u8]]) -> bool {
     for item in list {
         if eql_comptime_check_len_with_type::<u8, true>(self_, item) {
@@ -1175,37 +929,11 @@ pub fn count_char(self_: &[u8], char: u8) -> usize {
     total
 }
 
-pub fn ends_with_any_comptime(self_: &[u8], str: &'static [u8]) -> bool {
-    if str.len() < 10 {
-        let last = self_[self_.len() - 1];
-        for &char in str {
-            if char == last {
-                return true;
-            }
-        }
-        false
-    } else {
-        ends_with_any(self_, str)
-    }
-}
-
 pub fn eql(self_: &[u8], other: &[u8]) -> bool {
     if self_.len() != other.len() {
         return false;
     }
     eql_long(self_, other, false)
-}
-
-pub fn eql_comptime_t<T: crate::NoUninit + Eq>(self_: &[T], alt: &'static [u8]) -> bool {
-    // Branch on size_of (const-folded): 2-byte T → eql_comptime_utf16.
-    if core::mem::size_of::<T>() == 2 {
-        // `NoUninit` + size_of::<T>()==2 lets bytemuck prove the &[T]→&[u16]
-        // reinterpret is sound (align checked at runtime; T is u16 in practice).
-        let s16: &[u16] = crate::cast_slice(self_);
-        return eql_comptime_utf16(s16, alt);
-    }
-    // T is u8-sized in remaining branch.
-    eql_comptime(reinterpret_to_u8(self_), alt)
 }
 
 pub fn eql_comptime(self_: &[u8], alt: &'static [u8]) -> bool {
@@ -1227,6 +955,10 @@ pub fn eql_comptime_utf16(self_: &[u16], alt: &[u8]) -> bool {
 pub fn eql_comptime_ignore_len(self_: &[u8], alt: &[u8]) -> bool {
     eql_comptime_check_len_with_type::<u8, false>(self_, alt)
 }
+
+// `const fn` equality for const-context callers (clap param-name lookup,
+// MultiArrayList field-name reflection). Runtime callers should prefer `eql`.
+pub use crate::strings_impl::{const_bytes_eq, const_str_eq};
 
 pub fn has_prefix_comptime(self_: &[u8], alt: &'static [u8]) -> bool {
     self_.len() >= alt.len()
@@ -1295,7 +1027,9 @@ pub fn eql_case_insensitive_ascii_ignore_length(a: &[u8], b: &[u8]) -> bool {
     eql_case_insensitive_ascii(a, b, false)
 }
 
-pub use crate::strings::eql_case_insensitive_ascii_check_length;
+pub use crate::strings_impl::{
+    eql_any_case_insensitive_ascii, eql_case_insensitive_ascii_check_length,
+};
 
 /// The triple-`i` typo spelling is kept deliberately; both spellings are
 /// reachable from existing call sites until the next typo sweep.
@@ -1304,17 +1038,13 @@ pub fn eql_case_insensitive_asciii_check_length(a: &[u8], b: &[u8]) -> bool {
     eql_case_insensitive_ascii(a, b, true)
 }
 
-// `check_len` is a runtime 3rd arg because that's the dominant call shape
-// across the tree (`eql_case_insensitive_ascii(a, b, true)`) —
-// the branch is trivially predicted/inlined; callers wanting the
-// length-agnostic forms still have the `_check_length` / `_ignore_length`
-// wrappers above.
-#[inline]
-pub fn eql_case_insensitive_ascii(a: &[u8], b: &[u8], check_len: bool) -> bool {
-    // NOTE: must call `strings_impl` directly — `crate::strings::eql_case_insensitive_ascii`
-    // re-exports *this* function (177f671a9046), so routing through it recurses.
-    crate::strings_impl::eql_case_insensitive_ascii(a, b, check_len)
-}
+// The libc `strncasecmp`-backed implementation lives in tier-0
+// `crate::strings_impl` (so `contains_case_insensitive_ascii` and friends can
+// reach it). `check_len` is a runtime 3rd arg because that's the dominant
+// call shape across the tree (`eql_case_insensitive_ascii(a, b, true)`);
+// callers wanting the length-agnostic forms have the `_check_length` /
+// `_ignore_length` wrappers above.
+pub use crate::strings_impl::eql_case_insensitive_ascii;
 
 pub fn eql_case_insensitive_t<T: crate::NoUninit + Into<u32>>(a: &[T], b: &[u8]) -> bool {
     if a.len() != b.len() || a.is_empty() {
@@ -1356,19 +1086,6 @@ pub fn has_prefix_case_insensitive_t<T: crate::NoUninit + Into<u32>>(
 
 pub fn has_prefix_case_insensitive(str: &[u8], prefix: &[u8]) -> bool {
     has_prefix_case_insensitive_t(str, prefix)
-}
-
-pub fn eql_long_t<T: crate::NoUninit, const CHECK_LEN: bool>(a_str: &[T], b_str: &[T]) -> bool {
-    if CHECK_LEN {
-        let len = b_str.len();
-        if len == 0 {
-            return a_str.is_empty();
-        }
-        if a_str.len() != len {
-            return false;
-        }
-    }
-    eql_long(reinterpret_to_u8(a_str), reinterpret_to_u8(b_str), false)
 }
 
 // same rationale as `eql_case_insensitive_ascii` — `check_len` is a runtime
@@ -1456,21 +1173,11 @@ pub fn append(self_: &[u8], other: &[u8]) -> Box<[u8]> {
 }
 
 #[inline]
-pub fn concat_alloc_t<T: Copy>(strs: &[&[T]]) -> Result<Box<[T]>, AllocError> {
-    let len: usize = strs.iter().map(|s| s.len()).sum();
-    let mut buf = Vec::with_capacity(len);
-    for s in strs {
-        buf.extend_from_slice(s);
-    }
-    Ok(buf.into_boxed_slice())
-}
-
-#[inline]
 pub fn concat_buf_t<'a, T: Copy>(out: &'a mut [T], strs: &[&[T]]) -> Result<&'a mut [T], Error> {
     let mut off: usize = 0;
     for s in strs {
         if s.len() > out.len() - off {
-            return Err(crate::err!("NoSpaceLeft"));
+            return Err(crate::CrateError::NoSpaceLeft);
         }
         out[off..off + s.len()].copy_from_slice(s);
         off += s.len();
@@ -1506,8 +1213,7 @@ macro_rules! w {
             let mut i = 0;
             while i < __N {
                 // Const-evaluated: a non-ASCII byte is a hard compile error in
-                // every profile (`to_utf16_literal!` forwards here, so this
-                // also keeps that alias from silently mis-encoding non-ASCII).
+                // every profile.
                 assert!(__B[i] < 0x80, "w! is ASCII-only");
                 out[i] = __B[i] as u16;
                 i += 1;
@@ -1518,14 +1224,13 @@ macro_rules! w {
     }};
 }
 
-/// Index of first non-ASCII byte. Thin `u32` view over the canonical
-/// `crate::strings_impl::first_non_ascii`.
-/// NOTE: must call `strings_impl` directly — `crate::strings::first_non_ascii`
-/// re-exports *this* function (177f671a9046), so routing through it recurses.
+/// Index of the first non-ASCII byte in `slice`, or `None` if all-ASCII.
+/// Thin `u32` view over the simdutf-backed [`first_non_ascii_usize`].
 #[inline]
 pub fn first_non_ascii(slice: &[u8]) -> Option<u32> {
-    crate::strings_impl::first_non_ascii(slice).map(|i| i as u32)
+    first_non_ascii_usize(slice).map(|i| i as u32)
 }
+pub use crate::strings_impl::first_non_ascii_usize;
 
 /// `bun.strings.isValidUTF8` — SIMD-validated UTF-8 check.
 /// Wraps `simdutf::validate::utf8`; the gated `unicode_draft` adds a
@@ -1843,10 +1548,8 @@ fn _decode_hex_to_bytes<Char: HexChar, const TRUNCATE: bool>(
 }
 
 pub fn encode_bytes_to_hex(destination: &mut [u8], source: &[u8]) -> usize {
-    if cfg!(debug_assertions) {
-        debug_assert!(!destination.is_empty());
-        debug_assert!(!source.is_empty());
-    }
+    debug_assert!(!destination.is_empty());
+    debug_assert!(!source.is_empty());
     let to_write = if destination.len() < source.len() * 2 {
         destination.len() - destination.len() % 2
     } else {
@@ -1913,14 +1616,6 @@ pub fn trim_prefix_comptime<'a, T: crate::NoUninit + Eq>(
 ) -> &'a [T] {
     if has_prefix_comptime_type(buffer, prefix) {
         &buffer[prefix.len()..]
-    } else {
-        buffer
-    }
-}
-
-pub fn trim_suffix_comptime<'a>(buffer: &'a [u8], suffix: &'static [u8]) -> &'a [u8] {
-    if has_suffix_comptime(buffer, suffix) {
-        &buffer[0..buffer.len() - suffix.len()]
     } else {
         buffer
     }
@@ -2108,11 +1803,7 @@ pub fn first_non_ascii16(slice: &[u16]) -> Option<u32> {
     None
 }
 
-pub use crate::strings::trim;
-
-pub fn trim_spaces(slice: &[u8]) -> &[u8] {
-    trim(slice, &WHITESPACE_CHARS)
-}
+pub use crate::strings_impl::trim;
 
 pub fn is_all_whitespace(slice: &[u8]) -> bool {
     let mut begin: usize = 0;
@@ -2182,10 +1873,6 @@ pub fn cmp_strings_asc(_: (), a: &[u8], b: &[u8]) -> bool {
     order(a, b) == Ordering::Less
 }
 
-pub fn cmp_strings_desc(_: (), a: &[u8], b: &[u8]) -> bool {
-    order(a, b) == Ordering::Greater
-}
-
 /// `u8` rather than a narrower 3-bit integer type: masking off the extra bits
 /// on every read is a meaningful performance difference, including in release
 /// builds.
@@ -2201,20 +1888,6 @@ pub fn sort_desc(in_: &mut [&[u8]]) {
     in_.sort_unstable_by(|a, b| order(b, a));
 }
 
-pub struct StringArrayByIndexSorter<'a> {
-    pub keys: &'a [&'a [u8]],
-}
-
-impl<'a> StringArrayByIndexSorter<'a> {
-    pub fn less_than(&self, a: usize, b: usize) -> bool {
-        order(self.keys[a], self.keys[b]) == Ordering::Less
-    }
-
-    pub fn init(keys: &'a [&'a [u8]]) -> Self {
-        Self { keys }
-    }
-}
-
 #[inline]
 pub fn to_ascii_hex_value(character: u8) -> u8 {
     // Precondition-based (no Option).
@@ -2222,114 +1895,9 @@ pub fn to_ascii_hex_value(character: u8) -> u8 {
     crate::fmt::hex_digit_value(character).expect("ascii hex digit")
 }
 
-/// Rust cannot take a field name as a const param; use an accessor fn.
-pub struct LengthSorter<T, F: Fn(&T) -> &[u8]>(pub F, core::marker::PhantomData<T>);
-impl<T, F: Fn(&T) -> &[u8]> LengthSorter<T, F> {
-    pub fn less_than(&self, lhs: &T, rhs: &T) -> bool {
-        (self.0)(lhs).len() < (self.0)(rhs).len()
-    }
-}
-
-pub struct GlobLengthSorter<T, F: Fn(&T) -> &[u8]>(pub F, core::marker::PhantomData<T>);
-impl<T, F: Fn(&T) -> &[u8]> GlobLengthSorter<T, F> {
-    pub fn less_than(&self, lhs: &T, rhs: &T) -> bool {
-        // Assert: keyA ends with "/" or contains only a single "*".
-        // Assert: keyB ends with "/" or contains only a single "*".
-        let key_a = (self.0)(lhs);
-        let key_b = (self.0)(rhs);
-
-        // Let baseLengthA be the index of "*" in keyA plus one, if keyA contains "*", or the length of keyA otherwise.
-        // Let baseLengthB be the index of "*" in keyB plus one, if keyB contains "*", or the length of keyB otherwise.
-        let star_a = index_of_char(key_a, b'*');
-        let star_b = index_of_char(key_b, b'*');
-        let base_length_a = star_a.map_or(key_a.len(), |i| i as usize);
-        let base_length_b = star_b.map_or(key_b.len(), |i| i as usize);
-
-        // If baseLengthA is greater than baseLengthB, return -1.
-        // If baseLengthB is greater than baseLengthA, return 1.
-        if base_length_a > base_length_b {
-            return true;
-        }
-        if base_length_b > base_length_a {
-            return false;
-        }
-
-        // If keyA does not contain "*", return 1.
-        // If keyB does not contain "*", return -1.
-        if star_a.is_none() {
-            return false;
-        }
-        if star_b.is_none() {
-            return true;
-        }
-
-        // If the length of keyA is greater than the length of keyB, return -1.
-        // If the length of keyB is greater than the length of keyA, return 1.
-        if key_a.len() > key_b.len() {
-            return true;
-        }
-        if key_b.len() > key_a.len() {
-            return false;
-        }
-
-        false
-    }
-}
-
-/// Reflection adapter for [`move_all_slices`].
-/// Rust has no field reflection, so each container type hand-implements this
-/// trait (or, once landed, `#[derive(MoveSlices)]`) to yield its byte-slice
-/// fields as `&mut &'a [u8]` so they can be re-pointed into a new backing
-/// buffer of lifetime `'a` without any unsafe.
-pub trait MoveSlices<'a> {
-    /// Invoke `f` once per byte-slice field of `self`.
-    fn for_each_byte_slice_field(&mut self, f: &mut dyn FnMut(&mut &'a [u8]));
-}
-
-/// Update all `&[u8]` fields in `container` that currently point into `from`
-/// to instead point at the same offset within `to`.
-pub fn move_all_slices<'a, T: MoveSlices<'a> + ?Sized>(
-    container: &mut T,
-    from: &[u8],
-    to: &'a [u8],
-) {
-    let from_start = from.as_ptr() as usize;
-    let from_end = from_start + from.len();
-    container.for_each_byte_slice_field(&mut |field| {
-        let slice_start = field.as_ptr() as usize;
-        let slice_end = slice_start + field.len();
-        if from_end >= slice_end && from_start <= slice_start {
-            *field = move_slice(field, from, to);
-        }
-    });
-}
-
-pub fn move_slice<'a>(slice: &[u8], from: &[u8], to: &'a [u8]) -> &'a [u8] {
-    if cfg!(debug_assertions) {
-        debug_assert!(from.len() <= to.len() && from.len() >= slice.len());
-        // assert we are in bounds
-        debug_assert!(
-            (from.as_ptr() as usize + from.len()) >= slice.as_ptr() as usize + slice.len()
-                && (from.as_ptr() as usize <= slice.as_ptr() as usize)
-        );
-        debug_assert!(eql_long(from, &to[0..from.len()], false)); // data should be identical
-    }
-
-    let ptr_offset = slice.as_ptr() as usize - from.as_ptr() as usize;
-    let result = &to[ptr_offset..][0..slice.len()];
-
-    if cfg!(debug_assertions) {
-        debug_assert!(eql_long(slice, result, false)); // data should be identical
-    }
-
-    result
-}
-
 pub use exact_size_matcher::ExactSizeMatcher;
 
 pub const UNICODE_REPLACEMENT: u32 = 0xFFFD;
-// UTF-8 encoding of U+FFFD
-pub const UNICODE_REPLACEMENT_STR: [u8; 3] = [0xEF, 0xBF, 0xBD];
 
 // Uses `ares_inet_pton`, the vendored
 // c-ares implementation. Do NOT call the system `inet_pton` here: on Windows that
@@ -2366,6 +1934,10 @@ pub fn is_ip_address(input: &[u8]) -> bool {
     }
 }
 
+/// `ares_inet_pton(AF_INET6, …) > 0`.
+/// Must be a strict parse, not a `contains(':')` heuristic: on Windows a
+/// unix-socket path like `C:/Windows/Temp/…` contains a colon and the old
+/// heuristic mis-bracketed it as `unix://[C:/…]`, which fails URL parsing.
 pub fn is_ipv6_address(input: &[u8]) -> bool {
     let mut buf = [0u8; 512];
     if input.len() >= buf.len() {
@@ -2437,70 +2009,6 @@ pub fn concat(args: &[&[u8]]) -> Box<[u8]> {
         length += arg.len();
     }
     concat_with_length(args, length)
-}
-
-pub fn concat_if_needed(
-    dest: &mut Box<[u8]>,
-    args: &[&[u8]],
-    interned_strings_to_check: &[&'static [u8]],
-) -> Result<(), AllocError> {
-    let total_length: usize = {
-        let mut length: usize = 0;
-        for arg in args {
-            length += arg.len();
-        }
-        length
-    };
-
-    if total_length == 0 {
-        *dest = Box::default();
-        return Ok(());
-    }
-
-    if total_length < 1024 {
-        // Use a fixed stack buffer.
-        let mut stack_buf = [0u8; 1024];
-        let mut off: usize = 0;
-        for arg in args {
-            stack_buf[off..off + arg.len()].copy_from_slice(arg);
-            off += arg.len();
-        }
-        let stack_copy = &stack_buf[0..total_length];
-        for &interned in interned_strings_to_check {
-            if eql_long(stack_copy, interned, true) {
-                // PERF: with an owned `Box<[u8]>` dest we copy once.
-                // Hit at most once per JSX config; no leak.
-                *dest = Box::from(interned);
-                return Ok(());
-            }
-        }
-    }
-
-    let is_needed = 'brk: {
-        let mut remain: &[u8] = dest;
-
-        for arg in args {
-            // `args.len` (not `arg.len`) is likely a bug; preserved verbatim.
-            if args.len() > remain.len() {
-                break 'brk true;
-            }
-
-            if eql_long(&remain[0..args.len()], arg, true) {
-                remain = &remain[args.len()..];
-            } else {
-                break 'brk true;
-            }
-        }
-
-        false
-    };
-
-    if !is_needed {
-        return Ok(());
-    }
-
-    *dest = concat_with_length(args, total_length);
-    Ok(())
 }
 
 pub fn must_escape_yaml_string(contents: &[u8]) -> bool {
@@ -2585,11 +2093,6 @@ pub fn index_of_scalar<T: crate::NoUninit + Eq>(input: &[T], scalar: T) -> Optio
     input.iter().position(|c| *c == scalar)
 }
 
-/// Generic. Works on &[u8], &[u16], etc
-pub fn contains_scalar<T: crate::NoUninit + Eq>(input: &[T], item: T) -> bool {
-    index_of_scalar(input, item).is_some()
-}
-
 pub fn without_suffix_comptime<'a>(input: &'a [u8], suffix: &'static [u8]) -> &'a [u8] {
     if has_suffix_comptime(input, suffix) {
         return &input[0..input.len() - suffix.len()];
@@ -2628,23 +2131,6 @@ pub fn without_prefix_if_possible_comptime<'a>(
         return Some(&input[prefix.len()..]);
     }
     None
-}
-
-pub struct SplitFirst<'a> {
-    pub first: u8,
-    pub rest: &'a [u8],
-}
-
-/// Returns the first byte of the string and the rest of the string excluding the first byte
-pub fn split_first(self_: &[u8]) -> Option<SplitFirst<'_>> {
-    if self_.is_empty() {
-        return None;
-    }
-    let first = self_[0];
-    Some(SplitFirst {
-        first,
-        rest: &self_[1..],
-    })
 }
 
 /// Returns the first byte of the string which matches the expected byte and the rest of the string excluding the first byte
@@ -2702,7 +2188,7 @@ pub fn percent_encode_write(
 
 // Unicode core is re-exported at the top of the file. Further transcoding
 // helpers (unicode_draft) and path helpers (bun_paths) are re-exported on
-// demand as callers need them — see the `crate::strings` re-export block below.
+// demand as callers need them — see the `crate::strings_impl` re-export block below.
 pub use crate::string::escape_reg_exp::{escape_reg_exp, escape_reg_exp_for_package_name_matching};
 
 crate::declare_scope!(STR, hidden);
@@ -2721,11 +2207,10 @@ pub fn is_hex_code_point<T: TryInto<u8>>(cp: T) -> bool {
 /// Unicode `Zs` (Space_Separator) general category — the exact 17-codepoint
 /// set, stable since Unicode 4.0. Shared core of:
 ///   - ECMAScript `WhiteSpace` (js_parser::lexer)
-///   - the JSON5/JS-flavoured JSON lexer (parsers::json_lexer)
 ///   - CommonMark §2.1 "Unicode whitespace" (md::helpers)
 /// Callers compose with their own ASCII / U+FEFF / line-terminator extras —
-/// those differ per spec and MUST NOT be folded in here (FEFF is Cf, not Zs,
-/// and is ECMAScript-only; 2028/2029 are Zl/Zp, json_lexer-only).
+/// those differ per spec and MUST NOT be folded in here (FEFF is Cf, not Zs;
+/// 2028/2029 are Zl/Zp).
 #[inline]
 pub const fn is_unicode_space_separator(cp: u32) -> bool {
     matches!(
@@ -2785,18 +2270,18 @@ unsafe extern "C" {
     safe fn Bun__ANSI__next(it: &mut ANSIIterator) -> bool;
 }
 
-// Transcoding allocators live in T0 `crate::strings` so collections can
+// Transcoding allocators live in T0 `crate::strings_impl` so collections can
 // reach them without a same-tier cycle. Re-export here for callers that go
 // through `bun_core::strings`.
-pub use crate::strings::{
+pub use crate::strings_impl::{
     allocate_latin1_into_utf8_with_list, convert_utf16_to_utf8, convert_utf16_to_utf8_append,
-    encode_wtf8_rune, is_all_ascii, latin1_to_codepoint_bytes_assume_not_ascii, to_utf8_alloc,
-    to_utf8_alloc_from_le_bytes, to_utf8_append_to_list, to_utf8_from_latin1,
+    encode_wtf8_rune, is_all_ascii, latin1_to_codepoint_bytes_assume_not_ascii, narrow_ascii_u16,
+    to_utf8_alloc, to_utf8_alloc_from_le_bytes, to_utf8_append_to_list, to_utf8_from_latin1,
 };
 
 #[inline]
 pub fn to_utf8_alloc_with_type(utf16: &[u16]) -> Vec<u8> {
-    crate::strings::to_utf8_alloc(utf16)
+    crate::strings_impl::to_utf8_alloc(utf16)
 }
 
 // ───────────── minimal real impls of submodule fns ─────────────
@@ -2807,12 +2292,12 @@ pub fn to_utf8_alloc_with_type(utf16: &[u16]) -> Vec<u8> {
 pub use crate::strings_impl::utf8_byte_sequence_length;
 
 /// Strip leading chars in `values_to_strip`.
-pub use crate::strings::trim_left;
+pub use crate::strings_impl::trim_left;
 
 /// Strip trailing chars in `values_to_strip`.
-pub use crate::strings::trim_right;
+pub use crate::strings_impl::trim_right;
 
-pub use crate::strings::{replace, replace_owned, replacement_size};
+pub use crate::strings_impl::{replace, replace_owned, replacement_size};
 
 // Defined in crate::fmt; re-exported here for back-compat.
 pub use crate::fmt::{ParseIntError, parse_int};
@@ -2830,7 +2315,7 @@ pub fn utf16_eql_string(text: &[u16], str: &[u8]) -> bool {
     while i < n {
         // `decode_wtf16_raw` avoids the `|`-precedence bug of the old
         // open-coded math, which mis-decoded supplementary code points >= U+20000.
-        let (cp, adv) = crate::strings::decode_wtf16_raw(&text[i..]);
+        let (cp, adv) = crate::strings_impl::decode_wtf16_raw(&text[i..]);
         i += adv as usize;
         let width = encode_wtf8_rune(&mut temp, cp);
         if j + width > str.len() {
@@ -2856,7 +2341,9 @@ pub fn to_utf16_alloc_for_real(
         return Ok(v);
     }
     // All-ASCII path: widen each byte.
-    let mut out = Vec::with_capacity(bytes.len() + sentinel as usize);
+    let mut out: Vec<u16> = Vec::new();
+    out.try_reserve_exact(bytes.len() + sentinel as usize)
+        .map_err(|_| ToUTF16Error::OutOfMemory)?;
     out.extend(bytes.iter().map(|&b| u16::from(b)));
     if sentinel {
         out.push(0);
@@ -2879,12 +2366,17 @@ pub fn without_prefix<'a>(input: &'a [u8], prefix: &[u8]) -> &'a [u8] {
 // `bun_paths::string_paths` (it depends upward on `bun_paths` resolve/pool
 // helpers and would cycle here). Callers reach the Windows path-shape
 // helpers (`to_nt_path` / `to_kernel32_path` / `from_w_path` / …) via
-// `bun_paths::strings::*`; this module keeps only the re-export of the
-// scalar `without_trailing_slash` already defined in `crate::strings`.
-pub use crate::strings_impl::{remove_leading_dot_slash, without_trailing_slash};
+// `bun_paths::strings::*`; this module re-exports only the path-shape
+// primitives that must live at tier-0 (`crate::strings_impl`) so `bun_paths`
+// itself can build on them.
+pub use crate::strings_impl::{
+    PathByte, basename, basename_posix, basename_windows,
+    is_windows_absolute_path_missing_drive_letter, remove_leading_dot_slash,
+    without_trailing_slash,
+};
 // Re-export the bun_core implementation so callers can spell
 // `strings::convert_utf16_to_utf8_in_buffer` without reaching into `unicode`.
-pub use crate::strings::convert_utf16_to_utf8_in_buffer;
+pub use crate::strings_impl::convert_utf16_to_utf8_in_buffer;
 // Re-export the NUL-terminated variant so callers can spell
 // `strings::convert_utf8_to_utf16_in_buffer_z` (used by the Windows profilers
 // to widen output paths for `File::write_file_os_path`).
@@ -3028,23 +2520,24 @@ pub fn to_utf8_list_with_type(mut list: Vec<u8>, utf16: &[u16]) -> Result<Vec<u8
     let length = simdutf::length::utf8::from::utf16::le(utf16);
     list.try_reserve(length + 16).map_err(|_| AllocError)?;
     // Route through
-    // `crate::strings::convert_utf16_to_utf8_append`, which replaces
+    // `crate::strings_impl::convert_utf16_to_utf8_append`, which replaces
     // unpaired surrogates with U+FFFD.
-    crate::strings::convert_utf16_to_utf8_append(&mut list, utf16);
+    crate::strings_impl::convert_utf16_to_utf8_append(&mut list, utf16);
     Ok(list)
 }
 
-/// Errors from `to_utf16_alloc` when `fail_if_invalid = true`.
+/// Errors from `to_utf16_alloc`. `InvalidByteSequence` is only returned when
+/// `fail_if_invalid = true`; `OutOfMemory` can be returned by any call.
 ///
 /// Re-exported from `unicode_draft` so that `to_utf16_alloc_maybe_buffered`
 /// (defined there) and `to_utf16_alloc` (defined here) share a single error
 /// type — callers like `TextDecoder` match on `strings::ToUTF16Error` for both.
 pub use unicode_draft::ToUTF16Error;
-impl From<ToUTF16Error> for crate::Error {
+impl From<ToUTF16Error> for crate::CrateError {
     fn from(e: ToUTF16Error) -> Self {
         match e {
-            ToUTF16Error::InvalidByteSequence => crate::err!("InvalidByteSequence"),
-            ToUTF16Error::OutOfMemory => crate::err!("OutOfMemory"),
+            ToUTF16Error::InvalidByteSequence => crate::CrateError::InvalidByteSequence,
+            ToUTF16Error::OutOfMemory => crate::CrateError::Alloc(bun_alloc::AllocError),
         }
     }
 }
@@ -3070,8 +2563,10 @@ pub fn to_utf16_alloc(
     // spare capacity — avoids the redundant zero-fill of `vec![0u16; cap]`,
     // which for large source files (build/create-next benches) is a measurable
     // memset. `.max(1)` keeps the buffer pointer non-dangling so simdutf never
-    // sees `Vec::with_capacity(0)`'s `0x2` sentinel.
-    let mut out: Vec<u16> = Vec::with_capacity(cap.max(1));
+    // sees `Vec::new()`'s dangling `0x2` sentinel.
+    let mut out: Vec<u16> = Vec::new();
+    out.try_reserve_exact(cap.max(1))
+        .map_err(|_| ToUTF16Error::OutOfMemory)?;
     // SAFETY: `out` has ≥ `out_length` u16 of capacity (just reserved). simdutf
     // never reads from the output buffer and writes at most `out_length` code
     // units (the upper bound returned by `utf16_length_from_utf8`), so passing
@@ -3097,7 +2592,8 @@ pub fn to_utf16_alloc(
     }
     // Slow path: WTF-8 decode with replacement. `out` is still len 0 (we never
     // committed the failed fast-path write); reuse its capacity.
-    out.reserve(bytes.len() + if sentinel { 1 } else { 0 });
+    out.try_reserve(bytes.len() + if sentinel { 1 } else { 0 })
+        .map_err(|_| ToUTF16Error::OutOfMemory)?;
     let mut remaining = bytes;
     while let Some(i) = first_non_ascii(remaining) {
         let i = i as usize;
@@ -3116,6 +2612,56 @@ pub fn to_utf16_alloc(
         out.push(0);
     }
     Ok(Some(out))
+}
+
+/// WTF-8 → UTF-16LE iff `bytes` contains any non-ASCII byte; pure-ASCII inputs return `None`.
+pub fn wtf8_to_utf16_alloc(bytes: &[u8]) -> Option<Vec<u16>> {
+    first_non_ascii(bytes)?;
+
+    let out_length = simdutf::length::utf16::from::utf8(bytes);
+    let mut out: Vec<u16> = Vec::with_capacity(out_length.max(1));
+    // SAFETY: `out` has ≥ `out_length` u16 of capacity; simdutf writes at most that many.
+    let res = unsafe {
+        simdutf::simdutf__convert_utf8_to_utf16le_with_errors(
+            bytes.as_ptr(),
+            bytes.len(),
+            out.as_mut_ptr(),
+        )
+    };
+    if res.is_successful() && out_length > 0 {
+        // SAFETY: on success simdutf initialised exactly `out_length` u16s.
+        unsafe { out.set_len(out_length) };
+        return Some(out);
+    }
+
+    out.reserve(bytes.len());
+    let mut i = 0usize;
+    while i < bytes.len() {
+        let b = bytes[i];
+        if b < 0x80 {
+            out.push(u16::from(b));
+            i += 1;
+            continue;
+        }
+        let width = wtf8_byte_sequence_length_with_invalid(b);
+        if width == 1 {
+            out.push(UNICODE_REPLACEMENT as u16);
+            i += 1;
+            continue;
+        }
+        let take = (width as usize).min(bytes.len() - i);
+        let mut buf = [0u8; 4];
+        buf[..take].copy_from_slice(&bytes[i..i + take]);
+        let cp = decode_wtf8_rune_t::<i32>(buf, width, -1);
+        if cp < 0 {
+            out.push(UNICODE_REPLACEMENT as u16);
+            i += 1;
+            continue;
+        }
+        push_codepoint_utf16(&mut out, cp as u32);
+        i += take;
+    }
+    Some(out)
 }
 
 /// `PATTERN_KEY_COMPARE` from the Node.js ESM resolution spec — the comparator
@@ -3150,12 +2696,11 @@ pub fn glob_length_compare(key_a: &[u8], key_b: &[u8]) -> Ordering {
 
 #[cfg(test)]
 mod tests {
-    // Regression guard for 3e7f1dabc079: `crate::strings::{first_non_ascii,
-    // eql_case_insensitive_ascii}` are explicit re-exports of the wrappers in
-    // *this* module (lib.rs `pub mod strings`), so the wrappers must call
-    // `crate::strings_impl::*` directly. Routing through `crate::strings::*`
-    // tail-recurses; rustc's `unconditional_recursion` lint does NOT fire
-    // across `pub use` re-export chains, so assert termination here instead.
+    // Regression guard for 3e7f1dabc079: `crate::strings` is an alias of
+    // *this* module, so wrappers here (e.g. `first_non_ascii`) must call
+    // `crate::strings_impl::*`, never `crate::strings::*` (self-recursion).
+    // rustc's `unconditional_recursion` lint does NOT fire across `pub use`
+    // re-export chains, so assert termination here instead.
     #[test]
     fn strings_reexport_wrappers_terminate() {
         assert_eq!(super::first_non_ascii(b"abc"), None);

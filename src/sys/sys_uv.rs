@@ -18,38 +18,20 @@ use crate::ReturnCodeExt;
 
 type Result<T> = crate::Result<T>;
 
-// `pub const log = bun.sys.syslog;`
-// In Rust the scoped log is a macro; re-export the crate macro and alias locally.
-pub use crate::syslog;
 bun_core::define_scoped_log!(log, crate::fd::SYS);
 
 pub use crate::Error;
-pub use crate::PosixStat;
 
 // libuv dont support openat (https://github.com/libuv/libuv/issues/4167)
 pub use crate::access;
 pub use crate::get_fd_path;
 pub use crate::openat;
-pub use crate::openat_os_path;
-pub use crate::set_file_offset;
 // Re-export the bun.sys versions of these (libuv has no
 // equivalent or `bun.sys` already routes through Win32 directly).
 pub use crate::lseek;
 pub use crate::symlink;
 pub use crate::unlinkat;
 pub use crate::unlinkat_with_flags;
-// On Windows this is the WTF-16 `CreateDirectoryW` wrapper (handles unpaired
-// surrogates / `\\?\` long paths). Wrap `mkdir_w`, NOT the UTF-8 `mkdir`, so
-// callers passing an `OSPathSlice` keep WTF-16 semantics.
-//
-// The `flags` param is ignored on Windows but is part of the public 2-arg
-// signature, so we cannot `pub use mkdir_w as ...` — that would drop the
-// second arg and break callers that pass a mode.
-#[inline]
-pub fn mkdir_os_path(file_path: &bun_core::WStr, flags: Mode) -> Result<()> {
-    let _ = flags;
-    crate::mkdir_w(file_path)
-}
 
 // Note: `req = undefined; req.deinit()` has a safety-check in a debug build
 
@@ -258,6 +240,34 @@ pub fn chown(file_path: &ZStr, uid: uv::uv_uid_t, gid: uv::uv_uid_t) -> Result<(
     );
     if let Some(errno) = rc.err_enum_e() {
         Result::Err(Error::new(errno, Tag::chown).with_path(file_path.as_bytes()))
+    } else {
+        Result::Ok(())
+    }
+}
+
+pub fn lchown(file_path: &ZStr, uid: uv::uv_uid_t, gid: uv::uv_uid_t) -> Result<()> {
+    let mut req = FsReq::new();
+    // SAFETY: synchronous libuv fs call; req lives on the stack for the duration.
+    let rc = unsafe {
+        uv::uv_fs_lchown(
+            uv::Loop::get(),
+            &mut *req,
+            file_path.as_ptr(),
+            uid,
+            gid,
+            None,
+        )
+    };
+
+    log!(
+        "uv lchown({}, {}, {}) = {}",
+        BStr::new(file_path.as_bytes()),
+        uid,
+        gid,
+        rc.int()
+    );
+    if let Some(errno) = rc.err_enum_e() {
+        Result::Err(Error::new(errno, Tag::lchown).with_path(file_path.as_bytes()))
     } else {
         Result::Ok(())
     }
@@ -526,10 +536,6 @@ pub fn lstat(path: &ZStr) -> Result<Stat> {
 
 pub fn close(fd: Fd) -> Option<Error> {
     fd.close_allowing_bad_file_descriptor(None)
-}
-
-pub fn close_allowing_stdout_and_stderr(fd: Fd) -> Option<Error> {
-    fd.close_allowing_standard_io(None)
 }
 
 /// Maximum number of iovec buffers that can be passed to uv_fs_read/uv_fs_write.

@@ -1014,7 +1014,7 @@ impl Image {
         // option space isn't accidentally squatted.
         if args.len() > 0 && !args[0].is_undefined_or_null() {
             let s = bun_core::OwnedString::new(args[0].to_bun_string(global)?);
-            if !s.eql_utf8(b"dataurl") {
+            if !s.eql_comptime(b"dataurl") {
                 return Err(global.throw_invalid_arguments(format_args!(
                     "Image.placeholder(): only \"dataurl\" is supported",
                 )));
@@ -1790,7 +1790,9 @@ impl<'a> PipelineTask<'a> {
                         unsafe { (out.free)(out.bytes.as_ptr().cast(), core::ptr::null_mut()) };
                         let blob = Blob::init(owned, global);
                         blob.content_type
-                            .set(std::ptr::from_ref::<[u8]>(format.mime().as_bytes()));
+                            .set(crate::webcore::blob::BlobContentType::Static(
+                                format.mime().as_bytes(),
+                            ));
                         blob.content_type_was_set.set(true);
                         // UFCS to pick the consuming `JsClass::to_js(self, _)`
                         // (heap-promotes via `Blob::new`) over the inherent

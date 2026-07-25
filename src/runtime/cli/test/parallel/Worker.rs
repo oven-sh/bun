@@ -71,11 +71,10 @@ pub struct Worker {
     /// Set when the process-exit notification arrives. Reaping waits for both
     /// this and `ipc.done` so trailing IPC frames are decoded first.
     pub exit_status: Option<Status>,
-    pub extra_fd_stdio: [Stdio; 1],
 }
 
 impl Worker {
-    pub fn start(&mut self) -> Result<(), bun_core::Error> {
+    pub fn start(&mut self) -> crate::Result<()> {
         debug_assert!(!self.alive);
         let coord_ptr = self.coord;
         // SAFETY: coord backref is valid for the worker's lifetime (Coordinator owns workers slice).
@@ -123,9 +122,6 @@ impl Worker {
         {
             // `.buffer` extra_fd creates an AF_UNIX socketpair; the parent end is
             // adopted into a usockets `Channel`.
-            // SpawnOptions.extra_fds is `Box<[Stdio]>` (owned) in the
-            // Rust port, so the `extra_fd_stdio` field is no longer borrowed here.
-            this.extra_fd_stdio = [Stdio::Buffer];
             let options = SpawnOptions {
                 stdin: Stdio::Ignore,
                 stdout: Stdio::Buffer,
@@ -154,7 +150,7 @@ impl Worker {
             }?
             .map_err(|e| {
                 Output::err(e, "spawnProcess failed for test worker", ());
-                bun_core::err!("SpawnFailed")
+                crate::Error::SpawnFailed
             })?;
             let stdout = spawned.stdout;
             let stderr = spawned.stderr;
@@ -167,19 +163,19 @@ impl Worker {
                 this.out
                     .reader
                     .start(fd, true)
-                    .map_err(|_| bun_core::err!("PipeStartFailed"))?;
+                    .map_err(|_| crate::Error::PipeStartFailed)?;
             }
             if let Some(fd) = stderr {
                 this.err
                     .reader
                     .start(fd, true)
-                    .map_err(|_| bun_core::err!("PipeStartFailed"))?;
+                    .map_err(|_| crate::Error::PipeStartFailed)?;
             }
             if !extra_pipes.is_empty() {
                 // coord.vm backref valid for worker lifetime; adopt() mutates the
                 // loop's socket context via interior mutability on the C side.
                 if !this.ipc.adopt(coord.vm, extra_pipes[0].fd()) {
-                    return Err(bun_core::err!("ChannelAdoptFailed"));
+                    return Err(crate::Error::ChannelAdoptFailed);
                 }
             } else {
                 this.ipc.done = true;
@@ -208,9 +204,6 @@ impl Worker {
                 unsafe { uv::Pipe::close_and_destroy(p) };
             });
 
-            // SpawnOptions.extra_fds is `Box<[Stdio]>` (owned) in the
-            // Rust port, so the `extra_fd_stdio` field is no longer borrowed here.
-            this.extra_fd_stdio = [Stdio::Ipc(ipc_pipe)];
             let options = SpawnOptions {
                 stdin: Stdio::Ignore,
                 stdout: Stdio::Buffer(bun_core::heap::into_raw(Box::new(bun_core::ffi::zeroed::<
@@ -239,7 +232,7 @@ impl Worker {
             }?
             .map_err(|e| {
                 Output::err(e, "spawnProcess failed for test worker", ());
-                bun_core::err!("SpawnFailed")
+                crate::Error::SpawnFailed
             })?;
             // `WindowsStdioResult::Buffer` holds `Box<uv::Pipe>`, and
             // `spawn_process_windows` does `heap::take(ipc_pipe)` into it — so
@@ -265,7 +258,7 @@ impl Worker {
                         .reader
                         .start_with_pipe(bun_core::heap::into_raw(pipe))
                 }
-                .map_err(|_| bun_core::err!("PipeStartFailed"))?;
+                .map_err(|_| crate::Error::PipeStartFailed)?;
             }
             if let spawn::WindowsStdioResult::Buffer(pipe) = spawned.stderr.take() {
                 // SAFETY: see stdout above.
@@ -274,7 +267,7 @@ impl Worker {
                         .reader
                         .start_with_pipe(bun_core::heap::into_raw(pipe))
                 }
-                .map_err(|_| bun_core::err!("PipeStartFailed"))?;
+                .map_err(|_| crate::Error::PipeStartFailed)?;
             }
             // `ipc_pipe` was Box-allocated via heap::into_raw above and
             // initialised by spawn_process; ownership of the *mut Pipe transfers
@@ -282,7 +275,7 @@ impl Worker {
             // On failure the caller still owns it (Channel.rs:294) and the
             // `ipc_pipe_guard` errdefer performs `close_and_destroy`.
             if !this.ipc.adopt_pipe(coord.vm, ipc_pipe) {
-                return Err(bun_core::err!("ChannelAdoptFailed"));
+                return Err(crate::Error::ChannelAdoptFailed);
             }
             // Channel now owns the Box; disarm the errdefer so end-of-block
             // doesn't double-close. Any later error (watch_or_reap) is handled
@@ -331,7 +324,7 @@ impl Worker {
                 // SAFETY: see above.
                 unsafe { (*coord_ptr.cast_mut()).live_workers -= 1 };
                 Output::err(e, "watchOrReap failed for test worker", ());
-                return Err(bun_core::err!("ProcessWatchFailed"));
+                return Err(crate::Error::ProcessWatchFailed);
             }
         }
 
@@ -383,28 +376,6 @@ impl Worker {
         // Leave the channel open so the reader drains trailing
         // repeat_bufs/junit_file/coverage_file frames; the worker exits on
         // `.shutdown` and its exit closes the peer end.
-    }
-
-    /// `Channel` owner callback: a decoded frame arrived.
-    pub fn on_channel_frame(&mut self, kind: frame::Kind, rd: &mut frame::Reader<'_>) {
-        // SAFETY: coord backref valid; mutation — see `coord` field doc (provenance caveats).
-        unsafe { (*self.coord.cast_mut()).on_frame(self, kind, rd) };
-    }
-
-    /// `Channel` owner callback: peer closed, errored, or sent a corrupt frame.
-    /// Gates `tryReap` so kernel-buffered frames written just before exit() are
-    /// decoded before the worker slot is torn down.
-    pub fn on_channel_done(&mut self) {
-        if self.ipc.is_attached() {
-            // Corrupt frame path — kill the worker so onWorkerExit accounts for
-            // the in-flight file and the slot can respawn.
-            if let Some(p) = self.process {
-                // SAFETY: `p` is the live intrusive-refcounted *mut Process.
-                let _ = unsafe { (*p).kill(9) };
-            }
-        }
-        // SAFETY: coord backref valid; mutation — see `coord` field doc (provenance caveats).
-        unsafe { (*self.coord.cast_mut()).try_reap(self) };
     }
 }
 

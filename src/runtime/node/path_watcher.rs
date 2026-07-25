@@ -57,7 +57,7 @@ use bun_wyhash::hash;
 
 use bun_jsc::VirtualMachineRef as VirtualMachine;
 
-use crate::node::node_fs_watcher::{Event, EventPathString, FSWatcher};
+use crate::node::node_fs_watcher::{Event, FSWatcher, WatchEventKind};
 
 #[cfg(target_os = "macos")]
 use crate::node::fs_events as fsevents;
@@ -159,26 +159,11 @@ impl PathWatcherManager {
             return Ok(m);
         }
 
-        // Process-lifetime singleton. Hand the allocation off via
-        // `heap::release`; it is published into
-        // `DEFAULT_MANAGER` below and lives until process exit — except on the
-        // `Platform::init` error path, which is the one place it is reclaimed.
-        let m: &'static mut PathWatcherManager =
-            bun_core::heap::release(Box::new(PathWatcherManager::default()));
-        if let Err(e) = Platform::init(m) {
-            // SAFETY: `m` came from `release(Box::new(..))` above and has not
-            // been published — reclaim it so the failed init isn't a leak.
-            unsafe {
-                drop(bun_core::heap::take(
-                    std::ptr::from_mut::<PathWatcherManager>(m),
-                ))
-            };
-            return Err(e);
-        }
+        let m = Platform::init()?;
         // Holding DEFAULT_MANAGER_MUTEX with `.get()` having returned `None`
         // above, so this is the first publish; `set` cannot fail.
-        let _ = DEFAULT_MANAGER.set(&*m);
-        Ok(&*m)
+        let _ = DEFAULT_MANAGER.set(m);
+        Ok(m)
     }
 
     /// Build the dedup key into `buf`. Not null-terminated; only used as a hashmap key.
@@ -226,48 +211,31 @@ pub struct PathWatcher {
     platform: PlatformWatch,
 }
 
-#[derive(Copy, Clone, Default, Eq, PartialEq, strum::IntoStaticStr)]
-pub enum EventType {
-    #[strum(serialize = "rename")]
-    Rename,
-    #[strum(serialize = "change")]
-    #[default]
-    Change,
-}
-
-impl EventType {
-    pub fn to_event(self, path: EventPathString) -> Event {
-        match self {
-            EventType::Rename => Event::Rename(path),
-            EventType::Change => Event::Change(path),
-        }
-    }
-}
-
 /// Per-handler duplicate suppression.
 ///
-/// The predicate is intentionally identical to `win_watcher.rs`
-/// so POSIX and Windows agree on which bursts are coalesced.
-/// It suppresses only when, within the same millisecond, *both* the hash and
-/// the event type match the previous emission — arguably too aggressive, but
-/// changing it here would diverge from Windows; fixing all three together is
-/// a separate change.
+/// Suppresses only exact duplicates: same path hash *and* same event type
+/// within a 1ms window. Distinct files changed in the same millisecond must
+/// each emit — node delivers both (see test/js/node/test/parallel
+/// fs-watch tests that write two files back-to-back). Kept identical to
+/// `win_watcher.rs` so POSIX and Windows agree on which bursts are coalesced.
 #[derive(Default)]
 pub(crate) struct ChangeEvent {
     #[cfg(not(windows))]
     hash: u64,
     #[cfg(not(windows))]
-    event_type_: EventType,
+    event_type_: WatchEventKind,
     #[cfg(not(windows))]
     timestamp: i64,
 }
 
 #[cfg(not(windows))]
 impl ChangeEvent {
-    fn should_emit(&mut self, hash: u64, timestamp: i64, event_type: EventType) -> bool {
+    fn should_emit(&mut self, hash: u64, timestamp: i64, event_type: WatchEventKind) -> bool {
         let time_diff = timestamp - self.timestamp;
-        if (self.timestamp == 0 || time_diff > 1)
-            || (self.event_type_ != event_type && self.hash != hash)
+        if self.timestamp == 0
+            || time_diff > 1
+            || self.event_type_ != event_type
+            || self.hash != hash
         {
             self.timestamp = timestamp;
             self.event_type_ = event_type;
@@ -290,7 +258,7 @@ impl PathWatcher {
     /// Called from the platform reader thread with `manager.mutex` held.
     /// `rel_path` is borrowed — `onPathUpdatePosix` dupes it before enqueuing.
     #[cfg(not(windows))]
-    fn emit(&mut self, event_type: EventType, rel_path: &[u8], is_file: bool) {
+    fn emit(&mut self, event_type: WatchEventKind, rel_path: &[u8], is_file: bool) {
         let timestamp = bun_core::time::milli_timestamp();
         let h = hash(rel_path);
         for entry in self.handlers.iterator() {
@@ -301,6 +269,32 @@ impl PathWatcher {
                     is_file,
                 );
             }
+        }
+    }
+
+    /// Like [`emit`](Self::emit), but without per-handler duplicate suppression.
+    /// The `IN_IGNORED` retiring a deleted inode's wd lands in the same
+    /// millisecond as its `IN_DELETE_SELF`, with the same path and type, so
+    /// `should_emit` would fold the two into one; node (libuv) delivers both.
+    /// Caller holds `manager.mutex`.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    fn emit_unsuppressed(&mut self, event_type: WatchEventKind, rel_path: &[u8], is_file: bool) {
+        for &ctx in self.handlers.keys() {
+            (FSWatcher::ON_PATH_UPDATE)(Some(ctx), event_type.to_event(rel_path.into()), is_file);
+        }
+    }
+
+    /// The shared inotify queue overflowed and events were lost; every handler
+    /// gets `('change', null)`. No duplicate suppression — a loss signal must
+    /// always be delivered. Caller holds `manager.mutex`.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    fn emit_overflow(&mut self) {
+        for &ctx in self.handlers.keys() {
+            (FSWatcher::ON_PATH_UPDATE)(
+                Some(ctx),
+                Event::NoFilename(WatchEventKind::Change),
+                false,
+            );
         }
     }
 
@@ -344,7 +338,6 @@ impl PathWatcher {
     // is therefore scoped to the region where exclusivity actually holds, so
     // clippy's `&mut` rewrite would be unsound here, not just stylistic.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    #[allow(dead_code)]
     pub(crate) fn detach(this: *mut PathWatcher, ctx: *mut c_void) {
         // SAFETY: `this` is a live PathWatcher created via `PathWatcher::new`. Read
         // `manager` via the raw pointer so no `&mut PathWatcher` is asserted before
@@ -636,13 +629,6 @@ type Platform = Kqueue;
 #[cfg(target_os = "freebsd")]
 type PlatformWatch = KqueueWatch;
 
-// win_watcher.rs imports `EventType` from this file, so this module must
-// compile on Windows even though none of the code paths run. The stub keeps
-// `Platform::*` resolvable while the actual Windows backend lives in
-// win_watcher.rs.
-#[cfg(windows)]
-type Platform = WindowsStub;
-
 #[cfg(target_arch = "wasm32")]
 compile_error!("path_watcher: unsupported target");
 
@@ -715,27 +701,30 @@ mod inotify_masks {
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
 impl Linux {
-    fn init(manager: &mut PathWatcherManager) -> sys::Result<()> {
+    fn init() -> sys::Result<&'static PathWatcherManager> {
         use bun_sys::linux::IN;
         let rc = sys::linux::inotify_init1(IN::CLOEXEC);
         if rc < 0 {
             return Err(sys::Error::from_code_int(sys::last_errno(), Tag::watch));
         }
+        // Owning raw pointer first, shared view second: the spawn error arm reclaims
+        // through `manager_ptr`, which must not be derived from a shared reference.
+        let manager_ptr = bun_core::heap::into_raw(Box::new(PathWatcherManager::default()));
+        // SAFETY: just allocated and exclusively owned; published only on Ok.
+        let manager: &'static PathWatcherManager = unsafe { &*manager_ptr };
         manager.platform_fd.set(Fd::from_native(rc));
         // The manager is process-global and never torn down, so the reader thread is
         // a daemon — detach it instead of stashing a handle we'd never join.
-        let mgr_ptr = std::ptr::from_mut::<PathWatcherManager>(manager) as usize;
-        match std::thread::Builder::new().spawn(move || {
-            // SAFETY: manager is process-global (&'static), never freed.
-            Linux::thread_main(unsafe { &*(mgr_ptr as *const PathWatcherManager) })
-        }) {
+        match std::thread::Builder::new().spawn(move || Linux::thread_main(manager)) {
             Ok(handle) => drop(handle), // detach
             Err(_) => {
                 manager.platform_fd.get().close();
+                // SAFETY: the thread never started and the manager was never published.
+                drop(unsafe { bun_core::heap::take(manager_ptr) });
                 return Err(sys::Error::from_code(E::ENOMEM, Tag::watch));
             }
         }
-        Ok(())
+        Ok(manager)
     }
 
     /// Caller holds `manager.mutex`.
@@ -921,14 +910,52 @@ impl Linux {
                 i += core::mem::size_of::<InotifyEvent>() + ev.name_len as usize;
                 let wd = ev.watch_descriptor;
 
-                // Kernel retired this wd (rm_watch, or the watched inode is gone).
+                // Queue hit fs.inotify.max_queued_events and the kernel dropped
+                // events (wd == -1 matches no watch). Every watcher on this fd
+                // is affected — notify all, like node on Windows does.
+                if ev.mask & IN::Q_OVERFLOW != 0 {
+                    // SAFETY: holding manager.mutex.
+                    let watchers = unsafe { &*manager.watchers.get() };
+                    for &w in watchers.values() {
+                        // SAFETY: w live under manager.mutex.
+                        unsafe { (*w).emit_overflow() };
+                        let _ = handle_oom(touched.get_or_put(w));
+                    }
+                    continue;
+                }
+
+                // Kernel retired this wd: `remove_watch` issued an explicit
+                // `inotify_rm_watch` (it deletes the `wd_map` entry first, so no
+                // owners remain to notify) or the watched inode is gone. libuv
+                // turns the latter into one more "rename" after IN_DELETE_SELF,
+                // so a deleted watch root reports two. Recursive sub-wds stay
+                // silent; their parent directory's IN_DELETE already reported it.
                 if ev.mask & IN::IGNORED != 0 {
                     // SAFETY: holding manager.mutex; exclusive access to `wd_map`.
                     let wd_map = unsafe { &mut (*plat).wd_map };
                     if let Some(owners) = wd_map.get_mut(&wd) {
                         for o in owners.drain(..) {
+                            // SAFETY: o.watcher live under manager.mutex. `path` is
+                            // read through the raw pointer (a separate ZBox heap
+                            // allocation) so the slice is not derived from the
+                            // `&mut` formed below, as in the dispatch loop.
+                            let (w_is_file, w_recursive, w_path): (bool, bool, &[u8]) = unsafe {
+                                (
+                                    (*o.watcher).is_file,
+                                    (*o.watcher).recursive,
+                                    &*std::ptr::from_ref::<[u8]>((*o.watcher).path.as_bytes()),
+                                )
+                            };
                             // SAFETY: o.watcher live under manager.mutex.
                             let w = unsafe { &mut *o.watcher };
+                            if o.subpath.as_bytes().is_empty() && (w_is_file || !w_recursive) {
+                                w.emit_unsuppressed(
+                                    WatchEventKind::Rename,
+                                    path::basename(w_path),
+                                    w_is_file,
+                                );
+                                let _ = handle_oom(touched.get_or_put(o.watcher));
+                            }
                             if let Some(idx) = w.platform.wds.iter().position(|&x| x == wd) {
                                 w.platform.wds.swap_remove(idx);
                             }
@@ -953,7 +980,7 @@ impl Linux {
                 };
 
                 let is_dir_child = ev.mask & IN::ISDIR != 0;
-                let event_type: EventType = if ev.mask
+                let event_type: WatchEventKind = if ev.mask
                     & (IN::CREATE
                         | IN::DELETE
                         | IN::DELETE_SELF
@@ -962,9 +989,9 @@ impl Linux {
                         | IN::MOVED_TO)
                     != 0
                 {
-                    EventType::Rename
+                    WatchEventKind::Rename
                 } else {
-                    EventType::Change
+                    WatchEventKind::Change
                 };
 
                 // Dispatch to every owner of this wd. The recursive branch below calls
@@ -1020,7 +1047,16 @@ impl Linux {
                     let rel: &[u8] = if watcher_is_file {
                         path::basename(watcher_path)
                     } else if owner_subpath.is_empty() {
-                        name
+                        if name.is_empty() && !watcher_recursive {
+                            // A nameless event on the root wd is about the watched
+                            // directory itself (IN_DELETE_SELF, IN_MOVE_SELF,
+                            // IN_ATTRIB); libuv reports basename(watched path),
+                            // same as for a file. node's recursive watcher uses
+                            // root-relative paths instead, so those keep "".
+                            path::basename(watcher_path)
+                        } else {
+                            name
+                        }
                     } else if name.is_empty() {
                         owner_subpath
                     } else {
@@ -1054,11 +1090,28 @@ impl Linux {
                             &[watcher_path, owner_subpath, name],
                         );
                         // Borrowck: `rel` may borrow `path_buf`,
-                        // which `walk_and_add` also borrows. Own it for the call.
+                        // which `walk_subtree` also borrows. Own it for the call.
                         let rel_owned: Box<[u8]> = Box::from(rel);
                         // These may rehash `wd_map`; `owners` is re-fetched next iteration.
                         let _ = Linux::add_one(manager, watcher, child_abs, &rel_owned);
-                        Linux::walk_and_add(manager, watcher, child_abs, &rel_owned);
+                        // Entries created inside the new directory before our watch
+                        // attached never get their own IN_CREATE on this fd. Walk the
+                        // subtree: watch nested directories and synthesize a "rename"
+                        // for every discovered entry, like node's recursive watcher
+                        // does when it scans a newly added folder
+                        // (lib/internal/fs/recursive_watch.js). An entry created after
+                        // the watch attached may emit twice; per-handler ChangeEvent
+                        // coalescing absorbs back-to-back duplicates.
+                        walk_subtree::<false>(
+                            child_abs,
+                            &rel_owned,
+                            &mut |abs, entry_rel, entry_is_file| {
+                                if !entry_is_file {
+                                    let _ = Linux::add_one(manager, watcher, abs, entry_rel);
+                                }
+                                watcher.emit(WatchEventKind::Rename, entry_rel, entry_is_file);
+                            },
+                        );
                     }
 
                     oi += 1;
@@ -1115,8 +1168,9 @@ impl Drop for DarwinWatch {
 
 #[cfg(target_os = "macos")]
 impl Darwin {
-    fn init(_: &mut PathWatcherManager) -> sys::Result<()> {
-        Ok(())
+    fn init() -> sys::Result<&'static PathWatcherManager> {
+        // SAFETY: just allocated; nothing after this can fail.
+        Ok(unsafe { &*bun_core::heap::into_raw(Box::new(PathWatcherManager::default())) })
     }
 
     /// Caller does NOT hold `manager.mutex` — `FSEvents.watch()` takes the FSEvents
@@ -1141,7 +1195,7 @@ impl Darwin {
                 Ok(())
             }
             Err(e) => Err(sys::Error::from_code(
-                if e == bun_core::err!("FailedToCreateCoreFoudationSourceLoop") {
+                if matches!(e, crate::Error::FailedToCreateCoreFoudationSourceLoop) {
                     E::EINVAL
                 } else {
                     E::ENOMEM
@@ -1202,8 +1256,8 @@ impl Darwin {
         // yet unlinked us, so no other `&mut PathWatcher` exists for this allocation.
         let watcher = unsafe { &mut *watcher_ptr };
         match event {
-            Event::Rename(path) => watcher.emit(EventType::Rename, &path, is_file),
-            Event::Change(path) => watcher.emit(EventType::Change, &path, is_file),
+            Event::Rename(path) => watcher.emit(WatchEventKind::Rename, &path, is_file),
+            Event::Change(path) => watcher.emit(WatchEventKind::Change, &path, is_file),
             Event::Error(err) => watcher.emit_error(&err),
             _ => {}
         }
@@ -1276,25 +1330,25 @@ impl PathWatcherManager {
 
 #[cfg(target_os = "freebsd")]
 impl Kqueue {
-    fn init(manager: &mut PathWatcherManager) -> sys::Result<()> {
-        let kq = match sys::kqueue() {
-            Ok(f) => f,
-            Err(e) => return Err(e),
-        };
+    fn init() -> sys::Result<&'static PathWatcherManager> {
+        let kq = sys::kqueue()?;
+        // Owning raw pointer first, shared view second: the spawn error arm reclaims
+        // through `manager_ptr`, which must not be derived from a shared reference.
+        let manager_ptr = bun_core::heap::into_raw(Box::new(PathWatcherManager::default()));
+        // SAFETY: just allocated and exclusively owned; published only on Ok.
+        let manager: &'static PathWatcherManager = unsafe { &*manager_ptr };
         manager.platform_fd.set(kq);
         // Daemon reader — the manager is process-global and never torn down.
-        let mgr_ptr = manager as *mut PathWatcherManager as usize;
-        match std::thread::Builder::new().spawn(move || {
-            // SAFETY: manager is process-global (&'static), never freed.
-            Kqueue::thread_main(unsafe { &*(mgr_ptr as *const PathWatcherManager) })
-        }) {
+        match std::thread::Builder::new().spawn(move || Kqueue::thread_main(manager)) {
             Ok(handle) => drop(handle), // detach
             Err(_) => {
                 manager.platform_fd.get().close();
+                // SAFETY: the thread never started and the manager was never published.
+                drop(unsafe { bun_core::heap::take(manager_ptr) });
                 return Err(sys::Error::from_code(E::ENOMEM, Tag::watch));
             }
         }
-        Ok(())
+        Ok(manager)
     }
 
     /// Caller holds `manager.mutex`.
@@ -1473,13 +1527,13 @@ impl Kqueue {
                     unsafe { &*((*entry.watcher).path.as_bytes() as *const [u8]) };
                 let watcher = unsafe { &mut *entry.watcher };
 
-                let event_type: EventType = if kev.fflags
+                let event_type: WatchEventKind = if kev.fflags
                     & (NOTE::DELETE | NOTE::RENAME | NOTE::REVOKE | NOTE::LINK)
                     != 0
                 {
-                    EventType::Rename
+                    WatchEventKind::Rename
                 } else {
-                    EventType::Change
+                    WatchEventKind::Change
                 };
 
                 // kqueue has no filenames. For a file watch, report the basename; for a
@@ -1506,19 +1560,3 @@ impl Kqueue {
 // ────────────────────────────────────────────────────────────────────────────────
 // Windows stub
 // ────────────────────────────────────────────────────────────────────────────────
-
-#[cfg(windows)]
-#[derive(Default)]
-pub(crate) struct WindowsStub {}
-
-#[cfg(windows)]
-impl WindowsStub {
-    fn init(_: &mut PathWatcherManager) -> sys::Result<()> {
-        Err(sys::Error::from_code(E::ENOTSUP, Tag::watch))
-    }
-    fn add_watch(_: &'static PathWatcherManager, _: &mut PathWatcher) -> sys::Result<()> {
-        Err(sys::Error::from_code(E::ENOTSUP, Tag::watch))
-    }
-    #[allow(dead_code)]
-    fn remove_watch(_: &'static PathWatcherManager, _: &mut PathWatcher) {}
-}

@@ -197,7 +197,7 @@ plugin({
 });
 
 // This is to test that it works when imported from a separate file
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { render as svelteRender } from "svelte/server";
 import "../../third_party/svelte";
 import "./module-plugins";
@@ -344,7 +344,7 @@ export default Hello;
 });
 
 describe("errors", () => {
-  it.todo("valid loaders work", () => {
+  it("valid loaders work", () => {
     const validLoaders = ["js", "jsx", "ts", "tsx"];
     const inputs = ["export default 'hi';", "export default 'hi';", "export default 'hi';", "export default 'hi';"];
     for (let i = 0; i < validLoaders.length; i++) {
@@ -364,6 +364,42 @@ describe("errors", () => {
     expect(() => {
       plugin(opts as any);
     }).toThrow("plugin target must be one of 'node', 'bun' or 'browser'");
+  });
+
+  it("handles 'target' that throws while being coerced to a string", () => {
+    let called = false;
+    const opts = {
+      setup: () => {
+        called = true;
+      },
+      target: {
+        [Symbol.toPrimitive]: () => ({}),
+      },
+    };
+
+    expect(() => {
+      plugin(opts as any);
+    }).toThrow("Symbol.toPrimitive returned an object");
+    expect(called).toBe(false);
+  });
+
+  it("handles a 'target' whose toString throws", () => {
+    let called = false;
+    const opts = {
+      setup: () => {
+        called = true;
+      },
+      target: {
+        toString() {
+          throw new Error("target toString error");
+        },
+      },
+    };
+
+    expect(() => {
+      plugin(opts as any);
+    }).toThrow("target toString error");
+    expect(called).toBe(false);
   });
 
   it("invalid loaders throw", () => {
@@ -549,6 +585,34 @@ it("recursion throws stack overflow", () => {
   }
 });
 
+it("onResolve callbacks registered while a path is resolving only apply to later resolutions", () => {
+  Bun.plugin({
+    name: "registers another onResolve while resolving",
+    setup(builder) {
+      builder.onResolve({ filter: /.*/, namespace: "regduring" }, () => {
+        Bun.plugin({
+          name: "registered during resolution",
+          setup(inner) {
+            inner.onResolve({ filter: /.*/, namespace: "regduring" }, ({ path }) => ({
+              path,
+              namespace: "regduring",
+            }));
+          },
+        });
+        return undefined;
+      });
+
+      builder.onLoad({ filter: /.*/, namespace: "regduring" }, ({ path }) => ({
+        contents: `export default ${JSON.stringify(path)};`,
+        loader: "js",
+      }));
+    },
+  });
+
+  expect(() => require("regduring:first")).toThrow();
+  expect(require("regduring:second").default).toBe("second");
+});
+
 it("recursion throws stack overflow at entry point", () => {
   const result = Bun.spawnSync({
     cmd: [bunExe(), "--preload=./plugin-recursive-fixture.ts", "plugin-recursive-fixture-run.ts"],
@@ -559,4 +623,102 @@ it("recursion throws stack overflow at entry point", () => {
   });
 
   expect(result.stderr.toString()).toContain("RangeError: Maximum call stack size exceeded.");
+});
+
+it.concurrent("onResolve can redirect a specifier to a real file in the file namespace", async () => {
+  using dir = tempDir("plugin-onresolve-file-namespace", {
+    "real.js": `export const value = "redirected";`,
+    "entry.js": `
+      import { join } from "node:path";
+
+      const target = join(import.meta.dir, "real.js");
+
+      Bun.plugin({
+        name: "redirect-to-file",
+        setup(build) {
+          build.onResolve({ filter: /^implicit\\.mod$/ }, () => ({ path: target }));
+          build.onResolve({ filter: /^explicit\\.mod$/ }, () => ({ path: target, namespace: "file" }));
+          build.onResolve({ filter: /^empty-namespace\\.mod$/ }, () => ({ path: target, namespace: "" }));
+          build.onResolve({ filter: /^custom\\.mod$/ }, () => ({ path: "inner", namespace: "custom" }));
+          build.onLoad({ filter: /.*/, namespace: "custom" }, ({ path }) => ({
+            contents: "export const value = " + JSON.stringify("custom:" + path) + ";",
+            loader: "js",
+          }));
+        },
+      });
+
+      async function attempt(fn) {
+        try {
+          return await fn();
+        } catch (error) {
+          return "threw: " + error.message;
+        }
+      }
+
+      console.log(
+        JSON.stringify({
+          dynamicImport: await attempt(async () => (await import("implicit.mod")).value),
+          explicitFileNamespace: await attempt(async () => (await import("explicit.mod")).value),
+          emptyNamespace: await attempt(async () => (await import("empty-namespace.mod")).value),
+          customNamespace: await attempt(async () => (await import("custom.mod")).value),
+          requireComputed: await attempt(() => require("implicit" + ".mod").value),
+          resolveSync: await attempt(() => Bun.resolveSync("implicit.mod", import.meta.dir)),
+          importMetaResolve: await attempt(() => import.meta.resolve("implicit.mod")),
+        }),
+      );
+    `,
+  });
+
+  const target = resolve(String(dir), "real.js");
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "entry.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  // The fixture catches its own failures, so empty stdout means it crashed.
+  expect(stdout.trim() ? JSON.parse(stdout) : { crashed: stderr }).toEqual({
+    dynamicImport: "redirected",
+    explicitFileNamespace: "redirected",
+    emptyNamespace: "redirected",
+    // A non-file namespace still round-trips through onLoad as "namespace:path".
+    customNamespace: "custom:inner",
+    requireComputed: "redirected",
+    resolveSync: target,
+    importMetaResolve: Bun.pathToFileURL(target).href,
+  });
+  expect(exitCode).toBe(0);
+});
+
+it.concurrent("a no-op onResolve that returns args.path unchanged is transparent", async () => {
+  using dir = tempDir("plugin-onresolve-no-op", {
+    "preload.js": `
+      Bun.plugin({
+        name: "no-op",
+        setup(build) {
+          build.onResolve({ filter: /\\.js$/ }, args => ({ path: args.path }));
+          build.onResolve({ filter: /\\.ts$/, namespace: "file" }, args => ({ path: args.path, namespace: "file" }));
+        },
+      });
+    `,
+    "dep.ts": `export const value = "dep";`,
+    "entry.js": `
+      import { value } from "./dep.ts";
+      console.log("entry ran:" + value);
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--preload", "./preload.js", "entry.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout.trim() || stderr).toBe("entry ran:dep");
+  expect(exitCode).toBe(0);
 });

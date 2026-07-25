@@ -22,33 +22,13 @@ impl Signature {
 
     // `deinit` deleted — body only freed owned slices; `Box<[T]>` fields drop automatically.
 
-    pub fn hash(&self) -> u64 {
-        // Hash `name` followed by each param's `(type, flags)` field-by-field.
-        //
-        // This intentionally does NOT reinterpret `&[Param]` as `&[u8]`:
-        // `Param` has default
-        // `repr(Rust)` with a `u8` enum + `u16` bitflags, leaving one padding
-        // byte. Exposing padding through `&[u8]` reads uninitialized memory and
-        // is UB. The hash is a process-local prepared-statement cache key, so it
-        // only needs to be self-consistent.
-        //
-        // Stream the bytes (minus padding, see above) through `bun_wyhash::Wyhash`.
-        let mut hasher = bun_wyhash::Wyhash::init(0);
-        hasher.update(&self.name);
-        for p in self.fields.iter() {
-            hasher.update(&[p.r#type as u8]);
-            hasher.update(&p.flags.to_int().to_ne_bytes());
-        }
-        hasher.final_()
-    }
-
-    // Errors are collapsed into the crate-wide `bun_core::Error` currency.
+    // Errors are collapsed into the crate-wide `crate::Error` currency.
     pub fn generate(
         global_object: &JSGlobalObject,
         query: &[u8],
         array_value: JSValue,
         columns: JSValue,
-    ) -> Result<Signature, bun_core::Error> {
+    ) -> crate::Result<Signature> {
         use crate::jsc::js_error_to_mysql;
         use crate::shared::query_binding_iterator::QueryBindingIterator;
 
@@ -94,7 +74,7 @@ impl Signature {
         }
 
         if iter.any_failed() {
-            return Err(bun_core::err!("InvalidQueryBinding"));
+            return Err(crate::Error::InvalidQueryBinding);
         }
 
         Ok(Signature {

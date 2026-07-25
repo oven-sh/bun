@@ -16,17 +16,22 @@ use core::ffi::{CStr, c_uint, c_void};
 use core::ptr::NonNull;
 
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{CallFrame, GlobalRef, JSGlobalObject, JSValue, JsResult, StrongOptional, host_fn};
+use bun_jsc::{CallFrame, GlobalRef, JSGlobalObject, JSValue, JsResult, host_fn};
 use bun_uws::{us_bun_verify_error_t, uws_callback};
 
 use super::ssl_wrapper::SSLWrapper;
+use crate::generated_classes::js_TLSSocket;
 use crate::timer::{ElTimespec, EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 
 bun_output::declare_scope!(UpgradedDuplex, visible);
 
 pub(crate) struct UpgradedDuplex {
     pub wrapper: Option<WrapperType>,
-    pub origin: StrongOptional, // any duplex
+    /// The owning `JSTLSSocket` wrapper. Its `values:` slots root `origin` and
+    /// the four listener thunks; the `JSValue` fields below are read-side
+    /// shadows of those slots.
+    pub js_wrapper: JSValue,
+    pub origin: JSValue, // any duplex
     // JSC_BORROW per LIFETIMES.tsv.
     pub global: Option<GlobalRef>,
     pub ssl_error: CertError,
@@ -35,12 +40,30 @@ pub(crate) struct UpgradedDuplex {
     // `zeroed()` before overwriting via `from()`).
     pub vm: Option<&'static VirtualMachine>,
     pub handlers: Handlers,
-    pub on_data_callback: StrongOptional,
-    pub on_end_callback: StrongOptional,
-    pub on_writable_callback: StrongOptional,
-    pub on_close_callback: StrongOptional,
+    pub on_data_callback: JSValue,
+    pub on_end_callback: JSValue,
+    pub on_writable_callback: JSValue,
+    pub on_close_callback: JSValue,
     pub event_loop_timer: EventLoopTimer,
     pub current_timeout: u32,
+    /// Transport bytes that arrived before the TLS engine existed.
+    ///
+    /// `js_upgrade_duplex_to_tls` defers `start_tls` to an event-loop task (so
+    /// `on_open` cannot re-enter JS before the caller holds the handle), but the
+    /// JS caller attaches its `data` listener as soon as that function returns.
+    /// When both ends of a `duplexPair()` are wrapped in-process, the peer's
+    /// engine starts first and writes its ClientHello while this side's
+    /// `wrapper` is still `None`. Dropping those bytes deadlocks the handshake
+    /// forever, so stage them here and replay them from
+    /// [`Self::drain_pending`] as soon as the engine is up.
+    pub pending_data: Vec<u8>,
+    /// Peer EOF that arrived before the TLS engine existed. Same race as
+    /// [`Self::pending_data`]: a duplex that writes its last bytes and calls
+    /// `end()` in the tick before `StartTLS` runs would otherwise have the EOF
+    /// dropped, leaving the readable side waiting on data that will never come.
+    /// Replayed by [`Self::drain_pending`] after the staged bytes, preserving
+    /// the original data-then-EOF order.
+    pub pending_end: bool,
 }
 
 bun_event_loop::impl_timer_owner!(UpgradedDuplex; from_timer_ptr => event_loop_timer);
@@ -56,6 +79,17 @@ pub struct CertError {
 
 type WrapperType = SSLWrapper<*mut UpgradedDuplex>;
 
+/// Server-side peer-certificate policy for a duplex TLS upgrade, resolved in
+/// `js_upgrade_duplex_to_tls` and applied via `SSLWrapper::set_server_verify`.
+/// Ignored for client upgrades.
+#[derive(Clone, Copy)]
+pub(crate) struct ServerVerify {
+    /// `requestCert` — whether to send a CertificateRequest at all.
+    pub request_cert: bool,
+    /// `rejectUnauthorized` — only meaningful when `request_cert` is set.
+    pub reject_unauthorized: bool,
+}
+
 pub struct Handlers {
     // BACKREF per LIFETIMES.tsv — container holding self as `.upgrade`.
     pub ctx: *mut (),
@@ -67,32 +101,38 @@ pub struct Handlers {
     pub on_writable: fn(*mut ()),
     pub on_error: fn(*mut (), JSValue),
     pub on_timeout: fn(*mut ()),
+    /// A new resumable TLS session (serialized SSL_SESSION) - node's
+    /// `'session'` event on the wrapping TLSSocket.
+    pub on_session: fn(*mut (), &[u8]),
+    /// An NSS key-log line - node's `'keylog'` event.
+    pub on_keylog: fn(*mut (), &[u8]),
 }
 
 use crate::jsc_hooks::timer_all_mut as timer_all;
 
-/// Lazily create-and-cache a JS host-function callback in `slot`.
-///
-/// All four `get_js_handlers` slots follow the identical pattern:
+/// Lazily create-and-cache a JS host-function callback in `shadow`, mirrored
+/// into the owning `JSTLSSocket` wrapper's visited `values:` slot (the GC
+/// root). All four `get_js_handlers` slots follow the identical
 /// `NewFunctionWithData(global, null, 0, fn, self)` → `ensureStillAlive` →
-/// redundant `setFunctionData(self)` → `Strong.Optional.create`.
+/// `setFunctionData(self)` → store pattern.
 #[inline]
 fn lazy_js_handler(
-    slot: &mut StrongOptional,
+    shadow: &mut JSValue,
+    js_wrapper: JSValue,
+    set_slot: fn(JSValue, &JSGlobalObject, JSValue),
     global: &JSGlobalObject,
     func: host_fn::JsHostFn,
     this_ptr: *mut c_void,
 ) -> JSValue {
-    match slot.get() {
-        Some(cb) => cb,
-        None => {
-            let callback = host_fn::new_function_with_data(global, None, 0, func, this_ptr);
-            callback.ensure_still_alive();
-            host_fn::set_function_data(callback, Some(this_ptr));
-            *slot = StrongOptional::create(callback, global);
-            callback
-        }
+    if !shadow.is_empty() {
+        return *shadow;
     }
+    let callback = host_fn::new_function_with_data(global, None, 0, func, this_ptr);
+    callback.ensure_still_alive();
+    host_fn::set_function_data(callback, Some(this_ptr));
+    set_slot(js_wrapper, global, callback);
+    *shadow = callback;
+    callback
 }
 
 impl UpgradedDuplex {
@@ -108,6 +148,20 @@ impl UpgradedDuplex {
         // SAFETY: SSLWrapper handlers ctx is `self as *mut Self`; live for the wrapper's lifetime.
         let this = unsafe { &mut *this };
         (this.handlers.on_data)(this.handlers.ctx, decoded_data);
+    }
+
+    fn on_session(this: *mut Self, session: &[u8]) {
+        bun_output::scoped_log!(UpgradedDuplex, "onSession ({})", session.len());
+        // SAFETY: SSLWrapper handlers ctx is `self as *mut Self`; live for the wrapper's lifetime.
+        let this = unsafe { &mut *this };
+        (this.handlers.on_session)(this.handlers.ctx, session);
+    }
+
+    fn on_keylog(this: *mut Self, line: &[u8]) {
+        bun_output::scoped_log!(UpgradedDuplex, "onKeylog ({})", line.len());
+        // SAFETY: SSLWrapper handlers ctx is `self as *mut Self`; live for the wrapper's lifetime.
+        let this = unsafe { &mut *this };
+        (this.handlers.on_keylog)(this.handlers.ctx, line);
     }
 
     fn on_handshake(this: *mut Self, handshake_success: bool, ssl_error: us_bun_verify_error_t) {
@@ -134,12 +188,19 @@ impl UpgradedDuplex {
         // SAFETY: SSLWrapper handlers ctx is `self as *mut Self`; live for the wrapper's lifetime.
         let this = unsafe { &mut *this };
 
+        // Keep the wrapper (and so its visited `duplex*` slots) reachable
+        // across `handlers.on_close`, which downgrades the socket's own strong
+        // self-reference and re-enters JS.
+        let js_wrapper = this.js_wrapper;
+        js_wrapper.ensure_still_alive();
+
         (this.handlers.on_close)(this.handlers.ctx);
         // closes the underlying duplex
         this.call_write_or_end(None, false);
 
         // Early teardown (struct itself is dropped later by parent).
         this.teardown();
+        js_wrapper.ensure_still_alive();
     }
 
     fn call_write_or_end(&mut self, data: Option<&[u8]>, msg_more: bool) {
@@ -149,11 +210,26 @@ impl UpgradedDuplex {
         if vm.is_shutting_down() {
             return;
         }
-        let Some(duplex) = self.origin.get() else {
+        let duplex = self.origin;
+        if duplex.is_empty() {
             return;
-        };
+        }
         // global is set in `from()` whenever origin is set.
         let Some(global) = self.global else { return };
+
+        // Teardown-phase bytes (close_notify / the trailing end()) aimed at a
+        // duplex whose write side already ended (TLS-inception teardown) only
+        // surface a spurious EPIPE - drop them. Ordinary data writes skip the
+        // probe so write-after-end still errors like node.
+        let teardown = data.is_none() || self.wrapper.as_ref().is_some_and(|w| w.is_shutdown());
+        if teardown {
+            match duplex.get(&global, "writableEnded") {
+                Ok(Some(ended)) if ended.to_boolean() => return,
+                Ok(_) => {}
+                // Best-effort probe: consume the exception and fall through.
+                Err(err) => drop(global.take_exception(err)),
+            }
+        }
 
         let name = if msg_more { "write" } else { "end" };
         let write_or_end = match duplex.get(&global, name) {
@@ -208,7 +284,67 @@ impl UpgradedDuplex {
             if let Some(wrapper) = &mut self.wrapper {
                 wrapper.receive_data(data);
             }
+            return;
         }
+        // Engine not up yet - `start_tls` is still queued. Stage the bytes;
+        // `drain_pending` feeds them in as soon as the engine is up.
+        self.pending_data.extend_from_slice(data);
+    }
+
+    /// Replay bytes that arrived before the engine existed. Called by
+    /// `DuplexUpgradeContext::run_event` once the `StartTLS` branch has
+    /// finished its bookkeeping, so the replay is indistinguishable from an
+    /// ordinary post-start delivery.
+    pub(super) fn drain_pending(&mut self) {
+        // Nothing to replay, or the engine never came up (the socket died
+        // before `StartTLS`). Bail before `mem::take` so the bytes are not
+        // destroyed by a drain that could not deliver them.
+        if self.wrapper.is_none() {
+            return;
+        }
+        if self.pending_data.is_empty() {
+            self.drain_pending_end();
+            return;
+        }
+        // `receive_data` can re-enter this object (it drives BoringSSL, which
+        // calls back into `internal_write`/`on_data`), so move the buffer out
+        // before handing it over rather than holding a borrow across the call.
+        // Taking ownership is load-bearing: a re-entrant `teardown()` clears
+        // `pending_data`, and BoringSSL must not have the slice freed under it.
+        let staged = std::mem::take(&mut self.pending_data);
+        self.reset_timeout();
+        // Feed in bounded slices rather than one concatenated buffer. Each JS
+        // chunk was originally delivered on its own; `receive_data` casts the
+        // length to `c_int` with a panicking `expect`, so handing it the sum of
+        // every chunk staged in the window would turn a large pre-start burst
+        // into a process abort. Re-check the engine each round: BoringSSL can
+        // re-enter and tear it down partway through, and `teardown()` neuters
+        // in place (frees the SSL, keeps the Option `Some`), so the live
+        // signal is the SSL handle, not the Option.
+        for chunk in staged.chunks(64 * 1024) {
+            match &mut self.wrapper {
+                Some(wrapper) if wrapper.ssl.is_some() => wrapper.receive_data(chunk),
+                _ => break,
+            }
+        }
+        self.drain_pending_end();
+    }
+
+    /// Replay an EOF that landed before the engine came up. Split out so both
+    /// `drain_pending` exits report it, and kept after the staged bytes so the
+    /// engine sees data-then-EOF in the order the peer sent it.
+    fn drain_pending_end(&mut self) {
+        if !self.pending_end {
+            return;
+        }
+        self.pending_end = false;
+        // A re-entrant teardown during the byte replay above neuters the
+        // engine in place (`teardown()` keeps the Option `Some` but frees the
+        // SSL); do not synthesize an EOF into a dead socket.
+        if self.wrapper.as_ref().is_none_or(|w| w.ssl.is_none()) {
+            return;
+        }
+        (self.handlers.on_end)(self.handlers.ctx);
     }
 
     pub(crate) fn on_timeout(&mut self) {
@@ -231,22 +367,27 @@ impl UpgradedDuplex {
 
     pub(crate) fn from(
         global: &JSGlobalObject,
+        js_wrapper: JSValue,
         origin: JSValue,
         handlers: Handlers,
     ) -> UpgradedDuplex {
+        js_TLSSocket::duplex_origin_set_cached(js_wrapper, global, origin);
         UpgradedDuplex {
             vm: Some(global.bun_vm()),
-            origin: StrongOptional::create(origin, global),
+            js_wrapper,
+            origin,
             global: Some(GlobalRef::from(global)),
             wrapper: None,
             handlers,
             ssl_error: CertError::default(),
-            on_data_callback: StrongOptional::empty(),
-            on_end_callback: StrongOptional::empty(),
-            on_writable_callback: StrongOptional::empty(),
-            on_close_callback: StrongOptional::empty(),
+            on_data_callback: JSValue::ZERO,
+            on_end_callback: JSValue::ZERO,
+            on_writable_callback: JSValue::ZERO,
+            on_close_callback: JSValue::ZERO,
             event_loop_timer: EventLoopTimer::init_paused(EventLoopTimerTag::UpgradedDuplex),
             current_timeout: 0,
+            pending_data: Vec::new(),
+            pending_end: false,
         }
     }
 
@@ -255,11 +396,14 @@ impl UpgradedDuplex {
         array.ensure_still_alive();
 
         let this_ptr = std::ptr::from_mut(self).cast::<c_void>();
+        let js_wrapper = self.js_wrapper;
         array.put_index(
             global,
             0,
             lazy_js_handler(
                 &mut self.on_data_callback,
+                js_wrapper,
+                js_TLSSocket::duplex_on_data_set_cached,
                 global,
                 __jsc_host_on_received_data,
                 this_ptr,
@@ -270,6 +414,8 @@ impl UpgradedDuplex {
             1,
             lazy_js_handler(
                 &mut self.on_end_callback,
+                js_wrapper,
+                js_TLSSocket::duplex_on_end_set_cached,
                 global,
                 __jsc_host_on_end,
                 this_ptr,
@@ -280,6 +426,8 @@ impl UpgradedDuplex {
             2,
             lazy_js_handler(
                 &mut self.on_writable_callback,
+                js_wrapper,
+                js_TLSSocket::duplex_on_writable_set_cached,
                 global,
                 __jsc_host_on_writable,
                 this_ptr,
@@ -290,6 +438,8 @@ impl UpgradedDuplex {
             3,
             lazy_js_handler(
                 &mut self.on_close_callback,
+                js_wrapper,
+                js_TLSSocket::duplex_on_close_set_cached,
                 global,
                 __jsc_host_on_close_js,
                 this_ptr,
@@ -303,7 +453,8 @@ impl UpgradedDuplex {
         &mut self,
         ssl_options: &crate::server::server_config::SSLConfig,
         is_client: bool,
-    ) -> Result<(), bun_core::Error> {
+        verify: ServerVerify,
+    ) -> Result<(), crate::Error> {
         self.wrapper = Some(super::ssl_wrapper::init(
             ssl_options,
             is_client,
@@ -314,10 +465,14 @@ impl UpgradedDuplex {
                 on_data: Self::on_data,
                 on_close: Self::on_close,
                 write: Self::internal_write,
+                on_session: Some(Self::on_session),
+                on_keylog: Some(Self::on_keylog),
             },
         )?);
 
-        self.wrapper.as_mut().unwrap().start();
+        let wrapper = self.wrapper.as_mut().unwrap();
+        wrapper.set_server_verify(verify.request_cert, verify.reject_unauthorized);
+        wrapper.start();
         Ok(())
     }
 
@@ -329,7 +484,8 @@ impl UpgradedDuplex {
         &mut self,
         ctx: *mut bun_boringssl_sys::SSL_CTX,
         is_client: bool,
-    ) -> Result<(), bun_core::Error> {
+        verify: ServerVerify,
+    ) -> Result<(), crate::Error> {
         // errdefer SSL_CTX_free(ctx) — free the adopted ref on the error path only.
         let ctx_guard = scopeguard::guard(ctx, |ctx| {
             // SAFETY: ctx is a valid SSL_CTX* with one ref adopted by this fn.
@@ -347,12 +503,16 @@ impl UpgradedDuplex {
                 on_data: Self::on_data,
                 on_close: Self::on_close,
                 write: Self::internal_write,
+                on_session: Some(Self::on_session),
+                on_keylog: Some(Self::on_keylog),
             },
         )?);
         // Success: disarm the errdefer.
         scopeguard::ScopeGuard::into_inner(ctx_guard);
 
-        self.wrapper.as_mut().unwrap().start();
+        let wrapper = self.wrapper.as_mut().unwrap();
+        wrapper.set_server_verify(verify.request_cert, verify.reject_unauthorized);
+        wrapper.start();
         Ok(())
     }
 
@@ -473,32 +633,48 @@ impl UpgradedDuplex {
     }
 
     /// Side-effecting teardown shared by `on_close` (early) and `Drop` (final).
-    /// Idempotent — resets to empty state. Not the public API; callers drop the struct.
-    fn teardown(&mut self) {
+    /// Idempotent: resets to empty state. Also invoked by
+    /// `DuplexUpgradeContext`'s connect-error branches so the listener thunks
+    /// are neutered while the wrapper is still strongly reachable.
+    pub(super) fn teardown(&mut self) {
         bun_output::scoped_log!(UpgradedDuplex, "deinit");
         // clear the timer
         self.set_timeout(0);
 
-        self.wrapper = None; // Drop runs SSLWrapper teardown
+        // Neuter in place rather than `self.wrapper = None`: `teardown()` can
+        // run re-entrantly from `on_close` while a `SSLWrapper::handle_traffic`
+        // frame is still on the stack with a `*mut Self` into the `Some`
+        // payload. Assigning `None` to the `Option` runs `Drop` (fine -
+        // `deinit()` nulls `ssl`/`ctx`) but then memmoves a fresh
+        // `Option::None` value over the slot, whose payload bytes are stack
+        // garbage - the in-flight frame's `Self::r(this).ssl` then reads junk
+        // and `flush_pending_events` UAFs into BoringSSL. `deinit()` alone
+        // leaves `ssl = None` / `closed_notified = true` readable so those
+        // guards work; the `Option` is dropped for real when the parent
+        // `DuplexUpgradeContext` frees on the next tick. See WindowsNamedPipe's
+        // WRAPPER_BUSY for the sibling pattern.
+        if let Some(wrapper) = self.wrapper.as_mut() {
+            wrapper.deinit();
+        }
 
-        self.origin.deinit();
-        if let Some(callback) = self.on_data_callback.get() {
-            host_fn::set_function_data(callback, None);
-            self.on_data_callback.deinit();
-        }
-        if let Some(callback) = self.on_end_callback.get() {
-            host_fn::set_function_data(callback, None);
-            self.on_end_callback.deinit();
-        }
-        if let Some(callback) = self.on_writable_callback.get() {
-            host_fn::set_function_data(callback, None);
-            self.on_writable_callback.deinit();
-        }
-        if let Some(callback) = self.on_close_callback.get() {
-            host_fn::set_function_data(callback, None);
-            self.on_close_callback.deinit();
+        // Neuter the listener thunks so a late `origin` event sees null
+        // function data instead of a freed `*mut Self`. GC-root clearing is
+        // left to the wrapper's own collection.
+        self.origin = JSValue::ZERO;
+        for cb in [
+            &mut self.on_data_callback,
+            &mut self.on_end_callback,
+            &mut self.on_writable_callback,
+            &mut self.on_close_callback,
+        ] {
+            if !cb.is_empty() {
+                host_fn::set_function_data(*cb, None);
+                *cb = JSValue::ZERO;
+            }
         }
         self.ssl_error = CertError::default();
+        self.pending_data = Vec::new();
+        self.pending_end = false;
     }
 }
 
@@ -513,14 +689,13 @@ fn on_received_data(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
     bun_output::scoped_log!(UpgradedDuplex, "onReceivedData");
 
     let function = frame.callee();
-    let args = frame.arguments_old::<1>();
+    let [data_arg] = frame.arguments_as_array::<1>();
 
     if let Some(self_ptr) = host_fn::get_function_data(function) {
         // SAFETY: function data was set to *mut UpgradedDuplex in get_js_handlers.
         let this = unsafe { bun_ptr::callback_ctx::<UpgradedDuplex>(self_ptr) };
-        if args.len >= 1 {
-            let data_arg = args.ptr[0];
-            if this.origin.has() {
+        if frame.arguments_count() >= 1 {
+            if !this.origin.is_empty() {
                 if data_arg.is_empty_or_undefined_or_null() {
                     return Ok(JSValue::UNDEFINED);
                 }
@@ -556,6 +731,10 @@ fn on_end(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
 
         if this.wrapper.is_some() {
             (this.handlers.on_end)(this.handlers.ctx);
+        } else {
+            // EOF before `start_tls` ran. Hold it so `drain_pending` reports it
+            // in order, after any bytes staged in the same window.
+            this.pending_end = true;
         }
     }
     Ok(JSValue::UNDEFINED)

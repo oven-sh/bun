@@ -34,13 +34,6 @@ impl Strong {
         Impl::set(self.handle, global, new_value);
     }
 
-    /// Swap a new value for the strong reference.
-    pub fn swap(&mut self, global: &JSGlobalObject, new_value: JSValue) -> JSValue {
-        let result = Impl::get(self.handle);
-        self.set(global, new_value);
-        result
-    }
-
     /// Adopt an `Impl` handle allocated externally (e.g. by C++ bindgen glue),
     /// taking ownership. The handle will be destroyed on `Drop`.
     ///
@@ -138,15 +131,6 @@ impl Optional {
         !Impl::get(r).is_empty()
     }
 
-    /// Debug-only raw handle pointer for corruption probes (#53265). Null when
-    /// `None`. Do NOT dereference — only compare against the small-integer
-    /// floor in `Impl::destroy`.
-    #[doc(hidden)]
-    #[inline]
-    pub fn handle_ptr(&self) -> *const () {
-        self.handle.map_or(core::ptr::null(), |p| p.as_ptr().cast())
-    }
-
     pub fn try_swap(&mut self) -> Option<JSValue> {
         let result = self.swap();
         if result.is_empty() {
@@ -224,10 +208,7 @@ impl Impl {
         // call site that holds the corrupted Strong. The 0x10000 floor is
         // Windows' default null-page guard; legitimate `Impl*` are bmalloc'd
         // far above it.
-        if cfg!(debug_assertions) || cfg!(windows) {
-            // Always-on on Windows while #53265 fs-promises-writeFile segfault
-            // is being root-caused; release-stripped elsewhere. Remove the
-            // `|| cfg!(windows)` once the corrupting writer is found.
+        if cfg!(debug_assertions) {
             assert!(
                 (this.as_ptr() as usize) >= 0x10000,
                 "Strong<Impl>* corrupted ({:p}); owning struct was overwritten",
@@ -250,5 +231,3 @@ unsafe extern "C" {
     safe fn Bun__StrongRef__set(this: &Impl, global: &JSGlobalObject, value: JSValue);
     safe fn Bun__StrongRef__clear(this: &Impl);
 }
-
-pub use crate::deprecated_strong as deprecated;

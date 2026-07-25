@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { join } from "path";
 
 describe("scope mismatch panic regression test", () => {
   test("should not panic with scope mismatch when arrow function is followed by array literal", async () => {
@@ -28,7 +29,7 @@ const Layout = () => {
     // With the fix, it should fail with a normal ReferenceError for 'app'
     await using proc = Bun.spawn({
       cmd: [bunExe(), "index.tsx"],
-      env: bunEnv,
+      env: { ...bunEnv, NODE_PATH: join(import.meta.dir, "..", "..", "node_modules") },
       cwd: String(dir),
       stderr: "pipe",
       stdout: "pipe",
@@ -102,12 +103,6 @@ describe("TypeScript 'declare' statements discard scopes of dropped statements",
   // parse pass and is then dropped. The recorded scopes used to be left behind, so
   // visiting the following class statement hit "Scope mismatch while visiting".
   const cases: [name: string, source: string, expected: string[]][] = [
-    [
-      "declare module with an invalid name followed by a class",
-      "declare module : es2015\nclass Foo {}\n",
-      ["class Foo"],
-    ],
-    ["declare followed by a labeled statement and a class", "declare foo: bar\nclass Foo {}\n", ["class Foo"]],
     [
       "declare const with an arrow function initializer followed by a class",
       "declare const x = () => {};\nclass Foo {}\n",

@@ -233,7 +233,6 @@ pub enum BorderSideWidth {
 }
 
 impl BorderSideWidth {
-    // blocked_on: Length::is_compatible
     pub fn is_compatible(&self, browsers: &Browsers) -> bool {
         match self {
             BorderSideWidth::Length(len) => len.is_compatible(browsers),
@@ -352,13 +351,6 @@ macro_rules! define_size_shorthand {
             pub end: $inner,
         }
 
-        impl $name {
-            // The table is kept as data for a future shorthand derive to consume.
-            pub const PROPERTY_FIELD_MAP: &[(&str, PropertyIdTag)] = &[
-                ("start", PropertyIdTag::$start_id),
-                ("end", PropertyIdTag::$end_id),
-            ];
-        }
         // parse/to_css via `Size2D<V>`.
         // Shared impl macro lives in `properties/mod.rs`.
         impl_size_shorthand!($name, $inner, start, end);
@@ -543,7 +535,6 @@ bitflags::bitflags! {
     }
 }
 
-// blocked_on: PropertyIdTag variant name verification (PascalCase mapping)
 impl BorderProperty {
     pub(crate) fn try_from_property_id(property_id: PropertyIdTag) -> Option<Self> {
         // An explicit match over every PropertyIdTag whose name starts

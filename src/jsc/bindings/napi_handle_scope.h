@@ -58,6 +58,8 @@ public:
     // Returns false if this handle scope is not escapable or if it is but escape() has already
     // been called
     bool escape(JSC::JSValue val);
+    // Drop all handles (and the parent edge) when the scope is closed, like V8 does.
+    void releaseHandles();
 
 private:
     using Slot = JSC::WriteBarrier<JSC::Unknown>;

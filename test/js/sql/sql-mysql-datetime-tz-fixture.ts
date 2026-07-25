@@ -60,17 +60,25 @@ checkRoundTrip("text", await sql`SELECT id, dt FROM ${sql(t)} ORDER BY id`.simpl
 
 // MySQL's permissive sql_mode stores "0000-00-00 00:00:00"; it must read back
 // as Invalid Date (not the Unix epoch / a wrapped date) on both protocols.
+// ALLOW_INVALID_DATES additionally lets MySQL store a non-zero day past its
+// month length ("2024-02-31") verbatim; that must also read back as Invalid
+// Date instead of being normalized to March 2 by the decoder.
 const zt = "dt_zero_" + randomUUIDv7("hex").replaceAll("-", "");
-await sql`SET SESSION sql_mode=''`.simple();
+await sql`SET SESSION sql_mode='ALLOW_INVALID_DATES'`.simple();
 await sql`CREATE TEMPORARY TABLE ${sql(zt)} (id INT PRIMARY KEY, dt DATETIME)`.simple();
-await sql.unsafe(`INSERT INTO ${zt} (id, dt) VALUES (1, '0000-00-00 00:00:00')`);
-for (const [protocol, [row]] of [
-  ["binary", await sql`SELECT dt FROM ${sql(zt)} WHERE id = 1`],
-  ["text", await sql`SELECT dt FROM ${sql(zt)} WHERE id = 1`.simple()],
+await sql.unsafe(`INSERT INTO ${zt} (id, dt) VALUES (1, '0000-00-00 00:00:00'), (2, '2024-02-31 00:00:00')`);
+for (const [protocol, rows] of [
+  ["binary", await sql`SELECT id, dt FROM ${sql(zt)} ORDER BY id`],
+  ["text", await sql`SELECT id, dt FROM ${sql(zt)} ORDER BY id`.simple()],
 ] as const) {
-  const got: Date = row.dt;
-  if (!(got instanceof Date) || !Number.isNaN(got.getTime())) {
-    failures.push(`${protocol} zero-date: expected Invalid Date, got ${String(got)}`);
+  for (const [id, label] of [
+    [1, "zero-date"],
+    [2, "impossible-date"],
+  ] as const) {
+    const got: Date = rows[id - 1].dt;
+    if (!(got instanceof Date) || !Number.isNaN(got.getTime())) {
+      failures.push(`${protocol} ${label}: expected Invalid Date, got ${String(got)}`);
+    }
   }
 }
 

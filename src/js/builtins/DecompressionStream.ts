@@ -1,6 +1,6 @@
 export function initializeDecompressionStream(this, format) {
   const zlib = require("node:zlib");
-  const stream = require("node:stream");
+  const { newBufferSourceTransformPairFromDuplex } = require("internal/webstreams_adapters");
 
   const builders = {
     "deflate": zlib.createInflate,
@@ -13,9 +13,11 @@ export function initializeDecompressionStream(this, format) {
   if (!(format in builders))
     throw $ERR_INVALID_ARG_VALUE("format", format, "must be one of: " + Object.keys(builders).join(", "));
 
-  const handle = builders[format]();
-  $putByIdDirectPrivate(this, "readable", stream.Readable.toWeb(handle));
-  $putByIdDirectPrivate(this, "writable", stream.Writable.toWeb(handle));
+  // The Compression Streams spec requires erroring on any bytes that follow the
+  // end of the compressed data.
+  const transform = newBufferSourceTransformPairFromDuplex(builders[format]({ rejectGarbageAfterEnd: true }));
+  $putByIdDirectPrivate(this, "readable", transform.readable);
+  $putByIdDirectPrivate(this, "writable", transform.writable);
 
   return this;
 }

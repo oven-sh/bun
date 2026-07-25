@@ -249,3 +249,109 @@ describe("CompressionStream and DecompressionStream", () => {
     });
   });
 });
+
+// Ported behaviors from Node v26's webstreams adapters
+// (upstream: test-whatwg-webstreams-compression.js and
+// lib/internal/webstreams/compression.js validateBufferSourceChunk).
+describe("CompressionStream chunk handling (Node v26 semantics)", () => {
+  test("accepts ArrayBuffer chunks", async () => {
+    const input = "hello arraybuffer world";
+    const data = new TextEncoder().encode(input);
+
+    const cs = new CompressionStream("gzip");
+    const writer = cs.writable.getWriter();
+    writer.write(data.buffer);
+    writer.close();
+
+    const compressedChunks: Uint8Array[] = [];
+    const reader = cs.readable.getReader();
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      compressedChunks.push(value);
+    }
+    expect(compressedChunks.length).toBeGreaterThan(0);
+
+    const ds = new DecompressionStream("gzip");
+    const dWriter = ds.writable.getWriter();
+    for (const chunk of compressedChunks) dWriter.write(chunk);
+    dWriter.close();
+
+    const out: Uint8Array[] = [];
+    const dReader = ds.readable.getReader();
+    while (true) {
+      const { done, value } = await dReader.read();
+      if (done) break;
+      out.push(value);
+    }
+    expect(new TextDecoder().decode(Buffer.concat(out))).toBe(input);
+  });
+
+  test("rejects SharedArrayBuffer chunks with ERR_INVALID_ARG_TYPE", async () => {
+    const cs = new CompressionStream("gzip");
+    const writer = cs.writable.getWriter();
+    expect.assertions(1);
+    try {
+      await writer.write(new SharedArrayBuffer(8));
+    } catch (e: any) {
+      expect(e.code).toBe("ERR_INVALID_ARG_TYPE");
+    }
+  });
+
+  test("a synchronously-invalid chunk errors both sides instead of hanging the readable", async () => {
+    const cs = new CompressionStream("gzip");
+    const writer = cs.writable.getWriter();
+    const reader = cs.readable.getReader();
+
+    const writeError = writer.write(42).catch(e => e);
+    // Without the kDestroyOnSyncError handling the readable side hangs
+    // forever here.
+    const readError = reader.read().catch(e => e);
+
+    const [we, re] = await Promise.all([writeError, readError]);
+    expect(we.code).toBe("ERR_INVALID_ARG_TYPE");
+    expect(re.code).toBe("ERR_INVALID_ARG_TYPE");
+  });
+
+  test("brotli decoder errors surface as TypeError with the original code as own property", async () => {
+    const ds = new DecompressionStream("brotli");
+    const writer = ds.writable.getWriter();
+    const reader = ds.readable.getReader();
+
+    writer.write(new Uint8Array([0xff, 0xff, 0xff, 0xff, 0xff, 0xff])).catch(() => {});
+    writer.close().catch(() => {});
+
+    expect.assertions(4);
+    try {
+      while (true) {
+        const { done } = await reader.read();
+        if (done) break;
+      }
+    } catch (e: any) {
+      expect(e).toBeInstanceOf(TypeError);
+      expect(Object.hasOwn(e, "code")).toBe(true);
+      // Node builds these as "ERR_" + BrotliDecoderErrorString(), and brotli
+      // returns the macro PREFIX+NAME ("_ERROR_FORMAT_" + "PADDING_2"), so the
+      // double underscore is what node:zlib emits.
+      expect(e.code).toBe("ERR__ERROR_FORMAT_PADDING_2");
+      expect(e.cause.code).toBe(e.code);
+    }
+  });
+
+  // DecompressionStream rejects trailing bytes after the compressed data. Concatenated
+  // gzip members are a single valid stream per RFC 1952 section 2.2, not trailing junk,
+  // so they must still decode in full.
+  test("gzip decodes concatenated members rather than stopping at the first", async () => {
+    const gzip = async (text: string) =>
+      new Uint8Array(
+        await new Response(new Blob([text]).stream().pipeThrough(new CompressionStream("gzip"))).arrayBuffer(),
+      );
+    const concatenated = Buffer.concat([await gzip("hello "), await gzip("world")]);
+
+    const decoded = await new Response(
+      new Blob([concatenated]).stream().pipeThrough(new DecompressionStream("gzip")),
+    ).text();
+
+    expect(decoded).toBe("hello world");
+  });
+});

@@ -38,3 +38,22 @@ test("import anything.jsonc as json", async () => {
   });
   expect([join(dir, "index.ts")]).toRun();
 });
+
+test("imported JSON strings match JSON.parse exactly (escapes, lone surrogates, non-ASCII)", async () => {
+  const json = `{"lone":"\\ud800","pair":"\\ud83d\\ude00","mix":"a\\udfffz","e":"caf\\u00e9\\ud800x","lit":"é🚀","esc\\nkey":"a\\n\\"b\\""}`;
+  const dir = tempDirWithFiles("jsonc", {
+    "weird.json": json,
+    "weird.jsonc": json,
+    "index.ts": `
+    import w from "./weird.json";
+    import c from "./weird.jsonc";
+    const file = await Bun.file(import.meta.dir + "/weird.json").text();
+    const expected = JSON.parse(file);
+    const units = (o: any) => JSON.stringify(Object.entries(o).map(([k, v]) => [...(k + v as string)].map(s => s.codePointAt(0))));
+    if (units(w) !== units(expected)) throw new Error("json import != JSON.parse: " + units(w) + " vs " + units(expected));
+    if (units(c) !== units(expected)) throw new Error("jsonc import != JSON.parse");
+    if (units(Bun.JSONC.parse(file)) !== units(expected)) throw new Error("Bun.JSONC.parse != JSON.parse");
+    `,
+  });
+  expect([join(dir, "index.ts")]).toRun();
+});

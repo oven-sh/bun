@@ -197,6 +197,10 @@ pub struct SocketConfigHandlers {
     pub on_end: JSValue,
     pub on_error: JSValue,
     pub on_handshake: JSValue,
+    pub on_session: JSValue,
+    pub on_keylog: JSValue,
+    pub on_server_name: JSValue,
+    pub on_alpn_callback: JSValue,
     pub binary_type: SocketConfigHandlersBinaryType,
 }
 
@@ -212,6 +216,10 @@ struct ExternSocketConfigHandlers {
     onEnd: JSValue,
     onConnectError: JSValue,
     onTimeout: JSValue,
+    onSession: JSValue,
+    onKeylog: JSValue,
+    onServerName: JSValue,
+    onALPNCallback: JSValue,
     binary_type: SocketConfigHandlersBinaryType,
 }
 
@@ -239,6 +247,10 @@ impl SocketConfigHandlers {
             on_end: ext.onEnd,
             on_connect_error: ext.onConnectError,
             on_timeout: ext.onTimeout,
+            on_session: ext.onSession,
+            on_keylog: ext.onKeylog,
+            on_server_name: ext.onServerName,
+            on_alpn_callback: ext.onALPNCallback,
             binary_type: ext.binary_type,
         }
     }
@@ -291,6 +303,8 @@ pub struct SSLConfig {
     pub reject_unauthorized: Option<bool>,
     pub request_cert: bool,
     pub secure_options: u32,
+    pub ssl_min_version: i32,
+    pub ssl_max_version: i32,
     pub ca: SSLConfigFile,
     pub cert: SSLConfigFile,
     pub key: SSLConfigFile,
@@ -301,6 +315,11 @@ pub struct SSLConfig {
     pub ciphers: GenOpt<GenString>,
     pub client_renegotiation_limit: u32,
     pub client_renegotiation_window: u32,
+    pub crl: SSLConfigFile,
+    pub allow_partial_trust_chain: bool,
+    pub session_timeout: i32,
+    pub sigalgs: GenOpt<GenString>,
+    pub ecdh_curve: GenOpt<GenString>,
 }
 
 // ── refcount release on drop ──────────────────────────────────────────────
@@ -397,6 +416,8 @@ impl Drop for SSLConfig {
         release_gen_opt_string(&self.ca_file);
         // `alpn_protocols`: `SSLConfigAlpnProtocols` — released by its own `Drop`.
         release_gen_opt_string(&self.ciphers);
+        release_gen_opt_string(&self.sigalgs);
+        release_gen_opt_string(&self.ecdh_curve);
     }
 }
 
@@ -537,6 +558,8 @@ struct ExternSSLConfig {
     cert: ExternSSLConfigFile,
     key: ExternSSLConfigFile,
     secure_options: u32,
+    ssl_min_version: i32,
+    ssl_max_version: i32,
     key_file: RawWTFStringImpl,
     cert_file: RawWTFStringImpl,
     ca_file: RawWTFStringImpl,
@@ -544,6 +567,11 @@ struct ExternSSLConfig {
     ciphers: RawWTFStringImpl,
     client_renegotiation_limit: u32,
     client_renegotiation_window: u32,
+    crl: ExternSSLConfigFile,
+    allow_partial_trust_chain: bool,
+    session_timeout: i32,
+    sigalgs: RawWTFStringImpl,
+    ecdh_curve: RawWTFStringImpl,
 }
 
 // safe: same handle/out-param contract as
@@ -569,6 +597,8 @@ impl SSLConfig {
             cert: SSLConfigFile::convert_from_extern(ext.cert),
             key: SSLConfigFile::convert_from_extern(ext.key),
             secure_options: ext.secure_options,
+            ssl_min_version: ext.ssl_min_version,
+            ssl_max_version: ext.ssl_max_version,
             key_file: adopt_opt_string(ext.key_file),
             cert_file: adopt_opt_string(ext.cert_file),
             ca_file: adopt_opt_string(ext.ca_file),
@@ -576,6 +606,11 @@ impl SSLConfig {
             ciphers: adopt_opt_string(ext.ciphers),
             client_renegotiation_limit: ext.client_renegotiation_limit,
             client_renegotiation_window: ext.client_renegotiation_window,
+            crl: SSLConfigFile::convert_from_extern(ext.crl),
+            allow_partial_trust_chain: ext.allow_partial_trust_chain,
+            session_timeout: ext.session_timeout,
+            sigalgs: adopt_opt_string(ext.sigalgs),
+            ecdh_curve: adopt_opt_string(ext.ecdh_curve),
         }
     }
 

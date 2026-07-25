@@ -45,20 +45,20 @@ class ScriptExecutionContext;
 // offset | 7 | 6 | 5 | 4 | 3   2   1   0  |
 // value  | 1 | 1 | 1 | 1 |    NodeType    |
 
-static const uint8_t JSDOMWrapperType = 0b11101110;
-static const uint8_t JSEventType = 0b11101111;
-static const uint8_t JSNodeType = 0b11110000;
-static const uint8_t JSNodeTypeMask = 0b00001111;
-static const uint8_t JSTextNodeType = JSNodeType | NodeConstants::TEXT_NODE;
-static const uint8_t JSProcessingInstructionNodeType = JSNodeType | NodeConstants::PROCESSING_INSTRUCTION_NODE;
-static const uint8_t JSDocumentTypeNodeType = JSNodeType | NodeConstants::DOCUMENT_TYPE_NODE;
-static const uint8_t JSDocumentFragmentNodeType = JSNodeType | NodeConstants::DOCUMENT_FRAGMENT_NODE;
-static const uint8_t JSDocumentWrapperType = JSNodeType | NodeConstants::DOCUMENT_NODE;
-static const uint8_t JSCommentNodeType = JSNodeType | NodeConstants::COMMENT_NODE;
-static const uint8_t JSCDATASectionNodeType = JSNodeType | NodeConstants::CDATA_SECTION_NODE;
-static const uint8_t JSAttrNodeType = JSNodeType | NodeConstants::ATTRIBUTE_NODE;
-static const uint8_t JSElementType = 0b11110000 | NodeConstants::ELEMENT_NODE;
-static const uint8_t JSAsJSONType = JSElementType;
+inline constexpr uint8_t JSDOMWrapperType = 0b11101110;
+inline constexpr uint8_t JSEventType = 0b11101111;
+inline constexpr uint8_t JSNodeType = 0b11110000;
+inline constexpr uint8_t JSNodeTypeMask = 0b00001111;
+inline constexpr uint8_t JSTextNodeType = JSNodeType | NodeConstants::TEXT_NODE;
+inline constexpr uint8_t JSProcessingInstructionNodeType = JSNodeType | NodeConstants::PROCESSING_INSTRUCTION_NODE;
+inline constexpr uint8_t JSDocumentTypeNodeType = JSNodeType | NodeConstants::DOCUMENT_TYPE_NODE;
+inline constexpr uint8_t JSDocumentFragmentNodeType = JSNodeType | NodeConstants::DOCUMENT_FRAGMENT_NODE;
+inline constexpr uint8_t JSDocumentWrapperType = JSNodeType | NodeConstants::DOCUMENT_NODE;
+inline constexpr uint8_t JSCommentNodeType = JSNodeType | NodeConstants::COMMENT_NODE;
+inline constexpr uint8_t JSCDATASectionNodeType = JSNodeType | NodeConstants::CDATA_SECTION_NODE;
+inline constexpr uint8_t JSAttrNodeType = JSNodeType | NodeConstants::ATTRIBUTE_NODE;
+inline constexpr uint8_t JSElementType = 0b11110000 | NodeConstants::ELEMENT_NODE;
+inline constexpr uint8_t JSAsJSONType = JSElementType;
 
 static_assert(JSDOMWrapperType > JSC::LastJSCObjectType, "JSC::JSType offers the highest bit.");
 static_assert(NodeConstants::LastNodeType <= JSNodeTypeMask, "NodeType should be represented in 4bit.");

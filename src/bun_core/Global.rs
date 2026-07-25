@@ -154,8 +154,6 @@ impl Default for DumpStackTraceOptions {
         }
     }
 }
-/// Alias for `DumpStackTraceOptions`; also re-exported from `bun_crash_handler`.
-pub type WriteStackTraceLimits = DumpStackTraceOptions;
 
 /// T0 fallback prints raw return
 /// addresses — **no symbolication** (the `backtrace` crate is not a T0 dep,
@@ -373,10 +371,10 @@ macro_rules! mark_binding {
     };
     ($fn_name:expr) => {
         // Opt-in via BUN_DEBUG_JSC=1. The `JSC` scope is owned by bun_core. Gate on
-        // `debug_assertions` (== `Environment::ENABLE_LOGS`) — never on a Cargo
+        // `env::IS_DEBUG` (== `Environment::ENABLE_LOGS`) — never on a Cargo
         // feature, since `cfg!(feature = ..)` is resolved against the *calling*
         // crate and would warn (or silently no-op) in crates without it.
-        if cfg!(debug_assertions) && $crate::Global::JSC_SCOPE.is_visible() {
+        if $crate::env::IS_DEBUG && $crate::Global::JSC_SCOPE.is_visible() {
             $crate::Global::JSC_SCOPE.log(::core::format_args!(
                 "[JSC] {} ({}:{})\n",
                 $fn_name,
@@ -403,19 +401,19 @@ pub mod debug_flags {
     pub fn has_resolve_breakpoint(str_: &[u8]) -> bool {
         #[cfg(debug_assertions)]
         for bp in RESOLVE_BREAKPOINTS.get().copied().unwrap_or(&[]) {
-            if crate::strings_impl::includes(str_, bp) {
+            if crate::strings::includes(str_, bp) {
                 return true;
             }
         }
         let _ = str_;
         false
     }
+
     #[inline]
     pub fn has_print_breakpoint(pretty: &[u8], text: &[u8]) -> bool {
         #[cfg(debug_assertions)]
         for bp in PRINT_BREAKPOINTS.get().copied().unwrap_or(&[]) {
-            if crate::strings_impl::includes(pretty, bp) || crate::strings_impl::includes(text, bp)
-            {
+            if crate::strings::includes(pretty, bp) || crate::strings::includes(text, bp) {
                 return true;
             }
         }
@@ -430,7 +428,7 @@ pub mod debug_flags {
 
 /// Does not have the canary tag, because it is exposed in `Bun.version`
 /// "1.0.0" or "1.0.0-debug"
-pub const package_json_version: &str = if cfg!(debug_assertions) {
+pub const package_json_version: &str = if env::IS_DEBUG {
     concatcp!(version_string, "-debug")
 } else {
     version_string
@@ -442,7 +440,7 @@ pub const package_json_version_nl: &str = concatcp!(package_json_version, "\n");
 
 /// This is used for `bun` without any arguments, it `package_json_version` but with canary if it is a canary build.
 /// like "1.0.0-canary.12"
-pub const package_json_version_with_canary: &str = if cfg!(debug_assertions) {
+pub const package_json_version_with_canary: &str = if env::IS_DEBUG {
     concatcp!(version_string, "-debug")
 } else if env::IS_CANARY {
     formatcp!("{}-canary.{}", version_string, env::CANARY_REVISION)
@@ -453,7 +451,7 @@ pub const package_json_version_with_canary: &str = if cfg!(debug_assertions) {
 /// The version and a short hash in parenthesis.
 pub const package_json_version_with_sha: &str = if env::GIT_SHA.is_empty() {
     package_json_version
-} else if cfg!(debug_assertions) {
+} else if env::IS_DEBUG {
     formatcp!("{} ({})", version_string, env::GIT_SHA_SHORT)
 } else if env::IS_CANARY {
     formatcp!(
@@ -470,7 +468,7 @@ pub const package_json_version_with_sha: &str = if env::GIT_SHA.is_empty() {
 /// "1.0.0+abcdefghi" or "1.0.0-canary.12+abcdefghi"
 pub const package_json_version_with_revision: &str = if env::GIT_SHA.is_empty() {
     package_json_version
-} else if cfg!(debug_assertions) {
+} else if env::IS_DEBUG {
     formatcp!("{}-debug+{}", version_string, env::GIT_SHA_SHORT)
 } else if env::IS_CANARY {
     formatcp!(
@@ -498,7 +496,7 @@ pub const os_display: &str = if cfg!(target_os = "android") {
     env::OS.display_string()
 };
 
-// Bun v1.0.0 (Linux x64 baseline)
+// Bun v1.0.0 (Linux x64)
 // Bun v1.0.0-debug (Linux x64)
 // Bun v1.0.0-canary.0+44e09bb7f (Linux x64)
 pub const unhandled_error_bun_version_string: &str = concatcp!(
@@ -512,7 +510,7 @@ pub const unhandled_error_bun_version_string: &str = concatcp!(
     os_display,
     " ",
     arch_name,
-    if env::BASELINE { " baseline)" } else { ")" },
+    ")",
 );
 
 pub const arch_name: &str = if cfg!(target_arch = "x86_64") {
@@ -625,6 +623,7 @@ pub(crate) fn is_exiting() -> bool {
 // args and are `noreturn`/kernel-validated — no memory-safety preconditions,
 // so `safe fn` discharges the link-time proof and the call sites are plain
 // calls. `#[link_name]` avoids colliding with this module's own `pub fn exit`.
+#[allow(suspicious_runtime_symbol_definitions)] // signatures are ABI-identical; `safe fn` is intentional (above)
 unsafe extern "C" {
     #[link_name = "abort"]
     safe fn libc_abort() -> !;
@@ -697,7 +696,14 @@ pub fn raise_ignoring_panic_handler_raw(sig: c_int) -> ! {
             let mut act: libc::sigaction = crate::ffi::zeroed();
             act.sa_sigaction = libc::SIG_DFL;
             libc::sigemptyset(&raw mut act.sa_mask);
-            for &s in &[libc::SIGSEGV, libc::SIGBUS, libc::SIGILL, libc::SIGFPE] {
+            for &s in &[
+                libc::SIGSEGV,
+                libc::SIGBUS,
+                libc::SIGILL,
+                libc::SIGFPE,
+                libc::SIGABRT,
+                libc::SIGTRAP,
+            ] {
                 let _ = libc::sigaction(s, &raw const act, core::ptr::null_mut());
             }
         }
@@ -712,8 +718,12 @@ pub fn raise_ignoring_panic_handler_raw(sig: c_int) -> ! {
             // preconditions, so `safe fn` discharges the link-time proof.
             unsafe extern "system" {
                 safe fn RemoveVectoredExceptionHandler(Handle: *mut core::ffi::c_void) -> u32;
+                safe fn SetUnhandledExceptionFilter(
+                    f: Option<unsafe extern "system" fn(*mut core::ffi::c_void) -> i32>,
+                ) -> Option<unsafe extern "system" fn(*mut core::ffi::c_void) -> i32>;
             }
             let _ = RemoveVectoredExceptionHandler(handle);
+            let _ = SetUnhandledExceptionFilter(None);
         }
     }
 
@@ -756,11 +766,6 @@ pub fn mimalloc_cleanup(force: bool) {
 // 2. if I want to configure allocator later
 #[inline]
 pub fn configure_allocator(_: AllocatorConfiguration) {}
-
-#[cold]
-pub fn notimpl() -> ! {
-    Output::panic(core::format_args!("Not implemented yet!!!!!"));
-}
 
 // Make sure we always print any leftover
 #[cold]

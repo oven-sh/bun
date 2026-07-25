@@ -3,7 +3,7 @@ use core::ptr::NonNull;
 
 use crate::virtual_machine::VirtualMachine;
 use crate::{JSGlobalObject, JSValue, JsResult, VM, host_fn};
-use bun_core::{StringPointer, ZigString};
+use bun_core::{String as BunString, StringPointer, ZigString};
 use bun_uws::ResponseKind;
 
 bun_opaque::opaque_ffi! {
@@ -14,8 +14,9 @@ bun_opaque::opaque_ffi! {
 // `FetchHeaders`/`JSGlobalObject`/`VM` are opaque `UnsafeCell`-backed ZST
 // handles, so `&T` is ABI-identical to a non-null `*const T` and C++ mutating
 // header storage / VM state through them is interior mutation invisible to
-// Rust. `ZigString` is a plain `#[repr(C)]` POD; `&ZigString`/`&mut ZigString`
-// at the FFI boundary are sound (C++ reads/writes only the named struct).
+// Rust. `ZigString` and `String` (`BunString`) are plain `#[repr(C)]` PODs;
+// `&`/`&mut` refs to them at the FFI boundary are sound (C++ reads/writes
+// only the named struct).
 // Shims that traffic only in such refs + scalars are declared `safe fn`; those
 // that take raw `*mut c_void` / unsized `*mut StringPointer` arrays / `deref`
 // (which may free) keep their `unsafe fn` body.
@@ -102,7 +103,7 @@ unsafe extern "C" {
     safe fn WebCore__FetchHeaders__put(
         this: &FetchHeaders,
         name_: HTTPHeaderName,
-        value: &ZigString,
+        value: &BunString,
         global: &JSGlobalObject,
     );
 }
@@ -118,18 +119,6 @@ struct PicoHeaders {
 // positive on opaque-token forwarding through an unsafe extern call.
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 impl FetchHeaders {
-    pub fn create_value(
-        global: &JSGlobalObject,
-        names: *mut StringPointer,
-        values: *mut StringPointer,
-        buf: &ZigString,
-        count_: u32,
-    ) -> JSValue {
-        // SAFETY: forwarding caller-provided buffers to C++; `global` is an opaque ZST handle
-        // passed by address only — C++ never dereferences it as Rust data.
-        unsafe { WebCore__FetchHeaders__createValue(global, names, values, buf, count_) }
-    }
-
     /// Construct a `Headers` object from a JSValue.
     ///
     /// This can be:
@@ -151,7 +140,7 @@ impl FetchHeaders {
     pub fn put_default(
         &mut self,
         name_: HTTPHeaderName,
-        value: &[u8],
+        value: &BunString,
         global: &JSGlobalObject,
     ) -> JsResult<()> {
         if self.fast_has(name_) {
@@ -222,24 +211,20 @@ impl FetchHeaders {
         .expect("WebCore__FetchHeaders__createFromPicoHeaders_ returned null")
     }
 
-    pub fn create_from_pico_headers_(pico_headers: *const c_void) -> NonNull<FetchHeaders> {
-        NonNull::new(WebCore__FetchHeaders__createFromPicoHeaders_(pico_headers))
-            .expect("WebCore__FetchHeaders__createFromPicoHeaders_ returned null")
-    }
-
     pub fn append(&mut self, name_: &ZigString, value: &ZigString, global: &JSGlobalObject) {
         WebCore__FetchHeaders__append(self, name_, value, global)
     }
 
+    /// `value`'s tag carries its encoding, and a `WTFStringImpl`-tagged value
+    /// is ref'd by the C++ side instead of copied character-by-character.
     pub fn put(
         &mut self,
         name_: HTTPHeaderName,
-        value: &[u8],
+        value: &BunString,
         global: &JSGlobalObject,
     ) -> JsResult<()> {
         host_fn::from_js_host_call_generic(global, || {
-            let zs = ZigString::init(value);
-            WebCore__FetchHeaders__put(self, name_, &zs, global)
+            WebCore__FetchHeaders__put(self, name_, value, global)
         })
     }
 

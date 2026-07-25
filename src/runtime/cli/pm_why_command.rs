@@ -9,7 +9,7 @@ impl PmWhyCommand {
         _ctx: &command::Context,
         pm: &mut PackageManager,
         positionals: &[&[u8]],
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         // Note: `bun pm` dispatch threads the context here as `&Command::Context`,
         // but `WhyCommand::exec_from_pm` needs `&mut Command::Context` to reach
         // `ctx.log`. Reacquire the process-global handle (same pointee,

@@ -18,12 +18,6 @@ pub enum TimeoutError {
     Timeout,
 }
 
-impl From<TimeoutError> for bun_core::Error {
-    fn from(_: TimeoutError) -> Self {
-        bun_core::err!("Timeout")
-    }
-}
-
 /// Checks if `ptr` still contains the value `expect` and, if so, blocks the caller until either:
 /// - The value at `ptr` is no longer equal to `expect`.
 /// - The caller is unblocked by a matching `wake()`.

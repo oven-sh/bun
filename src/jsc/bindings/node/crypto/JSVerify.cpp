@@ -74,6 +74,18 @@ void JSVerify::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
     Base::finishCreation(vm);
 }
 
+template<typename Visitor>
+void JSVerify::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+{
+    JSVerify* thisObject = uncheckedDowncast<JSVerify>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    Base::visitChildren(thisObject, visitor);
+
+    visitor.reportExtraMemoryVisited(thisObject->m_sizeForGC);
+}
+
+DEFINE_VISIT_CHILDREN(JSVerify);
+
 JSVerify* JSVerify::create(JSC::VM& vm, JSC::Structure* structure, JSC::JSGlobalObject* globalObject)
 {
     JSVerify* verify = new (NotNull, JSC::allocateCell<JSVerify>(vm)) JSVerify(vm, structure);
@@ -202,6 +214,11 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncInit, (JSGlobalObject * globalObject, 
     // Store the initialized context in the JSVerify object
     thisObject->m_mdCtx = WTF::move(mdCtx);
 
+    if (!thisObject->m_sizeForGC) {
+        thisObject->m_sizeForGC = sizeof(EVP_MD_CTX);
+        vm.heap.reportExtraMemoryAllocated(thisObject, thisObject->m_sizeForGC);
+    }
+
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
@@ -248,12 +265,6 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncUpdate, (JSGlobalObject * globalObject
 
         auto* view = dynamicDowncast<JSC::JSArrayBufferView>(buf);
 
-        // Update the digest context with the buffer data
-        if (view->isDetached()) {
-            throwTypeError(globalObject, scope, "Buffer is detached"_s);
-            return {};
-        }
-
         size_t byteLength = view->byteLength();
         if (byteLength > INT_MAX) {
             throwRangeError(globalObject, scope, "data is too long"_s);
@@ -273,37 +284,28 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncUpdate, (JSGlobalObject * globalObject
         return JSValue::encode(wrappedVerify);
     }
 
-    if (!data.isCell() || !JSC::isTypedArrayTypeIncludingDataView(data.asCell()->type())) {
+    auto* view = dynamicDowncast<JSC::JSArrayBufferView>(data);
+    if (!view) {
         return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "data"_s, "string or an instance of Buffer, TypedArray, or DataView"_s, data);
     }
 
-    // Handle ArrayBufferView input
-    if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(data)) {
-        if (view->isDetached()) {
-            throwTypeError(globalObject, scope, "Buffer is detached"_s);
-            return {};
-        }
-
-        size_t byteLength = view->byteLength();
-        if (byteLength > INT_MAX) {
-            throwRangeError(globalObject, scope, "data is too long"_s);
-            return {};
-        }
-
-        auto buffer = ncrypto::Buffer<const void> {
-            .data = view->vector(),
-            .len = byteLength,
-        };
-
-        if (!thisObject->m_mdCtx.digestUpdate(buffer)) {
-            throwCryptoError(globalObject, scope, ERR_get_error(), "Failed to update digest");
-            return {};
-        }
-
-        return JSValue::encode(wrappedVerify);
+    size_t byteLength = view->byteLength();
+    if (byteLength > INT_MAX) {
+        throwRangeError(globalObject, scope, "data is too long"_s);
+        return {};
     }
 
-    return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "data"_s, "string or an instance of Buffer, TypedArray, or DataView"_s, data);
+    auto buffer = ncrypto::Buffer<const void> {
+        .data = view->vector(),
+        .len = byteLength,
+    };
+
+    if (!thisObject->m_mdCtx.digestUpdate(buffer)) {
+        throwCryptoError(globalObject, scope, ERR_get_error(), "Failed to update digest");
+        return {};
+    }
+
+    return JSValue::encode(wrappedVerify);
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncVerify, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -368,6 +370,7 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncVerify, (JSGlobalObject * globalObject
 
     // Move mdCtx out of JSVerify object to finalize it
     ncrypto::EVPMDCtxPointer mdCtx = WTF::move(thisObject->m_mdCtx);
+    thisObject->m_sizeForGC = 0;
 
     // Validate DSA parameters
     if (!keyPtr.validateDsaParameters()) {
@@ -485,6 +488,8 @@ std::optional<ncrypto::EVPKeyPointer> keyFromPublicString(JSGlobalObject* lexica
         .data = reinterpret_cast<const unsigned char*>(keySpan.data()),
         .len = keySpan.size(),
     };
+
+    ncrypto::ClearErrorOnReturn clearErrorOnReturn;
 
     auto publicRes = ncrypto::EVPKeyPointer::TryParsePublicKey(publicConfig, ncryptoBuf);
     if (publicRes) {

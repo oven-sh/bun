@@ -19,6 +19,7 @@ enumset.workspace = true
 libc.workspace = true
 bitflags.workspace = true
 thiserror.workspace = true
+bun_errno.workspace = true
 bun_core.workspace = true
 bun_collections.workspace = true
 bun_event_loop.workspace = true

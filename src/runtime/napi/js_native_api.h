@@ -479,6 +479,33 @@ NAPI_EXTERN napi_status node_api_create_property_key_utf16(
     napi_env env, const char16_t* str, size_t length, napi_value* result);
 #endif // NAPI_VERSION >= 10
 
+#ifdef NAPI_EXPERIMENTAL
+NAPI_EXTERN napi_status node_api_set_prototype(napi_env env,
+    napi_value object,
+    napi_value value);
+NAPI_EXTERN napi_status node_api_create_object_with_properties(napi_env env,
+    napi_value prototype_or_null,
+    napi_value* property_names,
+    napi_value* property_values,
+    size_t property_count,
+    napi_value* result);
+NAPI_EXTERN napi_status node_api_is_sharedarraybuffer(napi_env env,
+    napi_value value,
+    bool* result);
+NAPI_EXTERN napi_status node_api_create_sharedarraybuffer(napi_env env,
+    size_t byte_length,
+    void** data,
+    napi_value* result);
+typedef void (*node_api_noenv_finalize)(void* finalize_data,
+    void* finalize_hint);
+NAPI_EXTERN napi_status node_api_create_external_sharedarraybuffer(napi_env env,
+    void* external_data,
+    size_t byte_length,
+    node_api_noenv_finalize finalize_cb,
+    void* finalize_hint,
+    napi_value* result);
+#endif // NAPI_EXPERIMENTAL
+
 EXTERN_C_END
 
 #endif // SRC_JS_NATIVE_API_H_

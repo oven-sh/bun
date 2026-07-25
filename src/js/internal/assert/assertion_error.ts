@@ -199,8 +199,9 @@ function createErrDiff(actual, expected, operator, customMessage) {
   if (showSimpleDiff) {
     const simpleDiff = getSimpleDiff(actual, inspectedSplitActual[0], expected, inspectedSplitExpected[0]);
     message = simpleDiff.message;
-    if (typeof simpleDiff.header !== "undefined") {
-      header = simpleDiff.header;
+    const simpleHeader = simpleDiff.header;
+    if (typeof simpleHeader !== "undefined") {
+      header = simpleHeader;
     }
     if (simpleDiff.skipped) {
       skipped = true;
@@ -323,7 +324,8 @@ class AssertionError extends Error {
 
         // Only remove lines in case it makes sense to collapse those.
         // TODO: Accept env to always show the full error.
-        if (res.length > 50) {
+        const resLength = res.length;
+        if (resLength > 50) {
           res[46] = `${colors.blue}...${colors.white}`;
           while (res.length > 47) {
             ArrayPrototypePop.$call(res);

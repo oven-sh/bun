@@ -37,19 +37,11 @@ pub enum ImportWatcher {
 const _: () = assert!(bun_watcher::Loader::File.0 == bun_ast::Loader::File as u8);
 
 impl ImportWatcher {
-    pub fn start(&mut self) -> Result<(), bun_core::Error> {
+    pub fn start(&mut self) -> Result<(), crate::CrateError> {
         match self {
-            ImportWatcher::Hot(w) => w.start(),
-            ImportWatcher::Watch(w) => w.start(),
+            ImportWatcher::Hot(w) => w.start().map_err(Into::into),
+            ImportWatcher::Watch(w) => w.start().map_err(Into::into),
             ImportWatcher::None => Ok(()),
-        }
-    }
-
-    #[inline]
-    pub fn watchlist(&self) -> Option<&bun_watcher::WatchList> {
-        match self {
-            ImportWatcher::Hot(w) | ImportWatcher::Watch(w) => Some(&w.watchlist),
-            ImportWatcher::None => None,
         }
     }
 
@@ -325,7 +317,7 @@ impl HotReloaderEventLoop for EventLoop {
 /// With `RELOAD_IMMEDIATELY = true`, `Task::enqueue` diverges via
 /// `bun_core::reload_process()` before any concurrent task is enqueued, so
 /// this is never reached.
-impl HotReloaderEventLoop for bun_event_loop::AnyEventLoop<'static> {
+impl HotReloaderEventLoop for bun_event_loop::AnyEventLoop {
     fn enqueue_task_concurrent(_this: &Self, _task: core::ptr::NonNull<ConcurrentTask>) {
         unreachable!()
     }
@@ -763,17 +755,6 @@ where
         self.ctx.event_loop()
     }
 
-    pub fn enqueue_task_concurrent(&self, task: core::ptr::NonNull<ConcurrentTask>) {
-        if RELOAD_IMMEDIATELY {
-            unreachable!();
-        }
-
-        // `ctx` is a `BackRef<Ctx>` (Deref) and `event_loop_ref` is the safe
-        // accessor on the trait; the event loop is owned by `Ctx` and outlives
-        // the reloader.
-        EventLoopType::enqueue_task_concurrent(self.ctx.event_loop_ref(), task);
-    }
-
     /// # Safety
     /// `this` must point to a live `Ctx` (VirtualMachine / DevServer / BundleV2)
     /// that outlives the leaked `NewHotReloader` allocated here — i.e. for the
@@ -817,8 +798,9 @@ where
         );
 
         // SAFETY: `watcher_ptr` was just installed into `ctx` and is live.
-        if unsafe { (*watcher_ptr).start() }.is_err() {
-            panic!("Failed to start File Watcher");
+        if let Err(err) = unsafe { (*watcher_ptr).start() } {
+            bun_core::handle_error_return_trace(&err);
+            Output::panic(format_args!("Failed to start File Watcher: {}", err.name()));
         }
     }
 
@@ -1195,8 +1177,13 @@ where
                                         {
                                             // reset the file descriptor
                                             let ent = file_ent.entry();
-                                            ent.set_cache_fd(Fd::INVALID);
-                                            ent.need_stat.set(true);
+                                            {
+                                                // Every cached-`Entry` rewrite takes
+                                                // the per-entry mutex.
+                                                let _entry_guard = ent.mutex.lock_guard();
+                                                ent.set_cache_fd(Fd::INVALID);
+                                                ent.need_stat.set(true);
+                                            }
                                             path_string = ent.abs_path;
                                             file_hash = Watcher::get_hash(path_string.as_bytes());
                                             for (entry_id, hash) in hashes.iter().enumerate() {
@@ -1329,7 +1316,7 @@ where
 // in via the `#[no_mangle]` hook below.
 
 impl<'a> HotReloaderCtx for bun_bundler::BundleV2<'a> {
-    type EventLoop = bun_event_loop::AnyEventLoop<'static>;
+    type EventLoop = bun_event_loop::AnyEventLoop;
 
     fn event_loop(&self) -> *mut Self::EventLoop {
         // With RELOAD_IMMEDIATELY=true the only caller
@@ -1404,7 +1391,7 @@ impl<'a> HotReloaderCtx for bun_bundler::BundleV2<'a> {
 /// `'static` because the only caller (`bun build --watch`)
 /// allocates the transpiler from the process-lifetime CLI arena.
 type BundlerWatcher =
-    NewHotReloader<bun_bundler::BundleV2<'static>, bun_event_loop::AnyEventLoop<'static>, true>;
+    NewHotReloader<bun_bundler::BundleV2<'static>, bun_event_loop::AnyEventLoop, true>;
 
 /// CYCLEBREAK extern hook: called from `BundleV2::init` (T5) when
 /// `cli_watch_flag` is set. Defined here (not in
@@ -1418,5 +1405,3 @@ fn __bun_jsc_enable_hot_module_reloading_for_bundler(
     // command leaks the CLI arena), and the box is leaked under --watch.
     unsafe { BundlerWatcher::enable_hot_module_reloading(bv2.as_ptr(), None) };
 }
-
-pub use crate::MarkedArrayBuffer as Buffer;

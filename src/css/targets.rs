@@ -104,7 +104,7 @@ impl Targets {
         use bun_ast::Target as T;
         match target {
             T::Node | T::Bun => Self::runtime_default(),
-            T::Browser | T::BunMacro | T::BakeServerComponentsSsr => Self::browser_default(),
+            T::Browser | T::BunMacro | T::ServerComponentsSsr => Self::browser_default(),
         }
     }
 
@@ -197,7 +197,7 @@ static BROWSER_DEFAULT: std::sync::LazyLock<Browsers> = std::sync::LazyLock::new
 impl Browsers {
     /// Ported from here:
     /// https://github.com/vitejs/vite/blob/ac329685bba229e1ff43e3d96324f817d48abe48/packages/vite/src/node/plugins/css.ts#L3335
-    pub fn convert_from_string(esbuild_target: &[&[u8]]) -> Result<Browsers, bun_core::Error> {
+    pub fn convert_from_string(esbuild_target: &[&[u8]]) -> crate::CrateResult<Browsers> {
         let mut browsers = Browsers::default();
 
         for &str in esbuild_target {
@@ -212,10 +212,8 @@ impl Browsers {
                 // Propagates InvalidCharacter / Overflow. Preserve the tag for
                 // error-name snapshot compat (do NOT collapse to UnsupportedCSSTarget).
                 let year = strings::parse_int::<u16>(number_part, 10).map_err(|e| match e {
-                    strings::ParseIntError::Overflow => bun_core::err!("Overflow"),
-                    strings::ParseIntError::InvalidCharacter => {
-                        bun_core::err!("InvalidCharacter")
-                    }
+                    strings::ParseIntError::Overflow => crate::CrateError::Overflow,
+                    strings::ParseIntError::InvalidCharacter => crate::CrateError::InvalidCharacter,
                 })?;
                 match year {
                     // https://caniuse.com/?search=es2015
@@ -317,7 +315,7 @@ impl Browsers {
                         break 'entries_without_es &entries_buf[0..4];
                     }
                     _ => {
-                        return Err(bun_core::err!("UnsupportedCSSTarget"));
+                        return Err(crate::CrateError::UnsupportedCSSTarget);
                     }
                 }
             };
@@ -415,26 +413,26 @@ bitflags::bitflags! {
     /// Features to explicitly enable or disable.
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub struct Features: u32 {
-        const NESTING                        = 1 << 0;
-        const NOT_SELECTOR_LIST              = 1 << 1;
-        const DIR_SELECTOR                   = 1 << 2;
-        const LANG_SELECTOR_LIST             = 1 << 3;
-        const IS_SELECTOR                    = 1 << 4;
+        const NESTING                           = 1 << 0;
+        const NOT_SELECTOR_LIST                 = 1 << 1;
+        const DIR_SELECTOR                      = 1 << 2;
+        const LANG_SELECTOR_LIST                = 1 << 3;
+        const IS_SELECTOR                       = 1 << 4;
         const TEXT_DECORATION_THICKNESS_PERCENT = 1 << 5;
-        const MEDIA_INTERVAL_SYNTAX          = 1 << 6;
-        const MEDIA_RANGE_SYNTAX             = 1 << 7;
-        const CUSTOM_MEDIA_QUERIES           = 1 << 8;
-        const CLAMP_FUNCTION                 = 1 << 9;
-        const COLOR_FUNCTION                 = 1 << 10;
-        const OKLAB_COLORS                   = 1 << 11;
-        const LAB_COLORS                     = 1 << 12;
-        const P3_COLORS                      = 1 << 13;
-        const HEX_ALPHA_COLORS               = 1 << 14;
-        const SPACE_SEPARATED_COLOR_NOTATION = 1 << 15;
-        const FONT_FAMILY_SYSTEM_UI          = 1 << 16;
-        const DOUBLE_POSITION_GRADIENTS      = 1 << 17;
-        const VENDOR_PREFIXES                = 1 << 18;
-        const LOGICAL_PROPERTIES             = 1 << 19;
+        const MEDIA_INTERVAL_SYNTAX             = 1 << 6;
+        const MEDIA_RANGE_SYNTAX                = 1 << 7;
+        const CUSTOM_MEDIA_QUERIES              = 1 << 8;
+        const CLAMP_FUNCTION                    = 1 << 9;
+        const COLOR_FUNCTION                    = 1 << 10;
+        const OKLAB_COLORS                      = 1 << 11;
+        const LAB_COLORS                        = 1 << 12;
+        const P3_COLORS                         = 1 << 13;
+        const HEX_ALPHA_COLORS                  = 1 << 14;
+        const SPACE_SEPARATED_COLOR_NOTATION    = 1 << 15;
+        const FONT_FAMILY_SYSTEM_UI             = 1 << 16;
+        const DOUBLE_POSITION_GRADIENTS         = 1 << 17;
+        const VENDOR_PREFIXES                   = 1 << 18;
+        const LOGICAL_PROPERTIES                = 1 << 19;
 
         const SELECTORS = Self::NESTING.bits()
             | Self::NOT_SELECTOR_LIST.bits()

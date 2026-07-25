@@ -13,7 +13,6 @@ import {
   readdirSync,
   readFileSync,
   realpathSync,
-  rmdirSync,
   rmSync,
   writeFileSync,
 } from "fs";
@@ -52,6 +51,39 @@ export function dedent(str: string | TemplateStringsArray, ...args: any[]) {
       .map(x => x.slice(smallest_indent))
       .join("\n")
   );
+}
+
+export function decodeSourceMappingsLine(line: string) {
+  const B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  const segs: { gen: number; src: number; ol: number; oc: number }[] = [];
+  let gen = 0;
+  let src = 0;
+  let ol = 0;
+  let oc = 0;
+  for (const raw of line ? line.split(",") : []) {
+    const f: number[] = [];
+    let v = 0;
+    let sh = 0;
+    for (const c of raw) {
+      const d = B64.indexOf(c);
+      v |= (d & 31) << sh;
+      if (d & 32) {
+        sh += 5;
+        continue;
+      }
+      f.push(v & 1 ? -(v >>> 1) : v >>> 1);
+      v = 0;
+      sh = 0;
+    }
+    gen += f[0];
+    if (f.length > 1) {
+      src += f[1];
+      ol += f[2];
+      oc += f[3];
+    }
+    segs.push({ gen, src, ol, oc });
+  }
+  return segs;
 }
 
 let currentFile: string | undefined;
@@ -233,6 +265,8 @@ export interface BundlerTestInput {
   minifyWhitespace?: boolean;
   splitting?: boolean;
   serverComponents?: boolean;
+  reactCompiler?: boolean;
+  reactCompilerOutputMode?: "client" | "ssr";
   treeShaking?: boolean;
   unsupportedCSSFeatures?: string[];
   unsupportedJSFeatures?: string[];
@@ -497,6 +531,8 @@ function expectBundled(
     run,
     runtimeFiles,
     serverComponents = false,
+    reactCompiler = false,
+    reactCompilerOutputMode,
     skipOnEsbuild,
     snapshotSourceMap,
     sourceMap,
@@ -734,6 +770,9 @@ function expectBundled(
       if (optimizeImports) {
         throw new Error("optimizeImports not possible in backend=CLI (API-only option)");
       }
+      if (reactCompilerOutputMode) {
+        throw new Error("reactCompilerOutputMode not possible in backend=CLI (API-only option)");
+      }
       const cmd = (
         !ESBUILD
           ? [
@@ -785,6 +824,7 @@ function expectBundled(
               assetNaming && assetNaming !== "[name]-[hash].[ext]" && [`--asset-naming`, assetNaming],
               splitting && `--splitting`,
               serverComponents && "--server-components",
+              reactCompiler && "--react-compiler",
               outbase && `--root=${outbase}`,
               banner && `--banner="${banner}"`, // TODO: --banner-css=*
               footer && `--footer="${footer}"`,
@@ -1152,6 +1192,8 @@ function expectBundled(
           sourcemap: sourceMap,
           splitting,
           target,
+          reactCompiler,
+          reactCompilerOutputMode,
           bytecode,
           publicPath,
           emitDCEAnnotations,
@@ -1580,6 +1622,24 @@ for (const [key, blob] of build.outputs) {
         const file = file_input.toString("utf8"); // type bug? `file_input` is `Buffer|string`
         if (file.endsWith(".map")) {
           const parsed = await Bun.file(path.join(outdir, file)).json();
+          // SourceMapConsumer re-sorts segments by generated position, so
+          // decode the raw VLQ first to catch out-of-order segments (a
+          // source-map spec violation).
+          {
+            let ln = 0;
+            for (const line of String(parsed.mappings).split(";")) {
+              ln++;
+              const segs = decodeSourceMappingsLine(line);
+              for (let i = 1; i < segs.length; i++) {
+                if (segs[i].gen < segs[i - 1].gen) {
+                  throw new Error(
+                    `${file}: out-of-order segments on generated line ${ln}: ` +
+                      `column ${segs[i - 1].gen} -> ${segs[i].gen}\n  mappings line: ${line}`,
+                  );
+                }
+              }
+            }
+          }
           const mappedLocations = new Map();
           await SourceMapConsumer.with(parsed, null, async map => {
             map.eachMapping(m => {
@@ -1811,7 +1871,7 @@ for (const [key, blob] of build.outputs) {
       }
     }
 
-    rmdirSync(root, { recursive: true });
+    rmSync(root, { recursive: true, force: true });
 
     return testRef(id, opts);
   })();

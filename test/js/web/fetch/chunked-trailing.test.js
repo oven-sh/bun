@@ -5,6 +5,7 @@ it("handles trailing headers split across packets", async () => {
   const { promise, resolve } = Promise.withResolvers();
   await using server = net
     .createServer(socket => {
+      socket.on("error", () => {}); // raw test server: tolerate client aborts (ECONNRESET)
       socket.once("data", () => {
         socket.write("HTTP/1.1 200 OK\r\n");
         socket.write("Content-Type: text/plain\r\n");
@@ -35,6 +36,7 @@ it("handles trailing headers in a single packet", async () => {
   const { promise, resolve } = Promise.withResolvers();
   await using server = net
     .createServer(socket => {
+      socket.on("error", () => {}); // raw test server: tolerate client aborts (ECONNRESET)
       socket.once("data", () => {
         socket.write("HTTP/1.1 200 OK\r\n");
         socket.write("Content-Type: text/plain\r\n");
@@ -60,6 +62,7 @@ it("handles trailing headers with empty body", async () => {
   const { promise, resolve } = Promise.withResolvers();
   await using server = net
     .createServer(socket => {
+      socket.on("error", () => {}); // raw test server: tolerate client aborts (ECONNRESET)
       socket.once("data", () => {
         socket.write("HTTP/1.1 200 OK\r\n");
         socket.write("Content-Type: text/plain\r\n");
@@ -84,6 +87,7 @@ it("handles multiple trailing headers", async () => {
   const { promise, resolve } = Promise.withResolvers();
   await using server = net
     .createServer(socket => {
+      socket.on("error", () => {}); // raw test server: tolerate client aborts (ECONNRESET)
       socket.once("data", () => {
         socket.write("HTTP/1.1 200 OK\r\n");
         socket.write("Content-Type: text/plain\r\n");
@@ -111,6 +115,7 @@ it("handles trailing headers with very long delay", async () => {
   const { promise, resolve } = Promise.withResolvers();
   await using server = net
     .createServer(socket => {
+      socket.on("error", () => {}); // raw test server: tolerate client aborts (ECONNRESET)
       socket.once("data", () => {
         socket.write("HTTP/1.1 200 OK\r\n");
         socket.write("Content-Type: text/plain\r\n");
@@ -139,6 +144,7 @@ it("handles trailing headers with byte-by-byte transmission", async () => {
   const { promise, resolve } = Promise.withResolvers();
   await using server = net
     .createServer(socket => {
+      socket.on("error", () => {}); // raw test server: tolerate client aborts (ECONNRESET)
       socket.once("data", () => {
         socket.write("HTTP/1.1 200 OK\r\n");
         socket.write("Content-Type: text/plain\r\n");
@@ -178,6 +184,7 @@ it("handles trailing headers with malformed format (missing final CRLF)", async 
   const { promise, resolve } = Promise.withResolvers();
   await using server = net
     .createServer(socket => {
+      socket.on("error", () => {}); // raw test server: tolerate client aborts (ECONNRESET)
       socket.once("data", () => {
         socket.write("HTTP/1.1 200 OK\r\n");
         socket.write("Content-Type: text/plain\r\n");
@@ -204,6 +211,7 @@ it("handles trailing headers with extremely large values", async () => {
   const { promise, resolve } = Promise.withResolvers();
   await using server = net
     .createServer(socket => {
+      socket.on("error", () => {}); // raw test server: tolerate client aborts (ECONNRESET)
       socket.once("data", () => {
         socket.write("HTTP/1.1 200 OK\r\n");
         socket.write("Content-Type: text/plain\r\n");
@@ -229,6 +237,7 @@ it("handles connection close during trailing headers", async () => {
   const { promise, resolve } = Promise.withResolvers();
   await using server = net
     .createServer(socket => {
+      socket.on("error", () => {}); // raw test server: tolerate client aborts (ECONNRESET)
       socket.once("data", () => {
         socket.write("HTTP/1.1 200 OK\r\n");
         socket.write("Content-Type: text/plain\r\n");
@@ -254,6 +263,7 @@ it("handles trailing headers with multiple header lines", async () => {
   const { promise, resolve } = Promise.withResolvers();
   await using server = net
     .createServer(socket => {
+      socket.on("error", () => {}); // raw test server: tolerate client aborts (ECONNRESET)
       socket.once("data", () => {
         socket.write("HTTP/1.1 200 OK\r\n");
         socket.write("Content-Type: text/plain\r\n");
@@ -281,6 +291,7 @@ it("handles trailing headers with empty values", async () => {
   const { promise, resolve } = Promise.withResolvers();
   await using server = net
     .createServer(socket => {
+      socket.on("error", () => {}); // raw test server: tolerate client aborts (ECONNRESET)
       socket.once("data", () => {
         socket.write("HTTP/1.1 200 OK\r\n");
         socket.write("Content-Type: text/plain\r\n");
@@ -306,6 +317,7 @@ it("handles delayed trailing headers", async () => {
   const { promise, resolve } = Promise.withResolvers();
   await using server = net
     .createServer(socket => {
+      socket.on("error", () => {}); // raw test server: tolerate client aborts (ECONNRESET)
       socket.once("data", () => {
         socket.write("HTTP/1.1 200 OK\r\n");
         socket.write("Content-Type: text/plain\r\n");
@@ -335,6 +347,7 @@ it("handles trailing headers after the final chunk only", async () => {
   const { promise, resolve } = Promise.withResolvers();
   await using server = net
     .createServer(socket => {
+      socket.on("error", () => {}); // raw test server: tolerate client aborts (ECONNRESET)
       socket.once("data", () => {
         socket.write("HTTP/1.1 200 OK\r\n");
         socket.write("Content-Type: text/plain\r\n");
@@ -367,6 +380,7 @@ it("handles chunked extensions with empty extension", async () => {
   const { promise, resolve } = Promise.withResolvers();
   await using server = net
     .createServer(socket => {
+      socket.on("error", () => {}); // raw test server: tolerate client aborts (ECONNRESET)
       socket.once("data", () => {
         socket.write("HTTP/1.1 200 OK\r\n");
         socket.write("Content-Type: text/plain\r\n");
@@ -393,6 +407,7 @@ it("handles chunked extensions with simple key", async () => {
   const { promise, resolve } = Promise.withResolvers();
   await using server = net
     .createServer(socket => {
+      socket.on("error", () => {}); // raw test server: tolerate client aborts (ECONNRESET)
       socket.once("data", () => {
         socket.write("HTTP/1.1 200 OK\r\n");
         socket.write("Content-Type: text/plain\r\n");
@@ -419,6 +434,7 @@ it("handles chunked extensions with key-value pair", async () => {
   const { promise, resolve } = Promise.withResolvers();
   await using server = net
     .createServer(socket => {
+      socket.on("error", () => {}); // raw test server: tolerate client aborts (ECONNRESET)
       socket.once("data", () => {
         socket.write("HTTP/1.1 200 OK\r\n");
         socket.write("Content-Type: text/plain\r\n");
@@ -445,6 +461,7 @@ it("handles chunked extensions with quoted value", async () => {
   const { promise, resolve } = Promise.withResolvers();
   await using server = net
     .createServer(socket => {
+      socket.on("error", () => {}); // raw test server: tolerate client aborts (ECONNRESET)
       socket.once("data", () => {
         socket.write("HTTP/1.1 200 OK\r\n");
         socket.write("Content-Type: text/plain\r\n");
@@ -471,6 +488,7 @@ it("handles chunked extensions on multiple chunks", async () => {
   const { promise, resolve } = Promise.withResolvers();
   await using server = net
     .createServer(socket => {
+      socket.on("error", () => {}); // raw test server: tolerate client aborts (ECONNRESET)
       socket.once("data", () => {
         socket.write("HTTP/1.1 200 OK\r\n");
         socket.write("Content-Type: text/plain\r\n");
@@ -502,6 +520,7 @@ it("handles chunked extensions with trailing headers", async () => {
   const { promise, resolve } = Promise.withResolvers();
   await using server = net
     .createServer(socket => {
+      socket.on("error", () => {}); // raw test server: tolerate client aborts (ECONNRESET)
       socket.once("data", () => {
         socket.write("HTTP/1.1 200 OK\r\n");
         socket.write("Content-Type: text/plain\r\n");
@@ -532,6 +551,7 @@ it("handles chunked extensions with special characters", async () => {
   const { promise, resolve } = Promise.withResolvers();
   await using server = net
     .createServer(socket => {
+      socket.on("error", () => {}); // raw test server: tolerate client aborts (ECONNRESET)
       socket.once("data", () => {
         socket.write("HTTP/1.1 200 OK\r\n");
         socket.write("Content-Type: text/plain\r\n");
@@ -558,6 +578,7 @@ it("proper error if missing zero-length chunk", async () => {
   const { promise, resolve } = Promise.withResolvers();
   await using server = net
     .createServer(socket => {
+      socket.on("error", () => {}); // raw test server: tolerate client aborts (ECONNRESET)
       socket.once("data", () => {
         socket.write("HTTP/1.1 200 OK\r\n");
         socket.write("Content-Type: text/plain\r\n");
@@ -589,6 +610,7 @@ it("proper error if missing data in middle of chunk extension", async () => {
   const { promise, resolve } = Promise.withResolvers();
   await using server = net
     .createServer(socket => {
+      socket.on("error", () => {}); // raw test server: tolerate client aborts (ECONNRESET)
       socket.once("data", () => {
         socket.write("HTTP/1.1 200 OK\r\n");
         socket.write("Content-Type: text/plain\r\n");
@@ -622,6 +644,7 @@ it("proper error if missing CRLF after chunk data", async () => {
   const { promise, resolve } = Promise.withResolvers();
   await using server = net
     .createServer(socket => {
+      socket.on("error", () => {}); // raw test server: tolerate client aborts (ECONNRESET)
       socket.once("data", () => {
         socket.write("HTTP/1.1 200 OK\r\n");
         socket.write("Content-Type: text/plain\r\n");

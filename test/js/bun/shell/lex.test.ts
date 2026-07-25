@@ -744,5 +744,10 @@ describe("lex shell", () => {
 
       await TestBuilder.command`echo hi && (echo uh oh`.error("Unclosed subshell").run();
     });
+
+    // https://github.com/oven-sh/bun/issues/33235
+    TestBuilder.command`(((( |||`
+      .error("Unexpected EOF\nUnclosed subshell\nUnclosed subshell\nUnclosed subshell")
+      .runAsTest("multiple errors are newline separated");
   });
 });

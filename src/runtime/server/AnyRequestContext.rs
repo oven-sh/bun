@@ -123,11 +123,6 @@ macro_rules! dispatch {
     }};
 }
 
-// ─── dispatch arms calling gated RequestContext methods ──────────────────────
-// set_timeout / set_cookies / set_timeout_handler / get_remote_socket_info /
-// on_abort / ref_ / deref / set_signal_aborted forward to RequestContext
-// methods that live in `_gated_state_machine`. Un-gate alongside.
-
 impl AnyRequestContext {
     pub fn set_additional_on_abort_callback(self, cb: Option<AdditionalOnAbortCallback>) {
         dispatch!(self, (), |_T, ctx| {
@@ -191,17 +186,6 @@ impl AnyRequestContext {
                 return None;
             }
             ctx.req.map(|p| p.cast::<uws::Request>())
-        })
-    }
-
-    pub fn on_abort(self, response: uws::AnyResponse) {
-        dispatch!(self, (), |T, ctx| {
-            // `RequestContext::on_abort`
-            // takes `uws::AnyResponse` directly (and re-checks H3 internally),
-            // so forward the enum as-is.
-            // SAFETY: `ctx` is the live request context this `AnyRequestContext`
-            // wraps; `on_abort` only derefs that exact pointer.
-            T::on_abort(core::ptr::from_mut::<T>(ctx), response);
         })
     }
 

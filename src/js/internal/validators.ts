@@ -110,9 +110,31 @@ function throwIfNullBytesInFileName(filename: string) {
   }
 }
 
+/**
+ * node's fs getValidatedPath (lib/internal/fs/utils.js): converts URL
+ * *instances* via fileURLToPath, accepts strings and Buffers as-is (no
+ * path.resolve, no "file:"-prefix string sniffing), and rejects null bytes.
+ */
+function getValidatedFsPath(p: any, propName: string = "path") {
+  if (p instanceof URL) p = Bun.fileURLToPath(p);
+  if (typeof p === "string") {
+    if (p.indexOf("\u0000") !== -1) {
+      throw $ERR_INVALID_ARG_VALUE(propName, p, "must be a string, Uint8Array, or URL without null bytes");
+    }
+    return p;
+  }
+  if (p instanceof Uint8Array) {
+    if (p.indexOf(0) !== -1) {
+      throw $ERR_INVALID_ARG_VALUE(propName, p, "must be a string, Uint8Array, or URL without null bytes");
+    }
+    return p;
+  }
+  throw $ERR_INVALID_ARG_TYPE(propName, ["string", "Buffer", "URL"], p);
+}
+
 hideFromStack(validateLinkHeaderValue, validateInternalField);
 hideFromStack(validateString, validateFunction, validateBoolean, validateUndefined);
-hideFromStack(getValidatedPath, throwIfNullBytesInFileName);
+hideFromStack(getValidatedPath, getValidatedFsPath, throwIfNullBytesInFileName);
 
 export default {
   /** (value, name) */
@@ -160,6 +182,7 @@ export default {
   validateInternalField,
   /** `(path)` — accepts a string or file URL, returns it resolved to an absolute path string */
   getValidatedPath,
+  getValidatedFsPath,
   /** `(filename)` */
   throwIfNullBytesInFileName,
 };

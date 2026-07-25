@@ -2,8 +2,10 @@ use core::ptr;
 use core::slice;
 
 use crate::jsc::{ExternColumnIdentifier, JSGlobalObject, JSType, JSValue, JsError, JsResult};
+use bun_collections::StringHashMap;
+use bun_core::UnwrapOrOom as _;
 use bun_core::wtf::WTFStringImpl;
-use bun_sql::shared::Data;
+use bun_sql::shared::{ColumnIdentifier, Data};
 
 // Note: This entire type is passed by pointer
 // across FFI to C++ (`JSC__constructObjectFromDataCell`). Field layout is
@@ -276,6 +278,115 @@ impl SQLDataCell {
         }
     }
 
+    #[inline]
+    pub fn null() -> SQLDataCell {
+        SQLDataCell::default()
+    }
+
+    #[inline]
+    pub fn int4(value: i32) -> SQLDataCell {
+        SQLDataCell {
+            tag: Tag::Int4,
+            value: Value { int4: value },
+            ..Default::default()
+        }
+    }
+
+    #[inline]
+    pub fn uint4(value: u32) -> SQLDataCell {
+        SQLDataCell {
+            tag: Tag::Uint4,
+            value: Value { uint4: value },
+            ..Default::default()
+        }
+    }
+
+    #[inline]
+    pub fn int8(value: i64) -> SQLDataCell {
+        SQLDataCell {
+            tag: Tag::Int8,
+            value: Value { int8: value },
+            ..Default::default()
+        }
+    }
+
+    #[inline]
+    pub fn uint8(value: u64) -> SQLDataCell {
+        SQLDataCell {
+            tag: Tag::Uint8,
+            value: Value { uint8: value },
+            ..Default::default()
+        }
+    }
+
+    #[inline]
+    pub fn float8(value: f64) -> SQLDataCell {
+        SQLDataCell {
+            tag: Tag::Float8,
+            value: Value { float8: value },
+            ..Default::default()
+        }
+    }
+
+    #[inline]
+    pub fn bool_(value: bool) -> SQLDataCell {
+        SQLDataCell {
+            tag: Tag::Bool,
+            value: Value { bool_: value as u8 },
+            ..Default::default()
+        }
+    }
+
+    #[inline]
+    pub fn date(value: f64) -> SQLDataCell {
+        SQLDataCell {
+            tag: Tag::Date,
+            value: Value { date: value },
+            ..Default::default()
+        }
+    }
+
+    #[inline]
+    pub fn date_with_tz(value: f64) -> SQLDataCell {
+        SQLDataCell {
+            tag: Tag::DateWithTimeZone,
+            value: Value {
+                date_with_time_zone: value,
+            },
+            ..Default::default()
+        }
+    }
+
+    /// Owned string cell: clones `bytes` into a WTFStringImpl, freed via
+    /// `free_value = 1`. Empty input becomes a null pointer, which the C++
+    /// side (SQLClient.cpp) renders as the empty string.
+    #[inline]
+    pub fn string(bytes: &[u8]) -> SQLDataCell {
+        SQLDataCell {
+            tag: Tag::String,
+            value: Value {
+                string: clone_utf8_or_null(bytes),
+            },
+            free_value: 1,
+            ..Default::default()
+        }
+    }
+
+    /// Owned JSON cell: clones `bytes` into a WTFStringImpl, freed via
+    /// `free_value = 1`. Empty input becomes a null pointer, which the C++
+    /// side (SQLClient.cpp) renders as `null`.
+    #[inline]
+    pub fn json(bytes: &[u8]) -> SQLDataCell {
+        SQLDataCell {
+            tag: Tag::Json,
+            value: Value {
+                json: clone_utf8_or_null(bytes),
+            },
+            free_value: 1,
+            ..Default::default()
+        }
+    }
+
     pub fn raw<'a>(optional_bytes: impl IntoOptionalData<'a>) -> SQLDataCell {
         if let Some(bytes) = optional_bytes.into_optional_data() {
             let bytes_slice = bytes.slice();
@@ -291,11 +402,37 @@ impl SQLDataCell {
             };
         }
         // TODO: check empty and null fields
-        SQLDataCell {
-            tag: Tag::Null,
-            value: Value { null: 0 },
-            ..Default::default()
-        }
+        SQLDataCell::null()
+    }
+
+    /// Shared wrapper around `construct_object_from_data_cell` used by the
+    /// per-row `to_js` paths (postgres `Putter`, mysql `Row`): extracts the
+    /// cached-structure column names and forwards the cells.
+    pub fn to_js_object(
+        global_object: &JSGlobalObject,
+        array: JSValue,
+        structure: JSValue,
+        cells: &mut [SQLDataCell],
+        flags: Flags,
+        result_mode: u8,
+        cached_structure: Option<&crate::shared::CachedStructure>,
+    ) -> JsResult<JSValue> {
+        let (names, names_count) = match cached_structure.and_then(|c| c.fields.as_deref()) {
+            Some(f) => (f.as_ptr().cast_mut(), f.len() as u32),
+            None => (ptr::null_mut(), 0),
+        };
+
+        SQLDataCell::construct_object_from_data_cell(
+            global_object,
+            array,
+            structure,
+            cells.as_mut_ptr(),
+            cells.len() as u32,
+            flags,
+            result_mode,
+            names,
+            names_count,
+        )
     }
 
     // TODO: cppbind isn't yet able to detect slice parameters when the next is uint32_t
@@ -370,6 +507,18 @@ impl<'a> IntoOptionalData<'a> for Option<&'a mut Data> {
     }
 }
 
+/// Clones the bytes into a fresh `WTFStringImpl` whose +1 ref is transferred
+/// to the cell (`free_value = 1`). Empty input maps to a null pointer instead
+/// of allocating an empty string.
+#[inline]
+fn clone_utf8_or_null(bytes: &[u8]) -> WTFStringImpl {
+    if !bytes.is_empty() {
+        bun_core::String::clone_utf8(bytes).leak_wtf_impl()
+    } else {
+        ptr::null_mut()
+    }
+}
+
 bitflags::bitflags! {
     #[repr(transparent)]
     #[derive(Copy, Clone, Default)]
@@ -379,6 +528,55 @@ bitflags::bitflags! {
         const HAS_DUPLICATE_COLUMNS = 1 << 2;
         // remaining 29 bits: padding
     }
+}
+
+/// Rewrites repeated column identifiers to [`ColumnIdentifier::Duplicate`] and
+/// accumulates the column-set [`Flags`]. Callers pass the columns in reverse
+/// order so the LAST occurrence of a repeated name/index keeps its identifier.
+pub fn dedupe_columns<'a>(
+    columns: impl ExactSizeIterator<Item = &'a mut ColumnIdentifier>,
+) -> Flags {
+    let mut seen_numbers: Vec<u32> = Vec::new();
+    // StringHashMap clones to an owned `Box<[u8]>` key. Fine for a transient
+    // dedup set.
+    let mut seen_fields: StringHashMap<()> = StringHashMap::default();
+    seen_fields.reserve(columns.len());
+
+    let mut flags = Flags::default();
+    for name_or_index in columns {
+        match &*name_or_index {
+            ColumnIdentifier::Name(name) => {
+                // reshaped for borrowck — compute `found_existing` before
+                // mutating `*name_or_index`.
+                let found_existing = seen_fields
+                    .get_or_put(name.slice())
+                    .unwrap_or_oom()
+                    .found_existing;
+                if found_existing {
+                    *name_or_index = ColumnIdentifier::Duplicate;
+                    flags.insert(Flags::HAS_DUPLICATE_COLUMNS);
+                }
+
+                flags.insert(Flags::HAS_NAMED_COLUMNS);
+            }
+            ColumnIdentifier::Index(index) => {
+                let index = *index;
+                if seen_numbers.contains(&index) {
+                    *name_or_index = ColumnIdentifier::Duplicate;
+                    flags.insert(Flags::HAS_DUPLICATE_COLUMNS);
+                } else {
+                    seen_numbers.push(index);
+                }
+
+                flags.insert(Flags::HAS_INDEXED_COLUMNS);
+            }
+            ColumnIdentifier::Duplicate => {
+                flags.insert(Flags::HAS_DUPLICATE_COLUMNS);
+            }
+        }
+    }
+
+    flags
 }
 
 // Declared inline rather than in a dedicated `*_sys` crate: this is the only

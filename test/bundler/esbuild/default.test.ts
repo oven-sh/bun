@@ -1531,6 +1531,19 @@ describe.concurrent("bundler", () => {
       stdout: "123 object",
     },
   });
+  itBundled("default/RuntimeNameCollisionBundle", {
+    files: {
+      "/entry.js": /* js */ `
+        function __require() { return 123 }
+        console.log(__require(), typeof (require('fs')))
+      `,
+    },
+    target: "node",
+    external: ["fs"],
+    run: {
+      stdout: "123 object",
+    },
+  });
   itBundled("default/TopLevelReturnForbiddenImport", {
     todo: true,
     files: {

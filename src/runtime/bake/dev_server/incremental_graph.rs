@@ -294,12 +294,6 @@ pub struct GraphMemoryCost {
 }
 
 impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
-    /// Helper for `DevServer::is_file_cached`.
-    #[inline]
-    pub fn file_kind_at(&self, index: usize) -> FileKind {
-        self.bundled_files.values()[index].kind
-    }
-
     /// `@fieldParentPtr(@tagName(side) ++ "_graph", g)` — recover the owning
     /// `DevServer` from this inline field. Returns a raw pointer because the
     /// caller already holds `&mut self` (a sub-borrow of `*dev`); forming
@@ -377,17 +371,6 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
     }
 
     // ── per-bundle scratch accessors (kept for existing call sites) ────────
-    #[inline]
-    pub fn current_chunk_parts_len(&self) -> usize {
-        match SIDE {
-            Side::Client => self.current_chunk_parts.len(),
-            Side::Server => self.current_chunk_code.len(),
-        }
-    }
-    #[inline]
-    pub fn current_chunk_source_maps_is_empty(&self) -> bool {
-        self.current_chunk_source_maps.is_empty()
-    }
 
     /// Does NOT count `size_of::<Self>()`.
     pub fn memory_cost_detailed(&self) -> GraphMemoryCost {
@@ -524,7 +507,11 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         }
     }
 
-    pub(super) fn disconnect_and_delete_file(&mut self, file_index: FileIndex<SIDE>) {
+    pub(super) fn disconnect_and_delete_file(
+        &mut self,
+        directory_watchers: &mut super::DirectoryWatchStore,
+        file_index: FileIndex<SIDE>,
+    ) {
         debug_assert!(self.first_dep[file_index.get() as usize].is_none()); // must have no dependencies
 
         // Disconnect all imports.
@@ -539,21 +526,8 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
 
         // DirectoryWatchStore.Dep.source_file_path borrows this key; remove
         // any such dependencies before freeing it so they do not dangle.
-        {
-            // Note: reshaped for borrowck — re-derive the key slice via raw
-            // ptr so the `&mut DevServer.directory_watchers` borrow does not
-            // overlap the `&mut self.bundled_files` borrow.
-            let key_ptr: *const [u8] =
-                &raw const *self.bundled_files.keys()[file_index.get() as usize];
-            // SAFETY: see `owner()`; touches `directory_watchers` sibling only,
-            // and `key_ptr` points into `bundled_files` which is not mutated
-            // by `remove_dependencies_for_file`.
-            unsafe {
-                (*self.owner())
-                    .directory_watchers
-                    .remove_dependencies_for_file(&*key_ptr);
-            }
-        }
+        directory_watchers
+            .remove_dependencies_for_file(&self.bundled_files.keys()[file_index.get() as usize]);
 
         // Free the key string and tombstone the slot. Cannot swap-remove since
         // FrameworkRouter / SerializedFailure hold FileIndices into this graph.
@@ -577,7 +551,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         index: impl Into<bun_ast::Index>,
         content: ReceiveChunkContent,
         is_ssr_graph: bool,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         let index: bun_ast::Index = index.into();
         // SAFETY: see `owner()`.
         let dev = unsafe { self.owner() };
@@ -771,9 +745,10 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                         .is_client_component_boundary
                     {
                         // SAFETY: cross-graph access via `owner()`. We hold
-                        // `&mut self` (server_graph); `client_graph` is a
-                        // disjoint sibling field.
-                        let client_graph = unsafe { &mut (*dev).client_graph };
+                        // `&mut self` (server_graph); `client_graph` and
+                        // `directory_watchers` are disjoint sibling fields.
+                        let (client_graph, directory_watchers) =
+                            unsafe { (&mut (*dev).client_graph, &mut (*dev).directory_watchers) };
                         let key = bun_ptr::RawSlice::new(
                             &*self.bundled_files.keys()[file_index.get() as usize],
                         );
@@ -783,7 +758,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                                     "Client graph's SCB was already deleted",
                                 ))
                             });
-                        client_graph.disconnect_and_delete_file(client_index);
+                        client_graph.disconnect_and_delete_file(directory_watchers, client_index);
                         self.bundled_files.values_mut()[file_index.get() as usize]
                             .is_client_component_boundary = false;
                         self.dev_incremental_result()
@@ -844,7 +819,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         ctx: &mut HotUpdateContext<'_>,
         mode: ProcessMode,
         bundle_graph_index: impl Into<bun_ast::Index>,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         let bundle_graph_index: bun_ast::Index = bundle_graph_index.into();
         let file_index: FileIndex<SIDE> = ctx
             .get_cached_index(SIDE, bundle_graph_index)
@@ -934,7 +909,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         new_imports: &mut Option<EdgeIndex>,
         file_index: FileIndex<SIDE>,
         index: bun_ast::Index,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         debug_assert!(index.is_valid());
         debug_assert!(!ctx.loaders[index.get() as usize].is_css());
 
@@ -972,7 +947,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         new_imports: &mut Option<EdgeIndex>,
         file_index: FileIndex<SIDE>,
         bundler_index: bun_ast::Index,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         debug_assert!(bundler_index.is_valid());
         debug_assert!(ctx.loaders[bundler_index.get() as usize].is_css());
 
@@ -1021,7 +996,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         ir_source_index: bun_ast::Index,
         key: &[u8],
         mode: EdgeAttachmentMode,
-    ) -> Result<EdgeAttachmentResult, bun_core::Error> {
+    ) -> Result<EdgeAttachmentResult, crate::Error> {
         // Duplicated import records are marked unused by `ConvertESMExportsForHmr`.
         if ir_flags.contains(bun_ast::ImportRecordFlags::IS_UNUSED) {
             return Ok(EdgeAttachmentResult::Stop);
@@ -1123,7 +1098,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         gts: &mut GraphTraceState,
         goal: TraceDependencyGoal,
         from_file_index: FileIndex<SIDE>,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         if gts.bits(SIDE).is_set(file_index.get() as usize) {
             return Ok(());
         }
@@ -1225,7 +1200,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         file_index: FileIndex<SIDE>,
         gts: &mut GraphTraceState,
         goal: TraceImportGoal,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         if gts.bits(SIDE).is_set(file_index.get() as usize) {
             return Ok(());
         }
@@ -1448,7 +1423,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         ctx: &mut HotUpdateContext<'_>,
         index: bun_ast::Index,
         abs_path: &[u8],
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         debug_assert!(matches!(SIDE, Side::Server));
         let gop = self.bundled_files.get_or_put(abs_path)?;
         let file_index = FileIndex::<SIDE>::init(gop.index as u32);
@@ -1628,7 +1603,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         &mut self,
         paths: &[Box<[u8]>],
         entry_points: &mut EntryPointList,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         for path in paths {
             let Some(index) = self.bundled_files.get_index(path) else {
                 continue;
@@ -1717,7 +1692,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
     pub fn take_js_bundle_server(
         &mut self,
         opts: &TakeJSBundleOptionsServer,
-    ) -> Result<Vec<u8>, bun_core::Error> {
+    ) -> Result<Vec<u8>, crate::Error> {
         let mut chunk = Vec::new();
         self.take_js_bundle_to_list_server(&mut chunk, opts)?;
         Ok(chunk)
@@ -1728,7 +1703,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
     pub fn take_js_bundle(
         &mut self,
         opts: &TakeJSBundleOptionsClient,
-    ) -> Result<Vec<u8>, bun_core::Error> {
+    ) -> Result<Vec<u8>, crate::Error> {
         let mut chunk = Vec::new();
         self.take_js_bundle_to_list(&mut chunk, opts)?;
         Ok(chunk)
@@ -1739,7 +1714,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         &mut self,
         list: &mut Vec<u8>,
         options: &TakeJSBundleOptionsClient,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         debug_assert!(matches!(SIDE, Side::Client));
         debug_assert!(self.current_chunk_len > 0);
         let kind = options.kind;
@@ -1870,7 +1845,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         &mut self,
         list: &mut Vec<u8>,
         options: &TakeJSBundleOptionsServer,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         debug_assert!(matches!(SIDE, Side::Server));
         debug_assert!(self.current_chunk_len > 0);
 
@@ -1919,7 +1894,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
     pub(crate) fn take_source_map(
         &mut self,
         out: &mut source_map_store::Entry,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         let paths = self.bundled_files.keys();
         match SIDE {
             Side::Client => {

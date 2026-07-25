@@ -5,9 +5,10 @@
 
 # ----------------------------------------------------------------------------
 # Bun's Highway SVE/SVE2 targets. Gate: hwy::SupportedTargets via getauxval(AT_HWCAP).
-# (132 symbols)
+# (133 symbols)
 # ----------------------------------------------------------------------------
 _ZN3bun10N_SVE2_12810MemMemImplEPKhmS2_m                                      [SVE]
+_ZN3bun10N_SVE2_12813JsonIndexImplEPKhmmPjPmS4_S3_                            [SVE]
 _ZN3bun10N_SVE2_12814DecodeHex8ImplEPKhPhm                                    [SVE]
 _ZN3bun10N_SVE2_12814LowerAsciiImplEPKhmPh                                    [SVE]
 _ZN3bun10N_SVE2_12815CopyU16ToU8ImplEPKtmPh                                   [SVE]
@@ -142,6 +143,20 @@ _ZN3bun9N_SVE_25649IndexOfNeedsEscapeForJavaScriptStringImplBacktickEPKhmh    [S
 
 
 # ----------------------------------------------------------------------------
+# Bun source-map VLQ decoder (src/jsc/bindings/highway_sourcemap.cpp).
+# Gate: HWY_DYNAMIC_DISPATCH via hwy::SupportedTargets. (8 symbols)
+# ----------------------------------------------------------------------------
+_ZN3bun5N_SVE15CountDelimsImplEPKhm                                           [SVE]
+_ZN3bun5N_SVE17ParseMappingsImplEPKhmPiS3_S3_S3_miS3_Pm                       [SVE]
+_ZN3bun6N_SVE215CountDelimsImplEPKhm                                          [SVE]
+_ZN3bun6N_SVE217ParseMappingsImplEPKhmPiS3_S3_S3_miS3_Pm                      [SVE]
+_ZN3bun9N_SVE_25615CountDelimsImplEPKhm                                       [SVE]
+_ZN3bun9N_SVE_25617ParseMappingsImplEPKhmPiS3_S3_S3_miS3_Pm                   [SVE]
+_ZN3bun10N_SVE2_12815CountDelimsImplEPKhm                                     [SVE]
+_ZN3bun10N_SVE2_12817ParseMappingsImplEPKhmPiS3_S3_S3_miS3_Pm                 [SVE]
+
+
+# ----------------------------------------------------------------------------
 # Highway SVE detector.
 # (1 symbols)
 # ----------------------------------------------------------------------------
@@ -218,6 +233,15 @@ _Unwind_GetGR        [SVE]
 execute_stack_op     [SVE]
 uw_update_context    [SVE]
 uw_update_context_1  [SVE]
+
+
+# ----------------------------------------------------------------------------
+# libgcc SME lazy-save ABI routines (gcc 14+). Gate: only called from code
+# compiled with __arm_streaming/__arm_new_za (Bun has none); the routines
+# themselves early-return when TPIDR2_EL0 is null on non-SME hardware.
+# (1 symbols)
+# ----------------------------------------------------------------------------
+__arm_tpidr2_save  [SVE]
 
 
 # ----------------------------------------------------------------------------

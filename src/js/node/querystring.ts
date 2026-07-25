@@ -280,8 +280,11 @@ var require_src = __commonJS((exports, module) => {
     eq ||= "=";
 
     let encode = QueryString.escape;
-    if (options && typeof options.encodeURIComponent === "function") {
-      encode = options.encodeURIComponent;
+    if (options) {
+      const encodeURIComponentOption = options.encodeURIComponent;
+      if (typeof encodeURIComponentOption === "function") {
+        encode = encodeURIComponentOption;
+      }
     }
     const convert = encode === qsEscape ? encodeStringified : encodeStringifiedCustom;
 
@@ -369,19 +372,21 @@ var require_src = __commonJS((exports, module) => {
     const eqLen = eqCodes.length;
 
     let pairs = 1000;
-    if (options && typeof options.maxKeys === "number") {
-      // -1 is used in place of a value like Infinity for meaning
-      // "unlimited pairs" because of additional checks V8 (at least as of v5.4)
-      // has to do when using variables that contain values like Infinity. Since
-      // `pairs` is always decremented and checked explicitly for 0, -1 works
-      // effectively the same as Infinity, while providing a significant
-      // performance boost.
-      pairs = options.maxKeys > 0 ? options.maxKeys : -1;
-    }
-
     let decode = QueryString.unescape;
-    if (options && typeof options.decodeURIComponent === "function") {
-      decode = options.decodeURIComponent;
+    if (options) {
+      const { maxKeys, decodeURIComponent: decodeURIComponentOption } = options;
+      if (typeof maxKeys === "number") {
+        // -1 is used in place of a value like Infinity for meaning
+        // "unlimited pairs" because of additional checks V8 (at least as of v5.4)
+        // has to do when using variables that contain values like Infinity. Since
+        // `pairs` is always decremented and checked explicitly for 0, -1 works
+        // effectively the same as Infinity, while providing a significant
+        // performance boost.
+        pairs = maxKeys > 0 ? maxKeys : -1;
+      }
+      if (typeof decodeURIComponentOption === "function") {
+        decode = decodeURIComponentOption;
+      }
     }
     const customDecode = decode !== qsUnescape;
 

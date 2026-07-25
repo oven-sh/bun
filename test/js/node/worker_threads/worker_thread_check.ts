@@ -54,7 +54,7 @@ if (isMainThread) {
     const promises: Promise<unknown>[] = [];
 
     for (let i = 0; i < CONCURRENCY; i++) {
-      const worker = new Worker(import.meta.url, {
+      const worker = new Worker(new URL(import.meta.url), {
         workerData: {
           action,
           port: server.port,

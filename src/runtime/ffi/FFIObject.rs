@@ -14,26 +14,25 @@ use bun_jsc::{
 /// `addr` must be either `0` or the address of a function with signature
 /// `extern "C" fn(*mut c_void, *mut c_void)`. This is user-supplied via
 /// `bun:ffi`; a bad value will crash when JSC invokes it.
-#[allow(deprecated)] // jsc::c::JSTypedArrayBytesDeallocator
 #[inline(always)]
-unsafe fn deallocator_from_addr(addr: usize) -> jsc::c::JSTypedArrayBytesDeallocator {
+unsafe fn deallocator_from_addr(addr: usize) -> jsc::JSTypedArrayBytesDeallocator {
     // SAFETY: `JSTypedArrayBytesDeallocator` is
     // `Option<unsafe extern "C" fn(*mut c_void, *mut c_void)>`, which under
     // the null-pointer optimisation is layout-compatible with a single
     // pointer-sized word — exactly `usize` here. `0` round-trips to `None`.
-    unsafe { core::mem::transmute::<usize, jsc::c::JSTypedArrayBytesDeallocator>(addr) }
+    unsafe { core::mem::transmute::<usize, jsc::JSTypedArrayBytesDeallocator>(addr) }
 }
 
 /// Unlike `JSValue::create_buffer` (which hard-codes `MarkedArrayBuffer_deallocator`),
 /// this variant passes the caller's (possibly null) deallocator through, so FFI-owned
 /// memory is only freed by the user-supplied callback.
-#[allow(deprecated, non_snake_case)]
+#[allow(non_snake_case)]
 #[inline]
 fn create_buffer_with_ctx(
     global: &JSGlobalObject,
     slice: &mut [u8],
     ctx: *mut c_void,
-    callback: jsc::c::JSTypedArrayBytesDeallocator,
+    callback: jsc::JSTypedArrayBytesDeallocator,
 ) -> JSValue {
     unsafe extern "C" {
         fn JSBuffer__bufferFromPointerAndLengthAndDeinit(
@@ -41,7 +40,7 @@ fn create_buffer_with_ctx(
             ptr: *mut u8,
             len: usize,
             ctx: *mut c_void,
-            deallocator: jsc::c::JSTypedArrayBytesDeallocator,
+            deallocator: jsc::JSTypedArrayBytesDeallocator,
         ) -> JSValue;
     }
     // SAFETY: `global` is live; slice describes FFI-owned memory whose
@@ -373,7 +372,9 @@ pub mod reader {
         let addr = addr_from_args(global_object, arguments)?;
         // SAFETY: see `read_unaligned_at`.
         let value = unsafe { read_unaligned_at::<f32>(addr) };
-        Ok(JSValue::js_number(value as f64))
+        // The bytes at `addr` are arbitrary; a crafted NaN payload must not
+        // reach the NaN-boxed encoding (see `JSValue::purify_nan`).
+        Ok(JSValue::js_number(JSValue::purify_nan(value as f64)))
     }
     pub(crate) fn f64(
         global_object: &JSGlobalObject,
@@ -383,7 +384,9 @@ pub mod reader {
         let addr = addr_from_args(global_object, arguments)?;
         // SAFETY: see `read_unaligned_at`.
         let value = unsafe { read_unaligned_at::<f64>(addr) };
-        Ok(JSValue::js_number(value))
+        // The bytes at `addr` are arbitrary; a crafted NaN payload must not
+        // reach the NaN-boxed encoding (see `JSValue::purify_nan`).
+        Ok(JSValue::js_number(JSValue::purify_nan(value)))
     }
     pub(crate) fn i64(
         global_object: &JSGlobalObject,
@@ -393,7 +396,7 @@ pub mod reader {
         let addr = addr_from_args(global_object, arguments)?;
         // SAFETY: see `read_unaligned_at`.
         let value = unsafe { read_unaligned_at::<i64>(addr) };
-        Ok(JSValue::from_int64_no_truncate(global_object, value))
+        JSValue::from_int64_no_truncate(global_object, value)
     }
     pub(crate) fn u64(
         global_object: &JSGlobalObject,
@@ -403,7 +406,7 @@ pub mod reader {
         let addr = addr_from_args(global_object, arguments)?;
         // SAFETY: see `read_unaligned_at`.
         let value = unsafe { read_unaligned_at::<u64>(addr) };
-        Ok(JSValue::from_uint64_no_truncate(global_object, value))
+        JSValue::from_uint64_no_truncate(global_object, value)
     }
 
     // The DOMJIT fast-path (no type checks) readers — called directly from
@@ -474,9 +477,7 @@ fn ptr_(global_this: &JSGlobalObject, value: JSValue, byte_offset: Option<JSValu
         ));
     }
 
-    if cfg!(debug_assertions) {
-        debug_assert!(JSValue::from_ptr_address(addr).as_ptr_address() == addr);
-    }
+    debug_assert!(JSValue::from_ptr_address(addr).as_ptr_address() == addr);
 
     JSValue::from_ptr_address(addr)
 }
@@ -608,7 +609,6 @@ fn get_cptr(value: JSValue) -> Option<usize> {
     None
 }
 
-#[allow(deprecated)] // jsc::c::JSTypedArrayBytesDeallocator — bun_jsc gates the c_api module as deprecated; no replacement path yet.
 pub(crate) fn to_array_buffer(
     global_this: &JSGlobalObject,
     value: JSValue,
@@ -620,7 +620,7 @@ pub(crate) fn to_array_buffer(
     match get_ptr_slice(global_this, value, byte_offset, value_length) {
         ValueOrError::Err(erro) => Ok(erro),
         ValueOrError::Slice(ptr, len) => {
-            let mut callback: jsc::c::JSTypedArrayBytesDeallocator = None;
+            let mut callback: jsc::JSTypedArrayBytesDeallocator = None;
             let mut ctx: Option<*mut c_void> = None;
             if let Some(callback_value) = finalization_callback {
                 if let Some(callback_ptr) = get_cptr(callback_value) {
@@ -669,7 +669,6 @@ pub(crate) fn to_array_buffer(
     }
 }
 
-#[allow(deprecated)] // jsc::c::JSTypedArrayBytesDeallocator — bun_jsc gates the c_api module as deprecated; no replacement path yet.
 pub(crate) fn to_buffer(
     global_this: &JSGlobalObject,
     value: JSValue,
@@ -681,7 +680,7 @@ pub(crate) fn to_buffer(
     match get_ptr_slice(global_this, value, byte_offset, value_length) {
         ValueOrError::Err(err) => Ok(err),
         ValueOrError::Slice(ptr, len) => {
-            let mut callback: jsc::c::JSTypedArrayBytesDeallocator = None;
+            let mut callback: jsc::JSTypedArrayBytesDeallocator = None;
             let mut ctx: Option<*mut c_void> = None;
             if let Some(callback_value) = finalization_callback {
                 if let Some(callback_ptr) = get_cptr(callback_value) {
@@ -743,7 +742,7 @@ pub(crate) fn getter(global_object: &JSGlobalObject, _: &JSObject) -> JSValue {
 /// Minimal `ArgumentsSlice::nextEat` — pops the next non-consumed argument.
 /// `wrapStaticMethod`'s arena/protect machinery is unused for the FFI fields
 /// (no `StringOrBuffer` params, `auto_protect=false`), so a bare cursor over
-/// `arguments_old(N).slice()` is semantically identical.
+/// `callframe.arguments()` is semantically identical.
 #[inline]
 fn next_eat<'a>(iter: &mut core::slice::Iter<'a, JSValue>) -> Option<JSValue> {
     iter.next().copied()
@@ -804,8 +803,7 @@ mod fields {
 
     // viewSource → FFI::print(global, JSValue, ?JSValue) -> JsResult<JSValue>
     pub(super) fn view_source(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let args = callframe.arguments_old::<2>();
-        let mut iter = args.slice().iter();
+        let mut iter = callframe.arguments().iter();
         let object = eat_required(global, &mut iter)?;
         let is_callback = next_eat(&mut iter);
         FfiImpl::print(global, object, is_callback)
@@ -813,8 +811,7 @@ mod fields {
 
     // dlopen → FFI::open(global, ZigString, JSValue) -> JSValue
     pub(super) fn dlopen(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let args = callframe.arguments_old::<2>();
-        let mut iter = args.slice().iter();
+        let mut iter = callframe.arguments().iter();
         let name = eat_zig_string(global, &mut iter)?;
         let object = eat_required(global, &mut iter)?;
         Ok(FfiImpl::open(global, name, object))
@@ -822,8 +819,7 @@ mod fields {
 
     // callback → FFI::callback(global, JSValue, JSValue) -> JsResult<JSValue>
     pub(super) fn callback(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let args = callframe.arguments_old::<2>();
-        let mut iter = args.slice().iter();
+        let mut iter = callframe.arguments().iter();
         let interface = eat_required(global, &mut iter)?;
         let js_callback = eat_required(global, &mut iter)?;
         FfiImpl::callback(global, interface, js_callback)
@@ -834,16 +830,14 @@ mod fields {
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let args = callframe.arguments_old::<1>();
-        let mut iter = args.slice().iter();
+        let mut iter = callframe.arguments().iter();
         let object = eat_required(global, &mut iter)?;
         Ok(FfiImpl::link_symbols(global, object))
     }
 
     // toBuffer → to_buffer(global, JSValue, ?JSValue×4) -> JsResult<JSValue>
     pub(super) fn to_buffer(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let args = callframe.arguments_old::<5>();
-        let mut iter = args.slice().iter();
+        let mut iter = callframe.arguments().iter();
         let value = eat_required(global, &mut iter)?;
         let byte_offset = next_eat(&mut iter);
         let length = next_eat(&mut iter);
@@ -857,8 +851,7 @@ mod fields {
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let args = callframe.arguments_old::<5>();
-        let mut iter = args.slice().iter();
+        let mut iter = callframe.arguments().iter();
         let value = eat_required(global, &mut iter)?;
         let byte_offset = next_eat(&mut iter);
         let length = next_eat(&mut iter);
@@ -872,16 +865,14 @@ mod fields {
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let args = callframe.arguments_old::<1>();
-        let mut iter = args.slice().iter();
+        let mut iter = callframe.arguments().iter();
         let ctx = eat_required(global, &mut iter)?;
         Ok(FfiImpl::close_callback(global, ctx))
     }
 
     // CString → new_cstring(global, JSValue, ?JSValue, ?JSValue) -> JsResult<JSValue>
     pub(super) fn cstring(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let args = callframe.arguments_old::<3>();
-        let mut iter = args.slice().iter();
+        let mut iter = callframe.arguments().iter();
         let value = eat_required(global, &mut iter)?;
         let byte_offset = next_eat(&mut iter);
         let length = next_eat(&mut iter);

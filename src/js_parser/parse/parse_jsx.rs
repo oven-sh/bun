@@ -7,15 +7,14 @@ use bun_ast::flags;
 use bun_ast::op::Level;
 use bun_ast::{E, Expr, ExprNodeIndex, ExprNodeList, G};
 use bun_collections::VecExt;
-use bun_core::err;
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
-    pub fn parse_jsx_element(&mut self, loc: bun_ast::Loc) -> Result<Expr, bun_core::Error> {
+    pub fn parse_jsx_element(&mut self, loc: bun_ast::Loc) -> crate::CrateResult<Expr> {
         let p = self;
         // Nested child elements (`<a><b><c>...`) recurse back into this function,
         // so guard the stack the same way the other recursive parse entry points do.
         if !p.stack_check.is_safe_to_recurse() {
-            return Err(err!("StackOverflow"));
+            return Err(crate::Error::StackOverflow);
         }
         if SCAN_ONLY {
             p.needs_jsx_import = true;
@@ -26,7 +25,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // The tag may have TypeScript type arguments: "<Foo<T>/>"
         if TYPESCRIPT {
             // Pass a flag to the type argument skipper because we need to call
-            let _ = p.skip_type_script_type_arguments::<true>()?;
+            let _ = p.skip_type_script_type_arguments::<true, false>()?;
         }
 
         let mut previous_string_with_backslash_loc = bun_ast::Loc::default();
@@ -174,7 +173,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         expr.loc,
                                         b"Invalid JSX prop shorthand, must be identifier, dot or string",
                                     );
-                                    return Err(err!("SyntaxError"));
+                                    return Err(crate::Error::SyntaxError);
                                 };
 
                                 props.push(G::Property {
@@ -258,7 +257,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 r,
                 b"Invalid JSX escape - use XML entity codes quotes or pass a JavaScript string instead",
             );
-            return Err(err!("SyntaxError"));
+            return Err(crate::Error::SyntaxError);
         }
 
         // A slash here is a self-closing element
@@ -349,13 +348,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             Some(p.source),
                             end_tag.range,
                             format_args!(
-                                "Expected closing JSX tag to match opening tag \"\\<{}\\>\"",
+                                "Expected closing JSX tag to match opening tag \"<{}>\"",
                                 bstr::BStr::new(tag.name)
                             ),
                             format_args!("Opening tag here:"),
                             tag.range,
                         );
-                        return Err(err!("SyntaxError"));
+                        return Err(crate::Error::SyntaxError);
                     }
 
                     if p.lexer.token != T::TGreaterThan {
@@ -377,7 +376,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 _ => {
                     p.lexer.unexpected()?;
-                    return Err(err!("SyntaxError"));
+                    return Err(crate::Error::SyntaxError);
                 }
             }
         }

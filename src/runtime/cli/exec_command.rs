@@ -33,7 +33,7 @@ fn exec_arena() -> &'static bun_alloc::Arena {
 }
 
 impl ExecCommand {
-    pub(crate) fn exec(ctx: Context) -> Result<(), bun_core::Error> {
+    pub(crate) fn exec(ctx: Context) -> Result<(), crate::Error> {
         // Clone the positional so `ctx` can be reborrowed `&mut` for
         // `init_and_run_from_source` below.
         let script: Box<[u8]> = ctx.positionals[1].clone();
@@ -66,7 +66,7 @@ impl ExecCommand {
         // process singleton, or freshly `heap::alloc`'d) — never null. The
         // loader is a thread-/process-lifetime singleton, so `&'static mut` is
         // sound for the single CLI dispatch thread.
-        let env = unsafe { &mut *bundle.env.cast::<bun_dotenv::Loader<'static>>() };
+        let env = unsafe { &mut *bundle.env };
         let mini = bun_event_loop::MiniEventLoop::init_global(Some(env), Some(cwd));
         let parts: [&[u8]; 2] = [cwd, b"[eval]"];
         let script_path = bun_paths::resolve_path::join::<bun_paths::platform::Auto>(&parts);

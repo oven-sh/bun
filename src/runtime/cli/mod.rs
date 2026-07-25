@@ -13,9 +13,8 @@ use bun_core::{pretty, pretty_error, pretty_errorln};
 // ─── compiling submodules ────────────────────────────────────────────────────
 #[path = "ci_info.rs"]
 pub mod ci_info;
-/// CI-provider detection table, copied from watson/ci-info@4.0.0; since the
-/// Rust build has no codegen hook for this yet, the table is maintained by
-/// hand. Keep in sync with `src/codegen/ci_info.ts`.
+/// CI-provider detection table, copied from watson/ci-info@4.0.0; maintained by
+/// hand. Keep in sync with the vendors.json upstream.
 pub(crate) mod ci_info_generated {
     use bun_core::{getenv_z, zstr};
 
@@ -32,7 +31,7 @@ pub(crate) mod ci_info_generated {
     macro_rules! env_contains {
         ($k:literal, $needle:literal) => {
             getenv_z(zstr!($k)).map_or(false, |v| {
-                bun_core::immutable::index_of(v, $needle.as_bytes()).is_some()
+                bun_core::strings::index_of(v, $needle.as_bytes()).is_some()
             })
         };
     }
@@ -216,8 +215,6 @@ pub mod add_completions;
 pub mod colon_list_type;
 #[path = "discord_command.rs"]
 pub mod discord_command;
-#[path = "list-of-yarn-commands.rs"]
-pub mod list_of_yarn_commands;
 #[path = "shell_completions.rs"]
 pub mod shell_completions;
 #[path = "which_npm_client.rs"]
@@ -276,19 +273,16 @@ pub mod test_command;
 pub mod test {
     #[path = "Scanner.rs"]
     pub mod scanner;
-    pub use scanner::Scanner;
 
     /// `bun test --changed`: git-diff → bundler module graph → reverse-import
     /// walk to filter test files.
     #[path = "ChangedFilesFilter.rs"]
     pub mod changed_files_filter;
-    pub use changed_files_filter as ChangedFilesFilter;
 
     /// `bun test --parallel`: process-pool coordinator/worker entry points.
     /// Thin façade re-exporting from `parallel::runner`.
     #[path = "ParallelRunner.rs"]
     pub mod parallel_runner;
-    pub use parallel_runner as ParallelRunner;
 
     /// `test/parallel/` submodule directory (no `mod.rs` on disk; declared
     /// inline). `ParallelRunner.rs`
@@ -314,17 +308,10 @@ pub mod test {
 #[path = "Arguments.rs"]
 pub mod arguments;
 pub use arguments as Arguments;
-// bunfig.toml without a tier-6 dependency. Re-export under the original path so
-// existing `crate::cli::bunfig` / `crate::cli::Bunfig` callers are unaffected.
-pub use bun_bunfig::Bunfig;
-pub use bun_bunfig::bunfig;
 #[path = "run_command.rs"]
 pub mod run_command;
 
-// ─── per-subcommand bodies (un-gated for `Command::start` dispatch) ──────────
-// Heavy bodies inside re-gate on whatever
-// lower-tier crate surface they still need; the dispatch arm just calls
-// `<Mod>Command::exec(ctx)`.
+// ─── per-subcommand bodies ───────────────────────────────────────────────────
 #[path = "build_command.rs"]
 pub mod build_command;
 #[path = "bunx_command.rs"]
@@ -353,6 +340,8 @@ pub mod filter_arg;
 pub mod filter_run;
 #[path = "link_command.rs"]
 pub mod link_command;
+#[path = "multi_run.rs"]
+pub mod multi_run;
 #[path = "outdated_command.rs"]
 pub mod outdated_command;
 #[path = "pack_command.rs"]
@@ -386,10 +375,6 @@ pub mod update_command;
 pub mod update_interactive_command;
 #[path = "why_command.rs"]
 pub mod why_command;
-pub use filter_run as FilterRun;
-#[path = "multi_run.rs"]
-pub mod multi_run;
-pub use multi_run as MultiRun;
 
 // ─── crate-local helper for param-table concatenation ────────────────────────
 // `bun_clap::parse_param!` is a real proc-macro (const `Param<Help>` literal),
@@ -516,12 +501,12 @@ pub(crate) type DefineColonList = colon_list_type::ColonListType<&'static [u8]>;
 
 impl colon_list_type::ColonListValue for bun_options_types::schema::api::Loader {
     const IS_LOADER: bool = true;
-    fn resolve_value(input: &[u8]) -> Result<Self, bun_core::Error> {
+    fn resolve_value(input: &[u8]) -> crate::Result<Self> {
         arguments::loader_resolver(input)
     }
 }
 impl colon_list_type::ColonListValue for &'static [u8] {
-    fn resolve_value(input: &[u8]) -> Result<Self, bun_core::Error> {
+    fn resolve_value(input: &[u8]) -> crate::Result<Self> {
         // SAFETY: argv slices are process-lifetime; see ColonListType::keys note.
         Ok(unsafe { bun_ptr::detach_lifetime(input) })
     }
@@ -529,7 +514,7 @@ impl colon_list_type::ColonListValue for &'static [u8] {
 
 #[cold]
 pub(crate) fn invalid_target(diag: &mut bun_clap::Diagnostic, _target: &[u8]) -> ! {
-    let _ = diag.report(Output::error_writer(), bun_core::err!("InvalidTarget"));
+    let _ = diag.report(Output::error_writer(), bun_clap::Error::InvalidArgument);
     Global::exit(1);
 }
 
@@ -611,7 +596,7 @@ pub mod help_command {
     }
 
     #[cold]
-    pub(crate) fn exec() -> Result<(), bun_core::Error> {
+    pub(crate) fn exec() -> crate::Result<()> {
         exec_with_reason(Reason::Explicit)
     }
 
@@ -773,7 +758,7 @@ pub mod reserved_command {
     use super::*;
 
     #[cold]
-    pub(crate) fn exec() -> Result<(), bun_core::Error> {
+    pub(crate) fn exec() -> crate::Result<()> {
         let mut command_name: &[u8] = b"";
         for (i, arg) in bun::argv().iter().enumerate() {
             if i == 0 {
@@ -814,12 +799,8 @@ pub mod command {
     }
 
     pub use bun_options_types::command_tag::Tag;
-    pub use bun_options_types::command_tag::{
-        ALWAYS_LOADS_CONFIG, LOADS_CONFIG, USES_GLOBAL_OPTIONS,
-    };
-    pub use bun_options_types::context::{
-        Context, ContextData, DebugOptions, HotReload, RuntimeOptions, TestOptions,
-    };
+    pub use bun_options_types::command_tag::{LOADS_CONFIG, USES_GLOBAL_OPTIONS};
+    pub use bun_options_types::context::{Context, ContextData, HotReload, TestOptions};
 
     // Process-lifetime
     // storage, written exactly once in `create_context_data` during
@@ -1140,10 +1121,14 @@ pub mod command {
     pub fn create_context_data(
         cmd: Tag,
         log: &mut bun_ast::Log,
-    ) -> Result<&'static mut ContextData, bun_core::Error> {
+    ) -> crate::Result<&'static mut ContextData> {
         // SAFETY: single-threaded CLI startup — no other thread exists yet.
-        // `CMD` is read by crash-reporter / debug logging only.
+        // `CMD` is read by debug logging and `run_command` (feedback dispatch).
         unsafe { CMD.write(Some(cmd)) };
+        // The crash handler can't read `CMD` (lower-tier crate); mirror the
+        // one-byte command tag into its `cli_state` so crash-report trace
+        // strings encode the running subcommand (Zig: `Cli.cmd = command`).
+        bun_crash_handler::cli_state::set_cmd_char(cmd.char());
 
         let ctx = write_context_no_parse(log);
 
@@ -1184,7 +1169,7 @@ pub mod command {
     /// / `exec_auto_or_run` adjacent), instead of fat-LTO inlining it into
     /// `Cli::start` and re-scattering the per-tag tail calls.
     #[inline(never)]
-    pub fn start(log: &mut bun_ast::Log) -> Result<(), bun_core::Error> {
+    pub fn start(log: &mut bun_ast::Log) -> crate::Result<()> {
         // WebView host subprocess entry. Must be before StandaloneModuleGraph,
         // before JSC init, before anything that touches a JS engine. The child
         // runs CFRunLoopRun() as its real main loop — no Bun runtime past this.
@@ -1344,7 +1329,7 @@ pub mod command {
     // (`bun foo.js`, `bun --version`), so it gets `#[inline(never)]` only —
     // no `#[cold]` — to avoid pessimising branch weights / section placement.
 
-    type CmdResult = Result<(), bun_core::Error>;
+    type CmdResult = crate::Result<()>;
 
     /// `bun build --compile` standalone-executable boot. Never taken for a
     /// plain `bun` binary; out-lined so the ~2 KB of argv-splice / ctx-setup
@@ -1438,7 +1423,7 @@ pub mod command {
         // exists in case a producer is ever added (Arguments.rs).
         let ctx = match init(tag, log) {
             Ok(ctx) => ctx,
-            Err(e) if tag == Tag::AutoCommand && e == bun_core::err!("MissingEntryPoint") => {
+            Err(e) if tag == Tag::AutoCommand && matches!(e, crate::Error::MissingEntryPoint) => {
                 return HelpCommand::exec();
             }
             Err(e) => return Err(e),
@@ -1457,6 +1442,25 @@ pub mod command {
             let Err(err) = super::filter_run::run_scripts_with_filter(ctx);
             pretty_errorln!("<r><red>error<r>: {}", err.name());
             Global::exit(1);
+        }
+
+        // Node: `-i foo.js` runs the script; `-i -e code` evals then enters the
+        // REPL (via process._eval). `-i -p` is not yet threaded through the
+        // bootstrap (Node prints AND enters the REPL), so `-p` currently
+        // bypasses the REPL. RunCommand's positionals carry a leading "run".
+        if ctx.runtime_options.interactive && !ctx.runtime_options.eval.eval_and_print {
+            let no_target = match tag {
+                Tag::AutoCommand => ctx.positionals.is_empty(),
+                Tag::RunCommand => match ctx.positionals.as_slice() {
+                    [] => true,
+                    [r] => r.as_ref() == b"run",
+                    _ => false,
+                },
+                _ => false,
+            };
+            if no_target {
+                return run_command::RunCommand::exec_node_repl(ctx);
+            }
         }
 
         if tag == Tag::AutoCommand && !ctx.runtime_options.eval.script.is_empty() {
@@ -1580,7 +1584,7 @@ pub mod command {
             let ctx = init(Tag::FuzzilliCommand, log)?;
             return super::fuzzilli_command::FuzzilliCommand::exec(ctx);
         }
-        Err(bun_core::err!("UnrecognizedCommand"))
+        Err(crate::Error::UnrecognizedCommand)
     }
 
     /// Stamps out `#[cold] #[inline(never)] fn $name(log) { init($tag)?; $exec(ctx) }`
@@ -1650,7 +1654,7 @@ pub mod command {
 
     #[cold]
     #[inline(never)]
-    fn bun_getcompletes(log: &mut bun_ast::Log) -> Result<(), bun_core::Error> {
+    fn bun_getcompletes(log: &mut bun_ast::Log) -> crate::Result<()> {
         use super::add_completions;
         use super::run_command::{Filter, RunCommand};
         use super::shell_completions::ShellCompletions;
@@ -1763,7 +1767,7 @@ pub mod command {
 
     #[cold]
     #[inline(never)]
-    fn bun_create(log: &mut bun_ast::Log) -> Result<(), bun_core::Error> {
+    fn bun_create(log: &mut bun_ast::Log) -> crate::Result<()> {
         use super::bunx_command::BunxCommand;
         use super::create_command::{CreateCommand, ExampleTag};
         use bun_core::ZStr;
@@ -1887,7 +1891,7 @@ To create a project with the official Next.js scaffolding tool, run\n\
     /// `bun ./bun.lockb` — print lockfile as yarn.lock (or its hash with `--hash`).
     #[cold]
     #[inline(never)]
-    fn bun_lockb(ctx: &mut ContextData) -> Result<(), bun_core::Error> {
+    fn bun_lockb(ctx: &mut ContextData) -> crate::Result<()> {
         use bun_install::lockfile::{Printer, PrinterFormat};
 
         for arg in bun::argv() {
@@ -1915,12 +1919,12 @@ To create a project with the official Next.js scaffolding tool, run\n\
         // SAFETY: single-threaded CLI dispatch; `ctx.log` was populated by
         // `create_context_data` and no other `&mut Log` borrow is live for the
         // duration of this `Printer::print` call.
-        Printer::print(unsafe { ctx.log_mut() }, &entry, PrinterFormat::Yarn)
+        Printer::print(unsafe { ctx.log_mut() }, &entry, PrinterFormat::Yarn).map_err(Into::into)
     }
 
     #[cold]
     #[inline(never)]
-    fn bun_info(log: &mut bun_ast::Log) -> Result<(), bun_core::Error> {
+    fn bun_info(log: &mut bun_ast::Log) -> crate::Result<()> {
         use bun_install::package_manager_real::{CommandLineArguments, Subcommand as PmSubcommand};
         use bun_install::{PackageManager, Subcommand};
 
@@ -1952,19 +1956,6 @@ To create a project with the official Next.js scaffolding tool, run\n\
         }
 
         super::pm_view_command::view(pm, package_name, property_path, json_output)
-    }
-
-    /// Per-tag clap param table. Runtime dispatch (`Tag` lacks `ConstParamTy`
-    /// here, so `cmd` is a value param).
-    pub fn tag_params(cmd: Tag) -> &'static [arguments::ParamType] {
-        match cmd {
-            Tag::AutoCommand => arguments::AUTO_PARAMS,
-            Tag::RunCommand | Tag::RunAsNodeCommand => arguments::RUN_PARAMS,
-            Tag::BuildCommand => arguments::BUILD_PARAMS,
-            Tag::TestCommand => arguments::TEST_PARAMS,
-            Tag::BunxCommand => arguments::RUN_PARAMS,
-            _ => arguments::BASE_RUNTIME_TRANSPILER_PARAMS,
-        }
     }
 
     pub(crate) fn tag_print_help(cmd: Tag, show_all_flags: bool) {

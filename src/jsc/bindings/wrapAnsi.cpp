@@ -10,8 +10,9 @@
 
 // Native exports (implemented in stringWidth.cpp) for visible width calculation
 extern "C" size_t Bun__visibleWidthExcludeANSI_utf16(const uint16_t* ptr, size_t len, bool ambiguous_as_wide);
-extern "C" size_t Bun__visibleWidthExcludeANSI_latin1(const uint8_t* ptr, size_t len);
+extern "C" size_t Bun__visibleWidthExcludeANSI_latin1(const uint8_t* ptr, size_t len, bool ambiguous_as_wide);
 extern "C" uint8_t Bun__codepointWidth(uint32_t cp, bool ambiguous_as_wide);
+extern "C" bool Bun__graphemeBreak(uint32_t cp1, uint32_t cp2, uint8_t* state);
 
 namespace Bun {
 using namespace WTF;
@@ -49,12 +50,81 @@ static size_t stringWidth(const Char* start, const Char* end, bool ambiguousIsNa
         return 0;
 
     if constexpr (sizeof(Char) == 1) {
-        // 8-bit JSC strings are Latin1, not UTF-8
-        // Note: Latin1 doesn't have ambiguous width characters (all are in U+0000-U+00FF)
-        (void)ambiguousIsNarrow;
-        return Bun__visibleWidthExcludeANSI_latin1(reinterpret_cast<const uint8_t*>(start), len);
+        // 8-bit JSC strings are Latin1, not UTF-8; U+00A1-U+00FF holds East
+        // Asian Ambiguous codepoints (§ ° ± ×), so the flag applies here too.
+        return Bun__visibleWidthExcludeANSI_latin1(reinterpret_cast<const uint8_t*>(start), len, !ambiguousIsNarrow);
     } else {
         return Bun__visibleWidthExcludeANSI_utf16(reinterpret_cast<const uint16_t*>(start), len, !ambiguousIsNarrow);
+    }
+}
+
+// A word may begin with ANSI escape sequences whose code units are all ASCII
+// (ESC, '[', digits, 'm'), hiding the codepoint that actually lands on the seam.
+// Skip them before classifying; a word not starting with ESC never enters the scan.
+template<typename Char>
+static inline const Char* skipLeadingAnsi(const Char* start, const Char* end)
+{
+    if (start < end && ANSI::isEscapeCharacter(*start))
+        return ANSI::consumeANSI(start, end);
+    return start;
+}
+
+// True when a grapheme cluster boundary always precedes the word's first codepoint
+// (worst-case predecessor: the separator space). A word-initial cluster-fusing
+// codepoint (combining mark, ZWJ, VS16, keycap) makes row widths non-additive.
+template<typename Char>
+static inline bool wordStartsNewCluster(const Char* wordStart, const Char* wordEnd)
+{
+    wordStart = skipLeadingAnsi(wordStart, wordEnd);
+    if (wordStart >= wordEnd)
+        return true;
+    char32_t cp;
+    if constexpr (sizeof(Char) == 1) {
+        cp = static_cast<char32_t>(static_cast<uint8_t>(*wordStart));
+    } else {
+        size_t cpLen;
+        cp = decodeUTF16(reinterpret_cast<const UChar*>(wordStart), wordEnd - wordStart, cpLen);
+    }
+    if (cp < 0x80)
+        return true;
+    uint8_t state = 0;
+    return Bun__graphemeBreak(' ', cp, &state);
+}
+
+// Without a separator space the row's trailing content is the word's real
+// predecessor, and a trailing escape can hide a cluster-fusing codepoint
+// (e.g. a Prepend): only an ASCII/ASCII seam keeps row widths additive.
+template<typename Char>
+static inline bool wordSeamIsAscii(Char rowTail, const Char* wordStart, const Char* wordEnd)
+{
+    wordStart = skipLeadingAnsi(wordStart, wordEnd);
+    if (wordStart >= wordEnd)
+        return true;
+    return static_cast<char32_t>(rowTail) < 0x80 && static_cast<char32_t>(*wordStart) < 0x80;
+}
+
+// Return the separator space that ends the word starting at `start` (or
+// `end`). An escape sequence is opaque — a space inside its payload (an OSC
+// hyperlink URL, a CSI intermediate byte) does not separate words.
+template<typename Char>
+static const Char* findWordSeparator(const Char* start, const Char* end)
+{
+    const auto nextSpace = [end](const Char* from) {
+        size_t pos = WTF::find(std::span<const Char>(from, end), static_cast<Char>(' '));
+        return pos == WTF::notFound ? end : from + pos;
+    };
+    const Char* space = nextSpace(start);
+    for (const Char* it = start;;) {
+        const Char* esc = ANSI::findEscapeCharacter(it, space);
+        if (!esc)
+            return space;
+        // findEscapeCharacter also stops at the standalone C1 ST (0x9c),
+        // which introduces nothing; consumeANSI leaves it in place.
+        const Char* after = ANSI::consumeANSI(esc, end);
+        it = after > esc ? after : esc + 1;
+        // Re-scan for a separator only when the escape swallowed the last one.
+        if (it > space)
+            space = nextSpace(it);
     }
 }
 
@@ -90,61 +160,52 @@ public:
         return stringWidth(span.data(), span.data() + span.size(), ambiguousIsNarrow);
     }
 
-    void trimLeadingSpaces()
+    size_t trimLeadingSpaces()
     {
-        size_t removeCount = 0;
-        bool inEscape = false;
+        if (m_leadingTrimComplete)
+            return 0;
 
-        // Count leading spaces (preserving ANSI)
-        for (size_t i = 0; i < m_data.size(); ++i) {
-            Char c = m_data[i];
-            if (c == 0x1b) {
-                inEscape = true;
-                continue;
-            }
-            if (inEscape) {
-                if (c == 'm' || c == 0x07)
-                    inEscape = false;
-                continue;
-            }
-            if (c == ' ' || c == '\t')
-                removeCount++;
-            else
+        auto span = m_data.mutableSpan();
+        Char* const data = span.data();
+        const size_t size = span.size();
+        size_t read = m_trimScanOffset;
+        size_t write = m_trimScanOffset;
+        size_t removedWidth = 0;
+
+        while (read < size) {
+            Char c = data[read];
+            if (ANSI::isEscapeCharacter(c)) {
+                // Keep the whole sequence; only the separator spaces around it go.
+                const size_t seqLen = ANSI::consumeANSI(data + read, data + size) - (data + read);
+                if (write != read)
+                    memmove(data + write, data + read, seqLen * sizeof(Char));
+                read += seqLen;
+                write += seqLen;
+            } else if (c == ' ' || c == '\t') {
+                if (c == ' ')
+                    removedWidth++;
+                read++;
+            } else {
+                m_leadingTrimComplete = true;
                 break;
+            }
         }
 
-        if (removeCount == 0)
-            return;
-
-        // Remove spaces while preserving ANSI codes
-        Vector<Char> newData;
-        newData.reserveCapacity(m_data.size() - removeCount);
-
-        inEscape = false;
-        size_t removed = 0;
-
-        for (size_t i = 0; i < m_data.size(); ++i) {
-            Char c = m_data[i];
-            if (c == 0x1b) {
-                inEscape = true;
-                newData.append(c);
-                continue;
+        if (write != read) {
+            while (read < size) {
+                data[write] = data[read];
+                write++;
+                read++;
             }
-            if (inEscape) {
-                if (c == 'm' || c == 0x07)
-                    inEscape = false;
-                newData.append(c);
-                continue;
-            }
-            if ((c == ' ' || c == '\t') && removed < removeCount) {
-                removed++;
-                continue;
-            }
-            newData.append(c);
+            m_data.shrink(write);
         }
 
-        m_data = std::move(newData);
+        m_trimScanOffset = write;
+        return removedWidth;
     }
+
+    size_t m_trimScanOffset = 0;
+    bool m_leadingTrimComplete = false;
 };
 
 // ============================================================================
@@ -154,83 +215,41 @@ public:
 template<typename Char>
 static void wrapWord(Vector<Row<Char>>& rows, const Char* wordStart, const Char* wordEnd, size_t columns, const WrapAnsiOptions& options)
 {
-    bool isInsideEscape = false;
-    bool isInsideLinkEscape = false;
-    bool isInsideCsiEscape = false;
     size_t vis = rows.last().width(options.ambiguousIsNarrow);
 
     const Char* it = wordStart;
     while (it < wordEnd) {
-        if (*it == 0x1b) {
-            isInsideEscape = true;
-            isInsideCsiEscape = false;
-            // Check for hyperlink escape (OSC 8)
-            if (wordEnd - it > 4) {
-                if (it[1] == ']' && it[2] == '8' && it[3] == ';' && it[4] == ';')
-                    isInsideLinkEscape = true;
-            }
-            // Check for CSI escape (ESC [)
-            if (wordEnd - it > 1 && it[1] == '[')
-                isInsideCsiEscape = true;
-        }
-
-        size_t charLen = 0;
-        uint8_t charWidth = 0;
-
-        if (!isInsideEscape) {
-            char32_t cp;
-            if constexpr (sizeof(Char) == 1) {
-                // Latin1: each byte is one character, direct 1:1 mapping to U+0000-U+00FF
-                charLen = 1;
-                cp = static_cast<uint8_t>(*it);
-            } else {
-                cp = decodeUTF16(it, wordEnd - it, charLen);
-            }
-            charWidth = getVisibleWidth(cp, !options.ambiguousIsNarrow);
-        } else {
-            charLen = 1;
-            charWidth = 0;
-        }
-
-        if (!isInsideEscape && vis + charWidth <= columns) {
-            rows.last().append(it, it + charLen);
-            vis += charWidth;
-        } else if (!isInsideEscape) {
-            // Character doesn't fit on current line, start a new line
-            rows.append(Row<Char>());
-            rows.last().append(it, it + charLen);
-            vis = charWidth; // Start with the width of the character we just added
-        } else {
-            rows.last().append(*it);
-        }
-
-        if (isInsideEscape) {
-            if (isInsideLinkEscape) {
-                if (*it == 0x07) {
-                    isInsideEscape = false;
-                    isInsideLinkEscape = false;
-                }
-            } else if (isInsideCsiEscape) {
-                // CSI sequence ends with a byte in 0x40-0x7E range
-                // (excluding '[' which is the CSI introducer)
-                if (*it >= 0x40 && *it <= 0x7E && *it != '[') {
-                    isInsideEscape = false;
-                    isInsideCsiEscape = false;
-                }
-            } else if (*it == 'm') {
-                // Fallback for non-CSI SGR-like sequences
-                isInsideEscape = false;
-            }
-            it++;
+        // An escape sequence is zero-width and never split across rows.
+        if (ANSI::isEscapeCharacter(*it)) {
+            const Char* seqEnd = ANSI::consumeANSI(it, wordEnd);
+            rows.last().append(it, seqEnd);
+            it = seqEnd;
             continue;
         }
 
-        if (vis == columns && it + charLen < wordEnd) {
+        size_t charLen = 1;
+        char32_t cp;
+        if constexpr (sizeof(Char) == 1) {
+            // Latin1: each byte is one character, direct 1:1 mapping to U+0000-U+00FF
+            cp = static_cast<uint8_t>(*it);
+        } else {
+            cp = decodeUTF16(it, wordEnd - it, charLen);
+        }
+        uint8_t charWidth = getVisibleWidth(cp, !options.ambiguousIsNarrow);
+
+        if (vis + charWidth > columns) {
+            // Character doesn't fit on current line, start a new line
             rows.append(Row<Char>());
             vis = 0;
         }
-
+        rows.last().append(it, it + charLen);
+        vis += charWidth;
         it += charLen;
+
+        if (vis == columns && it < wordEnd) {
+            rows.append(Row<Char>());
+            vis = 0;
+        }
     }
 
     // Handle edge case: last row is only ANSI escape codes
@@ -241,91 +260,44 @@ static void wrapWord(Vector<Row<Char>>& rows, const Char* wordStart, const Char*
     }
 }
 
-// Helper to check if a character ends a CSI escape sequence
-// CSI sequences end with bytes in 0x40-0x7E range (excluding '[' which is the introducer)
-template<typename Char>
-static bool isCsiTerminator(Char c)
-{
-    return c >= 0x40 && c <= 0x7E && c != '[';
-}
-
-// Helper to check if a character ends an ANSI escape sequence
-template<typename Char>
-static bool isAnsiEscapeTerminator(Char c, bool isOscSequence)
-{
-    if (isOscSequence)
-        return c == 0x07; // BEL terminates OSC sequences
-    return isCsiTerminator(c); // CSI terminator
-}
-
 template<typename Char>
 static void trimRowTrailingSpaces(Row<Char>& row, bool ambiguousIsNarrow)
 {
-    // Find last visible word
     auto span = row.m_data.span();
-    const Char* data = span.data();
-    size_t size = span.size();
+    const Char* const data = span.data();
+    const Char* const end = data + span.size();
 
-    // Split by spaces and find last word with visible content
-    size_t lastVisibleEnd = 0;
-    size_t wordStart = 0;
-    bool hasVisibleContent = false;
-
-    for (size_t i = 0; i <= size; ++i) {
-        if (i == size || data[i] == ' ') {
-            if (wordStart < i) {
-                size_t wordWidth = stringWidth(data + wordStart, data + i, ambiguousIsNarrow);
-                if (wordWidth > 0) {
-                    hasVisibleContent = true;
-                    lastVisibleEnd = i;
-                }
-            }
-            wordStart = i + 1;
-        }
+    // Find the end of the last space-delimited word with visible content
+    const Char* lastVisibleEnd = data;
+    for (const Char* wordStart = data;;) {
+        const Char* wordEnd = findWordSeparator(wordStart, end);
+        if (stringWidth(wordStart, wordEnd, ambiguousIsNarrow) > 0)
+            lastVisibleEnd = wordEnd;
+        if (wordEnd == end)
+            break;
+        wordStart = wordEnd + 1;
     }
 
-    if (!hasVisibleContent) {
-        // Keep only ANSI codes
-        Vector<Char> ansiOnly;
-        bool inEscape = false;
-        bool inOscEscape = false;
-        for (size_t i = 0; i < size; ++i) {
-            if (data[i] == 0x1b || inEscape) {
-                ansiOnly.append(data[i]);
-                if (data[i] == 0x1b) {
-                    inEscape = true;
-                    inOscEscape = (i + 1 < size && data[i + 1] == ']');
-                } else if (isAnsiEscapeTerminator(data[i], inOscEscape)) {
-                    inEscape = false;
-                    inOscEscape = false;
-                }
-            }
-        }
-        row.m_data = std::move(ansiOnly);
+    if (lastVisibleEnd == end)
         return;
-    }
 
-    if (lastVisibleEnd < size) {
-        // Collect trailing ANSI codes
-        Vector<Char> trailingAnsi;
-        bool inEscape = false;
-        bool inOscEscape = false;
-        for (size_t i = lastVisibleEnd; i < size; ++i) {
-            if (data[i] == 0x1b || inEscape) {
-                trailingAnsi.append(data[i]);
-                if (data[i] == 0x1b) {
-                    inEscape = true;
-                    inOscEscape = (i + 1 < size && data[i + 1] == ']');
-                } else if (isAnsiEscapeTerminator(data[i], inOscEscape)) {
-                    inEscape = false;
-                    inOscEscape = false;
-                }
-            }
+    // wrap-ansi's stringVisibleTrimSpacesRight: past the last visible word only
+    // the separator spaces go; escapes and zero-width text stay.
+    Vector<Char> tail;
+    for (const Char* it = lastVisibleEnd; it != end;) {
+        if (ANSI::isEscapeCharacter(*it)) {
+            const Char* seqEnd = ANSI::consumeANSI(it, end);
+            tail.append(std::span { it, seqEnd });
+            it = seqEnd;
+        } else {
+            if (*it != ' ')
+                tail.append(*it);
+            ++it;
         }
-
-        row.m_data.shrink(lastVisibleEnd);
-        row.m_data.appendVector(trailingAnsi);
     }
+
+    row.m_data.shrink(lastVisibleEnd - data);
+    row.m_data.appendVector(tail);
 }
 
 // ============================================================================
@@ -334,14 +306,13 @@ static void trimRowTrailingSpaces(Row<Char>& row, bool ambiguousIsNarrow)
 
 static constexpr uint32_t END_CODE = 39;
 
+// Parse a CSI parameter body (after the introducer) as a single numeric SGR
+// code: digits followed by the final byte 'm'.
 template<typename Char>
-static std::optional<uint32_t> parseSgrCode(const Char* start, const Char* end)
+static std::optional<uint32_t> parseSgrCode(const Char* body, const Char* end)
 {
-    if (end - start < 3 || start[0] != 0x1b || start[1] != '[')
-        return std::nullopt;
-
     uint32_t code = 0;
-    for (const Char* it = start + 2; it < end; ++it) {
+    for (const Char* it = body; it < end; ++it) {
         Char c = *it;
         if (c >= '0' && c <= '9') {
             code = code * 10 + (c - '0');
@@ -355,133 +326,193 @@ static std::optional<uint32_t> parseSgrCode(const Char* start, const Char* end)
     return std::nullopt;
 }
 
+// A hyperlink is OSC 8: introducer, "8;", params, ';', URI, then BEL / ESC \ /
+// C1 ST. `link` covers "params;URI" so id= params are kept when re-opening;
+// an empty URI closes the current link.
 template<typename Char>
-static std::pair<const Char*, const Char*> parseOsc8Url(const Char* start, const Char* end)
+struct HyperlinkState {
+    const Char* link = nullptr;
+    size_t linkLen = 0;
+};
+
+// Classify the single escape sequence at `seq` and return its end (never
+// less than seq + 1): an SGR CSI (ESC [ or 0x9b) opens/closes a style, a
+// terminated OSC 8 (ESC ] or 0x9d) opens/closes a hyperlink, and the
+// payload of any other sequence is skipped so its bytes are never re-parsed.
+// Terminators follow ANSI::consumeANSI: ESC re-introduces a new sequence
+// (this one ends before it), CAN/SUB abort with the byte consumed.
+template<typename Char>
+static const Char* trackEscape(const Char* seq, const Char* end, std::optional<uint32_t>& escapeCode, HyperlinkState<Char>& hyperlink)
 {
-    // Format: ESC ] 8 ; ; url BEL
-    if (end - start < 6)
-        return { nullptr, nullptr };
-    if (start[0] != 0x1b || start[1] != ']' || start[2] != '8' || start[3] != ';' || start[4] != ';')
-        return { nullptr, nullptr };
-
-    const Char* urlStart = start + 5;
-    const Char* urlEnd = urlStart;
-
-    while (urlEnd < end && *urlEnd != 0x07 && *urlEnd != 0x1b)
-        urlEnd++;
-
-    if (urlEnd == urlStart)
-        return { nullptr, nullptr };
-
-    return { urlStart, urlEnd };
-}
-
-static std::optional<uint32_t> getCloseCode(uint32_t code)
-{
-    switch (code) {
-    case 1:
-    case 2:
-        return 22;
-    case 3:
-        return 23;
-    case 4:
-        return 24;
-    case 5:
-    case 6:
-        return 25;
-    case 7:
-        return 27;
-    case 8:
-        return 28;
-    case 9:
-        return 29;
+    const Char* body;
+    bool isCsi = false;
+    bool isOsc = false;
+    switch (static_cast<char32_t>(*seq)) {
+    case 0x1b: {
+        if (end - seq < 2)
+            return end;
+        const Char next = seq[1];
+        body = seq + 2;
+        if (next == '[') {
+            isCsi = true;
+        } else if (next == ']') {
+            isOsc = true;
+        } else if (next == 'P' || next == 'X' || next == '^' || next == '_') {
+            // DCS / SOS / PM / APC control string
+        } else if (next >= 0x20 && next <= 0x2f) {
+            // nF: ESC, intermediate byte, one more code unit (an ESC there aborts it).
+            return (end - seq >= 3 && body[0] != 0x1b) ? seq + 3 : body;
+        } else if (next >= 0x30 && next <= 0x7e) {
+            return body; // Fe / Fs two-byte sequence (ESC 7, ESC c)
+        } else {
+            return seq + 1; // lone ESC: the next byte cannot continue a sequence
+        }
+        break;
+    }
+    case 0x9b:
+        isCsi = true;
+        body = seq + 1;
+        break;
+    case 0x9d:
+        isOsc = true;
+        body = seq + 1;
+        break;
+    case 0x90:
+    case 0x98:
+    case 0x9e:
+    case 0x9f:
+        body = seq + 1; // C1 DCS / SOS / PM / APC control string
+        break;
+    default:
+        return seq + 1; // standalone C1 ST (0x9c) introduces nothing
     }
 
-    if (code >= 30 && code <= 37)
-        return 39;
-    if (code >= 40 && code <= 47)
-        return 49;
-    if (code >= 90 && code <= 97)
-        return 39;
-    if (code >= 100 && code <= 107)
-        return 49;
+    if (isCsi) {
+        // ECMA-48 §5.4: parameters until a final byte in [0x40, 0x7E]; ESC,
+        // CAN, SUB and the C1 ST abort the sequence.
+        const Char* seqEnd = end;
+        for (const Char* it = body; it < end; ++it) {
+            const char32_t c = static_cast<char32_t>(*it);
+            if (c == 0x1b) {
+                seqEnd = it;
+                break;
+            }
+            if ((c >= 0x40 && c <= 0x7e) || c == 0x18 || c == 0x1a || c == 0x9c) {
+                seqEnd = it + 1;
+                break;
+            }
+        }
+        if (auto code = parseSgrCode(body, seqEnd)) {
+            if (*code == END_CODE || *code == 0)
+                escapeCode = std::nullopt;
+            else
+                escapeCode = *code;
+        }
+        return seqEnd;
+    }
 
-    return std::nullopt;
+    // OSC ends at BEL; OSC and the control strings end at ST (C1 0x9c or
+    // ESC \). ESC otherwise, CAN and SUB abort the string (VT510: the payload
+    // is discarded), so only a terminated OSC 8 updates the hyperlink.
+    const Char* seqEnd = end;
+    const Char* payloadEnd = end;
+    bool terminated = false;
+    for (const Char* it = body; it < end; ++it) {
+        const char32_t c = static_cast<char32_t>(*it);
+        if (c == 0x1b) {
+            payloadEnd = it;
+            terminated = it + 1 < end && it[1] == '\\';
+            seqEnd = terminated ? it + 2 : it;
+            break;
+        }
+        if ((isOsc && c == 0x07) || c == 0x9c) {
+            payloadEnd = it;
+            seqEnd = it + 1;
+            terminated = true;
+            break;
+        }
+        if (c == 0x18 || c == 0x1a) {
+            payloadEnd = it;
+            seqEnd = it + 1;
+            break;
+        }
+    }
+
+    if (!isOsc || !terminated || payloadEnd - body < 2 || body[0] != '8' || body[1] != ';')
+        return seqEnd;
+
+    const Char* params = body + 2;
+    const Char* uri = params;
+    while (uri < payloadEnd && *uri != ';')
+        ++uri;
+    if (uri == payloadEnd)
+        return seqEnd; // malformed: no URI field
+    ++uri;
+    if (uri == payloadEnd) {
+        hyperlink.link = nullptr;
+        hyperlink.linkLen = 0;
+    } else {
+        hyperlink.link = params;
+        hyperlink.linkLen = payloadEnd - params;
+    }
+    return seqEnd;
+}
+
+// One table for every SGR-tracking API: the shared close-code map in
+// ANSIHelpers.h (also used by sliceAnsi). 0 there means "no close known".
+static std::optional<uint32_t> getCloseCode(uint32_t code)
+{
+    const uint32_t close = ANSI::sgrCloseCode(code);
+    return close ? std::optional<uint32_t>(close) : std::nullopt;
 }
 
 template<typename Char>
 static void joinRowsWithAnsiPreservation(const Vector<Row<Char>>& rows, StringBuilder& result)
 {
-    // First join all rows
-    Vector<Char> joined;
-    size_t totalSize = 0;
-    for (const auto& row : rows)
-        totalSize += row.m_data.size() + 1;
-
-    joined.reserveCapacity(totalSize);
-
-    for (size_t i = 0; i < rows.size(); ++i) {
-        if (i > 0)
-            joined.append(static_cast<Char>('\n'));
-        joined.appendVector(rows[i].m_data);
-    }
-
-    // Process for ANSI style preservation
     std::optional<uint32_t> escapeCode;
-    const Char* escapeUrl = nullptr;
-    size_t escapeUrlLen = 0;
+    HyperlinkState<Char> hyperlink;
 
-    for (size_t i = 0; i < joined.size(); ++i) {
-        Char c = joined[i];
-        result.append(static_cast<UChar>(c));
-
-        if (c == 0x1b && i + 1 < joined.size()) {
-            auto span = joined.span();
-            // Parse ANSI sequence
-            if (joined[i + 1] == '[') {
-                if (auto code = parseSgrCode(span.data() + i, span.data() + span.size())) {
-                    if (*code == END_CODE || *code == 0)
-                        escapeCode = std::nullopt;
-                    else
-                        escapeCode = *code;
-                }
-            } else if (i + 4 < joined.size() && joined[i + 1] == ']' && joined[i + 2] == '8' && joined[i + 3] == ';' && joined[i + 4] == ';') {
-                auto [urlStart, urlEnd] = parseOsc8Url(span.data() + i, span.data() + span.size());
-                if (urlStart && urlEnd != urlStart) {
-                    escapeUrl = urlStart;
-                    escapeUrlLen = urlEnd - urlStart;
-                } else {
-                    escapeUrl = nullptr;
-                    escapeUrlLen = 0;
-                }
+    for (size_t rowIndex = 0; rowIndex < rows.size(); ++rowIndex) {
+        if (rowIndex > 0) {
+            result.append('\n');
+            // Restore styles after newline (only open codes; close/unknown codes
+            // have no close mapping and are not re-emitted, matching npm wrap-ansi)
+            if (escapeCode && getCloseCode(*escapeCode)) {
+                result.append("\x1b["_s);
+                result.append(String::number(*escapeCode));
+                result.append('m');
+            }
+            if (hyperlink.link) {
+                result.append("\x1b]8;"_s);
+                result.append(std::span<const Char>(hyperlink.link, hyperlink.linkLen));
+                result.append(static_cast<UChar>(0x07));
             }
         }
 
-        // Check if next character is newline
-        if (i + 1 < joined.size() && joined[i + 1] == '\n') {
-            // Close styles before newline
-            if (escapeUrl) {
-                result.append("\x1b]8;;\x07"_s);
+        auto span = rows[rowIndex].m_data.span();
+        const Char* it = span.data();
+        const Char* const end = it + span.size();
+        while (it != end) {
+            const Char* esc = ANSI::findEscapeCharacter(it, end);
+            if (!esc) {
+                result.append(std::span<const Char>(it, end));
+                break;
             }
+            const Char* seqEnd = trackEscape(esc, end, escapeCode, hyperlink);
+            result.append(std::span<const Char>(it, seqEnd));
+            it = seqEnd;
+        }
+
+        if (rowIndex + 1 < rows.size()) {
+            // Close styles before newline
+            if (hyperlink.link)
+                result.append("\x1b]8;;\x07"_s);
             if (escapeCode) {
                 if (auto closeCode = getCloseCode(*escapeCode)) {
                     result.append("\x1b["_s);
                     result.append(String::number(*closeCode));
                     result.append('m');
                 }
-            }
-        } else if (c == '\n') {
-            // Restore styles after newline
-            if (escapeCode) {
-                result.append("\x1b["_s);
-                result.append(String::number(*escapeCode));
-                result.append('m');
-            }
-            if (escapeUrl) {
-                result.append("\x1b]8;;"_s);
-                for (size_t j = 0; j < escapeUrlLen; ++j)
-                    result.append(static_cast<UChar>(escapeUrl[j]));
-                result.append(static_cast<UChar>(0x07));
             }
         }
     }
@@ -506,44 +537,27 @@ static void processLine(const Char* lineStart, const Char* lineEnd, size_t colum
             return;
     }
 
-    // Calculate word lengths using WTF::find for space detection
-    Vector<size_t> wordLengths;
-    auto lineSpan = std::span<const Char>(lineStart, lineEnd);
-    size_t wordStartIdx = 0;
-    while (wordStartIdx <= lineSpan.size()) {
-        size_t spacePos = WTF::find(lineSpan, static_cast<Char>(' '), wordStartIdx);
-        size_t wordEndIdx = (spacePos == WTF::notFound) ? lineSpan.size() : spacePos;
-
-        if (wordStartIdx < wordEndIdx) {
-            wordLengths.append(stringWidth(lineSpan.data() + wordStartIdx,
-                lineSpan.data() + wordEndIdx,
-                options.ambiguousIsNarrow));
-        } else {
-            wordLengths.append(0);
-        }
-
-        if (spacePos == WTF::notFound)
-            break;
-        wordStartIdx = wordEndIdx + 1;
-    }
-
     // Start with empty first row
     rows.append(Row<Char>());
 
-    // Process each word
-    const Char* wordStart = lineStart;
-    size_t wordIndex = 0;
+    size_t lastRowWidth = 0;
+    bool lastRowWidthDirty = false;
 
-    for (const Char* it = lineStart; it <= lineEnd; ++it) {
-        if (it < lineEnd && *it != ' ')
-            continue;
+    const auto placeWord = [&](const Char* wordStart, const Char* wordEnd, size_t wordIndex) {
+        if (options.trim) {
+            size_t removedWidth = rows.last().trimLeadingSpaces();
+            if (!lastRowWidthDirty)
+                lastRowWidth = removedWidth < lastRowWidth ? lastRowWidth - removedWidth : 0;
+        }
 
-        const Char* wordEnd = it;
+        if (lastRowWidthDirty) {
+            lastRowWidth = rows.last().width(options.ambiguousIsNarrow);
+            lastRowWidthDirty = false;
+        }
 
-        if (options.trim)
-            rows.last().trimLeadingSpaces();
-
-        size_t rowLength = rows.last().width(options.ambiguousIsNarrow);
+        size_t rowLength = lastRowWidth;
+        bool spacePrecedesWord = true;
+        Char rowTail = static_cast<Char>(' ');
 
         if (wordIndex != 0) {
             if (rowLength >= columns && (!options.wordWrap || !options.trim)) {
@@ -554,10 +568,13 @@ static void processLine(const Char* lineStart, const Char* lineEnd, size_t colum
             if (rowLength > 0 || !options.trim) {
                 rows.last().append(static_cast<Char>(' '));
                 rowLength++;
+            } else if (!rows.last().m_data.isEmpty()) {
+                spacePrecedesWord = false;
+                rowTail = rows.last().m_data.last();
             }
         }
 
-        size_t wordLen = wordIndex < wordLengths.size() ? wordLengths[wordIndex] : 0;
+        size_t wordLen = stringWidth(wordStart, wordEnd, options.ambiguousIsNarrow);
 
         // Hard wrap mode
         if (options.hard && wordLen > columns) {
@@ -568,33 +585,41 @@ static void processLine(const Char* lineStart, const Char* lineEnd, size_t colum
                 rows.append(Row<Char>());
 
             wrapWord(rows, wordStart, wordEnd, columns, options);
-            wordStart = it + 1;
-            wordIndex++;
-            continue;
+            lastRowWidthDirty = true;
+            return;
         }
 
         if (rowLength + wordLen > columns && rowLength > 0 && wordLen > 0) {
             if (!options.wordWrap && rowLength < columns) {
                 wrapWord(rows, wordStart, wordEnd, columns, options);
-                wordStart = it + 1;
-                wordIndex++;
-                continue;
+                lastRowWidthDirty = true;
+                return;
             }
 
             rows.append(Row<Char>());
+            rowLength = 0;
         }
 
-        rowLength = rows.last().width(options.ambiguousIsNarrow);
         if (rowLength + wordLen > columns && !options.wordWrap) {
             wrapWord(rows, wordStart, wordEnd, columns, options);
-            wordStart = it + 1;
-            wordIndex++;
-            continue;
+            lastRowWidthDirty = true;
+            return;
         }
 
         rows.last().append(wordStart, wordEnd);
-        wordStart = it + 1;
-        wordIndex++;
+        if (spacePrecedesWord ? wordStartsNewCluster(wordStart, wordEnd) : wordSeamIsAscii(rowTail, wordStart, wordEnd))
+            lastRowWidth = rowLength + wordLen;
+        else
+            lastRowWidthDirty = true;
+    };
+
+    const Char* wordStart = lineStart;
+    for (size_t wordIndex = 0;; ++wordIndex) {
+        const Char* wordEnd = findWordSeparator(wordStart, lineEnd);
+        placeWord(wordStart, wordEnd, wordIndex);
+        if (wordEnd == lineEnd)
+            break;
+        wordStart = wordEnd + 1;
     }
 
     // Trim trailing whitespace from rows if needed
@@ -620,40 +645,27 @@ static WTF::String wrapAnsiImpl(std::span<const Char> input, size_t columns, con
         return result.toString();
     }
 
-    // Normalize \r\n to \n using WTF::findNextNewline
-    Vector<Char> normalized;
-    normalized.reserveCapacity(input.size());
-
-    size_t pos = 0;
-    while (pos < input.size()) {
-        auto newline = WTF::findNextNewline(input, pos);
-        if (newline.position == WTF::notFound) {
-            // Append remaining content
-            normalized.append(std::span { input.data() + pos, input.size() - pos });
-            break;
-        }
-        // Append content before newline
-        if (newline.position > pos)
-            normalized.append(std::span { input.data() + pos, newline.position - pos });
-        // Always append \n regardless of original (\r, \n, or \r\n)
-        normalized.append(static_cast<Char>('\n'));
-        pos = newline.position + newline.length;
-    }
-
-    // Process each line separately
+    // Process each line separately. \n, a bare \r and a \r\n pair each
+    // break a line and are emitted as one \n — callers (Claude Code's
+    // wrap-text) map wrapped output back to the original text by relying on
+    // every \r becoming a break.
     StringBuilder result;
     result.reserveCapacity(input.size() + input.size() / 10);
 
-    auto span = normalized.span();
-    const Char* lineStart = span.data();
-    const Char* const dataEnd = span.data() + span.size();
+    const Char* lineStart = input.data();
+    const Char* const dataEnd = input.data() + input.size();
     bool firstLine = true;
 
-    while (lineStart <= dataEnd) {
-        // Find next newline using WTF::find
+    while (true) {
         auto remaining = std::span<const Char>(lineStart, dataEnd);
-        size_t nlPos = WTF::find(remaining, static_cast<Char>('\n'));
-        const Char* lineEnd = (nlPos == WTF::notFound) ? dataEnd : lineStart + nlPos;
+        size_t brPos = WTF::notFound;
+        for (size_t k = 0; k < remaining.size(); ++k) {
+            if (remaining[k] == '\n' || remaining[k] == '\r') {
+                brPos = k;
+                break;
+            }
+        }
+        const Char* lineEnd = (brPos == WTF::notFound) ? dataEnd : lineStart + brPos;
 
         // Add newline between input lines
         if (!firstLine)
@@ -669,7 +681,10 @@ static WTF::String wrapAnsiImpl(std::span<const Char> input, size_t columns, con
             joinRowsWithAnsiPreservation(lineRows, result);
         }
 
-        lineStart = lineEnd + 1;
+        if (lineEnd == dataEnd)
+            break;
+        // A \r\n pair is one break: step over both.
+        lineStart = (*lineEnd == '\r' && lineEnd + 1 != dataEnd && *(lineEnd + 1) == '\n') ? lineEnd + 2 : lineEnd + 1;
     }
 
     return result.toString();
@@ -717,18 +732,17 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionBunWrapAnsi, (JSC::JSGlobalObject * globalObj
 
         JSC::JSValue hardValue = optionsObj->get(globalObject, JSC::Identifier::fromString(vm, "hard"_s));
         RETURN_IF_EXCEPTION(scope, {});
-        if (!hardValue.isUndefined())
-            options.hard = hardValue.toBoolean(globalObject);
+        options.hard = hardValue.toBoolean(globalObject);
 
+        // wordWrap and trim default on: only an explicit `false` disables them
+        // (wrap-ansi's `!== false`); other falsy values keep the default.
         JSC::JSValue wordWrapValue = optionsObj->get(globalObject, JSC::Identifier::fromString(vm, "wordWrap"_s));
         RETURN_IF_EXCEPTION(scope, {});
-        if (!wordWrapValue.isUndefined())
-            options.wordWrap = wordWrapValue.toBoolean(globalObject);
+        options.wordWrap = !wordWrapValue.isFalse();
 
         JSC::JSValue trimValue = optionsObj->get(globalObject, JSC::Identifier::fromString(vm, "trim"_s));
         RETURN_IF_EXCEPTION(scope, {});
-        if (!trimValue.isUndefined())
-            options.trim = trimValue.toBoolean(globalObject);
+        options.trim = !trimValue.isFalse();
 
         JSC::JSValue ambiguousValue = optionsObj->get(globalObject, JSC::Identifier::fromString(vm, "ambiguousIsNarrow"_s));
         RETURN_IF_EXCEPTION(scope, {});

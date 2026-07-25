@@ -1,6 +1,6 @@
 use core::ffi::{c_uint, c_void};
 
-use crate::{Loop, SocketGroup, SocketKind};
+use crate::{SocketGroup, SocketKind};
 
 // `us_connecting_socket_t` — a connect in flight (DNS / non-blocking
 // `connect()` / happy-eyeballs). No I/O is possible yet; on success the loop
@@ -28,13 +28,6 @@ impl ConnectingSocket {
         SocketKind::from_u8(us_connecting_socket_kind(self))
     }
 
-    /// Returns the owning `Loop`. Raw pointer because the loop is a shared
-    /// singleton referenced by every group/socket/timer;
-    /// materializing `&mut Loop` here would be aliased UB.
-    pub fn r#loop(&mut self) -> *mut Loop {
-        us_connecting_socket_get_loop(self)
-    }
-
     pub fn ext<T>(&mut self) -> &mut T {
         // SAFETY: the ext slot is per-socket trailing storage inside this
         // allocation; `&mut self` guarantees exclusive access to it for the
@@ -45,6 +38,13 @@ impl ConnectingSocket {
 
     pub fn get_error(&mut self) -> i32 {
         us_connecting_socket_get_error(self)
+    }
+
+    /// Raw `getaddrinfo(3)` return code when the name lookup itself failed;
+    /// 0 for a connect failure past name resolution. A different namespace
+    /// from [`Self::get_error`] (errno).
+    pub fn get_dns_error(&mut self) -> i32 {
+        us_connecting_socket_get_dns_error(self)
     }
 
     pub fn get_native_handle(&mut self) -> *mut c_void {
@@ -87,6 +87,7 @@ unsafe extern "C" {
     pub(crate) safe fn us_connecting_socket_kind(s: &mut ConnectingSocket) -> u8;
     pub(crate) safe fn us_connecting_socket_ext(s: &mut ConnectingSocket) -> *mut c_void;
     pub(crate) safe fn us_connecting_socket_get_error(s: &mut ConnectingSocket) -> i32;
+    pub(crate) safe fn us_connecting_socket_get_dns_error(s: &mut ConnectingSocket) -> i32;
     pub(crate) safe fn us_connecting_socket_get_native_handle(
         s: &mut ConnectingSocket,
     ) -> *mut c_void;
@@ -96,5 +97,4 @@ unsafe extern "C" {
     pub(crate) safe fn us_connecting_socket_shutdown(s: &mut ConnectingSocket);
     pub(crate) safe fn us_connecting_socket_shutdown_read(s: &mut ConnectingSocket);
     pub(crate) safe fn us_connecting_socket_timeout(s: &mut ConnectingSocket, seconds: c_uint);
-    pub(crate) safe fn us_connecting_socket_get_loop(s: &mut ConnectingSocket) -> *mut Loop;
 }

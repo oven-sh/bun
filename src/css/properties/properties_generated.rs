@@ -1,5 +1,4 @@
-// Hand-maintained. Note: generate_properties.ts (`bun run css-properties`)
-// does not write this file — edits here are safe and will not be clobbered.
+// Hand-maintained.
 //
 // Type paths below resolve against `super::*` (the leaf property
 // modules — currently data-only stub bodies in `mod.rs`) and
@@ -17,10 +16,9 @@ use super::CSSWideKeyword;
 use super::custom::{CustomProperty, CustomPropertyName, UnparsedProperty};
 use super::properties_impl;
 
-// Leaf property modules (gated in mod.rs — these resolve to the inline
-// `pub mod $name { prop_value_stub!(...) }` bodies until the real .rs files
-// un-gate).
+// Leaf property modules.
 use super::align;
+use super::animation;
 use super::background;
 use super::border;
 use super::border_image;
@@ -248,6 +246,8 @@ pub enum PropertyIdTag {
     TransitionDelay,
     TransitionTimingFunction,
     Transition,
+    Animation,
+    AnimationName,
     Transform,
     TransformOrigin,
     TransformStyle,
@@ -345,6 +345,8 @@ impl PropertyIdTag {
                 | PropertyIdTag::TransitionDelay
                 | PropertyIdTag::TransitionTimingFunction
                 | PropertyIdTag::Transition
+                | PropertyIdTag::Animation
+                | PropertyIdTag::AnimationName
                 | PropertyIdTag::Transform
                 | PropertyIdTag::TransformOrigin
                 | PropertyIdTag::TransformStyle
@@ -404,6 +406,8 @@ impl PropertyIdTag {
             T::TransitionDelay => PrefixFeature::TransitionDelay,
             T::TransitionTimingFunction => PrefixFeature::TransitionTimingFunction,
             T::Transition => PrefixFeature::Transition,
+            T::Animation => PrefixFeature::Animation,
+            T::AnimationName => PrefixFeature::AnimationName,
             T::Transform => PrefixFeature::Transform,
             T::TransformOrigin => PrefixFeature::TransformOrigin,
             T::TransformStyle => PrefixFeature::TransformStyle,
@@ -629,6 +633,8 @@ impl PropertyIdTag {
             PropertyIdTag::TransitionDelay => b"transition-delay",
             PropertyIdTag::TransitionTimingFunction => b"transition-timing-function",
             PropertyIdTag::Transition => b"transition",
+            PropertyIdTag::Animation => b"animation",
+            PropertyIdTag::AnimationName => b"animation-name",
             PropertyIdTag::Transform => b"transform",
             PropertyIdTag::TransformOrigin => b"transform-origin",
             PropertyIdTag::TransformStyle => b"transform-style",
@@ -892,6 +898,8 @@ pub enum PropertyId {
     TransitionDelay(VendorPrefix),
     TransitionTimingFunction(VendorPrefix),
     Transition(VendorPrefix),
+    Animation(VendorPrefix),
+    AnimationName(VendorPrefix),
     Transform(VendorPrefix),
     TransformOrigin(VendorPrefix),
     TransformStyle(VendorPrefix),
@@ -1172,6 +1180,8 @@ impl PropertyId {
             PropertyId::TransitionDelay(..) => PropertyIdTag::TransitionDelay,
             PropertyId::TransitionTimingFunction(..) => PropertyIdTag::TransitionTimingFunction,
             PropertyId::Transition(..) => PropertyIdTag::Transition,
+            PropertyId::Animation(..) => PropertyIdTag::Animation,
+            PropertyId::AnimationName(..) => PropertyIdTag::AnimationName,
             PropertyId::Transform(..) => PropertyIdTag::Transform,
             PropertyId::TransformOrigin(..) => PropertyIdTag::TransformOrigin,
             PropertyId::TransformStyle(..) => PropertyIdTag::TransformStyle,
@@ -1279,6 +1289,8 @@ impl PropertyId {
             | PropertyId::TransitionDelay(p)
             | PropertyId::TransitionTimingFunction(p)
             | PropertyId::Transition(p)
+            | PropertyId::Animation(p)
+            | PropertyId::AnimationName(p)
             | PropertyId::Transform(p)
             | PropertyId::TransformOrigin(p)
             | PropertyId::TransformStyle(p)
@@ -2791,6 +2803,28 @@ impl PropertyId {
             }
             return None;
         }
+        if strings::eql_case_insensitive_ascii_check_length(name, b"animation-name") {
+            let allowed: VendorPrefix = VendorPrefix::NONE
+                | VendorPrefix::WEBKIT
+                | VendorPrefix::MOZ
+                | VendorPrefix::O
+                | VendorPrefix::MS;
+            if allowed.intersects(pre) {
+                return Some(PropertyId::AnimationName(pre));
+            }
+            return None;
+        }
+        if strings::eql_case_insensitive_ascii_check_length(name, b"animation") {
+            let allowed: VendorPrefix = VendorPrefix::NONE
+                | VendorPrefix::WEBKIT
+                | VendorPrefix::MOZ
+                | VendorPrefix::O
+                | VendorPrefix::MS;
+            if allowed.intersects(pre) {
+                return Some(PropertyId::Animation(pre));
+            }
+            return None;
+        }
         if strings::eql_case_insensitive_ascii_check_length(name, b"transform") {
             let allowed: VendorPrefix = VendorPrefix::NONE
                 | VendorPrefix::WEBKIT
@@ -3373,6 +3407,8 @@ pub enum Property {
         ),
     ),
     Transition((SmallList<transition::Transition, 1>, VendorPrefix)),
+    Animation((SmallList<animation::Animation, 1>, VendorPrefix)),
+    AnimationName((SmallList<animation::AnimationName, 1>, VendorPrefix)),
     Transform((transform::TransformList, VendorPrefix)),
     TransformOrigin((position::Position, VendorPrefix)),
     TransformStyle((transform::TransformStyle, VendorPrefix)),
@@ -3638,6 +3674,8 @@ impl Property {
             Property::TransitionDelay(v) => PropertyId::TransitionDelay(v.1),
             Property::TransitionTimingFunction(v) => PropertyId::TransitionTimingFunction(v.1),
             Property::Transition(v) => PropertyId::Transition(v.1),
+            Property::Animation(v) => PropertyId::Animation(v.1),
+            Property::AnimationName(v) => PropertyId::AnimationName(v.1),
             Property::Transform(v) => PropertyId::Transform(v.1),
             Property::TransformOrigin(v) => PropertyId::TransformOrigin(v.1),
             Property::TransformStyle(v) => PropertyId::TransformStyle(v.1),
@@ -3905,6 +3943,8 @@ impl Property {
             Property::TransitionDelay(v) => css::generic::to_css(&v.0, dest),
             Property::TransitionTimingFunction(v) => css::generic::to_css(&v.0, dest),
             Property::Transition(v) => css::generic::to_css(&v.0, dest),
+            Property::Animation(v) => css::generic::to_css(&v.0, dest),
+            Property::AnimationName(v) => css::generic::to_css(&v.0, dest),
             Property::Transform(v) => css::generic::to_css(&v.0, dest),
             Property::TransformOrigin(v) => css::generic::to_css(&v.0, dest),
             Property::TransformStyle(v) => css::generic::to_css(&v.0, dest),
@@ -5782,6 +5822,25 @@ impl Property {
                     }
                 }
             }
+            PropertyId::Animation(pre) => {
+                if let Ok(c) = css::generic::parse_with_options::<SmallList<animation::Animation, 1>>(
+                    input, options,
+                ) {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::Animation((c, pre)));
+                    }
+                }
+            }
+            PropertyId::AnimationName(pre) => {
+                if let Ok(c) = css::generic::parse_with_options::<
+                    SmallList<animation::AnimationName, 1>,
+                >(input, options)
+                {
+                    if input.expect_exhausted().is_ok() {
+                        return Ok(Property::AnimationName((c, pre)));
+                    }
+                }
+            }
             PropertyId::Transform(pre) => {
                 if let Ok(c) =
                     css::generic::parse_with_options::<transform::TransformList>(input, options)
@@ -6188,110 +6247,6 @@ impl Property {
         properties_impl::property_mixin::to_css(self, dest, important)
     }
 
-    /// Returns the given longhand property for a shorthand.
-    ///
-    /// Per-type `longhand` is not implemented yet, so the per-arm dispatch is
-    /// routed through a no-op `lh!` (`return None`) until the
-    /// `DefineShorthand` derive exists. There are no callers.
-    // blocked_on: shorthand_handler_port — leaf shorthand types lack `.longhand()`
-    pub fn longhand(&self, property_id: &PropertyId) -> Option<Property> {
-        #[inline(always)]
-        fn lh<T: ?Sized>(_v: &T, _id: &PropertyId) -> Option<Property> {
-            // Trip in debug so callers can't accidentally rely on the
-            // always-`None` placeholder before `DefineShorthand::longhand`
-            // is ported.
-            debug_assert!(
-                false,
-                "Property::longhand: per-type DefineShorthand::longhand not yet ported"
-            );
-            None
-        }
-        match self {
-            Property::BackgroundPosition(v) => lh(v, property_id),
-            Property::Overflow(v) => lh(v, property_id),
-            Property::InsetBlock(v) => lh(v, property_id),
-            Property::InsetInline(v) => lh(v, property_id),
-            Property::Inset(v) => lh(v, property_id),
-            Property::BorderRadius(v) => {
-                if v.1 != property_id.prefix() {
-                    return None;
-                }
-                lh(&v.0, property_id)
-            }
-            Property::BorderImage(v) => {
-                if v.1 != property_id.prefix() {
-                    return None;
-                }
-                lh(&v.0, property_id)
-            }
-            Property::BorderColor(v) => lh(v, property_id),
-            Property::BorderStyle(v) => lh(v, property_id),
-            Property::BorderWidth(v) => lh(v, property_id),
-            Property::BorderBlockColor(v) => lh(v, property_id),
-            Property::BorderBlockStyle(v) => lh(v, property_id),
-            Property::BorderBlockWidth(v) => lh(v, property_id),
-            Property::BorderInlineColor(v) => lh(v, property_id),
-            Property::BorderInlineStyle(v) => lh(v, property_id),
-            Property::BorderInlineWidth(v) => lh(v, property_id),
-            Property::Border(v) => lh(v, property_id),
-            Property::BorderTop(v) => lh(v, property_id),
-            Property::BorderBottom(v) => lh(v, property_id),
-            Property::BorderLeft(v) => lh(v, property_id),
-            Property::BorderRight(v) => lh(v, property_id),
-            Property::BorderBlock(v) => lh(v, property_id),
-            Property::BorderBlockStart(v) => lh(v, property_id),
-            Property::BorderBlockEnd(v) => lh(v, property_id),
-            Property::BorderInline(v) => lh(v, property_id),
-            Property::BorderInlineStart(v) => lh(v, property_id),
-            Property::BorderInlineEnd(v) => lh(v, property_id),
-            Property::Outline(v) => lh(v, property_id),
-            Property::FlexFlow(v) => {
-                if v.1 != property_id.prefix() {
-                    return None;
-                }
-                lh(&v.0, property_id)
-            }
-            Property::Flex(v) => {
-                if v.1 != property_id.prefix() {
-                    return None;
-                }
-                lh(&v.0, property_id)
-            }
-            Property::PlaceContent(v) => lh(v, property_id),
-            Property::PlaceSelf(v) => lh(v, property_id),
-            Property::PlaceItems(v) => lh(v, property_id),
-            Property::Gap(v) => lh(v, property_id),
-            Property::MarginBlock(v) => lh(v, property_id),
-            Property::MarginInline(v) => lh(v, property_id),
-            Property::Margin(v) => lh(v, property_id),
-            Property::PaddingBlock(v) => lh(v, property_id),
-            Property::PaddingInline(v) => lh(v, property_id),
-            Property::Padding(v) => lh(v, property_id),
-            Property::ScrollMarginBlock(v) => lh(v, property_id),
-            Property::ScrollMarginInline(v) => lh(v, property_id),
-            Property::ScrollMargin(v) => lh(v, property_id),
-            Property::ScrollPaddingBlock(v) => lh(v, property_id),
-            Property::ScrollPaddingInline(v) => lh(v, property_id),
-            Property::ScrollPadding(v) => lh(v, property_id),
-            Property::Font(v) => lh(v, property_id),
-            Property::Transition(v) => {
-                if v.1 != property_id.prefix() {
-                    return None;
-                }
-                lh(&v.0, property_id)
-            }
-            Property::Mask(v) => {
-                if v.1 != property_id.prefix() {
-                    return None;
-                }
-                lh(&v.0, property_id)
-            }
-            Property::MaskBorder(v) => lh(v, property_id),
-            _ => None,
-        }
-    }
-
-    // blocked_on: leaf_value_traits — un-gate once every payload type impls `generics::DeepClone`
     pub fn deep_clone(&self, arena: &bun_alloc::Arena) -> Property {
         match self {
             Property::BackgroundColor(v) => {
@@ -6757,6 +6712,12 @@ impl Property {
             Property::Transition(v) => {
                 Property::Transition((css::generic::deep_clone(&v.0, arena), v.1))
             }
+            Property::Animation(v) => {
+                Property::Animation((css::generic::deep_clone(&v.0, arena), v.1))
+            }
+            Property::AnimationName(v) => {
+                Property::AnimationName((css::generic::deep_clone(&v.0, arena), v.1))
+            }
             Property::Transform(v) => {
                 Property::Transform((css::generic::deep_clone(&v.0, arena), v.1))
             }
@@ -6868,7 +6829,6 @@ impl Property {
         }
     }
 
-    // blocked_on: leaf_value_traits — un-gate once every payload type impls `generics::CssEql`
     pub fn eql(&self, other: &Property) -> bool {
         match (self, other) {
             (Property::BackgroundColor(a), Property::BackgroundColor(b)) => css::generic::eql(a, b),
@@ -7288,6 +7248,12 @@ impl Property {
             (Property::Transition(a), Property::Transition(b)) => {
                 css::generic::eql(&a.0, &b.0) && a.1 == b.1
             }
+            (Property::Animation(a), Property::Animation(b)) => {
+                css::generic::eql(&a.0, &b.0) && a.1 == b.1
+            }
+            (Property::AnimationName(a), Property::AnimationName(b)) => {
+                css::generic::eql(&a.0, &b.0) && a.1 == b.1
+            }
             (Property::Transform(a), Property::Transform(b)) => {
                 css::generic::eql(&a.0, &b.0) && a.1 == b.1
             }
@@ -7387,23 +7353,11 @@ impl Property {
             _ => false,
         }
     }
-
-    /// We're going to have this empty for now since not every property has a deinit function.
-    /// It's not strictly necessary since all allocations are into an arena.
-    /// It's mostly intended as a performance optimization in the case where mimalloc arena is used,
-    /// since it can reclaim the memory and use it for subsequent allocations.
-    /// I haven't benchmarked that though, so I don't actually know how much faster it would actually make it.
-    pub fn deinit(&mut self, arena: &bun_alloc::Arena) {
-        let _ = self;
-        let _ = arena;
-    }
 }
 
 // `declaration::placeholder_property()` (the moved-out slot
 // sentinel in `DeclarationBlock::minify`) is
-// `Property::All(CSSWideKeyword::RevertLayer)`. Expose it via `Default` so
-// the un-gated stub branch in `declaration.rs` keeps compiling against the
-// real enum.
+// `Property::All(CSSWideKeyword::RevertLayer)`.
 impl Default for Property {
     #[inline]
     fn default() -> Self {

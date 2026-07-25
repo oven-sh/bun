@@ -2,6 +2,7 @@ use core::cell::Cell;
 use core::ffi::{c_int, c_void};
 use core::ptr::NonNull;
 
+use crate::Error;
 use crate::http_thread::InitOpts as HTTPThreadInitOpts;
 use crate::ssl_config::{self, SSLConfig};
 use crate::{
@@ -11,7 +12,7 @@ use bun_boringssl::ssl_ctx_setup;
 use bun_boringssl_sys::SSL_CTX;
 use bun_collections::{HiveArray, TaggedPtrUnion};
 use bun_core::strings;
-use bun_core::{self, Error, FeatureFlags};
+use bun_core::{self, FeatureFlags};
 use bun_uws as uws;
 
 bun_core::declare_scope!(HTTPContext, hidden);
@@ -77,39 +78,25 @@ pub(crate) struct ActiveSocketTypes<const SSL: bool>;
 
 // Note: tags assigned 1024 - i, descending.
 impl<const SSL: bool> bun_ptr::tagged_pointer::TypeList for ActiveSocketTypes<SSL> {
-    const LEN: usize = 4;
     const MIN_TAG: bun_ptr::tagged_pointer::TagType = 1024 - 3;
-    fn type_name_from_tag(tag: bun_ptr::tagged_pointer::TagType) -> Option<&'static str> {
-        match tag {
-            1024 => Some("DeadSocket"),
-            1023 => Some("HTTPClient"),
-            1022 => Some("PooledSocket"),
-            1021 => Some("H2.ClientSession"),
-            _ => None,
-        }
-    }
 }
 impl<const SSL: bool> bun_ptr::tagged_pointer::UnionMember<ActiveSocketTypes<SSL>> for DeadSocket {
     const TAG: bun_ptr::tagged_pointer::TagType = 1024;
-    const NAME: &'static str = "DeadSocket";
 }
 impl<const SSL: bool> bun_ptr::tagged_pointer::UnionMember<ActiveSocketTypes<SSL>>
     for HTTPClient<'static>
 {
     const TAG: bun_ptr::tagged_pointer::TagType = 1023;
-    const NAME: &'static str = "HTTPClient";
 }
 impl<const SSL: bool> bun_ptr::tagged_pointer::UnionMember<ActiveSocketTypes<SSL>>
     for PooledSocket<SSL>
 {
     const TAG: bun_ptr::tagged_pointer::TagType = 1022;
-    const NAME: &'static str = "PooledSocket";
 }
 impl<const SSL: bool> bun_ptr::tagged_pointer::UnionMember<ActiveSocketTypes<SSL>>
     for h2::ClientSession
 {
     const TAG: bun_ptr::tagged_pointer::TagType = 1021;
-    const NAME: &'static str = "H2.ClientSession";
 }
 
 /// Typed accessors for the `ActiveSocket` tagged-pointer recovered from a
@@ -287,12 +274,6 @@ impl<const SSL: bool> ExistingSocket<SSL> {
     }
 }
 
-/// The ext stores `*anyopaque` (the `ActiveSocket` tagged pointer), so
-/// dispatch reads it as `**anyopaque` and `Handler` decodes the tag.
-// Note: a `pub type ActiveSocketHandler = Handler<SSL>;` inherent
-// associated type is unstable, so this is a free alias.
-pub type ActiveSocketHandler<const SSL: bool> = Handler<SSL>;
-
 impl<const SSL: bool> HTTPContext<SSL> {
     pub(crate) const KIND: uws::SocketKind = if SSL {
         uws::SocketKind::HttpClientTls
@@ -431,7 +412,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
                 // Same liveness as above; exclusive access — the waiter was
                 // just removed from the only container that aliased it, and
                 // the HTTP thread is single-threaded here.
-                h2::PendingConnect::waiter_mut(waiter).fail_from_h2(bun_core::err!("Aborted"));
+                h2::PendingConnect::waiter_mut(waiter).fail_from_h2(crate::Error::Aborted);
                 return true;
             }
         }
@@ -509,7 +490,12 @@ impl<const SSL: bool> HTTPContext<SSL> {
                     uws::create_bun_socket_error_t::load_ca_file => InitError::LoadCAFile,
                     uws::create_bun_socket_error_t::invalid_ca_file => InitError::InvalidCAFile,
                     uws::create_bun_socket_error_t::invalid_ca => InitError::InvalidCA,
-                    _ => InitError::FailedToOpenSocket,
+                    uws::create_bun_socket_error_t::invalid_crl => InitError::InvalidCRL,
+                    uws::create_bun_socket_error_t::none
+                    | uws::create_bun_socket_error_t::invalid_ciphers
+                    | uws::create_bun_socket_error_t::invalid_ecdh_curve => {
+                        InitError::FailedToOpenSocket
+                    }
                 });
             }
         };
@@ -594,11 +580,9 @@ impl<const SSL: bool> HTTPContext<SSL> {
     ) {
         // log("releaseSocket(0x{f})", .{bun.fmt.hexIntUpper(@intFromPtr(socket.socket))});
 
-        if cfg!(debug_assertions) {
-            debug_assert!(!socket.is_closed());
-            debug_assert!(!socket.is_shutdown());
-            debug_assert!(socket.is_established());
-        }
+        debug_assert!(!socket.is_closed());
+        debug_assert!(!socket.is_shutdown());
+        debug_assert!(socket.is_established());
         debug_assert!(!hostname.is_empty());
         debug_assert!(port > 0);
 
@@ -1172,7 +1156,7 @@ impl<const SSL: bool> Handler<SSL> {
                             .expect("TLS socket has native handle after handshake")
                             .cast::<bun_boringssl_sys::SSL>()
                     };
-                    if !client.check_server_identity::<SSL>(socket, handshake_error, ssl, true) {
+                    if !client.check_server_identity::<SSL>(socket, ssl, true) {
                         // checkServerIdentity already called closeAndFail() → fail()
                         // → result callback, which may have destroyed the
                         // AsyncHTTP that embeds `client`. Socket is terminated
@@ -1195,7 +1179,7 @@ impl<const SSL: bool> Handler<SSL> {
                     return;
                 }
                 // if handshake_success it self is false, this means that the connection was rejected
-                client.close_and_fail::<SSL>(bun_core::err!("ConnectionRefused"), socket);
+                client.close_and_fail::<SSL>(crate::Error::ConnectionRefused, socket);
                 return;
             }
         }
@@ -1225,8 +1209,12 @@ impl<const SSL: bool> Handler<SSL> {
             return client.on_close::<SSL>(socket);
         }
         if let Some(session) = tagged.session_mut() {
-            return session.on_close(bun_core::err!("ConnectionClosed"));
+            return session.on_close(crate::Error::ConnectionClosed);
         }
+        // PooledSocket/DeadSocket: whoever retagged the ext should have
+        // unregistered; sweep by pointer so a miss can't leave a stale
+        // entry for `drain_queued_shutdowns` to deref after free.
+        crate::unregister_abort_tracker_for_socket(socket.socket);
     }
 
     unsafe fn add_memory_back_to_pool(pooled_ptr: *mut PooledSocket<SSL>) {
@@ -1309,7 +1297,7 @@ impl<const SSL: bool> Handler<SSL> {
         }
         if let Some(session) = tagged.session_mut() {
             HTTPContext::<SSL>::mark_socket_as_dead(socket);
-            session.on_close(bun_core::err!("Timeout"));
+            session.on_close(crate::Error::Timeout);
         }
 
         HTTPContext::<SSL>::terminate_socket(socket);
@@ -1323,10 +1311,18 @@ impl<const SSL: bool> Handler<SSL> {
     }
 
     pub fn on_connect_error(ptr: *mut c_void, socket: HTTPSocket<SSL>, _: c_int) {
+        // Read before the socket is marked dead: uSockets keeps the
+        // connecting socket alive for the whole dispatch.
+        let dns_error = socket.dns_error();
         let tagged = HTTPContext::<SSL>::get_tagged(ptr);
         HTTPContext::<SSL>::mark_tagged_socket_as_dead(socket, tagged);
         if let Some(client) = tagged.client_mut() {
-            client.on_connect_error();
+            client.on_connect_error(dns_error);
+        } else {
+            // Same backstop as `on_close`: a SEMI_SOCKET/connecting socket
+            // whose ext is no longer a client never dispatches `on_close`,
+            // so sweep any leftover tracker entry here.
+            crate::unregister_abort_tracker_for_socket(socket.socket);
         }
         // us_connecting_socket_close is always called internally by uSockets
     }
@@ -1342,16 +1338,34 @@ impl<const SSL: bool> Handler<SSL> {
         // 4. Dead socket: it is already marked as dead
         let tagged = HTTPContext::<SSL>::get_tagged(ptr);
         HTTPContext::<SSL>::mark_tagged_socket_as_dead(socket, tagged);
-        socket.close(uws::CloseKind::Failure);
-
+        // An idle (pooled keep-alive) socket's FIN is answered with a graceful
+        // close so well-behaved servers don't observe ECONNRESET for
+        // connections we were simply done with, and so is a FIN that
+        // terminates an EOF-delimited response (the request was fully sent;
+        // this FIN *is* the end of the response). A FIN that cuts the request
+        // short while its body is still being sent is answered with a reset
+        // instead: a graceful close would queue our FIN behind the
+        // not-yet-delivered body bytes (a server that rejects an upload early
+        // stops reading them), so the peer would never observe the connection
+        // closing and it would leak.
         if let Some(client) = tagged.client_mut() {
+            if client.has_unsent_request_body() {
+                socket.close(uws::CloseKind::Failure);
+            } else {
+                socket.close(uws::CloseKind::Normal);
+            }
             client.on_close::<SSL>(socket);
             return;
         }
         if let Some(session) = tagged.session_mut() {
-            session.on_close(bun_core::err!("ConnectionClosed"));
+            // An HTTP/2 session's streams may still be uploading; the same
+            // undeliverable-bytes reasoning applies, and this matches the
+            // pre-existing behaviour for this branch.
+            socket.close(uws::CloseKind::Failure);
+            session.on_close(crate::Error::ConnectionClosed);
             return;
         }
+        socket.close(uws::CloseKind::Normal);
     }
 }
 

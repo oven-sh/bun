@@ -1,5 +1,5 @@
 import { expect, it } from "bun:test";
-import { expiredTls, tls as validTls } from "harness";
+import { expiredTls, isDebug, tls as validTls } from "harness";
 const CERT_LOCALHOST_IP = { ...validTls };
 const CERT_EXPIRED = { ...expiredTls };
 
@@ -13,7 +13,10 @@ for (const timeout of [0, 1, 10, 20, 100, 300]) {
         return new Response("Hello World");
       },
     });
-    const THRESHOLD = 50;
+    // The whole budget for timeout(0) is TLS-fetch setup + abort plumbing,
+    // which a debug build exceeds; still asserts the abort lands well before
+    // the server's 1000ms reply.
+    const THRESHOLD = isDebug ? 500 : 50;
 
     const time = performance.now();
     try {

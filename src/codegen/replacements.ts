@@ -165,8 +165,8 @@ export interface ReplacementRule {
 export const function_replacements = [
   "$debug",
   "$assert",
-  "$zig",
-  "$newZigFunction",
+  "$rust",
+  "$newRustFunction",
   "$cpp",
   "$newCppFunction",
   "$isPromiseFulfilled",
@@ -222,8 +222,8 @@ export function applyReplacements(src: string, length: number) {
         rest2,
         true,
       ];
-    } else if (["zig", "cpp", "newZigFunction", "newCppFunction"].includes(name)) {
-      const kind = name.includes("ig") ? "zig" : "cpp";
+    } else if (["rust", "cpp", "newRustFunction", "newCppFunction"].includes(name)) {
+      const kind = name.includes("ust") ? "rust" : "cpp";
       const is_create_fn = name.startsWith("new");
 
       const inner = sliceSourceCode(rest, true);

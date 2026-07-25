@@ -12,19 +12,19 @@ use bun_jsc::{self as jsc, CallFrame, JSFunction, JSGlobalObject, JSValue, JsRes
 // ──────────────────────────────────────────────────────────────────────────
 
 pub(crate) trait HashOutput: Copy {
-    fn to_js(self, global: &JSGlobalObject) -> JSValue;
+    fn to_js(self, global: &JSGlobalObject) -> JsResult<JSValue>;
 }
 
 impl HashOutput for u32 {
     #[inline]
-    fn to_js(self, _global: &JSGlobalObject) -> JSValue {
-        JSValue::js_number(f64::from(self))
+    fn to_js(self, _global: &JSGlobalObject) -> JsResult<JSValue> {
+        Ok(JSValue::js_number(f64::from(self)))
     }
 }
 
 impl HashOutput for u64 {
     #[inline]
-    fn to_js(self, global: &JSGlobalObject) -> JSValue {
+    fn to_js(self, global: &JSGlobalObject) -> JsResult<JSValue> {
         JSValue::from_uint64_no_truncate(global, self)
     }
 }
@@ -64,23 +64,7 @@ pub(crate) struct Crc32;
 impl HashAlgorithm for Crc32 {
     type Output = u32;
     fn hash(seed: u64, input: &[u8]) -> u32 {
-        // zlib takes a 32-bit length, so chunk large inputs to avoid truncation.
-        let mut crc: bun_zlib::uLong = seed as u32 as bun_zlib::uLong;
-        let mut offset: usize = 0;
-        while offset < input.len() {
-            let remaining = input.len() - offset;
-            let max_len: usize = u32::MAX as usize;
-            let chunk_len: u32 = if remaining > max_len {
-                u32::MAX
-            } else {
-                u32::try_from(remaining).expect("int cast")
-            };
-            // SAFETY: offset < input.len() and chunk_len <= remaining, so the
-            // pointer range [ptr+offset, ptr+offset+chunk_len) is in-bounds.
-            crc = unsafe { bun_zlib::crc32(crc, input.as_ptr().add(offset), chunk_len) };
-            offset += chunk_len as usize;
-        }
-        u32::try_from(crc).expect("int cast")
+        bun_zlib::crc32_bytes(seed as u32, input)
     }
 }
 
@@ -261,10 +245,9 @@ pub(crate) fn create(global: &JSGlobalObject) -> JSValue {
 }
 
 fn hash_wrap<H: HashAlgorithm>(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let arguments = frame.arguments_old::<2>();
     // SAFETY: `bun_vm()` never returns null for a Bun-owned global;
     // ArgumentsSlice borrows it for the call.
-    let mut args = jsc::ArgumentsSlice::init(global.bun_vm(), arguments.slice());
+    let mut args = jsc::ArgumentsSlice::init(global.bun_vm(), frame.arguments());
 
     let mut input: &[u8] = b"";
     let input_slice: ZigStringSlice;
@@ -319,5 +302,5 @@ fn hash_wrap<H: HashAlgorithm>(global: &JSGlobalObject, frame: &CallFrame) -> Js
     }
 
     let value = H::hash(seed, input);
-    Ok(value.to_js(global))
+    value.to_js(global)
 }

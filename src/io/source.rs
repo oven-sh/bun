@@ -172,6 +172,15 @@ impl File {
         }
     }
 
+    /// Detach without closing the parent-owned fd. Returns true when an
+    /// operation is in flight (its callback frees the Box); false when idle
+    /// (caller drops the Box).
+    pub fn detach_borrowed_fd(&mut self) -> bool {
+        self.fs.data = core::ptr::null_mut();
+        self.stop();
+        self.state != FileState::Deinitialized
+    }
+
     /// Mark the operation as complete and clean up.
     /// Must be called first in the callback before processing data.
     pub fn complete(&mut self, was_canceled: bool) {
@@ -253,16 +262,6 @@ impl Source {
         }
     }
 
-    pub fn get_handle(&mut self) -> *mut uv::Handle {
-        match self {
-            // SAFETY: uv::Pipe / uv::uv_tty_t embed uv_handle_t as their first member.
-            // `&mut self` so the returned `*mut` carries write provenance.
-            Source::Pipe(pipe) => core::ptr::from_mut::<Pipe>(pipe.as_mut()).cast(),
-            Source::Tty(tty) => tty.as_ptr().cast(),
-            Source::SyncFile(_) | Source::File(_) => unreachable!(),
-        }
-    }
-
     pub fn to_stream(&mut self) -> *mut uv::uv_stream_t {
         match self {
             // SAFETY: uv::Pipe / uv::uv_tty_t embed uv_stream_t as their first member.
@@ -292,14 +291,6 @@ impl Source {
         }
     }
 
-    pub fn get_data(&self) -> *mut c_void {
-        match self {
-            Source::Pipe(pipe) => pipe.data,
-            Source::Tty(tty) => tty.data,
-            Source::SyncFile(file) | Source::File(file) => file.fs.data,
-        }
-    }
-
     pub fn ref_(&mut self) {
         match self {
             Source::Pipe(pipe) => pipe.ref_(),
@@ -313,14 +304,6 @@ impl Source {
             Source::Pipe(pipe) => pipe.unref(),
             Source::Tty(tty) => Self::tty_mut(tty).unref(),
             Source::SyncFile(_) | Source::File(_) => {}
-        }
-    }
-
-    pub fn has_ref(&self) -> bool {
-        match self {
-            Source::Pipe(pipe) => pipe.has_ref(),
-            Source::Tty(tty) => tty.has_ref(),
-            Source::SyncFile(_) | Source::File(_) => false,
         }
     }
 

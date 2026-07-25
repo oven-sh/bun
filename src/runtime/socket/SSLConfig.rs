@@ -24,9 +24,7 @@ use crate::webcore::blob::store::Data as StoreData;
 // Canonical re-exports (struct + registry live in bun_http now)
 // ──────────────────────────────────────────────────────────────────────────
 
-pub use bun_http::ssl_config::{
-    GlobalRegistry, SSLConfig, SharedPtr, SslConfig, WeakPtr, global_registry,
-};
+pub use bun_http::ssl_config::SSLConfig;
 
 // ──────────────────────────────────────────────────────────────────────────
 // ReadFromBlobError
@@ -176,19 +174,50 @@ impl SSLConfigFromJs for SSLConfig {
             as i32;
         result.request_cert = generated.request_cert as i32;
         result.secure_options = generated.secure_options;
+        result.ssl_min_version = generated.ssl_min_version;
+        result.ssl_max_version = generated.ssl_max_version;
+        result.session_timeout = generated.session_timeout;
+        result.allow_partial_trust_chain = generated.allow_partial_trust_chain;
+        if let Some(sigalgs) = generated.sigalgs.get() {
+            result.sigalgs = zbox_into_raw(&sigalgs.to_owned_slice_z());
+            any = true;
+        }
+        if let Some(ecdh_curve) = generated.ecdh_curve.get() {
+            let bytes = ecdh_curve.to_owned_slice_z();
+            // Node treats `ecdhCurve: 'auto'` (the documented default) as
+            // "use the library's default group list", i.e. skip the
+            // SSL_CTX_set1_groups_list call entirely.
+            if bytes.as_bytes() != b"auto" {
+                result.ecdh_curve = zbox_into_raw(&bytes);
+                any = true;
+            }
+        }
         any = any
             || result.low_memory_mode
             || generated.reject_unauthorized.is_some()
             || generated.request_cert
-            || result.secure_options != 0;
+            || result.secure_options != 0
+            || result.ssl_min_version != 0
+            || result.ssl_max_version != 0
+            || result.session_timeout != 0
+            || result.allow_partial_trust_chain;
 
         result.ca = handle_file_for_field(global, "ca", &generated.ca)?;
         result.cert = handle_file_for_field(global, "cert", &generated.cert)?;
         result.key = handle_file_for_field(global, "key", &generated.key)?;
+        result.crl = handle_file_for_field(global, "crl", &generated.crl)?;
         result.requires_custom_request_ctx = result.requires_custom_request_ctx
             || result.ca.is_some()
             || result.cert.is_some()
-            || result.key.is_some();
+            || result.key.is_some()
+            || result.crl.is_some()
+            || result.secure_options != 0
+            || result.ssl_min_version != 0
+            || result.ssl_max_version != 0
+            || !result.sigalgs.is_null()
+            || !result.ecdh_curve.is_null()
+            || result.session_timeout != 0
+            || result.allow_partial_trust_chain;
 
         if let Some(key_file) = generated.key_file.get() {
             result.key_file_name = handle_path(global, "keyFile", &key_file)?;
@@ -237,14 +266,25 @@ impl SSLConfigFromJs for SSLConfig {
     }
 }
 
-/// Free-function aliases for callers that prefer module-path syntax.
-#[inline]
-pub fn from_js(
+/// The `SSLConfig` for the `tls: true` shorthand: every option at its
+/// documented default, unlike `SSLConfig::zero()`.
+pub fn tls_true_defaults(vm: &VirtualMachine) -> SSLConfig {
+    let mut cfg = SSLConfig::zero();
+    cfg.reject_unauthorized = vm.get_tls_reject_unauthorized() as i32;
+    cfg
+}
+
+/// Whether a new TLS socket must enforce `rejectUnauthorized`: close the
+/// connection when the peer certificate fails verification.
+pub fn resolve_reject_unauthorized(
     vm: &VirtualMachine,
-    global: &JSGlobalObject,
-    value: JSValue,
-) -> JsResult<Option<SSLConfig>> {
-    <SSLConfig as SSLConfigFromJs>::from_js(vm, global, value)
+    cfg: Option<&SSLConfig>,
+    is_server: bool,
+) -> bool {
+    match cfg {
+        Some(cfg) => (!is_server || cfg.request_cert != 0) && cfg.reject_unauthorized != 0,
+        None => !is_server && vm.get_tls_reject_unauthorized(),
+    }
 }
 
 // ── handlePath / handleFile helpers ──────────────────────────────────

@@ -4,7 +4,6 @@
 // Generated bindings are available as `bun.generated.<basename>.*` on the native side,
 // or `Generated::<basename>::*` in C++ from including `Generated<basename>.h`.
 import assert from "node:assert";
-import fs from "node:fs";
 import * as path from "node:path";
 import {
   ArgStrategyChildItem,
@@ -1164,15 +1163,7 @@ const unsortedFiles = readdirRecursiveWithExclusionsAndExtensionsSync(src, ["nod
 // Sort for deterministic output
 for (const fileName of [...unsortedFiles].sort()) {
   const zigFile = path.relative(src, fileName.replace(/\.bind\.ts$/, ".zig"));
-  const zigFilePath = path.join(src, zigFile);
   let file = files.get(zigFile);
-  if (!fs.existsSync(zigFilePath)) {
-    // It would be nice if this would generate the file with the correct boilerplate
-    const bindName = path.basename(fileName);
-    throw new Error(
-      `${bindName} is missing a corresponding Zig file at ${zigFile}. Please create it and make sure it matches signatures in ${bindName}.`,
-    );
-  }
   if (!file) {
     file = { functions: [], typedefs: [] };
     files.set(zigFile, file);
@@ -1588,7 +1579,6 @@ writeIfNotChanged(
   path.join(codegenRoot, "GeneratedBindings.cpp"),
   [...headers].map(name => `#include ${str(name)}\n`).join("") + "\n" + cppInternal.buffer + "\n" + cpp.buffer,
 );
-writeIfNotChanged(path.join(src, "jsc/bindings/GeneratedBindings.zig"), zig.buffer + zigInternal.buffer);
 
 // Headers
 for (const [filename, { functions, typedefs }] of files) {

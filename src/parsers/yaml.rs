@@ -77,14 +77,12 @@ pub enum YamlParseError {
 
 bun_core::oom_from_alloc!(YamlParseError);
 
-impl From<YamlParseError> for bun_core::Error {
-    // Map each variant to its tag string via `bun.err!`, the same shape
-    // `json5::ExternalError` uses one file over.
+impl From<YamlParseError> for crate::Error {
     fn from(e: YamlParseError) -> Self {
         match e {
-            YamlParseError::OutOfMemory => bun_core::err!("OutOfMemory"),
-            YamlParseError::SyntaxError => bun_core::err!("SyntaxError"),
-            YamlParseError::StackOverflow => bun_core::err!("StackOverflow"),
+            YamlParseError::OutOfMemory => crate::Error::Alloc(bun_alloc::AllocError),
+            YamlParseError::SyntaxError => crate::Error::SyntaxError,
+            YamlParseError::StackOverflow => crate::Error::StackOverflow,
         }
     }
 }
@@ -110,7 +108,7 @@ pub fn print<Enc: Encoding, W: fmt::Write>(stream: Stream<'_, Enc>, writer: &mut
     // (currently unreachable — `rg yaml::print src/` has no callers) path.
     let _ = (stream, writer);
     panic!(
-        "yaml::print: Printer is commented out in yaml.zig (dead-by-spec; uses removed Node type)"
+        "yaml::print: Printer is commented out in the Zig original (dead-by-spec; uses removed Node type)"
     );
 }
 
@@ -194,10 +192,6 @@ impl Indent {
 
     pub fn inc(&mut self, n: usize) {
         self.0 += n;
-    }
-
-    pub fn dec(&mut self, n: usize) {
-        self.0 -= n;
     }
 
     pub fn add(self, n: usize) -> Indent {
@@ -318,14 +312,6 @@ impl Pos {
         }
     }
 
-    pub fn inc(&mut self, n: usize) {
-        self.0 += n;
-    }
-
-    pub fn dec(&mut self, n: usize) {
-        self.0 -= n;
-    }
-
     pub fn add(self, n: usize) -> Pos {
         Pos(self.0 + n)
     }
@@ -368,10 +354,6 @@ impl Line {
 
     pub fn inc(&mut self, n: usize) {
         self.0 += n;
-    }
-
-    pub fn dec(&mut self, n: usize) {
-        self.0 -= n;
     }
 
     pub fn add(self, n: usize) -> Line {
@@ -691,40 +673,6 @@ pub mod chars {
         cw == 0x20 || cw == 0x09
     }
 
-    pub fn is_ns_plain_safe_out<Enc: Encoding>(c: Enc::Unit) -> bool {
-        is_ns_char::<Enc>(c)
-    }
-
-    pub fn is_ns_plain_safe_in<Enc: Encoding>(c: Enc::Unit) -> bool {
-        // TODO: inline isCFlowIndicator
-        is_ns_char::<Enc>(c) && !is_c_flow_indicator::<Enc>(c)
-    }
-
-    pub fn is_c_indicator<Enc: Encoding>(c: Enc::Unit) -> bool {
-        matches!(
-            Enc::wide(c),
-            // - ? : , [ ] { } # & * ! | > ' " % @ `
-            0x2D | 0x3F
-                | 0x3A
-                | 0x2C
-                | 0x5B
-                | 0x5D
-                | 0x7B
-                | 0x7D
-                | 0x23
-                | 0x26
-                | 0x2A
-                | 0x21
-                | 0x7C
-                | 0x3E
-                | 0x27
-                | 0x22
-                | 0x25
-                | 0x40
-                | 0x60
-        )
-    }
-
     pub fn is_c_flow_indicator<Enc: Encoding>(c: Enc::Unit) -> bool {
         matches!(Enc::wide(c), 0x2C | 0x5B | 0x5D | 0x7B | 0x7D)
     }
@@ -800,8 +748,6 @@ pub enum ParseError {
 }
 
 bun_core::oom_from_alloc!(ParseError);
-
-bun_core::named_error_set!(ParseError);
 
 // ───────────────────────────────────────────────────────────────────────────
 // String / StringRange / StringBuilder
@@ -977,25 +923,6 @@ impl<'i, Enc: Encoding> StringBuilder<'i, Enc> {
         Ok(())
     }
 
-    pub fn append_source_slice(&mut self, off: Pos, end: Pos) -> Result<(), AllocError> {
-        self.drain_whitespace()?;
-        let input = self.input;
-        match &mut self.str {
-            YamlString::Range(range) => {
-                if range.is_empty() {
-                    range.off = off;
-                    range.end = off;
-                }
-                debug_assert!(range.end == off);
-                range.end = end;
-            }
-            YamlString::List(list) => {
-                list.extend_from_slice(&input[off.cast()..end.cast()]);
-            }
-        }
-        Ok(())
-    }
-
     pub fn append_expected_source_slice(
         &mut self,
         off: Pos,
@@ -1056,24 +983,6 @@ impl<'i, Enc: Encoding> StringBuilder<'i, Enc> {
         Ok(())
     }
 
-    pub fn append_n_times(&mut self, unit: Enc::Unit, n: usize) -> Result<(), AllocError> {
-        if n == 0 {
-            return Ok(());
-        }
-        self.drain_whitespace()?;
-        let input = self.input;
-        match &mut self.str {
-            YamlString::Range(range) => {
-                let mut list: Vec<Enc::Unit> = Vec::with_capacity(range.len() + n);
-                list.extend_from_slice(range.slice(input));
-                bun_core::vec::push_n(&mut list, unit, n);
-                self.str = YamlString::List(list);
-            }
-            YamlString::List(list) => bun_core::vec::push_n(list, unit, n),
-        }
-        Ok(())
-    }
-
     pub fn len(&self) -> usize {
         self.str.len()
     }
@@ -1129,8 +1038,7 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
                 if scalar_str.len() == resolved_scalar_len {
                     drop(scalar_str);
                     break 'scalar TokenScalar {
-                        multiline,
-                        is_quoted: false,
+                        style: ScalarStyle::Plain { multiline },
                         data: scalar,
                     };
                 }
@@ -1139,8 +1047,7 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
             }
 
             break 'scalar TokenScalar {
-                multiline,
-                is_quoted: false,
+                style: ScalarStyle::Plain { multiline },
                 data: NodeScalar::String(scalar_str),
             };
         };
@@ -1178,16 +1085,6 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
         pos: Pos,
     ) -> Result<(), AllocError> {
         self.str_builder.append_source_whitespace(unit, pos)
-    }
-
-    pub fn append_source_slice(
-        &mut self,
-        parser: &Parser<'i, Enc>,
-        off: Pos,
-        end: Pos,
-    ) -> Result<(), AllocError> {
-        self.check_append(parser);
-        self.str_builder.append_source_slice(off, end)
     }
 
     // may or may not contain whitespace
@@ -1229,19 +1126,6 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
     ) -> Result<(), AllocError> {
         self.check_append(parser);
         self.str_builder.append_slice(str)
-    }
-
-    pub fn append_n_times(
-        &mut self,
-        parser: &Parser<'i, Enc>,
-        unit: Enc::Unit,
-        n: usize,
-    ) -> Result<(), AllocError> {
-        if n == 0 {
-            return Ok(());
-        }
-        self.check_append(parser);
-        self.str_builder.append_n_times(unit, n)
     }
 
     pub fn append_whitespace_n_times(
@@ -1787,7 +1671,7 @@ impl<Enc: Encoding> NodeScalar<Enc> {
         match self {
             NodeScalar::Null => Expr::init(E::Null {}, pos.loc()),
             NodeScalar::Boolean(value) => Expr::init(E::Boolean { value: *value }, pos.loc()),
-            NodeScalar::Number(value) => Expr::init(E::Number { value: *value }, pos.loc()),
+            NodeScalar::Number(value) => Expr::init(E::Number::new(*value), pos.loc()),
             NodeScalar::String(value) => {
                 // For `Utf16` we route through `E::String::init_utf16`.
                 //
@@ -1871,7 +1755,7 @@ fn yaml_merge_key_expr_eql(l: &Expr, r: &Expr) -> bool {
     match (&l.data, &r.data) {
         (ast::ExprData::ENull(_), _) => true,
         (ast::ExprData::EBoolean(lb), ast::ExprData::EBoolean(rb)) => lb.value == rb.value,
-        (ast::ExprData::ENumber(ln), ast::ExprData::ENumber(rn)) => ln.value == rn.value,
+        (ast::ExprData::ENumber(ln), ast::ExprData::ENumber(rn)) => ln.value() == rn.value(),
         (ast::ExprData::EString(ls), ast::ExprData::EString(rs)) => {
             // UTF-8/UTF-16-aware string equality.
             if ls.is_utf16 != rs.is_utf16 {
@@ -1899,7 +1783,7 @@ fn yaml_merge_key_expr_hash(key: &Expr) -> u64 {
         ast::ExprData::ENull(_) => 0,
         ast::ExprData::EBoolean(b) => 1 + b.value as u64,
         ast::ExprData::ENumber(n) => {
-            let value = if n.value == 0.0 { 0.0 } else { n.value };
+            let value = if n.value() == 0.0 { 0.0 } else { n.value() };
             value.to_bits()
         }
         ast::ExprData::EString(s) => s.hash(),
@@ -1977,8 +1861,22 @@ pub enum TokenData<Enc: Encoding> {
 #[derive(Clone)]
 pub struct TokenScalar<Enc: Encoding> {
     pub data: NodeScalar<Enc>,
-    pub multiline: bool,
-    pub is_quoted: bool,
+    pub style: ScalarStyle,
+}
+
+/// How a scalar token was written in the source. Only `Plain` carries
+/// `multiline`: the sole reader (`parse_block_indented`'s tag-neutral
+/// rewind) cares exclusively about plain single-line scalars, and the
+/// value has no well-defined meaning for quoted or block styles.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum ScalarStyle {
+    /// [131] ns-plain. `multiline` = source text spans more than one line,
+    /// tracked by `ScalarResolverCtx::check_append`.
+    Plain { multiline: bool },
+    /// [170] `|` literal or [174] `>` folded.
+    Block,
+    /// [120] single-quoted or [109] double-quoted.
+    Quoted,
 }
 
 #[derive(Clone, Copy)]
@@ -3280,7 +3178,10 @@ impl MappingProps {
         }
     }
 
-    pub fn append(&mut self, prop: G::Property) -> Result<(), AllocError> {
+    pub fn append(&mut self, mut prop: G::Property) -> Result<(), AllocError> {
+        if let Some(key) = &prop.key {
+            prop.flags |= E::own_key_property_flags(key);
+        }
         self.list.push(prop);
         Ok(())
     }
@@ -3345,12 +3246,11 @@ impl MappingProps {
         };
 
         if !is_merge_key {
-            self.list.push(G::Property {
+            return self.append(G::Property {
                 key: Some(key),
                 value: Some(value),
                 ..Default::default()
             });
-            return Ok(());
         }
 
         match &value.data {
@@ -3365,14 +3265,11 @@ impl MappingProps {
                 }
                 Ok(())
             }
-            _ => {
-                self.list.push(G::Property {
-                    key: Some(key),
-                    value: Some(value),
-                    ..Default::default()
-                });
-                Ok(())
-            }
+            _ => self.append(G::Property {
+                key: Some(key),
+                value: Some(value),
+                ..Default::default()
+            }),
         }
     }
 
@@ -3438,19 +3335,6 @@ impl<Enc: Encoding> NodeProperties<Enc> {
 
     pub fn anchor_line(&self) -> Option<Line> {
         self.has_anchor.as_ref().map(|t| t.line)
-    }
-
-    pub fn anchor_indent(&self) -> Option<Indent> {
-        self.has_anchor.as_ref().map(|t| t.indent)
-    }
-
-    pub fn mapping_anchor(&self) -> Option<StringRange> {
-        self.has_mapping_anchor
-            .as_ref()
-            .and_then(|t| match &t.data {
-                TokenData::Anchor(r) => Some(*r),
-                _ => None,
-            })
     }
 
     pub fn implicit_key_anchors(
@@ -3531,10 +3415,6 @@ impl<Enc: Encoding> NodeProperties<Enc> {
         let t = self.tag();
         self.has_tag = None;
         t
-    }
-
-    pub fn tag_indent(&self) -> Option<Indent> {
-        self.has_tag.as_ref().map(|t| t.indent)
     }
 }
 
@@ -3677,17 +3557,16 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     // is now abandoned to the parent, rewind to its start and
                     // re-scan tag-neutral so the sibling key resolves under
                     // the default schema. Only plain single-line scalars are
-                    // tag-resolved at scan time; quoted scalars ignore
+                    // tag-resolved at scan time; quoted/block scalars ignore
                     // ScanOptions.tag (and their token.start is past the
-                    // opening quote, so rewind would be wrong); multiline
+                    // opening indicator, so rewind would be wrong); multiline
                     // plain scalars may have advanced parser state across
                     // lines that a positional rewind cannot fully restore.
                     if value_tag.is_some()
                         && matches!(
                             &self.token.data,
                             TokenData::Scalar(TokenScalar {
-                                is_quoted: false,
-                                multiline: false,
+                                style: ScalarStyle::Plain { multiline: false },
                                 ..
                             })
                         )
@@ -4228,7 +4107,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         _ => unreachable!("token.data was Scalar at match guard"),
                     };
 
-                    let json_key = if scalar.is_quoted {
+                    let json_key = if scalar.style == ScalarStyle::Quoted {
                         self.maybe_set_json_key(opts.flow_pair_allowed)?
                     } else {
                         false
@@ -4446,6 +4325,9 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         loop {
             match __c {
                 0 => {
+                    if !self.is_eof() {
+                        return Err(ParseError::UnexpectedCharacter);
+                    }
                     return Ok(ctx.done(self));
                 }
 
@@ -4790,6 +4672,9 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         loop {
             match __c {
                 0 => {
+                    if !self.is_eof() {
+                        return Err(ParseError::UnexpectedCharacter);
+                    }
                     return Ok((
                         indent_indicator.unwrap_or(IndentIndicator::DEFAULT),
                         chomp.unwrap_or(Chomp::DEFAULT),
@@ -4828,6 +4713,9 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     if Enc::wide(self.next()) == 0x23 /* '#' */ {
                         self.inc(1);
                         while !self.is_b_char_or_eof() {
+                            if Enc::wide(self.next()) == 0 {
+                                return Err(ParseError::UnexpectedCharacter);
+                            }
                             self.inc(1);
                         }
                     }
@@ -4933,8 +4821,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     line: self.line,
                     resolved: TokenScalar {
                         data: NodeScalar::String(YamlString::List(self.text)),
-                        multiline: true,
-                        is_quoted: false,
+                        style: ScalarStyle::Block,
                     },
                 }))
             }
@@ -5013,6 +4900,9 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             let __c = Enc::wide(self.next());
             match __c {
                 0 => {
+                    if !self.is_eof() {
+                        return Err(ParseError::UnexpectedCharacter);
+                    }
                     // Official yaml-test-suite JEF9/02: trailing indentation
                     // at EOF without a final break counts as one trailing
                     // empty line for chomping (matches eemeli/yaml + js-yaml).
@@ -5103,7 +4993,12 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         let mut __c = first;
         loop {
             match __c {
-                0 => return Ok(ctx.done()?),
+                0 => {
+                    if !self.is_eof() {
+                        return Err(ParseError::UnexpectedCharacter);
+                    }
+                    return Ok(ctx.done()?);
+                }
                 0x0D => {
                     if Enc::wide(self.peek(1)) == 0x0A {
                         self.inc(1);
@@ -5308,9 +5203,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         indent: scalar_indent,
                         line: scalar_line,
                         resolved: TokenScalar {
-                            // TODO: wrong!
-                            multiline: self.line != scalar_line,
-                            is_quoted: true,
+                            style: ScalarStyle::Quoted,
                             data: NodeScalar::String(YamlString::List(text)),
                         },
                     }));
@@ -5386,9 +5279,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         indent: scalar_indent,
                         line: scalar_line,
                         resolved: TokenScalar {
-                            // TODO: wrong!
-                            multiline: self.line != scalar_line,
-                            is_quoted: true,
+                            style: ScalarStyle::Quoted,
                             data: NodeScalar::String(YamlString::List(text)),
                         },
                     }));
@@ -5465,25 +5356,47 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         }
     }
 
-    // TODO: should this append replacement characters instead of erroring?
-    fn decode_hex_code_point(
-        &mut self,
-        escape: Escape,
-        text: &mut Vec<Enc::Unit>,
-    ) -> Result<(), ParseError> {
+    fn read_hex_digits(&mut self, count: u8) -> Result<u32, ParseError> {
         let mut value: u32 = 0;
-        for _ in 0..(escape as u8) {
+        for _ in 0..count {
             self.inc(1);
             let digit = Enc::wide(self.next());
             let num =
                 bun_core::fmt::hex_digit_value_u32(digit).ok_or(ParseError::UnexpectedCharacter)?;
             value = value * 16 + num as u32;
         }
+        Ok(value)
+    }
 
-        if value > 0x10_FFFF {
+    fn decode_hex_code_point(
+        &mut self,
+        escape: Escape,
+        text: &mut Vec<Enc::Unit>,
+    ) -> Result<(), ParseError> {
+        let mut cp = self.read_hex_digits(escape as u8)?;
+
+        if cp > 0x10_FFFF {
             return Err(ParseError::UnexpectedCharacter);
         }
-        let cp = value;
+
+        // JSON encodes supplementary code points as a `\uD8xx\uDCxx` surrogate
+        // pair; YAML 1.2 is a JSON superset. Lone surrogates remain an error.
+        if (0xD800..=0xDFFF).contains(&cp) {
+            if !matches!(escape, Escape::LowerU)
+                || !bun_core::strings::u16_is_lead(cp as u16)
+                || Enc::wide(self.peek(1)) != 0x5C /* '\\' */
+                || Enc::wide(self.peek(2)) != 0x75
+            /* 'u' */
+            {
+                return Err(ParseError::UnexpectedCharacter);
+            }
+            self.inc(2);
+            let low = self.read_hex_digits(Escape::LowerU as u8)?;
+            if !bun_core::strings::u16_is_trail(low as u16) {
+                return Err(ParseError::UnexpectedCharacter);
+            }
+            cp = bun_core::strings::u16_get_supplementary(cp as u16, low as u16);
+        }
 
         match Enc::KIND {
             EncodingKind::Utf8 => {
@@ -5495,10 +5408,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 }
             }
             EncodingKind::Utf16 => {
-                // Surrogate code points are rejected.
-                if (0xD800..=0xDFFF).contains(&cp) {
-                    return Err(ParseError::UnexpectedCharacter);
-                }
                 if cp < 0x10000 {
                     text.push(Enc::unit_from_u16(cp as u16));
                 } else {
@@ -5685,6 +5594,12 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             let c = Enc::wide(self.next());
             match c {
                 0 => {
+                    // [1] c-printable excludes U+0000. `next()` returns NUL as
+                    // the EOF sentinel, so a literal NUL in the input must be
+                    // rejected here rather than silently ending the stream.
+                    if !self.is_eof() {
+                        return Err(ParseError::UnexpectedCharacter);
+                    }
                     let start = self.pos;
                     break 'next Token::eof(self.token_init(start));
                 }
@@ -5829,6 +5744,9 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     }
                     self.inc(1);
                     while !self.is_b_char_or_eof() {
+                        if Enc::wide(self.next()) == 0 {
+                            return Err(ParseError::UnexpectedCharacter);
+                        }
                         self.inc(1);
                     }
                     continue;
@@ -6119,6 +6037,9 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             }
             self.inc(1);
             while !self.is_b_char_or_eof() {
+                if Enc::wide(self.next()) == 0 {
+                    return Err(ParseError::UnexpectedCharacter);
+                }
                 self.inc(1);
             }
         }

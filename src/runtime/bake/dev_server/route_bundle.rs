@@ -92,10 +92,9 @@ impl RouteBundle {
             // outstanding `&`/`&mut` borrow exists across this call.
             unsafe { StaticRoute::deref_(bundle.as_ptr()) };
         }
-        // OS CSPRNG.
         self.client_script_generation = {
             let mut buf = [0u8; 4];
-            bun_core::csprng(&mut buf);
+            bun_boringssl_sys::rand_bytes(&mut buf);
             u32::from_ne_bytes(buf)
         };
         match &mut self.data {
@@ -164,8 +163,9 @@ impl RouteBundle {
     }
 }
 
-// `deinit` is fully subsumed by Drop:
-//   - client_bundle / cached_response: Option<Arc<StaticRoute>> drop = .deref()
-//   - Framework: StrongOptional fields drop = .deinit()
-//   - Html: bundled_html_text Box<[u8]> drop = allocator.free()
-//           html_bundle RefPtr drop = .deref()
+// Zig `RouteBundle.deinit` equivalent, split across two mechanisms:
+//   - Drop: `Framework` StrongOptional fields (= .deinit()) and
+//     `Html.bundled_html_text` Box<[u8]> (= allocator.free()).
+//   - `DevServer`'s `Drop` (explicit): `client_bundle`, `Html.cached_response`
+//     (BackRef, no Drop) and `Html.html_bundle` (raw ptr, no Drop) each hold
+//     an intrusive ref that is deref'd there.

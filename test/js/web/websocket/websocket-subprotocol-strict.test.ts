@@ -17,6 +17,10 @@ describe("WebSocket strict RFC 6455 subprotocol handling", () => {
     });
 
     server.on("connection", socket => {
+      // Raw test server: tolerate client aborts, surface anything unexpected.
+      socket.on("error", (err: NodeJS.ErrnoException) => {
+        if (err.code !== "ECONNRESET" && err.code !== "EPIPE" && err.code !== "ECONNABORTED") throw err;
+      });
       let requestData = "";
 
       socket.on("data", data => {
@@ -187,5 +191,32 @@ describe("WebSocket strict RFC 6455 subprotocol handling", () => {
   it("should handle protocol with dots", async () => {
     await using server = await createTestServer(["Sec-WebSocket-Protocol: com.example.chat"]);
     await expectConnectionSuccess(server.port, ["com.example.chat", "other"], "com.example.chat");
+  });
+
+  it("should fail the connection when subprotocols were requested but the server omits the Sec-WebSocket-Protocol header, and should connect without a subprotocol when none were requested and the server sends none", async () => {
+    await using server = await createTestServer([]);
+    const { promise: closePromise, resolve: resolveClose } = Promise.withResolvers<CloseEvent>();
+
+    const ws = new WebSocket(`ws://localhost:${server.port}`, ["chat", "echo"]);
+    const onopenMock = mock(() => {});
+    ws.onopen = onopenMock;
+    ws.onclose = close => resolveClose(close);
+
+    const close = await closePromise;
+    expect(close.code).toBe(1002);
+    expect(close.reason).toBe("Missing client protocol");
+    expect(onopenMock).not.toHaveBeenCalled();
+
+    const { promise: openPromise, resolve: resolveOpen, reject } = Promise.withResolvers<void>();
+    const bare = new WebSocket(`ws://localhost:${server.port}`);
+    try {
+      bare.onopen = () => resolveOpen();
+      bare.onerror = reject;
+      bare.onclose = close => reject(new Error(`unexpected close: ${close.code} ${close.reason}`));
+      await openPromise;
+      expect(bare.protocol).toBe("");
+    } finally {
+      bare.terminate();
+    }
   });
 });

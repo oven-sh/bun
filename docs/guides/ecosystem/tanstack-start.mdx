@@ -4,7 +4,7 @@ sidebarTitle: TanStack Start with Bun
 mode: center
 ---
 
-[TanStack Start](https://tanstack.com/start/latest) is a full-stack framework powered by TanStack Router. It supports full-document SSR, streaming, server functions, bundling and more, powered by TanStack Router and [Vite](https://vite.dev/).
+[TanStack Start](https://tanstack.com/start/latest) is a full-stack framework powered by TanStack Router and [Vite](https://vite.dev/). It supports full-document SSR, streaming, server functions, and bundling.
 
 ---
 
@@ -18,18 +18,16 @@ mode: center
 
   </Step>
   <Step title="Start the dev server">
-    Change to the project directory and run the dev server with Bun.
+    Change to the project directory and start the Vite dev server with Bun.
 
     ```sh terminal icon="terminal"
     cd my-tanstack-app
     bun --bun run dev
     ```
 
-    This starts the Vite dev server with Bun.
-
   </Step>
   <Step title="Update scripts in package.json">
-   Modify the scripts field in your `package.json` by prefixing the Vite CLI commands with `bun --bun`. This ensures that Bun executes the Vite CLI for common tasks like `dev`, `build`, and `preview`.
+   In the scripts field of your `package.json`, prefix the Vite CLI commands with `bun --bun` so that Bun runs the Vite CLI for `dev`, `build`, and `preview`.
 
     ```json package.json icon="file-json"
     {
@@ -48,13 +46,13 @@ mode: center
 
 ## Hosting
 
-To host your TanStack Start app, you can use [Nitro](https://nitro.build/) or a custom Bun server for production deployments.
+To host your TanStack Start app in production, use [Nitro](https://nitro.build/) or a custom Bun server.
 
 <Tabs>
   <Tab title="Nitro">
     <Steps>
       <Step title="Add Nitro to your project">
-        Add [Nitro](https://nitro.build/) to your project. This tool allows you to deploy your TanStack Start app to different platforms.
+        Add [Nitro](https://nitro.build/) to your project to deploy your TanStack Start app to different platforms.
 
         ```sh terminal icon="terminal"
         bun add nitro
@@ -62,7 +60,7 @@ To host your TanStack Start app, you can use [Nitro](https://nitro.build/) or a 
 
       </Step>
       <Step title={<span>Update your <code>vite.config.ts</code> file</span>}>
-        Update your `vite.config.ts` file to include the necessary plugins for TanStack Start with Bun.
+        Add the Nitro plugin to your `vite.config.ts` file.
 
         ```ts vite.config.ts icon="/icons/typescript.svg"
         // other imports...
@@ -104,10 +102,10 @@ To host your TanStack Start app, you can use [Nitro](https://nitro.build/) or a 
 
       </Step>
       <Step title="Deploy your app">
-        Check out one of our guides to deploy your app to a hosting provider.
+        Use one of the following guides to deploy your app to a hosting provider.
 
         <Note>
-          When deploying to Vercel, you can either add the `"bunVersion": "1.x"` to your `vercel.json` file, or add it to the `nitro` config in your `vite.config.ts` file:
+          When deploying to Vercel, either add `"bunVersion": "1.x"` to your `vercel.json` file, or set the Bun version in the `nitro` config in your `vite.config.ts` file:
 
           <Warning>
             Do **not** use the `bun` Nitro preset when deploying to Vercel.
@@ -135,12 +133,12 @@ To host your TanStack Start app, you can use [Nitro](https://nitro.build/) or a 
   </Tab>
   <Tab title="Custom Server">
     <Note>
-      This custom server implementation is based on [TanStack's Bun template](https://github.com/TanStack/router/blob/main/examples/react/start-bun/server.ts). It provides fine-grained control over static asset serving, including configurable memory management that preloads small files into memory for fast serving while serving larger files on-demand. This approach is useful when you need precise control over resource usage and asset loading behavior in production deployments.
+      This custom server is based on [TanStack's Bun template](https://github.com/TanStack/router/blob/main/examples/react/start-bun/server.ts). It gives you fine-grained control over static asset serving: small files are preloaded into memory and larger files are served on-demand, with configurable limits on what gets preloaded.
     </Note>
 
     <Steps>
       <Step title="Create the production server">
-        Create a `server.ts` file in your project root with the following custom server implementation:
+        Create a `server.ts` file in your project root:
 
         ```ts server.ts icon="/icons/typescript.svg" expandable
         /**
@@ -723,7 +721,7 @@ To host your TanStack Start app, you can use [Nitro](https://nitro.build/) or a 
         bun run start
         ```
 
-        The server will start on port 3000 by default (configurable via `PORT` environment variable).
+        The server listens on port 3000 by default; set the `PORT` environment variable to change it.
 
       </Step>
     </Steps>
@@ -788,4 +786,4 @@ To host your TanStack Start app, you can use [Nitro](https://nitro.build/) or a 
 
 ---
 
-[→ See TanStack Start's official documentation](https://tanstack.com/start/latest/docs/framework/react/guide/hosting) for more information on hosting.
+[→ See TanStack Start's hosting documentation](https://tanstack.com/start/latest/docs/framework/react/guide/hosting)

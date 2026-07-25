@@ -17,7 +17,7 @@ impl ConfigVersion {
         let ExprData::ENumber(e_number) = &expr.data else {
             return None;
         };
-        let version: f64 = e_number.value;
+        let version: f64 = e_number.value();
 
         if version == 0.0 {
             return Some(ConfigVersion::V0);

@@ -37,11 +37,6 @@ pub enum ParseError {
     #[error("Clear")]
     Clear,
 }
-impl From<ParseError> for bun_core::Error {
-    fn from(_: ParseError) -> Self {
-        bun_core::err!("Clear")
-    }
-}
 
 /// Parse the first usable `h3` alternative out of an `Alt-Svc` field-value, or
 /// `None` if none / `clear`. Tolerant of extra whitespace and unknown params.

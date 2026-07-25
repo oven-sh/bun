@@ -86,6 +86,12 @@ JSC_DEFINE_HOST_FUNCTION(jsCheckPrimeSync, (JSC::JSGlobalObject * lexicalGlobalO
     auto candidateView = getArrayBufferOrView2(lexicalGlobalObject, scope, candidateValue, "candidate"_s, jsUndefined());
     RETURN_IF_EXCEPTION(scope, {});
 
+    ncrypto::BignumPointer candidate = ncrypto::BignumPointer(candidateView->data(), candidateView->size());
+    if (!candidate) {
+        throwCryptoError(lexicalGlobalObject, scope, ERR_get_error(), "BignumPointer"_s);
+        return {};
+    }
+
     JSValue optionsValue = callFrame->argument(1);
     if (!optionsValue.isUndefined()) {
         V::validateObject(scope, lexicalGlobalObject, optionsValue, "options"_s);
@@ -102,12 +108,6 @@ JSC_DEFINE_HOST_FUNCTION(jsCheckPrimeSync, (JSC::JSGlobalObject * lexicalGlobalO
             V::validateInt32(scope, lexicalGlobalObject, checksValue, "options.checks"_s, jsNumber(0), jsUndefined(), &checks);
             RETURN_IF_EXCEPTION(scope, {});
         }
-    }
-
-    ncrypto::BignumPointer candidate = ncrypto::BignumPointer(candidateView->data(), candidateView->size());
-    if (!candidate) {
-        throwCryptoError(lexicalGlobalObject, scope, ERR_get_error(), "BignumPointer"_s);
-        return {};
     }
 
     auto res = candidate.isPrime(checks, [](int32_t a, int32_t b) -> bool {
@@ -131,6 +131,12 @@ JSC_DEFINE_HOST_FUNCTION(jsCheckPrime, (JSC::JSGlobalObject * lexicalGlobalObjec
 
     auto candidateView = getArrayBufferOrView2(lexicalGlobalObject, scope, candidateValue, "candidate"_s, jsUndefined());
     RETURN_IF_EXCEPTION(scope, {});
+
+    ncrypto::BignumPointer candidate = ncrypto::BignumPointer(candidateView->data(), candidateView->size());
+    if (!candidate) {
+        throwCryptoError(lexicalGlobalObject, scope, ERR_get_error(), "BignumPointer"_s);
+        return {};
+    }
 
     JSValue optionsValue = callFrame->argument(1);
     JSValue callback = callFrame->argument(2);
@@ -157,12 +163,6 @@ JSC_DEFINE_HOST_FUNCTION(jsCheckPrime, (JSC::JSGlobalObject * lexicalGlobalObjec
             V::validateInt32(scope, lexicalGlobalObject, checksValue, "options.checks"_s, jsNumber(0), jsUndefined(), &checks);
             RETURN_IF_EXCEPTION(scope, {});
         }
-    }
-
-    ncrypto::BignumPointer candidate = ncrypto::BignumPointer(candidateView->data(), candidateView->size());
-    if (!candidate) {
-        throwCryptoError(lexicalGlobalObject, scope, ERR_get_error(), "BignumPointer"_s);
-        return {};
     }
 
     CheckPrimeJob::createAndSchedule(lexicalGlobalObject, WTF::move(candidate), checks, callback);

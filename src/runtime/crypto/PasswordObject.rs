@@ -32,8 +32,6 @@ use bun_sha_hmac::SHA512;
 
 pub struct PasswordObject;
 
-impl PasswordObject {}
-
 #[derive(Copy, Clone, PartialEq, Eq, strum::IntoStaticStr)]
 #[repr(u8)]
 pub enum Algorithm {
@@ -241,22 +239,7 @@ impl Default for Argon2Params {
     }
 }
 
-bun_core::comptime_string_map! {
-    pub static ALGORITHM_LABEL: Algorithm = {
-        b"argon2i" => Algorithm::Argon2i,
-        b"argon2d" => Algorithm::Argon2d,
-        b"argon2id" => Algorithm::Argon2id,
-        b"bcrypt" => Algorithm::Bcrypt,
-    };
-}
-
 impl Algorithm {
-    pub const ARGON2: Algorithm = Algorithm::Argon2id;
-
-    pub const LABEL: &'static __ComptimeStringMap_ALGORITHM_LABEL = &ALGORITHM_LABEL;
-
-    pub const DEFAULT: Algorithm = Algorithm::ARGON2;
-
     pub fn get(pw: &[u8]) -> Option<Algorithm> {
         if pw[0] != b'$' {
             return None;
@@ -286,9 +269,9 @@ impl Algorithm {
     }
 }
 
-/// `bun_core::Error` (NonZeroU16 tag). The pwhash shim
-/// must `impl From<pwhash::Error> for bun_core::Error`.
-pub(crate) type HashError = bun_core::Error;
+/// `crate::Error` (NonZeroU16 tag). The pwhash shim
+/// must `impl From<pwhash::Error> for crate::Error`.
+pub(crate) type HashError = crate::Error;
 
 impl PasswordObject {
     // This is purposely simple because nobody asked to make it more complicated
@@ -361,7 +344,7 @@ impl PasswordObject {
 
         let algo = match algorithm.or_else(|| Algorithm::get(previous_hash)) {
             Some(a) => a,
-            None => return Err(bun_core::err!("UnsupportedAlgorithm")),
+            None => return Err(crate::Error::UnsupportedAlgorithm),
         };
 
         Self::verify_with_algorithm(password, previous_hash, algo)
@@ -376,12 +359,8 @@ impl PasswordObject {
             Algorithm::Argon2id | Algorithm::Argon2d | Algorithm::Argon2i => {
                 match pwhash::argon2::str_verify(previous_hash, password, Default::default()) {
                     Ok(()) => Ok(true),
-                    Err(err) => {
-                        if err == bun_core::err!("PasswordVerificationFailed") {
-                            return Ok(false);
-                        }
-                        Err(err)
-                    }
+                    Err(crate::Error::PasswordVerificationFailed) => Ok(false),
+                    Err(err) => Err(err),
                 }
             }
             Algorithm::Bcrypt => {
@@ -404,12 +383,8 @@ impl PasswordObject {
                     },
                 ) {
                     Ok(()) => Ok(true),
-                    Err(err) => {
-                        if err == bun_core::err!("PasswordVerificationFailed") {
-                            return Ok(false);
-                        }
-                        Err(err)
-                    }
+                    Err(crate::Error::PasswordVerificationFailed) => Ok(false),
+                    Err(err) => Err(err),
                 }
             }
         }
@@ -552,7 +527,7 @@ impl PasswordOp for VerifyOp {
 
 /// Build the JS `Error` instance for a failed hash/verify, with `code` set
 /// to `PASSWORD_<SCREAMING_SNAKE_ERROR_NAME>`.
-fn password_error_instance(err: HashError, verb: &str, g: &JSGlobalObject) -> JSValue {
+fn password_error_instance(err: &HashError, verb: &str, g: &JSGlobalObject) -> JSValue {
     let mut error_code: Vec<u8> = Vec::new();
     write!(
         &mut error_code,
@@ -653,7 +628,7 @@ impl<Op: PasswordOp> PasswordResult<Op> {
         r#ref.unref(bun_io::js_vm_ctx());
         match value {
             Err(err) => {
-                let error_instance = password_error_instance(err, Op::ERR_VERB, global);
+                let error_instance = password_error_instance(&err, Op::ERR_VERB, global);
                 promise.reject_with_async_stack(global, Ok(error_instance))?;
             }
             Ok(v) => {
@@ -681,7 +656,7 @@ impl JSPasswordObject {
         if SYNC {
             return match op.compute(&password) {
                 Err(err) => {
-                    let error_instance = password_error_instance(err, Op::ERR_VERB, global_object);
+                    let error_instance = password_error_instance(&err, Op::ERR_VERB, global_object);
                     Err(global_object.throw_value(error_instance))
                 }
                 Ok(v) => Ok(Op::to_js(v, global_object)),
@@ -740,8 +715,7 @@ pub(crate) fn js_password_object_hash(
     global_object: &JSGlobalObject,
     callframe: &CallFrame,
 ) -> JsResult<JSValue> {
-    let arguments_ = callframe.arguments_old::<2>();
-    let arguments = &arguments_.ptr[..arguments_.len];
+    let arguments = callframe.arguments();
 
     if arguments.len() < 1 {
         return Err(global_object.throw_not_enough_arguments("hash", 1, 0));
@@ -780,8 +754,7 @@ pub(crate) fn js_password_object_hash_sync(
     global_object: &JSGlobalObject,
     callframe: &CallFrame,
 ) -> JsResult<JSValue> {
-    let arguments_ = callframe.arguments_old::<2>();
-    let arguments = &arguments_.ptr[..arguments_.len];
+    let arguments = callframe.arguments();
 
     if arguments.len() < 1 {
         return Err(global_object.throw_not_enough_arguments("hash", 1, 0));
@@ -825,8 +798,7 @@ pub(crate) fn js_password_object_verify(
     global_object: &JSGlobalObject,
     callframe: &CallFrame,
 ) -> JsResult<JSValue> {
-    let arguments_ = callframe.arguments_old::<3>();
-    let arguments = &arguments_.ptr[..arguments_.len];
+    let arguments = callframe.arguments();
 
     if arguments.len() < 2 {
         return Err(global_object.throw_not_enough_arguments("verify", 2, 0));
@@ -906,8 +878,7 @@ pub(crate) fn js_password_object_verify_sync(
     global_object: &JSGlobalObject,
     callframe: &CallFrame,
 ) -> JsResult<JSValue> {
-    let arguments_ = callframe.arguments_old::<3>();
-    let arguments = &arguments_.ptr[..arguments_.len];
+    let arguments = callframe.arguments();
 
     if arguments.len() < 2 {
         return Err(global_object.throw_not_enough_arguments("verify", 2, 0));

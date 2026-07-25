@@ -68,7 +68,7 @@ impl Default for TimerObjectInternals {
 pub use bun_event_loop::EventLoopTimer::TimerFlags as Flags;
 
 // ──────────────────────────────────────────────────────────────────────────
-// `runImmediateTask` path — un-gated for `__bun_run_immediate_task` (dispatch.rs).
+// `runImmediateTask` path for `__bun_run_immediate_task` (dispatch.rs).
 // ──────────────────────────────────────────────────────────────────────────
 
 // C++ symbol emitted from ImmediateList.cpp / setTimeout.cpp; already linked.
@@ -147,8 +147,9 @@ impl TimerObjectInternals {
     /// `cancel()` skips its own `remove`/`deref` because `state` is already
     /// `CANCELLED`, which is why the explicit `deref` follows.
     ///
-    /// `vm` is the live per-thread VM; `All.lock` must NOT be held (the
-    /// `set_enable_keeping_event_loop_alive` write reaches `&mut All`).
+    /// `vm` is the live per-thread VM; no borrow of `All` may be live across
+    /// this call (`cancel()` reaches `All::remove`, which forms its own
+    /// `&mut All`).
     pub(crate) fn release_heap_pin(this: core::ptr::NonNull<Self>, vm: *mut VirtualMachine) {
         // SAFETY: caller guarantees the parent box is live (refcount ≥ 1).
         let internals = unsafe { this.as_ref() };
@@ -290,8 +291,7 @@ impl TimerObjectInternals {
             flags: {
                 let mut f = Flags::default();
                 f.set_kind(kind);
-                // SAFETY: `state` is the boxed per-thread `RuntimeState`;
-                // single-threaded JS heap so no concurrent `&mut` to `.timer`.
+                // SAFETY: `state` is the boxed per-thread `RuntimeState`.
                 f.set_epoch(unsafe { (*state).timer.epoch });
                 Cell::new(f)
             },
@@ -833,13 +833,17 @@ impl TimerObjectInternals {
             unsafe { (*state).timer.remove(self.event_loop_timer()) };
         }
 
-        // (c) `vm.timer.maps.get(kind).orderedRemove(id)` if
+        // (c) `vm.timer.maps.get(kind).swapRemove(id)` if
         //     `has_accessed_primitive` — drops the i32→*mut EventLoopTimer
-        //     entry minted by `toPrimitive`.
+        //     entry minted by `toPrimitive`. Swap-remove: the id map is only
+        //     ever keyed into, never iterated in order, and `deinit` runs for
+        //     every id-accessed timer a GC sweep collects, so the ordered
+        //     remove's O(n) shift + index rebuild here was O(n²) across a
+        //     sweep.
         if self.flags.get().has_accessed_primitive() {
             // SAFETY: as above — fresh `&mut` to `.timer.maps` for this call.
             let map = unsafe { (*state).timer.maps.get(kind) };
-            if map.remove(&self.id).is_some() {
+            if map.swap_remove(&self.id) {
                 // If this map got
                 // large, shrink it back down. Keys are i32, values are one
                 // pointer (~12 bytes per entry), so 21,000 timers accessed by
@@ -858,7 +862,7 @@ impl TimerObjectInternals {
                 // too, or `remove_timer_by_id` would hand out a dangling
                 // `*mut EventLoopTimer` after the parent is freed.
                 // SAFETY: as above.
-                let _ = unsafe { (*state).timer.maps.set_timeout.remove(&self.id) };
+                unsafe { (*state).timer.maps.set_timeout.swap_remove(&self.id) };
             }
         }
 
@@ -871,7 +875,7 @@ impl TimerObjectInternals {
 
 // ──────────────────────────────────────────────────────────────────────────
 // JS-host-method facade — `do_ref`/`do_unref`/`do_refresh`/`has_ref`/
-// `to_primitive`/`get_destroyed`/`finalize`/`cancel`. Un-gated for
+// `to_primitive`/`get_destroyed`/`finalize`/`cancel`, called from
 // `TimeoutObject.rs` / `ImmediateObject.rs` host-fn shims.
 // ──────────────────────────────────────────────────────────────────────────
 impl TimerObjectInternals {

@@ -292,7 +292,7 @@ impl WhyCommand {
         Output::flush();
     }
 
-    pub(crate) fn exec(ctx: command::Context) -> Result<(), bun_core::Error> {
+    pub(crate) fn exec(ctx: command::Context) -> Result<(), crate::Error> {
         let cli = CommandLineArguments::parse(Subcommand::Why)?;
         // Capture the few `cli` fields we read after `init` consumes it.
         let positionals = cli.positionals;
@@ -320,7 +320,7 @@ impl WhyCommand {
         ctx: command::Context,
         pm: &mut PackageManager,
         positionals: &[&[u8]],
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         if positionals.len() < 2 {
             Self::print_usage();
             Global::exit(1);
@@ -334,7 +334,7 @@ impl WhyCommand {
         pm: &mut PackageManager,
         package_pattern: &[u8],
         top_only: bool,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         // Detach the `Box<Lockfile>` from `pm`
         // so `load_from_cwd` can take `Option<&mut PackageManager>` without
         // overlapping the `&mut self` lockfile borrow. `pm.options.depth` is read

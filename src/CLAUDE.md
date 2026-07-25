@@ -12,16 +12,12 @@ bun_bin` (driven by `scripts/build/rust.ts`). Key crates:
 - `bun_js_parser`, `bun_js_printer`, `bun_resolver`, `bun_bundler`, `bun_install`, `bun_collections`, `bun_threading`, `bun_alloc` — the rest of the pipeline
 - `bun_bin` (`src/bun_bin/`) — the staticlib root that `cargo build` links
 
-You will see `.zig` siblings next to many `.rs` files — those are the original
-implementation kept as a porting reference for _behavior_; they are not
-compiled and are not where new code goes.
-
 Conventions:
 
 - `cargo check -p <crate>` for fast iteration; `bun bd` builds and links everything.
 - Don't `.unwrap()` a fallible path that user input or the OS can hit at runtime — return the error. `.unwrap()` is for invariants you can prove.
 - The C ABI / syscall boundary uses `bun_sys::Maybe<T>` (= `Result<T, bun_sys::Error>`); ordinary Rust code uses `Result<T, E>` with `?`.
-- `bun_core::Error` is a lightweight interned `NonZeroU16` error code; `bun_sys::Error` is the rich syscall error (errno + syscall tag + path). `From<bun_sys::Error> for bun_core::Error` exists.
+- Each crate defines its own `Error` enum (a `thiserror::Error` at `<crate>/error.rs`, re-exported as `crate::Error` + `crate::Result`). Errno codes nest via `Sys(#[from] bun_errno::SystemErrno)`; OOM via `Alloc(#[from] bun_alloc::AllocError)`. `bun_sys::Error` is the rich syscall error (errno + syscall tag + path); `From<bun_sys::Error> for bun_errno::SystemErrno` exists for `?`-chaining.
 - NEVER add comments to deleted code blocks.
 - Do not add comments that reference context from the transcript.
 - Avoid adding comments where not necessary.
@@ -66,10 +62,10 @@ Key types and functions:
 - Open flags: `bun_sys::O::RDONLY`, `O::WRONLY | O::CREAT | O::TRUNC`, etc.
 
 `bun_sys::Error` carries `errno`, `syscall: Tag`, `path: Box<[u8]>`. Convert
-to a JS exception via `bun_jsc::ErrorJsc::to_js`:
+to a JS exception via `bun_sys_jsc::ErrorJsc::to_js`:
 
 ```rust
-use bun_jsc::ErrorJsc;
+use bun_sys_jsc::ErrorJsc;
 match File::openat(Fd::cwd(), path, O::RDONLY, 0) {
     Ok(f) => f,
     Err(err) => return Ok(err.to_js(global)?),

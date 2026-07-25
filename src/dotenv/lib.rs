@@ -1,11 +1,14 @@
 #![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
 #![warn(unused_must_use)]
 pub mod env_loader;
+pub mod error;
+
+pub use error::{Error, Result};
 
 pub use env_loader::{
     DirEntryProbe, DotEnvBehavior, DotEnvFileSuffix, HAS_NO_CLEAR_SCREEN_CLI_FLAG, HashTable,
-    HashTableValue, INSTANCE, Kind, Loader, Map, Mode, NullDelimitedEnvMap, S3Credentials,
-    StdEnvMapWrapper, Value, instance, set_instance,
+    HashTableValue, INSTANCE, Loader, Map, NullDelimitedEnvMap, S3Credentials, StdEnvMapWrapper,
+    instance, set_instance,
 };
 
 /// `dotenv::map::{HashTable, Entry}` namespace expected by `install_jsc::ini_jsc` et al.

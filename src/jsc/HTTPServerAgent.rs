@@ -22,31 +22,12 @@ impl Default for HTTPServerAgent {
 }
 
 impl HTTPServerAgent {
-    pub fn is_enabled(&self) -> bool {
-        self.agent.is_some()
-    }
-
-    /// Safe accessor for the set-once C++ agent handle. `agent` is populated
-    /// exactly once via [`Bun__HTTPServerAgent__setEnabled`] and lives for the
-    /// debugger's lifetime; `InspectorHTTPServerAgent` is an `opaque_ffi!` ZST
-    /// so the `&mut` covers zero bytes (see [`bun_opaque::opaque_deref_mut`]).
-    /// Consolidates the per-call-site raw deref into the single audited
-    /// `opaque_mut` proof so callers stay safe.
-    #[inline]
-    pub fn agent_mut(&mut self) -> Option<&mut InspectorHTTPServerAgent> {
-        self.agent
-            .map(|p| InspectorHTTPServerAgent::opaque_mut(p.as_ptr()))
-    }
-
     // #region Events
     //
     // `notify_server_started` / `notify_server_stopped` /
-    // `notify_server_routes_updated` reach into `bun_jsc::api::AnyServer` and
+    // `notify_server_routes_updated` reach into `AnyServer` and
     // `ServerConfig::RouteDeclaration`, which live in `bun_runtime` (forward
-    // dep). The C++ side only needs `Bun__HTTPServerAgent__setEnabled` for
-    // linkage; the per-event notifiers are called from Rust → C++ (FFI decls
-    // below) and are wired from `bun_runtime` once that tier un-gates. The
-    // event bodies will land when `AnyServer` is reachable.
+    // dep), so they are defined there (`runtime/server/mod.rs`).
 
     // #endregion
 }

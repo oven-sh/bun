@@ -247,8 +247,6 @@ pub enum Error {
     OutOfMemory,
 }
 
-bun_core::named_error_set!(Error);
-
 bun_core::oom_from_alloc!(Error);
 
 /// Sharp's default: 0x3FFF * 0x3FFF ≈ 268 MP. A single RGBA8 frame at this
@@ -303,7 +301,7 @@ pub fn decode(bytes: &[u8], max_pixels: u64, hint: DecodeHint) -> Result<Decoded
             // entry verbatim, leaving the original RGB with α=0. Normalise
             // here so
             // every backend yields identical bytes for the same GIF.
-            for px in d.rgba.chunks_exact_mut(4) {
+            for px in d.rgba.as_chunks_mut::<4>().0 {
                 if px[3] == 0 {
                     px[0] = 0;
                     px[1] = 0;
@@ -479,7 +477,7 @@ impl Default for EncodeOptions {
 /// we hand the original buffer to JS via `ArrayBuffer.toJSWithContext` with
 /// the matching free — one allocation, zero copies, for the final output.
 ///
-/// `free` matches `jsc.C.JSTypedArrayBytesDeallocator` (bytes, ctx) so it can
+/// `free` matches `jsc::JSTypedArrayBytesDeallocator` (bytes, ctx) so it can
 /// be passed straight through; the `ctx` arg is unused.
 pub struct Encoded {
     // SAFETY: fat pointer (ptr+len) owned by whichever C allocator produced

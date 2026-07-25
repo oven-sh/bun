@@ -10,7 +10,7 @@
 
 use std::io::Write as _;
 
-use super::cron_parser::{self, CronExpression};
+use super::cron_parser::{self, CronExpression, CronTz};
 
 use core::ffi::c_char;
 use std::cell::Cell;
@@ -247,7 +247,7 @@ impl CronRegisterJob {
                     // borrows do not overlap (Windows only; POSIX ignores
                     // stderr here).
                     #[cfg(windows)]
-                    let stderr_owned: Vec<u8> = bun_core::immutable::trim(
+                    let stderr_owned: Vec<u8> = bun_core::strings::trim(
                         s.stderr_reader.final_buffer().as_slice(),
                         &ASCII_WHITESPACE,
                     )
@@ -678,15 +678,53 @@ impl CronRegisterJob {
     }
 }
 
+/// Resolve the `{ tz?: string }` option to a `CronTz`.
+fn resolve_cron_tz(global: &JSGlobalObject, opts: JSValue) -> JsResult<CronTz> {
+    if opts.is_empty() || opts.is_undefined_or_null() {
+        return Ok(CronTz::Local);
+    }
+    if !opts.is_object() {
+        return Err(
+            global.throw_invalid_arguments(format_args!("Bun.cron: options must be an object"))
+        );
+    }
+    let Some(tz_val) = opts.get(global, "tz")? else {
+        return Ok(CronTz::Local);
+    };
+    if tz_val.is_undefined_or_null() {
+        return Ok(CronTz::Local);
+    }
+    if !tz_val.is_string() {
+        return Err(
+            global.throw_invalid_arguments(format_args!("Bun.cron: options.tz must be a string"))
+        );
+    }
+    let tz_str = bun_core::OwnedString::new(tz_val.to_bun_string(global)?);
+    let tz_slice = tz_str.to_utf8();
+    let tz_bytes = tz_slice.slice();
+    // IANA names are ASCII; rejecting here keeps the Latin-1 StringView cast in
+    // Bun__resolveTimeZoneID sound for non-ASCII UTF-8 input.
+    if tz_bytes.is_ascii()
+        && let Some(id) = JSGlobalObject::resolve_time_zone_id(tz_bytes)
+    {
+        return Ok(CronTz::Named(id));
+    }
+    Err(global.throw_invalid_arguments(format_args!(
+        "Bun.cron: unknown time zone '{}'",
+        bstr::BStr::new(tz_bytes)
+    )))
+}
+
 // -- JS entry point -- (free fn: `#[host_fn]` Free shim calls bare `cron_register(..)`)
 
 #[bun_jsc::host_fn]
 pub fn cron_register(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let args = frame.arguments_as_array::<3>();
 
-    // In-process callback cron: Bun.cron(schedule, handler)
+    // In-process callback cron: Bun.cron(schedule, handler, opts?)
     if args[1].is_callable() {
-        return CronJob::register(global, args[0], args[1]);
+        let tz = resolve_cron_tz(global, args[2])?;
+        return CronJob::register(global, args[0], args[1], tz);
     }
     if args[0].is_string() && args[2].is_undefined() {
         return Err(global.throw_invalid_arguments(format_args!(
@@ -771,7 +809,7 @@ pub fn cron_register(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSV
             return Err(global.throw(format_args!("Failed to get bun executable path")));
         }
     };
-    if bun_core::index_of_any(bun_exe.as_bytes(), b"'%").is_some() {
+    if bun_core::strings::index_of_any(bun_exe.as_bytes(), b"'%").is_some() {
         return Err(global.throw_invalid_arguments(format_args!(
                 "Bun executable path '{}' contains characters (' or %) that cannot be safely embedded in a crontab entry",
                 bstr::BStr::new(bun_exe.as_bytes())
@@ -1048,7 +1086,7 @@ impl CronRemoveJob {
                     // Owned copy: `final_buffer()` is `&mut self` and would
                     // alias `s.set_err` below. Copy the trimmed bytes out.
                     #[cfg(windows)]
-                    let stderr_owned: Vec<u8> = bun_core::immutable::trim(
+                    let stderr_owned: Vec<u8> = bun_core::strings::trim(
                         s.stderr_reader.final_buffer().as_slice(),
                         &ASCII_WHITESPACE,
                     )
@@ -1419,6 +1457,8 @@ pub struct CronJob {
     global: GlobalRef,
     // Read-only after construction.
     parsed: CronExpression,
+    // Read-only after construction.
+    tz: CronTz,
     poll_ref: JsCell<KeepAlive>,
     this_value: JsCell<JsRef>,
     stopped: Cell<bool>,
@@ -1632,21 +1672,22 @@ impl CronJob {
     }
 
     fn compute_next_timespec(&self) -> Option<bun_core::Timespec> {
-        // Cron occurrences are calendar-based (real epoch); the timer heap is
-        // monotonic. Anchor both to real time so fake timers don't half-apply.
-        let now_ms: f64 = bun_core::time::milli_timestamp() as f64;
+        // Cron occurrences are calendar-based (epoch); the timer heap is
+        // monotonic. Anchor both to the same clock (mocked when fake timers
+        // are active) so they can never half-apply.
+        let now_ms: f64 = bun_core::time::milli_timestamp_allow_mocked_time();
         // The monotonic timer can fire fractionally before the wall-clock target
         // (clock skew / NTP step); floor next() at the prior target so it can't
         // recompute the same minute and double-fire.
         let from_ms = now_ms.max(self.last_next_ms.get());
-        let next_ms = match self.parsed.next(&self.global, from_ms) {
+        let next_ms = match self.parsed.next(&self.global, from_ms, self.tz) {
             Ok(Some(v)) => v,
             _ => return None,
         };
         self.last_next_ms.set(next_ms);
         let delta: i64 = (next_ms - now_ms).max(1.0) as i64;
         Some(bun_core::Timespec::ms_from_now(
-            bun_core::TimespecMockMode::ForceRealTime,
+            bun_core::TimespecMockMode::AllowMockedTime,
             delta,
         ))
     }
@@ -1834,6 +1875,7 @@ impl CronJob {
         global: &JSGlobalObject,
         schedule_arg: JSValue,
         callback_arg: JSValue,
+        tz: CronTz,
     ) -> JsResult<JSValue> {
         if !schedule_arg.is_string() {
             return Err(global.throw_invalid_arguments(format_args!(
@@ -1862,6 +1904,7 @@ impl CronJob {
             event_loop_timer: JsCell::new(EventLoopTimer::init_paused(EventLoopTimerTag::CronJob)),
             global: GlobalRef::from(global),
             parsed,
+            tz,
             poll_ref: JsCell::new(KeepAlive::default()),
             this_value: JsCell::new(JsRef::empty()),
             stopped: Cell::new(false),
@@ -2013,7 +2056,7 @@ pub fn get_cron_object(global_this: &JSGlobalObject, _obj: &JSObject) -> JSValue
 
 #[bun_jsc::host_fn]
 pub fn cron_parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let args = frame.arguments_as_array::<2>();
+    let args = frame.arguments_as_array::<3>();
 
     if !args[0].is_string() {
         return Err(global.throw_invalid_arguments(format_args!(
@@ -2047,13 +2090,21 @@ pub fn cron_parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValu
         bun_core::time::milli_timestamp() as f64
     };
 
-    if from_ms.is_nan() || from_ms.is_infinite() {
+    // Out-of-range ms hits UB in WTF::msToGregorianDateTime's int casts and
+    // the resulting garbage components panic next()'s u32 conversions.
+    if from_ms.is_nan() || from_ms.abs() > jsc::wtf::MAX_ECMASCRIPT_TIME {
         return Err(global.throw_invalid_arguments(format_args!("Invalid date value")));
     }
 
-    let Some(next_ms) = parsed.next(global, from_ms)? else {
+    let tz = resolve_cron_tz(global, args[2])?;
+
+    let Some(next_ms) = parsed.next(global, from_ms, tz)? else {
         return Ok(JSValue::NULL);
     };
+    // Return null (not Invalid Date) so callers can rely on `=== null` for "no future match".
+    if next_ms > jsc::wtf::MAX_ECMASCRIPT_TIME {
+        return Ok(JSValue::NULL);
+    }
     Ok(JSValue::from_date_number(global, next_ms))
 }
 
@@ -2401,7 +2452,7 @@ fn resolve_path(
     global: &JSGlobalObject,
     frame: &CallFrame,
     path_: &[u8],
-) -> Result<ZString, bun_core::Error> {
+) -> crate::Result<ZString> {
     // SAFETY: `bun_vm()` returns the per-thread singleton.
     let vm = global.bun_vm().as_mut();
     let srcloc = frame.get_caller_src_loc(global);
@@ -2412,10 +2463,8 @@ fn resolve_path(
         .transpiler
         .resolver
         .resolve(source_dir, path_, bun_ast::ImportKind::EntryPointRun)
-        .map_err(|_| bun_core::err!("ModuleNotFound"))?;
-    let entry_path = resolved
-        .path()
-        .ok_or_else(|| bun_core::err!("ModuleNotFound"))?;
+        .map_err(|_| crate::Error::ModuleNotFound)?;
+    let entry_path = resolved.path().ok_or(crate::Error::ModuleNotFound)?;
     Ok(ZString::from_bytes(entry_path.text))
 }
 
@@ -2537,12 +2586,6 @@ pub enum CalendarError {
     InvalidCron,
     #[error("OutOfMemory")]
     OutOfMemory,
-}
-
-impl From<CalendarError> for bun_core::Error {
-    fn from(e: CalendarError) -> Self {
-        bun_core::Error::from_name(<&'static str>::from(e))
-    }
 }
 
 pub fn cron_to_calendar_interval(schedule: &[u8]) -> Result<Vec<u8>, CalendarError> {
@@ -2714,12 +2757,6 @@ pub enum TaskXmlError {
     TooManyTriggers,
     #[error("OutOfMemory")]
     OutOfMemory,
-}
-
-impl From<TaskXmlError> for bun_core::Error {
-    fn from(e: TaskXmlError) -> Self {
-        bun_core::Error::from_name(<&'static str>::from(e))
-    }
 }
 
 /// Build a Windows Task Scheduler XML definition from a parsed cron expression.

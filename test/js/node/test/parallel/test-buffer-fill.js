@@ -2,6 +2,9 @@
 'use strict';
 const common = require('../common');
 const assert = require('assert');
+// Bun does not expose node's internal/errors or internal/test/binding modules.
+// const { codes: { ERR_OUT_OF_RANGE } } = require('internal/errors');
+// const { internalBinding } = require('internal/test/binding');
 const SIZE = 28;
 
 const buf1 = Buffer.allocUnsafe(SIZE);
@@ -339,9 +342,10 @@ Buffer.alloc(8, '');
   assert.strictEqual(buf.toString(), 'էէէէէ');
 }
 
-// Testing process.binding. Make sure "start" is properly checked for range errors.
+// Testing process.binding. Make sure "start" is properly checked for range
+// errors.
 // assert.throws(
-//   () => { process.binding('buffer').fill(Buffer.alloc(1), 1, -1, 0, 1); },
+//   () => { internalBinding('buffer').fill(Buffer.alloc(1), 1, -1, 0, 1); },
 //   { code: 'ERR_OUT_OF_RANGE' }
 // );
 
@@ -362,13 +366,15 @@ Buffer.alloc(8, '');
   });
 }
 
-// Testing process.binding. Make sure "end" is properly checked for range errors.
+// Testing process.binding. Make sure "end" is properly checked for range
+// errors.
 // assert.throws(
-//   () => { process.binding('buffer').fill(Buffer.alloc(1), 1, 1, -2, 1); },
+//   () => { internalBinding('buffer').fill(Buffer.alloc(1), 1, 1, -2, 1); },
 //   { code: 'ERR_OUT_OF_RANGE' }
 // );
 
 // Test that bypassing 'length' won't cause an abort.
+// Bun's fill() reads the real byteLength, not the (spoofable) length property.
 // assert.throws(() => {
 //   const buf = Buffer.from('w00t');
 //   Object.defineProperty(buf, 'length', {

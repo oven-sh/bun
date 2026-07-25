@@ -660,7 +660,10 @@ public:
     bool isOne() const;
 
     bool setWord(unsigned long w); // NOLINT(runtime/int)
-    unsigned long getWord() const; // NOLINT(runtime/int)
+    // std::nullopt when the value does not fit in a single BN_ULONG, which
+    // BN_get_word reports as the all-ones word (otherwise a real value).
+    // BN_ULONG, not unsigned long: the latter is only 32 bits on LLP64.
+    std::optional<BN_ULONG> getWord() const;
 
     size_t byteLength() const;
 
@@ -700,7 +703,7 @@ public:
         size_t size);
     static int GetBitCount(const BIGNUM* bn);
     static int GetByteCount(const BIGNUM* bn);
-    static unsigned long GetWord(const BIGNUM* bn); // NOLINT(runtime/int)
+    static std::optional<BN_ULONG> GetWord(const BIGNUM* bn);
     static const BIGNUM* One();
 
     BignumPointer clone();
@@ -875,6 +878,9 @@ public:
         DER,
         PEM,
         JWK,
+        RawPublic,
+        RawPrivate,
+        RawSeed,
     };
 
     enum class PKParseError { NOT_RECOGNIZED,
@@ -886,6 +892,7 @@ public:
         bool output_key_object = false;
         PKFormatType format = PKFormatType::DER;
         PKEncodingType type = PKEncodingType::PKCS8;
+        int ec_point_form = POINT_CONVERSION_UNCOMPRESSED;
         AsymmetricKeyEncodingConfig() = default;
         AsymmetricKeyEncodingConfig(bool output_key_object,
             PKFormatType format,
@@ -1225,6 +1232,8 @@ public:
     BIOPointer getValidTo() const;
     int64_t getValidFromTime() const;
     int64_t getValidToTime() const;
+    std::optional<std::string_view> getSignatureAlgorithm() const;
+    std::optional<std::string> getSignatureAlgorithmOID() const;
     DataPointer getSerialNumber() const;
     Result<EVPKeyPointer, int> getPublicKey() const;
     StackOfASN1 getKeyUsage() const;

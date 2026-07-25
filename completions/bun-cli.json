@@ -3396,6 +3396,13 @@
           "multiple": false
         },
         {
+          "name": "react-compiler",
+          "description": "Run the React Compiler over .jsx/.tsx files (experimental)",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
           "name": "no-bundle",
           "description": "Transpile file only, do not bundle",
           "hasValue": false,

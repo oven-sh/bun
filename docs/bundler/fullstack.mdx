@@ -57,8 +57,6 @@ bun run app.ts
 
 ### HTML Imports as Routes
 
-The web starts with HTML, and so does Bun's fullstack dev server.
-
 To specify entrypoints to your frontend, import HTML files into your JavaScript/TypeScript/TSX/JSX files.
 
 ```ts title="app.ts" icon="/icons/typescript.svg"
@@ -66,7 +64,7 @@ import dashboard from "./dashboard.html";
 import homepage from "./index.html";
 ```
 
-These HTML files are used as routes in Bun's dev server you can pass to `Bun.serve()`.
+Pass the imported HTML files as routes to `Bun.serve()`.
 
 ```ts title="app.ts" icon="/icons/typescript.svg"
 Bun.serve({
@@ -204,19 +202,16 @@ Bun.serve({
 
 ### Development Mode Features
 
-When `development` is `true`, Bun will:
+When `development` is `true`, Bun:
 
-- Include the SourceMap header in the response so that devtools can show the original source code
-- Disable minification
-- Re-bundle assets on each request to a `.html` file
-- Enable hot module reloading (unless `hmr: false` is set)
-- Echo console logs from browser to terminal
+- Includes the SourceMap header in the response so that devtools can show the original source code
+- Disables minification
+- Re-bundles assets on each request to a `.html` file
+- Enables hot module reloading (unless `hmr: false` is set)
 
 ### Advanced Development Configuration
 
-`Bun.serve()` supports echoing console logs from the browser to the terminal.
-
-To enable this, pass `console: true` in the development object in `Bun.serve()`.
+To echo console logs from the browser to the terminal, pass `console: true` in the `development` object in `Bun.serve()`.
 
 ```ts title="src/backend.ts" icon="/icons/typescript.svg"
 import homepage from "./index.html";
@@ -237,7 +232,7 @@ Bun.serve({
 });
 ```
 
-When `console: true` is set, Bun will stream console logs from the browser to the terminal. This reuses the existing WebSocket connection from HMR to send the logs.
+Bun sends the logs over the existing HMR WebSocket connection.
 
 ### Development vs Production
 
@@ -252,17 +247,17 @@ When `console: true` is set, Bun will stream console logs from the browser to th
 
 ## Production Mode
 
-Hot reloading and `development: true` helps you iterate quickly, but in production, your server should be as fast as possible and have as few external dependencies as possible.
+Hot reloading and `development: true` help you iterate quickly, but in production your server should be as fast as possible and have as few external dependencies as possible.
 
 ### Ahead of Time Bundling (Recommended)
 
-As of Bun v1.2.17, you can use `Bun.build` or `bun build` to bundle your full-stack application ahead of time.
+As of Bun v1.2.17, you can use `Bun.build` or `bun build` to bundle your fullstack application ahead of time.
 
 ```bash terminal icon="terminal"
 bun build --target=bun --production --outdir=dist ./src/index.ts
 ```
 
-When Bun's bundler sees an HTML import from server-side code, it will bundle the referenced JavaScript/TypeScript/TSX/JSX and CSS files into a manifest object that `Bun.serve()` can use to serve the assets.
+When Bun's bundler sees an HTML import from server-side code, it bundles the referenced JavaScript/TypeScript/TSX/JSX and CSS files into a manifest object that `Bun.serve()` can use to serve the assets.
 
 ```ts title="src/backend.ts" icon="/icons/typescript.svg"
 import { serve } from "bun";
@@ -275,13 +270,13 @@ serve({
 
 ### Runtime Bundling
 
-When adding a build step is too complicated, you can set `development: false` in `Bun.serve()`.
+If you'd rather not add a build step, set `development: false` in `Bun.serve()`.
 
-This will:
+This:
 
-- Enable in-memory caching of bundled assets. Bun will bundle assets lazily on the first request to an `.html` file, and cache the result in memory until the server restarts.
-- Enable `Cache-Control` headers and `ETag` headers
-- Minify JavaScript/TypeScript/TSX/JSX files
+- Enables in-memory caching of bundled assets. Bun bundles assets lazily on the first request to an `.html` file and caches the result in memory until the server restarts.
+- Enables `Cache-Control` and `ETag` headers
+- Minifies JavaScript/TypeScript/TSX/JSX files
 
 ```ts title="src/backend.ts" icon="/icons/typescript.svg"
 import { serve } from "bun";
@@ -410,7 +405,7 @@ To configure plugins for `Bun.serve`, add a `plugins` array in the `[serve.stati
 
 ### TailwindCSS Plugin
 
-You can use TailwindCSS by installing and adding the `tailwindcss` package and `bun-plugin-tailwind` plugin.
+To use TailwindCSS, install the `tailwindcss` package and the `bun-plugin-tailwind` plugin.
 
 ```bash terminal icon="terminal"
 bun add tailwindcss bun-plugin-tailwind
@@ -421,7 +416,7 @@ bun add tailwindcss bun-plugin-tailwind
 plugins = ["bun-plugin-tailwind"]
 ```
 
-This will allow you to use TailwindCSS utility classes in your HTML and CSS files. Import `tailwindcss` somewhere in your project:
+You can now use TailwindCSS utility classes in your HTML and CSS files. Import `tailwindcss` somewhere in your project:
 
 ```html title="index.html" icon="file-code"
 <!doctype html>
@@ -457,7 +452,7 @@ Alternatively, you can import TailwindCSS in your CSS file:
 
 ### Custom Plugins
 
-Any JS file or module which exports a valid bundler plugin object (essentially an object with a `name` and `setup` field) can be placed inside the plugins array:
+Any JS file or module that exports a valid bundler plugin object (an object with a `name` and a `setup` field) can be placed in the plugins array:
 
 ```toml title="bunfig.toml" icon="settings"
 [serve.static]
@@ -484,17 +479,16 @@ const myPlugin: BunPlugin = {
 export default myPlugin;
 ```
 
-Bun will lazily resolve and load each plugin and use them to bundle your routes.
+Bun lazily resolves and loads each plugin and uses them to bundle your routes.
 
 <Note>
-  This is currently in `bunfig.toml` to make it possible to know statically which plugins are in use when we eventually
-  integrate this with the `bun build` CLI. These plugins work in `Bun.build()`'s JS API, but are not yet supported in
-  the CLI.
+  Plugins live in `bunfig.toml` so that the `bun build` CLI, once it supports them, can know statically which plugins
+  are in use. These plugins work in `Bun.build()`'s JS API, but not yet in the CLI.
 </Note>
 
 ## Inline Environment Variables
 
-Bun can replace `process.env.*` references in your frontend JavaScript and TypeScript with their actual values at build time. Configure the `env` option in your `bunfig.toml`:
+Bun can replace `process.env.*` references in your frontend JavaScript and TypeScript with their values at build time. Configure the `env` option in your `bunfig.toml`:
 
 ```toml title="bunfig.toml" icon="settings"
 [serve.static]
@@ -512,7 +506,7 @@ If an environment variable is not set, you may see runtime errors like `Referenc
 
 </Note>
 
-See the [HTML & static sites documentation](/bundler/html-static#inline-environment-variables) for more details on build-time configuration and examples.
+See [HTML & static sites](/bundler/html-static#inline-environment-variables) for build-time configuration and examples.
 
 ## How It Works
 
@@ -558,8 +552,6 @@ Bun uses `HTMLRewriter` to scan for `<script>` and `<link>` tags in HTML files, 
 </Steps>
 
 ## Complete Example
-
-Here's a complete fullstack application example:
 
 ```ts title="server.ts" icon="/icons/typescript.svg"
 import { serve } from "bun";
@@ -1000,7 +992,7 @@ FROM oven/bun:1 as base
 WORKDIR /usr/src/app
 
 # Install dependencies
-COPY package.json bun.lockb ./
+COPY package.json bun.lock ./
 RUN bun install --frozen-lockfile
 
 # Copy source code
@@ -1072,15 +1064,13 @@ export default function handler(req, res) {
 
 ### Current Limitations
 
-- `bun build` CLI integration is not yet available for fullstack apps
 - Auto-discovery of API routes is not implemented
 - Server-side rendering (SSR) is not built-in
 
 ### Planned Features
 
-- Integration with `bun build` CLI
 - File-based routing for API endpoints
 - Built-in SSR support
 - Enhanced plugin ecosystem
 
-<Note>This is a work in progress. Features and APIs may change as Bun continues to evolve.</Note>
+<Note>This is a work in progress. Features and APIs may change.</Note>

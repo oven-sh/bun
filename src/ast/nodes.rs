@@ -1,7 +1,6 @@
 //! Core AST node payload types and arena-slice helpers.
 #![allow(non_snake_case)]
 
-use core::fmt;
 use core::ops::{Deref, DerefMut};
 use core::ptr::NonNull;
 
@@ -20,10 +19,20 @@ pub use crate::flags as Flags;
 // Thin `NonNull<T>` newtype — `Copy`, `Deref`/`DerefMut`. The pointee lives
 // until the owning Store/arena is `reset()`; callers must not hold a `StoreRef`
 // across that boundary.
+//
+// `packed(4)` lowers the alignment to 4 without changing the single-scalar
+// representation: still passed/returned in one register, `self.0` is one `mov`,
+// and `Option<StoreRef<T>>` keeps its `NonNull` niche. The align-4 part is what
+// lets `expr::Data`/`stmt::Data` drop to align 4 and `Expr`/`Stmt`/`Binding`
+// pack into 16 bytes.
 // ───────────────────────────────────────────────────────────────────────────
 
-#[repr(transparent)]
+#[repr(C, packed(4))]
 pub struct StoreRef<T>(NonNull<T>);
+
+const _: () = assert!(core::mem::size_of::<StoreRef<u8>>() == 8);
+const _: () = assert!(core::mem::align_of::<StoreRef<u8>>() == 4);
+const _: () = assert!(core::mem::size_of::<Option<StoreRef<u8>>>() == 8);
 
 // SAFETY: `StoreRef` is a thin pointer into a single-threaded bump arena.
 // We assert Send/Sync so payload types embedding `Option<StoreRef<T>>`
@@ -57,14 +66,6 @@ impl<T> StoreRef<T> {
     pub fn from_bump(r: &mut T) -> Self {
         StoreRef(NonNull::from(r))
     }
-    /// Consume a `Box<T>` whose payload must outlive every Store reset.
-    /// Ownership transfers to the returned `StoreRef`; the allocation is
-    /// process-lifetime by design and is never dropped. Prefer `from_bump`
-    /// for arena-backed nodes.
-    #[inline]
-    pub fn from_box(b: Box<T>) -> Self {
-        StoreRef(bun_core::heap::into_raw_nn(b))
-    }
     #[inline]
     pub const fn as_ptr(self) -> *mut T {
         self.0.as_ptr()
@@ -97,7 +98,7 @@ impl<T> Deref for StoreRef<T> {
     #[inline]
     fn deref(&self) -> &T {
         // SAFETY: StoreRef invariant — points into a live Store/arena block.
-        unsafe { self.0.as_ref() }
+        unsafe { &*self.as_ptr() }
     }
 }
 impl<T> DerefMut for StoreRef<T> {
@@ -106,20 +107,23 @@ impl<T> DerefMut for StoreRef<T> {
         // SAFETY: StoreRef invariant. AST nodes are mutated in-place during
         // visiting; no two `StoreRef` to the same node are deref'd `&mut`
         // simultaneously in single-threaded parser/visitor passes.
-        unsafe { self.0.as_mut() }
+        unsafe { &mut *self.as_ptr() }
     }
 }
 impl<T> From<NonNull<T>> for StoreRef<T> {
     #[inline]
     fn from(p: NonNull<T>) -> Self {
-        StoreRef(p)
+        StoreRef::from_non_null(p)
     }
 }
 /// Pointer-identity comparison.
 impl<T> PartialEq for StoreRef<T> {
     #[inline]
     fn eq(&self, other: &Self) -> bool {
-        self.0 == other.0
+        // Copy out of the packed field before comparing (`NonNull::eq` takes
+        // `&self`, which would require an unaligned reference).
+        let (a, b) = (self.0, other.0);
+        a == b
     }
 }
 impl<T> Eq for StoreRef<T> {}
@@ -149,12 +153,18 @@ pub(crate) const fn empty_arena_str() -> ArenaStr {
 // already imposes. Avoids cascading `<'arena>` through `Expr`/`Stmt`/`Data`
 // (~100 types, 12 downstream crates) — that cascade is the follow-up round
 // once `StoreRef` itself carries `'arena`.
+// Layout matches `StoreSlice<u8>`: `packed(4)` lowers `NonNull<u8>` to align 4
+// so the struct is 12 bytes instead of 16. The `u32` length keeps the 4 GB
+// source-file limit explicit.
 #[derive(Copy, Clone)]
-#[repr(C)]
+#[repr(C, packed(4))]
 pub struct StoreStr {
-    ptr: core::ptr::NonNull<u8>,
-    len: usize,
+    ptr: NonNull<u8>,
+    len: u32,
 }
+
+const _: () = assert!(core::mem::size_of::<StoreStr>() == 12);
+const _: () = assert!(core::mem::align_of::<StoreStr>() == 4);
 
 // SAFETY: same rationale as `StoreRef` — points into a single-threaded bump
 // arena. Asserted Send/Sync so payload types can sit in
@@ -167,7 +177,7 @@ unsafe impl Sync for StoreStr {}
 
 impl StoreStr {
     pub const EMPTY: StoreStr = StoreStr {
-        ptr: core::ptr::NonNull::<u8>::dangling(),
+        ptr: NonNull::<u8>::dangling(),
         len: 0,
     };
 
@@ -176,11 +186,12 @@ impl StoreStr {
     /// (valid until the owning arena resets).
     #[inline]
     pub const fn new(s: &[u8]) -> Self {
-        match core::ptr::NonNull::new(s.as_ptr().cast_mut()) {
-            Some(ptr) => StoreStr { ptr, len: s.len() },
-            // Only the (ptr=null, len=0) empty-slice edge needs this; Rust
-            // `&[u8]` never has a null ptr, but be defensive for const-eval.
-            None => StoreStr::EMPTY,
+        debug_assert!(s.len() <= u32::MAX as usize);
+        // SAFETY: `&[u8]` always has a non-null data pointer.
+        let ptr = unsafe { NonNull::new_unchecked(s.as_ptr().cast_mut()) };
+        StoreStr {
+            ptr,
+            len: s.len() as u32,
         }
     }
 
@@ -191,7 +202,7 @@ impl StoreStr {
 
     #[inline]
     pub const fn raw_len(self) -> usize {
-        self.len
+        self.len as usize
     }
 
     /// Re-borrow as `&[u8]`. Same safety contract as `StoreRef::get`: the
@@ -203,18 +214,13 @@ impl StoreStr {
         // SAFETY: StoreStr invariant — `ptr` is non-null, points at `len`
         // initialized bytes valid for the arena lifetime (or `'static`); caller
         // must not outlive the owning arena (same as `StoreRef`).
-        unsafe { core::slice::from_raw_parts(self.ptr.as_ptr(), self.len) }
+        unsafe { core::slice::from_raw_parts(self.ptr.as_ptr(), self.len as usize) }
     }
 
     #[inline]
     pub fn as_raw(self) -> *const [u8] {
-        core::ptr::slice_from_raw_parts(self.ptr.as_ptr(), self.len)
+        core::ptr::slice_from_raw_parts(self.ptr.as_ptr(), self.len as usize)
     }
-
-    // (former `from_raw(*const [u8])` removed — the StoreSlice migration is
-    // complete; `js_printer::renamer::NameStr` now constructs via the safe
-    // `StoreStr::new(&[u8])`, so the raw-fat-pointer back-door has no
-    // remaining callers.)
 }
 
 impl Default for StoreStr {
@@ -311,15 +317,20 @@ impl core::fmt::Debug for StoreStr {
 //
 // Generalizes `StoreStr` to `[T]` for AST list fields (`E::Arrow.args`,
 // per-node `[Stmt]`/`[Expr]` views, …) that borrow from the parse arena.
-// Same contract as `StoreRef`/`StoreStr`: safe `::new`,
-// raw `NonNull<T>` + `u32` length, `Deref<Target=[T]>`, valid until the
-// owning arena resets. The `u32` length keeps the field at 12 bytes
-// on 64-bit instead of 16 — relevant for hot AST nodes.
-#[repr(C)]
+// Same contract as `StoreRef`/`StoreStr`: safe `::new`, `Deref<Target=[T]>`,
+// valid until the owning arena resets.
+//
+// Layout: `packed(4)` lowers `NonNull<T>` to align 4 so the field is 12 bytes
+// instead of 16. The pointer stays a single scalar (one `mov` to read), and the
+// `u32` length keeps the 4 G-element ceiling explicit.
+#[repr(C, packed(4))]
 pub struct StoreSlice<T> {
-    ptr: core::ptr::NonNull<T>,
+    ptr: NonNull<T>,
     len: u32,
 }
+
+const _: () = assert!(core::mem::size_of::<StoreSlice<u8>>() == 12);
+const _: () = assert!(core::mem::align_of::<StoreSlice<u8>>() == 4);
 
 // Manual Copy/Clone: derive would add a spurious `T: Copy` bound.
 impl<T> Copy for StoreSlice<T> {}
@@ -343,7 +354,7 @@ unsafe impl<T: Sync> Sync for StoreSlice<T> {}
 
 impl<T> StoreSlice<T> {
     pub const EMPTY: StoreSlice<T> = StoreSlice {
-        ptr: core::ptr::NonNull::<T>::dangling(),
+        ptr: NonNull::<T>::dangling(),
         len: 0,
     };
 
@@ -353,12 +364,11 @@ impl<T> StoreSlice<T> {
     #[inline]
     pub const fn new(s: &[T]) -> Self {
         debug_assert!(s.len() <= u32::MAX as usize);
-        match core::ptr::NonNull::new(s.as_ptr().cast_mut()) {
-            Some(ptr) => StoreSlice {
-                ptr,
-                len: s.len() as u32,
-            },
-            None => StoreSlice::EMPTY,
+        // SAFETY: `&[T]` always has a non-null data pointer.
+        let ptr = unsafe { NonNull::new_unchecked(s.as_ptr().cast_mut()) };
+        StoreSlice {
+            ptr,
+            len: s.len() as u32,
         }
     }
 
@@ -368,23 +378,17 @@ impl<T> StoreSlice<T> {
     #[inline]
     pub fn new_mut(s: &mut [T]) -> Self {
         debug_assert!(s.len() <= u32::MAX as usize);
-        match core::ptr::NonNull::new(s.as_mut_ptr()) {
-            Some(ptr) => StoreSlice {
-                ptr,
-                len: s.len() as u32,
-            },
-            None => StoreSlice::EMPTY,
+        // SAFETY: `&mut [T]` always has a non-null data pointer.
+        let ptr = unsafe { NonNull::new_unchecked(s.as_mut_ptr()) };
+        StoreSlice {
+            ptr,
+            len: s.len() as u32,
         }
     }
 
     #[inline]
     pub const fn as_ptr(self) -> *const T {
         self.ptr.as_ptr()
-    }
-
-    #[inline]
-    pub const fn raw_len(self) -> u32 {
-        self.len
     }
 
     /// Re-borrow as `&[T]`. Same safety contract as `StoreStr::slice` /
@@ -554,17 +558,16 @@ pub enum AssignTarget {
 #[derive(Copy, Clone)]
 pub struct LocRef {
     pub loc: crate::Loc,
-
-    // TODO: remove this optional and make Ref a function getter
-    // That will make this struct 128 bits instead of 192 bits and we can remove some heap allocations
-    pub ref_: Option<Ref>,
+    pub ref_: Ref,
 }
+
+const _: () = assert!(core::mem::size_of::<LocRef>() == 12);
 
 impl Default for LocRef {
     fn default() -> Self {
         Self {
             loc: crate::Loc::EMPTY,
-            ref_: None,
+            ref_: Ref::NONE,
         }
     }
 }
@@ -803,19 +806,17 @@ impl InlinedEnumValue {
                 }
             },
         };
-        if cfg!(debug_assertions) {
-            debug_assert!(match encoded.decode() {
-                InlinedEnumValueDecoded::String(str_) => match decoded {
-                    InlinedEnumValueDecoded::String(orig) => core::ptr::eq(str_, orig),
-                    _ => false,
-                },
-                InlinedEnumValueDecoded::Number(num) => match decoded {
-                    InlinedEnumValueDecoded::Number(orig) =>
-                        num.to_bits() == Self::purify_nan(orig).to_bits(),
-                    _ => false,
-                },
-            });
-        }
+        debug_assert!(match encoded.decode() {
+            InlinedEnumValueDecoded::String(str_) => match decoded {
+                InlinedEnumValueDecoded::String(orig) => core::ptr::eq(str_, orig),
+                _ => false,
+            },
+            InlinedEnumValueDecoded::Number(num) => match decoded {
+                InlinedEnumValueDecoded::Number(orig) =>
+                    num.to_bits() == Self::purify_nan(orig).to_bits(),
+                _ => false,
+            },
+        });
         encoded
     }
 
@@ -1033,9 +1034,6 @@ impl Default for Dependency {
 
 pub type DependencyList = bun_alloc::AstVec<Dependency>;
 
-pub type ExprList = Vec<Expr>;
-pub type StmtList = Vec<Stmt>;
-pub type BindingList = Vec<Binding>;
 // PERF: these may be arena-backed in callers; revisit with
 // bumpalo::collections::Vec if profiling shows churn.
 
@@ -1065,7 +1063,7 @@ pub struct Part {
     /// value or not. This is only known during linking. So we defer adding
     /// a dependency on these imported symbols until we know whether the
     /// property access is an inlined enum value or not.
-    pub import_symbol_property_uses: PartSymbolPropertyUseMap,
+    pub import_symbol_property_uses: Option<bun_alloc::AstBox<PartSymbolPropertyUseMap>>,
 
     /// The indices of the other parts in this file that are needed if this part
     /// is needed.
@@ -1097,6 +1095,7 @@ pub enum PartTag {
     Runtime,
     CjsImports,
     ReactFastRefresh,
+    ReactCompiler,
     DirnameFilename,
     BunTest,
     DeadDueToInlining,
@@ -1120,7 +1119,7 @@ impl Default for Part {
             import_record_indices: PartImportRecordIndices::new_in(bun_alloc::AstAlloc),
             declared_symbols: DeclaredSymbolList::default(),
             symbol_uses: PartSymbolUseMap::default(),
-            import_symbol_property_uses: PartSymbolPropertyUseMap::default(),
+            import_symbol_property_uses: None,
             dependencies: Vec::new_in(bun_alloc::AstAlloc),
             can_be_removed_if_unused: false,
             force_tree_shaking: false,
@@ -1177,8 +1176,8 @@ pub struct NamedImport {
     /// This field is used by the bundler to match imports with their corresponding
     /// exports and for error reporting when imports can't be resolved.
     pub alias: Option<ArenaStr>,
-    pub alias_loc: Option<crate::Loc>,
-    pub namespace_ref: Option<Ref>,
+    pub alias_loc: crate::Loc,
+    pub namespace_ref: Ref,
     pub import_record_index: u32,
 
     /// If true, the alias refers to the entire export namespace object of a
@@ -1197,8 +1196,8 @@ impl Default for NamedImport {
         Self {
             local_parts_with_uses: bun_alloc::AstAlloc::vec(),
             alias: None,
-            alias_loc: None,
-            namespace_ref: None,
+            alias_loc: crate::Loc::EMPTY,
+            namespace_ref: Ref::NONE,
             import_record_index: 0,
             alias_is_star: false,
             is_exported: false,
@@ -1224,13 +1223,6 @@ pub enum StrictModeKind {
     ImplicitStrictModeClass,
 }
 
-pub fn printmem(args: fmt::Arguments<'_>) {
-    // `defer Output.flush()` → executes after print; emulate ordering explicitly.
-    Output::init_test();
-    Output::print(args);
-    Output::flush();
-}
-
 #[derive(Debug, Copy, Clone, PartialEq, Eq, strum::IntoStaticStr)]
 pub enum ToJSError {
     #[strum(serialize = "Cannot convert argument type to JS")]
@@ -1243,62 +1235,6 @@ pub enum ToJSError {
     JSTerminated,
 }
 bun_core::impl_tag_error!(ToJSError);
-
-bun_core::named_error_set!(ToJSError);
-
-/// Say you need to allocate a bunch of tiny arrays
-/// You could just do separate allocations for each, but that is slow
-/// With std.ArrayList, pointers invalidate on resize and that means it will crash.
-/// So a better idea is to batch up your allocations into one larger allocation
-/// and then just make all the arrays point to different parts of the larger allocation
-pub struct Batcher<T> {
-    pub head: StoreSlice<T>,
-}
-
-impl<T> Batcher<T> {
-    pub fn init(
-        bump: &bun_alloc::Arena,
-        count: usize,
-    ) -> core::result::Result<Self, bun_alloc::AllocError>
-    where
-        T: Default,
-    {
-        let all = bump.alloc_slice_fill_default(count);
-        Ok(Self {
-            head: StoreSlice::new_mut(all),
-        })
-    }
-
-    pub fn done(&mut self) {
-        debug_assert!(self.head.is_empty()); // count to init() was too large, overallocation
-    }
-
-    pub fn eat(&mut self, value: T) -> *mut T {
-        self.eat1(value).as_ptr().cast_mut()
-    }
-
-    pub fn eat1(&mut self, value: T) -> StoreSlice<T> {
-        // `head` has at least 1 element remaining (caller contract);
-        // `Batcher` holds the unique view of the allocation.
-        let head = self.head.slice_mut();
-        let (prev, rest) = head.split_at_mut(1);
-        prev[0] = value;
-        self.head = StoreSlice::new_mut(rest);
-        StoreSlice::new_mut(prev)
-    }
-
-    pub fn next<const N: usize>(&mut self, values: [T; N]) -> StoreSlice<T> {
-        // `head` has at least N elements remaining; see `eat1`.
-        let head = self.head.slice_mut();
-        let (prev, rest) = head.split_at_mut(N);
-        for (dst, src) in prev.iter_mut().zip(values) {
-            *dst = src;
-        }
-        self.head = StoreSlice::new_mut(rest);
-        StoreSlice::new_mut(prev)
-    }
-}
-pub type NewBatcher<T> = Batcher<T>;
 
 // ═════════════════════════════════════════════════════════════════════════
 // Symbols pulled DOWN from higher-tier
@@ -1328,4 +1264,3 @@ pub mod math {
 // ─── from bun_bundler::v2::MangledProps ─────────────────────────────────────
 // LIFETIMES.tsv: value slices point into the parser arena → `StoreStr`
 // (arena-owned, no `'bump` cascade).
-pub type MangledProps = ArrayHashMap<Ref, StoreStr>;

@@ -21,12 +21,18 @@ pub(crate) mod bake_body;
 mod dev_server_body;
 pub(crate) use dev_server_body::get_deinit_count_for_testing;
 pub(crate) use dev_server_body::is_allowed_dev_host;
+pub(crate) use dev_server_body::is_allowed_host_header;
 
 #[path = "FrameworkRouter.rs"]
 pub(crate) mod framework_router_body;
 
 #[path = "production.rs"]
 mod production_body;
+
+// `Bun__add{Bake,DevServer}SourceProvider*` host exports — the Rust side of
+// `BakeSourceProvider.h` / `DevServerSourceProvider.h`. Reached only via the
+// codegen-emitted `extern "C"` thunks in `generated_host_exports.rs`.
+pub mod source_provider_exports;
 
 // Re-exports from the submodule bodies so `production.rs` can name them
 // without going through the keystone stubs below.
@@ -41,10 +47,7 @@ pub mod jsc {
     /// nominal type.
     pub(crate) use crate::api::js_bundler::Plugin;
     pub(crate) use crate::jsc::*;
-    pub(crate) use bun_jsc::debugger::DebuggerId;
 }
-
-pub const API_NAME: &str = "app";
 
 // ══════════════════════════════════════════════════════════════════════════
 // Top-level types
@@ -81,19 +84,6 @@ pub struct ServerComponents {
 }
 // No `Default` impl — `server_runtime_import` is a required field. Callers must
 // supply it explicitly (`Framework::react()` sets `"react-server-dom-bun/server"`).
-impl ServerComponents {
-    /// Construct with the defaults for the three `register*` exports;
-    /// `server_runtime_import` must be supplied.
-    pub fn new(server_runtime_import: Cow<'static, [u8]>) -> Self {
-        Self {
-            separate_ssr_graph: false,
-            server_runtime_import,
-            server_register_client_reference: Cow::Borrowed(b"registerClientReference"),
-            server_register_server_reference: Cow::Borrowed(b"registerServerReference"),
-            client_register_server_reference: Cow::Borrowed(b"registerServerReference"),
-        }
-    }
-}
 
 #[derive(Clone)]
 pub struct ReactFastRefresh {
@@ -215,7 +205,7 @@ impl Framework {
         renderer: Graph,
         out: &mut core::mem::MaybeUninit<bun_bundler::Transpiler<'a>>,
         bundler_options: &BuildConfigSubset,
-    ) -> Result<*mut bun_bundler::bake_types::Framework, bun_core::Error> {
+    ) -> crate::Result<*mut bun_bundler::bake_types::Framework> {
         use bun_options_types::schema as bun_schema;
 
         let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(arena);
@@ -367,7 +357,7 @@ impl Framework {
         server: &mut bun_resolver::Resolver,
         client: &mut bun_resolver::Resolver,
         arena: &bun_alloc::Arena,
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::Result<()> {
         let mut had_errors = false;
 
         if let Some(rfr) = &mut self.react_fast_refresh {
@@ -417,7 +407,7 @@ impl Framework {
         }
 
         if had_errors {
-            return Err(bun_core::err!("ModuleNotFound"));
+            return Err(crate::Error::ModuleNotFound);
         }
         Ok(())
     }
@@ -455,8 +445,6 @@ impl Framework {
             }
         }
     }
-
-    pub const REACT_INSTALL_COMMAND: &str = "bun i react@experimental react-dom@experimental react-server-dom-bun react-refresh@experimental";
 
     pub fn add_react_install_command_note(log: &mut bun_ast::Log) {
         log.add_msg(bun_ast::Msg {
@@ -558,8 +546,8 @@ impl From<bake_body::Framework> for Framework {
 impl From<bake_body::BuildConfigSubset> for BuildConfigSubset {
     fn from(src: bake_body::BuildConfigSubset) -> Self {
         // `BuildConfigSubset` mirrors the field-set
-        // `Framework::init_transpiler` reads (everything except `loader` /
-        // `source_map`, which only `init_transpiler_with_options` honours).
+        // `Framework::init_transpiler` reads (everything except `source_map`,
+        // which only `init_transpiler_with_options` honours).
         Self {
             ignore_dce_annotations: src.ignore_dce_annotations,
             conditions: src.conditions,
@@ -601,8 +589,8 @@ pub struct BuildConfigSubset {
     pub minify_syntax: Option<bool>,
     pub minify_identifiers: Option<bool>,
     pub minify_whitespace: Option<bool>,
-    // `loader`/`source_map` intentionally omitted — only
-    // `init_transpiler_with_options` (bake_body) honours those, and DevServer
+    // `source_map` intentionally omitted — only
+    // `init_transpiler_with_options` (bake_body) honours it, and DevServer
     // never calls that path.
 }
 
@@ -624,9 +612,6 @@ pub use bake_body::get_hmr_runtime;
 // NUL-terminated `&ZStr` form for JSC handoff; the bundler-side one is plain
 // `&[u8]`.)
 
-// `bake.UserOptions` — top-level JS-facing options struct. Full body (with
-// `from_js`) lives in the un-gated `bake_body.rs` draft and is re-exported
-// above; the keystone `(())` stub is gone now that `bake_body` compiles.
 pub use bake_body::StringRefList;
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -663,9 +648,7 @@ pub use framework_router as FrameworkRouter;
 // production
 // ══════════════════════════════════════════════════════════════════════════
 pub mod production {
-    pub use super::production_body::{
-        EntryPointHashMap, EntryPointMap, InputFile, PerThread, TypeAndFlags, build_command,
-    };
+    pub use super::production_body::{EntryPointMap, PerThread, TypeAndFlags, build_command};
 }
 
 // ══════════════════════════════════════════════════════════════════════════

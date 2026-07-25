@@ -145,15 +145,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 .get(name)
                                 .copied();
                             let ref_ = match existing {
-                                Some(loc_ref) => loc_ref.ref_.expect("infallible: ref bound"),
+                                Some(loc_ref) => loc_ref.ref_,
                                 None => {
                                     // Generate a new import item symbol in the module scope
-                                    let new_ref = p
-                                        .new_symbol(js_ast::symbol::Kind::Import, name)
-                                        .expect("unreachable");
+                                    let new_ref = p.new_symbol(js_ast::symbol::Kind::Import, name);
                                     let new_item = LocRef {
                                         loc: name_loc,
-                                        ref_: Some(new_ref),
+                                        ref_: new_ref,
                                     };
                                     // SAFETY: module_scope is arena-owned and valid for the parser lifetime.
                                     VecExt::append(&mut p.module_scope_mut().generated, new_ref);
@@ -387,15 +385,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 let ref_ = if let Some(existing) =
                                     p.commonjs_named_exports.get(name)
                                 {
-                                    existing.loc_ref.ref_.expect("infallible: ref bound")
+                                    existing.loc_ref.ref_
                                 } else {
                                     let sym_name: &'a [u8] = p.arena.alloc_slice_copy(
                                         format!("${}", bun_core::fmt::fmt_identifier(name))
                                             .as_bytes(),
                                     );
-                                    let new_ref = p
-                                        .new_symbol(js_ast::symbol::Kind::Other, sym_name)
-                                        .expect("unreachable");
+                                    let new_ref =
+                                        p.new_symbol(js_ast::symbol::Kind::Other, sym_name);
                                     // SAFETY: module_scope is arena-owned and valid for 'a.
                                     VecExt::append(&mut p.module_scope_mut().generated, new_ref);
                                     p.commonjs_named_exports
@@ -404,7 +401,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                             CommonJSNamedExport {
                                                 loc_ref: LocRef {
                                                     loc: name_loc,
-                                                    ref_: Some(new_ref),
+                                                    ref_: new_ref,
                                                 },
                                                 needs_decl: true,
                                             },
@@ -450,7 +447,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         // minify "long-string".length to 11
                         if name == b"length" {
                             if let Some(len) = e_string_javascript_length(&str_) {
-                                return Some(p.new_expr(E::Number { value: len as f64 }, loc));
+                                return Some(p.new_expr(E::Number::new(len as f64), loc));
                             }
                         }
                     }
@@ -616,15 +613,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     let ref_ = if let Some(existing) =
                                         p.commonjs_named_exports.get(name)
                                     {
-                                        existing.loc_ref.ref_.expect("infallible: ref bound")
+                                        existing.loc_ref.ref_
                                     } else {
                                         let sym_name: &'a [u8] = p.arena.alloc_slice_copy(
                                             format!("${}", bun_core::fmt::fmt_identifier(name))
                                                 .as_bytes(),
                                         );
-                                        let new_ref = p
-                                            .new_symbol(js_ast::symbol::Kind::Other, sym_name)
-                                            .expect("unreachable");
+                                        let new_ref =
+                                            p.new_symbol(js_ast::symbol::Kind::Other, sym_name);
                                         // SAFETY: module_scope is arena-owned and valid for 'a.
                                         VecExt::append(
                                             &mut p.module_scope_mut().generated,
@@ -636,7 +632,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                                 CommonJSNamedExport {
                                                     loc_ref: LocRef {
                                                         loc: name_loc,
-                                                        ref_: Some(new_ref),
+                                                        ref_: new_ref,
                                                     },
                                                     needs_decl: true,
                                                 },
@@ -767,7 +763,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     return Some(p.wrap_inlined_enum(
                         Expr {
                             loc,
-                            data: js_ast::ExprData::ENumber(E::Number { value: num }),
+                            data: js_ast::ExprData::ENumber(E::Number::new(num)),
                         },
                         name,
                     ));
@@ -809,7 +805,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         None
     }
 
-    pub fn check_if_defined_helper(&mut self, expr: Expr) -> Result<Expr, bun_core::Error> {
+    pub fn check_if_defined_helper(&mut self, expr: Expr) -> Result<Expr, crate::Error> {
         let p = self;
         let flags = if matches!(expr.data, js_ast::ExprData::EIdentifier(_)) {
             E::UnaryFlags::WAS_ORIGINALLY_TYPEOF_IDENTIFIER
@@ -835,7 +831,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         ))
     }
 
-    pub fn maybe_defined_helper(&mut self, identifier_expr: Expr) -> Result<Expr, bun_core::Error> {
+    pub fn maybe_defined_helper(&mut self, identifier_expr: Expr) -> Result<Expr, crate::Error> {
         let p = self;
         let test_ = Self::check_if_defined_helper(p, identifier_expr)?;
         let object_ref = p
@@ -853,12 +849,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         ))
     }
 
-    pub fn maybe_comma_spread_error(&mut self, comma_after_spread: Option<bun_ast::Loc>) {
+    pub fn maybe_comma_spread_error(&mut self, comma_after_spread: bun_ast::Loc) {
         let p = self;
-        let Some(comma_after_spread) = comma_after_spread else {
-            return;
-        };
-        if comma_after_spread.start == -1 {
+        if comma_after_spread.is_empty() {
             return;
         }
 

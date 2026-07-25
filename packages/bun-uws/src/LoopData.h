@@ -198,7 +198,7 @@ public:
     bool noMark = false;
 
     /* Good 16k for SSL perf. */
-    static const unsigned int CORK_BUFFER_SIZE = 16 * 1024;
+    static constexpr unsigned int CORK_BUFFER_SIZE = 16 * 1024;
 
     /* Per message deflate data */
     ZlibContext *zlibContext = nullptr;

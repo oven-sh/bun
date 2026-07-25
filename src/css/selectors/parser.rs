@@ -18,8 +18,6 @@ use super::impl_;
 
 use super::builder::SelectorBuilder;
 
-pub use bun_css::Printer as PrinterRe; // re-export parity (Printer/PrintErr were `pub const` aliases)
-
 /// `css::Result<T>` — the CSS parser result type (`Ok(T)` / `Err(css::ParseError)`).
 type CResult<T> = css::Result<T>;
 
@@ -107,20 +105,8 @@ pub type Component = GenericComponent<impl_::Selectors>;
 pub type Selector = GenericSelector<impl_::Selectors>;
 pub type SelectorList = GenericSelectorList<impl_::Selectors>;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum ToCssCtx {
-    Lightning,
-    Servo,
-}
-
 /// The definition of whitespace per CSS Selectors Level 3 § 4.
 pub const SELECTOR_WHITESPACE: &[u8] = &[b' ', b'\t', b'\n', b'\r', 0x0C];
-
-/// Compile-time check that `T` satisfies the `SelectorImpl` trait shape.
-/// In Rust this is expressed as a trait bound; this fn is kept for diff parity.
-pub fn valid_selector_impl<T: SelectorImpl>() {
-    // The trait bound `T: SelectorImpl` is the check.
-}
 
 /// The `SelectorImpl` shape. Implemented
 /// by `impl_::Selectors` in `bun_css::selector::impl_`.
@@ -131,15 +117,12 @@ pub fn valid_selector_impl<T: SelectorImpl>() {
 // module forwards through `css::implement_*` which bound on `CssEql`/
 // `DeepClone`/`CssHash`, so the std bounds were never load-bearing.
 pub trait SelectorImpl: Sized {
-    type ExtraMatchingData;
     type AttrValue: Clone;
     type Identifier: Clone;
     type LocalIdentifier: Clone;
     type LocalName: Clone;
     type NamespaceUrl: Clone;
     type NamespacePrefix: Clone;
-    type BorrowedNamespaceUrl;
-    type BorrowedLocalName;
     type NonTSPseudoClass: Clone;
     type VendorPrefix: Clone;
     type PseudoElement: Clone;
@@ -392,16 +375,6 @@ pub mod attrs {
                 Self::Suffix => "$=",
             })
         }
-    }
-
-    #[derive(Clone, Copy, PartialEq, Eq, Hash)]
-    pub enum AttrSelectorOperation {
-        Equal,
-        Includes,
-        DashMatch,
-        Prefix,
-        Substring,
-        Suffix,
     }
 
     #[derive(Clone, Copy, PartialEq, Eq, Hash, CssEql, CssHash, css::generics::DeepClone)]
@@ -732,7 +705,7 @@ fn parse_compound_selector<Impl: BunSelectorImpl>(
         empty = false;
     }
 
-    if parse_type_selector::<Impl>(parser, input, *state, builder).is_ok() {
+    if parse_type_selector::<Impl>(parser, input, *state, builder)? {
         empty = false;
     }
 
@@ -874,12 +847,6 @@ fn parse_relative_selector<Impl: BunSelectorImpl>(
     }
 
     Ok(selector)
-}
-
-/// Compile-time validation of the `SelectorParser` shape. In Rust the methods are
-/// inherent on `SelectorParser`; this is a no-op kept for diff parity.
-pub fn valid_selector_parser<T>() {
-    // These are inherent methods on `SelectorParser`; nothing to validate at runtime.
 }
 
 /// The [:dir()](https://drafts.csswg.org/selectors-4/#the-dir-pseudo) pseudo class.
@@ -1201,7 +1168,6 @@ pub struct SelectorParser<'a> {
 // Rust inherent associated types are unstable (rust#8995); the equivalent
 // contract is the `BunSelectorImpl` blanket impl above, so expose the alias
 // at module scope instead.
-pub type SelectorParserImpl = impl_::Selectors;
 
 impl<'a> SelectorParser<'a> {
     pub fn new_local_identifier(
@@ -1211,11 +1177,6 @@ impl<'a> SelectorParser<'a> {
         raw: Str,
         loc: usize,
     ) -> <impl_::Selectors as SelectorImpl>::LocalIdentifier {
-        // blocked_on: `Parser::add_symbol_for_name` (gated in css_parser.rs on
-        // ArrayHashMap::entry + SymbolList::push). The CSS-modules branch
-        // returns the symbol-table ref; until that un-gates, fall through to
-        // the ident arm so non-modules parsing is correct.
-
         if input.flags.css_modules() {
             return <impl_::Selectors as SelectorImpl>::LocalIdentifier::from_ref(
                 input.add_symbol_for_name(
@@ -1303,19 +1264,12 @@ impl<'a> SelectorParser<'a> {
             );
         }
 
-        // blocked_on: properties::custom (TokenList::parse_raw / TokenOrValue) un-gate.
-        // The stub `properties::custom::TokenList` is a unit struct with no `.v`
-        // field and no `parse_raw`; consume the function args as opaque tokens
-        // until the real `custom.rs` un-gates.
-
-        {
-            let mut args: Vec<css::css_properties::custom::TokenOrValue> = Vec::new();
-            TokenList::parse_raw(input, &mut args, self.options, 0)?;
-            return Ok(PseudoElement::CustomFunction {
-                name,
-                arguments: TokenList { v: args },
-            });
-        }
+        let mut args: Vec<css::css_properties::custom::TokenOrValue> = Vec::new();
+        TokenList::parse_raw(input, &mut args, self.options, 0)?;
+        Ok(PseudoElement::CustomFunction {
+            name,
+            arguments: TokenList { v: args },
+        })
     }
 
     fn parse_is_and_where(&self) -> bool {
@@ -1628,34 +1582,7 @@ impl<Impl: SelectorImpl> GenericSelectorList<Impl> {
     }
 }
 
-/// `DebugFmt` wrapper — implements `Display` over a borrowed list (debug builds only).
-pub struct SelectorListDebugFmt<'a, Impl: SelectorImpl>(pub &'a GenericSelectorList<Impl>);
-
-// Concrete `impl_::Selectors` only — `sel.debug()` formatting requires the
-// concrete `Display` impl on `SelectorDebugFmt` (see the comment there).
-impl<'a> fmt::Display for SelectorListDebugFmt<'a, impl_::Selectors> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if !cfg!(debug_assertions) {
-            return Ok(());
-        }
-        writeln!(f, "SelectorList[")?;
-        let last = (self.0.v.len() as usize).saturating_sub(1);
-        for (i, sel) in self.0.v.slice().iter().enumerate() {
-            if i != last {
-                writeln!(f, " {}", sel.debug())?;
-            } else {
-                writeln!(f, " {},", sel.debug())?;
-            }
-        }
-        writeln!(f, "]")
-    }
-}
-
 impl<Impl: BunSelectorImpl> GenericSelectorList<Impl> {
-    pub fn debug(&self) -> SelectorListDebugFmt<'_, Impl> {
-        SelectorListDebugFmt(self)
-    }
-
     pub fn any_has_pseudo_element(&self) -> bool {
         for sel in self.v.slice() {
             if sel.has_pseudo_element() {
@@ -1904,57 +1831,7 @@ pub struct GenericSelector<Impl: SelectorImpl> {
     pub components: Vec<GenericComponent<Impl>, ArenaPtr>,
 }
 
-pub struct SelectorDebugFmt<'a, Impl: SelectorImpl>(pub &'a GenericSelector<Impl>);
-
-// Implemented for the concrete `impl_::Selectors` only (the crate's sole
-// `SelectorImpl`): `tocss_servo::to_css_selector` serializes the concrete
-// `Selector`, not a generic `GenericSelector<Impl>`.
-impl<'a> fmt::Display for SelectorDebugFmt<'a, impl_::Selectors> {
-    // `IN_DEBUG_FMT` only exists under `#[cfg(debug_assertions)]`
-    // (printer.rs), so the whole serialization body is compiled out of
-    // release builds rather than gated at runtime.
-    #[cfg(not(debug_assertions))]
-    fn fmt(&self, _f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        Ok(())
-    }
-
-    #[cfg(debug_assertions)]
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // Serialize through a buffered
-        // `Printer` over an empty symbol map. `IN_DEBUG_FMT` makes
-        // `lookup_ident_or_ref` fall back to `debug_ident` instead of
-        // consulting the (empty) symbol table.
-        let arena = Bump::new();
-        let mut buf: Vec<u8> = Vec::new();
-        let symbols = bun_ast::symbol::Map::default();
-        // Unwind-safe reset of the flag:
-        // Debug formatting commonly runs while building panic messages, so a
-        // panic inside `to_css_selector` must not leak the flag thread-wide.
-        struct InDebugFmtGuard;
-        impl Drop for InDebugFmtGuard {
-            fn drop(&mut self) {
-                crate::printer::IN_DEBUG_FMT.with(|flag| flag.set(false));
-            }
-        }
-        crate::printer::IN_DEBUG_FMT.with(|flag| flag.set(true));
-        let result = {
-            let _guard = InDebugFmtGuard;
-            let mut printer = Printer::new_buffered(&arena, &mut buf, None, None, &symbols);
-            css::selector::tocss_servo::to_css_selector(self.0, &mut printer)
-        };
-        write!(f, "Selector(")?;
-        match result {
-            Ok(()) => write!(f, "{}", bstr::BStr::new(&buf)),
-            Err(e) => writeln!(f, "<error writing selector: {}>", e.name()),
-        }
-    }
-}
-
 impl<Impl: BunSelectorImpl> GenericSelector<Impl> {
-    pub fn debug(&self) -> SelectorDebugFmt<'_, Impl> {
-        SelectorDebugFmt(self)
-    }
-
     /// Parse a selector, without any pseudo-element.
     pub fn parse(parser: &mut SelectorParser, input: &mut CssParser) -> CResult<Self> {
         let mut state = SelectorParsingState::empty();
@@ -2231,11 +2108,6 @@ pub enum GenericComponent<Impl: SelectorImpl> {
 }
 
 impl<Impl: BunSelectorImpl> GenericComponent<Impl> {
-    /// If css modules is enabled these will be locally scoped
-    pub fn is_locally_scoped(&self) -> bool {
-        matches!(self, Self::Id(_) | Self::Class(_))
-    }
-
     pub fn as_class(&self) -> Option<&Impl::LocalIdentifier> {
         match self {
             Self::Class(v) => Some(v),
@@ -3287,18 +3159,6 @@ pub enum NthType {
 }
 
 impl NthType {
-    pub fn is_only(self) -> bool {
-        self == NthType::OnlyChild || self == NthType::OnlyOfType
-    }
-
-    pub fn is_of_type(self) -> bool {
-        self == NthType::OfType || self == NthType::LastOfType || self == NthType::OnlyOfType
-    }
-
-    pub fn is_from_end(self) -> bool {
-        self == NthType::LastChild || self == NthType::LastOfType || self == NthType::LastCol
-    }
-
     pub fn allows_of_selector(self) -> bool {
         self == NthType::Child || self == NthType::LastChild
     }
@@ -3929,11 +3789,14 @@ pub fn parse_nth_pseudo_class<Impl: BunSelectorImpl>(
         s
     };
 
+    // The of-list is a <complex-real-selector-list>, which is not forgiving: one
+    // invalid selector invalidates the whole pseudo-class. Forgiving recovery would
+    // leave the list empty, which has no valid serialization (`:nth-child(2n of )`).
     let selectors = GenericSelectorList::<Impl>::parse_with_state(
         parser,
         input,
         &mut child_state,
-        ParseErrorRecovery::IgnoreInvalidSelector,
+        ParseErrorRecovery::DiscardList,
         NestingRequirement::None,
     )?;
 
@@ -3992,11 +3855,14 @@ pub fn parse_has<Impl: BunSelectorImpl>(
     state: &mut SelectorParsingState,
 ) -> CResult<GenericComponent<Impl>> {
     let mut child_state = *state;
+    // Since https://github.com/w3c/csswg-drafts/issues/7676, :has() takes a
+    // <relative-selector-list>, which is not forgiving. Forgiving recovery would
+    // leave the list empty, which has no valid serialization (`:has()`).
     let inner = GenericSelectorList::<Impl>::parse_relative_with_state(
         parser,
         input,
         &mut child_state,
-        parser.is_and_where_error_recovery(),
+        ParseErrorRecovery::DiscardList,
         NestingRequirement::None,
     )?;
 

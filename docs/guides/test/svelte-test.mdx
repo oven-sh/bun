@@ -4,9 +4,9 @@ sidebarTitle: Test Svelte
 mode: center
 ---
 
-Bun's [Plugin API](/runtime/plugins) lets you add custom loaders to your project. The `test.preload` option in `bunfig.toml` lets you configure your loader to start before your tests run.
+Use Bun's [Plugin API](/runtime/plugins) to add a custom loader for `.svelte` files, and the `test.preload` option in `bunfig.toml` to load it before your tests run.
 
-Firstly, install `@testing-library/svelte`, `svelte`, and `@happy-dom/global-registrator`.
+First, install `@testing-library/svelte`, `svelte`, and `@happy-dom/global-registrator`.
 
 ```bash terminal icon="terminal"
 bun add @testing-library/svelte svelte@4 @happy-dom/global-registrator
@@ -30,7 +30,7 @@ afterEach(async () => {
 });
 
 plugin({
-  title: "svelte loader",
+  name: "svelte loader",
   setup(builder) {
     builder.onLoad({ filter: /\.svelte(\?[^.]+)?$/ }, ({ path }) => {
       try {
@@ -56,7 +56,7 @@ plugin({
 
 ---
 
-Add this to `bunfig.toml` to tell Bun to preload the plugin, so it loads before your tests run.
+Add this to `bunfig.toml` so Bun preloads the plugin before your tests run.
 
 ```toml bunfig.toml icon="settings"
 [test]
@@ -82,7 +82,7 @@ Add an example `.svelte` file in your project.
 
 ---
 
-Now you can `import` or `require` `*.svelte` files in your tests, and it will load the Svelte component as a JavaScript module.
+Now you can `import` or `require` `*.svelte` files in your tests. Bun loads each Svelte component as a JavaScript module.
 
 ```ts hello-svelte.test.ts icon="/icons/typescript.svg"
 import { test, expect } from "bun:test";

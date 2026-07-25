@@ -32,6 +32,7 @@
 #include <JavaScriptCore/JSTypedArrays.h>
 #include "SerializedScriptValue.h"
 #include "MessagePort.h"
+#include "JSStructuredSerializeOptions.h"
 
 namespace WebCore {
 using namespace JSC;
@@ -95,13 +96,17 @@ JSC_DEFINE_HOST_FUNCTION(structuredCloneForStream, (JSGlobalObject * globalObjec
             throwDataCloneError(*globalObject, scope);
             return {};
         }
-        auto bufferClone = buffer->slice(0);
+        // Copy only the bytes the view covers. Chunks are often narrow windows into a
+        // much larger shared buffer (e.g. a fetch body's read buffer); cloning the whole
+        // backing buffer per chunk retains every neighboring chunk's bytes again.
+        size_t byteOffset = bufferView->byteOffset();
+        auto bufferClone = buffer->slice(byteOffset, byteOffset + bufferView->byteLength());
         Structure* structure = bufferView->structure();
 
-#define CLONE_TYPED_ARRAY(name)                                                                                                                                                   \
-    do {                                                                                                                                                                          \
-        if (bufferView->inherits<JS##name##Array>())                                                                                                                              \
-            RELEASE_AND_RETURN(scope, JSValue::encode(JS##name##Array::create(globalObject, structure, WTF::move(bufferClone), bufferView->byteOffset(), bufferView->length()))); \
+#define CLONE_TYPED_ARRAY(name)                                                                                                                            \
+    do {                                                                                                                                                   \
+        if (bufferView->inherits<JS##name##Array>())                                                                                                       \
+            RELEASE_AND_RETURN(scope, JSValue::encode(JS##name##Array::create(globalObject, structure, WTF::move(bufferClone), 0, bufferView->length()))); \
     } while (0);
 
         FOR_EACH_TYPED_ARRAY_TYPE_EXCLUDING_DATA_VIEW(CLONE_TYPED_ARRAY)
@@ -109,7 +114,7 @@ JSC_DEFINE_HOST_FUNCTION(structuredCloneForStream, (JSGlobalObject * globalObjec
 #undef CLONE_TYPED_ARRAY
 
         if (value.inherits<JSDataView>())
-            RELEASE_AND_RETURN(scope, JSValue::encode(JSDataView::create(globalObject, structure, WTF::move(bufferClone), bufferView->byteOffset(), bufferView->length())));
+            RELEASE_AND_RETURN(scope, JSValue::encode(JSDataView::create(globalObject, structure, WTF::move(bufferClone), 0, bufferView->length())));
     }
 
     throwTypeError(globalObject, scope, "structuredClone not implemented for non-ArrayBuffer / non-ArrayBufferView"_s);
@@ -129,29 +134,14 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionStructuredClone, (JSC::JSGlobalObject * globa
     JSC::JSValue value = callFrame->argument(0);
     JSC::JSValue options = callFrame->argument(1);
 
-    Vector<JSC::Strong<JSC::JSObject>> transferList;
-
-    if (options.isObject()) {
-        JSC::JSObject* optionsObject = options.getObject();
-        JSC::JSValue transferListValue = optionsObject->get(globalObject, vm.propertyNames->transfer);
-        RETURN_IF_EXCEPTION(throwScope, {});
-        if (transferListValue.isObject()) {
-            JSC::JSObject* transferListObject = transferListValue.getObject();
-            if (auto* transferListArray = dynamicDowncast<JSC::JSArray>(transferListObject)) {
-                for (unsigned i = 0; i < transferListArray->length(); i++) {
-                    JSC::JSValue transferListValue = transferListArray->get(globalObject, i);
-                    RETURN_IF_EXCEPTION(throwScope, {});
-                    if (transferListValue.isObject()) {
-                        JSC::JSObject* transferListObject = transferListValue.getObject();
-                        transferList.append(JSC::Strong<JSC::JSObject>(vm, transferListObject));
-                    }
-                }
-            }
-        }
-    }
+    // https://html.spec.whatwg.org/multipage/structured-data.html#dom-structuredclone
+    // Convert the options dictionary (including its `transfer` sequence) per WebIDL
+    // before serializing, so an invalid transfer list throws without detaching anything.
+    auto serializeOptions = convertDictionary<StructuredSerializeOptions>(*globalObject, options);
+    RETURN_IF_EXCEPTION(throwScope, {});
 
     Vector<RefPtr<MessagePort>> ports;
-    ExceptionOr<Ref<SerializedScriptValue>> serialized = SerializedScriptValue::create(*globalObject, value, WTF::move(transferList), ports);
+    ExceptionOr<Ref<SerializedScriptValue>> serialized = SerializedScriptValue::create(*globalObject, value, WTF::move(serializeOptions.transfer), ports);
     if (serialized.hasException()) {
         WebCore::propagateException(*globalObject, throwScope, serialized.releaseException());
         RELEASE_AND_RETURN(throwScope, {});

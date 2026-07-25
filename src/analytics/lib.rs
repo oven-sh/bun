@@ -331,17 +331,6 @@ pub(crate) const fn validate_feature_name(name: &[u8]) -> bool {
 
 // ──────────────────────────────────────────────────────────────────────────
 
-#[repr(u8)]
-#[derive(Copy, Clone, PartialEq, Eq, strum::IntoStaticStr)]
-#[allow(non_camel_case_types)]
-pub enum EventName {
-    bundle_success,
-    bundle_fail,
-    bundle_start,
-    http_start,
-    http_build,
-}
-
 const PLATFORM_ARCH: analytics::Architecture = {
     #[cfg(target_arch = "aarch64")]
     {
@@ -464,14 +453,17 @@ pub mod generate_header {
         // macOS sendmsg_x / recvmsg_x feature gate
         // ──────────────────────────────────────────────────────────────────
 
-        // On macOS 13, tests that use sendmsg_x or recvmsg_x hang.
+        // Before macOS 15.6 (xnu-11417.140.69), recvmsg_x's soreceive_m_list()
+        // leaks the socket lock: concurrent batch-receives on one shared UDP
+        // socket deadlock the kernel and black-hole all loopback until reboot.
         #[cfg(target_os = "macos")]
-        static USE_MSGX_ON_MACOS_14_OR_LATER: OnceLock<bool> = OnceLock::new();
+        static USE_MSGX_ON_MACOS_15_6_OR_LATER: OnceLock<bool> = OnceLock::new();
 
         #[cfg(target_os = "macos")]
-        fn detect_use_msgx_on_macos_14_or_later() -> bool {
-            let version = semver::Version::parse_utf8(for_os().version);
-            version.valid && version.version.max().major >= 14
+        fn detect_use_msgx_on_macos_15_6_or_later() -> bool {
+            let parsed = semver::Version::parse_utf8(for_os().version);
+            let version = parsed.version.min();
+            parsed.valid && (version.major, version.minor) >= (15, 6)
         }
 
         #[unsafe(no_mangle)]
@@ -483,7 +475,7 @@ pub mod generate_header {
             }
             #[cfg(target_os = "macos")]
             {
-                *USE_MSGX_ON_MACOS_14_OR_LATER.get_or_init(detect_use_msgx_on_macos_14_or_later)
+                *USE_MSGX_ON_MACOS_15_6_OR_LATER.get_or_init(detect_use_msgx_on_macos_15_6_or_later)
                     as i32
             }
         }
@@ -515,12 +507,22 @@ pub mod generate_header {
 
         #[unsafe(no_mangle)]
         pub(crate) extern "C" fn Bun__isEpollPwait2SupportedOnLinuxKernel() -> i32 {
-            #[cfg(not(any(target_os = "linux", target_os = "android")))]
+            // Android's per-app seccomp policy does not whitelist
+            // epoll_pwait2 (bionic SYSCALLS.TXT only lists epoll_pwait).
+            // https://github.com/oven-sh/bun/issues/32489
+            #[cfg(not(target_os = "linux"))]
             {
                 0
             }
-            #[cfg(any(target_os = "linux", target_os = "android"))]
+            #[cfg(target_os = "linux")]
             {
+                if env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_EPOLL_PWAIT2
+                    .get()
+                    .unwrap_or(false)
+                {
+                    return 0;
+                }
+
                 // https://man.archlinux.org/man/epoll_pwait2.2.en#HISTORY
                 let min_epoll_pwait2 = semver::Version {
                     major: 5,
@@ -590,4 +592,3 @@ pub mod generate_header {
 pub use generate_header as GenerateHeader;
 
 pub mod schema;
-pub use schema::{BufReader, Reader, SchemaInt};

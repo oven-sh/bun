@@ -1,9 +1,5 @@
 use crate::css_parser as css;
 
-// blocked_on: rules/media + media_query::{MediaCondition,MediaFeature,...} +
-// properties/custom — only the gated `get_*_rules` / `add_unparsed_fallbacks`
-// bodies below reference these.
-
 use css::css_rules::media::MediaRule;
 
 use css::css_properties::custom::UnparsedProperty;
@@ -95,12 +91,7 @@ impl<'a> PropertyHandlerContext<'a> {
     }
 }
 
-// ─── heavy rule-building helpers (gated) ──────────────────────────────────
-// blocked_on: css_rules::{CssRule,CssRuleList,StyleRule,SupportsRule,media},
-// selectors::parser::{Direction,Component,PseudoClass}, DeclarationBlock
-// construction with bump-allocated lists, properties/custom::UnparsedProperty.
-// These build whole rule subtrees and are only called from the (still-gated)
-// minify path; un-gate alongside `rules/style.rs`.
+// ─── heavy rule-building helpers ──────────────────────────────────────────
 
 impl<'a> PropertyHandlerContext<'a> {
     /// `'static`-erased arena handle for building `DeclarationBlock<'static>` /

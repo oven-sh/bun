@@ -269,12 +269,11 @@ impl Ls {
                 b'd' => opts.list_directories = true,
                 b'l' => opts.long_listing = true,
                 b'R' => opts.recursive = true,
-                b'r' => opts.reverse_order = true,
-                b'1' => opts.one_file_per_line = true,
                 // The remaining short flags are recognised but currently no-op.
-                b'b' | b'B' | b'c' | b'C' | b'D' | b'f' | b'F' | b'g' | b'G' | b'h' | b'H'
-                | b'i' | b'I' | b'k' | b'L' | b'm' | b'n' | b'N' | b'o' | b'p' | b'q' | b'Q'
-                | b's' | b'S' | b't' | b'T' | b'u' | b'U' | b'v' | b'w' | b'x' | b'X' | b'Z' => {}
+                b'r' | b'1' | b'b' | b'B' | b'c' | b'C' | b'D' | b'f' | b'F' | b'g' | b'G'
+                | b'h' | b'H' | b'i' | b'I' | b'k' | b'L' | b'm' | b'n' | b'N' | b'o' | b'p'
+                | b'q' | b'Q' | b's' | b'S' | b't' | b'T' | b'u' | b'U' | b'v' | b'w' | b'x'
+                | b'X' | b'Z' => {}
                 _ => return ParseFlag::IllegalOption(Box::from(&flag[1..2])),
             }
         }
@@ -356,14 +355,6 @@ impl OutputTaskVTable for Ls {
     }
 }
 
-#[derive(Clone, Copy, Default)]
-pub enum ResultKind {
-    File,
-    Dir,
-    #[default]
-    Idk,
-}
-
 /// Opens the path, iterates its entries (or
 /// prints the path itself for files / `-d`), accumulating into `output`.
 pub(crate) struct ShellLsTask {
@@ -378,7 +369,6 @@ pub(crate) struct ShellLsTask {
     pub output: Vec<u8>,
     pub is_absolute: bool,
     pub err: Option<bun_sys::Error>,
-    pub result_kind: ResultKind,
     /// Cached current time (seconds since epoch) for formatting timestamps.
     /// Cached once per task to avoid repeated syscalls.
     now_secs: u64,
@@ -409,7 +399,6 @@ impl ShellLsTask {
             output: Vec::new(),
             is_absolute: false,
             err: None,
-            result_kind: ResultKind::Idk,
             now_secs: 0,
             event_loop,
             interp,
@@ -479,7 +468,6 @@ impl ShellLsTask {
                         this.err = Some(this.error_with_path(&e));
                     }
                     E::ENOTDIR => {
-                        this.result_kind = ResultKind::File;
                         // Clone the path to dodge the &mut/& borrow overlap.
                         let p = ZBox::from_bytes(this.path.as_bytes());
                         this.add_entry(p.as_bytes(), this.cwd);
@@ -802,8 +790,4 @@ pub struct Opts {
     pub long_listing: bool,
     /// `-R`, `--recursive` — list subdirectories recursively
     pub recursive: bool,
-    /// `-r`, `--reverse` — reverse order while sorting
-    pub reverse_order: bool,
-    /// `-1` — list one file per line
-    pub one_file_per_line: bool,
 }

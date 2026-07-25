@@ -118,15 +118,68 @@ describe("invalid inputs", () => {
   });
 });
 
-[Infinity, -Infinity, NaN].forEach(input => {
+[Infinity, -Infinity, NaN, 32.9, 1.5, 0.5, -0.5].forEach(input => {
   test(`${input} keylen`, () => {
     expect(() => crypto.pbkdf2("password", "salt", 1, input, "sha256")).toThrow(
-      `The value of "keylen" is out of range. It must be an integer. Received ${input}`,
+      expect.objectContaining({
+        name: "RangeError",
+        code: "ERR_OUT_OF_RANGE",
+        message: `The value of "keylen" is out of range. It must be an integer. Received ${input}`,
+      }),
+    );
+    expect(() => crypto.pbkdf2Sync("password", "salt", 1, input, "sha256")).toThrow(
+      expect.objectContaining({
+        name: "RangeError",
+        code: "ERR_OUT_OF_RANGE",
+        message: `The value of "keylen" is out of range. It must be an integer. Received ${input}`,
+      }),
     );
   });
 });
 
-[-1, 2147483648, 4294967296].forEach(input => {
+[Infinity, -Infinity, NaN, 1.5, 0.5].forEach(input => {
+  test(`${input} iterations`, () => {
+    expect(() => crypto.pbkdf2("password", "salt", input, 8, "sha256", () => {})).toThrow(
+      expect.objectContaining({
+        name: "RangeError",
+        code: "ERR_OUT_OF_RANGE",
+        message: `The value of "iterations" is out of range. It must be an integer. Received ${input}`,
+      }),
+    );
+    expect(() => crypto.pbkdf2Sync("password", "salt", input, 8, "sha256")).toThrow(
+      expect.objectContaining({
+        name: "RangeError",
+        code: "ERR_OUT_OF_RANGE",
+        message: `The value of "iterations" is out of range. It must be an integer. Received ${input}`,
+      }),
+    );
+  });
+});
+
+[0, -0].forEach(input => {
+  test(`keylen=${Object.is(input, -0) ? "-0" : "0"} fails sync`, () => {
+    expect(() => crypto.pbkdf2Sync("p", "s", 1, input, "sha256")).toThrow(
+      expect.objectContaining({ name: "Error", message: "PBKDF2 derivation failed" }),
+    );
+  });
+});
+
+test("keylen=0 fails async via callback", async () => {
+  const { promise, resolve } = Promise.withResolvers();
+  let threwSync = false;
+  try {
+    crypto.pbkdf2("p", "s", 1, 0, "sha256", (err, key) => resolve({ err, key }));
+  } catch {
+    threwSync = true;
+  }
+  expect(threwSync).toBe(false);
+  const { err, key } = await promise;
+  expect(key).toBeUndefined();
+  expect(err).toBeInstanceOf(Error);
+  expect(err.message).toBe("PBKDF2 derivation failed");
+});
+
+[-1, 2147483648, 4294967296, 2 ** 52].forEach(input => {
   test(`${input} keylen`, () => {
     expect(() => crypto.pbkdf2("password", "salt", 1, input, "sha256")).toThrow(
       `The value of "keylen" is out of range. It must be >= 0 and <= 2147483647. Received ${input}`,

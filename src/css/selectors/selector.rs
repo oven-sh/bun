@@ -33,7 +33,6 @@ pub mod r#impl {
         pub mod selector_impl {
             use super::*;
 
-            pub type PseudoElement = parser::PseudoElement;
             pub type VendorPrefix = css::VendorPrefix;
         }
     }
@@ -539,20 +538,7 @@ fn is_selector_unused(
     for component in selector.components.iter() {
         match component {
             Component::Class(ident) | Component::Id(ident) => {
-                // `IdentOrRef::as_original_string` is
-                // gated (blocked_on bun_ast::symbol::List::at
-                // + Symbol.original_name). Inline the ident arm; the ref arm
-                // (CSS-modules symbol-table lookup) is unreachable until
-                // `Parser::add_symbol_for_name` un-gates (see
-                // `SelectorParser::new_local_identifier`).
-                let actual_ident: &[u8] = match (*ident).as_ident() {
-                    // SAFETY: arena-owned slice (`'static` placeholder for the arena lifetime).
-                    Some(i) => unsafe { crate::arena_str(i.v) },
-                    None => {
-                        let _ = symbols;
-                        continue; // blocked_on: as_original_string ref arm
-                    }
-                };
+                let actual_ident: &[u8] = ident.as_original_string(symbols);
                 // Look up the borrowed `&[u8]` against the map's owned
                 // `Box<[u8]>` keys without allocating.
                 struct SliceAdapter;
@@ -849,25 +835,28 @@ pub mod serialize {
                 operator.to_css(dest)?;
 
                 if dest.minify {
-                    // PERF: should we put a scratch buffer in the printer
                     // Serialize as both an identifier and a string and choose the shorter one.
                     // SAFETY: per the `CssString` invariant, the pointee borrows the parser
                     // arena which outlives the `Printer` it is being written to.
                     let value_bytes = unsafe { crate::arena_str(*value) };
-                    // `Vec<u8>: WriteAll<Error = Infallible>` — cannot fail.
-                    let mut id: Vec<u8> = Vec::new();
-                    let _ = css::serializer::serialize_identifier(value_bytes, &mut id);
 
-                    // `serialize_string` is called directly here since `CssString`
-                    // (`*const [u8]`) does not implement `generic::ToCss`.
-                    let mut s: Vec<u8> = Vec::new();
-                    let _ = css::serializer::serialize_string(value_bytes, &mut s);
+                    // Identifier form goes into the printer's reusable scratch
+                    // buffer; the quoted-string length is counted in a null
+                    // sink, so picking the shorter form allocates nothing.
+                    dest.scratchbuf.clear();
+                    let _ =
+                        css::serializer::serialize_identifier(value_bytes, &mut dest.scratchbuf);
+                    let id_len = dest.scratchbuf.len();
 
-                    let id_items = &id[..];
-                    if !id_items.is_empty() && id_items.len() < s.len() {
-                        dest.write_str(id_items)?;
+                    let mut counter = bun_io::DiscardingWriter::new();
+                    let _ = css::serializer::serialize_string(value_bytes, &mut counter);
+
+                    if id_len > 0 && id_len < counter.count {
+                        dest.write_scratchbuf(0..id_len)?;
                     } else {
-                        dest.write_str(&s)?;
+                        // `serialize_string` is called directly here since `CssString`
+                        // (`*const [u8]`) does not implement `generic::ToCss`.
+                        dest.serialize_string(value_bytes)?;
                     }
                 } else {
                     CSSStringFns::to_css(value, dest)?;
@@ -1052,8 +1041,6 @@ pub mod serialize {
                 };
                 if let Some(class) = class {
                     $d.write_char(b'.')?;
-                    // blocked_on: `Printer::write_ident` (gated on css_modules
-                    // Pattern::write closure-arity reshape). Non-modules path:
                     $d.serialize_identifier(class)?;
                 } else {
                     $d.write_str($s)?;
@@ -1178,10 +1165,7 @@ pub mod serialize {
                 dest.write_char(b':')?;
                 dest.serialize_identifier(name)?;
                 dest.write_char(b'(')?;
-                // blocked_on: properties::custom (TokenList::to_css_raw) un-gate.
-
                 arguments.to_css_raw(dest)?;
-                let _ = arguments;
                 dest.write_char(b')')?;
             }
         }
@@ -1318,10 +1302,7 @@ pub mod serialize {
                 dest.write_str(b"::")?;
                 dest.serialize_identifier(name)?;
                 dest.write_char(b'(')?;
-                // blocked_on: properties::custom (TokenList::to_css_raw) un-gate.
-
                 arguments.to_css_raw(dest)?;
-                let _ = arguments;
                 dest.write_char(b')')?;
             }
         }

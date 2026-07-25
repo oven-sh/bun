@@ -16,6 +16,24 @@ describe("fs.opendir", () => {
   it("throws if callback is not provided", () => {
     expect(() => fs.opendir("foo")).toThrow(/The "callback" argument must be of type function/);
   });
+
+  it("opendirSync on a file throws ENOTDIR with libuv's platform errno", () => {
+    const file = path.join(os.tmpdir(), "opendir-enotdir-" + String(Math.random() * 100).substring(0, 6) + ".txt");
+    fs.writeFileSync(file, "not a directory");
+    try {
+      let err: any;
+      try {
+        fs.opendirSync(file);
+      } catch (e) {
+        err = e;
+      }
+      expect(err?.code).toBe("ENOTDIR");
+      expect(err?.errno).toBe(process.platform === "win32" ? -4052 : -20);
+      expect(err?.syscall).toBe("opendir");
+    } finally {
+      fs.rmSync(file, { force: true });
+    }
+  });
 });
 
 describe("fs.Dir", () => {
@@ -29,7 +47,7 @@ describe("fs.Dir", () => {
     });
 
     afterAll(() => {
-      fs.rmdirSync(dirname, { recursive: true });
+      fs.rmSync(dirname, { recursive: true, force: true });
     });
 
     describe("when an empty directory is opened", () => {
@@ -117,3 +135,109 @@ describe("fs.Dir", () => {
     }); // </when an empty directory is opened>
   }); // </given an empty temp directory>
 }); // </fs.Dir>
+
+describe("fs.opendir async validation", () => {
+  it("does not invoke the callback synchronously", async () => {
+    const dirname = path.join(os.tmpdir(), "opendir-async-" + String(Math.random() * 100).substring(0, 6));
+    fs.mkdirSync(dirname);
+    try {
+      let sync = true;
+      const { promise, resolve } = Promise.withResolvers<boolean>();
+      fs.opendir(dirname, (err, dir) => {
+        resolve(sync);
+        dir?.close(() => {});
+      });
+      sync = false;
+      expect(await promise).toBe(false);
+    } finally {
+      fs.rmSync(dirname, { recursive: true, force: true });
+    }
+  });
+
+  it("reports ENOTDIR through the callback, not a synchronous throw", async () => {
+    const file = path.join(os.tmpdir(), "opendir-async-file-" + String(Math.random() * 100).substring(0, 6));
+    fs.writeFileSync(file, "x");
+    try {
+      const { promise, resolve } = Promise.withResolvers<any>();
+      fs.opendir(file, err => resolve(err));
+      const err = await promise;
+      expect(err?.code).toBe("ENOTDIR");
+      expect(err?.syscall).toBe("opendir");
+    } finally {
+      fs.rmSync(file, { force: true });
+    }
+  });
+});
+
+describe("opendirSync string encoding shorthand", () => {
+  it("validates a string options argument as an encoding", () => {
+    const dirname = path.join(os.tmpdir(), "opendir-enc-" + String(Math.random() * 100).substring(0, 6));
+    fs.mkdirSync(dirname);
+    try {
+      // an invalid encoding passed as the shorthand is validated like node
+      expect(() => fs.opendirSync(dirname, "nope")).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }));
+    } finally {
+      fs.rmSync(dirname, { recursive: true, force: true });
+    }
+  });
+
+  // On Windows the native readdir always emits UTF-8 names (a pre-existing
+  // gap: fs.readdirSync ignores the encoding option there too), so the
+  // byte-reinterpretation is only observable on POSIX.
+  it.skipIf(process.platform === "win32")("applies the encoding to entry names", () => {
+    const dirname = path.join(os.tmpdir(), "opendir-enc-" + String(Math.random() * 100).substring(0, 6));
+    fs.mkdirSync(dirname);
+    // latin1 makes the shorthand observable: the utf8 bytes of the name are
+    // reinterpreted per-byte. (encoding: "buffer" dirents are a pre-existing
+    // native readdir gap unrelated to the shorthand.)
+    fs.writeFileSync(path.join(dirname, "na\u00efve.txt"), "x");
+    try {
+      const dir = fs.opendirSync(dirname, "latin1");
+      const entry = dir.readSync();
+      expect(entry?.name).toBe(Buffer.from("na\u00efve.txt", "utf8").toString("latin1"));
+      dir.closeSync();
+    } finally {
+      fs.rmSync(dirname, { recursive: true, force: true });
+    }
+  });
+});
+
+// Node's Dir implements Symbol.dispose / Symbol.asyncDispose so it composes
+// with `using` / `await using`. Disposing an already-closed Dir is a no-op.
+describe("Dir explicit resource management", () => {
+  let dirname: string;
+  beforeEach(() => {
+    dirname = path.join(os.tmpdir(), "opendir-dispose-" + String(Math.random() * 100).substring(0, 6));
+    fs.mkdirSync(dirname);
+    fs.writeFileSync(path.join(dirname, "entry.txt"), "x");
+  });
+  afterEach(() => {
+    fs.rmSync(dirname, { recursive: true, force: true });
+  });
+
+  it("`using` closes the directory at scope exit", () => {
+    let dir!: fs.Dir;
+    {
+      using d = fs.opendirSync(dirname);
+      dir = d;
+      expect(d.readSync()?.name).toBe("entry.txt");
+    }
+    expect(() => dir.readSync()).toThrow(expect.objectContaining({ code: "ERR_DIR_CLOSED" }));
+  });
+
+  it("`await using` closes the directory at scope exit", async () => {
+    let dir!: fs.Dir;
+    {
+      await using d = await fs.promises.opendir(dirname);
+      dir = d;
+    }
+    expect(() => dir.readSync()).toThrow(expect.objectContaining({ code: "ERR_DIR_CLOSED" }));
+  });
+
+  it("disposing an already-closed Dir does not throw", async () => {
+    const dir = fs.opendirSync(dirname);
+    dir.closeSync();
+    expect(() => dir[Symbol.dispose]()).not.toThrow();
+    await expect(dir[Symbol.asyncDispose]()).resolves.toBeUndefined();
+  });
+});

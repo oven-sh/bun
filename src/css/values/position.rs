@@ -310,8 +310,6 @@ pub enum PositionComponent<S> {
     Side(PositionComponentSide<S>),
 }
 
-// `S` is bounded on the values-local `protocol::{Parse,ToCss}` shapes until
-// `generics::Parse` un-gates.
 impl<S: protocol::Parse + protocol::ToCss + Clone + PartialEq> PositionComponent<S> {
     pub(crate) fn is_zero(&self) -> bool {
         if let PositionComponent::Length(l) = self {

@@ -1,17 +1,15 @@
 use core::cell::Cell;
 
 use crate::jsc::{JSGlobalObject, JSValue, JsResult};
-use bun_collections::StringHashMap;
 
 use crate::postgres::error_jsc::postgres_error_to_js;
 use crate::postgres::signature::Signature;
 use crate::shared::cached_structure::CachedStructure as PostgresCachedStructure;
-use crate::shared::sql_data_cell::Flags as DataCellFlags;
+use crate::shared::sql_data_cell::{Flags as DataCellFlags, dedupe_columns};
 
 use bun_sql::postgres::any_postgres_error::AnyPostgresError;
 use bun_sql::postgres::postgres_protocol as protocol;
 use bun_sql::postgres::postgres_types::int4;
-use bun_sql::shared::ColumnIdentifier;
 
 bun_core::declare_scope!(Postgres, visible);
 
@@ -71,19 +69,7 @@ impl Error {
     }
 }
 
-#[derive(Copy, Clone, Eq, PartialEq)]
-pub enum Status {
-    Pending,
-    Parsing,
-    Prepared,
-    Failed,
-}
-
-impl Status {
-    pub fn is_running(self) -> bool {
-        self == Status::Parsing
-    }
-}
+pub use bun_sql::shared::statement_status::Status;
 
 impl PostgresSQLStatement {
     /// Set the initial intrusive
@@ -103,52 +89,8 @@ impl PostgresSQLStatement {
         }
         self.needs_duplicate_check = false;
 
-        let mut seen_numbers: Vec<u32> = Vec::new();
-        let mut seen_fields: StringHashMap<()> = StringHashMap::default();
-        seen_fields.reserve(self.fields.len());
-
-        // iterate backwards
-        let mut remaining = self.fields.len();
-        let mut flags = DataCellFlags::default();
-        while remaining > 0 {
-            remaining -= 1;
-            let field: &mut protocol::FieldDescription = &mut self.fields[remaining];
-            match &field.name_or_index {
-                ColumnIdentifier::Name(name) => {
-                    // Note: reshaped for borrowck — compute `found_existing`
-                    // before mutating `field.name_or_index`.
-                    // StringHashMap
-                    // clones to an owned `Box<[u8]>` key. Fine for a transient
-                    // dedup set.
-                    let found_existing = seen_fields
-                        .get_or_put(name.slice())
-                        .expect("OOM")
-                        .found_existing;
-                    if found_existing {
-                        field.name_or_index = ColumnIdentifier::Duplicate;
-                        flags.insert(DataCellFlags::HAS_DUPLICATE_COLUMNS);
-                    }
-
-                    flags.insert(DataCellFlags::HAS_NAMED_COLUMNS);
-                }
-                ColumnIdentifier::Index(index) => {
-                    let index = *index;
-                    if seen_numbers.contains(&index) {
-                        field.name_or_index = ColumnIdentifier::Duplicate;
-                        flags.insert(DataCellFlags::HAS_DUPLICATE_COLUMNS);
-                    } else {
-                        seen_numbers.push(index);
-                    }
-
-                    flags.insert(DataCellFlags::HAS_INDEXED_COLUMNS);
-                }
-                ColumnIdentifier::Duplicate => {
-                    flags.insert(DataCellFlags::HAS_DUPLICATE_COLUMNS);
-                }
-            }
-        }
-
-        self.fields_flags = flags;
+        self.fields_flags =
+            dedupe_columns(self.fields.iter_mut().rev().map(|f| &mut f.name_or_index));
     }
 
     // Note: returning

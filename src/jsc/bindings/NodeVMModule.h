@@ -66,6 +66,16 @@ public:
 
     JSValue evaluate(JSGlobalObject* globalObject, uint32_t timeout, bool breakOnSigint);
 
+    // For top-level-await modules JSC finishes evaluation asynchronously
+    // (record status EvaluatingAsync -> Evaluated); pull the final state into
+    // m_status/m_evaluationException once the record has settled.
+    void reconcileEvaluationState(JSC::VM& vm);
+
+    bool hasAsyncGraph() const;
+    void propagateLinked();
+
+    JSC::Exception* evaluationException() const { return m_evaluationException.get(); }
+
 protected:
     WTF::String m_identifier;
     Status m_status = Status::Unlinked;
@@ -75,6 +85,7 @@ protected:
     WriteBarrier<Unknown> m_moduleWrapper;
     WTF::Vector<NodeVMModuleRequest> m_moduleRequests;
     WTF::HashMap<WTF::String, WriteBarrier<JSObject>> m_resolveCache;
+    WriteBarrier<JSC::Exception> m_evaluationException;
 
     NodeVMModule(JSC::VM& vm, JSC::Structure* structure, WTF::String identifier, JSValue context, JSValue moduleWrapper);
 

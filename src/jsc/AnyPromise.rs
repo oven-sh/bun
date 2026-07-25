@@ -53,11 +53,6 @@ impl AnyPromise {
     }
 
     #[inline]
-    pub fn is_handled(self) -> bool {
-        any_promise_dispatch!(self, |p| p.is_handled())
-    }
-
-    #[inline]
     pub fn set_handled(self, vm: &VM) {
         let _ = vm;
         any_promise_dispatch!(self, |p| p.set_handled())
@@ -100,15 +95,6 @@ impl AnyPromise {
             // pointer reinterpretation is valid for any C++ API taking JSPromise*.
             Self::Internal(p) => p.cast::<JSPromise>(),
         }
-    }
-
-    #[inline]
-    pub fn reject_as_handled(
-        self,
-        global_this: &JSGlobalObject,
-        value: JSValue,
-    ) -> Result<(), JsTerminated> {
-        any_promise_dispatch!(self, |p| p.reject_as_handled(global_this, value))
     }
 
     #[inline]

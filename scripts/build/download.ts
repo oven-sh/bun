@@ -274,6 +274,36 @@ export async function extractZip(zipPath: string, dest: string): Promise<void> {
 }
 
 /**
+ * A missing prebuilt tarball is a bad pin, not a network blip. The
+ * `autobuild-preview-pr-*` WebKit tags are the sharp edge: GitHub deletes the
+ * preview release when the PR merges or closes, so every build 404s at once.
+ * Say so, and say which line to edit.
+ */
+function prebuiltDownloadError(name: string, url: string, cause: unknown): Error {
+  const message = cause instanceof Error ? cause.message : String(cause);
+  // 404 only: a 403/429 is GitHub rate-limiting us, not a deleted release.
+  const missing = message.includes("HTTP 404");
+  if (name === "WebKit" && missing && url.includes("/autobuild-preview-pr-")) {
+    return new BuildError(`WebKit preview release is gone: ${message}`, {
+      cause,
+      file: "scripts/build/deps/webkit.ts",
+      hint:
+        "WEBKIT_VERSION points at an `autobuild-preview-pr-*` tag. Those releases only exist " +
+        "while the WebKit PR is open — this one has merged, closed, or been re-tagged. Set " +
+        "WEBKIT_VERSION in scripts/build/deps/webkit.ts to the merged main sha (see " +
+        "https://github.com/oven-sh/WebKit/releases).",
+    });
+  }
+  if (missing) {
+    return new BuildError(`Prebuilt ${name} is not published at that URL: ${message}`, {
+      cause,
+      hint: `Check the version pin for '${name}' in scripts/build/deps/.`,
+    });
+  }
+  return cause instanceof Error ? cause : new BuildError(message);
+}
+
+/**
  * Fetch a prebuilt tarball: download + extract + write identity stamp.
  *
  * Generic mechanism for the `{ kind: "prebuilt" }` Source variant. Download a
@@ -323,7 +353,11 @@ export async function fetchPrebuilt(
   const destParent = resolve(dest, "..");
   await mkdir(destParent, { recursive: true });
   const tarballPath = `${dest}${suffix}.tar.gz`;
-  await downloadWithRetry(url, tarballPath, name);
+  try {
+    await downloadWithRetry(url, tarballPath, name);
+  } catch (err) {
+    throw prebuiltDownloadError(name, url, err);
+  }
 
   // ─── Extract ───
   // Extract to a private staging dir, then hoist. We don't extract directly

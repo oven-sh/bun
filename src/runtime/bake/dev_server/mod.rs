@@ -20,38 +20,19 @@ use bun_sys::FdExt as _;
 use super::jsc;
 use super::{Graph, Side};
 
-// ─── submodule bodies ────────────────────────────────────────────────────────
-// Assets body dissolved into `assets.rs`.
-#[path = "../DevServer/DirectoryWatchStore.rs"]
-pub(crate) mod directory_watch_store_body;
-#[path = "../DevServer/ErrorReportRequest.rs"]
-pub(crate) mod error_report_request_body;
-#[path = "../DevServer/HmrSocket.rs"]
-pub(crate) mod hmr_socket_body;
-// HotReloadEvent body draft dissolved into this file (see struct + impl below).
-#[path = "../DevServer/IncrementalGraph.rs"]
-pub(crate) mod incremental_graph_body;
-// PackedMap body draft dissolved into `packed_map.rs`.
-#[path = "../DevServer/RouteBundle.rs"]
-pub(crate) mod route_bundle_body;
-// SerializedFailure body draft dissolved into `serialized_failure.rs`.
-// SourceMapStore body draft dissolved into `source_map_store.rs`.
-#[path = "../DevServer/memory_cost.rs"]
-pub(crate) mod memory_cost_body;
-#[path = "../DevServer/WatcherAtomics.rs"]
-pub(crate) mod watcher_atomics_body;
+// ─── submodules ──────────────────────────────────────────────────────────────
+pub(crate) mod error_report_request;
+pub(crate) mod hmr_socket;
+pub(crate) mod js_escape;
+pub(crate) mod memory_cost;
 
 // NOTE: the `DevServer` scoped-log static (`ScopedLogger`) is declared in
 // `dev_server_body` (`bun_output::declare_scope!(DevServer, visible)`) and
 // re-exported via the `pub use` block below alongside the `struct DevServer`
 // type. Declaring it again here would collide in the value namespace.
 
-pub const INTERNAL_PREFIX: &str = "/_bun";
 pub const ASSET_PREFIX: &str = "/_bun/asset";
 pub const CLIENT_PREFIX: &str = "/_bun/client";
-
-/// `bun.jsc.Debugger.DevServerId`.
-pub type DebuggerId = jsc::DebuggerId;
 
 // LAYERING: the 4.8 kL of method bodies live in `../DevServer.rs` (mounted as
 // `super::dev_server_body`). The struct definitions are owned there so impl
@@ -73,12 +54,6 @@ pub enum FileKind {
     Js = 1,
     Asset = 2,
     Css = 3,
-}
-impl FileKind {
-    #[inline]
-    pub fn has_inline_js_code_chunk(self) -> bool {
-        matches!(self, FileKind::Js | FileKind::Asset)
-    }
 }
 
 #[repr(u8)]
@@ -185,6 +160,14 @@ impl HmrTopic {
         }
     }
 
+    /// uWS topic name for this HMR channel. The leading `0xFF` byte cannot
+    /// occur in WTF-8, so no topic string passed to `ServerWebSocket`
+    /// `subscribe()`/`publish()` or `Server.publish()` can ever name it.
+    #[inline]
+    pub fn uws_topic(self) -> [u8; 2] {
+        [0xFF, self as u8]
+    }
+
     /// Maps a topic to its packed `HmrTopicBits` flag.
     #[inline]
     pub fn as_bit(self) -> crate::bake::dev_server_body::HmrTopicBits {
@@ -267,7 +250,7 @@ impl GraphTraceState {
         self.client_bits.unmanaged.set_all(false);
     }
 
-    pub fn resize(&mut self, side: Side, new_size: usize) -> Result<(), bun_core::Error> {
+    pub fn resize(&mut self, side: Side, new_size: usize) -> Result<(), crate::Error> {
         let b = match side {
             Side::Client => &mut self.client_bits,
             Side::Server => &mut self.server_bits,
@@ -290,11 +273,9 @@ impl GraphTraceState {
 
 pub use super::dev_server_body::init;
 
-// ──────────────────────────────────────────────────────────────────────────
-// Submodule types (struct shapes un-gated; method bodies stay in drafts)
-// ──────────────────────────────────────────────────────────────────────────
 pub mod assets;
 pub mod incremental_graph;
+pub mod inspector_agent;
 mod lifecycle;
 pub mod packed_map;
 pub mod route_bundle;
@@ -316,7 +297,6 @@ pub trait ResponseLike {
     fn write_status(&mut self, status: &[u8]);
     fn end(&mut self, data: &[u8], close_connection: bool);
     fn as_any_response(&mut self) -> bun_uws::AnyResponse;
-    fn get_remote_socket_info(&mut self) -> Option<bun_uws::SocketAddress>;
     fn upgrade<D>(
         &mut self,
         data: D,
@@ -341,16 +321,6 @@ impl ResponseLike for bun_uws::AnyResponse {
     fn as_any_response(&mut self) -> bun_uws::AnyResponse {
         *self
     }
-    fn get_remote_socket_info(&mut self) -> Option<bun_uws::SocketAddress> {
-        // Re-box into the owned `bun_uws::SocketAddress` shape this trait uses.
-        (*self)
-            .get_remote_socket_info()
-            .map(|a| bun_uws::SocketAddress {
-                ip: a.ip().to_vec().into_boxed_slice(),
-                port: a.port,
-                is_ipv6: a.is_ipv6,
-            })
-    }
     fn upgrade<D>(
         &mut self,
         data: D,
@@ -371,15 +341,13 @@ impl ResponseLike for bun_uws::AnyResponse {
 }
 
 /// `DevServer.HmrSocket` — per-WebSocket state. Method bodies (open/close/
-/// message handlers) live in `hmr_socket_body` (`../DevServer/HmrSocket.rs`).
+/// message handlers) live in [`hmr_socket`].
 pub struct HmrSocket {
     /// BACKREF: owned by `dev.active_websocket_connections`; destroyed via
     /// `remove` + `heap::take` in `on_close`.
     pub dev: bun_ptr::BackRef<DevServer>,
     pub underlying: Option<bun_uws::AnyWebSocket>,
     pub subscriptions: super::dev_server_body::HmrTopicBits,
-    /// Allows actions which inspect or mutate sensitive DevServer state.
-    pub is_from_localhost: bool,
     /// By telling DevServer the active route, this enables receiving detailed
     /// `hot_update` events for when the route is updated.
     pub active_route: route_bundle::IndexOptional,
@@ -445,10 +413,8 @@ impl HotReloadEvent {
     }
 
     /// Debug-asserts that the owning [`DevServer`]'s watcher thread-lock is
-    /// held. Centralises the back-ref deref so the four call sites in
-    /// `watcher_acquire_event` / `watcher_release_and_submit_event` (both the
-    /// `WatcherAtomics` impl here and the duplicate in
-    /// `DevServer/WatcherAtomics.rs`) stay safe.
+    /// held. Centralises the back-ref deref so the call sites in
+    /// `watcher_acquire_event` / `watcher_release_and_submit_event` stay safe.
     #[inline]
     pub fn assert_watcher_thread_locked(&self) {
         // SAFETY: BACKREF — `owner` is the DevServer whose
@@ -536,7 +502,7 @@ impl HotReloadEvent {
         }
 
         let mut rest_extra: &[u8] = &self.extra_files;
-        while let Some(str_idx) = bun_core::index_of_char(rest_extra, 0) {
+        while let Some(str_idx) = bun_core::strings::index_of_char_usize(rest_extra, 0) {
             bun_core::handle_oom(self.files.put(&rest_extra[0..str_idx as usize], ()));
             rest_extra = &rest_extra[str_idx as usize + 1..];
         }
@@ -990,7 +956,17 @@ impl WatcherAtomics {
 }
 
 /// `DevServer.DirectoryWatchStore` — sparse map of directories under watch
-/// for resolution-failure recovery. Full body gated in `DirectoryWatchStore.rs`.
+/// for resolution-failure recovery.
+///
+/// When a file fails to import a relative path, directory watchers are added
+/// so that when a matching file is created, the dependencies can be rebuilt.
+/// This handles HMR cases where a user writes an import before creating the
+/// file, or moves files around. Not thread-safe.
+///
+/// Known gap: when the importing file fixes its resolution (the failing
+/// import is removed or renamed), nothing walks this store to release the
+/// now-unneeded watcher; it stays until the directory changes or the file
+/// is evicted from the incremental graph.
 #[derive(Default)]
 pub struct DirectoryWatchStore {
     pub watches: StringArrayHashMap<directory_watch_store::Entry>,
@@ -1135,11 +1111,11 @@ bun_bundler::link_impl_DevServerHandle! {
             // (stable heap address); the `'static` is a stand-in for the
             // DevServer-self lifetime — see the comment on `CurrentBundle.bv2`.
             super::dev_server_body::finalize_bundle(&mut *this, &mut *bv2.cast(), &mut *result)
-                .map_err(Into::into)
+                .map_err(|e| bun_bundler::Error::from(crate::Error::from(e)))
         },
         handle_parse_task_failure(err, graph, abs_path, log, bv2) => {
             (*this)
-                .handle_parse_task_failure(err, graph, abs_path, &*log, &mut *bv2)
+                .handle_parse_task_failure(&err.into(), graph, abs_path, &*log, &mut *bv2)
                 .map_err(Into::into)
         },
         put_or_overwrite_asset(path, contents, content_hash) => {
@@ -1148,7 +1124,7 @@ bun_bundler::link_impl_DevServerHandle! {
             // bytes as an owned blob (ownership is transferred).
             let path = &*path.cast::<bun_resolver::fs::Path<'_>>();
             let blob = crate::webcore::blob::Any::from_owned_slice(contents.to_vec());
-            (*this).put_or_overwrite_asset(path, blob, content_hash)
+            (*this).put_or_overwrite_asset(path, blob, content_hash).map_err(Into::into)
         },
         track_resolution_failure(import_source, specifier, renderer, loader) => {
             (*this)

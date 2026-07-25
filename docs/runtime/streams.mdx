@@ -42,7 +42,7 @@ for await (const chunk of stream) {
 
 ## Direct `ReadableStream`
 
-Bun implements an optimized version of `ReadableStream` that avoid unnecessary data copying & queue management logic.
+Bun implements an optimized version of `ReadableStream` that avoids unnecessary data copying and queue management.
 
 With a traditional `ReadableStream`, chunks of data are _enqueued_. Each chunk is copied into a queue, where it sits until the stream is ready to send more data.
 
@@ -56,7 +56,7 @@ const stream = new ReadableStream({
 });
 ```
 
-With a direct `ReadableStream`, chunks of data are written directly to the stream. No queueing happens, and there's no need to clone the chunk data into memory. The `controller` API is updated to reflect this; instead of `.enqueue()` you call `.write`.
+With a direct `ReadableStream`, chunks of data are written directly to the stream. No queueing happens, and there's no need to clone the chunk data into memory. The `controller` API reflects this: you call `.write()` instead of `.enqueue()`.
 
 ```ts
 const stream = new ReadableStream({
@@ -69,6 +69,30 @@ const stream = new ReadableStream({
 ```
 
 When using a direct `ReadableStream`, the destination handles all chunk queueing. The consumer of the stream receives exactly what is passed to `controller.write()`, without any encoding or modification.
+
+### Handling backpressure
+
+`controller.write()` returns the number of bytes written. When the destination's internal buffer is full (for example, a slow HTTP client), it returns a **negative number** instead. The chunk is still accepted — the negative return is a signal to pause and wait for the destination to drain.
+
+To wait for the drain, `await controller.flush(true)`:
+
+```ts
+const stream = new ReadableStream({
+  type: "direct",
+  async pull(controller) {
+    for (const chunk of chunks) {
+      const n = controller.write(chunk);
+      if (typeof n === "number" && n < 0) {
+        // destination is backed up; wait for it to drain before writing more
+        await controller.flush(true);
+      }
+    }
+    controller.close();
+  },
+});
+```
+
+For default (non-`direct`) `ReadableStream`s and async-generator response bodies, Bun applies this backpressure automatically — the producer is paused while the destination is backed up.
 
 ---
 
@@ -100,7 +124,7 @@ const response = new Response({
 await response.text(); // "helloworld"
 ```
 
-If you need more granular control over the stream, `yield` will return the direct ReadableStream controller.
+For more control over the stream, `yield` returns the direct `ReadableStream` controller.
 
 ```ts
 const response = new Response({
@@ -160,7 +184,7 @@ sink.write(Buffer.from("lo").buffer);
 sink.end();
 ```
 
-Once `.end()` is called, no more data can be written to the `ArrayBufferSink`. However, in the context of buffering a stream, it's useful to continuously write data and periodically `.flush()` the contents (say, into a `WriteableStream`). To support this, pass `stream: true` to the constructor.
+Once `.end()` is called, no more data can be written to the `ArrayBufferSink`. However, when buffering a stream you may want to keep writing data and periodically `.flush()` the contents (say, into a `WritableStream`). To support this, pass `stream: true` to the `start` method.
 
 ```ts
 const sink = new Bun.ArrayBufferSink();
@@ -172,15 +196,15 @@ sink.write("h");
 sink.write("e");
 sink.write("l");
 sink.flush();
-// ArrayBuffer(5) [ 104, 101, 108 ]
+// ArrayBuffer(3) [ 104, 101, 108 ]
 
 sink.write("l");
 sink.write("o");
 sink.flush();
-// ArrayBuffer(5) [ 108, 111 ]
+// ArrayBuffer(2) [ 108, 111 ]
 ```
 
-The `.flush()` method returns the buffered data as an `ArrayBuffer` (or `Uint8Array` if `asUint8Array: true`) and clears internal buffer.
+The `.flush()` method returns the buffered data as an `ArrayBuffer` (or `Uint8Array` if `asUint8Array: true`) and clears the internal buffer.
 
 To manually set the size of the internal buffer in bytes, pass a value for `highWaterMark`:
 

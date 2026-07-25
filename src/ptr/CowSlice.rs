@@ -196,32 +196,6 @@ impl<T: 'static, const Z: bool> CowSliceZ<T, Z> {
         self.flags.len()
     }
 
-    /// Mutably borrow this `Cow`'s slice.
-    ///
-    /// Borrowed `Cow`s will be automatically converted to owned, incurring
-    /// an allocation.
-    pub fn slice_mut(&mut self) -> Result<&mut [T], AllocError>
-    where
-        T: Clone + Default,
-    {
-        if !self.is_owned() {
-            self.into_owned()?;
-        }
-        // SAFETY: owned ⇒ `ptr` is uniquely owned and valid for `len` elements.
-        Ok(unsafe { core::slice::from_raw_parts_mut(self.ptr, self.flags.len()) })
-    }
-
-    /// Mutably borrow this `Cow`'s slice, assuming it already owns its data.
-    /// Calling this on a borrowed `Cow` invokes safety-checked Illegal Behavior.
-    pub fn slice_mut_unsafe(&mut self) -> &mut [T] {
-        debug_assert!(
-            self.is_owned(),
-            "CowSlice.slice_mut_unsafe cannot be called on Cows that borrow their data."
-        );
-        // SAFETY: caller contract — `self` is owned.
-        unsafe { core::slice::from_raw_parts_mut(self.ptr, self.flags.len()) }
-    }
-
     /// Take ownership over this string's allocation. `self` is left in a
     /// valid, empty state.
     ///
@@ -297,18 +271,6 @@ impl<T: 'static, const Z: bool> CowSliceZ<T, Z> {
         result.ptr = unsafe { self.ptr.add(start) };
         result.flags.set_len(end_ - start);
         result
-    }
-
-    /// Make this Cow `owned` by duplicating its borrowed data. Does nothing
-    /// if the Cow is already owned.
-    pub fn to_owned(&mut self) -> Result<(), AllocError>
-    where
-        T: Clone + Default,
-    {
-        if !self.is_owned() {
-            self.into_owned()?;
-        }
-        Ok(())
     }
 
     /// Make this Cow `owned` by duplicating its borrowed data. Panics if
@@ -447,7 +409,7 @@ mod tests {
         assert!(!borrow.is_owned());
         assert_eq!(borrow.slice(), b"hello");
 
-        str.to_owned().unwrap();
+        str.into_owned().unwrap();
         assert!(str.is_owned());
         assert_eq!(str.slice(), b"hello");
 
@@ -475,7 +437,7 @@ mod tests {
         let mut borrow = str.borrow();
         assert!(!borrow.is_owned());
         assert_eq!(borrow.slice(), b"hello");
-        borrow.to_owned().unwrap();
+        borrow.into_owned().unwrap();
         assert!(borrow.is_owned());
         assert_eq!(borrow.slice(), b"hello");
         // SAFETY: owned Z-cow ⇒ sentinel at index `len`.

@@ -22,24 +22,13 @@ impl ErrorResponse {
     pub fn decode_internal<Container: super::new_reader::ReaderContext>(
         mut reader: NewReader<Container>,
     ) -> Result<Self, AnyPostgresError> {
-        let mut remaining_bytes = reader.length()?;
-        if remaining_bytes < 4 {
-            return Err(AnyPostgresError::InvalidMessageLength);
-        }
-        remaining_bytes = remaining_bytes.saturating_sub(4);
-
+        let remaining_bytes = reader.body_length()?;
         if remaining_bytes > 0 {
             return Ok(Self {
-                messages: FieldMessage::decode_list::<Container>(reader)?,
+                messages: FieldMessage::decode_list::<Container>(reader, remaining_bytes)?,
             });
         }
         Ok(Self::default())
-    }
-
-    pub fn decode<Container: super::new_reader::ReaderContext>(
-        context: Container,
-    ) -> Result<Self, AnyPostgresError> {
-        Self::decode_internal(NewReader { wrapped: context })
     }
 }
 

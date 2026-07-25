@@ -106,10 +106,9 @@ pub(crate) fn testing_impl(
     // out of it below.
     let alloc: &'static Arena = unsafe { bun_ptr::detach_lifetime_ref(&arena) };
 
-    let arguments_ = frame.arguments_old::<3>();
     // SAFETY: bunVM() never returns null for a Bun-owned global; reborrow the
     // raw `*mut VirtualMachine` as a shared ref for the slice's lifetime.
-    let mut arguments = bun_jsc::ArgumentsSlice::init(global.bun_vm(), arguments_.slice());
+    let mut arguments = bun_jsc::ArgumentsSlice::init(global.bun_vm(), frame.arguments());
     let source_bunstr = eat_string_arg(
         &mut arguments,
         global,
@@ -316,9 +315,8 @@ pub fn attr_test(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
     // `stylesheet` below.
     let alloc: &'static Arena = unsafe { bun_ptr::detach_lifetime_ref(&arena) };
 
-    let arguments_ = frame.arguments_old::<4>();
     // SAFETY: bunVM() never returns null for a Bun-owned global.
-    let mut arguments = bun_jsc::ArgumentsSlice::init(global.bun_vm(), arguments_.slice());
+    let mut arguments = bun_jsc::ArgumentsSlice::init(global.bun_vm(), frame.arguments());
     let source_bunstr = eat_string_arg(&mut arguments, global, "attrTest", 3, 0, "source")?;
     let source = source_bunstr.to_utf8();
 

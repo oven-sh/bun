@@ -82,7 +82,7 @@ pub(crate) fn dump_source_string_failiable(
     vm: NonNull<VirtualMachine>,
     specifier: &[u8],
     written: &[u8],
-) -> Result<(), bun_core::Error> {
+) -> crate::CrateResult<()> {
     if !cfg!(debug_assertions) {
         return Ok(());
     }
@@ -128,7 +128,7 @@ pub(crate) fn dump_source_string_failiable(
         if let Err(e) = File::write_file(parent.fd, base_z, written) {
             bun_core::debug_warn!(
                 "Failed to dump source string: writeFile {}",
-                bun_core::Error::from(e).name()
+                crate::CrateError::from(e).name()
             );
             return Ok(());
         }
@@ -173,7 +173,7 @@ pub(crate) fn dump_source_string_failiable(
                 json(&source_file),
                 mappings.format_vlqs(),
             )
-            .map_err(|_| bun_core::err!("WriteError"))?;
+            .map_err(|_| crate::CrateError::WriteError)?;
             file.write_all(out.as_bytes())?;
         }
     } else {
@@ -227,35 +227,6 @@ impl RuntimeTranspilerStore {
         // The HiveArrayFallback uses the global mimalloc
         // (PORTING.md §Allocators).
         Self::default()
-    }
-
-    /// In-place constructor. Writes the bookkeeping fields directly at `out`
-    /// and leaves the inline `[MaybeUninit<TranspilerJob>; 64]` hive buffer
-    /// uninitialized — its bytes are never read until `used.set()` claims a
-    /// slot, so any bit pattern is valid.
-    ///
-    /// PERF: `out.write(Self::init())` materialises a stack temporary
-    /// of `size_of::<Self>()` (≈ 64 × `size_of::<TranspilerJob>()`) and
-    /// `memcpy`s it; rustc cannot elide the copy through the `MaybeUninit`
-    /// payload. This leaves `buffer` uninitialized and only
-    /// zeroes the bitset.
-    ///
-    /// On return, `*out` is fully initialized.
-    pub fn init_in_place(out: &mut core::mem::MaybeUninit<Self>) {
-        use core::ptr::addr_of_mut;
-        let out = out.as_mut_ptr();
-        // SAFETY: `out` is `&mut MaybeUninit<Self>::as_mut_ptr()` — valid for
-        // writes and properly aligned by type; each `addr_of_mut!` projects a
-        // valid in-bounds field place without forming an intermediate reference.
-        unsafe {
-            addr_of_mut!((*out).generation_number).write(AtomicU32::new(0));
-            // `store.hive.buffer: [MaybeUninit<TranspilerJob>; 64]` —
-            // intentionally left untouched (uninit is a valid value).
-            addr_of_mut!((*out).store.hive.used)
-                .write(bun_collections::hive_array::HiveBitSet::init_empty());
-            addr_of_mut!((*out).enabled).write(true);
-            addr_of_mut!((*out).queue).write(Queue::new());
-        }
     }
 
     // Note: takes `NonNull` rather than `&mut` for `event_loop`/`vm`
@@ -411,7 +382,7 @@ pub struct TranspilerJob {
     pub poll_ref: KeepAlive,
     pub generation_number: u32,
     pub log: bun_ast::Log,
-    pub parse_error: Option<bun_core::Error>,
+    pub parse_error: Option<crate::CrateError>,
     /// RAII-owned: holds +1 on `source_code`/`source_url`/`specifier`/
     /// `bytecode_origin_path` until `run_from_js_thread` `take()`s and
     /// `into_ffi()`s to C++. Dropped (via `HiveArray::put` → `drop_in_place`)
@@ -645,7 +616,7 @@ impl TranspilerJob {
                 .load(Ordering::Relaxed)
         };
         if self.generation_number != store_generation {
-            self.parse_error = Some(bun_core::err!("TranspilerJobGenerationMismatch"));
+            self.parse_error = Some(crate::CrateError::TranspilerJobGenerationMismatch);
             return;
         }
 
@@ -832,7 +803,6 @@ impl TranspilerJob {
             // outlives `parse_options`; `addr_of_mut!` avoids forming an
             // intermediate `&mut` so the close-guard's later borrow stays sound.
             file_fd_ptr: Some(unsafe { &mut *ptr::addr_of_mut!(input_file_fd) }),
-            file_hash: Some(hash),
             macro_remappings,
             macro_js_ctx: transpiler::default_macro_js_value(),
             jsx: transpiler.options.jsx.clone(),
@@ -934,7 +904,7 @@ impl TranspilerJob {
                 }
             }
 
-            self.parse_error = Some(bun_core::err!("ParseError"));
+            self.parse_error = Some(crate::CrateError::ParseError);
             return;
         };
 
@@ -1020,17 +990,25 @@ impl TranspilerJob {
         }
 
         if !matches!(parse_result.already_bundled, AlreadyBundled::None) {
-            let bytecode_slice = parse_result.already_bundled.bytecode_slice();
+            let already_bundled = core::mem::take(&mut parse_result.already_bundled);
+            let is_commonjs_module = already_bundled.is_common_js();
+            let (bytecode_cache, bytecode_cache_size) = match already_bundled {
+                AlreadyBundled::Bytecode(bytes) | AlreadyBundled::BytecodeCjs(bytes) => {
+                    let len = bytes.len();
+                    if len == 0 {
+                        (ptr::null_mut(), 0)
+                    } else {
+                        (bun_core::heap::into_raw(bytes).cast::<u8>(), len)
+                    }
+                }
+                _ => (ptr::null_mut(), 0),
+            };
             self.resolved_source = OwnedResolvedSource::from(ResolvedSource {
                 source_code: String::clone_latin1(&parse_result.source.contents),
                 already_bundled: true,
-                bytecode_cache: if !bytecode_slice.is_empty() {
-                    bytecode_slice.as_ptr().cast_mut()
-                } else {
-                    ptr::null_mut()
-                },
-                bytecode_cache_size: bytecode_slice.len(),
-                is_commonjs_module: parse_result.already_bundled.is_common_js(),
+                bytecode_cache,
+                bytecode_cache_size,
+                is_commonjs_module,
                 tag: this_tag,
                 ..Default::default()
             });
@@ -1153,10 +1131,8 @@ impl TranspilerJob {
             )
         };
         if let Err(err) = print_result {
-            if let Some(mi) = module_info {
-                mi.destroy();
-            }
-            self.parse_error = Some(err);
+            drop(module_info);
+            self.parse_error = Some(err.into());
             return;
         }
 

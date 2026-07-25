@@ -295,6 +295,20 @@ private:
 
         HttpResponseData<SSL> *httpResponseData = (HttpResponseData<SSL> *) us_socket_ext(s);
 
+        /* node:http compat: forward the raw TCP payload to the JS socket
+         * wrapper so a user 'data' listener on the 'connection' socket sees the
+         * raw request bytes (Node feeds its parser from that event). Tunnel
+         * mode routes through onSocketData instead. */
+        if constexpr (IsNodeHttp) {
+            if (!httpResponseData->isConnectRequest && httpResponseData->socketData && httpContextData->onSocketRawData) {
+                httpContextData->onSocketRawData(httpResponseData->socketData, SSL, s, data, length, false);
+                if (us_socket_is_closed(s)) {
+                    us_socket_unref(s);
+                    return s;
+                }
+            }
+        }
+
         /* node:http compat: HTTP parsing stopped on this connection (a parse error
          * was already delivered to 'clientError', or the JS layer freed the
          * parser); ignore further request bytes. CONNECT/Upgrade tunnels are not
@@ -303,23 +317,6 @@ private:
             if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_PARSING_STOPPED) && !httpResponseData->isConnectRequest) {
                 us_socket_unref(s);
                 return s;
-            }
-        }
-
-        /* node:http compat: Node's server socket is a net.Socket whose 'data'
-         * event carries the raw TCP payload (the parser is just another 'data'
-         * listener). Forward the raw bytes to the JS socket wrapper before
-         * parsing so a user 'data' listener on the 'connection' socket sees
-         * them. Tunnel mode routes through onSocketData instead. The receiver
-         * early-returns when no JS callback is installed, so the common path
-         * pays only the indirect call. */
-        if constexpr (IsNodeHttp) {
-            if (!httpResponseData->isConnectRequest && httpResponseData->socketData && httpContextData->onSocketRawData) {
-                httpContextData->onSocketRawData(httpResponseData->socketData, SSL, s, data, length, false);
-                if (us_socket_is_closed(s)) {
-                    us_socket_unref(s);
-                    return s;
-                }
             }
         }
 

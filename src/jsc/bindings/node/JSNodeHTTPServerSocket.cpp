@@ -651,9 +651,6 @@ void JSNodeHTTPServerSocket::onData(const char* data, int length, bool last)
 
 void JSNodeHTTPServerSocket::onRawData(const char* data, int length)
 {
-    // Called for every TCP payload on a node:http connection before HTTP
-    // parsing. When no JS 'data' listener is attached the callback slot is
-    // null and this is the only work done.
     if (!functionToCallOnRawData) {
         return;
     }

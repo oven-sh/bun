@@ -1396,10 +1396,8 @@ function detachSocketListenersForHandoff(socket) {
 const kSocketTimeoutTimer = Symbol("socketTimeoutTimer");
 const kStreamingEnabled = Symbol("kStreamingEnabled");
 const kEnableRawData = Symbol("kEnableRawData");
-// Node's server socket is the net.Socket the parser reads from, so every
-// 'data' listener sees the raw request bytes. Here parsing runs natively; when
-// a user reads the socket, have the native side forward the raw TCP payload
-// into this Duplex so 'data'/'readable' behave the same.
+// Node feeds its parser from the socket's 'data' event, so user listeners see
+// the raw request bytes; arm the native raw-bytes tap when a listener exists.
 function maybeEnableRawSocketData(socket) {
   if (!socket[kStreamingEnabled] && (socket.listenerCount("data") > 0 || socket.listenerCount("readable") > 0)) {
     socket[kEnableRawData]();
@@ -1621,9 +1619,7 @@ const NodeHTTPServerSocket = class Socket extends NetSocket {
       if (enable) {
         handle.ondata = this.#onData.bind(this);
         handle.ondrain = this.#onDrain.bind(this);
-        // Tunnel mode owns the readable side from here; the raw-bytes tap would
-        // deliver the same bytes a second time. The already-queued chunk for
-        // this packet is dropped by the task's own null-check.
+        // Tunnel mode owns the readable side; the raw tap would double-deliver.
         handle.onrawdata = undefined;
       } else {
         handle.ondata = undefined;
@@ -1645,9 +1641,7 @@ const NodeHTTPServerSocket = class Socket extends NetSocket {
     this._unrefTimer();
     this.bytesRead += chunk.length;
     if (!this.push(chunk)) {
-      // Readable buffer filled: drop the tap so the native side stops
-      // allocating a Buffer per TCP read; _read() re-arms on next demand.
-      // HTTP parsing continues natively regardless.
+      // Buffer full: drop the tap; _read() re-arms on next demand.
       const handle = this[kHandle];
       if (handle) handle.onrawdata = undefined;
     }
@@ -1661,6 +1655,7 @@ const NodeHTTPServerSocket = class Socket extends NetSocket {
   #onData(chunk, last) {
     this._unrefTimer();
     if (chunk) {
+      this.bytesRead += chunk.length;
       this.push(chunk);
     }
     if (last) {
@@ -1899,22 +1894,23 @@ const NodeHTTPServerSocket = class Socket extends NetSocket {
         const message = this._httpMessage;
         const req = message?.req;
 
-        if ((bodyReadState & NodeHTTPBodyReadState.done) !== 0) {
-          emitServerSocketEOFNT(this, req);
+        // The raw-bytes tap feeds this socket's readable side with wire
+        // bytes; the parsed body goes to the IncomingMessage only.
+        if (!handle.onrawdata) {
+          if ((bodyReadState & NodeHTTPBodyReadState.done) !== 0) {
+            emitServerSocketEOFNT(this, req);
+          }
+          this.push(resumed);
         }
         if (req) {
           req.push(resumed);
         }
-        this.push(resumed);
       }
     }
   }
 
   _read(_size) {
     // https://github.com/nodejs/node/blob/13e3aef053776be9be262f210dc438ecec4a3c8d/lib/net.js#L725-L737
-    // (Re-)arm the raw-bytes tap: a listener added after 'connection' reaches
-    // here via the Readable's resume() → read(0), and a push()==false disarm
-    // re-arms on the next demand.
     maybeEnableRawSocketData(this);
     this.#resumeSocket();
   }

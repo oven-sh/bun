@@ -58,27 +58,30 @@ test("http.Server 'connection' socket 'data' covers the body and every keep-aliv
   const { port } = server.address() as AddressInfo;
 
   const client = connect(port);
-  await once(client, "connect");
-  let replies = "";
-  client.on("data", d => (replies += d.toString("latin1")));
+  try {
+    await once(client, "connect");
+    let replies = "";
+    client.on("data", d => (replies += d.toString("latin1")));
 
-  // Two body-bearing requests over one keep-alive connection; the second is
-  // chunked so the raw bytes include the chunk framing, like Node.
-  client.write("POST /one HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\n\r\nHELLO");
-  while ((replies.match(/HTTP\/1\.1 200/g) ?? []).length < 1) await once(client, "data");
-  client.write("POST /two HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nWORLD\r\n0\r\n\r\n");
-  while ((replies.match(/HTTP\/1\.1 200/g) ?? []).length < 2) await once(client, "data");
-  client.end();
-  await once(client, "close");
+    // Two body-bearing requests over one keep-alive connection; the second is
+    // chunked so the raw bytes include the chunk framing, like Node.
+    client.write("POST /one HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\n\r\nHELLO");
+    while ((replies.match(/HTTP\/1\.1 200/g) ?? []).length < 1) await once(client, "data");
+    client.write("POST /two HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nWORLD\r\n0\r\n\r\n");
+    while ((replies.match(/HTTP\/1\.1 200/g) ?? []).length < 2) await once(client, "data");
+    client.end();
+    await once(client, "close");
 
-  const raw = Buffer.concat(received).toString("latin1");
-  expect(raw).toContain("POST /one HTTP/1.1\r\n");
-  expect(raw).toContain("\r\n\r\nHELLO");
-  expect(raw).toContain("POST /two HTTP/1.1\r\n");
-  expect(raw).toContain("5\r\nWORLD\r\n0\r\n\r\n");
-
-  server.closeAllConnections();
-  server.close();
+    const raw = Buffer.concat(received).toString("latin1");
+    expect(raw).toContain("POST /one HTTP/1.1\r\n");
+    expect(raw).toContain("\r\n\r\nHELLO");
+    expect(raw).toContain("POST /two HTTP/1.1\r\n");
+    expect(raw).toContain("5\r\nWORLD\r\n0\r\n\r\n");
+  } finally {
+    client.destroy();
+    server.closeAllConnections();
+    server.close();
+  }
 });
 
 test("http.Server 'connection' socket 'readable' + read() yields the raw request bytes", async () => {
@@ -126,18 +129,21 @@ test("https.Server 'connection' socket 'data' carries the decrypted request byte
   const { port } = server.address() as AddressInfo;
 
   const client = tlsConnect({ port, rejectUnauthorized: false });
-  await once(client, "secureConnect");
-  client.write("GET /tls-path HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
-  let reply = "";
-  client.on("data", d => (reply += d.toString("latin1")));
-  await once(client, "close");
+  try {
+    await once(client, "secureConnect");
+    client.write("GET /tls-path HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+    let reply = "";
+    client.on("data", d => (reply += d.toString("latin1")));
+    await once(client, "close");
 
-  const chunk = await firstData;
-  expect(chunk.toString("latin1").startsWith("GET /tls-path HTTP/1.1\r\n")).toBe(true);
-  expect(reply).toContain("HTTP/1.1 200");
-
-  server.closeAllConnections();
-  server.close();
+    const chunk = await firstData;
+    expect(chunk.toString("latin1").startsWith("GET /tls-path HTTP/1.1\r\n")).toBe(true);
+    expect(reply).toContain("HTTP/1.1 200");
+  } finally {
+    client.destroy();
+    server.closeAllConnections();
+    server.close();
+  }
 });
 
 // A 'data' listener added later (inside the 'request' handler) arms via the
@@ -159,18 +165,21 @@ test("req.socket 'data' listener added inside the request handler sees subsequen
   const { port } = server.address() as AddressInfo;
 
   const client = connect(port);
-  await once(client, "connect");
-  client.on("data", () => {});
-  client.write("GET /first HTTP/1.1\r\nHost: x\r\n\r\n");
-  await once(client, "data");
-  client.write("GET /second HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
-  await done;
-  client.end();
-  await once(client, "close");
+  try {
+    await once(client, "connect");
+    client.on("data", () => {});
+    client.write("GET /first HTTP/1.1\r\nHost: x\r\n\r\n");
+    await once(client, "data");
+    client.write("GET /second HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+    await done;
+    client.end();
+    await once(client, "close");
 
-  const raw = Buffer.concat(received).toString("latin1");
-  expect(raw).toContain("GET /second HTTP/1.1\r\n");
-
-  server.closeAllConnections();
-  server.close();
+    const raw = Buffer.concat(received).toString("latin1");
+    expect(raw).toContain("GET /second HTTP/1.1\r\n");
+  } finally {
+    client.destroy();
+    server.closeAllConnections();
+    server.close();
+  }
 });

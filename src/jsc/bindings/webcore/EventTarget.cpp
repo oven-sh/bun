@@ -330,11 +330,8 @@ void EventTarget::innerInvokeEventListeners(Event& event, EventListenerVector li
         JSC::EnsureStillAliveScope wrapperProtector(registeredListener->callback().wrapper());
         JSC::EnsureStillAliveScope jsFunctionProtector(registeredListener->callback().jsFunction());
 
-        // Do this before invocation to avoid reentrancy issues.
-        // Mark-and-sweep rather than removeEventListener(): the latter's
-        // removeAt() memmoves the whole tail, which is O(N^2) when every
-        // listener is once:true (e.g. AbortSignal fan-out). A single
-        // compactRemoved() pass below drops them all in O(N).
+        // Mark before invocation for reentrancy; compactRemoved() after the
+        // loop drops them in one pass (removeEventListener() here is O(N^2)).
         if (registeredListener->isOnce()) {
             registeredListener->markAsRemoved();
             removedOnceListeners = true;

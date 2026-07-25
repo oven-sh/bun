@@ -165,9 +165,6 @@ bool EventListenerMap::remove(const AtomString& eventType, EventListener& listen
     return false;
 }
 
-// Sweep out entries already flagged via markAsRemoved() (used by
-// EventTarget::innerInvokeEventListeners for once:true listeners so they can
-// be dropped in one linear pass instead of N O(N) removeAt() shifts).
 unsigned EventListenerMap::compactRemoved(const AtomString& eventType)
 {
     releaseAssertOrSetThreadUID();
@@ -186,7 +183,6 @@ unsigned EventListenerMap::compactRemoved(const AtomString& eventType)
 
     return 0;
 }
-
 EventListenerVector* EventListenerMap::find(const AtomString& eventType)
 {
     for (auto& entry : m_entries) {

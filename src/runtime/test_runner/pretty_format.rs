@@ -450,6 +450,7 @@ pub enum Tag {
     ArrayBuffer,
 
     JSX,
+    DOMNode,
     Event,
 }
 
@@ -471,7 +472,7 @@ impl Tag {
 
     #[inline]
     pub const fn can_have_circular_references(self) -> bool {
-        matches!(self, Tag::Array | Tag::Object | Tag::Map | Tag::Set)
+        matches!(self, Tag::Array | Tag::Object | Tag::Map | Tag::Set | Tag::DOMNode)
     }
 }
 
@@ -484,6 +485,19 @@ pub struct TagResult {
 impl Default for TagResult {
     fn default() -> Self {
         Self { tag: Tag::Undefined, cell: JSType::Cell }
+    }
+}
+
+#[inline(never)]
+fn is_dom_node_tag(
+    global_this: &JSGlobalObject,
+    value: JSValue,
+    js_type: JSType,
+) -> JsResult<Option<TagResult>> {
+    if bun_jsc::console_object::formatter::is_dom_node(global_this, value)? {
+        Ok(Some(TagResult { tag: Tag::DOMNode, cell: js_type }))
+    } else {
+        Ok(None)
     }
 }
 
@@ -559,6 +573,13 @@ impl Tag {
                 {
                     return Ok(TagResult { tag: Tag::JSX, cell: js_type });
                 }
+            }
+        }
+
+        // Is this a DOM node (jsdom / happy-dom)?
+        if matches!(js_type, JSType::Object | JSType::FinalObject) {
+            if let Some(r) = is_dom_node_tag(global_this, value, js_type)? {
+                return Ok(r);
             }
         }
 
@@ -1090,6 +1111,186 @@ impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
 }
 
 impl<'a> Formatter<'a> {
+    /// Serializes a DOM node (jsdom / happy-dom) as markup, mirroring the
+    /// `pretty-format` `DOMElement` plugin used by Jest's snapshot serializer.
+    #[inline(never)]
+    fn print_dom_node<W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>(
+        &mut self,
+        writer_: &mut W,
+        value: JSValue,
+    ) -> JsResult<()> {
+        macro_rules! pf {
+            ($s:literal) => {
+                pretty_fmt_const::<ENABLE_ANSI_COLORS>($s)
+            };
+        }
+        macro_rules! get_swallow {
+            ($v:expr, $name:literal) => {
+                match $v.get(self.global_this, $name) {
+                    Ok(v) => v,
+                    Err(_) => {
+                        self.global_this.clear_exception_except_termination();
+                        None
+                    }
+                }
+            };
+        }
+
+        let node_type = get_swallow!(value, "nodeType")
+            .filter(|v| v.is_int32())
+            .map(|v| v.to_int32())
+            .unwrap_or(0);
+
+        if node_type == 3 || node_type == 8 {
+            let data = get_swallow!(value, "data");
+            let text = match data {
+                Some(v) if v.is_string() => {
+                    bun_core::OwnedString::new(v.to_bun_string(self.global_this)?)
+                }
+                _ => bun_core::OwnedString::new(bun_core::String::empty()),
+            };
+            if node_type == 8 {
+                let _ = write!(writer_, "{}<!--{}-->{}", pf!("<r><d>"), text, pf!("<r>"));
+            } else {
+                let _ = write!(writer_, "{}", text);
+            }
+            return Ok(());
+        }
+
+        let (tag_utf8, is_fragment) = if node_type == 11 {
+            (bun_core::ZigStringSlice::from_utf8_never_free(b"DocumentFragment"), true)
+        } else {
+            let tag_name = get_swallow!(value, "tagName");
+            match tag_name {
+                Some(v) if v.is_string() => {
+                    let s = v.get_zig_string(self.global_this)?;
+                    let slice = s.to_slice();
+                    let mut owned = slice.slice().to_vec();
+                    owned.make_ascii_lowercase();
+                    (bun_core::ZigStringSlice::init_owned(owned), false)
+                }
+                _ => (bun_core::ZigStringSlice::from_utf8_never_free(b"unknown"), false),
+            }
+        };
+        let tag_bytes = tag_utf8.slice();
+
+        let _ = writer_.write_all(pf!("<r><green>").as_bytes());
+        let _ = writer_.write_all(b"<");
+        let _ = writer_.write_all(tag_bytes);
+        let _ = writer_.write_all(pf!("<r>").as_bytes());
+
+        let mut has_attrs = false;
+        if !is_fragment {
+            if let Some(attrs) = get_swallow!(value, "attributes") {
+                if attrs.is_cell() && attrs.is_object() {
+                    if let Some(len_v) = get_swallow!(attrs, "length") {
+                        if len_v.is_int32() {
+                            let n = len_v.to_int32().max(0) as u32;
+                            let mut pairs: Vec<(Vec<u8>, bun_core::OwnedString)> =
+                                Vec::with_capacity(n.min(64) as usize);
+                            for i in 0..n {
+                                let Ok(attr) = attrs.get_index(self.global_this, i) else {
+                                    self.global_this.clear_exception_except_termination();
+                                    continue;
+                                };
+                                if !attr.is_cell() || !attr.is_object() {
+                                    continue;
+                                }
+                                let Some(name) = get_swallow!(attr, "name") else { continue };
+                                if !name.is_string() {
+                                    continue;
+                                }
+                                let name_s = name.get_zig_string(self.global_this)?;
+                                let name_owned = name_s.to_slice().slice().to_vec();
+                                let val = get_swallow!(attr, "value")
+                                    .filter(|v| v.is_string())
+                                    .map(|v| v.to_bun_string(self.global_this))
+                                    .transpose()?
+                                    .map(bun_core::OwnedString::new)
+                                    .unwrap_or_else(|| {
+                                        bun_core::OwnedString::new(bun_core::String::empty())
+                                    });
+                                pairs.push((name_owned, val));
+                            }
+                            pairs.sort_by(|a, b| a.0.cmp(&b.0));
+                            self.indent += 1;
+                            for (name, val) in &pairs {
+                                has_attrs = true;
+                                let _ = writer_.write_all(b"\n");
+                                let _ = self.write_indent(writer_);
+                                let _ = write!(
+                                    writer_,
+                                    "{}{}{}={}\"{}\"{}",
+                                    pf!("<blue>"),
+                                    bstr::BStr::new(name),
+                                    pf!("<r><d>"),
+                                    pf!("<r><green>"),
+                                    val,
+                                    pf!("<r>"),
+                                );
+                            }
+                            self.indent = self.indent.saturating_sub(1);
+                            if has_attrs {
+                                let _ = writer_.write_all(b"\n");
+                                let _ = self.write_indent(writer_);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        let children = get_swallow!(value, "childNodes").filter(|v| v.is_cell() && v.is_object());
+        let child_len = children
+            .and_then(|c| get_swallow!(c, "length"))
+            .filter(|v| v.is_int32())
+            .map(|v| v.to_int32().max(0) as u32)
+            .unwrap_or(0);
+
+        if child_len == 0 {
+            if has_attrs {
+                let _ = write!(writer_, "{}/>{}", pf!("<green>"), pf!("<r>"));
+            } else {
+                let _ = write!(writer_, "{} />{}", pf!("<green>"), pf!("<r>"));
+            }
+            return Ok(());
+        }
+
+        let _ = write!(writer_, "{}>{}", pf!("<green>"), pf!("<r>"));
+        {
+            self.indent += 1;
+            let children = children.expect("child_len > 0 implies Some");
+            let inner: JsResult<()> = (|| {
+                for i in 0..child_len {
+                    let _ = writer_.write_all(b"\n");
+                    let _ = self.write_indent(writer_);
+                    let Ok(child) = children.get_index(self.global_this, i) else {
+                        self.global_this.clear_exception_except_termination();
+                        continue;
+                    };
+                    if !child.is_cell() {
+                        continue;
+                    }
+                    let tag = Tag::get(child, self.global_this)?;
+                    self.format::<W, ENABLE_ANSI_COLORS>(tag, writer_, child, self.global_this)?;
+                }
+                Ok(())
+            })();
+            self.indent = self.indent.saturating_sub(1);
+            inner?;
+        }
+        let _ = writer_.write_all(b"\n");
+        let _ = self.write_indent(writer_);
+        let _ = write!(
+            writer_,
+            "{}</{}>{}",
+            pf!("<green>"),
+            bstr::BStr::new(tag_bytes),
+            pf!("<r>"),
+        );
+        Ok(())
+    }
+
     pub fn print_as<W: bun_io::Write, const FORMAT: Tag, const ENABLE_ANSI_COLORS: bool>(
         &mut self,
         writer_: &mut W,
@@ -2344,6 +2545,9 @@ impl<'a> Formatter<'a> {
 
                     writer.write_all(b" />");
                 }
+                Tag::DOMNode => {
+                    self.print_dom_node::<W, ENABLE_ANSI_COLORS>(writer.ctx, value)?;
+                }
                 Tag::Object => {
                     let prev_quote_strings = self.quote_strings;
                     self.quote_strings = true;
@@ -2627,6 +2831,9 @@ impl<'a> Formatter<'a> {
             Tag::JSX => {
                 self.print_as::<W, { Tag::JSX }, ENABLE_ANSI_COLORS>(writer, value, result.cell)
             }
+            Tag::DOMNode => {
+                self.print_as::<W, { Tag::DOMNode }, ENABLE_ANSI_COLORS>(writer, value, result.cell)
+            }
             Tag::Event => {
                 self.print_as::<W, { Tag::Event }, ENABLE_ANSI_COLORS>(writer, value, result.cell)
             }
@@ -2700,6 +2907,7 @@ impl bun_jsc::ConsoleFormatter for Formatter<'_> {
             Ft::JSON => Tag::JSON,
             Ft::NativeCode => Tag::NativeCode,
             Ft::JSX => Tag::JSX,
+            Ft::DOMNode => Tag::DOMNode,
             Ft::Event => Tag::Event,
             // Variants the test-runner formatter has no dedicated arm for:
             Ft::MapIterator

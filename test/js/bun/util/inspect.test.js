@@ -803,3 +803,142 @@ it("CustomEvent", () => {
     }"
   `);
 });
+
+// https://github.com/oven-sh/bun/issues/10886
+// DOM nodes (jsdom / happy-dom) are duck-typed: an object whose constructor
+// name matches a DOM class *and* whose nodeType agrees is serialized as markup
+// instead of having its internals dumped.
+describe("DOM nodes", () => {
+  function attr(name, value) {
+    return new (class Attr {
+      get name() {
+        return name;
+      }
+      get value() {
+        return value;
+      }
+    })();
+  }
+  function element(Ctor, tagName, attrs, children) {
+    return Object.assign(new Ctor(), {
+      get nodeType() {
+        return 1;
+      },
+      get tagName() {
+        return tagName;
+      },
+      get attributes() {
+        return attrs;
+      },
+      get childNodes() {
+        return children;
+      },
+    });
+  }
+  class HTMLButtonElement {}
+  class HTMLDivElement {}
+  class SVGSVGElement {}
+  class Text {
+    nodeType = 3;
+    constructor(data) {
+      this.data = data;
+    }
+  }
+  class Comment {
+    nodeType = 8;
+    constructor(data) {
+      this.data = data;
+    }
+  }
+  class DocumentFragment {
+    nodeType = 11;
+    constructor(children) {
+      this.childNodes = children;
+    }
+  }
+
+  it("HTMLButtonElement, no attributes, no children", () => {
+    const button = element(HTMLButtonElement, "BUTTON", [], []);
+    expect(Bun.inspect(button)).toBe("<button />");
+  });
+
+  it("HTMLButtonElement, one attribute, no children", () => {
+    const button = element(HTMLButtonElement, "BUTTON", [attr("type", "submit")], []);
+    expect(Bun.inspect(button)).toBe('<button type="submit" />');
+  });
+
+  it("HTMLDivElement, two attributes (sorted), text child, comment child", () => {
+    const div = element(
+      HTMLDivElement,
+      "DIV",
+      [attr("id", "outer"), attr("data-x", "1")],
+      [new Text("hello"), new Comment("note")],
+    );
+    expect(Bun.inspect(div)).toBe(
+      ['<div', '  data-x="1"', '  id="outer"', ">", "  hello", "  <!--note-->", "</div>"].join("\n"),
+    );
+  });
+
+  it("SVGSVGElement", () => {
+    const svg = element(SVGSVGElement, "svg", [attr("width", "10")], []);
+    expect(Bun.inspect(svg)).toBe('<svg width="10" />');
+  });
+
+  it("Text node", () => {
+    expect(Bun.inspect(new Text("some text"))).toBe("some text");
+  });
+
+  it("Comment node", () => {
+    expect(Bun.inspect(new Comment("hi"))).toBe("<!--hi-->");
+  });
+
+  it("DocumentFragment with child", () => {
+    const frag = new DocumentFragment([element(HTMLButtonElement, "BUTTON", [], [])]);
+    expect(Bun.inspect(frag)).toBe(["<DocumentFragment>", "  <button />", "</DocumentFragment>"].join("\n"));
+  });
+
+  it("nested elements respect depth", () => {
+    let el = element(HTMLDivElement, "DIV", [], []);
+    for (let i = 0; i < 5; i++) el = element(HTMLDivElement, "DIV", [], [el]);
+    expect(Bun.inspect(el, { depth: 1 })).toBe(["<div>", "  <div \u2026 />", "</div>"].join("\n"));
+    expect(Bun.inspect(el, { depth: Infinity }).split("\n").length).toBe(11);
+  });
+
+  it("printReceived / stringify in a custom matcher", () => {
+    const button = element(HTMLButtonElement, "BUTTON", [attr("id", "x")], []);
+    let printed, stringified;
+    expect.extend({
+      toCaptureDomPrints(actual) {
+        printed = Bun.stripANSI(this.utils.printReceived(actual));
+        stringified = this.utils.stringify(actual);
+        return { pass: true, message: () => "" };
+      },
+    });
+    expect(button).toCaptureDomPrints();
+    expect(printed).toBe('<button id="x" />');
+    expect(stringified).toBe('<button id="x" />');
+  });
+
+  it("constructor name matches but nodeType does not -> plain object", () => {
+    class HTMLBogusElement {
+      nodeType = 99;
+    }
+    expect(Bun.inspect(new HTMLBogusElement())).toStartWith("HTMLBogusElement {");
+  });
+
+  it("non-DOM constructor name with nodeType -> plain object", () => {
+    class Widget {
+      nodeType = 1;
+    }
+    expect(Bun.inspect(new Widget())).toStartWith("Widget {");
+  });
+
+  it("nodeType getter throws -> plain object", () => {
+    class HTMLThrowElement {
+      get nodeType() {
+        throw new Error("boom");
+      }
+    }
+    expect(Bun.inspect(new HTMLThrowElement())).toStartWith("HTMLThrowElement {");
+  });
+});

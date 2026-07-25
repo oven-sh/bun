@@ -120,56 +120,32 @@ describe.concurrent("sync APIs do not drain the microtask queue (jest parity)", 
   //
   // The ordering depends on event-loop enter/exit depth at the call site, which
   // a prior test's real-time `await` can change, so assert in a subprocess.
-  const orderingFixture = (api: string) => `
-    import { jest, test } from "bun:test";
-    test("ordering", async () => {
-      jest.useFakeTimers();
-      const log = [];
-      setTimeout(() => { log.push("T1"); Promise.resolve().then(() => log.push("P1")); }, 5);
-      setTimeout(() => { log.push("T2"); Promise.resolve().then(() => log.push("P2")); }, 10);
-      jest.${api};
-      log.push("after-advance");
-      await Promise.resolve();
-      log.push("after-await");
-      console.log(JSON.stringify(log));
-      jest.useRealTimers();
-    });
-  `;
-
-  async function runOrderingFixture(api: string) {
-    using dir = tempDir("fake-timers-sync-microtask", {
-      "ordering.test.ts": orderingFixture(api),
-    });
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "test", "ordering.test.ts"],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toContain("1 pass");
-    expect(stdout).toContain(JSON.stringify(["T1", "T2", "after-advance", "P1", "P2", "after-await"]) + "\n");
-    expect(exitCode).toBe(0);
-  }
-
-  test("advanceTimersByTime", async () => {
-    await runOrderingFixture("advanceTimersByTime(10)");
-  });
-
-  test("advanceTimersToNextTimer", async () => {
+  async function runOrderingFixture({
+    timerCount,
+    api,
+    expected,
+  }: {
+    timerCount: 1 | 2;
+    api: string;
+    expected: string[];
+  }) {
+    const setups = Array.from(
+      { length: timerCount },
+      (_, i) =>
+        `setTimeout(() => { log.push("T${i + 1}"); Promise.resolve().then(() => log.push("P${i + 1}")); }, ${5 * (i + 1)});`,
+    ).join("\n      ");
     using dir = tempDir("fake-timers-sync-microtask", {
       "ordering.test.ts": `
         import { jest, test } from "bun:test";
         test("ordering", async () => {
           jest.useFakeTimers();
           const log = [];
-          setTimeout(() => { log.push("T1"); Promise.resolve().then(() => log.push("P1")); }, 10);
-          jest.advanceTimersToNextTimer();
+          ${setups}
+          jest.${api};
           log.push("after-advance");
           await Promise.resolve();
           log.push("after-await");
-          console.log(JSON.stringify(log));
+          console.log("ORDER=" + JSON.stringify(log));
           jest.useRealTimers();
         });
       `,
@@ -182,17 +158,44 @@ describe.concurrent("sync APIs do not drain the microtask queue (jest parity)", 
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toContain("1 pass");
-    expect(stdout).toContain(JSON.stringify(["T1", "after-advance", "P1", "after-await"]) + "\n");
-    expect(exitCode).toBe(0);
+    const order = stdout.match(/^ORDER=(.*)$/m)?.[1];
+    expect({ order, exitCode, stderr: exitCode === 0 ? undefined : stderr }).toEqual({
+      order: JSON.stringify(expected),
+      exitCode: 0,
+      stderr: undefined,
+    });
+  }
+
+  test("advanceTimersByTime", async () => {
+    await runOrderingFixture({
+      timerCount: 2,
+      api: "advanceTimersByTime(10)",
+      expected: ["T1", "T2", "after-advance", "P1", "P2", "after-await"],
+    });
+  });
+
+  test("advanceTimersToNextTimer", async () => {
+    await runOrderingFixture({
+      timerCount: 1,
+      api: "advanceTimersToNextTimer()",
+      expected: ["T1", "after-advance", "P1", "after-await"],
+    });
   });
 
   test("runAllTimers", async () => {
-    await runOrderingFixture("runAllTimers()");
+    await runOrderingFixture({
+      timerCount: 2,
+      api: "runAllTimers()",
+      expected: ["T1", "T2", "after-advance", "P1", "P2", "after-await"],
+    });
   });
 
   test("runOnlyPendingTimers", async () => {
-    await runOrderingFixture("runOnlyPendingTimers()");
+    await runOrderingFixture({
+      timerCount: 2,
+      api: "runOnlyPendingTimers()",
+      expected: ["T1", "T2", "after-advance", "P1", "P2", "after-await"],
+    });
   });
 
   test("microtask drain resumes after advanceTimersByTime returns", async () => {

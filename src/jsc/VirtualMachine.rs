@@ -1179,7 +1179,7 @@ impl VirtualMachine {
     #[inline]
     pub fn suppress_microtask_drain_scope(&'static self) -> SuppressMicrotaskDrain {
         let prev = self.suppress_microtask_drain.replace(true);
-        SuppressMicrotaskDrain { vm: self, prev }
+        SuppressMicrotaskDrain { vm: self, prev, _not_send: core::marker::PhantomData }
     }
 
     /// Acquires the JSC API lock for the duration of `f()`.
@@ -1879,6 +1879,10 @@ bun_io::link_impl_EventLoopCtx! {
 pub struct SuppressMicrotaskDrain {
     vm: &'static VirtualMachine,
     prev: bool,
+    // `VirtualMachine` is `unsafe impl Sync`, so `&'static VirtualMachine` would
+    // make this guard auto-`Send`/`Sync`; the `Cell` write in `Drop` must stay
+    // on the JS thread.
+    _not_send: core::marker::PhantomData<*mut ()>,
 }
 
 impl Drop for SuppressMicrotaskDrain {

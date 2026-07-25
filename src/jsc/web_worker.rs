@@ -1465,6 +1465,9 @@ impl WebWorker {
         if vm_log.msgs.is_empty() {
             return;
         }
+        if self.has_requested_terminate() {
+            return;
+        }
         let global = vm.global();
         let result: jsc::JsResult<(JSValue, BunString)> = (|| {
             let err = vm_log.to_js(global, "Error in worker")?;
@@ -1474,7 +1477,22 @@ impl WebWorker {
         let (err, str) = match result {
             Ok(pair) => pair,
             Err(JsError::OutOfMemory) => bun_core::out_of_memory(),
-            Err(JsError::Thrown | JsError::Terminated) => panic!("unhandled exception"),
+            Err(JsError::Terminated) => return,
+            Err(e @ JsError::Thrown) => {
+                if self.has_requested_terminate() {
+                    return;
+                }
+                if let Some(exc) = global
+                    .take_exception(e)
+                    .as_exception(global.vm().as_mut_ptr())
+                {
+                    let _ = jsc::js_global_object::report_uncaught_exception(
+                        global,
+                        jsc::Exception::opaque_ref(exc),
+                    );
+                }
+                return;
+            }
         };
         let mut str = bun_core::OwnedString::new(str);
         let dispatch = jsc::host_fn::from_js_host_call_generic(global, || {
@@ -1482,6 +1500,9 @@ impl WebWorker {
             WebWorker__dispatchError(global, self.cpp_worker, &mut str, err)
         });
         if let Err(e) = dispatch {
+            if self.has_requested_terminate() {
+                return;
+            }
             // `take_exception` on a `JsError` always returns an Exception
             // cell; None is unreachable. Do not silently drop the error.
             let exc = global

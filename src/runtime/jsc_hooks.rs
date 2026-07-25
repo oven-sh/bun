@@ -3274,10 +3274,11 @@ fn transpile_source_code_inner(
                 check_magic(&source.contents)?;
                 bun_core::String::clone_latin1(&source.contents)
             } else {
+                // Register with the watcher even on read/validate failure so fixing the file triggers a reload.
+                auto_watch_asset(jsc_vm, path, L::Wasm);
                 match bun_sys::File::read_from(bun_sys::Fd::cwd(), path.text) {
                     Ok(bytes) => {
                         check_magic(&bytes)?;
-                        auto_watch_asset(jsc_vm, path, L::Wasm);
                         bun_core::String::create_external_globally_allocated_latin1(bytes)
                     }
                     Err(err) => {

@@ -3691,6 +3691,14 @@ impl<'a> Resolver<'a> {
         if self.node_module_error.is_some() {
             return;
         }
+        // Path-length overflows are a Bun-only limit; Node resolves the huge
+        // path and reports module-not-found, so keep the generic shape.
+        if matches!(
+            esm_resolution.detail.as_deref(),
+            Some(ResolutionDetail::PathTooLong)
+        ) {
+            return;
+        }
         let pkg_json_path: &[u8] = package_json.source.path.text;
         let err = match esm_resolution.status {
             // Bun-only intermediate statuses all correspond to Node's

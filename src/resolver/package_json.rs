@@ -1319,6 +1319,9 @@ pub enum ResolutionDetail {
     /// The package config shape itself is invalid; `message` is Node's
     /// trailing explanation.
     ConfigMessage { message: Box<[u8]> },
+    /// The expanded target exceeded Bun's path-length limit (Node has no
+    /// such limit; the failure keeps the generic module-not-found shape).
+    PathTooLong,
 }
 
 impl Default for Resolution {
@@ -1947,7 +1950,7 @@ impl<'a> ESModule<'a> {
                             return Resolution {
                                 path: Box::<[u8]>::from(subpath),
                                 status: Status::InvalidModuleSpecifier,
-                                detail: None,
+                                detail: Some(Box::new(ResolutionDetail::PathTooLong)),
                             };
                         }
                     };
@@ -1964,11 +1967,7 @@ impl<'a> ESModule<'a> {
                     return Resolution {
                         path: Box::<[u8]>::from(str),
                         status: Status::InvalidPackageTarget,
-                        detail: Some(Box::new(ResolutionDetail::InvalidTarget {
-                            key: None,
-                            target: Some(Box::<[u8]>::from(str)),
-                            bare_string_target: !str.is_empty() && !strings::starts_with(str, b"./"),
-                        })),
+                        detail: Some(Box::new(ResolutionDetail::PathTooLong)),
                     };
                 }
 

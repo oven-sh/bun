@@ -4368,6 +4368,12 @@ impl VirtualMachine {
     }
 
     /// Resolves `specifier` relative to `source`, writing the result or error into `res`.
+    ///
+    /// This is the module loader's entry (`Zig__GlobalObject__resolve`).
+    /// Specifiers the default ESM loader can never load fail fast here with
+    /// Node's error shape; `Bun.resolveSync` / `import.meta.resolve` bypass
+    /// this on purpose — like Node's `import.meta.resolve`, they return
+    /// URL-like specifiers as-is.
     pub fn resolve(
         res: &mut ErrorableString,
         global: &JSGlobalObject,
@@ -4376,6 +4382,20 @@ impl VirtualMachine {
         query_string: Option<&mut bun_core::String>,
         is_esm: bool,
     ) -> JsResult<()> {
+        if is_esm {
+            let specifier_utf8 = specifier.to_utf8();
+            if let Some(msg) = crate::ResolveMessage::esm_specifier_precheck(
+                specifier_utf8.slice(),
+                bun_ast::ImportKind::Stmt,
+            ) {
+                let source_utf8 = source.to_utf8();
+                *res = ErrorableString::err(
+                    ErrorCode(ErrorCode::JS_ERROR_OBJECT),
+                    crate::ResolveMessage::create(global, &msg, source_utf8.slice())?,
+                );
+                return Ok(());
+            }
+        }
         Self::resolve_maybe_needs_trailing_slash::<true>(
             res,
             global,
@@ -4475,19 +4495,6 @@ impl VirtualMachine {
         } else {
             bun_ast::ImportKind::Require
         };
-
-        // Fail fast on specifiers the default ESM loader can never load
-        // (unsupported URL schemes, unloadable data: MIME types) with Node's
-        // error shape.
-        if let Some(msg) =
-            crate::ResolveMessage::esm_specifier_precheck(specifier_utf8.slice(), import_kind)
-        {
-            *res = ErrorableString::err(
-                ErrorCode(ErrorCode::JS_ERROR_OBJECT),
-                crate::ResolveMessage::create(global, &msg, source_utf8.slice())?,
-            );
-            return Ok(());
-        }
 
         // Drop any capture left over from an earlier resolve so a failure
         // below is attributed to this specifier only.

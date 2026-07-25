@@ -5252,19 +5252,6 @@ unsafe fn resolve_hook(
         ImportKind::Require
     };
 
-    // Fail fast on specifiers the default ESM loader can never load
-    // (unsupported URL schemes, unloadable data: MIME types) with Node's
-    // error shape.
-    if let Some(msg) = ResolveMessage::esm_specifier_precheck(specifier_utf8.slice(), import_kind) {
-        let js_err = match ResolveMessage::create(global_ref, &msg, source_utf8.slice()) {
-            Ok(v) => v,
-            Err(_) => return false,
-        };
-        // SAFETY: per fn contract.
-        unsafe { *res = ErrorableString::err(ErrorCode(ErrorCode::JS_ERROR_OBJECT), js_err) };
-        return true;
-    }
-
     // Drop any capture left over from an earlier resolve so a failure below
     // is attributed to this specifier only.
     // SAFETY: `vm` is the live per-thread VM.

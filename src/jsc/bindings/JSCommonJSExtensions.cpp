@@ -202,17 +202,16 @@ bool JSCommonJSExtensions::deleteProperty(JSC::JSCell* cell, JSC::JSGlobalObject
 }
 
 // Called once from node:fs when it first evaluates, recording the exports
-// object and the original readFileSync so the CJS loader can detect a
-// user-installed replacement.
+// object and installing the adaptive watchpoint on `readFileSync` so the CJS
+// loader can detect a user-installed replacement with a single word read.
 JSC_DEFINE_HOST_FUNCTION(jsFunctionSetFsReadFileSyncForRequire, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
     Zig::GlobalObject* globalObject = defaultGlobalObject(lexicalGlobalObject);
     auto& vm = globalObject->vm();
     JSC::JSObject* exports = callFrame->argument(0).getObject();
-    JSC::JSValue original = callFrame->argument(1);
-    if (exports && original.isCallable()) {
+    if (exports) {
         globalObject->m_fsModuleExportsForRequire.set(vm, globalObject, exports);
-        globalObject->m_fsReadFileSyncOriginal.set(vm, globalObject, original);
+        globalObject->m_fsReadFileSyncWatchpoint.install(globalObject, exports, JSC::Identifier::fromString(vm, "readFileSync"_s));
     }
     return JSValue::encode(jsUndefined());
 }
@@ -222,12 +221,15 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionSetFsReadFileSyncForRequire, (JSC::JSGlobalOb
 // require(). `transpile_file` calls this once it has established that no
 // custom `Module._extensions` handler will claim the file, so the override
 // runs exactly once per require, from inside what is conceptually
-// `Module._extensions['.js']`, matching Node. Returns false when node:fs has
-// not been loaded or the export still points at the original function.
+// `Module._extensions['.js']`, matching Node. Returns false when the
+// watchpoint is still valid (node:fs not loaded yet, or the export has not
+// been touched).
 extern "C" bool ZigGlobalObject__callOverriddenFsReadFileSync(Zig::GlobalObject* globalObject, const BunString* filename, BunString* outSource)
 {
+    if (globalObject->m_fsReadFileSyncWatchpoint.isStillOriginal()) [[likely]]
+        return false;
     JSC::JSObject* fsExports = globalObject->m_fsModuleExportsForRequire.get();
-    if (!fsExports) [[likely]]
+    if (!fsExports)
         return false;
 
     auto& vm = globalObject->vm();
@@ -235,7 +237,7 @@ extern "C" bool ZigGlobalObject__callOverriddenFsReadFileSync(Zig::GlobalObject*
 
     JSC::JSValue current = fsExports->getIfPropertyExists(globalObject, JSC::Identifier::fromString(vm, "readFileSync"_s));
     RETURN_IF_EXCEPTION(scope, true);
-    if (!current || current == globalObject->m_fsReadFileSyncOriginal.get() || !current.isCallable())
+    if (!current || !current.isCallable())
         return false;
 
     JSC::CallData callData = JSC::getCallData(current);
@@ -251,7 +253,7 @@ extern "C" bool ZigGlobalObject__callOverriddenFsReadFileSync(Zig::GlobalObject*
     }
     if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(result)) {
         auto span = view->span();
-        *outSource = Bun::toStringRef(WTF::String::fromUTF8(span));
+        *outSource = Bun::toStringRef(WTF::String::fromUTF8ReplacingInvalidSequences(span));
         return true;
     }
     throwTypeError(globalObject, scope, makeString("Overridden fs.readFileSync did not return a string or Buffer for '"_s, filename->toWTFString(BunString::ZeroCopy), "'"_s));
@@ -260,12 +262,7 @@ extern "C" bool ZigGlobalObject__callOverriddenFsReadFileSync(Zig::GlobalObject*
 
 extern "C" bool ZigGlobalObject__hasOverriddenFsReadFileSync(Zig::GlobalObject* globalObject)
 {
-    JSC::JSObject* fsExports = globalObject->m_fsModuleExportsForRequire.get();
-    if (!fsExports) [[likely]]
-        return false;
-    auto& vm = globalObject->vm();
-    JSC::JSValue current = fsExports->getDirect(vm, JSC::Identifier::fromString(vm, "readFileSync"_s));
-    return current && current != globalObject->m_fsReadFileSyncOriginal.get();
+    return !globalObject->m_fsReadFileSyncWatchpoint.isStillOriginal();
 }
 
 extern "C" uint32_t JSCommonJSExtensions__appendFunction(Zig::GlobalObject* globalObject, JSC::JSValue value)

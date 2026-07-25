@@ -1208,14 +1208,11 @@ impl JSGlobalObject {
         &self,
         filename: &BunString,
     ) -> JsResult<Option<OwnedString>> {
+        crate::top_scope!(scope, self);
         let mut out = BunString::empty();
-        if !ZigGlobalObject__callOverriddenFsReadFileSync(self, filename, &mut out) {
-            return Ok(None);
-        }
-        if self.has_exception() {
-            return Err(JsError::Thrown);
-        }
-        Ok(Some(OwnedString::new(out)))
+        let called = ZigGlobalObject__callOverriddenFsReadFileSync(self, filename, &mut out);
+        scope.return_if_exception()?;
+        Ok(called.then(|| OwnedString::new(out)))
     }
 
     // returns false if it throws

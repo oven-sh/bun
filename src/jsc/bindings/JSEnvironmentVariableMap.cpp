@@ -489,9 +489,7 @@ static constexpr ASCIILiteral kProxyEnvVarNames[] = {
     "no_proxy"_s,
 };
 
-// POSIX "STD[+|-]hh" -> "Etc/GMT[+|-]h" (both count hours west of UTC, so the
-// sign is preserved). Whole hours in the Etc/GMT range only, matching what
-// Node/V8 honors via ICU's uprv_tzname gate.
+// POSIX "STD[+|-]hh" -> "Etc/GMT[+|-]h"; both count hours west of UTC so the sign carries over.
 static String posixStdOffsetToEtcGMT(StringView v)
 {
     size_t i = 0;
@@ -526,10 +524,6 @@ static String posixStdOffsetToEtcGMT(StringView v)
     return makeString("Etc/GMT"_s, negative ? '-' : '+', hours);
 }
 
-// Normalize a process.env.TZ value to an IANA name JSC's intlResolveTimeZoneID
-// accepts; anything that can't be named clears the override so a stale zone
-// from a prior assignment doesn't persist. Handles ":Zone", absolute tzfile
-// paths (realpath + "/zoneinfo/" suffix), and POSIX "STD[+|-]hh" -> Etc/GMT.
 bool setTimeZoneFromEnvValue(JSC::JSGlobalObject* globalObject, const WTF::String& raw)
 {
     auto& vm = JSC::getVM(globalObject);

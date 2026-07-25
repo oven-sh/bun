@@ -307,11 +307,9 @@ pub(crate) const RUNTIME_PARAMS_: &[ParamType] = &[
     parse_param!("--trace-exit"),
     parse_param!("--expose-internals"),
     parse_param!("--stack-trace-limit <STR>"),
-    // Node.js permission-model flags. Bun does not implement the permission
-    // model; these are declared so `parse()` can refuse to run rather than
-    // silently executing with no sandbox. `<STR>?` on the boolean grants
-    // accepts both `--allow-x` and `--allow-x=val` without a DoesntTakeValue
-    // parse error.
+    // Node.js permission-model flags. Declared so `parse()` can refuse to run
+    // instead of silently executing unsandboxed; `<STR>?` lets the boolean
+    // grants accept `--allow-x=val` without a DoesntTakeValue error.
     parse_param!("--permission"),
     parse_param!("--experimental-permission"),
     parse_param!("--permission-audit"),
@@ -942,15 +940,9 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
             | CommandTag::TestCommand
             | CommandTag::RunAsNodeCommand
     ) {
-        // Node's permission model (`--permission`) runs user code inside a
-        // sandbox that denies filesystem / child-process / worker / net access
-        // unless granted via `--allow-*`. Bun does not implement that model,
-        // so accepting the flag and running anyway would execute the program
-        // with none of the restrictions the caller asked for, and
-        // `process.permission` being undefined makes that indistinguishable
-        // from Node launched without `--permission`. Refuse to run instead.
-        // The escape hatch exists for node/bun CI matrices that pass the flag
-        // unconditionally and do not actually rely on the sandbox.
+        // Bun does not implement Node's permission model. Refuse to run rather
+        // than silently executing with none of the restrictions the caller
+        // asked for.
         {
             let permission_flag: Option<&[u8]> = if args.flag(b"--permission") {
                 Some(b"--permission")

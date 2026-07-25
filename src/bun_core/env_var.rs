@@ -80,10 +80,8 @@ new!(pub BUN_ENABLE_CRASH_REPORTING: boolean, "BUN_ENABLE_CRASH_REPORTING", {});
 // a signal), and on its own clean exit recursively SIGKILLs every descendant
 // so nothing it spawned outlives it. See `src/io/ParentDeathWatchdog.rs`.
 new!(pub BUN_FEATURE_FLAG_NO_ORPHANS: boolean, "BUN_FEATURE_FLAG_NO_ORPHANS", { default: false });
-// Bun does not implement Node's permission model. When `--permission` /
-// `--allow-*` are passed, Bun refuses to run rather than silently executing
-// unsandboxed. Setting this skips that refusal (for node/bun CI matrices that
-// pass the flag unconditionally and do not depend on the sandbox).
+// Skip the refusal to run under Node's `--permission` / `--allow-*` flags
+// (which Bun does not implement). See `runtime/cli/Arguments.rs`.
 new!(pub BUN_IGNORE_NODE_PERMISSION_FLAGS: boolean, "BUN_IGNORE_NODE_PERMISSION_FLAGS", { default: false });
 new!(pub BUN_FEATURE_FLAG_DUMP_CODE: string, "BUN_FEATURE_FLAG_DUMP_CODE", {});
 // TODO(markovejnovic): It's unclear why the default here is 100_000, but this was legacy behavior

@@ -541,6 +541,27 @@ describe.concurrent("--no-bundle with --outdir", () => {
     expect(stdout).toContain("main.js");
     expect(stdout).toContain(path.join("nested", "deep.js"));
   });
+
+  test("creates nested directories for a single entry point with --root", async () => {
+    using dir = tempDir("no-bundle-outdir-root", {
+      "src/nested/deep.ts": `export const deep = 2;\n`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--no-bundle", "--root=.", "./src/nested/deep.ts", "--outdir=dist"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+
+    const deep = await Bun.file(path.join(String(dir), "dist", "src", "nested", "deep.js")).text();
+    expect(deep).toContain("deep");
+    expect(stdout).toContain(path.join("src", "nested", "deep.js"));
+  });
 });
 
 describe("CLI argument error messages", () => {

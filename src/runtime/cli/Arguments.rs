@@ -188,6 +188,9 @@ pub(crate) const RUNTIME_PARAMS_: &[ParamType] = &[
         "--inspect-brk <STR>?              Activate Bun's debugger, set breakpoint on first line of code and wait"
     ),
     parse_param!(
+        "--inspect-port <STR>              Set the [host:]port used by the debugger and reported by process.debugPort"
+    ),
+    parse_param!(
         "--cpu-prof                        Start CPU profiler and write profile to disk on exit"
     ),
     parse_param!("--cpu-prof-name <STR>             Specify the name of the CPU profile file"),
@@ -1196,6 +1199,29 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
                     ..Default::default()
                 })
             };
+        }
+
+        unsafe extern "C" {
+            // Defined in BunProcess.cpp; backs process.debugPort.
+            fn Bun__setProcessDebugPort(port: u16);
+        }
+        // Node's --inspect-port=[host:]port: the port for an active
+        // `--inspect*` listener, and the value of process.debugPort either
+        // way -- `--inspect-port=0` alone reports 0 without starting a
+        // server. An explicit `--inspect=<port>` keeps its own port.
+        if let Some(inspect_port_flag) = args.option(b"--inspect-port") {
+            let port_bytes = match inspect_port_flag.iter().rposition(|&byte| byte == b':') {
+                Some(at) => &inspect_port_flag[at + 1..],
+                None => inspect_port_flag,
+            };
+            if let Ok(port) = core::str::from_utf8(port_bytes).unwrap_or("").parse::<u16>() {
+                unsafe { Bun__setProcessDebugPort(port) };
+                if let Debugger::Enable(ref mut enable) = ctx.runtime_options.debugger {
+                    if enable.path_or_port.is_empty() {
+                        enable.path_or_port = Box::<[u8]>::from(inspect_port_flag);
+                    }
+                }
+            }
         }
 
         let cpu_prof_flag = args.flag(b"--cpu-prof");

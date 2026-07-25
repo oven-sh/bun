@@ -6603,9 +6603,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
                     }
 
-                    // `declare`/`abstract` fields only reach this loop when decorated (the
-                    // undecorated case is dropped in `parse_property`); drop the type-only
-                    // body entry now that the decorator call has been recorded above.
+                    // Undecorated `declare`/`abstract` fields were already dropped in `parse_property`.
                     if matches!(prop.kind, PropertyKind::Declare | PropertyKind::Abstract) {
                         continue;
                     }

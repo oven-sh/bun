@@ -173,11 +173,14 @@ extern "C" ssize_t posix_spawn_bun(
     // mimalloc (built with MI_DEFAULT_ALLOW_THP=0) sets PR_SET_THP_DISABLE at
     // startup. That flag lives on mm->flags (MMF_DISABLE_THP), is inherited by
     // fork and preserved across execve, so every subprocess would inherit it.
-    // The vfork child shares our mm, so save now, clear in the child just
-    // before exec, and restore in the parent once vfork returns. Only act on
-    // the exact state mimalloc sets (1 = fully disabled); any other value
-    // (0, 3 = PR_THP_DISABLE_EXCEPT_ADVISED, -1 = unsupported) is left alone.
-    int saved_thp_disable = prctl(PR_GET_THP_DISABLE, 0, 0, 0, 0);
+    // The vfork child shares our mm, so clear in the child just before exec
+    // and restore in the parent once vfork returns. mimalloc sets this before
+    // any threads exist, so capture it once; reading the live value on every
+    // spawn can observe another thread's vfork child having cleared it. Only
+    // act on the exact state mimalloc sets (1 = fully disabled); any other
+    // value (0, 3 = PR_THP_DISABLE_EXCEPT_ADVISED, -1 = unsupported) is left
+    // alone.
+    static const int initial_thp_disable = prctl(PR_GET_THP_DISABLE, 0, 0, 0, 0);
     pid_t child = vfork();
 #else
     // On macOS, we must use fork() because vfork() is more strictly enforced.
@@ -363,7 +366,7 @@ extern "C" ssize_t posix_spawn_bun(
         // Reset THP to the system default for the new process. Done as late as
         // possible because under vfork this also flips the flag on the shared
         // parent mm until the parent restores it after vfork returns.
-        if (saved_thp_disable == 1) {
+        if (initial_thp_disable == 1) {
             (void)prctl(PR_SET_THP_DISABLE, 0, 0, 0, 0);
         }
 #endif
@@ -453,7 +456,7 @@ extern "C" ssize_t posix_spawn_bun(
     if (saved_dumpable == 0 || saved_dumpable == 1) {
         (void)prctl(PR_SET_DUMPABLE, saved_dumpable, 0, 0, 0);
     }
-    if (saved_thp_disable == 1) {
+    if (initial_thp_disable == 1) {
         (void)prctl(PR_SET_THP_DISABLE, 1, 0, 0, 0);
     }
 #endif

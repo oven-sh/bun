@@ -308,6 +308,36 @@ impl<const SSL: bool> HTTPContext<SSL> {
         socket.close(uws::CloseKind::Normal);
     }
 
+    /// Non-blocking `MSG_PEEK` on the pooled socket's raw fd. A pooled
+    /// HTTP/1.1 socket is idle with an empty receive queue, so `recv` = 0
+    /// is a peer FIN already queued in the kernel that the event loop has
+    /// not yet dispatched; handing that socket to a new request races the
+    /// server's close and a non-idempotent request surfaces `ECONNRESET`.
+    /// The only healthy result is `EAGAIN`. Not applied to HTTP/2 (servers
+    /// legitimately send PING/SETTINGS while idle) and POSIX-only: on
+    /// Windows the pool relies on the `Keep-Alive` hint and the libuv
+    /// deferred-FIN sweep.
+    #[cfg_attr(windows, allow(unused_variables))]
+    fn probe_idle_socket_alive(socket: HTTPSocket<SSL>) -> bool {
+        #[cfg(unix)]
+        {
+            let fd = socket.fd();
+            if !fd.is_valid() {
+                return true;
+            }
+            let mut buf = [0u8; 1];
+            match bun_sys::recv(fd, &mut buf, libc::MSG_PEEK | libc::MSG_DONTWAIT) {
+                Ok(0) => false,
+                Ok(_) => true,
+                Err(e) => e.is_retry(),
+            }
+        }
+        #[cfg(windows)]
+        {
+            true
+        }
+    }
+
     /// `ptr` is the *value* stored in the socket ext (the packed
     /// `ActiveSocket` tagged pointer), already dereferenced by
     /// `NsHandler` before reaching `Handler.on*`. No second deref.
@@ -589,7 +619,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
         debug_assert!(!hostname.is_empty());
         debug_assert!(port > 0);
 
-        // `Keep-Alive: timeout=N` minus a 1 s margin; 0 ⇒ close instead of pooling (Node-compat).
+        // `Keep-Alive: timeout=N` minus the safety margin; 0 ⇒ close instead of pooling.
         let idle_seconds = keepalive_hint_seconds
             .map(|n| n.saturating_sub(crate::KEEPALIVE_TIMEOUT_BUFFER_SECONDS));
         let reusable = hostname.len() <= MAX_KEEPALIVE_HOSTNAME
@@ -808,6 +838,12 @@ impl<const SSL: bool> HTTPContext<SSL> {
 
                 // Past the server's `Keep-Alive: timeout=N`: the peer is about to close it.
                 if socket.idle_deadline_ns != 0 && now_ns >= socket.idle_deadline_ns {
+                    Self::close_socket(http_socket);
+                    continue;
+                }
+
+                // Peer FIN queued in the kernel but not yet dispatched.
+                if socket.h2_session.is_none() && !Self::probe_idle_socket_alive(http_socket) {
                     Self::close_socket(http_socket);
                     continue;
                 }

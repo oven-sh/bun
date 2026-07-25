@@ -991,8 +991,10 @@ fn hash_header_const(name: &[u8]) -> u64 {
     hash_header_name(name)
 }
 
-/// Margin subtracted from a `Keep-Alive: timeout=N` hint (Node's `agentKeepAliveTimeoutBuffer`).
-pub(crate) const KEEPALIVE_TIMEOUT_BUFFER_SECONDS: u32 = 1;
+/// Margin subtracted from a `Keep-Alive: timeout=N` hint before pooling
+/// (undici's `keepAliveTimeoutThreshold` default, 2 s). A hint at or below
+/// the margin means the safe idle window is empty: close instead of pooling.
+pub(crate) const KEEPALIVE_TIMEOUT_BUFFER_SECONDS: u32 = 2;
 
 /// `timeout=` parameter from a `Keep-Alive` header value (`timeout=5, max=100`). Case-insensitive.
 pub(crate) fn parse_keepalive_timeout(value: &[u8]) -> Option<u32> {

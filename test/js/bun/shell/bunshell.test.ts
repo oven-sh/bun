@@ -3003,7 +3003,11 @@ describe("FORCE_COLOR", () => {
       env: colorEnv,
       terminal,
     });
-    proc.exited.then(code => (code === 0 ? resolve() : reject(new Error(`exit ${code}: ${output}`))));
+    // Exit and PTY data delivery are independent; only the data callback
+    // resolves. A non-zero exit still rejects so failures surface promptly.
+    proc.exited.then(code => {
+      if (code !== 0) reject(new Error(`exit ${code}: ${output}`));
+    });
     await promise;
     await proc.exited;
     return output;
@@ -3029,8 +3033,10 @@ describe("FORCE_COLOR", () => {
     const output = await runInTerminal(
       fixture(
         `const f = require("path").join(require("os").tmpdir(), "fc-" + process.pid);
-         await $\`PROBE > \${f}\`;
-         process.stdout.write(require("fs").readFileSync(f, "utf8"));`,
+         try {
+           await $\`PROBE > \${f}\`;
+           process.stdout.write(require("fs").readFileSync(f, "utf8"));
+         } finally { require("fs").rmSync(f, { force: true }); }`,
       ),
     );
     expect(output).toMatch(/^fc= nc=\r?$/m);
@@ -3116,7 +3122,9 @@ describe("FORCE_COLOR", () => {
       env: colorEnv,
       terminal,
     });
-    proc.exited.then(code => (code === 0 ? resolve() : reject(new Error(`exit ${code}: ${output}`))));
+    proc.exited.then(code => {
+      if (code !== 0) reject(new Error(`exit ${code}: ${output}`));
+    });
     await promise;
     await proc.exited;
     expect(await Bun.file(out).text()).toBe("fc= nc=\nDONE\n");

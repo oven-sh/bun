@@ -328,8 +328,7 @@ pub struct Interpreter {
     pub flags: Cell<InterpreterFlags>,
     /// `Some("FORCE_COLOR=N\0")` when the JS-captured root stdout is a color
     /// terminal. `Cmd` appends it to a child's env only when that child's
-    /// resolved stdout is still the relayed `Stdio::Capture` pipe (not
-    /// `> file` / `| next` / `$(..)`) and no FORCE_COLOR/NO_COLOR is in scope.
+    /// resolved stdout is still the relayed `Stdio::Capture` pipe.
     pub force_color_env: Cell<Option<&'static [u8]>>,
     pub exit_code: Cell<Option<ExitCode>>,
     pub this_jsvalue: Cell<crate::jsc::JSValue>,

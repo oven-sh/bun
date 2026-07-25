@@ -21,7 +21,6 @@
 
 'use strict';
 const common = require('../common');
-if (common.isWindows) return; // TODO: BUN no 'ab' installed
 const assert = require('assert');
 // This test requires the program 'ab'
 const http = require('http');
@@ -41,7 +40,7 @@ const server = http.createServer(function(req, res) {
 
 function runAb(opts, callback) {
   const command = `ab ${opts} http://127.0.0.1:${server.address().port}/`;
-  exec(command, function(err, stdout, stderr) {
+  exec(command, common.mustCall(function(err, stdout, stderr) {
     if (err) {
       if (/ab|apr/i.test(stderr)) {
         common.printSkipMessage(`problem spawning \`ab\`.\n${stderr}`);
@@ -63,7 +62,7 @@ function runAb(opts, callback) {
     assert.strictEqual(completeRequests * documentLength, htmlTransferred);
 
     if (callback) callback();
-  });
+  }));
 }
 
 server.listen(0, common.mustCall(function() {

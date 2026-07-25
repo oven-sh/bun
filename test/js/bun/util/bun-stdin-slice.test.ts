@@ -1,4 +1,4 @@
-import { expect, test, describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows } from "harness";
 import crypto from "node:crypto";
 
@@ -63,11 +63,7 @@ describe.skipIf(isWindows)("concurrent Bun.stdin blob reads on a pipe", () => {
     });
     proc.stdin.write(payload);
     await proc.stdin.end();
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     return { stdout, stderr, exitCode };
   }
 

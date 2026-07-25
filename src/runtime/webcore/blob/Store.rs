@@ -140,8 +140,7 @@ impl StoreExt for Store {
             mime_type: bun_http_types::MimeType::NONE,
             ref_count: bun_ptr::ThreadSafeRefCount::init(),
             is_all_ascii: None,
-            in_flight_blob_reader:
-                core::sync::atomic::AtomicPtr::new(core::ptr::null_mut()),
+            in_flight_blob_reader: core::sync::atomic::AtomicPtr::new(core::ptr::null_mut()),
         }))
     }
 
@@ -161,8 +160,7 @@ impl StoreExt for Store {
             mime_type: bun_http_types::MimeType::NONE,
             ref_count: bun_ptr::ThreadSafeRefCount::init(),
             is_all_ascii: None,
-            in_flight_blob_reader:
-                core::sync::atomic::AtomicPtr::new(core::ptr::null_mut()),
+            in_flight_blob_reader: core::sync::atomic::AtomicPtr::new(core::ptr::null_mut()),
         }))
     }
 
@@ -175,8 +173,7 @@ impl StoreExt for Store {
             mime_type: bun_http_types::MimeType::NONE,
             ref_count: bun_ptr::ThreadSafeRefCount::init(),
             is_all_ascii: None,
-            in_flight_blob_reader:
-                core::sync::atomic::AtomicPtr::new(core::ptr::null_mut()),
+            in_flight_blob_reader: core::sync::atomic::AtomicPtr::new(core::ptr::null_mut()),
         }))
     }
 

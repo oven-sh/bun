@@ -212,8 +212,7 @@ pub struct ReadFile {
     /// the JS thread while the read runs on the work pool; drained in
     /// `then()` on the JS thread. Guarded so the JS-thread push does not
     /// alias the work-pool `&mut self`.
-    pub extra_completions:
-        bun_threading::Guarded<Vec<(ReadFileOnReadFileCallback, *mut c_void)>>,
+    pub extra_completions: bun_threading::Guarded<Vec<(ReadFileOnReadFileCallback, *mut c_void)>>,
     pub io_task: Option<*mut ReadFileTask>,
     pub io_poll: io::Poll,
     pub io_request: io::Request,
@@ -645,8 +644,7 @@ impl ReadFile {
             }
             let err = SystemError {
                 code: BunString::static_("INTERNAL_ERROR").into(),
-                message: BunString::static_("assertion failure - store should not be null")
-                    .into(),
+                message: BunString::static_("assertion failure - store should not be null").into(),
                 syscall: BunString::static_("read").into(),
                 ..Default::default()
             };

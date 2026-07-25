@@ -641,11 +641,15 @@ function fakeParentPort() {
   function track(type: string, listener: any, registered: any) {
     let set = byType.get(type);
     if (!set) byType.set(type, (set = new SafeMap()));
+    // First registration of a given listener wins (including its once-ness),
+    // matching node's NodeEventTarget dedup.
+    if (set.has(listener)) return false;
     set.set(listener, registered);
+    return true;
   }
   function on(this: any, type: string, listener: any) {
-    self.addEventListener(type, listener, { $kIsNodeStyleListener: true } as AddEventListenerOptions);
-    track(type, listener, listener);
+    if (track(type, listener, listener))
+      self.addEventListener(type, listener, { $kIsNodeStyleListener: true } as AddEventListenerOptions);
     return this;
   }
   function once(this: any, type: string, listener: any) {
@@ -653,8 +657,8 @@ function fakeParentPort() {
       byType.get(type)?.delete(listener);
       listener(arg);
     };
-    self.addEventListener(type, wrapper, { once: true, $kIsNodeStyleListener: true } as AddEventListenerOptions);
-    track(type, listener, wrapper);
+    if (track(type, listener, wrapper))
+      self.addEventListener(type, wrapper, { once: true, $kIsNodeStyleListener: true } as AddEventListenerOptions);
     return this;
   }
   function off(this: any, type: string, listener: any) {

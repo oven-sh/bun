@@ -300,5 +300,18 @@
                 }],
             ],
         },
+        {
+            "target_name": "regular_node_exe_import_addon",
+            "sources": ["no_delay_load_hook_addon.c"],
+            "include_dirs": ["<!@(node -p \"require('node-addon-api').include\")"],
+            "libraries": [],
+            "dependencies": ["<!(node -p \"require('node-addon-api').gyp\")"],
+            "defines": [
+                "NAPI_DISABLE_CPP_EXCEPTIONS",
+                "NODE_API_EXPERIMENTAL_NOGC_ENV_OPT_OUT=1",
+            ],
+            # Non-delay node.exe import, like Zig-built prebuilds (issue #30454).
+            "win_delay_load_hook": "false",
+        },
     ]
 }

@@ -544,16 +544,6 @@ bool MessagePort::addEventListener(const AtomString& eventType, Ref<EventListene
     return EventTarget::addEventListener(eventType, WTF::move(listener), options);
 }
 
-bool MessagePort::removeEventListener(const AtomString& eventType, EventListener& listener, const EventListenerOptions& options)
-{
-    auto result = EventTarget::removeEventListener(eventType, listener, options);
-    if (!hasEventListeners(eventNames().messageEvent))
-        m_hasMessageEventListener = false;
-    if (!hasEventListeners(eventNames().closeEvent))
-        m_hasCloseEventListener.store(false, std::memory_order_release);
-    return result;
-}
-
 WebCoreOpaqueRoot root(MessagePort* port)
 {
     return WebCoreOpaqueRoot { port };

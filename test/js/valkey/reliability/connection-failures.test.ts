@@ -401,12 +401,15 @@ describe("Valkey: connect() error identity", () => {
   test("connectionTimeout expiry rejects connect() with ERR_REDIS_CONNECTION_TIMEOUT", async () => {
     const srv = await stubServer(() => null);
     try {
-      const err = await connectError(`redis://127.0.0.1:${srv.port}`, {
-        autoReconnect: false,
-        connectionTimeout: 200,
+      expect(
+        await connectError(`redis://127.0.0.1:${srv.port}`, {
+          autoReconnect: false,
+          connectionTimeout: 200,
+        }),
+      ).toEqual({
+        code: "ERR_REDIS_CONNECTION_TIMEOUT",
+        message: "Connection timeout reached after 200ms",
       });
-      expect(err.code).toBe("ERR_REDIS_CONNECTION_TIMEOUT");
-      expect(err.message).toContain("Connection timeout reached after");
     } finally {
       srv.close();
     }

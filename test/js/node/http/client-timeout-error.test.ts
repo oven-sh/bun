@@ -139,10 +139,9 @@ describe("node:http client timeout", () => {
       });
       req.on("error", () => {});
       const [socket] = await once(req, "socket");
-      const { promise, resolve } = Promise.withResolvers<void>();
-      socket.setTimeout(100, resolve);
+      socket.setTimeout(100);
       try {
-        await promise;
+        await once(socket, "timeout");
         expect(socket.connecting).toBe(true);
       } finally {
         req.destroy();

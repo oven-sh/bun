@@ -23,11 +23,7 @@ describe.concurrent("unhandled rejection inside a ShadowRealm", () => {
       env: bunEnv,
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stdout).toBe("");
     expect(stderr).toContain("boom-from-realm");
     expect(exitCode).toBe(1);
@@ -47,11 +43,7 @@ describe.concurrent("unhandled rejection inside a ShadowRealm", () => {
       env: bunEnv,
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stdout).toBe("");
     expect(stderr).toContain("async-boom");
     expect(exitCode).toBe(1);
@@ -73,11 +65,7 @@ describe.concurrent("unhandled rejection inside a ShadowRealm", () => {
       env: bunEnv,
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     expect(stdout).toBe("caught handled-by-process\n");
     expect(exitCode).toBe(0);
@@ -100,11 +88,7 @@ describe.concurrent("unhandled rejection inside a ShadowRealm", () => {
       env: bunEnv,
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     expect(stdout).toBe("ok\n");
     expect(exitCode).toBe(0);
@@ -129,11 +113,7 @@ describe.concurrent("unhandled rejection inside a ShadowRealm", () => {
       env: bunEnv,
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     expect(stdout).toBe("unhandled\nhandled\n");
     expect(exitCode).toBe(0);

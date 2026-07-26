@@ -1516,9 +1516,7 @@ impl CommandLineReporter {
             .saturating_add(sequence.expect_call_count);
     }
 
-    /// `pass / skip / filtered out / todo / fail / errors` lines, shared by
-    /// the end-of-run summary in `TestCommand::exec` and the mid-run
-    /// `process.exit()` summary so they never diverge.
+    /// `pass / skip / filtered out / todo / fail / errors` lines.
     pub fn print_summary_counts(&self, indent: &str) {
         let summary = self.jest.summary;
         if summary.pass > 0 {
@@ -3306,10 +3304,8 @@ impl TestCommand {
 
             // need to wake up so autoTick() doesn't wait for 16-100ms after loading the entrypoint
             vm.wakeup();
-            // Only count the file once, not once per repeat. Bumped before
-            // module load so `on_process_exit_during_tests` sees this file as
-            // started when `process.exit()` is called from top-level.
             if repeat_index == 0 {
+                // Before load: `on_process_exit_during_tests` must see this file as started.
                 reporter.summary().files += 1;
             }
             reporter.jest.module_load_in_progress = true;
@@ -3445,25 +3441,25 @@ pub(crate) fn handle_top_level_test_error_before_javascript_start(err: &crate::E
     Global::exit(1);
 }
 
-/// JS-VM-thread-only pointer to the boxed `CommandLineReporter` while a
-/// `bun test` run is in progress. Set alongside [`jest::Jest::RUNNER`] in
-/// `TestCommand::exec` and cleared on the same shutdown path.
+/// Live `CommandLineReporter` while a `bun test` run is in progress (sibling of [`jest::Jest::RUNNER`]).
 static REPORTER: bun_core::RacyCell<Option<core::ptr::NonNull<CommandLineReporter>>> =
     bun_core::RacyCell::new(None);
 
-/// Called from `Bun__Process__exit` when user code invokes `process.exit()`
-/// on the main thread while `bun test` is running. Prints the summary that
-/// would otherwise be lost and forces a nonzero exit so a test calling
-/// `process.exit(0)` can't make the whole run appear green while later files
-/// are silently never executed.
+/// The Node `common/index.js` re-spawn / `common.skip()` pattern: last file's top-level exit, nothing to hide.
+fn is_last_file_toplevel_exit_with_no_failures(r: &CommandLineReporter, not_run: u32) -> bool {
+    not_run == 0
+        && r.jest.module_load_in_progress
+        && r.jest.summary.fail == 0
+        && r.jest.unhandled_errors_between_tests == 0
+}
+
+/// `Bun__Process__exit` hook: flush the `bun test` summary and force exit 1 so an in-test `process.exit(0)` can't mask later files.
 pub(crate) fn on_process_exit_during_tests(vm: &mut VirtualMachine, requested: u8) {
     // SAFETY: `REPORTER` is only read/written on the JS VM thread.
     let Some(reporter_ptr) = (unsafe { REPORTER.read() }) else {
         return;
     };
-    // Clear first so a re-entrant `process.exit()` from an `'exit'` listener
-    // or JUnit write path below is a no-op instead of double-printing.
-    // SAFETY: single-threaded (JS VM thread); no concurrent reader.
+    // SAFETY: single-threaded; clear-before-use makes re-entry a no-op.
     unsafe { REPORTER.write(None) };
     // SAFETY: `REPORTER` was set from `&mut *reporter` in `exec()`, which
     // owns the `Box<CommandLineReporter>` for the process lifetime. Same
@@ -3472,10 +3468,8 @@ pub(crate) fn on_process_exit_during_tests(vm: &mut VirtualMachine, requested: u
     // next call) diverges.
     let reporter = unsafe { &mut *reporter_ptr.as_ptr() };
 
-    // A `--parallel` worker's crash is accounted for by the coordinator
-    // (`Coordinator::reap_worker` → `account_crash`); don't print a summary
-    // to stderr here, it would interleave with the coordinator's output.
     if reporter.worker_ipc_file_idx.is_some() {
+        // `--parallel` coordinator accounts for the crash (`reap_worker` → `account_crash`).
         return;
     }
 
@@ -3484,21 +3478,7 @@ pub(crate) fn on_process_exit_during_tests(vm: &mut VirtualMachine, requested: u
         .total_test_files
         .saturating_sub(reporter.jest.summary.files);
 
-    // `process.exit()` during the last file's top-level module evaluation
-    // with no later files queued and nothing already failed is the Node test
-    // harness re-spawn pattern (`test/js/node/test/common/index.js`
-    // exec-with-Flags then `process.exit(child.status)`): pass the requested
-    // code through unchanged. `module_load_in_progress` is only set for the
-    // synchronous `load_entry_point_for_test_runner` window; a `describe()`
-    // callback (still `Phase::Collection` but after module load) does not
-    // qualify. `fail`/`unhandled_errors` gate the multi-file case where an
-    // earlier file recorded a failure and the last file's top-level
-    // `process.exit(0)` would otherwise mask it.
-    if not_run == 0
-        && reporter.jest.module_load_in_progress
-        && reporter.jest.summary.fail == 0
-        && reporter.jest.unhandled_errors_between_tests == 0
-    {
+    if is_last_file_toplevel_exit_with_no_failures(reporter, not_run) {
         return;
     }
 

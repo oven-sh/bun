@@ -2319,7 +2319,12 @@ pub mod environment_variables {
         }
 
         {
-            let _slots = vm.proxy_env_storage.lock();
+            let mut slots = vm.proxy_env_storage.lock();
+            // Clear a matching proxy-var slot so a later worker spawn's
+            // sync_into doesn't re-insert the deleted value.
+            if let Some(slot) = slots.slot(key) {
+                *slot.ptr = None;
+            }
             // Ordered remove so Object.keys(process.env) keeps the relative
             // order of remaining keys after delete (Node/unsetenv shift
             // environ in place).

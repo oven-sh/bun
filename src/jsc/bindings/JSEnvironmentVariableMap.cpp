@@ -350,9 +350,11 @@ JSC_DEFINE_HOST_FUNCTION(jsEditWindowsEnvVar, (JSGlobalObject * global, JSC::Cal
 // put()/delete() wrote through to the OS environment (the Windows Proxy's
 // SetEnvironmentVariableW or the POSIX JSProcessEnvMap's setenv/unsetenv), so
 // every mutation of a main-rooted shared store has to re-apply that write-
-// through. Gated on the *store*, not the writing thread: node roots a
-// main-founded tree at its RealEnvStore, so a worker writing through that tree
-// reaches the OS env too. `value == nullptr` deletes.
+// through. Gated on the *store*, not the writing thread. On Windows a worker
+// writing through a main-rooted tree reaches the OS env (Node parity); on
+// POSIX Bun__ProcessEnv__put still gates setenv on vm.is_main_thread(), so
+// only main-thread writes reach environ and a worker's write lands only in
+// the shared store. `value == nullptr` deletes.
 static ALWAYS_INLINE void syncOSEnv(JSGlobalObject* globalObject, SharedEnvStore* store, const String& key, const String* value)
 {
     if (!store || !store->isMainRooted())

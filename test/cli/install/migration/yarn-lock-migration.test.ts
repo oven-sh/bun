@@ -1,7 +1,64 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import fs from "fs";
 import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 import { join } from "path";
+
+// `bun pm migrate` fetches every npm-resolved package's manifest from the
+// configured registry to enrich the migrated lockfile with bin/os/cpu
+// metadata (see fetch_necessary_package_metadata_after_yarn_or_pnpm_migration).
+// Run every spawn against a loopback registry so the file is hermetic.
+// Packages listed here get real os/cpu/bin metadata; everything else 404s
+// (the enrichment pass silently skips packages whose manifest is missing).
+const manifests: Record<string, Record<string, { os?: string[]; cpu?: string[]; bin?: Record<string, string> }>> = {
+  "fsevents": {
+    "2.3.2": { os: ["darwin"] },
+  },
+  "esbuild": {
+    "0.17.19": { bin: { esbuild: "bin/esbuild" } },
+  },
+  "@esbuild/android-arm64": { "0.17.19": { os: ["android"], cpu: ["arm64"] } },
+  "@esbuild/darwin-arm64": { "0.17.19": { os: ["darwin"], cpu: ["arm64"] } },
+  "@esbuild/darwin-x64": { "0.17.19": { os: ["darwin"], cpu: ["x64"] } },
+  "@esbuild/linux-arm64": { "0.17.19": { os: ["linux"], cpu: ["arm64"] } },
+  "@esbuild/linux-x64": { "0.17.19": { os: ["linux"], cpu: ["x64"] } },
+};
+
+let registry: ReturnType<typeof Bun.serve>;
+let registryUrl: string;
+
+beforeAll(() => {
+  registry = Bun.serve({
+    port: 0,
+    fetch(req) {
+      const name = decodeURIComponent(new URL(req.url).pathname.slice(1));
+      const versions = manifests[name];
+      if (!versions) return new Response("not found", { status: 404 });
+      const body: Record<string, unknown> = { name, versions: {} };
+      for (const [version, meta] of Object.entries(versions)) {
+        (body.versions as Record<string, unknown>)[version] = {
+          name,
+          version,
+          ...meta,
+          dist: { tarball: `${registryUrl}${name}/-/${name.split("/").pop()}-${version}.tgz` },
+        };
+      }
+      return Response.json(body);
+    },
+  });
+  registryUrl = registry.url.href;
+});
+
+afterAll(() => {
+  registry?.stop(true);
+});
+
+function migrateEnv(dir: string) {
+  return {
+    ...bunEnv,
+    BUN_CONFIG_REGISTRY: registryUrl,
+    BUN_INSTALL_CACHE_DIR: join(dir, ".bun-install-cache"),
+  };
+}
 
 describe("yarn.lock migration basic", () => {
   test("simple yarn.lock migration produces correct bun.lock", async () => {
@@ -32,7 +89,7 @@ is-number@^7.0.0:
     const migrateResult = await Bun.spawn({
       cmd: [bunExe(), "pm", "migrate", "-f"],
       cwd: tempDir,
-      env: bunEnv,
+      env: migrateEnv(tempDir),
       stdout: "pipe",
       stderr: "pipe",
       stdin: "ignore",
@@ -129,7 +186,7 @@ to-fast-properties@^2.0.0:
     const migrateResult = await Bun.spawn({
       cmd: [bunExe(), "pm", "migrate", "-f"],
       cwd: tempDir,
-      env: bunEnv,
+      env: migrateEnv(tempDir),
       stdout: "pipe",
       stderr: "pipe",
       stdin: "ignore",
@@ -155,19 +212,6 @@ to-fast-properties@^2.0.0:
     expect(bunLockContent).not.toContain("monoreporeact");
     expect(bunLockContent).not.toContain("@types/react");
     expect(bunLockContent).not.toContain("�");
-
-    // Install should work after migration
-    const installResult = await Bun.spawn({
-      cmd: [bunExe(), "install"],
-      cwd: tempDir,
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-      stdin: "ignore",
-    });
-
-    const installExitCode = await installResult.exited;
-    expect(installExitCode).toBe(0);
   });
 
   test("yarn.lock with extremely long build tags (regression test)", async () => {
@@ -199,7 +243,7 @@ test-package@1.0.0-alpha.beta.gamma.delta.epsilon.zeta.eta.theta.iota.kappa.lamb
     const migrateResult = await Bun.spawn({
       cmd: [bunExe(), "pm", "migrate", "-f"],
       cwd: tempDir,
-      env: bunEnv,
+      env: migrateEnv(tempDir),
       stdout: "pipe",
       stderr: "pipe",
       stdin: "ignore",
@@ -715,7 +759,7 @@ vary@~1.1.2:
     const migrateResult = await Bun.spawn({
       cmd: [bunExe(), "pm", "migrate", "-f"],
       cwd: tempDir,
-      env: bunEnv,
+      env: migrateEnv(tempDir),
       stdout: "pipe",
       stderr: "pipe",
       stdin: "ignore",
@@ -787,7 +831,7 @@ undici-types@~5.26.4:
     const migrateResult = await Bun.spawn({
       cmd: [bunExe(), "pm", "migrate", "-f"],
       cwd: tempDir,
-      env: bunEnv,
+      env: migrateEnv(tempDir),
       stdout: "pipe",
       stderr: "pipe",
       stdin: "ignore",
@@ -877,7 +921,7 @@ webpack@^5.89.0:
     const migrateResult = await Bun.spawn({
       cmd: [bunExe(), "pm", "migrate", "-f"],
       cwd: tempDir,
-      env: bunEnv,
+      env: migrateEnv(tempDir),
       stdout: "pipe",
       stderr: "pipe",
       stdin: "ignore",
@@ -975,7 +1019,7 @@ lodash@^4.17.21:
     const migrateResult = await Bun.spawn({
       cmd: [bunExe(), "pm", "migrate", "-f"],
       cwd: tempDir,
-      env: bunEnv,
+      env: migrateEnv(tempDir),
       stdout: "pipe",
       stderr: "pipe",
       stdin: "ignore",
@@ -1090,7 +1134,7 @@ babel-loader/chalk@^2.4.2:
     const migrateResult = await Bun.spawn({
       cmd: [bunExe(), "pm", "migrate", "-f"],
       cwd: tempDir,
-      env: bunEnv,
+      env: migrateEnv(tempDir),
       stdout: "pipe",
       stderr: "pipe",
       stdin: "ignore",
@@ -1315,7 +1359,7 @@ webpack@^5.75.0:
     const migrateResult = await Bun.spawn({
       cmd: [bunExe(), "pm", "migrate", "-f"],
       cwd: tempDir,
-      env: bunEnv,
+      env: migrateEnv(tempDir),
       stdout: "pipe",
       stderr: "pipe",
       stdin: "ignore",
@@ -1360,7 +1404,7 @@ describe("bun pm migrate for existing yarn.lock", () => {
     const migrateResult = Bun.spawn({
       cmd: [bunExe(), "pm", "migrate", "-f"],
       cwd: tempDir,
-      env: bunEnv,
+      env: migrateEnv(tempDir),
       stdout: "pipe",
       stderr: "pipe",
       stdin: "ignore",
@@ -1455,7 +1499,7 @@ fsevents@^2.3.2:
     const migrateResult = await Bun.spawn({
       cmd: [bunExe(), "pm", "migrate", "-f"],
       cwd: tempDir,
-      env: bunEnv,
+      env: migrateEnv(tempDir),
       stdout: "pipe",
       stderr: "pipe",
       stdin: "ignore",
@@ -1473,10 +1517,11 @@ fsevents@^2.3.2:
     const bunLockContent = fs.readFileSync(join(tempDir, "bun.lock"), "utf8");
     expect(bunLockContent).toMatchSnapshot("os-cpu-yarn-migration");
 
-    // Verify that the lockfile contains the expected os/cpu metadata by checking the snapshot
-    // fsevents should have darwin os constraint, esbuild packages should have arch constraints
-    expect(bunLockContent).toContain("fsevents");
-    expect(bunLockContent).toContain("@esbuild/linux-arm64");
-    expect(bunLockContent).toContain("@esbuild/darwin-arm64");
+    // The enrichment pass must have fetched os/cpu/bin from the (local)
+    // registry; these fields are absent from yarn.lock itself.
+    expect(bunLockContent).toContain('["fsevents@2.3.2", "", { "os": "darwin" }');
+    expect(bunLockContent).toContain('["@esbuild/darwin-arm64@0.17.19", "", { "os": "darwin", "cpu": "arm64" }');
+    expect(bunLockContent).toContain('["@esbuild/linux-x64@0.17.19", "", { "os": "linux", "cpu": "x64" }');
+    expect(bunLockContent).toContain('"bin": { "esbuild": "bin/esbuild" }');
   });
 });

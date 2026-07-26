@@ -589,11 +589,8 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionJSONLParseChunk, (JSGlobalObject * globalObje
                 return {};
             }
             result = JSC::streamingJSONParse(globalObject, str, values);
-            // Map the UTF-16 character offset back to a byte offset in the
-            // original input. Walking the source bytes with U8_NEXT_OR_FFFD
-            // mirrors fromUTF8ReplacingInvalidSequences exactly, so an invalid
-            // sequence contributes its real source width rather than the 3-byte
-            // UTF-8 encoding of U+FFFD that utf8_length_from_utf16 would report.
+            // Walk source bytes with the same decoder fromUTF8ReplacingInvalidSequences
+            // uses so invalid sequences map to their real source width, not 3 bytes.
             size_t byteOffset = 0;
             size_t u16Units = 0;
             while (u16Units < result.charactersConsumed && byteOffset < sliceLen) {

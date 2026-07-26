@@ -170,6 +170,30 @@ describe("AbortSignal", () => {
       et.dispatchEvent(new Event("x"));
       expect(calls).toBe(0);
     });
+
+    // Registering/removing an abort algorithm must not disarm a user-held timeout signal.
+    test("timeout still fires after a pipeTo using it completes early", async () => {
+      const s = AbortSignal.timeout(50);
+      await new ReadableStream({ start: c => c.close() }).pipeTo(new WritableStream({}), { signal: s });
+      const result = await Promise.race([
+        new Promise(r => s.addEventListener("abort", () => r("aborted"), { once: true })),
+        Bun.sleep(2000).then(() => "timeout-never-fired"),
+      ]);
+      expect({ result, aborted: s.aborted }).toEqual({ result: "aborted", aborted: true });
+    });
+
+    test("timeout still fires after addEventListener({signal})+removeEventListener", async () => {
+      const s = AbortSignal.timeout(50);
+      const et = new EventTarget();
+      const fn = () => {};
+      et.addEventListener("x", fn, { signal: s });
+      et.removeEventListener("x", fn);
+      const result = await Promise.race([
+        new Promise(r => s.addEventListener("abort", () => r("aborted"), { once: true })),
+        Bun.sleep(2000).then(() => "timeout-never-fired"),
+      ]);
+      expect({ result, aborted: s.aborted }).toEqual({ result: "aborted", aborted: true });
+    });
   });
 
   // https://wpt.fyi/results/dom/abort/timeout.any.html "AbortSignal timeouts fire in order"

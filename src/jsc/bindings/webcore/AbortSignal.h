@@ -149,6 +149,7 @@ private:
     void addSourceSignal(AbortSignal&);
     void addDependentSignal(AbortSignal&);
     void cancelTimer();
+    bool updateHasAbortEventListener();
 
     void applyFlags(uint8_t flags) { m_flags |= flags; }
     void setIsDependent(bool isDependent)

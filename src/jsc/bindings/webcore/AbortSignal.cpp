@@ -290,7 +290,7 @@ void AbortSignal::signalFollow(AbortSignal& signal)
     });
 }
 
-void AbortSignal::eventListenersDidChange()
+bool AbortSignal::updateHasAbortEventListener()
 {
     // HasAbortEventListener gates the wrapper's GC reachability, so every observer kind counts.
     bool hasListeners = hasEventListeners(eventNames().abortEvent)
@@ -301,6 +301,12 @@ void AbortSignal::eventListenersDidChange()
         hasListeners = !m_abortAlgorithms.isEmpty();
     }
     setHasAbortEventListener(hasListeners);
+    return hasListeners;
+}
+
+void AbortSignal::eventListenersDidChange()
+{
+    bool hasListeners = updateHasAbortEventListener();
 
     // When a timeout signal loses all observers (no JS listeners, no native
     // callbacks, no algorithms, no dependent signals), there is nothing left
@@ -328,7 +334,7 @@ uint32_t AbortSignal::addAbortAlgorithmToSignal(AbortSignal& signal, Ref<AbortAl
         Locker locker { signal.m_abortAlgorithmsLock };
         signal.m_abortAlgorithms.append(std::make_pair(identifier, WTF::move(algorithm)));
     }
-    signal.eventListenersDidChange();
+    signal.updateHasAbortEventListener();
     return identifier;
 }
 
@@ -340,13 +346,13 @@ void AbortSignal::removeAbortAlgorithmFromSignal(AbortSignal& signal, uint32_t a
             return pair.first == algorithmIdentifier;
         });
     }
-    signal.eventListenersDidChange();
+    signal.updateHasAbortEventListener();
 }
 
 uint32_t AbortSignal::addAlgorithm(Algorithm&& algorithm)
 {
     m_algorithms.append(std::make_pair(++m_algorithmIdentifier, WTF::move(algorithm)));
-    eventListenersDidChange();
+    updateHasAbortEventListener();
     return m_algorithmIdentifier;
 }
 
@@ -355,7 +361,7 @@ void AbortSignal::removeAlgorithm(uint32_t algorithmIdentifier)
     m_algorithms.removeFirstMatching([algorithmIdentifier](auto& pair) {
         return pair.first == algorithmIdentifier;
     });
-    eventListenersDidChange();
+    updateHasAbortEventListener();
 }
 
 void AbortSignal::throwIfAborted(JSC::JSGlobalObject& lexicalGlobalObject)

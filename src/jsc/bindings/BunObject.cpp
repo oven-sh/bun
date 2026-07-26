@@ -444,12 +444,7 @@ static JSValue constructDNSObject(VM& vm, JSObject* bunObject)
 JSC_DECLARE_HOST_FUNCTION(jsFunctionJSONLParse);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionJSONLParseChunk);
 
-// Parse JSONL from a UTF-8 byte slice. Runs of consecutive ASCII-only lines are
-// parsed via the Latin-1 fast path without any encoding conversion; only the
-// non-ASCII line runs are converted with fromUTF8ReplacingInvalidSequences. On
-// return, consumedBytes is the byte offset (relative to data) immediately after
-// the last successfully parsed value. May throw via scope; callers must
-// RETURN_IF_EXCEPTION afterwards.
+// consumedBytes: byte offset in data after the last parsed value. Caller must RETURN_IF_EXCEPTION.
 static JSC::StreamingJSONParseResult::Status parseJSONLFromBytes(
     JSGlobalObject* globalObject, JSC::ThrowScope& scope,
     const uint8_t* data, size_t length,
@@ -468,10 +463,6 @@ static JSC::StreamingJSONParseResult::Status parseJSONLFromBytes(
         return r.status;
     }
 
-    // Convert [from, to) via fromUTF8ReplacingInvalidSequences and parse it.
-    // Sets localBytes to the UTF-8 byte length of the consumed prefix of the
-    // converted string (0 when nothing was consumed). Returns false if an
-    // exception was thrown.
     const auto parseConverted = [&](size_t from, size_t to, Status& status, size_t& localBytes) -> bool {
         localBytes = 0;
         size_t n = to - from;
@@ -546,16 +537,12 @@ static JSC::StreamingJSONParseResult::Status parseJSONLFromBytes(
             if (isLast)
                 return status;
 
-            // A value spans the segment boundary. Fall back to converting the
-            // remainder as a single string. For an ASCII segment the consumed
-            // byte count is exact, so resume from there; for a converted
-            // segment the byte count may disagree with the original bytes when
-            // invalid sequences were replaced, so discard this segment's
-            // values and re-parse from its start.
             size_t from;
             if (segAscii) {
                 from = segStart + localBytes;
             } else {
+                // localBytes is derived from the *converted* string and can exceed
+                // the original byte span when invalid UTF-8 was replaced, so rewind.
                 while (values.size() > sizeBefore)
                     values.removeLast();
                 consumedBytes = consumedBefore;

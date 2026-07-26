@@ -387,10 +387,7 @@ static inline EncodedJSValue jsPerformancePrototypeFunction_toJSONBody(JSGlobalO
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
-    // Node.js: { nodeTiming: this.nodeTiming, timeOrigin: this.timeOrigin,
-    //            eventLoopUtilization: this.eventLoopUtilization() }
-    // nodeTiming and eventLoopUtilization are installed on Performance.prototype
-    // by node:perf_hooks; ensure it has been evaluated so the reads below see them.
+    // node:perf_hooks installs nodeTiming/eventLoopUtilization on Performance.prototype.
     auto* zigGlobal = defaultGlobalObject(castedThis->globalObject());
     zigGlobal->internalModuleRegistry()->requireId(zigGlobal, vm, Bun::InternalModuleRegistry::NodePerfHooks);
     RETURN_IF_EXCEPTION(throwScope, {});

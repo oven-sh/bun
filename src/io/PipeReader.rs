@@ -414,9 +414,6 @@ impl PosixBufferedReader {
         let Some(poll) = self.handle.get_poll_mut() else {
             return true;
         };
-        if poll.is_watching() {
-            return true;
-        }
         poll.set_owner(Owner::new(PollTag::BufferedReader, owner_ptr.cast()));
 
         if !poll.has_flag(FilePollFlag::WasEverRegistered)
@@ -465,7 +462,9 @@ impl PosixBufferedReader {
     }
 
     pub fn watch(&mut self) {
-        if self.flags.contains(PosixFlags::POLLABLE) {
+        if self.flags.contains(PosixFlags::POLLABLE)
+            && !matches!(&self.handle, PollOrFd::Poll(poll) if poll.is_watching())
+        {
             self.register_poll();
         }
     }

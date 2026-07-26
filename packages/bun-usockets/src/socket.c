@@ -410,14 +410,16 @@ struct us_socket_t *us_socket_pair(struct us_socket_group_t *group, unsigned cha
 }
 
 /* Re-arm writable for a backpressured write without resuming the read side of
- * a paused socket (caller asked to defer data) or a socket whose readable side
- * has ended (recv()==0 would re-derive eof and re-fire on_end every tick).
- * us_poll_change sets absolute flags, so READABLE is added back explicitly for
- * the common case. */
+ * a paused socket: us_poll_change sets absolute flags, so including READABLE
+ * unconditionally would silently undo us_socket_pause mid-backpressure and
+ * deliver data the caller asked to defer. READABLE stays on even when
+ * readable_ended is set - loop.c's readable_ended guard absorbs the 0-byte
+ * read without re-dispatching, and the Windows/TLS half-close drain (libuv.c
+ * poll_cb's UV_DISCONNECT handling) relies on READABLE being present to keep
+ * the writable dispatch flowing after the eof branch drops it. */
 static void us_internal_rearm_writable(struct us_socket_t *s) {
     us_poll_change(&s->p, s->group->loop,
-                   LIBUS_SOCKET_WRITABLE |
-                       ((s->flags.is_paused || s->readable_ended) ? 0 : LIBUS_SOCKET_READABLE));
+                   LIBUS_SOCKET_WRITABLE | (s->flags.is_paused ? 0 : LIBUS_SOCKET_READABLE));
 }
 
 int us_socket_write2(struct us_socket_t *s, const char *header, int header_length, const char *payload, int payload_length) {

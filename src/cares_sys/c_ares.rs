@@ -863,13 +863,6 @@ impl Channel {
         let mut name_buf = [0u8; 1024];
         let name_ptr = copy_nul_terminated(&mut name_buf, name);
 
-        // Node.js calls `ares_query_dnsrec` (which the legacy `ares_query` is
-        // deprecated in favor of) and re-serializes the `ares_dns_record_t` to a
-        // buffer for the `ares_parse_*_reply` helpers, so follow the same path.
-        // The legacy `ares_query` wrapper would overwrite a post-response status
-        // with `ares_dns_write`'s own failure, which is observable when a
-        // resolver returns a malformed answer.
-        //
         // SAFETY: c-ares FFI; name_ptr is a NUL-terminated stack buffer; ctx outlives the channel.
         unsafe {
             ares_query_dnsrec(
@@ -1271,14 +1264,10 @@ pub trait ReplyHandler<R: AresReply>: Sized {
     fn on_reply(&mut self, status: Option<Error>, timeouts: i32, results: *mut R);
 }
 
-/// `ares_callback_dnsrec` thunk used by [`Channel::resolve`]: re-serializes the
-/// parsed `ares_dns_record_t` to a wire buffer and forwards to the existing
-/// legacy-shaped `T::raw_callback`. Matches the conversion Node.js performs in
-/// `QueryWrap::Callback` (src/cares_wrap.h), including not overriding `status`
-/// when `ares_dns_write` itself fails: a malformed answer that c-ares parsed
-/// but cannot re-encode reaches the `ares_parse_*_reply` step as an empty
-/// buffer, which reports it as a response parse failure instead of as a bad
-/// query name.
+/// `ares_callback_dnsrec` thunk for [`Channel::resolve`]: re-serializes the
+/// reply and forwards to `T::raw_callback`, matching Node's `QueryWrap::Callback`.
+/// An `ares_dns_write` failure does not override `status`; the parse thunk
+/// classifies the resulting empty buffer.
 unsafe extern "C" fn dnsrec_to_buf_callback<T: ResolveHandler>(
     ctx: *mut c_void,
     status: c_int,

@@ -357,39 +357,62 @@ it("setTimeout should not refresh after clearTimeout", done => {
   }, 100);
 });
 
-it("setTimeout Timeout objects are unprotected after called", async () => {
-  let { promise, resolve } = Promise.withResolvers();
+// Armed timers must keep their JS wrapper alive so the callback fires, then
+// become collectable once fired or cleared. Spawn a subprocess so the
+// heapStats() Timeout count is not polluted by other tests in this file.
+it("setTimeout Timeout objects are collectable after called", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const { heapStats } = require("bun:jsc");
+        const counts = {};
+        // Timers are no longer held by a per-timer Strong handle, so nothing
+        // should show up in protectedObjectTypeCounts at any point.
+        let remaining = 100;
+        let { promise, resolve } = Promise.withResolvers();
+        for (let i = 0; i < 100; i++)
+          setTimeout(() => { if (--remaining === 0) resolve(); }, 0);
+        counts.protectedWhileArmed = heapStats().protectedObjectTypeCounts.Timeout ?? 0;
+        await promise;
+        Bun.gc(true);
+        counts.liveAfterFire = heapStats().objectTypeCounts.Timeout ?? 0;
 
-  const initial = heapStats().protectedObjectTypeCounts;
-  let remaining = 2;
-  setTimeout(() => {
-    remaining--;
-    if (remaining === 0) resolve();
-  }, 0);
-  setTimeout(() => {
-    remaining--;
-    if (remaining === 0) resolve();
-  }, 0);
-  expect(heapStats().protectedObjectTypeCounts.Timeout || 0).toEqual((initial.Timeout || 0) + 2);
-
-  // Assert it's unprotected.
-  await promise;
-
-  expect(heapStats().protectedObjectTypeCounts.Timeout || 0).toEqual(initial.Timeout || 0);
-
-  Bun.gc(true);
-  remaining = 5;
-  ({ promise, resolve } = Promise.withResolvers());
-  setInterval(function () {
-    remaining--;
-    if (remaining === 0) {
-      clearInterval(this);
-      queueMicrotask(resolve);
-    }
+        remaining = 5;
+        ({ promise, resolve } = Promise.withResolvers());
+        setInterval(function () {
+          if (--remaining === 0) {
+            clearInterval(this);
+            queueMicrotask(resolve);
+          }
+        });
+        Bun.gc(true);
+        await promise;
+        counts.protectedAfterInterval = heapStats().protectedObjectTypeCounts.Timeout ?? 0;
+        Bun.gc(true);
+        counts.liveAfterInterval = heapStats().objectTypeCounts.Timeout ?? 0;
+        process.stdout.write(JSON.stringify(counts));
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
   });
-  Bun.gc(true);
-  await promise;
-  expect(heapStats().protectedObjectTypeCounts.Timeout || 0).toEqual(initial.Timeout || 0);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const filteredStderr = stderr
+    .split("\n")
+    .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
+    .join("\n");
+  expect(filteredStderr).toBe("");
+  const counts = JSON.parse(stdout);
+  expect(counts.protectedWhileArmed).toBe(0);
+  expect(counts.protectedAfterInterval).toBe(0);
+  // Conservative stack scan may keep a handful of the 100 alive across the GC;
+  // the point is that ~all of them are collectable, not pinned.
+  expect(counts.liveAfterFire).toBeLessThan(10);
+  expect(counts.liveAfterInterval).toBeLessThan(10);
+  expect(exitCode).toBe(0);
 });
 
 it("setTimeout CPU usage #7790", async () => {
@@ -721,6 +744,59 @@ it("GC of many id-accessed timers is not quadratic", async () => {
   // After: <10 ms release, ~100-170 ms debug+ASAN (linear). 1500 ms splits
   // the two with ~9x headroom over the fixed debug+ASAN number.
   expect(ms).toBeLessThan(1500);
+  expect(exitCode).toBe(0);
+}, 30_000);
+
+// Arming a timer used to allocate a JSC::Strong handle per Timeout so the
+// wrapper (and its cached callback/arguments) survived until fire. The HandleSet
+// strong list is walked as roots on every collection (eden included) and the
+// walk is serial, so N armed timers added an O(N) stop-the-world cost to every
+// GC: at 1e6 timers a 100 ms probe setTimeout fired 22-27 ms late at p90 while
+// Node stayed under 3 ms. The wrapper now keeps itself alive via the
+// hasPendingActivity Weak path, which is generational and parallelised, so no
+// Strong handle is allocated per timer.
+it("armed timers do not allocate a Strong handle each", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const { heapStats } = require("bun:jsc");
+        const N = 20000;
+        let fired = 0;
+        for (let i = 0; i < N; i++) setTimeout(() => fired++, 1);
+        const intervals = [];
+        for (let i = 0; i < 100; i++) intervals.push(setInterval(() => {}, 3_600_000));
+        const immediates = [];
+        for (let i = 0; i < 100; i++) immediates.push(setImmediate(() => {}));
+        const protectedCounts = heapStats().protectedObjectTypeCounts;
+        // The wrapper must survive GC on its own (no user-side reference held);
+        // hasPendingActivity returning true is what keeps it reachable.
+        Bun.gc(true);
+        setTimeout(() => {
+          for (const t of intervals) clearInterval(t);
+          for (const t of immediates) clearImmediate(t);
+          process.stdout.write(JSON.stringify({
+            Timeout: protectedCounts.Timeout ?? 0,
+            Immediate: protectedCounts.Immediate ?? 0,
+            fired,
+          }));
+        }, 50);
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const filteredStderr = stderr
+    .split("\n")
+    .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
+    .join("\n");
+  expect(filteredStderr).toBe("");
+  const result = JSON.parse(stdout);
+  // Before: one Strong per armed timer; after: none.
+  expect(result).toEqual({ Timeout: 0, Immediate: 0, fired: 20000 });
   expect(exitCode).toBe(0);
 }, 30_000);
 

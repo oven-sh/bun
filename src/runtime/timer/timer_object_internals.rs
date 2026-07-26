@@ -16,6 +16,7 @@ use crate::jsc::{
     generated::{JSImmediate, JSTimeout},
 };
 use core::cell::Cell;
+use core::sync::atomic::{AtomicBool, Ordering};
 // Note: `bun_jsc::VirtualMachine` is a *module* alias; the struct lives at
 // `virtual_machine::VirtualMachine`.
 use crate::jsc::virtual_machine::VirtualMachine;
@@ -35,6 +36,15 @@ pub struct TimerObjectInternals {
     pub flags: Cell<Flags>,
     /// `bun test --isolate` generation this timer was created in.
     pub generation: u32,
+    /// `true` while this timer is scheduled (in the heap / immediate queue, or
+    /// an interval between fires). Read from the GC thread by
+    /// [`Self::has_pending_activity`] to keep the JS wrapper alive; written
+    /// only on the JS thread. Replaces what used to be a per-timer
+    /// `JSC::Strong` in `this_value`: the Strong list is a linked list walked
+    /// as roots on every collection (eden included), so N armed timers cost
+    /// O(N) per GC. The `hasPendingActivity` Weak path is generational and
+    /// parallelised.
+    armed: AtomicBool,
 }
 
 impl TimerObjectInternals {
@@ -47,6 +57,33 @@ impl TimerObjectInternals {
         f(&mut fl);
         self.flags.set(fl);
     }
+
+    /// `Timeout__hasPendingActivity` / `Immediate__hasPendingActivity` body.
+    /// Called on the GC thread concurrently with the mutator during weak
+    /// processing; touches only the atomic. Returning `true` marks the JS
+    /// wrapper (and via `visitChildren` its cached callback/arguments) as
+    /// reachable.
+    #[inline]
+    pub fn has_pending_activity(&self) -> bool {
+        self.armed.load(Ordering::Acquire)
+    }
+
+    /// JS-thread side of [`Self::has_pending_activity`]. Also keeps
+    /// `this_value` in sync: upgrade to the known wrapper when arming so
+    /// `fire()` can retrieve it, drop to weak when disarming so a stale raw
+    /// `JSValue` is never read after the wrapper is collected. `this_value`
+    /// itself is never a `Strong`; the `JsRef` stays in `Weak`/`Finalized`.
+    #[inline]
+    fn arm(&self, wrapper: JSValue) {
+        self.this_value.with_mut(|r| r.set_weak(wrapper));
+        self.armed.store(true, Ordering::Release);
+    }
+
+    #[inline]
+    fn disarm(&self) {
+        self.armed.store(false, Ordering::Release);
+        self.this_value.with_mut(|r| r.downgrade());
+    }
 }
 
 impl Default for TimerObjectInternals {
@@ -57,6 +94,7 @@ impl Default for TimerObjectInternals {
             this_value: JsCell::new(JsRef::empty()),
             flags: Cell::new(Flags::default()),
             generation: 0,
+            armed: AtomicBool::new(false),
         }
     }
 }
@@ -299,6 +337,7 @@ impl TimerObjectInternals {
             // SAFETY: `vm` is the live per-thread VM; field read only.
             generation: unsafe { (*vm).test_isolation_generation },
             this_value: JsCell::new(JsRef::empty()),
+            armed: AtomicBool::new(false),
         };
 
         if kind == Kind::SetImmediate {
@@ -337,7 +376,7 @@ impl TimerObjectInternals {
             self.reschedule(timer, vm, global.as_ptr());
         }
 
-        self.this_value.with_mut(|r| r.set_strong(timer, global));
+        self.arm(timer);
     }
 
     /// Returns `true` if an
@@ -375,7 +414,7 @@ impl TimerObjectInternals {
                 && !unsafe { (*vm).is_event_loop_alive_excluding_immediates() });
         if cleared {
             s.set_enable_keeping_event_loop_alive(vm, false);
-            s.this_value.with_mut(|r| r.downgrade());
+            s.disarm();
             s.deref();
             return false;
         }
@@ -392,7 +431,7 @@ impl TimerObjectInternals {
         };
         // SAFETY: `vm` is live; `global` is the per-VM JSGlobalObject pointer.
         let global_this = unsafe { (*vm).global };
-        s.this_value.with_mut(|r| r.downgrade());
+        s.disarm();
         s.set_event_loop_timer_state(EventLoopTimerState::FIRED);
         s.set_enable_keeping_event_loop_alive(vm, false);
         timer.ensure_still_alive();
@@ -440,7 +479,7 @@ impl TimerObjectInternals {
         // SAFETY: per fn contract.
         let s = unsafe { &*this };
         s.set_enable_keeping_event_loop_alive(vm, false);
-        s.this_value.with_mut(|r| r.downgrade());
+        s.disarm();
         s.deref();
     }
 
@@ -495,7 +534,7 @@ impl TimerObjectInternals {
         let Some(this_object) = s.this_value.get().try_get() else {
             s.set_enable_keeping_event_loop_alive(vm, false);
             s.update_flags(|f| f.set_has_cleared_timer(true));
-            s.this_value.with_mut(|r| r.downgrade());
+            s.disarm();
             s.deref();
             return;
         };
@@ -535,7 +574,7 @@ impl TimerObjectInternals {
             }
             s.set_enable_keeping_event_loop_alive(vm, false);
             s.update_flags(|f| f.set_has_cleared_timer(true));
-            s.this_value.with_mut(|r| r.downgrade());
+            s.disarm();
             s.deref();
             return;
         }
@@ -544,7 +583,11 @@ impl TimerObjectInternals {
         let mut time_before_call = Timespec::EPOCH;
 
         if kind != KindBig::SetInterval {
-            s.this_value.with_mut(|r| r.downgrade());
+            // One-shot: release the GC pin before running the callback.
+            // `this_object` is on the stack, so conservative scan keeps the
+            // wrapper alive for the duration of `Self::run` even if a GC runs
+            // inside the callback.
+            s.disarm();
         } else {
             time_before_call = Timespec::ms_from_now(
                 TimespecMockMode::AllowMockedTime,
@@ -675,6 +718,7 @@ impl TimerObjectInternals {
             if is_timer_done {
                 s.set_enable_keeping_event_loop_alive(vm, false);
                 // The timer will not be re-entered into the event loop at this point.
+                s.disarm();
                 s.deref();
             }
 
@@ -719,8 +763,7 @@ impl TimerObjectInternals {
         // `opaque_ffi!` ZST — safe deref; `vm.global` never null.
         let global_ref = JSGlobalObject::opaque_ref(global);
         JSTimeout::idle_timeout_set_cached(timer, global_ref, repeat);
-        self.this_value
-            .with_mut(|r| r.set_strong(timer, global_ref));
+        self.arm(timer);
         self.update_flags(|f| f.set_kind(Kind::SetInterval));
         self.interval.set(new_interval);
         self.reschedule(timer, vm, global);
@@ -950,8 +993,7 @@ impl TimerObjectInternals {
             return Ok(this_value);
         }
 
-        self.this_value
-            .with_mut(|r| r.set_strong(this_value, global_object));
+        self.arm(this_value);
         self.reschedule(
             this_value,
             VirtualMachine::get_mut_ptr(),
@@ -1028,16 +1070,16 @@ impl TimerObjectInternals {
         self.update_flags(|f| f.set_has_cleared_timer(true));
 
         if self.flags.get().kind() == Kind::SetImmediate {
-            // Release the strong reference so the GC can collect the JS object.
-            // The immediate task is still in the event loop queue and will be skipped
-            // by runImmediateTask when it sees has_cleared_timer == true.
-            self.this_value.with_mut(|r| r.downgrade());
+            // Release the GC pin so the JS object can be collected. The
+            // immediate task is still in the event loop queue and will be
+            // skipped by runImmediateTask when it sees has_cleared_timer.
+            self.disarm();
             return;
         }
 
         let was_active = self.event_loop_timer_state() == EventLoopTimerState::ACTIVE;
         self.set_event_loop_timer_state(EventLoopTimerState::CANCELLED);
-        self.this_value.with_mut(|r| r.downgrade());
+        self.disarm();
 
         if was_active {
             let state = crate::jsc_hooks::runtime_state();

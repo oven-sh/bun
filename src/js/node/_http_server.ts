@@ -3127,6 +3127,9 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
     return this;
   }
 
+  const headerState = this[headerStateSymbol];
+  callWriteHeadIfObservable(this, headerState);
+
   if (this[headerStateSymbol] === NodeHTTPHeaderState.none) {
     // Implicit header: Node's write_() runs _implicitHeader() (which derives
     // _hasBody from the status code) unconditionally before its !_hasBody
@@ -3160,9 +3163,6 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
   ) {
     this.socket?.[kHandle]?.setResponseTrailers(trailer);
   }
-
-  const headerState = this[headerStateSymbol];
-  callWriteHeadIfObservable(this, headerState);
 
   const flags = handle.flags;
   if (!!(flags & NodeHTTPResponseFlags.closed_or_completed)) {
@@ -3667,11 +3667,8 @@ ServerResponse.prototype.flushHeaders = function () {
   }
 };
 
-// Node's implicit header path is _implicitHeader() -> writeHead(this.statusCode),
-// and writeHead coerces (|= 0) and range-checks the value before rendering, so
-// `res.statusCode = '404'` reaches the wire as 404. The fast path below skips
-// writeHead(); apply the same coercion before any status-dependent decision
-// (updateHasBody, renderNativeHeaders, the native handle's own integer check).
+// The implicit-header fast path skips writeHead(); apply the same |= 0
+// coercion and range check that _writeHead would have done.
 function coerceImplicitStatusCode(res) {
   const originalStatusCode = res.statusCode;
   const statusCode = originalStatusCode | 0;

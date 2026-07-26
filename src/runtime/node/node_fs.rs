@@ -9551,25 +9551,16 @@ pub unsafe extern "C" fn Bun__mkdirp(global_this: &JSGlobalObject, path: *const 
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// zig_delete_tree — recursive delete-tree. Returns `ENOENT` on the top-level
-// path instead of swallowing it so `fs.rm({recursive, force:false})` can
-// report the missing root. Errors carry the full path of the failing entry
-// and the real syscall tag (unlink/rmdir/open/scandir), matching node's
-// async rimraf.
+// zig_delete_tree — recursive delete-tree. Top-level `ENOENT` propagates (for
+// `force:false`); other errors carry the failing entry's full path + real
+// syscall tag, matching node's async rimraf.
 // ──────────────────────────────────────────────────────────────────────────
-
-// Implemented on top of `bun_sys` primitives (`openat` + `unlinkat`). The
-// structure: 16-slot stack, treat_as_dir flip-flop, close-then-deleteDir,
-// retry-on-DirNotEmpty.
 
 #[inline]
 fn dt_err(errno: E, syscall: sys::Tag, path: &[u8]) -> sys::Error {
     sys::Error::from_code(dt_map_errno(errno), syscall).with_path(path)
 }
 
-/// The fixed errno set the delete-tree walker surfaces. Anything outside this
-/// set falls through to `EFAULT` so unexpected kernel errors stay visibly
-/// "wrong" rather than being mistaken for a known failure mode.
 #[inline]
 fn dt_map_errno(errno: E) -> E {
     match errno {
@@ -9594,10 +9585,8 @@ fn dt_map_errno(errno: E) -> E {
     }
 }
 
-/// Reconstructs the user-visible path of the entry a delete-tree syscall
-/// failed on: `sub_path` joined with every stacked directory name (skipping
-/// the root frame, which *is* `sub_path`) and then `leaf`. The walker operates
-/// on dir-fd-relative names via `*at(2)`, so the full path only exists here.
+/// `sub_path` / stack[1..].name / leaf. `stack[0]` is the `sub_path` frame
+/// itself and skipped.
 fn dt_join_path(sub_path: &[u8], stack: &[DeleteTreeStackItem], leaf: &[u8]) -> Vec<u8> {
     let mut cap = sub_path.len();
     for item in stack.iter().skip(1) {
@@ -10061,8 +10050,7 @@ fn zig_delete_tree_min_stack_size_with_kind_hint(
         // the borrow checker won't let that alias survive the copy/reassignment
         // below, so track `(is_sub_path, len)` and re-slice on each use.
         let mut dir_name_is_sub_path = true;
-        // User-visible absolute-ish path of `dir`, rooted at `err_prefix`.
-        // Grows on each descent; resets on `'start_over`.
+        // User-visible path of `dir`; grows on descent, resets on 'start_over.
         let mut dir_path: Vec<u8> = err_prefix.to_vec();
 
         // Here we must avoid recursion, in order to provide O(1) memory guarantee of this function.

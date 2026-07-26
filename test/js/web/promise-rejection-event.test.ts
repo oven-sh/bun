@@ -5,6 +5,7 @@ describe("PromiseRejectionEvent", () => {
   test("is a global constructor", () => {
     expect(typeof PromiseRejectionEvent).toBe("function");
     expect(PromiseRejectionEvent.name).toBe("PromiseRejectionEvent");
+    expect(PromiseRejectionEvent.length).toBe(2);
     expect(Object.getPrototypeOf(PromiseRejectionEvent.prototype)).toBe(Event.prototype);
   });
 

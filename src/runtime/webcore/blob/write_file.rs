@@ -346,8 +346,7 @@ impl WriteFile {
             }
             bun_sys::Result::Err(err) => {
                 if err.get_errno() == io::RETRY {
-                    // write(2) on a regular file never returns EAGAIN, so reaching here means
-                    // the fd is pollable regardless of what `could_block` was initialised to.
+                    // EAGAIN is impossible on a regular file, so the fd is pollable.
                     self.could_block = true;
                     self.wait_for_writable();
                 } else {
@@ -415,8 +414,7 @@ impl WriteFile {
             .pathlike
         {
             PathOrFileDescriptor::Path(_) => true,
-            // A caller-supplied fd stays owned by the caller unless `run_with_fd` duped it
-            // for polling, in which case `opened_fd` is the private dup and must be closed.
+            // opened_fd differs from the caller's fd only when run_with_fd duped it.
             PathOrFileDescriptor::Fd(fd) => self.opened_fd != Fd::INVALID && self.opened_fd != fd,
         }
     }
@@ -450,16 +448,11 @@ impl WriteFile {
             Some(store) => match &store.data {
                 blob::store::Data::File(file) => match file.pathlike {
                     PathOrFileDescriptor::Fd(_) => {
-                        // Bun.stdout/Bun.stderr fstat() up front and set `mode` (but not
-                        // `seekable`), so gate on `mode` being populated.
                         self.could_block = file.mode != 0 && !bun_sys::is_regular_file(file.mode);
                         true
                     }
                     PathOrFileDescriptor::Path(_) => {
-                        // We opened the file descriptor with O_NONBLOCK, so we
-                        // shouldn't have to worry about blocking reads/writes
-                        //
-                        // We do not call fstat() because that is very expensive.
+                        // Opened with O_NONBLOCK; don't fstat.
                         self.could_block = false;
                         false
                     }
@@ -469,12 +462,8 @@ impl WriteFile {
             None => false,
         };
 
-        // A caller-supplied pollable fd (e.g. Bun.stdout backed by a pipe) may be the target
-        // of several concurrent Bun.write() calls. Each WriteFile carries its own `io::Poll`,
-        // and the IO thread's epoll/kqueue keys interest by fd number, so two instances
-        // registering the same fd collide (EEXIST on Linux; last-wins udata on kqueue). Dup it
-        // so this instance owns a private fd number for the same open file description; the dup
-        // is closed in `on_finish` via `is_allowed_to_close`.
+        // The IO thread's epoll/kqueue keys interest by fd number, so concurrent WriteFiles on
+        // one caller-supplied fd would collide; dup so this instance polls a private fd number.
         if self.could_block && caller_supplied_fd {
             match bun_sys::dup(fd) {
                 bun_sys::Result::Ok(duped) => self.opened_fd = duped,

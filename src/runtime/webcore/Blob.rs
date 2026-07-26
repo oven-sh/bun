@@ -5449,11 +5449,8 @@ fn write_string_to_file_fast<const NEEDS_OPEN: bool>(
                             *needs_async = true;
                             return JSValue::ZERO;
                         }
-                        // Part of the payload is already committed; handing the rest to the
-                        // async path would re-send the whole input and duplicate bytes. This
-                        // branch can only be reached on a pollable fd, so block here until
-                        // it drains (equivalent to the blocking write() we would have issued
-                        // had the fd not been flipped O_NONBLOCK behind our back).
+                        // The async path re-sends the whole input, so after a partial
+                        // write finish synchronously via poll(POLLOUT).
                         let mut pfd = [bun_sys::posix::PollFd {
                             fd: fd.native(),
                             events: bun_sys::posix::POLL_OUT,

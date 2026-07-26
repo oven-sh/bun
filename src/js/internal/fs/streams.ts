@@ -735,7 +735,7 @@ writeStreamPrototype._writev = function (data, cb) {
       }
       cb(er);
     };
-    if (this[kFs].writev === writev) {
+    if (this[kFs].writev === writev && this[kFs].write) {
       // Default fs.writev EINVALs past IOV_MAX; drain as one write.
       writeAll.$call(this, len === 1 ? chunks[0] : Buffer.concat(chunks, size), size, this.pos, done);
     } else {

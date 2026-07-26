@@ -3712,8 +3712,8 @@ describe("createWriteStream", () => {
 
     // Without coalescing each chunk is a separate thread-pool dispatch (one
     // write(2) to the file plus one 8-byte eventfd wake), so 5000 chunks is
-    // ~10000 write syscalls. Coalescing into one writeSync per drain cycle
-    // brings it down to tens.
+    // ~10000 write syscalls. Coalescing into one thread-pool fs.write per
+    // drain cycle brings it well under N/4.
     expect(writeSyscalls).toBeLessThan(N / 4);
   });
 

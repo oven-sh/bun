@@ -663,13 +663,6 @@ JSC_DEFINE_HOST_FUNCTION(functionSetTimeZone, (JSGlobalObject * globalObject, Ca
 JSC_DEFINE_HOST_FUNCTION(functionRunProfiler, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
-    // --cpu-prof / node:inspector / Worker.{start,stop}CpuProfile share the
-    // VM's single JSC::SamplingProfiler via Bun::startCPUProfiler. When one of
-    // those already owns it, profile() must not pause, clearData, change the
-    // timing interval, or call stackTracesAsJSON() (which itself ends with
-    // clearData()); doing so wipes their samples and leaves the sampler paused
-    // so the resulting .cpuprofile is empty.
-    const bool hasOtherConsumer = Bun::isCPUProfilerRunning();
     JSC::SamplingProfiler& samplingProfiler = vm.ensureSamplingProfiler(WTF::Stopwatch::create());
 
     JSC::JSValue callbackValue = callFrame->argument(0);
@@ -693,7 +686,9 @@ JSC_DEFINE_HOST_FUNCTION(functionRunProfiler, (JSGlobalObject * globalObject, Ca
 
     JSC::JSFunction* function = uncheckedDowncast<JSC::JSFunction>(callbackValue);
 
-    if (!hasOtherConsumer) {
+    // --cpu-prof / node:inspector share this VM's single SamplingProfiler via
+    // Bun::startCPUProfiler; when one of those owns it, don't stomp its state.
+    if (!Bun::isCPUProfilerRunning()) {
         if (sampleValue.isNumber()) {
             unsigned sampleInterval = sampleValue.toUInt32(globalObject);
             samplingProfiler.setTimingInterval(Seconds::fromMicroseconds(sampleInterval));
@@ -707,10 +702,6 @@ JSC_DEFINE_HOST_FUNCTION(functionRunProfiler, (JSGlobalObject * globalObject, Ca
     const auto report = [](JSC::VM& vm,
                             JSC::JSGlobalObject* globalObject) -> JSC::JSValue {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        // Re-read at report time: on the promise path a node:inspector
-        // Profiler.start inside the awaited callback can begin owning the
-        // sampler between profile() entry and here.
-        const bool hasOtherConsumer = Bun::isCPUProfilerRunning();
 
         auto& samplingProfiler = *vm.samplingProfiler();
         StringPrintStream topFunctions;
@@ -720,10 +711,11 @@ JSC_DEFINE_HOST_FUNCTION(functionRunProfiler, (JSGlobalObject * globalObject, Ca
         samplingProfiler.reportTopBytecodes(byteCodes);
 
         JSValue stackTraces;
-        if (hasOtherConsumer) {
-            // stackTracesAsJSON() calls clearData() internally; skip it so the
-            // other consumer's samples survive. reportTopFunctions /
-            // reportTopBytecodes above are read-only.
+        // Re-read (not captured): a Profiler.start inside the callback can
+        // flip this after entry. stackTracesAsJSON() ends with clearData(), so
+        // skip it (and pause/clearData below) when another consumer owns the
+        // sampler; the two report* calls above are read-only.
+        if (Bun::isCPUProfilerRunning()) {
             stackTraces = jsNull();
         } else {
             stackTraces = JSONParse(globalObject, samplingProfiler.stackTracesAsJSON()->toJSONString());

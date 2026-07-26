@@ -193,6 +193,8 @@ pub enum ZstdError {
     ZstdFailedToCreateInstance,
     ZstdDecompressionError,
     ShortRead,
+    /// Decompressed output would exceed `max_output_size`.
+    OutputTooLarge,
 }
 
 bun_core::impl_tag_error!(ZstdError);
@@ -295,6 +297,15 @@ pub fn decompress(dest: &mut [u8], src: &[u8]) -> Result {
 /// Handles both frames with known and unknown content sizes.
 /// For safety, if the reported decompressed size exceeds 16MB, streaming decompression is used instead.
 pub fn decompress_alloc(src: &[u8]) -> core::result::Result<Vec<u8>, ZstdError> {
+    decompress_alloc_with_limit(src, usize::MAX)
+}
+
+/// [`decompress_alloc`] with a hard cap on the output size. Returns
+/// [`ZstdError::OutputTooLarge`] instead of allocating past `max_output_size`.
+pub fn decompress_alloc_with_limit(
+    src: &[u8],
+    max_output_size: usize,
+) -> core::result::Result<Vec<u8>, ZstdError> {
     let size = get_decompressed_size(src);
 
     const ZSTD_CONTENTSIZE_UNKNOWN: usize = c_ulonglong::MAX as usize; // 0ULL - 1
@@ -311,6 +322,7 @@ pub fn decompress_alloc(src: &[u8]) -> core::result::Result<Vec<u8>, ZstdError> 
     if size == ZSTD_CONTENTSIZE_UNKNOWN || size > MAX_PREALLOCATE_SIZE {
         let mut list: Vec<u8> = Vec::new();
         let mut reader = ZstdReaderArrayList::init(src, &mut list)?;
+        reader.max_output_size = max_output_size;
 
         reader.read_all(true)?;
         drop(reader);
@@ -420,7 +432,7 @@ impl<'a> ZstdReaderArrayList<'a> {
             let remaining_output = self.max_output_size.saturating_sub(self.list_ptr.len());
             if remaining_output == 0 {
                 self.state = State::Error;
-                return Err(ZstdError::ZstdDecompressionError);
+                return Err(ZstdError::OutputTooLarge);
             }
 
             // SAFETY: write-only spare; ZSTD_decompressStream initializes the
@@ -570,7 +582,7 @@ impl StreamingDecoder {
             let remaining_output = self.max_output_size.saturating_sub(out.len());
             if remaining_output == 0 {
                 self.state = State::Error;
-                return Err(ZstdError::ZstdDecompressionError);
+                return Err(ZstdError::OutputTooLarge);
             }
 
             out.reserve(4096);

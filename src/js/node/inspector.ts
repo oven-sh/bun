@@ -415,11 +415,8 @@ function collectCoverageScripts(): any[] | Error {
 class Session extends EventEmitter {
   #connected = false;
   #profilerEnabled = false;
-  // JSC has one SamplingProfiler per VM, reference-counted across --cpu-prof
-  // and every Session. This holds the timestamp startCPUProfiler() returned for
-  // this session's Profiler.start, so disconnect()/Profiler.disable only
-  // release this session's hold (not --cpu-prof's or another session's) and
-  // Profiler.stop excludes samples taken before this session's start.
+  // startCPUProfiler()'s returned timestamp for this session's Profiler.start;
+  // the shared sampling profiler is refcounted (see BunCPUProfiler.h).
   #cpuProfileStartTime: number | undefined;
   #preciseCoverageEnabled = false;
   #preciseCoverageCallCount = false;

@@ -815,11 +815,6 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_startCpuProfileInter
     uint64_t reqId = worker.registerCrossVMRequest(vm, promise);
     auto parentId = globalObject->scriptExecutionContext()->identifier();
     bool accepted = worker.postTaskToWorkerGlobalScope([reqId, parentId, protectedWorker = Ref { worker }](ScriptExecutionContext& workerCtx) mutable {
-        // The worker thread's sampling profiler is reference-counted across
-        // this API and any in-worker node:inspector Session, so take a ref
-        // rather than guarding on isCPUProfilerRunning(). Tasks posted here run
-        // serially on the worker thread, so the load/store is not racy, and a
-        // second startCpuProfile() before stop stays idempotent.
         if (protectedWorker->cpuProfileStartTime() == 0.0)
             protectedWorker->setCpuProfileStartTime(Bun::startCPUProfiler(workerCtx.vm()));
         ScriptExecutionContext::postTaskTo(parentId, [reqId, protectedWorker = WTF::move(protectedWorker)](ScriptExecutionContext& parentCtx) {

@@ -163,10 +163,8 @@ public:
     void enqueueToParent(MessageWithMessagePorts&&);
     void drainToWorker(ScriptExecutionContext&);
 
-    // Worker.{start,stop}CpuProfile's hold on the worker thread's shared
-    // sampling profiler: the timestamp startCPUProfiler() returned, or 0 if no
-    // profile is held. Read and written only from the worker thread's task
-    // queue (serial), so atomicity is for cross-thread destruction visibility.
+    // startCPUProfiler()'s returned timestamp for Worker.startCpuProfile's hold
+    // on the refcounted sampler, 0 if none. Touched only on the worker thread.
     double cpuProfileStartTime() const { return m_cpuProfileStartTime.load(); }
     void setCpuProfileStartTime(double ts) { m_cpuProfileStartTime.store(ts); }
 

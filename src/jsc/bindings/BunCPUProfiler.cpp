@@ -33,17 +33,11 @@ namespace Bun {
 static thread_local double s_profilingStartTime = 0.0;
 // Set sampling interval to 1ms (1000 microseconds) to match Node.js
 static thread_local int s_samplingInterval = 1000;
-// JSC has one SamplingProfiler per VM. --cpu-prof, node:inspector sessions, and
-// Worker.{start,stop}CpuProfile all share it, so the underlying profiler is
-// started once on the first consumer and only paused/cleared when the last one
-// releases it.
 static thread_local int s_profilerRefCount = 0;
 
-// A sample drained from JSC's SamplingProfiler. releaseStackTraces() also
-// clears m_liveCellPointers, so the raw ExecutableBase*/JSObject* in a
-// StackTrace are only valid under DeferGC; converting to owned strings/ints
-// here lets samples outlive the DeferGC scope so a later consumer can still
-// see samples a prior consumer's stop() released.
+// GC-safe copy of a SamplingProfiler::StackFrame: releaseStackTraces() clears
+// m_liveCellPointers, so the raw ExecutableBase* in a StackTrace is only valid
+// under DeferGC; owned strings/ints here survive across consumers.
 struct RetainedFrame {
     WTF::String functionName;
     WTF::String url;
@@ -389,9 +383,6 @@ static RetainedFrame extractFrame(JSC::VM& vm, JSC::SamplingProfiler::StackFrame
     return out;
 }
 
-// Move everything the sampling profiler has accumulated into s_retainedSamples.
-// releaseStackTraces() clears m_liveCellPointers, so the raw heap pointers in
-// the returned traces are only valid inside the DeferGC scope here.
 static void drainSamplesFromProfiler(JSC::VM& vm, JSC::SamplingProfiler& profiler)
 {
     JSC::JSLockHolder locker(vm);
@@ -434,11 +425,6 @@ static WTF::String generateEmptyProfileJSON(double startTimeUs)
     return sb.toString();
 }
 
-// Release one consumer's hold on the profiler and generate its profile in the
-// requested formats. sinceTimestampUs is the value startCPUProfiler() returned
-// for this consumer; samples taken before it are excluded so concurrent
-// consumers (e.g. --cpu-prof and a node:inspector session) each see only their
-// own window. 0 means "since the first consumer's start".
 void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText, double sinceTimestampUs)
 {
     if (s_profilerRefCount > 0)

@@ -3391,14 +3391,9 @@ where
     }
 
     /// `false` when the Response can be written. A status outside `100..=999`
-    /// has no HTTP status line, so the Response can never reach the client:
-    /// report it like a thrown error rather than writing an unparseable one.
-    ///
-    /// A 101 is also refused: the fetch handler has no way to take over the
-    /// connection after a protocol switch, so a 101 on the wire would be an
-    /// unfulfilled promise (the connection keeps parsing HTTP/1.1 and the
-    /// client's post-switch bytes come back as 400). `server.upgrade()` is the
-    /// only supported upgrade path today and it writes its own 101.
+    /// has no HTTP status line, and a 101 is unfulfillable (the fetch handler
+    /// has no socket-handoff; `server.upgrade()` writes its own 101): report
+    /// either like a thrown error.
     ///
     /// Takes the status, not the Response: `run_error_handler` below runs user
     /// JS, which may write through the cell pointer the caller holds.

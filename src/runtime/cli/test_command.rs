@@ -909,9 +909,6 @@ pub(crate) fn should_drain_event_loop() -> bool {
 }
 
 /// Is the next entry in this thread's timer heap due within `window_ms`?
-/// Used to decide whether the post-file drain's second `auto_tick` may block
-/// on its own (bounded by that deadline) or must be `wakeup()`-forced to
-/// return immediately.
 fn has_timer_due_within(window_ms: i64) -> bool {
     let timers = crate::jsc_hooks::timer_all();
     if timers.is_null() {
@@ -3398,18 +3395,16 @@ impl TestCommand {
                     }
                 }
 
-                // One bounded macrotask pass after the last test so a due timer's
-                // throw/rejection books as "Unhandled error between tests" instead
-                // of being orphaned at exit. Two ticks: a wakeup left over from
-                // the run loop consumes the first poll, and the second lets a
-                // `setTimeout(fn, 0)` (clamped to 1ms) become due and fire.
+                // One bounded macrotask pass so a due timer's throw/rejection books
+                // as "Unhandled error between tests" instead of being orphaned at
+                // exit. Two ticks: a leftover wakeup eats the first poll; the
+                // second fires a `setTimeout(fn, 0)` once its 1ms clamp elapses.
                 vm.event_loop_ref().auto_tick();
                 vm.event_loop_ref().tick();
                 if vm.is_event_loop_alive() {
-                    // With no timer due soon the poll would wait on a far-future
-                    // one (or forever on a socket); wakeup keeps it non-blocking.
-                    // A near-future timer bounds the poll itself.
                     if !has_timer_due_within(20) {
+                        // No near deadline to bound the poll; don't wait on a
+                        // far-future timer or an open socket.
                         vm.wakeup();
                     }
                     vm.event_loop_ref().auto_tick();
@@ -3426,11 +3421,8 @@ impl TestCommand {
                     && repeat_index + 1 == repeat_count
                     && vm.is_event_loop_alive()
                 {
-                    // Still-live work after the bounded pass (a future-deadline
-                    // timer, a ref'd socket) is abandoned at exit. Surface it
-                    // once at the end of the run so a late rejection from that
-                    // work isn't silently lost; the loop is VM-wide, so a
-                    // per-file note would misattribute an earlier file's leak.
+                    // Loop liveness is VM-wide; noting once at end-of-run avoids
+                    // misattributing an earlier file's leak to every later file.
                     bun_core::note!(
                         "a test left a timer or open handle that is still pending after the last test finished. `bun test` will not wait for it.",
                     );

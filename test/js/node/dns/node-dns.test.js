@@ -714,7 +714,7 @@ describe("resolve4 against a loopback responder", () => {
   });
 
   it("reports EFORMERR for an answer RR owner name over 255 octets", async () => {
-    // 6 x 63-byte labels = 383 wire octets, above the RFC 1035 255-octet limit.
+    // 6 x 63-byte labels + terminator = 385 wire octets, above the RFC 1035 255-octet limit.
     const label = Buffer.concat([Buffer.from([63]), Buffer.alloc(63, 0x61)]);
     const owner = Buffer.concat([label, label, label, label, label, label, Buffer.from([0])]);
     build = (msg, question) => {

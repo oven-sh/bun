@@ -1,6 +1,6 @@
 #![allow(non_camel_case_types, non_snake_case, non_upper_case_globals)]
 
-use core::ffi::{c_char, c_int, c_long, c_uint, c_ulong, c_ushort, c_void};
+use core::ffi::{c_char, c_int, c_long, c_uint, c_ulong, c_void};
 
 pub use crate::shared::{
     Bytef, DataType, FlushValue, ReturnCode, alloc_func, free_func, gzFile, gzFile_s,
@@ -8,13 +8,6 @@ pub use crate::shared::{
     voidpf, z_alloc_func, z_free_func, z_stream, z_stream_s, z_streamp, zStream_struct,
 };
 
-pub type rsize_t = usize;
-pub type _ino_t = c_ushort;
-pub type ino_t = _ino_t;
-pub type _dev_t = c_uint;
-pub type dev_t = _dev_t;
-pub type _off_t = c_long;
-pub type off_t = _off_t;
 type z_size_t = usize;
 type voidpc = *const c_void;
 type voidp = *mut c_void;
@@ -197,114 +190,3 @@ unsafe extern "C" {
     pub fn inflateResetKeep(strm: z_streamp) -> ReturnCode;
     pub fn deflateResetKeep(strm: z_streamp) -> ReturnCode;
 }
-
-pub type z_off_t = c_long;
-pub const Z_NO_FLUSH: c_int = 0;
-pub const Z_PARTIAL_FLUSH: c_int = 1;
-pub const Z_SYNC_FLUSH: c_int = 2;
-pub const Z_FULL_FLUSH: c_int = 3;
-pub const Z_FINISH: c_int = 4;
-pub const Z_BLOCK: c_int = 5;
-pub const Z_TREES: c_int = 6;
-pub const Z_OK: c_int = 0;
-pub const Z_STREAM_END: c_int = 1;
-pub const Z_NEED_DICT: c_int = 2;
-pub const Z_ERRNO: c_int = -1;
-pub const Z_STREAM_ERROR: c_int = -2;
-pub const Z_DATA_ERROR: c_int = -3;
-pub const Z_MEM_ERROR: c_int = -4;
-pub const Z_BUF_ERROR: c_int = -5;
-pub const Z_VERSION_ERROR: c_int = -6;
-pub const Z_NO_COMPRESSION: c_int = 0;
-pub const Z_BEST_SPEED: c_int = 1;
-pub const Z_BEST_COMPRESSION: c_int = 9;
-pub const Z_DEFAULT_COMPRESSION: c_int = -1;
-pub const Z_FILTERED: c_int = 1;
-pub const Z_HUFFMAN_ONLY: c_int = 2;
-pub const Z_RLE: c_int = 3;
-pub const Z_FIXED: c_int = 4;
-pub const Z_DEFAULT_STRATEGY: c_int = 0;
-pub const Z_BINARY: c_int = 0;
-pub const Z_TEXT: c_int = 1;
-pub const Z_ASCII: c_int = Z_TEXT;
-pub const Z_UNKNOWN: c_int = 2;
-pub const Z_DEFLATED: c_int = 8;
-pub const Z_NULL: c_int = 0;
-
-#[inline]
-pub unsafe fn deflate_init(strm: z_streamp, level: c_int) -> ReturnCode {
-    // SAFETY: caller guarantees `strm` is a valid z_stream pointer; zlib reads version/stream_size for ABI check.
-    unsafe {
-        deflateInit_(
-            strm,
-            level,
-            zlibVersion(),
-            c_int::try_from(core::mem::size_of::<z_stream>()).expect("int cast"),
-        )
-    }
-}
-#[inline]
-pub unsafe fn inflate_init(strm: z_streamp) -> ReturnCode {
-    // SAFETY: caller guarantees `strm` is a valid z_stream pointer.
-    unsafe {
-        inflateInit_(
-            strm,
-            zlibVersion(),
-            c_int::try_from(core::mem::size_of::<z_stream>()).expect("int cast"),
-        )
-    }
-}
-#[inline]
-pub unsafe fn deflate_init2(
-    strm: z_streamp,
-    level: c_int,
-    method: c_int,
-    window_bits: c_int,
-    mem_level: c_int,
-    strategy: c_int,
-) -> ReturnCode {
-    // SAFETY: caller guarantees `strm` is a valid z_stream pointer.
-    unsafe {
-        deflateInit2_(
-            strm,
-            level,
-            method,
-            window_bits,
-            mem_level,
-            strategy,
-            zlibVersion(),
-            c_int::try_from(core::mem::size_of::<z_stream>()).expect("int cast"),
-        )
-    }
-}
-#[inline]
-pub unsafe fn inflate_init2(strm: z_streamp, window_bits: c_int) -> ReturnCode {
-    // SAFETY: caller guarantees `strm` is a valid z_stream pointer.
-    unsafe {
-        inflateInit2_(
-            strm,
-            window_bits,
-            zlibVersion(),
-            c_int::try_from(core::mem::size_of::<z_stream>()).expect("int cast"),
-        )
-    }
-}
-#[inline]
-pub unsafe fn inflate_back_init(
-    strm: z_streamp,
-    window_bits: c_int,
-    window: *mut u8,
-) -> ReturnCode {
-    // SAFETY: caller guarantees `strm` and `window` are valid.
-    unsafe {
-        inflateBackInit_(
-            strm,
-            window_bits,
-            window,
-            zlibVersion(),
-            c_int::try_from(core::mem::size_of::<z_stream>()).expect("int cast"),
-        )
-    }
-}
-
-pub type gz_header_s = struct_gz_header_s;

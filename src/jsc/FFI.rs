@@ -10,9 +10,7 @@
 
 use core::ffi::{c_int, c_longlong, c_ulonglong, c_void};
 
-use bun_jsc::{JSGlobalObject, JSValue};
-
-pub type JSCell = *mut c_void;
+use bun_jsc::JSValue;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -49,21 +47,6 @@ pub(crate) const TRUE_I64: i64 = ((2 | 4) | 1) as i64;
 #[unsafe(no_mangle)]
 pub(crate) static ValueTrue: bun_core::RacyCell<EncodedJSValue> =
     bun_core::RacyCell::new(EncodedJSValue { as_int64: TRUE_I64 });
-
-// By-value POD union arg; no invariants beyond ABI → `safe fn`.
-unsafe extern "C" {
-    pub safe fn JSVALUE_TO_UINT64_SLOW(value: EncodedJSValue) -> u64;
-    pub safe fn JSVALUE_TO_INT64_SLOW(value: EncodedJSValue) -> i64;
-}
-
-#[inline]
-pub fn uint64_to_jsvalue_slow(global_object: &JSGlobalObject, val: u64) -> JSValue {
-    JSValue::from_uint64_no_truncate(global_object, val)
-}
-
-unsafe extern "C" {
-    pub fn JSFunctionCall(globalObject: *mut c_void, callFrame: *mut c_void) -> *mut c_void;
-}
 
 pub(crate) const DOUBLE_ENCODE_OFFSET_BIT: c_int = 49;
 pub(crate) const DOUBLE_ENCODE_OFFSET: c_longlong = (1 as c_longlong) << DOUBLE_ENCODE_OFFSET_BIT;

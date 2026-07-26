@@ -3,6 +3,7 @@
 
 #include "DOMClientIsoSubspaces.h"
 #include "DOMIsoSubspaces.h"
+#include "ErrorCode.h"
 #include "JSDOMExceptionHandling.h"
 #include "JSDOMGlobalObjectInlines.h"
 #include "JSDOMWrapperCache.h"
@@ -13,6 +14,8 @@
 #include "JSReadableStreamDefaultReader.h"
 #include "JSStreamTeeState.h"
 #include "JSStreamsRuntime.h"
+#include "WebStreamsHeapAnalyzer.h"
+#include "WebStreamsInspectCustom.h"
 #include "WebStreamsInternals.h"
 #include "ZigGlobalObject.h"
 
@@ -25,6 +28,7 @@
 #include <JavaScriptCore/JSDataView.h>
 #include <JavaScriptCore/JSGenericTypedArrayViewInlines.h>
 #include <JavaScriptCore/JSTypedArrays.h>
+#include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/SlotVisitorMacros.h>
 #include <JavaScriptCore/SubspaceInlines.h>
 #include <JavaScriptCore/TopExceptionScope.h>
@@ -111,6 +115,8 @@ static JSC::JSPromise* invokePromiseReturningMethod(JSC::VM& vm, JSC::JSGlobalOb
 
 // The [[pullAlgorithm]] dispatch. The reachable kind set on a byte controller is exactly
 // {JavaScript, Nothing, ByteTeeBranch}; the switch is total over SourceKind.
+// Returns nullptr with no exception pending when the pull completed synchronously with a
+// non-thenable result: the caller queues the upon-fulfillment handler without a wrapper promise.
 static JSC::JSPromise* performByteControllerPullAlgorithm(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSReadableByteStreamController* controller)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -118,7 +124,7 @@ static JSC::JSPromise* performByteControllerPullAlgorithm(JSC::VM& vm, JSC::JSGl
     case SourceKind::JavaScript: {
         JSC::JSObject* pullMethod = controller->m_algorithms.method1.get();
         if (!pullMethod)
-            RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
+            return nullptr;
         JSC::MarkedArgumentBuffer args;
         args.append(controller);
         if (args.hasOverflowed()) [[unlikely]] {
@@ -126,10 +132,28 @@ static JSC::JSPromise* performByteControllerPullAlgorithm(JSC::VM& vm, JSC::JSGl
             return nullptr;
         }
         StreamAsyncContextScope asyncContextScope(globalObject, controller->m_stream.get());
-        RELEASE_AND_RETURN(scope, invokePromiseReturningMethod(vm, globalObject, pullMethod, controller->m_algorithms.underlyingObject.get(), args));
+        JSC::JSValue result;
+        JSC::JSValue thrown;
+        {
+            auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+            auto callData = JSC::getCallData(pullMethod);
+            ASSERT(callData.type != JSC::CallData::Type::None);
+            result = JSC::call(globalObject, pullMethod, callData, controller->m_algorithms.underlyingObject.get(), args);
+            if (catchScope.exception()) [[unlikely]]
+                thrown = takeAbruptCompletion(globalObject, catchScope);
+        }
+        if (!thrown.isEmpty()) [[unlikely]]
+            RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, thrown));
+        if (result.isEmpty()) [[unlikely]]
+            return nullptr;
+        if (!result.isObject()) [[likely]]
+            return nullptr;
+        if (auto* resultPromise = dynamicDowncast<JSC::JSPromise>(result); resultPromise && resultPromise->isThenFastAndNonObservable())
+            return resultPromise;
+        RELEASE_AND_RETURN(scope, promiseResolvedWith(globalObject, result));
     }
     case SourceKind::Nothing:
-        RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
+        return nullptr;
     case SourceKind::ByteTeeBranch:
         RELEASE_AND_RETURN(scope, byteTeePullAlgorithm(globalObject, uncheckedDowncast<JSStreamTeeState>(controller->m_algorithms.algorithmContext.get()), controller->m_algorithms.teeBranchIndex));
     case SourceKind::Transform:
@@ -190,6 +214,7 @@ static JSC_DECLARE_CUSTOM_GETTER(jsReadableByteStreamControllerPrototypeGetter_d
 static JSC_DECLARE_HOST_FUNCTION(jsReadableByteStreamControllerPrototypeFunction_close);
 static JSC_DECLARE_HOST_FUNCTION(jsReadableByteStreamControllerPrototypeFunction_enqueue);
 static JSC_DECLARE_HOST_FUNCTION(jsReadableByteStreamControllerPrototypeFunction_error);
+static JSC_DECLARE_HOST_FUNCTION(jsReadableByteStreamControllerPrototype_inspectCustom);
 
 class JSReadableByteStreamControllerPrototype final : public JSC::JSNonFinalObject {
 public:
@@ -234,10 +259,24 @@ static const HashTableValue JSReadableByteStreamControllerPrototypeTableValues[]
 
 const ClassInfo JSReadableByteStreamControllerPrototype::s_info = { "ReadableByteStreamController"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSReadableByteStreamControllerPrototype) };
 
+JSC_DEFINE_HOST_FUNCTION(jsReadableByteStreamControllerPrototype_inspectCustom, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue thisValue = callFrame->thisValue();
+    auto* thisObject = dynamicDowncast<JSReadableByteStreamController>(thisValue);
+    if (!thisObject) [[unlikely]]
+        return JSValue::encode(thisValue);
+    JSObject* data = constructEmptyObject(lexicalGlobalObject);
+    (void)thisObject;
+    RELEASE_AND_RETURN(scope, Bun::WebStreams::customInspect(lexicalGlobalObject, callFrame, thisValue, "ReadableByteStreamController"_s, data));
+}
+
 void JSReadableByteStreamControllerPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     reifyStaticProperties(vm, JSReadableByteStreamController::info(), JSReadableByteStreamControllerPrototypeTableValues, *this);
+    Bun::WebStreams::installInspectCustom(vm, this, jsReadableByteStreamControllerPrototype_inspectCustom);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
 
@@ -323,20 +362,42 @@ void JSReadableByteStreamController::visitChildrenImpl(JSCell* cell, Visitor& vi
     auto* thisObject = uncheckedDowncast<JSReadableByteStreamController>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
-    visitor.append(thisObject->m_stream);
-    visitor.append(thisObject->m_byobRequest);
-    visitor.append(thisObject->m_algorithms.underlyingObject);
-    visitor.append(thisObject->m_algorithms.method1);
-    visitor.append(thisObject->m_algorithms.method2);
-    visitor.append(thisObject->m_algorithms.algorithmContext);
+    visitor.appendHidden(thisObject->m_stream);
+    visitor.appendHidden(thisObject->m_byobRequest);
+    visitor.appendHidden(thisObject->m_algorithms.underlyingObject);
+    visitor.appendHidden(thisObject->m_algorithms.method1);
+    visitor.appendHidden(thisObject->m_algorithms.method2);
+    visitor.appendHidden(thisObject->m_algorithms.algorithmContext);
     // ONE non-recursive cellLock scope covers BOTH barrier containers (StreamQueue.h).
     WTF::Locker locker { thisObject->cellLock() };
     thisObject->m_queue.visit(locker, visitor);
     for (auto& descriptor : thisObject->m_pendingPullIntos)
-        visitor.append(descriptor);
+        visitor.appendHidden(descriptor);
 }
 
 DEFINE_VISIT_CHILDREN(JSReadableByteStreamController);
+
+void JSReadableByteStreamController::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
+{
+    auto* thisObject = uncheckedDowncast<JSReadableByteStreamController>(cell);
+    auto& vm = cell->vm();
+    Base::analyzeHeap(cell, analyzer);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_stream, "stream"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_byobRequest, "byobRequest"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_algorithms.underlyingObject, "underlyingSource"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_algorithms.method1, "pullAlgorithm"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_algorithms.method2, "cancelAlgorithm"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_algorithms.algorithmContext, "algorithmContext"_s);
+    {
+        WTF::Locker locker { thisObject->cellLock() };
+        uint32_t i = 0;
+        for (auto& entry : thisObject->m_pendingPullIntos) {
+            if (auto* descriptor = entry.get())
+                analyzer.analyzeIndexEdge(cell, descriptor, i);
+            ++i;
+        }
+    }
+}
 
 // [[CancelSteps]](reason)
 JSPromise* JSReadableByteStreamController::cancelSteps(JSGlobalObject* globalObject, JSValue reason)
@@ -512,7 +573,8 @@ JSC_DEFINE_HOST_FUNCTION(jsReadableByteStreamControllerPrototypeFunction_close, 
         return Bun::ERR::INVALID_THIS(scope, globalObject, "ReadableByteStreamController"_s);
     if (thisObject->m_closeRequested)
         return Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_INVALID_STATE_TypeError, "Invalid state: ReadableStream is already closed"_s);
-    if (!thisObject->m_stream || thisObject->m_stream->m_state != ReadableStreamState::Readable)
+    const JSReadableStream* const stream = thisObject->m_stream.get();
+    if (!stream || stream->m_state != ReadableStreamState::Readable)
         return Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_INVALID_STATE_TypeError, "Invalid state: ReadableStream is already closed"_s);
     readableByteStreamControllerClose(globalObject, thisObject);
     RETURN_IF_EXCEPTION(scope, {});
@@ -540,7 +602,8 @@ JSC_DEFINE_HOST_FUNCTION(jsReadableByteStreamControllerPrototypeFunction_enqueue
         return Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_INVALID_STATE_TypeError, "Invalid state: chunk ArrayBuffer is zero-length or detached"_s);
     if (thisObject->m_closeRequested)
         return Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_INVALID_STATE_TypeError, "Invalid state: ReadableStream is already closed"_s);
-    if (!thisObject->m_stream || thisObject->m_stream->m_state != ReadableStreamState::Readable)
+    const JSReadableStream* const stream = thisObject->m_stream.get();
+    if (!stream || stream->m_state != ReadableStreamState::Readable)
         return Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_INVALID_STATE_TypeError, "Invalid state: ReadableStream is already closed"_s);
     readableByteStreamControllerEnqueue(globalObject, thisObject, chunk);
     RETURN_IF_EXCEPTION(scope, {});
@@ -582,6 +645,9 @@ void readableByteStreamControllerCallPullIfNeeded(JSGlobalObject* globalObject, 
     JSPromise* pullPromise = performByteControllerPullAlgorithm(vm, globalObject, controller);
     RETURN_IF_EXCEPTION(scope, void());
     auto* runtime = JSStreamsRuntime::from(globalObject);
+    // See readableStreamDefaultControllerCallPullIfNeeded.
+    if (!pullPromise || pullPromise->status() == JSPromise::Status::Fulfilled)
+        return queueStreamsMicrotask(globalObject, runtime->onRSByteControllerPullFulfilled(), jsUndefined(), controller);
     pullPromise->performPromiseThenWithContext(vm, globalObject, runtime->onRSByteControllerPullFulfilled(), runtime->onRSByteControllerPullRejected(), jsUndefined(), controller);
 }
 
@@ -732,7 +798,7 @@ void readableByteStreamControllerEnqueue(JSGlobalObject* globalObject, JSReadabl
             throwOutOfMemoryError(globalObject, scope);
             return;
         }
-        for (size_t i = 0; i < filledPullIntos.size(); ++i) {
+        for (size_t i = 0, count = filledPullIntos.size(); i < count; ++i) {
             readableByteStreamControllerCommitPullIntoDescriptor(globalObject, stream, uncheckedDowncast<JSPullIntoDescriptor>(filledPullIntos.at(i)));
             RETURN_IF_EXCEPTION(scope, void());
         }
@@ -780,8 +846,9 @@ void readableByteStreamControllerEnqueueDetachedPullIntoToQueue(JSGlobalObject* 
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     ASSERT(pullIntoDescriptor->m_readerType == ReaderType::None);
-    if (pullIntoDescriptor->m_bytesFilled > 0) {
-        readableByteStreamControllerEnqueueClonedChunkToQueue(globalObject, controller, *pullIntoDescriptor->m_buffer, pullIntoDescriptor->m_byteOffset, pullIntoDescriptor->m_bytesFilled);
+    const size_t bytesFilled = pullIntoDescriptor->m_bytesFilled;
+    if (bytesFilled > 0) {
+        readableByteStreamControllerEnqueueClonedChunkToQueue(globalObject, controller, *pullIntoDescriptor->m_buffer, pullIntoDescriptor->m_byteOffset, bytesFilled);
         RETURN_IF_EXCEPTION(scope, void());
     }
     readableByteStreamControllerShiftPendingPullInto(controller);
@@ -814,16 +881,17 @@ void readableByteStreamControllerFillHeadPullIntoDescriptor(JSReadableByteStream
 bool readableByteStreamControllerFillPullIntoDescriptorFromQueue(JSReadableByteStreamController* controller, JSPullIntoDescriptor* pullIntoDescriptor)
 {
     size_t elementSize = pullIntoDescriptor->elementSize();
-    size_t maxBytesToCopy = std::min(static_cast<size_t>(controller->m_queue.totalSize()), pullIntoDescriptor->m_byteLength - pullIntoDescriptor->m_bytesFilled);
-    size_t maxBytesFilled = pullIntoDescriptor->m_bytesFilled + maxBytesToCopy;
+    const size_t bytesFilled = pullIntoDescriptor->m_bytesFilled;
+    size_t maxBytesToCopy = std::min(static_cast<size_t>(controller->m_queue.totalSize()), pullIntoDescriptor->m_byteLength - bytesFilled);
+    size_t maxBytesFilled = bytesFilled + maxBytesToCopy;
     size_t totalBytesToCopyRemaining = maxBytesToCopy;
     bool ready = false;
     ASSERT(!pullIntoDescriptor->m_buffer->isDetached());
-    ASSERT(pullIntoDescriptor->m_bytesFilled < pullIntoDescriptor->m_minimumFill);
+    ASSERT(bytesFilled < pullIntoDescriptor->m_minimumFill);
     size_t remainderBytes = maxBytesFilled % elementSize;
     size_t maxAlignedBytes = maxBytesFilled - remainderBytes;
     if (maxAlignedBytes >= pullIntoDescriptor->m_minimumFill) {
-        totalBytesToCopyRemaining = maxAlignedBytes - pullIntoDescriptor->m_bytesFilled;
+        totalBytesToCopyRemaining = maxAlignedBytes - bytesFilled;
         ready = true;
     }
     auto& queue = controller->m_queue;
@@ -885,8 +953,9 @@ JSReadableStreamBYOBRequest* readableByteStreamControllerGetBYOBRequest(JSGlobal
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (!controller->m_byobRequest && !controller->m_pendingPullIntos.isEmpty()) {
-        JSPullIntoDescriptor* firstDescriptor = controller->m_pendingPullIntos.first().get();
-        JSArrayBufferView* view = constructViewOfType(globalObject, JSC::TypeUint8, firstDescriptor->m_buffer, firstDescriptor->m_byteOffset + firstDescriptor->m_bytesFilled, firstDescriptor->m_byteLength - firstDescriptor->m_bytesFilled);
+        const JSPullIntoDescriptor* firstDescriptor = controller->m_pendingPullIntos.first().get();
+        const size_t bytesFilled = firstDescriptor->m_bytesFilled;
+        JSArrayBufferView* view = constructViewOfType(globalObject, JSC::TypeUint8, firstDescriptor->m_buffer, firstDescriptor->m_byteOffset + bytesFilled, firstDescriptor->m_byteLength - bytesFilled);
         RETURN_IF_EXCEPTION(scope, nullptr);
         auto* zigGlobalObject = defaultGlobalObject(globalObject);
         JSReadableStreamBYOBRequest* byobRequest = JSReadableStreamBYOBRequest::create(vm, getDOMStructure<JSReadableStreamBYOBRequest>(vm, *zigGlobalObject));
@@ -1083,7 +1152,7 @@ void readableByteStreamControllerRespondInClosedState(JSGlobalObject* globalObje
             throwOutOfMemoryError(globalObject, scope);
             return;
         }
-        for (size_t i = 0; i < filledPullIntos.size(); ++i) {
+        for (size_t i = 0, count = filledPullIntos.size(); i < count; ++i) {
             readableByteStreamControllerCommitPullIntoDescriptor(globalObject, stream, uncheckedDowncast<JSPullIntoDescriptor>(filledPullIntos.at(i)));
             RETURN_IF_EXCEPTION(scope, void());
         }
@@ -1105,18 +1174,19 @@ void readableByteStreamControllerRespondInReadableState(JSGlobalObject* globalOb
             throwOutOfMemoryError(globalObject, scope);
             return;
         }
-        for (size_t i = 0; i < filledPullIntos.size(); ++i) {
+        for (size_t i = 0, count = filledPullIntos.size(); i < count; ++i) {
             readableByteStreamControllerCommitPullIntoDescriptor(globalObject, controller->m_stream.get(), uncheckedDowncast<JSPullIntoDescriptor>(filledPullIntos.at(i)));
             RETURN_IF_EXCEPTION(scope, void());
         }
         return;
     }
-    if (pullIntoDescriptor->m_bytesFilled < pullIntoDescriptor->m_minimumFill)
+    const size_t bytesFilled = pullIntoDescriptor->m_bytesFilled;
+    if (bytesFilled < pullIntoDescriptor->m_minimumFill)
         return;
     readableByteStreamControllerShiftPendingPullInto(controller);
-    size_t remainderSize = pullIntoDescriptor->m_bytesFilled % pullIntoDescriptor->elementSize();
+    size_t remainderSize = bytesFilled % pullIntoDescriptor->elementSize();
     if (remainderSize > 0) {
-        size_t end = pullIntoDescriptor->m_byteOffset + pullIntoDescriptor->m_bytesFilled;
+        size_t end = pullIntoDescriptor->m_byteOffset + bytesFilled;
         readableByteStreamControllerEnqueueClonedChunkToQueue(globalObject, controller, *pullIntoDescriptor->m_buffer, end - remainderSize, remainderSize);
         RETURN_IF_EXCEPTION(scope, void());
     }
@@ -1129,7 +1199,7 @@ void readableByteStreamControllerRespondInReadableState(JSGlobalObject* globalOb
     }
     readableByteStreamControllerCommitPullIntoDescriptor(globalObject, controller->m_stream.get(), pullIntoDescriptor);
     RETURN_IF_EXCEPTION(scope, void());
-    for (size_t i = 0; i < filledPullIntos.size(); ++i) {
+    for (size_t i = 0, count = filledPullIntos.size(); i < count; ++i) {
         readableByteStreamControllerCommitPullIntoDescriptor(globalObject, controller->m_stream.get(), uncheckedDowncast<JSPullIntoDescriptor>(filledPullIntos.at(i)));
         RETURN_IF_EXCEPTION(scope, void());
     }
@@ -1177,17 +1247,18 @@ void readableByteStreamControllerRespondWithNewView(JSGlobalObject* globalObject
             return;
         }
     }
-    if (firstDescriptor->m_byteOffset + firstDescriptor->m_bytesFilled != view->byteOffset()) {
-        throwRangeError(globalObject, scope, "The view's byte offset does not match the BYOB request's current write position"_s);
+    const size_t bytesFilled = firstDescriptor->m_bytesFilled;
+    if (firstDescriptor->m_byteOffset + bytesFilled != view->byteOffset()) {
+        Bun::ERR::INVALID_ARG_VALUE_RangeError(scope, globalObject, "view"_s, view, "must match the BYOB request's current write position"_s);
         return;
     }
     RefPtr<JSC::ArrayBuffer> viewedBuffer = view->possiblySharedBuffer();
     if (firstDescriptor->m_bufferByteLength != viewedBuffer->byteLength()) {
-        throwRangeError(globalObject, scope, "The view's buffer length does not match the BYOB request's buffer length"_s);
+        Bun::ERR::INVALID_ARG_VALUE_RangeError(scope, globalObject, "view"_s, view, "must have the same buffer length as the BYOB request"_s);
         return;
     }
-    if (firstDescriptor->m_bytesFilled + viewByteLength > firstDescriptor->m_byteLength) {
-        throwRangeError(globalObject, scope, "The view's byte length exceeds the remaining length of the BYOB request"_s);
+    if (bytesFilled + viewByteLength > firstDescriptor->m_byteLength) {
+        Bun::ERR::INVALID_ARG_VALUE_RangeError(scope, globalObject, "view"_s, view, "must not exceed the remaining length of the BYOB request"_s);
         return;
     }
     RefPtr<JSC::ArrayBuffer> transferredBuffer = transferArrayBufferImpl(globalObject, *viewedBuffer);

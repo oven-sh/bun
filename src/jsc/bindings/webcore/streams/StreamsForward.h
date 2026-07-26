@@ -163,14 +163,17 @@ enum class ReaderType : uint8_t {
     None,
 };
 
-// JSReadRequest::m_kind — ONE concrete cell, a kind tag, no C++ virtuals. The Bun layer adds
-// NO kind: its pumps react to read()'s promise, and readMany() uses the Promise kind.
+// JSReadRequest::m_kind — ONE concrete cell, a kind tag, no C++ virtuals. readMany() uses
+// the Promise kind; the Bun native-sink pumps each have a dedicated kind so their per-chunk
+// path allocates no Promise / iterator-result object.
 enum class ReadRequestKind : uint8_t {
     Promise, // public reader.read(): context = the JSPromise it resolves
     PipeTo, // context = the JSStreamPipeToOperation
     DefaultTee, // context = the JSStreamTeeState
     ByteTee, // context = the JSStreamTeeState (byte tee's default-reader read request)
     AsyncIterator, // context = InternalFieldTuple{asyncIterator, the next() result promise}
+    ReadStreamIntoSink, // Bun: readStreamIntoSink pump read (context = JSReadStreamIntoSinkOperation)
+    ResumableSinkPump, // Bun: ResumableSink pump read (context = JSResumableSinkPumpOperation)
 };
 
 // JSReadIntoRequest::m_kind (the BYOB parallel of ReadRequestKind).

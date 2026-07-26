@@ -8,7 +8,7 @@ pub fn post_process_html_chunk(
     ctx: GenerateChunkCtx,
     worker: &mut thread_pool::Worker,
     chunk: &mut Chunk,
-) -> Result<(), bun_core::Error> {
+) -> Result<(), crate::Error> {
     // The body has no fallible sites; the Result signature matches the other
     // `post_process_*_chunk` callees dispatched from `generate_chunk`.
     // This is where we split output into pieces

@@ -18,7 +18,6 @@ enum-map.workspace = true
 enumset.workspace = true
 libc.workspace = true
 bitflags.workspace = true
-bumpalo.workspace = true
 typed-arena.workspace = true
 smallvec.workspace = true
 thiserror.workspace = true

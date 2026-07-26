@@ -56,11 +56,10 @@ async function assertComputedDecimalsAreStrings(sql: SQL) {
   expect(rawRow[0]).toEqual(new Uint8Array(Buffer.from("350.75")));
 }
 if (isDockerEnabled()) {
+  // Ordered so the suites whose containers become healthy quickly (mysql_plain,
+  // mysql:9) run first; the slow-to-start mysql_tls container warms up in the
+  // background instead of stalling the whole file up front.
   const images = [
-    {
-      name: "MySQL with TLS",
-      image: "mysql_tls",
-    },
     {
       name: "MySQL",
       image: "mysql_plain",
@@ -72,6 +71,10 @@ if (isDockerEnabled()) {
       env: {
         MYSQL_ROOT_PASSWORD: "bun",
       },
+    },
+    {
+      name: "MySQL with TLS",
+      image: "mysql_tls",
     },
   ].filter(Boolean);
 

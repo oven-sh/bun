@@ -1,6 +1,8 @@
 //! HTTP client.
 
 #![warn(unused_must_use)]
+pub mod error;
+pub use error::{CertError, Error, Result};
 #[path = "AsyncHTTP.rs"]
 pub mod async_http;
 #[path = "CertificateInfo.rs"]
@@ -43,10 +45,6 @@ pub mod signals;
 pub mod thread_safe_stream_buffer;
 #[path = "websocket.rs"]
 pub mod websocket;
-#[path = "websocket_http_client.rs"]
-pub mod websocket_http_client;
-#[path = "zlib.rs"]
-pub mod zlib;
 
 // ── crate-root re-exports ──
 pub use async_http::AsyncHTTP;
@@ -70,26 +68,20 @@ pub use ssl_config::SSLConfig;
 // SSLWrapper was MOVE_DOWN to bun_uws (tier 4); re-export here so
 // `crate::ssl_wrapper::SSLWrapper` resolves for ProxyTunnel/HTTPContext.
 pub use bun_uws::ssl_wrapper;
-pub use bun_uws::ssl_wrapper::SSLWrapper;
 
 // ── naming aliases ──
 // Submodules use both `HTTPClient`/`HttpClient` and the older name
 // `NewHTTPContext`; alias all spellings to the canonical types so submodules
 // resolve without churn.
 pub use h2_client as h2;
-pub use h2_client as H2;
 pub use h3_client as h3;
 pub use h3_client as H3;
-pub use http_context as new_http_context;
 pub type NewHTTPContext<const SSL: bool> = http_context::HTTPContext<SSL>;
 pub type NewHttpContext<const SSL: bool> = http_context::HTTPContext<SSL>;
 pub type HttpsContext = http_context::HTTPContext<true>;
-pub type HttpContext = http_context::HTTPContext<false>;
 pub type HttpClient<'a> = HTTPClient<'a>;
-pub type HttpThread = HTTPThread;
 pub type AsyncHttp<'a> = AsyncHTTP<'a>;
 pub type ThreadlocalAsyncHttp<'a> = ThreadlocalAsyncHTTP<'a>;
-pub use HTTPClientResult as http_client_result;
 pub use bun_http_types::FetchRedirect::FetchRedirect;
 pub use bun_http_types::Method::Method;
 pub use bun_picohttp as picohttp;
@@ -115,9 +107,6 @@ pub enum Protocol {
 pub use bun_http_types::Encoding::Encoding;
 pub use header_value_iterator::HeaderValueIterator;
 pub use init_error::InitError;
-
-/// Compile-time verbosity switch.
-pub const EXTREMELY_VERBOSE: bool = false;
 
 /// Cloned response metadata (headers + url + status). Ownership transfers to
 /// the user once the headers phase completes.
@@ -159,7 +148,7 @@ impl Drop for HTTPResponseMetadata {
         self.response.status = b"";
     }
 }
-pub use bun_http_types::{ETag, FetchCacheMode, FetchRequestMode, MimeType, URLPath};
+pub use bun_http_types::{ETag, MimeType};
 
 // ═══════════════════════════════════════════════════════════════════════
 // Standalone items with no deps on HTTPClient/HTTPContext/ssl_*.
@@ -288,6 +277,20 @@ pub fn idle_timeout_seconds() -> c_uint {
     IDLE_TIMEOUT_SECONDS.load(Ordering::Relaxed)
 }
 
+/// Normalise an idle timeout (seconds) for uSockets' timers: the long-timeout
+/// counter wraps `% 240` minutes, so clamp to 239 min, and values above 240s
+/// are served by the minute-granularity long timer, so round them up to a
+/// whole minute so the floor-to-minute path never fires *earlier* than asked.
+#[inline]
+pub fn normalize_idle_timeout_seconds(raw: u64) -> c_uint {
+    let raw = raw.min(239 * 60);
+    (if raw > 240 {
+        raw.div_ceil(60) * 60
+    } else {
+        raw
+    }) as c_uint
+}
+
 pub const END_OF_CHUNKED_HTTP1_1_ENCODING_RESPONSE_BODY: &[u8] = b"0\r\n\r\n";
 
 /// HTTP-thread-only scratch buffer for building NUL-terminated hostnames.
@@ -301,11 +304,6 @@ const MAX_TLS_RECORD_SIZE: usize = 16 * 1024;
 pub const MAX_H2_RETRIES: u8 = 5;
 
 const PREALLOCATE_MAX: usize = 1024 * 1024 * 256;
-
-#[inline]
-pub fn cleanup(_force: bool) {
-    // No-op: nothing thread-local to clean up.
-}
 
 /// Whether the experimental Alt-Svc-driven HTTP/3 upgrade is enabled at all
 /// (CLI flag or env var). Used on its own to gate `H3.AltSvc.record` — a
@@ -361,17 +359,16 @@ impl HTTPClient<'_> {
     /// undo the HTTP/1.1-specific framing decisions that don't apply when the
     /// transport delimits the body (h2 DATA frames / h3 STREAM frames).
     ///
-    /// SAFETY CONTRACT: `headers` borrows caller-owned storage
-    /// (`stream.decoded_bytes` for h2, the lsquic hset for h3) that is
-    /// lifetime-erased into `state.pending_response`. The caller MUST invoke
-    /// `clone_metadata` (which deep-copies the header bytes) synchronously
-    /// before that backing storage is freed. Both call sites already do.
+    /// Returns the (possibly-mutated) response so the caller can pass it to
+    /// `clone_metadata` once the redirect decision has been made; the borrow of
+    /// `headers` flows through, so the deep copy is checked by the compiler
+    /// rather than by a call-ordering contract.
     #[inline]
-    pub(crate) fn apply_multiplexed_headers(
+    pub(crate) fn apply_multiplexed_headers<'h>(
         &mut self,
         status_code: u32,
-        headers: &[picohttp::Header],
-    ) -> Result<HeaderResult, bun_core::Error> {
+        headers: &'h [picohttp::Header],
+    ) -> crate::Result<(HeaderResult, picohttp::Response<'h>)> {
         let mut response = picohttp::Response {
             minor_version: 0,
             status_code,
@@ -379,14 +376,7 @@ impl HTTPClient<'_> {
             headers: picohttp::HeaderList { list: headers },
             bytes_read: 0,
         };
-        // SAFETY: see fn doc — erased borrow is deep-copied by `clone_metadata`
-        // before the backing storage is released.
-        self.state.pending_response = Some(unsafe { response.detach_lifetime() });
         let should_continue = self.handle_response_metadata(&mut response)?;
-        // handle_response_metadata may mutate `response` (e.g. the 304 rewrite
-        // for force_last_modified); clone_metadata reads pending_response, so
-        // re-sync. SAFETY: same lifetime erase as above.
-        self.state.pending_response = Some(unsafe { response.detach_lifetime() });
         // h2/h3 framing delimits the body; chunked transfer-encoding and the
         // HTTP/1.1 "no Content-Length ⇒ no keep-alive" rule don't apply.
         self.state.transfer_encoding = Encoding::Identity;
@@ -394,11 +384,12 @@ impl HTTPClient<'_> {
             self.state.response_stage = ResponseStage::Body;
         }
         self.state.flags.allow_keepalive = true;
-        Ok(if should_continue == ShouldContinue::Finished {
+        let result = if should_continue == ShouldContinue::Finished {
             HeaderResult::Finished
         } else {
             HeaderResult::HasBody
-        })
+        };
+        Ok((result, response))
     }
 }
 
@@ -420,7 +411,7 @@ pub struct HTTPClientResult<'a> {
     /// streaming-body buffer instead of chunked-encoding them.
     pub is_http2: bool,
 
-    pub fail: Option<bun_core::Error>,
+    pub fail: Option<crate::Error>,
     /// Raw `getaddrinfo(3)` return code when `fail` is `DNSResolveFailed`;
     /// 0 otherwise. Lets the JS side report the resolver error (`ENOTFOUND`,
     /// ...) with `syscall`/`hostname` instead of a generic connect failure.
@@ -458,11 +449,14 @@ impl<'a> HTTPClientResult<'a> {
     }
 
     pub fn is_timeout(&self) -> bool {
-        matches!(self.fail, Some(e) if e == bun_core::err!("Timeout"))
+        matches!(self.fail, Some(crate::Error::Timeout))
     }
 
     pub fn is_abort(&self) -> bool {
-        matches!(self.fail, Some(e) if e == bun_core::err!("Aborted") || e == bun_core::err!("AbortedBeforeConnecting"))
+        matches!(
+            self.fail,
+            Some(crate::Error::Aborted | crate::Error::AbortedBeforeConnecting)
+        )
     }
 
     /// Widen the borrow on `body` to `'static` for self-referential storage.
@@ -587,6 +581,141 @@ use bun_core::ZigStringSlice;
 use bun_url::URL;
 use core::ptr::NonNull;
 
+/// Owned copies of the proxy environment captured at request creation so the
+/// HTTP thread can re-resolve `HTTPClient::http_proxy` per redirect hop.
+/// curl / Node's undici `EnvHttpProxyAgent` both re-run the no_proxy match
+/// and the http/https proxy choice against each redirected URL.
+pub struct ProxySettings {
+    http_proxy: Box<[u8]>,
+    https_proxy: Box<[u8]>,
+    no_proxy: Box<[u8]>,
+}
+
+impl ProxySettings {
+    /// Returns `None` when neither proxy is set: no re-evaluation is needed.
+    pub fn new(
+        http_proxy: Option<&[u8]>,
+        https_proxy: Option<&[u8]>,
+        no_proxy: Option<&[u8]>,
+    ) -> Option<Box<Self>> {
+        let http_proxy = http_proxy.unwrap_or(b"");
+        let https_proxy = https_proxy.unwrap_or(b"");
+        if http_proxy.is_empty() && https_proxy.is_empty() {
+            return None;
+        }
+        Some(Box::new(Self {
+            http_proxy: http_proxy.into(),
+            https_proxy: https_proxy.into(),
+            no_proxy: no_proxy.unwrap_or(b"").into(),
+        }))
+    }
+
+    /// Capture `http_proxy` / `https_proxy` / `no_proxy` from the process env.
+    pub fn from_env(env: &bun_dotenv::Loader) -> Option<Box<Self>> {
+        #[inline]
+        fn is_emptyish(v: &[u8]) -> bool {
+            v.is_empty() || v == b"\"\"" || v == b"''"
+        }
+        // lowercase first; an empty lowercase value falls through to uppercase.
+        let read = |lower: &[u8], upper: &[u8]| -> Option<&[u8]> {
+            let v = env
+                .get(lower)
+                .filter(|v| !v.is_empty())
+                .or_else(|| env.get(upper))?;
+            if is_emptyish(v) { None } else { Some(v) }
+        };
+        Self::new(
+            read(b"http_proxy", b"HTTP_PROXY"),
+            read(b"https_proxy", b"HTTPS_PROXY"),
+            read(b"no_proxy", b"NO_PROXY"),
+        )
+    }
+
+    /// Build from an explicit `fetch(url, { proxy })` option. The same proxy is
+    /// used for both schemes; NO_PROXY is still consulted per hop.
+    pub fn from_explicit(proxy_href: &[u8], env: &bun_dotenv::Loader) -> Option<Box<Self>> {
+        let no_proxy = env
+            .get(b"no_proxy")
+            .filter(|v| !v.is_empty())
+            .or_else(|| env.get(b"NO_PROXY"))
+            .filter(|v| !(v.is_empty() || *v == b"\"\"" || *v == b"''"));
+        Self::new(Some(proxy_href), Some(proxy_href), no_proxy)
+    }
+
+    /// Proxy href to use for `url`, or `None` for a direct connection.
+    pub fn resolve(&self, url: &URL<'_>) -> Option<&[u8]> {
+        let href: &[u8] = if url.is_http() {
+            &self.http_proxy
+        } else {
+            &self.https_proxy
+        };
+        if href.is_empty() {
+            return None;
+        }
+        if no_proxy_matches(&self.no_proxy, url.hostname, url.host) {
+            return None;
+        }
+        Some(href)
+    }
+}
+
+/// Returns true if the given hostname/host should bypass the proxy according
+/// to the supplied `no_proxy` list. Runs on the HTTP thread from a captured
+/// copy of the env value; see https://about.gitlab.com/blog/2021/01/27/we-need-to-talk-no-proxy/.
+fn no_proxy_matches(no_proxy_text: &[u8], hostname: &[u8], host: &[u8]) -> bool {
+    if hostname.is_empty() {
+        return false;
+    }
+    for item in no_proxy_text.split(|&b| b == b',') {
+        let mut entry = strings::trim(item, &strings::WHITESPACE_CHARS);
+        if entry.is_empty() {
+            continue;
+        }
+        if entry == b"*" {
+            return true;
+        }
+        if strings::starts_with_char(entry, b'.') {
+            entry = &entry[1..];
+            if entry.is_empty() {
+                continue;
+            }
+        }
+
+        // IPv6 literals contain multiple colons (e.g., "::1"); bracketed IPv6
+        // with port is "[::1]:8080"; host:port has a single colon.
+        let colon_count = entry.iter().filter(|&&b| b == b':').count();
+        let has_port = if strings::starts_with_char(entry, b'[') {
+            strings::index_of(entry, b"]:").is_some()
+        } else {
+            colon_count == 1
+        };
+
+        if has_port {
+            if strings::eql_case_insensitive_ascii(host, entry, true) {
+                return true;
+            }
+        } else {
+            let entry_len = entry.len();
+            if hostname.len() == entry_len {
+                if strings::eql_case_insensitive_ascii(hostname, entry, true) {
+                    return true;
+                }
+            } else if hostname.len() > entry_len
+                && hostname[hostname.len() - entry_len - 1] == b'.'
+                && strings::eql_case_insensitive_ascii(
+                    &hostname[hostname.len() - entry_len..],
+                    entry,
+                    true,
+                )
+            {
+                return true;
+            }
+        }
+    }
+
+    false
+}
+
 // TODO: reduce the size of this struct
 // Many of these fields can be moved to a packed struct and use less space
 //
@@ -623,6 +752,11 @@ pub struct HTTPClient<'a> {
 
     pub flags: Flags,
 
+    /// Per-request override of the global [`IDLE_TIMEOUT_SECONDS`], set from
+    /// `fetch(url, { timeout: <ms> })`. Already normalised (see
+    /// [`normalize_idle_timeout_seconds`]). `None` = use the global default.
+    pub idle_timeout_seconds: Option<c_uint>,
+
     pub state: InternalState<'a>,
     pub tls_props: Option<ssl_config::SharedPtr>,
     /// The custom SSL context used for this request (None = default context).
@@ -639,6 +773,10 @@ pub struct HTTPClient<'a> {
     pub request_content_len_buf: [u8; b"-4294967295".len()],
 
     pub http_proxy: Option<URL<'a>>,
+    /// Captured proxy env (http_proxy / https_proxy / no_proxy) so redirects
+    /// can re-resolve `http_proxy` against each hop's URL on the HTTP thread.
+    /// `None` means the initial `http_proxy` is used for every hop.
+    pub proxy_settings: Option<Box<ProxySettings>>,
     pub proxy_headers: Option<Headers>,
     pub proxy_authorization: Option<Vec<u8>>,
     /// Set while this request is tunneling through an HTTP proxy (CONNECT).
@@ -793,7 +931,7 @@ use bstr::BStr;
 use bun_boringssl as boringssl;
 use bun_collections::{ArrayHashMap, VecExt};
 use bun_core::StringBuilder;
-use bun_core::{FeatureFlags, Global, Output, err};
+use bun_core::{FeatureFlags, Global, Output};
 use bun_core::{OwnedString, String as BunString, Tag as BunStringTag, strings};
 use bun_http_types::ETag::StringPointer;
 use bun_uws as uws;
@@ -805,9 +943,9 @@ use crate::internal_state::{RequestStage, ResponseStage, Stage};
 
 bun_core::declare_scope!(fetch, visible);
 
-/// Generic `HttpContext<const SSL>` alias — `crate::HttpContext` /
-/// `crate::HttpsContext` (above) are concrete-SSL aliases; the state machine
-/// needs a const-generic spelling for `get_ssl_ctx<IS_SSL>()`.
+/// Generic `HttpContext<const SSL>` alias — `crate::HttpsContext` (above) is
+/// the concrete-SSL alias; the state machine needs a const-generic spelling
+/// for `get_ssl_ctx<IS_SSL>()`.
 pub type GenHttpContext<const SSL: bool> = http_context::HTTPContext<SSL>;
 
 // ── header constants ────────────────────────────────────────────────────
@@ -1124,14 +1262,14 @@ fn write_proxy_auth_and_headers(writer: &mut Vec<u8>, client: &HTTPClient) {
     }
 }
 
-fn validate_request_target(target: &[u8]) -> Result<(), bun_core::Error> {
+fn validate_request_target(target: &[u8]) -> crate::Result<()> {
     if target.iter().any(|&byte| byte <= 0x20 || byte == 0x7f) {
-        return Err(err!(InvalidURL));
+        return Err(crate::Error::InvalidURL);
     }
     Ok(())
 }
 
-fn write_proxy_connect(writer: &mut Vec<u8>, client: &HTTPClient) -> Result<(), bun_core::Error> {
+fn write_proxy_connect(writer: &mut Vec<u8>, client: &HTTPClient) -> crate::Result<()> {
     validate_request_target(client.url.href)?;
     let port: &[u8] = if client.url.get_port().is_some() {
         client.url.port
@@ -1163,7 +1301,7 @@ fn write_proxy_request(
     writer: &mut Vec<u8>,
     request: &picohttp::Request<'_>,
     client: &HTTPClient,
-) -> Result<(), bun_core::Error> {
+) -> crate::Result<()> {
     validate_request_target(client.url.href)?;
     writer.extend_from_slice(request.method);
     // will always be http:// here, https:// needs CONNECT tunnel
@@ -1194,10 +1332,7 @@ fn write_proxy_request(
     Ok(())
 }
 
-fn write_request(
-    writer: &mut Vec<u8>,
-    request: &picohttp::Request<'_>,
-) -> Result<(), bun_core::Error> {
+fn write_request(writer: &mut Vec<u8>, request: &picohttp::Request<'_>) -> crate::Result<()> {
     validate_request_target(request.path)?;
     writer.extend_from_slice(request.method);
     writer.extend_from_slice(b" ");
@@ -1257,13 +1392,13 @@ fn print_response(response: &picohttp::Response<'_>) {
 fn write_to_socket<const IS_SSL: bool>(
     socket: HttpSocket<IS_SSL>,
     data: &[u8],
-) -> Result<usize, bun_core::Error> {
+) -> crate::Result<usize> {
     let mut remaining = data;
     let mut total_written: usize = 0;
     while !remaining.is_empty() {
         let amount = socket.write(remaining);
         if amount < 0 {
-            return Err(err!(WriteFailed));
+            return Err(crate::Error::WriteFailed);
         }
         let wrote = usize::try_from(amount).expect("int cast");
         total_written += wrote;
@@ -1280,7 +1415,7 @@ fn write_to_socket_with_buffer_fallback<const IS_SSL: bool>(
     socket: HttpSocket<IS_SSL>,
     buffer: &mut bun_io::StreamBuffer,
     data: &[u8],
-) -> Result<usize, bun_core::Error> {
+) -> crate::Result<usize> {
     let amount = write_to_socket::<IS_SSL>(socket, data)?;
     if amount < data.len() {
         let _ = buffer.write(&data[amount..]);
@@ -1294,83 +1429,83 @@ fn write_to_socket_with_buffer_fallback<const IS_SSL: bool>(
 // ────────────────────────────────────────────────────────────────────────
 
 /// Maps an X509 verify code
-/// onto a `bun_core::Error` whose name is the upper-snake error tag
+/// onto a `crate::Error` whose name is the upper-snake error tag
 /// (e.g. `CERT_HAS_EXPIRED`). JS-side `error.code` matches on this exact
 /// string, so do NOT substitute `X509_verify_cert_error_string` output here.
 // constants are the BoringSSL `X509_V_ERR_*` values from
 // `<openssl/x509.h>`. Inlined as literals so
 // this file doesn't grow a dep on a header-generated const set.
-pub(crate) fn get_cert_error_from_no(error_no: i32) -> bun_core::Error {
-    let name: &'static str = match error_no {
-        0 => "OK", // X509_V_OK
-        2 => "UNABLE_TO_GET_ISSUER_CERT",
-        3 => "UNABLE_TO_GET_CRL",
-        4 => "UNABLE_TO_DECRYPT_CERT_SIGNATURE",
-        5 => "UNABLE_TO_DECRYPT_CRL_SIGNATURE",
-        6 => "UNABLE_TO_DECODE_ISSUER_PUBLIC_KEY",
-        7 => "CERT_SIGNATURE_FAILURE",
-        8 => "CRL_SIGNATURE_FAILURE",
-        9 => "CERT_NOT_YET_VALID",
-        10 => "CERT_HAS_EXPIRED",
-        11 => "CRL_NOT_YET_VALID",
-        12 => "CRL_HAS_EXPIRED",
-        13 => "ERROR_IN_CERT_NOT_BEFORE_FIELD",
-        14 => "ERROR_IN_CERT_NOT_AFTER_FIELD",
-        15 => "ERROR_IN_CRL_LAST_UPDATE_FIELD",
-        16 => "ERROR_IN_CRL_NEXT_UPDATE_FIELD",
-        17 => "OUT_OF_MEM",
-        18 => "DEPTH_ZERO_SELF_SIGNED_CERT",
-        19 => "SELF_SIGNED_CERT_IN_CHAIN",
-        20 => "UNABLE_TO_GET_ISSUER_CERT_LOCALLY",
-        21 => "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
-        22 => "CERT_CHAIN_TOO_LONG",
-        23 => "CERT_REVOKED",
-        24 => "INVALID_CA",
-        25 => "PATH_LENGTH_EXCEEDED",
-        26 => "INVALID_PURPOSE",
-        27 => "CERT_UNTRUSTED",
-        28 => "CERT_REJECTED",
-        29 => "SUBJECT_ISSUER_MISMATCH",
-        30 => "AKID_SKID_MISMATCH",
-        31 => "AKID_ISSUER_SERIAL_MISMATCH",
-        32 => "KEYUSAGE_NO_CERTSIGN",
-        33 => "UNABLE_TO_GET_CRL_ISSUER",
-        34 => "UNHANDLED_CRITICAL_EXTENSION",
-        35 => "KEYUSAGE_NO_CRL_SIGN",
-        36 => "UNHANDLED_CRITICAL_CRL_EXTENSION",
-        37 => "INVALID_NON_CA",
-        38 => "PROXY_PATH_LENGTH_EXCEEDED",
-        39 => "KEYUSAGE_NO_DIGITAL_SIGNATURE",
-        40 => "PROXY_CERTIFICATES_NOT_ALLOWED",
-        41 => "INVALID_EXTENSION",
-        42 => "INVALID_POLICY_EXTENSION",
-        43 => "NO_EXPLICIT_POLICY",
-        44 => "DIFFERENT_CRL_SCOPE",
-        45 => "UNSUPPORTED_EXTENSION_FEATURE",
-        46 => "UNNESTED_RESOURCE",
-        47 => "PERMITTED_VIOLATION",
-        48 => "EXCLUDED_VIOLATION",
-        49 => "SUBTREE_MINMAX",
-        50 => "APPLICATION_VERIFICATION",
-        51 => "UNSUPPORTED_CONSTRAINT_TYPE",
-        52 => "UNSUPPORTED_CONSTRAINT_SYNTAX",
-        53 => "UNSUPPORTED_NAME_SYNTAX",
-        54 => "CRL_PATH_VALIDATION_ERROR",
-        56 => "SUITE_B_INVALID_VERSION",
-        57 => "SUITE_B_INVALID_ALGORITHM",
-        58 => "SUITE_B_INVALID_CURVE",
-        59 => "SUITE_B_INVALID_SIGNATURE_ALGORITHM",
-        60 => "SUITE_B_LOS_NOT_ALLOWED",
-        61 => "SUITE_B_CANNOT_SIGN_P_384_WITH_P_256",
-        62 => "HOSTNAME_MISMATCH",
-        63 => "EMAIL_MISMATCH",
-        64 => "IP_ADDRESS_MISMATCH",
-        65 => "INVALID_CALL",
-        66 => "STORE_LOOKUP",
-        67 => "NAME_CONSTRAINTS_WITHOUT_SANS",
-        _ => "UNKNOWN_CERTIFICATE_VERIFICATION_ERROR",
-    };
-    bun_core::Error::from_name(name)
+pub(crate) fn get_cert_error_from_no(error_no: i32) -> crate::Error {
+    use crate::error::CertError;
+    crate::Error::Cert(match error_no {
+        0 => CertError::OK, // X509_V_OK
+        2 => CertError::UNABLE_TO_GET_ISSUER_CERT,
+        3 => CertError::UNABLE_TO_GET_CRL,
+        4 => CertError::UNABLE_TO_DECRYPT_CERT_SIGNATURE,
+        5 => CertError::UNABLE_TO_DECRYPT_CRL_SIGNATURE,
+        6 => CertError::UNABLE_TO_DECODE_ISSUER_PUBLIC_KEY,
+        7 => CertError::CERT_SIGNATURE_FAILURE,
+        8 => CertError::CRL_SIGNATURE_FAILURE,
+        9 => CertError::CERT_NOT_YET_VALID,
+        10 => CertError::CERT_HAS_EXPIRED,
+        11 => CertError::CRL_NOT_YET_VALID,
+        12 => CertError::CRL_HAS_EXPIRED,
+        13 => CertError::ERROR_IN_CERT_NOT_BEFORE_FIELD,
+        14 => CertError::ERROR_IN_CERT_NOT_AFTER_FIELD,
+        15 => CertError::ERROR_IN_CRL_LAST_UPDATE_FIELD,
+        16 => CertError::ERROR_IN_CRL_NEXT_UPDATE_FIELD,
+        17 => CertError::OUT_OF_MEM,
+        18 => CertError::DEPTH_ZERO_SELF_SIGNED_CERT,
+        19 => CertError::SELF_SIGNED_CERT_IN_CHAIN,
+        20 => CertError::UNABLE_TO_GET_ISSUER_CERT_LOCALLY,
+        21 => CertError::UNABLE_TO_VERIFY_LEAF_SIGNATURE,
+        22 => CertError::CERT_CHAIN_TOO_LONG,
+        23 => CertError::CERT_REVOKED,
+        24 => CertError::INVALID_CA,
+        25 => CertError::PATH_LENGTH_EXCEEDED,
+        26 => CertError::INVALID_PURPOSE,
+        27 => CertError::CERT_UNTRUSTED,
+        28 => CertError::CERT_REJECTED,
+        29 => CertError::SUBJECT_ISSUER_MISMATCH,
+        30 => CertError::AKID_SKID_MISMATCH,
+        31 => CertError::AKID_ISSUER_SERIAL_MISMATCH,
+        32 => CertError::KEYUSAGE_NO_CERTSIGN,
+        33 => CertError::UNABLE_TO_GET_CRL_ISSUER,
+        34 => CertError::UNHANDLED_CRITICAL_EXTENSION,
+        35 => CertError::KEYUSAGE_NO_CRL_SIGN,
+        36 => CertError::UNHANDLED_CRITICAL_CRL_EXTENSION,
+        37 => CertError::INVALID_NON_CA,
+        38 => CertError::PROXY_PATH_LENGTH_EXCEEDED,
+        39 => CertError::KEYUSAGE_NO_DIGITAL_SIGNATURE,
+        40 => CertError::PROXY_CERTIFICATES_NOT_ALLOWED,
+        41 => CertError::INVALID_EXTENSION,
+        42 => CertError::INVALID_POLICY_EXTENSION,
+        43 => CertError::NO_EXPLICIT_POLICY,
+        44 => CertError::DIFFERENT_CRL_SCOPE,
+        45 => CertError::UNSUPPORTED_EXTENSION_FEATURE,
+        46 => CertError::UNNESTED_RESOURCE,
+        47 => CertError::PERMITTED_VIOLATION,
+        48 => CertError::EXCLUDED_VIOLATION,
+        49 => CertError::SUBTREE_MINMAX,
+        50 => CertError::APPLICATION_VERIFICATION,
+        51 => CertError::UNSUPPORTED_CONSTRAINT_TYPE,
+        52 => CertError::UNSUPPORTED_CONSTRAINT_SYNTAX,
+        53 => CertError::UNSUPPORTED_NAME_SYNTAX,
+        54 => CertError::CRL_PATH_VALIDATION_ERROR,
+        56 => CertError::SUITE_B_INVALID_VERSION,
+        57 => CertError::SUITE_B_INVALID_ALGORITHM,
+        58 => CertError::SUITE_B_INVALID_CURVE,
+        59 => CertError::SUITE_B_INVALID_SIGNATURE_ALGORITHM,
+        60 => CertError::SUITE_B_LOS_NOT_ALLOWED,
+        61 => CertError::SUITE_B_CANNOT_SIGN_P_384_WITH_P_256,
+        62 => CertError::HOSTNAME_MISMATCH,
+        63 => CertError::EMAIL_MISMATCH,
+        64 => CertError::IP_ADDRESS_MISMATCH,
+        65 => CertError::INVALID_CALL,
+        66 => CertError::STORE_LOOKUP,
+        67 => CertError::NAME_CONSTRAINTS_WITHOUT_SANS,
+        _ => CertError::UNKNOWN_CERTIFICATE_VERIFICATION_ERROR,
+    })
 }
 
 // ── HTTPClient field accessors ──────────────────────────────────────────
@@ -1428,29 +1563,30 @@ impl<'a> HTTPClient<'a> {
     }
     /// Common tail of `fail` / `fail_from_h2` / `complete_connecting_process`:
     /// build the result, reset request state, and dispatch the callback.
-    /// Factored out so the borrowck reshape (`to_result()` borrows `&mut self`
-    /// while the post-reset callback wants `&mut self.state` again) lives in
-    /// one place instead of being open-coded with raw `(*this_ptr).field` at
-    /// every fail site.
     fn dispatch_result_and_reset(&mut self, clear_proxy_tunneling: bool) {
         let callback = self.result_callback;
-        // reshaped for borrowck — `to_result()`'s `body` field is a
-        // `&mut MutableString` derived from a NonNull (caller-owned, disjoint
-        // from `self`'s storage), but its lifetime is tied to `&mut self`.
-        // Detach so the `state.reset()` reborrow below compiles.
-        // SAFETY: `body_out_str` points at the caller-owned MutableString that
-        // outlives this client. NOTE: `state.reset()` below DOES write through
-        // that same allocation (`(*body_out_str).reset()`, InternalState.rs)
-        // while `result.body` is a live `&'static mut` to it — this overlap is
-        // pre-existing (the old open-coded `(*this_ptr).state.reset()` did the
-        // same); the callback observes the
-        // post-reset (empty) buffer. Do not read this comment as asserting
-        // `result.body` and `state.reset()` are disjoint.
-        let result = unsafe { self.to_result().detach_lifetime() };
+        let body = self.state.body_out_str;
+        let mut result = self.to_result();
         self.state.reset();
+        // `state.reset()` returns every stage field to Pending, which makes
+        // this finished client indistinguishable from a fresh one. Every
+        // caller reaches here with `stage == Fail` (a terminal state), and the
+        // final result dispatched below frees the HTTP-thread AsyncHTTP clone
+        // that embeds this client. Restore the terminal stage so a late event
+        // on a still-reachable reference (socket tag, timer, tracker entry)
+        // hits the `stage != Done && stage != Fail` guards and becomes a
+        // no-op instead of delivering a second final result into freed
+        // memory. The success path (`send_progress_update_without_stage_check`)
+        // already restores `Stage::Done` the same way after its reset.
+        self.state.request_stage = RequestStage::Fail;
+        self.state.response_stage = ResponseStage::Fail;
+        self.state.stage = Stage::Fail;
         if clear_proxy_tunneling {
             self.flags.proxy_tunneling = false;
         }
+        // `state.reset()` cleared the caller-owned body buffer; attach it now
+        // so the callback sees the (empty) post-reset buffer.
+        result.body = body_out::opt_mut(body);
         callback.run(self.parent_async_http(), result);
     }
     #[inline]
@@ -1523,7 +1659,6 @@ impl<'a> HTTPClient<'a> {
     pub fn check_server_identity<const IS_SSL: bool>(
         &mut self,
         socket: HttpSocket<IS_SSL>,
-        cert_error: HTTPCertError,
         ssl: &mut boringssl::c::SSL,
         allow_proxy_url: bool,
     ) -> bool {
@@ -1561,7 +1696,6 @@ impl<'a> HTTPClient<'a> {
                         self.state.certificate_info = Some(CertificateInfo {
                             cert,
                             hostname: Box::<[u8]>::from(hostname),
-                            cert_error,
                         });
 
                         // Park the connection until the JS-side
@@ -1588,7 +1722,7 @@ impl<'a> HTTPClient<'a> {
                 }
             }
             // SSL error so we fail the connection
-            self.close_and_fail::<IS_SSL>(err!(ERR_TLS_CERT_ALTNAME_INVALID), socket);
+            self.close_and_fail::<IS_SSL>(crate::Error::ERR_TLS_CERT_ALTNAME_INVALID, socket);
             return false;
         }
         // we allow the connection to continue anyway
@@ -1614,10 +1748,7 @@ impl<'a> HTTPClient<'a> {
         }
     }
 
-    pub fn on_open<const IS_SSL: bool>(
-        &mut self,
-        socket: HttpSocket<IS_SSL>,
-    ) -> Result<(), bun_core::Error> {
+    pub fn on_open<const IS_SSL: bool>(&mut self, socket: HttpSocket<IS_SSL>) -> crate::Result<()> {
         if cfg!(debug_assertions) {
             if let Some(proxy) = &self.http_proxy {
                 debug_assert!(IS_SSL == proxy.is_https());
@@ -1661,7 +1792,7 @@ impl<'a> HTTPClient<'a> {
 
         if self.signals.get(signals::Field::Aborted) {
             self.close_and_abort::<IS_SSL>(socket);
-            return Err(err!(ClientAborted));
+            return Err(crate::Error::ClientAborted);
         }
 
         if self.state.request_stage == RequestStage::Pending {
@@ -1844,7 +1975,7 @@ impl<'a> HTTPClient<'a> {
             self.flags.protocol = Protocol::Http1_1;
             self.resolve_pending_h2(PendingH2Resolution::H1);
             if self.flags.force_http2 {
-                self.close_and_fail::<IS_SSL>(err!(HTTP2Unsupported), socket);
+                self.close_and_fail::<IS_SSL>(crate::Error::HTTP2Unsupported, socket);
                 return;
             }
         }
@@ -1866,13 +1997,18 @@ impl<'a> HTTPClient<'a> {
     pub fn retry_from_h2(&mut self) {
         debug_assert!(self.h2.is_none());
         self.unregister_abort_tracker();
+        // No owner buffer means the request is already terminal (see
+        // `InternalState::get_body_buffer`); there is nowhere to deliver a
+        // retried response.
+        let Some(body_out) = self.state.body_out_str else {
+            return;
+        };
         self.flags.protocol = Protocol::Http1_1;
         self.h2_retries += 1;
         let body = core::mem::replace(
             &mut self.state.original_request_body,
             HTTPRequestBody::Bytes(b""),
         );
-        let body_out = self.state.body_out_str.take().unwrap();
         self.state.reset();
         self.start(body, body_out::as_mut(body_out));
     }
@@ -1880,7 +2016,7 @@ impl<'a> HTTPClient<'a> {
     /// Called by the HTTP/2 session for stream-level termination (RST_STREAM,
     /// GOAWAY, abort, decode error). The socket stays up for sibling streams, so
     /// only the request fails.
-    pub fn fail_from_h2(&mut self, err: bun_core::Error) {
+    pub fn fail_from_h2(&mut self, err: crate::Error) {
         debug_assert!(self.h2.is_none());
         debug_assert!(self.h3.is_none());
         self.unregister_abort_tracker();
@@ -1902,7 +2038,7 @@ impl<'a> HTTPClient<'a> {
         self.unregister_abort_tracker();
 
         if self.signals.get(signals::Field::Aborted) {
-            self.fail(err!(Aborted));
+            self.fail(crate::Error::Aborted);
             return;
         }
         self.close_proxy_tunnel(true);
@@ -1916,32 +2052,22 @@ impl<'a> HTTPClient<'a> {
             self.do_redirect::<IS_SSL>(ctx, socket);
             return;
         }
-        if in_progress {
-            if self.state.is_chunked_encoding() {
-                // Match the spec exactly: only the two trailer states mean
-                // "all chunks consumed"; CHUNKED_IN_CHUNK_SIZE/EXT/CRLF mean
-                // the body was truncated mid-stream and must fail.
-                // 4 = CHUNKED_IN_TRAILERS_LINE_HEAD, 5 = CHUNKED_IN_TRAILERS_LINE_MIDDLE
-                if matches!(self.state.chunked_decoder._state, 4 | 5) {
-                    // ignore failure if we are in the middle of trailer headers, since we processed all the chunks and trailers are ignored
-                    self.state.flags.received_last_chunk = true;
-                    let ctx = self.get_ssl_ctx::<IS_SSL>();
-                    self.progress_update::<IS_SSL>(ctx, socket);
-                    return;
-                }
-                // here we are in the middle of a chunk so ECONNRESET is expected
-            } else if self.state.content_length.is_none()
-                && self.state.response_stage == ResponseStage::Body
-            {
-                // no content length informed so we are done here
-                self.state.flags.received_last_chunk = true;
-                let ctx = self.get_ssl_ctx::<IS_SSL>();
-                self.progress_update::<IS_SSL>(ctx, socket);
+        if in_progress && self.state.is_body_complete_on_close() {
+            if let Err(err) = self.state.finalize_body_on_eof() {
+                self.fail(err);
                 return;
             }
+            let ctx = self.get_ssl_ctx::<IS_SSL>();
+            self.progress_update::<IS_SSL>(ctx, socket);
+            return;
         }
 
-        if self.allow_retry
+        // `in_progress` also keeps a client whose final result was already
+        // delivered (stage Done/Fail) from restarting; the AsyncHTTP clone
+        // that embeds it is freed once that result is dispatched, so a late
+        // close event must not re-enter `start()`.
+        if in_progress
+            && self.allow_retry
             && self.method.is_idempotent()
             // Only a Bytes body can be rebuilt from `original_request_body`.
             // Stream/Sendfile bodies are consumed as they are written, so a
@@ -1950,20 +2076,24 @@ impl<'a> HTTPClient<'a> {
             && self.state.response_stage != ResponseStage::Body
             && self.state.response_stage != ResponseStage::BodyChunk
         {
-            self.allow_retry = false;
-            // we need to retry the request, clean up the response message buffer and start again
-            self.state.response_message_buffer = MutableString::default();
-            let body = core::mem::replace(
-                &mut self.state.original_request_body,
-                HTTPRequestBody::Bytes(b""),
-            );
-            let body_out = self.state.body_out_str.take().unwrap();
-            self.start(body, body_out::as_mut(body_out));
+            // No owner buffer means the request is already terminal (see
+            // `InternalState::get_body_buffer`); there is nowhere to deliver
+            // a retried response.
+            if let Some(body_out) = self.state.body_out_str {
+                self.allow_retry = false;
+                // we need to retry the request, clean up the response message buffer and start again
+                self.state.response_message_buffer = MutableString::default();
+                let body = core::mem::replace(
+                    &mut self.state.original_request_body,
+                    HTTPRequestBody::Bytes(b""),
+                );
+                self.start(body, body_out::as_mut(body_out));
+            }
             return;
         }
 
         if in_progress {
-            self.fail(err!(ConnectionClosed));
+            self.fail(crate::Error::ConnectionClosed);
         }
     }
 
@@ -1972,8 +2102,14 @@ impl<'a> HTTPClient<'a> {
             return;
         }
         bun_core::scoped_log!(fetch, "Timeout  {}\n", BStr::new(self.url.href));
-        self.fail(err!(Timeout));
+        // Terminate (mark dead + close) BEFORE failing, matching
+        // `close_and_fail`: `fail()` dispatches the final result, which frees
+        // the HTTP-thread AsyncHTTP clone that embeds `self`, so nothing may
+        // run after it, and the socket must already be de-tagged so the
+        // synchronous close callbacks (TLS close fires on_handshake for a
+        // mid-handshake socket) cannot re-enter this client.
         GenHttpContext::<IS_SSL>::terminate_socket(socket);
+        self.fail(crate::Error::Timeout);
     }
 
     /// `dns_error` is the raw `getaddrinfo(3)` return code when the name
@@ -1992,10 +2128,10 @@ impl<'a> HTTPClient<'a> {
             // by `HTTPContext::connect` and valid for the connect attempt.
             // Copy it: the JS side outlives this client's borrowed URL buffers.
             self.state.dns_hostname = Some(self.connected_url.hostname.into());
-            self.fail(err!(DNSResolveFailed));
+            self.fail(crate::Error::DNSResolveFailed);
             return;
         }
-        self.fail(err!(ConnectionRefused));
+        self.fail(crate::Error::ConnectionRefused);
     }
 
     /// Get the buffer we use to write data to the network.
@@ -2433,9 +2569,14 @@ impl<'a> HTTPClient<'a> {
 
         self.state.response_message_buffer = MutableString::default();
 
-        // copy the NonNull, do NOT `.take()` — the
-        // TooManyRedirects `fail()` below still needs a populated body pointer.
-        let body_out_str = self.state.body_out_str.unwrap();
+        // Copy the NonNull, do NOT `.take()` — the TooManyRedirects `fail()`
+        // below still needs a populated body pointer. No owner buffer means
+        // the request is already terminal; there is nowhere to deliver a
+        // redirected response.
+        let Some(body_out_str) = self.state.body_out_str else {
+            GenHttpContext::<IS_SSL>::close_socket(socket);
+            return;
+        };
         self.remaining_redirect_count = self.remaining_redirect_count.saturating_sub(1);
         self.flags.redirected = true;
         debug_assert!(self.redirect_type == FetchRedirect::Follow);
@@ -2496,7 +2637,7 @@ impl<'a> HTTPClient<'a> {
         // TODO: should this check be before decrementing the redirect count?
         // the current logic will allow one less redirect than requested
         if self.remaining_redirect_count == 0 {
-            self.fail(err!(TooManyRedirects));
+            self.fail(crate::Error::TooManyRedirects);
             return;
         }
         self.state.reset();
@@ -2505,11 +2646,40 @@ impl<'a> HTTPClient<'a> {
         self.flags.proxy_tunneling = false;
         self.close_proxy_tunnel(false);
         self.flags.protocol = Protocol::Http1_1;
+        self.reevaluate_proxy_for_redirect();
 
         self.start(
             HTTPRequestBody::Bytes(request_body),
             body_out::as_mut(body_out_str),
         );
+    }
+
+    /// Re-resolve `http_proxy` against the post-redirect `self.url`. The
+    /// decision was made once on the JS thread at request creation; without
+    /// this, a redirect into a `no_proxy`-exempt host would still be sent via
+    /// the proxy, and a redirect out of one would bypass it.
+    fn reevaluate_proxy_for_redirect(&mut self) {
+        let Some(settings) = self.proxy_settings.as_deref() else {
+            return;
+        };
+        let new_href = settings.resolve(&self.url);
+        let current = self.http_proxy.as_ref().map(|p| p.href).unwrap_or(b"");
+        if new_href.unwrap_or(b"") == current {
+            return;
+        }
+        match new_href {
+            None => {
+                self.http_proxy = None;
+                self.proxy_authorization = None;
+            }
+            Some(href) => {
+                // SAFETY: self-borrow. `href` points into `self.proxy_settings`'s
+                // boxed storage, which lives as long as `self` (>= `'a`).
+                let proxy: URL<'a> = unsafe { URL::parse(href).erase_lifetime() };
+                self.proxy_authorization = async_http::build_proxy_authorization(&proxy);
+                self.http_proxy = Some(proxy);
+            }
+        }
     }
 
     /// **Not thread safe while request is in-flight**
@@ -2545,7 +2715,7 @@ impl<'a> HTTPClient<'a> {
 
         // Aborted before connecting
         if self.signals.get(signals::Field::Aborted) {
-            self.fail(err!(AbortedBeforeConnecting));
+            self.fail(crate::Error::AbortedBeforeConnecting);
             self.complete_connecting_process();
             return;
         }
@@ -2555,7 +2725,7 @@ impl<'a> HTTPClient<'a> {
         // this an http:// request would silently fall through to HTTP/1.1.
         if !IS_SSL {
             if self.flags.force_http2 {
-                self.fail(err!(HTTP2Unsupported));
+                self.fail(crate::Error::HTTP2Unsupported);
                 self.complete_connecting_process();
                 return;
             }
@@ -2585,7 +2755,7 @@ impl<'a> HTTPClient<'a> {
                             self.url.hostname,
                             alt_port,
                         ) {
-                            self.fail(err!(ConnectionRefused));
+                            self.fail(crate::Error::ConnectionRefused);
                         }
                         self.complete_connecting_process();
                         return;
@@ -2599,7 +2769,7 @@ impl<'a> HTTPClient<'a> {
         // callback is set, so `protocol: "http2"` + callback would handshake and
         // then fail in `first_call` anyway. Fail up front instead.
         if self.flags.force_http2 && self.signals.get(signals::Field::CertErrors) {
-            self.fail(err!(HTTP2Unsupported));
+            self.fail(crate::Error::HTTP2Unsupported);
             self.complete_connecting_process();
             return;
         }
@@ -2608,22 +2778,22 @@ impl<'a> HTTPClient<'a> {
             // h3 never routes through `check_server_identity`; refuse the
             // combination instead of silently skipping the JS callback.
             if self.signals.get(signals::Field::CertErrors) {
-                self.fail(err!(HTTP3Unsupported));
+                self.fail(crate::Error::HTTP3Unsupported);
                 self.complete_connecting_process();
                 return;
             }
             if !IS_SSL {
-                self.fail(err!(HTTP3Unsupported));
+                self.fail(crate::Error::HTTP3Unsupported);
                 self.complete_connecting_process();
                 return;
             }
             if self.http_proxy.is_some() || self.unix_socket_path.slice().len() > 0 {
-                self.fail(err!(HTTP3Unsupported));
+                self.fail(crate::Error::HTTP3Unsupported);
                 self.complete_connecting_process();
                 return;
             }
             if self.has_tls_options_unsupported_by_h3() {
-                self.fail(err!(HTTP3Unsupported));
+                self.fail(crate::Error::HTTP3Unsupported);
                 self.complete_connecting_process();
                 return;
             }
@@ -2632,7 +2802,7 @@ impl<'a> HTTPClient<'a> {
             let Some(ctx) = h3::ClientContext::get_or_create(unsafe {
                 NonNull::new_unchecked(http_thread().uws_loop)
             }) else {
-                self.fail(err!(HTTP3Unsupported));
+                self.fail(crate::Error::HTTP3Unsupported);
                 self.complete_connecting_process();
                 return;
             };
@@ -2641,7 +2811,7 @@ impl<'a> HTTPClient<'a> {
                 self.url.hostname,
                 self.url.get_port_auto(),
             ) {
-                self.fail(err!(ConnectionRefused));
+                self.fail(crate::Error::ConnectionRefused);
             }
             self.complete_connecting_process();
             return;
@@ -2667,7 +2837,7 @@ impl<'a> HTTPClient<'a> {
                 && self.state.response_stage != ResponseStage::Fail)
         {
             GenHttpContext::<IS_SSL>::mark_socket_as_dead(socket);
-            self.fail(err!(ConnectionClosed));
+            self.fail(crate::Error::ConnectionClosed);
             self.complete_connecting_process();
             return;
         }
@@ -2707,7 +2877,7 @@ impl<'a> HTTPClient<'a> {
     /// `state.flags.body_compressed`.
     ///
     /// [`spill_compressed_body`]: Self::spill_compressed_body
-    pub fn compress_body_for_send(&mut self, into_shared: bool) -> Result<(), bun_core::Error> {
+    pub fn compress_body_for_send(&mut self, into_shared: bool) -> crate::Result<()> {
         let Some(opt) = self.compress else {
             return Ok(());
         };
@@ -2783,7 +2953,7 @@ impl<'a> HTTPClient<'a> {
     fn send_initial_request_payload<const IS_FIRST_CALL: bool, const IS_SSL: bool>(
         &mut self,
         socket: HttpSocket<IS_SSL>,
-    ) -> Result<InitialRequestPayloadResult, bun_core::Error> {
+    ) -> crate::Result<InitialRequestPayloadResult> {
         self.compress_body_for_send(true)?;
 
         let mut request_body_buffer = self.get_request_body_send_buffer();
@@ -2832,7 +3002,7 @@ impl<'a> HTTPClient<'a> {
         // Headers forever. Surface ConnectionClosed so the caller's
         // close_and_fail runs.
         if socket.is_closed() || socket.is_shutdown() {
-            return Err(err!(ConnectionClosed));
+            return Err(crate::Error::ConnectionClosed);
         }
         let amount = write_to_socket::<IS_SSL>(socket, to_send)?;
         if IS_FIRST_CALL {
@@ -2894,12 +3064,12 @@ impl<'a> HTTPClient<'a> {
         socket: HttpSocket<IS_SSL>,
         buffer: &mut bun_io::StreamBuffer,
         data: &[u8],
-    ) -> Result<bool, bun_core::Error> {
+    ) -> crate::Result<bool> {
         // Through a proxy tunnel the stream body goes via the inner TLS,
         // not the outer socket.
         if let Some(proxy_ptr) = self.proxy_tunnel.as_ref().map(|p| p.as_ptr()) {
             if socket.is_closed() || socket.is_shutdown() {
-                return Err(err!(ConnectionClosed));
+                return Err(crate::Error::ConnectionClosed);
             }
             let proxy = proxy_tunnel::raw_as_mut(proxy_ptr);
             // Any Err is backpressure: WantRead/WantWrite retry on the next
@@ -3301,7 +3471,7 @@ impl<'a> HTTPClient<'a> {
                     // the tunnel would succeed at the SSL layer and buffer
                     // forever on a dead outer socket.
                     if socket.is_closed() || socket.is_shutdown() {
-                        self.close_and_fail::<IS_SSL>(err!(ConnectionClosed), socket);
+                        self.close_and_fail::<IS_SSL>(crate::Error::ConnectionClosed, socket);
                         return;
                     }
                     // just wait and retry when onWritable! if closed internally will call proxy.onClose
@@ -3389,7 +3559,7 @@ impl<'a> HTTPClient<'a> {
 
     pub fn close_and_fail<const IS_SSL: bool>(
         &mut self,
-        err: bun_core::Error,
+        err: crate::Error,
         socket: HttpSocket<IS_SSL>,
     ) {
         bun_core::scoped_log!(fetch, "closeAndFail: {:?}", err);
@@ -3409,55 +3579,17 @@ impl<'a> HTTPClient<'a> {
         } else {
             crate::ssl_config::SSLConfig::ZERO
         };
-        // Take ownership of the CONNECT accumulation buffer BEFORE entering
-        // ProxyTunnel::start. The envelope has been fully consumed by the
-        // caller (handle_on_data_headers); we leave an empty buffer behind so
-        // that when the tunnel later re-enters handle_on_data_headers with
-        // decrypted upstream bytes, the stale CONNECT envelope isn't re-parsed
-        // as the user-facing response (see #30381). Without this, a split
-        // CONNECT 200 response (envelope arriving across two TCP reads) stays
-        // buffered; the tunnel's re-entry appends the decrypted upstream bytes
-        // onto it, re-parses the envelope as the response (leaking
-        // proxy-agent / connection: close into response.headers), and hands
-        // the upstream's raw HTTP/1.1 bytes to the body unparsed.
-        //
-        // `start_payload` may alias into this buffer's heap storage on the
-        // split-read path, but `std::mem::take` swaps only the `Vec` header —
-        // the heap allocation (and thus the bytes `start_payload` points at)
-        // stays put until `envelope_buf` is dropped at the end of this
-        // function. ProxyTunnel::start copies `start_payload` into the TLS BIO
-        // via start_with_payload -> BIO_write before it returns, so the bytes
-        // are captured before the drop.
-        //
-        // We hold the buffer in a local and drop it AFTER start() rather than
-        // clearing `self.state.response_message_buffer` afterwards:
-        // ProxyTunnel::start has synchronous failure paths (SSLWrapper init
-        // error, or a handshake-traffic error that synchronously fires
-        // on_close) that call close_and_fail -> fail -> the result callback,
-        // which can free the AsyncHTTP that embeds `*self`. Touching `self`
-        // after start() returns would be a use-after-free.
-        let envelope_buf = std::mem::take(&mut self.state.response_message_buffer);
+        // The sole caller (`handle_on_data_headers`) has already moved
+        // `response_message_buffer` into a local, so the CONNECT envelope is
+        // gone from `self` and `start_payload` borrows that caller local (or
+        // `incoming_data`), which outlives this call; the #30381 split-envelope
+        // hazard is handled there. ProxyTunnel::start has synchronous failure
+        // paths (SSLWrapper init error, or a handshake-traffic error that
+        // synchronously fires on_close) that call close_and_fail -> fail -> the
+        // result callback, which can free the AsyncHTTP that embeds `*self`.
+        debug_assert!(self.state.response_message_buffer.list.capacity() == 0);
         ProxyTunnel::start::<IS_SSL>(self, socket, &ssl_options, start_payload);
         // Must not reference `self` past this point — see comment above.
-        drop(envelope_buf);
-    }
-
-    #[inline]
-    fn handle_short_read<const IS_SSL: bool>(
-        &mut self,
-        incoming_data: &[u8],
-        socket: HttpSocket<IS_SSL>,
-        needs_move: bool,
-    ) {
-        if needs_move {
-            let to_copy = incoming_data;
-            if !to_copy.is_empty() {
-                // this one will probably be another chunk, so we leave a little extra room
-                let _ = self.state.response_message_buffer.append(to_copy); // OOM/capacity: fire-and-forget
-            }
-        }
-
-        self.set_timeout(&socket);
     }
 
     pub fn handle_on_data_headers<const IS_SSL: bool>(
@@ -3471,51 +3603,59 @@ impl<'a> HTTPClient<'a> {
             "handleOnDataHeader data: {}",
             BStr::new(incoming_data)
         );
-        // reshaped for borrowck — `to_read` aliases either
-        // `incoming_data` or `self.state.response_message_buffer`; hold it as a
-        // `RawSlice` (encapsulated outlives-holder backref, safe `.slice()`)
-        // so subsequent `&mut self` calls don't trip the checker.
-        let mut to_read = bun_ptr::RawSlice::new(incoming_data);
-        macro_rules! to_read {
-            () => {
-                to_read.slice()
-            };
-        }
-        let mut needs_move = true;
-        if !self.state.response_message_buffer.list.is_empty() {
+        // Move the accumulation buffer out of `self` so `to_read` can be a
+        // plain `&[u8]` borrow of either `incoming_data` or the local `buffer`,
+        // both disjoint from `&mut self`. The short-read paths move it back;
+        // every other path either drops it (terminal / reset) or lets it drop
+        // here once `clone_metadata()` has deep-copied the parsed headers.
+        let mut buffer = std::mem::take(&mut self.state.response_message_buffer);
+        let needs_move = buffer.list.is_empty();
+        let mut to_read: &[u8] = if needs_move {
+            incoming_data
+        } else {
             // this one probably won't be another chunk, so we use appendSliceExact() to avoid over-allocating
-            let _ = self
-                .state
-                .response_message_buffer
-                .append_slice_exact(incoming_data);
-            to_read = bun_ptr::RawSlice::new(self.state.response_message_buffer.list.as_slice());
-            needs_move = false;
+            let _ = buffer.append_slice_exact(incoming_data);
+            buffer.list.as_slice()
+        };
+
+        // Persist the unparsed tail for the next `on_data` and re-arm the
+        // receive timeout. When `needs_move`, `to_read` is a suffix of
+        // `incoming_data` and is copied into the (currently empty) accumulation
+        // buffer; otherwise `to_read` is a suffix of `buffer`, so the consumed
+        // prefix is drained and `buffer` is moved back into state.
+        macro_rules! short_read {
+            () => {{
+                bun_core::scoped_log!(fetch, "handleShortRead");
+                if needs_move {
+                    if !to_read.is_empty() {
+                        // this one will probably be another chunk, so we leave a little extra room
+                        let _ = self.state.response_message_buffer.append(to_read);
+                    }
+                } else {
+                    let keep = to_read.len();
+                    buffer
+                        .list
+                        .drain_front(buffer.list.len().saturating_sub(keep));
+                    self.state.response_message_buffer = buffer;
+                }
+                self.set_timeout(&socket);
+                return;
+            }};
         }
 
-        loop {
+        let shared_resp = scratch::response_headers();
+        let mut response = loop {
             let mut amount_read: usize = 0;
-
-            // we reset the pending_response each time wich means that on parse error this will be always be empty
-            self.state.pending_response = Some(picohttp::Response::default());
 
             // minimal http/1.1 response is 16 bytes ("HTTP/1.1 200\r\n\r\n")
             // if less than 16 it will always be a ShortRead
-            if to_read!().len() < 16 {
-                bun_core::scoped_log!(fetch, "handleShortRead");
-                if !needs_move {
-                    let remaining = to_read!().len();
-                    let buffer = &mut self.state.response_message_buffer.list;
-                    buffer.drain_front(buffer.len().saturating_sub(remaining));
-                    to_read = bun_ptr::RawSlice::new(buffer.as_slice());
-                }
-                self.handle_short_read::<IS_SSL>(to_read!(), socket, needs_move);
-                return;
+            if to_read.len() < 16 {
+                short_read!();
             }
 
-            let shared_resp = scratch::response_headers();
-            let response = match picohttp::Response::parse_parts(
-                to_read!(),
-                shared_resp,
+            let parsed = match picohttp::Response::parse_parts(
+                to_read,
+                &mut shared_resp[..],
                 Some(&mut amount_read),
             ) {
                 Ok(r) => r,
@@ -3527,18 +3667,14 @@ impl<'a> HTTPClient<'a> {
                     // `response_message_buffer` growth, so use a generous fixed
                     // cap independent of that knob.
                     const MAX_RESPONSE_HEADER_BUFFER: usize = 1024 * 1024;
-                    if to_read!().len() > MAX_RESPONSE_HEADER_BUFFER {
-                        self.close_and_fail::<IS_SSL>(err!(ResponseHeadersTooLarge), socket);
+                    if to_read.len() > MAX_RESPONSE_HEADER_BUFFER {
+                        self.close_and_fail::<IS_SSL>(
+                            crate::Error::ResponseHeadersTooLarge,
+                            socket,
+                        );
                         return;
                     }
-                    if !needs_move {
-                        let remaining = to_read!().len();
-                        let buffer = &mut self.state.response_message_buffer.list;
-                        buffer.drain_front(buffer.len().saturating_sub(remaining));
-                        to_read = bun_ptr::RawSlice::new(buffer.as_slice());
-                    }
-                    self.handle_short_read::<IS_SSL>(to_read!(), socket, needs_move);
-                    return;
+                    short_read!();
                 }
                 Err(e) => {
                     self.close_and_fail::<IS_SSL>(e.into(), socket);
@@ -3546,45 +3682,33 @@ impl<'a> HTTPClient<'a> {
                 }
             };
 
-            // we save the successful parsed response
-            // SAFETY: response borrows SHARED_RESPONSE_HEADERS_BUF / response_message_buffer,
-            // both of which outlive this fn; widen to 'static for storage.
-            // Rebind `response` to the detached `'static` copy so it no longer
-            // borrows `to_read` (lets the `to_read` reassignment below pass
-            // borrowck — `RawSlice::slice` ties output to `&to_read`).
-            let response = unsafe { response.detach_lifetime() };
-            self.state.pending_response = Some(response);
-
             let bytes_read =
-                (usize::try_from(response.bytes_read).expect("int cast")).min(to_read.len());
-            to_read = bun_ptr::RawSlice::new(&to_read.slice()[bytes_read..]);
+                (usize::try_from(parsed.bytes_read).expect("int cast")).min(to_read.len());
+            to_read = &to_read[bytes_read..];
 
-            if response.status_code == 101 {
+            if parsed.status_code == 101 {
                 if self.flags.upgrade_state == HTTPUpgradeState::None
                     || (self.flags.proxy_tunneling && self.proxy_tunnel.is_none())
                 {
                     // we cannot upgrade to websocket because the client did not request it!
-                    self.close_and_fail::<IS_SSL>(err!(UnrequestedUpgrade), socket);
+                    self.close_and_fail::<IS_SSL>(crate::Error::UnrequestedUpgrade, socket);
                     return;
                 }
                 // special case for websocket upgrade
                 self.flags.upgrade_state = HTTPUpgradeState::Upgraded;
-                self.signals
-                    .store(signals::Field::Upgraded, true, Ordering::Relaxed);
                 // start draining the request body
                 self.flush_stream::<IS_SSL>(socket);
-                break;
+                break parsed;
             }
 
             // handle the case where we have a 100 Continue
-            if response.status_code >= 100 && response.status_code < 200 {
+            if parsed.status_code >= 100 && parsed.status_code < 200 {
                 bun_core::scoped_log!(fetch, "information headers");
 
-                self.state.pending_response = None;
-                if to_read!().is_empty() {
+                if to_read.is_empty() {
                     if !needs_move {
-                        let buffer = &mut self.state.response_message_buffer.list;
-                        buffer.drain_front(buffer.len());
+                        buffer.list.clear();
+                        self.state.response_message_buffer = buffer;
                     }
                     // we only received 1XX responses, we wanna wait for the next status code
                     return;
@@ -3593,12 +3717,8 @@ impl<'a> HTTPClient<'a> {
                 continue;
             }
 
-            break;
-        }
-        // pending_response is already `Option<Response<'static>>` (set just above).
-        // NOTE: copy (Response is Copy), do NOT .take() — clone_metadata() below
-        // requires pending_response to remain Some.
-        let mut response: picohttp::Response<'static> = self.state.pending_response.unwrap();
+            break parsed;
+        };
         let should_continue = match self.handle_response_metadata(&mut response) {
             Ok(s) => s,
             Err(err) => {
@@ -3606,10 +3726,6 @@ impl<'a> HTTPClient<'a> {
                 return;
             }
         };
-        // handle_response_metadata may mutate `response`; mirror it back so
-        // clone_metadata() sees the up-to-date headers regardless of the
-        // content-encoding branch below.
-        self.state.pending_response = Some(response);
 
         if (self.state.content_encoding_i as usize) < response.headers.list.len()
             && !self.state.flags.did_set_content_encoding
@@ -3617,8 +3733,6 @@ impl<'a> HTTPClient<'a> {
             // if it compressed with this header, it is no longer because we will decompress it
             self.state.flags.did_set_content_encoding = true;
             self.state.content_encoding_i = u8::MAX;
-            // we need to reset the pending response because we removed a header
-            self.state.pending_response = Some(response);
         }
 
         if should_continue == ShouldContinue::Finished {
@@ -3628,7 +3742,7 @@ impl<'a> HTTPClient<'a> {
             }
             // this means that the request ended
             // clone metadata and return the progress at this point
-            self.clone_metadata();
+            self.clone_metadata(&response);
             // if is chuncked but no body is expected we mark the last chunk
             self.state.flags.received_last_chunk = true;
             // if is not we ignore the content_length
@@ -3639,14 +3753,14 @@ impl<'a> HTTPClient<'a> {
 
         if self.flags.proxy_tunneling && self.proxy_tunnel.is_none() {
             // we are proxing we dont need to cloneMetadata yet
-            self.start_proxy_handshake::<IS_SSL>(socket, to_read!());
+            self.start_proxy_handshake::<IS_SSL>(socket, to_read);
             return;
         }
 
         // we have body data incoming so we clone metadata and keep going
-        self.clone_metadata();
+        self.clone_metadata(&response);
 
-        if to_read!().is_empty() {
+        if to_read.is_empty() {
             // no body data yet, but we can report the headers
             if self.signals.get(signals::Field::HeaderProgress) {
                 self.progress_update::<IS_SSL>(ctx, socket);
@@ -3655,7 +3769,7 @@ impl<'a> HTTPClient<'a> {
         }
 
         if self.state.response_stage == ResponseStage::Body {
-            let report_progress = match self.handle_response_body(to_read!(), true) {
+            let report_progress = match self.handle_response_body(to_read, true) {
                 Ok(b) => b,
                 Err(err) => {
                     self.close_and_fail::<IS_SSL>(err, socket);
@@ -3669,7 +3783,7 @@ impl<'a> HTTPClient<'a> {
             }
         } else if self.state.response_stage == ResponseStage::BodyChunk {
             self.set_timeout(&socket);
-            let report_progress = match self.handle_response_body_chunked_encoding(to_read!()) {
+            let report_progress = match self.handle_response_body_chunked_encoding(to_read) {
                 Ok(b) => b,
                 Err(err) => {
                     self.close_and_fail::<IS_SSL>(err, socket);
@@ -3714,8 +3828,7 @@ impl<'a> HTTPClient<'a> {
         // the proxy_tunnel dispatch above: a tunneled target's raw inner-TLS
         // records must keep reaching the SSLWrapper while parked.
         if self.state.flags.is_waiting_for_cert_check {
-            self.state.pending_response = None;
-            self.close_and_fail::<IS_SSL>(err!(UnexpectedData), socket);
+            self.close_and_fail::<IS_SSL>(crate::Error::UnexpectedData, socket);
             return;
         }
 
@@ -3762,15 +3875,14 @@ impl<'a> HTTPClient<'a> {
             }
             ResponseStage::Fail => {}
             _ => {
-                self.state.pending_response = None;
-                self.close_and_fail::<IS_SSL>(err!(UnexpectedData), socket);
+                self.close_and_fail::<IS_SSL>(crate::Error::UnexpectedData, socket);
                 return;
             }
         }
     }
 
     pub fn close_and_abort<const IS_SSL: bool>(&mut self, socket: HttpSocket<IS_SSL>) {
-        self.close_and_fail::<IS_SSL>(err!(Aborted), socket);
+        self.close_and_fail::<IS_SSL>(crate::Error::Aborted, socket);
     }
 
     fn complete_connecting_process(&mut self) {
@@ -3802,7 +3914,7 @@ impl<'a> HTTPClient<'a> {
         for waiter_ptr in pc.waiters.iter().copied() {
             let waiter = h2::PendingConnect::waiter_mut(waiter_ptr);
             if waiter.signals.get(signals::Field::Aborted) {
-                waiter.fail(err!(Aborted));
+                waiter.fail(crate::Error::Aborted);
                 continue;
             }
             match &mut resolution {
@@ -3813,7 +3925,7 @@ impl<'a> HTTPClient<'a> {
                     // and fail the same way, so fail it here instead of burning
                     // another handshake.
                     if waiter.flags.force_http2 {
-                        waiter.fail(err!(HTTP2Unsupported));
+                        waiter.fail(crate::Error::HTTP2Unsupported);
                         continue;
                     }
                     // Pin to h1 so this `start_` doesn't register a fresh
@@ -3830,7 +3942,7 @@ impl<'a> HTTPClient<'a> {
         }
     }
 
-    fn fail(&mut self, err: bun_core::Error) {
+    fn fail(&mut self, err: crate::Error) {
         self.unregister_abort_tracker();
         self.resolve_pending_h2(PendingH2Resolution::LeaderFailed);
 
@@ -3847,65 +3959,57 @@ impl<'a> HTTPClient<'a> {
         }
     }
 
-    // We have to clone metadata immediately after use
-    pub fn clone_metadata(&mut self) {
-        debug_assert!(self.state.pending_response.is_some());
-        // `Response<'static>` is `Copy`; bind by value so no borrow
-        // of `self.state` is held across the `pending_response = None` write
-        // below.
-        if let Some(response) = self.state.pending_response {
-            if let Some(old) = self.state.cloned_metadata.take() {
-                drop(old); // deinit
-            }
-            let mut builder = picohttp::StringBuilder::default();
-            response.count(&mut builder);
-            builder.count(self.url.href);
-            let _ = builder.allocate();
-            // headers_buf is owned by the cloned_response (aka cloned_response.headers)
-            // `Response::clone` ties its return lifetime to
-            // `headers: &'a mut [Header]`; leak the box to obtain `'static` so
-            // the cloned response can be stored in `HTTPResponseMetadata`.
-            // Reclaimed by `Drop for HTTPResponseMetadata`.
-            let headers_buf = bun_core::heap::release(
-                vec![picohttp::Header::ZERO; response.headers.list.len()].into_boxed_slice(),
-            );
-            let cloned_response = response.clone(headers_buf, &mut builder);
+    /// Deep-copy `response` (headers, status, and this request's `url.href`)
+    /// into owned storage on `state.cloned_metadata` so the caller can drop the
+    /// buffer the parsed slices borrow.
+    pub fn clone_metadata(&mut self, response: &picohttp::Response<'_>) {
+        self.state.cloned_metadata = None;
+        let mut builder = picohttp::StringBuilder::default();
+        response.count(&mut builder);
+        builder.count(self.url.href);
+        let _ = builder.allocate();
+        // headers_buf is owned by the cloned_response (aka cloned_response.headers)
+        // `Response::clone` ties its return lifetime to
+        // `headers: &'a mut [Header]`; leak the box to obtain `'static` so
+        // the cloned response can be stored in `HTTPResponseMetadata`.
+        // Reclaimed by `Drop for HTTPResponseMetadata`.
+        let headers_buf = bun_core::heap::release(
+            vec![picohttp::Header::ZERO; response.headers.list.len()].into_boxed_slice(),
+        );
+        let cloned_response = response.clone(headers_buf, &mut builder);
+        // SAFETY: `href` aliases `builder`'s heap buffer; ownership of that
+        // buffer is transferred to `owned_buf` immediately below and stored
+        // alongside `href` in `HTTPResponseMetadata`.
+        let href = bun_ptr::RawSlice::new(unsafe { builder.append_raw(self.url.href) });
+        // Transfer the single backing allocation out of the builder
+        // (`builder.ptr.?[0..builder.cap]`) so its Drop becomes a no-op.
+        let owned_buf = builder.move_to_slice();
+        self.state.cloned_metadata = Some(HTTPResponseMetadata {
+            owned_buf,
+            response: cloned_response,
+            url: href,
+        });
+    }
 
-            // we clean the temporary response since cloned_metadata is now the owner
-            self.state.pending_response = None;
-
-            // SAFETY: `href` aliases `builder`'s heap buffer; ownership of that
-            // buffer is transferred to `owned_buf` immediately below and stored
-            // alongside `href` in `HTTPResponseMetadata`.
-            let href = bun_ptr::RawSlice::new(unsafe { builder.append_raw(self.url.href) });
-            // Transfer the single backing allocation out of the builder
-            // (`builder.ptr.?[0..builder.cap]`) so its Drop becomes a no-op.
-            let owned_buf = builder.move_to_slice();
-            self.state.cloned_metadata = Some(HTTPResponseMetadata {
-                owned_buf,
-                response: cloned_response,
-                url: href,
-            });
-        } else {
-            // we should never clone metadata that dont exists
-            // we added a empty metadata just in case but will hit the assert
-            self.state.cloned_metadata = Some(HTTPResponseMetadata::default());
+    /// The idle timeout to arm for this request, in seconds (0 = disabled):
+    /// the per-request `fetch({ timeout })` override when present, otherwise
+    /// the global `BUN_CONFIG_HTTP_IDLE_TIMEOUT` default. Both are already
+    /// normalised (see [`normalize_idle_timeout_seconds`]).
+    #[inline]
+    pub fn effective_idle_timeout_seconds(&self) -> c_uint {
+        if self.flags.disable_timeout {
+            return 0;
         }
+        self.idle_timeout_seconds
+            .unwrap_or_else(idle_timeout_seconds)
     }
 
     pub fn set_timeout<S: SocketTimeout>(&self, socket: &S) {
-        // Duration comes from `IDLE_TIMEOUT_SECONDS` (tunable via
-        // `BUN_CONFIG_HTTP_IDLE_TIMEOUT`, set low in tests) and is normalised once
-        // in `HTTPThread::on_start` — clamped to the uSockets long-timer bound and
-        // rounded up to a whole minute above 240s — so this is a plain
-        // pass-through. `socket.set_timeout` picks the short-tick timer for values
-        // ≤ 240s and the minute-granularity long timer above that, so the default
-        // 300s maps to the same 5-minute long timer as before.
-        if self.flags.disable_timeout || idle_timeout_seconds() == 0 {
-            socket.set_timeout(0);
-            return;
-        }
-        socket.set_timeout(idle_timeout_seconds());
+        // Values are pre-normalised (global: `HTTPThread::on_start`;
+        // per-request: `AsyncHTTP::init`) so this is a plain pass-through.
+        // `socket.set_timeout` picks the short-tick timer for values ≤ 240s
+        // and the minute-granularity long timer above that.
+        socket.set_timeout(self.effective_idle_timeout_seconds());
     }
 
     fn maybe_pause_receive<const IS_SSL: bool>(&mut self, socket: HttpSocket<IS_SSL>) {
@@ -3980,14 +4084,6 @@ impl<'a> HTTPClient<'a> {
         if self.flags.protocol != Protocol::Http1_1 {
             return self.send_progress_update_multiplexed();
         }
-        // reshaped for borrowck — `to_result()` returns an
-        // `HTTPClientResult<'_>` whose lifetime is tied to `&mut self` (via the
-        // `body: &mut MutableString` borrow). Holding that result across the
-        // `is_done` mutations below would require a second live `&mut Self`,
-        // which PORTING.md §Forbidden flags as aliased `&mut`. Instead:
-        // snapshot every owned/Copy field out of the result, drop it, mutate
-        // `self` directly, then rebuild a fresh `HTTPClientResult` for the
-        // callback from the snapshotted fields + the restored body.
         let body = self.state.body_out_str;
         // Snapshot the body buffer's CONTENTS by value so that `state.reset()`
         // — which calls `body.reset()` and clears the list — doesn't deliver
@@ -3995,32 +4091,8 @@ impl<'a> HTTPClient<'a> {
         let body_snapshot = body_out::take_list(body);
         let callback = self.result_callback;
 
-        let (
-            has_more,
-            redirected,
-            can_stream,
-            is_http2,
-            fail,
-            dns_error,
-            dns_hostname,
-            metadata,
-            body_size,
-            certificate_info,
-        ) = {
-            let r = self.to_result();
-            (
-                r.has_more,
-                r.redirected,
-                r.can_stream,
-                r.is_http2,
-                r.fail,
-                r.dns_error,
-                r.dns_hostname,
-                r.metadata,
-                r.body_size,
-                r.certificate_info,
-            )
-        }; // r (and its &mut borrow of self) dropped here
+        let mut result = self.to_result();
+        let has_more = result.has_more;
         let is_done = !has_more;
 
         bun_core::scoped_log!(fetch, "progressUpdate {}", is_done);
@@ -4147,23 +4219,8 @@ impl<'a> HTTPClient<'a> {
 
         // Restore the body bytes that `state.reset()` cleared.
         body_out::restore_list(body, body_snapshot);
-        let async_http = self.parent_async_http();
-        // Rebuild the result from snapshotted fields now that all `&mut self`
-        // mutations are finished — no aliased borrows remain.
-        let result = HTTPClientResult {
-            body: body_out::opt_mut(body),
-            has_more,
-            redirected,
-            can_stream,
-            is_http2,
-            fail,
-            dns_error,
-            dns_hostname,
-            metadata,
-            body_size,
-            certificate_info,
-        };
-        callback.run(async_http, result);
+        result.body = body_out::opt_mut(body);
+        callback.run(self.parent_async_http(), result);
 
         if has_more {
             self.maybe_pause_receive(socket);
@@ -4185,44 +4242,13 @@ impl<'a> HTTPClient<'a> {
     /// transport, so there is no `ctx`/`socket` to hand back to the pool here.
     fn send_progress_update_multiplexed(&mut self) {
         debug_assert!(self.flags.protocol != Protocol::Http1_1);
-        // reshaped for borrowck — `to_result()` ties `result`'s
-        // lifetime to `&mut self`, so holding it across the `is_done` mutations
-        // would require a second live `&mut Self` (aliased UB). Instead snapshot
-        // every owned/Copy field out of the result, drop it, mutate `self`
-        // directly, then rebuild a fresh `HTTPClientResult` for the callback.
-        // See send_progress_update_without_stage_check for the same pattern.
         let body = self.state.body_out_str;
         // Snapshot the body buffer's CONTENTS by value; restored below.
         let body_snapshot = body_out::take_list(body);
         let callback = self.result_callback;
 
-        let (
-            has_more,
-            redirected,
-            can_stream,
-            is_http2,
-            fail,
-            dns_error,
-            dns_hostname,
-            metadata,
-            body_size,
-            certificate_info,
-        ) = {
-            let r = self.to_result();
-            (
-                r.has_more,
-                r.redirected,
-                r.can_stream,
-                r.is_http2,
-                r.fail,
-                r.dns_error,
-                r.dns_hostname,
-                r.metadata,
-                r.body_size,
-                r.certificate_info,
-            )
-        }; // r (and its &mut borrow of self) dropped here
-        let is_done = !has_more;
+        let mut result = self.to_result();
+        let is_done = !result.has_more;
         bun_core::scoped_log!(fetch, "progressUpdate {}", is_done);
         if is_done {
             self.unregister_abort_tracker();
@@ -4234,23 +4260,8 @@ impl<'a> HTTPClient<'a> {
         }
         // Restore the body bytes that `state.reset()` cleared.
         body_out::restore_list(body, body_snapshot);
-        let async_http = self.parent_async_http();
-        // Rebuild the result from snapshotted fields now that all `&mut self`
-        // mutations are finished — no aliased borrows remain.
-        let result = HTTPClientResult {
-            body: body_out::opt_mut(body),
-            has_more,
-            redirected,
-            can_stream,
-            is_http2,
-            fail,
-            dns_error,
-            dns_hostname,
-            metadata,
-            body_size,
-            certificate_info,
-        };
-        callback.run(async_http, result);
+        result.body = body_out::opt_mut(body);
+        callback.run(self.parent_async_http(), result);
     }
 
     /// `do_redirect` minus the per-request socket release/close. The session
@@ -4286,9 +4297,13 @@ impl<'a> HTTPClient<'a> {
             b""
         };
         self.state.response_message_buffer = MutableString::default();
-        // copy the NonNull, do NOT `.take()` — the
-        // TooManyRedirects `fail()` below still needs a populated body pointer.
-        let body_out_str = self.state.body_out_str.unwrap();
+        // Copy the NonNull, do NOT `.take()` — the TooManyRedirects `fail()`
+        // below still needs a populated body pointer. No owner buffer means
+        // the request is already terminal; there is nowhere to deliver a
+        // redirected response.
+        let Some(body_out_str) = self.state.body_out_str else {
+            return;
+        };
         self.remaining_redirect_count = self.remaining_redirect_count.saturating_sub(1);
         self.flags.redirected = true;
         debug_assert!(self.redirect_type == FetchRedirect::Follow);
@@ -4296,12 +4311,13 @@ impl<'a> HTTPClient<'a> {
         self.connected_url = URL::default();
         self.prev_redirect = Vec::new();
         if self.remaining_redirect_count == 0 {
-            self.fail(err!(TooManyRedirects));
+            self.fail(crate::Error::TooManyRedirects);
             return;
         }
         self.state.reset();
         self.flags.proxy_tunneling = false;
         self.flags.protocol = Protocol::Http1_1;
+        self.reevaluate_proxy_for_redirect();
         // SAFETY: body_out_str points at the caller-owned MutableString.
         self.start(
             HTTPRequestBody::Bytes(request_body),
@@ -4390,7 +4406,14 @@ impl<'a> HTTPClient<'a> {
         }
     }
 
-    pub fn to_result(&mut self) -> HTTPClientResult<'_> {
+    /// Build the result payload for the progress/completion callback.
+    ///
+    /// `body` is left `None`: every caller attaches it from `state.body_out_str`
+    /// *after* the `state.reset()` that follows this call (reset writes through
+    /// the same allocation). With `body` absent the result is fully owned, so
+    /// it can be held across the caller's `&mut self` mutations without a
+    /// lifetime widen.
+    pub fn to_result(&mut self) -> HTTPClientResult<'static> {
         let body_size: BodySize = if self.state.is_chunked_encoding() {
             BodySize::TotalReceived(self.state.total_body_received)
         } else if let Some(content_length) = self.state.content_length {
@@ -4399,32 +4422,35 @@ impl<'a> HTTPClient<'a> {
             BodySize::Unknown
         };
 
-        let mut certificate_info: Option<CertificateInfo> = None;
-        if let Some(info) = self.state.certificate_info.take() {
-            // transfer owner ship of the certificate info here
-            certificate_info = Some(info);
-        } else if let Some(metadata) = self.state.cloned_metadata.take() {
-            // transfer owner ship of the metadata here
-            return HTTPClientResult {
-                metadata: Some(metadata),
-                body: body_out::opt_mut(self.state.body_out_str),
-                redirected: self.flags.redirected,
-                fail: self.state.fail,
-                dns_error: self.state.dns_error,
-                dns_hostname: self.state.dns_hostname.take(),
-                // check if we are reporting cert errors, do not have a fail state and we are not done
-                has_more: certificate_info.is_some()
-                    || (self.state.fail.is_none() && !self.state.is_done()),
-                body_size,
-                certificate_info: None,
-                can_stream: (self.state.request_stage == RequestStage::Body
-                    || self.state.request_stage == RequestStage::ProxyBody)
-                    && self.flags.is_streaming_request_body,
-                is_http2: self.flags.protocol != Protocol::Http1_1,
-            };
+        // A followed redirect's intermediate head was only cloned to drive
+        // do_redirect(); on failure it must not surface as the final Response.
+        if self.state.flags.is_redirect_pending && self.state.fail.is_some() {
+            self.state.cloned_metadata = None;
+        }
+
+        let certificate_info = self.state.certificate_info.take();
+        if certificate_info.is_none() {
+            if let Some(metadata) = self.state.cloned_metadata.take() {
+                // transfer ownership of the metadata here
+                return HTTPClientResult {
+                    metadata: Some(metadata),
+                    body: None,
+                    redirected: self.flags.redirected,
+                    fail: self.state.fail,
+                    dns_error: self.state.dns_error,
+                    dns_hostname: self.state.dns_hostname.take(),
+                    has_more: self.state.fail.is_none() && !self.state.is_done(),
+                    body_size,
+                    certificate_info: None,
+                    can_stream: (self.state.request_stage == RequestStage::Body
+                        || self.state.request_stage == RequestStage::ProxyBody)
+                        && self.flags.is_streaming_request_body,
+                    is_http2: self.flags.protocol != Protocol::Http1_1,
+                };
+            }
         }
         HTTPClientResult {
-            body: body_out::opt_mut(self.state.body_out_str),
+            body: None,
             metadata: None,
             redirected: self.flags.redirected,
             fail: self.state.fail,
@@ -4447,7 +4473,7 @@ impl<'a> HTTPClient<'a> {
         &mut self,
         incoming_data: &[u8],
         is_only_buffer: bool,
-    ) -> Result<bool, bun_core::Error> {
+    ) -> crate::Result<bool> {
         debug_assert!(self.state.transfer_encoding == Encoding::Identity);
         let content_length = self.state.content_length;
         if let Some(len) = content_length
@@ -4470,7 +4496,7 @@ impl<'a> HTTPClient<'a> {
     fn handle_response_body_from_single_packet(
         &mut self,
         incoming_data: &[u8],
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::Result<()> {
         if !self.state.is_chunked_encoding() {
             self.state.total_body_received += incoming_data.len();
             bun_core::scoped_log!(
@@ -4482,25 +4508,14 @@ impl<'a> HTTPClient<'a> {
         // we can ignore the body data in redirects
         if !self.state.flags.is_redirect_pending {
             if self.state.encoding.is_compressed() {
-                let body_out = self.state.body_out_str.unwrap();
-                self.state
-                    .decompress_bytes(incoming_data, body_out::as_mut(body_out), true)?;
+                if let Some(body_out) = self.state.body_out_str {
+                    self.state
+                        .decompress_bytes(incoming_data, body_out::as_mut(body_out), true)?;
+                }
             } else {
                 self.state
                     .get_body_buffer()
                     .append_slice_exact(incoming_data)?;
-            }
-
-            if self.state.response_message_buffer.owns(incoming_data) {
-                if cfg!(debug_assertions) {
-                    // i'm not sure why this would happen and i haven't seen it happen
-                    // but we should check
-                    debug_assert!(
-                        self.state.get_body_buffer().list.as_ptr()
-                            != self.state.response_message_buffer.list.as_ptr()
-                    );
-                }
-                self.state.response_message_buffer = MutableString::default();
             }
         }
 
@@ -4511,7 +4526,7 @@ impl<'a> HTTPClient<'a> {
     fn handle_response_body_from_multiple_packets(
         &mut self,
         incoming_data: &[u8],
-    ) -> Result<bool, bun_core::Error> {
+    ) -> crate::Result<bool> {
         // reshaped for borrowck — get_body_buffer() may return
         // `&mut self.state.compressed_body`, so its borrow must be scoped
         // tightly and not held across other `self.state.*` accesses (would be
@@ -4548,11 +4563,9 @@ impl<'a> HTTPClient<'a> {
         // done or streaming
         let is_done =
             content_length.is_some() && self.state.total_body_received >= content_length.unwrap();
-        if is_done
-            || self.signals.get(signals::Field::ResponseBodyStreaming)
-            || content_length.is_none()
-            || self.signals.body_receive_mode.is_some()
-        {
+        let is_streaming = self.signals.get(signals::Field::ResponseBodyStreaming)
+            || self.signals.body_receive_mode.is_some();
+        if is_done || is_streaming || content_length.is_none() {
             let is_final_chunk = is_done;
             // Move the body buffer's bytes out — process_body_buffer takes `&mut self.state`
             // and may mutate `compressed_body` (via decompress_bytes' reset) or `body_out_str`,
@@ -4568,7 +4581,10 @@ impl<'a> HTTPClient<'a> {
 
             let total_received = self.state.total_body_received;
             self.report_progress(total_received);
-            return Ok(is_done || processed);
+            // Close-delimited bodies still need per-packet decompression, but
+            // a non-streaming consumer must not see per-packet progress: the
+            // terminal callback (on close) is the first to carry metadata.
+            return Ok(is_done || (processed && is_streaming));
         }
         Ok(false)
     }
@@ -4576,7 +4592,7 @@ impl<'a> HTTPClient<'a> {
     pub fn handle_response_body_chunked_encoding(
         &mut self,
         incoming_data: &[u8],
-    ) -> Result<bool, bun_core::Error> {
+    ) -> crate::Result<bool> {
         let small_len = 16 * 1024usize;
         if incoming_data.len() <= small_len && self.state.get_body_buffer().list.is_empty() {
             self.handle_response_body_chunked_encoding_from_single_packet(incoming_data)
@@ -4588,7 +4604,7 @@ impl<'a> HTTPClient<'a> {
     fn handle_response_body_chunked_encoding_from_multiple_packets(
         &mut self,
         incoming_data: &[u8],
-    ) -> Result<bool, bun_core::Error> {
+    ) -> crate::Result<bool> {
         // reshaped for borrowck — `chunked_decoder` and the body
         // buffer (`compressed_body` / `body_out_str`) are disjoint fields of
         // `self.state`, so borrow them once together via the split accessor and
@@ -4631,7 +4647,7 @@ impl<'a> HTTPClient<'a> {
 
         match pret {
             // Invalid HTTP response body
-            -1 => return Err(err!(InvalidHTTPResponse)),
+            -1 => return Err(crate::Error::InvalidHTTPResponse),
             // Needs more data
             -2 => {
                 self.report_progress(buffer_len);
@@ -4667,7 +4683,7 @@ impl<'a> HTTPClient<'a> {
     fn handle_response_body_chunked_encoding_from_single_packet(
         &mut self,
         incoming_data: &[u8],
-    ) -> Result<bool, bun_core::Error> {
+    ) -> crate::Result<bool> {
         let small = scratch::single_packet_small_buffer();
         debug_assert!(incoming_data.len() <= small.len());
 
@@ -4675,31 +4691,19 @@ impl<'a> HTTPClient<'a> {
         // using content-encoding per chunk is not supported
         self.state.chunked_decoder.consume_trailer = 1;
 
-        // Capture the length up front so no `&[u8]` aliases the live `&mut [u8]` below.
+        // `handle_on_data_headers` moves `response_message_buffer` into a
+        // local before dispatching here, so `incoming_data` never aliases
+        // `self` and the scratch copy is always sufficient (the dispatcher
+        // bounds `incoming_data.len()` to the scratch size).
         let in_len = incoming_data.len();
-        let buffer: &mut [u8] = if self.state.response_message_buffer.owns(incoming_data) {
-            // if we've already copied the buffer once, we can avoid copying it again.
-            // SAFETY: `incoming_data` is a subslice of `response_message_buffer.list`
-            // (`owns` just verified).
-            // `incoming_data.as_ptr() as *mut u8` would carry SharedReadOnly provenance
-            // (it came from a `&[u8]`) and writing through it is UB. Derive the mutable
-            // slice from the owning Vec instead so the write has Unique provenance.
-            let base = self.state.response_message_buffer.list.as_mut_ptr();
-            let off = incoming_data.as_ptr() as usize - base as usize;
-            // SAFETY: `owns()` proved `[base+off, base+off+in_len)` lies within
-            // `response_message_buffer.list`; `base` carries Unique provenance.
-            unsafe { bun_core::ffi::slice_mut(base.add(off), in_len) }
-        } else {
-            small[0..in_len].copy_from_slice(incoming_data);
-            &mut small[0..in_len]
-        };
+        let buffer = &mut small[0..in_len];
+        buffer.copy_from_slice(incoming_data);
 
         let mut bytes_decoded = in_len;
         // phr_decode_chunked mutates in-place
         // SAFETY: `buffer` is an exclusive &mut [u8] of len == in_len; offset
         // len - in_len == 0 is trivially in bounds. `chunked_decoder` is a
-        // disjoint field of `self.state` (no live borrow of `self` at this
-        // point — `buffer` is raw-derived or borrows `small`).
+        // disjoint field of `self.state` (`buffer` borrows `small`).
         let pret = unsafe {
             picohttp::phr_decode_chunked(
                 &raw mut self.state.chunked_decoder,
@@ -4717,7 +4721,7 @@ impl<'a> HTTPClient<'a> {
         );
         match pret {
             // Invalid HTTP response body
-            -1 => Err(err!(InvalidHTTPResponse)),
+            -1 => Err(crate::Error::InvalidHTTPResponse),
             // Needs more data
             -2 => {
                 self.report_progress(buffer.len());
@@ -4759,7 +4763,7 @@ impl<'a> HTTPClient<'a> {
     pub fn handle_response_metadata(
         &mut self,
         response: &mut picohttp::Response,
-    ) -> Result<ShouldContinue, bun_core::Error> {
+    ) -> crate::Result<ShouldContinue> {
         let mut location: &[u8] = b"";
         let mut pretend_304 = false;
         let mut is_server_sent_events = false;
@@ -4785,7 +4789,7 @@ impl<'a> HTTPClient<'a> {
                     // into the keep-alive pool.
                     let Ok(content_length) = bun_core::parse_unsigned::<usize>(header.value(), 10)
                     else {
-                        return Err(err!(InvalidContentLength));
+                        return Err(crate::Error::InvalidContentLength);
                     };
                     if self.method.has_body() {
                         if self
@@ -4793,7 +4797,7 @@ impl<'a> HTTPClient<'a> {
                             .content_length
                             .is_some_and(|prev| prev != content_length)
                         {
-                            return Err(err!(InvalidContentLength));
+                            return Err(crate::Error::InvalidContentLength);
                         }
                         self.state.content_length = Some(content_length);
                     } else {
@@ -4865,7 +4869,7 @@ impl<'a> HTTPClient<'a> {
                     } else if strings::eql_case_insensitive_ascii_check_length(value, b"chunked") {
                         self.state.transfer_encoding = Encoding::Chunked;
                     } else {
-                        return Err(err!(UnsupportedTransferEncoding));
+                        return Err(crate::Error::UnsupportedTransferEncoding);
                     }
                 }
                 h if h == hash_header_const(b"Location") => {
@@ -5001,7 +5005,7 @@ impl<'a> HTTPClient<'a> {
                                 HTTPRequestBody::Stream(_)
                             )
                         {
-                            return Err(err!(RequestBodyNotReusable));
+                            return Err(crate::Error::RequestBodyNotReusable);
                         }
                         let is_same_origin;
 
@@ -5015,17 +5019,27 @@ impl<'a> HTTPClient<'a> {
                                 } else {
                                     &location[0..i]
                                 };
-                                let is_http = protocol_name == b"http";
-                                if is_http || protocol_name == b"https" {
+                                let is_http = strings::eql_case_insensitive_ascii(
+                                    protocol_name,
+                                    b"http",
+                                    true,
+                                );
+                                if is_http
+                                    || strings::eql_case_insensitive_ascii(
+                                        protocol_name,
+                                        b"https",
+                                        true,
+                                    )
+                                {
                                 } else {
-                                    return Err(err!(UnsupportedRedirectProtocol));
+                                    return Err(crate::Error::UnsupportedRedirectProtocol);
                                 }
 
                                 if (protocol_name.len() * usize::from(is_protocol_relative))
                                     + location.len()
                                     > MAX_REDIRECT_URL_LENGTH
                                 {
-                                    return Err(err!(RedirectURLTooLong));
+                                    return Err(crate::Error::RedirectURLTooLong);
                                 }
 
                                 string_builder.count(location);
@@ -5050,9 +5064,7 @@ impl<'a> HTTPClient<'a> {
 
                                 let _ = string_builder.append(location);
 
-                                if cfg!(debug_assertions) {
-                                    debug_assert!(string_builder.cap == string_builder.len);
-                                }
+                                debug_assert!(string_builder.cap == string_builder.len);
 
                                 let input =
                                     BunString::borrow_utf8(string_builder.allocated_slice());
@@ -5060,7 +5072,7 @@ impl<'a> HTTPClient<'a> {
                                     OwnedString::new(bun_url::href_from_string(&input));
                                 if normalized_url.tag() == BunStringTag::Dead {
                                     // URL__getHref failed, dont pass dead tagged string to toOwnedSlice.
-                                    return Err(err!(RedirectURLInvalid));
+                                    return Err(crate::Error::RedirectURLInvalid);
                                 }
                                 let normalized_url_str = normalized_url.to_owned_slice();
 
@@ -5088,10 +5100,14 @@ impl<'a> HTTPClient<'a> {
                                 if protocol_name.len() + 1 + location.len()
                                     > MAX_REDIRECT_URL_LENGTH
                                 {
-                                    return Err(err!(RedirectURLTooLong));
+                                    return Err(crate::Error::RedirectURLTooLong);
                                 }
 
-                                let is_http = protocol_name == b"http";
+                                let is_http = strings::eql_case_insensitive_ascii(
+                                    protocol_name,
+                                    b"http",
+                                    true,
+                                );
 
                                 if is_http {
                                     string_builder.count(b"http:");
@@ -5111,16 +5127,14 @@ impl<'a> HTTPClient<'a> {
 
                                 let _ = string_builder.append(location);
 
-                                if cfg!(debug_assertions) {
-                                    debug_assert!(string_builder.cap == string_builder.len);
-                                }
+                                debug_assert!(string_builder.cap == string_builder.len);
 
                                 let input =
                                     BunString::borrow_utf8(string_builder.allocated_slice());
                                 let normalized_url =
                                     OwnedString::new(bun_url::href_from_string(&input));
                                 if normalized_url.tag() == BunStringTag::Dead {
-                                    return Err(err!(RedirectURLInvalid));
+                                    return Err(crate::Error::RedirectURLInvalid);
                                 }
                                 let normalized_url_str = normalized_url.to_owned_slice();
 
@@ -5145,13 +5159,13 @@ impl<'a> HTTPClient<'a> {
                                 let new_url_ = OwnedString::new(bun_url::join(&base, &rel));
 
                                 if new_url_.is_empty() {
-                                    return Err(err!(InvalidRedirectURL));
+                                    return Err(crate::Error::InvalidRedirectURL);
                                 }
 
                                 let new_url = new_url_.to_owned_slice();
                                 let parsed_url = URL::parse(&new_url);
                                 if !parsed_url.has_http_like_protocol() {
-                                    return Err(err!(UnsupportedRedirectProtocol));
+                                    return Err(crate::Error::UnsupportedRedirectProtocol);
                                 }
                                 // SAFETY: self-borrow — `new_url` is moved into `self.redirect`
                                 // below, which lives as long as `self` (≥ `'a`).
@@ -5234,7 +5248,7 @@ impl<'a> HTTPClient<'a> {
                 }
             } else if !is_proxy_connect_failure && self.redirect_type == FetchRedirect::Error {
                 // error out if redirect is not allowed
-                return Err(err!(UnexpectedRedirect));
+                return Err(crate::Error::UnexpectedRedirect);
             }
         }
 
@@ -5273,6 +5287,13 @@ impl<'a> HTTPClient<'a> {
                 || self.state.transfer_encoding == Encoding::Chunked
                 || is_server_sent_events)
         {
+            if self.state.flags.is_redirect_pending {
+                // WHATWG HTTP-redirect fetch runs on the response head; the 3xx
+                // body is discarded, not awaited. The socket still carries
+                // undrained body bytes so it must be closed, not pooled.
+                self.state.flags.allow_keepalive = false;
+                return Ok(ShouldContinue::Finished);
+            }
             Ok(ShouldContinue::ContinueStreaming)
         } else {
             Ok(ShouldContinue::Finished)

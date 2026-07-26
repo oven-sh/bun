@@ -638,13 +638,6 @@ impl SystemErrno {
         code.into_system_errno()
     }
 
-    /// Routes through `bun_core::Error::from_errno`, which interns tag names
-    /// via the `ErrnoNames` link hook this crate populates.
-    #[inline]
-    pub fn to_error(self) -> bun_core::Error {
-        bun_core::Error::from_errno(self as u16 as i32)
-    }
-
     /// `init(code: u16)` — Win32/WSA error codes and negated-uv codes encoded as u16.
     pub fn init_u16(code: u16) -> Option<SystemErrno> {
         Self::init_numeric(code)

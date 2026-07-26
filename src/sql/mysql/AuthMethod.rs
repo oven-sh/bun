@@ -12,7 +12,7 @@ impl AuthMethod {
         password: &[u8],
         auth_data: &[u8],
         buf: &'a mut [u8; 32],
-    ) -> Result<&'a mut [u8], bun_core::Error> {
+    ) -> crate::Result<&'a mut [u8]> {
         if password.is_empty() {
             return Ok(&mut []);
         }

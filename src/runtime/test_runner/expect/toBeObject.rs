@@ -1,6 +1,6 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
-use super::Expect;
+use super::{throw, Expect};
 
 impl Expect {
     #[bun_jsc::host_fn(method)]
@@ -31,24 +31,22 @@ impl Expect {
 
         if not {
             let signature = Expect::get_signature("toBeObject", "", true);
-            return this.throw(
+            return throw!(
+                this,
                 global,
                 signature,
-                format_args!(
-                    "\n\nExpected value <b>not<r> to be an object\n\nReceived: <red>{}<r>\n",
-                    received
-                ),
+                "\n\nExpected value <b>not<r> to be an object\n\nReceived: <red>{}<r>\n",
+                received
             );
         }
 
         let signature = Expect::get_signature("toBeObject", "", false);
-        this.throw(
+        throw!(
+            this,
             global,
             signature,
-            format_args!(
-                "\n\nExpected value to be an object\n\nReceived: <red>{}<r>\n",
-                received
-            ),
+            "\n\nExpected value to be an object\n\nReceived: <red>{}<r>\n",
+            received
         )
         })();
         this.post_match(global);

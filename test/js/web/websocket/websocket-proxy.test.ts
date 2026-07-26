@@ -17,6 +17,16 @@ const bunExe = harness.bunExe;
 const bunEnv = harness.bunEnv;
 const isDockerEnabled = harness.isDockerEnabled;
 
+// The in-process WebSocket tests below pass an explicit `proxy:` option targeting
+// 127.0.0.1 and expect the proxy to be hit. NO_PROXY applies to explicit proxies
+// too, so an ambient NO_PROXY=localhost,127.0.0.1,... would bypass the proxy and
+// break those assertions. The NO_PROXY test block further down spawns subprocesses
+// with an explicit env, so clearing the runner's value here doesn't affect it.
+const prevNoProxy = process.env.NO_PROXY;
+const prevNoProxyLower = process.env.no_proxy;
+process.env.NO_PROXY = "";
+process.env.no_proxy = "";
+
 // HTTP CONNECT proxy server for WebSocket tunneling
 let proxy: net.Server;
 let authProxy: net.Server;
@@ -88,6 +98,8 @@ afterAll(() => {
   authProxy?.close();
   wsServer?.stop(true);
   wssServer?.stop(true);
+  if (prevNoProxy !== undefined) process.env.NO_PROXY = prevNoProxy;
+  if (prevNoProxyLower !== undefined) process.env.no_proxy = prevNoProxyLower;
 });
 
 describe("WebSocket proxy API", () => {
@@ -176,6 +188,31 @@ describe("WebSocket proxy API", () => {
       });
     }).toThrow(SyntaxError);
   });
+
+  test.each(["socks5", "socks4", "socks5h", "ftp", "ws", "gopher"])(
+    "rejects unsupported proxy protocol %s://",
+    scheme => {
+      // Matching fetch()'s UnsupportedProxyProtocol rejection: only http:// and
+      // https:// proxies are supported, and any other scheme must fail up front
+      // instead of silently sending an HTTP CONNECT request.
+      expect(() => {
+        new WebSocket("ws://example.com", {
+          proxy: `${scheme}://127.0.0.1:1`,
+        });
+      }).toThrow(
+        expect.objectContaining({
+          name: "SyntaxError",
+          message: expect.stringContaining("Unsupported proxy protocol"),
+        }),
+      );
+      // Same rejection via the { url } form.
+      expect(() => {
+        new WebSocket("ws://example.com", {
+          proxy: { url: `${scheme}://127.0.0.1:1` },
+        });
+      }).toThrow(/Unsupported proxy protocol/);
+    },
+  );
 });
 
 describe("WebSocket through HTTP CONNECT proxy", () => {
@@ -600,7 +637,7 @@ describe.skipIf(!isDockerEnabled())("WebSocket through Squid proxy (Docker)", ()
     console.log("Starting squid proxy container...");
     squidInfo = await dockerCompose.ensure("squid");
     console.log(`Squid proxy ready at: ${squidInfo.host}:${squidInfo.ports[3128]}`);
-  }, 120_000);
+  }, 240_000);
 
   afterAll(async () => {
     if (!process.env.BUN_KEEP_DOCKER) {

@@ -24,13 +24,6 @@ use crate::transpiler::{
     BunPluginTarget, ParseResult, PluginResolver, PluginRunner, ResolveQueue, ResolveResults,
 };
 
-#[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
-pub enum CSSResolveError {
-    #[error("ResolveMessage")]
-    ResolveMessage,
-}
-bun_core::named_error_set!(CSSResolveError);
-
 type HashedFileNameMap = HashMap<u64, &'static [u8]>;
 
 // Matches `Transpiler::IS_CACHE_ENABLED`; inlined so `get_hashed_filename`
@@ -50,25 +43,12 @@ pub struct Linker {
     pub resolve_queue: *mut ResolveQueue,
     pub resolver: *mut Resolver<'static>,
     pub resolve_results: *mut ResolveResults,
-    pub any_needs_runtime: bool,
-    pub runtime_import_record: Option<ImportRecord>,
     pub hashed_filenames: HashedFileNameMap,
-    pub import_counter: usize,
-    pub tagged_resolutions: TaggedResolution,
 
     pub plugin_runner: Option<*mut dyn PluginResolver>,
 }
 
 pub(crate) const RUNTIME_SOURCE_PATH: &[u8] = b"bun:wrap";
-
-#[derive(Default)]
-pub struct TaggedResolution {
-    pub react_refresh: Option<resolver::Result>,
-    // These tags cannot safely be used
-    // Projects may use different JSX runtimes across folders
-    // jsx_import: Option<resolver::Result>,
-    // jsx_classic: Option<resolver::Result>,
-}
 
 // ── relative_paths_list singleton ────────────────────────────────────────
 // `bun_alloc::BSSStringList<COUNT, ITEM_LENGTH>` encodes the parameters as
@@ -271,11 +251,7 @@ impl Linker {
             resolve_queue,
             resolver,
             resolve_results,
-            any_needs_runtime: false,
-            runtime_import_record: None,
             hashed_filenames: HashedFileNameMap::default(),
-            import_counter: 0,
-            tagged_resolutions: TaggedResolution::default(),
             plugin_runner: None,
         }
     }
@@ -283,8 +259,7 @@ impl Linker {
     /// Re-seat the self-referential back-pointers after the owning
     /// `Transpiler` has been moved to its final address. Only re-assigns the
     /// pointer fields; does NOT reset
-    /// `import_counter` / `plugin_runner` / `tagged_resolutions` /
-    /// `any_needs_runtime`. Use instead of `init` from
+    /// `plugin_runner`. Use instead of `init` from
     /// `Transpiler::wire_after_move`.
     pub fn reseat_self_refs(
         &mut self,
@@ -303,14 +278,6 @@ impl Linker {
         self.fs = fs;
     }
 
-    /// Accessor for the `relative_paths_list` singleton. Returns `*mut`
-    /// because the contract is a global pointer — fabricating `&'static mut`
-    /// here would alias on every call.
-    #[inline]
-    pub fn relative_paths_list() -> *mut ImportPathsList {
-        relative_paths_list_ptr()
-    }
-
     // ── getModKey / getHashedFilename ────────────────────────────────────
     // `ModKey` lives at module scope (`bun_resolver::fs::ModKey`)
     // alongside `RealFS`. `file_path` is typed `PFs::Path` (not `Fs::Path`)
@@ -320,7 +287,7 @@ impl Linker {
         &mut self,
         file_path: &PFs::Path<'_>,
         fd: Option<Fd>,
-    ) -> Result<Fs::ModKey, bun_core::Error> {
+    ) -> crate::Result<Fs::ModKey> {
         // Borrow the cached fd; own the freshly-opened one.
         let _owned: Option<bun_sys::File>;
         let raw_fd = match fd {
@@ -343,14 +310,14 @@ impl Linker {
         // `fs_full::RealFS` are distinct types, so route through the
         // RealFS-agnostic `from_file` wrapper added alongside the `ModKey`
         // re-export.
-        Fs::ModKey::from_file(file)
+        Ok(Fs::ModKey::from_file(file)?)
     }
 
     pub fn get_hashed_filename(
         &mut self,
         file_path: &PFs::Path<'_>,
         fd: Option<Fd>,
-    ) -> Result<&'static [u8], bun_core::Error> {
+    ) -> crate::Result<&'static [u8]> {
         if IS_CACHE_ENABLED {
             let hashed = bun_wyhash::hash(file_path.text);
             if let Some(v) = self.hashed_filenames.get(&hashed) {
@@ -396,7 +363,7 @@ impl Linker {
         result: &mut ParseResult,
         origin: &URL<'_>,
         import_path_format: ImportPathFormat,
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::Result<()> {
         // Copy out the two scalar config values we read so the `&self` borrow
         // from `options()` doesn't overlap later `&mut self` calls
         // (`generate_import_path`, `log_mut`).
@@ -455,8 +422,6 @@ impl Linker {
                                 )?;
                             }
 
-                            ast.runtime_import_record_id = Some(record_index);
-                            ast.needs_runtime = true;
                             continue;
                         }
                     }
@@ -492,7 +457,7 @@ impl Linker {
                             )?;
 
                             if had_resolve_errors {
-                                return Err(bun_core::err!("ResolveMessage"));
+                                return Err(crate::Error::ResolveMessage);
                             }
                             continue;
                         }
@@ -555,7 +520,7 @@ impl Linker {
             _ => {}
         }
         if had_resolve_errors {
-            return Err(bun_core::err!("ResolveMessage"));
+            return Err(crate::Error::ResolveMessage);
         }
         // Vec drop at scope end frees.
         externals.clear();
@@ -570,7 +535,7 @@ impl Linker {
         target: BundleTarget,
         import_record: &mut ImportRecord,
         source: &bun_ast::Source,
-    ) -> Result<bool, bun_core::Error> {
+    ) -> crate::Result<bool> {
         if import_record
             .flags
             .contains(ImportRecordFlags::HANDLES_IMPORT_ERRORS)
@@ -602,7 +567,7 @@ impl Linker {
                     ),
                     import_record.path.text,
                     import_record.kind,
-                    bun_core::err!("ModuleNotFound"),
+                    bun_ast::Error::ModuleNotFound,
                 );
             } else {
                 log.add_resolve_error(
@@ -614,7 +579,7 @@ impl Linker {
                     ),
                     import_record.path.text,
                     import_record.kind,
-                    bun_core::err!("ModuleNotFound"),
+                    bun_ast::Error::ModuleNotFound,
                 );
             }
         } else {
@@ -627,7 +592,7 @@ impl Linker {
                 ),
                 import_record.path.text,
                 import_record.kind,
-                bun_core::err!("ModuleNotFound"),
+                bun_ast::Error::ModuleNotFound,
             );
         }
         Ok(true)
@@ -641,7 +606,7 @@ impl Linker {
         namespace: &'static [u8],
         origin: &URL<'_>,
         import_path_format: ImportPathFormat,
-    ) -> Result<PFs::Path<'static>, bun_core::Error> {
+    ) -> crate::Result<PFs::Path<'static>> {
         match import_path_format {
             ImportPathFormat::AbsolutePath => {
                 if namespace == b"node" {
@@ -694,9 +659,7 @@ impl Linker {
 
             ImportPathFormat::AbsoluteUrl => {
                 if namespace == b"node" {
-                    if cfg!(debug_assertions) {
-                        debug_assert!(&source_path[0..5] == b"node:");
-                    }
+                    debug_assert!(&source_path[0..5] == b"node:");
 
                     let mut buf: Vec<u8> = Vec::new();
                     // assumption: already starts with "node:"
@@ -706,7 +669,7 @@ impl Linker {
                         bstr::BStr::new(strings::without_trailing_slash(origin.href)),
                         bstr::BStr::new(bun_paths::strings::without_leading_slash(source_path)),
                     )
-                    .map_err(|_| bun_core::err!("OutOfMemory"))?;
+                    .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
                     Ok(PFs::Path::init(dupe(&buf)))
                 } else {
                     let mut absolute_pathname = PFs::PathName::init(source_path);
@@ -764,7 +727,7 @@ impl Linker {
     pub fn enqueue_resolve_result(
         &mut self,
         resolve_result: resolver::Result,
-    ) -> Result<bool, bun_core::Error> {
+    ) -> crate::Result<bool> {
         let hash_key = self.resolve_result_hash_key(&resolve_result);
 
         // `found_existing` is whether the key was already present.

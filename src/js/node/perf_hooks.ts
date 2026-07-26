@@ -1,5 +1,13 @@
 // Hardcoded module "node:perf_hooks"
-const { throwNotImplemented, kNodeEntryTypes, NodeEntryObserver } = require("internal/shared");
+const {
+  kNodeEntryTypes,
+  NodeEntryObserver,
+  enqueueNodeEntry,
+  hasObserver,
+  PerformanceNodeEntry,
+  kEmptyObject,
+} = require("internal/shared");
+const { validateFunction, validateObject } = require("internal/validators");
 
 const cppCreateHistogram = $newCppFunction("JSNodePerformanceHooksHistogram.cpp", "jsFunction_createHistogram", 3) as (
   min: number,
@@ -15,6 +23,14 @@ var {
   PerformanceObserver: NodePerformanceObserver,
   PerformanceObserverEntryList,
 } = globalThis;
+
+// `extends PerformanceEntry` can't work (WebCore ctor throws); link here via
+// the captured global. Construction is gated by hasObserver() so this module
+// has loaded first. Guarded so a pre-require delete degrades, not throws.
+if (PerformanceEntry) {
+  Object.setPrototypeOf(PerformanceNodeEntry.prototype, PerformanceEntry.prototype);
+  Object.setPrototypeOf(PerformanceNodeEntry, PerformanceEntry);
+}
 
 var constants = {
   NODE_PERFORMANCE_ENTRY_TYPE_DNS: 4,
@@ -86,7 +102,10 @@ class PerformanceNodeTiming {
     };
   }
 }
-$toClass(PerformanceNodeTiming, "PerformanceNodeTiming", PerformanceEntry);
+if (PerformanceEntry) {
+  Object.setPrototypeOf(PerformanceNodeTiming.prototype, PerformanceEntry.prototype);
+  Object.setPrototypeOf(PerformanceNodeTiming, PerformanceEntry);
+}
 
 function createPerformanceNodeTiming() {
   const object = Object.create(PerformanceNodeTiming.prototype);
@@ -105,13 +124,57 @@ function eventLoopUtilization(_utilization1, _utilization2) {
   };
 }
 
-// PerformanceEntry is not a valid constructor, so we have to fake it.
-class PerformanceResourceTiming {
-  constructor() {
-    throwNotImplemented("PerformanceResourceTiming");
+const { PerformanceResourceTiming } = globalThis;
+
+// Resolved on first inspection so requiring perf_hooks does not pull in the
+// inspect module, and so repeated inspection does not re-resolve it.
+var _lazyInspect;
+function lazyInspect() {
+  return (_lazyInspect ??= require("internal/util/inspect").inspect);
+}
+
+// Node prints entries as `<ClassName> { ...toJSON() }`; WebCore's fields are
+// prototype accessors so default inspection prints `{}`. Ported from node's
+// lib/internal/perf/performance_entry.js.
+if (PerformanceEntry) {
+  const kInspect = Symbol.for("nodejs.util.inspect.custom");
+  Object.defineProperty(PerformanceEntry.prototype, kInspect, {
+    __proto__: null,
+    configurable: true,
+    writable: true,
+    value: function inspect(depth, options) {
+      if (depth < 0) return this;
+      // A prototype object is not an entry, and toJSON below is brand-checked.
+      // Same circular check util.inspect uses to skip custom inspectors there.
+      if (Object.getOwnPropertyDescriptor(this, "constructor")?.value?.prototype === this) return this;
+      const opts = {
+        ...options,
+        depth: options?.depth == null ? null : options.depth - 1,
+      };
+      return this.constructor.name + " " + lazyInspect()(this.toJSON(), opts);
+    },
+  });
+
+  // PerformanceEntry.prototype.toJSON has no notion of `detail`; node's mark
+  // and measure entries include it.
+  for (const Ctor of [PerformanceMark, PerformanceMeasure]) {
+    if (!Ctor) continue;
+    Object.defineProperty(Ctor.prototype, "toJSON", {
+      __proto__: null,
+      configurable: true,
+      writable: true,
+      value: function toJSON() {
+        return {
+          name: this.name,
+          entryType: this.entryType,
+          startTime: this.startTime,
+          duration: this.duration,
+          detail: this.detail,
+        };
+      },
+    });
   }
 }
-$toClass(PerformanceResourceTiming, "PerformanceResourceTiming", PerformanceEntry);
 
 const kNodeObserver = Symbol("kNodeObserver");
 const kObserverCallback = Symbol("kObserverCallback");
@@ -193,64 +256,104 @@ class PerformanceObserverForNodeTypes extends NodePerformanceObserver {
     return super.disconnect();
   }
 }
-// Not $toClass: that resets the prototype object and would drop the
-// observe/disconnect overrides above. Only the public name needs fixing.
 Object.defineProperty(PerformanceObserverForNodeTypes, "name", {
   value: "PerformanceObserver",
   configurable: true,
 });
 
+// kEmptyObject (frozen, null-prototype) so the histogram read below cannot
+// pick up a polluted Object.prototype, matching node's default.
+function timerify(fn, options = kEmptyObject) {
+  validateFunction(fn, "fn");
+  validateObject(options, "options");
+  const { histogram } = options;
+  // Node brand-checks with isHistogram (kHandle presence); Bun duck-types on
+  // .record for now — a native brand-check helper on
+  // JSNodePerformanceHooksHistogram would tighten this if it ever matters.
+  if (
+    histogram !== undefined &&
+    (histogram === null || typeof histogram !== "object" || typeof histogram.record !== "function")
+  ) {
+    throw $ERR_INVALID_ARG_TYPE("options.histogram", "RecordableHistogram", histogram);
+  }
+
+  function timerified(...args) {
+    const isConstructorCall = new.target !== undefined;
+    const start = performance.now();
+    const result = isConstructorCall ? Reflect.construct(fn, args, fn) : fn.$apply(this, args);
+    if (!isConstructorCall && typeof result?.finally === "function") {
+      return result.finally(() => {
+        processTimerifyComplete(fn.name, start, args, histogram);
+      });
+    }
+    processTimerifyComplete(fn.name, start, args, histogram);
+    return result;
+  }
+
+  Object.defineProperties(timerified, {
+    length: {
+      __proto__: null,
+      configurable: false,
+      enumerable: true,
+      value: fn.length,
+    },
+    name: {
+      __proto__: null,
+      configurable: false,
+      enumerable: true,
+      value: `timerified ${fn.name}`,
+    },
+  });
+
+  return timerified;
+}
+
+function processTimerifyComplete(name, start, args, histogram) {
+  const duration = performance.now() - start;
+  if (histogram !== undefined) {
+    histogram.record(Math.ceil(duration * 1e6));
+  }
+  if (hasObserver("function")) {
+    const entry = new PerformanceNodeEntry(name, "function", start, duration, args);
+    for (let n = 0; n < args.length; n++) entry[n] = args[n];
+    enqueueNodeEntry(entry);
+  }
+}
+
+const nodeTiming = createPerformanceNodeTiming();
+
+// Node augments the real `performance` object (not a forwarding shim), so
+// timerify/eventLoopUtilization/nodeTiming go on Performance.prototype,
+// non-enumerable, per lib/internal/perf/performance.js.
+if (Performance) {
+  Object.defineProperties(Performance.prototype, {
+    nodeTiming: {
+      __proto__: null,
+      configurable: true,
+      enumerable: false,
+      writable: true,
+      value: nodeTiming,
+    },
+    timerify: {
+      __proto__: null,
+      configurable: true,
+      enumerable: false,
+      writable: true,
+      value: timerify,
+    },
+    eventLoopUtilization: {
+      __proto__: null,
+      configurable: true,
+      enumerable: false,
+      writable: true,
+      value: eventLoopUtilization,
+    },
+  });
+}
+
 export default {
-  performance: {
-    mark(_) {
-      return performance.mark(...arguments);
-    },
-    measure(_) {
-      return performance.measure(...arguments);
-    },
-    clearMarks(_) {
-      return performance.clearMarks(...arguments);
-    },
-    clearMeasures(_) {
-      return performance.clearMeasures(...arguments);
-    },
-    getEntries(_) {
-      return performance.getEntries(...arguments);
-    },
-    getEntriesByName(_) {
-      return performance.getEntriesByName(...arguments);
-    },
-    getEntriesByType(_) {
-      return performance.getEntriesByType(...arguments);
-    },
-    setResourceTimingBufferSize(_) {
-      return performance.setResourceTimingBufferSize(...arguments);
-    },
-    timeOrigin: performance.timeOrigin,
-    toJSON(_) {
-      return performance.toJSON(...arguments);
-    },
-    onresourcetimingbufferfull: performance.onresourcetimingbufferfull,
-    nodeTiming: createPerformanceNodeTiming(),
-    now: () => performance.now(),
-    eventLoopUtilization: eventLoopUtilization,
-    clearResourceTimings: function () {},
-  },
-  // performance: {
-  //   clearMarks: [Function: clearMarks],
-  //   clearMeasures: [Function: clearMeasures],
-  //   clearResourceTimings: [Function: clearResourceTimings],
-  //   getEntries: [Function: getEntries],
-  //   getEntriesByName: [Function: getEntriesByName],
-  //   getEntriesByType: [Function: getEntriesByType],
-  //   mark: [Function: mark],
-  //   measure: [Function: measure],
-  //   now: performance.now,
-  //   setResourceTimingBufferSize: [Function: setResourceTimingBufferSize],
-  //   timeOrigin: performance.timeOrigin,
-  //   toJSON: [Function: toJSON],
-  //   onresourcetimingbufferfull: [Getter/Setter]
-  // },
+  timerify,
+  performance,
   constants,
   Performance,
   PerformanceEntry,
@@ -259,22 +362,28 @@ export default {
   PerformanceObserver: PerformanceObserverForNodeTypes,
   PerformanceObserverEntryList,
   PerformanceNodeTiming,
+  eventLoopUtilization,
   monitorEventLoopDelay: function monitorEventLoopDelay(options?: { resolution?: number }) {
     const impl = require("internal/perf_hooks/monitorEventLoopDelay");
     return impl(options);
   },
-  createHistogram: function createHistogram(options?: {
-    lowest?: number | bigint;
-    highest?: number | bigint;
-    figures?: number;
-  }): import("node:perf_hooks").RecordableHistogram {
-    const opts = options || {};
+  createHistogram: function createHistogram(
+    options: {
+      lowest?: number | bigint;
+      highest?: number | bigint;
+      figures?: number;
+    } = kEmptyObject,
+  ): import("node:perf_hooks").RecordableHistogram {
+    // kEmptyObject default, and validate rather than `options || {}`: the reads
+    // below must not see a polluted Object.prototype, and node rejects a
+    // non-object argument instead of silently ignoring it.
+    validateObject(options, "options");
 
     let lowest = 1;
     let highest = Number.MAX_SAFE_INTEGER;
     let figures = 3;
 
-    const lowestOpt = opts.lowest;
+    const lowestOpt = options.lowest;
     if (lowestOpt !== undefined) {
       if (typeof lowestOpt === "bigint") {
         lowest = Number(lowestOpt);
@@ -285,7 +394,7 @@ export default {
       }
     }
 
-    const highestOpt = opts.highest;
+    const highestOpt = options.highest;
     if (highestOpt !== undefined) {
       if (typeof highestOpt === "bigint") {
         highest = Number(highestOpt);
@@ -296,7 +405,7 @@ export default {
       }
     }
 
-    const figuresOpt = opts.figures;
+    const figuresOpt = options.figures;
     if (figuresOpt !== undefined) {
       if (typeof figuresOpt !== "number") {
         throw $ERR_INVALID_ARG_TYPE("options.figures", "number", figuresOpt);

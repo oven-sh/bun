@@ -1,5 +1,3 @@
-#[cfg(debug_assertions)]
-use core::cell::Cell;
 use core::fmt;
 
 use bun_alloc::Arena as Bump;
@@ -7,13 +5,10 @@ use bun_alloc::ArenaVec as BumpVec;
 use bun_ast::ImportRecord;
 
 use crate::css_parser as css;
-use crate::sourcemap;
 use crate::values as css_values;
 
 use crate::{Location, PrintErr, PrintResult};
 use css_values::ident::DashedIdent;
-
-pub use css::Error;
 
 // Byte-oriented writer (writeAll/writeByte/print equivalents).
 use bun_io::Write;
@@ -22,9 +17,6 @@ use bun_io::Write;
 pub struct PrinterOptions<'a> {
     /// Whether to minify the CSS, i.e. remove white space.
     pub minify: bool,
-    /// An optional reference to a source map to write mappings into.
-    /// (Available when the `sourcemap` feature is enabled.)
-    pub source_map: Option<&'a mut sourcemap::SourceMap>,
     /// An optional project root path, used to generate relative paths for sources used in CSS module hashes.
     pub project_root: Option<&'a [u8]>,
     /// Targets to output the CSS for.
@@ -51,7 +43,6 @@ impl<'a> PrinterOptions<'a> {
     pub fn default_with_minify(minify: bool) -> PrinterOptions<'a> {
         PrinterOptions {
             minify,
-            source_map: None,
             project_root: None,
             targets: Targets {
                 browsers: None,
@@ -185,11 +176,6 @@ pub struct Printer<'a> {
     pub arena: &'a Bump,
 }
 
-#[cfg(debug_assertions)]
-thread_local! {
-    pub(crate) static IN_DEBUG_FMT: Cell<bool> = const { Cell::new(false) };
-}
-
 impl<'a> Printer<'a> {
     pub fn lookup_symbol(&self, ref_: bun_ast::Ref) -> &'a [u8] {
         let symbols = self.symbols;
@@ -207,12 +193,6 @@ impl<'a> Printer<'a> {
     }
 
     pub fn lookup_ident_or_ref(&self, ident: css_values::ident::IdentOrRef) -> &'a [u8] {
-        #[cfg(debug_assertions)]
-        {
-            if IN_DEBUG_FMT.with(|f| f.get()) {
-                return ident.debug_ident();
-            }
-        }
         if ident.is_ident() {
             // SAFETY: Ident.v is an arena-owned slice packed by IdentOrRef::from_ident.
             return unsafe { crate::arena_str(ident.as_ident().unwrap().v) };
@@ -263,18 +243,6 @@ impl<'a> Printer<'a> {
         self.error_kind = Some(css::PrinterError {
             kind: css::PrinterErrorKind::no_import_records,
             loc: None,
-        });
-        PrintErr::CSSPrintError
-    }
-
-    pub fn add_invalid_css_modules_pattern_in_grid_error(&mut self) -> PrintErr {
-        self.error_kind = Some(css::PrinterError {
-            kind: css::PrinterErrorKind::invalid_css_modules_pattern_in_grid,
-            loc: Some(css::ErrorLocation {
-                filename: std::ptr::from_ref::<[u8]>(self.filename()),
-                line: self.loc.line,
-                column: self.loc.column,
-            }),
         });
         PrintErr::CSSPrintError
     }
@@ -352,47 +320,10 @@ impl<'a> Printer<'a> {
         }
     }
 
-    /// Construct a `Printer` that writes into an in-memory `Vec<u8>` buffer
-    /// using default `PrinterOptions`. Used for sub-serialization
-    /// (e.g. `PseudoClass::toCss`, `Selector` debug fmt).
-    pub fn new_buffered(
-        arena: &'a Bump,
-        dest: &'a mut Vec<u8>,
-        import_info: Option<ImportInfo<'a>>,
-        local_names: Option<&'a css::LocalsResultsMap>,
-        symbols: &'a SymbolMap,
-    ) -> Self {
-        Printer::new(
-            arena,
-            BumpVec::new_in(arena),
-            dest,
-            &PrinterOptions::default(),
-            import_info,
-            local_names,
-            symbols,
-        )
-    }
-
     #[inline]
     pub fn get_import_records(&mut self) -> PrintResult<&'a [ImportRecord]> {
         if let Some(info) = &self.import_info {
             return Ok(info.import_records);
-        }
-        Err(self.add_no_import_record_error())
-    }
-
-    pub fn print_import_record(&mut self, import_record_idx: u32) -> PrintResult<()> {
-        if let Some(info) = &self.import_info {
-            let import_record = &info.import_records[import_record_idx as usize];
-            let [a, b] =
-                bun_core::cheap_prefix_normalizer(self.public_path, import_record.path.text);
-            // Reshaped for borrowck — copied (a, b) out before re-borrowing &mut self
-            let a = a.to_vec();
-            let b = b.to_vec();
-            // PERF: two small heap copies above; profile if it shows up on a hot path.
-            self.write_str(&a)?;
-            self.write_str(&b)?;
-            return Ok(());
         }
         Err(self.add_no_import_record_error())
     }
@@ -412,16 +343,42 @@ impl<'a> Printer<'a> {
         };
         let record = &import_info.import_records[import_record_idx as usize];
         if record.source_index.is_valid() {
-            // It has an inlined url for CSS
+            // A `url()`'s `?query`/`#fragment` (e.g. `url(sprites.svg#icon)`) is
+            // stripped by the resolver to find the file; re-append it to the
+            // rewritten reference so the fragment still addresses the element.
+            let suffix: &[u8] = if record.kind == bun_ast::ImportKind::Url {
+                match bun_core::strings::index_of_any(record.original_path, b"?#") {
+                    Some(i) => &record.original_path[i..],
+                    None => b"",
+                }
+            } else {
+                b""
+            };
+            let arena = self.arena;
+            let with_suffix = |url: &'a [u8], suffix: &[u8]| -> &'a [u8] {
+                if suffix.is_empty() {
+                    return url;
+                }
+                let buf = arena.alloc_slice_fill_copy(url.len() + suffix.len(), 0u8);
+                buf[..url.len()].copy_from_slice(url);
+                buf[url.len()..].copy_from_slice(suffix);
+                buf
+            };
+            // It has an inlined data: URL for CSS. A `?query` here lands in the
+            // base64 body and fails decoding, so keep only the `#fragment`.
             let urls_for_css = import_info.ast_urls_for_css[record.source_index.get() as usize];
             if !urls_for_css.is_empty() {
-                return Ok(urls_for_css);
+                let fragment: &[u8] = match bun_core::strings::index_of_char(suffix, b'#') {
+                    Some(i) => &suffix[i as usize..],
+                    None => b"",
+                };
+                return Ok(with_suffix(urls_for_css, fragment));
             }
-            // It is a chunk URL
+            // It is a chunk URL (copied asset): keep the full `?query#fragment`.
             let unique_key_for_additional_file =
                 import_info.ast_unique_key_for_additional_file[record.source_index.get() as usize];
             if !unique_key_for_additional_file.is_empty() {
-                return Ok(unique_key_for_additional_file);
+                return Ok(with_suffix(unique_key_for_additional_file, suffix));
             }
         }
         // External URL stays as-is
@@ -446,11 +403,11 @@ impl<'a> Printer<'a> {
 impl<'a> bun_io::Write for Printer<'a> {
     #[inline]
     fn write_all(&mut self, buf: &[u8]) -> bun_io::Result<()> {
-        Printer::write_str(self, buf).map_err(|_| bun_core::err!("CSSPrintError"))
+        Printer::write_str(self, buf).map_err(|_| bun_core::Error::WriteFailed)
     }
     #[inline]
     fn write_byte(&mut self, b: u8) -> bun_io::Result<()> {
-        Printer::write_char(self, b).map_err(|_| bun_core::err!("CSSPrintError"))
+        Printer::write_char(self, b).map_err(|_| bun_core::Error::WriteFailed)
     }
 }
 
@@ -502,6 +459,21 @@ impl<'a> Printer<'a> {
     /// If such a string is written, it will break source maps.
     pub fn write_str(&mut self, s: impl AsRef<[u8]>) -> PrintResult<()> {
         let s = s.as_ref();
+        #[cfg(debug_assertions)]
+        {
+            debug_assert!(!s.contains(&b'\n'));
+        }
+        self.col += u32::try_from(s.len()).expect("int cast");
+        if self.dest.write_all(s).is_err() {
+            return Err(self.add_fmt_error());
+        }
+        Ok(())
+    }
+
+    /// `write_str(&self.scratchbuf[range])` with the field borrows split so
+    /// callers can fill `scratchbuf` and flush it through the same `&mut self`.
+    pub(crate) fn write_scratchbuf(&mut self, range: core::ops::Range<usize>) -> PrintResult<()> {
+        let s = &self.scratchbuf[range];
         #[cfg(debug_assertions)]
         {
             debug_assert!(!s.contains(&b'\n'));
@@ -711,10 +683,6 @@ impl<'a> Printer<'a> {
         }
 
         self.serialize_name(&ident_v[2..])
-    }
-
-    pub fn write_byte(&mut self, char_: u8) -> Result<(), bun_alloc::AllocError> {
-        self.write_char(char_).map_err(|_| bun_alloc::AllocError)
     }
 
     /// Write a single character to the underlying destination.

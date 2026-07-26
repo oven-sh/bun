@@ -170,6 +170,10 @@ pub(super) mod ffi {
         // `SSL::opaque_ref` (panics on null, which every site already guards).
         pub(crate) safe fn SSL_get_servername(ssl: &SSL, ty: c_int) -> *const c_char;
         pub(crate) safe fn SSL_is_init_finished(ssl: &SSL) -> c_int;
+        /// Installs the inline-reject verify recorder (usockets openssl.c);
+        /// the BIO hook + handshake drive then keep a rejected client's
+        /// Finished off the wire and fail the handshake with the X509 verdict.
+        pub(crate) safe fn us_internal_ssl_set_inline_reject(ssl: &SSL);
         pub(crate) safe fn SSL_get_peer_cert_chain(ssl: &SSL) -> *mut struct_stack_st_X509;
         pub(crate) safe fn SSL_get0_alpn_selected(
             ssl: &SSL,
@@ -191,6 +195,7 @@ pub(super) mod ffi {
             mode: c_int,
             callback: super::boringssl::SSL_verify_cb,
         );
+        pub(crate) safe fn SSL_is_server(ssl: &SSL) -> c_int;
         // Opaque-ZST `&SSL` + opaque `*mut c_void` payload (BoringSSL stores
         // it verbatim, never derefs) ⇒ no caller-side precondition.
         pub(crate) safe fn SSL_set_ex_data(ssl: &SSL, idx: c_int, data: *mut c_void) -> c_int;
@@ -311,12 +316,11 @@ pub(super) fn set_servername(
         )));
     }
 
-    let args = frame.arguments_old::<1>();
-    if args.len < 1 {
+    let [server_name] = frame.arguments_as_array::<1>();
+    if frame.arguments_count() < 1 {
         return Err(global.throw(format_args!("Expected 1 argument")));
     }
 
-    let server_name = args.ptr[0];
     if !server_name.is_string() {
         return Err(global.throw(format_args!("Expected \"serverName\" to be a string")));
     }
@@ -407,22 +411,18 @@ pub(super) fn set_max_send_fragment(
 ) -> JsResult<JSValue> {
     jsc::mark_binding();
 
-    let args = frame.arguments_old::<1>();
+    let [arg] = frame.arguments_as_array::<1>();
 
-    if args.len < 1 {
+    if frame.arguments_count() < 1 {
         return Err(global.throw(format_args!("Expected size to be a number")));
     }
 
-    let arg = args.ptr[0];
     if !arg.is_number() {
         return Err(global.throw(format_args!("Expected size to be a number")));
     }
-    let size = args.ptr[0].coerce_to_int64(global)?;
-    if size < 1 {
-        return Err(global.throw(format_args!("Expected size to be greater than 1")));
-    }
-    if size > 16384 {
-        return Err(global.throw(format_args!("Expected size to be less than 16385")));
+    let size = arg.coerce_to_int64(global)?;
+    if !(512..=16384).contains(&size) {
+        return Ok(JSValue::FALSE);
     }
 
     let Some(ssl_ptr) = this.socket.get().ssl() else {
@@ -443,10 +443,9 @@ pub(super) fn get_peer_certificate(
 ) -> JsResult<JSValue> {
     jsc::mark_binding();
 
-    let args = frame.arguments_old::<1>();
+    let [arg] = frame.arguments_as_array::<1>();
     let mut abbreviated: bool = true;
-    if args.len > 0 {
-        let arg = args.ptr[0];
+    if frame.arguments_count() > 0 {
         if !arg.is_boolean() {
             return Err(global.throw(format_args!("Expected abbreviated to be a boolean")));
         }
@@ -456,9 +455,10 @@ pub(super) fn get_peer_certificate(
     let Some(ssl_ptr) = this.socket.get().ssl() else {
         return Ok(JSValue::UNDEFINED);
     };
+    let is_server_ssl = ffi::SSL_is_server(boringssl::SSL::opaque_ref(ssl_ptr)) != 0;
 
     if abbreviated {
-        if this.is_server() {
+        if is_server_ssl {
             // SSL_get_peer_certificate returns a +1 reference; we must free it.
             // X509::to_js only borrows the pointer (X509View is non-owning).
             let cert = ffi::SSL_get_peer_certificate(boringssl::SSL::opaque_ref(ssl_ptr));
@@ -481,7 +481,7 @@ pub(super) fn get_peer_certificate(
     }
 
     let mut cert: *mut boringssl::X509 = core::ptr::null_mut();
-    if this.is_server() {
+    if is_server_ssl {
         // SSL_get_peer_certificate returns a +1 reference; we must free it.
         cert = ffi::SSL_get_peer_certificate(boringssl::SSL::opaque_ref(ssl_ptr));
     }
@@ -873,11 +873,11 @@ pub(crate) fn set_key_cert(
     if this.socket.get().is_detached() {
         return Ok(JSValue::UNDEFINED);
     }
-    let args = frame.arguments_old::<1>();
-    if args.len < 1 {
+    let [arg] = frame.arguments_as_array::<1>();
+    if frame.arguments_count() < 1 {
         return Err(global.throw(format_args!("setKeyCert requires a SecureContext")));
     }
-    let Some(sc) = SecureContext::from_js(args.ptr[0]) else {
+    let Some(sc) = SecureContext::from_js(arg) else {
         return Err(global.throw(format_args!("setKeyCert requires a SecureContext")));
     };
     let Some(ssl_ptr) = this.socket.get().ssl() else {
@@ -920,11 +920,10 @@ pub(crate) fn export_keying_material(
         return Ok(JSValue::UNDEFINED);
     }
 
-    let args = frame.arguments_old::<3>();
-    if args.len < 2 {
+    let [length_arg, label_arg, context_arg] = frame.arguments_as_array::<3>();
+    if frame.arguments_count() < 2 {
         return Err(global.throw(format_args!("Expected length and label to be provided")));
     }
-    let length_arg = args.ptr[0];
     if !length_arg.is_number() {
         return Err(global.throw(format_args!("Expected length to be a number")));
     }
@@ -934,7 +933,6 @@ pub(crate) fn export_keying_material(
         return Err(global.throw(format_args!("Expected length to be a positive number")));
     }
 
-    let label_arg = args.ptr[1];
     if !label_arg.is_string() {
         return Err(global.throw(format_args!("Expected label to be a string")));
     }
@@ -945,9 +943,7 @@ pub(crate) fn export_keying_material(
         return Ok(JSValue::UNDEFINED);
     };
 
-    if args.len > 2 {
-        let context_arg = args.ptr[2];
-
+    if frame.arguments_count() > 2 {
         if let Some(sb) = StringOrBuffer::from_js(global, context_arg)? {
             let context_slice = sb.slice();
 
@@ -1013,14 +1009,12 @@ pub(super) fn get_ephemeral_key_info(
     global: &JSGlobalObject,
     _frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    // only available for clients
-    if this.is_server() {
-        return Ok(JSValue::NULL);
-    }
-
     let Some(ssl_ptr) = this.socket.get().ssl() else {
         return Ok(JSValue::NULL);
     };
+    if ffi::SSL_is_server(boringssl::SSL::opaque_ref(ssl_ptr)) != 0 {
+        return Ok(JSValue::NULL);
+    }
     let result = JSValue::create_empty_object(global, 0);
 
     // TODO: investigate better option or compatible way to get the key
@@ -1147,15 +1141,13 @@ pub(super) fn set_session(
         return Ok(JSValue::UNDEFINED);
     }
 
-    let args = frame.arguments_old::<1>();
+    let [session_arg] = frame.arguments_as_array::<1>();
 
-    if args.len < 1 {
+    if frame.arguments_count() < 1 {
         return Err(global.throw(format_args!(
             "Expected session to be a string, Buffer or TypedArray"
         )));
     }
-
-    let session_arg = args.ptr[0];
 
     if let Some(sb) = StringOrBuffer::from_js(global, session_arg)? {
         let session_slice = sb.slice();
@@ -1275,15 +1267,13 @@ pub(super) fn set_verify_mode(
         return Ok(JSValue::UNDEFINED);
     }
 
-    let args = frame.arguments_old::<2>();
+    let [request_cert_js, reject_unauthorized_js] = frame.arguments_as_array::<2>();
 
-    if args.len < 2 {
+    if frame.arguments_count() < 2 {
         return Err(global.throw(format_args!(
             "Expected requestCert and rejectUnauthorized arguments"
         )));
     }
-    let request_cert_js = args.ptr[0];
-    let reject_unauthorized_js = args.ptr[1];
     if !request_cert_js.is_boolean() || !reject_unauthorized_js.is_boolean() {
         return Err(global.throw(format_args!(
             "Expected requestCert and rejectUnauthorized arguments to be boolean"
@@ -1292,8 +1282,9 @@ pub(super) fn set_verify_mode(
 
     let request_cert = request_cert_js.to_boolean();
     let reject_unauthorized = reject_unauthorized_js.to_boolean();
+    let acts_as_server = this.acts_as_tls_server();
     let mut verify_mode: c_int = boringssl::SSL_VERIFY_NONE;
-    if this.is_server() {
+    if acts_as_server {
         if request_cert {
             verify_mode = boringssl::SSL_VERIFY_PEER;
             if reject_unauthorized {
@@ -1301,6 +1292,13 @@ pub(super) fn set_verify_mode(
             }
         }
     }
+    // Keep the enforcement flag in sync with the verify mode this call installs.
+    this.update_flags(|f| {
+        f.set(
+            super::Flags::REJECT_UNAUTHORIZED,
+            reject_unauthorized && (!acts_as_server || request_cert),
+        );
+    });
     let Some(ssl_ptr) = this.socket.get().ssl() else {
         return Ok(JSValue::UNDEFINED);
     };

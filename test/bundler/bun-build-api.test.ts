@@ -319,6 +319,44 @@ describe("Bun.build", () => {
     Bun.gc(true);
   });
 
+  test("BuildArtifact sourcemap is traced from the owner, not rooted separately", async () => {
+    // `.sourcemap` is the wrapper's `m_sourcemap` WriteBarrier slot (visited in
+    // visitChildren); it must not also be held by a Strong root.
+    using dir = tempDir("build-artifact-sourcemap-gc", {
+      "index.js": "export const x = 1;\n",
+      "run.js": `
+        const { heapStats } = require("bun:jsc");
+        const result = await Bun.build({
+          entrypoints: ["./index.js"],
+          sourcemap: "external",
+          outdir: ".",
+        });
+        const entry = result.outputs[0];
+        const map = result.outputs[1];
+        console.log(JSON.stringify({
+          sourcemapIsMap: entry.sourcemap === map,
+          inspectShowsSourcemap: Bun.inspect(entry).includes("sourcemap: BuildArtifact (sourcemap)"),
+          protectedBuildArtifact: heapStats().protectedObjectTypeCounts.BuildArtifact ?? 0,
+        }));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      sourcemapIsMap: true,
+      inspectShowsSourcemap: true,
+      protectedBuildArtifact: 0,
+    });
+    expect(exitCode).toBe(0);
+  });
+
   // test("BuildArtifact properties splitting", async () => {
   //   Bun.gc(true);
   //   const x = await Bun.build({

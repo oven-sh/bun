@@ -6,10 +6,13 @@ pub mod code_coverage_options;
 pub mod command_tag;
 pub mod compile_target;
 pub mod context;
+pub mod error;
 pub mod global_cache;
 pub mod jsx;
 pub mod offline_mode;
 pub mod schema;
+
+pub use error::{Error, Result};
 
 pub use jsx as JSX;
 
@@ -19,8 +22,8 @@ pub use jsx as JSX;
 // Only the `schema::api`-coupled extension traits and option-only types
 // (`Format`, `ModuleType`, …) are surfaced from this crate.
 pub use bundle_enums::{
-    BuiltInModule, BundlePackage, ForceNodeEnv, Format, ImportKindExt, LOADER_API_NAMES, LoaderExt,
-    LoaderOptionalExt, ModuleType, TargetExt, WindowsOptions,
+    BuiltInModule, BundlePackage, ForceNodeEnv, Format, LOADER_API_NAMES, LoaderExt, ModuleType,
+    TargetExt, WindowsOptions,
 };
 
 /// Compiled-standalone-binary virtual filesystem path prefix + predicate.
@@ -42,13 +45,6 @@ pub mod standalone_path {
     pub const BASE_PUBLIC_PATH: &str = "/$bunfs/";
     #[cfg(windows)]
     pub const BASE_PUBLIC_PATH: &str = "B:/~BUN/";
-
-    #[cfg(not(windows))]
-    pub const BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX: &str =
-        const_format::concatcp!(BASE_PUBLIC_PATH, "root/");
-    #[cfg(windows)]
-    pub const BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX: &str =
-        const_format::concatcp!(BASE_PUBLIC_PATH, "root/");
 
     #[inline]
     pub(crate) fn is_bun_standalone_file_path_canonicalized(str_: &[u8]) -> bool {

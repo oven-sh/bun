@@ -13,15 +13,11 @@ pub struct ByteBlobLoader {
     pub chunk_size: blob::SizeType,
     pub remain: blob::SizeType,
     pub done: bool,
-    pub pulled: bool,
 
     /// https://github.com/oven-sh/bun/issues/14988
     /// Necessary for converting a ByteBlobLoader from a Blob -> back into a Blob
     /// Especially for DOMFormData, where the specific content-type might've been serialized into the data.
-    // Always-owned `Box<[u8]>`; the flag is kept because it is
-    // transferred to Blob in to_any_blob.
-    pub content_type: Box<[u8]>,
-    pub content_type_allocated: bool,
+    pub content_type: blob::BlobContentType,
 }
 
 impl Default for ByteBlobLoader {
@@ -32,9 +28,7 @@ impl Default for ByteBlobLoader {
             chunk_size: 1024 * 1024 * 2,
             remain: 1024 * 1024 * 2,
             done: false,
-            pulled: false,
-            content_type: Box::default(),
-            content_type_allocated: false,
+            content_type: blob::BlobContentType::default(),
         }
     }
 }
@@ -83,16 +77,10 @@ impl ByteBlobLoader {
         let store = blob.store.get().as_ref().unwrap().clone();
         // `Blob` is not `Clone`, so use the non-mutating `resolved_size()` helper.
         let (offset, size) = blob.resolved_size();
-        // `content_type` is an always-owned `Box<[u8]>` (we dupe in both
-        // arms), so the flag must be `true` whenever the box is non-empty —
-        // it's later transferred verbatim to a `Blob` in `to_any_blob`, and a
-        // `false` there strands the `into_raw`'d allocation behind
-        // `Blob::free_content_type`'s `content_type_allocated` gate.
-        let (content_type, content_type_allocated) = if blob.content_type_was_set.get() {
-            let ct = blob.content_type_slice();
-            (Box::<[u8]>::from(ct), !ct.is_empty())
+        let content_type = if blob.content_type_was_set.get() {
+            blob.content_type.get().clone()
         } else {
-            (Box::default(), false)
+            blob::BlobContentType::default()
         };
         *self = ByteBlobLoader {
             offset,
@@ -105,9 +93,7 @@ impl ByteBlobLoader {
             .min(1024 * 1024 * 2),
             remain: size,
             done: false,
-            pulled: false,
             content_type,
-            content_type_allocated,
         };
     }
 
@@ -119,7 +105,6 @@ impl ByteBlobLoader {
     pub fn on_pull(&mut self, buffer: &mut [u8], array: JSValue) -> streams::Result {
         array.ensure_still_alive();
         let _keep = bun_jsc::EnsureStillAlive(array);
-        self.pulled = true;
         let Some(store) = self.store.clone() else {
             return streams::Result::Done;
         };
@@ -178,13 +163,7 @@ impl ByteBlobLoader {
         if !self.content_type.is_empty() {
             let ct = core::mem::take(&mut self.content_type);
             blob.content_type_was_set.set(!ct.is_empty());
-            blob.content_type
-                .set(bun_core::heap::into_raw(ct).cast_const());
-            // `content_type` is an always-owned `Box<[u8]>` in the Rust port
-            // (see `setup`); `into_raw` just handed the new blob a heap
-            // allocation it must free regardless of the flag's prior value.
-            blob.content_type_allocated.set(true);
-            self.content_type_allocated = false;
+            blob.content_type.set(ct);
         }
 
         self.parent_const().is_closed.set(true);
@@ -212,10 +191,7 @@ impl ByteBlobLoader {
     }
 
     fn clear_data(&mut self) {
-        if self.content_type_allocated {
-            self.content_type = Box::default();
-            self.content_type_allocated = false;
-        }
+        self.content_type = blob::BlobContentType::default();
 
         if let Some(store) = self.store.take() {
             drop(store); // store.deref()

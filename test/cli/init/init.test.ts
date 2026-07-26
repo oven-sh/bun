@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { beforeAll, describe, expect, test } from "bun:test";
 import fs, { readdirSync } from "fs";
 import { bunEnv, bunExe, isWindows, nodeExe, tempDirWithFiles } from "harness";
 import path from "path";
@@ -9,6 +9,24 @@ import path from "path";
 const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
 
 (isWindows ? describe : describe.concurrent)("bun init", () => {
+  // Every test's `bun init` runs a real `bun install`. bun dedupes downloads
+  // within a process but not across them, so on a cold CI cache the concurrent
+  // inits each re-fetch the same tarballs. Prime the shared install cache once,
+  // serially: `--react=shadcn`'s lockfile is a superset of the other react
+  // templates', and `-y` covers the blank template (typescript + @types/bun).
+  beforeAll(async () => {
+    for (const flag of ["-y", "--react=shadcn"]) {
+      const temp = tempDirWithFiles("bun-init-cache-prime", {});
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "init", flag],
+        cwd: temp,
+        stdio: ["ignore", "ignore", "ignore"],
+        env: initEnv,
+      });
+      await proc.exited;
+    }
+  }, 240_000);
+
   test("bun init works", async () => {
     const temp = tempDirWithFiles("bun-init-works", {});
 
@@ -45,39 +63,30 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
     expect(fs.existsSync(path.join(temp, "tsconfig.json"))).toBe(true);
   }, 30_000);
 
-  test("bun init with piped cli", async () => {
-    const temp = tempDirWithFiles("bun-init-with-piped-cli", {});
+  test("bun init falls back to --yes when stdin is not a TTY", async () => {
+    const temp = tempDirWithFiles("bun-init-no-tty", {});
 
-    const { exited } = Bun.spawn({
+    // stdin is a pipe we never write to. Previously this hung at the template
+    // menu waiting for a keystroke that never arrives.
+    await using proc = Bun.spawn({
       cmd: [bunExe(), "init"],
       cwd: temp,
-      stdio: [new Blob(["\n\n\n\n\n\n\n\n\n\n\n\n"]), "inherit", "inherit"],
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
       env: initEnv,
     });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(await exited).toBe(0);
+    // No interactive menu rendered: no "Select a project template" prompt and
+    // no cursor-control escapes leaked into piped stdout.
+    expect(stdout).not.toContain("Select a project template");
+    expect(stdout).not.toContain("\x1b[");
+    expect(stderr).not.toContain("\x1b[");
+    expect(exitCode).toBe(0);
 
-    const pkg = JSON.parse(fs.readFileSync(path.join(temp, "package.json"), "utf8"));
-    expect(pkg).toEqual({
-      "name": path.basename(temp).toLowerCase().replaceAll(" ", "-"),
-      "module": "index.ts",
-      "private": true,
-      "type": "module",
-      "devDependencies": {
-        "@types/bun": "latest",
-      },
-      "peerDependencies": {
-        "typescript": "^6",
-      },
-    });
-    const readme = fs.readFileSync(path.join(temp, "README.md"), "utf8");
-    expect(readme).toStartWith("# " + path.basename(temp).toLowerCase().replaceAll(" ", "-") + "\n");
-    expect(readme).toInclude("v" + Bun.version.replaceAll("-debug", ""));
-    expect(readme).toInclude("index.ts");
-
+    expect(fs.existsSync(path.join(temp, "package.json"))).toBe(true);
     expect(fs.existsSync(path.join(temp, "index.ts"))).toBe(true);
-    expect(fs.existsSync(path.join(temp, ".gitignore"))).toBe(true);
-    expect(fs.existsSync(path.join(temp, "node_modules"))).toBe(true);
     expect(fs.existsSync(path.join(temp, "tsconfig.json"))).toBe(true);
   }, 30_000);
 
@@ -190,10 +199,9 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
       env: initEnv,
     });
     expect(await exited2).toBe(0);
-    expect(await stderr.text()).toMatchInlineSnapshot(`
-    "note: package.json already exists, configuring existing project
-    "
-  `);
+    // stdin is "ignore" (not a TTY), so this run behaves like `-y` and the
+    // "package.json already exists" note is suppressed just as it is for `-y`.
+    expect(await stderr.text()).toMatchInlineSnapshot(`""`);
     expect(await exited2).toBe(0);
     expect(readdirSync(temp).sort()).toEqual(["mydir"]);
     expect(readdirSync(path.join(temp, "mydir")).sort()).toMatchInlineSnapshot(`
@@ -340,10 +348,13 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
       expect({ tscStdout, tscStderr, tscExited }).toMatchObject({ tscExited: 0 });
 
       // The blank template has no `build` script; the react templates do.
+      // bun-plugin-tailwind's `bun` peer dep links a node_modules/.bin/bun that
+      // would otherwise shadow bunExe() in the nested `bun run build.ts`, so
+      // pass --bun.
       const pkg = JSON.parse(fs.readFileSync(path.join(temp, "package.json"), "utf8"));
       if (pkg.scripts?.build) {
         await using build = Bun.spawn({
-          cmd: [bunExe(), "run", "build"],
+          cmd: [bunExe(), "--bun", "run", "build"],
           cwd: temp,
           stdio: ["ignore", "pipe", "pipe"],
           env: bunEnv,

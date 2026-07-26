@@ -162,7 +162,7 @@ pub(crate) type WriterImpl = bun_io::pipe_writer::PosixBufferedWriter<IOWriter>;
 pub(crate) type WriterImpl = bun_io::pipe_writer::WindowsBufferedWriter<IOWriter>;
 
 /// The `FilePoll.Owner` payload type for `SHELL_BUFFERED_WRITER`.
-#[allow(dead_code)]
+#[cfg(not(windows))]
 pub(crate) type Poll = WriterImpl;
 
 /// Poll-dispatch entry for `SHELL_BUFFERED_WRITER`. Holds an extra Arc strong
@@ -693,6 +693,17 @@ impl IOWriter {
 
     // ── file write (non-pollable sync path) ─────────────────────────────
 
+    /// Tee `amt` bytes from the current buffer position into `writers[idx]`'s
+    /// capture and advance its `written` / `total_bytes_written` counters.
+    #[cfg(not(windows))]
+    fn record_write_progress(&self, idx: usize, amt: usize) {
+        let s = self.state();
+        let lo = s.total_bytes_written;
+        s.writers[idx].tee(&s.buf[lo..lo + amt]);
+        s.total_bytes_written += amt;
+        s.writers[idx].written += amt;
+    }
+
     /// POSIX-only. `child` is the writer being enqueued (see `on_sync_error`).
     #[cfg(not(windows))]
     fn do_file_write(&self, child: ChildPtr) -> Yield {
@@ -716,21 +727,28 @@ impl IOWriter {
         // holding a stale `&mut`.
         let amt = match result {
             bun_io::WriteResult::Done(amt) | bun_io::WriteResult::Wrote(amt) => amt,
-            bun_io::WriteResult::Pending(_) => {
-                unreachable!(
-                    "drainBufferedData returning .pending in IOWriter.doFileWrite should not happen"
-                );
+            bun_io::WriteResult::Pending(amt) => {
+                // EAGAIN from a target that was classified non-pollable (a
+                // FIFO or chardev opened by path with O_NONBLOCK). Record the
+                // partial write and restart this writer on the pollable path.
+                self.record_write_progress(idx, amt);
+                let s = self.state();
+                s.flags.pollable = true;
+                s.flags.nonblock = true;
+                s.started = false;
+                return match self.write() {
+                    WriteOutcome::Suspended => Yield::suspended(),
+                    WriteOutcome::IsActuallyFile => self
+                        .on_sync_error(child, &sys::Error::from_code(E::EAGAIN, sys::Tag::write)),
+                    WriteOutcome::Failed(e) => self.on_sync_error(child, &e),
+                };
             }
             // The caller is inside the enqueuing child's trampoline, so the
             // error completion is returned, not `Yield::run` from here.
             bun_io::WriteResult::Err(e) => return self.on_sync_error(child, &e),
         };
-        let s = self.state();
-        let lo = s.total_bytes_written;
-        s.writers[idx].tee(&s.buf[lo..lo + amt]);
-        s.total_bytes_written += amt;
-        s.writers[idx].written += amt;
-        if !s.writers[idx].wrote_everything() {
+        self.record_write_progress(idx, amt);
+        if !self.state().writers[idx].wrote_everything() {
             // The only case where we get partial writes is when an error is
             // encountered, which returns above.
             unreachable!(
@@ -1074,17 +1092,6 @@ impl IOWriter {
             bytelist,
         });
         self.enqueue_internal(child)
-    }
-
-    /// Format `args` into the write buffer and enqueue the resulting chunk
-    /// for `child` (no builtin-name prefix).
-    pub fn enqueue_fmt(
-        &self,
-        child: ChildPtr,
-        bytelist: Option<*mut Vec<u8>>,
-        args: core::fmt::Arguments<'_>,
-    ) -> Yield {
-        self.enqueue_fmt_bltn(child, bytelist, None, args)
     }
 }
 

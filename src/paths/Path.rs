@@ -26,13 +26,6 @@ pub mod options {
     use super::*;
 
     #[derive(PartialEq, Eq, Clone, Copy, Debug)]
-    pub enum Unit {
-        U8,
-        U16,
-        Os,
-    }
-
-    #[derive(PartialEq, Eq, Clone, Copy, Debug)]
     pub enum Kind {
         Abs,
         Rel,
@@ -75,7 +68,6 @@ pub mod options {
         pub const ANY: u8 = 0;
         pub const AUTO: u8 = 1;
         pub const POSIX: u8 = 2;
-        pub const WINDOWS: u8 = 3;
         #[inline(always)]
         pub const fn from_u8(v: u8) -> Self {
             match v {
@@ -122,9 +114,9 @@ pub mod options {
         MaxPathExceeded,
     }
 
-    impl From<Error> for bun_core::Error {
+    impl From<Error> for crate::Error {
         fn from(_e: Error) -> Self {
-            bun_core::err!("MaxPathExceeded")
+            crate::Error::MaxPathExceeded
         }
     }
 
@@ -675,7 +667,7 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
         this
     }
 
-    pub fn init_fd_path(fd: Fd) -> Result<Self, bun_core::Error> {
+    pub fn init_fd_path(fd: Fd) -> crate::Result<Self> {
         match Kind::from_u8(KIND) {
             Kind::Abs => {}
             Kind::Rel => panic!("cannot create a relative path from getFdPath"),
@@ -707,9 +699,9 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
                     // FileNotFound (return_length==0 → -1) or
                     // NameTooLong (return_length>=buf.len → -2).
                     return Err(if n == -2 {
-                        bun_core::Error::intern("NameTooLong")
+                        crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG)
                     } else {
-                        bun_core::Error::intern("FileNotFound")
+                        crate::Error::Sys(bun_errno::SystemErrno::ENOENT)
                     });
                 }
                 let wide = &wslice[..n as usize];
@@ -727,7 +719,7 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
                 // `fd_path_raw` returns 0 on misc failure — do not swallow as
                 // an empty path; propagate an error.
                 if n <= 0 {
-                    return Err(bun_core::Error::from_errno(9)); // EBADF — fd_path_raw surfaces no errno
+                    return Err(crate::Error::Sys(bun_errno::SystemErrno::EBADF)); // EBADF — fd_path_raw surfaces no errno
                 }
                 let raw = &buf[..n as usize];
                 let trimmed = trim_input(TrimInputKind::Abs, raw);
@@ -744,9 +736,9 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
                 // FileNotFound (return_length==0 → -1) or
                 // NameTooLong (return_length>=buf.len → -2).
                 return Err(if n == -2 {
-                    bun_core::Error::intern("NameTooLong")
+                    crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG)
                 } else {
-                    bun_core::Error::intern("FileNotFound")
+                    crate::Error::Sys(bun_errno::SystemErrno::ENOENT)
                 });
             }
             let raw = &buf[..n as usize];
@@ -835,19 +827,6 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
 
     pub fn basename(&self) -> &[U] {
         basename_generic(self.slice())
-    }
-
-    pub fn basename_z(&mut self) -> &U::ZSlice {
-        let len = self._buf.len;
-        let buf = U::buffer_as_mut_slice(&mut self._buf.pooled);
-        buf[len] = U::from_u8(0);
-        let base_len = basename_generic(&buf[..len]).len();
-        // Index from the END of `buf[..len]`, not from `base.as_ptr()`, so that
-        // when `base_len == 0` the result points at `buf[len]` (the NUL just
-        // written) and the sentinel invariant holds.
-        // SAFETY: `base_len <= len`, `buf[len] == 0`, and `buf` outlives the
-        // returned borrow.
-        unsafe { U::zslice_from_raw(buf.as_ptr().add(len - base_len), base_len) }
     }
 
     pub fn dirname(&self) -> Option<&[U]> {
@@ -1307,11 +1286,6 @@ pub struct ResetScope<'a, U: PathUnit, const KIND: u8, const SEP_OPT: u8, const 
     // LIFETIMES.tsv: BORROW_PARAM → &'a mut Path
     path: &'a mut Path<U, KIND, SEP_OPT, CHECK>,
     saved_len: usize,
-}
-
-impl<'a, U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
-    ResetScope<'a, U, KIND, SEP_OPT, CHECK>
-{
 }
 
 impl<'a, U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8> core::ops::Deref

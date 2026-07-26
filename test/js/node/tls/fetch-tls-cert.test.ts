@@ -1,5 +1,7 @@
 import { expect, it } from "bun:test";
 import { readFileSync } from "fs";
+import { once } from "node:events";
+import tls from "node:tls";
 import { join } from "path";
 
 const client = {
@@ -47,7 +49,7 @@ async function connect(options: any) {
     }
   }
 }
-it.todo("complete cert chains sent to peer.", async () => {
+it("complete cert chains sent to peer.", async () => {
   await connect({
     client: {
       key: client.key,
@@ -64,6 +66,40 @@ it.todo("complete cert chains sent to peer.", async () => {
   });
 });
 
+// https://github.com/oven-sh/bun/issues/27985. TLS 1.3 usually coalesces the
+// client's Certificate..Finished with its first request bytes; one attempt only
+// caught this ~60% of the time, so 25 keeps P(a regression slips through) < 1e-9.
+const REJECT_ATTEMPTS = 25;
+it("rejects a client cert the server's CA cannot verify, every time", async () => {
+  let served = 0;
+  using srv = Bun.serve({
+    port: 0,
+    tls: {
+      key: server.key,
+      cert: server.cert,
+      ca: server.ca,
+      requestCert: true,
+      rejectUnauthorized: true,
+    },
+    fetch() {
+      served++;
+      return new Response("MUST NOT BE SERVED");
+    },
+  });
+  const clientTls = { key: client.key, cert: client.cert, ca: server.ca, checkServerIdentity };
+  for (let i = 0; i < REJECT_ATTEMPTS; i++) {
+    const outcome = await fetch(`https://localhost:${srv.port}`, { tls: clientTls }).then(
+      res => `accepted with status ${res.status}`,
+      err => err.code ?? String(err),
+    );
+    expect(outcome).toBe("ECONNRESET");
+  }
+  expect(served).toBe(0);
+});
+
+// Known gap: `ca` on a Bun.serve TLS server sets SSL_VERIFY_PEER|FAIL_IF_NO_PEER_CERT even
+// without `requestCert`, so the server demands a client cert and aborts (ECONNRESET).
+// Node only requests one when `requestCert: true`.
 it.todo("complete cert chains sent to peer, but without requesting client's cert.", async () => {
   await connect({
     client: {
@@ -100,65 +136,56 @@ it.todo("Request cert from TLS1.2 client that doesn't have one.", async () => {
   }
 });
 
-it.todo(
-  "Typical configuration error, incomplete cert chains sent, we have to know the peer's subordinate CAs in order to verify the peer.",
-  async () => {
-    await connect({
-      client: {
-        key: client.key,
-        cert: client.single,
-        ca: [server.ca, server.subca],
-        checkServerIdentity,
-      },
-      server: {
-        key: server.key,
-        cert: server.single,
-        ca: [client.ca, client.subca],
-        requestCert: true,
-      },
-    });
-  },
-);
+it("Typical configuration error, incomplete cert chains sent, we have to know the peer's subordinate CAs in order to verify the peer.", async () => {
+  await connect({
+    client: {
+      key: client.key,
+      cert: client.single,
+      ca: [server.ca, server.subca],
+      checkServerIdentity,
+    },
+    server: {
+      key: server.key,
+      cert: server.single,
+      ca: [client.ca, client.subca],
+      requestCert: true,
+    },
+  });
+});
 
-it.todo(
-  "Typical configuration error, incomplete cert chains sent, we have to know the peer's subordinate CAs in order to verify the peer. But using multi-PEM",
-  async () => {
-    await connect({
-      client: {
-        key: client.key,
-        cert: client.single,
-        ca: server.ca + "\n" + server.subca,
-        checkServerIdentity,
-      },
-      server: {
-        key: server.key,
-        cert: server.single,
-        ca: client.ca + "\n" + client.subca,
-        requestCert: true,
-      },
-    });
-  },
-);
+it("Typical configuration error, incomplete cert chains sent, we have to know the peer's subordinate CAs in order to verify the peer. But using multi-PEM", async () => {
+  await connect({
+    client: {
+      key: client.key,
+      cert: client.single,
+      ca: server.ca + "\n" + server.subca,
+      checkServerIdentity,
+    },
+    server: {
+      key: server.key,
+      cert: server.single,
+      ca: client.ca + "\n" + client.subca,
+      requestCert: true,
+    },
+  });
+});
 
-it.todo(
-  "Typical configuration error, incomplete cert chains sent, we have to know the peer's subordinate CAs in order to verify the peer. But using multi-PEM in an array",
-  async () => {
-    await connect({
-      client: {
-        key: client.key,
-        cert: client.single,
-        ca: [server.ca + "\n" + server.subca],
-        checkServerIdentity,
-      },
-      server: {
-        key: server.key,
-        cert: server.single,
-        ca: [client.ca + "\n" + client.subca],
-        requestCert: true,
-      },
-    });
-  },
-);
+it("Typical configuration error, incomplete cert chains sent, we have to know the peer's subordinate CAs in order to verify the peer. But using multi-PEM in an array", async () => {
+  await connect({
+    client: {
+      key: client.key,
+      cert: client.single,
+      ca: [server.ca + "\n" + server.subca],
+      checkServerIdentity,
+    },
+    server: {
+      key: server.key,
+      cert: server.single,
+      ca: [client.ca + "\n" + client.subca],
+      requestCert: true,
+    },
+  });
+});
 
 it("Fail to complete server's chain", async () => {
   try {
@@ -178,7 +205,7 @@ it("Fail to complete server's chain", async () => {
   }
 });
 
-it.todo("Fail to complete client's chain.", async () => {
+it("Fail to complete client's chain.", async () => {
   try {
     await connect({
       client: {
@@ -196,7 +223,10 @@ it.todo("Fail to complete client's chain.", async () => {
     });
     expect.unreachable();
   } catch (err: any) {
-    expect(err.code).toBe("UNABLE_TO_GET_ISSUER_CERT");
+    // The X.509 verify result (UNABLE_TO_GET_ISSUER_CERT) is the server's.
+    // Node's server signals it with a TLS alert (its client sees an SSL alert
+    // error); Bun's server aborts the connection, so the client sees a reset.
+    expect(err.code).toBe("ECONNRESET");
   }
 });
 
@@ -234,7 +264,7 @@ it("Server sent their CA, but CA cannot be trusted if it is not locally known.",
   }
 });
 
-it.todo("Server sent their CA, wrongly, but its OK since we know the CA locally.", async () => {
+it("Server sent their CA, wrongly, but its OK since we know the CA locally.", async () => {
   await connect({
     client: {
       checkServerIdentity,
@@ -247,6 +277,8 @@ it.todo("Server sent their CA, wrongly, but its OK since we know the CA locally.
   });
 });
 
+// Known gap: "BEGIN TRUSTED CERTIFICATE" PEM blocks aren't parsed as CA input, so
+// the client cannot verify the server (UNABLE_TO_GET_ISSUER_CERT_LOCALLY).
 it.todo('Confirm client support for "BEGIN TRUSTED CERTIFICATE".', async () => {
   await connect({
     client: {
@@ -264,6 +296,9 @@ it.todo('Confirm client support for "BEGIN TRUSTED CERTIFICATE".', async () => {
   });
 });
 
+// Known gap (same as above): "BEGIN TRUSTED CERTIFICATE" on the server side: the CA
+// never loads, so the (valid) client cert can't be verified and the server closes
+// the connection (ECONNRESET). It fails closed, but the option is a no-op.
 it.todo('Confirm server support for "BEGIN TRUSTED CERTIFICATE".', async () => {
   await connect({
     client: {
@@ -281,7 +316,7 @@ it.todo('Confirm server support for "BEGIN TRUSTED CERTIFICATE".', async () => {
   });
 });
 
-it.todo('Confirm client support for "BEGIN X509 CERTIFICATE".', async () => {
+it('Confirm client support for "BEGIN X509 CERTIFICATE".', async () => {
   await connect({
     client: {
       key: client.key,
@@ -298,7 +333,7 @@ it.todo('Confirm client support for "BEGIN X509 CERTIFICATE".', async () => {
   });
 });
 
-it.todo('Confirm server support for "BEGIN X509 CERTIFICATE".', async () => {
+it('Confirm server support for "BEGIN X509 CERTIFICATE".', async () => {
   await connect({
     client: {
       key: client.key,
@@ -313,4 +348,50 @@ it.todo('Confirm server support for "BEGIN X509 CERTIFICATE".', async () => {
       requestCert: true,
     },
   });
+});
+
+it("reports an invalid `tls.crl` with its own error code", async () => {
+  using bunServer = Bun.serve({
+    port: 0,
+    tls: { key: server.key, cert: server.cert },
+    fetch: () => new Response("ok"),
+  });
+  const error: any = await fetch(`https://localhost:${bunServer.port}/`, {
+    tls: { ca: server.ca, crl: "this is not a CRL", rejectUnauthorized: false },
+  }).then(
+    () => null,
+    e => e,
+  );
+  expect(error?.code).toBe("InvalidCRL");
+});
+
+it("fetch applies tls.sigalgs even when it is the only TLS option", async () => {
+  // `sigalgs` alone must still force a per-request SSL_CTX; without that the
+  // fetch reuses the shared default context and silently drops the option.
+  // The client only offers ECDSA while the server key is RSA, so honoring the
+  // option must fail the handshake; the (much larger) default offer succeeds.
+  const clientError = Promise.withResolvers<Error & { code?: string }>();
+  const tlsServer = tls.createServer({ key: server.key, cert: server.cert }, socket => socket.end());
+  tlsServer.on("tlsClientError", clientError.resolve);
+  tlsServer.listen(0);
+  await once(tlsServer, "listening");
+  try {
+    const port = (tlsServer.address() as any).port;
+    // The fetch promise joins the race so an early client-side failure fails
+    // the test immediately instead of timing out.
+    const request = fetch(`https://127.0.0.1:${port}/`, {
+      tls: { rejectUnauthorized: false, sigalgs: "ecdsa_secp256r1_sha256" },
+    }).then(
+      () => "fetch-resolved",
+      (error: Error & { code?: string }) => `fetch-rejected:${error.code ?? error.name}`,
+    );
+    const outcome = await Promise.race([
+      once(tlsServer, "secureConnection").then(() => "handshake-completed"),
+      clientError.promise.then(error => `rejected:${error.code}`),
+      request.then(r => (r === "fetch-resolved" ? "handshake-completed" : r)),
+    ]);
+    expect(outcome).toBe("rejected:ERR_SSL_NO_COMMON_SIGNATURE_ALGORITHMS");
+  } finally {
+    tlsServer.close();
+  }
 });

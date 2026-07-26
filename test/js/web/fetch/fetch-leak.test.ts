@@ -68,6 +68,17 @@ describe("fetch doesn't leak", () => {
       NAME: name,
     };
 
+    if (isASAN) {
+      // The fixture judges leakage by RSS delta, but ASAN's quarantine retains
+      // freed allocations (256 MB by default): 1000 compressed-body requests
+      // free ~65 MB of transient buffers and the delta still reads ~276 MB —
+      // pure quarantine, measured with zero real leakage. Cap the child's
+      // quarantine so RSS tracks live memory again; a genuine
+      // one-body-per-request leak still exceeds the threshold by orders of
+      // magnitude.
+      env.ASAN_OPTIONS = `${bunEnv.ASAN_OPTIONS ?? ""}:quarantine_size_mb=32`.replace(/^:/, "");
+    }
+
     if (tls) {
       env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
     }
@@ -144,8 +155,10 @@ describe.each(["FormData", "Blob", "Buffer", "String", "URLSearchParams", "strea
       expect(last).toBeLessThan(first * 10);
     },
     // The URLSearchParams variant URL-encodes the 2MB body on each of the 500
-    // requests - pure throughput that a debug build cannot fit in 20s.
-    isDebug ? 120 * 1000 : 20 * 1000,
+    // requests - pure throughput that a debug build cannot fit in 20s, and
+    // ASAN instrumentation overruns the 20s release deadline the same way
+    // (observed 20000.61ms on the x64-asan lane).
+    isDebug || isASAN ? 120 * 1000 : 20 * 1000,
   );
 });
 
@@ -650,9 +663,7 @@ test("fetch() promise Strong handle is consumed on resolve/reject (FetchTasklet 
 // in-hive slot path and the fallback-allocator path.
 describe("Request body HiveRef pool returns slot via Body.Value.deinit (does not leak)", () => {
   for (const kind of ["String"] as const) {
-    // TODO(zig-rust-divergence): Rust port skips Body.Value.deinit() on pool
-    // return; see docs/ZIG_RUST_DIVERGENCE_AUDIT.md.
-    test.todo(
+    test(
       kind,
       async () => {
         const script = `
@@ -727,6 +738,12 @@ test("should not leak using readable stream", async () => {
       // ASAN's quarantine retains freed allocations so RSS stays elevated
       // under bun-asan; the fixture only allows MAX_MEMORY_INCREASE MiB.
       MAX_MEMORY_INCREASE: isASAN ? "64" : "5", // in MB
+      // The fixture asserts RSS stabilizes after iteration 250, but with the
+      // default 256 MB quarantine the freed 128 KB bodies are never reused and
+      // RSS keeps climbing through all 500 iterations (~97 MB past the sample
+      // point, over the 64 MB allowance). Cap the quarantine so freed churn
+      // recycles and the stabilization the test asserts can actually happen.
+      ...(isASAN && { ASAN_OPTIONS: `${bunEnv.ASAN_OPTIONS ?? ""}:quarantine_size_mb=32`.replace(/^:/, "") }),
     },
     stdout: "pipe",
     stderr: "pipe",
@@ -743,8 +760,10 @@ test("should not leak using readable stream", async () => {
 // `ondrain` never fires and the JS `drainReaderIntoSink` continuation (which
 // captures the reader/stream graph) plus the FetchTasklet's startRequestStream
 // ref used to leak forever — one ReadableStream/Controller/Reader per fetch.
-test("should not leak request-body ReadableStream when server ignores the body", async () => {
-  const script = `
+test(
+  "should not leak request-body ReadableStream when server ignores the body",
+  async () => {
+    const script = `
     const { heapStats } = require("bun:jsc");
     const server = Bun.serve({ port: 0, fetch: () => new Response("ok") });
     const url = "http://localhost:" + server.port;
@@ -782,14 +801,108 @@ test("should not leak request-body ReadableStream when server ignores the body",
     process.exit(0);
   `;
 
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout + stderr).toContain('"after"');
+    expect(stderr).not.toContain("LEAK");
+    expect(exitCode).toBe(0);
+    // The scenario itself takes ~100 ms; under ASAN the spawned child's startup
+    // (shadow-memory init) plus suite load overruns the 5 s default. Standalone
+    // ASAN runs pass in well under a second.
+  },
+  isASAN ? 30_000 : 5_000,
+);
+
+// https://github.com/oven-sh/bun/issues/32659
+test("aborting an in-flight streaming fetch() discards the buffered body and errors the reader", async () => {
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", script],
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const CHUNK = new Uint8Array(256 * 1024);
+        let sent = 0;
+        let serverAbort;
+        using server = Bun.serve({
+          port: 0,
+          idleTimeout: 0,
+          fetch(req) {
+            serverAbort = new Promise(r => req.signal.addEventListener("abort", () => r()));
+            return new Response(
+              new ReadableStream({ pull(c) { c.enqueue(CHUNK); sent++; } }),
+            );
+          },
+        });
+        const ac = new AbortController();
+        const res = await fetch(server.url, { signal: ac.signal });
+        const reader = res.body.getReader();
+        await reader.read();
+        // Wait for the server's pull to stop advancing: the transport and
+        // the client's response buffer are full, so the abort lands on a
+        // body with buffered-but-unread bytes. Bounded so a backpressure
+        // regression fails the assertions instead of hanging here.
+        for (let last = sent, p = 0; p < 200; last = sent, p++) {
+          await Bun.sleep(5);
+          if (sent === last && sent > 2) break;
+        }
+        ac.abort();
+        // Once the server observes the abort the client socket is closed,
+        // so the client-side error callback has run.
+        await serverAbort;
+        for (let i = 0; i < 5; i++) await Bun.sleep(1);
+        let drained = 0, result;
+        try {
+          for (;;) {
+            const r = await reader.read();
+            if (r.done) { result = { done: true }; break; }
+            drained += r.value.length;
+          }
+        } catch (e) { result = { error: e.name }; }
+        console.log(JSON.stringify({ drained, result }));
+        process.exit(0);
+      `,
+    ],
     env: bunEnv,
+    stdout: "pipe",
+    // ASAN/debug builds may emit benign stderr noise; stdout carries the result.
+    stderr: "ignore",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const { drained, result } = JSON.parse(stdout.trim());
+  // Before the fix the reader drained the retained native buffer then saw
+  // { done: true }; now the buffer is released and the stored error is
+  // surfaced to the next pull.
+  expect(result).toEqual({ error: "AbortError" });
+  // Only what was already in the JS-side stream queue remains readable.
+  expect(drained).toBeLessThan(2 * 1024 * 1024);
+  expect(exitCode).toBe(0);
+});
+
+// https://github.com/oven-sh/bun/issues/32659
+test("aborting in-flight streaming fetch() responses does not retain the buffered body off-heap", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), join(import.meta.dir, "fetch-abort-stream-leak-fixture.ts")],
+    env: {
+      ...bunEnv,
+      ITERATIONS: "60",
+      // Unfixed, every held iteration retains its multi-MB buffered body
+      // (>100MB total); 55 absorbs allocator noise (Windows release measured
+      // 32.8MB of it) while staying far below the leak.
+      MAX_GROWTH_MB: "55",
+      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=0", "thread_local_quarantine_size_kb=0"]
+        .filter(Boolean)
+        .join(":"),
+    },
     stdout: "pipe",
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stdout + stderr).toContain('"after"');
+  expect(stdout).toContain("held=60");
   expect(stderr).not.toContain("LEAK");
   expect(exitCode).toBe(0);
 });

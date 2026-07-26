@@ -50,8 +50,10 @@ public:
     WEBCORE_EXPORT static RefPtr<CryptoKeyOKP> importRaw(CryptoAlgorithmIdentifier, NamedCurve, Vector<uint8_t>&& keyData, bool extractable, CryptoKeyUsageBitmap);
     static RefPtr<CryptoKeyOKP> importPublicJwk(CryptoAlgorithmIdentifier, NamedCurve, JsonWebKey&&, bool extractable, CryptoKeyUsageBitmap);
     static RefPtr<CryptoKeyOKP> importJwk(CryptoAlgorithmIdentifier, NamedCurve, JsonWebKey&&, bool extractable, CryptoKeyUsageBitmap);
-    static RefPtr<CryptoKeyOKP> importSpki(CryptoAlgorithmIdentifier, NamedCurve, Vector<uint8_t>&& keyData, bool extractable, CryptoKeyUsageBitmap);
-    static RefPtr<CryptoKeyOKP> importPkcs8(CryptoAlgorithmIdentifier, NamedCurve, Vector<uint8_t>&& keyData, bool extractable, CryptoKeyUsageBitmap);
+    // On failure, `keyTypeMismatch` (when given) reports whether the data held a
+    // well-formed key of another type, surfaced as "Invalid key type".
+    static RefPtr<CryptoKeyOKP> importSpki(CryptoAlgorithmIdentifier, NamedCurve, Vector<uint8_t>&& keyData, bool extractable, CryptoKeyUsageBitmap, bool* keyTypeMismatch = nullptr);
+    static RefPtr<CryptoKeyOKP> importPkcs8(CryptoAlgorithmIdentifier, NamedCurve, Vector<uint8_t>&& keyData, bool extractable, CryptoKeyUsageBitmap, bool* keyTypeMismatch = nullptr);
 
     WEBCORE_EXPORT ExceptionOr<Vector<uint8_t>> exportRaw() const;
     ExceptionOr<JsonWebKey> exportJwk() const;

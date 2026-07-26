@@ -230,6 +230,15 @@ export interface CodegenOutputs {
   bindgenV2Cpp: string[];
 
   /**
+   * The InternalModuleRegistryConstants.S path — compiled via cc() in bun.ts
+   * and linked alongside the C++ objects. Carries the concatenated JS module
+   * sources as a `.incbin` of the sibling `.bin`.
+   */
+  internalModulesAsm: string;
+  /** The `.incbin`'d blob — implicit input to the `.S` compile edge. */
+  internalModulesBin: string;
+
+  /**
    * Stamp output from `bun install` at repo root.
    * The esbuild tool and the cppbind lezer parser live here. Any
    * step that uses esbuild (or imports node_modules deps at configure
@@ -261,6 +270,8 @@ export function emitCodegen(n: Ninja, cfg: Config, sources: Sources): CodegenOut
     cppHeaders: [],
     cppAll: [],
     bindgenV2Cpp: [],
+    internalModulesAsm: resolve(cfg.codegenDir, "InternalModuleRegistryConstants.S"),
+    internalModulesBin: resolve(cfg.codegenDir, "InternalModuleRegistryConstants.bin"),
     rootInstall,
   };
 
@@ -570,7 +581,9 @@ function emitErrorCode({ n, cfg, o, dirStamp }: Ctx): void {
     resolve(cfg.cwd, "src", "jsc", "bindings", "ErrorCode.h"),
   ];
 
-  const outputs = [resolve(cfg.codegenDir, "ErrorCode+List.h"), resolve(cfg.codegenDir, "ErrorCode+Data.h")];
+  const cppOutputs = [resolve(cfg.codegenDir, "ErrorCode+List.h"), resolve(cfg.codegenDir, "ErrorCode+Data.h")];
+  const rustOutput = resolve(cfg.codegenDir, "ErrorCode.generated.rs");
+  const outputs = [...cppOutputs, rustOutput];
 
   n.build({
     outputs,
@@ -586,7 +599,7 @@ function emitErrorCode({ n, cfg, o, dirStamp }: Ctx): void {
 
   o.all.push(...outputs);
   o.rustInputs.push(...outputs);
-  o.cppHeaders.push(outputs[0]!, outputs[1]!);
+  o.cppHeaders.push(...cppOutputs);
 }
 
 function emitGeneratedClasses({ n, cfg, sources, o, dirStamp }: Ctx): void {
@@ -743,6 +756,8 @@ function emitJsModules({ n, cfg, sources, o, dirStamp }: Ctx): void {
     // `resolved_source_tag` module in src/jsc/lib.rs. Declared for the same
     // reason as generated_js2native.rs.
     resolve(cfg.codegenDir, "generated_resolved_source_tag.rs"),
+    o.internalModulesAsm,
+    o.internalModulesBin,
   ];
 
   n.build({

@@ -189,8 +189,8 @@ pub(crate) mod sql_hooks {
     unsafe fn timer_insert(heap: *mut c_void, timer: *mut EventLoopTimer) {
         // SAFETY: `heap` is `&runtime_state().timer` (live for the VM); `timer`
         // is a live intrusive heap node owned by the caller. Route through
-        // `All::insert` (NOT the raw `.timers` field) so the lock is taken and
-        // `(*timer).state` / `in_heap` bookkeeping is updated.
+        // `All::insert` (NOT the raw `.timers` field) so the fake-timers
+        // routing and the `(*timer).state` / `in_heap` bookkeeping happen.
         unsafe { (*heap.cast::<crate::timer::All>()).insert(timer) };
     }
     unsafe fn timer_remove(heap: *mut c_void, timer: *mut EventLoopTimer) {

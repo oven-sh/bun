@@ -82,7 +82,7 @@ fn write_entry_item<W: Write + ?Sized>(
     hash: u64,
     loader: Loader,
     kind: OutputKind,
-) -> Result<(), bun_core::Error> {
+) -> Result<(), crate::Error> {
     writer.write_all(b"{")?;
 
     if !input.is_empty() {
@@ -133,7 +133,7 @@ pub fn write_escaped_json<W: Write + ?Sized>(
     linker_graph: &LinkerGraph<'_>,
     chunks: &[Chunk],
     writer: &mut W,
-) -> Result<(), bun_core::Error> {
+) -> Result<(), crate::Error> {
     let mut bytes: Vec<u8> = Vec::new();
     write(index, graph, linker_graph, chunks, &mut bytes)?;
     bun_js_printer::write_pre_quoted_string::<_, b'"', false, true, { Encoding::Utf8 }>(
@@ -173,7 +173,7 @@ pub fn write<W: Write + ?Sized>(
     linker_graph: &LinkerGraph<'_>,
     chunks: &[Chunk],
     writer: &mut W,
-) -> Result<(), bun_core::Error> {
+) -> Result<(), crate::Error> {
     let browser_source_index = graph.html_imports.html_source_indices.slice()[index as usize];
     let server_source_index = graph.html_imports.server_source_indices.slice()[index as usize];
     let sources: &[Source] = graph.input_files.items_source();

@@ -141,9 +141,26 @@ module.exports = {
   get opensslCli() {
     if (typeof Bun === "object") {
       if (opensslCli !== null) return opensslCli;
-  
-      opensslCli = Bun.which('openssl');
-      
+
+      const found = Bun.which('openssl');
+      if (!found) {
+        // Match Node's contract: false (not null) means no usable OpenSSL CLI,
+        // so tests checking `opensslCli === false` skip correctly.
+        opensslCli = false;
+        return opensslCli;
+      }
+      // Tests assume the OpenSSL CLI's option syntax (e.g. `s_client --alpn`,
+      // `-reconnect`); LibreSSL's `openssl` (the macOS system binary) does not
+      // accept the same options, so report it as unavailable like Node does
+      // when its bundled openssl-cli is missing.
+      const { spawnSync } = require('child_process');
+      const ver = spawnSync(found, ['version']);
+      if (ver.status !== 0 || ver.error !== undefined ||
+          String(ver.stdout).includes('LibreSSL')) {
+        opensslCli = false;
+      } else {
+        opensslCli = found;
+      }
       return opensslCli;
     }
 

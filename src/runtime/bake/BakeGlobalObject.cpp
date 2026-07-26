@@ -261,7 +261,6 @@ extern "C" GlobalObject* BakeCreateProdGlobal(void* console)
     JSC::gcProtect(global);
 
     global->setConsole(console);
-    global->setStackTraceLimit(10); // Node.js defaults to 10
     global->isThreadLocalDefaultGlobalObject = true;
 
     // if (shouldDisableStopIfNecessaryTimer) {

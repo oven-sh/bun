@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug } from "harness";
+import { join } from "path";
 
 // Worker VM startup/teardown is much slower under debug and/or ASAN; these
 // tests spawn many workers, so scale iteration counts and timeouts down.
@@ -116,6 +117,62 @@ test(
     expect(stderr).toBe("");
     expect(stdout).toBe("");
     expect(exitCode).toBe(0);
+  },
+  timeout,
+);
+
+// Regression: the per-VM c-ares channel was destroyed in deinit_runtime_state
+// (RuntimeState drop) AFTER JSC teardown and RareData.file_polls drop.
+// ares_destroy() synchronously fires EDESTRUCTION query callbacks and socket-
+// state callbacks, which then dereferenced the freed JSGlobalObject and the
+// freed FilePoll hive. ASAN-only: release builds read freed memory without
+// crashing. Upstream Node test-worker-dns-terminate.js.
+test.skipIf(!isASAN)(
+  "terminate() while dns.lookup() is in flight does not UAF on c-ares channel teardown",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { Worker } = require("worker_threads");
+        let done = 0;
+        for (let i = 0; i < 4; i++) {
+          const w = new Worker(
+            // Hermetic: point the global resolver's c-ares channel at a local
+            // UDP socket that never replies, so both queries are guaranteed
+            // in-flight (socket registered, no completion) when terminate()
+            // lands. dns.lookup() only respects setServers() where the c-ares
+            // backend is the default (Linux); elsewhere resolve4 alone still
+            // covers the socket-state and EDESTRUCTION paths hermetically.
+            'const dgram = require("dgram");' +
+            'const dns = require("dns");' +
+            'const s = dgram.createSocket("udp4");' +
+            's.bind(0, "127.0.0.1", () => {' +
+            '  dns.setServers(["127.0.0.1:" + s.address().port]);' +
+            '  if (process.platform === "linux") dns.lookup("example.org", () => {});' +
+            '  dns.resolve4("example.org", () => {});' +
+            '  require("worker_threads").parentPort.postMessage(0);' +
+            '});',
+            { eval: true },
+          );
+          w.on("message", () => w.terminate().then(() => {
+            if (++done === 4) console.log("ok");
+          }));
+        }
+      `,
+      ],
+      env: {
+        ...bunEnv,
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
+        LSAN_OPTIONS: `print_suppressions=0:suppressions=${join(import.meta.dirname, "../../../leaksan.supp")}`,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "ok\n", stderr: "", exitCode: 0 });
   },
   timeout,
 );

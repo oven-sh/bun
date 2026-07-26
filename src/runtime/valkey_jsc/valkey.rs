@@ -81,13 +81,6 @@ pub enum Status {
     Connected,
 }
 
-impl Status {
-    #[inline]
-    pub fn is_active(self) -> bool {
-        matches!(self, Status::Connected | Status::Connecting)
-    }
-}
-
 pub use super::valkey_command_body as Command_;
 
 /// Valkey protocol types (standalone, TLS, Unix socket)
@@ -121,10 +114,6 @@ impl Protocol {
 
     pub fn is_tls(self) -> bool {
         matches!(self, Protocol::StandaloneTls | Protocol::StandaloneTlsUnix)
-    }
-
-    pub fn is_unix(self) -> bool {
-        matches!(self, Protocol::StandaloneUnix | Protocol::StandaloneTlsUnix)
     }
 }
 
@@ -208,7 +197,7 @@ impl Address {
         group: &mut SocketGroup,
         ssl_ctx: Option<*mut SslCtx>,
         is_tls: bool,
-    ) -> Result<AnySocket, bun_core::Error> {
+    ) -> Result<AnySocket, crate::Error> {
         if is_tls {
             let kind = SocketKind::ValkeyTls;
             let sock = match self {
@@ -1214,9 +1203,8 @@ impl ValkeyClient {
         // `self.write_buffer` directly (disjoint field) via `WriteBufWriter`.
         let hello_write_result = {
             let mut hello_args_buf: [&[u8]; 4] = [b"3", b"AUTH", b"", b""];
-            let hello_args: &[&[u8]];
 
-            if !self.username.is_empty() || !self.password.is_empty() {
+            let hello_args: &[&[u8]] = if !self.username.is_empty() || !self.password.is_empty() {
                 hello_args_buf[0] = b"3";
                 hello_args_buf[1] = b"AUTH";
 
@@ -1228,10 +1216,10 @@ impl ValkeyClient {
                     hello_args_buf[3] = &self.password;
                 }
 
-                hello_args = &hello_args_buf[0..4];
+                &hello_args_buf[0..4]
             } else {
-                hello_args = &hello_args_buf[0..1];
-            }
+                &hello_args_buf[0..1]
+            };
 
             // Format and send the HELLO command without adding to command queue
             // We'll handle this response specially in handleResponse
@@ -1363,7 +1351,7 @@ impl ValkeyClient {
         &mut self,
         command: &Command,
         mut promise: command::Promise,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         let can_pipeline = command
             .meta
             .contains(command::Meta::SUPPORTS_AUTO_PIPELINING)
@@ -1427,7 +1415,7 @@ impl ValkeyClient {
         &mut self,
         global_this: &JSGlobalObject,
         command: &Command,
-    ) -> Result<*mut JSPromise, bun_core::Error> {
+    ) -> Result<*mut JSPromise, crate::Error> {
         // FIX: Check meta before using it for routing decisions
         let mut checked_command = *command;
         checked_command.meta = command.meta.check(command);
@@ -1550,10 +1538,6 @@ impl ValkeyClient {
     pub fn on_valkey_close(&mut self) -> JsTerminated<()> {
         self.parent().on_valkey_close()
     }
-
-    pub fn on_valkey_timeout(&mut self) {
-        self.parent().on_valkey_timeout();
-    }
 }
 
 // Auto-pipelining
@@ -1578,7 +1562,7 @@ impl bun_io::Write for ValkeyClient {
     fn write_all(&mut self, buf: &[u8]) -> bun_io::Result<()> {
         self.write_buffer
             .write(buf)
-            .map_err(|_| bun_core::Error::OUT_OF_MEMORY)
+            .map_err(|_| bun_core::Error::Alloc(bun_alloc::AllocError))
     }
 }
 
@@ -1593,7 +1577,7 @@ impl bun_io::Write for WriteBufWriter<'_> {
     fn write_all(&mut self, buf: &[u8]) -> bun_io::Result<()> {
         self.0
             .write(buf)
-            .map_err(|_| bun_core::Error::OUT_OF_MEMORY)
+            .map_err(|_| bun_core::Error::Alloc(bun_alloc::AllocError))
     }
 }
 

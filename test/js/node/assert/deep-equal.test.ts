@@ -23,6 +23,13 @@ interface Case {
 }
 
 const sym = Symbol("shared");
+const sharedArrayBuffer = new ArrayBuffer(4);
+
+function float64WithNaNPayload(bits: bigint) {
+  const arr = new Float64Array(1);
+  new BigUint64Array(arr.buffer)[0] = bits;
+  return arr;
+}
 
 class WithPrototypeGetter {
   get a() {
@@ -117,6 +124,34 @@ const cases: Case[] = [
     loose: true,
   },
   { name: "two boxed bigints", a: () => Object(1n), b: () => Object(1n), strict: true, loose: true },
+  {
+    name: "two boxed symbols wrapping distinct symbols",
+    a: () => Object(Symbol("s")),
+    b: () => Object(Symbol("s")),
+    strict: false,
+    loose: false,
+  },
+  { name: "two boxed unequal bigints", a: () => Object(1n), b: () => Object(2n), strict: false, loose: false },
+  {
+    name: "a boxed string with an extra own property",
+    a: () => withExtraProperty(new String("test")),
+    b: () => new String("test"),
+    strict: false,
+    loose: false,
+    looseBug: "reports equal",
+  },
+  {
+    name: "a boxed string with an out-of-range indexed own property",
+    a: () => {
+      const boxed = new String("ab");
+      boxed[5] = "x";
+      return boxed;
+    },
+    b: () => new String("ab"),
+    strict: false,
+    loose: false,
+    looseBug: "reports equal",
+  },
 
   // Undefined-valued and missing properties. Both modes compare own key counts.
   {
@@ -245,6 +280,20 @@ const cases: Case[] = [
     a: () => ({ [sym]: 1 }),
     b: () => ({ [sym]: 1 }),
     strict: true,
+    loose: true,
+  },
+  {
+    name: "an enumerable symbol key and a non-enumerable one",
+    a: () => ({ [sym]: 1 }),
+    b: () => Object.defineProperty({}, sym, { value: 1, enumerable: false }),
+    strict: false,
+    loose: true,
+  },
+  {
+    name: "typed arrays differing only in a symbol property",
+    a: () => Object.assign(new Uint8Array([1]), { [sym]: true }),
+    b: () => Object.assign(new Uint8Array([1]), { [sym]: false }),
+    strict: false,
     loose: true,
   },
   {
@@ -498,8 +547,31 @@ const cases: Case[] = [
     b: () => new Uint8Array([1]),
     strict: false,
     loose: false,
-    strictBug: "reports equal",
     looseBug: "reports equal",
+  },
+  {
+    name: "an empty typed array with an extra own property",
+    a: () => withExtraProperty(new Uint8Array(0)),
+    b: () => new Uint8Array(0),
+    strict: false,
+    loose: false,
+    looseBug: "reports equal",
+  },
+  {
+    name: "two views over the same ArrayBuffer, one with an extra own property",
+    a: () => withExtraProperty(new Uint8Array(sharedArrayBuffer)),
+    b: () => new Uint8Array(sharedArrayBuffer),
+    strict: false,
+    loose: false,
+    looseBug: "reports equal",
+  },
+  {
+    // Strict mode compares the bytes; the property walk would see both as NaN and accept them.
+    name: "Float64Arrays with distinct NaN payloads and an extra own property",
+    a: () => withExtraProperty(float64WithNaNPayload(0x7ff8000000000001n)),
+    b: () => withExtraProperty(float64WithNaNPayload(0x7ff8000000000002n)),
+    strict: false,
+    loose: false,
   },
 
   // Arrays.
@@ -616,6 +688,109 @@ describe("util.isDeepStrictEqual", () => {
     expect(util.isDeepStrictEqual(undefined, undefined)).toBe(true);
     expect(util.isDeepStrictEqual(null, undefined)).toBe(false);
     expect(util.isDeepStrictEqual(Object.create(null), Object.create(null))).toBe(true);
+  });
+
+  // The third argument was added in Node v26.
+  describe("skipPrototype", () => {
+    class Foo {
+      constructor(value) {
+        this.value = value;
+      }
+    }
+    class Bar {
+      constructor(value) {
+        this.value = value;
+      }
+    }
+
+    test("ignores differing constructors when set", () => {
+      expect(util.isDeepStrictEqual(new Foo(42), new Bar(42))).toBe(false);
+      expect(util.isDeepStrictEqual(new Foo(42), new Bar(42), true)).toBe(true);
+    });
+
+    test("still compares values", () => {
+      expect(util.isDeepStrictEqual(new Foo(42), new Bar(99), true)).toBe(false);
+    });
+
+    test.each([
+      ["object property", () => ({ inner: new Foo(1) }), () => ({ inner: new Bar(1) })],
+      ["array element", () => [new Foo(1)], () => [new Bar(1)]],
+      ["Map value", () => new Map([["k", new Foo(1)]]), () => new Map([["k", new Bar(1)]])],
+      ["Set element", () => new Set([new Foo(1)]), () => new Set([new Bar(1)])],
+      ["Error cause", () => new Error("e", { cause: new Foo(1) }), () => new Error("e", { cause: new Bar(1) })],
+    ])("propagates through %s", (_name, makeA, makeB) => {
+      expect(util.isDeepStrictEqual(makeA(), makeB())).toBe(false);
+      expect(util.isDeepStrictEqual(makeA(), makeB(), true)).toBe(true);
+    });
+
+    test("ignores the boxed-primitive subclass distinction", () => {
+      class S extends String {}
+      expect(util.isDeepStrictEqual(new String("a"), new S("a"))).toBe(false);
+      expect(util.isDeepStrictEqual(new String("a"), new S("a"), true)).toBe(true);
+    });
+
+    test("does not leak into assert.deepStrictEqual", () => {
+      expect(() => assert.deepStrictEqual(new Foo(42), new Bar(42))).toThrow();
+    });
+  });
+});
+
+describe("detached ArrayBuffer", () => {
+  function detached() {
+    const buf = new ArrayBuffer(4);
+    buf.transfer();
+    return buf;
+  }
+
+  const table: Array<[string, Thunk, Thunk]> = [
+    ["two distinct detached ArrayBuffers", detached, detached],
+    ["a detached ArrayBuffer and a zero-length ArrayBuffer", detached, () => new ArrayBuffer(0)],
+    ["a zero-length ArrayBuffer and a detached ArrayBuffer", () => new ArrayBuffer(0), detached],
+    ["nested detached ArrayBuffers", () => ({ x: detached() }), () => ({ x: detached() })],
+  ];
+
+  for (const [label, a, b] of table) {
+    test(`throws TypeError on ${label}`, () => {
+      expect(() => assert.deepStrictEqual(a(), b())).toThrow(TypeError);
+      expect(() => assert.deepEqual(a(), b())).toThrow(TypeError);
+      expect(() => assert.notDeepStrictEqual(a(), b())).toThrow(TypeError);
+      expect(() => assert.notDeepEqual(a(), b())).toThrow(TypeError);
+      expect(() => util.isDeepStrictEqual(a(), b())).toThrow(TypeError);
+    });
+  }
+
+  test("assert.partialDeepStrictEqual throws TypeError on a detached ArrayBuffer", () => {
+    expect(() => assert.partialDeepStrictEqual(detached(), new ArrayBuffer(0))).toThrow(TypeError);
+  });
+
+  test("error matches Node's message", () => {
+    const error = caught(() => assert.deepStrictEqual(detached(), new ArrayBuffer(0)));
+    expect(error).toBeInstanceOf(TypeError);
+    expect(error?.message).toBe("Cannot perform Construct on a detached ArrayBuffer");
+  });
+
+  test("reference-identical detached ArrayBuffer short-circuits as equal", () => {
+    const buf = detached();
+    expect(() => assert.deepStrictEqual(buf, buf)).not.toThrow();
+    expect(util.isDeepStrictEqual(buf, buf)).toBe(true);
+  });
+
+  test("detached ArrayBuffer vs non-zero-length ArrayBuffer is an ordinary mismatch", () => {
+    const error = caught(() => assert.deepStrictEqual(detached(), new ArrayBuffer(4)));
+    expect(error?.code).toBe("ERR_ASSERTION");
+  });
+
+  // Node v26 passes typed-array views directly to Buffer.compare (no re-wrap over
+  // .buffer), so a detached view compares as zero-length. Node v22 and earlier threw.
+  test("a detached typed-array view is comparable as zero-length", () => {
+    function detachedView() {
+      const buf = new ArrayBuffer(4);
+      const view = new Uint8Array(buf);
+      buf.transfer();
+      return view;
+    }
+    expect(() => assert.deepStrictEqual(detachedView(), detachedView())).not.toThrow();
+    expect(() => assert.deepStrictEqual(detachedView(), new Uint8Array(0))).not.toThrow();
   });
 });
 

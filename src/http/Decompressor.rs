@@ -19,7 +19,7 @@ impl Decompressor {
     // explicit `Drop` is unnecessary. Callers that want a mid-lifecycle reset
     // assign `*self = Decompressor::None`.
 
-    fn init(&mut self, encoding: Encoding, first_chunk: &[u8]) -> Result<(), bun_core::Error> {
+    fn init(&mut self, encoding: Encoding, first_chunk: &[u8]) -> crate::Result<()> {
         match encoding {
             Encoding::Gzip | Encoding::Deflate => {
                 // zlib.MAX_WBITS = 15
@@ -58,7 +58,7 @@ impl Decompressor {
         buffer: &[u8],
         body_out_str: &mut MutableString,
         is_done: bool,
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::Result<()> {
         if !encoding.is_compressed() {
             return Ok(());
         }
@@ -68,7 +68,7 @@ impl Decompressor {
         let out = &mut body_out_str.list;
         match self {
             Decompressor::Zlib(reader) => Ok(reader.decompress(buffer, out, is_done)?),
-            Decompressor::Brotli(reader) => reader.decompress(buffer, out, is_done),
+            Decompressor::Brotli(reader) => Ok(reader.decompress(buffer, out, is_done)?),
             Decompressor::Zstd(reader) => Ok(reader.decompress(buffer, out, is_done)?),
             Decompressor::None => {
                 unreachable!("Invalid encoding. This code should not be reachable")

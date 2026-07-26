@@ -23,12 +23,6 @@ pub enum PathFormat {
 }
 
 impl PathFormat {
-    /// The native path format for the target OS.
-    #[cfg(windows)]
-    pub const NATIVE: Self = Self::Windows;
-    #[cfg(not(windows))]
-    pub const NATIVE: Self = Self::Posix;
-
     #[inline(always)]
     pub fn is_sep<T: PathChar>(self, c: T) -> bool {
         match self {
@@ -68,7 +62,7 @@ impl<'a, T: PathChar> ComponentIterator<'a, T> {
     /// For Windows paths, returns `BadPathName` if `path` has an explicit
     /// namespace prefix (`\\.\`, `\\?\`, `\??\`) or is a UNC path with more
     /// than two leading separators. POSIX `init` is infallible.
-    pub fn init(path: &'a [T], fmt: PathFormat) -> Result<Self, bun_core::Error> {
+    pub fn init(path: &'a [T], fmt: PathFormat) -> crate::Result<Self> {
         let root_end = match fmt {
             PathFormat::Posix => {
                 let mut i = 0;
@@ -101,22 +95,6 @@ impl<'a, T: PathChar> ComponentIterator<'a, T> {
         } else {
             Some(&self.path[..self.root_end])
         }
-    }
-
-    /// Returns the first component and seeks to it.
-    pub fn first(&mut self) -> Option<Component<'a, T>> {
-        self.start = self.root_end;
-        self.end = self.start;
-        while self.end < self.path.len() && !self.is_sep(self.path[self.end]) {
-            self.end += 1;
-        }
-        if self.end == self.start {
-            return None;
-        }
-        Some(Component {
-            name: &self.path[self.start..self.end],
-            path: &self.path[..self.end],
-        })
     }
 
     /// Returns the last component and seeks to it.
@@ -206,13 +184,6 @@ impl<'a, T: PathChar> ComponentIterator<'a, T> {
     }
 }
 
-/// Native-format convenience wrapper over
-/// `ComponentIterator::init` for `u8` paths.
-#[inline]
-pub fn component_iterator(path: &[u8]) -> Result<ComponentIterator<'_, u8>, bun_core::Error> {
-    ComponentIterator::init(path, PathFormat::NATIVE)
-}
-
 /// Outcome of one `mkdir`-like step in [`make_path_with`]. The closure maps
 /// its I/O result onto these three variants; the walk handles the
 /// `previous()` / `next()` bookkeeping.
@@ -270,7 +241,7 @@ pub fn make_path_with<'a, T: PathChar, E>(
 // only see `ComponentIterator::init`; for ad-hoc root-length probing
 // `resolve_path::windows_filesystem_root_t` already exists.
 
-fn windows_root_end<T: PathChar>(path: &[T]) -> Result<usize, bun_core::Error> {
+fn windows_root_end<T: PathChar>(path: &[T]) -> crate::Result<usize> {
     #[inline(always)]
     fn sep<T: PathChar>(c: T) -> bool {
         c == T::from_u8(b'/') || c == T::from_u8(b'\\')
@@ -290,12 +261,12 @@ fn windows_root_end<T: PathChar>(path: &[T]) -> Result<usize, bun_core::Error> {
             if c1 == T::from_u8(b'?') {
                 // `\??\` (NT) — only when both outer seps are real backslashes.
                 if c2 == T::from_u8(b'?') && bs0 && bs3 {
-                    return Err(bun_core::err!("BadPathName"));
+                    return Err(crate::Error::Sys(bun_errno::SystemErrno::EINVAL));
                 }
             } else if sep(c1) {
                 // `\\?\` (verbatim/fake-verbatim) or `\\.\` (local-device).
                 if c2 == T::from_u8(b'?') || c2 == T::from_u8(b'.') {
-                    return Err(bun_core::err!("BadPathName"));
+                    return Err(crate::Error::Sys(bun_errno::SystemErrno::EINVAL));
                 }
             }
         }
@@ -317,7 +288,7 @@ fn windows_root_end<T: PathChar>(path: &[T]) -> Result<usize, bun_core::Error> {
         // .unc_absolute → consume `\\server\share\`; reject `\\\x`.
         let mut i = 2usize;
         if i < path.len() && sep(path[i]) {
-            return Err(bun_core::err!("BadPathName"));
+            return Err(crate::Error::Sys(bun_errno::SystemErrno::EINVAL));
         }
         while i < path.len() && !sep(path[i]) {
             i += 1;

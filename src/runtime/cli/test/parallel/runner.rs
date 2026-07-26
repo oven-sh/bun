@@ -22,10 +22,6 @@ use super::file_range::FileRange;
 use super::frame::{self, Frame};
 use super::worker::{PipeRole, Worker, WorkerPipe};
 use crate::Command;
-#[cfg(unix)]
-use crate::api::bun::process::PosixStdio as Stdio;
-#[cfg(not(unix))]
-use crate::api::bun::process::WindowsStdio as Stdio;
 use crate::test_command::{self, CommandLineReporter, TestCommand};
 use crate::test_runner::bun_test::FirstLast;
 use bun_options_types::code_coverage_options::CodeCoverageOptions;
@@ -75,7 +71,7 @@ pub fn run_as_coordinator(
     files: &[Interned],
     ctx: Command::Context,
     coverage_opts: &mut CodeCoverageOptions,
-) -> Result<bool, bun_core::Error> {
+) -> crate::Result<bool> {
     // SAFETY: caller guarantees `vm` is a valid live VM pointer for the duration.
     // Kept as a raw pointer; dereferenced at each use site to sidestep borrowck
     // around the self-referential Coordinator/Worker graph.
@@ -187,7 +183,6 @@ pub fn run_as_coordinator(
             captured: Vec::new(),
             alive: false,
             exit_status: None,
-            extra_fd_stdio: [Stdio::Ignore],
         });
         let w: *mut Worker = workers.last_mut().unwrap();
         // SAFETY: w points into workers; Vec will not reallocate (capacity == k)
@@ -297,19 +292,17 @@ pub fn run_as_coordinator(
 /// (`--path-ignore-patterns`, `--changed`), `--reporter`/`--reporter-outfile`,
 /// `--pass-with-no-tests`, `--parallel` itself — are intentionally not
 /// forwarded.
-fn build_worker_argv(
-    ctx: &Command::ContextData,
-) -> Result<Box<[bun_spawn::CStrPtr]>, bun_core::Error> {
+fn build_worker_argv(ctx: &Command::ContextData) -> crate::Result<Box<[bun_spawn::CStrPtr]>> {
     // Null-sentinel slice of C-string pointers. String storage routes through
     // the process-lifetime CLI arena (bulk-freed on exit).
     let mut argv: Vec<bun_spawn::CStrPtr> = Vec::new();
     let opts = &ctx.test_options;
 
     // Helper: format → NUL-terminated, return raw ptr (arena-owned).
-    let print_z = |args: core::fmt::Arguments<'_>| -> Result<*const c_char, bun_core::Error> {
+    let print_z = |args: core::fmt::Arguments<'_>| -> crate::Result<*const c_char> {
         let mut buf = Vec::<u8>::new();
         buf.write_fmt(args)
-            .map_err(|_| bun_core::err!("FormatFailed"))?;
+            .map_err(|_| crate::Error::FormatFailed)?;
         Ok(crate::cli::cli_dupe_z(&buf))
     };
     let dupe_z = |s: &[u8]| -> *const c_char { crate::cli::cli_dupe_z(s) };
@@ -317,7 +310,7 @@ fn build_worker_argv(
 
     argv.push(
         bun_core::self_exe_path()
-            .map_err(|_| bun_core::err!("SelfExePathFailed"))?
+            .map_err(|_| crate::Error::SelfExePathFailed)?
             .as_ptr(),
     );
     argv.push(lit(b"test\0"));
@@ -615,7 +608,7 @@ impl<'a> WorkerLoop<'a> {
                     last: true,
                 },
             ) {
-                test_command::handle_top_level_test_error_before_javascript_start(err);
+                test_command::handle_top_level_test_error_before_javascript_start(&err);
             }
             crate::jsc_hooks::close_isolation_handles(vm);
             vm.swap_global_for_test_isolation();

@@ -11,12 +11,15 @@
 #include "JSStreamTeeState.h"
 #include "JSStreamsRuntime.h"
 #include "JSTransformStream.h"
+#include "WebStreamsHeapAnalyzer.h"
+#include "WebStreamsInspectCustom.h"
 #include "WebStreamsInternals.h"
 
 #include <JavaScriptCore/Error.h>
 #include <JavaScriptCore/ExceptionHelpers.h>
 #include <JavaScriptCore/FunctionPrototype.h>
 #include <JavaScriptCore/JSCInlines.h>
+#include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/SlotVisitorMacros.h>
 #include <JavaScriptCore/SubspaceInlines.h>
 #include <JavaScriptCore/TopExceptionScope.h>
@@ -52,6 +55,8 @@ static JSC::JSPromise* invokePromiseReturningMethod(JSC::VM& vm, JSC::JSGlobalOb
 
 // The [[pullAlgorithm]] dispatch. ByteTeeBranch is byte-controller-only and CrossRealm sources
 // are never created (transferable streams are unimplemented); the switch is total over SourceKind.
+// Returns nullptr with no exception pending when the pull completed synchronously with a
+// non-thenable result: the caller queues the upon-fulfillment handler without a wrapper promise.
 static JSC::JSPromise* performDefaultControllerPullAlgorithm(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSReadableStreamDefaultController* controller)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -59,7 +64,7 @@ static JSC::JSPromise* performDefaultControllerPullAlgorithm(JSC::VM& vm, JSC::J
     case SourceKind::JavaScript: {
         JSC::JSObject* pullMethod = controller->m_algorithms.method1.get();
         if (!pullMethod)
-            RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
+            return nullptr;
         JSC::MarkedArgumentBuffer args;
         args.append(controller);
         if (args.hasOverflowed()) [[unlikely]] {
@@ -67,10 +72,31 @@ static JSC::JSPromise* performDefaultControllerPullAlgorithm(JSC::VM& vm, JSC::J
             return nullptr;
         }
         StreamAsyncContextScope asyncContextScope(globalObject, controller->m_stream.get());
-        RELEASE_AND_RETURN(scope, invokePromiseReturningMethod(vm, globalObject, pullMethod, controller->m_algorithms.underlyingObject.get(), args));
+        JSC::JSValue result;
+        JSC::JSValue thrown;
+        {
+            auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+            auto callData = JSC::getCallData(pullMethod);
+            ASSERT(callData.type != JSC::CallData::Type::None);
+            result = JSC::call(globalObject, pullMethod, callData, controller->m_algorithms.underlyingObject.get(), args);
+            if (catchScope.exception()) [[unlikely]]
+                thrown = takeAbruptCompletion(globalObject, catchScope);
+        }
+        if (!thrown.isEmpty()) [[unlikely]]
+            RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, thrown));
+        if (result.isEmpty()) [[unlikely]]
+            return nullptr;
+        if (!result.isObject()) [[likely]]
+            return nullptr;
+        // A vanilla JSPromise with an unpatched .then needs no wrapper: the caller uses
+        // performPromiseThenWithContext (internal reactions), so skipping promiseResolvedWith's
+        // thenable adoption is unobservable. Subclasses / patched .then fall through.
+        if (auto* resultPromise = dynamicDowncast<JSC::JSPromise>(result); resultPromise && resultPromise->isThenFastAndNonObservable())
+            return resultPromise;
+        RELEASE_AND_RETURN(scope, promiseResolvedWith(globalObject, result));
     }
     case SourceKind::Nothing:
-        RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
+        return nullptr;
     case SourceKind::Transform:
         RELEASE_AND_RETURN(scope, transformStreamDefaultSourcePullAlgorithm(globalObject, uncheckedDowncast<JSTransformStream>(controller->m_algorithms.algorithmContext.get())));
     case SourceKind::TeeBranch:
@@ -136,6 +162,7 @@ static JSC_DECLARE_CUSTOM_GETTER(jsReadableStreamDefaultControllerPrototypeGette
 static JSC_DECLARE_HOST_FUNCTION(jsReadableStreamDefaultControllerPrototypeFunction_close);
 static JSC_DECLARE_HOST_FUNCTION(jsReadableStreamDefaultControllerPrototypeFunction_enqueue);
 static JSC_DECLARE_HOST_FUNCTION(jsReadableStreamDefaultControllerPrototypeFunction_error);
+static JSC_DECLARE_HOST_FUNCTION(jsReadableStreamDefaultControllerPrototype_inspectCustom);
 
 class JSReadableStreamDefaultControllerPrototype final : public JSC::JSNonFinalObject {
 public:
@@ -179,10 +206,24 @@ static const HashTableValue JSReadableStreamDefaultControllerPrototypeTableValue
 
 const ClassInfo JSReadableStreamDefaultControllerPrototype::s_info = { "ReadableStreamDefaultController"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSReadableStreamDefaultControllerPrototype) };
 
+JSC_DEFINE_HOST_FUNCTION(jsReadableStreamDefaultControllerPrototype_inspectCustom, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue thisValue = callFrame->thisValue();
+    auto* thisObject = dynamicDowncast<JSReadableStreamDefaultController>(thisValue);
+    if (!thisObject) [[unlikely]]
+        return JSValue::encode(thisValue);
+    JSObject* data = constructEmptyObject(lexicalGlobalObject);
+    (void)thisObject;
+    RELEASE_AND_RETURN(scope, Bun::WebStreams::customInspect(lexicalGlobalObject, callFrame, thisValue, "ReadableStreamDefaultController"_s, data));
+}
+
 void JSReadableStreamDefaultControllerPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     reifyStaticProperties(vm, JSReadableStreamDefaultController::info(), JSReadableStreamDefaultControllerPrototypeTableValues, *this);
+    Bun::WebStreams::installInspectCustom(vm, this, jsReadableStreamDefaultControllerPrototype_inspectCustom);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
 
@@ -268,17 +309,32 @@ void JSReadableStreamDefaultController::visitChildrenImpl(JSCell* cell, Visitor&
     auto* thisObject = uncheckedDowncast<JSReadableStreamDefaultController>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
-    visitor.append(thisObject->m_stream);
-    visitor.append(thisObject->m_algorithms.underlyingObject);
-    visitor.append(thisObject->m_algorithms.method1);
-    visitor.append(thisObject->m_algorithms.method2);
-    visitor.append(thisObject->m_algorithms.algorithmContext);
-    visitor.append(thisObject->m_strategySizeAlgorithm);
+    visitor.appendHidden(thisObject->m_stream);
+    visitor.appendHidden(thisObject->m_algorithms.underlyingObject);
+    visitor.appendHidden(thisObject->m_algorithms.method1);
+    visitor.appendHidden(thisObject->m_algorithms.method2);
+    visitor.appendHidden(thisObject->m_algorithms.algorithmContext);
+    visitor.appendHidden(thisObject->m_strategySizeAlgorithm);
     WTF::Locker locker { thisObject->cellLock() };
     thisObject->m_queue.visit(locker, visitor);
 }
 
 DEFINE_VISIT_CHILDREN(JSReadableStreamDefaultController);
+
+void JSReadableStreamDefaultController::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
+{
+    auto* thisObject = uncheckedDowncast<JSReadableStreamDefaultController>(cell);
+    auto& vm = cell->vm();
+    Base::analyzeHeap(cell, analyzer);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_stream, "stream"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_strategySizeAlgorithm, "strategySizeAlgorithm"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_algorithms.underlyingObject, "underlyingSource"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_algorithms.method1, "pullAlgorithm"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_algorithms.method2, "cancelAlgorithm"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_algorithms.algorithmContext, "algorithmContext"_s);
+    WTF::Locker locker { thisObject->cellLock() };
+    thisObject->m_queue.analyzeHeap(locker, cell, analyzer);
+}
 
 // [[CancelSteps]](reason)
 JSPromise* JSReadableStreamDefaultController::cancelSteps(JSGlobalObject* globalObject, JSValue reason)
@@ -480,6 +536,12 @@ void readableStreamDefaultControllerCallPullIfNeeded(JSGlobalObject* globalObjec
     JSPromise* pullPromise = performDefaultControllerPullAlgorithm(vm, globalObject, controller);
     RETURN_IF_EXCEPTION(scope, void());
     auto* runtime = JSStreamsRuntime::from(globalObject);
+    // A non-thenable return, or an already-fulfilled promise from an internal pull arm,
+    // completed synchronously: queue the upon-fulfillment handler directly, saving the
+    // wrapper promise and performPromiseThen reactions while keeping the spec's microtask
+    // boundary (m_pulling stays set until then, so pull-call count is unchanged).
+    if (!pullPromise || pullPromise->status() == JSPromise::Status::Fulfilled)
+        return queueStreamsMicrotask(globalObject, runtime->onRSDefaultControllerPullFulfilled(), jsUndefined(), controller);
     pullPromise->performPromiseThenWithContext(vm, globalObject, runtime->onRSDefaultControllerPullFulfilled(), runtime->onRSDefaultControllerPullRejected(), jsUndefined(), controller);
 }
 

@@ -167,15 +167,13 @@ pub struct WebWorker {
     // `JsCell` (not `Cell`) because `Arena` is non-`Copy`; worker-thread-only
     // so the single-owner-thread invariant `JsCell` documents is upheld.
     arena: JsCell<Option<bun_alloc::Arena>>,
-    /// Heap-owned cloned env (Map + Loader) for the worker VM. The worker
-    /// `Arena` (`bumpalo::Bump`) does not run `Drop` (so the inner
-    /// `HashTable` would leak), and `clone_with_allocator()` does not route
-    /// through the arena allocator anyway — own them as `Box`es
-    /// here instead. `start_vm()` `heap::alloc`s and stores the pointers;
-    /// `shutdown()` step 5 `heap::take`s after `vm.destroy()` (loader
-    /// first, then map — `Loader<'static>` borrows `*map`).
-    worker_env_map: Cell<*mut bun_dotenv::Map>,
-    worker_env_loader: Cell<*mut bun_dotenv::Loader<'static>>,
+    /// Heap-owned cloned env for the worker VM. The worker `Arena`
+    /// (`bumpalo::Bump`) does not run `Drop` (so the inner `HashTable` would
+    /// leak), and `clone_with_allocator()` does not route through the arena
+    /// allocator anyway — own it as a `Box` here instead. `start_vm()`
+    /// `heap::alloc`s and stores the pointer; `shutdown()` step 5
+    /// `heap::take`s after `vm.destroy()`.
+    worker_env_loader: Cell<*mut bun_dotenv::Loader>,
     /// Set by `exit()` so that `spin()`'s error paths don't clobber an explicit
     /// `process.exit(code)`. Atomic so `exit()` can take `&self` (the struct is
     /// observed concurrently by `terminate_all_and_wait` / parent-thread FFI;
@@ -204,17 +202,26 @@ unsafe extern "C" {
     // ABI-identical to non-null `*const`); C++ mutating VM state through it is
     // interior to the cell.
     safe fn WebWorker__teardownJSCVM(global: &JSGlobalObject);
+    // safe: opaque `&JSGlobalObject` handle (see above); takes the contexts-map
+    // lock and flips an atomic flag, no Rust-visible state touched.
+    safe fn ScriptExecutionContext__markTerminating(global: &JSGlobalObject);
+    // safe: same opaque-handle contract; flips JSCTaskScheduler::m_isShuttingDown
+    // under its own lock and returns. Idempotent.
+    safe fn Bun__JSCTaskScheduler__markShuttingDown(global: &JSGlobalObject);
     // safe: `cpp_worker` is an opaque round-trip pointer owned by C++ (allocated
     // there, stored in `WebWorker.cpp_worker`, and only ever passed back to C++
     // — never dereferenced as Rust data); same contract as `JSC__VM__holdAPILock`'s
     // `ctx`. `&JSGlobalObject` is the non-null handle proof; remaining args are
     // by-value scalars/`#[repr(C)]` PODs.
     safe fn WebWorker__dispatchExit(cpp_worker: *mut c_void, exit_code: i32);
+    // safe: no args; frees this thread's lazily-allocated HPACK scratch buffer.
+    safe fn Bun__freeSharedHeaderBufferForThreadExit();
     // Re-declared here (also private in VM.rs) so `thread_main` can take the
     // API lock as a raw FFI call with NO RAII guard — see the note there.
     safe fn JSC__VM__getAPILock(vm: &jsc::VM);
     safe fn WebWorker__dispatchOnline(cpp_worker: *mut c_void, global: &JSGlobalObject);
     safe fn WebWorker__fireEarlyMessages(cpp_worker: *mut c_void, global: &JSGlobalObject);
+    safe fn WebWorker__entrySettled(global: &JSGlobalObject);
     safe fn WebWorker__dispatchError(
         global: &JSGlobalObject,
         cpp_worker: *mut c_void,
@@ -506,6 +513,13 @@ impl WebWorker {
         let mut preloads: Vec<Box<[u8]>> = Vec::with_capacity(preload_modules_len);
         for module in preload_modules {
             let utf8_slice = module.to_utf8();
+            // node: builtin specifiers skip the file resolver — the worker-side
+            // module loader resolves them. Lets node:worker_threads run its
+            // bootstrap (stdio rebinding) as a preload.
+            if utf8_slice.slice().starts_with(b"node:") {
+                preloads.push(utf8_slice.slice().to_vec().into_boxed_slice());
+                continue;
+            }
             // SAFETY: `parent_ref` is the live VM on the calling (parent)
             // thread — its `transpiler` is uniquely owned here.
             if let Some(preload) = unsafe {
@@ -555,7 +569,6 @@ impl WebWorker {
             parent_poll_ref: JsCell::new(KeepAlive::init()),
             status: Cell::new(Status::Start),
             arena: JsCell::new(None),
-            worker_env_map: Cell::new(core::ptr::null_mut()),
             worker_env_loader: Cell::new(core::ptr::null_mut()),
             exit_called: AtomicBool::new(false),
         }));
@@ -823,7 +836,7 @@ impl WebWorker {
     /// ran `shutdown()` (after which `self` may be freed by `~Worker` on the
     /// parent thread; touching `self` past that point is the UAF this return
     /// shape exists to prevent).
-    fn start_vm(&self) -> Result<*mut VirtualMachine, bun_core::Error> {
+    fn start_vm(&self) -> Result<*mut VirtualMachine, crate::CrateError> {
         debug_assert!(self.status.get() == Status::Start);
         debug_assert!(self.vm_ptr().is_null());
 
@@ -873,29 +886,23 @@ impl WebWorker {
         // state.
         let mut temp_proxy_slots = jsc::rare_data::ProxyEnvSlots::default();
 
-        // Box Map/Loader on the global heap and hand ownership to the VM via
+        // Box the Loader on the global heap and hand ownership to the VM via
         // `transpiler.env`; reclaimed in `vm.destroy()` in `shutdown()`.
-        let mut map = Box::new(bun_dotenv::Map::default());
-        {
+        let mut map = {
             let parent_slots = parent.proxy_env_storage.lock();
             temp_proxy_slots.clone_from(&parent_slots);
             // SAFETY: `parent.transpiler.env` is the parent-owned `DotEnv::Loader`
             // set in `Transpiler::init`; valid while `parent` lives. Read-only.
-            *map = parent.env_loader().map.clone_with_allocator()?;
-        }
+            parent.env_loader().map.clone_with_allocator()?
+        };
         // Ensure map entries point at the exact bytes we hold refs on.
         temp_proxy_slots.sync_into(&mut map);
 
-        // `Loader<'static>` borrows `map` for its lifetime. Both are `heap::alloc`'d
-        // and stashed on `self` so `shutdown()` step 5 reclaims them on every
-        // path — including the early-terminate checkpoint below, which calls
-        // `shutdown()` before the VM exists.
-        let map_ptr: *mut bun_dotenv::Map = bun_core::heap::into_raw(map);
-        // SAFETY: `map_ptr` heap-allocated above; `'static` is the lifetime
-        // erasure for the worker-VM-lifetime borrow.
-        let loader = Box::new(bun_dotenv::Loader::init(unsafe { &mut *map_ptr }));
-        let loader_ptr: *mut bun_dotenv::Loader<'static> = bun_core::heap::into_raw(loader);
-        self.worker_env_map.set(map_ptr);
+        // `heap::alloc`'d and stashed on `self` so `shutdown()` step 5 reclaims
+        // it on every path — including the early-terminate checkpoint below,
+        // which calls `shutdown()` before the VM exists.
+        let loader_ptr: *mut bun_dotenv::Loader =
+            bun_core::heap::into_raw(Box::new(bun_dotenv::Loader::init_with_map(map)));
         self.worker_env_loader.set(loader_ptr);
 
         // Checkpoint before the expensive part: initWorker builds a full JSC
@@ -1090,22 +1097,39 @@ impl WebWorker {
                     vm.as_mut().exit_handler.exit_code = 1;
                 }
                 self.flush_logs(vm);
+                WebWorker__entrySettled(vm.global());
                 return self.shutdown();
             }
         };
 
+        // Fire (and clear) the entryEvaluated hook on EVERY post-evaluation path
+        // so buffered postMessageToThread deliveries drain and the sender's
+        // Atomics.waitAsync settles. dispatchOnline re-calls it as a no-op.
+        WebWorker__entrySettled(vm.global());
+
         // SAFETY: `promise` is a live JSC heap cell.
         unsafe {
-            if (*promise).status() == jsc::js_promise::Status::Rejected {
+            let status = (*promise).status();
+            if status == jsc::js_promise::Status::Rejected {
                 let handled = vm.as_mut().uncaught_exception(
                     vm.global(),
                     (*promise).result(vm.jsc_vm()),
                     true,
                 );
                 if !handled {
-                    vm.as_mut().exit_handler.exit_code = 1;
+                    // exit_code is already 1 from uncaught_exception; re-setting it here
+                    // would clobber a process.on('exit') change to process.exitCode.
                     return self.shutdown();
                 }
+            } else if status == jsc::js_promise::Status::Pending {
+                // Unsettled top-level await (loop drained, entry promise still
+                // pending): node exits the worker with code 13, but only if the
+                // user hasn't set a nonzero process.exitCode.
+                if vm.exit_handler.exit_code == 0 {
+                    vm.as_mut().exit_handler.exit_code = 13;
+                }
+                self.flush_logs(vm);
+                return self.shutdown();
             } else {
                 let _ = (*promise).result(vm.jsc_vm());
             }
@@ -1200,7 +1224,6 @@ impl WebWorker {
         // worker-thread only field; no other thread reads `arena`.
         let mut arena = self.arena.replace(None);
         let env_loader = self.worker_env_loader.replace(core::ptr::null_mut());
-        let env_map = self.worker_env_map.replace(core::ptr::null_mut());
 
         // ---- 1. Unpublish vm ------------------------------------------------
         self.vm_lock.lock();
@@ -1237,6 +1260,8 @@ impl WebWorker {
                 // worker thread is still installed (torn down in `destroy()`).
                 unsafe { (hooks.cancel_all_timers)(vm_ptr) };
             }
+            // Same reason: the GC timers are heap nodes too.
+            vm.gc_controller.deinit();
             // Embedded socket groups must drain while JSC is still alive —
             // closeAll() fires on_close → JS callbacks. RareData.deinit() runs
             // after teardownJSCVM and only deinit()s (asserts empty in debug).
@@ -1250,6 +1275,44 @@ impl WebWorker {
                 // is step 3 below).
                 rare.close_all_socket_groups(unsafe { &*vm_ptr });
             }
+            // Destroy the per-VM c-ares channel now: `ares_destroy()` fires
+            // every pending query callback with `ARES_EDESTRUCTION` and then
+            // the socket-state callback for each fd it closes, both of which
+            // dereference state (`JSGlobalObject`, `RareData.file_polls`,
+            // `runtime_state().timer`) that step 3/5 below free. Deferring it
+            // to `destroy()`'s `deinit_runtime_state` is a UAF. Must FOLLOW
+            // `close_all_socket_groups`: its on_close JS can call
+            // `dns.resolve*()`, and `Resolver::get_channel()` lazily re-inits
+            // on `channel == None` — running this earlier lets a re-created
+            // channel survive to `GlobalData::drop` (the original UAF).
+            if let Some(hooks) = runtime_hooks() {
+                (hooks.close_dns_for_terminate)();
+            }
+            // Stop cross-thread posters first: markTerminating() serializes
+            // with postTaskTo() on the contexts-map lock, so after this call
+            // every task another thread has already enqueued is visible to the
+            // drain below and no new one can land. teardownJSCVM() will call
+            // it again (redundantly) after the drain; without this earlier
+            // call a parent-side MessagePort ack (worker stdio backpressure)
+            // posted in the gap would sit in concurrent_tasks past the raw VM
+            // dealloc and leak under LSan.
+            ScriptExecutionContext__markTerminating(vm.global());
+            // Same for JSCTaskScheduler: a cross-thread Atomics.notify that
+            // races this shutdown either enqueues (and is caught by the drain)
+            // or observes m_isShuttingDown under m_lock and drops. Idempotent;
+            // teardownJSCVM sets it again.
+            Bun__JSCTaskScheduler__markShuttingDown(vm.global());
+            // Reclaim queued CppTasks (the per-worker stdio/messaging
+            // MessagePort drain tasks that can be in self.tasks mid-tick when
+            // terminate() lands, and any Worker dispatchExit close task from a
+            // sub-worker) while JSC is still live: ~Ref<Worker> walks
+            // ~JSEventListener Weak<> handles, and after teardownJSCVM the
+            // worker VM is dealloc'd-without-Drop so anything still in
+            // self.tasks leaks. Mirrors the global_exit() ordering.
+            vm.event_loop_mut().release_queued_tasks_for_shutdown();
+            if let Some(rare) = vm.rare_data.as_deref_mut() {
+                rare.release_js_handles();
+            }
             exit_code = i32::from(vm.exit_handler.exit_code);
             global_object = Some(vm.global);
         }
@@ -1259,6 +1322,15 @@ impl WebWorker {
             // `JSGlobalObject` is an opaque ZST handle; `opaque_ref` is the
             // centralised non-null deref proof (JSC VM still alive here).
             WebWorker__teardownJSCVM(JSGlobalObject::opaque_ref(global));
+        }
+
+        // The finalizers JSC just ran close the sockets that `close_all_socket_groups` leaves
+        // alone (a Listener owns its listen socket and closes it in `finalize`). `us_socket_close`
+        // only queues onto `loop->data.closed_head`; step 5's `on_thread_exit()` frees the loop
+        // out from under whatever is still queued, so drain it now, while the loop is alive.
+        if !vm_ptr.is_null() {
+            // SAFETY: `vm_ptr` was unpublished under `vm_lock`; sole owner, `destroy()` is below.
+            unsafe { (*vm_ptr).uws_loop_mut().drain_closed_sockets() };
         }
 
         // JSC is down; no more resolver/module-loader access past this point.
@@ -1281,12 +1353,6 @@ impl WebWorker {
         if let Some(loop_) = loop_ {
             // SAFETY: loop owned by this thread's VM; no concurrent access.
             unsafe { (*loop_).internal_loop_data.jsc_vm = core::ptr::null_mut() };
-        }
-        if !vm_ptr.is_null() {
-            // SAFETY: vm_ptr valid; sole owner.
-            // Must precede Loop.shutdown so uv_close isn't called twice on the
-            // GC timer.
-            unsafe { (*vm_ptr).gc_controller.deinit() };
         }
         #[cfg(windows)]
         {
@@ -1320,18 +1386,16 @@ impl WebWorker {
                 );
             }
         }
-        // Reclaim the cloned env (loader borrows `*map` — drop loader first).
-        // Both were `heap::alloc`'d in `start_vm()` (see field doc).
+        // Reclaim the cloned env (`heap::alloc`'d in `start_vm()`; see field doc).
         if !env_loader.is_null() {
             // SAFETY: `heap::alloc`'d in `start_vm`; sole owner; the VM is
             // gone so its raw `transpiler.env` borrow is dead.
             drop(unsafe { bun_core::heap::take(env_loader) });
         }
-        if !env_map.is_null() {
-            // SAFETY: `heap::alloc`'d in `start_vm`; sole owner.
-            drop(unsafe { bun_core::heap::take(env_map) });
-        }
-        bun_core::delete_all_pools_for_thread_exit();
+        // Same reason as the uWS loop below: this thread's C++ thread_local destructors are not
+        // guaranteed to run before the process exits, so free the HPACK scratch buffer that any
+        // http2 session on this thread allocated.
+        Bun__freeSharedHeaderBufferForThreadExit();
         // Free this thread's lazily-created uWS loop and its 512 KiB recv
         // buffer. The C++ thread_local `~LoopCleaner` does not fire here:
         // we return normally and
@@ -1441,6 +1505,17 @@ fn on_unhandled_rejection(
         .to_error()
         .unwrap_or(error_instance_or_exception);
 
+    // A parse failure rejects with a BuildMessage, which doesn't survive structured
+    // clone. Node reports a SyntaxError; build a real one from the formatted parse
+    // error so the subtype reaches the parent intact.
+    if let Some(bm) = error_instance.as_::<crate::BuildMessage>() {
+        // SAFETY: as_ returned a live BuildMessage cell, read-only on the
+        // worker (JS) thread that owns it.
+        let text = unsafe { (*bm).msg.data.text.clone() };
+        error_instance =
+            global_object.create_syntax_error_instance(format_args!("{}", bstr::BStr::new(&text)));
+    }
+
     let mut array: Vec<u8> = Vec::new();
 
     // `worker_ref()` is the safe BACKREF accessor — `vm.worker` points at the
@@ -1495,6 +1570,11 @@ fn on_unhandled_rejection(
     {
         let _ = global_object.try_take_exception();
     }
+    // node runs the worker's process 'exit' handlers on an uncaught exception (code 1;
+    // they may change process.exitCode). Run them before arming termination — a pending
+    // termination exception makes dispatchExitInternal skip 'exit' (as terminate() should),
+    // and its processIsExiting guard stops shutdown() from running them twice.
+    virtual_machine::ExitHandler::dispatch_on_exit(vm);
     let _ = worker.set_requested_terminate();
     // Do NOT call `worker.shutdown()` here —
     // `shutdown()` RETURNS, so calling it here would destroy

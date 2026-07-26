@@ -84,7 +84,7 @@ pub struct Entry {
 
 impl Entry {
     /// `SourceMapStore.Entry.renderMappings`.
-    pub fn render_mappings(&self, kind: ChunkKind) -> Result<Vec<u8>, bun_core::Error> {
+    pub fn render_mappings(&self, kind: ChunkKind) -> crate::Result<Vec<u8>> {
         let mut j = StringJoiner::default();
         j.push_static(b"AAAA");
         self.join_vlq(kind, &mut j, Side::Client)?;
@@ -97,7 +97,7 @@ impl Entry {
         dev: &mut DevServer,
         kind: ChunkKind,
         side: Side,
-    ) -> Result<Vec<u8>, bun_core::Error> {
+    ) -> crate::Result<Vec<u8>> {
         let map_files = self.files.as_slice();
         let paths = &self.paths;
 
@@ -149,7 +149,7 @@ impl Entry {
                             panic!("Unexpected: asset with incomplete UTF-8 as file path")
                         }
                         Err(EncodeSourceMapPathError::OutOfMemory) => {
-                            return Err(bun_core::err!("OutOfMemory"));
+                            return Err(crate::Error::Alloc(bun_alloc::AllocError));
                         }
                     }
                 } else {
@@ -163,7 +163,7 @@ impl Entry {
                             panic!("Unexpected: asset with incomplete UTF-8 as file path")
                         }
                         Err(EncodeSourceMapPathError::OutOfMemory) => {
-                            return Err(bun_core::err!("OutOfMemory"));
+                            return Err(crate::Error::Alloc(bun_alloc::AllocError));
                         }
                     }
                 }
@@ -176,7 +176,7 @@ impl Entry {
                         panic!("Unexpected: asset with incomplete UTF-8 as file path")
                     }
                     Err(bun_core::PercentEncodeError::OutOfMemory) => {
-                        return Err(bun_core::err!("OutOfMemory"));
+                        return Err(crate::Error::Alloc(bun_alloc::AllocError));
                     }
                 }
                 source_map_strings.extend_from_slice(b"\"");
@@ -270,7 +270,7 @@ impl Entry {
         kind: ChunkKind,
         j: &mut StringJoiner<'a>,
         side: Side,
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::Result<()> {
         let _ = side;
         let map_files = self.files.as_slice();
 
@@ -427,16 +427,10 @@ pub enum RemoveOrUpgradeMode {
 }
 
 pub struct LocateWeakRefResult {
-    pub index: usize,
     pub r#ref: WeakRef,
 }
 
-/// `bun.GenericIndex(u32, Entry)`.
-pub enum SmEntryMarker {}
-pub type EntryIndex = bun_core::GenericIndex<u32, SmEntryMarker>;
-
 pub struct GetResult<'a> {
-    pub index: EntryIndex,
     pub mappings: source_map::mapping::List,
     pub file_paths: &'a [Box<[u8]>],
     pub entry_files: &'a [packed_map::Shared],
@@ -623,7 +617,7 @@ impl SourceMapStore {
         for i in 0..self.weak_refs.readable_length() {
             let r = self.weak_refs.peek_item(i);
             if r.key() == key {
-                return Some(LocateWeakRefResult { index: i, r#ref: r });
+                return Some(LocateWeakRefResult { r#ref: r });
             }
         }
         None
@@ -714,7 +708,6 @@ impl SourceMapStore {
                 None
             }
             source_map::ParseResult::Success(mut psm) => Some(GetResult {
-                index: EntryIndex::init(u32::try_from(index).expect("int cast")),
                 mappings: core::mem::take(&mut psm.mappings),
                 file_paths: &entry.paths,
                 entry_files: &entry.files,

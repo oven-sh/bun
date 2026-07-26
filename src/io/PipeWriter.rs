@@ -271,10 +271,6 @@ pub trait PosixBufferedWriterParent {
     /// # Safety
     /// `this` must point to a live `Self`; returned slice borrows from it.
     unsafe fn get_buffer<'a>(this: *mut Self) -> &'a [u8];
-    const HAS_ON_WRITABLE: bool;
-    /// # Safety
-    /// `this` must point to a live `Self`.
-    unsafe fn on_writable(_this: *mut Self) {}
     /// # Safety
     /// `this` must point to a live `Self`.
     unsafe fn event_loop(this: *mut Self) -> EventLoopHandle;
@@ -407,10 +403,6 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
         self.close();
     }
 
-    pub fn get_force_sync(&self) -> bool {
-        false
-    }
-
     fn _on_write(&mut self, written: usize, status: WriteStatus) {
         // PORT_NOTES_PLAN R-2: `&mut self` carries LLVM `noalias`, but
         // `Parent::on_write` (e.g. `IOWriter::on_write`) re-enters via a fresh
@@ -440,17 +432,6 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
         }
     }
 
-    fn _on_writable(&mut self) {
-        if self.is_done {
-            return;
-        }
-
-        if Parent::HAS_ON_WRITABLE {
-            // SAFETY: parent BACKREF set via set_parent; outlives this writer.
-            unsafe { Parent::on_writable(self.parent()) };
-        }
-    }
-
     pub fn register_poll(&mut self) {
         let Some(poll) = self.get_poll() else { return };
         // Use the event loop from the parent, not the global one
@@ -461,17 +442,6 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
             }
             sys::Result::Ok(()) => {}
         }
-    }
-
-    pub fn has_ref(&self) -> bool {
-        if self.is_done {
-            return false;
-        }
-
-        let Some(poll) = self.get_poll() else {
-            return false;
-        };
-        poll.can_enable_keeping_process_alive()
     }
 
     pub fn enable_keeping_process_alive(&self, event_loop: EventLoopHandle) {
@@ -718,10 +688,6 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
         unsafe { Parent::on_write(self.parent(), amount, status) }
     }
 
-    pub fn get_force_sync(&self) -> bool {
-        self.force_sync
-    }
-
     pub fn memory_cost(&self) -> usize {
         mem::size_of::<Self>() + self.outgoing.memory_cost()
     }
@@ -794,19 +760,6 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
         let owner = std::ptr::from_mut(self).cast::<c_void>();
         self.handle
             .set_owner(Owner::new(Parent::POLL_OWNER_TAG, owner.cast()));
-    }
-
-    fn _on_writable(&mut self) {
-        if self.is_done || self.closed_without_reporting {
-            return;
-        }
-
-        self.outgoing.reset();
-
-        if Parent::HAS_ON_READY {
-            // SAFETY: parent BACKREF set via set_parent; outlives this writer.
-            unsafe { Parent::on_ready(self.parent()) };
-        }
     }
 
     fn close_without_reporting(&mut self) {
@@ -1033,13 +986,6 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
         rc
     }
 
-    pub fn has_ref(&self) -> bool {
-        let Some(poll) = self.get_poll() else {
-            return false;
-        };
-        !self.is_done && poll.can_enable_keeping_process_alive()
-    }
-
     pub fn enable_keeping_process_alive(&self, event_loop: EventLoopHandle) {
         if self.is_done {
             return;
@@ -1160,16 +1106,6 @@ pub trait BaseWindowsPipeWriter {
         pipe.get_fd()
     }
 
-    fn has_ref(&self) -> bool {
-        if self.is_done() {
-            return false;
-        }
-        if let Some(pipe) = self.source() {
-            return pipe.has_ref();
-        }
-        false
-    }
-
     fn enable_keeping_process_alive(&mut self, event_loop: EventLoopHandle) {
         self.update_ref(event_loop, true);
     }
@@ -1210,24 +1146,12 @@ pub trait BaseWindowsPipeWriter {
                         // detach() schedules start_close() (now or after the pending
                         // op completes); on_close_complete heap::take()s `raw`.
                         (*raw).detach();
-                    } else {
-                        // Don't own fd: stop any in-flight op and detach parent so
-                        // on_fs_write_complete won't touch the (possibly freed)
-                        // writer. We must still reclaim the Box<File>.
-                        (*raw).stop();
-                        (*raw).fs.data = core::ptr::null_mut();
-                        if (*raw).state == crate::source::FileState::Deinitialized {
-                            // No callback will ever fire for this fs_t — sole
-                            // owner, free now.
-                            // SAFETY: `raw` is the Box<File> leaked above via
-                            // into_raw; no libuv request references it.
-                            drop(bun_core::heap::take(raw));
-                        }
-                        // else: state is Operating/Canceling — libuv still owns a
-                        // request pointing into *raw. on_fs_write_complete sees
-                        // parent_ptr null, observes state == Deinitialized after
-                        // complete(), and heap::take()s there.
+                    } else if !(*raw).detach_borrowed_fd() {
+                        // Idle and the fd is parent-owned: nothing pending,
+                        // nothing to close. Reclaim and drop the Box.
+                        drop(bun_core::heap::take(raw));
                     }
+                    // else: on_fs_write_complete heap::take()s the detached Box.
                 }
             }
             Source::Pipe(pipe) => {
@@ -1586,7 +1510,10 @@ impl<Parent: WindowsBufferedWriterParent> WindowsBufferedWriter<Parent> {
             return;
         }
         let pending = Self::r(this).get_buffer_internal();
-        let has_pending_data = (pending.len() - written) != 0;
+        // `close()` may have run before this callback (exit-first ordering) and
+        // cleared the parent's buffer to 0 while `written` still carries the
+        // submitted size; treat that as no pending data rather than underflowing.
+        let has_pending_data = pending.len().saturating_sub(written) != 0;
         let is_done_before = Self::r(this).is_done;
         // SAFETY: parent BACKREF valid.
         unsafe {
@@ -1847,10 +1774,6 @@ impl StreamBuffer {
     pub fn ensure_unused_capacity(&mut self, capacity: usize) -> Result<(), OOM> {
         self.list.reserve(capacity);
         Ok(())
-    }
-
-    pub fn write_type_as_bytes<T: bun_core::NoUninit>(&mut self, data: &T) -> Result<(), OOM> {
-        self.write(bun_core::bytes_of(data))
     }
 
     pub fn write_type_as_bytes_assume_capacity<T: bun_core::NoUninit>(&mut self, data: T) {
@@ -2805,7 +2728,6 @@ macro_rules! impl_buffered_writer_parent {
                 #[allow(unused_unsafe)]
                 unsafe { $gb }
             }
-            const HAS_ON_WRITABLE: bool = false;
             #[inline]
             unsafe fn event_loop(this: *mut Self) -> $crate::EventLoopHandle {
                 // SAFETY: see on_write.

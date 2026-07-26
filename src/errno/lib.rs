@@ -295,6 +295,15 @@ impl SystemErrno {
     }
 }
 
+/// Map a raw OS errno to `SystemErrno`. Unknown / out-of-range codes collapse
+/// to `EIO`. This is the migration target for the deleted
+/// `bun_core::errno_to_zig_err`; every caller's `Error` enum wraps the result
+/// via `Sys(#[from] SystemErrno)`.
+#[inline]
+pub fn from_errno(errno: i32) -> SystemErrno {
+    SystemErrno::init(errno as i64).unwrap_or(SystemErrno::EIO)
+}
+
 #[cfg(not(windows))]
 impl SystemErrno {
     // `i64` covers every concrete call site (errno-range values).
@@ -315,6 +324,13 @@ impl SystemErrno {
     }
 }
 
+impl core::fmt::Display for SystemErrno {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str(<&'static str>::from(self))
+    }
+}
+impl core::error::Error for SystemErrno {}
+
 impl bun_core::output::ErrName for SystemErrno {
     fn name(&self) -> &[u8] {
         <&'static str>::from(*self).as_bytes()
@@ -333,7 +349,7 @@ impl bun_core::output::ErrName for SystemErrno {
 
 /// Platform errno integer → its `SystemErrno` tag name.
 /// `None` for `0` (SUCCESS), out-of-range, or (POSIX) non-positive input —
-/// the contract bun_core's `Error::from_errno` / `coreutils_error_map` rely on.
+/// the contract bun_core's `coreutils_error_map` relies on.
 #[inline]
 pub(crate) fn system_errno_name(errno: i32) -> Option<&'static str> {
     #[cfg(not(windows))]
@@ -400,15 +416,15 @@ bun_core::link_impl_ErrnoNames! {
 #[cfg(test)]
 mod errno_name_tests {
     use super::*;
-    use bun_core::{Error, coreutils_error_map};
+    use bun_core::coreutils_error_map;
 
     #[test]
     fn errno_mapping() {
-        assert_eq!(Error::from_errno(2).name(), "ENOENT");
-        assert_eq!(Error::from_errno(2), Error::intern("ENOENT"));
-        assert_eq!(Error::from_errno(12), Error::intern("ENOMEM"));
-        assert_eq!(Error::from_errno(0), Error::UNEXPECTED);
-        assert_eq!(Error::from_errno(9999), Error::UNEXPECTED);
+        assert_eq!(system_errno_name(2), Some("ENOENT"));
+        assert_eq!(SystemErrno::init(2), Some(SystemErrno::ENOENT));
+        assert_eq!(SystemErrno::init(12), Some(SystemErrno::ENOMEM));
+        assert_eq!(system_errno_name(0), None);
+        assert_eq!(system_errno_name(9999), None);
         // errno 11 is platform-specific: EAGAIN on linux/windows, EDEADLK on darwin/bsd.
         #[cfg(any(
             target_os = "linux",
@@ -417,19 +433,19 @@ mod errno_name_tests {
             target_family = "wasm"
         ))]
         {
-            assert_eq!(Error::from_errno(11), Error::intern("EAGAIN"));
-            assert_eq!(Error::from_errno(104), Error::intern("ECONNRESET"));
+            assert_eq!(SystemErrno::init(11), Some(SystemErrno::EAGAIN));
+            assert_eq!(SystemErrno::init(104), Some(SystemErrno::ECONNRESET));
         }
         #[cfg(any(target_os = "macos", target_os = "freebsd"))]
         {
-            assert_eq!(Error::from_errno(11), Error::intern("EDEADLK"));
-            assert_eq!(Error::from_errno(35), Error::intern("EAGAIN"));
-            assert_eq!(Error::from_errno(54), Error::intern("ECONNRESET"));
+            assert_eq!(SystemErrno::init(11), Some(SystemErrno::EDEADLK));
+            assert_eq!(SystemErrno::init(35), Some(SystemErrno::EAGAIN));
+            assert_eq!(SystemErrno::init(54), Some(SystemErrno::ECONNRESET));
         }
     }
 
     /// Exhaustive: every dense slot in the per-platform enum round-trips through
-    /// `system_errno_name → from_errno → name()` and matches the strum table.
+    /// `system_errno_name` and matches the strum table.
     #[test]
     fn errno_table_full_range() {
         // Slot 0 is the SUCCESS hole.
@@ -437,11 +453,15 @@ mod errno_name_tests {
         let max = system_errno_max_dense();
         for i in 1..max {
             let name = system_errno_name(i as i32).expect("dense slot");
-            assert_eq!(Error::from_errno(i as i32).name(), name, "slot {i}");
+            assert_eq!(
+                <&'static str>::from(SystemErrno::from_raw(i as u16)),
+                name,
+                "slot {i}"
+            );
         }
-        // One past the dense end → Unexpected.
+        // One past the dense end → None.
         #[cfg(not(windows))]
-        assert_eq!(Error::from_errno(max as i32), Error::UNEXPECTED);
+        assert_eq!(system_errno_name(max as i32), None);
 
         // Spot-check the last entry on each platform.
         #[cfg(any(target_os = "linux", target_os = "android", target_family = "wasm"))]
@@ -450,12 +470,11 @@ mod errno_name_tests {
         {
             assert_eq!(system_errno_name(137), Some("EFTYPE"));
             // Sparse UV_* range round-trips.
-            assert_eq!(Error::from_errno(-4058).name(), "UV_ENOENT");
-            assert_eq!(Error::from_errno(-4092).name(), "UV_EACCES");
-            assert_eq!(Error::from_errno(-4095).name(), "UV_EOF");
-            assert_eq!(Error::from_errno(-3008).name(), "UV_EAI_NONAME");
             assert_eq!(system_errno_name(-4058), Some("UV_ENOENT"));
-            assert_eq!(Error::from_errno(-5000), Error::UNEXPECTED);
+            assert_eq!(system_errno_name(-4092), Some("UV_EACCES"));
+            assert_eq!(system_errno_name(-4095), Some("UV_EOF"));
+            assert_eq!(system_errno_name(-3008), Some("UV_EAI_NONAME"));
+            assert_eq!(system_errno_name(-5000), None);
         }
         #[cfg(target_os = "macos")]
         assert_eq!(system_errno_name(106), Some("EQFULL"));

@@ -23,7 +23,7 @@ impl Signature {
 
     // JSError (from QueryBindingIterator /
     // Tag::from_js), OOM, and InvalidQueryBinding are collapsed to the
-    // crate-wide `bun_core::Error`.
+    // crate-wide `crate::Error`.
     pub fn generate(
         global_object: &JSGlobalObject,
         query: &[u8],
@@ -31,7 +31,7 @@ impl Signature {
         columns: JSValue,
         prepared_statement_id: u64,
         unnamed: bool,
-    ) -> Result<Signature, bun_core::Error> {
+    ) -> crate::Result<Signature> {
         use crate::jsc::js_error_to_postgres;
         use crate::postgres::types::tag_jsc;
         use crate::shared::QueryBindingIterator;
@@ -91,7 +91,7 @@ impl Signature {
         }
 
         if iter.any_failed() {
-            return Err(bun_core::err!("InvalidQueryBinding"));
+            return Err(crate::Error::InvalidQueryBinding);
         }
         // max u64 length is 20, max prepared_statement_name length is 63
         let prepared_statement_name: Box<[u8]> = if unnamed {

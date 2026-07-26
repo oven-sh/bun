@@ -36,8 +36,7 @@ test("writer.end() should not close the fd if it does not own the fd", async () 
     const fd = fileHandle.fd;
 
     await Bun.file(fd).writer().end();
-    // @ts-ignore
-    await fsPromises.close(fd);
+    await fileHandle.close();
     expect(await Bun.file(filename).text()).toBe("");
   }
 });

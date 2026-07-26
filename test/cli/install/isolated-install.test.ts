@@ -1,6 +1,6 @@
 import { file, spawn, write } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { existsSync, lstatSync, readlinkSync } from "fs";
+import { existsSync, lstatSync, readlinkSync, statSync } from "fs";
 import { mkdir, readlink, rm, symlink } from "fs/promises";
 import { VerdaccioRegistry, bunEnv, bunExe, readdirSorted, runBunInstall, tempDir } from "harness";
 import { dirname, join } from "path";
@@ -620,6 +620,107 @@ describe("optional peers", () => {
     await checkInstall();
     await checkInstall();
   });
+});
+
+// https://github.com/oven-sh/bun/issues/28147
+test("patched package shared by multiple peer variants is materialized into the cache once", async () => {
+  const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+
+  // `peer-deps@1.0.0` has `peerDependencies: { "no-deps": "*" }`. Giving each
+  // workspace a different `no-deps` version forces one isolated store variant
+  // of `peer-deps` per workspace, all sharing one patched cache directory.
+  const noDepsVersions = ["1.0.0", "1.0.1", "1.1.0", "2.0.0"];
+  await write(
+    packageJson,
+    JSON.stringify({
+      name: "patched-peer-variants",
+      workspaces: ["packages/*"],
+      patchedDependencies: {
+        "peer-deps@1.0.0": "patches/peer-deps@1.0.0.patch",
+      },
+    }),
+  );
+  await write(
+    join(packageDir, "patches", "peer-deps@1.0.0.patch"),
+    `diff --git a/patched.txt b/patched.txt
+new file mode 100644
+index 0000000000000000000000000000000000000000..3b18e512dba79e4c8300dd08aeb37f8e728b8dad
+--- /dev/null
++++ b/patched.txt
+@@ -0,0 +1 @@
++hello world
+`,
+  );
+  for (const version of noDepsVersions) {
+    await write(
+      join(packageDir, "packages", `pkg-${version}`, "package.json"),
+      JSON.stringify({
+        name: `pkg-${version}`,
+        version: "1.0.0",
+        dependencies: {
+          "peer-deps": "1.0.0",
+          "no-deps": version,
+        },
+      }),
+    );
+  }
+
+  // CI exports BUN_INSTALL_CACHE_DIR, which overrides bunfig's `cache`. Pin it
+  // so the patched cache directory is created where the assertions look.
+  const cacheDir = join(packageDir, ".bun-cache");
+
+  // Force the hardlink backend so the inode assertions below hold on every
+  // platform (macOS defaults to clonefile, which copies).
+  async function install() {
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install", "--backend", "hardlink"],
+      cwd: packageDir,
+      env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: cacheDir },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
+    expect(err).not.toContain("error:");
+    expect(out).toContain("packages installed");
+    expect(exitCode).toBe(0);
+  }
+
+  async function checkInstall() {
+    const storeDirs = (await readdirSorted(join(packageDir, "node_modules", ".bun"))).filter(dir =>
+      dir.startsWith("peer-deps@1.0.0"),
+    );
+    expect(storeDirs.length).toBe(noDepsVersions.length);
+
+    // Exactly one patched cache directory exists for the package.
+    const cacheDirs = (await readdirSorted(cacheDir)).filter(
+      dir => dir.startsWith("peer-deps@1.0.0") && dir.includes("_patch_hash="),
+    );
+    expect(cacheDirs.length).toBe(1);
+    const cacheFile = join(cacheDir, cacheDirs[0], "index.js");
+
+    // The patch is applied in every variant, and every variant is hardlinked
+    // from the single patched cache materialization. Before the fix each
+    // variant re-applied the patch, replacing the shared cache directory the
+    // previous variant was concurrently hardlinking from (EPERM on Windows,
+    // divergent inodes on POSIX).
+    const inodes = new Set<number>();
+    for (const storeDir of storeDirs) {
+      const pkgDir = join(packageDir, "node_modules", ".bun", storeDir, "node_modules", "peer-deps");
+      expect(await file(join(pkgDir, "patched.txt")).text()).toBe("hello world\n");
+      inodes.add(statSync(join(pkgDir, "index.js")).ino);
+    }
+    inodes.add(statSync(cacheFile).ino);
+    expect(inodes.size).toBe(1);
+  }
+
+  await install();
+  await checkInstall();
+
+  // Reinstall with a warm cache and no node_modules: the patched cache
+  // directory already exists and must not be rebuilt per variant.
+  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+  await install();
+  await checkInstall();
 });
 
 for (const backend of ["clonefile", "hardlink", "copyfile"]) {

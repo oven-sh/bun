@@ -1057,6 +1057,10 @@ pub struct Options<'a> {
     pub print_dce_annotations: bool,
 
     pub transform_only: bool,
+    /// Print the `bun:wrap` helpers as local `var` declarations instead of an
+    /// import. Set when the output is handed to a runtime that cannot resolve
+    /// `bun:wrap` because no bundling step will inline it.
+    pub inline_runtime_helpers: bool,
     pub inline_require_and_import_errors: bool,
     pub has_run_symbol_renamer: bool,
 
@@ -1129,6 +1133,7 @@ impl<'a> Default for Options<'a> {
             minify_syntax: false,
             print_dce_annotations: true,
             transform_only: false,
+            inline_runtime_helpers: false,
             inline_require_and_import_errors: true,
             has_run_symbol_renamer: false,
             require_or_import_meta_for_source_callback: RequireOrImportMetaCallback::default(),
@@ -1720,6 +1725,43 @@ pub mod __gated_printer {
                 unreachable!();
             }
             self.print_internal_bun_import(import, Some(b"globalThis.Bun"));
+        }
+
+        /// Print `import { __x as __x_hash } from "bun:wrap"` as
+        /// `var __x_hash = <helper source>;`, one declaration per clause item.
+        ///
+        /// Returns false without printing anything when a helper has no
+        /// standalone source, so the caller prints the import statement.
+        fn print_inlined_runtime_helpers(&mut self, import: &S::Import) -> bool {
+            let items = slice_of(import.items);
+            if items.is_empty() || import.default_name.is_some() || !import.star_name_loc.is_empty()
+            {
+                return false;
+            }
+
+            if items
+                .iter()
+                .any(|item| bun_ast::runtime_inline::source(item.alias.slice()).is_none())
+            {
+                return false;
+            }
+
+            for (i, item) in items.iter().enumerate() {
+                let source =
+                    bun_ast::runtime_inline::source(item.alias.slice()).expect("checked above");
+                if i > 0 {
+                    // The caller already printed these for the first declaration.
+                    self.print_indent();
+                    self.print_space_before_identifier();
+                }
+                self.print_semicolon_if_needed();
+                self.print(b"var ");
+                self.print_symbol(item.name.ref_);
+                self.print_equals();
+                self.print(source.as_bytes());
+                self.print_semicolon_after_statement();
+            }
+            true
         }
 
         fn print_internal_bun_import(
@@ -5767,6 +5809,16 @@ pub mod __gated_printer {
                             self.prev_stmt_tag = new_tag;
                             return Ok(());
                         }
+                    }
+
+                    // `generate_import_stmt` is the only producer of the
+                    // `runtime` namespace, so this is the `bun:wrap` import.
+                    if self.options.inline_runtime_helpers
+                        && record.path.namespace == b"runtime"
+                        && self.print_inlined_runtime_helpers(s)
+                    {
+                        self.prev_stmt_tag = new_tag;
+                        return Ok(());
                     }
 
                     if record.path.is_disabled {

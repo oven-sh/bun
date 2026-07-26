@@ -97,6 +97,9 @@ impl Default for Config {
             log: bun_ast::Log::default(), // overwritten at construction
             runtime: Runtime::Features {
                 top_level_await: true,
+                // `bun:wrap` only resolves inside Bun, and this output is handed
+                // to another runtime. `allowBunRuntime: true` opts back in.
+                allow_runtime: false,
                 ..Default::default()
             },
             tree_shaking: false,
@@ -335,8 +338,6 @@ impl Config {
                 }
             }
         }
-
-        self.runtime.allow_runtime = false;
 
         if let Some(macros) = object.get_truthy(global, "macro")? {
             'macros: {
@@ -1074,6 +1075,10 @@ impl JSTranspiler {
             transpiler.options.minify_identifiers = true;
         }
 
+        // Reads the target-derived default, not `allowBunRuntime`. Assigning
+        // `allow_runtime` first would make this true for every `Bun.Transpiler`,
+        // which flips `module_type` to `output_format` for `target: "bun"` and
+        // stops `import.meta.main` lowering to `require.main == module`.
         transpiler.options.transform_only = !transpiler.options.allow_runtime;
 
         transpiler.options.tree_shaking = config.tree_shaking;

@@ -318,10 +318,7 @@ describe.concurrent("bun build accepts sloppy CommonJS", () => {
   });
 
   test("legacy octal escape in a sloppy CJS file bundles to ESM", async () => {
-    const [stdout, stderr, exitCode] = await build(
-      { "x.cjs": `var s = "a\\7b";\nmodule.exports = s;\n` },
-      "x.cjs",
-    );
+    const [stdout, stderr, exitCode] = await build({ "x.cjs": `var s = "a\\7b";\nmodule.exports = s;\n` }, "x.cjs");
     expect(stderr).not.toContain("Legacy octal escape sequences");
     expect(stdout).toContain("\\x07");
     expect(exitCode).toBe(0);

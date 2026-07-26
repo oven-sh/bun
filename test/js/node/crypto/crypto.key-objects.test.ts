@@ -1797,6 +1797,39 @@ test("ECDSA should work", async () => {
   }).toThrow(/The property 'options.dsaEncoding' is invalid. Received 'ieee-p136'/);
 });
 
+test("PEM key with a leading UTF-8 BOM is accepted", () => {
+  const { privateKey, publicKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+  const privPem = privateKey.export({ type: "pkcs8", format: "pem" }) as string;
+  const pubPem = publicKey.export({ type: "spki", format: "pem" }) as string;
+
+  const bomStr = (s: string) => "\ufeff" + s;
+  const bomBuf = (s: string) => Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from(s)]);
+
+  for (const key of [bomStr(privPem), bomBuf(privPem), { key: bomStr(privPem), format: "pem" as const }]) {
+    const k = createPrivateKey(key);
+    expect(k.type).toBe("private");
+    expect(k.asymmetricKeyType).toBe("rsa");
+  }
+
+  for (const key of [bomStr(pubPem), bomBuf(pubPem), { key: bomBuf(pubPem), format: "pem" as const }]) {
+    const k = createPublicKey(key);
+    expect(k.type).toBe("public");
+    expect(k.asymmetricKeyType).toBe("rsa");
+  }
+
+  // Public key derivable from a BOM-prefixed private PEM.
+  expect(createPublicKey(bomStr(privPem)).type).toBe("public");
+
+  const msg = Buffer.from("hello");
+  const sig = sign("sha256", msg, bomStr(privPem));
+  expect(verify("sha256", msg, bomBuf(pubPem), sig)).toBeTrue();
+
+  const sig2 = createSign("sha256").update(msg).sign(bomBuf(privPem));
+  expect(createVerify("sha256").update(msg).verify(bomStr(pubPem), sig2)).toBeTrue();
+
+  expect(privateDecrypt(bomStr(privPem), publicEncrypt(bomBuf(pubPem), msg))).toEqual(msg);
+});
+
 function randomProp() {
   return "prop" + crypto.randomUUID().replace(/-/g, "");
 }

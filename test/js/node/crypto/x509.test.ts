@@ -72,3 +72,13 @@ describe("X509Certificate.checkHost()", () => {
     expect(cnOnly.checkIP("127.0.0.1")).toBeUndefined();
   });
 });
+
+test("X509Certificate accepts a PEM with a leading UTF-8 BOM", () => {
+  const bomStr = "\ufeff" + wildcardSanCertPem;
+  const bomBuf = Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from(wildcardSanCertPem)]);
+
+  for (const input of [bomStr, bomBuf]) {
+    const cert = new X509Certificate(input);
+    expect(cert.subject).toBe("CN=wildcard-san.example.com");
+  }
+});

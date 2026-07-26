@@ -97,7 +97,7 @@ pub enum Error {
     InvalidCRL,
     #[error("UnsupportedProxyProtocol")]
     UnsupportedProxyProtocol,
-    #[error("ProxyConnectFailed")]
+    #[error("CONNECT tunnel failed, response {0}")]
     ProxyConnectFailed(u32),
     #[error(transparent)]
     Cert(#[from] CertError),

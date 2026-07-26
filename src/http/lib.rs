@@ -4917,6 +4917,28 @@ impl<'a> HTTPClient<'a> {
             print_response(response);
         }
 
+        // RFC 9110 §9.3.6: any 2xx response to CONNECT means the tunnel is
+        // established and the bytes after the header section are from the
+        // origin. A non-2xx response means the tunnel was not established;
+        // the proxy's status/headers/body arrived over the plaintext
+        // client→proxy hop, so they MUST NOT be returned as an https-origin
+        // Response — reject the fetch instead (curl / Node undici / browsers
+        // all do this; see CVE-2009-2062). The socket is closed by the
+        // caller's close_and_fail on Err.
+        //
+        // This runs before the status-code-driven state writes below: none of
+        // the CONNECT reply's properties (pretend_304, the 204/304
+        // content_length = Some(0) write) may leak into the origin response's
+        // pass — ProxyTunnel does not reset `state` between the two legs.
+        if self.flags.proxy_tunneling && self.proxy_tunnel.is_none() {
+            if response.status_code >= 200 && response.status_code < 300 {
+                // signal to continue the proxing
+                return Ok(ShouldContinue::ContinueStreaming);
+            }
+
+            return Err(crate::Error::ProxyConnectFailed(response.status_code));
+        }
+
         if pretend_304 {
             response.status_code = 304;
         }
@@ -4927,8 +4949,6 @@ impl<'a> HTTPClient<'a> {
         //      [...] cannot contain a message body or trailer section.
         // Therefore in these cases set content-length to 0, so the response body is always ignored
         // and is not waited for (which could cause a timeout).
-        // This applies regardless of whether we're using a proxy tunnel or not,
-        // since these status codes NEVER have a body per the HTTP spec.
         if (response.status_code >= 100 && response.status_code < 200)
             || response.status_code == 204
             || response.status_code == 304
@@ -4952,23 +4972,6 @@ impl<'a> HTTPClient<'a> {
             {
                 self.state.flags.allow_keepalive = false;
             }
-        }
-
-        // RFC 9110 §9.3.6: any 2xx response to CONNECT means the tunnel is
-        // established and the bytes after the header section are from the
-        // origin. A non-2xx response means the tunnel was not established;
-        // the proxy's status/headers/body arrived over the plaintext
-        // client→proxy hop, so they MUST NOT be returned as an https-origin
-        // Response — reject the fetch instead (curl / Node undici / browsers
-        // all do this; see CVE-2009-2062). The socket is closed by the
-        // caller's close_and_fail on Err.
-        if self.flags.proxy_tunneling && self.proxy_tunnel.is_none() {
-            if response.status_code >= 200 && response.status_code < 300 {
-                // signal to continue the proxing
-                return Ok(ShouldContinue::ContinueStreaming);
-            }
-
-            return Err(crate::Error::ProxyConnectFailed(response.status_code));
         }
 
         let status_code = response.status_code;

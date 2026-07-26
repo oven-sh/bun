@@ -213,6 +213,7 @@ impl Tag {
         match self {
             Tag::WTFTimer // internal
             | Tag::BunTest // for test timeouts
+            | Tag::TimerCallback // internal runtime-scheduled callbacks
             | Tag::EventLoopDelayMonitor // probably important
             | Tag::StatWatcherScheduler
             | Tag::GcOneShot | Tag::GcRepeating // internal GC pacing

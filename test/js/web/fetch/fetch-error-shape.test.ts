@@ -64,12 +64,14 @@ describe("fetch network error shape", () => {
   });
 
   test("DNS failure carries hostname/syscall on cause", async () => {
-    // Spawn with proxy env cleared so the lookup actually runs.
+    // A 64-byte DNS label violates RFC 1035, so getaddrinfo rejects it
+    // locally on every platform without touching the network.
+    const host = Buffer.alloc(64, "a").toString() + ".invalid";
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
         "-e",
-        `fetch("http://does.not.exist.invalid/").catch(e => {
+        `fetch("http://" + process.env.BAD_HOST + "/").catch(e => {
            process.stdout.write(JSON.stringify({
              name: e.name,
              message: e.message,
@@ -79,18 +81,27 @@ describe("fetch network error shape", () => {
            }));
          });`,
       ],
-      env: { ...bunEnv, HTTP_PROXY: "", HTTPS_PROXY: "", http_proxy: "", https_proxy: "" },
+      env: {
+        ...bunEnv,
+        BAD_HOST: host,
+        HTTP_PROXY: "",
+        HTTPS_PROXY: "",
+        http_proxy: "",
+        https_proxy: "",
+        ALL_PROXY: "",
+        all_proxy: "",
+      },
       stdout: "pipe",
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    // resolver-dependent code (ENOTFOUND, EAI_AGAIN, ENOTIMP, ...); assert shape only
+    // resolver-dependent code (ENOTFOUND, EAI_AGAIN, ...); assert shape only
     expect({ out: JSON.parse(stdout || "null"), stderr, exitCode }).toEqual({
       out: {
         name: "TypeError",
         message: "fetch failed",
         causeSyscall: "getaddrinfo",
-        causeHostname: "does.not.exist.invalid",
+        causeHostname: host,
         causeCode: expect.any(String),
       },
       stderr: "",

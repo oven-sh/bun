@@ -571,6 +571,8 @@ interface EventMap {
   fetch: FetchEvent;
   message: MessageEvent;
   messageerror: MessageEvent;
+  unhandledrejection: PromiseRejectionEvent;
+  rejectionhandled: PromiseRejectionEvent;
   // exit: Event;
 }
 

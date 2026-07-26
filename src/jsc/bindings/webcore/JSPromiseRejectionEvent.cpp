@@ -41,6 +41,7 @@
 #include <JavaScriptCore/HeapAnalyzer.h>
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/JSDestructibleObjectHeapCellType.h>
+#include <JavaScriptCore/JSPromise.h>
 #include <JavaScriptCore/SlotVisitorMacros.h>
 #include <JavaScriptCore/SubspaceInlines.h>
 #include <wtf/GetPtr.h>
@@ -105,7 +106,7 @@ template<> PromiseRejectionEvent::Init convertDictionary<PromiseRejectionEvent::
         RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!promiseValue.isUndefined()) {
-        result.promise = convert<IDLAny>(lexicalGlobalObject, promiseValue);
+        result.promise = JSC::JSPromise::resolvedPromise(&lexicalGlobalObject, promiseValue);
         RETURN_IF_EXCEPTION(throwScope, {});
     } else {
         throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "promise"_s, "PromiseRejectionEventInit"_s, "Promise"_s);

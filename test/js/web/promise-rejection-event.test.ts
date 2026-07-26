@@ -38,6 +38,13 @@ describe("PromiseRejectionEvent", () => {
     expect(e.cancelable).toBe(false);
   });
 
+  test("constructor wraps a non-Promise promise member in a Promise", async () => {
+    // @ts-expect-error
+    const e = new PromiseRejectionEvent("x", { promise: 42 });
+    expect(e.promise).toBeInstanceOf(Promise);
+    expect(await e.promise).toBe(42);
+  });
+
   test("constructor requires promise", () => {
     expect(() => new PromiseRejectionEvent("x")).toThrow(TypeError);
     // @ts-expect-error

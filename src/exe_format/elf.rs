@@ -223,10 +223,19 @@ impl ElfFile {
         // flags). Growing an existing PT_LOAD is the layout a linker would
         // naturally produce; WSL1's kernel loader rejects binaries that
         // instead add a late PT_LOAD by repurposing PT_GNU_STACK (#29963).
+        //
+        // With `-z relro -z now` lld emits TWO PF_W PT_LOADs: the RELRO
+        // segment (.data.rel.ro/.got/.got.plt) first, then the regular
+        // .data/.bss segment. .bun is mutable initialized data so it is in
+        // the second one. We therefore select the PF_W PT_LOAD whose file
+        // extent ends last, and assert it is also the last PT_LOAD overall
+        // so the "everything past its file bytes is non-ALLOC tail" move
+        // below is sound.
         let phdr_size = size_of::<Elf64_Phdr>();
         let mut rw_phdr_index: Option<usize> = None;
         let mut rw_phdr: Elf64_Phdr = Elf64_Phdr::ZEROED;
         let mut max_vaddr_end: u64 = 0;
+        let mut max_load_file_end: u64 = 0;
         for i in 0..ehdr.e_phnum as usize {
             let phdr_offset = usize::try_from(ehdr.e_phoff).expect("int cast") + i * phdr_size;
             let phdr: Elf64_Phdr = read_struct(&self.data[phdr_offset..][..phdr_size]);
@@ -239,7 +248,14 @@ impl ElfFile {
                 max_vaddr_end = vaddr_end;
             }
 
-            if (phdr.p_flags & PF_W) != 0 && rw_phdr_index.is_none() {
+            let file_end = phdr.p_offset + phdr.p_filesz;
+            if file_end > max_load_file_end {
+                max_load_file_end = file_end;
+            }
+
+            if (phdr.p_flags & PF_W) != 0
+                && rw_phdr_index.is_none_or(|_| file_end > rw_phdr.p_offset + rw_phdr.p_filesz)
+            {
                 rw_phdr_index = Some(i);
                 rw_phdr = phdr;
             }
@@ -248,6 +264,11 @@ impl ElfFile {
         let Some(rw_index) = rw_phdr_index else {
             return Err(ElfError::NoWritableLoadSegment);
         };
+        if rw_phdr.p_offset + rw_phdr.p_filesz != max_load_file_end {
+            // A PT_LOAD with file bytes past the selected RW segment would be
+            // clobbered by the tail relocation below.
+            return Err(ElfError::InvalidElfFile);
+        }
 
         // Place the new data at a page-aligned virtual address past every
         // existing mapping. page_size is ≥ 128 so this also guarantees the

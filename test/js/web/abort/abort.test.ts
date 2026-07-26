@@ -121,8 +121,10 @@ describe("AbortSignal", () => {
   // release its native timer then, not at the deadline. Observed via the
   // Timeout live-count in bun:internal-for-testing; run in a subprocess so
   // other tests' timeout signals do not perturb the count.
-  test.concurrent("AbortSignal.timeout() cancels its native timer when the unobserved signal is collected", async () => {
-    const src = `
+  test.concurrent(
+    "AbortSignal.timeout() cancels its native timer when the unobserved signal is collected",
+    async () => {
+      const src = `
       const { heapStats } = require("bun:jsc");
       const { abortSignalTimeoutLiveCount } = require("bun:internal-for-testing");
       const N = 2_000;
@@ -142,25 +144,26 @@ describe("AbortSignal", () => {
       const wrappers = heapStats().objectTypeCounts.AbortSignal || 0;
       console.log(JSON.stringify({ held, afterGc, wrappers }));
     `;
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", src],
-      env: bunEnv,
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    const { held, afterGc, wrappers } = JSON.parse(stdout.trim());
-    // The JS wrappers are collectable either way (isReachableFromOpaqueRoots
-    // returns false for a timeout signal with no listeners); assert that so a
-    // live-count regression can be attributed to the native side.
-    expect(wrappers).toBeLessThan(100);
-    // Before the fix: afterGc === held === N. After: afterGc is ~0. A handful
-    // of wrappers may be conservatively retained by the collector on some
-    // platforms, so allow a small margin well below the unfixed N.
-    expect(held).toBe(2_000);
-    expect(afterGc).toBeLessThan(100);
-    expect(exitCode).toBe(0);
-  });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", src],
+        env: bunEnv,
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      const { held, afterGc, wrappers } = JSON.parse(stdout.trim());
+      // The JS wrappers are collectable either way (isReachableFromOpaqueRoots
+      // returns false for a timeout signal with no listeners); assert that so a
+      // live-count regression can be attributed to the native side.
+      expect(wrappers).toBeLessThan(100);
+      // Before the fix: afterGc === held === N. After: afterGc is ~0. A handful
+      // of wrappers may be conservatively retained by the collector on some
+      // platforms, so allow a small margin well below the unfixed N.
+      expect(held).toBe(2_000);
+      expect(afterGc).toBeLessThan(100);
+      expect(exitCode).toBe(0);
+    },
+  );
 
   // Regression guard for the above: a timeout signal that IS observed (via a
   // listener, via AbortSignal.any, or via a bare native ref holder like

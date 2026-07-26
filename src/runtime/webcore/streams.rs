@@ -1404,12 +1404,16 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
             if self.requested_end {
                 // HTTP/1: `send_readable` drained the parked `try_end`/`end`,
                 // so `markDone()` nulled our `onWritable` and the wrapper then
-                // replayed any buffered pipelined request; clearing here would
-                // null THAT request's handler. HTTP/3 has no replay.
+                // replayed any buffered pipelined request; the socket now
+                // belongs to THAT request. HTTP/3 has no replay.
                 if HTTP3 {
                     if let Some(res) = self.any_res() {
                         res.clear_on_writable();
                     }
+                } else {
+                    // finalize()'s `if !self.done` block would clear_on_writable
+                    // and end_stream() the replayed request's state.
+                    self.done = true;
                 }
                 self.ended_response = true;
                 self.signal.close(None);

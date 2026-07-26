@@ -66,9 +66,14 @@ test.skipIf(!isLinux || !isASAN)(
         // Consuming one byte does not unblock the 2 MiB writer.
         const buf = Buffer.alloc(1);
         const deadline = Date.now() + 5000;
+        let sawBytes = false;
         while (Date.now() < deadline) {
-          try { if (fs.readSync(rd, buf) > 0) break; } catch (e) { if (e.code !== "EAGAIN") throw e; }
+          try { if (fs.readSync(rd, buf) > 0) { sawBytes = true; break; } } catch (e) { if (e.code !== "EAGAIN") throw e; }
           Bun.sleepSync(1);
+        }
+        if (!sawBytes) {
+          process.stderr.write("writer never entered kernel within 5s\\n");
+          process.exit(1);
         }
 
         process.stdout.write("alive\\n");

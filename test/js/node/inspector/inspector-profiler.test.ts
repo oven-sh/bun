@@ -538,11 +538,9 @@ phase2();
         expect(names).toContain("phase2");
       });
 
-      test.concurrent(
-        "worker.startCpuProfile()'s stop does not tear down an in-worker Session's profile",
-        async () => {
-          using dir = tempDir("inspector-worker-cpuprofile", {
-            "fixture.mjs": `
+      test.concurrent("worker.startCpuProfile()'s stop does not tear down an in-worker Session's profile", async () => {
+        using dir = tempDir("inspector-worker-cpuprofile", {
+          "fixture.mjs": `
 import { Worker } from "node:worker_threads";
 import { once } from "node:events";
 const worker = new Worker(\`
@@ -569,27 +567,26 @@ const [result] = await once(worker, "message");
 await worker.terminate();
 console.log(JSON.stringify(result));
 `,
-          });
-          await using proc = Bun.spawn({
-            cmd: [bunExe(), "fixture.mjs"],
-            env: bunEnv,
-            cwd: String(dir),
-            stderr: "pipe",
-          });
-          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-          expect({ stderrIfFailed: exitCode === 0 ? "" : stderr, exitCode }).toEqual({
-            stderrIfFailed: "",
-            exitCode: 0,
-          });
-          const result = JSON.parse(stdout.trim());
-          // With the old isCPUProfilerRunning() guards in JSWorker.cpp, the
-          // parent's handle.stop() decremented the ref the Session took, so the
-          // Session's own Profiler.stop found the sampler paused and the buffer
-          // cleared.
-          expect(result.samples).toBeGreaterThan(0);
-          expect(result.names).toContain("inWorker");
-        },
-      );
+        });
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "fixture.mjs"],
+          env: bunEnv,
+          cwd: String(dir),
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stderrIfFailed: exitCode === 0 ? "" : stderr, exitCode }).toEqual({
+          stderrIfFailed: "",
+          exitCode: 0,
+        });
+        const result = JSON.parse(stdout.trim());
+        // With the old isCPUProfilerRunning() guards in JSWorker.cpp, the
+        // parent's handle.stop() decremented the ref the Session took, so the
+        // Session's own Profiler.stop found the sampler paused and the buffer
+        // cleared.
+        expect(result.samples).toBeGreaterThan(0);
+        expect(result.names).toContain("inWorker");
+      });
     });
   });
 

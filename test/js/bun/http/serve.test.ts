@@ -1520,8 +1520,7 @@ describe("Response with status 101", () => {
   const refused =
     "Bun.serve cannot send a Response with status 101 (Switching Protocols): the fetch handler has no way to take over the connection after the protocol switch. Use server.upgrade() for WebSocket upgrades.";
 
-  const switching = () =>
-    new Response(null, { status: 101, headers: { Upgrade: "my-proto", Connection: "Upgrade" } });
+  const switching = () => new Response(null, { status: 101, headers: { Upgrade: "my-proto", Connection: "Upgrade" } });
 
   // Send a request offering a protocol upgrade and return the server's raw
   // reply once the status line is available. The connection is torn down by

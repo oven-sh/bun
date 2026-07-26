@@ -929,6 +929,18 @@ fn has_timer_due_within(window_ms: i64) -> bool {
     .greater(&deadline)
 }
 
+/// [`VirtualMachine::is_event_loop_alive`] without its `unhandled_error_counter == 0`
+/// gate: that predicate answers "keep draining?", this one answers "any work left?".
+fn has_pending_loop_work(vm: &VirtualMachine) -> bool {
+    let el = vm.event_loop_shared();
+    vm.platform_loop_opt().map(|h| h.is_active()).unwrap_or(false)
+        || vm.active_tasks > 0
+        || el.tasks.readable_length() > 0
+        || el.has_pending_refs()
+        || !el.immediate_tasks.is_empty()
+        || !el.next_immediate_tasks.is_empty()
+}
+
 pub struct CommandLineReporter {
     // `TestRunner<'a>` borrows `TestOptions`/regex from the CLI ctx; the
     // reporter is held in a `Box` local to `TestCommand::exec` which never
@@ -3397,14 +3409,14 @@ impl TestCommand {
 
                 // One bounded macrotask pass so a due timer's throw/rejection books
                 // as "Unhandled error between tests" instead of being orphaned at
-                // exit. Two ticks: a leftover wakeup eats the first poll; the
-                // second fires a `setTimeout(fn, 0)` once its 1ms clamp elapses.
-                vm.event_loop_ref().auto_tick();
-                vm.event_loop_ref().tick();
-                if vm.is_event_loop_alive() {
+                // exit. Two ticks so a `setTimeout(fn, 0)` (clamped to 1ms) can
+                // become due; each poll is bounded by the nearest heap deadline
+                // when within 20ms, or made non-blocking via wakeup otherwise.
+                for pass in 0..2 {
+                    if pass != 0 && !has_pending_loop_work(vm) {
+                        break;
+                    }
                     if !has_timer_due_within(20) {
-                        // No near deadline to bound the poll; don't wait on a
-                        // far-future timer or an open socket.
                         vm.wakeup();
                     }
                     vm.event_loop_ref().auto_tick();
@@ -3419,10 +3431,11 @@ impl TestCommand {
                     vm.on_before_exit();
                 } else if first_last.last
                     && repeat_index + 1 == repeat_count
-                    && vm.is_event_loop_alive()
+                    && reporter.worker_ipc_file_idx.is_none()
+                    && has_pending_loop_work(vm)
                 {
-                    // Loop liveness is VM-wide; noting once at end-of-run avoids
-                    // misattributing an earlier file's leak to every later file.
+                    // Once, at end of run: liveness is VM-wide and a --parallel
+                    // worker's own IPC socket would otherwise count.
                     bun_core::note!(
                         "a test left a timer or open handle that is still pending after the last test finished. `bun test` will not wait for it.",
                     );

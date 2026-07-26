@@ -31,7 +31,7 @@ declare module "bun:jsc" {
    * @param value The value to serialize, usually an object or array
    * @returns A SharedArrayBuffer that can be sent to another Bun instance
    */
-  function serialize(value: any): SharedArrayBuffer;
+  function serialize(value: any, options?: { binaryType?: undefined }): SharedArrayBuffer;
 
   /**
    * Serializes a JavaScript value into a binary representation that can be sent to another Bun instance.

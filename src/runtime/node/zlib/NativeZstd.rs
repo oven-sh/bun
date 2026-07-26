@@ -495,9 +495,7 @@ mod _impl {
         const ZSTD_MAGIC_SKIPPABLE_START: u32 = 0x184D2A50;
         const ZSTD_MAGIC_SKIPPABLE_MASK: u32 = 0xFFFFFFF0;
 
-        /// RFC 8878 §3.1: a zstd stream is one or more concatenated frames.
-        /// True when the unconsumed input begins a zstd or skippable frame
-        /// magic (or a prefix of one when fewer than 4 bytes remain).
+        /// True when the unconsumed input begins a zstd/skippable frame magic (or a prefix of one).
         fn next_input_is_frame(&self) -> bool {
             let avail = self.input.size - self.input.pos;
             if avail == 0 {

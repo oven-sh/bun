@@ -4121,7 +4121,11 @@ impl<'a> HTTPClient<'a> {
                     } else {
                         0
                     },
-                    if had_tunnel { self.proxy_auth_hash() } else { 0 },
+                    if had_tunnel {
+                        self.proxy_auth_hash()
+                    } else {
+                        0
+                    },
                     None,
                 );
             } else {

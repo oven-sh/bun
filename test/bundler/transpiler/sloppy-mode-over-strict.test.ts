@@ -16,28 +16,20 @@ async function run(body: string, cjs = true) {
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { stdout, stderr, exitCode };
 }
 
 describe.concurrent("sloppy-mode constructs the transpiler must accept", () => {
   test("duplicate parameter names in a plain function declaration", async () => {
-    const { stdout, stderr, exitCode } = await run(
-      `function f(a, a) { return a }\nconsole.log(f(1, 2));`,
-    );
+    const { stdout, stderr, exitCode } = await run(`function f(a, a) { return a }\nconsole.log(f(1, 2));`);
     expect(stderr).not.toContain("cannot be bound multiple times");
     expect(stdout.trim()).toBe("2");
     expect(exitCode).toBe(0);
   });
 
   test("duplicate parameter names in a plain function expression", async () => {
-    const { stdout, stderr, exitCode } = await run(
-      `var e = function(b, b) { return b };\nconsole.log(e(1, 2));`,
-    );
+    const { stdout, stderr, exitCode } = await run(`var e = function(b, b) { return b };\nconsole.log(e(1, 2));`);
     expect(stderr).not.toContain("cannot be bound multiple times");
     expect(stdout.trim()).toBe("2");
     expect(exitCode).toBe(0);
@@ -52,9 +44,7 @@ describe.concurrent("sloppy-mode constructs the transpiler must accept", () => {
   });
 
   test("assignment to eval and arguments", async () => {
-    const { stdout, stderr, exitCode } = await run(
-      `eval = 2; arguments = 3; eval++;\nconsole.log(eval, arguments);`,
-    );
+    const { stdout, stderr, exitCode } = await run(`eval = 2; arguments = 3; eval++;\nconsole.log(eval, arguments);`);
     expect(stderr).not.toContain("Invalid assignment target");
     expect(stdout.trim()).toBe("3 3");
     expect(exitCode).toBe(0);
@@ -70,9 +60,7 @@ describe.concurrent("sloppy-mode constructs the transpiler must accept", () => {
   });
 
   test("legacy octal escape at end of string (1 digit)", async () => {
-    const { stdout, stderr, exitCode } = await run(
-      `console.log("x\\7".charCodeAt(1));`,
-    );
+    const { stdout, stderr, exitCode } = await run(`console.log("x\\7".charCodeAt(1));`);
     expect(stderr).not.toContain("Syntax Error");
     expect(stdout.trim()).toBe("7");
     expect(exitCode).toBe(0);
@@ -106,9 +94,7 @@ describe.concurrent("sloppy-mode constructs the transpiler must accept", () => {
   });
 
   test("<!-- HTML open comment is a line comment", async () => {
-    const { stdout, stderr, exitCode } = await run(
-      `var h = 1 <!-- comment\nconsole.log("ok", h);`,
-    );
+    const { stdout, stderr, exitCode } = await run(`var h = 1 <!-- comment\nconsole.log("ok", h);`);
     expect(stderr).not.toContain("Legacy HTML comments");
     expect(stdout.trim()).toBe("ok 1");
     expect(exitCode).toBe(0);
@@ -135,9 +121,7 @@ describe.concurrent("strict-mode / unique-formal-parameter rejections still fire
   });
 
   test('duplicate parameters under "use strict"', async () => {
-    const { exitCode, stderr } = await run(
-      `"use strict";\nfunction f(a, a) { return a }\nvoid f;`,
-    );
+    const { exitCode, stderr } = await run(`"use strict";\nfunction f(a, a) { return a }\nvoid f;`);
     expect(stderr).toContain("cannot be bound multiple times");
     expect(exitCode).not.toBe(0);
   });
@@ -149,9 +133,7 @@ describe.concurrent("strict-mode / unique-formal-parameter rejections still fire
   });
 
   test("var await inside async function still rejected", async () => {
-    const { exitCode, stderr } = await run(
-      `async function f() { var await = 1; }\nf();`,
-    );
+    const { exitCode, stderr } = await run(`async function f() { var await = 1; }\nf();`);
     expect(stderr).toMatch(/await/);
     expect(exitCode).not.toBe(0);
   });
@@ -175,11 +157,7 @@ describe("bun build accepts sloppy CommonJS", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).not.toContain("cannot be bound multiple times");
     expect(stdout).toContain("function f(a, a)");
     expect(exitCode).toBe(0);

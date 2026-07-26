@@ -45,8 +45,14 @@ public:
         if (std::exchange(m_disarmed, true))
             return;
         s_innermost = m_enclosing;
-        if (m_installed)
-            m_vm.watchdog()->setTimeLimit(m_previousLimit, m_enclosing ? &didFire : nullptr, m_enclosing, nullptr);
+        if (!m_installed)
+            return;
+        // Restore to the nearest ancestor that actually armed the Watchdog;
+        // a non-installed ancestor never owned the callback.
+        NodeVMWatchdogScope* owner = m_enclosing;
+        while (owner && !owner->m_installed)
+            owner = owner->m_enclosing;
+        m_vm.watchdog()->setTimeLimit(m_previousLimit, owner ? &didFire : nullptr, owner, nullptr);
     }
 
     bool timedOut() const { return m_timedOut; }

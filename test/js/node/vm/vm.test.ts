@@ -1430,6 +1430,25 @@ describe.concurrent("node:vm nested evaluation propagates an enclosing terminati
     ).toEqual({ stdout: "outer:ERR_SCRIPT_EXECUTION_TIMEOUT\nalive", stderr: "", exitCode: 0, signalCode: null });
   });
 
+  test("three-level nesting: outer's fire after a tighter inner disarms is attributed to outer", async () => {
+    // outer{100ms} / middle{60000ms, clamped so not installed} / inner{50ms}.
+    // inner disarms back to the nearest *installed* ancestor (outer), not to
+    // middle, so the 100ms fire sets outer's flag and middle propagates.
+    expect(
+      await run(`
+        const vm = require("node:vm");
+        const inner = () => vm.runInNewContext("1", {}, { timeout: 50 });
+        const middle = () => {
+          try { return vm.runInNewContext("inner(); while(true){}", { inner }, { timeout: 60000 }); }
+          catch (e) { return "middle-threw:" + (e && e.code); }
+        };
+        try { console.log("outer:" + vm.runInNewContext("middle()", { middle }, { timeout: 100 })); }
+        catch (e) { console.log("outer:" + (e && e.code)); }
+        console.log("alive");
+      `),
+    ).toEqual({ stdout: "outer:ERR_SCRIPT_EXECUTION_TIMEOUT\nalive", stderr: "", exitCode: 0, signalCode: null });
+  });
+
   test("outer timeout fires inside an inner untimed runInThisContext", async () => {
     expect(
       await run(`

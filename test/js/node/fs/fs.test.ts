@@ -3729,10 +3729,16 @@ describe("createWriteStream", () => {
   });
 
   // https://github.com/oven-sh/bun/issues/31763
-  // With no `start`, the retry position must stay undefined, not
-  // `undefined + bytesWritten === NaN` (coerced to offset 0 by the binding).
-  it.each(["write", "writev"])("partial %s retry does not corrupt the file (issue #31763)", async method => {
-    const streamPath = join(tmpdirSync(), `partial-${method}.bin`);
+  // With no `start` the retry position must stay undefined (not NaN); with
+  // `start` it must advance the captured `pos`, not `this.pos`, which
+  // `_writev` has already bumped past the unwritten tail.
+  it.each([
+    ["write", undefined],
+    ["write", 0],
+    ["writev", undefined],
+    ["writev", 0],
+  ] as const)("partial %s retry with start %p does not corrupt the file (issue #31763)", async (method, start) => {
+    const streamPath = join(tmpdirSync(), `partial-${method}-${start}.bin`);
     const payload = Buffer.from("ABCDEFGHIJKLMNOPQRSTUVWXYZ");
     const positions: unknown[] = [];
     let first = true;
@@ -3764,7 +3770,7 @@ describe("createWriteStream", () => {
       },
     };
 
-    const stream = createWriteStream(streamPath, { fs: customFs } as any);
+    const stream = createWriteStream(streamPath, { fs: customFs, start } as any);
     const { promise: done, resolve, reject } = Promise.withResolvers<void>();
     stream.on("error", reject);
     stream.on("finish", resolve);

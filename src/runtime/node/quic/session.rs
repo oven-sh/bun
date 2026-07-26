@@ -313,9 +313,7 @@ pub(super) enum SessionEvent {
         stream: *mut super::stream::QuicStream,
     },
     HandshakeConfirmed,
-    GoawayReceived {
-        last_stream_id: Option<u64>,
-    },
+    GoawayReceived,
     Datagram {
         payload: Vec<u8>,
         early: bool,
@@ -896,10 +894,7 @@ impl QuicSession {
             // SAFETY: teardown clears `endpoint` before the endpoint can die.
             let defer_closes = !endpoint.is_null() && unsafe { (*endpoint).defer_closes.get() };
             if (dispatched_js || defer_closes)
-                && matches!(
-                    event,
-                    SessionEvent::Closed | SessionEvent::GoawayReceived { .. }
-                )
+                && matches!(event, SessionEvent::Closed | SessionEvent::GoawayReceived)
             {
                 self.events.with_mut(|e| e.insert(0, event));
                 self.schedule_process();
@@ -1079,12 +1074,9 @@ impl QuicSession {
                         }
                     }
                 }
-                SessionEvent::GoawayReceived { last_stream_id } => {
-                    // -1n is Node's "id unavailable" (session.cc EmitGoaway).
-                    let last_stream_id = match last_stream_id.map_or_else(
-                        || JSValue::from_int64_no_truncate(global, -1),
-                        |id| JSValue::from_uint64_no_truncate(global, id),
-                    ) {
+                SessionEvent::GoawayReceived => {
+                    // Node v26 reports -1n here; the id is read internally for rejection.
+                    let last_stream_id = match JSValue::from_int64_no_truncate(global, -1) {
                         Ok(v) => v,
                         Err(e) => {
                             global.report_uncaught_exception_from_error(e);
@@ -2385,12 +2377,13 @@ lsquic_callback! {
     }
 
     pub(super) fn on_goaway_received(session: &QuicSession) {
-        let stream_id = session.conn().and_then(|c| c.min_goaway_stream_id());
-        session.push_event(SessionEvent::GoawayReceived {
-            last_stream_id: stream_id,
-        });
+        session.push_event(SessionEvent::GoawayReceived);
         // lsquic fake-resets id>goaway_id with no on_reset (→clean EOF); reject so readers error.
-        let Some(stream_id) = stream_id.filter(|_| !session.is_server()) else {
+        let Some(stream_id) = session
+            .conn()
+            .and_then(|c| c.min_goaway_stream_id())
+            .filter(|_| !session.is_server())
+        else {
             return;
         };
         let streams: Vec<*mut super::stream::QuicStream> = session.streams.get().clone();

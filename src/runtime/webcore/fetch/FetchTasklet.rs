@@ -2400,9 +2400,7 @@ impl FetchTasklet {
 
         task_ref.body_size = task_ref.result.body_size;
         if let http::BodySize::ContentLength(n) = task_ref.body_size {
-            task_ref
-                .response_content_length
-                .store(n, Ordering::Release);
+            task_ref.response_content_length.store(n, Ordering::Release);
         }
 
         let success = task_ref.result.is_success();

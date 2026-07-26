@@ -111,9 +111,8 @@ function prependListener(emitter, event, fn) {
   // the prependListener() method. The goal is to eventually remove this hack.
   let events, existing;
   if (!(events = emitter._events) || !(existing = events[event])) emitter.on(event, fn);
-  // A fresh array, not unshift(): node:events iterates stored arrays without
-  // cloning and marks them so its own mutators copy-on-write, but this path
-  // bypasses that mark check, so only a new array is guaranteed safe here.
+  // A fresh array, not unshift(): emit() in node:events iterates without
+  // cloning, and this path can't see the kIterated mark that guards in-place edits.
   else if (ArrayIsArray(existing)) events[event] = [fn, ...existing];
   else events[event] = [fn, existing];
 }

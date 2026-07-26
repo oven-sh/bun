@@ -3044,6 +3044,14 @@ impl TestCommand {
 
         reporter.write_junit_report_if_needed();
 
+        // Run complete: summary printed, JUnit written. Any `process.exit()`
+        // from here on (watch-idle timers, `'exit'` listeners) is a normal
+        // shutdown-time exit, not a mid-run abort.
+        // SAFETY: single-threaded (JS VM thread).
+        unsafe {
+            REPORTER.write(None);
+        }
+
         if vm.hot_reload == jsc::virtual_machine::HOT_RELOAD_WATCH {
             let vm_ptr: *mut VirtualMachine = vm;
             // SAFETY: `vm_ptr` reborrows the live `&mut VirtualMachine`;
@@ -3064,15 +3072,6 @@ impl TestCommand {
             || reporter.jest.unhandled_errors_between_tests > 0
         {
             vm.exit_handler.exit_code = 1;
-        }
-        // The run is complete: summary printed, exit code computed. Clear
-        // `REPORTER` before firing JS `'exit'` listeners so a handler calling
-        // `process.exit()` (Node's `common.mustCall()` pattern) is handled by
-        // `Bun__Process__exit` as a normal shutdown-time exit rather than a
-        // mid-run abort.
-        // SAFETY: single-threaded (JS VM thread).
-        unsafe {
-            REPORTER.write(None);
         }
         // Run `process.on('exit')` handlers like `bun run` does. Node's test
         // harness verifies mustCall() counts from one, so skipping them made
@@ -3482,6 +3481,9 @@ pub(crate) fn on_process_exit_during_tests(vm: &mut VirtualMachine, requested: u
         return;
     }
 
+    if Output::is_github_action() {
+        pretty_errorln!("<r>\n::endgroup::\n");
+    }
     pretty_error!(
         "\n<red>error<r><d>:<r> <b>process.exit({})<r> was called during <b>bun test<r>\n",
         requested,

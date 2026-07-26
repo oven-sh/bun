@@ -1186,8 +1186,7 @@ where
     pub fn end_already_responded_stream(&mut self) {
         ctx_log!("endAlreadyRespondedStream");
         debug_assert!(!HTTP3);
-        // Resume before `take()`: READABLE was disabled while paused, so the
-        // socket cannot have been recycled onto a next request in the interim.
+        // Resume before `take()`: READABLE was disabled while paused, so the socket has not been recycled.
         self.resume_request_body_socket();
         if self.resp.take().is_some() {
             self.flags.set_is_waiting_for_request_body(false);

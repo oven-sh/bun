@@ -137,8 +137,10 @@ test.skipIf(!isLinux)("unconnected socket with no error handler survives ICMP po
 // the caller catches. With IP_RECVERR on, the kernel also queues the same
 // EMSGSIZE on the error queue and it was re-delivered as an async uncaught
 // error. Without an error handler the process must still survive.
-test.skipIf(!isLinux)("oversized send caught synchronously does not also kill the process via the error queue", async () => {
-  const src = `
+test.skipIf(!isLinux)(
+  "oversized send caught synchronously does not also kill the process via the error queue",
+  async () => {
+    const src = `
     const rx = await Bun.udpSocket({ port: 0, hostname: "127.0.0.1", socket: { data() {} } });
     const tx = await Bun.udpSocket({ socket: { data() {} } });
     let caught = "none";
@@ -149,17 +151,18 @@ test.skipIf(!isLinux)("oversized send caught synchronously does not also kill th
     console.log(JSON.stringify({ caught, txClosed: tx.closed }));
     process.exit(0);
   `;
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", src],
-    env: bunEnv,
-    stderr: "pipe",
-    stdout: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
-  expect(JSON.parse(stdout.trim())).toEqual({ caught: "EMSGSIZE", txClosed: false });
-  expect(exitCode).toBe(0);
-});
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      env: bunEnv,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout.trim())).toEqual({ caught: "EMSGSIZE", txClosed: false });
+    expect(exitCode).toBe(0);
+  },
+);
 
 // Belt-and-suspenders for the same contract on a connected socket: even when
 // IP_RECVERR is armed and the error queue delivers, a socket with no error

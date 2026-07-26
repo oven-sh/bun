@@ -829,12 +829,14 @@ async function getDeadPort() {
 // flag forced on, the same ICMP poisoned sk_err and surfaced through the
 // plain recv path (no errqueue flag), bypassing the unconnected filter and
 // killing the process.
-test.skipIf(!isLinux)("unconnected echo server without 'error' listener survives ICMP from a vanished client", async () => {
-  // The reply must go out from inside the 'message' handler so it happens
-  // inside loop.c's recvmmsg do-while; on loopback the ICMP lands before the
-  // next iteration and poisons sk_err, which surfaces as a recv-path error
-  // without the errqueue flag and so bypasses the errqueue-only filter.
-  const src = `
+test.skipIf(!isLinux)(
+  "unconnected echo server without 'error' listener survives ICMP from a vanished client",
+  async () => {
+    // The reply must go out from inside the 'message' handler so it happens
+    // inside loop.c's recvmmsg do-while; on loopback the ICMP lands before the
+    // next iteration and poisons sk_err, which surfaces as a recv-path error
+    // without the errqueue flag and so bypasses the errqueue-only filter.
+    const src = `
     const dgram = require("node:dgram");
     const server = dgram.createSocket("udp4");
     const client = dgram.createSocket("udp4");
@@ -861,18 +863,19 @@ test.skipIf(!isLinux)("unconnected echo server without 'error' listener survives
       });
     });
   `;
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", src],
-    env: bunEnv,
-    stderr: "pipe",
-    stdout: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
-  // Node delivers no error at all for ICMP on an unconnected socket.
-  expect(JSON.parse(stdout.trim())).toEqual({ handled: true });
-  expect(exitCode).toBe(0);
-});
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      env: bunEnv,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    // Node delivers no error at all for ICMP on an unconnected socket.
+    expect(JSON.parse(stdout.trim())).toEqual({ handled: true });
+    expect(exitCode).toBe(0);
+  },
+);
 
 // A connected socket's ICMP error must be *emitted*, not treated as fatal.
 // On the BSDs there is no error queue, so the kernel only delivers it via the

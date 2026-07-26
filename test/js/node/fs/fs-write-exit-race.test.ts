@@ -24,7 +24,8 @@ test.skipIf(!isLinux || !isASAN)(
   async () => {
     using dir = tempDir("fs-write-exit-race", {
       "helper.c": `
-        #include <unistd.h>
+        extern int close(int);
+        extern int usleep(unsigned int);
         extern int __cxa_atexit(void (*)(void *), void *, void *);
         static int g_fd = -1;
         static void do_close_and_sleep(void *unused) {

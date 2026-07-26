@@ -484,18 +484,12 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 let entry = asset_paths.get_or_put(&out.dest_path)?;
                 if !entry.found_existing {
                     entry.value_ptr.hash = out.hash;
-                    entry.value_ptr.inputs.push(i);
-                    if collides_with_chunk {
-                        entry.value_ptr.collides = true;
-                        has_collision = true;
-                    }
+                    entry.value_ptr.collides = collides_with_chunk;
                 } else if entry.value_ptr.hash != out.hash {
-                    if !entry.value_ptr.collides {
-                        entry.value_ptr.collides = true;
-                        has_collision = true;
-                    }
-                    entry.value_ptr.inputs.push(i);
+                    entry.value_ptr.collides = true;
                 }
+                entry.value_ptr.inputs.push(i);
+                has_collision |= entry.value_ptr.collides;
             }
 
             if has_collision {

@@ -436,49 +436,30 @@ pub mod js_bundler {
 
     /// One resolved step of the plugin `setup()` chain.
     enum SetupStep {
-        /// `runSetupFunction` (and, for the last plugin, its `onStart()`
-        /// promises) settled synchronously; carries the updated promise array
-        /// to thread into the next plugin's `runSetupFunction` call.
+        /// The updated `onStart()` promise array, threaded into the next step.
         Settled(JSValue),
-        /// `runSetupFunction` returned a promise that is still pending: an
-        /// async `setup()` that suspended on an `await`, or the last plugin's
-        /// `Promise.all` over pending `onStart()` promises.
+        /// A still-pending async `setup()` or last-plugin `onStart()` `Promise.all`.
         Pending(JSValue),
     }
 
-    /// Where [`Config::from_js`] stopped when a plugin `setup()` yielded a
-    /// promise that had not settled yet. `build` turns this into a
-    /// [`DeferredBuild`] and continues from the promise's `.then`
-    /// continuation.
+    /// Where [`Config::from_js`] stopped when a plugin `setup()` suspended; see [`DeferredBuild`].
     pub struct SuspendedPluginSetup {
-        /// The still-pending promise `runSetupFunction` returned, kept
-        /// GC-rooted until `build` attaches the `.then` reactions to it.
+        /// GC-roots the `runSetupFunction` promise until `build` attaches `.then` reactions.
         pending: jsc::Strong,
-        /// `config.plugins`, snapshotted before any `setup()` ran so a getter
-        /// is not re-invoked on resume.
+        /// `config.plugins`, snapshotted so getters aren't re-invoked on resume.
         plugins_array: jsc::Strong,
         /// Plugin index to resume the chain from.
         next_index: u32,
         /// Snapshot of the plugin array length.
         length: u32,
         plugin_target: jsc::BunPluginTarget,
-        /// The partially-parsed config: only the pre-plugin `target` fields
-        /// are set. The rest is parsed by `finish_from_js` once every
-        /// `setup()` has settled, because plugins may mutate the config
-        /// object before then.
+        /// Only `target` is set; the rest is parsed by `finish_from_js` once the chain settles.
         config: Config,
         did_set_target: bool,
     }
 
     impl Config {
-        /// Parses `Bun.build`'s config object.
-        ///
-        /// Returns `Ok(None)` when a plugin's `setup()` (or the last plugin's
-        /// pending `onStart()` promises) yielded a promise that is still
-        /// pending. `*suspended` then records where the chain stopped and
-        /// owns the partially-parsed config; the caller must continue from
-        /// that promise's `.then` continuation instead of re-entering the
-        /// event loop (#33261).
+        /// `Ok(None)` means a plugin `setup()` suspended; `*suspended` records where the chain stopped (#33261).
         pub fn from_js(
             global_this: &JSGlobalObject,
             config: JSValue,
@@ -546,13 +527,6 @@ pub mod js_bundler {
                     )? {
                         SetupStep::Settled(value) => onstart_promise_array = value,
                         SetupStep::Pending(pending) => {
-                            // An async `setup()` (or the last plugin's pending
-                            // `onStart()` promises) has not settled. Never
-                            // re-enter the event loop from here (#33261):
-                            // record where the chain stopped so `build` can
-                            // run the remaining plugins, and the rest of the
-                            // config parse, from this promise's `.then`
-                            // continuation.
                             *suspended = Some(SuspendedPluginSetup {
                                 pending: jsc::Strong::create(pending, global_this),
                                 plugins_array: jsc::Strong::create(array, global_this),
@@ -562,8 +536,7 @@ pub mod js_bundler {
                                 config: this,
                                 did_set_target,
                             });
-                            // Ownership of the plugin registry transfers to
-                            // the continuation; disarm the error cleanup.
+                            // Plugin registry ownership moves to the continuation; disarm cleanup.
                             scopeguard::ScopeGuard::into_inner(plugins);
                             return Ok(None);
                         }
@@ -576,14 +549,7 @@ pub mod js_bundler {
             Ok(Some(this))
         }
 
-        /// Validate plugin `index` of the `plugins` array, lazily create the
-        /// shared plugin registry, and invoke the plugin's `setup()` through
-        /// the `runSetupFunction` builtin.
-        ///
-        /// `runSetupFunction` stores the `onStart()` promise array it is
-        /// given on the plugin registry before calling `setup()`, so the
-        /// chain has to advance one plugin at a time with the previous
-        /// plugin's settled result.
+        /// Run plugin `index`'s `setup()`; one at a time because the builtin stashes the prior step's array.
         #[allow(clippy::too_many_arguments)]
         fn run_one_plugin_setup(
             global_this: &JSGlobalObject,
@@ -644,9 +610,6 @@ pub mod js_bundler {
                 if let Some(promise) = plugin_result.as_any_promise() {
                     promise.set_handled(global_this.vm());
                     if matches!(promise.status(), jsc::js_promise::Status::Pending) {
-                        // Never block the event loop waiting for this promise
-                        // (#33261): the caller attaches `.then` reactions and
-                        // continues the chain from there.
                         return Ok(SetupStep::Pending(plugin_result));
                     }
                     match promise.unwrap(global_this.vm(), jsc::PromiseUnwrapMode::MarkHandled) {
@@ -670,11 +633,7 @@ pub mod js_bundler {
             Ok(SetupStep::Settled(plugin_result))
         }
 
-        /// Everything `from_js` parses after the plugin `setup()` chain has
-        /// settled. Split out so that, when a `setup()` suspends, the
-        /// remainder can run in its `.then` continuation: plugins are
-        /// allowed to mutate the config object before their promise settles,
-        /// so none of these fields may be read earlier.
+        /// The post-setup tail of `from_js`; plugins may mutate the config, so nothing here can be read earlier.
         fn finish_from_js(
             global_this: &JSGlobalObject,
             config: JSValue,
@@ -1452,18 +1411,10 @@ pub mod js_bundler {
         let Some(config) =
             Config::from_js(global_this, arguments[0], &mut plugins, &mut suspended)?
         else {
-            // A plugin `setup()` (or the last plugin's `onStart()` promises)
-            // suspended on a promise that has not settled. `Bun.build`
-            // already returns a promise, so run the remaining plugins, finish
-            // the config parse, and schedule the bundle from that promise's
-            // `.then` continuation instead of re-entering the event loop
-            // (#33261).
             let suspended = suspended.expect("from_js returned None without a suspension");
             let result = jsc::JSPromiseStrong::init(global_this);
             let return_value = result.value();
-            // `suspended.pending` (the Strong that is GC-rooting the promise)
-            // drops at the end of this block, after `.then` has attached its
-            // reactions.
+            // `suspended.pending` stays rooted through this block and drops after `.then` attaches.
             let pending = suspended.pending.get();
             let deferred = bun_core::heap::into_raw(Box::new(DeferredBuild {
                 config_js: jsc::Strong::create(arguments[0], global_this),
@@ -1516,48 +1467,32 @@ pub mod js_bundler {
         build(global_this, callframe.arguments())
     }
 
-    /// A `Bun.build` whose plugin `setup()` chain suspended on a pending
-    /// promise.
-    ///
-    /// Leaked with `heap::into_raw` and handed to the promise's `.then`
-    /// reactions as their context pointer; exactly one of the two reactions
-    /// runs and reclaims it (or leaks it again if the chain suspends on a
-    /// later plugin).
+    /// Leaked via `heap::into_raw`; exactly one `.then` reaction reclaims it (or re-leaks on another suspension).
     struct DeferredBuild {
-        /// `Bun.build(config)`'s config argument; the rest of the parse reads
-        /// it after the chain settles.
+        /// `Bun.build`'s config argument; re-read by `finish_from_js` after the chain settles.
         config_js: jsc::Strong,
         /// See [`SuspendedPluginSetup::plugins_array`].
         plugins_array: jsc::Strong,
         next_index: u32,
         length: u32,
         plugin_target: jsc::BunPluginTarget,
-        /// The plugin registry, owned here until it either transfers to the
-        /// completion task (success) or is destroyed (failure).
+        /// Owned here until moved to the completion task or destroyed on failure.
         plugin: Option<*mut Plugin>,
-        /// The partially-parsed config (pre-plugin `target` fields only);
-        /// `None` once it has moved into the completion task.
+        /// The pre-plugin config; `None` once it moves to the completion task.
         partial: Option<Config>,
         did_set_target: bool,
-        /// `Bun.build`'s result promise. Moved into the completion task on
-        /// success, rejected here on failure.
+        /// `Bun.build`'s result promise; moves to the completion task or is rejected here.
         result: jsc::JSPromiseStrong,
     }
 
     impl DeferredBuild {
-        /// Continue the plugin `setup()` chain from `next_index` with the
-        /// value the last pending step settled to, then, once every plugin
-        /// has settled, finish the config parse and schedule the bundle.
-        ///
-        /// Returns `Some(pending)` when the chain suspended again on a later
-        /// plugin's promise.
+        /// Continue from `next_index`; returns `Some(pending)` on another suspension.
         fn resume(
             &mut self,
             global_this: &JSGlobalObject,
             mut onstart_promise_array: JSValue,
         ) -> JsResult<Option<JSValue>> {
-            // The synchronous chain rejects when a step settles to an Error;
-            // preserve that for a step that settled through `.then`.
+            // Preserve the sync chain's reject-on-Error for a `.then`-settled step.
             if let Some(err) = onstart_promise_array.to_error() {
                 return Err(global_this.throw_value(err));
             }
@@ -1609,15 +1544,12 @@ pub mod js_bundler {
             Ok(None)
         }
 
-        /// Reject `Bun.build`'s result promise with the pending exception and
-        /// destroy the plugin registry.
+        /// Reject the result promise with the pending exception and free the plugin registry.
         fn fail(&mut self, global_this: &JSGlobalObject, err: JsError) {
             if let Some(plugin) = self.plugin.take() {
                 Plugin::destroy(plugin);
             }
             if matches!(err, JsError::Terminated) {
-                // The VM is terminating; leave the termination exception in
-                // place and don't settle the promise.
                 return;
             }
             let exception = global_this.take_exception(err);
@@ -1625,9 +1557,7 @@ pub mod js_bundler {
         }
     }
 
-    /// `.then` resolve reaction for a suspended plugin `setup()` chain: the
-    /// step's settled value (the `onStart()` promise array) arrives as the
-    /// first argument.
+    /// `.then` resolve reaction; arg[0] is the settled `onStart()` promise array.
     #[bun_jsc::host_fn(export = "Bun__JSBundler__onResolvePluginSetup")]
     fn on_deferred_build_resolve(
         global_this: &JSGlobalObject,
@@ -1641,8 +1571,6 @@ pub mod js_bundler {
         let mut this: Box<DeferredBuild> = unsafe { bun_core::heap::take(deferred) };
         match this.resume(global_this, onstart_promise_array) {
             Ok(Some(pending)) => {
-                // Another plugin suspended; hand the allocation to the next
-                // pair of reactions.
                 let deferred = bun_core::heap::into_raw(this);
                 pending.then(
                     global_this,
@@ -1657,9 +1585,7 @@ pub mod js_bundler {
         Ok(JSValue::UNDEFINED)
     }
 
-    /// `.then` reject reaction for a suspended plugin `setup()` chain: a
-    /// plugin's async `setup()` (or one of its `onStart()` callbacks)
-    /// rejected.
+    /// `.then` reject reaction for a suspended plugin `setup()` chain.
     #[bun_jsc::host_fn(export = "Bun__JSBundler__onRejectPluginSetup")]
     fn on_deferred_build_reject(
         global_this: &JSGlobalObject,

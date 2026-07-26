@@ -3961,8 +3961,7 @@ where
                 // TODO: properly propagate exception upwards
                 let _ = bytes.on_data(WebCore::streams::Result::Temporary(borrowed));
 
-                // Whatever `on_data` did not hand to a waiting reader is now in
-                // `bytes.buffer`; `on_stream_drained` resumes once it empties.
+                // What `on_data` buffered; `on_stream_drained` resumes once it empties.
                 let buffered = bytes.buffer.get().len().saturating_sub(bytes.offset.get());
                 if buffered >= REQUEST_BODY_HIGH_WATER_MARK {
                     this.pause_request_body_socket();
@@ -4076,8 +4075,7 @@ where
             }
             this.request_body_buf.extend_from_slice(chunk);
 
-            // Pre-stream backpressure; resumed by `on_stream_drained` once the
-            // handler reads, or by `on_start_buffering` for `.text()` etc.
+            // Pre-stream backpressure; resumed by `on_stream_drained` / `on_start_buffering`.
             if !this.flags.request_body_buffer_all()
                 && this.request_body_buf.len() >= REQUEST_BODY_HIGH_WATER_MARK
             {
@@ -4109,8 +4107,7 @@ where
         }
     }
 
-    /// Detach the body ByteStream's `drain_handler` before this context is
-    /// released: the stream can outlive it in JS.
+    /// Detach the body ByteStream's `drain_handler` (the stream can outlive this ctx in JS).
     fn clear_request_body_stream_drain_handler(&self, global_this: &JSGlobalObject) {
         let Some(readable) = self.request_body_readable_stream_ref.get(global_this) else {
             return;
@@ -4264,8 +4261,7 @@ where
 
 const MAX_REQUEST_BODY_PREALLOCATE_LENGTH: usize = 1024 * 256;
 
-/// Pause socket reads once the request-body buffer holds this many unconsumed
-/// bytes: two `LIBUS_RECV_BUFFER_LENGTH` (512 KB) recv buffers.
+/// Pause socket reads at this many unconsumed request-body bytes (two 512 KB uWS recv buffers).
 const REQUEST_BODY_HIGH_WATER_MARK: usize = 1024 * 1024;
 
 // Trap host fn for the `(false, _, true)` arms of `exported_host_fns`. Those

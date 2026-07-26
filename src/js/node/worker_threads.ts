@@ -628,16 +628,18 @@ function fakeParentPort() {
     value: self.addEventListener.bind(self),
   });
 
-  Object.defineProperty(fake, "removeEventListener", {
-    value: self.removeEventListener.bind(self),
-  });
-
   // MessagePort.prototype.on/etc. require a real MessagePort receiver; shadow
   // them so calls on this stand-in forward to the global scope. A local map
   // tracks which listeners were added via parentPort so listenerCount/
   // eventNames/removeAllListeners see only those (self may carry internal
   // listeners the user must not touch).
   const byType = new SafeMap();
+  Object.defineProperty(fake, "removeEventListener", {
+    value(type: string, listener: any) {
+      self.removeEventListener(type, listener);
+      byType.get(type)?.delete(listener);
+    },
+  });
   function track(type: string, listener: any, registered: any) {
     let set = byType.get(type);
     if (!set) byType.set(type, (set = new SafeMap()));

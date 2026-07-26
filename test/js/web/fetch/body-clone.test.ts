@@ -1247,57 +1247,64 @@ describe("new Request(input) transfers the input body", () => {
 
   // A Bun.serve incoming Request shares its body slot with the RequestContext.
   // The transfer must not move that Locked value out of the shared slot; it
-  // materializes the stream in place so chunks still reach the copy.
-  for (const touchBodyFirst of [false, true]) {
-    test(`Bun.serve: new Request(incomingReq)${touchBodyFirst ? " after .body was accessed" : ""} reads the bytes and consumes the input`, async () => {
+  // materializes the stream in place so chunks still reach the copy. Cover
+  // both construct_into entry points: single-arg (clone_into transfer) and
+  // two-arg (deferred post-loop transfer).
+  for (const [variant, construct] of [
+    ["single-arg", (req: Request) => new Request(req)],
+    ["two-arg", (req: Request) => new Request(req, { headers: { "x-proxied": "1" } })],
+  ] as const) {
+    for (const touchBodyFirst of [false, true]) {
+      test(`Bun.serve: ${variant} new Request(incomingReq)${touchBodyFirst ? " after .body was accessed" : ""} reads the bytes and consumes the input`, async () => {
+        await using server = Bun.serve({
+          port: 0,
+          async fetch(req) {
+            if (touchBodyFirst) void req.body;
+            const r = construct(req);
+            const inputUsed = req.bodyUsed;
+            let secondThrew = false;
+            try {
+              new Request(req);
+            } catch (e) {
+              secondThrew = e instanceof TypeError;
+            }
+            const copyText = await r.text();
+            let inputTextRejected = false;
+            try {
+              await req.text();
+            } catch (e) {
+              inputTextRejected = e instanceof TypeError;
+            }
+            return Response.json({ inputUsed, copyText, secondThrew, inputTextRejected });
+          },
+        });
+        const res = await fetch(server.url, { method: "POST", body: "hello-server" });
+        expect(await res.json()).toEqual({
+          inputUsed: true,
+          copyText: "hello-server",
+          secondThrew: true,
+          inputTextRejected: true,
+        });
+      });
+    }
+
+    test(`Bun.serve: req.clone() then ${variant} new Request(req) both read the bytes and the input is consumed`, async () => {
       await using server = Bun.serve({
         port: 0,
         async fetch(req) {
-          if (touchBodyFirst) void req.body;
-          const r = new Request(req, { headers: { "x-proxied": "1" } });
+          const c = req.clone();
+          const r = construct(req);
           const inputUsed = req.bodyUsed;
-          let secondThrew = false;
-          try {
-            new Request(req);
-          } catch (e) {
-            secondThrew = e instanceof TypeError;
-          }
-          const copyText = await r.text();
-          let inputTextRejected = false;
-          try {
-            await req.text();
-          } catch (e) {
-            inputTextRejected = e instanceof TypeError;
-          }
-          return Response.json({ inputUsed, copyText, secondThrew, inputTextRejected });
+          const [cloneText, copyText] = await Promise.all([c.text(), r.text()]);
+          return Response.json({ inputUsed, cloneText, copyText });
         },
       });
       const res = await fetch(server.url, { method: "POST", body: "hello-server" });
       expect(await res.json()).toEqual({
         inputUsed: true,
+        cloneText: "hello-server",
         copyText: "hello-server",
-        secondThrew: true,
-        inputTextRejected: true,
       });
     });
   }
-
-  test("Bun.serve: req.clone() then new Request(req) both read the bytes and the input is consumed", async () => {
-    await using server = Bun.serve({
-      port: 0,
-      async fetch(req) {
-        const c = req.clone();
-        const r = new Request(req, { headers: { "x-proxied": "1" } });
-        const inputUsed = req.bodyUsed;
-        const [cloneText, copyText] = await Promise.all([c.text(), r.text()]);
-        return Response.json({ inputUsed, cloneText, copyText });
-      },
-    });
-    const res = await fetch(server.url, { method: "POST", body: "hello-server" });
-    expect(await res.json()).toEqual({
-      inputUsed: true,
-      cloneText: "hello-server",
-      copyText: "hello-server",
-    });
-  });
 });

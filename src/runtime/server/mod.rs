@@ -257,12 +257,9 @@ pub struct NewServer<const SSL: bool, const DEBUG: bool> {
     /// `Cell` because the open/close accounting arrives through shared
     /// `AnyServer` handles on the JS thread.
     pub active_websocket_count: core::cell::Cell<u32>,
-    /// Live HTTP connection count (sockets currently in the uWS HTTP socket
-    /// group). Fed by the uWS filter hook: +1 at accept (or TLS handshake
-    /// completion) and -1 on close or WebSocket upgrade (both remove the
-    /// socket from the HTTP group). Lets [`deinit_if_we_can`] gate on idle
-    /// keep-alive connections the way it already does on
-    /// `active_websocket_count`.
+    /// Sockets currently in the uWS HTTP socket group. Fed by the uWS filter
+    /// hook (+1 on accept, -1 on close or WebSocket upgrade) so
+    /// [`deinit_if_we_can`] can gate on idle keep-alive connections.
     pub open_http_connections: core::cell::Cell<u32>,
     /// Set across [`NewServer::deinit_if_we_can`] and the synchronous
     /// `app.close()` drain in `stop_listening`; lets a nested call (reached
@@ -1518,11 +1515,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     }
 
     /// Returns true when this close drained the last open HTTP connection.
+    /// Saturates at 0: for TLS the +1 fires at handshake completion but the
+    /// -1 fires on every close, so a pre-handshake close has no matching +1.
     pub(crate) fn note_connection_closed(&self) -> bool {
         let prev = self.open_http_connections.get();
-        // Saturate: for TLS, the filter's +1 fires at handshake completion but
-        // its -1 fires on every close, so a socket that closes before the
-        // handshake completes would otherwise underflow.
         if prev == 0 {
             return false;
         }
@@ -1535,9 +1531,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         self.open_http_connections.get() > 0
     }
 
-    /// uWS filter thunk: `+1` on accept (TLS: at handshake completion), `-1`
-    /// on close. Runs the idle pass on the last-close edge so a `stop(false)`
-    /// whose promise is gated on open connections resolves once the final
+    /// uWS filter thunk (+1 on accept, -1 on close/upgrade). Runs the idle
+    /// pass on the last-close edge so `stop(false)` resolves once the final
     /// keep-alive socket goes away.
     extern "C" fn on_connection_filter(
         _socket: *mut uws_sys::us_socket_t,

@@ -3422,25 +3422,41 @@ it("http2 allowHTTP1 fallback keeps the connection alive after a response with a
 
 it("http2 allowHTTP1 fallback writes a Transfer-Encoding: identity body raw and keeps the connection alive", async () => {
   const server = http2.createSecureServer({ ...TLS_CERT, allowHTTP1: true }, (req, res) => {
-    res.setHeader("Transfer-Encoding", "identity");
-    res.end("ok");
+    if (req.url === "/a") {
+      res.setHeader("Transfer-Encoding", "identity");
+      res.end("ok");
+      return;
+    }
+    res.end("two");
   });
   await new Promise(resolve => server.listen(0, resolve));
   try {
     const { promise, resolve, reject } = Promise.withResolvers();
     const socket = tls.connect(
       { host: "localhost", port: server.address().port, ca: TLS_CERT.cert, ALPNProtocols: ["http/1.1"] },
-      () => socket.write("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"),
+      () => socket.write("GET /a HTTP/1.1\r\nHost: localhost\r\n\r\n"),
     );
     const chunks = [];
+    let sentSecond = false;
     socket.on("error", reject);
-    socket.on("data", chunk => chunks.push(chunk));
+    socket.on("data", chunk => {
+      chunks.push(chunk);
+      const so = Buffer.concat(chunks).toString();
+      if (!sentSecond && so.includes("\r\n\r\nok")) {
+        sentSecond = true;
+        socket.write("GET /b HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+      }
+    });
     socket.on("end", () => resolve(Buffer.concat(chunks).toString()));
     const raw = await promise;
     const head = raw.slice(0, raw.indexOf("\r\n\r\n")).toLowerCase();
+    // Sentinel "4" must not be misread as close-delimited.
+    expect(head).toContain("connection: keep-alive");
     expect(head).toContain("transfer-encoding: identity");
     expect(head).not.toContain("content-length");
-    expect(raw.slice(raw.indexOf("\r\n\r\n") + 4)).toBe("ok");
+    const after = raw.slice(raw.indexOf("\r\n\r\nok") + 6);
+    expect(after).toStartWith("HTTP/1.1 200 ");
+    expect(after.slice(after.indexOf("\r\n\r\n") + 4)).toBe("two");
   } finally {
     server.close();
   }

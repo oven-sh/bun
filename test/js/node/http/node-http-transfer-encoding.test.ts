@@ -784,5 +784,17 @@ describe("response body framing matches the user's Transfer-Encoding header", ()
       expect(normalizeHead(head)).toBe("HTTP/1.1 200 OK\r\nConnection: close\r\nTransfer-Encoding: chunked");
       expect(body).toBe("2\r\nab\r\n2\r\ncd\r\n0\r\n\r\n");
     });
+
+    test.concurrent("addTrailers (willBeChunked falls through to auto-framing)", async () => {
+      await using server = createServer((req, res) => {
+        res.setHeader("Transfer-Encoding", []);
+        res.write("ab");
+        res.addTrailers({ "X-Foo": "bar" });
+        res.end("cd");
+      });
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      const { body } = await rawGet((server.address() as AddressInfo).port, "/");
+      expect(body).toBe("2\r\nab\r\n2\r\ncd\r\n0\r\nX-Foo: bar\r\n\r\n");
+    });
   });
 });

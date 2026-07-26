@@ -2054,7 +2054,10 @@ function willBeChunked(response) {
   const outHeaders = response[kOutHeaders];
   const te = outHeaders !== null ? outHeaders["transfer-encoding"] : undefined;
   if (te !== undefined) {
-    return chunkExpression.test(String(te[1]));
+    const teValue = te[1];
+    if (!($isArray(teValue) && teValue.length === 0)) {
+      return chunkExpression.test($isArray(teValue) ? teValue.join(", ") : String(teValue));
+    }
   }
   if (outHeaders !== null && outHeaders["content-length"] !== undefined) return false;
   if (response._hasBody === false) return false;

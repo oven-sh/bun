@@ -750,46 +750,32 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
       const N = 200003;
       const payload = Buffer.alloc(N - 3, "x").toString() + "END";
 
-      // Reader: a node:fs read stream opens O_RDONLY in the thread pool
-      // (blocks there until our write side opens) and drains to EOF.
-      const { promise: opened, resolve: onOpen, reject: onOpenErr } = Promise.withResolvers();
-      const { promise: drained, resolve: onEnd, reject: onReadErr } = Promise.withResolvers();
-      const chunks = [];
-      const reader = fs
-        .createReadStream(fifo)
-        .once("open", onOpen)
-        .on("data", c => chunks.push(c))
-        .once("end", () => onEnd(Buffer.concat(chunks)))
-        .once("error", e => {
-          onOpenErr(e);
-          onReadErr(e);
-        });
+      // Open the read side synchronously with O_NONBLOCK so it returns
+      // immediately (no writer required) and the writer's O_WRONLY|O_NONBLOCK
+      // open cannot observe ENXIO. Reading through Bun.file(fd).stream() polls
+      // on EAGAIN instead of parking a thread-pool worker, which matters under
+      // describe.concurrent.
+      const readFd = fs.openSync(fifo, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
+      const drained = (async () => {
+        const chunks = [];
+        for await (const chunk of Bun.file(readFd).stream()) chunks.push(chunk);
+        return Buffer.concat(chunks);
+      })();
 
+      let got;
+      let written;
       try {
-        // Our O_WRONLY|O_NONBLOCK open returns ENXIO until the reader's open
-        // has started. Retry the write until the reader is attached instead
-        // of sleeping for a guess.
-        let written;
-        while (true) {
-          try {
-            written = await Bun.write(fifo, toSource(payload));
-            break;
-          } catch (e) {
-            if (e?.code !== "ENXIO") throw e;
-            await Bun.sleep(0);
-          }
-        }
-        await opened;
-
-        const got = await drained;
-        expect({ bytes: got.length, tail: got.subarray(-3).toString(), written }).toEqual({
-          bytes: N,
-          tail: "END",
-          written: N,
-        });
+        written = await Bun.write(fifo, toSource(payload));
+        got = await drained;
       } finally {
-        reader.destroy();
+        fs.closeSync(readFd);
       }
+
+      expect({ bytes: got.length, tail: got.subarray(-3).toString(), written }).toEqual({
+        bytes: N,
+        tail: "END",
+        written: N,
+      });
     });
   });
 });

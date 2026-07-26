@@ -5461,8 +5461,9 @@ fn write_string_to_file_fast<const NEEDS_OPEN: bool>(
     // A FIFO/socket/chardev opened O_NONBLOCK will EAGAIN once the pipe
     // buffer fills. Closing mid-payload would deliver a torn prefix and EOF
     // to the reader, so hand the open fd to the async WriteFile path instead
-    // and let it drive POLLOUT. Regular files never EAGAIN; keep the fast path.
-    if NEEDS_OPEN {
+    // and let it drive POLLOUT. Regular files never EAGAIN; keep the fast
+    // path. A 0-byte write cannot EAGAIN either, so stay on the fast path.
+    if NEEDS_OPEN && !str.is_empty() {
         if let bun_sys::Result::Ok(st) = bun_sys::fstat(fd) {
             if !bun_sys::is_regular_file(st.st_mode as bun_sys::Mode) {
                 *needs_async = true;
@@ -5529,7 +5530,7 @@ fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
     global_this: &JSGlobalObject,
     pathlike: &PathOrFileDescriptor,
     bytes: &[u8],
-    _needs_async: &mut bool,
+    needs_async: &mut bool,
     handoff_fd: &mut Option<Fd>,
 ) -> JSValue {
     let fd: Fd = if !NEEDS_OPEN {
@@ -5550,7 +5551,7 @@ fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
             bun_sys::Result::Err(err) => {
                 #[cfg(not(windows))]
                 if err.get_errno() == bun_sys::E::ENOENT {
-                    *_needs_async = true;
+                    *needs_async = true;
                     return JSValue::ZERO;
                 }
                 return JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
@@ -5564,10 +5565,10 @@ fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
     // See write_string_to_file_fast: route non-regular files to the async
     // path with the fd we just opened, so a FIFO write never closes+reopens
     // mid-payload.
-    if NEEDS_OPEN {
+    if NEEDS_OPEN && !bytes.is_empty() {
         if let bun_sys::Result::Ok(st) = bun_sys::fstat(fd) {
             if !bun_sys::is_regular_file(st.st_mode as bun_sys::Mode) {
-                *_needs_async = true;
+                *needs_async = true;
                 *handoff_fd = Some(fd);
                 return JSValue::ZERO;
             }
@@ -5593,7 +5594,7 @@ fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
             bun_sys::Result::Err(err) => {
                 #[cfg(not(windows))]
                 if err.get_errno() == bun_sys::E::EAGAIN {
-                    *_needs_async = true;
+                    *needs_async = true;
                     return JSValue::ZERO;
                 }
                 let err_js = if !NEEDS_OPEN {

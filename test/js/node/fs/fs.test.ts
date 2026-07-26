@@ -1900,6 +1900,19 @@ describe.concurrent("writev/readv with more than IOV_MAX buffers", () => {
     expect(readFileSync(file).equals(expectedBytes)).toBe(true);
   });
 
+  it.each([1023, 1024, 1025, 5000])("writevSync writes all %d buffers at the IOV_MAX boundary", count => {
+    using dir = tempDir(`writev-iovmax-${count}`, {});
+    const file = join(String(dir), "out");
+    const fd = openSync(file, "w");
+    const bufs = Array.from({ length: count }, (_, i) => Buffer.from([i & 0xff]));
+    try {
+      expect(writevSync(fd, bufs)).toBe(count);
+    } finally {
+      closeSync(fd);
+    }
+    expect(readFileSync(file).equals(Buffer.concat(bufs))).toBe(true);
+  });
+
   it("writevSync with position writes every buffer", () => {
     using dir = tempDir("pwritev-iovmax-sync", {});
     const file = join(String(dir), "out");
@@ -3771,116 +3784,6 @@ describe("createWriteStream", () => {
     expect(readFileSync(streamPath)).toEqual(payload);
     // The retry must never pass NaN as the position.
     expect(positions.some(p => typeof p === "number" && Number.isNaN(p))).toBe(false);
-  });
-});
-
-describe("fs.writev past IOV_MAX", () => {
-  // https://github.com/oven-sh/bun/issues/31763
-  // writev(2)/pwritev(2) reject more than IOV_MAX (1024) iovecs with EINVAL;
-  // Bun must batch the syscall so fs.writev behaves like Node's.
-  const makeBuffers = (n: number) => {
-    const buffers = new Array<Buffer>(n);
-    for (let i = 0; i < n; i++) buffers[i] = Buffer.from([i & 0xff]);
-    return buffers;
-  };
-
-  it.each([1023, 1024, 1025, 2000, 5000])("writevSync handles %d buffers", count => {
-    const p = join(tmpdirSync(), `writev-sync-${count}.bin`);
-    const fd = openSync(p, "w");
-    try {
-      const buffers = makeBuffers(count);
-      expect(writevSync(fd, buffers)).toBe(count);
-    } finally {
-      closeSync(fd);
-    }
-    expect(readFileSync(p)).toEqual(Buffer.concat(makeBuffers(count)));
-  });
-
-  it("writevSync with a position handles more than IOV_MAX buffers", () => {
-    const p = join(tmpdirSync(), "pwritev-sync.bin");
-    const fd = openSync(p, "w");
-    const prefix = "prefix";
-    try {
-      writeSync(fd, prefix, 0);
-      const buffers = makeBuffers(3000);
-      expect(writevSync(fd, buffers, prefix.length)).toBe(3000);
-    } finally {
-      closeSync(fd);
-    }
-    const out = readFileSync(p);
-    expect(out.subarray(0, prefix.length).toString()).toBe(prefix);
-    expect(out.subarray(prefix.length)).toEqual(Buffer.concat(makeBuffers(3000)));
-  });
-
-  it("async fs.writev handles more than IOV_MAX buffers", async () => {
-    const p = join(tmpdirSync(), "writev-async.bin");
-    const fd = openSync(p, "w");
-    let written: number;
-    try {
-      const buffers = makeBuffers(2500);
-      const { promise, resolve, reject } = Promise.withResolvers<number>();
-      fs.writev(fd, buffers, (err, w) => (err ? reject(err) : resolve(w)));
-      written = await promise;
-    } finally {
-      closeSync(fd);
-    }
-    expect(written).toBe(2500);
-    expect(readFileSync(p)).toEqual(Buffer.concat(makeBuffers(2500)));
-  });
-});
-
-// readv(2)/preadv(2) reject more than IOV_MAX (1024) iovecs with EINVAL.
-// Node (libuv) caps the batch and returns a short read instead of erroring;
-// Windows reads every buffer through libuv, so these POSIX tests don't apply.
-describe.skipIf(isWindows)("fs.readv past IOV_MAX", () => {
-  const COUNT = 1025;
-  const IOV_MAX = 1024;
-
-  const makeFile = (name: string) => {
-    const p = join(tmpdirSync(), name);
-    writeFileSync(p, Buffer.concat(Array.from({ length: COUNT }, (_, i) => Buffer.from([i & 0xff]))));
-    return p;
-  };
-  const makeBuffers = () => Array.from({ length: COUNT }, () => Buffer.alloc(1));
-
-  it("readvSync caps at IOV_MAX buffers and returns a short read", () => {
-    const fd = openSync(makeFile("readv-sync.bin"), "r");
-    const buffers = makeBuffers();
-    try {
-      // First call short-reads at the cap; a second call drains the rest.
-      expect(readvSync(fd, buffers)).toBe(IOV_MAX);
-      expect(readvSync(fd, buffers.slice(IOV_MAX))).toBe(COUNT - IOV_MAX);
-    } finally {
-      closeSync(fd);
-    }
-    expect(Buffer.concat(buffers)).toEqual(
-      Buffer.concat(Array.from({ length: COUNT }, (_, i) => Buffer.from([i & 0xff]))),
-    );
-  });
-
-  it("readvSync with a position caps at IOV_MAX buffers", () => {
-    const fd = openSync(makeFile("preadv-sync.bin"), "r");
-    const buffers = makeBuffers();
-    try {
-      expect(readvSync(fd, buffers, 1)).toBe(IOV_MAX);
-    } finally {
-      closeSync(fd);
-    }
-    expect(buffers[0]).toEqual(Buffer.from([1]));
-    expect(buffers[IOV_MAX - 1]).toEqual(Buffer.from([IOV_MAX & 0xff]));
-  });
-
-  it("async fs.readv caps at IOV_MAX buffers", async () => {
-    const fd = openSync(makeFile("readv-async.bin"), "r");
-    let bytesRead: number;
-    try {
-      const { promise, resolve, reject } = Promise.withResolvers<number>();
-      fs.readv(fd, makeBuffers(), (err, n) => (err ? reject(err) : resolve(n)));
-      bytesRead = await promise;
-    } finally {
-      closeSync(fd);
-    }
-    expect(bytesRead).toBe(IOV_MAX);
   });
 });
 

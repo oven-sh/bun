@@ -564,10 +564,6 @@ private:
 
         /* Mark that we are no longer parsing Http */
         httpContextData->flags.isParsingHttp = false;
-        if constexpr (IsNodeHttp) {
-            /* Scope the same-chunk-head suppression to this parse call only. */
-            httpResponseData->state &= ~HttpResponseData<SSL>::HTTP_NODE_TUNNEL_HEAD_PENDING;
-        }
         /* If we got fullptr that means the parser wants us to close the socket from error (same as calling the errorHandler) */
         if (httpErrorStatusCode) {
             /* node:http compat: parse errors surface as the server's 'clientError'
@@ -615,6 +611,8 @@ private:
                     nodeHttpResponseData->lastMessageStartMs = nodeCompatMonotonicMs();
                     nodeHttpResponseData->headersCompleted = false;
                 }
+                /* Scope the same-chunk-head suppression to this parse call only. */
+                httpResponseData->state &= ~HttpResponseData<SSL>::HTTP_NODE_TUNNEL_HEAD_PENDING;
             }
 
             /* Timeout on uncork failure */

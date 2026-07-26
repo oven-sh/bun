@@ -205,6 +205,45 @@ describe("node:http 'upgrade' with a request body", () => {
     }
   });
 
+  // Fallback-buffer path: a partial header block in one packet followed by a
+  // large packet (> maxHeaderSize) with the rest of the headers + body + tunnel
+  // tail. Every tunnel byte must reach the listener through head + socket 'data'
+  // combined (the parser's fallback reassembly truncates the head view there, so
+  // the post-body remainder is delivered via socket 'data' instead).
+  test.concurrent("split header block + large tail: no tunnel bytes are dropped", async () => {
+    const { promise, resolve, reject } = Promise.withResolvers<{ reqData: string; delivered: number }>();
+    const TAIL_LEN = 20000;
+    const tail = Buffer.alloc(TAIL_LEN, "X").toString();
+    const server = http.createServer((_req, res) => res.end());
+    server.on("error", reject);
+    server.on("clientError", reject);
+    server.on("upgrade", (req, socket, head) => {
+      let reqData = "";
+      let sockBytes = 0;
+      req.on("data", d => (reqData += d));
+      socket.on("data", d => (sockBytes += d.length));
+      socket.on("error", reject);
+      socket.on("end", () => socket.end());
+      socket.on("close", () => resolve({ reqData, delivered: head.length + sockBytes }));
+    });
+    await once(server.listen(0), "listening");
+    const port = (server.address() as net.AddressInfo).port;
+    const client = net.connect(port, "127.0.0.1");
+    client.on("error", () => {});
+    try {
+      await once(client, "connect");
+      client.write("GET / HTTP/1.1\r\nHost: x\r\nConnection: Upgra");
+      await once(server, "connection");
+      client.write("de\r\nUpgrade: x\r\nContent-Length: 5\r\n\r\nHELLO" + tail);
+      client.end();
+      const { reqData, delivered } = await promise;
+      expect({ reqData, delivered }).toEqual({ reqData: "HELLO", delivered: TAIL_LEN });
+    } finally {
+      client.destroy();
+      await new Promise<void>(r => server.close(() => r()));
+    }
+  });
+
   // c: No-body control. Same as CONNECT: post-header bytes are the head.
   test.concurrent("no body: head is the post-header remainder", async () => {
     const result = await observeUpgrade("GET / HTTP/1.1\r\nHost: x\r\nConnection: Upgrade\r\nUpgrade: x\r\n\r\nAFTER");

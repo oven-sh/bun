@@ -1268,7 +1268,15 @@ struct HttpResponseData;
                 if (!isConnectRequest && methodFramesBody
                         && (transferEncoding.has || contentLengthStringLen)
                         && req->getHeader("upgrade").data()) [[unlikely]] {
-                    if (transferEncoding.has) {
+                    if constexpr (ConsumeMinimally) {
+                        /* Fallback-buffer path: (data, length) is a view truncated
+                         * to maxFallbackSize, so a head sliced from it would not
+                         * match the full-buffer remainder later suppressed from
+                         * onSocketData. Clear head so JS emits immediately with
+                         * an empty head and every post-body byte reaches
+                         * socket.on('data'), matching the pre-existing delivery. */
+                        req->head = std::span<const char>();
+                    } else if (transferEncoding.has) {
                         /* Pre-scan the chunked body with local state so the real
                          * parse below (which fires inStream per chunk) is unchanged. */
                         uint64_t scanState = STATE_IS_CHUNKED;

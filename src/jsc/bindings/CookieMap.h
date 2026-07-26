@@ -62,11 +62,12 @@ private:
     CookieMap();
     CookieMap(Vector<KeyValuePair<String, String>>&& cookies);
 
-    void removeInternal(const String& name);
-    void appendModified(Ref<Cookie>&&);
+    void removeOriginal(const String& name);
+    void setModified(const String& name, RefPtr<Cookie>&&);
 
-    // Insertion-ordered storage. removeInternal() tombstones in place (null key / null
-    // RefPtr) so the hashed indices below stay valid; readers skip tombstones.
+    // Insertion-ordered storage. removeOriginal() tombstones in place (null key) so the
+    // hashed indices below stay valid; setModified() reuses an existing slot for the
+    // same name. Readers skip tombstones.
     Vector<KeyValuePair<String, String>> m_originalCookies;
     Vector<RefPtr<Cookie>> m_modifiedCookies;
 

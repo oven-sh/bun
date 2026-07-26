@@ -261,8 +261,8 @@ describe("Bun.Cookie and Bun.CookieMap", () => {
     // Get changes
     expect(map.toSetCookieHeaders()).toMatchInlineSnapshot(`
       [
-        "foo=bar; Path=/; Secure; HttpOnly; Partitioned; SameSite=Lax",
         "name=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax",
+        "foo=bar; Path=/; Secure; HttpOnly; Partitioned; SameSite=Lax",
       ]
     `);
   });
@@ -542,6 +542,16 @@ describe("delete() accepts any existing key", () => {
 });
 
 describe("hashed lookup", () => {
+  test("repeated set()/delete() on one name reuses the Set-Cookie slot", () => {
+    const map = new Bun.CookieMap();
+    for (let i = 0; i < 1000; i++) map.set("x", String(i));
+    expect(map.toSetCookieHeaders()).toEqual(["x=999; Path=/; SameSite=Lax"]);
+    for (let i = 0; i < 1000; i++) map.delete("x");
+    expect(map.toSetCookieHeaders()).toEqual(["x=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax"]);
+    map.set("x", "v");
+    expect(map.toSetCookieHeaders()).toEqual(["x=v; Path=/; SameSite=Lax"]);
+  });
+
   test("get()/set()/delete() stay correct over many keys", () => {
     const N = 2000;
     const map = new Bun.CookieMap();

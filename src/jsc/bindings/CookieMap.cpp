@@ -165,31 +165,35 @@ bool CookieMap::has(const String& name) const
     return get(name).has_value();
 }
 
-void CookieMap::removeInternal(const String& name)
+void CookieMap::removeOriginal(const String& name)
 {
-    if (name.isNull())
-        return;
-
     if (auto indices = m_originalIndex.takeOptional(name)) {
         for (auto i : *indices)
             m_originalCookies[i].key = String();
     }
-
-    if (auto index = m_modifiedIndex.takeOptional(name)) {
-        m_modifiedCookies[*index] = nullptr;
-    }
 }
 
-void CookieMap::appendModified(Ref<Cookie>&& cookie)
+void CookieMap::setModified(const String& name, RefPtr<Cookie>&& cookie)
 {
-    m_modifiedIndex.set(cookie->name(), m_modifiedCookies.size());
+    // Reuse an existing slot so repeated set()/delete() on one name does not
+    // accumulate tombstones; live Set-Cookie order is first-write position.
+    if (auto it = m_modifiedIndex.find(name); it != m_modifiedIndex.end()) {
+        m_modifiedCookies[it->value] = WTF::move(cookie);
+        if (!m_modifiedCookies[it->value])
+            m_modifiedIndex.remove(it);
+        return;
+    }
+    if (!cookie)
+        return;
+    m_modifiedIndex.set(name, m_modifiedCookies.size());
     m_modifiedCookies.append(WTF::move(cookie));
 }
 
 void CookieMap::set(Ref<Cookie> cookie)
 {
-    removeInternal(cookie->name());
-    appendModified(WTF::move(cookie));
+    const String& name = cookie->name();
+    removeOriginal(name);
+    setModified(name, WTF::move(cookie));
 }
 
 ExceptionOr<void> CookieMap::remove(const CookieStoreDeleteOptions& options)
@@ -203,18 +207,21 @@ ExceptionOr<void> CookieMap::remove(const CookieStoreDeleteOptions& options)
     if (!Cookie::isValidCookieDomain(domain))
         return Exception { TypeError, "Invalid cookie domain: contains invalid characters"_s };
 
-    removeInternal(name);
+    removeOriginal(name);
 
     // The Cookie-header parser accepts names that the Set-Cookie emission grammar
-    // (isValidCookieName) rejects. Such a cookie is still evicted from the map above;
-    // there is no well-formed Set-Cookie header we could emit to clear it on the client.
-    if (!Cookie::isValidCookieName(name))
+    // (isValidCookieName) rejects. Such a cookie is still evicted above; there is no
+    // well-formed Set-Cookie header we could emit to clear it on the client, so drop
+    // any earlier modified entry and queue nothing.
+    if (!Cookie::isValidCookieName(name)) {
+        setModified(name, nullptr);
         return {};
+    }
 
     bool secure = name.startsWithIgnoringASCIICase("__Secure-"_s) || name.startsWithIgnoringASCIICase("__Host-"_s);
     auto cookieOr = Cookie::create(name, ""_s, domain, path, 1, secure, CookieSameSite::Lax, false, std::numeric_limits<double>::quiet_NaN(), false);
     ASSERT(!cookieOr.hasException());
-    appendModified(cookieOr.releaseReturnValue());
+    setModified(name, cookieOr.releaseReturnValue());
     return {};
 }
 

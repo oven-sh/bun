@@ -1118,6 +1118,7 @@ pub(crate) fn resolver_bundle_options_subset(
         polyfill_node_globals: src.polyfill_node_globals,
         prefer_offline_install: src.prefer_offline_install,
         preserve_symlinks: src.preserve_symlinks,
+        preserve_symlinks_main: false,
         rewrite_jest_for_tests: src.rewrite_jest_for_tests,
         tsconfig_override: src.tsconfig_override.clone(),
         production: src.production,

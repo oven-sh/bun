@@ -572,6 +572,12 @@ extern "C" void Bun__setCTRLHandler(BOOL add)
 
 extern "C" int32_t bun_is_stdio_null[3] = { 0, 0, 0 };
 
+#if !OS(WINDOWS)
+extern "C" void Bun__noopSignalHandler(int)
+{
+}
+#endif
+
 extern "C" void bun_initialize_process()
 {
     // Disable printf() buffering. We buffer it ourselves.
@@ -652,6 +658,17 @@ extern "C" void bun_initialize_process()
 
         sigaction(SIGTERM, &sa, nullptr);
         sigaction(SIGINT, &sa, nullptr);
+    }
+
+    // Node.js reserves SIGUSR1 (debugger) so it is never fatal by default; a
+    // handler rather than SIG_IGN so exec()'d children revert to SIG_DFL.
+    {
+        struct sigaction sa;
+        memset(&sa, 0, sizeof(sa));
+        sigemptyset(&sa.sa_mask);
+        sa.sa_flags = SA_RESTART;
+        sa.sa_handler = Bun__noopSignalHandler;
+        sigaction(SIGUSR1, &sa, nullptr);
     }
 #elif OS(WINDOWS)
     for (int fd = 0; fd <= 2; ++fd) {

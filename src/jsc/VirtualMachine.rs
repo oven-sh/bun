@@ -4048,7 +4048,8 @@ impl VirtualMachine {
             return Err(crate::CrateError::ModuleNotFound);
         }
 
-        let is_special_source = source == MAIN_FILE_NAME || Macro::is_macro_path(source);
+        let is_main_entry_resolve = source == MAIN_FILE_NAME;
+        let is_special_source = is_main_entry_resolve || Macro::is_macro_path(source);
         let mut query_string: &[u8] = b"";
         let normalized_specifier = normalize_specifier_for_resolution(specifier, &mut query_string);
         let top_level_dir = self.top_level_dir();
@@ -4157,10 +4158,24 @@ impl VirtualMachine {
         let result_path = result
             .path_const()
             .ok_or(crate::CrateError::ModuleNotFound)?;
-        // SAFETY: `result_path.text` borrows the resolver's arena, which
-        // outlives `ResolveFunctionResult` (see the struct's lifetime-erasure
-        // note).
-        ret.path = unsafe { bun_ptr::detach_lifetime(result_path.text) };
+        // Node.js: `--preserve-symlinks` keeps the link spelling for required
+        // modules only; `--preserve-symlinks-main` extends it to the entry.
+        // `Path::set_realpath` stashed the pre-realpath spelling in `.pretty`.
+        let opts = &self.transpiler.resolver.opts;
+        let preserve = if is_main_entry_resolve {
+            opts.preserve_symlinks_main
+        } else {
+            opts.preserve_symlinks
+        };
+        let path_text = if preserve && result_path.is_symlink && !result_path.pretty.is_empty() {
+            result_path.pretty
+        } else {
+            result_path.text
+        };
+        // SAFETY: `result_path.text`/`.pretty` borrow the resolver's arena,
+        // which outlives `ResolveFunctionResult` (see the struct's
+        // lifetime-erasure note).
+        ret.path = unsafe { bun_ptr::detach_lifetime(path_text) };
         ret.result = Some(result);
 
         Ok(())

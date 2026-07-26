@@ -232,6 +232,9 @@ pub struct BundleOptions {
     pub polyfill_node_globals: bool,
     pub prefer_offline_install: bool,
     pub preserve_symlinks: bool,
+    /// `--preserve-symlinks-main`: `preserve_symlinks` for the entry only
+    /// (read by `_resolve` when source is `bun:main`).
+    pub preserve_symlinks_main: bool,
     pub rewrite_jest_for_tests: bool,
     pub tsconfig_override: Option<Box<[u8]>>,
     pub production: bool,
@@ -275,6 +278,7 @@ impl Default for BundleOptions {
             polyfill_node_globals: false,
             prefer_offline_install: false,
             preserve_symlinks: false,
+            preserve_symlinks_main: false,
             rewrite_jest_for_tests: false,
             tsconfig_override: None,
             output_dir: Box::default(),

@@ -574,10 +574,10 @@ static inline JSC::EncodedJSValue jsMessagePortPrototypeFunction_removeAllListen
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto& impl = castedThis->wrapped();
-    if (callFrame->argumentCount() == 0) {
+    EnsureStillAliveScope argument0 = callFrame->argument(0);
+    if (argument0.value().isUndefinedOrNull()) {
         impl.removeAllEventListeners();
     } else {
-        EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
         auto type = convert<IDLAtomStringAdaptor<IDLDOMString>>(*lexicalGlobalObject, argument0.value());
         RETURN_IF_EXCEPTION(throwScope, {});
         impl.removeAllEventListenersForType(type);

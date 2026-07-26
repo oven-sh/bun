@@ -635,9 +635,10 @@ function fakeParentPort() {
   // listeners the user must not touch).
   const byType = new SafeMap();
   Object.defineProperty(fake, "removeEventListener", {
-    value(type: string, listener: any) {
-      self.removeEventListener(type, listener);
-      byType.get(type)?.delete(listener);
+    value(type: string, listener: any, options?: any) {
+      const set = byType.get(type);
+      self.removeEventListener(type, set?.get(listener) ?? listener, options);
+      set?.delete(listener);
     },
   });
   function track(type: string, listener: any, registered: any) {

@@ -19,16 +19,21 @@ using namespace JSC;
 JSC_DECLARE_HOST_FUNCTION(jsFunction_startCPUProfiler);
 JSC_DEFINE_HOST_FUNCTION(jsFunction_startCPUProfiler, (JSGlobalObject * globalObject, CallFrame*))
 {
-    Bun::startCPUProfiler(globalObject->vm());
-    return JSValue::encode(jsUndefined());
+    return JSValue::encode(jsNumber(Bun::startCPUProfiler(globalObject->vm())));
 }
 
 JSC_DECLARE_HOST_FUNCTION(jsFunction_stopCPUProfiler);
-JSC_DEFINE_HOST_FUNCTION(jsFunction_stopCPUProfiler, (JSGlobalObject * globalObject, CallFrame*))
+JSC_DEFINE_HOST_FUNCTION(jsFunction_stopCPUProfiler, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto& vm = globalObject->vm();
+    double since = 0.0;
+    if (callFrame->argumentCount() > 0) {
+        JSValue arg = callFrame->uncheckedArgument(0);
+        if (arg.isNumber())
+            since = arg.asNumber();
+    }
     WTF::String result;
-    Bun::stopCPUProfiler(vm, &result, nullptr);
+    Bun::stopCPUProfiler(vm, &result, nullptr, since);
     return JSValue::encode(jsString(vm, result));
 }
 

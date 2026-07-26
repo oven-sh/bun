@@ -11,6 +11,13 @@ pub const fn is_sendable(code: u16) -> bool {
     matches!(code, 100..=999)
 }
 
+/// A status Bun.serve can write from a handler-returned Response. 101 is
+/// refused: the fetch handler has no socket-handoff API, so the advertised
+/// protocol switch is unfulfillable. `server.upgrade()` writes its own 101.
+pub const fn is_handler_writable(code: u16) -> bool {
+    is_sendable(code) && code != 101
+}
+
 pub fn get(code: u16) -> Option<&'static [u8]> {
     match code {
         100 => Some(b"100 Continue"),

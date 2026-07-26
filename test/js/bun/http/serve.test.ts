@@ -1581,6 +1581,8 @@ describe("Response with status 101", () => {
         const servers = [
           Bun.serve({ port: 0, hostname: "127.0.0.1", development: false, fetch: switching }),
           Bun.serve({ port: 0, hostname: "127.0.0.1", development: false, fetch: switching, error: switching }),
+          Bun.serve({ port: 0, hostname: "127.0.0.1", development: false, fetch: switching, error: () => Promise.resolve(switching()) }),
+          Bun.serve({ port: 0, hostname: "127.0.0.1", development: false, fetch: switching, error: async () => switching() }),
         ];
         for (const server of servers) {
           const response = await fetch(server.url);
@@ -1592,9 +1594,12 @@ describe("Response with status 101", () => {
       stderr: "pipe",
     });
 
-    const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stdout).toBe("500 Something went wrong!\n500 Something went wrong!\n");
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("500 Something went wrong!\n".repeat(4));
     expect(stderr).toContain(refused);
+    // The child reports each refusal as an unhandled error, so it exits 1 by
+    // design; a crash after the last print would read as a signal exit instead.
+    expect(exitCode).toBe(1);
   });
 
   it.each([

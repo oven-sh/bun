@@ -3397,7 +3397,7 @@ where
     /// Takes the status, not the Response: `run_error_handler` below runs user
     /// JS, which may write through the cell pointer the caller holds.
     fn reject_unsendable_response(&mut self, status: u16) -> bool {
-        if HTTPStatusText::is_sendable(status) && status != 101 {
+        if HTTPStatusText::is_handler_writable(status) {
             return false;
         }
         let Some(server) = self.server else {
@@ -3508,8 +3508,8 @@ where
                         // An unsendable Response from the error handler itself
                         // falls through to the default error page below.
                         // SAFETY: `response` is the live, rooted cell pointer.
-                        let status = unsafe { (*response).status_code() };
-                        if HTTPStatusText::is_sendable(status) && status != 101 {
+                        if HTTPStatusText::is_handler_writable(unsafe { (*response).status_code() })
+                        {
                             // SAFETY: as above.
                             unsafe { self.render(response) };
                             return;
@@ -3563,8 +3563,7 @@ where
                 };
 
                 // SAFETY: `response` is the live, rooted cell pointer.
-                let fulfilled_status = unsafe { (*response).status_code() };
-                if !HTTPStatusText::is_sendable(fulfilled_status) || fulfilled_status == 101 {
+                if !HTTPStatusText::is_handler_writable(unsafe { (*response).status_code() }) {
                     ctx.finish_running_error_handler(value, status);
                     return;
                 }

@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { isASAN, isDebug } from "harness";
 
 describe("Bun.Cookie and Bun.CookieMap", () => {
   // Basic Cookie tests
@@ -372,8 +373,7 @@ describe("iterator", () => {
     for (const key of map.keys()) {
       map.delete(key);
     }
-    // expect(map.size).toBe(0);
-    expect(map.size).toBe(500); // FormData works this way, but not Set. maybe we should work like Set.
+    expect(map.size).toBe(0);
   });
   test("delete in a loop with predefined entries", () => {
     const entries: [string, string][] = [];
@@ -398,8 +398,7 @@ describe("iterator", () => {
     for (const key of map.keys()) {
       map.delete(key);
     }
-    // expect(map.size).toBe(0);
-    expect(map.size).toBe(500); // FormData works this way, but not Set. maybe we should work like Set.
+    expect(map.size).toBe(0);
   });
   test("basic iterator", () => {
     const cookies = new Bun.CookieMap({ a: "b", c: "d" });
@@ -464,5 +463,86 @@ describe("invalid delete usage", () => {
       // @ts-ignore
       v2.delete(v2);
     }).toThrow("Cookie name is required");
+  });
+});
+
+describe("duplicate names from constructor", () => {
+  test("get() returns the first occurrence, entries() yields every one", () => {
+    const map = new Bun.CookieMap("a=1; b=x; a=2; a=3");
+    expect(map.get("a")).toBe("1");
+    expect(map.size).toBe(4);
+    expect([...map.entries()]).toEqual([
+      ["a", "1"],
+      ["b", "x"],
+      ["a", "2"],
+      ["a", "3"],
+    ]);
+  });
+
+  test("set() on a duplicated name replaces every occurrence", () => {
+    const map = new Bun.CookieMap("a=1; b=x; a=2; a=3");
+    map.set("a", "z");
+    expect(map.get("a")).toBe("z");
+    expect([...map.entries()].sort()).toEqual([
+      ["a", "z"],
+      ["b", "x"],
+    ]);
+    expect(map.size).toBe(2);
+  });
+
+  test("delete() on a duplicated name removes every occurrence", () => {
+    const map = new Bun.CookieMap("a=1; b=x; a=2; a=3; c=y");
+    map.delete("a");
+    expect(map.has("a")).toBe(false);
+    expect([...map.entries()]).toEqual([
+      ["b", "x"],
+      ["c", "y"],
+    ]);
+    expect(map.size).toBe(2);
+  });
+});
+
+describe("per-key operations are O(1)", () => {
+  // Without the hash index, each set/get/has/delete is a linear scan, so a loop
+  // of N of them is O(N^2). These bounds sit well above the observed O(N) cost
+  // and well below the observed O(N^2) cost on every build type.
+  const N = 8000;
+  const budgetMs = isDebug || isASAN ? 6000 : 300;
+
+  test(`N=${N} within ${budgetMs}ms: set + get + has + delete`, () => {
+    const names: string[] = [];
+    for (let i = 0; i < N; i++) names.push("c" + i);
+
+    const t0 = performance.now();
+
+    const m = new Bun.CookieMap();
+    for (let i = 0; i < N; i++) m.set(names[i], "v");
+    expect(m.size).toBe(N);
+
+    for (let i = 0; i < N; i++) m.get(names[i]);
+    for (let i = 0; i < N; i++) m.has(names[i]);
+    for (let i = 0; i < N; i++) m.delete(names[i]);
+    expect(m.size).toBe(0);
+
+    const elapsed = performance.now() - t0;
+    expect(elapsed).toBeLessThan(budgetMs);
+  });
+
+  test(`N=${N} within ${budgetMs}ms: get + has + delete on a parsed header`, () => {
+    const names: string[] = [];
+    for (let i = 0; i < N; i++) names.push("c" + i);
+    const header = names.map(n => n + "=v").join("; ");
+
+    const t0 = performance.now();
+
+    const m = new Bun.CookieMap(header);
+    expect(m.size).toBe(N);
+    for (let i = 0; i < N; i++) m.get(names[i]);
+    for (let i = 0; i < N; i++) m.has(names[i]);
+    for (let i = 0; i < N; i++) m.delete(names[i]);
+    expect(m.size).toBe(0);
+
+    const elapsed = performance.now() - t0;
+    expect(elapsed).toBeLessThan(budgetMs);
   });
 });

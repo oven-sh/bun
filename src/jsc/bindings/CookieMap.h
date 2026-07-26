@@ -32,7 +32,7 @@ public:
 
     std::optional<String> get(const String& name) const;
     Vector<KeyValuePair<String, String>> getAll() const;
-    Vector<Ref<Cookie>> getAllChanges() const { return m_modifiedCookies; }
+    Vector<Ref<Cookie>> getAllChanges() const;
 
     bool has(const String& name) const;
 
@@ -54,7 +54,8 @@ public:
 
     private:
         Ref<CookieMap> m_target;
-        size_t m_index { 0 };
+        size_t m_modifiedIndex { 0 };
+        size_t m_originalIndex { 0 };
     };
 
     Iterator createIterator() { return Iterator { *this }; }
@@ -62,13 +63,27 @@ public:
 
 private:
     CookieMap();
-    CookieMap(Vector<Ref<Cookie>>&& cookies);
     CookieMap(Vector<KeyValuePair<String, String>>&& cookies);
 
+    void buildOriginalIndex();
     void removeInternal(const String& name);
+    void appendModified(Ref<Cookie>&&);
 
+    // Holes are marked with key.isNull().
     Vector<KeyValuePair<String, String>> m_originalCookies;
-    Vector<Ref<Cookie>> m_modifiedCookies;
+    // Holes are marked with nullptr.
+    Vector<RefPtr<Cookie>> m_modifiedCookies;
+
+    // name -> first index in m_originalCookies. Duplicate occurrences (rare) are
+    // chained through m_originalNext so removeInternal can hole-punch every one
+    // without scanning. m_originalNext stays empty when there are no duplicates.
+    HashMap<String, size_t> m_originalIndex;
+    Vector<size_t> m_originalNext;
+    size_t m_originalHoles { 0 };
+
+    // name -> index in m_modifiedCookies. Names are unique because
+    // set()/remove() always clear the prior entry before appending.
+    HashMap<String, size_t> m_modifiedIndex;
 };
 
 } // namespace WebCore

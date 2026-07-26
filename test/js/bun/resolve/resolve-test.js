@@ -75,7 +75,7 @@ it("import.meta.resolveSync", async () => {
   );
 
   // "./package.json" is gated by the exports map like every other subpath (Node parity)
-  expect(() => import.meta.resolveSync("package-json-exports/package.json")).toThrow();
+  expect(() => import.meta.resolveSync("package-json-exports/package.json")).toThrow(ResolveMessage);
 
   // if an unnecessary ".js" extension was added, try against /baz
   expect(import.meta.resolveSync("package-json-exports/baz.js")).toBe(

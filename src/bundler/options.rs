@@ -1148,6 +1148,10 @@ bun_core::comptime_string_map! {
 
 /// BundleOptions is used when ResolveMode is not set to "disable".
 /// BundleOptions is effectively webpack + babel
+/// Default `asset_inline_limit`: CSS `url(...)` assets below this many bytes
+/// inline as `data:` URIs.
+pub const DEFAULT_ASSET_INLINE_LIMIT: u32 = 128 * 1024;
+
 pub struct BundleOptions<'a> {
     pub footer: Cow<'static, [u8]>,
     pub banner: Cow<'static, [u8]>,
@@ -1648,7 +1652,7 @@ impl<'a> BundleOptions<'a> {
             env: Env::init(),
             transform_options: std::sync::Arc::clone(&transform),
             css_chunking: false,
-            asset_inline_limit: 128 * 1024,
+            asset_inline_limit: DEFAULT_ASSET_INLINE_LIMIT,
             drop: transform.drop.clone().into_boxed_slice(),
             bundler_feature_flags,
 

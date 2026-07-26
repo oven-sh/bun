@@ -204,7 +204,7 @@ pub mod js_bundler {
                 allow_unresolved: None,
                 source_map: options::SourceMapOption::None,
                 public_path: OwnedString::default(),
-                asset_inline_limit: 128 * 1024,
+                asset_inline_limit: options::DEFAULT_ASSET_INLINE_LIMIT,
                 conditions: StringSet::default(),
                 packages: options::PackagesOption::Bundle,
                 format: options::Format::Esm,

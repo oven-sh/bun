@@ -21,6 +21,7 @@
 #include <JavaScriptCore/Error.h>
 #include <JavaScriptCore/ErrorInstance.h>
 #include <JavaScriptCore/HeapSnapshotBuilder.h>
+#include <JavaScriptCore/IntlCache.h>
 #include <JavaScriptCore/JIT.h>
 #include <JavaScriptCore/JSBasePrivate.h>
 #include <JavaScriptCore/JSCInlines.h>
@@ -653,6 +654,7 @@ JSC_DEFINE_HOST_FUNCTION(functionSetTimeZone, (JSGlobalObject * globalObject, Ca
     }
     WTF::timeZoneDidChange();
     vm.dateCache.clearForTimeZoneChange();
+    vm.intlCache().clearForTimeZoneChange();
     WTF::Vector<char16_t, 32> buffer;
     WTF::getTimeZoneOverride(buffer);
     WTF::String timeZoneString(buffer.span());

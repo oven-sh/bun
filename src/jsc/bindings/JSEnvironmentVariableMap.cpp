@@ -13,6 +13,7 @@
 #include "BunClientData.h"
 #include "wtf/Compiler.h"
 #include "wtf/Forward.h"
+#include <JavaScriptCore/IntlCache.h>
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/SubspaceInlines.h>
 #include <JavaScriptCore/StructureInlines.h>
@@ -489,7 +490,9 @@ static void applyTZFromString(JSGlobalObject* globalObject, const String& value)
 {
     if (value.length() < 32 && WTF::setTimeZoneOverride(value)) {
         WTF::timeZoneDidChange();
-        JSC::getVM(globalObject).dateCache.clearForTimeZoneChange();
+        auto& vm = JSC::getVM(globalObject);
+        vm.dateCache.clearForTimeZoneChange();
+        vm.intlCache().clearForTimeZoneChange();
     }
 }
 static void applyTLSRejectFromString(JSGlobalObject*, const String& value)

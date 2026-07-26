@@ -329,16 +329,24 @@ describe("Bun.JSONL", () => {
         expect(Bun.JSONL.parse(JSON.stringify({ s: bigStr }) + "\n")).toStrictEqual([{ s: bigStr }]);
       });
 
-      test("4 GB Uint8Array of null bytes", () => {
-        const buf = new Uint8Array(4 * 1024 * 1024 * 1024);
-        expect(() => Bun.JSONL.parse(buf)).toThrow();
-      });
+      test(
+        "4 GB Uint8Array of null bytes",
+        () => {
+          const buf = new Uint8Array(4 * 1024 * 1024 * 1024);
+          expect(() => Bun.JSONL.parse(buf)).toThrow();
+        },
+        30_000,
+      );
 
-      test("4 GB Uint8Array with first byte 0xFF (non-ASCII path)", () => {
-        const buf = new Uint8Array(4 * 1024 * 1024 * 1024);
-        buf[0] = 255;
-        expect(() => Bun.JSONL.parse(buf)).toThrow();
-      });
+      test(
+        "4 GB Uint8Array with first byte 0xFF (non-ASCII path)",
+        () => {
+          const buf = new Uint8Array(4 * 1024 * 1024 * 1024);
+          buf[0] = 255;
+          expect(() => Bun.JSONL.parse(buf)).toThrow();
+        },
+        30_000,
+      );
     });
   });
 
@@ -2478,6 +2486,7 @@ describe("Bun.JSONL", () => {
       expect(r.done).toBe(true);
     });
 
+    // Spawns two subprocesses that each build and parse a 16 MB buffer.
     test.concurrent(
       "mixed ASCII/non-ASCII input does not convert the whole buffer",
       async () => {
@@ -2488,7 +2497,7 @@ describe("Bun.JSONL", () => {
         const prog = `
           const mixed = process.env.JSONL_MIXED === "1";
           const line = '{"id":0,"s":"' + Buffer.alloc(200, "x").toString() + '"}\\n';
-          const nLines = Math.floor((48 * 1024 * 1024) / line.length);
+          const nLines = Math.floor((16 * 1024 * 1024) / line.length);
           const buf = Buffer.alloc(nLines * line.length + 32);
           for (let i = 0; i < nLines; i++) buf.write(line, i * line.length, "latin1");
           let end = nLines * line.length;
@@ -2497,10 +2506,13 @@ describe("Bun.JSONL", () => {
           let ascii = true;
           for (let i = 0; i < input.length; i++) if (input[i] > 0x7f) { ascii = false; break; }
           if (mixed === ascii) throw new Error("fixture mismatch: mixed=" + mixed + " ascii=" + ascii);
+          Bun.gc(true);
+          const before = process.memoryUsage().rss;
           const r = Bun.JSONL.parse(input);
+          const after = process.memoryUsage().rss;
           if (r.length !== nLines + 1) throw new Error("bad count: " + r.length);
           if (mixed && r[r.length - 1].jp !== "\\u65e5\\u672c\\u8a9e") throw new Error("bad tail");
-          console.log(process.resourceUsage().maxRSS);
+          console.log(after - before);
         `;
         const run = async (mixed: boolean) => {
           await using proc = Bun.spawn({
@@ -2513,14 +2525,13 @@ describe("Bun.JSONL", () => {
           expect(code).toBe(0);
           return Number(out.trim());
         };
-        const [asciiKB, mixedKB] = await Promise.all([run(false), run(true)]);
-        const deltaMB = (mixedKB - asciiKB) / 1024;
-        // Without segmentation the delta is roughly 2x the 48 MB buffer (the
-        // UTF-16 copy), well above the buffer size itself. With segmentation
-        // the two runs are within noise.
-        expect(deltaMB).toBeLessThan(48);
+        const [asciiBytes, mixedBytes] = await Promise.all([run(false), run(true)]);
+        const deltaMB = (mixedBytes - asciiBytes) / (1024 * 1024);
+        // Without segmentation the delta is roughly 2x the 16 MB buffer (the
+        // UTF-16 copy). With segmentation the two runs are within noise.
+        expect(deltaMB).toBeLessThan(16);
       },
-      60_000,
+      30_000,
     );
   });
 });

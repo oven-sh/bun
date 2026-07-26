@@ -5,7 +5,7 @@ use bun_core::feature_flags as FeatureFlags;
 use crate::p::P;
 use crate::parser::{self as js_parser, IdentifierOpts, RelocateVars, RelocateVarsMode};
 use bun_ast::ast_result::CommonJSNamedExport;
-use bun_ast::{self as js_ast, Binding, E, Expr, Flags, G, LocRef, Ref, S};
+use bun_ast::{self as js_ast, Binding, E, Expr, Flags, G, LocRef, S};
 
 // ── local EString shims ────────────────────────────────────────────────────
 // E.rs currently carries two `impl EString` blocks (live + round-C draft) with
@@ -436,25 +436,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         && identifier_opts.assign_target() != js_ast::AssignTarget::None
                         && !identifier_opts.is_delete_target()
                     {
-                        // Runtime (non-bundler) path: record `exports.<name>` so an ESM
-                        // importer can resolve named bindings via static analysis. This
-                        // mirrors Node's cjs-module-lexer; the expression itself is left
-                        // untouched.
-                        p.has_commonjs_export_names = true;
-                        if !p.commonjs_named_exports.contains(name) {
-                            p.commonjs_named_exports
-                                .put(
-                                    name,
-                                    CommonJSNamedExport {
-                                        loc_ref: LocRef {
-                                            loc: name_loc,
-                                            ref_: Ref::NONE,
-                                        },
-                                        needs_decl: false,
-                                    },
-                                )
-                                .expect("unreachable");
-                        }
+                        p.record_runtime_commonjs_export_name(name, name_loc);
                     }
 
                     // Handle references to namespaces or namespace members
@@ -605,6 +587,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 // EDot and EIndex are handled with structurally identical arms.
                 js_ast::ExprData::EDot(data) => {
+                    // `module.exports.<name>` — at runtime `module.exports` is not
+                    // rewritten to `ESpecial::ModuleExports`, so it arrives here as
+                    // a nested EDot.
                     if p.options.features.commonjs_at_runtime
                         && !p.should_unwrap_common_js_to_esm()
                         && !p.is_control_flow_dead
@@ -613,25 +598,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         && data.name == b"exports"
                         && matches!(data.target.data, js_ast::ExprData::EIdentifier(inner) if inner.ref_.eql(p.module_ref))
                     {
-                        // Runtime: record `module.exports.<name>` for the ESM-imports-CJS
-                        // static export table. At runtime `commonjs_named_exports_deoptimized`
-                        // starts true, so `module.exports` is not rewritten to
-                        // `ESpecial::ModuleExports` and this is where we see the nested EDot.
-                        p.has_commonjs_export_names = true;
-                        if !p.commonjs_named_exports.contains(name) {
-                            p.commonjs_named_exports
-                                .put(
-                                    name,
-                                    CommonJSNamedExport {
-                                        loc_ref: LocRef {
-                                            loc: name_loc,
-                                            ref_: Ref::NONE,
-                                        },
-                                        needs_decl: false,
-                                    },
-                                )
-                                .expect("unreachable");
-                        }
+                        p.record_runtime_commonjs_export_name(name, name_loc);
                     }
 
                     if matches!(p.ts_namespace.expr, js_ast::ExprData::EDot(ns_data) if data.as_ptr() == ns_data.as_ptr())
@@ -720,24 +687,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             && identifier_opts.assign_target() != js_ast::AssignTarget::None
                             && !identifier_opts.is_delete_target()
                         {
-                            // Runtime (non-bundler) path: record `module.exports.<name>` for the
-                            // ESM-imports-CJS static export table (see the `exports.<name>` arm
-                            // above). No rewrite.
-                            p.has_commonjs_export_names = true;
-                            if !p.commonjs_named_exports.contains(name) {
-                                p.commonjs_named_exports
-                                    .put(
-                                        name,
-                                        CommonJSNamedExport {
-                                            loc_ref: LocRef {
-                                                loc: name_loc,
-                                                ref_: Ref::NONE,
-                                            },
-                                            needs_decl: false,
-                                        },
-                                    )
-                                    .expect("unreachable");
-                            }
+                            p.record_runtime_commonjs_export_name(name, name_loc);
                         }
                     }
                     E::Special::HotEnabled | E::Special::HotDisabled => {

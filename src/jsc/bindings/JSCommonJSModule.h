@@ -32,11 +32,9 @@ void populateESMExports(
     JSC::MarkedArgumentBuffer& exportValues,
     bool ignoreESModuleAnnotation);
 
-// Post-order-evaluate hook for the ESM wrapper that createCommonJSModule emits
-// when an ESM graph imports a CommonJS module. Runs the CommonJS body and
-// writes the resulting export values into `moduleRecord`'s module environment.
-// Returns true when `key` resolves to such a wrapper (whether or not it threw);
-// false means this record is not a wrapped CommonJS module.
+// Called from GlobalObject::moduleLoaderEvaluate for the ESM wrapper that
+// createCommonJSModule emits: runs the CommonJS body and fills the wrapper's
+// module-environment bindings. Returns false when `key` has no such wrapper.
 bool evaluateDeferredCommonJSModuleForESM(
     Zig::GlobalObject* globalObject,
     JSC::AbstractModuleRecord* moduleRecord,
@@ -84,12 +82,8 @@ public:
     bool ignoreESModuleAnnotation { false };
     JSC::SourceCode sourceCode = JSC::SourceCode();
 
-    // Export names the transpiler proved statically (exports.x / module.exports.x
-    // assignments). When an ESM graph imports this module, these become the
-    // SyntheticModuleRecord's export table so link() can resolve named bindings
-    // without running the body first. Empty when the source was served from a
-    // cache that did not carry the names; callers fall back to fetch-time
-    // evaluation in that case.
+    // Statically detected export names for the ESM-imports-CJS wrapper.
+    // `m_hasStaticExportNames` gates the deferred-evaluation path.
     Vector<JSC::Identifier, 4> m_staticExportNames;
     bool m_hasStaticExportNames { false };
 

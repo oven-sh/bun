@@ -1983,10 +1983,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 p.visit_expr(arg);
             }
 
-            // Runtime (non-bundler) CJS static-export-name scan: record names assigned via
-            // `Object.defineProperty(exports|module.exports, "<name>", ...)` so an ESM
-            // importer can resolve them by name. This mirrors Node's cjs-module-lexer
-            // without the cross-file re-export following.
+            // `Object.defineProperty(exports|module.exports, "<name>", ...)`
             if p.options.features.commonjs_at_runtime
                 && !p.options.features.unwrap_commonjs_to_esm
                 && !p.is_control_flow_dead
@@ -2023,22 +2020,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if is_object_define_property && args.len() >= 2 && is_exports_expr(&args[0]) {
                     if let Data::EString(name_str) = &args[1].data {
                         if !name_str.is_utf16 {
-                            let name: &[u8] = &name_str.data;
-                            p.has_commonjs_export_names = true;
-                            if !name.is_empty() && !p.commonjs_named_exports.contains(name) {
-                                p.commonjs_named_exports
-                                    .put(
-                                        name,
-                                        bun_ast::ast_result::CommonJSNamedExport {
-                                            loc_ref: bun_ast::LocRef {
-                                                loc: args[1].loc,
-                                                ref_: bun_ast::Ref::NONE,
-                                            },
-                                            needs_decl: false,
-                                        },
-                                    )
-                                    .expect("unreachable");
-                            }
+                            p.record_runtime_commonjs_export_name(&name_str.data, args[1].loc);
                         }
                     }
                 }

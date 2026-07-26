@@ -134,8 +134,7 @@ typedef struct ResolvedSource {
     // File path used as source origin for bytecode cache validation.
     // Converted to file:// URL. If empty, origin is derived from source_url.
     BunString bytecode_origin_path;
-    // Statically detected CommonJS export names, NUL-joined. Only set when
-    // isCommonJSModule is true. Consumed (and deref'd) by createCommonJSModule.
+    // Statically detected CommonJS export names, NUL-joined. Consumed by createCommonJSModule.
     BunString commonjs_export_names;
 } ResolvedSource;
 inline constexpr uint32_t ResolvedSourceTagPackageJSONTypeModule = 1;

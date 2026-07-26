@@ -5219,6 +5219,28 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.commonjs_named_exports_deoptimized = true;
     }
 
+    /// Runtime path (cjs-module-lexer analogue): record a statically visible
+    /// CommonJS export name for the ESM-imports-CJS wrapper. The expression is
+    /// not rewritten.
+    pub fn record_runtime_commonjs_export_name(&mut self, name: &[u8], loc: bun_ast::Loc) {
+        self.has_commonjs_export_names = true;
+        if name.is_empty() || self.commonjs_named_exports.contains(name) {
+            return;
+        }
+        self.commonjs_named_exports
+            .put(
+                name,
+                bun_ast::ast_result::CommonJSNamedExport {
+                    loc_ref: bun_ast::LocRef {
+                        loc,
+                        ref_: bun_ast::Ref::NONE,
+                    },
+                    needs_decl: false,
+                },
+            )
+            .expect("unreachable");
+    }
+
     pub fn maybe_keep_expr_symbol_name(
         &mut self,
         expr: Expr,

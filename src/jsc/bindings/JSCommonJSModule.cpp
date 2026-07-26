@@ -1483,8 +1483,6 @@ static JSC::SourceCode commonJSModuleSyntheticSourceCode(const SourceOrigin& sou
 
 static void assignStaticExportNames(JSC::VM& vm, JSCommonJSModule* moduleObject, const WTF::String& joined)
 {
-    // null (no string sent) => the static scan was incomplete; stay on the
-    // fetch-time evaluation path so runtime-enumerated named exports still work.
     if (joined.isNull())
         return;
 
@@ -1519,9 +1517,7 @@ std::optional<JSC::SourceCode> createCommonJSModule(
     JSCommonJSModule* moduleObject = nullptr;
     WTF::String sourceURL = source.source_url.toWTFString();
 
-    // Claim the static-export-name list up front so the ResolvedSource that
-    // Zig::SourceProvider::create copies into m_resolvedSource below does not
-    // carry a soon-to-be-stale BunString.
+    // Claim before Zig::SourceProvider::create copies `source` into m_resolvedSource.
     WTF::String staticExportNames = source.commonjs_export_names.toWTFString(BunString::ZeroCopy);
     source.commonjs_export_names.deref();
     source.commonjs_export_names = Zig::BunStringEmpty;
@@ -1585,8 +1581,6 @@ std::optional<JSC::SourceCode> createCommonJSModule(
     return commonJSModuleSyntheticSourceCode(sourceOrigin, sourceURL, moduleObject);
 }
 
-// The wrapper's local binding for the `default` export. GlobalObject::moduleLoaderEvaluate
-// writes the computed default into this slot after running the CommonJS body.
 static constexpr auto cjsWrapperDefaultLocal = "__BUN_CJS_DEFAULT__"_s;
 
 static JSC::SourceCode commonJSModuleSyntheticSourceCode(const SourceOrigin& sourceOrigin, const WTF::String& sourceURL, const JSCommonJSModule* moduleObject)
@@ -1639,12 +1633,8 @@ static JSC::SourceCode commonJSModuleSyntheticSourceCode(const SourceOrigin& sou
                 sourceURL));
     }
 
-    // Build an ESM wrapper that declares the export-name table but does no work.
-    // It becomes a JSModuleRecord, so InnerModuleEvaluation reaches it at the
-    // correct post-order position; GlobalObject::moduleLoaderEvaluate detects
-    // the backing JSCommonJSModule via the require map, executes the CommonJS
-    // body there, and then writes the real values into this record's module
-    // environment (the `$e<i>` locals and the default binding).
+    // ESM wrapper declaring the export-name table; evaluateDeferredCommonJSModuleForESM
+    // runs the CommonJS body at this record's post-order slot and fills the bindings.
     WTF::StringBuilder src;
     src.append("var "_s);
     src.append(cjsWrapperDefaultLocal);

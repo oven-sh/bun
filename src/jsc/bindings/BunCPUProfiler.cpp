@@ -17,6 +17,7 @@
 #include <wtf/URL.h>
 #include <algorithm>
 #include <limits>
+#include <memory>
 
 extern "C" void Bun__startCPUProfiler(JSC::VM* vm);
 extern "C" void Bun__stopCPUProfiler(JSC::VM* vm, BunString* outJSON, BunString* outText);

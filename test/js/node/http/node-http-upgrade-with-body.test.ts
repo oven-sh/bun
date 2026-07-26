@@ -3,11 +3,11 @@
 // buffered on req with req.complete === true, and a peer FIN with an
 // unsatisfied body tears the handed-off socket down instead of leaking the
 // pending-request ref.
-import { test, expect, describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
+import { once } from "node:events";
 import http from "node:http";
 import net from "node:net";
-import { once } from "node:events";
 
 type UpgradeResult = {
   head: string;
@@ -172,7 +172,9 @@ describe("node:http 'upgrade' with a request body", () => {
     const port = (server.address() as net.AddressInfo).port;
     const client = net.connect(port, "127.0.0.1");
     await once(client, "connect");
-    client.write("GET / HTTP/1.1\r\nHost: x\r\nConnection: Upgrade\r\nUpgrade: x\r\nContent-Length: 5\r\n\r\nHELLOAFTER");
+    client.write(
+      "GET / HTTP/1.1\r\nHost: x\r\nConnection: Upgrade\r\nUpgrade: x\r\nContent-Length: 5\r\n\r\nHELLOAFTER",
+    );
     await once(server, "upgrade");
     client.write("MORE");
     client.on("end", () => client.end());
@@ -220,7 +222,11 @@ describe("node:http 'upgrade' with a request body", () => {
     });
     await once(server.listen(0), "listening");
     const port = (server.address() as net.AddressInfo).port;
-    sendRaw(port, "GET / HTTP/1.1\r\nHost: x\r\nConnection: Upgrade\r\nUpgrade: x\r\nContent-Length: 5\r\n\r\nHE", true);
+    sendRaw(
+      port,
+      "GET / HTTP/1.1\r\nHost: x\r\nConnection: Upgrade\r\nUpgrade: x\r\nContent-Length: 5\r\n\r\nHE",
+      true,
+    );
     await sockClosed;
     await new Promise<void>(r => server.close(() => r()));
   });

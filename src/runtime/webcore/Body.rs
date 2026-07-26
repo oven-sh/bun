@@ -2004,11 +2004,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
             let Value::Locked(locked) = value else {
                 unreachable!()
             };
-            return locked.set_promise(
-                global_object,
-                Action::GetFormData(encoder),
-                owned_readable,
-            );
+            return locked.set_promise(global_object, Action::GetFormData(encoder), owned_readable);
         }
 
         let mut blob: AnyBlob = value.use_as_any_blob();

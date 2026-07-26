@@ -2754,10 +2754,6 @@ Socket.prototype.destroySoon = function destroySoon() {
   else this.once("finish", this.destroy);
 };
 
-//TODO: migrate to native
-// Writes `chunks` (normalized Buffer-likes) one at a time; on the first short
-// write parks the remainder on `_pendingData` and arms the drain callback.
-// Returns true when every chunk was fully accepted.
 function writeChunksUntilFull(self, socket, chunks, callback) {
   const len = chunks.length;
   for (let i = 0; i < len; i++) {
@@ -2780,6 +2776,7 @@ function writeChunksUntilFull(self, socket, chunks, callback) {
   return true;
 }
 
+//TODO: migrate to native
 Socket.prototype._writev = function _writev(data, callback) {
   const allBuffers = data.allBuffers;
   for (let i = 0; i < data.length; i++) {

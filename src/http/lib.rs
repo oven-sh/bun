@@ -2420,6 +2420,19 @@ impl<'a> HTTPClient<'a> {
                         }
                     }
                 }
+                h if h == hash_header_const(b"Expect") => {
+                    // h1-only: h2/h3 track this per-stream (`Stream.awaiting_continue`).
+                    if will_append
+                        && self.flags.protocol == Protocol::Http1_1
+                        && bun_core::strings::eql_case_insensitive_ascii_check_length(
+                            self.header_str(header_values[i]),
+                            b"100-continue",
+                        )
+                        && (body_len > 0 || self.flags.is_streaming_request_body)
+                    {
+                        self.state.flags.awaiting_continue = true;
+                    }
+                }
                 h if h == hash_header_const(CHUNKED_ENCODED_HEADER.name()) => {
                     if !self.flags.is_streaming_request_body {
                         continue;
@@ -2986,6 +2999,7 @@ impl<'a> HTTPClient<'a> {
         if !self.request_body().is_empty()
             && temporary_send_buffer.capacity() - temporary_send_buffer.len() > 0
             && !self.flags.proxy_tunneling
+            && !self.state.flags.awaiting_continue
         {
             let spare = temporary_send_buffer.capacity() - temporary_send_buffer.len();
             let wrote = spare.min(self.request_body().len());
@@ -3142,7 +3156,8 @@ impl<'a> HTTPClient<'a> {
         if !matches!(
             self.state.request_stage,
             RequestStage::Body | RequestStage::ProxyBody
-        ) {
+        ) || self.state.flags.awaiting_continue
+        {
             return;
         }
         // reshaped for borrowck — copy out the Copy bits we need
@@ -3296,7 +3311,9 @@ impl<'a> HTTPClient<'a> {
                         self.state.request_stage = RequestStage::ProxyHandshake;
                     } else {
                         self.state.request_stage = RequestStage::Body;
-                        if self.flags.is_streaming_request_body {
+                        if self.flags.is_streaming_request_body
+                            && !self.state.flags.awaiting_continue
+                        {
                             // lets signal to start streaming the body
                             let ctx = self.get_ssl_ctx::<IS_SSL>();
                             self.progress_update::<IS_SSL>(ctx, socket);
@@ -3310,7 +3327,9 @@ impl<'a> HTTPClient<'a> {
                         self.state.request_stage = RequestStage::ProxyHandshake;
                     } else {
                         self.state.request_stage = RequestStage::Body;
-                        if self.flags.is_streaming_request_body {
+                        if self.flags.is_streaming_request_body
+                            && !self.state.flags.awaiting_continue
+                        {
                             // lets signal to start streaming the body
                             let ctx = self.get_ssl_ctx::<IS_SSL>();
                             self.progress_update::<IS_SSL>(ctx, socket);
@@ -3338,6 +3357,9 @@ impl<'a> HTTPClient<'a> {
                 bun_core::scoped_log!(fetch, "send body");
                 if !self.state.flags.receive_paused {
                     self.set_timeout(&socket);
+                }
+                if self.state.flags.awaiting_continue {
+                    return;
                 }
 
                 match &mut self.state.original_request_body {
@@ -3395,6 +3417,9 @@ impl<'a> HTTPClient<'a> {
             }
             RequestStage::ProxyBody => {
                 bun_core::scoped_log!(fetch, "send proxy body");
+                if self.state.flags.awaiting_continue {
+                    return;
+                }
                 if let Some(proxy_ptr) = self.proxy_tunnel.as_ref().map(|p| p.as_ptr()) {
                     // Detached upgrade so `&mut self` can be reborrowed below;
                     // the tunnel is a disjoint heap allocation (see
@@ -3456,6 +3481,7 @@ impl<'a> HTTPClient<'a> {
                     let headers_len = temporary_send_buffer.len();
                     if !self.request_body().is_empty()
                         && temporary_send_buffer.capacity() - temporary_send_buffer.len() > 0
+                        && !self.state.flags.awaiting_continue
                     {
                         let spare = temporary_send_buffer.capacity() - temporary_send_buffer.len();
                         let wrote = spare.min(self.request_body().len());
@@ -3514,7 +3540,9 @@ impl<'a> HTTPClient<'a> {
 
                     if has_sent_headers {
                         self.state.request_stage = RequestStage::ProxyBody;
-                        if self.flags.is_streaming_request_body {
+                        if self.flags.is_streaming_request_body
+                            && !self.state.flags.awaiting_continue
+                        {
                             // lets signal to start streaming the body
                             let ctx = self.get_ssl_ctx::<IS_SSL>();
                             self.progress_update::<IS_SSL>(ctx, socket);
@@ -3541,6 +3569,29 @@ impl<'a> HTTPClient<'a> {
                 }
             }
             _ => {}
+        }
+    }
+
+    /// `100 Continue` arrived for an `Expect: 100-continue` request: release
+    /// the body that `on_writable` / `write_to_stream` have been holding back.
+    ///
+    /// Over a CONNECT tunnel this runs from inside `ProxyTunnel::receive` →
+    /// `handle_traffic`. Re-entering the wrapper from there is the same
+    /// pattern as `ProxyTunnel::on_handshake` → `on_writable` and relies on
+    /// the `black_box` laundering inside `SSLWrapper::handle_traffic`;
+    /// deferring the body write until after `receive` returns instead touches
+    /// `self` after a completion callback may have freed it.
+    fn resume_after_100_continue<const IS_SSL: bool>(&mut self, socket: HttpSocket<IS_SSL>) {
+        if !self.state.flags.awaiting_continue {
+            return;
+        }
+        bun_core::scoped_log!(fetch, "resumeAfter100Continue");
+        self.state.flags.awaiting_continue = false;
+        if self.flags.is_streaming_request_body {
+            let ctx = self.get_ssl_ctx::<IS_SSL>();
+            self.progress_update::<IS_SSL>(ctx, socket);
+        } else {
+            self.on_writable::<false, IS_SSL>(socket);
         }
     }
 
@@ -3704,6 +3755,14 @@ impl<'a> HTTPClient<'a> {
             // handle the case where we have a 100 Continue
             if parsed.status_code >= 100 && parsed.status_code < 200 {
                 bun_core::scoped_log!(fetch, "information headers");
+                // Only `100 Continue` releases a withheld body; 102/103 are
+                // informational and do not satisfy `Expect: 100-continue`.
+                if parsed.status_code == 100 {
+                    self.resume_after_100_continue::<IS_SSL>(socket);
+                    if socket.is_closed() {
+                        return;
+                    }
+                }
 
                 if to_read.is_empty() {
                     if !needs_move {
@@ -3719,6 +3778,15 @@ impl<'a> HTTPClient<'a> {
 
             break parsed;
         };
+        // Origin final status without a preceding 100: abandon the body. A
+        // CONNECT reply is not an origin response.
+        let abandoned_expect_body = self.state.flags.awaiting_continue
+            && !(self.flags.proxy_tunneling && self.proxy_tunnel.is_none());
+        if abandoned_expect_body {
+            self.state.flags.awaiting_continue = false;
+            self.state.request_body = bun_ptr::RawSlice::EMPTY;
+            self.state.request_stage = RequestStage::Done;
+        }
         let should_continue = match self.handle_response_metadata(&mut response) {
             Ok(s) => s,
             Err(err) => {
@@ -3726,6 +3794,13 @@ impl<'a> HTTPClient<'a> {
                 return;
             }
         };
+        if abandoned_expect_body {
+            // Declared length never sent; the connection must not be pooled.
+            // Set after handle_response_metadata so `Connection: keep-alive`
+            // can't overwrite it, and on the per-attempt flags so a redirect
+            // hop's fresh connection is still poolable.
+            self.state.flags.allow_keepalive = false;
+        }
 
         if (self.state.content_encoding_i as usize) < response.headers.list.len()
             && !self.state.flags.did_set_content_encoding
@@ -4444,7 +4519,8 @@ impl<'a> HTTPClient<'a> {
                     certificate_info: None,
                     can_stream: (self.state.request_stage == RequestStage::Body
                         || self.state.request_stage == RequestStage::ProxyBody)
-                        && self.flags.is_streaming_request_body,
+                        && self.flags.is_streaming_request_body
+                        && !self.state.flags.awaiting_continue,
                     is_http2: self.flags.protocol != Protocol::Http1_1,
                 };
             }
@@ -4464,7 +4540,8 @@ impl<'a> HTTPClient<'a> {
             // we can stream the request_body at this stage
             can_stream: (self.state.request_stage == RequestStage::Body
                 || self.state.request_stage == RequestStage::ProxyBody)
-                && self.flags.is_streaming_request_body,
+                && self.flags.is_streaming_request_body
+                && !self.state.flags.awaiting_continue,
             is_http2: self.flags.protocol != Protocol::Http1_1,
         }
     }

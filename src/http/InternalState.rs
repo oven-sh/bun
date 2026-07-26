@@ -80,6 +80,10 @@ pub struct InternalStateFlags {
     /// redirect hop / failure, so each hop re-parks independently).
     pub is_waiting_for_cert_check: bool,
     pub receive_paused: bool,
+    /// `Expect: 100-continue` is in effect: the request body is withheld until
+    /// a `100 Continue` (or final status) arrives. Set by `build_request`,
+    /// cleared in `handle_on_data_headers`. Mirrors the h2 `Stream.awaiting_continue`.
+    pub awaiting_continue: bool,
     /// Set once `HTTPClient::compress_body_for_send` has run for this attempt.
     /// Guards header-retry re-entries from compressing again. Cleared by
     /// `reset()`/`init()` so each redirect/retry hop re-compresses from the
@@ -100,6 +104,7 @@ impl InternalStateFlags {
             clear_hostname_on_redirect: false,
             is_waiting_for_cert_check: false,
             receive_paused: false,
+            awaiting_continue: false,
             body_compressed: false,
         }
     }

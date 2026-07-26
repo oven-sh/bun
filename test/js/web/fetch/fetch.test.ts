@@ -3068,3 +3068,236 @@ it("an explicit numeric `timeout` extends the socket idle deadline past the defa
   expect(out.withDefault).toStartWith("ERR:");
   expect(exitCode).toBe(0);
 }, 60_000);
+
+describe("fetch Expect: 100-continue (HTTP/1.1)", () => {
+  // Raw TCP origin that records how many body bytes arrived alongside the
+  // request head and, optionally, how many arrived in total. `onHead` is
+  // invoked once the CRLFCRLF boundary is seen and returns the bytes to
+  // write back before the body is expected (or to reject the upload).
+  function rawOrigin(onHead: (sock: import("net").Socket, headText: string) => Buffer | string) {
+    const result = { bodyWithHead: -1, bodyTotal: 0, sawHead: false };
+    const server = net.createServer(sock => {
+      let buf = Buffer.alloc(0);
+      let headEnd = -1;
+      let cl = 0;
+      let replied = false;
+      sock.on("data", chunk => {
+        buf = Buffer.concat([buf, chunk]);
+        if (headEnd < 0) {
+          headEnd = buf.indexOf("\r\n\r\n");
+          if (headEnd < 0) return;
+          result.sawHead = true;
+          result.bodyWithHead = buf.length - (headEnd + 4);
+          const headText = buf.toString("latin1", 0, headEnd);
+          cl = Number((/content-length:\s*(\d+)/i.exec(headText) || [, "0"])[1]);
+          sock.write(onHead(sock, headText));
+        }
+        result.bodyTotal = buf.length - (headEnd + 4);
+        if (!replied && result.bodyTotal >= cl) {
+          replied = true;
+          sock.write("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok");
+        }
+      });
+      sock.on("error", () => {});
+    });
+    return { server, result };
+  }
+
+  it("withholds the body until 100 Continue arrives", async () => {
+    const { server, result } = rawOrigin(() => "HTTP/1.1 100 Continue\r\n\r\n");
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    try {
+      const res = await fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/upload`, {
+        method: "POST",
+        body: "the-payload",
+        headers: { expect: "100-continue" },
+      });
+      expect({
+        status: res.status,
+        text: await res.text(),
+        bodyWithHead: result.bodyWithHead,
+        bodyTotal: result.bodyTotal,
+      }).toEqual({ status: 200, text: "ok", bodyWithHead: 0, bodyTotal: 11 });
+    } finally {
+      server.close();
+    }
+  });
+
+  it("withholds a streaming body until 100 Continue arrives", async () => {
+    // Covers the streaming release path: can_stream gating in to_result, the
+    // progress_update arm of resume_after_100_continue, and write_to_stream's
+    // early return. None of these are reached by a Bytes body.
+    const { server, result } = rawOrigin(() => "HTTP/1.1 100 Continue\r\n\r\n");
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    try {
+      const res = await fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/upload`, {
+        method: "POST",
+        duplex: "half",
+        headers: { expect: "100-continue", "content-length": "11" },
+        body: new ReadableStream({
+          start(c) {
+            c.enqueue(new TextEncoder().encode("the-payload"));
+            c.close();
+          },
+        }),
+      });
+      expect({
+        status: res.status,
+        text: await res.text(),
+        bodyWithHead: result.bodyWithHead,
+        bodyTotal: result.bodyTotal,
+      }).toEqual({ status: 200, text: "ok", bodyWithHead: 0, bodyTotal: 11 });
+    } finally {
+      server.close();
+    }
+  });
+
+  it("abandons the body when the server answers with a final status before 100", async () => {
+    const body = Buffer.alloc(50_000, "x").toString();
+    const { server, result } = rawOrigin(
+      () => "HTTP/1.1 417 Expectation Failed\r\nContent-Length: 4\r\nConnection: close\r\n\r\nnope",
+    );
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    let received = "";
+    try {
+      const res = await fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/upload`, {
+        method: "POST",
+        body,
+        headers: { Expect: "100-continue" },
+      });
+      received = await res.text();
+      expect({
+        status: res.status,
+        text: received,
+        bodyWithHead: result.bodyWithHead,
+        bodyTotal: result.bodyTotal,
+      }).toEqual({ status: 417, text: "nope", bodyWithHead: 0, bodyTotal: 0 });
+    } finally {
+      server.close();
+    }
+  });
+
+  it("does not pool the connection after an early 2xx with Connection: keep-alive", async () => {
+    // Early final 2xx + keep-alive: the body is abandoned, so the declared
+    // Content-Length was never satisfied. Pooling that socket would let the
+    // next request's head land inside the previous request's body frame.
+    let connections = 0;
+    const sockets: import("net").Socket[] = [];
+    const server = net.createServer(sock => {
+      connections++;
+      sockets.push(sock);
+      let buf = Buffer.alloc(0);
+      sock.on("data", chunk => {
+        buf = Buffer.concat([buf, chunk]);
+        let he: number;
+        while ((he = buf.indexOf("\r\n\r\n")) >= 0) {
+          buf = buf.subarray(he + 4);
+          sock.write("HTTP/1.1 200 OK\r\nConnection: keep-alive\r\nContent-Length: 2\r\n\r\nok");
+        }
+      });
+      sock.on("error", () => {});
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/p`;
+    try {
+      const r1 = await fetch(url, {
+        method: "POST",
+        body: Buffer.alloc(50_000, "x").toString(),
+        headers: { expect: "100-continue" },
+        keepalive: true,
+      });
+      await r1.text();
+      const r2 = await fetch(url);
+      await r2.text();
+      expect({ connections, status1: r1.status, status2: r2.status }).toEqual({
+        connections: 2,
+        status1: 200,
+        status2: 200,
+      });
+    } finally {
+      for (const s of sockets) s.destroy();
+      server.close();
+    }
+  });
+
+  it("over an HTTPS CONNECT proxy the body still reaches the origin", async () => {
+    // Regression guard: the CONNECT `200 Connection Established` reply must
+    // not be treated as a final origin status that abandons the withheld body.
+    const env = { ...bunEnv };
+    for (const k of ["NO_PROXY", "no_proxy", "HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy"]) delete env[k];
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          import net from "node:net";
+          import { once } from "node:events";
+          const tlsCert = ${JSON.stringify(tls)};
+          await using origin = Bun.serve({
+            port: 0, hostname: "127.0.0.1", tls: tlsCert,
+            async fetch(req) { return new Response(await req.text()); },
+          });
+          const proxy = net.createServer(client => {
+            let buf = Buffer.alloc(0);
+            const onHead = chunk => {
+              buf = Buffer.concat([buf, chunk]);
+              if (!buf.includes("\\r\\n\\r\\n")) return;
+              client.off("data", onHead);
+              const up = net.connect(origin.port, "127.0.0.1", () => {
+                client.write("HTTP/1.1 200 Connection Established\\r\\n\\r\\n");
+                client.pipe(up); up.pipe(client);
+              });
+              up.on("error", () => client.destroy());
+            };
+            client.on("data", onHead);
+            client.on("error", () => {});
+          });
+          proxy.listen(0, "127.0.0.1");
+          await once(proxy, "listening");
+          try {
+            const res = await fetch("https://127.0.0.1:" + origin.port + "/upload", {
+              method: "POST",
+              body: "the-payload",
+              headers: { expect: "100-continue" },
+              proxy: "http://127.0.0.1:" + proxy.address().port,
+              tls: { rejectUnauthorized: false },
+            });
+            console.log(res.status, await res.text());
+          } finally { proxy.close(); }
+        `,
+      ],
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("200 the-payload");
+    expect(exitCode).toBe(0);
+  });
+
+  it("without the Expect header the body is sent without waiting for 100", async () => {
+    // No 100 is ever written; if the body were withheld unconditionally the
+    // server would never see `bodyTotal >= cl` and the fetch would time out.
+    const { server, result } = rawOrigin(() => "");
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    try {
+      const res = await fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/upload`, {
+        method: "POST",
+        body: "the-payload",
+      });
+      expect({ status: res.status, text: await res.text(), bodyTotal: result.bodyTotal }).toEqual({
+        status: 200,
+        text: "ok",
+        bodyTotal: 11,
+      });
+    } finally {
+      server.close();
+    }
+  });
+});

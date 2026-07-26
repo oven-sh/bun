@@ -29,9 +29,7 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
 
   public readonly [_adapter]: DatabaseAdapter<any, any, Handle>;
 
-  // Private fields so every prototype member that touches status/flags
-  // brand-checks its receiver (TypeError on a non-Query `this`) instead of
-  // reading `undefined` or stamping a Symbol property onto a foreign object.
+  // Private (not Symbol-keyed) so prototype methods brand-check their receiver.
   #queryStatus: SQLQueryStatus = SQLQueryStatus.none;
   #flags: SQLQueryFlags = SQLQueryFlags.none;
 

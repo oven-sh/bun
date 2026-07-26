@@ -21,6 +21,8 @@ use bun_url::URL;
 
 use crate::webcore::s3::list_objects;
 
+bun_core::declare_scope!(S3SimpleRequest, hidden);
+
 // The result/options structs below carry borrowed slices that are valid only for the
 // duration of the callback invocation (not owned; they must be copied if used
 // after the callback). They take an explicit `<'a>` because they are ephemeral stack-only
@@ -139,6 +141,10 @@ pub struct S3HttpSimpleTask {
     /// copy instead of borrowing caller memory.
     pub body: Box<[u8]>,
     pub poll_ref: KeepAlive,
+    pub method: Method,
+    /// Remaining retry attempts. Decremented on each failed response before
+    /// rescheduling; when it reaches 0 the failure is reported to `callback`.
+    pub retry: u8,
 }
 
 impl Taskable for S3HttpSimpleTask {
@@ -167,6 +173,8 @@ impl Default for S3HttpSimpleTask {
             proxy_url: Box::default(),
             body: Box::default(),
             poll_ref: KeepAlive::default(),
+            method: Method::GET,
+            retry: 0,
         }
     }
 }
@@ -238,6 +246,76 @@ impl S3HttpSimpleTask {
     // bun.TrivialNew(@This()) — heap-allocate; pointer crosses thread boundary via http callback
     pub fn new(init: Self) -> *mut Self {
         bun_core::heap::into_raw(Box::new(init))
+    }
+
+    /// Initialise `self.http` from the already-populated `sign_result` / `headers` / `body` /
+    /// `proxy_url` / `method` fields and hand it to the HTTP thread. Used for both the first
+    /// dispatch and for retries, so those fields must already be set and `self.http` must either
+    /// be uninitialised (first dispatch) or have been cleared by the caller (retry).
+    ///
+    /// # Safety
+    /// `task_ptr` must be a live heap pointer produced by `S3HttpSimpleTask::new` with exclusive
+    /// access on this thread; the pointer is stored in the HTTP callback and must remain valid
+    /// until `on_response` reclaims it.
+    pub(crate) unsafe fn schedule_http(task_ptr: *mut Self) {
+        // SAFETY: caller contract.
+        let task = unsafe { &mut *task_ptr };
+        // SAFETY: lifetime extension — `url`, `headers_buf`, `body`, and `proxy_url` borrow from
+        // heap-allocated fields of `*task` (sign_result.url / headers.buf / body / proxy_url) which
+        // the task outlives. AsyncHTTP::init wants `'static` borrows because the HTTP thread reads
+        // them concurrently; they remain valid until `task` is dropped in `on_response`.
+        let url = URL::parse(unsafe { bun_ptr::detach_lifetime_ref(&*task.sign_result.url) });
+        // SAFETY: same lifetime-extension invariant as `url` above.
+        let headers_buf: &'static [u8] =
+            unsafe { bun_ptr::detach_lifetime(task.headers.buf.as_slice()) };
+        // SAFETY: same lifetime-extension invariant as `url` above.
+        let body: &'static [u8] = unsafe { bun_ptr::detach_lifetime(&*task.body) };
+        let http_proxy = if !task.proxy_url.is_empty() {
+            // SAFETY: same lifetime-extension invariant as `url` above.
+            Some(URL::parse(unsafe {
+                bun_ptr::detach_lifetime_ref(&*task.proxy_url)
+            }))
+        } else {
+            None
+        };
+        let vm = VirtualMachine::get();
+        let verbose = vm.as_mut().get_verbose_fetch();
+        let reject_unauthorized = vm.get_tls_reject_unauthorized();
+        task.http.write(AsyncHTTP::init(
+            task.method,
+            url,
+            task.headers.entries.clone().expect("OOM"),
+            headers_buf,
+            &raw mut task.response_buffer,
+            body,
+            HTTPClientResultCallback::new::<S3HttpSimpleTask>(
+                task_ptr,
+                S3HttpSimpleTask::http_callback,
+            ),
+            FetchRedirect::Follow,
+            HttpOptions {
+                http_proxy,
+                verbose: Some(verbose),
+                reject_unauthorized: Some(reject_unauthorized),
+                ..Default::default()
+            },
+        ));
+        // queue http request
+        bun_http::http_thread::init(&Default::default());
+        let mut batch = thread_pool::Batch::default();
+        // SAFETY: `http` was initialised by `task.http.write(...)` immediately above.
+        unsafe { task.http.assume_init_mut() }.schedule(&mut batch);
+        bun_http::HTTPThread::schedule(batch);
+    }
+
+    fn is_retryable_failure(&self) -> bool {
+        if !self.result.is_success() {
+            return true;
+        }
+        match &self.result.metadata {
+            Some(metadata) => !matches!(metadata.response.status_code, 200 | 204 | 206 | 404),
+            None => false,
+        }
     }
 
     fn error_with_body(&self, error_type: ErrorType) -> JsTerminatedResult<()> {
@@ -335,6 +413,33 @@ impl S3HttpSimpleTask {
     // pointer the queue hands back, non-null by the `ConcurrentTask::from` contract.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn on_response(this: *mut Self) -> JsTerminatedResult<()> {
+        {
+            // SAFETY: `this` was produced by `S3HttpSimpleTask::new` and is exclusively owned by
+            // the JS thread here (the HTTP thread handed it back via `enqueue_task_concurrent`).
+            let task = unsafe { &mut *this };
+            if task.retry > 0 && task.is_retryable_failure() {
+                task.retry -= 1;
+                bun_core::scoped_log!(
+                    S3SimpleRequest,
+                    "on_response retry (remaining {})",
+                    task.retry
+                );
+                // Release the previous AsyncHTTP's owned header copies (same cleanup as `Drop`)
+                // before the no-drop `MaybeUninit::write` in `schedule_http` overwrites it.
+                {
+                    // SAFETY: `http` is always initialised before the task pointer escapes.
+                    let http = unsafe { task.http.assume_init_mut() };
+                    http.clear_data();
+                    http.request_headers = Default::default();
+                    http.client.header_entries = Default::default();
+                }
+                task.result = HTTPClientResult::default();
+                task.response_buffer = MutableString::default();
+                // SAFETY: `this` is the live heap task; exclusive access on this thread.
+                unsafe { Self::schedule_http(this) };
+                return Ok(());
+            }
+        }
         // SAFETY: `this` was produced by `S3HttpSimpleTask::new` (heap::alloc) and ownership is
         // reclaimed here exactly once via the ConcurrentTask `.manual_deinit` contract;
         // `this` is dropped at scope exit.
@@ -549,6 +654,7 @@ pub struct S3SimpleRequestOptions<'a> {
     pub acl: Option<ACL>,
     pub storage_class: Option<StorageClass>,
     pub request_payer: bool,
+    pub retry: u8,
 }
 
 impl<'a> Default for S3SimpleRequestOptions<'a> {
@@ -566,6 +672,7 @@ impl<'a> Default for S3SimpleRequestOptions<'a> {
             acl: None,
             storage_class: None,
             request_payer: false,
+            retry: 0,
         }
     }
 }
@@ -626,6 +733,7 @@ pub(crate) fn execute_simple_s3_request(
         }
     };
 
+    let proxy = options.proxy_url.unwrap_or(b"");
     let task_ptr = S3HttpSimpleTask::new(S3HttpSimpleTask {
         // written below via `MaybeUninit::write` before any read.
         http: core::mem::MaybeUninit::uninit(),
@@ -638,73 +746,22 @@ pub(crate) fn execute_simple_s3_request(
         response_buffer: MutableString::default(),
         result: HTTPClientResult::default(),
         concurrent_task: ConcurrentTask::default(),
-        proxy_url: Box::default(),
+        proxy_url: if !proxy.is_empty() {
+            Box::<[u8]>::from(proxy)
+        } else {
+            Box::default()
+        },
         body: Box::<[u8]>::from(options.body),
         poll_ref: KeepAlive::init(),
+        method: options.method,
+        retry: options.retry,
     });
     // SAFETY: `task_ptr` is a freshly heap-allocated pointer; exclusive access here.
     let task = unsafe { &mut *task_ptr };
     task.poll_ref.ref_(bun_io::posix_event_loop::get_vm_ctx(
         bun_io::AllocatorType::Js,
     ));
-
-    let proxy = options.proxy_url.unwrap_or(b"");
-    task.proxy_url = if !proxy.is_empty() {
-        Box::<[u8]>::from(proxy)
-    } else {
-        Box::default()
-    };
-    // SAFETY: lifetime extension — `url`, `headers_buf`, and `proxy_url` borrow from
-    // heap-allocated fields of `*task` (sign_result.url / headers.buf / proxy_url) which the task
-    // outlives. AsyncHTTP::init wants `'static` borrows because the HTTP thread reads them
-    // concurrently; they remain valid until `task` is dropped in `on_response`.
-    let url = URL::parse(unsafe { bun_ptr::detach_lifetime_ref(&*task.sign_result.url) });
-    // SAFETY: same lifetime-extension invariant as `url` above — `task.headers.buf` is heap-owned
-    // by `*task` and outlives the AsyncHTTP request.
-    let headers_buf: &'static [u8] =
-        unsafe { bun_ptr::detach_lifetime(task.headers.buf.as_slice()) };
-    // SAFETY: same lifetime-extension invariant as `url` above — `task.body` is a heap-owned
-    // `Box<[u8]>` field of `*task` (an owned copy of the caller's slice) and outlives the
-    // AsyncHTTP request; it is freed only when `task` is dropped in `on_response`.
-    let body: &'static [u8] = unsafe { bun_ptr::detach_lifetime(&*task.body) };
-    let http_proxy = if !task.proxy_url.is_empty() {
-        // SAFETY: same lifetime-extension invariant as `url` above — `task.proxy_url` is a
-        // heap-owned `Box<[u8]>` field of `*task` and outlives the AsyncHTTP request.
-        Some(URL::parse(unsafe {
-            bun_ptr::detach_lifetime_ref(&*task.proxy_url)
-        }))
-    } else {
-        None
-    };
-    let vm = VirtualMachine::get();
-    let verbose = vm.as_mut().get_verbose_fetch();
-    let reject_unauthorized = vm.get_tls_reject_unauthorized();
-    task.http.write(AsyncHTTP::init(
-        options.method,
-        url,
-        task.headers.entries.clone().expect("OOM"),
-        headers_buf,
-        &raw mut task.response_buffer,
-        body,
-        HTTPClientResultCallback::new::<S3HttpSimpleTask>(
-            task_ptr,
-            // SAFETY: `task_ptr` was just heap-allocated above and `async_http` is supplied by
-            // the HTTP thread as a live pointer for the duration of the callback.
-            S3HttpSimpleTask::http_callback,
-        ),
-        FetchRedirect::Follow,
-        HttpOptions {
-            http_proxy,
-            verbose: Some(verbose),
-            reject_unauthorized: Some(reject_unauthorized),
-            ..Default::default()
-        },
-    ));
-    // queue http request
-    bun_http::http_thread::init(&Default::default());
-    let mut batch = thread_pool::Batch::default();
-    // SAFETY: `http` was initialised by `task.http.write(...)` immediately above.
-    unsafe { task.http.assume_init_mut() }.schedule(&mut batch);
-    bun_http::HTTPThread::schedule(batch);
+    // SAFETY: `task_ptr` is the freshly heap-allocated task; exclusive access here.
+    unsafe { S3HttpSimpleTask::schedule_http(task_ptr) };
     Ok(())
 }

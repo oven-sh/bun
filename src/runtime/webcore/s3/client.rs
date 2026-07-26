@@ -68,6 +68,7 @@ pub(crate) fn stat(
     callback_context: *mut c_void,
     proxy_url: Option<&[u8]>,
     request_payer: bool,
+    retry: u8,
 ) -> JsTerminatedResult<()> {
     s3_simple_request::execute_simple_s3_request(
         this,
@@ -77,6 +78,7 @@ pub(crate) fn stat(
             proxy_url,
             body: b"",
             request_payer,
+            retry,
             ..Default::default()
         },
         s3_simple_request::Callback::Stat(callback),
@@ -91,6 +93,7 @@ pub(crate) fn download(
     callback_context: *mut c_void,
     proxy_url: Option<&[u8]>,
     request_payer: bool,
+    retry: u8,
 ) -> JsTerminatedResult<()> {
     s3_simple_request::execute_simple_s3_request(
         this,
@@ -100,6 +103,7 @@ pub(crate) fn download(
             proxy_url,
             body: b"",
             request_payer,
+            retry,
             ..Default::default()
         },
         s3_simple_request::Callback::Download(callback),
@@ -107,6 +111,7 @@ pub(crate) fn download(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn download_slice(
     this: &S3Credentials,
     path: &[u8],
@@ -116,6 +121,7 @@ pub(crate) fn download_slice(
     callback_context: *mut c_void,
     proxy_url: Option<&[u8]>,
     request_payer: bool,
+    retry: u8,
 ) -> JsTerminatedResult<()> {
     let range: Option<Vec<u8>> = 'brk: {
         if let Some(size_) = size {
@@ -144,6 +150,7 @@ pub(crate) fn download_slice(
             body: b"",
             range: range.map(Vec::into_boxed_slice),
             request_payer,
+            retry,
             ..Default::default()
         },
         s3_simple_request::Callback::Download(callback),
@@ -158,6 +165,7 @@ pub(crate) fn delete(
     callback_context: *mut c_void,
     proxy_url: Option<&[u8]>,
     request_payer: bool,
+    retry: u8,
 ) -> JsTerminatedResult<()> {
     s3_simple_request::execute_simple_s3_request(
         this,
@@ -167,6 +175,7 @@ pub(crate) fn delete(
             proxy_url,
             body: b"",
             request_payer,
+            retry,
             ..Default::default()
         },
         s3_simple_request::Callback::Delete(callback),
@@ -184,6 +193,7 @@ pub(crate) fn list_objects(
     callback: fn(S3ListObjectsResult, *mut c_void) -> JsTerminatedResult<()>,
     callback_context: *mut c_void,
     proxy_url: Option<&[u8]>,
+    retry: u8,
 ) -> JsTerminatedResult<()> {
     let mut search_params: Vec<u8> = Vec::<u8>::default();
 
@@ -295,6 +305,7 @@ pub(crate) fn list_objects(
 
     let headers = bun_http::Headers::from_pico_http_headers(result.headers());
 
+    let proxy = proxy_url.unwrap_or(b"");
     let task_ptr = bun_core::heap::into_raw(Box::new(S3HttpSimpleTask {
         // Written below via `MaybeUninit::write` before any read.
         http: core::mem::MaybeUninit::uninit(),
@@ -307,75 +318,23 @@ pub(crate) fn list_objects(
         response_buffer: MutableString::default(),
         result: bun_http::HTTPClientResult::default(),
         concurrent_task: Default::default(),
-        proxy_url: Box::default(),
+        proxy_url: if !proxy.is_empty() {
+            Box::<[u8]>::from(proxy)
+        } else {
+            Box::<[u8]>::default()
+        },
         body: Box::default(),
         poll_ref: bun_io::KeepAlive::init(),
+        method: bun_http::Method::GET,
+        retry,
     }));
     // SAFETY: just allocated, non-null
     let task = unsafe { &mut *task_ptr };
 
     task.poll_ref.ref_(bun_io::js_vm_ctx());
 
-    let proxy = proxy_url.unwrap_or(b"");
-    task.proxy_url = if !proxy.is_empty() {
-        Box::<[u8]>::from(proxy)
-    } else {
-        Box::<[u8]>::default()
-    };
-
-    // SAFETY: lifetime extension — `url`, `headers_buf`, and `proxy_url` borrow from
-    // heap-allocated fields of `*task` which the task outlives. AsyncHTTP::init wants
-    // `'static` borrows because the HTTP thread reads them concurrently; they remain valid
-    // until `task` is dropped in `on_response`.
-    let url = bun_url::URL::parse(unsafe { bun_ptr::detach_lifetime_ref(&*task.sign_result.url) });
-    // SAFETY: same lifetime-extension invariant as `url` above — `task.headers.buf` is
-    // heap-owned by `*task` and outlives the AsyncHTTP request.
-    let headers_buf: &'static [u8] =
-        unsafe { bun_ptr::detach_lifetime(task.headers.buf.as_slice()) };
-    let http_proxy = if !task.proxy_url.is_empty() {
-        // SAFETY: same lifetime-extension invariant as `url` above — `task.proxy_url` is
-        // heap-owned by `*task` and outlives the AsyncHTTP request.
-        Some(bun_url::URL::parse(unsafe {
-            bun_ptr::detach_lifetime_ref(&*task.proxy_url)
-        }))
-    } else {
-        None
-    };
-    let mut vm_ref = task.vm.expect("vm set at task creation");
-    // SAFETY: `task.vm` is the live per-thread VM BackRef from
-    // `VirtualMachine::get()`; `get_mut` exclusivity holds — single-threaded
-    // dispatch on the JS thread, no other `&`/`&mut VirtualMachine` is live for
-    // this call's duration.
-    let vm = unsafe { vm_ref.get_mut() };
-
-    task.http.write(bun_http::AsyncHTTP::init(
-        bun_http::Method::GET,
-        url,
-        task.headers.entries.clone().expect("OOM"),
-        headers_buf,
-        &raw mut task.response_buffer,
-        b"",
-        bun_http::HTTPClientResultCallback::new::<S3HttpSimpleTask>(
-            task_ptr,
-            // SAFETY: `task_ptr` is the heap-allocated task registered above; the
-            // HTTP thread invokes this with that exact pointer.
-            S3HttpSimpleTask::http_callback,
-        ),
-        bun_http::FetchRedirect::Follow,
-        bun_http::async_http::Options {
-            http_proxy,
-            verbose: Some(vm.get_verbose_fetch()),
-            reject_unauthorized: Some(vm.get_tls_reject_unauthorized()),
-            ..Default::default()
-        },
-    ));
-
-    // queue http request
-    bun_http::http_thread::init(&Default::default());
-    let mut batch = bun_threading::thread_pool::Batch::default();
-    // SAFETY: `http` was initialised by `task.http.write(...)` immediately above.
-    unsafe { task.http.assume_init_mut() }.schedule(&mut batch);
-    bun_http::HTTPThread::schedule(batch);
+    // SAFETY: `task_ptr` is the freshly heap-allocated task; exclusive access here.
+    unsafe { S3HttpSimpleTask::schedule_http(task_ptr) };
     Ok(())
 }
 
@@ -390,6 +349,7 @@ pub fn upload(
     proxy_url: Option<&[u8]>,
     storage_class: Option<StorageClass>,
     request_payer: bool,
+    retry: u8,
     callback: fn(S3UploadResult, *mut c_void) -> JsTerminatedResult<()>,
     callback_context: *mut c_void,
 ) -> JsTerminatedResult<()> {
@@ -406,6 +366,7 @@ pub fn upload(
             acl,
             storage_class,
             request_payer,
+            retry,
             ..Default::default()
         },
         s3_simple_request::Callback::Upload(callback),

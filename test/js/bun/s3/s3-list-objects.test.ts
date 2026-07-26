@@ -968,6 +968,10 @@ describe.concurrent("S3 - List Objects", () => {
     const client = new S3Client({
       ...options,
       endpoint: server.url.href,
+      // This test checks error-code propagation, not retry. With the default
+      // retry it needs several event loop turns, which under describe.concurrent
+      // can queue behind the big-response parse above and time out.
+      retry: 0,
     });
 
     try {

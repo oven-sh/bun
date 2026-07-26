@@ -3067,6 +3067,15 @@ impl TestCommand {
         {
             vm.exit_handler.exit_code = 1;
         }
+        // The run is complete: summary printed, exit code computed. Clear
+        // `REPORTER` before firing JS `'exit'` listeners so a handler calling
+        // `process.exit()` (Node's `common.mustCall()` pattern) is handled by
+        // `Bun__Process__exit` as a normal shutdown-time exit rather than a
+        // mid-run abort.
+        // SAFETY: single-threaded (JS VM thread).
+        unsafe {
+            REPORTER.write(None);
+        }
         // Run `process.on('exit')` handlers like `bun run` does. Node's test
         // harness verifies mustCall() counts from one, so skipping them made
         // those assertions silently pass. Must precede the GC-root release
@@ -3089,10 +3098,6 @@ impl TestCommand {
         // no concurrent reader exists on this shutdown path.
         unsafe {
             jest::Jest::RUNNER.write(None);
-        }
-        // SAFETY: same single-thread shutdown path as `RUNNER` above.
-        unsafe {
-            REPORTER.write(None);
         }
         drop(reporter);
         {

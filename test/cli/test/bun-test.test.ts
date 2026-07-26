@@ -1637,6 +1637,31 @@ describe("bun test", () => {
         expect(exitCode).toBe(code);
       },
     );
+
+    // After all tests finish and the summary is printed, the run is no longer
+    // "mid-run": a process.on('exit') listener calling process.exit() must
+    // behave like it does under `bun run` (honor the requested code, no
+    // mid-run diagnostic, no second summary).
+    test.concurrent("process.exit() from an 'exit' listener is not treated as mid-run", async () => {
+      using dir = tempDir("bun-test-process-exit-listener", {
+        "only.test.ts": `
+          import { test } from "bun:test";
+          process.on("exit", () => process.exit(3));
+          test("a passing test", () => {});
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", "./only.test.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).not.toContain("was called during bun test");
+      expect(stderr.match(/\b1 pass\b/g)?.length).toBe(1);
+      expect(exitCode).toBe(3);
+    });
   });
 });
 

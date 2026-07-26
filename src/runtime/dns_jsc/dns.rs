@@ -4155,6 +4155,18 @@ impl Resolver {
             pending_addr_cache_cares,
             pending_nameinfo_cache_cares
         );
+        // The pending caches above are fixed-size (32 slots each); any
+        // query issued past that is dispatched to c-ares untracked
+        // (`LookupCacheHit::Disabled`). Ask c-ares directly so the timeout
+        // timer stays armed for those too. Safe from inside a c-ares callback:
+        // the channel lock is recursive on every platform (PTHREAD_MUTEX_RECURSIVE
+        // on posix, CRITICAL_SECTION on Windows).
+        if let Some(channel) = self.channel.get() {
+            // SAFETY: `channel` is the live c-ares channel owned by `self`.
+            if c_ares::ares_queue_active_queries(unsafe { &*channel }) != 0 {
+                return true;
+            }
+        }
         false
     }
 
@@ -4778,13 +4790,19 @@ impl Resolver {
                 // an error occurred. just pretend that the socket is both readable and writable.
                 // https://github.com/nodejs/node/blob/8a41d9b636be86350cd32847c3f89d327c4f6ff7/src/cares_wrap.cc#L93
                 (*channel).process((*poll).socket, true, true);
-                return;
+            } else {
+                (*channel).process(
+                    (*poll).socket,
+                    events & libuv::UV_READABLE != 0,
+                    events & libuv::UV_WRITABLE != 0,
+                );
             }
-            (*channel).process(
-                (*poll).socket,
-                events & libuv::UV_READABLE != 0,
-                events & libuv::UV_WRITABLE != 0,
-            );
+
+            // See `on_dns_poll` — re-check after `ares_process_fd` has
+            // detached any just-completed queries.
+            if !(*parent).any_requests_pending() {
+                (*parent).remove_timer();
+            }
         }
     }
 
@@ -4828,6 +4846,14 @@ impl Resolver {
         // UnsafeCell-backed).
         unsafe {
             (*channel).process(poll.fd.native(), poll.is_readable(), poll.is_writable());
+        }
+
+        // c-ares detaches a query from its queue only *after* the callback
+        // returns, so `request_completed` (inside the callback) may have seen
+        // the just-finished query still counted and left the timeout timer
+        // armed. Re-check now that `ares_process_fd` has returned.
+        if !self.any_requests_pending() {
+            self.remove_timer();
         }
     }
 

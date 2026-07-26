@@ -307,6 +307,48 @@ describe("bundler", () => {
     },
     minifySyntax: true,
   });
+  // `sideEffect(); module.exports = require(...)` in an allowlisted package
+  // stays in a __commonJS wrapper so that a default import still receives the
+  // re-exported namespace. Rewriting it to `export * from` would leave the
+  // default as an empty object once the linker forces wrap=Cjs.
+  itBundled("cjs2esm/ReactSpecificUnwrappingSideEffectDefaultImport", {
+    files: {
+      "/entry.js": /* js */ `
+        import ReactDOM, { render } from "react-dom";
+        console.log(typeof ReactDOM.render, render());
+      `,
+      "/node_modules/react-dom/index.js": /* js */ `
+        console.log('side effect');
+        module.exports = require('./impl');
+      `,
+      "/node_modules/react-dom/impl.js": /* js */ `
+        exports.render = () => "pass";
+      `,
+      "/node_modules/react-dom/package.json": `{ "name": "react-dom", "version": "19.0.0" }`,
+    },
+    run: {
+      stdout: "side effect\nfunction pass",
+    },
+  });
+  itBundled("cjs2esm/ReactSpecificUnwrappingSideEffectNamespaceImport", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as ReactDOM from "react-dom";
+        console.log(ReactDOM.render(), typeof ReactDOM.default);
+      `,
+      "/node_modules/react-dom/index.js": /* js */ `
+        console.log('side effect');
+        module.exports = require('./impl');
+      `,
+      "/node_modules/react-dom/impl.js": /* js */ `
+        exports.render = () => "pass";
+      `,
+      "/node_modules/react-dom/package.json": `{ "name": "react-dom", "version": "19.0.0" }`,
+    },
+    run: {
+      stdout: "side effect\npass object",
+    },
+  });
   itBundled("cjs2esm/ReactSpecificUnwrapping2", {
     files: {
       "/entry.js": /* js */ `

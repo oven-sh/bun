@@ -408,8 +408,7 @@ pub(crate) fn shell_escape(
     }
     let bunstr = scopeguard::guard(bunstr, |s| s.deref());
 
-    // Mirror the interpolation path (`ShellSrcBuilder::append_js_value_str`): a value that
-    // `$.escape()` accepts must also be accepted by `{ raw: $.escape(v) }`.
+    // Same validation as the interpolation path (ShellSrcBuilder::append_js_value_str).
     if bunstr.index_of_ascii_char(0).is_some() {
         return Err(global_this
             .err(

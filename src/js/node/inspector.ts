@@ -485,9 +485,7 @@ class Session extends EventEmitter {
 
     const result = this.#handleMethod(method, params as object | undefined);
 
-    // Node's post() stores the callback keyed on the message id and dispatches;
-    // the reply is routed to that callback or dropped if none was registered.
-    // post() itself always returns undefined and never throws a command error.
+    // Node: without a callback the reply (including command errors) is dropped.
     if (!callback) return;
 
     queueMicrotask(() => {

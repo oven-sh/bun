@@ -483,8 +483,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             let mut has_collision = false;
 
             for (i, out) in additional.iter().enumerate() {
-                let collides_with_chunk =
-                    path_names_map.get_or_put(&out.dest_path)?.found_existing;
+                let collides_with_chunk = path_names_map.get_or_put(&out.dest_path)?.found_existing;
                 let entry = asset_paths.get_or_put(&out.dest_path)?;
                 if !entry.found_existing {
                     entry.value_ptr.hash = out.hash;

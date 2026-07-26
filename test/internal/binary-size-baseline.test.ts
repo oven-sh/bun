@@ -7,7 +7,7 @@
 // The test stands up a fake GitHub + Buildkite frontend and a fake
 // buildkite-agent, then runs the real script against them.
 
-import { test, expect, beforeAll, afterAll } from "bun:test";
+import { afterAll, beforeAll, expect, test } from "bun:test";
 import { bunEnv, bunExe, isPosix, tempDir } from "harness";
 import { chmodSync } from "node:fs";
 import { join } from "node:path";

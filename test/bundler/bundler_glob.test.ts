@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { symlinkSync } from "node:fs";
 import { join } from "node:path";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { itBundled } from "./expectBundled";
 
 // Coverage for bundling `require("./dir/" + x)` / `import("./dir/" + x)` by

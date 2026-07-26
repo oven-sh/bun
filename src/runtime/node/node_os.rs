@@ -745,11 +745,11 @@ mod _impl {
             let mut result: *mut libc::passwd = core::ptr::null_mut();
 
             let ret: c_int = loop {
-                // Real uid, matching libuv and userInfo()'s uid field.
+                // Effective uid: libuv's uv_os_get_passwd keys on geteuid().
                 // SAFETY: valid buffers and out-pointer
                 let ret = unsafe {
                     libc::getpwuid_r(
-                        libc::getuid(),
+                        libc::geteuid(),
                         &raw mut pw,
                         string_bytes.as_mut_ptr().cast::<c_char>(),
                         string_bytes.len(),

@@ -298,17 +298,9 @@ it("getPriority system error object", () => {
 });
 
 // https://github.com/oven-sh/bun/issues/29244
-//
-// os.homedir() returned a stale value after process.env.HOME was mutated at
-// runtime because the Zig binding read HOME via Bun's snapshot-on-first-read
-// env-var cache. Node's posix uv_os_homedir checks HOME live on every call:
-// it returns getenv("HOME") verbatim whenever it's non-NULL (so HOME="" → ""),
-// and only falls back to the passwd entry when HOME is unset.
-// os.userInfo().homedir reads passwd directly and does NOT honor HOME — that
-// behavior must be preserved.
-//
-// Each test spawns its own subprocess so mutating process.env.HOME can't
-// bleed into the test runner — so they run concurrently.
+// os.homedir() must reflect live process.env.HOME (HOME="" → ""; only absent
+// HOME falls through to passwd); os.userInfo().homedir must NOT honor HOME.
+// Each test runs in a subprocess so mutating HOME can't leak into the runner.
 describe("homedir live $HOME mutations (#29244)", () => {
   async function runBun(source, extraEnv = {}) {
     await using proc = Bun.spawn({

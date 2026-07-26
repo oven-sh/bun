@@ -6192,19 +6192,10 @@ pub mod __gated_printer {
             self.print(b"module.exports");
         }
 
-        /// True when `record` carries no `with { type }` attribute but its
-        /// specifier would be loaded with Bun's JSON loader. For such records
-        /// the Bun-target printer emits an explicit `with { type: "json" }`
-        /// clause so JSC's module map (keyed on
-        /// `(specifier, ScriptFetchParameters::Type)`) hashes the attribute-less
-        /// and attributed forms to the same slot; without it the former keys on
-        /// `Type::JavaScript`, the latter on `Type::JSON`, and one file becomes
-        /// two live module instances.
-        ///
-        /// Filenames Bun routes to the `jsonc` loader instead of `json`
-        /// (`loader_for_path` in `jsc_hooks.rs`) are excluded: emitting
-        /// `with { type: "json" }` for those would force strict JSON at fetch
-        /// time and break empty/commented `package.json` / `tsconfig.json`.
+        /// No `with { type }` on a `.json` specifier: emit one so JSC's
+        /// `(specifier, ScriptFetchParameters::Type)` module-map key matches
+        /// the attributed form. Skips filenames `loader_for_path` routes to
+        /// jsonc, where a synthesized `type: "json"` would force strict JSON.
         fn record_implies_json_type(record: &ImportRecord) -> bool {
             if record.loader.is_some() {
                 return false;

@@ -118,6 +118,50 @@ test("export-from of a .json shares one module with an attributed import", async
   expect(exitCode).toBe(0);
 });
 
+test("export * as of a .json shares one module with an attributed import", async () => {
+  const { stdout, exitCode } = await run({
+    "cfg.json": `{"n":1}`,
+    "reex.mjs": `export * as cfg from "./cfg.json";`,
+    "imp.mjs": `import b from "./cfg.json" with { type: "json" }; export default b;`,
+    "index.mjs": `
+      const a = (await import("./reex.mjs")).cfg;
+      const b = (await import("./imp.mjs")).default;
+      console.log("same:", a.default === b);
+    `,
+  });
+  expect(stdout).toMatchInlineSnapshot(`"same: true"`);
+  expect(exitCode).toBe(0);
+});
+
+test('the bun-target transpiler emits `with { type: "json" }` for attribute-less .json specifiers', () => {
+  // Static child imports go through `hostLoadImportedModule`, not the
+  // dynamic-import hook, so the printer change is load bearing on its own.
+  const t = new Bun.Transpiler({ target: "bun" });
+  const out = t.transformSync(
+    [
+      `import a from "./cfg.json";`,
+      `import b from "./package.json";`,
+      `import c from "./data.json" with { type: "text" };`,
+      `export { default as d } from "./other.json";`,
+      `export * as e from "./more.json";`,
+    ].join("\n"),
+  );
+  expect(out).toMatchInlineSnapshot(`
+"import a from "./cfg.json" with { type: "json" };
+import b from "./package.json";
+import c from "./data.json" with { type: "text" };
+export { default as d } from "./other.json" with { type: "json" };
+export * as e from "./more.json" with { type: "json" };
+"
+`);
+  // Other targets are untouched.
+  for (const target of ["browser", "node"] as const) {
+    expect(new Bun.Transpiler({ target }).transformSync(`import a from "./cfg.json";`)).toBe(
+      `import a from "./cfg.json";\n`,
+    );
+  }
+});
+
 test("an explicit non-json type attribute still produces a distinct module", async () => {
   const { stdout, exitCode } = await run({
     "cfg.json": `{"n":1}`,

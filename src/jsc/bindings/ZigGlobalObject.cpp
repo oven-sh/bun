@@ -3650,14 +3650,10 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
     }
 }
 
-// Bun loads a `.json` path with the JSON loader whether or not the request
-// carried `with { type: "json" }`. JSC's module map is keyed on
-// (specifier, ScriptFetchParameters::Type), so an attribute-less request must
-// reach it as Type::JSON too or the two forms become two live module
-// instances. Applied only when the caller supplied no attributes (an explicit
-// `with { type: ... }` is left untouched) and the filename is not one Bun
-// routes to the jsonc loader (`loader_for_path` in jsc_hooks.rs), for which an
-// inferred `type: "json"` would force strict JSON at fetch time.
+// Attribute-less dynamic import() of a `.json`: supply Type::JSON so JSC's
+// (specifier, Type) module-map key matches the `with { type: "json" }` form.
+// Skips filenames `loader_for_path` routes to jsonc, where a synthesized
+// attribute would force strict JSON at fetch time.
 static ALWAYS_INLINE void normalizeFetchParametersForResolvedPath(RefPtr<JSC::ScriptFetchParameters>& parameters, const JSC::Identifier& resolved)
 {
     if (parameters)

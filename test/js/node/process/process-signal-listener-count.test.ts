@@ -134,3 +134,97 @@ done"
 `);
   expect(exitCode).toBe(0);
 });
+
+// process.removeAllListeners() with NO event name must uninstall the underlying
+// OS signal handler for every signal that had listeners, restoring SIG_DFL.
+test.skipIf(isWindows)("process.removeAllListeners() with no args restores default signal handling", async () => {
+  const script = /*js*/ `
+    process.on("SIGUSR2", () => {
+      console.log("handler fired (bug: removeAllListeners should have removed me)");
+    });
+    process.removeAllListeners();
+    console.log("listenerCount SIGUSR2 =", process.listenerCount("SIGUSR2"));
+
+    setTimeout(() => {
+      console.log("timeout reached (bug: signal was swallowed)");
+      process.exit(42);
+    }, 2000);
+
+    process.kill(process.pid, "SIGUSR2");
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(normalizeBunSnapshot(stdout)).toBe("listenerCount SIGUSR2 = 0");
+  expect(stderr).toBe("");
+  expect(exitCode).not.toBe(42);
+  expect(exitCode).not.toBe(0);
+  expect(proc.signalCode).toBe("SIGUSR2");
+});
+
+// After process.removeAllListeners() with NO event name, adding a listener
+// again must reinstall the OS signal handler.
+test.skipIf(isWindows)("process.removeAllListeners() with no args then re-adding reinstalls the handler", async () => {
+  const script = /*js*/ `
+    const { promise, resolve } = Promise.withResolvers();
+
+    process.on("SIGUSR2", () => {});
+    process.removeAllListeners();
+    process.on("SIGUSR2", () => {
+      console.log("handler fired");
+      resolve();
+    });
+
+    process.kill(process.pid, "SIGUSR2");
+    await promise;
+    console.log("done");
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
+"handler fired
+done"
+`);
+  expect(exitCode).toBe(0);
+});
+
+// process.removeAllListeners() with NO event name must unref the IPC channel
+// so a child with no remaining work can exit.
+test("process.removeAllListeners() with no args unrefs the IPC channel", async () => {
+  const script = /*js*/ `
+    process.on("message", () => {});
+    process.removeAllListeners();
+    console.log("child listenerCount message =", process.listenerCount("message"));
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    ipc: () => {},
+    serialization: "json",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(normalizeBunSnapshot(stdout)).toBe("child listenerCount message = 0");
+  expect(exitCode).toBe(0);
+});

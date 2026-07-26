@@ -186,6 +186,31 @@ setTimeout(() => console.log(order.join(",")), 0);
     expect(exitCode).toBe(0);
   });
 
+  test.concurrent("globalThis.onrejectionhandled fires", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+const keepAlive = setInterval(() => {}, 1000);
+globalThis.onunhandledrejection = (e) => e.preventDefault();
+globalThis.onrejectionhandled = (e) => {
+  console.log(e.constructor.name, e.type, e.promise === p);
+  clearInterval(keepAlive);
+};
+const p = Promise.reject(new Error("boom"));
+setTimeout(() => p.catch(() => {}), 0);
+`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("PromiseRejectionEvent rejectionhandled true");
+    expect(exitCode).toBe(0);
+  });
+
   test.concurrent("addEventListener('rejectionhandled') fires", async () => {
     await using proc = Bun.spawn({
       cmd: [

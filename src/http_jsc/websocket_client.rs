@@ -82,9 +82,7 @@ pub struct WebSocket<const SSL: bool> {
     /// A Ping/Pong/Close payload is mid-accumulation in `ping_frame_bytes`.
     pub control_frame_started: Cell<bool>,
     pub close_received: Cell<bool>,
-    /// `Some` once a Close frame has been enqueued: blocks further outbound
-    /// writes and drives `clear_data` + the JS dispatch once the frame is
-    /// fully flushed (or the socket dies).
+    /// Set once a Close frame is enqueued; drives teardown + JS dispatch after it drains.
     pub close_dispatch_pending: RefCell<Option<PendingClose>>,
 
     pub receive_body_remain: Cell<usize>,
@@ -313,9 +311,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         log!("onClose");
         jsc::mark_binding!();
         if let Some(pending) = self.close_dispatch_pending.take() {
-            // The socket closed while our close frame was mid-flush; the peer
-            // either got it or didn't, but JS should still see the original
-            // close code/reason (not an abrupt 1006).
+            // Socket died mid-flush; JS still sees the original code, not 1006.
             self.detach_tcp();
             self.clear_data();
             self.dispatch_pending_close(pending);
@@ -338,23 +334,17 @@ impl<const SSL: bool> WebSocket<SSL> {
 
     pub fn terminate(&self, code: ErrorCode) {
         log!("terminate");
-        // RFC 6455 §7.1.7: an endpoint that fails the connection because of a
-        // protocol error SHOULD send a Close frame with the status code first
-        // so the peer sees 1002/1007/1009 instead of an abnormal 1006.
+        // RFC 6455 §7.1.7: send a Close frame with the status code before failing.
         if let Some(wire_code) = code.close_frame_code() {
             if self.outgoing_websocket.get().is_none() || self.has_pending_close_dispatch() {
-                // A Close frame is already on the wire or draining; a second
-                // protocol error in the same read must not fall through to
-                // fail() → cancel() → close(Failure) and RST it away.
+                // Already failing; don't fall through to fail() → RST the queued Close.
                 return;
             }
             if self.has_tcp() {
                 if !self.write_close_frame(wire_code) {
-                    // enqueue_encoded_bytes already tore down via
-                    // terminate(FailedToWrite) → fail().
+                    // enqueue_encoded_bytes → terminate(FailedToWrite) already tore down.
                     return;
                 }
-                // §7.1.7: stop processing data from the peer once failed.
                 self.close_received.set(true);
                 if self.send_buffer.borrow().readable_length() == 0 {
                     self.shutdown_after_close_frame();
@@ -363,8 +353,7 @@ impl<const SSL: bool> WebSocket<SSL> {
                     self.close_dispatch_pending
                         .replace(Some(PendingClose::Failed(code)));
                 }
-                // Dispatch now (not after the drain) so C++ transitions to
-                // CLOSED and JS/ws.send() cannot queue data after the Close.
+                // Dispatch now so C++ → CLOSED and later ws.send() is a no-op.
                 self.dispatch_abrupt_close(code);
                 return;
             }
@@ -372,9 +361,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         self.fail(code);
     }
 
-    /// Enqueue an 8-byte masked Close frame carrying just `code` (no reason).
-    /// Returns `false` if the write failed, in which case the nested
-    /// `terminate(FailedToWrite)` → `fail()` has already run the teardown.
+    /// Enqueue a masked Close frame carrying `code` (no reason).
     fn write_close_frame(&self, code: u16) -> bool {
         let mut frame = [0u8; CONTROL_HEADER_SIZE + 2];
         let header = WebsocketHeader::new(2, true, Opcode::Close);
@@ -1288,9 +1275,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         }
     }
 
-    // `reason` is transferred to C++ inside `dispatch_close` (via `&mut`),
-    // so the by-value `pending` is in fact consumed.
-    #[allow(clippy::needless_pass_by_value)]
+    #[allow(clippy::needless_pass_by_value)] // `reason` is transferred to C++ via &mut
     fn dispatch_pending_close(&self, pending: PendingClose) {
         match pending {
             PendingClose::Clean { code, mut reason } => self.dispatch_close(code, &mut reason),
@@ -2110,9 +2095,7 @@ pub enum ErrorCode {
 }
 
 impl ErrorCode {
-    /// RFC 6455 §7.4.1 status code to put on the wire when this error fails
-    /// the connection (§7.1.7). `None` for transport-level failures where the
-    /// socket is already dead or never established.
+    /// RFC 6455 §7.4.1 wire status code for this failure; `None` for transport errors.
     fn close_frame_code(self) -> Option<u16> {
         match self {
             ErrorCode::ControlFrameIsFragmented

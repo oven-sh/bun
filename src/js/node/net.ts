@@ -1865,8 +1865,11 @@ Object.defineProperty(Socket.prototype, "bytesWritten", {
       for (let i = 0; i < data.length; i++) {
         const chunk = data[i];
         if (data.allBuffers || chunk instanceof Buffer) bytes += chunk.length;
-        else if (chunk.chunk !== undefined) bytes += Buffer.byteLength(chunk.chunk, chunk.encoding);
-        else bytes += chunk.length;
+        else {
+          const inner = chunk.chunk;
+          if (inner !== undefined) bytes += Buffer.byteLength(inner, chunk.encoding);
+          else bytes += chunk.length;
+        }
       }
     } else if (data) {
       // Writes are either a string or a Buffer.
@@ -2800,13 +2803,14 @@ Socket.prototype._writev = function _writev(data, callback) {
   // connecting / upgrade-in-flight deferral mirrors _write. _pendingData
   // carries the Buffer[] and the drain handler resumes it once the handle is
   // open and the native buffer is empty.
-  if (this.connecting || (!this._handle && this[kupgraded] && !this.destroyed)) {
+  const connecting = this.connecting;
+  if (connecting || (!this._handle && this[kupgraded] && !this.destroyed)) {
     this._pendingData = data;
     this._pendingEncoding = "";
     this[kwriteCallback] = callback;
     const retry = onWritevHandleReady.bind(this, data, callback);
     const onClose = onWritevCloseBeforeReady.bind(this, callback);
-    this.once(this.connecting ? "connect" : kUpgradeAttached, function () {
+    this.once(connecting ? "connect" : kUpgradeAttached, function () {
       this.off("close", onClose);
       retry();
     });

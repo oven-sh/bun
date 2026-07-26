@@ -2828,8 +2828,7 @@ Socket.prototype._writev = function _writev(data, callback) {
   }
   this._unrefTimer();
   if (socket.readyState < 0) {
-    const er = new ErrnoException(process.platform === "win32" ? -4047 /* UV_EPIPE */ : -9 /* UV_EBADF */, "write");
-    process.nextTick(callback, er);
+    process.nextTick(callback, new ErrnoException(-9 /* UV_EBADF */, "write"));
     return false;
   }
 
@@ -2851,8 +2850,7 @@ function onWritevHandleReady(data, callback) {
   }
   this._unrefTimer();
   if (socket.readyState < 0) {
-    const er = new ErrnoException(process.platform === "win32" ? -4047 /* UV_EPIPE */ : -9 /* UV_EBADF */, "write");
-    process.nextTick(callback, er);
+    process.nextTick(callback, new ErrnoException(-9 /* UV_EBADF */, "write"));
     return;
   }
   if (writeChunksUntilFull(this, socket, data, callback)) {

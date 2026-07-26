@@ -1714,11 +1714,17 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
             return Ok(Value::Null);
         }
         // A Bun.serve body shares its slot with the RequestContext (= `task`):
-        // materialize the stream in place so the context streams into it, and
         // hand out a detached PendingValue instead of moving the Locked out.
+        // Prefer a stream that is already live (JS cache or `locked.readable`);
+        // only fall back to `to_readable_stream` to materialize one in place.
         if matches!(self.get_body_value(), Value::Locked(l) if l.task.is_some()) {
-            let stream_value = self.get_body_value().to_readable_stream(global_this)?;
-            let readable = ReadableStream::from_js(stream_value, global_this)?;
+            let readable = match self.get_body_readable_stream(global_this) {
+                Some(rs) => Some(rs),
+                None => {
+                    let v = self.get_body_value().to_readable_stream(global_this)?;
+                    ReadableStream::from_js(v, global_this)?
+                }
+            };
             *self.get_body_value() = Value::Used;
             if let Some(js_ref) = self.js_ref() {
                 Self::stream_set_cached(js_ref, global_this, JSValue::ZERO);

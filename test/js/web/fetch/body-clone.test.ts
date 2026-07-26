@@ -1251,4 +1251,23 @@ describe("new Request(input) transfers the input body", () => {
       });
     });
   }
+
+  test("Bun.serve: req.clone() then new Request(req) both read the bytes and the input is consumed", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        const c = req.clone();
+        const r = new Request(req, { headers: { "x-proxied": "1" } });
+        const inputUsed = req.bodyUsed;
+        const [cloneText, copyText] = await Promise.all([c.text(), r.text()]);
+        return Response.json({ inputUsed, cloneText, copyText });
+      },
+    });
+    const res = await fetch(server.url, { method: "POST", body: "hello-server" });
+    expect(await res.json()).toEqual({
+      inputUsed: true,
+      cloneText: "hello-server",
+      copyText: "hello-server",
+    });
+  });
 });

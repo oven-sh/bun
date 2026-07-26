@@ -223,6 +223,7 @@ unsafe extern "C" {
     pub fn us_nq_spec_iov(s: *const lsquic_out_spec, n: *mut usize) -> *const iovec;
     pub fn us_nq_spec_stride() -> usize;
     pub fn us_nq_stream_reset(s: *mut lsquic_stream, code: u64);
+    pub fn us_nq_stream_msg_error(s: *mut lsquic_stream, code: u64);
     pub fn us_nq_hset_pairs(hset: *mut c_void, len: *mut usize) -> *const c_char;
     pub fn us_nq_hset_malformed(hset: *mut c_void) -> c_int;
     pub fn us_nq_hset_free(hset: *mut c_void);
@@ -711,6 +712,11 @@ impl Stream {
     pub fn reset(&self, code: u64) {
         // SAFETY: as above.
         unsafe { us_nq_stream_reset(self.0, code) }
+    }
+    /// `lsquic_stream_msg_error`: per-stream RST+SS, synthesize RST_RECVD, fire on_reset(0).
+    pub fn msg_error(&self, code: u64) {
+        // SAFETY: as above.
+        unsafe { us_nq_stream_msg_error(self.0, code) }
     }
     pub fn error_code(&self) -> u64 {
         unsafe extern "C" {

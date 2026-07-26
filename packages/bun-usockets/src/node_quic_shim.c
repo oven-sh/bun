@@ -563,6 +563,11 @@ void us_nq_stream_reset(lsquic_stream_t *s, uint64_t code) {
     lsquic_stream_force_reset_ext(s, code);
 }
 
+extern void lsquic_stream_msg_error(lsquic_stream_t *, uint64_t);
+void us_nq_stream_msg_error(lsquic_stream_t *s, uint64_t code) {
+    lsquic_stream_msg_error(s, code);
+}
+
 /* ───── node:quic loop driver ─────
  *
  * The corking model quic.c uses for Bun.serve's HTTP/3 listener: JS marks the

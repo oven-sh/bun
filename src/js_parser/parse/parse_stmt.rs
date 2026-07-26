@@ -307,7 +307,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     fn t_with(p: &mut Self, _: &mut ParseStatementOptions, loc: bun_ast::Loc) -> Result<Stmt> {
         let with_range = p.lexer.range();
         p.lexer.next()?;
-        p.mark_strict_mode_feature(crate::parser::StrictModeFeature::WithStatement, with_range, b"")?;
+        p.mark_strict_mode_feature(
+            crate::parser::StrictModeFeature::WithStatement,
+            with_range,
+            b"",
+        )?;
         p.lexer.expect(T::TOpenParen)?;
         let test_ = p.parse_expr(Level::Lowest)?;
         let body_loc = p.lexer.loc();

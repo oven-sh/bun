@@ -228,12 +228,16 @@ describe("node:http 'upgrade' with a request body", () => {
     });
     await once(server.listen(0), "listening");
     const port = (server.address() as net.AddressInfo).port;
+    // Set up before connecting: 'connection' can fire before the awaits below.
+    const serverConnection = once(server, "connection");
     const client = net.connect(port, "127.0.0.1");
     client.on("error", () => {});
+    client.setNoDelay(true);
     try {
       await once(client, "connect");
       client.write("GET / HTTP/1.1\r\nHost: x\r\nConnection: Upgra");
-      await once(server, "connection");
+      await serverConnection;
+      await new Promise<void>(r => setImmediate(r));
       client.write("de\r\nUpgrade: x\r\nContent-Length: 5\r\n\r\nHELLO" + tail);
       client.end();
       const { reqData, delivered } = await promise;

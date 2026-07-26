@@ -807,11 +807,9 @@ private:
              * ends the socket's readable side and then tears the connection down
              * (the declared body is unsatisfied, so there is no valid tunnel
              * state to keep half-open). Closing here drives onClose, which
-             * delivers the body abort and releases the pending-request ref. */
+             * delivers the socket fin, the body abort and the pending-request
+             * release. */
             if (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_TUNNEL_AFTER_BODY) {
-                if (httpResponseData->socketData && httpContextData->onSocketData) {
-                    httpContextData->onSocketData(httpResponseData->socketData, SSL, s, "", 0, true);
-                }
                 asyncSocket->close();
                 return s;
             }

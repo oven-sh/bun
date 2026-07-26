@@ -1286,7 +1286,12 @@ struct HttpResponseData;
                         for (auto chunk : uWS::ChunkIterator(&scanView, &scanState, false, &scanExt, &scanTrailers, maxBufferedHeaderSize)) {
                             (void) chunk;
                         }
-                        if (!isParsingChunkedEncoding(scanState) && !isParsingInvalidChunkedEncoding(scanState)) {
+                        /* Mirror the real parse's gates so bodyCompleteInHead
+                         * is never true for a body the real parse will reject
+                         * (stranding the JS deferred emit). */
+                        if (!isParsingChunkedEncoding(scanState) && !isParsingInvalidChunkedEncoding(scanState)
+                                && scanExt <= MAX_CHUNK_EXTENSION_SIZE
+                                && validateNodeTrailerSection(&scanTrailers, useInsecureHTTPParser) == HTTP_PARSER_ERROR_NONE) {
                             req->head = std::span<const char>(scanView.data(), scanView.length());
                             req->bodyCompleteInHead = true;
                         } else {

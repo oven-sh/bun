@@ -1008,6 +1008,10 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
             http_req.once("end", clearUpgradeIncoming.bind(undefined, socket));
           }
           const upgradeHead = connectHead ? connectHead : kEmptyBuffer;
+          // Like CONNECT: the connection is detached from the HTTP request
+          // machinery; hold the native callback open until the raw socket
+          // closes.
+          const { promise: upgradePromise, resolve: resolveUpgrade } = $newPromiseCapability(Promise);
           const emitUpgrade = () => {
             let handled;
             try {
@@ -1024,12 +1028,10 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
               // listener is installed: Node.js destroys the socket.
               socket.destroy();
             }
+            // Attach the internal close listener after the user's handler ran:
+            // Node.js hands the socket over with no listeners (same as CONNECT).
+            socket.once("close", resolveUpgrade);
           };
-          // Like CONNECT: the connection is detached from the HTTP request
-          // machinery; hold the native callback open until the raw socket
-          // closes.
-          const { promise: upgradePromise, resolve: resolveUpgrade } = $newPromiseCapability(Promise);
-          socket.once("close", resolveUpgrade);
           if (hasBody && bodyCompleteInHead) {
             // Body is in this chunk: defer to onDataIncomingMessage's fin so
             // the listener observes req.complete and the buffered body.

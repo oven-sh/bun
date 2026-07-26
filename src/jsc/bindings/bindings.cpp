@@ -2369,6 +2369,7 @@ extern "C" JSC::EncodedJSValue Bun__createFetchFailedTypeError(
     bool terminated)
 {
     auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     auto clientData = WebCore::clientData(vm);
 
     JSC::JSObject* result = JSC::createTypeError(globalObject,
@@ -2385,11 +2386,8 @@ extern "C" JSC::EncodedJSValue Bun__createFetchFailedTypeError(
         }
     }
 
-    // Only transplant the fetch() call-site stack for the pre-response
-    // rejection. A body-stage ('terminated') error reaches the consumer via
-    // the body stream/promise, whose reject path attaches the awaiter's async
-    // frames; overwriting those with the fetch() call site would point at the
-    // wrong line.
+    // Transplant only for the pre-response rejection; body-stage errors get
+    // their stack from the body promise's async-attach path.
     auto* destInstance = dynamicDowncast<JSC::ErrorInstance>(result);
     JSC::JSValue stackSrc = JSC::JSValue::decode(stackSourceValue);
     if (auto* srcInstance = dynamicDowncast<JSC::ErrorInstance>(stackSrc); srcInstance && destInstance && !terminated) {
@@ -2399,17 +2397,23 @@ extern "C" JSC::EncodedJSValue Bun__createFetchFailedTypeError(
             frames.appendVector(*srcTrace);
             destInstance->setStackFrames(vm, WTF::move(frames));
         } else {
-            // GC's finalizeUnconditionally may have materialized the source
-            // (clearing its frame vector) if a captured callee was collected
-            // before the rejection ran. Fall back to the source's `.stack`
-            // string, rewriting the header for the outer TypeError.
+            // GC may have materialized the source (finalizeUnconditionally
+            // clears the frame vector when a captured callee is collected):
+            // fall back to its `.stack` string with the header rewritten.
+            // Swallow a throwing prepareStackTrace; the header-only fallback
+            // below still runs.
             srcInstance->materializeErrorInfoIfNeeded(vm);
-            if (JSC::JSValue srcStack = srcInstance->getDirect(vm, vm.propertyNames->stack); srcStack && srcStack.isString()) {
+            if (scope.exception()) [[unlikely]] {
+                scope.clearException();
+            } else if (JSC::JSValue srcStack = srcInstance->getDirect(vm, vm.propertyNames->stack); srcStack && srcStack.isString()) {
                 auto str = asString(srcStack)->value(globalObject);
-                size_t nl = str->find('\n');
-                auto frames = nl == WTF::notFound ? WTF::emptyString() : str->substring(nl);
-                auto header = terminated ? "TypeError: terminated"_s : "TypeError: fetch failed"_s;
-                result->putDirect(vm, vm.propertyNames->stack, JSC::jsString(vm, makeString(header, frames)), JSC::PropertyAttribute::DontEnum | 0);
+                if (scope.exception()) [[unlikely]] {
+                    scope.clearException();
+                } else {
+                    size_t nl = str->find('\n');
+                    auto frames = nl == WTF::notFound ? WTF::emptyString() : str->substring(nl);
+                    result->putDirect(vm, vm.propertyNames->stack, JSC::jsString(vm, makeString("TypeError: fetch failed"_s, frames)), JSC::PropertyAttribute::DontEnum | 0);
+                }
             }
         }
     }

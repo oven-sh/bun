@@ -9,7 +9,7 @@ import { bunEnv, bunExe } from "harness";
 
 // Bind an ephemeral port then close it so nothing is listening.
 function refusedPort(): number {
-  using server = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
+  const server = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
   const port = server.port;
   server.stop(true);
   return port;

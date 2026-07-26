@@ -696,6 +696,18 @@ describe("util.isDeepStrictEqual", () => {
     expect(util.isDeepStrictEqual(Object.create(null), Object.create(null))).toBe(true);
   });
 
+  test("reads an array's own symbol-keyed getter once per side", () => {
+    const s = Symbol("k");
+    let calls = 0;
+    const make = () => {
+      const a = [1];
+      Object.defineProperty(a, s, { enumerable: true, get: () => (calls++, 42) });
+      return a;
+    };
+    expect(util.isDeepStrictEqual(make(), make())).toBe(true);
+    expect(calls).toBe(2);
+  });
+
   // The third argument was added in Node v26.
   describe("skipPrototype", () => {
     class Foo {

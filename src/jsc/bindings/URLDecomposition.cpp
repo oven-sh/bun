@@ -125,13 +125,21 @@ void URLDecomposition::setHost(StringView value)
 {
     auto fullURL = this->fullURL();
     // The value is a host[:port] by definition: apply the Unicode 16 IDNA
-    // delta so old platform ICU data yields node's host (see DOMURL.cpp).
+    // delta to the host span only so old platform ICU data yields node's host
+    // (see DOMURL.cpp). The port span must stay verbatim: the delta's
+    // ignored-class entries (U+180E, U+206A..U+206F) are stripped, which
+    // would turn an invalid non-digit port character into a valid port.
     // Non-special schemes have opaque hosts, and '['-prefixed hosts go to
     // the IPv6 parser; neither runs IDNA.
     String mappedValue;
-    if (fullURL.hasSpecialScheme() && !value.startsWith('[') && Bun::containsUnicode16IDNADeltaSource(value)) {
-        mappedValue = Bun::applyUnicode16IDNADelta(value.toString());
-        value = mappedValue;
+    if (fullURL.hasSpecialScheme() && !value.startsWith('[')) {
+        size_t hostEnd = value.reverseFind(':');
+        auto hostSpan = hostEnd == notFound ? value : value.left(hostEnd);
+        if (Bun::containsUnicode16IDNADeltaSource(hostSpan)) {
+            auto mappedHost = Bun::applyUnicode16IDNADelta(hostSpan.toString());
+            mappedValue = hostEnd == notFound ? mappedHost : makeString(mappedHost, value.substring(hostEnd));
+            value = mappedValue;
+        }
     }
     if (value.isEmpty() && !fullURL.protocolIsFile() && fullURL.hasSpecialScheme())
         return;

@@ -893,6 +893,14 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
             return false;
         }
 
+        if constexpr (checkPrototypes) {
+            // node compares own enumerable non-index string and symbol
+            // properties via getOwnNonIndexProperties; the Bun.deepEquals
+            // symbol-only block below walks the prototype chain and would
+            // also duplicate the symbol pass.
+            return nonIndexOwnPropertiesEqual<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, gcBuffer, stack, scope, o1, o2);
+        }
+
         JSC::PropertyNameArrayBuilder a1(vm, PropertyNameMode::Symbols, PrivateSymbolMode::Exclude);
         JSC::PropertyNameArrayBuilder a2(vm, PropertyNameMode::Symbols, PrivateSymbolMode::Exclude);
         JSObject::getOwnPropertyNames(o1, globalObject, a1, DontEnumPropertiesMode::Exclude);
@@ -938,11 +946,6 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
         }
 
         RETURN_IF_EXCEPTION(scope, false);
-
-        if constexpr (checkPrototypes) {
-            // node also compares own enumerable non-index string properties.
-            return nonIndexOwnPropertiesEqual<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, gcBuffer, stack, scope, o1, o2);
-        }
 
         return true;
     }

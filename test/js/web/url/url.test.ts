@@ -113,6 +113,15 @@ describe("url", () => {
     const u = new URL("foo://x/");
     u.hostname = "\u1E9E";
     expect(u.hostname).toBe("%E1%BA%9E");
+    // url.host setter: delta applies to the host span only, port stays
+    // verbatim so an ignored-class code point there is not stripped into a
+    // valid digit run.
+    const h1 = new URL("http://x/");
+    h1.host = "foo:8\u206A0";
+    expect(h1.port).toBe("8");
+    const h2 = new URL("http://x/");
+    h2.host = "foo\u1E9E:81";
+    expect(h2.host).toBe("xn--foo-7ka:81");
   });
 
   it("prints", () => {

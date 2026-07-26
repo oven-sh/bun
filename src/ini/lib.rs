@@ -1622,14 +1622,22 @@ mod draft {
                 }
             }
 
+            // `configs` accumulates across .npmrc files and is re-iterated in
+            // full each call, so rebuild tarball_url_auth from scratch: an
+            // entry that was unmatched in an earlier file may now match a
+            // scoped registry introduced by this file.
+            install.tarball_url_auth.clear();
+
             for conf_item in configs.iter() {
                 let conf_item_url = URL::parse(&conf_item.registry_url);
+                let mut matched_any_registry = false;
 
                 if bun_core::without_trailing_slash(&default_registry_host)
                     == bun_core::without_trailing_slash(conf_item_url.host)
                     && bun_core::without_trailing_slash(&default_registry_pathname)
                         == bun_core::without_trailing_slash(conf_item_url.pathname)
                 {
+                    matched_any_registry = true;
                     // Apply config to default registry
                     let v: &mut NpmRegistry = 'brk: {
                         if let Some(r) = install.default_registry.as_mut() {
@@ -1648,32 +1656,7 @@ mod draft {
                         install.default_registry.as_mut().unwrap()
                     };
 
-                    match conf_item.optname {
-                        ConfigOpt::_AuthToken => {
-                            if let Some(x) = conf_item.dupe_value_decoded(log, source)? {
-                                v.token = x;
-                            }
-                        }
-                        ConfigOpt::Username => {
-                            if let Some(x) = conf_item.dupe_value_decoded(log, source)? {
-                                v.username = x;
-                            }
-                        }
-                        ConfigOpt::_Password => {
-                            if let Some(x) = conf_item.dupe_value_decoded(log, source)? {
-                                v.password = x;
-                            }
-                        }
-                        ConfigOpt::_Auth => {
-                            handle_auth(v, conf_item, log, source)?;
-                        }
-                        ConfigOpt::Email => {
-                            if let Some(x) = conf_item.dupe_value_decoded(log, source)? {
-                                v.email = x;
-                            }
-                        }
-                        ConfigOpt::Certfile | ConfigOpt::Keyfile => unreachable!(),
-                    }
+                    apply_config_opt(v, conf_item, log, source)?;
                 }
 
                 // `keys()`/`values_mut()` on the same map alias; since
@@ -1699,36 +1682,34 @@ mod draft {
                                 continue;
                             }
                         }
+                        matched_any_registry = true;
                         // Apply config to scoped registry
-                        match conf_item.optname {
-                            ConfigOpt::_AuthToken => {
-                                if let Some(x) = conf_item.dupe_value_decoded(log, source)? {
-                                    v.token = x;
-                                }
-                            }
-                            ConfigOpt::Username => {
-                                if let Some(x) = conf_item.dupe_value_decoded(log, source)? {
-                                    v.username = x;
-                                }
-                            }
-                            ConfigOpt::_Password => {
-                                if let Some(x) = conf_item.dupe_value_decoded(log, source)? {
-                                    v.password = x;
-                                }
-                            }
-                            ConfigOpt::_Auth => {
-                                handle_auth(v, conf_item, log, source)?;
-                            }
-                            ConfigOpt::Email => {
-                                if let Some(x) = conf_item.dupe_value_decoded(log, source)? {
-                                    v.email = x;
-                                }
-                            }
-                            ConfigOpt::Certfile | ConfigOpt::Keyfile => unreachable!(),
-                        }
+                        apply_config_opt(v, conf_item, log, source)?;
                         // We have to keep going as it could match multiple scopes
                         continue;
                     }
+                }
+
+                if !matched_any_registry {
+                    // `//host/path/:*=` entry that matches neither the default
+                    // nor any scoped registry. npm looks up auth by the URL
+                    // being fetched, so such an entry can still apply to a
+                    // tarball download whose `dist.tarball` points at this
+                    // origin. Group by `.npmrc` URL so multiple options for the
+                    // same host accumulate into one `NpmRegistry`.
+                    let v: &mut NpmRegistry = 'brk: {
+                        for entry in install.tarball_url_auth.iter_mut() {
+                            if *entry.url == *conf_item.registry_url {
+                                break 'brk entry;
+                            }
+                        }
+                        install.tarball_url_auth.push(NpmRegistry {
+                            url: Box::<[u8]>::from(&*conf_item.registry_url),
+                            ..Default::default()
+                        });
+                        install.tarball_url_auth.last_mut().unwrap()
+                    };
+                    apply_config_opt(v, conf_item, log, source)?;
                 }
             }
 
@@ -1860,6 +1841,41 @@ mod draft {
             matchers: matchers.into_boxed_slice(),
             behavior,
         })
+    }
+
+    fn apply_config_opt(
+        v: &mut NpmRegistry,
+        conf_item: &ConfigItem,
+        log: &mut Log,
+        source: &Source,
+    ) -> OOM<()> {
+        match conf_item.optname {
+            ConfigOpt::_AuthToken => {
+                if let Some(x) = conf_item.dupe_value_decoded(log, source)? {
+                    v.token = x;
+                }
+            }
+            ConfigOpt::Username => {
+                if let Some(x) = conf_item.dupe_value_decoded(log, source)? {
+                    v.username = x;
+                }
+            }
+            ConfigOpt::_Password => {
+                if let Some(x) = conf_item.dupe_value_decoded(log, source)? {
+                    v.password = x;
+                }
+            }
+            ConfigOpt::_Auth => {
+                handle_auth(v, conf_item, log, source)?;
+            }
+            ConfigOpt::Email => {
+                if let Some(x) = conf_item.dupe_value_decoded(log, source)? {
+                    v.email = x;
+                }
+            }
+            ConfigOpt::Certfile | ConfigOpt::Keyfile => unreachable!(),
+        }
+        Ok(())
     }
 
     fn handle_auth(

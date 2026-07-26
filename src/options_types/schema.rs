@@ -273,6 +273,13 @@ pub mod api {
         pub default_registry: Option<NpmRegistry>,
         /// scoped
         pub scoped: Option<NpmRegistryMap>,
+        /// `.npmrc` `//host/path/:_authToken=`-style entries whose URL does not
+        /// match the default registry or any scoped registry. Consulted by
+        /// tarball downloads when `dist.tarball` points at a host other than
+        /// the configured registry origin (Artifactory/Nexus with a separate
+        /// tarball/CDN host). `NpmRegistry::url` holds the raw `.npmrc` URL
+        /// part (no protocol, e.g. `cdn.example.com/`).
+        pub tarball_url_auth: Vec<NpmRegistry>,
         /// lockfile_path
         pub lockfile_path: Option<Box<[u8]>>,
         /// save_lockfile_path

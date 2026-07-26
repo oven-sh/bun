@@ -2837,6 +2837,16 @@ pub mod JSZstd {
             output.shrink_to_fit();
         }
 
+        let max_output = ArrayBuffer::MAX_SIZE as usize;
+        if output.len() > max_output {
+            return Err(global_this
+                .err(
+                    jsc::ErrCode::BUFFER_TOO_LARGE,
+                    format_args!("Cannot create a Buffer larger than {max_output} bytes"),
+                )
+                .throw());
+        }
+
         Ok(JSValue::create_buffer(global_this, output.leak()))
     }
 

@@ -385,7 +385,8 @@ describe.skipIf(os.totalmem() < 16 * 1024 ** 3)("decompressed output > ArrayBuff
   }
 
   // Bun.gunzipSync stops at the first gzip member, so the bomb has to be a
-  // single stream: compress (4 GiB + 1 KiB) of zeros and decompress that.
+  // single stream that decompresses to exactly 2^32 bytes (one past
+  // ArrayBuffer::MAX_SIZE).
   it("Bun.gunzipSync throws ERR_BUFFER_TOO_LARGE instead of panicking", async () => {
     const script = `
       import * as zlib from "node:zlib";

@@ -2916,6 +2916,7 @@ describe("bundler", () => {
     onAfterBundle(api) {
       expect(api.readFile("/out.js")).toContain("with (scope)");
     },
+    run: { stdout: "hi" },
   });
 });
 

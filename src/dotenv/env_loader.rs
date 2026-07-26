@@ -88,10 +88,6 @@ impl DotEnvBehavior {
     }
 }
 
-/// Mirrors the value fields of `bun_s3_signing::S3Credentials` (T5). Defined locally so
-/// this T2 crate names no `bun_s3_signing` types — see PORTING.md §Dispatch (cold-path,
-/// upward dep). The high-tier caller constructs the real refcounted `S3Credentials` from
-/// this POD at the call site.
 #[inline]
 fn is_suffix_key(k: &[u8]) -> bool {
     #[cfg(windows)]
@@ -101,6 +97,10 @@ fn is_suffix_key(k: &[u8]) -> bool {
     return k == b"NODE_ENV" || k == b"BUN_ENV";
 }
 
+/// Mirrors the value fields of `bun_s3_signing::S3Credentials` (T5). Defined locally so
+/// this T2 crate names no `bun_s3_signing` types — see PORTING.md §Dispatch (cold-path,
+/// upward dep). The high-tier caller constructs the real refcounted `S3Credentials` from
+/// this POD at the call site.
 #[derive(Clone, Default)]
 pub struct S3Credentials {
     pub access_key_id: Box<[u8]>,
@@ -1355,9 +1355,6 @@ impl<'a> Parser<'a> {
                     // Allow keys defined later in the same file to override keys defined earlier
                     // https://github.com/oven-sh/bun/issues/1262
                     if !OVERRIDE {
-                        if CONDITIONAL {
-                            entry.value_ptr.conditional = true;
-                        }
                         continue;
                     }
                 }

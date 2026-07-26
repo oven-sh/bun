@@ -886,12 +886,14 @@ for (const shell of ["system", "bun"]) {
       // An `.env` entry that references a key supplied by a NODE_ENV-dependent
       // file is itself NODE_ENV-dependent and must not be forwarded, or a
       // script like "NODE_ENV=production bun ..." would inherit the
-      // development expansion. An entry that expands only process-env /
-      // same-file keys stays forwarded.
+      // development expansion. An entry that expands a process-env key stays
+      // forwarded even when a NODE_ENV-dependent file also defines that key
+      // (process env wins under every NODE_ENV).
       const tmp = tempDirWithFiles("script-runner-dotenv", {
         "package.json": '{"scripts":{"show-env":"' + show_dotenv_script + '"}}',
         ".env": "BUNTEST_DOTENV_A=$BUNTEST_DOTENV_C\nBUNTEST_DOTENV_B=b-$BUNTEST_DOTENV_PROC",
         ".env.development": "BUNTEST_DOTENV_C=from-dev",
+        ".env.production": "BUNTEST_DOTENV_PROC=from-prod",
       });
       const unset = isWindowsCMD ? ["%BUNTEST_DOTENV_A%", "%BUNTEST_DOTENV_C%", "%BUNTEST_DOTENV_D%"] : ["", "", ""];
       expect(bunRunAsScript(tmp, "show-env", { BUNTEST_DOTENV_PROC: "proc" }, ["--shell=" + shell]).stdout).toBe(

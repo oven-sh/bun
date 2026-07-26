@@ -793,11 +793,7 @@ impl FileReader {
             }
         }
 
-        // No JS read is waiting; the chunk was appended to `self.buffered`.
-        // Stop the read loop once the buffered bytes reach the highwater mark
-        // or the consumer paused (`setFlowing(false)`). A full kernel pipe
-        // buffer blocking the writer is the backpressure signal. `onPull` /
-        // `setFlowing(true)` re-derive demand and restart the reader.
+        // No JS read is waiting; stop at the highwater mark. onPull restarts.
         // SAFETY: see `reader_buffer` decl.
         let reader_buffer_len = unsafe { (*reader_buffer).len() };
         let ret = self.flowing.get()
@@ -954,12 +950,8 @@ impl FileReader {
         self.pending_value.with_mut(|p| p.set(&global, array));
         self.pending_view.set(buffer);
 
-        // The read loop returns without re-arming the one-shot poll when
-        // `on_read_chunk` reports the highwater backstop, and pause() skips
-        // the unregister while the poll is already disarmed, so
-        // `has_pending_read()` (which tracks the registration flag, not the
-        // kernel arm state) can be true with no wakeup scheduled. The
-        // consumer is asking for data here, so make sure the poll is armed.
+        // `has_pending_read()` tracks the registration flag, not the kernel
+        // arm state: the highwater backstop leaves the one-shot poll disarmed.
         if self.flowing.get() {
             self.reader().watch();
         }

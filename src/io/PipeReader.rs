@@ -389,10 +389,8 @@ impl PosixBufferedReader {
     /// embedding `self` (the shell `PipeReader` does exactly that), so the
     /// caller must not touch `self` again after a `false` return.
     pub fn register_poll(&mut self) -> bool {
-        // A pause issued from inside the JS re-entry of the read loop
-        // (on_read_chunk → microtasks → setFlowing(false) → pause()) lands
-        // while the loop's own `register_poll()` is still ahead on the stack;
-        // re-arming here would undo it. `unpause()` + `read()` re-arm.
+        // pause() may land from inside on_read_chunk's JS re-entry while the
+        // loop's own re-arm is still ahead on the stack.
         if self.flags.contains(PosixFlags::IS_PAUSED) {
             return true;
         }
@@ -417,8 +415,6 @@ impl PosixBufferedReader {
             return true;
         };
         if poll.is_watching() {
-            // Already armed kernel-side; a redundant `register_with_fd`
-            // issues an idempotent `epoll_ctl(CTL_MOD)` / `kevent64`.
             return true;
         }
         poll.set_owner(Owner::new(PollTag::BufferedReader, owner_ptr.cast()));

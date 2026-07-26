@@ -272,7 +272,7 @@ mod date_header_timer_draft;
 mod event_loop_delay_monitor_draft;
 
 pub(crate) mod root_table;
-pub use root_table::RootTable;
+pub use root_table::{RootSlot, RootTable};
 
 // ─── TimerHeap ───────────────────────────────────────────────────────────────
 // Real intrusive pairing-heap (meld/remove/combine_siblings) implemented in
@@ -1264,12 +1264,16 @@ impl All {
             }
         }
 
-        // Release every segment `Strong` so JSC teardown sees no live handles
-        // from the per-thread `RuntimeState`. Any `root_slot` still set on a
-        // timer above was cleared by `cancel()`; immediates still queued are
-        // disarmed via `deinit()` when their boxes are freed.
-        // SAFETY: `this` is the live per-thread `All` (JS thread only).
-        unsafe { (*this).roots.clear() };
+        // Drop the segment list from the global so wrappers become
+        // collectible. Any `root_slot` still set on a timer above was cleared
+        // by `cancel()`; immediates still queued are disarmed via `deinit()`
+        // when their boxes are freed.
+        // SAFETY: `this` is the live per-thread `All` (JS thread only); `vm`
+        // is the live per-thread VM so `global` is valid.
+        unsafe {
+            let global = crate::jsc::JSGlobalObject::opaque_ref((*vm).global);
+            (*this).roots.clear(global);
+        }
     }
 }
 

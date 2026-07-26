@@ -29,27 +29,82 @@ void JSTimerRootSegment::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
 
+    visitor.append(thisObject->m_next);
     visitor.append(thisObject->m_slots.begin(), thisObject->m_slots.end());
 }
 
 DEFINE_VISIT_CHILDREN(JSTimerRootSegment);
 
-extern "C" JSC::EncodedJSValue Bun__TimerRootSegment__create(JSC::JSGlobalObject* globalObject)
+// Returns a segment with at least one free slot. Walks the active list from
+// the head, reuses the parked spare if nothing has room, and allocates only as
+// a last resort. JSC does not relocate cells, so the returned pointer is
+// stable while the segment is on the active list.
+extern "C" JSTimerRootSegment* Bun__TimerRootSegment__acquire(JSC::JSGlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
     auto* zigGlobal = defaultGlobalObject(globalObject);
-    auto* segment = JSTimerRootSegment::create(vm, zigGlobal->JSTimerRootSegmentStructure());
-    return JSC::JSValue::encode(segment);
+
+    for (auto* seg = zigGlobal->m_timerRootSegmentHead.get(); seg; seg = seg->next()) {
+        if (seg->findFreeSlot() < JSTimerRootSegment::capacity)
+            return seg;
+    }
+
+    JSTimerRootSegment* segment = zigGlobal->m_timerRootSegmentFree.get();
+    if (segment)
+        zigGlobal->m_timerRootSegmentFree.clear();
+    else
+        segment = JSTimerRootSegment::create(vm, zigGlobal->JSTimerRootSegmentStructure());
+
+    segment->setNext(vm, zigGlobal->m_timerRootSegmentHead.get());
+    zigGlobal->m_timerRootSegmentHead.set(vm, zigGlobal, segment);
+    return segment;
 }
 
-extern "C" void Bun__TimerRootSegment__set(JSC::EncodedJSValue segment, uint32_t index, JSC::EncodedJSValue value)
+extern "C" void Bun__TimerRootSegment__set(JSTimerRootSegment* segment, uint32_t index, JSC::EncodedJSValue value)
 {
-    uncheckedDowncast<JSTimerRootSegment>(JSC::JSValue::decode(segment).asCell())->set(index, JSC::JSValue::decode(value));
+    segment->set(index, JSC::JSValue::decode(value));
 }
 
-extern "C" void Bun__TimerRootSegment__clear(JSC::EncodedJSValue segment, uint32_t index)
+// Unlink `segment` from the active list and either park it in the free slot
+// (one segment of slack) or leave it unreachable so GC reclaims it.
+static void release(Zig::GlobalObject* zigGlobal, JSTimerRootSegment* segment)
 {
-    uncheckedDowncast<JSTimerRootSegment>(JSC::JSValue::decode(segment).asCell())->clear(index);
+    auto& vm = JSC::getVM(zigGlobal);
+    JSTimerRootSegment* head = zigGlobal->m_timerRootSegmentHead.get();
+    if (head == segment) {
+        zigGlobal->m_timerRootSegmentHead.setMayBeNull(vm, zigGlobal, segment->next());
+    } else {
+        for (auto* prev = head; prev; prev = prev->next()) {
+            if (prev->next() == segment) {
+                prev->setNext(vm, segment->next());
+                break;
+            }
+        }
+    }
+    segment->setNext(vm, nullptr);
+
+    if (!zigGlobal->m_timerRootSegmentFree.get())
+        zigGlobal->m_timerRootSegmentFree.set(vm, zigGlobal, segment);
+}
+
+extern "C" bool Bun__TimerRootSegment__clear(JSC::JSGlobalObject* globalObject, JSTimerRootSegment* segment, uint32_t index)
+{
+    if (segment->clear(index) > 0)
+        return false;
+    release(defaultGlobalObject(globalObject), segment);
+    return true;
+}
+
+extern "C" uint32_t Bun__TimerRootSegment__findFreeSlot(JSTimerRootSegment* segment)
+{
+    return segment->findFreeSlot();
+}
+
+extern "C" void Bun__TimerRootSegment__clearAll(JSC::JSGlobalObject* globalObject)
+{
+    auto* zigGlobal = defaultGlobalObject(globalObject);
+    zigGlobal->m_timerRootSegmentHead.clear();
+    zigGlobal->m_timerRootSegmentFree.clear();
 }
 
 } // namespace Bun

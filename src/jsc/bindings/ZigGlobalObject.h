@@ -35,6 +35,7 @@ class JSStreamsRuntime;
 namespace Bun {
 class InternalModuleRegistry;
 class NapiHandleScopeImpl;
+class JSTimerRootSegment;
 class JSNextTickQueue;
 class Process;
 class SecureContextCache;
@@ -508,6 +509,12 @@ public:
     /* back to a NAPI function without putting them in the handle scope, as the NAPI function may */         \
     /* move them off the stack which will cause them to get collected if not in the handle scope. */         \
     V(public, JSC::WriteBarrier<Bun::NapiHandleScopeImpl>, m_currentNapiHandleScopeImpl)                     \
+                                                                                                             \
+    /* Linked list of timer root segments (see JSTimerRootSegment.h); each */                                \
+    /* segment roots up to 4096 armed setTimeout/setInterval/setImmediate */                                 \
+    /* wrappers. One spare empty segment is parked in the free slot. */                                      \
+    V(public, JSC::WriteBarrier<Bun::JSTimerRootSegment>, m_timerRootSegmentHead)                            \
+    V(public, JSC::WriteBarrier<Bun::JSTimerRootSegment>, m_timerRootSegmentFree)                            \
                                                                                                              \
     /* Supports getEnvironmentData() and setEnvironmentData(), and is cloned into newly-created */           \
     /* Workers. Initialized in createNodeWorkerThreadsBinding. */                                            \

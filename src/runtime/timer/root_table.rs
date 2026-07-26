@@ -7,89 +7,127 @@
 //! list on every collection including eden, so N armed timers cost O(N) on
 //! every eden GC.
 //!
-//! This table stores wrappers in fixed-size `JSTimerRootSegment` cells
+//! Wrappers are stored in fixed-size `JSTimerRootSegment` cells
 //! (see `src/jsc/bindings/JSTimerRootSegment.cpp`). Each segment holds 4096
-//! `WriteBarrier<Unknown>` slots and is itself rooted via one `Strong`. A
-//! barriered slot store dirties only that segment, so an eden collection
-//! re-scans only the segments touched since the last full GC; idle segments
-//! stay old-gen-marked and are skipped. For 1M armed timers that is ~244
-//! strong handles instead of 1M.
+//! `WriteBarrier<Unknown>` slots plus a `WTF::BitSet<4096>` occupancy map.
+//! Active segments form a singly-linked list whose head is a `WriteBarrier` on
+//! `ZigGlobalObject` visited by `GlobalObject::visitChildren`, so no strong
+//! handle is held for any segment. A barriered slot store dirties only that
+//! segment, so an eden collection re-scans only segments touched since the
+//! last full GC. When a segment's occupancy drops to zero it is unlinked and
+//! parked in a single spare slot on the global (or dropped for GC if the spare
+//! is taken), so the table shrinks after a burst.
+//!
+//! Slot handles are `(segment cell pointer, index)` stored directly on the
+//! timer (JSC does not relocate cells); this side only caches the segment most
+//! recently handed out so the common path skips the C++ list walk.
 
-use crate::jsc::{JSGlobalObject, JSValue, strong::Strong};
+use core::cell::Cell;
+use core::ptr::NonNull;
+
+use crate::jsc::{JSGlobalObject, JSValue};
+
+bun_opaque::opaque_ffi! {
+    /// `Bun::JSTimerRootSegment*`. Opaque on the Rust side; addresses are
+    /// stable while the segment is on the global's active list because JSC
+    /// does not move cells.
+    pub struct Segment;
+}
 
 unsafe extern "C" {
-    safe fn Bun__TimerRootSegment__create(global: &JSGlobalObject) -> JSValue;
-    safe fn Bun__TimerRootSegment__set(segment: JSValue, index: u32, value: JSValue);
-    safe fn Bun__TimerRootSegment__clear(segment: JSValue, index: u32);
+    safe fn Bun__TimerRootSegment__acquire(global: &JSGlobalObject) -> *mut Segment;
+    safe fn Bun__TimerRootSegment__set(segment: &Segment, index: u32, value: JSValue);
+    safe fn Bun__TimerRootSegment__clear(
+        global: &JSGlobalObject,
+        segment: &Segment,
+        index: u32,
+    ) -> bool;
+    safe fn Bun__TimerRootSegment__findFreeSlot(segment: &Segment) -> u32;
+    safe fn Bun__TimerRootSegment__clearAll(global: &JSGlobalObject);
 }
 
 /// Must match `JSTimerRootSegment::capacity`.
 const SEGMENT_CAPACITY: u32 = 4096;
 
-/// Sentinel for "no slot" in `TimerObjectInternals::root_slot`.
-pub(super) const NO_SLOT: u32 = u32::MAX;
+/// Handle to an occupied root-table slot, stored on `TimerObjectInternals`.
+#[derive(Copy, Clone, Default)]
+pub struct RootSlot {
+    segment: Option<NonNull<Segment>>,
+    index: u16,
+}
+
+impl RootSlot {
+    #[inline]
+    pub(super) fn is_none(self) -> bool {
+        self.segment.is_none()
+    }
+}
 
 #[derive(Default)]
 pub struct RootTable {
-    /// One `Strong` per segment; `segments[i].get()` is the `JSTimerRootSegment`
-    /// cell backing slots `[i * 4096, (i + 1) * 4096)`.
-    segments: Vec<Strong>,
-    /// Released slot indices, LIFO. Reusing the most recently freed slot keeps
-    /// writes clustered in already-dirty segments.
-    free: Vec<u32>,
-    /// High-water mark: slots `[0, len)` have been handed out at least once.
-    len: u32,
+    /// Segment most recently returned by `acquire`; checked first on `arm` to
+    /// skip the C++ list walk while it still has room.
+    cursor: Cell<Option<NonNull<Segment>>>,
+    /// Set by [`clear`] at VM teardown; later `disarm` calls no-op so a stale
+    /// [`RootSlot`] never touches a collected segment.
+    cleared: Cell<bool>,
 }
 
 impl RootTable {
-    /// Root `wrapper` and return its slot index. JS thread only.
-    pub(super) fn arm(&mut self, wrapper: JSValue, global: &JSGlobalObject) -> u32 {
+    /// Root `wrapper` and return a handle to its slot. JS thread only.
+    pub(super) fn arm(&self, wrapper: JSValue, global: &JSGlobalObject) -> RootSlot {
         debug_assert!(wrapper.is_cell());
-        let slot = match self.free.pop() {
-            Some(slot) => slot,
-            None => {
-                let slot = self.len;
-                self.len = self
-                    .len
-                    .checked_add(1)
-                    .expect("timer root table slot overflow");
-                slot
-            }
-        };
-        let seg = (slot / SEGMENT_CAPACITY) as usize;
-        let idx = slot % SEGMENT_CAPACITY;
-        if seg >= self.segments.len() {
-            debug_assert_eq!(seg, self.segments.len());
-            let cell = Bun__TimerRootSegment__create(global);
-            self.segments.push(Strong::create(cell, global));
+        debug_assert!(!self.cleared.get());
+
+        let (segment, index) = self.find_slot(global);
+        Bun__TimerRootSegment__set(Segment::opaque_ref(segment.as_ptr()), index, wrapper);
+        RootSlot {
+            segment: Some(segment),
+            index: index as u16,
         }
-        Bun__TimerRootSegment__set(self.segments[seg].get(), idx, wrapper);
-        slot
     }
 
-    /// Clear `slot` and return it to the freelist. No-op for [`NO_SLOT`] and
-    /// for slots whose segment has already been released by [`clear`]. JS
+    /// Clear `slot` and return it to its segment's occupancy map. The segment
+    /// is released back to the global's spare slot (or dropped) if this was
+    /// its last occupant. No-op for an empty handle and after [`clear`]. JS
     /// thread only.
-    pub(super) fn disarm(&mut self, slot: u32) {
-        if slot == NO_SLOT {
+    pub(super) fn disarm(&self, slot: RootSlot, global: &JSGlobalObject) {
+        let Some(segment) = slot.segment else { return };
+        if self.cleared.get() {
             return;
         }
-        let seg = (slot / SEGMENT_CAPACITY) as usize;
-        let idx = slot % SEGMENT_CAPACITY;
-        let Some(segment) = self.segments.get(seg) else {
-            // `clear()` ran at VM teardown; the slot is already released.
-            return;
-        };
-        Bun__TimerRootSegment__clear(segment.get(), idx);
-        self.free.push(slot);
+        let released = Bun__TimerRootSegment__clear(
+            global,
+            Segment::opaque_ref(segment.as_ptr()),
+            u32::from(slot.index),
+        );
+        if released && self.cursor.get() == Some(segment) {
+            // The cursor pointed at a released segment; drop it so the next
+            // `arm` re-walks from the head.
+            self.cursor.set(None);
+        }
     }
 
-    /// Drop all segment `Strong`s so JSC teardown does not see live handles
-    /// from the per-thread `RuntimeState`. Slot contents become unreachable;
-    /// the wrappers are freed by the final GC sweep.
-    pub(super) fn clear(&mut self) {
-        self.segments.clear();
-        self.free.clear();
-        self.len = 0;
+    /// Drop both segment references from `ZigGlobalObject` so wrappers become
+    /// collectible at VM teardown.
+    pub(super) fn clear(&self, global: &JSGlobalObject) {
+        Bun__TimerRootSegment__clearAll(global);
+        self.cursor.set(None);
+        self.cleared.set(true);
+    }
+
+    fn find_slot(&self, global: &JSGlobalObject) -> (NonNull<Segment>, u32) {
+        if let Some(segment) = self.cursor.get() {
+            let idx = Bun__TimerRootSegment__findFreeSlot(Segment::opaque_ref(segment.as_ptr()));
+            if idx < SEGMENT_CAPACITY {
+                return (segment, idx);
+            }
+        }
+        let segment = NonNull::new(Bun__TimerRootSegment__acquire(global))
+            .expect("JSTimerRootSegment allocation");
+        self.cursor.set(Some(segment));
+        let idx = Bun__TimerRootSegment__findFreeSlot(Segment::opaque_ref(segment.as_ptr()));
+        debug_assert!(idx < SEGMENT_CAPACITY);
+        (segment, idx)
     }
 }

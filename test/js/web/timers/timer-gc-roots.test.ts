@@ -37,13 +37,39 @@ describe("armed timers do not each hold a JSC strong handle", () => {
     const { N, armedProtected, clearedProtected, armedTimeout, armedTimeoutLive } = JSON.parse(stdout);
     // The wrappers themselves are live (held by the `h` array).
     expect(armedTimeoutLive).toBeGreaterThanOrEqual(N);
-    // No Timeout wrapper is rooted via the strong HandleSet. The table
-    // segments (10000 / 4096 = 3) are fine; a per-timer Strong would show
-    // 10000 here.
+    // No Timeout wrapper is rooted via the strong HandleSet; a per-timer
+    // Strong would show 10000 here.
     expect(armedTimeout).toBe(0);
     expect(armedProtected).toBeLessThan(100);
     // Clearing should not regress the strong-handle count.
     expect(clearedProtected).toBeLessThanOrEqual(armedProtected);
+    expect(exitCode).toBe(0);
+  });
+
+  test("root segments are reclaimed after a burst", async () => {
+    const src = `
+      const { heapStats } = require("bun:jsc");
+      const N = 10000;
+      const h = [];
+      for (let i = 0; i < N; i++) h.push(setTimeout(() => {}, 600000));
+      Bun.gc(true);
+      const armedSegments = heapStats().objectTypeCounts.TimerRootSegment || 0;
+      for (const t of h) clearTimeout(t);
+      Bun.gc(true);
+      await new Promise(r => setTimeout(r, 0));
+      Bun.gc(true);
+      const clearedSegments = heapStats().objectTypeCounts.TimerRootSegment || 0;
+      console.log(JSON.stringify({ armedSegments, clearedSegments }));
+      process.exit(0);
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const { armedSegments, clearedSegments } = JSON.parse(stdout);
+    // 10000 / 4096 rounds up to 3 segments while armed; after clearing, all
+    // but one spare segment are released for GC.
+    expect(armedSegments).toBeGreaterThanOrEqual(3);
+    expect(clearedSegments).toBeLessThanOrEqual(1);
     expect(exitCode).toBe(0);
   });
 

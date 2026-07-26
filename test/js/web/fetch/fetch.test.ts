@@ -2079,7 +2079,7 @@ describe("maxRedirects", () => {
   });
 
   it("rejects once the chain exceeds maxRedirects", async () => {
-    expect(fetch(`${server.url}hop/0`, { maxRedirects: 2 })).rejects.toMatchObject({
+    await expect(fetch(`${server.url}hop/0`, { maxRedirects: 2 })).rejects.toMatchObject({
       name: "TypeError",
       code: "TooManyRedirects",
       cause: expect.objectContaining({ message: expect.stringContaining("redirected too many times") }),

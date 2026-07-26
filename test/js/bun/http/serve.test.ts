@@ -2674,9 +2674,9 @@ it.concurrent(
       const res = await fetch(new URL(pathname, server.url.origin));
       expect(res.status).toBe(200);
       if (success) {
-        expect(res.text()).resolves.toBe("Hello, World!");
+        await expect(res.text()).resolves.toBe("Hello, World!");
       } else {
-        expect(res.text()).rejects.toMatchObject({ code: "ECONNRESET" });
+        await expect(res.text()).rejects.toMatchObject({ code: "ECONNRESET" });
       }
     }
     await Promise.all([testTimeout("/ok", true), testTimeout("/timeout", false)]);

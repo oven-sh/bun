@@ -308,27 +308,20 @@ void NodeVMScript::destroy(JSCell* cell)
 
 extern "C" bool Bun__VM__hasWorkerRequestedTerminate(void*);
 
-bool isContextStoppingPermanently(JSC::VM& vm)
+// worker.requested_terminate is set only by worker.terminate(); node:vm's own
+// watchdog/SIGINT never touch it. Not is_shutting_down: that is already true
+// inside a worker's process.on('exit') listeners, where a {timeout} must stay
+// a catchable ERR_SCRIPT_EXECUTION_TIMEOUT.
+bool terminationIsExternalWorkerKill(JSC::VM& vm)
 {
-    // worker.requested_terminate is set only by worker.terminate() / the
-    // process-wide terminate-all sweep, never by node:vm's own watchdog or
-    // SIGINT watcher, so it distinguishes an external kill from a
-    // {timeout}/{breakOnSigint} termination that this evaluation owns.
-    // is_shutting_down is deliberately not consulted: a worker sets that flag
-    // before running process.on('exit') listeners, and a {timeout} firing
-    // inside one of those must stay a catchable ERR_SCRIPT_EXECUTION_TIMEOUT.
     return Bun__VM__hasWorkerRequestedTerminate(Bun::vm(vm));
 }
 
 static bool checkForTermination(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, NodeVMScript* script, std::optional<double> timeout)
 {
     if (vm.hasTerminationRequest()) {
-        if (isContextStoppingPermanently(vm)) {
-            // worker.terminate() raised this termination. Converting it to a
-            // catchable error would let the caller's try/catch swallow the
-            // kill request. Leave hasTerminationRequest set and rethrow the
-            // uncatchable TerminationException so it unwinds to the worker
-            // loop.
+        if (terminationIsExternalWorkerKill(vm)) {
+            // Keep worker.terminate() uncatchable: do not convert to ERR_SCRIPT_EXECUTION_*.
             scope.throwException(globalObject, vm.ensureTerminationException());
             return true;
         }

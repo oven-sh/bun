@@ -1912,7 +1912,8 @@ fn _join_abs_string_buf_windows<'a, const IS_SENTINEL: bool>(
 
     let input = &temp_buf[0..out];
     let avail = buf.len().saturating_sub(IS_SENTINEL as usize);
-    let result_len = if input.len() <= avail {
+    // `<` not `<=`: the UNC normalize branch can write `buf[input.len()]`.
+    let result_len = if input.len() < avail {
         normalize_string_buf::<false, platform::Windows, true>(input, buf).len()
     } else {
         match normalize_spill::<platform::Windows>(input, buf, avail) {
@@ -2514,6 +2515,14 @@ mod tests {
         assert_eq!(r, b"");
         let r = join_abs_string_buf::<platform::Windows>(b"C:\\cwd", &mut buf, &[&long_unc, b"x"]);
         assert_eq!(r, b"");
+        // Exact-boundary UNC: out == buf.len() == 64 (part 63, + trailing sep).
+        let unc_boundary: Vec<u8> = [b"\\\\".as_slice(), &vec![b'a'; 61]].concat();
+        let r = join_abs_string_buf::<platform::Windows>(b"C:\\cwd", &mut buf, &[&unc_boundary]);
+        assert_eq!(r, b"");
+        // Exact-boundary UNC with sentinel: out == buf.len() - 1 == 63.
+        let unc_boundary_z: Vec<u8> = [b"\\\\".as_slice(), &vec![b'a'; 60]].concat();
+        let r = join_abs_string_buf_z::<platform::Windows>(b"C:\\cwd", &mut buf, &[&unc_boundary_z]);
+        assert_eq!(r.as_bytes(), b"");
     }
 
     #[test]

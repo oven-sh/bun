@@ -1221,9 +1221,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             Op::UnDelete => {
                 let id_before = matches!(e_.value.data, Data::EIdentifier(..));
                 p.visit_expr_in_out(&mut e_.value, ExprIn::default());
-                // A define substitution can turn the property-access operand into a
-                // bare identifier; `delete <identifier>` is a strict-mode early
-                // error, so wrap it so the printer emits `delete (0, x)`.
+                // `delete <identifier>` is a strict-mode early error; wrap as `(0, x)`.
                 if !id_before && matches!(e_.value.data, Data::EIdentifier(..)) {
                     e_.value = Expr {
                         loc: e_.value.loc,

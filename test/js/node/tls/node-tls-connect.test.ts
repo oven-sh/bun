@@ -216,7 +216,16 @@ it("should be able to grab the JSStreamSocket constructor", () => {
 // destroys that stream; the wrapper must too, and must not throw.
 describe.each([
   ["net.Socket", () => new net.Socket()],
-  ["Duplex", () => new Duplex({ read() {}, write(_c, _e, cb) { cb(); } })],
+  [
+    "Duplex",
+    () =>
+      new Duplex({
+        read() {},
+        write(_c, _e, cb) {
+          cb();
+        },
+      }),
+  ],
 ])("new TLSSocket(%s).destroy() before connect", (_, makeRaw) => {
   it("destroys both sockets and emits 'close'", async () => {
     const raw = makeRaw();

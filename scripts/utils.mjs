@@ -2195,6 +2195,23 @@ export async function getCloud() {
   }
 }
 
+/** @type {Promise<string | undefined> | undefined} */
+let awsMetadataToken;
+
+/**
+ * IMDSv2 session token. Returns undefined when the token endpoint is
+ * unavailable (IMDSv1-only or not on EC2), letting callers fall back to
+ * unauthenticated reads.
+ * @returns {Promise<string | undefined>}
+ */
+function getAwsMetadataToken() {
+  return (awsMetadataToken ??= curl("http://169.254.169.254/latest/api/token", {
+    method: "PUT",
+    headers: { "X-aws-ec2-metadata-token-ttl-seconds": "21600" },
+    retries: 5,
+  }).then(({ error, body }) => (error ? undefined : body.trim())));
+}
+
 /**
  * @param {string | Record<Cloud, string>} name
  * @param {Cloud} [cloud]
@@ -2214,6 +2231,10 @@ export async function getCloudMetadata(name, cloud) {
   let headers;
   if (cloud === "aws") {
     url = new URL(name, "http://169.254.169.254/latest/meta-data/");
+    const token = await getAwsMetadataToken();
+    if (token) {
+      headers = { "X-aws-ec2-metadata-token": token };
+    }
   } else if (cloud === "google") {
     url = new URL(name, "http://metadata.google.internal/computeMetadata/v1/instance/");
     headers = { "Metadata-Flavor": "Google" };

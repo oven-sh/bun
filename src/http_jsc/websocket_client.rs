@@ -2096,13 +2096,30 @@ impl ErrorCode {
             InvalidUtf8 => Some(1007),
             MessageTooBig => Some(1009),
             // Handshake / transport / proxy failures: nothing to write a Close frame to.
-            Cancel | InvalidResponse | Expected101StatusCode | MissingUpgradeHeader
-            | MissingConnectionHeader | MissingWebsocketAcceptHeader | InvalidUpgradeHeader
-            | InvalidConnectionHeader | InvalidWebsocketVersion | MismatchWebsocketAcceptHeader
-            | MissingClientProtocol | MismatchClientProtocol | Timeout | Closed | FailedToWrite
-            | FailedToConnect | HeadersTooLarge | Ended | FailedToAllocateMemory
-            | TlsHandshakeFailed | ProxyConnectFailed | ProxyAuthenticationRequired
-            | ProxyConnectionRefused | ProxyTunnelFailed => None,
+            Cancel
+            | InvalidResponse
+            | Expected101StatusCode
+            | MissingUpgradeHeader
+            | MissingConnectionHeader
+            | MissingWebsocketAcceptHeader
+            | InvalidUpgradeHeader
+            | InvalidConnectionHeader
+            | InvalidWebsocketVersion
+            | MismatchWebsocketAcceptHeader
+            | MissingClientProtocol
+            | MismatchClientProtocol
+            | Timeout
+            | Closed
+            | FailedToWrite
+            | FailedToConnect
+            | HeadersTooLarge
+            | Ended
+            | FailedToAllocateMemory
+            | TlsHandshakeFailed
+            | ProxyConnectFailed
+            | ProxyAuthenticationRequired
+            | ProxyConnectionRefused
+            | ProxyTunnelFailed => None,
         }
     }
 }

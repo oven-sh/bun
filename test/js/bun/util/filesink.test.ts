@@ -679,7 +679,10 @@ describe.concurrent("process.stdout leaves fd 1 blocking on a pipe", () => {
     "console.log / process.stdout.write / Bun.write(Bun.stdout) interleaved deliver every line",
     async () => {
       const N = 200;
-      const PAD = 512;
+      // Longest line "C199 " + PAD + "\n" stays within macOS PIPE_BUF (512) so
+      // the un-awaited Bun.write running on a work-pool thread cannot interleave
+      // mid-line with the main thread's writes.
+      const PAD = 500;
       await using proc = Bun.spawn({
         cmd: [
           bunExe(),

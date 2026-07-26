@@ -36,7 +36,10 @@ test("HTTPResponseSink is destroyed after a sync pull() that ends later", async 
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect({ stdout, exitCode }, stderr).toEqual({ stdout: JSON.stringify({ ok: iterations, iterations }), exitCode: 0 });
+      expect({ stdout, exitCode }, stderr).toEqual({
+        stdout: JSON.stringify({ ok: iterations, iterations }),
+        exitCode: 0,
+      });
       const m = /SUMMARY: AddressSanitizer: (\d+) byte\(s\) leaked/.exec(stderr);
       return { bytes: m ? Number(m[1]) : 0, stderr };
     }

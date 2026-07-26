@@ -1,4 +1,4 @@
-import { describe } from "bun:test";
+import { describe, expect } from "bun:test";
 import { itBundled } from "./expectBundled";
 
 // Tests for CommonJS <> ESM interop, specifically the __toESM helper behavior.
@@ -597,4 +597,36 @@ describe("bundler", () => {
       stdout: "loaded ok",
     },
   });
+
+  // module.filename and module.path are inlined at bundle time. They must match
+  // Node's semantics: module.filename === __filename (full resolved path) and
+  // module.path === __dirname (the directory). Previously module.filename folded
+  // to the basename and module.path to the pretty (relative) path.
+  for (const target of ["bun", "node"] as const) {
+    itBundled(`cjs/ModuleFilenameAndPathInlining_${target}`, {
+      files: {
+        "/entry.cjs": /* js */ `
+          console.log(module.filename === __filename);
+          console.log(module.path === __dirname);
+          console.log(JSON.stringify({ filename: module.filename, path: module.path }));
+        `,
+      },
+      target,
+      run: {
+        validate({ stdout }) {
+          const lines = stdout.trim().split("\n");
+          expect(lines[0]).toBe("true");
+          expect(lines[1]).toBe("true");
+          const parsed = JSON.parse(lines[2]);
+          // Full path, not the bare basename.
+          expect(parsed.filename).not.toBe("entry.cjs");
+          expect(parsed.filename.endsWith("entry.cjs")).toBe(true);
+          expect(parsed.filename.length).toBeGreaterThan("entry.cjs".length);
+          // module.path is the dirname of module.filename.
+          expect(parsed.filename.startsWith(parsed.path)).toBe(true);
+          expect(parsed.path.endsWith("entry.cjs")).toBe(false);
+        },
+      },
+    });
+  }
 });

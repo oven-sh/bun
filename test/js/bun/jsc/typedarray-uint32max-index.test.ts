@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
 // A Uint8Array can have length up to MAX_ARRAY_BUFFER_SIZE (2**32 on 64-bit),

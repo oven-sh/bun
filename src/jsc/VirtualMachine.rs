@@ -4812,6 +4812,7 @@ impl VirtualMachine {
         remaining_unwraps: &mut u8,
     ) {
         const MAX_AGGREGATE_ERROR_DEPTH: u8 = 8;
+        const MAX_AGGREGATE_ERRORS_PER_LEVEL: u64 = 256;
 
         let global_ref = self.global();
         let mut exception_list = exception_list;
@@ -4824,7 +4825,17 @@ impl VirtualMachine {
             // Own data slot only (nothrow, no getter call); only iterate the
             // spec-created shape. Tampered values fall through to plain printing.
             let errors = value.get_errors_property(global_ref);
-            if errors.is_array() {
+            // Iteration is length-linear even when construction was O(1)
+            // (`e.errors = Array(1e9)` is sparse), so cap the per-level count.
+            let errors_len = if errors.is_array() {
+                errors.get_length(global_ref).unwrap_or_else(|_| {
+                    global_ref.clear_exception_except_termination();
+                    u64::MAX
+                })
+            } else {
+                u64::MAX
+            };
+            if errors_len <= MAX_AGGREGATE_ERRORS_PER_LEVEL {
                 // `for_each` takes a C-ABI fn pointer, so captures go through a
                 // raw-pointer ctx struct.
                 struct AggCtx<'a> {

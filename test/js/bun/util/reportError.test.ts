@@ -169,6 +169,12 @@ const tamperedAggregateErrors = [
     "wide self-referential errors array",
     'const e = new AggregateError([], "agg_boom"); e.errors = Array(8).fill(e); throw e;',
   ],
+  // Sparse array: O(1) to build, length-linear to iterate; the per-level
+  // length cap must make it fall through instead of walking 1e9 holes.
+  [
+    "sparse billion-length errors array",
+    'const e = new AggregateError([], "agg_boom"); e.errors = Array(1e9); throw e;',
+  ],
 ] as const;
 
 test.concurrent.each(tamperedAggregateErrors)(

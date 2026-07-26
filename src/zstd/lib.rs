@@ -328,6 +328,9 @@ pub fn decompress_alloc_with_limit(
     }
 
     // Fast path: size is known and within reasonable limits
+    if size > max_output_size {
+        return Err(ZstdError::OutputTooLarge);
+    }
     let mut output = vec![0u8; size];
 
     match decompress(&mut output, src) {

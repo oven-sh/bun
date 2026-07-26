@@ -1062,6 +1062,15 @@ impl FSWatcher {
     }
 
     pub fn init(args: &Arguments<'_>) -> bun_sys::Result<*mut FSWatcher> {
+        // node throws ENOENT for an empty path (the kernel would too);
+        // without this, the join against cwd below would watch cwd instead.
+        if args.path.slice().is_empty() {
+            return Err(bun_sys::Error {
+                errno: SystemErrno::ENOENT as _,
+                syscall: bun_sys::Tag::watch,
+                ..Default::default()
+            });
+        }
         let mut joined_buf = bun_paths::path_buffer_pool::get();
         let slice = {
             let mut s = args.path.slice();

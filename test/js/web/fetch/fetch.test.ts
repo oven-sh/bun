@@ -3124,6 +3124,36 @@ describe("fetch Expect: 100-continue (HTTP/1.1)", () => {
     }
   });
 
+  it("withholds a streaming body until 100 Continue arrives", async () => {
+    // Covers the streaming release path: can_stream gating in to_result, the
+    // progress_update arm of resume_after_100_continue, and write_to_stream's
+    // early return. None of these are reached by a Bytes body.
+    const { server, result } = rawOrigin(() => "HTTP/1.1 100 Continue\r\n\r\n");
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    try {
+      const res = await fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/upload`, {
+        method: "POST",
+        duplex: "half",
+        headers: { expect: "100-continue", "content-length": "11" },
+        body: new ReadableStream({
+          start(c) {
+            c.enqueue(new TextEncoder().encode("the-payload"));
+            c.close();
+          },
+        }),
+      });
+      expect({
+        status: res.status,
+        text: await res.text(),
+        bodyWithHead: result.bodyWithHead,
+        bodyTotal: result.bodyTotal,
+      }).toEqual({ status: 200, text: "ok", bodyWithHead: 0, bodyTotal: 11 });
+    } finally {
+      server.close();
+    }
+  });
+
   it("abandons the body when the server answers with a final status before 100", async () => {
     const body = Buffer.alloc(50_000, "x").toString();
     const { server, result } = rawOrigin(

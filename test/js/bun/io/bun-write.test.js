@@ -738,10 +738,12 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
 //
 // Runs outside `describe.concurrent` because on an unfixed build the child pegs every core until
 // the spawn timeout fires, which would starve the concurrent neighbours into their 5s default.
-it.skipIf(isWindows)("Bun.write(Bun.stdout, ...) to a full nonblocking pipe completes", async () => {
-  // Two payload sizes: below 256 KiB exercises the sync fast path's EAGAIN -> needs_async
-  // fallback; at/above 256 KiB goes straight to the thread-pool WriteFile path.
-  const script = `
+it.skipIf(isWindows)(
+  "Bun.write(Bun.stdout, ...) to a full nonblocking pipe completes",
+  async () => {
+    // Two payload sizes: below 256 KiB exercises the sync fast path's EAGAIN -> needs_async
+    // fallback; at/above 256 KiB goes straight to the thread-pool WriteFile path.
+    const script = `
     process.stdout.write("x"); // constructs the fd 1 FileSink, which flips the pipe O_NONBLOCK
     const small = Buffer.alloc(64 * 1024, 65).toString();
     const large = Buffer.alloc(256 * 1024, 66).toString();
@@ -751,20 +753,22 @@ it.skipIf(isWindows)("Bun.write(Bun.stdout, ...) to a full nonblocking pipe comp
     const wrote = await Promise.all(ps);
     process.stderr.write("wrote=" + wrote.reduce((a, b) => a + b, 0));
   `;
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", script],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-    timeout: 10_000,
-    killSignal: "SIGKILL",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.bytes(), proc.stderr.text(), proc.exited]);
-  const expected = 1 + 32 * 64 * 1024 + 8 * 256 * 1024;
-  expect({ length: stdout.length, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
-    length: expected,
-    stderr: "wrote=" + (expected - 1),
-    exitCode: 0,
-    signalCode: null,
-  });
-}, 15_000);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 10_000,
+      killSignal: "SIGKILL",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.bytes(), proc.stderr.text(), proc.exited]);
+    const expected = 1 + 32 * 64 * 1024 + 8 * 256 * 1024;
+    expect({ length: stdout.length, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+      length: expected,
+      stderr: "wrote=" + (expected - 1),
+      exitCode: 0,
+      signalCode: null,
+    });
+  },
+  15_000,
+);

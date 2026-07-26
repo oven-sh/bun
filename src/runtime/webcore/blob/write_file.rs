@@ -417,9 +417,7 @@ impl WriteFile {
             PathOrFileDescriptor::Path(_) => true,
             // A caller-supplied fd stays owned by the caller unless `run_with_fd` duped it
             // for polling, in which case `opened_fd` is the private dup and must be closed.
-            PathOrFileDescriptor::Fd(fd) => {
-                self.opened_fd != Fd::INVALID && self.opened_fd != fd
-            }
+            PathOrFileDescriptor::Fd(fd) => self.opened_fd != Fd::INVALID && self.opened_fd != fd,
         }
     }
 
@@ -454,8 +452,7 @@ impl WriteFile {
                     PathOrFileDescriptor::Fd(_) => {
                         // Bun.stdout/Bun.stderr fstat() up front and set `mode` (but not
                         // `seekable`), so gate on `mode` being populated.
-                        self.could_block =
-                            file.mode != 0 && !bun_sys::is_regular_file(file.mode);
+                        self.could_block = file.mode != 0 && !bun_sys::is_regular_file(file.mode);
                         true
                     }
                     PathOrFileDescriptor::Path(_) => {

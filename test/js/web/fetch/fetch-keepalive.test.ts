@@ -58,17 +58,17 @@ test("fetch does not reuse a pooled TLS connection for a request with a differen
     return await res.text();
   };
 
-  // Two requests whose TLS handshake used the Host-header override
-  // "wrong.example" for SNI/certificate verification share one pooled
-  // connection (legitimate keep-alive still works).
+  // Two requests whose TLS handshake sent the Host-header override
+  // "wrong.example" as SNI share one pooled connection (legitimate
+  // keep-alive still works).
   const overrideA = await get({ Host: "wrong.example" });
   const overrideB = await get({ Host: "wrong.example" });
   expect(overrideB).toBe(overrideA);
 
-  // A request without the override expects the server identity to match
-  // url.hostname ("localhost"), so it must not be handed the connection
-  // that was only ever negotiated as "wrong.example". It has to open a new
-  // connection, which cannot have the same client port.
+  // A request without the override sends the URL hostname ("localhost") as
+  // SNI, so it must not be handed the connection that was negotiated with
+  // SNI "wrong.example". It has to open a new connection, which cannot have
+  // the same client port.
   const plain = await get();
   expect(plain).not.toBe(overrideA);
 });

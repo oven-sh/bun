@@ -306,7 +306,7 @@ impl S3HttpSimpleTask {
             return true;
         }
         match &self.result.metadata {
-            Some(metadata) => !matches!(metadata.response.status_code, 200 | 204 | 206 | 404),
+            Some(metadata) => matches!(metadata.response.status_code, 408 | 429 | 500..=599),
             None => false,
         }
     }

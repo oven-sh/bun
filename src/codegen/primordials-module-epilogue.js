@@ -15,7 +15,6 @@ const {
   FunctionPrototypeCall,
   Map,
   MapIteratorPrototypeNext,
-  ObjectCreate,
   ObjectDefineProperties,
   ObjectDefineProperty,
   ObjectFreeze,

@@ -104,15 +104,17 @@ const prelude = /* js */ `
   };
   const nativeErrors = ["AggregateError","EvalError","RangeError","ReferenceError","SyntaxError","TypeError","URIError"];
   const typedArrays = ["Int8Array","Uint8Array","Uint8ClampedArray","Int16Array","Uint16Array","Int32Array","Uint32Array","Float16Array","Float32Array","Float64Array","BigInt64Array","BigUint64Array"];
+  // Read the constructors when a factory runs, not now: reading them here would
+  // create these lazy holders before the tests that must plant pollution first.
   for (let i = 0; i < nativeErrors.length; i++) {
-    const name = nativeErrors[i], ctor = globalThis[name];
-    holderFactories[name + "Constructor"] = () => ctor;
-    holderFactories[name + "Prototype"] = () => ctor.prototype;
+    const name = nativeErrors[i];
+    holderFactories[name + "Constructor"] = () => globalObject[name];
+    holderFactories[name + "Prototype"] = () => globalObject[name].prototype;
   }
   for (let i = 0; i < typedArrays.length; i++) {
-    const name = typedArrays[i], ctor = globalThis[name];
-    holderFactories[name + "Constructor"] = () => ctor;
-    holderFactories[name + "Prototype"] = () => ctor.prototype;
+    const name = typedArrays[i];
+    holderFactories[name + "Constructor"] = () => globalObject[name];
+    holderFactories[name + "Prototype"] = () => globalObject[name].prototype;
   }
   const holderNames = objectKeys(holderFactories);
   // Resolved lazily (some tests must not touch holders early) and memoized.
@@ -731,7 +733,7 @@ describe.concurrent("primordials survive tampering", () => {
         SafeStringIterator: [...safeString].length,
         hardenRegExpSplit: p.ArrayPrototypeJoin(p.StringPrototypeSplit("a-b-c", p.hardenRegExp(/-/)), "|"),
         SafeStringPrototypeSearch: p.SafeStringPrototypeSearch("xyz", /z/),
-        uncurryThis: p.uncurryThis(p.MapPrototypeGet.__proto__ ? Map.prototype.has : null) ? true : true,
+        uncurryThis: p.uncurryThis(function (a, b) { return this.n * a + b; })({ n: 3 }, 4, 2),
         applyBind: p.applyBind(p.MathMax)(null, [2, 8]),
       };
       let push = 0; const big = []; for (let i = 0; i < 70000; i++) big[i] = 1;
@@ -797,7 +799,7 @@ describe.concurrent("primordials survive tampering", () => {
       SafeStringIterator: 2,
       hardenRegExpSplit: "a|b|c",
       SafeStringPrototypeSearch: 2,
-      uncurryThis: true,
+      uncurryThis: 14,
       applyBind: 8,
       SafeArrayPrototypePushApply: 70000,
     });

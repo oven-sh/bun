@@ -80,7 +80,7 @@ interface Holder {
 const nativeError = (member: string, part: "prototype" | "constructor"): Holder => ({
   accessor: `m_${member}Structure.${part}(this)`,
   eager: false,
-  type: "ErrorConstructor",
+  type: part === "prototype" ? "Error" : "ErrorConstructor",
 });
 const typedArrayHolder = (type: string, part: "prototype" | "constructor", tsName: string): Holder => ({
   accessor: part === "prototype" ? `typedArrayPrototype(Type${type})` : `typedArrayConstructor(Type${type})`,
@@ -591,3 +591,11 @@ ${dtsLines.join("\n")}
 `;
 writeFileSync(dtsOutput, dts);
 console.log(`wrote ${dtsLines.length} declarations to ${dtsOutput}`);
+
+// Format the repo-local artifacts with the repo's formatter so the checked-in
+// generated files are already in the shape CI's autofix would produce.
+const format = spawnSync(join(root, "node_modules/.bin/prettier"), ["--write", moduleOutput, dtsOutput], {
+  cwd: root,
+  stdio: "inherit",
+});
+if (format.status !== 0) throw new Error("prettier failed on the generated files");

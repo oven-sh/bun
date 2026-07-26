@@ -39,11 +39,7 @@ describe.if(isPosix)("duplicate keys in process environ", () => {
       stderr: "pipe",
       stdout: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(stderr.trim()).toBe("");
     expect(JSON.parse(stdout)).toEqual({

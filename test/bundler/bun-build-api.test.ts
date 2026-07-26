@@ -766,6 +766,40 @@ describe("Bun.build", () => {
       expect(await html?.text()).toContain("<meta name='injected-by-plugin' content='true'>");
     },
   );
+
+  test.concurrent("HTML entrypoint with rooted <script src> longer than 4096 bytes does not abort", async () => {
+    // Rooted `/...` script src values are re-based onto the project root via the
+    // path-join primitive, whose output buffer is a fixed 4096-byte threadlocal.
+    // With an attacker-authored path >= 4096 bytes this used to panic and abort
+    // the process instead of surfacing a ResolveMessage.
+    const src = "/" + Buffer.alloc(5000, "a").toString() + ".js";
+    using dir = tempDir("bun-build-html-long-rooted-src", {
+      "index.html": `<html><body><script src="${src}"></script></body></html>`,
+      "build.mjs": `
+        const r = await Bun.build({ entrypoints: ["./index.html"], throw: false });
+        console.log(JSON.stringify({
+          success: r.success,
+          logs: r.logs.map(l => ({ name: l.name, message: String(l.message) })),
+        }));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).not.toContain("range end index");
+    const out = JSON.parse(stdout);
+    expect(out.success).toBe(false);
+    expect(out.logs.length).toBeGreaterThan(0);
+    expect(out.logs[0].name).toBe("ResolveMessage");
+    expect(out.logs[0].message).toContain("Could not resolve");
+    expect(exitCode).toBe(0);
+  });
 });
 
 test.concurrent("macro with nested object", async () => {

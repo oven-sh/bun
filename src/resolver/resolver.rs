@@ -5703,7 +5703,15 @@ impl<'a> Resolver<'a> {
         }
 
         // Try the path with extensions
-        bufs!(load_as_file)[..path.len()].copy_from_slice(path);
+        {
+            let buf = bufs!(load_as_file);
+            if path.len() >= buf.len() {
+                // Extension probing appends to `path` in this fixed buffer; a path that
+                // already exceeds it cannot name a file the OS would open anyway.
+                dec_ret!(None);
+            }
+            buf[..path.len()].copy_from_slice(path);
+        }
         // NOTE: index by `0..len` so each iteration takes a fresh short
         // borrow of `self.opts` that ends before `&mut self` is taken by
         // `load_extension` (matches `extra_cjs_extensions` loop below).

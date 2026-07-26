@@ -290,11 +290,10 @@ pub struct Timeout {
     /// this field, so it must stay at a fixed offset (hence `#[repr(C)]`).
     pub event_loop_timer: EventLoopTimer,
 
-    /// The `Timeout`'s lifetime is owned by the AbortSignal.
-    /// But this does have a ref count increment.
-    // AbortSignal is an opaque C++ type with intrusive WebCore
-    // refcounting (ref/unref) that crosses FFI — PORTING.md §Pointers: never
-    // Arc here. Kept as raw `*mut` with manual unref.
+    /// Raw back-pointer to the owning `AbortSignal`; no refcount held. The
+    /// `Timeout` is owned by the signal (`m_timeout`, freed via
+    /// `~AbortSignal` → `cancelTimer` → [`AbortSignal__Timeout__deinit`]),
+    /// so while this box is live the signal is too.
     pub signal: *mut AbortSignal,
 
     /// "epoch" is reused.
@@ -371,15 +370,19 @@ impl Timeout {
 
             // The signal and its handlers belong to a previous isolated test
             // file's global; firing now would run them against the new global.
-            // Drop the extra ref that signalAbort() would have released.
+            // The `Timeout` box is still owned by the signal and will be freed
+            // via `~AbortSignal` → `cancelTimer` when the wrapper is collected.
             if (*this).generation != (*vm).test_isolation_generation {
-                (*(*this).signal).unref();
                 return;
             }
 
-            // Dispatching the signal may cause the Timeout to get freed.
-            // Capture the raw ptr before `this` may dangle.
+            // `signal` is a raw back-pointer with no refcount of its own;
+            // see the field doc for why it is valid here. `dispatch` may free
+            // `this` re-entrantly (markAborted → cancelTimer → deinit), so
+            // capture the pointer first. Nulled at VM teardown; that path does
+            // not re-enter `run`.
             let signal_ptr: *mut AbortSignal = (*this).signal;
+            debug_assert!(!signal_ptr.is_null());
             Self::dispatch(vm, signal_ptr);
         }
     }
@@ -391,10 +394,10 @@ impl Timeout {
         // drop even if `signal` unwinds, and holds the raw VM-owned pointer so
         // borrowck doesn't see two live `&mut EventLoop` across re-entrant JS.
         let _guard = vm.enter_event_loop_scope();
-        // signalAbort() releases the extra ref from timeout() after all
-        // abort work completes, so we must not unref here.
         // `AbortSignal` is an `opaque_ffi!` ZST handle; `opaque_ref` is the
-        // centralised non-null deref proof (held alive by the extra ref above).
+        // centralised non-null deref proof. `signalAbort()` takes
+        // `Ref protectedThis` internally so `signal_ptr` stays valid for the
+        // whole dispatch even though abort listeners can trigger GC.
         AbortSignal::opaque_ref(signal_ptr).signal(vm.global(), CommonAbortReason::Timeout);
     }
 
@@ -410,7 +413,8 @@ impl Timeout {
     }
 }
 
-/// Caller is expected to have already ref'd the AbortSignal.
+/// The returned `Timeout` is owned by `signal_` (stored in `m_timeout`) and
+/// holds a raw back-pointer to it; caller retains its own ref on `signal_`.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn AbortSignal__Timeout__create(
     vm: *mut VirtualMachine,

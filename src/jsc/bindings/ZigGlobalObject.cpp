@@ -155,6 +155,7 @@
 #include "ModuleLoader.h"
 #include "napi_external.h"
 #include "napi_handle_scope.h"
+#include "JSTimerRootSegment.h"
 #include "napi_type_tag.h"
 #include "NativePromiseContext.h"
 #include "napi.h"
@@ -2445,6 +2446,10 @@ void GlobalObject::finishCreation(VM& vm)
 
     m_NapiHandleScopeImplStructure.initLater([](const JSC::LazyProperty<JSC::JSGlobalObject, Structure>::Initializer& init) {
         init.set(Bun::NapiHandleScopeImpl::createStructure(init.vm, init.owner));
+    });
+
+    m_JSTimerRootSegmentStructure.initLater([](const JSC::LazyProperty<JSC::JSGlobalObject, Structure>::Initializer& init) {
+        init.set(Bun::JSTimerRootSegment::createStructure(init.vm, init.owner));
     });
 
     m_NapiTypeTagStructure.initLater([](const JSC::LazyProperty<JSC::JSGlobalObject, Structure>::Initializer& init) {

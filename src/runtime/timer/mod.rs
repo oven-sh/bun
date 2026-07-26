@@ -271,6 +271,9 @@ mod date_header_timer_draft;
 #[path = "EventLoopDelayMonitor.rs"]
 mod event_loop_delay_monitor_draft;
 
+pub(crate) mod root_table;
+pub use root_table::RootTable;
+
 // ─── TimerHeap ───────────────────────────────────────────────────────────────
 // Real intrusive pairing-heap (meld/remove/combine_siblings) implemented in
 // `bun_io::heap::Intrusive`. `EventLoopTimer` now embeds the real
@@ -608,6 +611,7 @@ pub struct All {
     pub last_id: i32,
     pub thread_id: std::thread::ThreadId,
     pub timers: TimerHeap,
+    pub roots: RootTable,
     pub active_timer_count: i32,
     #[cfg(windows)]
     pub uv_timer: bun_sys::windows::libuv::Timer,
@@ -634,6 +638,7 @@ impl All {
             last_id: 1,
             thread_id: std::thread::current().id(),
             timers: TimerHeap::default(),
+            roots: RootTable::default(),
             active_timer_count: 0,
             #[cfg(windows)]
             uv_timer: bun_core::ffi::zeroed(),
@@ -1240,30 +1245,31 @@ impl All {
             unsafe { (*internals).cancel(vm) };
         }
 
-        // `AbortSignal.timeout()` boxes form a refcount cycle: the C++
-        // `AbortSignal` owns `m_timeout` (raw `*mut Timeout`) and the Timeout
-        // holds a `+1` on the signal. Neither can release first, so a pending
-        // timeout at exit leaks both. Unlink the timer (so the eventual
-        // `~AbortSignal` → `cancelTimer` → `Timeout::deinit` re-cancel is a
-        // no-op against the already-destroyed heap) and release the `+1`; the
-        // box itself is freed via `cancelTimer()` either now (if this was the
-        // last ref) or at `lastChanceToFinalize` when the JS wrapper is
-        // collected.
+        // `AbortSignal.timeout()` boxes are owned by the C++ `AbortSignal`
+        // (freed via `~AbortSignal` → `cancelTimer`), and the signal is kept
+        // alive by its JS wrapper. Unlink the timer here so `Timeout::deinit`'s
+        // `cancel` is a no-op against the already-destroyed heap, and null the
+        // back-pointer so `Timeout::run` cannot dereference a freed signal if
+        // an event-loop drain sneaks in before teardown.
         for t in signal_timeouts {
-            // SAFETY: each `t` was collected from the live heap above; the
-            // `+1` we release here is the one keeping the signal (and thus
-            // the box, via `m_timeout`) pinned. JS thread.
+            // SAFETY: each `t` was collected from the live heap above and is
+            // still owned by its `AbortSignal` (the box is freed by
+            // `cancelTimer()` at wrapper GC / `lastChanceToFinalize`). JS
+            // thread.
             unsafe {
                 if (*t).event_loop_timer.state == EventLoopTimerState::ACTIVE {
                     (*this).remove(core::ptr::addr_of_mut!((*t).event_loop_timer));
                 }
-                let signal = (*t).signal;
                 (*t).signal = core::ptr::null_mut();
-                if !signal.is_null() {
-                    crate::jsc::abort_signal::AbortSignal::opaque_ref(signal).unref();
-                }
             }
         }
+
+        // Release every segment `Strong` so JSC teardown sees no live handles
+        // from the per-thread `RuntimeState`. Any `root_slot` still set on a
+        // timer above was cleared by `cancel()`; immediates still queued are
+        // disarmed via `deinit()` when their boxes are freed.
+        // SAFETY: `this` is the live per-thread `All` (JS thread only).
+        unsafe { (*this).roots.clear() };
     }
 }
 

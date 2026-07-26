@@ -65,6 +65,7 @@ public:
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSECDH;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForTTYWrapObject;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForNapiHandleScopeImpl;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSTimerRootSegment;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForNapiTypeTag;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForNativePromiseContext;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForObjectTemplate;

@@ -62,6 +62,7 @@ public:
     std::unique_ptr<IsoSubspace> m_subspaceForNAPIFunction;
     std::unique_ptr<IsoSubspace> m_subspaceForTTYWrapObject;
     std::unique_ptr<IsoSubspace> m_subspaceForNapiHandleScopeImpl;
+    std::unique_ptr<IsoSubspace> m_subspaceForJSTimerRootSegment;
     std::unique_ptr<IsoSubspace> m_subspaceForNapiTypeTag;
     std::unique_ptr<IsoSubspace> m_subspaceForNativePromiseContext;
     std::unique_ptr<IsoSubspace> m_subspaceForObjectTemplate;

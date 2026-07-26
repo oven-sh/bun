@@ -370,7 +370,10 @@ it("setTimeout Timeout objects are unprotected after called", async () => {
     remaining--;
     if (remaining === 0) resolve();
   }, 0);
-  expect(heapStats().protectedObjectTypeCounts.Timeout || 0).toEqual((initial.Timeout || 0) + 2);
+  // Armed timers are rooted via a shared segmented table, not per-timer
+  // strong handles, so the Timeout protected count does not change while
+  // armed.
+  expect(heapStats().protectedObjectTypeCounts.Timeout || 0).toEqual(initial.Timeout || 0);
 
   // Assert it's unprotected.
   await promise;

@@ -26,6 +26,7 @@
 #include "NodeVM.h"
 #include "../../runtime/bake/BakeGlobalObject.h"
 #include "napi_handle_scope.h"
+#include "JSTimerRootSegment.h"
 #include "NativePromiseContext.h"
 
 namespace WebCore {
@@ -38,6 +39,7 @@ JSHeapData::JSHeapData(Heap& heap)
     , m_heapCellTypeForNodeVMGlobalObject(JSC::IsoHeapCellType::Args<Bun::NodeVMGlobalObject>())
     , m_heapCellTypeForBakeGlobalObject(JSC::IsoHeapCellType::Args<Bake::GlobalObject>())
     , m_heapCellTypeForNapiHandleScopeImpl(JSC::IsoHeapCellType::Args<Bun::NapiHandleScopeImpl>())
+    , m_heapCellTypeForJSTimerRootSegment(JSC::IsoHeapCellType::Args<Bun::JSTimerRootSegment>())
     , m_heapCellTypeForNativePromiseContext(JSC::IsoHeapCellType::Args<Bun::NativePromiseContext>())
     , m_domBuiltinConstructorSpace ISO_SUBSPACE_INIT(heap, heap.cellHeapCellType, JSDOMBuiltinConstructorBase)
     , m_domConstructorSpace ISO_SUBSPACE_INIT(heap, heap.cellHeapCellType, JSDOMConstructorBase)

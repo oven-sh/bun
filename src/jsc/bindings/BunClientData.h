@@ -63,6 +63,7 @@ public:
     JSC::IsoHeapCellType m_heapCellTypeForJSWorkerGlobalScope;
     JSC::IsoHeapCellType m_heapCellTypeForNodeVMGlobalObject;
     JSC::IsoHeapCellType m_heapCellTypeForNapiHandleScopeImpl;
+    JSC::IsoHeapCellType m_heapCellTypeForJSTimerRootSegment;
     JSC::IsoHeapCellType m_heapCellTypeForBakeGlobalObject;
     JSC::IsoHeapCellType m_heapCellTypeForNativePromiseContext;
     // JSC::IsoHeapCellType m_heapCellTypeForGeneratedClass;

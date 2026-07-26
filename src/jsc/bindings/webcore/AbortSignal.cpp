@@ -66,9 +66,13 @@ Ref<AbortSignal> AbortSignal::abort(JSDOMGlobalObject& globalObject, ScriptExecu
 Ref<AbortSignal> AbortSignal::timeout(ScriptExecutionContext& context, uint64_t milliseconds)
 {
     auto signal = adoptRef(*new AbortSignal(&context));
+    // The native timer holds a raw back-pointer to the signal but no refcount.
+    // The JS wrapper keeps the signal alive (and is itself kept alive by
+    // JSAbortSignalOwner::isReachableFromOpaqueRoots while an abort listener
+    // is registered). When no listener is interested, collecting the wrapper
+    // destroys the signal and ~AbortSignal() cancels and frees the timer.
     signal->m_timeout = AbortSignal__Timeout__create(bunVM(context.vm()), signal.ptr(), milliseconds);
     ASSERT(signal->m_timeout);
-    signal->ref();
     return signal;
 }
 
@@ -209,13 +213,10 @@ void AbortSignal::signalAbort(JSC::JSValue reason)
     if (aborted())
         return;
 
-    // signalAbort() is the sole path for releasing the extra ref that
-    // timeout() took — for ALL abort paths, including when the timer fires
-    // naturally (dispatch -> signal -> signalAbort -> deref).
-    // Timeout::dispatch() intentionally does NOT call unref().
-    // Defer the deref until after all abort work is done so `this` stays
-    // alive throughout.
-    bool hadTimeout = m_timeout != nullptr;
+    // Firing abort listeners (ours and dependent signals') can re-enter JS and
+    // trigger GC. Once we clear IsFiringEventListeners the wrapper may become
+    // unreachable, so keep `this` alive across the whole dispatch.
+    Ref protectedThis { *this };
 
     // 2. Set signal’s abort reason to reason if it is given; otherwise to a new "AbortError" DOMException.
     markAborted(reason);
@@ -235,10 +236,6 @@ void AbortSignal::signalAbort(JSC::JSValue reason)
     // 6. For each dependentSignal of dependentSignalsToAbort, run the abort steps for dependentSignal.
     for (auto& dependentSignal : dependentSignalsToAbort)
         dependentSignal->runAbortSteps();
-
-    // Release the extra ref from timeout() now that all abort work is done.
-    if (hadTimeout)
-        deref();
 }
 
 void AbortSignal::signalAbort(JSC::JSGlobalObject* globalObject, CommonAbortReason reason)
@@ -295,26 +292,17 @@ void AbortSignal::eventListenersDidChange()
     bool hasListeners = hasEventListeners(eventNames().abortEvent) or !m_native_callbacks.isEmpty();
     setHasAbortEventListener(hasListeners);
 
-    // When a timeout signal loses all observers (no JS listeners, no native
-    // callbacks, no algorithms, no dependent signals), there is nothing left
-    // to notify when the timer fires.  Cancel the timer and release the extra
-    // ref that timeout() took to keep the signal alive, so the C++ object can
-    // be destroyed normally.
+    // When a timeout signal loses all observers there is nothing left to
+    // notify when the timer fires, so cancel it eagerly.
+    // JSAbortSignalOwner::isReachableFromOpaqueRoots then no longer keeps the
+    // wrapper alive and ~AbortSignal() runs on collection; this just frees the
+    // native timer sooner.
     if (!hasListeners && m_timeout && !aborted()
         && m_algorithms.isEmpty() && !hasPendingActivity()
         && m_dependentSignals.isEmptyIgnoringNullReferences()) {
-        bool shouldDeref = false;
-        {
-            Locker locker { m_abortAlgorithmsLock };
-            if (m_abortAlgorithms.isEmpty()) {
-                cancelTimer();
-                shouldDeref = true;
-            }
-        }
-        // Release the extra ref after the lock is released, since deref()
-        // may destroy `this` (and m_abortAlgorithmsLock with it).
-        if (shouldDeref)
-            deref(); // balances the ref() in AbortSignal::timeout()
+        Locker locker { m_abortAlgorithmsLock };
+        if (m_abortAlgorithms.isEmpty())
+            cancelTimer();
     }
 }
 

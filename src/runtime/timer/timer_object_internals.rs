@@ -32,6 +32,10 @@ pub struct TimerObjectInternals {
     pub id: i32,
     pub interval: Cell<u32>,
     pub this_value: JsCell<JsRef>,
+    /// Slot in [`All::roots`](super::All::roots) while the wrapper must stay
+    /// reachable for a pending fire, [`NO_SLOT`](super::root_table::NO_SLOT)
+    /// otherwise. See `root_table` for why this replaces a per-timer `Strong`.
+    pub root_slot: Cell<u32>,
     pub flags: Cell<Flags>,
     /// `bun test --isolate` generation this timer was created in.
     pub generation: u32,
@@ -47,6 +51,38 @@ impl TimerObjectInternals {
         f(&mut fl);
         self.flags.set(fl);
     }
+
+    /// Root `wrapper` in the per-VM [`RootTable`](super::RootTable) and
+    /// remember it in `this_value` (weakly) for later retrieval by
+    /// `fire()`/`run_immediate_task()`. If the wrapper is already rooted the
+    /// existing slot is kept. JS thread only; no `&mut All` may be live.
+    fn arm_root(&self, wrapper: JSValue, global: &JSGlobalObject) {
+        self.this_value.with_mut(|r| r.set_weak(wrapper));
+        if self.root_slot.get() != super::root_table::NO_SLOT {
+            return;
+        }
+        let state = crate::jsc_hooks::runtime_state();
+        debug_assert!(!state.is_null(), "RuntimeState not installed");
+        // SAFETY: `state` is the boxed per-thread `RuntimeState`;
+        // single-threaded JS heap so no concurrent `&mut` to `.timer.roots`.
+        let slot = unsafe { (*state).timer.roots.arm(wrapper, global) };
+        self.root_slot.set(slot);
+    }
+
+    /// Release the [`RootTable`](super::RootTable) slot so GC may collect the
+    /// wrapper. `this_value` is left as-is (weak); callers that still need the
+    /// wrapper for the duration of the current tick hold it on the stack. JS
+    /// thread only; no `&mut All` may be live.
+    fn disarm_root(&self) {
+        let slot = self.root_slot.replace(super::root_table::NO_SLOT);
+        if slot == super::root_table::NO_SLOT {
+            return;
+        }
+        let state = crate::jsc_hooks::runtime_state();
+        debug_assert!(!state.is_null(), "RuntimeState not installed");
+        // SAFETY: as for `arm_root`.
+        unsafe { (*state).timer.roots.disarm(slot) };
+    }
 }
 
 impl Default for TimerObjectInternals {
@@ -55,6 +91,7 @@ impl Default for TimerObjectInternals {
             id: -1,
             interval: Cell::new(0),
             this_value: JsCell::new(JsRef::empty()),
+            root_slot: Cell::new(super::root_table::NO_SLOT),
             flags: Cell::new(Flags::default()),
             generation: 0,
         }
@@ -299,6 +336,7 @@ impl TimerObjectInternals {
             // SAFETY: `vm` is the live per-thread VM; field read only.
             generation: unsafe { (*vm).test_isolation_generation },
             this_value: JsCell::new(JsRef::empty()),
+            root_slot: Cell::new(super::root_table::NO_SLOT),
         };
 
         if kind == Kind::SetImmediate {
@@ -337,7 +375,7 @@ impl TimerObjectInternals {
             self.reschedule(timer, vm, global.as_ptr());
         }
 
-        self.this_value.with_mut(|r| r.set_strong(timer, global));
+        self.arm_root(timer, global);
     }
 
     /// Returns `true` if an
@@ -375,7 +413,7 @@ impl TimerObjectInternals {
                 && !unsafe { (*vm).is_event_loop_alive_excluding_immediates() });
         if cleared {
             s.set_enable_keeping_event_loop_alive(vm, false);
-            s.this_value.with_mut(|r| r.downgrade());
+            s.disarm_root();
             s.deref();
             return false;
         }
@@ -386,13 +424,14 @@ impl TimerObjectInternals {
             #[cfg(not(debug_assertions))]
             {
                 s.set_enable_keeping_event_loop_alive(vm, false);
+                s.disarm_root();
                 s.deref();
                 return false;
             }
         };
         // SAFETY: `vm` is live; `global` is the per-VM JSGlobalObject pointer.
         let global_this = unsafe { (*vm).global };
-        s.this_value.with_mut(|r| r.downgrade());
+        s.disarm_root();
         s.set_event_loop_timer_state(EventLoopTimerState::FIRED);
         s.set_enable_keeping_event_loop_alive(vm, false);
         timer.ensure_still_alive();
@@ -440,7 +479,7 @@ impl TimerObjectInternals {
         // SAFETY: per fn contract.
         let s = unsafe { &*this };
         s.set_enable_keeping_event_loop_alive(vm, false);
-        s.this_value.with_mut(|r| r.downgrade());
+        s.disarm_root();
         s.deref();
     }
 
@@ -495,7 +534,7 @@ impl TimerObjectInternals {
         let Some(this_object) = s.this_value.get().try_get() else {
             s.set_enable_keeping_event_loop_alive(vm, false);
             s.update_flags(|f| f.set_has_cleared_timer(true));
-            s.this_value.with_mut(|r| r.downgrade());
+            s.disarm_root();
             s.deref();
             return;
         };
@@ -535,7 +574,7 @@ impl TimerObjectInternals {
             }
             s.set_enable_keeping_event_loop_alive(vm, false);
             s.update_flags(|f| f.set_has_cleared_timer(true));
-            s.this_value.with_mut(|r| r.downgrade());
+            s.disarm_root();
             s.deref();
             return;
         }
@@ -544,7 +583,10 @@ impl TimerObjectInternals {
         let mut time_before_call = Timespec::EPOCH;
 
         if kind != KindBig::SetInterval {
-            s.this_value.with_mut(|r| r.downgrade());
+            // `this_object` is on the stack (conservatively scanned) so the
+            // wrapper, and thus the cached callback/args read above, stay
+            // alive through `Self::run` below without a root-table slot.
+            s.disarm_root();
         } else {
             time_before_call = Timespec::ms_from_now(
                 TimespecMockMode::AllowMockedTime,
@@ -719,8 +761,7 @@ impl TimerObjectInternals {
         // `opaque_ffi!` ZST — safe deref; `vm.global` never null.
         let global_ref = JSGlobalObject::opaque_ref(global);
         JSTimeout::idle_timeout_set_cached(timer, global_ref, repeat);
-        self.this_value
-            .with_mut(|r| r.set_strong(timer, global_ref));
+        self.arm_root(timer, global_ref);
         self.update_flags(|f| f.set_kind(Kind::SetInterval));
         self.interval.set(new_interval);
         self.reschedule(timer, vm, global);
@@ -870,6 +911,12 @@ impl TimerObjectInternals {
         //     dropped-while-ref'd timer leaks `active_timer_count` /
         //     `immediate_ref_count` and the process hangs at exit.
         self.set_enable_keeping_event_loop_alive(vm, false);
+
+        // (e) release the root-table slot if one is still held. In normal
+        //     operation the slot is released by `cancel()`/`fire()` before the
+        //     refcount reaches zero, but a `FakeTimers::clear` drain or a
+        //     teardown path can reach `deinit` with the slot still armed.
+        self.disarm_root();
     }
 }
 
@@ -950,8 +997,7 @@ impl TimerObjectInternals {
             return Ok(this_value);
         }
 
-        self.this_value
-            .with_mut(|r| r.set_strong(this_value, global_object));
+        self.arm_root(this_value, global_object);
         self.reschedule(
             this_value,
             VirtualMachine::get_mut_ptr(),
@@ -1028,16 +1074,16 @@ impl TimerObjectInternals {
         self.update_flags(|f| f.set_has_cleared_timer(true));
 
         if self.flags.get().kind() == Kind::SetImmediate {
-            // Release the strong reference so the GC can collect the JS object.
+            // Release the root so the GC can collect the JS object.
             // The immediate task is still in the event loop queue and will be skipped
             // by runImmediateTask when it sees has_cleared_timer == true.
-            self.this_value.with_mut(|r| r.downgrade());
+            self.disarm_root();
             return;
         }
 
         let was_active = self.event_loop_timer_state() == EventLoopTimerState::ACTIVE;
         self.set_event_loop_timer_state(EventLoopTimerState::CANCELLED);
-        self.this_value.with_mut(|r| r.downgrade());
+        self.disarm_root();
 
         if was_active {
             let state = crate::jsc_hooks::runtime_state();

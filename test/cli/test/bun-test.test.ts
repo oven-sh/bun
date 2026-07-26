@@ -1,6 +1,6 @@
 import { spawnSync } from "bun";
 import { beforeAll, describe, expect, it, test } from "bun:test";
-import { bunEnv, bunExe, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 
@@ -1635,4 +1635,53 @@ describe.concurrent("test file discovery (scanner)", () => {
     expect(stderr).toContain(" 1 pass");
     expect(exitCode).toBe(0);
   });
+
+  // MAX_PATH_BYTES is 4096 on Linux and 1024 on macOS. On Windows it is
+  // 32767*3+1, which exceeds the 32767-wide-char CreateProcessW command-line
+  // limit for ASCII argv, so this delivery vector cannot reach the overflow
+  // there; the Windows primitive is covered by the cargo unit test in
+  // bun_paths::resolve_path::tests.
+  for (const len of [5000, 100_000]) {
+    test.skipIf(isWindows)(
+      `path argument longer than MAX_PATH_BYTES (${len}) reports no match instead of panicking`,
+      async () => {
+        using dir = tempDir("scanner-long-arg", {
+          "exists.test.ts": `import { test } from "bun:test"; test("exists", () => {});`,
+        });
+        const longArg = "/" + Buffer.alloc(len, "a").toString() + ".test.ts";
+
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "test", longArg],
+          env: bunEnv,
+          cwd: String(dir),
+          stderr: "pipe",
+        });
+        const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+        expect(stderr).toContain("had no matches");
+        expect(exitCode).toBe(1);
+      },
+    );
+  }
+
+  test.skipIf(isWindows)(
+    "relative path argument longer than MAX_PATH_BYTES reports no match instead of panicking",
+    async () => {
+      using dir = tempDir("scanner-long-rel-arg", {
+        "exists.test.ts": `import { test } from "bun:test"; test("exists", () => {});`,
+      });
+      const longArg = "./" + Buffer.alloc(5000, "a").toString() + ".test.ts";
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", longArg],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+      expect(stderr).toContain("had no matches");
+      expect(exitCode).toBe(1);
+    },
+  );
 });

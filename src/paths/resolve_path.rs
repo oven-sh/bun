@@ -1605,6 +1605,7 @@ impl JoinScratch {
     }
 }
 
+/// Returns `&buf[..0]` when the normalized result overflows `buf`; see [`join_abs_string_buf_checked`].
 pub fn join_abs_string_buf<'a, P: PlatformT>(
     cwd: &'a [u8],
     buf: &'a mut [u8],
@@ -1766,16 +1767,43 @@ fn _join_abs_string_buf<'a, const IS_SENTINEL: bool, P: PlatformT>(
     // which writes into buf[leading_len..]).
     buf[..leading_len].copy_from_slice(&leading_buf[..leading_len]);
 
-    let result = normalize_string_buf::<false, P, true>(
-        &temp_buf[leading_len..out],
-        &mut buf[leading_len..],
-    );
-    let result_len = result.len();
+    let input = &temp_buf[leading_len..out];
+    let avail = buf
+        .len()
+        .saturating_sub(leading_len + (IS_SENTINEL as usize));
+    let result_len = if input.len() <= avail {
+        normalize_string_buf::<false, P, true>(input, &mut buf[leading_len..]).len()
+    } else {
+        match normalize_spill::<P>(input, &mut buf[leading_len..], avail) {
+            Some(r) => r,
+            None => return empty::<IS_SENTINEL>(buf),
+        }
+    };
 
     if IS_SENTINEL {
         buf[result_len + leading_len] = 0;
     }
     &buf[0..result_len + leading_len]
+}
+
+#[cold]
+fn normalize_spill<P: PlatformT>(input: &[u8], out: &mut [u8], avail: usize) -> Option<usize> {
+    // +1: the Windows UNC branch writes `buf[vol_len] = sep` with vol_len up to input.len().
+    let mut spill = vec![0u8; input.len() + 1];
+    let r = normalize_string_buf::<false, P, true>(input, &mut spill).len();
+    if r > avail {
+        return None;
+    }
+    out[..r].copy_from_slice(&spill[..r]);
+    Some(r)
+}
+
+#[cold]
+fn empty<const IS_SENTINEL: bool>(buf: &mut [u8]) -> &[u8] {
+    if IS_SENTINEL {
+        buf[0] = 0;
+    }
+    &buf[..0]
 }
 
 fn _join_abs_string_buf_windows<'a, const IS_SENTINEL: bool>(
@@ -1882,8 +1910,17 @@ fn _join_abs_string_buf_windows<'a, const IS_SENTINEL: bool>(
     //     out += 1;
     // }
 
-    let result = normalize_string_buf::<false, platform::Windows, true>(&temp_buf[0..out], buf);
-    let result_len = result.len();
+    let input = &temp_buf[0..out];
+    let avail = buf.len().saturating_sub(IS_SENTINEL as usize);
+    // `<` not `<=`: the UNC normalize branch can write `buf[input.len()]`.
+    let result_len = if input.len() < avail {
+        normalize_string_buf::<false, platform::Windows, true>(input, buf).len()
+    } else {
+        match normalize_spill::<platform::Windows>(input, buf, avail) {
+            Some(r) => r,
+            None => return empty::<IS_SENTINEL>(buf),
+        }
+    };
 
     if IS_SENTINEL {
         buf[result_len] = 0;
@@ -2434,3 +2471,65 @@ pub fn posix_to_platform_in_place<T: PathChar>(path_buffer: &mut [T]) {
 // `PathChar` is now canonical at `crate::path_char`; re-export for callers
 // that still path through `resolve_path::PathChar`.
 pub use crate::PathChar;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn join_abs_string_buf_overflow_returns_empty() {
+        let mut buf = [0u8; 64];
+        let long = vec![b'a'; 5000];
+        let r = join_abs_string_buf::<platform::Posix>(b"/cwd", &mut buf, &[&long]);
+        assert_eq!(r, b"");
+        let r = join_abs_string_buf::<platform::Posix>(b"/cwd", &mut buf, &[b"/", &long]);
+        assert_eq!(r, b"");
+        // _z variant: empty with NUL at buf[0].
+        let r = join_abs_string_buf_z::<platform::Posix>(b"/cwd", &mut buf, &[&long]);
+        assert_eq!(r.as_bytes(), b"");
+    }
+
+    #[test]
+    fn join_abs_string_buf_overflow_normalizes_down() {
+        // Unnormalized concat overflows `buf` but normalizes to a short path.
+        let mut buf = [0u8; 64];
+        let mut parts: Vec<&[u8]> = Vec::new();
+        for _ in 0..40 {
+            parts.push(b"x");
+            parts.push(b"..");
+        }
+        parts.push(b"end");
+        let r = join_abs_string_buf::<platform::Posix>(b"/cwd", &mut buf, &parts);
+        assert_eq!(r, b"/cwd/end");
+    }
+
+    #[test]
+    fn join_abs_string_buf_windows_overflow_returns_empty() {
+        let mut buf = [0u8; 64];
+        let long = vec![b'a'; 5000];
+        let r = join_abs_string_buf::<platform::Windows>(b"C:\\cwd", &mut buf, &[&long]);
+        assert_eq!(r, b"");
+        // UNC: normalize_string_generic_tz writes buf[vol_len] = sep with vol_len == input.len().
+        let long_unc: Vec<u8> = [b"\\\\".as_slice(), &vec![b'a'; 5000]].concat();
+        let r = join_abs_string_buf::<platform::Windows>(b"C:\\cwd", &mut buf, &[&long_unc]);
+        assert_eq!(r, b"");
+        let r = join_abs_string_buf::<platform::Windows>(b"C:\\cwd", &mut buf, &[&long_unc, b"x"]);
+        assert_eq!(r, b"");
+        // Exact-boundary UNC: out == buf.len() == 64 (part 63, + trailing sep).
+        let unc_boundary: Vec<u8> = [b"\\\\".as_slice(), &vec![b'a'; 61]].concat();
+        let r = join_abs_string_buf::<platform::Windows>(b"C:\\cwd", &mut buf, &[&unc_boundary]);
+        assert_eq!(r, b"");
+        // Exact-boundary UNC with sentinel: out == buf.len() - 1 == 63.
+        let unc_boundary_z: Vec<u8> = [b"\\\\".as_slice(), &vec![b'a'; 60]].concat();
+        let r =
+            join_abs_string_buf_z::<platform::Windows>(b"C:\\cwd", &mut buf, &[&unc_boundary_z]);
+        assert_eq!(r.as_bytes(), b"");
+    }
+
+    #[test]
+    fn join_abs_string_buf_fits_unchanged() {
+        let mut buf = [0u8; 64];
+        let r = join_abs_string_buf::<platform::Posix>(b"/cwd", &mut buf, &[b"a", b"b"]);
+        assert_eq!(r, b"/cwd/a/b");
+    }
+}

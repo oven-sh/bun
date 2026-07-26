@@ -1011,4 +1011,50 @@ body {
       expect(htmlContent).toMatch(/href=".*\.webmanifest"/);
     },
   });
+
+  // <link rel="preload" as="worker"> must emit the worker script as its own
+  // file and rewrite the href, not fold the worker's source into the page's
+  // module bundle.
+  itBundled("html/link-preload-worker", {
+    outdir: "out/",
+    files: {
+      "/index.html": `
+<!DOCTYPE html>
+<html>
+  <head>
+    <link rel="preload" as="worker" href="./w.js">
+    <script type="module" src="./m.js"></script>
+  </head>
+  <body></body>
+</html>`,
+      "/w.js": `self.onmessage = e => postMessage(e.data * 2);\nconsole.log("WORKER TOP-LEVEL RAN", typeof document);\n`,
+      "/m.js": `console.log("main");\n`,
+    },
+    entryPoints: ["/index.html"],
+    onAfterBundle(api) {
+      const html = api.readFile("out/index.html");
+
+      // The <link as="worker"> tag must survive with a rewritten href.
+      const linkMatch = html.match(/<link[^>]*\bas="worker"[^>]*\bhref="\.\/([^"]+)"/);
+      expect(linkMatch).not.toBeNull();
+      const workerFile = linkMatch![1];
+      expect(workerFile).toMatch(/\.js$/);
+
+      // The emitted worker file is the original source, not the page bundle.
+      const workerContents = api.readFile("out/" + workerFile);
+      expect(workerContents).toContain("self.onmessage");
+      expect(workerContents).not.toContain(`console.log("main")`);
+
+      // The page's module bundle must NOT contain the worker's top-level code.
+      const scriptMatch = html.match(/<script[^>]*\bsrc="\.\/([^"]+)"/);
+      expect(scriptMatch).not.toBeNull();
+      const pageBundle = api.readFile("out/" + scriptMatch![1]);
+      expect(pageBundle).toContain(`console.log("main")`);
+      expect(pageBundle).not.toContain("self.onmessage");
+      expect(pageBundle).not.toContain("WORKER TOP-LEVEL RAN");
+
+      // Worker and page bundle are distinct files.
+      expect(workerFile).not.toBe(scriptMatch![1]);
+    },
+  });
 });

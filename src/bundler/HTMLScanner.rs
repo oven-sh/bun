@@ -4,7 +4,9 @@ use std::borrow::Cow;
 use crate::Error;
 use crate::bun_fs as fs;
 use bun_alloc::AstAlloc;
-use bun_ast::{ImportKind, ImportRecord, ImportRecordFlags, ImportRecordTag, Index as AstIndex};
+use bun_ast::{
+    ImportKind, ImportRecord, ImportRecordFlags, ImportRecordTag, Index as AstIndex, Loader,
+};
 use bun_ast::{Loc, Log, Range, Source};
 use bun_paths::fs::Path as FsPath;
 use bun_paths::{platform, resolve_path};
@@ -31,7 +33,12 @@ impl<'a> HTMLScanner<'a> {
 }
 
 impl<'a> HTMLScanner<'a> {
-    fn create_import_record(&mut self, input_path: &[u8], kind: ImportKind) -> Result<(), Error> {
+    fn create_import_record(
+        &mut self,
+        input_path: &[u8],
+        kind: ImportKind,
+        loader: Option<Loader>,
+    ) -> Result<(), Error> {
         // In HTML, sometimes people do /src/index.js
         // In that case, we don't want to use the absolute filesystem path, we want to use the path relative to the project root
         let path_to_use: &[u8] = if input_path.len() > 1 && input_path[0] == b'/' {
@@ -74,7 +81,7 @@ impl<'a> HTMLScanner<'a> {
             kind,
             range: Range::NONE,
             tag: ImportRecordTag::default(),
-            loader: None,
+            loader,
             source_index: AstIndex::default(),
             original_path: b"",
             flags: ImportRecordFlags::default(),
@@ -102,9 +109,10 @@ impl<'a> HTMLScanner<'a> {
         path: &[u8],
         url_attribute: &[u8],
         kind: ImportKind,
+        loader: Option<Loader>,
     ) {
         let _ = url_attribute;
-        let _ = self.create_import_record(path, kind);
+        let _ = self.create_import_record(path, kind, loader);
     }
 
     pub(crate) fn scan(&mut self, input: &[u8]) -> Result<(), Error> {
@@ -126,6 +134,7 @@ pub(crate) trait HTMLProcessorHandler {
         path: &[u8],
         url_attribute: &[u8],
         kind: ImportKind,
+        loader: Option<Loader>,
     );
     fn on_write_html(&mut self, bytes: &[u8]);
     fn on_html_parse_error(&mut self, message: &[u8]);
@@ -151,8 +160,9 @@ impl<'a> HTMLProcessorHandler for HTMLScanner<'a> {
         path: &[u8],
         url_attribute: &[u8],
         kind: ImportKind,
+        loader: Option<Loader>,
     ) {
-        HTMLScanner::on_tag(self, element, path, url_attribute, kind)
+        HTMLScanner::on_tag(self, element, path, url_attribute, kind, loader)
     }
     fn on_write_html(&mut self, bytes: &[u8]) {
         HTMLScanner::on_write_html(self, bytes)
@@ -172,6 +182,10 @@ pub struct TagHandler {
     pub url_attribute: &'static str,
     /// The kind of import to create
     pub kind: ImportKind,
+    /// Force a specific loader on the import record instead of inferring from
+    /// the extension. Used for `<link as="worker">` to keep worker scripts out
+    /// of the page's JS chunk.
+    pub loader: Option<Loader>,
 }
 
 impl TagHandler {
@@ -180,6 +194,7 @@ impl TagHandler {
             selector,
             url_attribute,
             kind,
+            loader: None,
         }
     }
 }
@@ -205,8 +220,15 @@ pub(crate) const TAG_HANDLERS: [TagHandler; 16] = [
         "href",
         ImportKind::Url,
     ),
-    // Web Workers
-    TagHandler::new("link[as='worker'][href]", "href", ImportKind::Stmt),
+    // Web Workers. The worker script runs in its own global scope, so it must be
+    // emitted as a standalone file (like font/image/manifest preloads) rather than
+    // concatenated into the page's module bundle.
+    TagHandler {
+        selector: "link[as='worker'][href]",
+        url_attribute: "href",
+        kind: ImportKind::Url,
+        loader: Some(Loader::File),
+    },
     // Manifest files
     TagHandler::new("link[rel='manifest'][href]", "href", ImportKind::Url),
     // Icons
@@ -294,6 +316,7 @@ impl<T: HTMLProcessorHandler, const VISIT_DOCUMENT_TAGS: bool>
                                     value.as_bytes(),
                                     tag_info.url_attribute.as_bytes(),
                                     tag_info.kind,
+                                    tag_info.loader,
                                 );
                             }
                         }

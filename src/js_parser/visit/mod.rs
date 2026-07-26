@@ -1273,14 +1273,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             // or async functions, since this is a backwards-compatibility hack from
                             // Annex B of the JavaScript standard.
                             //
-                            // This transform rewrites `{ function f(){} }` into
-                            // `{ let f = function(){}; var f2 = f }` so the original strict/sloppy
-                            // semantics survive being wrapped in a different strict-mode context by
-                            // the bundler. The `var` alias requires a second name, which only the
-                            // renamer can produce, so without one the transform would emit only the
-                            // `let` and drop the Annex B.3.3 hoist. In that configuration the
-                            // output runs in the same strict/sloppy context as the source, so keep
-                            // the declaration and let the engine apply Annex B itself.
+                            // The `var` alias this emits needs a renamer; without one the output
+                            // context matches the source, so leave the declaration for the engine.
                             // SAFETY: current_scope is a valid arena ptr for the parse.
                             if p.will_use_renamer()
                                 && !p.current_scope().kind_stops_hoisting()

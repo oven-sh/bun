@@ -1303,6 +1303,10 @@ function allCachedValues(obj: ClassDefinition) {
     }
   }
 
+  for (const name in obj.callbacks ?? {}) {
+    values.push([name, `m_callback_${name}`]);
+  }
+
   return values;
 }
 
@@ -1538,8 +1542,9 @@ function generateClassImpl(typeName, obj: ClassDefinition) {
   } = obj;
   const name = className(typeName);
 
-  // analyzeHeap reports every cached value as a named property edge; appendHidden
-  // marks for GC without emitting a duplicate anonymous internal edge.
+  // analyzeHeap reports these as named property edges (see allCachedValues); appendHidden
+  // marks for GC without emitting a duplicate anonymous internal edge. klass caches are
+  // marked but never reported, which is moot: no setter is generated, so they stay empty.
   let DEFINE_VISIT_CHILDREN_LIST = [...Object.entries(fields), ...Object.entries(proto)]
     .filter(([name, { cache = false }]) => cache === true)
     .map(([name]) => `visitor.appendHidden(thisObject->m_${name});`)

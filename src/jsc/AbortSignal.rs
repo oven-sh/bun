@@ -49,6 +49,7 @@ unsafe extern "C" {
     safe fn WebCore__AbortSignal__ref(arg0: &AbortSignal) -> *mut AbortSignal;
     safe fn WebCore__AbortSignal__toJS(arg0: &AbortSignal, arg1: &JSGlobalObject) -> JSValue;
     safe fn WebCore__AbortSignal__unref(arg0: &AbortSignal);
+    safe fn WebCore__AbortSignal__cancelTimer(arg0: &AbortSignal);
     // `*mut Timeout` is round-tripped opaquely through C++ (stored from
     // `AbortSignal__Timeout__create`, never dereferenced on the C++ side), so
     // the non-`repr(C)` interior of `EventLoopTimer` is irrelevant to FFI.
@@ -166,6 +167,16 @@ impl AbortSignal {
 
     pub fn unref(&self) {
         WebCore__AbortSignal__unref(self)
+    }
+
+    /// Null `m_timeout` on the C++ side and free the `Timeout` box via
+    /// `AbortSignal__Timeout__deinit`. Paired with [`AbortSignal::unref`] this
+    /// is the shutdown-time release of the `timeout()` ref that preserves the
+    /// invariant `m_timeout != null ⇔ timeout()'s extra ref is held`, so a
+    /// later `JSAbortSignalOwner::finalize` → `releaseTimerIfUnobserved`
+    /// cannot double-deref. JS thread only.
+    pub fn cancel_timer(&self) {
+        WebCore__AbortSignal__cancelTimer(self)
     }
 
     pub fn detach(&self, ctx: *mut c_void) {
@@ -383,9 +394,14 @@ impl Timeout {
 
             // The signal and its handlers belong to a previous isolated test
             // file's global; firing now would run them against the new global.
-            // Drop the extra ref that signalAbort() would have released.
+            // Release via cancel_timer() (nulls m_timeout, frees `this`) then
+            // unref(), so a later JSAbortSignalOwner::finalize sees
+            // m_timeout == null and cannot double-deref.
             if (*this).generation != (*vm).test_isolation_generation {
-                (*(*this).signal).unref();
+                let signal = AbortSignal::opaque_ref((*this).signal);
+                signal.cancel_timer();
+                // `this` is freed; don't touch it again.
+                signal.unref();
                 return;
             }
 

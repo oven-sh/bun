@@ -412,7 +412,16 @@ void JSAbortSignalOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* contex
     // native is observing either, cancel the pending timer now rather than
     // letting it (and the C++ AbortSignal kept alive by timeout()'s extra ref)
     // survive until the deadline and fire as a no-op.
-    signal->releaseTimerIfUnobserved();
+    //
+    // The known refs here are exactly: the cell's m_wrapped (+1, released when
+    // the cell is swept after this returns), timeout()'s own (+1), and our
+    // local Ref (+1). A higher count means a bare C++ holder (e.g. Request's
+    // AbortSignalRef) still references the signal and may register an observer
+    // later, so the timer must stay armed. A lower count means
+    // cancel_all_timeout_objects already released timeout()'s ref while
+    // leaving the wrapper to free m_timeout; releasing again would over-deref.
+    if (signal->hasActiveTimeoutTimer() && signal->refCount() == 3)
+        signal->releaseTimerIfUnobserved();
 }
 
 #if ENABLE(BINDING_INTEGRITY)

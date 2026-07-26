@@ -103,6 +103,7 @@ public:
     }
 
     bool hasActiveTimeoutTimer() const { return m_timeout != nullptr; }
+    void cancelTimer();
     void releaseTimerIfUnobserved();
     bool hasAbortEventListener() const { return m_flags & static_cast<uint8_t>(AbortSignalFlags::HasAbortEventListener); }
     bool isFiringEventListeners() const { return m_flags & static_cast<uint8_t>(AbortSignalFlags::IsFiringEventListeners); }
@@ -149,7 +150,6 @@ private:
     void markAsDependent() { setIsDependent(true); }
     void addSourceSignal(AbortSignal&);
     void addDependentSignal(AbortSignal&);
-    void cancelTimer();
 
     void applyFlags(uint8_t flags) { m_flags |= flags; }
     void setIsDependent(bool isDependent)

@@ -1243,25 +1243,26 @@ impl All {
         // `AbortSignal.timeout()` boxes form a refcount cycle: the C++
         // `AbortSignal` owns `m_timeout` (raw `*mut Timeout`) and the Timeout
         // holds a `+1` on the signal. Neither can release first, so a pending
-        // timeout at exit leaks both. Unlink the timer (so the eventual
-        // `~AbortSignal` → `cancelTimer` → `Timeout::deinit` re-cancel is a
-        // no-op against the already-destroyed heap) and release the `+1`; the
-        // box itself is freed via `cancelTimer()` either now (if this was the
-        // last ref) or at `lastChanceToFinalize` when the JS wrapper is
-        // collected.
+        // timeout at exit leaks both. Release via C++ `cancelTimer()` (nulls
+        // `m_timeout`, frees the box through `AbortSignal__Timeout__deinit`,
+        // whose `Timeout::cancel` unlinks the still-ACTIVE heap node) then
+        // `unref()` the `+1`. Routing through `cancelTimer()` preserves the
+        // invariant `m_timeout != null ⇔ timeout()'s extra ref is held`, so a
+        // later `JSAbortSignalOwner::finalize` → `releaseTimerIfUnobserved`
+        // cannot double-deref.
         for t in signal_timeouts {
             // SAFETY: each `t` was collected from the live heap above; the
             // `+1` we release here is the one keeping the signal (and thus
             // the box, via `m_timeout`) pinned. JS thread.
             unsafe {
-                if (*t).event_loop_timer.state == EventLoopTimerState::ACTIVE {
-                    (*this).remove(core::ptr::addr_of_mut!((*t).event_loop_timer));
-                }
                 let signal = (*t).signal;
-                (*t).signal = core::ptr::null_mut();
-                if !signal.is_null() {
-                    crate::jsc::abort_signal::AbortSignal::opaque_ref(signal).unref();
+                if signal.is_null() {
+                    continue;
                 }
+                let signal = crate::jsc::abort_signal::AbortSignal::opaque_ref(signal);
+                signal.cancel_timer();
+                // `t` is freed now; don't touch it again.
+                signal.unref();
             }
         }
     }

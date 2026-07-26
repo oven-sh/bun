@@ -5726,6 +5726,11 @@ extern "C" void WebCore__AbortSignal__unref(WebCore::AbortSignal* abortSignal)
     abortSignal->deref();
 }
 
+extern "C" void WebCore__AbortSignal__cancelTimer(WebCore::AbortSignal* abortSignal)
+{
+    abortSignal->cancelTimer();
+}
+
 extern "C" void WebCore__AbortSignal__cleanNativeBindings(WebCore::AbortSignal* abortSignal, void* arg1)
 {
     abortSignal->cleanNativeBindings(arg1);

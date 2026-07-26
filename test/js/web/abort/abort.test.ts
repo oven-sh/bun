@@ -162,14 +162,18 @@ describe("AbortSignal", () => {
     // returns false for a timeout signal with no listeners); assert that so a
     // live-count regression can be attributed to the native side.
     expect(wrappers).toBeLessThan(100);
-    // Before the fix: afterGc === held === N. After: afterGc === 0.
-    expect({ held, afterGc }).toEqual({ held: 2_000, afterGc: 0 });
+    // Before the fix: afterGc === held === N. After: afterGc is ~0. A handful
+    // of wrappers may be conservatively retained by the collector on some
+    // platforms, so allow a small margin well below the unfixed N.
+    expect(held).toBe(2_000);
+    expect(afterGc).toBeLessThan(100);
     expect(exitCode).toBe(0);
   });
 
   // Regression guard for the above: a timeout signal that IS observed (via a
-  // listener, or transitively via AbortSignal.any) must not have its timer
-  // cancelled by GC of whatever reference the user dropped.
+  // listener, via AbortSignal.any, or via a bare native ref holder like
+  // Request) must not have its timer cancelled by GC of whatever reference the
+  // user dropped.
   test("AbortSignal.timeout() still fires after GC when the signal is observed", async () => {
     const src = `
       const { abortSignalTimeoutLiveCount } = require("bun:internal-for-testing");
@@ -191,9 +195,19 @@ describe("AbortSignal", () => {
         dep.addEventListener("abort", () => r2("any"), { once: true });
       })();
 
+      // Bare native ref holder: Request stores only an AbortSignalRef (no
+      // listener / pending-activity until fetch() registers one). The signal's
+      // JS wrapper is collectable once the options literal dies, but the
+      // native ref must keep the timer armed so a later fetch(req) can still
+      // time out.
+      let req;
+      (function () {
+        req = new Request("http://example.invalid/", { signal: AbortSignal.timeout(60 * 60 * 1000) });
+      })();
+
       Bun.gc(true);
       Bun.gc(true);
-      // Both native timers must have survived GC.
+      // All three native timers must have survived GC.
       const liveAfterGc = abortSignalTimeoutLiveCount();
 
       // AbortSignal.timeout timers are unref'd, so keep a ref'd timer around
@@ -201,7 +215,7 @@ describe("AbortSignal", () => {
       const keepalive = setInterval(() => {}, 1000);
       const results = await Promise.all([p1, p2]);
       clearInterval(keepalive);
-      console.log(JSON.stringify({ results, liveAfterGc }));
+      console.log(JSON.stringify({ results, liveAfterGc, reqAlive: req instanceof Request }));
     `;
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", src],
@@ -210,8 +224,35 @@ describe("AbortSignal", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
-    expect(JSON.parse(stdout.trim())).toEqual({ results: ["direct", "any"], liveAfterGc: 2 });
+    expect(JSON.parse(stdout.trim())).toEqual({ results: ["direct", "any"], liveAfterGc: 3, reqAlive: true });
     expect(exitCode).toBe(0);
+  });
+
+  // Regression guard for releaseTimerIfUnobserved() vs cancel_all_timeout_objects
+  // ordering under --isolate: the latter releases timeout()'s extra ref during
+  // the global swap, so a later wrapper finalize() must not deref again.
+  test("AbortSignal.timeout() leaked across --isolate files does not crash on GC", async () => {
+    using dir = tempDir("abort-isolate-deref", {
+      "a.test.ts": `import { test } from "bun:test";
+        test("leaves unobserved timeout signals", () => {
+          for (let i = 0; i < 50; i++) AbortSignal.timeout(1e9);
+        });`,
+      "b.test.ts": `import { test } from "bun:test";
+        test("forces GC", () => { Bun.gc(true); Bun.gc(true); });`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--isolate", "a.test.ts", "b.test.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ passed: stderr.includes("2 pass"), exitCode, signalCode: proc.signalCode }).toEqual({
+      passed: true,
+      exitCode: 0,
+      signalCode: null,
+    });
   });
 
   // https://wpt.fyi/results/dom/abort/timeout.any.html "AbortSignal timeouts fire in order"

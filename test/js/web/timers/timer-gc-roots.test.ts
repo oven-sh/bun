@@ -107,16 +107,20 @@ describe.concurrent("armed timers do not each hold a JSC strong handle", () => {
       (function () {
         let calls = 0;
         setTimeout(function () {
-          if (++calls === 1) this.refresh();
-          else { console.log("ok"); process.exit(0); }
+          if (++calls === 1) {
+            this._idleTimeout = 100;
+            this.refresh();
+          } else {
+            console.log("ok");
+            process.exit(0);
+          }
         }, 5);
       })();
       Bun.gc(true);
-      // The root-table slot is the only thing keeping the wrapper alive in the
-      // window between the first fire returning and the second fire.
-      await new Promise(r => setTimeout(r, 30));
-      Bun.gc(true);
-      setTimeout(() => { console.log("never fired"); process.exit(1); }, 500);
+      // Runs after the first fire has returned and before the second fire; the
+      // root-table slot is the only thing keeping the wrapper alive here.
+      setTimeout(() => Bun.gc(true), 30);
+      setTimeout(() => { console.log("never fired"); process.exit(1); }, 2000);
     `;
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", src],

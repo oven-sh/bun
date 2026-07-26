@@ -389,10 +389,7 @@ impl PosixBufferedReader {
     /// embedding `self` (the shell `PipeReader` does exactly that), so the
     /// caller must not touch `self` again after a `false` return.
     pub fn register_poll(&mut self) -> bool {
-        // `on_read_chunk` re-enters JS, which can call pause() and unregister
-        // the poll before control returns to the read loop that invoked it.
-        // The loop's own re-arm must not undo that pause; unpause() + read()
-        // will re-register when JS resumes.
+        // on_read_chunk may re-enter JS -> pause(); do not re-arm over it.
         if self.flags.contains(PosixFlags::IS_PAUSED) {
             return true;
         }

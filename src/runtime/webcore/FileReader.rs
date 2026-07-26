@@ -794,8 +794,7 @@ impl FileReader {
             unsafe { (*parent).increment_count() };
             self.pending.with_mut(|p| p.run());
             close_if_needed!();
-            // Re-entrant cancel closed the reader, or re-entrant setFlowing(false)
-            // paused it; either way tell the io caller to stop.
+            // Re-entrant cancel or setFlowing(false): tell the io caller to stop.
             let ret = if self.done.get() || !self.flowing.get() {
                 false
             } else {

@@ -961,9 +961,12 @@ struct HttpResponseData;
             }
             postPaddedBuffer = requestLineResult.position;
 
-            if(requestLineResult.isAncientHTTP) {
-                isAncientHTTP = true;
-            }
+            /* Written unconditionally (not just on true): ancientHttp is per-request and
+             * the caller re-enters this function for each pipelined request in the same
+             * recv buffer without clearing it, so a stale true from a prior HTTP/1.0
+             * request would mis-classify a following HTTP/1.1 request. isConnectRequest
+             * below is deliberately latched (tunnel mode persists across the loop). */
+            isAncientHTTP = requestLineResult.isAncientHTTP;
             if(requestLineResult.isConnect) {
                 isConnectRequest = true;
             }

@@ -232,22 +232,25 @@ test("node:http dispatches Transfer-Encoding on an HTTP/1.0 request (llhttp pari
     });
   });
   await new Promise<void>(r => server.listen(0, r));
-  const port = (server.address() as net.AddressInfo).port;
+  try {
+    const port = (server.address() as net.AddressInfo).port;
 
-  const client = net.connect(port, "127.0.0.1");
-  const request = "POST /a HTTP/1.0\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n";
+    const client = net.connect(port, "127.0.0.1");
+    const request = "POST /a HTTP/1.0\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n";
 
-  const response = await new Promise<string>((resolve, reject) => {
-    let buf = "";
-    client.on("error", reject);
-    client.on("data", d => (buf += d.toString("latin1")));
-    client.on("close", () => resolve(buf));
-    client.write(request);
-  });
-  server.close();
+    const response = await new Promise<string>((resolve, reject) => {
+      let buf = "";
+      client.on("error", reject);
+      client.on("data", d => (buf += d.toString("latin1")));
+      client.on("close", () => resolve(buf));
+      client.write(request);
+    });
 
-  expect(response).toContain("HTTP/1.1 200");
-  expect(hits).toEqual([{ url: "/a", body: "hello", httpVersion: "1.0" }]);
+    expect(response).toContain("HTTP/1.1 200");
+    expect(hits).toEqual([{ url: "/a", body: "hello", httpVersion: "1.0" }]);
+  } finally {
+    server.close();
+  }
 });
 
 test("rejects conflicting duplicate Content-Length headers", async () => {

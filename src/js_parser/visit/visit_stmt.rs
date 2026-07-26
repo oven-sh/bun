@@ -4,7 +4,7 @@ use crate::lexer as js_lexer;
 use crate::p::{P, ReactRefreshExportKind};
 use crate::parser::{
     PrependTempRefsOpts, ReactRefresh, Ref, RelocateVarsMode, SideEffects, StmtsKind,
-    statement_cares_about_scope,
+    StrictModeFeature, statement_cares_about_scope,
 };
 use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
 use bun_ast::flags;
@@ -1328,6 +1328,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         stmt: &mut Stmt,
         data: &mut S::Label,
     ) -> Result<(), Error> {
+        // Forbid functions inside labels in strict mode
+        if p.is_strict_mode() {
+            if let StmtData::SFunction(_) = data.stmt.data {
+                p.mark_strict_mode_feature(
+                    StrictModeFeature::LabelFunctionStmt,
+                    js_lexer::range_of_identifier(p.source, data.stmt.loc),
+                    b"",
+                )?;
+            }
+        }
+
         p.push_scope_for_visit_pass(js_ast::scope::Kind::Label, stmt.loc)
             .expect("unreachable");
         let name = p.load_name_from_ref(data.name.ref_);
@@ -1893,6 +1904,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         let decl: &mut G::Decl = &mut local.decls.slice_mut()[0];
                         if let js_ast::binding::Data::BIdentifier(b_id) = decl.binding.data {
                             if let Some(val) = decl.value {
+                                p.mark_strict_mode_feature(
+                                    StrictModeFeature::ForInVarInit,
+                                    js_lexer::range_of_identifier(p.source, decl.binding.loc),
+                                    b"",
+                                )?;
                                 let id_ref = b_id.r#ref;
                                 stmts.push(Stmt::assign(
                                     Expr::init_identifier(id_ref, decl.binding.loc),

@@ -1181,6 +1181,7 @@ pub enum StrictModeFeature {
     LegacyOctalLiteral,
     LegacyOctalEscape,
     IfElseFunctionStmt,
+    LabelFunctionStmt,
 }
 
 #[derive(Clone, Copy)]

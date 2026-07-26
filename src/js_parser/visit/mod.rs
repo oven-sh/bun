@@ -762,6 +762,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if has_if_scope {
             self.push_scope_for_visit_pass(ScopeKind::Block, stmt.loc)
                 .expect("unreachable");
+            if self.is_strict_mode() {
+                self.mark_strict_mode_feature(
+                    StrictModeFeature::IfElseFunctionStmt,
+                    js_lexer::range_of_identifier(self.source, stmt.loc),
+                    b"",
+                )
+                .expect("unreachable");
+            }
         }
 
         let old_is_inside_single_stmt_body = self.is_inside_single_stmt_body;

@@ -450,6 +450,12 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub module_scope_directive_loc: bun_ast::Loc,
     pub is_control_flow_dead: bool,
 
+    /// Legacy octal numeric literals (e.g. `010`) are only known to the lexer.
+    /// We record their ranges during the parse pass so the visit pass can emit
+    /// a strict-mode error once the scope's strict-mode kind is fully resolved
+    /// (which for ESM only happens after the whole file has been parsed).
+    pub legacy_octal_literals: Vec<bun_ast::Range>,
+
     /// True while `visit_single_stmt` is visiting a non-block body. `if`,
     /// `else`, `while`, and `do` reach it without pushing a scope, so inside
     /// their unbraced body `current_scope == module_scope` is still true at
@@ -4297,6 +4303,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     // TODO:
     pub fn check_for_non_bmp_code_point(&mut self, _: bun_ast::Loc, _: &[u8]) {}
 
+    #[inline]
+    pub fn check_for_legacy_octal_literal(&mut self) {
+        if self.lexer.is_legacy_octal_literal {
+            self.legacy_octal_literals.push(self.lexer.range());
+        }
+    }
+
     pub fn mark_strict_mode_feature(
         &mut self,
         feature: StrictModeFeature,
@@ -4325,6 +4338,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             StrictModeFeature::LegacyOctalLiteral => b"Legacy octal literals",
             StrictModeFeature::LegacyOctalEscape => b"Legacy octal escape sequences",
             StrictModeFeature::IfElseFunctionStmt => b"Function declarations inside if statements",
+            StrictModeFeature::LabelFunctionStmt => b"Function declarations inside labels",
         };
 
         let scope = self.current_scope();
@@ -4345,9 +4359,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     why = b"All code inside a class is implicitly in strict mode";
                     where_ = self.enclosing_class_keyword;
                 }
-                _ => {}
+                js_ast::StrictModeKind::ExplicitStrictMode => {
+                    why = b"Strict mode is triggered by the \"use strict\" directive here";
+                    where_ = self.source.range_of_string(self.module_scope_directive_loc);
+                }
+                js_ast::StrictModeKind::SloppyMode => {}
             }
-            if why.is_empty() {
+            if why.is_empty() && !where_.is_empty() {
                 why = bun_alloc::arena_format!(
                     in self.arena,
                     "This file is implicitly in strict mode because of the \"{}\" keyword here",
@@ -4356,9 +4374,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .into_bump_str()
                 .as_bytes();
             }
-            // bun_ast::Data is !Copy (Cow) — build the notes Box directly.
-            let notes: Box<[bun_ast::Data]> =
-                Box::new([bun_ast::range_data(Some(self.source), where_, why.to_vec())]);
+            let notes: Box<[bun_ast::Data]> = if why.is_empty() {
+                Box::new([])
+            } else {
+                Box::new([bun_ast::range_data(Some(self.source), where_, why.to_vec())])
+            };
             self.log().add_range_error_fmt_with_notes(
                 Some(self.source),
                 r,
@@ -8786,6 +8806,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             is_import_item: Default::default(),
             scope_order_to_visit: &[],
             module_scope_directive_loc: bun_ast::Loc::default(),
+            legacy_octal_literals: Vec::new(),
             is_control_flow_dead: false,
             is_inside_single_stmt_body: false,
             is_revisit_for_substitution: false,

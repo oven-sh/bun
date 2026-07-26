@@ -86,6 +86,15 @@ pub struct Ast<'a> {
     /// This is a list of named exports that may exist in a CommonJS module
     /// We use this with `commonjs_at_runtime` to re-export CommonJS
     pub has_commonjs_export_names: bool,
+    /// Statically-detected CJS export names under `commonjs_at_runtime` (name
+    /// slices borrow the source text / arena). Consumed before the arena drops.
+    pub runtime_commonjs_exports: Vec<&'a [u8]>,
+    /// Re-export specifiers from `__exportStar(require("x"), exports)` under
+    /// `commonjs_at_runtime`.
+    pub runtime_commonjs_reexports: Vec<&'a [u8]>,
+    /// Named exports cannot be statically enumerated
+    /// (`module.exports = require("x")`); the synthetic-provider path applies.
+    pub runtime_commonjs_exports_dynamic: bool,
     pub has_import_meta: bool,
     pub import_meta_ref: Ref,
 }
@@ -127,6 +136,9 @@ impl<'a> Ast<'a> {
             target: Target::Browser,
             ts_enums: Default::default(),
             has_commonjs_export_names: false,
+            runtime_commonjs_exports: Vec::new(),
+            runtime_commonjs_reexports: Vec::new(),
+            runtime_commonjs_exports_dynamic: false,
             has_import_meta: false,
             import_meta_ref: Ref::NONE,
         }

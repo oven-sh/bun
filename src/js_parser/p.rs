@@ -292,6 +292,19 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
 
     /// Used by commonjs_at_runtime
     pub has_commonjs_export_names: bool,
+    /// Statically-detected `exports.X` / `module.exports.X` /
+    /// `module.exports = { X: ... }` / `Object.defineProperty(exports, "X", ...)`
+    /// names, collected under `commonjs_at_runtime`. Used to declare the ESM
+    /// synthetic-module environment before the CJS body runs so the body can be
+    /// deferred to module-graph evaluate() time.
+    pub runtime_commonjs_exports: Vec<&'a [u8]>,
+    /// Re-export specifiers from `__exportStar(require("x"), exports)` patterns.
+    /// Emitted as `export * from "x"` in the ESM facade.
+    pub runtime_commonjs_reexports: Vec<&'a [u8]>,
+    /// Named exports cannot be statically enumerated
+    /// (`module.exports = require("x")`), so the ESM facade cannot be used and
+    /// the synthetic-provider path applies.
+    pub runtime_commonjs_exports_dynamic: bool,
 
     pub stack_check: bun_core::StackCheck,
 
@@ -5219,6 +5232,25 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.commonjs_named_exports_deoptimized = true;
     }
 
+    pub fn record_runtime_commonjs_export(&mut self, name: &'a [u8]) {
+        if !self.options.features.commonjs_at_runtime || name.is_empty() || name == b"default" {
+            return;
+        }
+        self.has_commonjs_export_names = true;
+        if !self.runtime_commonjs_exports.iter().any(|n| *n == name) {
+            self.runtime_commonjs_exports.push(name);
+        }
+    }
+
+    pub fn record_runtime_commonjs_reexport(&mut self, spec: &'a [u8]) {
+        if !self.options.features.commonjs_at_runtime || spec.is_empty() {
+            return;
+        }
+        if !self.runtime_commonjs_reexports.iter().any(|s| *s == spec) {
+            self.runtime_commonjs_reexports.push(spec);
+        }
+    }
+
     pub fn maybe_keep_expr_symbol_name(
         &mut self,
         expr: Expr,
@@ -8424,6 +8456,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             top_level_await_keyword: self.top_level_await_keyword,
             commonjs_named_exports: core::mem::take(&mut self.commonjs_named_exports),
             has_commonjs_export_names: self.has_commonjs_export_names,
+            runtime_commonjs_exports: core::mem::take(&mut self.runtime_commonjs_exports),
+            runtime_commonjs_reexports: core::mem::take(&mut self.runtime_commonjs_reexports),
+            runtime_commonjs_exports_dynamic: self.runtime_commonjs_exports_dynamic,
             has_import_meta: self.has_import_meta,
 
             hashbang: hashbang.into(),
@@ -8762,6 +8797,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             commonjs_replacement_stmts: js_ast::StmtNodeList::EMPTY,
             parse_pass_symbol_uses: None,
             has_commonjs_export_names: false,
+            runtime_commonjs_exports: Vec::new(),
+            runtime_commonjs_reexports: Vec::new(),
+            runtime_commonjs_exports_dynamic: false,
             should_fold_typescript_constant_expressions: false,
             emitted_namespace_vars: RefMap::default(),
             is_exported_inside_namespace: Default::default(),

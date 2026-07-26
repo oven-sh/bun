@@ -971,6 +971,7 @@ impl TranspilerJob {
                 ptr::null_mut()
             };
 
+            let is_commonjs_module = entry.metadata.module_type == CacheModuleType::Cjs;
             self.resolved_source = OwnedResolvedSource::from(ResolvedSource {
                 source_code: match &mut entry.output_code {
                     OutputCode::String(s) => *s,
@@ -980,7 +981,10 @@ impl TranspilerJob {
                         result
                     }
                 },
-                is_commonjs_module: entry.metadata.module_type == CacheModuleType::Cjs,
+                is_commonjs_module,
+                // The cache entry does not carry static export names; use the
+                // synthetic-provider path so named imports keep working.
+                cjs_exports_dynamic: is_commonjs_module,
                 module_info,
                 tag: this_tag,
                 ..Default::default()
@@ -1074,6 +1078,17 @@ impl TranspilerJob {
 
         let is_commonjs_module = parse_result.ast.has_commonjs_export_names
             || parse_result.ast.exports_kind == ExportsKind::Cjs;
+        let cjs_exports_dynamic = parse_result.ast.runtime_commonjs_exports_dynamic;
+        let (runtime_cjs_exports, runtime_cjs_reexports) = if is_commonjs_module
+            && !cjs_exports_dynamic
+        {
+            (
+                core::mem::take(&mut parse_result.ast.runtime_commonjs_exports),
+                core::mem::take(&mut parse_result.ast.runtime_commonjs_reexports),
+            )
+        } else {
+            (Vec::new(), Vec::new())
+        };
         let mut module_info: Option<Box<analyze_transpiled_module::ModuleInfo>> =
             if use_isolation_source_provider_cache
                 && !is_commonjs_module
@@ -1172,9 +1187,18 @@ impl TranspilerJob {
 
             break 'brk result;
         };
+        let (cjs_export_names, cjs_export_names_len) =
+            crate::resolved_source::leak_cjs_export_names(runtime_cjs_exports.iter().copied());
+        let (cjs_reexport_specifiers, cjs_reexport_specifiers_len) =
+            crate::resolved_source::leak_cjs_export_names(runtime_cjs_reexports.iter().copied());
         self.resolved_source = OwnedResolvedSource::from(ResolvedSource {
             source_code,
             is_commonjs_module,
+            cjs_export_names,
+            cjs_export_names_len,
+            cjs_reexport_specifiers,
+            cjs_reexport_specifiers_len,
+            cjs_exports_dynamic,
             module_info: module_info
                 .map(|mi| {
                     use analyze_transpiled_module::ModuleInfoExt;

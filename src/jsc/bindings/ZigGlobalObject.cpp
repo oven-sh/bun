@@ -3137,6 +3137,10 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
         ImplementationVisibility::Public,
         NoIntrinsic,
         PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete | 0);
+    putDirect(vm,
+        Identifier::fromUid(vm.symbolRegistry().symbolForKey("Bun.cjsFacade"_s)),
+        JSFunction::create(vm, this, 1, String(), Bun::jsFunctionLoadCommonJSForESM, ImplementationVisibility::Private),
+        PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete | PropertyAttribute::DontEnum | 0);
     putDirectNativeFunction(vm, this,
         builtinNames.evictIsolationSourceProviderCachePrivateName(),
         1,

@@ -693,6 +693,48 @@ impl BinaryExpressionVisitor {
 
             // ---------------------------------------------------------------------------------------------------
             Op::Code::BinAssign => {
+                if p.options.features.commonjs_at_runtime && !p.is_control_flow_dead {
+                    let left_is_module_exports = matches!(
+                        e_.left.data,
+                        ExprData::EDot(d)
+                            if d.name == b"exports"
+                                && matches!(
+                                    d.target.data,
+                                    ExprData::EIdentifier(id) if id.ref_.eql(p.module_ref)
+                                )
+                    );
+                    if left_is_module_exports {
+                        match e_.right.data {
+                            ExprData::ERequireString(_) => {
+                                // `module.exports = require("x")` replaces the
+                                // exports object wholesale; the named exports are
+                                // whatever `x` exports at runtime. Static
+                                // discovery would need cross-file analysis, so
+                                // flag the file for the synthetic-provider path.
+                                p.runtime_commonjs_exports_dynamic = true;
+                            }
+                            ExprData::EObject(obj) => {
+                                for prop in obj.properties.slice() {
+                                    if prop.kind != js_ast::G::PropertyKind::Normal
+                                        || prop.flags.contains(js_ast::Flags::Property::IsComputed)
+                                        || prop.flags.contains(js_ast::Flags::Property::IsSpread)
+                                    {
+                                        continue;
+                                    }
+                                    if let Some(key) = prop.key {
+                                        if let ExprData::EString(s) = key.data {
+                                            if s.is_utf8() {
+                                                p.record_runtime_commonjs_export(s.data.slice());
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+
                 // Optionally preserve the name
                 if let ExprData::EIdentifier(ident) = e_.left.data {
                     // reshaped for borrowck — copy the `StoreStr` out of

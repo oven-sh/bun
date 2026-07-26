@@ -1998,6 +1998,86 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
+        if p.options.features.commonjs_at_runtime && !p.is_control_flow_dead {
+            let args = e_.args.slice();
+            let is_exports_expr = |d: Data| match d {
+                Data::EIdentifier(id) => id.ref_.eql(p.exports_ref),
+                Data::EDot(d) => {
+                    d.name == b"exports"
+                        && matches!(
+                            d.target.data,
+                            Data::EIdentifier(inner) if inner.ref_.eql(p.module_ref)
+                        )
+                }
+                _ => false,
+            };
+            let callee_name: Option<&[u8]> = match e_.target.data {
+                Data::EDot(dot) => Some(dot.name.slice()),
+                Data::EIdentifier(id) => {
+                    Some(p.symbols[id.ref_.inner_index() as usize].original_name.slice())
+                }
+                _ => None,
+            };
+            if let Some(name) = callee_name {
+                if name == b"defineProperty"
+                    && matches!(
+                        e_.target.data,
+                        Data::EDot(dot) if matches!(
+                            dot.target.data,
+                            Data::EIdentifier(obj)
+                                if p.symbols[obj.ref_.inner_index() as usize].kind
+                                    == js_ast::symbol::Kind::Unbound
+                                    && p.symbols[obj.ref_.inner_index() as usize]
+                                        .original_name
+                                        .slice()
+                                        == b"Object"
+                        )
+                    )
+                    && args.len() >= 3
+                    && is_exports_expr(args[0].data)
+                {
+                    // Match cjs-module-lexer: only descriptors that have `value`
+                    // or set `enumerable: true` are treated as visible exports.
+                    let descriptor_is_visible = match args[2].data {
+                        Data::EObject(obj) => obj.properties.slice().iter().any(|prop| {
+                            matches!(
+                                prop.key.map(|k| k.data),
+                                Some(Data::EString(k))
+                                    if k.is_utf8()
+                                        && (k.data.slice() == b"value"
+                                            || (k.data.slice() == b"enumerable"
+                                                && matches!(
+                                                    prop.value.map(|v| v.data),
+                                                    Some(Data::EBoolean(b)) if b.value
+                                                )))
+                            )
+                        }),
+                        _ => false,
+                    };
+                    if descriptor_is_visible {
+                        if let Data::EString(s) = args[1].data {
+                            if s.is_utf8() {
+                                p.record_runtime_commonjs_export(s.data.slice());
+                            }
+                        }
+                    }
+                } else if (name == b"__exportStar" || name == b"__export") && !args.is_empty() {
+                    let has_exports_arg = args.len() == 1
+                        || args.get(1).is_some_and(|a| is_exports_expr(a.data))
+                        || args.get(2).is_some_and(|a| is_exports_expr(a.data));
+                    if has_exports_arg {
+                        if let Data::ERequireString(req) = args[0].data {
+                            let spec = p.import_records.items()
+                                [req.import_record_index as usize]
+                                .path
+                                .text;
+                            p.record_runtime_commonjs_reexport(spec);
+                        }
+                    }
+                }
+            }
+        }
+
         // Handle `feature("FLAG_NAME")` calls from `import { feature } from "bun:bundle"`
         // Check if the bundler_feature_flag_ref is set before calling the function
         // to avoid stack memory usage from copying values back and forth.

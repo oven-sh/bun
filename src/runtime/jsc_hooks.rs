@@ -2886,6 +2886,10 @@ fn transpile_source_code_inner(
                         specifier: input_specifier.dupe_ref(),
                         source_url: create_if_different(input_specifier, path.text),
                         is_commonjs_module,
+                        // The cache entry does not carry static export names;
+                        // use the synthetic-provider path so named imports
+                        // keep working.
+                        cjs_exports_dynamic: is_commonjs_module,
                         module_info,
                         tag,
                         ..Default::default()
@@ -2957,6 +2961,16 @@ fn transpile_source_code_inner(
 
                 let is_commonjs_module = parse_result.ast.has_commonjs_export_names
                     || parse_result.ast.exports_kind == bun_ast::ExportsKind::Cjs;
+                let cjs_exports_dynamic = parse_result.ast.runtime_commonjs_exports_dynamic;
+                let (runtime_cjs_exports, runtime_cjs_reexports) =
+                    if is_commonjs_module && !cjs_exports_dynamic {
+                        (
+                            core::mem::take(&mut parse_result.ast.runtime_commonjs_exports),
+                            core::mem::take(&mut parse_result.ast.runtime_commonjs_reexports),
+                        )
+                    } else {
+                        (Vec::new(), Vec::new())
+                    };
                 // Collect the ESM record while printing, for the isolation
                 // source-provider cache (same shape as `RuntimeTranspilerStore`).
                 // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
@@ -3068,6 +3082,15 @@ fn transpile_source_code_inner(
                     })
                     .unwrap_or(core::ptr::null_mut());
 
+                let (cjs_export_names, cjs_export_names_len) =
+                    bun_jsc::resolved_source::leak_cjs_export_names(
+                        runtime_cjs_exports.iter().copied(),
+                    );
+                let (cjs_reexport_specifiers, cjs_reexport_specifiers_len) =
+                    bun_jsc::resolved_source::leak_cjs_export_names(
+                        runtime_cjs_reexports.iter().copied(),
+                    );
+
                 // Watcher path uses ref-counted source.
                 // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
                 if unsafe { &*jsc_vm }.is_watcher_enabled() {
@@ -3088,6 +3111,11 @@ fn transpile_source_code_inner(
                     };
                     resolved_source.is_commonjs_module = is_commonjs_module;
                     resolved_source.module_info = module_info;
+                    resolved_source.cjs_export_names = cjs_export_names;
+                    resolved_source.cjs_export_names_len = cjs_export_names_len;
+                    resolved_source.cjs_reexport_specifiers = cjs_reexport_specifiers;
+                    resolved_source.cjs_reexport_specifiers_len = cjs_reexport_specifiers_len;
+                    resolved_source.cjs_exports_dynamic = cjs_exports_dynamic;
                     return Ok(OwnedResolvedSource::from(resolved_source));
                 }
 
@@ -3174,6 +3202,11 @@ fn transpile_source_code_inner(
                     specifier: input_specifier.dupe_ref(),
                     source_url: create_if_different(input_specifier, path.text),
                     is_commonjs_module,
+                    cjs_export_names,
+                    cjs_export_names_len,
+                    cjs_reexport_specifiers,
+                    cjs_reexport_specifiers_len,
+                    cjs_exports_dynamic,
                     module_info,
                     tag,
                     ..Default::default()

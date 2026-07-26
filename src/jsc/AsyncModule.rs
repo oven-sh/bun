@@ -1255,6 +1255,16 @@ impl AsyncModule {
         // can `mem::take` instead of cloning.
         let is_commonjs_module = self.parse_result.ast.has_commonjs_export_names
             || self.parse_result.ast.exports_kind == bun_ast::ExportsKind::Cjs;
+        let cjs_exports_dynamic = self.parse_result.ast.runtime_commonjs_exports_dynamic;
+        let (runtime_cjs_exports, runtime_cjs_reexports) =
+            if is_commonjs_module && !cjs_exports_dynamic {
+                (
+                    core::mem::take(&mut self.parse_result.ast.runtime_commonjs_exports),
+                    core::mem::take(&mut self.parse_result.ast.runtime_commonjs_reexports),
+                )
+            } else {
+                (Vec::new(), Vec::new())
+            };
         let input_fd = self.parse_result.input_fd;
         let arena = *self.parse_result.ast.parts.allocator();
         let parse_result = core::mem::replace(&mut self.parse_result, ParseResult::empty(arena));
@@ -1326,6 +1336,11 @@ impl AsyncModule {
             );
         }
 
+        let (cjs_export_names, cjs_export_names_len) =
+            crate::resolved_source::leak_cjs_export_names(runtime_cjs_exports.iter().copied());
+        let (cjs_reexport_specifiers, cjs_reexport_specifiers_len) =
+            crate::resolved_source::leak_cjs_export_names(runtime_cjs_reexports.iter().copied());
+
         // SAFETY: per-thread VM.
         if unsafe { (*jsc_vm).is_watcher_enabled() } {
             // SAFETY: per-thread VM.
@@ -1370,6 +1385,11 @@ impl AsyncModule {
             }
 
             resolved_source.is_commonjs_module = is_commonjs_module;
+            resolved_source.cjs_export_names = cjs_export_names;
+            resolved_source.cjs_export_names_len = cjs_export_names_len;
+            resolved_source.cjs_reexport_specifiers = cjs_reexport_specifiers;
+            resolved_source.cjs_reexport_specifiers_len = cjs_reexport_specifiers_len;
+            resolved_source.cjs_exports_dynamic = cjs_exports_dynamic;
 
             return Ok(resolved_source);
         }
@@ -1379,6 +1399,11 @@ impl AsyncModule {
             specifier: BunString::init(specifier),
             source_url: BunString::init(path.text),
             is_commonjs_module,
+            cjs_export_names,
+            cjs_export_names_len,
+            cjs_reexport_specifiers,
+            cjs_reexport_specifiers_len,
+            cjs_exports_dynamic,
             ..Default::default()
         })
     }

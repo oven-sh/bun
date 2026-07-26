@@ -20,26 +20,14 @@ test("shows __esModule if it was exported", () => {
 });
 
 test("arraylike", () => {
-  expect(CJSArrayLike[0]).toBe(0);
-  expect(CJSArrayLike[1]).toBe(1);
-  expect(CJSArrayLike[2]).toBe(3);
-  expect(CJSArrayLike[3]).toBe(4);
-  expect(CJSArrayLike[4]).toBe(undefined);
-  expect(CJSArrayLike).toHaveProperty("4");
+  // CJS named-export detection is now static (matching Node's cjs-module-lexer),
+  // so only bindings the lexer can prove are declared on the namespace; the
+  // full exports object is still reachable via `default`.
   expect(Object.getOwnPropertyNames(CJSArrayLike)).not.toContain("__esModule");
   expect(Object.getOwnPropertyNames(CJSArrayLike.default)).not.toContain("__esModule");
-  expect(Bun.inspect(CJSArrayLike)).toBe(`Module {
-  "0": 0,
-  "1": 1,
-  "2": 3,
-  "3": 4,
-  "4": undefined,
-  default: {
-    "0": 0,
-    "1": 1,
-    "2": [Getter],
-    "3": 4,
-    "4": [Getter],
-  },
-}`);
+  expect(CJSArrayLike.default[0]).toBe(0);
+  expect(CJSArrayLike.default[1]).toBe(1);
+  expect(CJSArrayLike.default[2]).toBe(3);
+  expect(CJSArrayLike.default[3]).toBe(4);
+  expect(() => CJSArrayLike.default[4]).toThrow();
 });

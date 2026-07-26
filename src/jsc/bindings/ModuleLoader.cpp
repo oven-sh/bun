@@ -48,6 +48,8 @@ using namespace JSC;
 using namespace Zig;
 using namespace WebCore;
 
+extern "C" void Bun__freeCjsExportNames(BunString* names, size_t len);
+
 class ResolvedSourceCodeHolder {
 public:
     ResolvedSourceCodeHolder(ErrorableResolvedSource* res_)
@@ -60,6 +62,16 @@ public:
         if (res->success && res->result.value.source_code.tag == BunStringTag::WTFStringImpl && res->result.value.needsDeref) {
             res->result.value.needsDeref = false;
             res->result.value.source_code.impl.wtf->deref();
+        }
+        if (res->success && res->result.value.cjs_export_names) {
+            Bun__freeCjsExportNames(res->result.value.cjs_export_names, res->result.value.cjs_export_names_len);
+            res->result.value.cjs_export_names = nullptr;
+            res->result.value.cjs_export_names_len = 0;
+        }
+        if (res->success && res->result.value.cjs_reexport_specifiers) {
+            Bun__freeCjsExportNames(res->result.value.cjs_reexport_specifiers, res->result.value.cjs_reexport_specifiers_len);
+            res->result.value.cjs_reexport_specifiers = nullptr;
+            res->result.value.cjs_reexport_specifiers_len = 0;
         }
     }
 

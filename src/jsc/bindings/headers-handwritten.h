@@ -134,6 +134,18 @@ typedef struct ResolvedSource {
     // File path used as source origin for bytecode cache validation.
     // Converted to file:// URL. If empty, origin is derived from source_url.
     BunString bytecode_origin_path;
+    // Statically-detected CommonJS export names (isCommonJSModule only). The
+    // backing allocation is a Rust Box<[BunString]> freed by
+    // Bun__freeCjsExportNames once consumed.
+    BunString* cjs_export_names;
+    size_t cjs_export_names_len;
+    // Re-export specifiers from __exportStar / module.exports = require("x").
+    BunString* cjs_reexport_specifiers;
+    size_t cjs_reexport_specifiers_len;
+    // Named exports cannot be statically enumerated; use the synthetic-provider
+    // path so the CJS body runs at makeModule() and all runtime-enumerable
+    // properties become named exports.
+    bool cjs_exports_dynamic;
 } ResolvedSource;
 inline constexpr uint32_t ResolvedSourceTagPackageJSONTypeModule = 1;
 typedef union ErrorableResolvedSourceResult {

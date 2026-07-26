@@ -215,7 +215,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         if identifier_opts.is_call_target() && name == b"require" {
                             p.ignore_usage(p.module_ref);
                             return Some(p.value_for_require(name_loc));
-                        } else if !p.commonjs_named_exports_deoptimized && name == b"exports" {
+                        }
+
+                        if !p.commonjs_named_exports_deoptimized && name == b"exports" {
                             if identifier_opts.assign_target() != js_ast::AssignTarget::None {
                                 p.commonjs_module_exports_assigned_deoptimized = true;
                             }
@@ -371,6 +373,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             p.ignore_usage(p.module_ref);
                             return Some(p.new_expr(e_string_init(p.source.path.pretty), name_loc));
                         }
+                    }
+
+                    if p.options.features.commonjs_at_runtime
+                        && !p.should_unwrap_common_js_to_esm()
+                        && !p.is_control_flow_dead
+                        && id.ref_.eql(p.exports_ref)
+                        && identifier_opts.assign_target() != js_ast::AssignTarget::None
+                        && !identifier_opts.is_delete_target()
+                    {
+                        p.record_runtime_commonjs_export(name);
                     }
 
                     if p.should_unwrap_common_js_to_esm() {
@@ -580,6 +592,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 // EDot and EIndex are handled with structurally identical arms.
                 js_ast::ExprData::EDot(data) => {
+                    if p.options.features.commonjs_at_runtime
+                        && !p.is_control_flow_dead
+                        && identifier_opts.assign_target() != js_ast::AssignTarget::None
+                        && !identifier_opts.is_delete_target()
+                        && data.name == b"exports"
+                        && matches!(
+                            data.target.data,
+                            js_ast::ExprData::EIdentifier(inner) if inner.ref_.eql(p.module_ref)
+                        )
+                    {
+                        p.record_runtime_commonjs_export(name);
+                    }
+
                     if matches!(p.ts_namespace.expr, js_ast::ExprData::EDot(ns_data) if data.as_ptr() == ns_data.as_ptr())
                         && identifier_opts.assign_target() == js_ast::AssignTarget::None
                         && !identifier_opts.is_delete_target()

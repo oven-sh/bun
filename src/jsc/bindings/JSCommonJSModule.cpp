@@ -73,6 +73,7 @@
 #include <JavaScriptCore/JSModuleNamespaceObject.h>
 #include <JavaScriptCore/JSSourceCode.h>
 #include <JavaScriptCore/LazyPropertyInlines.h>
+#include <JavaScriptCore/BuiltinNames.h>
 #include <JavaScriptCore/HeapAnalyzer.h>
 #include "PathInlines.h"
 #include "wtf/NakedPtr.h"
@@ -1478,6 +1479,45 @@ void JSCommonJSModule::evaluateWithPotentiallyOverriddenCompile(
 }
 
 static JSC::SourceCode commonJSModuleSyntheticSourceCode(const SourceOrigin& sourceOrigin, const WTF::String& sourceURL);
+static JSC::SourceCode commonJSModuleESMFacadeSourceCode(const SourceOrigin& sourceOrigin, const WTF::String& sourceURL, const WTF::String& requireMapKey, const WTF::Vector<JSC::Identifier>& staticExportNames, const WTF::Vector<WTF::String>& reexportSpecifiers);
+
+extern "C" void Bun__freeCjsExportNames(BunString* names, size_t len);
+
+static WTF::Vector<JSC::Identifier> takeStaticExportNames(VM& vm, ResolvedSource& source)
+{
+    WTF::Vector<JSC::Identifier> out;
+    if (source.cjs_export_names && source.cjs_export_names_len) {
+        out.reserveCapacity(source.cjs_export_names_len);
+        for (size_t i = 0; i < source.cjs_export_names_len; ++i) {
+            WTF::String name = source.cjs_export_names[i].toWTFString(BunString::ZeroCopy);
+            if (name.isEmpty())
+                continue;
+            out.append(JSC::Identifier::fromString(vm, name));
+        }
+    }
+    Bun__freeCjsExportNames(source.cjs_export_names, source.cjs_export_names_len);
+    source.cjs_export_names = nullptr;
+    source.cjs_export_names_len = 0;
+    return out;
+}
+
+static WTF::Vector<WTF::String> takeReexportSpecifiers(ResolvedSource& source)
+{
+    WTF::Vector<WTF::String> out;
+    if (source.cjs_reexport_specifiers && source.cjs_reexport_specifiers_len) {
+        out.reserveCapacity(source.cjs_reexport_specifiers_len);
+        for (size_t i = 0; i < source.cjs_reexport_specifiers_len; ++i) {
+            WTF::String spec = source.cjs_reexport_specifiers[i].toWTFString(BunString::ZeroCopy);
+            if (spec.isEmpty())
+                continue;
+            out.append(WTF::move(spec));
+        }
+    }
+    Bun__freeCjsExportNames(source.cjs_reexport_specifiers, source.cjs_reexport_specifiers_len);
+    source.cjs_reexport_specifiers = nullptr;
+    source.cjs_reexport_specifiers_len = 0;
+    return out;
+}
 
 std::optional<JSC::SourceCode> createCommonJSModule(
     Zig::GlobalObject* globalObject,
@@ -1545,7 +1585,15 @@ std::optional<JSC::SourceCode> createCommonJSModule(
 
     moduleObject->ignoreESModuleAnnotation = ignoreESModuleAnnotation;
 
-    return commonJSModuleSyntheticSourceCode(sourceOrigin, sourceURL);
+    if (moduleObject->hasEvaluated || source.cjs_exports_dynamic)
+        return commonJSModuleSyntheticSourceCode(sourceOrigin, sourceURL);
+
+    auto staticNames = takeStaticExportNames(vm, source);
+    auto reexports = takeReexportSpecifiers(source);
+    JSValue filenameValue = moduleObject->filename();
+    WTF::String requireMapKeyString = filenameValue.isString() ? asString(filenameValue)->value(globalObject).data : sourceURL;
+    RETURN_IF_EXCEPTION(scope, {});
+    return commonJSModuleESMFacadeSourceCode(sourceOrigin, sourceURL, requireMapKeyString, staticNames, reexports);
 }
 
 static JSC::SourceCode commonJSModuleSyntheticSourceCode(const SourceOrigin& sourceOrigin, const WTF::String& sourceURL)
@@ -1597,6 +1645,172 @@ static JSC::SourceCode commonJSModuleSyntheticSourceCode(const SourceOrigin& sou
             sourceURL));
 }
 
+JSC_DEFINE_HOST_FUNCTION(jsFunctionLoadCommonJSForESM, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+{
+    auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSValue keyValue = callFrame->argument(0);
+    JSValue entry = globalObject->requireMap()->get(globalObject, keyValue);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    auto* moduleObject = entry ? dynamicDowncast<JSCommonJSModule>(entry) : nullptr;
+    if (!moduleObject)
+        return JSValue::encode(jsUndefined());
+
+    if (!moduleObject->hasEvaluated) {
+        evaluateCommonJSModuleOnce(vm, globalObject, moduleObject, moduleObject->m_dirname.get(), moduleObject->m_filename.get());
+        if (auto exception = scope.exception()) {
+            (void)scope.tryClearException();
+            globalObject->requireMap()->remove(globalObject, moduleObject->filename());
+            RETURN_IF_EXCEPTION(scope, {});
+            scope.throwException(globalObject, exception);
+            return {};
+        }
+    }
+
+    JSValue exports = moduleObject->exportsObject();
+    RETURN_IF_EXCEPTION(scope, {});
+
+    JSValue defaultValue = exports;
+    if (!moduleObject->ignoreESModuleAnnotation) {
+        if (auto* exportsObject = exports.getObject()) {
+            PropertySlot slot(exportsObject, PropertySlot::InternalMethodType::VMInquiry, &vm);
+            auto hasMarker = exportsObject->getPropertySlot(globalObject, vm.propertyNames->__esModule, slot);
+            scope.assertNoException();
+            if (hasMarker) {
+                JSValue marker = slot.getValue(globalObject, vm.propertyNames->__esModule);
+                CLEAR_IF_EXCEPTION(scope);
+                if (!marker.isUndefinedOrNull() && marker.pureToBoolean() == TriState::True) {
+                    PropertySlot defaultSlot(exportsObject, PropertySlot::InternalMethodType::Get);
+                    auto hasDefault = exportsObject->getPropertySlot(globalObject, vm.propertyNames->defaultKeyword, defaultSlot);
+                    RETURN_IF_EXCEPTION(scope, {});
+                    if (hasDefault) {
+                        defaultValue = defaultSlot.getValue(globalObject, vm.propertyNames->defaultKeyword);
+                        if (scope.exception()) [[unlikely]] {
+                            (void)scope.tryClearException();
+                            defaultValue = exports;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    JSValue esModuleValue = jsUndefined();
+    if (moduleObject->ignoreESModuleAnnotation) {
+        if (auto* exportsObject = exports.getObject()) {
+            PropertySlot slot(exportsObject, PropertySlot::InternalMethodType::Get);
+            auto has = exportsObject->getPropertySlot(globalObject, vm.propertyNames->__esModule, slot);
+            RETURN_IF_EXCEPTION(scope, {});
+            if (has) {
+                esModuleValue = slot.getValue(globalObject, vm.propertyNames->__esModule);
+                if (scope.exception()) [[unlikely]] {
+                    (void)scope.tryClearException();
+                    esModuleValue = jsUndefined();
+                }
+            }
+        }
+    }
+
+    auto* result = JSC::constructEmptyArray(globalObject, nullptr, 3);
+    RETURN_IF_EXCEPTION(scope, {});
+    result->putDirectIndex(globalObject, 0, exports);
+    RETURN_IF_EXCEPTION(scope, {});
+    result->putDirectIndex(globalObject, 1, defaultValue);
+    RETURN_IF_EXCEPTION(scope, {});
+    result->putDirectIndex(globalObject, 2, esModuleValue);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(result);
+}
+
+static bool isSafeFacadeExportName(const StringImpl& impl)
+{
+    if (impl.isEmpty() || !impl.is8Bit())
+        return false;
+    auto span = impl.span8();
+    auto first = span[0];
+    if (!(isASCIIAlpha(first) || first == '_' || first == '$'))
+        return false;
+    for (auto c : span) {
+        if (!(isASCIIAlphanumeric(c) || c == '_' || c == '$'))
+            return false;
+    }
+    // Reserved words can't appear after `export var`. Match the Node loader,
+    // which drops any cjs-module-lexer name that is a reserved word.
+    static constexpr ASCIILiteral reserved[] = {
+        "await"_s, "break"_s, "case"_s, "catch"_s, "class"_s, "const"_s,
+        "continue"_s, "debugger"_s, "default"_s, "delete"_s, "do"_s, "else"_s,
+        "enum"_s, "export"_s, "extends"_s, "false"_s, "finally"_s, "for"_s,
+        "function"_s, "if"_s, "implements"_s, "import"_s, "in"_s,
+        "instanceof"_s, "interface"_s, "let"_s, "new"_s, "null"_s, "package"_s,
+        "private"_s, "protected"_s, "public"_s, "return"_s, "static"_s,
+        "super"_s, "switch"_s, "this"_s, "throw"_s, "true"_s, "try"_s,
+        "typeof"_s, "var"_s, "void"_s, "while"_s, "with"_s, "yield"_s,
+        "__esModule"_s,
+    };
+    for (auto word : reserved) {
+        if (impl == word)
+            return false;
+    }
+    return true;
+}
+
+// The ESM-imports-CJS wrapper: a real ES source-text module so its body runs
+// at the same point in innerModuleEvaluation's DFS as ESM siblings. The
+// previous SyntheticSourceProvider path ran the CJS body inside makeModule(),
+// which fires as each fetch promise settles (off-thread transpile pool order),
+// so CJS siblings evaluated before every ESM sibling and in non-deterministic
+// relative order. The facade body calls jsFunctionLoadCommonJSForESM, which
+// evaluates the JSCommonJSModule already registered in requireMap and hands
+// back [module.exports, default-per-__esModule].
+static void appendFacadeStringLiteral(WTF::StringBuilder& builder, const WTF::String& raw)
+{
+    WTF::String escaped = raw;
+    escaped = makeStringByReplacingAll(escaped, '\\', "\\\\"_s);
+    escaped = makeStringByReplacingAll(escaped, '"', "\\\""_s);
+    escaped = makeStringByReplacingAll(escaped, '\n', "\\n"_s);
+    escaped = makeStringByReplacingAll(escaped, '\r', "\\r"_s);
+    builder.append('"');
+    builder.append(escaped);
+    builder.append('"');
+}
+
+static JSC::SourceCode commonJSModuleESMFacadeSourceCode(const SourceOrigin& sourceOrigin, const WTF::String& sourceURL, const WTF::String& requireMapKey, const WTF::Vector<JSC::Identifier>& staticExportNames, const WTF::Vector<WTF::String>& reexportSpecifiers)
+{
+    WTF::StringBuilder builder;
+    for (auto& spec : reexportSpecifiers) {
+        builder.append("export*from"_s);
+        appendFacadeStringLiteral(builder, spec);
+        builder.append(";\n"_s);
+    }
+    builder.append("var $=globalThis[Symbol.for(\"Bun.cjsFacade\")]("_s);
+    appendFacadeStringLiteral(builder, requireMapKey);
+    builder.append("),$e=$?$[0]:void 0;export default $?$[1]:void 0;\n"_s);
+    bool hasESModule = false;
+    for (auto& name : staticExportNames) {
+        auto* impl = name.impl();
+        if (!impl)
+            continue;
+        if (equal(impl, "__esModule"_s)) {
+            hasESModule = true;
+            continue;
+        }
+        if (!isSafeFacadeExportName(*impl))
+            continue;
+        StringView view(*impl);
+        builder.append("export var "_s);
+        builder.append(view);
+        builder.append("=$e?$e."_s);
+        builder.append(view);
+        builder.append(":void 0;\n"_s);
+    }
+    if (hasESModule)
+        builder.append("export var __esModule=$?$[2]:void 0;\n"_s);
+    return JSC::makeSource(builder.toString(), sourceOrigin, JSC::SourceTaintedOrigin::Untainted, sourceURL, WTF::TextPosition(), JSC::SourceProviderSourceType::Module);
+}
+
 std::optional<JSC::SourceCode> createCommonJSModule(
     Zig::GlobalObject* globalObject,
     JSC::JSString* requireMapKey,
@@ -1646,7 +1860,13 @@ std::optional<JSC::SourceCode> createCommonJSModule(
 
     moduleObject->ignoreESModuleAnnotation = ignoreESModuleAnnotation;
 
-    return commonJSModuleSyntheticSourceCode(sourceOrigin, sourceURL);
+    if (moduleObject->hasEvaluated)
+        return commonJSModuleSyntheticSourceCode(sourceOrigin, sourceURL);
+
+    JSValue filenameValue = moduleObject->filename();
+    WTF::String requireMapKeyString = filenameValue.isString() ? asString(filenameValue)->value(globalObject).data : sourceURL;
+    RETURN_IF_EXCEPTION(scope, {});
+    return commonJSModuleESMFacadeSourceCode(sourceOrigin, sourceURL, requireMapKeyString, {}, {});
 }
 
 JSObject* JSCommonJSModule::createBoundRequireFunction(VM& vm, JSGlobalObject* lexicalGlobalObject, const WTF::String& pathString)

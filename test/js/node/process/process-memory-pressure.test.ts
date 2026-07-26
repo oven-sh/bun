@@ -94,6 +94,28 @@ describe.concurrent("process.on('memoryPressure')", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("process.removeAllListeners() with no args uninstalls the watcher", async () => {
+    const { stdout, stderr, exitCode } = await run(/* js */ `
+      const { isMemoryPressureWatcherInstalled } = require("bun:internal-for-testing");
+      const installed = [];
+      installed.push(isMemoryPressureWatcherInstalled()); // false: no listeners yet
+      process.on("memoryPressure", () => {});
+      installed.push(isMemoryPressureWatcherInstalled()); // true: armed
+      process.removeAllListeners();
+      installed.push(isMemoryPressureWatcherInstalled()); // false: no-arg removeAllListeners must disarm
+      process.on("memoryPressure", () => {});
+      installed.push(isMemoryPressureWatcherInstalled()); // true: can re-arm afterwards
+      process.removeAllListeners("memoryPressure");
+      installed.push(isMemoryPressureWatcherInstalled()); // false: named form (already worked)
+      process.stdout.write(JSON.stringify({ installed, listenerCount: process.listenerCount("memoryPressure") }));
+    `);
+    expect({ stdout, stderr: stderr.trim() }).toEqual({
+      stdout: JSON.stringify({ installed: [false, true, false, true, false], listenerCount: 0 }),
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  });
+
   test("removing on exit does not crash", async () => {
     const { stdout, exitCode } = await run(/* js */ `
       const h = () => {};

@@ -2250,10 +2250,20 @@ pub mod environment_variables {
         Some(ZigString::init_utf8(value))
     }
 
+    // setenv/unsetenv take C strings; Node truncates at the first NUL.
+    #[inline]
+    fn truncate_at_nul(s: &[u8]) -> &[u8] {
+        match bun_core::strings::index_of_char(s, 0) {
+            Some(i) => &s[..i as usize],
+            None => s,
+        }
+    }
+
     /// `process.env[name] = value`: update the env_loader map, and on the main
     /// thread also `setenv()` so a native library's `getenv()` observes the
-    /// write. Key/value are already NUL-truncated by the C++ side; an empty
-    /// key or a key containing `=` was filtered out there too.
+    /// write. Key/value are NUL-truncated and empty / `=`-containing keys are
+    /// dropped here so every C++ caller (JSProcessEnvMap, JSSharedEnvMap via
+    /// syncOSEnv) sees the same contract.
     #[unsafe(no_mangle)]
     pub(crate) extern "C" fn Bun__ProcessEnv__put(
         global_object: &JSGlobalObject,
@@ -2262,22 +2272,29 @@ pub mod environment_variables {
     ) {
         let vm = global_object.bun_vm().as_mut();
         let name_slice = name.to_utf8();
-        let key = name_slice.slice();
+        let key = truncate_at_nul(name_slice.slice());
+        if key.is_empty() || bun_core::strings::index_of_char(key, b'=').is_some() {
+            return;
+        }
         let value_slice = value.to_utf8();
+        let val = truncate_at_nul(value_slice.slice());
 
         {
             // Serialise against a concurrently-spawning worker's
             // env.map.clone_with_allocator (web_worker.rs holds this same lock).
             let _slots = vm.proxy_env_storage.lock();
-            bun_core::handle_oom(vm.transpiler.env_mut().map.put(key, value_slice.slice()));
+            bun_core::handle_oom(vm.transpiler.env_mut().map.put(key, val));
         }
 
         if vm.is_main_thread() {
             #[cfg(not(windows))]
             {
-                let key_z = std::ffi::CString::new(key).expect("pre-truncated at NUL");
-                let val_z =
-                    std::ffi::CString::new(value_slice.slice()).expect("pre-truncated at NUL");
+                let Ok(key_z) = std::ffi::CString::new(key) else {
+                    return;
+                };
+                let Ok(val_z) = std::ffi::CString::new(val) else {
+                    return;
+                };
                 let _g = bun_core::environ_write_lock();
                 // SAFETY: NUL-terminated C strings; setenv copies both. The
                 // write lock excludes bun_core::getenv_z on other threads.
@@ -2296,7 +2313,10 @@ pub mod environment_variables {
     ) {
         let vm = global_object.bun_vm().as_mut();
         let name_slice = name.to_utf8();
-        let key = name_slice.slice();
+        let key = truncate_at_nul(name_slice.slice());
+        if key.is_empty() {
+            return;
+        }
 
         {
             let _slots = vm.proxy_env_storage.lock();

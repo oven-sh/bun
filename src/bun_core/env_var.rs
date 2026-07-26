@@ -366,10 +366,21 @@ pub(crate) mod kind {
 
             #[inline]
             fn write_under_seqlock(&self, f: impl FnOnce()) {
-                // Odd seq = write in progress; even = stable. fetch_add is RMW so
-                // concurrent writers (initial-load race) serialise on seq, and the
-                // reader's Acquire on seq orders it against both Release stores.
-                self.seq.fetch_add(1, Ordering::AcqRel);
+                // Odd seq = write in progress; even = stable. CAS even→odd so
+                // concurrent writers exclude one another (fetch_add would let a
+                // second writer bump odd→even and run f() alongside the first).
+                loop {
+                    let s = self.seq.load(Ordering::Relaxed);
+                    if s & 1 == 0
+                        && self
+                            .seq
+                            .compare_exchange_weak(s, s + 1, Ordering::AcqRel, Ordering::Relaxed)
+                            .is_ok()
+                    {
+                        break;
+                    }
+                    core::hint::spin_loop();
+                }
                 f();
                 self.seq.fetch_add(1, Ordering::Release);
             }

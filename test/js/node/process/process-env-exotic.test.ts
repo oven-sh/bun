@@ -235,6 +235,31 @@ describe.skipIf(!isPosix)("process.env setenv sync + typed-cache invalidation", 
     expect(exitCode).toBe(0);
   });
 
+  test("NUL-containing value after founding a SHARE_ENV tree truncates (no panic)", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const { Worker, SHARE_ENV } = require("node:worker_threads");
+          const w = new Worker("require('node:worker_threads').parentPort.postMessage(1)", { eval: true, env: SHARE_ENV });
+          await new Promise(r => w.on("exit", r));
+          process.env.ENVFIX_SNUL = "ab\\x00cd";
+          process.stdout.write(JSON.stringify(process.env.ENVFIX_SNUL));
+        `,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    // JSSharedEnvMap::put stores the un-truncated string in the shared store,
+    // so the readback is "ab\0cd"; syncOSEnv's Bun__ProcessEnv__put truncates
+    // for the env_loader map / setenv so no CString panic.
+    expect(JSON.parse(stdout)).toBe("ab\x00cd");
+    expect(exitCode).toBe(0);
+  });
+
   test("process.env write still reaches setenv() after founding a SHARE_ENV tree", async () => {
     await using proc = Bun.spawn({
       cmd: [

@@ -161,46 +161,74 @@ const mapIteration = { prototype: primordials.MapIteratorPrototype, next: MapIte
 const setIteration = { prototype: primordials.SetIteratorPrototype, next: SetIteratorPrototypeNext };
 primordials.SafeMap = makeSafeFromPristine(
   Map,
-  class SafeMap extends Map {},
+  class SafeMap extends Map {
+    constructor(i) {
+      super(i);
+    }
+  },
   pristineDescriptors.MapPrototype,
   pristineDescriptors.MapConstructor,
   mapIteration,
 );
 primordials.SafeWeakMap = makeSafeFromPristine(
   WeakMap,
-  class SafeWeakMap extends WeakMap {},
+  class SafeWeakMap extends WeakMap {
+    constructor(i) {
+      super(i);
+    }
+  },
   pristineDescriptors.WeakMapPrototype,
   pristineDescriptors.WeakMapConstructor,
 );
 primordials.SafeSet = makeSafeFromPristine(
   Set,
-  class SafeSet extends Set {},
+  class SafeSet extends Set {
+    constructor(i) {
+      super(i);
+    }
+  },
   pristineDescriptors.SetPrototype,
   pristineDescriptors.SetConstructor,
   setIteration,
 );
 primordials.SafeWeakSet = makeSafeFromPristine(
   WeakSet,
-  class SafeWeakSet extends WeakSet {},
+  class SafeWeakSet extends WeakSet {
+    constructor(i) {
+      super(i);
+    }
+  },
   pristineDescriptors.WeakSetPrototype,
   pristineDescriptors.WeakSetConstructor,
 );
 primordials.SafeFinalizationRegistry = makeSafeFromPristine(
   FinalizationRegistry,
-  class SafeFinalizationRegistry extends FinalizationRegistry {},
+  class SafeFinalizationRegistry extends FinalizationRegistry {
+    constructor(i) {
+      super(i);
+    }
+  },
   pristineDescriptors.FinalizationRegistryPrototype,
   pristineDescriptors.FinalizationRegistryConstructor,
 );
 primordials.SafeWeakRef = makeSafeFromPristine(
   WeakRef,
-  class SafeWeakRef extends WeakRef {},
+  class SafeWeakRef extends WeakRef {
+    constructor(i) {
+      super(i);
+    }
+  },
   pristineDescriptors.WeakRefPrototype,
   pristineDescriptors.WeakRefConstructor,
 );
 
 const SafePromise = makeSafeFromPristine(
   Promise,
-  class SafePromise extends Promise {},
+  class SafePromise extends Promise {
+    constructor(i) {
+      super(i);
+    }
+  },
   pristineDescriptors.PromisePrototype,
   pristineDescriptors.PromiseConstructor,
 );

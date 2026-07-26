@@ -391,31 +391,6 @@ describe("web worker", () => {
       expect(exitCode).toBe(0);
     });
 
-    test.concurrent("preventDefault() suppresses the default report", async () => {
-      await using proc = Bun.spawn({
-        cmd: [
-          bunExe(),
-          "-e",
-          `process.on("uncaughtException", () => { console.log("caught"); process.exitCode = 2; });
-           const w = new Worker("data:text/javascript," + encodeURIComponent('throw new Error("WEB-WORKER-UNCAUGHT")'));
-           w.addEventListener("error", e => {
-             e.preventDefault();
-             console.log("defaultPrevented", e.defaultPrevented);
-           });
-           w.addEventListener("close", e => console.log("worker closed", e.code));`,
-        ],
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stderr).not.toContain("WEB-WORKER-UNCAUGHT");
-      expect(stdout).toContain("defaultPrevented true");
-      expect(stdout).not.toContain("caught");
-      expect(stdout).toContain("worker closed 1");
-      expect(exitCode).toBe(0);
-    });
-
     test.concurrent("with no listener is not reported after terminate()", async () => {
       // Spawn many workers that throw, then terminate() each one immediately.
       // Whether the in-flight error task lands before or after terminate()

@@ -534,10 +534,10 @@ void Worker::dispatchErrorWithMessage(WTF::String message, RefPtr<SerializedScri
         // Default action: report via the parent's uncaught-exception path
         // (https://html.spec.whatwg.org/multipage/workers.html#runtime-script-errors-2).
         // Listener presence suppresses (node EventEmitter semantics; the
-        // node:worker_threads wrapper always has one); preventDefault() is
-        // honoured. The terminate/closed check mirrors Worker::dispatchEvent.
+        // node:worker_threads wrapper always has one). The terminate/closed
+        // check mirrors Worker::dispatchEvent.
         if (protectedThis->m_options.kind != WorkerOptions::Kind::Web
-            || hadListener || event->defaultPrevented()
+            || hadListener
             || protectedThis->m_terminateRequested.load() || protectedThis->m_state.load() == State::Closed)
             return;
 

@@ -761,8 +761,11 @@ writeStreamPrototype._writev = function (data, cb) {
     size += chunk.length;
   }
 
-  if (syncWriteEnabled(this)) {
-    return writeAllSync(this, len === 1 ? chunks[0] : Buffer.concat(chunks, size), cb);
+  if (this[kSyncWrite] === true) {
+    const buf = len === 1 ? chunks[0] : Buffer.concat(chunks, size);
+    if (syncWriteEnabled(this)) return writeAllSync(this, buf, cb);
+    // Patch detected on this drain; honour it for the current batch too.
+    return _write.$call(this, buf, "buffer", cb);
   }
 
   const fileSink = this[kWriteStreamFastPath];

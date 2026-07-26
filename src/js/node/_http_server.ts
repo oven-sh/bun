@@ -121,15 +121,10 @@ const DateNow = Date.now;
 
 let cluster;
 
+// Like Node.js's net.Server#_emitCloseIfDrained: the native all-closed promise
+// resolves on pending_requests == 0 (not connections == 0), so gate the actual
+// 'close' on kTrackedConnections draining; #onClose reschedules once it does.
 function emitCloseServer(self: Server) {
-  // Like Node.js's net.Server#_emitCloseIfDrained: 'close' (and the close
-  // callback) only fire once every accepted connection has ended, and a
-  // re-listen before the drain completes cancels it (Node bails when
-  // `_handle` is set again). The native all-closed promise that schedules
-  // this resolves on pending_requests == 0, so a keep-alive connection that
-  // was serving a request when close() ran is still open when that promise
-  // resolves; the last connection's #onClose re-checks and reschedules once
-  // kTrackedConnections empties.
   if (!self[kClosing]) return;
   const connections = self[kTrackedConnections];
   if (connections && connections.size > 0) {
@@ -492,10 +487,8 @@ Server.prototype.unref = function () {
   return this;
 };
 
+// Node destroys every tracked connection and leaves the listen socket alone.
 Server.prototype.closeAllConnections = function () {
-  // Node destroys every tracked connection and leaves the listen socket alone.
-  // Driven off kTrackedConnections so it also works as the forced half of a
-  // close() + closeAllConnections() drain, once the native handle is gone.
   const connections = this[kTrackedConnections];
   if (!connections) return;
   for (const socket of connections) {
@@ -514,12 +507,9 @@ Server.prototype.getConnections = function (callback) {
 };
 
 Server.prototype.closeIdleConnections = function () {
-  // Like Node.js: destroy connections that are neither writing a response nor
-  // receiving a request, and leave the listen socket alone. On a live server
-  // the native sweep is authoritative (its isIdle flag spares connections
-  // whose request head is still arriving); the kTrackedConnections pass runs
-  // only during a close() drain, so it keeps working once the native app has
-  // deinit'd without undoing that decision on a live server.
+  // Native sweep is authoritative on a live server (its isIdle flag spares
+  // mid-parse connections); the kTrackedConnections pass covers the
+  // post-close() window once the native app has deinit'd.
   this[serverSymbol]?.closeIdleConnections();
   if (!this[kClosing]) return;
   const connections = this[kTrackedConnections];
@@ -544,9 +534,8 @@ Server.prototype.close = function (optionalCallback?) {
     // Like Node.js's net.Server#close, close() returns the server.
     return this;
   }
-  // The native handle stays reachable until every connection has drained
-  // (emitCloseServer clears it) so closeIdleConnections/closeAllConnections
-  // keep working after close(); kClosing is Node's "_handle == null" stand-in.
+  // kClosing is Node's "_handle == null" stand-in; serverSymbol stays set
+  // until emitCloseServer so the drain helpers keep working after close().
   this[kClosing] = true;
   if (typeof optionalCallback === "function") setCloseCallback(this, optionalCallback);
   this.listening = false;
@@ -710,8 +699,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
     if (tls) {
       this.serverName = tls.serverName || host || "localhost";
     }
-    // A listen() during a prior close()'s drain installs a fresh handle; the
-    // pending drain must not clear it (emitCloseServer bails on !kClosing).
+    // Cancel any prior close()'s pending drain before installing a new handle.
     this[kClosing] = false;
     this[kPendingDrainClose] = false;
     this[serverSymbol] = Bun.serve<any>({

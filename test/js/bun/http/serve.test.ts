@@ -3330,6 +3330,9 @@ describe("request body backpressure", () => {
       port: 0,
       idleTimeout: 0,
       maxRequestBodySize: TOTAL + 1,
+      error(e) {
+        serverDone.reject(e);
+      },
       async fetch(req) {
         const reader = req.body!.getReader();
         const first = await reader.read();
@@ -3386,6 +3389,9 @@ describe("request body backpressure", () => {
       port: 0,
       idleTimeout: 0,
       maxRequestBodySize: TOTAL + 1,
+      error(e) {
+        serverDone.reject(e);
+      },
       async fetch(req) {
         await gate.promise;
         for await (const c of req.body!) {
@@ -3413,36 +3419,45 @@ describe("request body backpressure", () => {
     }
   });
 
-  it("resumes a paused request body when the handler calls .arrayBuffer()", async () => {
-    // .arrayBuffer() wants the whole body, so the pre-stream pause must release
-    // once it is called instead of leaving the socket wedged.
-    const TOTAL = 32 * 1024 * 1024;
-    const gate = Promise.withResolvers<void>();
-    const serverDone = Promise.withResolvers<number>();
+  for (const touchBodyFirst of [false, true]) {
+    it(`resumes a paused request body when the handler calls .arrayBuffer()${touchBodyFirst ? " after touching req.body" : ""}`, async () => {
+      // .arrayBuffer() wants the whole body, so the pre-stream pause must
+      // release once it is called instead of leaving the socket wedged. The
+      // second variant materializes `req.body` first so `.arrayBuffer()` goes
+      // through the ByteStream buffer_action fastpath instead of
+      // on_start_buffering.
+      const TOTAL = 32 * 1024 * 1024;
+      const gate = Promise.withResolvers<void>();
+      const serverDone = Promise.withResolvers<number>();
 
-    using server = serve({
-      port: 0,
-      idleTimeout: 0,
-      maxRequestBodySize: TOTAL + 1,
-      async fetch(req) {
-        await gate.promise;
-        const buf = await req.arrayBuffer();
-        serverDone.resolve(buf.byteLength);
-        return new Response("ok");
-      },
+      using server = serve({
+        port: 0,
+        idleTimeout: 0,
+        maxRequestBodySize: TOTAL + 1,
+        error(e) {
+          serverDone.reject(e);
+        },
+        async fetch(req) {
+          if (touchBodyFirst) void req.body;
+          await gate.promise;
+          const buf = await req.arrayBuffer();
+          serverDone.resolve(buf.byteLength);
+          return new Response("ok");
+        },
+      });
+
+      const { sock, sentBeforeGate } = await pumpUploadUntilPlateau(server.port, TOTAL, 5);
+      try {
+        expect(sentBeforeGate).toBeLessThan(TOTAL);
+
+        gate.resolve();
+        const bytes = await serverDone.promise;
+        expect(bytes).toBe(TOTAL);
+      } finally {
+        sock.destroy();
+      }
     });
-
-    const { sock, sentBeforeGate } = await pumpUploadUntilPlateau(server.port, TOTAL, 5);
-    try {
-      expect(sentBeforeGate).toBeLessThan(TOTAL);
-
-      gate.resolve();
-      const bytes = await serverDone.promise;
-      expect(bytes).toBe(TOTAL);
-    } finally {
-      sock.destroy();
-    }
-  });
+  }
 });
 
 // https://github.com/oven-sh/bun/issues/32469

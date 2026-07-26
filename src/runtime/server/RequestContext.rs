@@ -1186,6 +1186,9 @@ where
     pub fn end_already_responded_stream(&mut self) {
         ctx_log!("endAlreadyRespondedStream");
         debug_assert!(!HTTP3);
+        // Resume before `take()`: READABLE was disabled while paused, so the
+        // socket cannot have been recycled onto a next request in the interim.
+        self.resume_request_body_socket();
         if self.resp.take().is_some() {
             self.flags.set_is_waiting_for_request_body(false);
             self.flags.set_has_abort_handler(false);
@@ -3963,7 +3966,10 @@ where
 
                 // What `on_data` buffered; `on_stream_drained` resumes once it empties.
                 let buffered = bytes.buffer.get().len().saturating_sub(bytes.offset.get());
-                if buffered >= REQUEST_BODY_HIGH_WATER_MARK {
+                if bytes.buffer_action.get().is_some() || bytes.pipe.get().ctx.is_some() {
+                    // `.text()`-after-`.body` / native pipe want it all; no `on_pull` will fire.
+                    this.resume_request_body_socket();
+                } else if buffered >= REQUEST_BODY_HIGH_WATER_MARK {
                     this.pause_request_body_socket();
                 }
             } else {
@@ -4124,13 +4130,23 @@ where
     /// `on_stream_drained` context.
     pub(crate) fn on_request_body_stream_drained_callback(ctx: Option<*mut c_void>) {
         let Some(ctx) = ctx else { return };
-        // SAFETY: caller upholds the fn-level contract — `ctx` is the
-        // `*mut RequestContext` registered as the body callback context.
-        let this = unsafe { bun_ptr::callback_ctx::<Self>(ctx) };
-        if this.is_aborted_or_ended() {
-            return;
+        let this = ctx.cast::<Self>();
+        // SAFETY: `ctx` is the registered `*mut RequestContext`. `ByteStream::
+        // on_data` can re-enter here while `on_buffered_body_chunk` already
+        // holds `&mut Self` (borrow = ptr), so dispatch via the raw pointer.
+        unsafe {
+            let flags = &raw mut (*this).flags;
+            if !(*flags).request_body_paused() {
+                return;
+            }
+            if (*this).resp.is_none() || (*flags).aborted() {
+                return;
+            }
+            (*flags).set_request_body_paused(false);
+            if let Some(resp) = (*this).resp {
+                resp.resume_();
+            }
         }
-        this.resume_request_body_socket();
     }
 
     pub fn on_start_streaming_request_body(&mut self) -> WebCore::DrainResult {

@@ -96,7 +96,7 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
             // pending (watchdog fired mid-checkpoint); observe it so the
             // exception-check validator is satisfied, then attribute it.
             std::ignore = scope.exception();
-            if (checkForTermination(vm, globalObject, scope, this, timeoutScope))
+            if (checkForTermination(vm, nodeVmGlobalObject, scope, this, timeoutScope))
                 return {};
         }
         return m_evaluationResult.get();

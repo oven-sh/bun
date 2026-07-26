@@ -49,6 +49,10 @@ const script = `
       Array.from({ length: n }, (_, i) => \`.a{--x\${i}:\${i}}\`).join(""),
       undefined,
     ],
+    "scattered-custom-props": [
+      Array.from({ length: n }, (_, i) => \`:root{--x\${i}:\${i}}.q\${i}{z-index:9}\`).join(""),
+      undefined,
+    ],
     "distinct-selectors": [
       Array.from({ length: n }, (_, i) => \`.a\${i}{color:red}\`).join(""),
       { chrome: 80 << 16 },
@@ -84,6 +88,7 @@ test("duplicate declarations across merged rules minify in linear time instead o
       "OK:webkit-gradient",
       "OK:clamp",
       "OK:distinct-custom-props",
+      "OK:scattered-custom-props",
       "OK:distinct-selectors",
       "",
     ].join("\n"),
@@ -154,5 +159,49 @@ test("stale duplicate-rule entries do not erase a later rule", () => {
 test("declaration merges do not drop partitioned incompatible selectors", () => {
   expect(cssInternals._test(".a{color:red}.a,.b:focus-visible{color:blue}", "", { chrome: 60 << 16 })).toBe(
     ".a {\n  color: #00f;\n}\n\n.b:focus-visible {\n  color: #00f;\n}\n",
+  );
+});
+
+// `is_duplicate` compared every custom property as the same property id, so
+// a later same-selector rule declaring the same *count* of custom properties
+// erased the earlier one and every variable it defined. The rules below are
+// separated by an unrelated rule so the adjacent-merge path cannot hide the
+// deletion.
+test("duplicate-rule detection distinguishes custom property names", () => {
+  expect(cssInternals._test(":root{--a:1}.q{z-index:9}:root{--b:2}", "")).toBe(
+    ":root {\n  --a: 1;\n}\n\n.q {\n  z-index: 9;\n}\n\n:root {\n  --b: 2;\n}\n",
+  );
+  expect(cssInternals._test(".card{--pad:4px;--bg:#fff}.x{color:red}.card{--radius:2px;--fg:#000}", "")).toBe(
+    ".card {\n  --pad: 4px;\n  --bg: #fff;\n}\n\n" +
+      ".x {\n  color: red;\n}\n\n" +
+      ".card {\n  --radius: 2px;\n  --fg: #000;\n}\n",
+  );
+  // Same custom property name in both rules: the earlier one *is* dead.
+  expect(cssInternals.minifyTest(":root{--a:1}.q{z-index:9}:root{--a:2}", "")).toBe(".q{z-index:9}:root{--a:2}");
+  // Unknown (non-dashed) property names must also be distinguished.
+  expect(cssInternals.minifyTest(".a{foo:1}.q{z-index:9}.a{bar:2}", "")).toBe(".a{foo:1}.q{z-index:9}.a{bar:2}");
+});
+
+// `is_duplicate` compared the *total* declaration count but then zipped the
+// normal and !important lists separately, so a 1-normal rule matched a
+// 1-important rule and the !important winner was deleted, flipping the
+// cascade.
+test("duplicate-rule detection respects the normal/!important split", () => {
+  expect(cssInternals._test(".z{color:red !important}.q{z-index:9}.z{color:blue}", "")).toBe(
+    ".z {\n  color: red !important;\n}\n\n.q {\n  z-index: 9;\n}\n\n.z {\n  color: #00f;\n}\n",
+  );
+  // Reversed order: the later !important rule must not erase the earlier
+  // normal one either (it does not redeclare the same property at normal
+  // priority, so the earlier rule is not dead).
+  expect(cssInternals._test(".z{color:red}.q{z-index:9}.z{color:blue !important}", "")).toBe(
+    ".z {\n  color: red;\n}\n\n.q {\n  z-index: 9;\n}\n\n.z {\n  color: #00f !important;\n}\n",
+  );
+  // Mixed: (normal,important) vs (important,normal) for different properties.
+  expect(
+    cssInternals.minifyTest(".z{color:red;top:0 !important}.q{z-index:9}.z{top:1px;color:blue !important}", ""),
+  ).toBe(".z{color:red;top:0!important}.q{z-index:9}.z{top:1px;color:#00f!important}");
+  // Same split, same properties: the earlier rule *is* dead.
+  expect(cssInternals.minifyTest(".z{color:red !important}.q{z-index:9}.z{color:blue !important}", "")).toBe(
+    ".q{z-index:9}.z{color:#00f!important}",
   );
 });

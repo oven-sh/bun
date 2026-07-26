@@ -688,11 +688,9 @@ impl PropertyIdTag {
 /// A known CSS property name + (for prefixable properties) the vendor
 /// prefix it was parsed with. Variants without payload are unprefixed.
 //
-// Do NOT `#[derive(PartialEq, Eq)]` here — the spec-correct
-// equality ignores the
-// `Custom(CustomPropertyName)` payload and is hand-written below. A derived
-// impl would (a) conflict (E0119) and (b) diverge by comparing custom-name
-// bytes.
+// Do NOT `#[derive(PartialEq, Eq)]`: the `CustomPropertyName` payload holds
+// arena `*const [u8]` idents and a derived impl would compare raw pointers.
+// The hand-written impl below compares tag + prefix + custom-name bytes.
 #[derive(Debug, Clone, Copy)]
 pub enum PropertyId {
     BackgroundColor,
@@ -948,29 +946,31 @@ pub enum PropertyId {
     Custom(CustomPropertyName),
 }
 
-// `PropertyId` equality compares the tag, then *only* compares the payload
-// when its type is `VendorPrefix` — for `Custom` (whose payload is
-// `CustomPropertyName`) and all unit variants it returns `true` on tag match
-// alone. A derived `PartialEq` would compare the `CustomPropertyName` bytes,
-// diverging from the duplicate-detection semantics in `rules/style.rs`.
-// `prefix()` already returns the `VendorPrefix` payload for the 65 prefixed
-// variants and `VendorPrefix::empty()` for every other variant (including
-// `Custom`/`All`/`Unparsed`), so `tag` + `prefix` equality is exactly that.
+// `PropertyId` equality compares the tag, the `VendorPrefix` payload (via
+// `prefix()`, which is `VendorPrefix::empty()` for every non-prefixed
+// variant), and for `Custom` the property-name bytes: `--a` and `--b` are
+// distinct properties and must not collapse in duplicate-rule detection.
 impl PartialEq for PropertyId {
     #[inline]
     fn eq(&self, other: &Self) -> bool {
-        self.tag() == other.tag() && self.prefix() == other.prefix()
+        match (self, other) {
+            (PropertyId::Custom(a), PropertyId::Custom(b)) => a == b,
+            _ => self.tag() == other.tag() && self.prefix() == other.prefix(),
+        }
     }
 }
 
 impl Eq for PropertyId {}
 
-// Hash only the tag discriminant so PropertyId can key a hash map
-// consistent with `eq`.
+// Hash must agree with `eq`: tag + prefix + custom-name bytes.
 impl core::hash::Hash for PropertyId {
     #[inline]
     fn hash<H: core::hash::Hasher>(&self, h: &mut H) {
         (self.tag() as u16).hash(h);
+        self.prefix().bits().hash(h);
+        if let PropertyId::Custom(name) = self {
+            h.write(name.as_str());
+        }
     }
 }
 

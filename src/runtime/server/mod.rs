@@ -1515,8 +1515,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     }
 
     /// Returns true when this close drained the last open HTTP connection.
-    /// Saturates at 0: for TLS the +1 fires at handshake completion but the
-    /// -1 fires on every close, so a pre-handshake close has no matching +1.
     pub(crate) fn note_connection_closed(&self) -> bool {
         let prev = self.open_http_connections.get();
         if prev == 0 {
@@ -1531,9 +1529,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         self.open_http_connections.get() > 0
     }
 
-    /// uWS filter thunk (+1 on accept, -1 on close/upgrade). Runs the idle
-    /// pass on the last-close edge so `stop(false)` resolves once the final
-    /// keep-alive socket goes away.
+    /// uWS filter thunk (+1 on accept, -1 on close/upgrade). Schedules the
+    /// idle pass on the last-close edge so `stop(false)` resolves once the
+    /// final keep-alive socket goes away.
     extern "C" fn on_connection_filter(
         _socket: *mut uws_sys::us_socket_t,
         delta: i32,
@@ -1545,11 +1543,24 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         let this = unsafe { &*user_data.cast::<Self>() };
         if delta == 1 {
             this.note_connection_opened();
-        } else if this.note_connection_closed() && !this.has_listener() {
-            // SAFETY: single-threaded JS context; the only outstanding borrow
-            // is the `&*this` above, dropped before this `&mut` is formed.
-            unsafe { &mut *user_data.cast::<Self>() }.deinit_if_we_can();
+            return;
         }
+        if !this.note_connection_closed() || this.has_listener() || this.deinit_running.get() {
+            return;
+        }
+        // Defer: we are inside uWS' `for (auto &f : filterHandlers)` loop, and
+        // `deinit_if_we_can` can reach `clear_routes()` → `filterHandlers.clear()`.
+        // SAFETY: `vm_mut()` is the process-static VM pointer; `user_data` stays
+        // valid until `Self::deinit`, which is enqueued strictly after this task.
+        let vm = unsafe { &mut *this.vm_mut() };
+        vm.enqueue_task(bun_event_loop::ManagedTask::ManagedTask::new(
+            user_data.cast::<Self>(),
+            |this| {
+                // SAFETY: see above.
+                unsafe { &mut *this }.deinit_if_we_can();
+                Ok(())
+            },
+        ));
     }
 
     pub(crate) fn register_connection_filter(&mut self) {
@@ -1563,6 +1574,16 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
     pub fn has_listener(&self) -> bool {
         self.listener.is_some() || (Self::HAS_H3 && self.h3_listener.is_some())
+    }
+
+    /// True when a prior graceful stop took the listener but connections
+    /// survive, so a follow-up `stop(true)` has something to force-close.
+    pub fn can_force_close(&self) -> bool {
+        !self.flags.contains(ServerFlags::TERMINATED)
+            && !self.deinit_running.get()
+            && (self.has_open_http_connections()
+                || self.has_active_web_sockets()
+                || self.pending_requests > 0)
     }
 
     pub fn set_idle_timeout(&mut self, seconds: core::ffi::c_uint) {
@@ -1643,6 +1664,29 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 self.notify_inspector_server_stopped();
                 if abrupt {
                     self.flags.insert(ServerFlags::TERMINATED);
+                }
+            }
+            // A prior graceful stop already took the listener; an abrupt stop
+            // still needs to force-close surviving connections so a
+            // graceful-then-force shutdown can complete.
+            if abrupt
+                && !self.flags.contains(ServerFlags::TERMINATED)
+                && (self.has_open_http_connections()
+                    || self.has_active_web_sockets()
+                    || self.pending_requests > 0)
+            {
+                self.unref();
+                if let Some(ws) = self.config.websocket.as_mut() {
+                    ws.handler.app = None;
+                }
+                self.flags.insert(ServerFlags::TERMINATED);
+                if let Some(app) = self.app {
+                    self.deinit_running.set(true);
+                    bun_opaque::opaque_deref_mut(app).close();
+                    self.deinit_running.set(false);
+                }
+                if let Some(ws) = self.config.websocket.as_mut() {
+                    ws.handler.server = None;
                 }
             }
             return;

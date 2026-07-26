@@ -695,10 +695,120 @@ test.concurrent("server.stop() promise waits for idle keep-alive connections to 
   expect(exitCode).toBe(0);
 });
 
+// After a graceful stop() has taken the listener, a follow-up stop(true) must
+// still force-close surviving keep-alive connections so the promise resolves.
+test.concurrent("server.stop(true) after server.stop() force-closes surviving keep-alive connections", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const net = require("net");
+        const server = Bun.serve({
+          port: 0,
+          hostname: "127.0.0.1",
+          idleTimeout: 0,
+          fetch() { return new Response("hi"); },
+        });
+        const sock = net.connect(server.port, "127.0.0.1");
+        let buf = "";
+        sock.on("data", d => (buf += d));
+        await new Promise((resolve, reject) => {
+          sock.once("error", reject);
+          sock.once("connect", resolve);
+        });
+        sock.write("GET / HTTP/1.1\\r\\nHost: x\\r\\nConnection: keep-alive\\r\\n\\r\\n");
+        await new Promise(r => sock.on("data", () => buf.endsWith("hi") && r()));
+        let resolved = false;
+        const stopped = server.stop();
+        stopped.then(() => (resolved = true));
+        // Prove the connection is live and the event loop has had a chance to
+        // run an eager resolve (old behaviour would have fired by now).
+        buf = "";
+        sock.write("GET / HTTP/1.1\\r\\nHost: x\\r\\nConnection: keep-alive\\r\\n\\r\\n");
+        await new Promise(r => sock.on("data", () => buf.endsWith("hi") && r()));
+        const resolvedBeforeForce = resolved;
+        server.stop(true);
+        await stopped;
+        await new Promise(r => sock.once("close", r));
+        console.log(JSON.stringify({ resolvedBeforeForce }));
+      `,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout.trim())).toEqual({ resolvedBeforeForce: false });
+  expect(exitCode).toBe(0);
+});
+
+// For HTTPS the filter +1 fires at handshake completion, not at accept, so a
+// socket that closes before its handshake completes never contributed a +1.
+// onClose's -1 is now gated on a per-socket "open fired" bit so such a close
+// cannot decrement another socket's count and resolve stop() early.
+test.concurrent("server.stop() promise (HTTPS) ignores pre-handshake closes when counting keep-alive connections", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const net = require("net");
+        const tls = require("tls");
+        const cert = (${JSON.stringify(tls)});
+        const server = Bun.serve({
+          port: 0,
+          hostname: "127.0.0.1",
+          idleTimeout: 0,
+          tls: cert,
+          fetch() { return new Response("hi"); },
+        });
+        const port = server.port;
+        // A: full handshake + one keep-alive request.
+        const a = tls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false });
+        let buf = "";
+        a.on("data", d => (buf += d));
+        await new Promise((resolve, reject) => {
+          a.once("error", reject);
+          a.once("secureConnect", resolve);
+        });
+        a.write("GET / HTTP/1.1\\r\\nHost: x\\r\\nConnection: keep-alive\\r\\n\\r\\n");
+        await new Promise(r => a.on("data", () => buf.endsWith("hi") && r()));
+        // B: raw TCP connect (no handshake), then close.
+        const b = net.connect(port, "127.0.0.1");
+        await new Promise((resolve, reject) => {
+          b.once("error", reject);
+          b.once("connect", resolve);
+        });
+        b.destroy();
+        await new Promise(r => b.once("close", r));
+        let resolved = false;
+        const stopped = server.stop();
+        stopped.then(() => (resolved = true));
+        // Second request on A proves it is still open and drives the event
+        // loop past the tick on which an eager resolve would have fired.
+        buf = "";
+        a.write("GET / HTTP/1.1\\r\\nHost: x\\r\\nConnection: keep-alive\\r\\n\\r\\n");
+        await new Promise(r => a.on("data", () => buf.endsWith("hi") && r()));
+        const resolvedWhileOpen = resolved;
+        a.destroy();
+        await stopped;
+        console.log(JSON.stringify({ resolvedWhileOpen }));
+      `,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout.trim())).toEqual({ resolvedWhileOpen: false });
+  expect(exitCode).toBe(0);
+});
+
 // A socket that upgrades to a WebSocket is adopted out of the HTTP socket
-// group (uWS does not fire the filter's -1 for it), so the HTTP-connection
-// count must transfer to the WebSocket count at upgrade time. Without that
-// transfer, stop() would never resolve once a WebSocket had been opened.
+// group; upgrade() fires the filter's -1 so the HTTP-connection count stays
+// balanced. Without that, stop() would never resolve once a WebSocket had
+// been opened.
 test.concurrent("server.stop() resolves after an upgraded WebSocket closes", async () => {
   await using proc = Bun.spawn({
     cmd: [

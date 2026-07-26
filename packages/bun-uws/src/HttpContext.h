@@ -175,6 +175,7 @@ private:
             ((HttpResponse<SSL> *) s)->resetTimeout();
 
             /* Call filter */
+            httpResponseData->state |= HttpResponseData<SSL>::HTTP_FILTER_OPEN_FIRED;
             for (auto &f : httpContextData->filterHandlers) {
                 f((HttpResponse<SSL> *) s, 1);
             }
@@ -217,6 +218,7 @@ private:
 
         if(!SSL) {
             /* Call filter */
+            ((HttpResponseData<SSL> *) us_socket_ext(s))->state |= HttpResponseData<SSL>::HTTP_FILTER_OPEN_FIRED;
             for (auto &f : httpContextData->filterHandlers) {
                 f((HttpResponse<SSL> *) s, 1);
             }
@@ -249,8 +251,10 @@ private:
         }
 
 
-        for (auto &f : httpContextData->filterHandlers) {
-            f((HttpResponse<SSL> *) s, -1);
+        if (httpResponseData->state & HttpResponseData<SSL>::HTTP_FILTER_OPEN_FIRED) {
+            for (auto &f : httpContextData->filterHandlers) {
+                f((HttpResponse<SSL> *) s, -1);
+            }
         }
 
         if (httpResponseData->socketData && httpContextData->onSocketClosed) {

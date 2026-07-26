@@ -143,13 +143,18 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
          * into the shared word so the shared response-end path (internalEnd) never
          * has to touch the node-only field. */
         HTTP_NODE_HAS_RESPONSE_TRAILERS = 1 << 16,
+        /* The filter +1 has fired for this socket (at accept for plain HTTP, at
+         * handshake completion for TLS). onClose and upgrade() only emit the
+         * matching -1 when this is set, so a TLS socket that closes before its
+         * handshake completes does not produce an unpaired -1. */
+        HTTP_FILTER_OPEN_FIRED = 1 << 17,
 
         /* Bits that describe the connection rather than the response in flight.
          * There is one HttpResponseData per socket, reused by every request on a
          * keep-alive connection, so starting a new response clears the rest of the
          * word (resetResponseState) - these have to survive that. */
         HTTP_CONNECTION_SCOPED = HTTP_NODE_PARSING_STOPPED | HTTP_NODE_READS_PAUSED
-            | HTTP_NODE_TUNNEL_AFTER_BODY | HTTP_NODE_RECEIVED_FIN,
+            | HTTP_NODE_TUNNEL_AFTER_BODY | HTTP_NODE_RECEIVED_FIN | HTTP_FILTER_OPEN_FIRED,
     };
 
     /* Begin a new response on this connection. Clearing the word in one go is

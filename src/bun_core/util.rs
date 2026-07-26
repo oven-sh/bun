@@ -3638,9 +3638,7 @@ pub mod rand {
 pub fn fast_random() -> u64 {
     use core::cell::Cell;
     fn random_seed() -> u64 {
-        // Should also apply to canary builds, but bun_core has no `canary`
-        // cargo feature yet, so debug-only for now (no
-        // regression vs. either pre-dedup copy — tracked separately).
+        // Debug-only until bun_core gains a `canary` cargo feature.
         #[cfg(debug_assertions)]
         if let Some(n) = crate::env_var::BUN_DEBUG_HASH_RANDOM_SEED.get() {
             return n;

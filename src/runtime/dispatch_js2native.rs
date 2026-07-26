@@ -97,8 +97,6 @@ pub use css::test_with_options as css_jsc_css_internals_test_with_options;
 // `bun_jsc`) rather than inventing a JSC edge into the collections crate.
 pub use crate::linear_fifo_testing::ordered_remove_probe as collections_linear_fifo_testing_ap_is_ordered_remove_probe;
 
-// `fast_random()` has no JS-visible surface; this probe exposes per-thread
-// first-draw values so a test can assert each thread is seeded independently.
 pub use crate::fast_random_testing::fast_random_thread_probe as bun_core_util_testing_ap_is_fast_random_thread_probe;
 
 // ported from: generated_js2native.rs

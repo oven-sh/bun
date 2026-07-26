@@ -977,8 +977,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         match p.lexer.token {
             T::TIdentifier => {
                 let name = p.lexer.identifier;
-                if (p.fn_or_arrow_data_parse.allow_await != AwaitOrYield::AllowIdent
-                    && name == b"await")
+                // At top level with `allow_await == AllowExpr` we're in the TLA-sniff
+                // state: the file may still be a Script, where `await` is a legal
+                // identifier. Don't reject it as a binding name there; if the file
+                // turns out to use top-level `await` as an operator, the engine will
+                // report the conflict.
+                let await_is_keyword = match p.fn_or_arrow_data_parse.allow_await {
+                    AwaitOrYield::AllowIdent => false,
+                    AwaitOrYield::ForbidAll => true,
+                    AwaitOrYield::AllowExpr => !p.fn_or_arrow_data_parse.is_top_level,
+                };
+                if (await_is_keyword && name == b"await")
                     || (p.fn_or_arrow_data_parse.allow_yield != AwaitOrYield::AllowIdent
                         && name == b"yield")
                 {

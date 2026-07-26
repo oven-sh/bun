@@ -299,28 +299,8 @@ describe("invalid-escape caret points at the backslash (#31134)", () => {
       pattern: "\\u{110000}",
       expectCol: 7,
     },
-    // Legacy-octal `\08`/`\09`:
-    {
-      name: "\\08 double-quote with prefix",
-      source: 'var a = "aaaaa\\08";',
-      msg: "Invalid legacy octal literal",
-      pattern: "\\08",
-      expectCol: 15,
-    },
-    {
-      name: "\\08 double-quote without prefix",
-      source: 'var a = "\\08";',
-      msg: "Invalid legacy octal literal",
-      pattern: "\\08",
-      expectCol: 10,
-    },
-    {
-      name: "\\09 single-quote with prefix",
-      source: "var a = 'aaaaa\\09';",
-      msg: "Invalid legacy octal literal",
-      pattern: "\\09",
-      expectCol: 15,
-    },
+    // `\08`/`\09` are valid Annex B LegacyOctalEscapeSequence + literal digit in
+    // sloppy mode and no longer error; see sloppy-mode-over-strict.test.ts.
   ];
 
   test.each(cases)("$name → column $expectCol", ({ source, msg, pattern, expectCol }) => {

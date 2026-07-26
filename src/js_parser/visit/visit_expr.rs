@@ -202,6 +202,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // Handle assigning to a constant
         if in_.assign_target != js_ast::AssignTarget::None {
+            if crate::parser::is_eval_or_arguments(name) {
+                p.mark_strict_mode_feature(
+                    StrictModeFeature::EvalOrArguments,
+                    js_lexer::range_of_identifier(p.source, expr.loc),
+                    name,
+                )
+                .expect("unreachable");
+            }
             if p.symbols[result.r#ref.inner_index() as usize].kind == js_ast::symbol::Kind::Constant
             {
                 // TODO: silence this for runtime transpiler

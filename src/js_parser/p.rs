@@ -26,7 +26,7 @@ use crate::{
     LOC_MODULE_SCOPE as loc_module_scope, LocList, MacroState, ParseStatementOptions, ParsedPath,
     PrependTempRefsOpts, ReactRefresh, Ref, RefMap, RefRefMap, RuntimeImports, ScopeOrder,
     ScopeOrderList, StrictModeFeature, StringBoolMap, Substitution, TempRef, ThenCatchChain,
-    TransposeState, WrapMode, fs, is_eval_or_arguments, options, statement_cares_about_scope,
+    TransposeState, WrapMode, fs, options, statement_cares_about_scope,
 };
 use bun_ast as js_ast;
 use bun_ast::DeclaredSymbol;
@@ -5296,9 +5296,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     // the full union. The only caller (`visit_expr_in_out`) already holds `&mut Expr`.
     pub fn is_valid_assignment_target(&self, expr: &Expr) -> bool {
         match &expr.data {
-            js_ast::ExprData::EIdentifier(ident) => {
-                !is_eval_or_arguments(self.load_name_from_ref(ident.ref_))
-            }
+            // Any identifier is a valid assignment target syntactically. Assigning to
+            // eval/arguments is a *strict-mode* early error (ECMA-262 13.15.1), handled
+            // via mark_strict_mode_feature at the call site so sloppy code still runs.
+            js_ast::ExprData::EIdentifier(_) => true,
             js_ast::ExprData::EDot(e) => e.optional_chain.is_none(),
             js_ast::ExprData::EIndex(e) => e.optional_chain.is_none(),
             js_ast::ExprData::EArray(e) => !e.is_parenthesized,

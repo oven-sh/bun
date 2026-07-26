@@ -599,25 +599,18 @@ lexer_impl_header! {
 
                         // legacy octal literals
                         0x30..=0x37 => {
-                            let octal_start =
-                                (iter.i as usize + width2 as usize).saturating_sub(2);
                             if IS_JSON {
                                 self.end = (start + iter.i as usize)
                                     .saturating_sub(width2 as usize);
                                 self.syntax_error()?;
                             }
 
-                            // 1-3 digit octal
-                            let mut is_bad = false;
+                            // 1-3 digit octal (Annex B LegacyOctalEscapeSequence).
                             let mut value: i64 = (c2 - 0x30) as i64;
                             let mut prev = iter;
 
                             if !iterator.next(&mut iter) {
-                                if value == 0 {
-                                    buf.push(0);
-                                    return Ok(());
-                                }
-                                self.syntax_error()?;
+                                buf.push(value as u16);
                                 return Ok(());
                             }
 
@@ -628,7 +621,8 @@ lexer_impl_header! {
                                     value = value * 8 + (c3 - 0x30) as i64;
                                     prev = iter;
                                     if !iterator.next(&mut iter) {
-                                        return self.syntax_error();
+                                        buf.push(value as u16);
+                                        return Ok(());
                                     }
 
                                     let c4 = iter.c;
@@ -642,16 +636,24 @@ lexer_impl_header! {
                                                 iter = prev;
                                             }
                                         }
+                                        // `\018` etc.: Annex B parses this as the
+                                        // two-digit octal `\01` followed by a literal
+                                        // `8`. Rewind so the outer loop re-reads the
+                                        // non-octal digit.
                                         0x38 | 0x39 => {
-                                            is_bad = true;
+                                            iter = prev;
                                         }
                                         _ => {
                                             iter = prev;
                                         }
                                     }
                                 }
+                                // `\08` / `\09`: LegacyOctalEscapeSequence
+                                // `0 [lookahead ∈ {8,9}]` — value is the single
+                                // octal digit, the 8/9 is a literal that the
+                                // outer loop must re-read.
                                 0x38 | 0x39 => {
-                                    is_bad = true;
+                                    iter = prev;
                                 }
                                 _ => {
                                     iter = prev;
@@ -659,25 +661,6 @@ lexer_impl_header! {
                             }
 
                             iter.c = i32::try_from(value).expect("int cast");
-                            if is_bad {
-                                // `octal_start` is text-relative like `iter.i`;
-                                // map back to absolute source position the same
-                                // way every sibling error path does (e.g.
-                                // `start + hex_start` in the `\u{}` branch).
-                                self.add_range_error(
-                                    Range {
-                                        loc: Loc {
-                                            start: i32::try_from(start + octal_start).expect("int cast"),
-                                        },
-                                        len: i32::try_from(
-                                            iter.i as usize - octal_start,
-                                        )
-                                        .unwrap(),
-                                    },
-                                    format_args!("Invalid legacy octal literal"),
-                                )
-                                .expect("unreachable");
-                            }
                         }
                         0x38 | 0x39 => {
                             iter.c = c2;
@@ -1911,10 +1894,8 @@ lexer_impl_header! {
                         // Handle legacy HTML-style comments
                         0x21 => {
                             if self.peek("--".len()) == b"--" {
-                                self.add_unsupported_syntax_error(
-                                    b"Legacy HTML comments not implemented yet!",
-                                )?;
-                                return Ok(());
+                                self.scan_legacy_html_open_comment();
+                                continue;
                             }
 
                             self.token = T::TLessThan;
@@ -2337,6 +2318,32 @@ lexer_impl_header! {
                     self.step_with(contents);
                 }
             }
+        }
+    }
+
+    /// Handles the legacy `<!--` HTML single-line open comment (Annex B
+    /// SingleLineHTMLOpenComment): emits a warning and consumes the rest of the
+    /// line. Entered with `self.code_point` on the `!` of `<!--` and
+    /// `self.current` past it.
+    #[cold]
+    #[inline(never)]
+    fn scan_legacy_html_open_comment(&mut self) {
+        // Consume `!`, `-`, `-`.
+        self.step();
+        self.step();
+        self.step();
+        self.log().add_range_warning(
+            Some(self.source),
+            self.range(),
+            b"Treating \"<!--\" as the start of a legacy HTML single-line comment",
+        );
+
+        loop {
+            match self.code_point {
+                0x0D | 0x0A | 0x2028 | 0x2029 | -1 => break,
+                _ => {}
+            }
+            self.step();
         }
     }
 

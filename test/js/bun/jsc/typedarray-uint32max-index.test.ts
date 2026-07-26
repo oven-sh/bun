@@ -78,6 +78,20 @@ const uc = new Uint8ClampedArray(u.buffer);
 uc[IDX] = 300;
 out.uc = uc[IDX];
 
+// Structure-keyed caches (HasOwnPropertyCache, GetBy/InBy IC miss entries)
+// must not be keyed on the shared TypedArray structure for this index, since
+// the answer is length-dependent. Allocate both views first so GC between the
+// two probes doesn't hide a stale entry by clearing the cache.
+const icSmall = new Uint8Array(u.buffer, 0, 8);
+new DataView(u.buffer).setUint8(IDX, 55);
+out.hasOwnSmallFirst = Object.hasOwn(icSmall, KEY);
+out.hasOwnBigAfter = Object.hasOwn(u, KEY);
+function probeGet(x) { return x["4294967295"]; }
+function probeIn(x) { return "4294967295" in x; }
+for (let i = 0; i < 200; i++) { probeGet(icSmall); probeIn(icSmall); }
+out.icGetBig = probeGet(u);
+out.icInBig = probeIn(u);
+
 console.log(JSON.stringify(out));
 `;
 
@@ -123,6 +137,10 @@ test("TypedArray indexed access at 4294967295 on a 2**32-length view", async () 
     smallDefineThrew: true,
     i8: -7,
     uc: 255,
+    hasOwnSmallFirst: false,
+    hasOwnBigAfter: true,
+    icGetBig: 55,
+    icInBig: true,
   });
   expect(exitCode).toBe(0);
 });

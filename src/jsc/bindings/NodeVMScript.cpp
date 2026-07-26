@@ -308,12 +308,9 @@ void NodeVMScript::destroy(JSCell* cell)
 
 extern "C" bool Bun__VM__hasWorkerRequestedTerminate(void*);
 
-// worker.requested_terminate is set only by worker.terminate(); node:vm's own
-// watchdog/SIGINT never touch it. Not is_shutting_down: that is already true
-// inside a worker's process.on('exit') listeners, where a {timeout} must stay
-// a catchable ERR_SCRIPT_EXECUTION_TIMEOUT.
 bool terminationIsExternalWorkerKill(JSC::VM& vm)
 {
+    // Not is_shutting_down: that is already true inside a worker's process.on('exit') listeners.
     return Bun__VM__hasWorkerRequestedTerminate(Bun::vm(vm));
 }
 

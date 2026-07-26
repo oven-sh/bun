@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { Buffer } from "node:buffer";
 import { EventEmitter } from "node:events";
 import fs from "node:fs";
+import os from "node:os";
 
 // Node.js defines `code` on ERR_* errors as an own, enumerable, writable,
 // configurable data property on the instance. That makes it visible to
@@ -66,9 +67,29 @@ describe("Node.js ERR_* error .code is an own property", () => {
     expect(err.name).toBe("RangeError");
   });
 
-  test("errno errors (control) also have own 'code'", () => {
-    const err = capture(() => fs.openSync("/nonexistent-" + Math.random().toString(36).slice(2), "r"));
+  test("errno errors have own 'code' with Node's descriptor", () => {
+    const err = capture(() => fs.openSync("/nonexistent-robobun-probe", "r"));
     expect(err.code).toBe("ENOENT");
-    expect(Object.prototype.hasOwnProperty.call(err, "code")).toBe(true);
+    for (const prop of ["code", "errno", "syscall", "path"] as const) {
+      expect(Object.getOwnPropertyDescriptor(err, prop)).toEqual({
+        value: (err as any)[prop],
+        writable: true,
+        enumerable: true,
+        configurable: true,
+      });
+    }
+  });
+
+  test("ERR_SYSTEM_ERROR 'code' is own and enumerable", () => {
+    const err = capture(() => os.setPriority(0x7ffffffe, 0));
+    expect(err.code).toBe("ERR_SYSTEM_ERROR");
+    expect(Object.getOwnPropertyDescriptor(err, "code")).toEqual({
+      value: "ERR_SYSTEM_ERROR",
+      writable: true,
+      enumerable: true,
+      configurable: true,
+    });
+    expect(Object.keys(err)).toContain("code");
+    expect({ ...err }.code).toBe("ERR_SYSTEM_ERROR");
   });
 });

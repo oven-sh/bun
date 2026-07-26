@@ -1445,17 +1445,11 @@ mod _impl {
             return bun_sys::E::SUCCESS;
         }
 
+        // Windows: `code` is a UV_E* return value, not -1-with-errno.
         #[cfg(windows)]
-        {
-            // On Windows `set_process_priority` returns `uv_os_setpriority`'s
-            // UV_E* code directly; translate that rather than re-reading
-            // GetLastError() via `get_errno`.
-            bun_sys::windows::translate_uv_error_to_e(code)
-        }
+        return bun_sys::windows::translate_uv_error_to_e(code);
         #[cfg(not(windows))]
-        {
-            bun_sys::get_errno(code)
-        }
+        return bun_sys::get_errno(code);
     }
 
     pub(crate) fn set_priority1(global: &JSGlobalObject, pid: i32, priority: i32) -> JsResult<()> {
@@ -1500,14 +1494,7 @@ mod _impl {
                 };
                 Err(global.throw_value(err.to_error_instance_with_info_object(global)))
             }
-            bun_sys::E::SUCCESS => Ok(()),
-            _ => {
-                // POSIX setpriority(2) only documents ESRCH/EACCES/EPERM (EINVAL
-                // cannot occur with PRIO_PROCESS). On Windows, uv_os_setpriority
-                // in practice only returns UV_ESRCH or UV_EPERM for OpenProcess
-                // and SetPriorityClass failures.
-                Ok(())
-            }
+            _ => Ok(()),
         }
     }
 

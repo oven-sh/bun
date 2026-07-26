@@ -223,6 +223,47 @@ describe("URL IDNA", () => {
   });
 });
 
+describe("Intl.Locale", () => {
+  test("structurally valid tag exceeding ICU capacity throws RangeError, consistent with every other Intl entry point", () => {
+    // 23 distinct 7-char variant subtags; each is a well-formed `unicode_variant_subtag`, so the
+    // whole tag is a structurally valid BCP-47 language tag. It only fails because it overflows
+    // ICU's internal ULOC_FULLNAME_CAPACITY buffer during canonicalization.
+    const tag = "en" + Array.from({ length: 23 }, (_, i) => "-" + String(i).padStart(5, "v") + "ab").join("");
+    const ctor = (f: () => unknown) => {
+      try {
+        f();
+        return "no throw";
+      } catch (e) {
+        return (e as Error).constructor.name;
+      }
+    };
+    // Every Intl path that canonicalizes this tag must agree on RangeError so that a
+    // `catch (e) { if (e instanceof RangeError) ... }` validation guard is not constructor-dependent.
+    expect({
+      "Intl.Locale": ctor(() => new Intl.Locale(tag)),
+      "Intl.Locale+options": ctor(() => new Intl.Locale(tag, { language: "en" })),
+      "Intl.DateTimeFormat": ctor(() => new Intl.DateTimeFormat(tag)),
+      "Intl.NumberFormat": ctor(() => new Intl.NumberFormat(tag)),
+      "Intl.Collator": ctor(() => new Intl.Collator(tag)),
+      "Intl.getCanonicalLocales": ctor(() => Intl.getCanonicalLocales(tag)),
+      "String#localeCompare": ctor(() => "a".localeCompare("b", tag)),
+    }).toEqual({
+      "Intl.Locale": "RangeError",
+      "Intl.Locale+options": "RangeError",
+      "Intl.DateTimeFormat": "RangeError",
+      "Intl.NumberFormat": "RangeError",
+      "Intl.Collator": "RangeError",
+      "Intl.getCanonicalLocales": "RangeError",
+      "String#localeCompare": "RangeError",
+    });
+  });
+
+  test("22 variants (under ICU capacity) still constructs", () => {
+    const tag = "en" + Array.from({ length: 22 }, (_, i) => "-" + String(i).padStart(5, "v") + "ab").join("");
+    expect(() => new Intl.Locale(tag)).not.toThrow();
+  });
+});
+
 describe("Intl.getCanonicalLocales", () => {
   test("deprecated BCP-47 tags map to modern equivalents", () => {
     // ICU ships .res bundles under the deprecated tag names; canonicalization

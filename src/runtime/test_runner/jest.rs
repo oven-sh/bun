@@ -146,6 +146,11 @@ pub struct TestRunner<'a> {
     pub unhandled_errors_between_tests: u32,
     pub summary: Summary,
 
+    /// Set the first time `node:test` registers something in this process.
+    /// Gates node-parity shutdown (event-loop drain, `process.on('exit')`
+    /// handlers) so bun:test-only runs keep exit-after-tests.
+    pub node_test_module_used: bool,
+
     pub bun_test_root: bun_test::BunTestRoot,
 }
 
@@ -523,8 +528,13 @@ pub(crate) fn js_file_generation(
     // registration, and an exclusive `&mut TestRunner` would invalidate the
     // `bun_test_root` pointer `test_command.rs` keeps live across the file run.
     // SAFETY: same invariant as `runner()` — RUNNER is only read on the JS thread.
-    let generation =
-        Jest::runner_ptr().map_or(0, |p| unsafe { (*p.as_ptr()).bun_test_root.file_generation });
+    let generation = Jest::runner_ptr().map_or(0, |p| unsafe {
+        let runner = p.as_ptr();
+        // `node_test_module_used` is disjoint from `bun_test_root`; the field
+        // projection does not overlap the caller's live `&BunTestRoot`.
+        (*runner).node_test_module_used = true;
+        (*runner).bun_test_root.file_generation
+    });
     Ok(JSValue::from(generation))
 }
 

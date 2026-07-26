@@ -295,6 +295,80 @@ describe("tcp socket binaryType", () => {
   }
 });
 
+// With allowHalfOpen, a server's end() handler that writes more than the kernel
+// send buffer accepts (a partial write) triggered us_internal_rearm_writable,
+// which re-added READABLE to the poll mask. The half-open eof branch had just
+// set it to WRITABLE-only, so the next epoll tick re-derived recv()==0 -> eof
+// and re-dispatched end(), forever. Drain fired at most once between re-entries.
+it("allowHalfOpen: end() fires once when the handler's write is partially accepted", async () => {
+  // 4 MiB reliably exceeds the loopback send buffer on every platform, so the
+  // write from inside end() lands partial and arms the writable poll.
+  const PAYLOAD = Buffer.alloc(4 * 1024 * 1024, 0x61);
+  let endCount = 0;
+  let drainCount = 0;
+  const serverClosed = Promise.withResolvers<void>();
+  const clientClosed = Promise.withResolvers<void>();
+
+  using server = listen({
+    hostname: "127.0.0.1",
+    port: 0,
+    allowHalfOpen: true,
+    socket: {
+      open(s) {
+        s.data = { sent: 0 };
+      },
+      data() {},
+      end(s) {
+        if (++endCount > 1) {
+          // The bug re-enters end() every tick; terminate so the test fails on
+          // the assertion below instead of spinning.
+          s.terminate();
+          return;
+        }
+        s.data.sent = s.write(PAYLOAD);
+        if (s.data.sent >= PAYLOAD.length) s.shutdown();
+      },
+      drain(s) {
+        drainCount++;
+        if (s.data.sent === 0) return;
+        s.data.sent += s.write(PAYLOAD.subarray(s.data.sent));
+        if (s.data.sent >= PAYLOAD.length) s.shutdown();
+      },
+      close() {
+        serverClosed.resolve();
+      },
+    },
+    data: null! as { sent: number },
+  });
+
+  let received = 0;
+  await connect({
+    hostname: "127.0.0.1",
+    port: server.port,
+    socket: {
+      open(s) {
+        s.write("hi");
+        s.shutdown();
+      },
+      data(_s, chunk) {
+        received += chunk.byteLength;
+      },
+      end() {},
+      close() {
+        clientClosed.resolve();
+      },
+    },
+  });
+
+  await Promise.all([serverClosed.promise, clientClosed.promise]);
+
+  expect({ endCount, received }).toEqual({ endCount: 1, received: PAYLOAD.length });
+  // drainCount is informational: any platform where 4 MiB is a partial write
+  // (all of them, in practice) will fire drain at least once. Not asserted so
+  // a future kernel with a huge default send buffer cannot flake this.
+  void drainCount;
+});
+
 it("should not leak memory", async () => {
   // assert we don't leak the sockets
   // we expect 1 or 2 because that's the prototype / structure

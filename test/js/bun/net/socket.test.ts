@@ -3332,7 +3332,11 @@ describe("TLS handshake callback throw", () => {
 });
 
 describe("Socket.shutdown() / Socket.end() half-close semantics", () => {
-  const PAYLOAD = Buffer.alloc(256 * 1024, 0x61);
+  // Small enough to fit one non-blocking write on every target's default
+  // loopback send buffer (macOS net.inet.tcp.sendspace defaults to 128 KiB):
+  // without allowHalfOpen the server socket closes as soon as the end handler
+  // returns, so there is no drain cycle to finish a partial write.
+  const PAYLOAD = Buffer.alloc(16 * 1024, 0x61);
 
   async function halfClose(how: "shutdown()" | "shutdown(false)" | "shutdown(true)" | "end()") {
     let received = 0;
@@ -3340,22 +3344,14 @@ describe("Socket.shutdown() / Socket.end() half-close semantics", () => {
     let writeAfterShutRd: number | undefined;
     const { promise, resolve } = Promise.withResolvers<void>();
 
-    using server = Bun.listen<{ sent: number }>({
+    using server = Bun.listen({
       hostname: "127.0.0.1",
       port: 0,
       socket: {
-        open(socket) {
-          socket.data = { sent: 0 };
-        },
         data() {},
         end(socket) {
-          socket.data.sent = socket.write(PAYLOAD);
-          if (socket.data.sent >= PAYLOAD.length) socket.shutdown();
-        },
-        drain(socket) {
-          if (socket.data.sent === 0) return;
-          socket.data.sent += socket.write(PAYLOAD.subarray(socket.data.sent));
-          if (socket.data.sent >= PAYLOAD.length) socket.shutdown();
+          socket.write(PAYLOAD);
+          socket.shutdown();
         },
         close() {},
       },
@@ -3402,13 +3398,10 @@ describe("Socket.shutdown() / Socket.end() half-close semantics", () => {
     expect({ received, readyState }).toEqual({ received: PAYLOAD.length, readyState: 1 });
   });
 
-  it.concurrent.skipIf(isWindows)(
-    "shutdown(true) shuts the read side (SHUT_RD) but leaves the write side open",
-    async () => {
-      const { received, writeAfterShutRd } = await halfClose("shutdown(true)");
-      expect({ received, writeAfterShutRd }).toEqual({ received: 0, writeAfterShutRd: 2 });
-    },
-  );
+  it.concurrent("shutdown(true) shuts the read side (SHUT_RD) but leaves the write side open", async () => {
+    const { received, writeAfterShutRd } = await halfClose("shutdown(true)");
+    expect({ received, writeAfterShutRd }).toEqual({ received: 0, writeAfterShutRd: 2 });
+  });
 
   it.concurrent("end() closes the connection; it does not leave the socket readable", async () => {
     const { received, readyState } = await halfClose("end()");

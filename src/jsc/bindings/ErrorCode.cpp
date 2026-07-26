@@ -237,9 +237,14 @@ JSObject* createError(VM& vm, JSC::JSGlobalObject* globalObject, ErrorCode code,
     if (auto* zigGlobalObject = dynamicDowncast<Zig::GlobalObject>(globalObject))
         return createError(vm, zigGlobalObject, code, message, jsUndefined());
 
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     const auto& data = errors[static_cast<size_t>(code)];
     auto* structure = createErrorStructure(vm, globalObject, data.type, data.name);
     auto* created_error = JSC::ErrorInstance::create(globalObject, structure, message, jsUndefined(), nullptr, JSC::RuntimeType::TypeNothing, data.type, true);
+    if (auto* thrown_exception = scope.exception()) [[unlikely]] {
+        (void)scope.tryClearException();
+        return uncheckedDowncast<JSObject>(thrown_exception->value());
+    }
     created_error->putDirect(vm, WebCore::builtinNames(vm).codePublicName(), jsString(vm, String(data.code)), 0);
     return created_error;
 }

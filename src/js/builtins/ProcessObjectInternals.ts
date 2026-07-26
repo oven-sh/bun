@@ -493,6 +493,11 @@ export function windowsEnv(
       const k = String(p).toUpperCase();
       $assert(typeof p === "string"); // proxy is only string and symbol. the symbol would have thrown by now
       value = String(value); // If toString() throws, we want to avoid it existing in the envMapList
+      // Node silently ignores empty names and names containing '=' (the
+      // assignment succeeds but nothing is stored, matching RealEnvStore::Set).
+      if (k === "" || k.indexOf("=") !== -1) {
+        return true;
+      }
       // Track the key for enumeration if it isn't already there. Don't gate on
       // `k in internalEnv`: the proxy-related env-var accessors (HTTP_PROXY,
       // HTTPS_PROXY, NO_PROXY and lowercase variants) always exist on
@@ -530,11 +535,40 @@ export function windowsEnv(
     defineProperty(_, p, attributes) {
       const k = String(p).toUpperCase();
       $assert(typeof p === "string"); // proxy is only string and symbol. the symbol would have thrown by now
+      // Node only accepts a fully-permissive data descriptor and routes it
+      // through the env setter (RealEnvStore::PropertyDefinerCallback).
+      if ("get" in attributes || "set" in attributes) {
+        throw $ERR_INVALID_OBJECT_DEFINE_PROPERTY(
+          "'process.env' does not accept an accessor(getter/setter) descriptor",
+        );
+      }
+      if (
+        !("value" in attributes) ||
+        attributes.configurable !== true ||
+        attributes.writable !== true ||
+        attributes.enumerable !== true
+      ) {
+        throw $ERR_INVALID_OBJECT_DEFINE_PROPERTY(
+          "'process.env' only accepts a configurable, writable, and enumerable data descriptor",
+        );
+      }
+      const value = String(attributes.value);
+      if (k === "" || k.indexOf("=") !== -1) {
+        return true;
+      }
       if (!(k in internalEnv) && !envMapList.includes(p)) {
         envMapList.push(p);
       }
-      editWindowsEnvVar(k, internalEnv[k]);
-      return $Object.$defineProperty(internalEnv, k, attributes);
+      editWindowsEnvVar(k, value);
+      internalEnv[k] = value;
+      return true;
+    },
+    preventExtensions() {
+      // Node: Object.freeze/seal/preventExtensions on process.env throw.
+      return false;
+    },
+    isExtensible() {
+      return true;
     },
     getOwnPropertyDescriptor(target, p) {
       if (typeof p === "string") {

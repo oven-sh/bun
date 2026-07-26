@@ -2247,6 +2247,63 @@ pub mod environment_variables {
         let value = vm.env_loader().get(sliced.slice())?;
         Some(ZigString::init_utf8(value))
     }
+
+    /// `process.env[name] = value`: update the env_loader map, and on the main
+    /// thread also `setenv()` so a native library's `getenv()` observes the
+    /// write. Key/value are already NUL-truncated by the C++ side; an empty
+    /// key or a key containing `=` was filtered out there too. Returns the
+    /// env_loader map's entry count so the caller (a C++ `put` that may have
+    /// added a key) can tell whether the JS enumeration view needs resizing.
+    #[unsafe(no_mangle)]
+    pub(crate) extern "C" fn Bun__ProcessEnv__put(
+        global_object: &JSGlobalObject,
+        name: &BunString,
+        value: &BunString,
+    ) {
+        let vm = global_object.bun_vm().as_mut();
+        let name_slice = name.to_utf8();
+        let key = name_slice.slice();
+        let value_slice = value.to_utf8();
+
+        bun_core::handle_oom(vm.transpiler.env_mut().map.put(key, value_slice.slice()));
+
+        if vm.is_main_thread() {
+            #[cfg(not(windows))]
+            {
+                let key_z = std::ffi::CString::new(key).expect("pre-truncated at NUL");
+                let val_z =
+                    std::ffi::CString::new(value_slice.slice()).expect("pre-truncated at NUL");
+                // SAFETY: NUL-terminated C strings; setenv copies both.
+                unsafe { libc::setenv(key_z.as_ptr(), val_z.as_ptr(), 1) };
+                bun_core::env_var::invalidate_for_setenv(key);
+            }
+        }
+    }
+
+    /// `delete process.env[name]`: remove from the env_loader map, and on the
+    /// main thread also `unsetenv()`.
+    #[unsafe(no_mangle)]
+    pub(crate) extern "C" fn Bun__ProcessEnv__delete(
+        global_object: &JSGlobalObject,
+        name: &BunString,
+    ) {
+        let vm = global_object.bun_vm().as_mut();
+        let name_slice = name.to_utf8();
+        let key = name_slice.slice();
+
+        vm.transpiler.env_mut().map.remove(key);
+
+        if vm.is_main_thread() {
+            #[cfg(not(windows))]
+            {
+                if let Ok(key_z) = std::ffi::CString::new(key) {
+                    // SAFETY: NUL-terminated C string.
+                    unsafe { libc::unsetenv(key_z.as_ptr()) };
+                }
+                bun_core::env_var::invalidate_for_setenv(key);
+            }
+        }
+    }
 }
 
 #[unsafe(no_mangle)]

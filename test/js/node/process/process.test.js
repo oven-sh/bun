@@ -251,9 +251,11 @@ it("ICU version does not regress", () => {
 it("process.env.TZ", () => {
   var origTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
-  // the default timezone is Etc/UTC
+  // The default timezone is UTC. ICU reports it as either "UTC" or "Etc/UTC"
+  // depending on the zone-detection path; accept both. This branch was dead
+  // while `"TZ" in process.env` was always true (the old DontEnum accessor).
   if (!("TZ" in process.env)) {
-    expect(origTimezone).toBe("Etc/UTC");
+    expect(["UTC", "Etc/UTC"]).toContain(origTimezone);
   }
 
   const realOrigTimezone = origTimezone;

@@ -992,6 +992,13 @@ impl WebWorker {
 
         // SAFETY: see post-publish note above.
         unsafe {
+            // The main-thread entry points (run/test/repl) set this before
+            // configure_defines(); without it the worker's transpiler inlines
+            // `process.env.X` from its DotEnv map (which it seeds from environ
+            // on spawn), so a main-thread `process.env.X = ...` + setenv leaks
+            // into the worker's source as a literal.
+            (*vm).transpiler.options.env.behavior =
+                bun_dotenv::DotEnvBehavior::LoadAllWithoutInlining;
             if (*vm).transpiler.configure_defines().is_err() {
                 // Fall through to spin() → shutdown() for full teardown under
                 // the API lock (flushLogs runs JS). Set terminate so spin()

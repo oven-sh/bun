@@ -369,6 +369,14 @@ pub(crate) mod kind {
 
                 raw_env
             }
+
+            /// Drop the cached value so the next `get()` re-reads libc.
+            /// `process.env` writes call setenv() and then this, so the cached
+            /// pointer into the old environ slot is never dereferenced again.
+            #[inline]
+            pub(crate) fn reset(&self) {
+                self.len_value.store(NOT_LOADED_LEN, Ordering::Release);
+            }
         }
     }
 
@@ -447,6 +455,12 @@ pub(crate) mod kind {
                     Ordering::Relaxed,
                 );
                 Some(string_is_truthy)
+            }
+
+            #[inline]
+            pub(crate) fn reset(&self) {
+                self.value
+                    .store(StoredType::Unknown as u8, Ordering::Relaxed);
             }
         }
     }
@@ -619,6 +633,11 @@ pub(crate) mod kind {
                     }
                 }
             }
+
+            #[inline]
+            pub(crate) fn reset(&self) {
+                self.value.store(UNKNOWN_SENTINEL, Ordering::Relaxed);
+            }
         }
     }
 }
@@ -761,6 +780,13 @@ macro_rules! platform_specific_new {
                     }
                     CacheOutput::Value(v) => Some(v),
                 }
+            }
+
+            /// Drop the cached value so the next `get()` re-reads libc; used by
+            /// the `process.env` write path after `setenv()`.
+            #[allow(dead_code)]
+            pub fn reset() {
+                CACHE.reset();
             }
 
             /// Retrieve the value of the environment variable, reloading it from the environment.
@@ -951,3 +977,34 @@ macro_rules! new_feature_flag {
     };
 }
 pub(crate) use new_feature_flag;
+
+/// Drop the cached value for the typed accessor whose key matches `name`, so
+/// the next `get()` re-reads libc. `process.env` writes call `setenv()` and
+/// then this — otherwise `os.homedir()` / `os.tmpdir()` would keep returning
+/// the value cached on first read.
+///
+/// Only the string-kind accessors that are read at runtime (after VM startup)
+/// are listed; the `BUN_*` flags are read once on boot and intentionally left
+/// cached.
+pub fn invalidate_for_setenv(name: &[u8]) {
+    macro_rules! try_var {
+        ($v:ident) => {
+            if let Some(k) = $v::platform_key() {
+                if crate::strings::eql(k.as_bytes(), name) {
+                    $v::reset();
+                    return;
+                }
+            }
+        };
+    }
+    try_var!(HOME);
+    try_var!(PATH);
+    try_var!(USER);
+    try_var!(TMPDIR);
+    try_var!(TEMP);
+    try_var!(TMP);
+    try_var!(SHELL);
+    try_var!(XDG_CACHE_HOME);
+    try_var!(XDG_CONFIG_HOME);
+    try_var!(XDG_DATA_HOME);
+}

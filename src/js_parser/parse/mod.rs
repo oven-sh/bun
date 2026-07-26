@@ -682,6 +682,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 && (!Self::IS_TYPESCRIPT_ENABLED || p.lexer.identifier != b"implements"))
         {
             let name_loc = p.lexer.loc();
+            let name_range = p.lexer.range();
             let name_text = p.lexer.identifier;
             p.lexer.expect(T::TIdentifier)?;
 
@@ -693,10 +694,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 return Err(crate::Error::SyntaxError);
             }
 
-            if name_text == b"await" && p.is_await_identifier_rejected(p.lexer.range()) {
+            if name_text == b"await" && p.is_await_identifier_rejected(name_range) {
                 p.log().add_range_error(
                     Some(p.source),
-                    p.lexer.range(),
+                    name_range,
                     b"Cannot use \"await\" as an identifier here",
                 );
             }

@@ -1146,12 +1146,10 @@ bun_core::comptime_string_map! {
     };
 }
 
-/// BundleOptions is used when ResolveMode is not set to "disable".
-/// BundleOptions is effectively webpack + babel
-/// Default `asset_inline_limit`: CSS `url(...)` assets below this many bytes
-/// inline as `data:` URIs.
 pub const DEFAULT_ASSET_INLINE_LIMIT: u32 = 128 * 1024;
 
+/// BundleOptions is used when ResolveMode is not set to "disable".
+/// BundleOptions is effectively webpack + babel
 pub struct BundleOptions<'a> {
     pub footer: Cow<'static, [u8]>,
     pub banner: Cow<'static, [u8]>,

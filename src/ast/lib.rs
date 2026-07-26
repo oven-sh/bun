@@ -2774,9 +2774,7 @@ impl Source {
         let text = &self.contents[0..loc.i()];
         if let Some(index) = bun_core::strings::last_index_of(text, op) {
             return Range {
-                loc: Loc {
-                    start: i32::try_from(index).expect("int cast"),
-                },
+                loc: usize2loc(index),
                 len: i32::try_from(op.len()).expect("int cast"),
             };
         }

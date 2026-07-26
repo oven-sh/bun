@@ -365,11 +365,7 @@ test.skipIf(isWindows)("glob/SymlinkedFileIsBundled", async () => {
     cwd: String(dir),
     stderr: "pipe",
   });
-  const [, buildStderr, buildExitCode] = await Promise.all([
-    build.stdout.text(),
-    build.stderr.text(),
-    build.exited,
-  ]);
+  const [, buildStderr, buildExitCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
   expect(buildStderr).toBe("");
   expect(buildExitCode).toBe(0);
 

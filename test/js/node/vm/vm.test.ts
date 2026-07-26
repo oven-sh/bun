@@ -1422,6 +1422,40 @@ describe("node:vm timeout option", () => {
     expect(exitCode).toBe(0);
   });
 
+  // A default-mode context shares the host's microtask queue, so a guest
+  // `Promise.resolve().then(loop)` chain drains on the host queue after
+  // runInContext returns. With the stale JSC Watchdog the 80ms deadline fired
+  // during that chain and left the VM terminated: every later host callback
+  // (timers, the process exit handler) was silently skipped and the process
+  // exited 0.
+  test("a guest microtask loop that outlives the evaluation's deadline does not poison host callbacks", async () => {
+    const fixture = `
+      import vm from "node:vm";
+      const c = vm.createContext({ N: { n: 0 } });
+      setTimeout(() => {
+        Promise.resolve().then(() => console.log("host microtask ran"));
+        console.log("host timer ran, later vm eval: " + vm.runInNewContext("6*7", {}));
+      }, 400);
+      vm.runInContext(
+        "const t = Date.now(); (function loop(){ N.n++; if (Date.now() - t < 200) Promise.resolve().then(loop); })(); 1",
+        c, { timeout: 80 },
+      );
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(stdout).toBe("host timer ran, later vm eval: 42\nhost microtask ran\n");
+    expect(exitCode).toBe(0);
+  });
+
   test("terminates a runaway script", () => {
     expect(() => runInThisContext("while (true) {}", { timeout: 100 })).toThrow(
       expect.objectContaining({

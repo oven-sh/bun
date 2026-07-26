@@ -662,8 +662,7 @@ pub fn relative_platform_buf<'a, P: PlatformT, const ALWAYS_COPY: bool>(
     )
 }
 
-/// [`relative_platform_buf`] with caller-supplied normalize scratch. Each
-/// scratch buffer must hold at least `input.len() + 1` bytes.
+/// [`relative_platform_buf`] with caller-supplied normalize scratch (each `>= input.len() + 1`).
 pub fn relative_platform_buf_with_scratch<'a, P: PlatformT, const ALWAYS_COPY: bool>(
     buf: &'a mut [u8],
     from: &[u8],

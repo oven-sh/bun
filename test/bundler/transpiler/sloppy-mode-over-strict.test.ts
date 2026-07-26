@@ -21,6 +21,19 @@ async function run(body: string, cjs = true, ext = "js") {
   return { stdout, stderr, exitCode };
 }
 
+async function build(files: Record<string, string>, entry: string, ...flags: string[]) {
+  using dir = tempDir("sloppy-build", files);
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", entry, ...flags],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const result = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return result;
+}
+
 describe.concurrent("sloppy-mode constructs the transpiler must accept", () => {
   test("duplicate parameter names in a plain function declaration", async () => {
     const { stdout, stderr, exitCode } = await run(`function f(a, a) { return a }\nconsole.log(f(1, 2));`);
@@ -275,6 +288,12 @@ describe.concurrent("strict-mode / unique-formal-parameter rejections still fire
     expect(exitCode).not.toBe(0);
   });
 
+  test("var await in a .cjs file bundled to ESM is rejected", async () => {
+    const [, stderr, exitCode] = await build({ "x.cjs": `var await = 1;\nmodule.exports = {};\n` }, "x.cjs");
+    expect(stderr).toContain(`Cannot use "await" as an identifier in an ECMAScript module`);
+    expect(exitCode).not.toBe(0);
+  });
+
   test("var await in an ESM file is rejected when bundling", async () => {
     using dir = tempDir("sloppy-await-esm", {
       "x.js": `export var await = 1;\n`,
@@ -293,19 +312,6 @@ describe.concurrent("strict-mode / unique-formal-parameter rejections still fire
 });
 
 describe.concurrent("bun build accepts sloppy CommonJS", () => {
-  async function build(files: Record<string, string>, entry: string, ...flags: string[]) {
-    using dir = tempDir("sloppy-build", files);
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "build", entry, ...flags],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const result = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    return result;
-  }
-
   test("duplicate params survive bundling to CJS", async () => {
     const [stdout, stderr, exitCode] = await build(
       { "x.js": `function f(a, a) { return a }\nmodule.exports = f(1, 2);\n` },
@@ -321,6 +327,17 @@ describe.concurrent("bun build accepts sloppy CommonJS", () => {
     const [stdout, stderr, exitCode] = await build({ "x.cjs": `var s = "a\\7b";\nmodule.exports = s;\n` }, "x.cjs");
     expect(stderr).not.toContain("Legacy octal escape sequences");
     expect(stdout).toContain("\\x07");
+    expect(exitCode).toBe(0);
+  });
+
+  test("var await in a sloppy CJS file bundles to CJS", async () => {
+    const [stdout, stderr, exitCode] = await build(
+      { "x.cjs": `var await = 1;\nmodule.exports = { await };\n` },
+      "x.cjs",
+      "--format=cjs",
+    );
+    expect(stderr).not.toContain(`Cannot use "await"`);
+    expect(stdout).toContain("var await = 1");
     expect(exitCode).toBe(0);
   });
 });

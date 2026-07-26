@@ -2808,7 +2808,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .recursive_set_strict_mode(js_ast::StrictModeKind::ImplicitStrictModeModuleType);
         }
 
-        if self.has_es_module_syntax || self.options.module_type == options::ModuleType::Esm {
+        let is_module_goal =
+            self.has_es_module_syntax || self.options.module_type == options::ModuleType::Esm;
+        if is_module_goal {
             for r in &self.lexer.legacy_html_comment_ranges {
                 self.log().add_range_error(
                     Some(self.source),
@@ -2816,13 +2818,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     b"Legacy HTML single-line comments are not allowed in ECMAScript modules",
                 );
             }
-            if self.top_level_await_identifier_range.len > 0 {
-                self.log().add_range_error(
-                    Some(self.source),
-                    self.top_level_await_identifier_range,
-                    b"Cannot use \"await\" as an identifier in an ECMAScript module",
-                );
-            }
+        }
+        if (is_module_goal || self.is_strict_mode_output_format())
+            && self.top_level_await_identifier_range.len > 0
+        {
+            self.log().add_range_error(
+                Some(self.source),
+                self.top_level_await_identifier_range,
+                b"Cannot use \"await\" as an identifier in an ECMAScript module",
+            );
         }
 
         self.hoist_symbols(self.module_scope_ref());

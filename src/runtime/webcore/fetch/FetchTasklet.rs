@@ -2177,8 +2177,10 @@ impl FetchTasklet {
     }
 
     /// Whether the request body should skip chunked transfer encoding framing.
+    /// Derived from the HTTP thread's `to_result` snapshot so the body framer
+    /// and `build_request` agree by construction on what went onto the wire.
     fn skip_chunked_framing(&self) -> bool {
-        self.upgraded_connection
+        self.result.is_upgrade
             || self.result.is_http2
             || self.declared_request_content_length.is_some()
     }

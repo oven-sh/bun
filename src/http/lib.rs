@@ -410,6 +410,9 @@ pub struct HTTPClientResult<'a> {
     /// Set once ALPN selected h2 so the JS side writes raw bytes into the
     /// streaming-body buffer instead of chunked-encoding them.
     pub is_http2: bool,
+    /// `upgrade_state != None`: an `Upgrade:` offer is on the wire, so the
+    /// streaming-body buffer carries raw bytes, not a chunked-encoded body.
+    pub is_upgrade: bool,
 
     pub fail: Option<crate::Error>,
     /// Raw `getaddrinfo(3)` return code when `fail` is `DNSResolveFailed`;
@@ -480,6 +483,7 @@ impl<'a> HTTPClientResult<'a> {
             redirected: self.redirected,
             can_stream: self.can_stream,
             is_http2: self.is_http2,
+            is_upgrade: self.is_upgrade,
             fail: self.fail,
             dns_error: self.dns_error,
             dns_hostname: self.dns_hostname,
@@ -2337,7 +2341,6 @@ impl<'a> HTTPClient<'a> {
         let mut override_connection_header = false;
         let mut override_user_agent = false;
         let mut original_content_length: Option<&[u8]> = None;
-        let mut saw_upgrade = false;
 
         // Reserve slots for default headers that may be appended after user headers
         // (Connection, User-Agent, Accept, Host, Accept-Encoding, Content-Length/Transfer-Encoding).
@@ -2410,13 +2413,12 @@ impl<'a> HTTPClient<'a> {
                     }
                 }
                 h if h == hash_header_const(b"Upgrade") => {
-                    let value = self.header_str(header_values[i]);
-                    if !bun_core::strings::eql_any_case_insensitive_ascii(value, &[b"h2", b"h2c"]) {
-                        // `saw_upgrade` (position-independent) suppresses the
-                        // chunked fallback; `upgrade_state` (wire-dependent)
-                        // only goes Pending when the header is actually sent.
-                        saw_upgrade = true;
-                        if will_append {
+                    if will_append {
+                        let value = self.header_str(header_values[i]);
+                        if !bun_core::strings::eql_any_case_insensitive_ascii(
+                            value,
+                            &[b"h2", b"h2c"],
+                        ) {
                             self.flags.upgrade_state = HTTPUpgradeState::Pending;
                         }
                     }
@@ -2475,7 +2477,7 @@ impl<'a> HTTPClient<'a> {
                     request_headers_buf[header_count] =
                         picohttp::Header::new(CONTENT_LENGTH_HEADER_NAME, content_length);
                     header_count += 1;
-                } else if !saw_upgrade {
+                } else if self.flags.upgrade_state == HTTPUpgradeState::None {
                     request_headers_buf[header_count] = CHUNKED_ENCODED_HEADER;
                     header_count += 1;
                 }
@@ -4436,6 +4438,7 @@ impl<'a> HTTPClient<'a> {
                         || self.state.request_stage == RequestStage::ProxyBody)
                         && self.flags.is_streaming_request_body,
                     is_http2: self.flags.protocol != Protocol::Http1_1,
+                    is_upgrade: self.flags.upgrade_state != HTTPUpgradeState::None,
                 };
             }
         }
@@ -4456,6 +4459,7 @@ impl<'a> HTTPClient<'a> {
                 || self.state.request_stage == RequestStage::ProxyBody)
                 && self.flags.is_streaming_request_body,
             is_http2: self.flags.protocol != Protocol::Http1_1,
+            is_upgrade: self.flags.upgrade_state != HTTPUpgradeState::None,
         }
     }
 

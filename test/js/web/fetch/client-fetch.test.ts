@@ -833,13 +833,16 @@ test.each([{ "transfer-encoding": "gzip" }, { "upgrade": "H2c" }])(
 );
 
 // build_request caps user headers at MAX_USER_HEADERS; an Upgrade entry past
-// the cap is read by the body framer (position-independent fast_get) but not
-// written to the wire. The header writer must then not emit Transfer-Encoding:
-// chunked (the body is raw), and must not set upgrade_state Pending (the
-// server never sees the offer, so the body must not be held for a 101).
-test.each([{}, { "content-length": "4" }])(
-  "an Upgrade header past the user-header cap with %j neither desynchronises framing nor hangs",
-  async extra => {
+// the cap is dropped from the wire. The body framer reads the same
+// build_request decision via result.is_upgrade, so the header that goes on the
+// wire and the body framing agree: no CL means TE:chunked with a chunk-framed
+// body, and a declared CL means exactly that many raw bytes.
+test.each([
+  [{}, { transferEncoding: "chunked", contentLength: undefined, body: "4\r\nabcd\r\n0\r\n\r\n" }],
+  [{ "content-length": "4" }, { transferEncoding: undefined, contentLength: "4", body: "abcd" }],
+])(
+  "an Upgrade header past the user-header cap with %j frames the body to match the wire",
+  async (extra, expected) => {
     let recorded = Buffer.alloc(0);
     const { promise: closed, resolve: onClose } = Promise.withResolvers<void>();
     await using server = net
@@ -848,8 +851,7 @@ test.each([{}, { "content-length": "4" }])(
         sock.on("close", onClose);
         sock.on("data", d => {
           recorded = Buffer.concat([recorded, d]);
-          // Respond only once body bytes have arrived so a held body hangs.
-          if (recorded.toString("latin1").includes("abcd")) {
+          if (recorded.toString("latin1").endsWith(expected.body)) {
             sock.end("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok");
           }
         });
@@ -874,8 +876,14 @@ test.each([{}, { "content-length": "4" }])(
     expect(res.status).toBe(200);
     await closed;
 
-    const head = recorded.toString("latin1").split("\r\n\r\n")[0];
-    expect(/^transfer-encoding: (.*)$/im.exec(head)?.[1]).toBeUndefined();
+    const raw = recorded.toString("latin1");
+    const head = raw.slice(0, raw.indexOf("\r\n\r\n"));
+    const body = raw.slice(raw.indexOf("\r\n\r\n") + 4);
+    expect({
+      transferEncoding: /^transfer-encoding: (.*)$/im.exec(head)?.[1],
+      contentLength: /^content-length: (.*)$/im.exec(head)?.[1],
+      body,
+    }).toEqual(expected);
   },
 );
 

@@ -1313,6 +1313,12 @@ impl WebWorker {
             if let Some(rare) = vm.rare_data.as_deref_mut() {
                 rare.release_js_handles();
             }
+            if let Some(hooks) = runtime_hooks() {
+                // Drop this worker's URL.createObjectURL entries from the
+                // process-global registry; nothing else revokes them once the
+                // worker is gone.
+                (hooks.sweep_object_urls_for_owner)(vm.initial_script_execution_context_identifier);
+            }
             exit_code = i32::from(vm.exit_handler.exit_code);
             global_object = Some(vm.global);
         }

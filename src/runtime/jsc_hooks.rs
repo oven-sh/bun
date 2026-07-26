@@ -1487,6 +1487,7 @@ pub(crate) static __BUN_RUNTIME_HOOKS: RuntimeHooks = RuntimeHooks {
     retroactively_report_discovered_tests,
     cancel_all_timers,
     close_dns_for_terminate,
+    sweep_object_urls_for_owner,
 };
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -1634,6 +1635,12 @@ fn close_dns_for_terminate() {
     if let Some(gd) = unsafe { &(*state).global_dns_data }.get() {
         gd.resolver.close_channel_for_terminate();
     }
+}
+
+/// `RuntimeHooks::sweep_object_urls_for_owner` — drop every blob-URL registry
+/// entry whose recording context is `owner`.
+fn sweep_object_urls_for_owner(owner: i32) {
+    crate::webcore::object_url_registry::ObjectURLRegistry::singleton().sweep_owner(owner);
 }
 
 pub(crate) fn close_isolation_handles(vm: &mut VirtualMachine) {

@@ -359,14 +359,13 @@ describe.concurrent("socket", () => {
       hostname: "127.0.0.1",
       port: 0,
       socket: {
-        binaryType: "buffer",
-        data(socket, data) {
-          if (data.toString("utf-8") === "still open") resolve();
+        data() {
+          resolve();
         },
         close() {},
       },
     });
-    const client = await connect({
+    using client = await connect({
       hostname: "127.0.0.1",
       port: server.port,
       socket: {
@@ -391,7 +390,6 @@ describe.concurrent("socket", () => {
       closeFired: false,
       readyStateAfter: 1,
     });
-    client.end();
   }, 60_000);
 
   it("should allow large amounts of data to be sent and received", async () => {

@@ -2847,9 +2847,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .reserve(self.define.injected.len());
             let will_use_renamer = self.will_use_renamer();
             for injected in self.define.injected.iter() {
-                let sanitized =
-                    bun_core::MutableString::ensure_valid_identifier(&injected.name)
-                        .unwrap_or_else(|_| Box::from(b"_".as_slice()));
+                let sanitized = bun_core::MutableString::ensure_valid_identifier(&injected.name)
+                    .unwrap_or_else(|_| Box::from(b"_".as_slice()));
                 // Without a renamer (transform-only, no minify) the printer emits
                 // `original_name` verbatim, so suffix a hash of the key bytes to
                 // keep it collision-resistant against user bindings.

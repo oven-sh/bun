@@ -154,9 +154,7 @@ describe("bundler", () => {
       expect(attrs).toContain("https://example.com/sprite.svg#ext");
 
       // Both references to clip.png point at the same emitted asset.
-      const clipHashes = new Set(
-        attrs.map(a => a.match(/clip-([a-z0-9]+)\.png/)?.[1]).filter(Boolean),
-      );
+      const clipHashes = new Set(attrs.map(a => a.match(/clip-([a-z0-9]+)\.png/)?.[1]).filter(Boolean));
       expect(clipHashes.size).toBe(1);
     },
   });

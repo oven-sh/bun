@@ -915,15 +915,10 @@ pub(crate) trait PathOrFdExt {
         Self: Sized;
 }
 
-/// The pin taken by [`Buffer::from_js_pinned`] blocks `transfer()`/detach but
-/// not `ArrayBuffer.prototype.resize`: shrinking a resizable ArrayBuffer
-/// decommits its tail pages (`JSC::ArrayBuffer::resize` → `OSAllocator::protect`),
-/// so any later read of the captured `(ptr, len)` faults. That later read can be
-/// a work-pool thread (async ops) or a sync op's own `slice_z` after an options
-/// getter (`flag`/`mode`/`encoding`/...) re-entered JS. Copy the path bytes
-/// instead; they are already bounded by `MAX_PATH_BYTES`. Growable
-/// SharedArrayBuffers never shrink and keep a stable data pointer, so they stay
-/// on the borrowed path.
+/// `pin()` blocks `transfer()` but not `ArrayBuffer.prototype.resize`, which
+/// decommits tail pages: a later `slice_z` (after an option getter) or a
+/// work-pool read faults. Copy resizable non-shared paths; growable SABs only
+/// grow in place so stay borrowed.
 fn snapshot_resizable_path_buffer(buffer: &mut Buffer) {
     if !(buffer.buffer.resizable && !buffer.buffer.shared) {
         return;

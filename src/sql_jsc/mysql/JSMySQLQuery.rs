@@ -26,6 +26,20 @@ use super::my_sql_statement::MySQLStatement;
 
 bun_core::define_scoped_log!(debug, MySQLQuery);
 
+/// The OK packet's `affected_rows` and `last_insert_id` are u64 on the wire, so
+/// a `BIGINT UNSIGNED` AUTO_INCREMENT key past 2^53 has no exact double. Values
+/// outside the safe-integer range cross into JS as BigInt instead of rounding.
+/// The BigInt branch allocates on the JS heap and so can throw, like the sibling
+/// `JSValue::from_timeval_no_truncate`.
+fn ok_packet_int_to_js(global_object: &JSGlobalObject, value: u64) -> JsResult<JSValue> {
+    if value <= bun_jsc::MAX_SAFE_INTEGER as u64 {
+        return Ok(JSValue::js_number_from_uint64(value));
+    }
+    jsc::host_fn::from_js_host_call(global_object, || {
+        JSValue::from_uint64_no_truncate(global_object, value)
+    })
+}
+
 // The `#[bun_jsc::JsClass]` derive is intentionally not applied: this type's
 // JS wiring (`to_js`/`from_js`, the exported `MySQLQueryPrototype__*` /
 // `MySQLQueryClass__*` wrappers) is owned by the `.classes.ts` codegen
@@ -234,11 +248,35 @@ impl JSMySQLQuery {
         Ok(JSValue::UNDEFINED)
     }
 
+    /// `(last_insert_id, affected_rows)` for the resolve callback.
+    fn ok_packet_ints(&self, result: &MySQLQueryResult) -> JsResult<(JSValue, JSValue)> {
+        if self.vm().is_shutting_down() {
+            // The caller returns before reading these; allocating is not safe here.
+            return Ok((JSValue::UNDEFINED, JSValue::UNDEFINED));
+        }
+        let global_object = self.global_object();
+        let last_insert_id = ok_packet_int_to_js(global_object, result.last_insert_id)?;
+        last_insert_id.ensure_still_alive();
+        let affected_rows = ok_packet_int_to_js(global_object, result.affected_rows)?;
+        affected_rows.ensure_still_alive();
+        Ok((last_insert_id, affected_rows))
+    }
+
     pub fn resolve(&self, queries_array: JSValue, result: &MySQLQueryResult) {
         // `ref_guard` brackets re-entry; drops *after* `_downgrade` so the
         // allocation outlives the closure body.
         let _guard = self.ref_guard();
         let is_last_result = result.is_last_result;
+
+        // Converted before `q.result()` below marks the query terminal, because a
+        // throw from the BigInt allocation has to be able to reject it, and
+        // `reject` is a no-op on a query already marked Success.
+        let ok_ints = self.ok_packet_ints(result);
+        let Ok((last_insert_id, affected_rows)) = ok_ints else {
+            self.reject(queries_array, AnyMySQLError::Error::JSError);
+            return;
+        };
+
         // R-2: `&Self` is `Copy`; the guard captures it by value and runs on
         // every exit path (defer). All mutation is `JsCell`-backed.
         let _downgrade = scopeguard::guard(self, move |s| {
@@ -300,8 +338,8 @@ impl JSMySQLQuery {
                     queries_array
                 },
                 JSValue::js_boolean(is_last_result),
-                JSValue::js_number(result.last_insert_id as f64),
-                JSValue::js_number(result.affected_rows as f64),
+                last_insert_id,
+                affected_rows,
             ],
         );
     }

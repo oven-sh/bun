@@ -319,8 +319,22 @@ export function mysqlHandshakeV10(
 
 // MySQL Protocol::OK_Packet — page_protocol_basic_ok_packet.html: Int<1>(header) lenenc(affected_rows) lenenc(last_insert_id) Int<2>(status) Int<2>(warnings)
 // The header is 0x00, except for the CLIENT_DEPRECATE_EOF result-set terminator, which is an OK packet with a 0xFE header.
-export function mysqlOkPacket(seq: number, header: 0x00 | 0xfe = 0x00): Buffer {
-  return mysqlRawPacket(seq, Buffer.from([header, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00]));
+// affected_rows / last_insert_id are u64, so they accept bigint as well as number.
+export function mysqlOkPacket(
+  seq: number,
+  header: 0x00 | 0xfe = 0x00,
+  rows: { affectedRows?: number | bigint; lastInsertId?: number | bigint } = {},
+): Buffer {
+  return mysqlRawPacket(
+    seq,
+    Buffer.concat([
+      Buffer.from([header]),
+      mysqlLenencInt(rows.affectedRows ?? 0),
+      mysqlLenencInt(rows.lastInsertId ?? 0),
+      Buffer.from([0x02, 0x00]), // status_flags (SERVER_STATUS_AUTOCOMMIT)
+      Buffer.from([0x00, 0x00]), // warnings
+    ]),
+  );
 }
 
 // MySQL Protocol::AuthMoreData — page_protocol_connection_phase_packets_protocol_auth_more_data.html:

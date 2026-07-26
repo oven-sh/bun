@@ -57,8 +57,14 @@ test("spawn can write to stdin multiple chunks", async () => {
             await proc.stdin!.flush();
             while (echoed < line.length * w) {
               if (stdoutClosed) {
-                const err = await stderrPromise;
-                throw new Error(`child stdout closed after ${echoed}/${line.length * writes} bytes; stderr:\n${err}`);
+                // stdout ended before we got our echo. Kill the child so stderr
+                // reaches EOF even if the child is still blocked on stdin, then
+                // surface whatever it wrote.
+                proc.kill();
+                const [err, code] = await Promise.all([stderrPromise, proc.exited]);
+                throw new Error(
+                  `child stdout closed after ${echoed}/${line.length * writes} bytes (exit ${code}); stderr:\n${err}`,
+                );
               }
               await new Promise<void>(resolve => {
                 notifyEcho = resolve;

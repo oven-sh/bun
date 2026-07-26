@@ -611,10 +611,7 @@ var access = function access(path, mode, callback) {
     // Invoke the callback from process.nextTick so an exception thrown by it
     // surfaces as an uncaught exception instead of rejecting this internal
     // promise chain (same convention as glob() below).
-    fs.opendir(path).then(
-      onOpendirFulfilled.bind(null, callback, result),
-      onOpendirRejected.bind(null, callback),
-    );
+    fs.opendir(path).then(onOpendirFulfilled.bind(null, callback, result), onOpendirRejected.bind(null, callback));
   };
 
 const { defineCustomPromisifyArgs } = require("internal/promisify");

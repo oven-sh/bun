@@ -18,6 +18,8 @@ pub const fn is_handler_writable(code: u16) -> bool {
     is_sendable(code) && code != 101
 }
 
+pub const ROUTE_101_REFUSED: &str = "Cannot use a Response with status 101 (Switching Protocols) as a static route: Bun.serve has no way to hand the connection over after the protocol switch. Use server.upgrade() for WebSocket upgrades.";
+
 pub fn get(code: u16) -> Option<&'static [u8]> {
     match code {
         100 => Some(b"100 Continue"),

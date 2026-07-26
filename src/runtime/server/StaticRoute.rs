@@ -164,9 +164,8 @@ impl StaticRoute {
                 )));
             }
             if status == 101 {
-                return Err(global_this.throw_invalid_arguments(format_args!(
-                    "Cannot use a Response with status 101 (Switching Protocols) as a static route: Bun.serve has no way to hand the connection over after the protocol switch. Use server.upgrade() for WebSocket upgrades.",
-                )));
+                return Err(global_this
+                    .throw_invalid_arguments(format_args!("{}", HTTPStatusText::ROUTE_101_REFUSED)));
             }
 
             // The user may want to pass in the same Response object multiple endpoints

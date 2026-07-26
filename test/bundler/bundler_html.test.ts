@@ -145,6 +145,9 @@ describe("bundler", () => {
     ">
     <img srcset="./small.png, ./big.png">
     <img srcset="https://example.com/ext.png 1x, ./big.png 2x">
+    <img srcset="./small.png">
+    <img srcset="">
+    <img srcset=" , ">
   </body>
 </html>`,
       "/small.png": "smallsmall",
@@ -154,7 +157,7 @@ describe("bundler", () => {
     onAfterBundle(api) {
       const html = api.readFile("out/index.html");
       const srcsets = [...html.matchAll(/srcset="([^"]*)"/g)].map(m => m[1]);
-      expect(srcsets).toHaveLength(6);
+      expect(srcsets).toHaveLength(9);
 
       // Two local candidates with density descriptors.
       expect(srcsets[0]).toMatch(/^\.\/small-[a-z0-9]+\.png 1x, \.\/big-[a-z0-9]+\.png 2x$/);
@@ -168,6 +171,11 @@ describe("bundler", () => {
       expect(srcsets[4]).toMatch(/^\.\/small-[a-z0-9]+\.png, \.\/big-[a-z0-9]+\.png$/);
       // External candidate is left alone; local one is hashed.
       expect(srcsets[5]).toMatch(/^https:\/\/example\.com\/ext\.png 1x, \.\/big-[a-z0-9]+\.png 2x$/);
+      // Bare single URL with no descriptor.
+      expect(srcsets[6]).toMatch(/^\.\/small-[a-z0-9]+\.png$/);
+      // Empty and delimiter-only values yield no candidates and are left untouched.
+      expect(srcsets[7]).toBe("");
+      expect(srcsets[8]).toBe(" , ");
 
       // The <img src> inside <picture> is hashed too.
       api.expectFile("out/index.html").toMatch(/<img src="\.\/small-[a-z0-9]+\.png" alt="image">/);

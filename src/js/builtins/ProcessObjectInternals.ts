@@ -490,8 +490,12 @@ export function windowsEnv(
       return internalEnv[p];
     },
     set(_, p, value) {
-      const k = String(p).toUpperCase();
-      $assert(typeof p === "string"); // proxy is only string and symbol. the symbol would have thrown by now
+      // Node's env setter does `ToString` on key and value, which throws on a
+      // Symbol; JS `String()` special-cases Symbols, so reject explicitly.
+      if (typeof p === "symbol" || typeof value === "symbol") {
+        throw new TypeError("Cannot convert a Symbol value to a string");
+      }
+      const k = (p as string).toUpperCase();
       value = String(value); // If toString() throws, we want to avoid it existing in the envMapList
       // Node silently ignores empty names and names containing '=' (the
       // assignment succeeds but nothing is stored, matching RealEnvStore::Set).
@@ -533,8 +537,10 @@ export function windowsEnv(
       return typeof p !== "symbol" ? delete internalEnv[k] : false;
     },
     defineProperty(_, p, attributes) {
-      const k = String(p).toUpperCase();
-      $assert(typeof p === "string"); // proxy is only string and symbol. the symbol would have thrown by now
+      if (typeof p === "symbol") {
+        throw new TypeError("Cannot convert a Symbol value to a string");
+      }
+      const k = (p as string).toUpperCase();
       // Node only accepts a fully-permissive data descriptor and routes it
       // through the env setter (RealEnvStore::PropertyDefinerCallback).
       if ("get" in attributes || "set" in attributes) {

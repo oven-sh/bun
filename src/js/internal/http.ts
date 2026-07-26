@@ -28,7 +28,9 @@ const {
     insecureHTTPParser: boolean,
     maxHeaderSize: number,
     onClientError: (ssl: boolean, socket: any, errorCode: number, rawPacket: ArrayBuffer) => undefined,
-    onConnection?: (socketHandle: any) => undefined,
+    onConnection: ((socketHandle: any) => undefined) | undefined,
+    httpAllowHalfOpen: boolean,
+    maxHeadersCount: number,
   ) => void;
   setServerAppFlags: (
     server: any,

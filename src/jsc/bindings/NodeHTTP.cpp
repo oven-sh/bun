@@ -42,6 +42,7 @@ extern "C" EncodedJSValue Server__setAppFlags(JSC::JSGlobalObject*, EncodedJSVal
 extern "C" EncodedJSValue Server__setOnClientError(JSC::JSGlobalObject*, EncodedJSValue, EncodedJSValue);
 extern "C" EncodedJSValue Server__setOnConnection(JSC::JSGlobalObject*, EncodedJSValue, EncodedJSValue);
 extern "C" EncodedJSValue Server__setMaxHTTPHeaderSize(JSC::JSGlobalObject*, EncodedJSValue, uint64_t);
+extern "C" EncodedJSValue Server__setMaxHeadersCount(JSC::JSGlobalObject*, EncodedJSValue, uint32_t);
 
 static EncodedJSValue assignHeadersFromFetchHeaders(FetchHeaders& impl, JSObject* prototype, JSObject* objectValue, JSC::InternalFieldTuple* tuple, JSC::JSGlobalObject* globalObject, JSC::VM& vm)
 {
@@ -1258,7 +1259,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPSetCustomOptions, (JSGlobalObject * globalObject,
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    ASSERT(callFrame->argumentCount() == 8);
+    ASSERT(callFrame->argumentCount() == 9);
     // This is an internal binding.
     JSValue serverValue = callFrame->uncheckedArgument(0);
     JSValue requireHostHeader = callFrame->uncheckedArgument(1);
@@ -1268,6 +1269,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPSetCustomOptions, (JSGlobalObject * globalObject,
     JSValue callback = callFrame->uncheckedArgument(5);
     JSValue onConnectionCallback = callFrame->argument(6);
     JSValue httpAllowHalfOpen = callFrame->argument(7);
+    JSValue maxHeadersCount = callFrame->argument(8);
 
     double maxHeaderSizeNumber = maxHeaderSize.toNumber(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
@@ -1277,6 +1279,14 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPSetCustomOptions, (JSGlobalObject * globalObject,
 
     Server__setMaxHTTPHeaderSize(globalObject, JSValue::encode(serverValue), maxHeaderSizeNumber);
     RETURN_IF_EXCEPTION(scope, {});
+
+    if (maxHeadersCount.isNumber()) {
+        double maxHeadersCountNumber = maxHeadersCount.asNumber();
+        if (maxHeadersCountNumber > 0 && maxHeadersCountNumber <= (double)UINT32_MAX) {
+            Server__setMaxHeadersCount(globalObject, JSValue::encode(serverValue), (uint32_t)maxHeadersCountNumber);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
+    }
 
     Server__setOnClientError(globalObject, JSValue::encode(serverValue), JSValue::encode(callback));
     RETURN_IF_EXCEPTION(scope, {});

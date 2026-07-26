@@ -159,8 +159,7 @@ static String applyIDNADeltaToURLAuthority(const String& urlString, StringView s
     }
 
     // Userinfo is percent-encoded, not IDNA-mapped, in node too: only the
-    // host[:port] span after the last '@' gets the delta. The port is ASCII
-    // digits, which the delta maps to themselves.
+    // host span after the last '@' gets the delta.
     size_t hostStart = authorityStart;
     auto authority = view.substring(authorityStart, authorityEnd - authorityStart);
     size_t at = authority.reverseFind('@');
@@ -172,7 +171,16 @@ static String applyIDNADeltaToURLAuthority(const String& urlString, StringView s
     if (hostStart < view.length() && view[hostStart] == '[')
         return {};
 
-    auto hostView = view.substring(hostStart, authorityEnd - hostStart);
+    // The port span must stay verbatim: the delta's ignored-class entries
+    // (U+180E, U+206A..U+206F) are stripped, which would turn an invalid
+    // non-digit port character into a valid port. With bracketed hosts
+    // already excluded, the last ':' in the remaining span is the port
+    // separator.
+    auto hostAndPort = view.substring(hostStart, authorityEnd - hostStart);
+    size_t portColon = hostAndPort.reverseFind(':');
+    size_t hostEnd = portColon == notFound ? authorityEnd : hostStart + portColon;
+
+    auto hostView = view.substring(hostStart, hostEnd - hostStart);
     if (!Bun::containsUnicode16IDNADeltaSource(hostView))
         return {};
 
@@ -180,7 +188,7 @@ static String applyIDNADeltaToURLAuthority(const String& urlString, StringView s
     StringBuilder builder;
     builder.append(view.left(hostStart));
     builder.append(mappedHost);
-    builder.append(view.substring(authorityEnd));
+    builder.append(view.substring(hostEnd));
     return builder.toString();
 }
 

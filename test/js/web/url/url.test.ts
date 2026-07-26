@@ -104,6 +104,11 @@ describe("url", () => {
     // embedded tab in the scheme or between : and // must not defeat the delta.
     expect(new URL("ht\ttp://\u1E9E.com/").href).toBe("http://xn--zca.com/");
     expect(new URL("http:\n//\u1E9E.com/").href).toBe("http://xn--zca.com/");
+    // The port span is left verbatim: an ignored-class delta source
+    // (U+180E) in the port must still fail the WHATWG port state, not be
+    // stripped into a valid digit run. The same char in the host is fine.
+    expect(() => new URL("http://foo:8\u180E0/")).toThrow();
+    expect(new URL("http://foo\u180E:80/").href).toBe("http://foo/");
     // setter on a non-special scheme: opaque host stays verbatim.
     const u = new URL("foo://x/");
     u.hostname = "\u1E9E";

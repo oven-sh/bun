@@ -52,8 +52,10 @@ test.skipIf(!hasMemory)(
   300_000,
 );
 
-test.skipIf(!hasMemory)("Bun.gunzipSync rejects a > 4 GiB output with ERR_BUFFER_TOO_LARGE", async () => {
-  const script = `
+test.skipIf(!hasMemory)(
+  "Bun.gunzipSync rejects a > 4 GiB output with ERR_BUFFER_TOO_LARGE",
+  async () => {
+    const script = `
     const zlib = require("node:zlib");
     const chunks = [];
     const gz = zlib.createGzip({ level: 1 });
@@ -79,17 +81,19 @@ test.skipIf(!hasMemory)("Bun.gunzipSync rejects a > 4 GiB output with ERR_BUFFER
       console.log(JSON.stringify({ threw: true, code: e.code, isRangeError: e instanceof RangeError }));
     }
   `;
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", script],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  const out = JSON.parse(stdout.trim() || "null");
-  expect({ out, stderr }).toEqual({
-    out: { threw: true, code: "ERR_BUFFER_TOO_LARGE", isRangeError: true },
-    stderr: "",
-  });
-  expect(exitCode).toBe(0);
-}, 300_000);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const out = JSON.parse(stdout.trim() || "null");
+    expect({ out, stderr }).toEqual({
+      out: { threw: true, code: "ERR_BUFFER_TOO_LARGE", isRangeError: true },
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  },
+  300_000,
+);

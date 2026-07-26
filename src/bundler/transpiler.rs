@@ -2307,10 +2307,6 @@ impl<'a> Transpiler<'a> {
                 .collect(),
         );
 
-        // `runtime_imports` is now forwarded — after Round-G `Ast.runtime_imports`
-        // is the real `parser::Runtime::Imports`, the same type
-        // `js_printer::Options.runtime_imports` takes (via `js_ast::runtime`),
-        // so the seam is gone.
         // `target` is now forwarded via `to_bundle_enums_target` below — it
         // *does* affect the EsmAscii/bun-runtime path (js_printer/lib.rs:6872
         // gates the `var {require}=import.meta;` hoist on `target == Bun`;
@@ -2400,7 +2396,6 @@ impl<'a> Transpiler<'a> {
     ) -> crate::Result<usize> {
         let opts = js_printer::Options {
             bundling: false,
-            runtime_imports: ast.runtime_imports.clone(),
             require_ref: Some(ast.require_ref),
             css_import_behavior: self.options.css_import_behavior(),
             source_map_handler: source_map_context,
@@ -2480,7 +2475,6 @@ impl<'a> Transpiler<'a> {
         let module_info = module_info.map(|p| unsafe { &mut *p });
         let opts = js_printer::Options {
             bundling: false,
-            runtime_imports: ast.runtime_imports.clone(),
             require_ref: Some(ast.require_ref),
             css_import_behavior: self.options.css_import_behavior(),
             source_map_handler: source_map_context,
@@ -2554,7 +2548,7 @@ impl<'a> Transpiler<'a> {
     // PERF: `#[inline(never)]` + concrete `&mut BufferPrinter` — see `print`
     // above. This is the hot entry from jsc_hooks.rs / RuntimeTranspilerStore.rs
     // / AsyncModule.rs; keeping it non-generic collapses the four cross-crate
-    // copies of `print_expr<true,false,true,false,true>` (244 KB → ~61 KB).
+    // copies of `print_expr<…>` (244 KB → ~61 KB).
     /// `print_arena` is the same per-call arena that built `result.ast` —
     /// see [`Self::print`].
     #[inline(never)]

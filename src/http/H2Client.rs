@@ -37,8 +37,8 @@ pub const WRITE_BUFFER_CONTROL_LIMIT: usize = 1024 * 1024;
 /// Incremented at allocation, decremented in deinit. Read from the JS thread
 /// via TestingAPIs.liveCounts so they must be atomic.
 // Lower-case names kept so cross-crate readers (`bun_http_jsc`) and the gated
-// submodules share one identifier; SCREAMING_SNAKE aliases preserved for the
-// existing internal references.
+// submodules share one identifier; SCREAMING_SNAKE alias preserved for the
+// existing internal reference.
 #[allow(non_upper_case_globals)]
 pub static live_sessions: AtomicI32 = AtomicI32::new(0);
 #[allow(non_upper_case_globals)]

@@ -1022,7 +1022,6 @@ impl<'a> SourceMapHandler<'a> {
 // ───────────────────────────────────────────────────────────────────────────
 // Options
 // ───────────────────────────────────────────────────────────────────────────
-use js_ast::runtime;
 use js_ast::{CommonJSNamedExports, TsEnumsMap};
 
 pub struct Options<'a> {
@@ -1033,7 +1032,6 @@ pub struct Options<'a> {
     pub import_meta_ref: Ref,
     pub hmr_ref: Ref,
     pub indent: Indentation,
-    pub runtime_imports: runtime::Imports,
     // allocator dropped — global mimalloc (this is an AST crate but Options.allocator is the global default)
     pub source_map_handler: Option<SourceMapHandler<'a>>,
     pub css_import_behavior: CssInJsBehavior,
@@ -1112,7 +1110,6 @@ impl<'a> Default for Options<'a> {
             import_meta_ref: Ref::NONE,
             hmr_ref: Ref::NONE,
             indent: Indentation::default(),
-            runtime_imports: runtime::Imports::default(),
             source_map_handler: None,
             css_import_behavior: CssInJsBehavior::Facade,
             target: bun_ast::Target::Browser,

@@ -345,9 +345,7 @@ impl WriteFile {
             }
             bun_sys::Result::Err(err) => {
                 if err.get_errno() == io::RETRY {
-                    // Regular files never return EAGAIN, so receiving it here
-                    // means the fd is pollable regardless of what `could_block`
-                    // inferred from the store.
+                    // EAGAIN is impossible on a regular file, so the fd is pollable.
                     self.could_block = true;
                     self.wait_for_writable();
                     return false;

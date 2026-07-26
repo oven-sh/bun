@@ -522,9 +522,7 @@ impl ReadFile {
             }
             Err(err) => {
                 if err.get_errno() == io::RETRY {
-                    // Regular files never return EAGAIN, so receiving it here
-                    // means the fd is pollable regardless of what `could_block`
-                    // inferred from fstat.
+                    // EAGAIN is impossible on a regular file, so the fd is pollable.
                     self.could_block = true;
                     *retry = true;
                     self.read_eof = false;

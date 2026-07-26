@@ -308,15 +308,10 @@ void NodeVMScript::destroy(JSCell* cell)
 
 extern "C" int Bun__VM__scriptExecutionStatus(void*);
 
-// A termination request belongs to this evaluation only if this evaluation
-// armed the watchdog ({timeout}) or was the SIGINT watcher's target
-// ({breakOnSigint}). Any other source is foreign: the execution context is
-// being stopped permanently (process.exit() inside a worker, worker.terminate()
-// from the parent, VM shutdown), or an enclosing evaluation's watchdog/SIGINT
-// fired while this untimed inner one was running. Converting a foreign
-// termination to a catchable ERR_SCRIPT_EXECUTION_* lets the caller's
-// try/catch swallow a kill request; propagate it as the uncatchable
-// TerminationException instead so it unwinds to whoever armed it.
+// A termination not raised by this evaluation's own {timeout}/{breakOnSigint}
+// (worker process.exit()/terminate(), VM shutdown, or an enclosing eval's
+// watchdog) must stay uncatchable; converting it to ERR_SCRIPT_EXECUTION_*
+// would let the caller's try/catch swallow a kill request.
 bool isForeignTermination(JSC::VM& vm, bool sigintReceived, bool hasTimeout)
 {
     if (Bun__VM__scriptExecutionStatus(Bun::vm(vm)) != 0)

@@ -37,23 +37,37 @@ test.concurrent("concurrent order", async () => {
     ,
       "stdout": 
     "bun test <version> (<revision>)
+    stdout | test/js/bun/test/concurrent.fixture.ts > test 1
     [0] start test 1
     [1] end test 1
     --- concurrent boundary ---
+    stdout | test/js/bun/test/concurrent.fixture.ts > test 2
     [0] start test 2
+    stdout | test/js/bun/test/concurrent.fixture.ts > test 3
     [0] start test 3
+    stdout | test/js/bun/test/concurrent.fixture.ts
     [1] end test 2
+    stdout | test/js/bun/test/concurrent.fixture.ts > test 3
     [2] end test 3
+    stdout | test/js/bun/test/concurrent.fixture.ts > test 4
     --- concurrent boundary ---
+    stdout | test/js/bun/test/concurrent.fixture.ts > test 5
     [0] start test 5
+    stdout | test/js/bun/test/concurrent.fixture.ts > test 6
     [0] start test 6
+    stdout | test/js/bun/test/concurrent.fixture.ts > describe group 7 > test 7
     [0] start before test 7
+    stdout | test/js/bun/test/concurrent.fixture.ts > describe group 8 > test 8
     [0] start test 8
+    stdout | test/js/bun/test/concurrent.fixture.ts
     [1] end test 5
     [2] end test 6
     [3] end before test 7
+    stdout | test/js/bun/test/concurrent.fixture.ts > describe group 7 > test 7
     [3] start test 7
+    stdout | test/js/bun/test/concurrent.fixture.ts
     [4] end test 7
+    stdout | test/js/bun/test/concurrent.fixture.ts > describe group 8 > test 8
     [5] end test 8"
     ,
     }
@@ -73,16 +87,24 @@ test.concurrent("concurrent-and-serial --concurrent", async () => {
   expect(exitCode).toBe(0);
   expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
     "bun test <version> (<revision>)
+    stdout | test/js/bun/test/concurrent-and-serial.fixture.ts > test default-1
     [0] start test default-1
+    stdout | test/js/bun/test/concurrent-and-serial.fixture.ts > test default-2
     [0] start test default-2
+    stdout | test/js/bun/test/concurrent-and-serial.fixture.ts > test concurrent-1
     [0] start test concurrent-1
+    stdout | test/js/bun/test/concurrent-and-serial.fixture.ts > test concurrent-2
     [0] start test concurrent-2
+    stdout | test/js/bun/test/concurrent-and-serial.fixture.ts
     [1] end test default-1
     [1] end test default-2
     [1] end test concurrent-1
+    stdout | test/js/bun/test/concurrent-and-serial.fixture.ts > test concurrent-2
     [1] end test concurrent-2
+    stdout | test/js/bun/test/concurrent-and-serial.fixture.ts > test serial-1
     [0] start test serial-1
     [1] end test serial-1
+    stdout | test/js/bun/test/concurrent-and-serial.fixture.ts > test serial-2
     [0] start test serial-2
     [1] end test serial-2"
   `);
@@ -101,16 +123,24 @@ test.concurrent("concurrent-and-serial, no flag", async () => {
   expect(exitCode).toBe(0);
   expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
     "bun test <version> (<revision>)
+    stdout | test/js/bun/test/concurrent-and-serial.fixture.ts > test default-1
     [0] start test default-1
     [1] end test default-1
+    stdout | test/js/bun/test/concurrent-and-serial.fixture.ts > test default-2
     [0] start test default-2
     [1] end test default-2
+    stdout | test/js/bun/test/concurrent-and-serial.fixture.ts > test concurrent-1
     [0] start test concurrent-1
+    stdout | test/js/bun/test/concurrent-and-serial.fixture.ts > test concurrent-2
     [0] start test concurrent-2
+    stdout | test/js/bun/test/concurrent-and-serial.fixture.ts
     [1] end test concurrent-1
+    stdout | test/js/bun/test/concurrent-and-serial.fixture.ts > test concurrent-2
     [1] end test concurrent-2
+    stdout | test/js/bun/test/concurrent-and-serial.fixture.ts > test serial-1
     [0] start test serial-1
     [1] end test serial-1
+    stdout | test/js/bun/test/concurrent-and-serial.fixture.ts > test serial-2
     [0] start test serial-2
     [1] end test serial-2"
   `);

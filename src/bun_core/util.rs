@@ -1752,6 +1752,77 @@ pub mod io {
         }
     }
 
+    /// `io::Writer` sink that appends to an owned `Vec<u8>` instead of an fd.
+    ///
+    /// Lets callers that must hand a `&mut io::Writer` to an existing formatter
+    /// (`VirtualMachine::print_errorlike_object`, which takes the vtable head
+    /// rather than `&mut dyn Write`) capture the render into memory.
+    #[repr(C)]
+    pub struct VecWriter {
+        /// Must stay first: `interface()` casts `*mut Self` to `*mut Writer`.
+        head: Writer,
+        buf: Vec<u8>,
+    }
+
+    unsafe fn vec_writer_write_all(w: *mut Writer, bytes: &[u8]) -> crate::CrateResult<()> {
+        // SAFETY: `w` was produced by `interface()` casting a `*mut VecWriter`,
+        // and `head` is the first `repr(C)` field, so the cast round-trips.
+        let this = unsafe { &mut *w.cast::<VecWriter>() };
+        this.buf.extend_from_slice(bytes);
+        Ok(())
+    }
+
+    unsafe fn vec_writer_flush(_: *mut Writer) -> crate::CrateResult<()> {
+        Ok(())
+    }
+
+    impl Default for VecWriter {
+        fn default() -> Self {
+            Self::new()
+        }
+    }
+
+    impl VecWriter {
+        pub const fn new() -> Self {
+            Self {
+                head: Writer {
+                    write_all: vec_writer_write_all,
+                    flush: vec_writer_flush,
+                },
+                buf: Vec::new(),
+            }
+        }
+
+        /// Vtable view. Same address as `self`; no two may be live at once.
+        #[inline]
+        pub fn interface(&mut self) -> &mut Writer {
+            // SAFETY: `head` is the first `repr(C)` field, so `*mut Self` and
+            // `*mut Writer` share an address, and the vtable fns cast back.
+            unsafe { &mut *core::ptr::from_mut::<Self>(self).cast::<Writer>() }
+        }
+
+        #[inline]
+        pub fn bytes(&self) -> &[u8] {
+            &self.buf
+        }
+
+        #[inline]
+        pub fn is_empty(&self) -> bool {
+            self.buf.is_empty()
+        }
+
+        /// Hand off the captured bytes, leaving the writer empty and reusable.
+        #[inline]
+        pub fn take(&mut self) -> Vec<u8> {
+            core::mem::take(&mut self.buf)
+        }
+
+        #[inline]
+        pub fn clear(&mut self) {
+            self.buf.clear();
+        }
+    }
+
     // ════════════════════════════════════════════════════════════════════════
     // trait Write — canonical byte-level write sink.
     // Lives in `bun_core` (not `bun_io`) so leaf crates

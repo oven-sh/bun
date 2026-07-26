@@ -13,4 +13,5 @@
 
 pub use super::parallel::runner::run_as_coordinator;
 pub use super::parallel::runner::run_as_worker;
+pub use super::parallel::runner::worker_emit_failure_diagnostic;
 pub use super::parallel::runner::worker_emit_test_done;

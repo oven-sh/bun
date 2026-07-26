@@ -14,7 +14,13 @@ test("11793", async () => {
 
   expect(exitCode).toBe(1);
   expect(normalizeBunSnapshot(stderr)).toMatchInlineSnapshot(`
-    "1 | const { test, expect } = require("bun:test");
+    "(fail) test/regression/issue/11793.fixture.ts:
+    (fail) %p
+
+    1 tests failed:
+
+    (fail) test/regression/issue/11793.fixture.ts:4 > %p
+    1 | const { test, expect } = require("bun:test");
     2 | 
     3 | test.each([[]])("%p", array => {
     4 |   expect(array.length).toBe(0);
@@ -24,9 +30,6 @@ test("11793", async () => {
     Expected: 0
     Received: 1
         at <anonymous> (file:NN:NN)
-
-    (fail) test/regression/issue/11793.fixture.ts:
-    (fail) %p
 
      0 pass
      1 fail

@@ -510,7 +510,10 @@ fn message_with_type_and_level_(
     // high-tier hook checks `Jest.runner` and calls `onBeforePrint()`; no-op
     // when `bun test` isn't running or hooks aren't installed.
     if let Some(hooks) = crate::virtual_machine::runtime_hooks() {
-        (hooks.console_on_before_print)();
+        (hooks.console_on_before_print)(matches!(
+            level,
+            MessageLevel::Warning | MessageLevel::Error
+        ));
     }
 
     let mut print_length = len;

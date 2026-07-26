@@ -16,10 +16,12 @@ test("5738", async () => {
   expect(exitCode).toBe(0);
   expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
     "bun test <version> (<revision>)
+    stdout | test/regression/issue/5738.fixture.ts
     1 - beforeAll
     1 - beforeEach
     1 - test
     1 - afterEach
+    stdout | test/regression/issue/5738.fixture.ts > Scoped / Nested block
     2 - beforeAll
     1 - beforeEach
     2 - beforeEach
@@ -27,6 +29,7 @@ test("5738", async () => {
     2 - afterEach
     1 - afterEach
     2 - afterAll
+    stdout | test/regression/issue/5738.fixture.ts
     1 - afterAll"
   `);
 });

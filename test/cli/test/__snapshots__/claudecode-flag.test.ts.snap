@@ -1,7 +1,13 @@
 // Bun Snapshot v1, https://bun.sh/docs/test/snapshots
 
 exports[`CLAUDECODE=1 shows quiet test output (only failures) 1`] = `
-"4 |       test("passing test", () => {
+"(fail) test2.test.js:
+(fail) failing test
+
+1 tests failed:
+
+(fail) test2.test.js:9 > failing test
+4 |       test("passing test", () => {
 5 |         expect(1).toBe(1);
 6 |       });
 7 | 
@@ -13,9 +19,6 @@ error: expect(received).toBe(expected)
 Expected: 2
 Received: 1
     at <anonymous> (file:NN:NN)
-
-(fail) test2.test.js:
-(fail) failing test
 
  1 pass
  1 skip

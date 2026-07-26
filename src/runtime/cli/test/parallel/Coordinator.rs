@@ -375,9 +375,9 @@ impl<'a> Coordinator<'a> {
             return;
         }
         self.break_dots();
-        if let Some(idx) = w.inflight {
-            self.ensure_header(idx);
-        }
+        // No file header here: `console.*` output carries its own
+        // `stdout | file > describe > test` label, written worker-side and
+        // relayed verbatim. Raw `process.stdout.write` stays unlabeled.
         let _ = Output::error_writer().write_all(&w.captured);
         if !strings::ends_with_char(&w.captured, b'\n') {
             let _ = Output::error_writer().write_all(b"\n");
@@ -481,14 +481,26 @@ impl<'a> Coordinator<'a> {
                 // Unrolled because an array of disjoint &mut fields needs
                 // explicit splitting.
                 self.reporter
-                    .failures_to_repeat_buf
-                    .extend_from_slice(rd.str());
-                self.reporter
                     .skips_to_repeat_buf
                     .extend_from_slice(rd.str());
                 self.reporter
                     .todos_to_repeat_buf
                     .extend_from_slice(rd.str());
+            }
+            frame::Kind::FailureDiagnostic => {
+                let idx = rd.u32_();
+                let entry = rd.str();
+                if w.inflight != Some(idx) {
+                    return;
+                }
+                self.flush_captured(w);
+                if !self.reporter.failure_report.push(entry) {
+                    // Over the cap — print now rather than drop it.
+                    self.break_dots();
+                    let _enable_buffering = Output::enable_buffering_scope();
+                    let _ = Output::error_writer_buffered().write_all(entry);
+                    Output::flush();
+                }
             }
             frame::Kind::JunitFile | frame::Kind::CoverageFile => {
                 let path = rd.str();

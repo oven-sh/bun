@@ -577,7 +577,9 @@ impl BunTestRoot {
     }
 
     /// `process.exit()` from inside a test never reaches `exit_file`, so the
-    /// buffered block for the file in flight would be dropped on the floor.
+    /// buffered block for the file in flight — and the batched failure
+    /// diagnostics, which are only rendered at end of run — would be dropped on
+    /// the floor.
     pub fn flush_active_file_block(&self) {
         let Some(active_file) = &self.active_file else {
             return;
@@ -587,7 +589,10 @@ impl BunTestRoot {
         let reporter = unsafe { *core::ptr::addr_of!((*active_file.as_ptr()).reporter) };
         if let Some(reporter) = reporter {
             // SAFETY: reporter outlives every BunTest (owned by test_command::exec).
-            unsafe { (*reporter.as_ptr()).flush_file_block() };
+            unsafe {
+                (*reporter.as_ptr()).flush_file_block();
+                (*reporter.as_ptr()).render_failure_report();
+            }
         }
     }
 
@@ -622,6 +627,121 @@ impl BunTestRoot {
                 }
             }
         }
+    }
+
+    /// `stdout | file > describe > test` ahead of a `console.*` write, so the
+    /// output is attributable once results are buffered and no longer adjacent
+    /// to it. Emitted only when the producing test changes, and on the same
+    /// stream as the content it labels.
+    pub fn print_console_attribution(&self, is_stderr: bool) {
+        let Some(active_file) = &self.active_file else {
+            return;
+        };
+        // Raw-ptr field read for the same reason as `on_before_print`.
+        // SAFETY: single-threaded; `active_file` keeps the cell alive.
+        let reporter = unsafe { *core::ptr::addr_of!((*active_file.as_ptr()).reporter) };
+        let Some(reporter) = reporter else {
+            return;
+        };
+        // SAFETY: reporter outlives every BunTest (owned by test_command::exec).
+        // Only `last_console_label` (a `RefCell`) is mutated through this.
+        let reporter = unsafe { reporter.as_ref() };
+        // Under `--parallel` the worker's stdout is captured and relayed
+        // verbatim, so the label the worker writes is the one the user sees.
+
+        // The stream is part of the identity: interleaved stdout/stderr from
+        // one test each need their own header, or the second stream's lines
+        // land under a header on the other stream.
+        let mut label: Vec<u8> = Vec::new();
+        label.extend_from_slice(if is_stderr { b"stderr | " } else { b"stdout | " });
+        if let Some(runner_ptr) = Jest::runner_ptr() {
+            // SAFETY: single-threaded; disjoint field from `bun_test_root`.
+            unsafe { (*runner_ptr.as_ptr()).current_file.write_path(&mut label) };
+        }
+        // SAFETY: `active_file` is live; `execution` is only read here.
+        let entry = unsafe { Self::attributable_entry(&*active_file.as_ptr()) };
+        match entry {
+            Some(entry) => {
+                // SAFETY: arena-owned entry, alive for the lifetime of BunTest.
+                let entry = unsafe { &*entry.as_ptr() };
+                CommandLineReporter::write_console_label_tail(entry, &mut label);
+            }
+            // Concurrent tests give no single owner; the file alone is still
+            // more than the caller had before.
+            None => {}
+        }
+
+        {
+            let mut last = reporter.last_console_label.borrow_mut();
+            if *last == label {
+                return;
+            }
+            last.clear();
+            last.extend_from_slice(&label);
+        }
+
+        let colors = if is_stderr {
+            Output::enable_ansi_colors_stderr()
+        } else {
+            Output::enable_ansi_colors_stdout()
+        };
+        let mut line: Vec<u8> = Vec::with_capacity(label.len() + 24);
+        if colors {
+            line.extend_from_slice(&Output::pretty_fmt::<true>("<r><d>"));
+        }
+        line.extend_from_slice(&label);
+        if colors {
+            line.extend_from_slice(&Output::pretty_fmt::<true>("<r>"));
+        }
+        line.push(b'\n');
+
+        let writer = if is_stderr {
+            Output::error_writer()
+        } else {
+            Output::writer()
+        };
+        let _ = writer.write_all(&line);
+        let _ = writer.flush();
+    }
+
+    /// The test a `console.*` write can be blamed on, or `None` when nothing
+    /// resolves.
+    ///
+    /// The entry synchronously on the stack is authoritative — it stays correct
+    /// when concurrent tests interleave. Hooks are unnamed, so a hook entry is
+    /// mapped to the test its sequence runs for; `beforeEach` output then reads
+    /// as the test it precedes rather than as an anonymous scope.
+    fn attributable_entry(buntest: &BunTest) -> Option<NonNull<ExecutionEntry>> {
+        if let Some(entry) = buntest.execution.on_stack_entry.get() {
+            // SAFETY: arena-owned entry, alive for the lifetime of BunTest.
+            let is_named = unsafe { &*entry.as_ptr() }
+                .base
+                .name
+                .as_deref()
+                .is_some_and(|n| !n.is_empty());
+            if is_named {
+                return Some(entry);
+            }
+            for sequence in &buntest.execution.sequences {
+                if sequence.active_entry == Some(entry) {
+                    return sequence.test_entry.or(Some(entry));
+                }
+            }
+            return Some(entry);
+        }
+        // Nothing on the stack: an async continuation or a hook between tests.
+        // Only attributable when exactly one sequence is in flight.
+        let mut found = None;
+        for sequence in &buntest.execution.sequences {
+            if !sequence.executing {
+                continue;
+            }
+            if found.is_some() {
+                return None;
+            }
+            found = sequence.test_entry;
+        }
+        found
     }
 }
 
@@ -1336,20 +1456,16 @@ impl BunTest {
             return; // the exception should not be visible (eg m_terminationException)
         };
 
-        let junit_ctx: *mut core::ffi::c_void = 'ctx: {
-            if handle_status != HandleUncaughtExceptionResult::ShowHandledError {
-                break 'ctx core::ptr::null_mut();
-            }
-            let Some(reporter) = self.reporter else {
-                break 'ctx core::ptr::null_mut();
+        // Diagnostics for a failing test are captured rather than printed, so
+        // `handle_test_completed` can re-emit them under a header naming the
+        // test. Errors with no owning test (hooks, top-level, between tests)
+        // keep streaming.
+        let capture_reporter: *mut CommandLineReporter =
+            if handle_status == HandleUncaughtExceptionResult::ShowHandledError {
+                self.reporter.map_or(core::ptr::null_mut(), |r| r.as_ptr())
+            } else {
+                core::ptr::null_mut()
             };
-            // SAFETY: `BunTest.reporter` carries write provenance from `enter_file`'s
-            // `&mut`; single-threaded test runner, no other borrow live here.
-            match unsafe { (*reporter.as_ptr()).reporters.junit.as_deref_mut() } {
-                Some(junit) => core::ptr::from_mut(junit).cast(),
-                None => core::ptr::null_mut(),
-            }
-        };
 
         self.bun_test_root.on_before_print();
         if matches!(
@@ -1363,22 +1479,36 @@ impl BunTest {
             unsafe {
                 (*self.reporter.unwrap().as_ptr()).jest.unhandled_errors_between_tests += 1;
             }
-            bun_core::pretty_errorln!(
-                "<r>\n<b><d>#<r> <red><b>Unhandled error<r><d> between tests<r>\n<d>-------------------------------<r>\n",
-            );
+            // The file is named here because the diagnostic below streams,
+            // while the file's result block does not print until it finishes.
+            let mut path: Vec<u8> = Vec::new();
+            if let Some(runner_ptr) = Jest::runner_ptr() {
+                // SAFETY: single-threaded; disjoint field from `bun_test_root`.
+                unsafe { (*runner_ptr.as_ptr()).current_file.write_path(&mut path) };
+            }
+            if path.is_empty() {
+                bun_core::pretty_errorln!(
+                    "<r>\n<b><d>#<r> <red><b>Unhandled error<r><d> between tests<r>\n<d>-------------------------------<r>\n",
+                );
+            } else {
+                bun_core::pretty_errorln!(
+                    "<r>\n<b><d>#<r> <red><b>Unhandled error<r><d> between tests in <r>{}<d>\n-------------------------------<r>\n",
+                    bstr::BStr::new(&path),
+                );
+            }
             Output::flush();
         }
 
         let vm = global_this.bun_vm().as_mut();
-        if !junit_ctx.is_null() {
-            vm.on_print_error_zig_exception =
-                Some(crate::cli::test_command::JunitReporter::record_failure_cb);
-            vm.on_print_error_zig_exception_ctx = junit_ctx;
+        if !capture_reporter.is_null() {
+            // SAFETY: `BunTest.reporter` carries write provenance from
+            // `enter_file`'s `&mut`; single-threaded test runner, no other
+            // borrow live across the call below.
+            unsafe { &mut *capture_reporter }.begin_diagnostic_capture(vm);
         }
         vm.run_error_handler(exception, None);
-        if !junit_ctx.is_null() {
-            vm.on_print_error_zig_exception = None;
-            vm.on_print_error_zig_exception_ctx = core::ptr::null_mut();
+        if !capture_reporter.is_null() {
+            CommandLineReporter::end_diagnostic_capture(vm);
         }
 
         if matches!(

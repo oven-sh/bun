@@ -39,90 +39,7 @@ test("verify we print error messages passed to done callbacks", () => {
     "
   `);
   expect(stderrStr).toMatchInlineSnapshot(`
-    "22 |   105,
-    23 |   115,
-    24 | );
-    25 |
-    26 | test("error done callback (sync)", done => {
-    27 |   done(new Error(msg + "(sync)"));
-    ^
-    error: you should see this(sync)
-    at <anonymous> (<dir>/test-error-done-callback-fixture.ts:27:12)
-    27 |   done(new Error(msg + "(sync)"));
-    28 | });
-    29 |
-    30 | test("error done callback (async with await)", async done => {
-    31 |   await 1;
-    32 |   done(new Error(msg + "(async with await)"));
-    ^
-    error: you should see this(async with await)
-    at <anonymous> (<dir>/test-error-done-callback-fixture.ts:32:12)
-    32 |   done(new Error(msg + "(async with await)"));
-    33 | });
-    34 |
-    35 | test("error done callback (async with Bun.sleep)", async done => {
-    36 |   await Bun.sleep(0);
-    37 |   done(new Error(msg + "(async with Bun.sleep)"));
-    ^
-    error: you should see this(async with Bun.sleep)
-    at <anonymous> (<dir>/test-error-done-callback-fixture.ts:37:12)
-    37 |   done(new Error(msg + "(async with Bun.sleep)"));
-    38 | });
-    39 |
-    40 | test("error done callback (async)", done => {
-    41 |   Promise.resolve().then(() => {
-    42 |     done(new Error(msg + "(async)"));
-    ^
-    error: you should see this(async)
-    at <anonymous> (<dir>/test-error-done-callback-fixture.ts:42:14)
-    at <anonymous> (<dir>/test-error-done-callback-fixture.ts:37:3)
-    43 |   });
-    44 | });
-    45 |
-    46 | test("error done callback (async, setTimeout)", done => {
-    47 |   setTimeout(() => {
-    48 |     done(new Error(msg + "(async, setTimeout)"));
-    ^
-    error: you should see this(async, setTimeout)
-    at <anonymous> (<dir>/test-error-done-callback-fixture.ts:48:14)
-    49 |   }, 0);
-    50 | });
-    51 |
-    52 | test("error done callback (async, setImmediate)", done => {
-    53 |   setImmediate(() => {
-    54 |     done(new Error(msg + "(async, setImmediate)"));
-    ^
-    error: you should see this(async, setImmediate)
-    at <anonymous> (<dir>/test-error-done-callback-fixture.ts:54:14)
-    55 |   });
-    56 | });
-    57 |
-    58 | test("error done callback (async, nextTick)", done => {
-    59 |   process.nextTick(() => {
-    60 |     done(new Error(msg + "(async, nextTick)"));
-    ^
-    error: you should see this(async, nextTick)
-    at <anonymous> (<dir>/test-error-done-callback-fixture.ts:60:14)
-    at <anonymous> (<dir>/test-error-done-callback-fixture.ts:54:5)
-    62 | });
-    63 |
-    64 | test("error done callback (async, setTimeout, Promise.resolve)", done => {
-    65 |   setTimeout(() => {
-    66 |     Promise.resolve().then(() => {
-    67 |       done(new Error(msg + "(async, setTimeout, Promise.resolve)"));
-    ^
-    error: you should see this(async, setTimeout, Promise.resolve)
-    at <anonymous> (<dir>/test-error-done-callback-fixture.ts:67:16)
-    70 | });
-    71 |
-    72 | test("error done callback (async, setImmediate, Promise.resolve)", done => {
-    73 |   setImmediate(() => {
-    74 |     Promise.resolve().then(() => {
-    75 |       done(new Error(msg + "(async, setImmediate, Promise.resolve)"));
-    ^
-    error: you should see this(async, setImmediate, Promise.resolve)
-    at <anonymous> (<dir>/test-error-done-callback-fixture.ts:75:16)
-
+    "
     (fail) test/js/bun/test/test-error-done-callback-fixture.ts:
     (fail) error done callback (sync)
     (fail) error done callback (async with await)
@@ -133,6 +50,109 @@ test("verify we print error messages passed to done callbacks", () => {
     (fail) error done callback (async, nextTick)
     (fail) error done callback (async, setTimeout, Promise.resolve)
     (fail) error done callback (async, setImmediate, Promise.resolve)
+
+    9 tests failed:
+
+    (fail) test/js/bun/test/test-error-done-callback-fixture.ts:27 > error done callback (sync)
+    22 |   105,
+    23 |   115,
+    24 | );
+    25 |
+    26 | test("error done callback (sync)", done => {
+    27 |   done(new Error(msg + "(sync)"));
+    ^
+    error: you should see this(sync)
+    at <anonymous> (<dir>/test-error-done-callback-fixture.ts:27:12)
+
+    (fail) test/js/bun/test/test-error-done-callback-fixture.ts:32 > error done callback (async with await)
+    27 |   done(new Error(msg + "(sync)"));
+    28 | });
+    29 |
+    30 | test("error done callback (async with await)", async done => {
+    31 |   await 1;
+    32 |   done(new Error(msg + "(async with await)"));
+    ^
+    error: you should see this(async with await)
+    at <anonymous> (<dir>/test-error-done-callback-fixture.ts:32:12)
+
+    (fail) test/js/bun/test/test-error-done-callback-fixture.ts:37 > error done callback (async with Bun.sleep)
+    32 |   done(new Error(msg + "(async with await)"));
+    33 | });
+    34 |
+    35 | test("error done callback (async with Bun.sleep)", async done => {
+    36 |   await Bun.sleep(0);
+    37 |   done(new Error(msg + "(async with Bun.sleep)"));
+    ^
+    error: you should see this(async with Bun.sleep)
+    at <anonymous> (<dir>/test-error-done-callback-fixture.ts:37:12)
+
+    (fail) test/js/bun/test/test-error-done-callback-fixture.ts:42 > error done callback (async)
+    37 |   done(new Error(msg + "(async with Bun.sleep)"));
+    38 | });
+    39 |
+    40 | test("error done callback (async)", done => {
+    41 |   Promise.resolve().then(() => {
+    42 |     done(new Error(msg + "(async)"));
+    ^
+    error: you should see this(async)
+    at <anonymous> (<dir>/test-error-done-callback-fixture.ts:42:14)
+    at <anonymous> (<dir>/test-error-done-callback-fixture.ts:37:3)
+
+    (fail) test/js/bun/test/test-error-done-callback-fixture.ts:48 > error done callback (async, setTimeout)
+    43 |   });
+    44 | });
+    45 |
+    46 | test("error done callback (async, setTimeout)", done => {
+    47 |   setTimeout(() => {
+    48 |     done(new Error(msg + "(async, setTimeout)"));
+    ^
+    error: you should see this(async, setTimeout)
+    at <anonymous> (<dir>/test-error-done-callback-fixture.ts:48:14)
+
+    (fail) test/js/bun/test/test-error-done-callback-fixture.ts:54 > error done callback (async, setImmediate)
+    49 |   }, 0);
+    50 | });
+    51 |
+    52 | test("error done callback (async, setImmediate)", done => {
+    53 |   setImmediate(() => {
+    54 |     done(new Error(msg + "(async, setImmediate)"));
+    ^
+    error: you should see this(async, setImmediate)
+    at <anonymous> (<dir>/test-error-done-callback-fixture.ts:54:14)
+
+    (fail) test/js/bun/test/test-error-done-callback-fixture.ts:60 > error done callback (async, nextTick)
+    55 |   });
+    56 | });
+    57 |
+    58 | test("error done callback (async, nextTick)", done => {
+    59 |   process.nextTick(() => {
+    60 |     done(new Error(msg + "(async, nextTick)"));
+    ^
+    error: you should see this(async, nextTick)
+    at <anonymous> (<dir>/test-error-done-callback-fixture.ts:60:14)
+    at <anonymous> (<dir>/test-error-done-callback-fixture.ts:54:5)
+
+    (fail) test/js/bun/test/test-error-done-callback-fixture.ts:67 > error done callback (async, setTimeout, Promise.resolve)
+    62 | });
+    63 |
+    64 | test("error done callback (async, setTimeout, Promise.resolve)", done => {
+    65 |   setTimeout(() => {
+    66 |     Promise.resolve().then(() => {
+    67 |       done(new Error(msg + "(async, setTimeout, Promise.resolve)"));
+    ^
+    error: you should see this(async, setTimeout, Promise.resolve)
+    at <anonymous> (<dir>/test-error-done-callback-fixture.ts:67:16)
+
+    (fail) test/js/bun/test/test-error-done-callback-fixture.ts:75 > error done callback (async, setImmediate, Promise.resolve)
+    70 | });
+    71 |
+    72 | test("error done callback (async, setImmediate, Promise.resolve)", done => {
+    73 |   setImmediate(() => {
+    74 |     Promise.resolve().then(() => {
+    75 |       done(new Error(msg + "(async, setImmediate, Promise.resolve)"));
+    ^
+    error: you should see this(async, setImmediate, Promise.resolve)
+    at <anonymous> (<dir>/test-error-done-callback-fixture.ts:75:16)
 
     0 pass
     9 fail

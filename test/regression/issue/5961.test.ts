@@ -14,6 +14,7 @@ test("5961", async () => {
 
   expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
     "bun test <version> (<revision>)
+    stdout | test/regression/issue/5961.fixture.ts > thing > does one thing
     hi!"
   `);
   expect(exitCode).toBe(0);

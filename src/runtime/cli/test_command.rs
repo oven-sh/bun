@@ -445,6 +445,72 @@ impl FileBlock {
     }
 }
 
+/// Cap on the batched failure-diagnostics buffer. Past this, failures print
+/// inline as they happen — still attributed — rather than being dropped.
+const FAILURE_REPORT_MAX_BYTES: usize = 32 * 1024 * 1024;
+
+/// Failure diagnostics captured during the run and held until it ends, so each
+/// one can print under a header naming the file and test that produced it.
+///
+/// Without this the diagnostics land wherever the failure happened, which — now
+/// that results are buffered per file — is above the block that would identify
+/// them, with nothing tying the two together in a multi-file run.
+#[derive(Default)]
+pub struct FailureReport {
+    /// Rendered `<header><diagnostic>` entries in completion order.
+    buf: Vec<u8>,
+    entries: u32,
+    /// Set once the cap is hit; later failures stream inline instead.
+    overflowed: bool,
+}
+
+impl FailureReport {
+    pub fn is_empty(&self) -> bool {
+        self.buf.is_empty()
+    }
+
+    pub fn overflowed(&self) -> bool {
+        self.overflowed
+    }
+
+    /// Buffer one already-rendered entry. Returns `false` when the cap is
+    /// reached — the caller must print `entry` itself so the diagnostic isn't
+    /// lost.
+    #[must_use]
+    pub fn push(&mut self, entry: &[u8]) -> bool {
+        if self.overflowed {
+            return false;
+        }
+        if self.buf.len() + entry.len() > FAILURE_REPORT_MAX_BYTES {
+            self.overflowed = true;
+            return false;
+        }
+        self.buf.extend_from_slice(entry);
+        self.entries += 1;
+        true
+    }
+
+    /// Drains: `process.exit()` renders on the exit callback and the normal
+    /// end-of-run path must not print the same entries a second time.
+    pub fn render(&mut self, writer: &mut impl bun_io::Write) {
+        let _ = writer.write_all(&self.buf);
+        self.buf.clear();
+    }
+
+    pub fn log_peak(&self) {
+        if self.entries == 0 {
+            return;
+        }
+        bun_output::scoped_log!(
+            testreporter,
+            "buffered failure report: {} bytes across {} entries{}",
+            self.buf.len(),
+            self.entries,
+            if self.overflowed { " (capped)" } else { "" }
+        );
+    }
+}
+
 /// Flushes the in-flight file's buffered block when `process.exit()` cuts the
 /// run short, so partial results aren't lost.
 extern "C" fn flush_active_file_block_on_exit() {
@@ -677,15 +743,6 @@ impl JunitReporter {
             }
             body.push(b'\n');
         }
-    }
-
-    /// VirtualMachine::on_print_error_zig_exception thunk.
-    pub fn record_failure_cb(ctx: *mut core::ffi::c_void, exception: &jsc::ZigException) {
-        // SAFETY: `ctx` was set to `&mut JunitReporter` by `on_uncaught_exception`
-        // for the duration of a single `run_error_handler` call; single-threaded,
-        // no other borrow of the reporter is live across that call.
-        let this = unsafe { &mut *ctx.cast::<JunitReporter>() };
-        this.record_failure(exception);
     }
 
     fn generate_properties_list(&mut self) -> crate::Result<()> {
@@ -1190,15 +1247,31 @@ pub struct CommandLineReporter {
     /// Interior-mut: written from `BunTestRoot::on_before_print` via `&CommandLineReporter`
     pub last_printed_dot: core::cell::Cell<bool>,
 
+    /// Identity (`file > describe > test`) of the last `console.*` write that
+    /// was labeled, so consecutive output from one test is labeled once.
+    /// Interior-mut for the same reason as `last_printed_dot`.
+    pub last_console_label: core::cell::RefCell<Vec<u8>>,
+
     /// When running as a `--parallel` worker, this is the coordinator-assigned
     /// index of the file currently being executed. While set, per-test output
     /// is sent over the IPC pipe instead of to stderr; the coordinator owns
     /// the terminal.
     pub worker_ipc_file_idx: Option<u32>,
 
-    pub failures_to_repeat_buf: Vec<u8>,
     pub skips_to_repeat_buf: Vec<u8>,
     pub todos_to_repeat_buf: Vec<u8>,
+
+    /// Diagnostics for the failure currently being reported. `on_uncaught_exception`
+    /// points `VirtualMachine::error_writer_override` at this for the duration of
+    /// one `run_error_handler`; `handle_test_completed` drains it into
+    /// `failure_report` under a header naming the test.
+    pub pending_diagnostic: bun_core::io::VecWriter,
+    /// Throw-site line of the first frame in the pending diagnostic, or 0.
+    /// Recorded by `capture_failure_cb` while the exception is already remapped,
+    /// so the header costs nothing extra to produce.
+    pub pending_diagnostic_line: u32,
+    /// Every failure's diagnostics, printed as one section at end of run.
+    pub failure_report: FailureReport,
 
     /// Result lines for the file currently being reported, flushed as one block
     /// on file exit. Unused by `--dots`, which stays streaming.
@@ -1246,6 +1319,141 @@ impl CommandLineReporter {
         self.file_block.clear();
     }
 
+    /// Move the diagnostics captured for the test that just finished into the
+    /// end-of-run report, headed by the test's qualified name.
+    ///
+    /// Only failures are batched. A `.todo` test that threw still reports
+    /// inline — its error is expected output, not a failure — and a retry that
+    /// eventually passes has diagnostics nobody needs.
+    fn drain_pending_diagnostic(
+        &mut self,
+        basic: bun_test::BasicResult,
+        scopes: &[*const bun_test::DescribeScope],
+        test_entry: &bun_test::ExecutionEntry,
+    ) {
+        let line = core::mem::take(&mut self.pending_diagnostic_line);
+        if self.pending_diagnostic.is_empty() {
+            return;
+        }
+        let diagnostic = self.pending_diagnostic.take();
+        let status = match basic {
+            bun_test::BasicResult::Fail => bun_test::Execution::Result::Fail,
+            bun_test::BasicResult::Todo => bun_test::Execution::Result::Todo,
+            _ => return,
+        };
+
+        let colors = Output::enable_ansi_colors_stderr();
+        let mut entry: Vec<u8> = Vec::with_capacity(diagnostic.len() + 128);
+        entry.push(b'\n');
+        let glyph = fmt_status_text_line(status, colors);
+        let mut path: Vec<u8> = Vec::new();
+        self.jest.current_file.write_path(&mut path);
+        Self::write_qualified_name(
+            &glyph,
+            &path,
+            line,
+            scopes,
+            test_entry.base.name.as_deref().unwrap_or(b"(unnamed)"),
+            colors,
+            &mut entry,
+        );
+        entry.extend_from_slice(&diagnostic);
+        if !entry.ends_with(b"\n") {
+            entry.push(b'\n');
+        }
+
+        if status == bun_test::Execution::Result::Fail {
+            if let Some(idx) = self.worker_ipc_file_idx {
+                // The coordinator owns the terminal and the run-level report.
+                ParallelRunner::worker_emit_failure_diagnostic(idx, &entry);
+                return;
+            }
+            if self.failure_report.push(&entry) {
+                return;
+            }
+            // Over the cap — fall through and print now rather than drop it.
+        }
+        let _enable_buffering = Output::enable_buffering_scope();
+        let _ = Output::error_writer_buffered().write_all(&entry);
+        Output::flush();
+    }
+
+    /// ` > <describe> > … > <name>` for a console label. Uncolored: the caller
+    /// dims the whole line.
+    pub(crate) fn write_console_label_tail(
+        test_entry: &bun_test::ExecutionEntry,
+        out: &mut Vec<u8>,
+    ) {
+        let scopes = Self::collect_scopes(test_entry);
+        for scope in scopes.as_slice().iter().rev() {
+            out.extend_from_slice(b" > ");
+            out.extend_from_slice(Self::scope_name(*scope));
+        }
+        // Hooks are unnamed; the scope path alone is the best available label.
+        if let Some(name) = test_entry.base.name.as_deref() {
+            if !name.is_empty() {
+                out.extend_from_slice(b" > ");
+                out.extend_from_slice(name);
+            }
+        }
+    }
+
+    /// Diagnostics sink for a failing test, installed on the VM for the duration
+    /// of one `run_error_handler`. Also arms the `on_print_error_zig_exception`
+    /// thunk, which there is only one slot for — hence the forwarding to JUnit.
+    pub fn begin_diagnostic_capture(&mut self, vm: &mut VirtualMachine) {
+        self.pending_diagnostic.clear();
+        self.pending_diagnostic_line = 0;
+        vm.error_writer_override =
+            core::ptr::NonNull::new(core::ptr::from_mut(self.pending_diagnostic.interface()));
+        vm.on_print_error_zig_exception = Some(Self::capture_failure_cb);
+        vm.on_print_error_zig_exception_ctx = core::ptr::from_mut(self).cast();
+    }
+
+    pub fn end_diagnostic_capture(vm: &mut VirtualMachine) {
+        vm.error_writer_override = None;
+        vm.on_print_error_zig_exception = None;
+        vm.on_print_error_zig_exception_ctx = core::ptr::null_mut();
+    }
+
+    /// Records the throw-site line for the report header, and forwards to the
+    /// JUnit reporter when it is enabled.
+    fn capture_failure_cb(ctx: *mut core::ffi::c_void, exception: &jsc::ZigException) {
+        // SAFETY: `ctx` was set to `&mut CommandLineReporter` by
+        // `begin_diagnostic_capture` for the duration of a single
+        // `run_error_handler`; single-threaded, no other borrow live across it.
+        let this = unsafe { &mut *ctx.cast::<CommandLineReporter>() };
+        if this.pending_diagnostic_line == 0 {
+            if let Some(frame) = exception.stack.frames().first() {
+                if frame.position.line.is_valid() {
+                    this.pending_diagnostic_line = frame.position.line.one_based() as u32;
+                }
+            }
+        }
+        if let Some(junit) = this.reporters.junit.as_deref_mut() {
+            junit.record_failure(exception);
+        }
+    }
+
+    /// The `N tests failed:` section: every failure's diagnostics, each under a
+    /// header naming the file and test it came from.
+    pub fn render_failure_report(&mut self) {
+        if self.failure_report.is_empty() {
+            return;
+        }
+        let _enable_buffering = Output::enable_buffering_scope();
+        pretty_error!("\n<r><d>{} tests failed:<r>\n", self.summary().fail);
+        if self.failure_report.overflowed() {
+            pretty_error!(
+                "<r><d>(diagnostics past {} MB printed inline above)<r>\n",
+                FAILURE_REPORT_MAX_BYTES / (1024 * 1024)
+            );
+        }
+        self.failure_report.log_peak();
+        self.failure_report.render(Output::error_writer_buffered());
+        Output::flush();
+    }
+
     /// Describe scopes enclosing `test_entry`, innermost first. Unnamed scopes
     /// are omitted so they don't consume an indent level.
     fn collect_scopes(
@@ -1284,6 +1492,41 @@ impl CommandLineReporter {
     fn write_indent(writer: &mut impl bun_io::Write, depth: usize) {
         let n = core::cmp::min(depth * 2, INDENT_SPACES.len());
         let _ = writer.write_all(&INDENT_SPACES[..n]);
+    }
+
+    /// `<glyph> <path>[:line] > <describe> > … > <name>` — identifies which test
+    /// a batched diagnostic came from. Also used for the `stdout`/`stderr`
+    /// console labels, which pass an empty `glyph` and `line` of 0.
+    fn write_qualified_name(
+        glyph: &[u8],
+        path: &[u8],
+        line: u32,
+        scopes: &[*const bun_test::DescribeScope],
+        name: &[u8],
+        colors: bool,
+        writer: &mut impl bun_io::Write,
+    ) {
+        if !glyph.is_empty() {
+            let _ = writer.write_all(glyph);
+            let _ = writer.write_all(b" ");
+        }
+        let _ = writer.write_all(path);
+        if line > 0 {
+            let _ = bun_core::write_pretty!(writer, colors, "<d>:{d}<r>", line);
+        }
+        for scope in scopes.iter().rev() {
+            let _ = bun_core::write_pretty!(writer, colors, "<d> \\> <r>");
+            let _ = writer.write_all(Self::scope_name(*scope));
+        }
+        let _ = bun_core::write_pretty!(writer, colors, "<d> \\> <r>");
+        if colors {
+            let _ = writer.write_all(&Output::pretty_fmt::<true>("<b>"));
+            let _ = writer.write_all(name);
+            let _ = writer.write_all(&Output::pretty_fmt::<true>("<r>"));
+        } else {
+            let _ = writer.write_all(name);
+        }
+        let _ = writer.write_all(b"\n");
     }
 
     /// One describe header: `<indent><glyph> <dim name>`.
@@ -1715,6 +1958,9 @@ impl CommandLineReporter {
         // the describe headers printed during streaming are absent.
         let mut recap_buf: Vec<u8> = Vec::new();
         let mut scope_path: Vec<u8> = Vec::new();
+        // Also needed after the print branches, to head this test's diagnostics
+        // in the end-of-run failure report.
+        let scopes_stack = Self::collect_scopes(test_entry);
 
         let initial_length = output_buf.len();
         let writer = &mut output_buf;
@@ -1768,7 +2014,6 @@ impl CommandLineReporter {
                 if !Output::is_ai_agent() || !result.is_pass(bun_test::PendingMode::PendingIsFail) {
                     Self::print_status_side_effects(result, sequence, test_entry);
 
-                    let scopes_stack = Self::collect_scopes(test_entry);
                     let scopes = scopes_stack.as_slice();
 
                     // In dots mode the coordinator/reporter suppresses headers, so
@@ -1871,12 +2116,15 @@ impl CommandLineReporter {
                 bun_test::BasicResult::Todo => {
                     this.todos_to_repeat_buf.extend_from_slice(&recap_buf)
                 }
-                bun_test::BasicResult::Fail => {
-                    this.failures_to_repeat_buf.extend_from_slice(&recap_buf)
-                }
-                bun_test::BasicResult::Pass | bun_test::BasicResult::Pending => {}
+                bun_test::BasicResult::Pass
+                | bun_test::BasicResult::Fail
+                | bun_test::BasicResult::Pending => {}
             }
         }
+
+        // Diagnostics were captured while the test ran, when nothing yet knew
+        // which test they belonged to. This is the first point that does.
+        this.drain_pending_diagnostic(basic, scopes_stack.as_slice(), test_entry);
 
         use bun_test::Execution::Result as R;
         match sequence.result {
@@ -2655,10 +2903,13 @@ impl TestCommand {
             last_dot: 0,
             repeat_count: 1,
             last_printed_dot: core::cell::Cell::new(false),
+            last_console_label: core::cell::RefCell::new(Vec::new()),
             worker_ipc_file_idx: None,
-            failures_to_repeat_buf: Vec::new(),
             skips_to_repeat_buf: Vec::new(),
             todos_to_repeat_buf: Vec::new(),
+            pending_diagnostic: bun_core::io::VecWriter::new(),
+            pending_diagnostic_line: 0,
+            failure_report: FailureReport::default(),
             file_block: FileBlock::default(),
             reporters: ReportersConfig::default(),
         });
@@ -3174,19 +3425,11 @@ impl TestCommand {
                 let error_writer = Output::error_writer();
                 let _ = error_writer.write_all(&reporter.todos_to_repeat_buf);
             }
-
-            if reporter.summary().fail > 0 {
-                if reporter.summary().skip > 0 || reporter.summary().todo > 0 {
-                    pretty_error!("\n");
-                }
-
-                pretty_error!("\n<r><d>{} tests failed:<r>\n", reporter.summary().fail);
-                Output::flush();
-
-                let error_writer = Output::error_writer();
-                let _ = error_writer.write_all(&reporter.failures_to_repeat_buf);
-            }
         }
+
+        // Not gated on the run being large: a failure's diagnostics are the
+        // point of the run, and this is the only place they are printed.
+        reporter.render_failure_report();
 
         Output::flush();
 
@@ -3668,6 +3911,7 @@ impl TestCommand {
             // disjoint without tripping borrowck.
             unsafe {
                 let rp: *mut CommandLineReporter = reporter;
+                (*rp).last_console_label.borrow_mut().clear();
                 (*rp).jest.current_file.set(
                     file_title,
                     file_prefix,

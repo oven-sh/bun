@@ -27,7 +27,32 @@ test("no color", async () => {
   const noColorStderr = cleanOutput(await noColorSpawn.stderr.text());
   const noColorStdout = await noColorSpawn.stdout.text();
   expect(noColorStderr).toMatchInlineSnapshot(`
-    "10 |     .replaceAll("\\\\", "/")
+    "
+    (fail) test/js/bun/test/printing/diffexample.fixture.ts:
+    (fail) example 1
+    (fail) example 2
+    (fail) example 3 - very long string with few changes
+    (todo) example 4 - ansi colors don't get printed to console
+    (fail) example 12 - large multiline diff
+    (fail) example 13 - simple multiline diff with sections
+    (fail) example 14 - single line diff
+    (fail) example 15 - unicode char diff
+    (fail) example 16 - indentation change diff
+    (fail) example 17 - very long string
+    (fail) example 18 - very long single line string
+    (fail) not
+    (fail) has end newline vs doesn't
+    (fail) extremely float64array
+    (fail) completely different long value does not truncate
+    (fail) whitespace-only difference
+    (skip) whitespace-only difference (ANSI)
+    (fail) mix of whitespace-only and non-whitespace-only differences
+    (skip) mix of whitespace-only and non-whitespace-only differences (ANSI)
+
+    16 tests failed:
+
+    (fail) test/js/bun/test/printing/diffexample.fixture.ts:15 > example 1
+    10 |     .replaceAll("\\\\", "/")
     11 |     .replaceAll(process.cwd(), "<cwd>");
     12 | }
     13 | 
@@ -48,6 +73,8 @@ test("no color", async () => {
     + Received  + 2
 
           at <anonymous> (FILE:LINE)
+
+    (fail) test/js/bun/test/printing/diffexample.fixture.ts:22 > example 2
     17 | test("example 2", () => {
     18 |   expect({
     19 |     object1: "a",
@@ -73,6 +100,8 @@ test("no color", async () => {
     + Received  + 3
 
           at <anonymous> (FILE:LINE)
+
+    (fail) test/js/bun/test/printing/diffexample.fixture.ts:42 > example 3 - very long string with few changes
     37 |   expectedLines[750] = "line 751 - MODIFIED"; // Change line 751
     38 |   expectedLines[900] = "line 901 - DIFFERENT"; // Change line 901
     39 |   expectedLines.splice(100, 0, "line 101 - INSERTED");
@@ -138,6 +167,8 @@ test("no color", async () => {
     + Received  + 3
 
           at <anonymous> (FILE:LINE)
+
+    (fail) test/js/bun/test/printing/diffexample.fixture.ts:127 > example 12 - large multiline diff
     122 | line 35
     123 | line 36
     124 | line 37
@@ -194,6 +225,8 @@ test("no color", async () => {
     + Received  + 3
 
           at <anonymous> (FILE:LINE)
+
+    (fail) test/js/bun/test/printing/diffexample.fixture.ts:210 > example 13 - simple multiline diff with sections
     205 | line six
     206 | line seven
     207 | 
@@ -259,6 +292,8 @@ test("no color", async () => {
     + Received  + 9
 
           at <anonymous> (FILE:LINE)
+
+    (fail) test/js/bun/test/printing/diffexample.fixture.ts:216 > example 14 - single line diff
     211 | });
     212 | 
     213 | test("example 14 - single line diff", () => {
@@ -272,6 +307,8 @@ test("no color", async () => {
     Received: ""¡hello, world""
 
           at <anonymous> (FILE:LINE)
+
+    (fail) test/js/bun/test/printing/diffexample.fixture.ts:222 > example 15 - unicode char diff
     217 | });
     218 | 
     219 | test("example 15 - unicode char diff", () => {
@@ -285,6 +322,8 @@ test("no color", async () => {
     Received: "Hello 👋 世界 🌎!"
 
           at <anonymous> (FILE:LINE)
+
+    (fail) test/js/bun/test/printing/diffexample.fixture.ts:236 > example 16 - indentation change diff
     231 | }\`;
     232 |   const expected = \`function main() {
     233 |     print("Hello, world!");
@@ -307,6 +346,8 @@ test("no color", async () => {
     + Received  + 4
 
           at <anonymous> (FILE:LINE)
+
+    (fail) test/js/bun/test/printing/diffexample.fixture.ts:272 > example 17 - very long string
     267 |   }
     268 | 
     269 |   // The Zig code adds a trailing newline to each string.
@@ -372,6 +413,8 @@ test("no color", async () => {
     + Received  + 4
 
           at <anonymous> (FILE:LINE)
+
+    (fail) test/js/bun/test/printing/diffexample.fixture.ts:278 > example 18 - very long single line string
     273 | });
     274 | 
     275 | test("example 18 - very long single line string", () => {
@@ -385,6 +428,8 @@ test("no color", async () => {
     Received: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa... (999801 bytes truncated) ...aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
           at <anonymous> (FILE:LINE)
+
+    (fail) test/js/bun/test/printing/diffexample.fixture.ts:282 > not
     277 |   const received = "a".repeat(1000001);
     278 |   expect(received).toEqual(expected);
     279 | });
@@ -397,6 +442,8 @@ test("no color", async () => {
     Expected: not "Hello, World!"
 
           at <anonymous> (FILE:LINE)
+
+    (fail) test/js/bun/test/printing/diffexample.fixture.ts:286 > has end newline vs doesn't
     281 | test("not", () => {
     282 |   expect("Hello, World!").not.toEqual("Hello, World!");
     283 | });
@@ -414,6 +461,8 @@ test("no color", async () => {
     + Received  + 2
 
           at <anonymous> (FILE:LINE)
+
+    (fail) test/js/bun/test/printing/diffexample.fixture.ts:297 > extremely float64array
     292 |   const received = new Float64Array(length);
     293 |   for (let i = 0; i < length; i++) {
     294 |     expected[i] = i;
@@ -444,6 +493,8 @@ test("no color", async () => {
     + Received  + 1
 
           at <anonymous> (FILE:LINE)
+
+    (fail) test/js/bun/test/printing/diffexample.fixture.ts:308 > completely different long value does not truncate
     303 |   const received = new Int32Array(length);
     304 |   for (let i = 0; i < length; i++) {
     305 |     expected[i] = i;
@@ -659,6 +710,8 @@ test("no color", async () => {
     + Received  + 99
 
           at <anonymous> (FILE:LINE)
+
+    (fail) test/js/bun/test/printing/diffexample.fixture.ts:312 > whitespace-only difference
     307 |   }
     308 |   expect(received).toEqual(expected);
     309 | });
@@ -676,6 +729,8 @@ test("no color", async () => {
     + Received  + 1
 
           at <anonymous> (FILE:LINE)
+
+    (fail) test/js/bun/test/printing/diffexample.fixture.ts:336 > mix of whitespace-only and non-whitespace-only differences
     331 |     \`);
     332 |   }
     333 | });
@@ -693,27 +748,6 @@ test("no color", async () => {
     + Received  + 1
 
           at <anonymous> (FILE:LINE)
-
-    (fail) test/js/bun/test/printing/diffexample.fixture.ts:
-    (fail) example 1
-    (fail) example 2
-    (fail) example 3 - very long string with few changes
-    (todo) example 4 - ansi colors don't get printed to console
-    (fail) example 12 - large multiline diff
-    (fail) example 13 - simple multiline diff with sections
-    (fail) example 14 - single line diff
-    (fail) example 15 - unicode char diff
-    (fail) example 16 - indentation change diff
-    (fail) example 17 - very long string
-    (fail) example 18 - very long single line string
-    (fail) not
-    (fail) has end newline vs doesn't
-    (fail) extremely float64array
-    (fail) completely different long value does not truncate
-    (fail) whitespace-only difference
-    (skip) whitespace-only difference (ANSI)
-    (fail) mix of whitespace-only and non-whitespace-only differences
-    (skip) mix of whitespace-only and non-whitespace-only differences (ANSI)
 
      0 pass
      2 skip

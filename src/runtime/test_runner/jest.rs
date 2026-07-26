@@ -46,18 +46,21 @@ impl CurrentFile {
         reporter: &mut CommandLineReporter,
     ) {
         self.header_pending = false;
+        // Assigning into the Box<[u8]> fields drops the previous values.
+        self.title = Box::<[u8]>::from(title);
+        self.prefix = Box::<[u8]>::from(prefix);
+        self.repeat_info.count = repeat_count;
+        self.repeat_info.index = repeat_index;
+
         if reporter.worker_ipc_file_idx.is_some() {
             // Coordinator owns the terminal and prints its own per-test file
-            // context; the worker should not emit a header to stderr.
+            // context; the worker should not emit a header to stderr. The path
+            // is still recorded — console attribution and failure headers are
+            // rendered worker-side and relayed verbatim.
             self.has_printed_filename = true;
             return;
         }
         if reporter.reporters.dots {
-            // Assigning into the Box<[u8]> fields below drops the previous values.
-            self.title = Box::<[u8]>::from(title);
-            self.prefix = Box::<[u8]>::from(prefix);
-            self.repeat_info.count = repeat_count;
-            self.repeat_info.index = repeat_index;
             self.has_printed_filename = false;
             return;
         }
@@ -66,10 +69,6 @@ impl CurrentFile {
         // block is flushed and can carry the file's aggregate glyph. Marked
         // printed so `print_if_needed` (console output, error blocks) doesn't
         // emit a second, glyph-less copy above it.
-        self.title = Box::<[u8]>::from(title);
-        self.prefix = Box::<[u8]>::from(prefix);
-        self.repeat_info.count = repeat_count;
-        self.repeat_info.index = repeat_index;
         self.has_printed_filename = true;
         self.header_pending = true;
     }
@@ -142,6 +141,13 @@ impl CurrentFile {
             self.repeat_info.count,
             self.repeat_info.index,
         );
+    }
+
+    /// `<prefix><title>` — the path as printed in headers, without the `:`.
+    /// The file's display path, without `prefix` — that carries the GitHub
+    /// Actions `::group::` marker, which must appear exactly once per file.
+    pub(crate) fn write_path(&self, out: &mut Vec<u8>) {
+        out.extend_from_slice(&self.title);
     }
 }
 

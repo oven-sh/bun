@@ -16,10 +16,15 @@ test("19758", async () => {
   expect(exitCode).toBe(0);
   expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
     "bun test <version> (<revision>)
+    stdout | test/regression/issue/19758.fixture.ts > foo
     -- foo beforeAll
+    stdout | test/regression/issue/19758.fixture.ts > foo > bar
     -- bar beforeAll
+    stdout | test/regression/issue/19758.fixture.ts > foo > bar > bar.1
     bar.1
+    stdout | test/regression/issue/19758.fixture.ts > foo > baz
     -- baz beforeAll
+    stdout | test/regression/issue/19758.fixture.ts > foo > baz > baz.1
     baz.1"
   `);
 });

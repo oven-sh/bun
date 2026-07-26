@@ -731,7 +731,6 @@ fn worker_flush_aggregates(
     let wf = unsafe { &mut *WORKER_FRAME.get() };
 
     wf.begin(frame::Kind::RepeatBufs);
-    wf.str(reporter.failures_to_repeat_buf.as_slice());
     wf.str(reporter.skips_to_repeat_buf.as_slice());
     wf.str(reporter.todos_to_repeat_buf.as_slice());
     cmds.send(wf.finish());
@@ -823,5 +822,24 @@ pub fn worker_emit_test_done(file_idx: u32, scope_path: &[u8], status: u8, forma
     wf.str(scope_path);
     wf.u32_(status as u32);
     wf.str(formatted_line);
+    cmds.send(wf.finish());
+}
+
+/// Ships a failing test's rendered diagnostic (header + error text) to the
+/// coordinator, which owns the run-level failure report. Oversized payloads are
+/// truncated by `Frame::str` rather than corrupting the channel.
+pub fn worker_emit_failure_diagnostic(file_idx: u32, entry: &[u8]) {
+    // SAFETY: single-threaded worker; WORKER_CMDS only written/read on this thread.
+    let Some(cmds_ptr) = (unsafe { WORKER_CMDS.read() }) else {
+        return;
+    };
+    // SAFETY: cmds_ptr was set from &mut WorkerCommands in run_as_worker; pointee
+    // outlives all callers (process exits before it is dropped).
+    let cmds = unsafe { &mut *cmds_ptr };
+    // SAFETY: single-threaded worker; WORKER_FRAME is a process-global scratch buffer.
+    let wf = unsafe { &mut *WORKER_FRAME.get() };
+    wf.begin(frame::Kind::FailureDiagnostic);
+    wf.u32_(file_idx);
+    wf.str(entry);
     cmds.send(wf.finish());
 }

@@ -299,6 +299,11 @@ pub struct VirtualMachine {
     /// `run_error_handler`.
     pub on_print_error_zig_exception: Option<fn(*mut c_void, &ZigException)>,
     pub on_print_error_zig_exception_ctx: *mut c_void,
+    /// When set, `print_exception` renders into this writer instead of the
+    /// buffered stderr stream. Installed by `bun test` around
+    /// `run_error_handler` so a failure's diagnostics can be captured and
+    /// re-emitted later, attributed to the test that produced them.
+    pub error_writer_override: Option<NonNull<bun_core::io::Writer>>,
     pub is_handling_uncaught_exception: bool,
     pub exit_on_uncaught_exception: bool,
 
@@ -1730,9 +1735,11 @@ pub struct RuntimeHooks {
     pub ipc_child_singleton_deinit: fn(),
     /// `onBeforePrint()` for the `bun:test` runner, which lives in `bun_runtime`;
     /// `console.log` calls this so the test reporter can flush its line state
-    /// before user output interleaves with it. No-op when `bun test` isn't
-    /// running.
-    pub console_on_before_print: fn(),
+    /// before user output interleaves with it, and label the output with the
+    /// test that produced it. `is_stderr` distinguishes `console.warn`/`error`
+    /// from the rest so the label lands on the same stream as the content.
+    /// No-op when `bun test` isn't running.
+    pub console_on_before_print: fn(is_stderr: bool),
     /// `ConsoleObject.Formatter` runtime-type dispatch
     /// over `Response`/`Request`/`Blob`/`S3Client`/`Archive`/
     /// `BuildArtifact`/`FetchHeaders`/`Timer`/`Immediate`/`BuildMessage`/

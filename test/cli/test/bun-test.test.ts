@@ -1799,3 +1799,255 @@ describe("nested describe output", () => {
     expect(lines).toContain("(fail) dirty");
   });
 });
+
+describe("failure and console attribution", () => {
+  /** Everything from the batched failures section onward. */
+  function failuresSection(stderr: string): string {
+    const at = stderr.indexOf("tests failed:");
+    return at === -1 ? "" : stderr.slice(at);
+  }
+
+  test("batches failure diagnostics after every file block", () => {
+    const stderr = runTest({
+      input: [
+        {
+          filename: "a.test.ts",
+          contents: `
+            import { test, describe, expect } from "bun:test";
+            describe("alpha", () => {
+              test("boom", () => { expect(1).toBe(2); });
+            });
+          `,
+        },
+        {
+          filename: "b.test.ts",
+          contents: `
+            import { test, expect } from "bun:test";
+            test("bang", () => { expect("x").toBe("y"); });
+          `,
+        },
+      ],
+      expectExitCode: 1,
+    });
+
+    // Both file blocks print before any diagnostic.
+    expect(stderr.indexOf("(fail) a.test.ts:")).toBeLessThan(stderr.indexOf("2 tests failed:"));
+    expect(stderr.indexOf("(fail) b.test.ts:")).toBeLessThan(stderr.indexOf("2 tests failed:"));
+
+    // Each diagnostic names the file and test it belongs to.
+    const section = failuresSection(stderr);
+    expect(section).toContain("(fail) a.test.ts:4 > alpha > boom");
+    expect(section).toContain("(fail) b.test.ts:3 > bang");
+    // ...and the diff follows its own header, not the other file's.
+    expect(section.indexOf("Expected: 2")).toBeGreaterThan(section.indexOf("> alpha > boom"));
+    expect(section.indexOf("Expected: 2")).toBeLessThan(section.indexOf("> bang"));
+  });
+
+  test("the flat name-only failure list is replaced by attributed diagnostics", () => {
+    const stderr = runTest({
+      input: [
+        {
+          filename: "solo.test.ts",
+          contents: `
+            import { test, expect } from "bun:test";
+            test("solo", () => { expect(1).toBe(2); });
+          `,
+        },
+      ],
+      expectExitCode: 1,
+    });
+    const section = failuresSection(stderr);
+    // Was a bare name; is now a qualified header with the diff under it.
+    expect(section).not.toMatch(/^solo$/m);
+    expect(section).toContain("(fail) solo.test.ts:3 > solo");
+    expect(section).toContain("Expected: 2");
+  });
+
+  test("failures are reported even when more than 20 tests pass", () => {
+    const stderr = runTest({
+      input: `
+        import { test, expect } from "bun:test";
+        for (let i = 0; i < 25; i++) test("ok " + i, () => {});
+        test("nope", () => { expect(1).toBe(2); });
+      `,
+      expectExitCode: 1,
+    });
+    expect(failuresSection(stderr)).toContain("> nope");
+  });
+
+  test("labels console output with the producing test, per stream", async () => {
+    using dir = tempDir("console-attribution", {
+      "logs.test.ts": `
+        import { test, describe } from "bun:test";
+        describe("group", () => {
+          test("one", () => { console.log("from-one"); });
+          test("two", () => { console.warn("warn-two"); console.log("log-two"); });
+        });
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "logs.test.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([
+      proc.stdout.text(),
+      proc.stderr.text(),
+      proc.exited,
+    ]);
+
+    // The header rides the same stream as the output it labels.
+    expect(stdout).toContain("stdout | logs.test.ts > group > one");
+    expect(stdout.indexOf("from-one")).toBeGreaterThan(stdout.indexOf("> group > one"));
+    expect(stderr).toContain("stderr | logs.test.ts > group > two");
+    expect(stdout).not.toContain("stderr |");
+    expect(stderr).not.toContain("stdout |");
+
+    // Switching streams within one test re-labels rather than leaving
+    // `log-two` sitting under a header on the other stream.
+    expect(stdout).toContain("stdout | logs.test.ts > group > two");
+    expect(exitCode).toBe(0);
+  });
+
+  test("repeated logs from one test are labeled once", async () => {
+    using dir = tempDir("console-attribution-once", {
+      "logs.test.ts": `
+        import { test } from "bun:test";
+        test("chatty", () => { console.log("a"); console.log("b"); console.log("c"); });
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "logs.test.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout.match(/stdout \| /g)).toHaveLength(1);
+    expect(exitCode).toBe(0);
+  });
+
+  test("--dots still batches attributed failures", () => {
+    const stderr = runTest({
+      input: `
+        import { test, expect } from "bun:test";
+        test("ok", () => {});
+        test("dotted", () => { expect(1).toBe(2); });
+      `,
+      args: ["--dots"],
+      expectExitCode: 1,
+    });
+    expect(failuresSection(stderr)).toContain("> dotted");
+  });
+
+  test("--only-failures still batches attributed failures", () => {
+    const stderr = runTest({
+      input: `
+        import { test, expect } from "bun:test";
+        test("ok", () => {});
+        test("quiet-fail", () => { expect(1).toBe(2); });
+      `,
+      args: ["--only-failures"],
+      expectExitCode: 1,
+    });
+    expect(failuresSection(stderr)).toContain("> quiet-fail");
+  });
+
+  test("--parallel attributes diagnostics and logs across workers", async () => {
+    using dir = tempDir("parallel-attribution", {
+      "a.test.ts": `
+        import { test, expect } from "bun:test";
+        test("a-fail", () => { console.log("a-log"); expect(1).toBe(2); });
+      `,
+      "b.test.ts": `
+        import { test, expect } from "bun:test";
+        test("b-fail", () => { console.log("b-log"); expect(3).toBe(4); });
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--parallel"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([
+      proc.stdout.text(),
+      proc.stderr.text(),
+      proc.exited,
+    ]);
+    const combined = stdout + stderr;
+    expect(combined).toContain("stdout | a.test.ts > a-fail");
+    expect(combined).toContain("stdout | b.test.ts > b-fail");
+    expect(stderr).toContain("2 tests failed:");
+    expect(stderr).toContain("(fail) a.test.ts:3 > a-fail");
+    expect(stderr).toContain("(fail) b.test.ts:3 > b-fail");
+    expect(exitCode).toBe(1);
+  });
+
+  test("--bail still reports the failure that stopped the run", () => {
+    const stderr = runTest({
+      input: `
+        import { test, expect } from "bun:test";
+        test("first", () => { expect(1).toBe(2); });
+        test("never", () => {});
+      `,
+      args: ["--bail"],
+      expectExitCode: 1,
+    });
+    expect(failuresSection(stderr)).toContain("> first");
+  });
+
+  test("process.exit() mid-run does not swallow diagnostics", async () => {
+    using dir = tempDir("attribution-exit", {
+      "exit.test.ts": `
+        import { test, expect } from "bun:test";
+        test("fails first", () => { expect(1).toBe(2); });
+        test("then exits", () => { process.exit(3); });
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "exit.test.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("> fails first");
+    expect(exitCode).toBe(3);
+  });
+
+  test("unhandled errors between tests name their file", () => {
+    const stderr = runTest({
+      input: [
+        {
+          filename: "stray.test.ts",
+          contents: `
+            import { test } from "bun:test";
+            test("a", () => {});
+            setTimeout(() => { throw new Error("stray"); }, 1);
+            await new Promise(r => setTimeout(r, 25));
+          `,
+        },
+      ],
+    });
+    expect(stderr).toContain("Unhandled error between tests in ");
+    expect(stderr).toContain("stray.test.ts");
+  });
+
+  test(".todo errors still report inline, attributed", () => {
+    const stderr = runTest({
+      input: `
+        import { test } from "bun:test";
+        test.todo("pending work", () => { throw new Error("not-done-yet"); });
+      `,
+      args: ["--todo"],
+    });
+    expect(stderr).toContain("(todo)");
+    expect(stderr).toContain("> pending work");
+    expect(stderr).toContain("not-done-yet");
+  });
+});

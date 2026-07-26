@@ -4567,14 +4567,9 @@ pub fn platform_iovec_const_create(buf: &[u8]) -> PlatformIoVecConst {
     }
 }
 
-/// Maximum number of iovecs a single `writev(2)`/`pwritev(2)`/`readv(2)`/
-/// `preadv(2)` may reference on POSIX. The kernel rejects a larger array with
-/// `EINVAL`, so `writev`/`pwritev` below batch the vectors into groups of at
-/// most this many and loop, while `readv`/`preadv` cap at one batch and
-/// return a short read (matching libuv's `uv__fs_read`). `1024` is
-/// `IOV_MAX`/`UIO_MAXIOV` on every POSIX target Bun supports (Linux, macOS,
-/// the BSDs). The Windows path batches in `sys_uv` instead (see
-/// `sys_uv::pwritev`).
+/// `IOV_MAX`/`UIO_MAXIOV` on every POSIX target Bun supports. The kernel
+/// rejects larger iovec arrays with `EINVAL`; `writev`/`pwritev` batch and
+/// loop, `readv`/`preadv` cap at one batch (short read, matching libuv).
 #[cfg(unix)]
 const POSIX_IOV_MAX: usize = 1024;
 
@@ -4583,15 +4578,10 @@ const POSIX_IOV_MAX: usize = 1024;
 #[cfg(unix)]
 #[inline]
 fn pwritev_one(fd: Fd, vecs: &[PlatformIoVecConst], offset: i64) -> Maybe<usize> {
-    // SAFETY: `PlatformIoVecConst` is layout-compatible with `libc::iovec`
-    // (asserted above); `pwritev(2)` only reads through `iov_base`.
-    // Darwin uses `pwritev$NOCANCEL` (avoid cancellation point).
     #[cfg(target_os = "macos")]
     {
-        // macOS: single `pwritev$NOCANCEL`, no
-        // EINTR retry (surfaces EINTR to caller).
-        // SAFETY: `fd` is a live descriptor; `vecs` gives an exact
-        // (ptr, len) pair of layout-compatible iovecs (asserted above).
+        // SAFETY: `PlatformIoVecConst` is layout-compatible with `libc::iovec`
+        // (asserted above). `pwritev$NOCANCEL`: single shot, surfaces EINTR.
         let rc = unsafe {
             nocancel::pwritev(
                 fd.native(),
@@ -4636,12 +4626,7 @@ fn pwritev_one(fd: Fd, vecs: &[PlatformIoVecConst], offset: i64) -> Maybe<usize>
 
 /// `bun.sys.pwritev` — gather-write at `offset`. Returns bytes written
 /// (may be less than the sum of `vecs` lengths on a short write).
-///
-/// When `vecs.len()` exceeds `POSIX_IOV_MAX` the vectors are written in
-/// batches and the bytes accumulated, matching libuv (and the Windows
-/// `sys_uv` path) and avoiding the kernel's `EINVAL` for oversized iovec
-/// arrays. A short write of any batch stops the loop, preserving
-/// `pwritev(2)`'s partial-write contract for callers that retry.
+/// Batches iovecs past `POSIX_IOV_MAX`; a short write stops the loop.
 pub fn pwritev(fd: Fd, vecs: &[PlatformIoVecConst], offset: i64) -> Maybe<usize> {
     #[cfg(unix)]
     {
@@ -4677,9 +4662,8 @@ pub fn pwritev(fd: Fd, vecs: &[PlatformIoVecConst], offset: i64) -> Maybe<usize>
             }
 
             remaining = &remaining[chunk_len..];
-            // A negative `offset` is the "use the current file offset" sentinel;
-            // keep it across batches instead of turning it into an explicit
-            // offset (matches `sys_uv::pwritev`).
+            // Negative `offset` means "current file offset"; keep the
+            // sentinel across batches (matches `sys_uv::pwritev`).
             if position >= 0 {
                 position += bytes_written as i64;
             }
@@ -4779,10 +4763,8 @@ pub fn writev(fd: Fd, vecs: &[PlatformIoVec]) -> Maybe<usize> {
             return writev_one(fd, vecs);
         }
 
-        // More iovecs than the kernel accepts in one writev(2) — write in
-        // batches (matching libuv / the Windows `sys_uv` path). writev(2) is
-        // sequential, so each batch resumes at the current file offset; a
-        // short write stops the loop to keep the caller's retry ordering.
+        // Batch past the kernel's IOV_MAX limit (matching libuv); a short
+        // write stops the loop to preserve write ordering.
         let mut total_written: usize = 0;
         let mut remaining = vecs;
 

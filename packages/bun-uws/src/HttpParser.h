@@ -1267,6 +1267,7 @@ struct HttpResponseData;
                 bool methodFramesBody = !(m == "HEAD" || m == "TRACE");
                 if (!isConnectRequest && methodFramesBody
                         && (transferEncoding.has || contentLengthStringLen)
+                        && !deferredTransferEncodingError
                         && req->getHeader("upgrade").data()) [[unlikely]] {
                     if constexpr (ConsumeMinimally) {
                         /* Fallback-buffer path: (data, length) is a view truncated

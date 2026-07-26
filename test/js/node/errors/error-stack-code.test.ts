@@ -57,6 +57,18 @@ describe("Node.js ERR_* error .stack header includes [code]", () => {
     expect(header).toStartWith("TypeError [OVERWRITTEN_CODE]: ");
   });
 
+  test("non-string .code is coerced (primitive) or falls back (object)", () => {
+    const e1 = capture(() => fs.rmSync("/x", { recursive: "yes" as any }));
+    (e1 as any).code = 42;
+    Error.captureStackTrace(e1);
+    expect(String(e1.stack).split("\n")[0]).toStartWith("TypeError [42]: ");
+
+    const e2 = capture(() => fs.rmSync("/x", { recursive: "yes" as any }));
+    (e2 as any).code = { toString: () => "ignored" };
+    Error.captureStackTrace(e2);
+    expect(String(e2.stack).split("\n")[0]).toStartWith("TypeError [ERR_INVALID_ARG_TYPE]: ");
+  });
+
   test("plain errors with .code do not get a bracket", () => {
     const err: any = new TypeError("hi");
     err.code = "ERR_FAKE";

@@ -32,10 +32,7 @@ using namespace WebCore;
 
 namespace Bun {
 
-// If errorObject was created via Bun::createError (its direct prototype carries the
-// private @code marker from createErrorPrototype), return the error's current
-// public .code value so the stack header can include `[${code}]`, matching
-// Node's prepareStackTraceCallback (which gates on kIsNodeError).
+// Returns .code when errorObject's direct prototype has the private @code marker from createErrorPrototype (Node's kIsNodeError analogue).
 static String nodeErrorCodeForStackHeader(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSObject* errorObject)
 {
     JSValue proto = errorObject->getPrototypeDirect();
@@ -44,21 +41,22 @@ static String nodeErrorCodeForStackHeader(JSC::VM& vm, JSC::JSGlobalObject* lexi
         return {};
 
     const auto& builtinNames = WebCore::builtinNames(vm);
-    PropertySlot markerSlot(protoObj, PropertySlot::InternalMethodType::VMInquiry, &vm);
-    if (!JSObject::getOwnPropertySlot(protoObj, lexicalGlobalObject, builtinNames.codePrivateName(), markerSlot) || !markerSlot.isValue())
-        return {};
-
+    JSValue markerValue;
     JSValue codeValue;
-    PropertySlot codeSlot(errorObject, PropertySlot::InternalMethodType::VMInquiry, &vm);
-    if (JSObject::getOwnPropertySlot(errorObject, lexicalGlobalObject, builtinNames.codePublicName(), codeSlot) && codeSlot.isValue()) {
-        codeValue = codeSlot.getValue(lexicalGlobalObject, builtinNames.codePublicName());
-    } else {
-        codeValue = markerSlot.getValue(lexicalGlobalObject, builtinNames.codePrivateName());
+    {
+        PropertySlot markerSlot(protoObj, PropertySlot::InternalMethodType::VMInquiry, &vm);
+        if (!JSObject::getOwnPropertySlot(protoObj, lexicalGlobalObject, builtinNames.codePrivateName(), markerSlot) || !markerSlot.isValue())
+            return {};
+        markerValue = markerSlot.getValue(lexicalGlobalObject, builtinNames.codePrivateName());
+
+        PropertySlot codeSlot(errorObject, PropertySlot::InternalMethodType::VMInquiry, &vm);
+        if (JSObject::getOwnPropertySlot(errorObject, lexicalGlobalObject, builtinNames.codePublicName(), codeSlot) && codeSlot.isValue())
+            codeValue = codeSlot.getValue(lexicalGlobalObject, builtinNames.codePublicName());
     }
-    auto* codeString = dynamicDowncast<JSC::JSString>(codeValue);
-    if (!codeString)
-        return {};
-    return codeString->getString(lexicalGlobalObject);
+
+    if (codeValue && !codeValue.isObject() && !codeValue.isUndefined())
+        return codeValue.toWTFString(lexicalGlobalObject);
+    return markerValue.getString(lexicalGlobalObject);
 }
 
 static JSValue formatStackTraceToJSValue(JSC::VM& vm, Zig::GlobalObject* globalObject, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSObject* errorObject, JSC::JSArray* callSites)

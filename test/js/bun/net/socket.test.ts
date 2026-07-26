@@ -350,6 +350,50 @@ describe.concurrent("socket", () => {
     }
   }, 60_000);
 
+  it("socket.timeout leaves the socket open (notify-only)", async () => {
+    let closeFired = false;
+    let readyStateInHandler: number | undefined;
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+
+    using server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        binaryType: "buffer",
+        data(socket, data) {
+          if (data.toString("utf-8") === "still open") resolve();
+        },
+        close() {},
+      },
+    });
+    const client = await connect({
+      hostname: "127.0.0.1",
+      port: server.port,
+      socket: {
+        open(socket) {
+          socket.timeout(1);
+        },
+        timeout(socket) {
+          readyStateInHandler = socket.readyState;
+          socket.write("still open");
+        },
+        close() {
+          closeFired = true;
+          reject(new Error("close fired before server received write"));
+        },
+        data() {},
+      },
+    });
+
+    await promise;
+    expect({ readyStateInHandler, closeFired, readyStateAfter: client.readyState }).toEqual({
+      readyStateInHandler: 1,
+      closeFired: false,
+      readyStateAfter: 1,
+    });
+    client.end();
+  }, 60_000);
+
   it("should allow large amounts of data to be sent and received", async () => {
     expect([fileURLToPath(new URL("./socket-huge-fixture.js", import.meta.url))]).toRun();
   }, 60_000);

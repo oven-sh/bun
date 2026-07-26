@@ -200,8 +200,7 @@ function ZlibBase(opts, mode, handle, { flush, finishFlush, fullFlush }) {
   this._maxOutputLength = maxOutputLength;
 
   this._rejectGarbageAfterEnd = opts?.rejectGarbageAfterEnd === true;
-  // zstd streams are one or more concatenated frames (RFC 8878 §3.1); only
-  // DecompressionStream opts in so plain createZstdDecompress matches Node.js.
+  // zstd is multi-frame (RFC 8878 §3.1); scoped so createZstdDecompress stays Node-compatible.
   this._continueOnFrameEnd = this._rejectGarbageAfterEnd && mode === ZSTD_DECOMPRESS;
 }
 $toClass(ZlibBase, "ZlibBase", Transform);

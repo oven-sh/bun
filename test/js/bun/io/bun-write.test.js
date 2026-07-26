@@ -825,3 +825,53 @@ it("Bun.write(Bun.stdout, <empty source>) does not truncate the destination", as
     });
   }
 });
+
+it("Bun.write(Bun.stdout, '') does not drop concurrent in-flight writes when stdout is a file", async () => {
+  // Many fire-and-forget Bun.write(Bun.stdout, chunk) calls are dispatched to the thread
+  // pool. An empty-string write used to synchronously ftruncate(fd, 0) on the main thread,
+  // which discarded already-written bytes without resetting the kernel file offset, so the
+  // remaining thread-pool writes landed past a NUL-filled sparse hole while every promise
+  // still resolved with its full byte count.
+  const N = 2000;
+  const script = `
+    const ps = [];
+    for (let i = 0; i < ${N}; i++) ps.push(Bun.write(Bun.stdout, "C" + i + "\\n"));
+    await Bun.write(Bun.stdout, "");
+    const r = await Promise.allSettled(ps);
+    process.stderr.write(
+      "fulfilled=" + r.filter(x => x.status === "fulfilled").length +
+      " bytes=" + r.reduce((a, x) => a + (x.value || 0), 0) + "\\n",
+    );
+  `;
+  const expectedLines = Array.from({ length: N }, (_, i) => "C" + i);
+  const expectedBytes = expectedLines.reduce((a, s) => a + s.length + 1, 0);
+
+  using dir = tempDir("bun-write-stdout-nul-hole", {});
+  const out = path.join(String(dir), "out.txt");
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: Bun.file(out),
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  const buf = fs.readFileSync(out);
+  // Ordering between the concurrent writes is not guaranteed, so compare the sorted set
+  // of lines rather than the raw bytes.
+  const lines = buf.toString("utf8").split("\n").filter(Boolean).sort();
+  expect({
+    stderr,
+    size: buf.length,
+    nulBytes: buf.indexOf(0) === -1 ? 0 : Array.prototype.reduce.call(buf, (a, b) => a + (b === 0 ? 1 : 0), 0),
+    lines: lines.length,
+    linesMatch: Bun.deepEquals(lines, expectedLines.slice().sort()),
+    exitCode,
+  }).toEqual({
+    stderr: `fulfilled=${N} bytes=${expectedBytes}\n`,
+    size: expectedBytes,
+    nulBytes: 0,
+    lines: N,
+    linesMatch: true,
+    exitCode: 0,
+  });
+});

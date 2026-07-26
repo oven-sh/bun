@@ -12,7 +12,7 @@
 // gone.
 
 import { describe, expect, test } from "bun:test";
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 const repoRoot = join(import.meta.dir, "../../..");
@@ -93,6 +93,7 @@ describe("dead symbols stay removed", () => {
     ["src/jsc/bindings/helpers.h", "BunStringCwd"],
     ["src/jsc/bindings/helpers.h", "static WTF::AtomString toAtomString(ZigString"],
     ["src/runtime/bake/BakeSourceProvider.cpp", "BakeRegisterProductionChunk"],
+    ["src/runtime/bake/BakeProduction.cpp", '#include "BakeProduction.h"'],
     ["src/runtime/api/bun/subprocess/Readable.rs", "pub fn on_ready"],
     ["src/io/posix_event_loop.rs", "pub use crate::closer::Closer"],
   ];
@@ -103,8 +104,4 @@ describe("dead symbols stay removed", () => {
       expect(src.includes(needle)).toBe(false);
     });
   }
-
-  test("BakeProduction.h is deleted", () => {
-    expect(existsSync(join(repoRoot, "src/runtime/bake/BakeProduction.h"))).toBe(false);
-  });
 });

@@ -215,11 +215,10 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
 
     std::ignore = scope.exception();
     if (checkForTermination(vm, globalObject, scope, this, timeoutScope)) {
-        // Only persist a converted ERR_SCRIPT_EXECUTION_* as the module's
-        // error; a propagated termination is the VM's singleton and must not
-        // be stored (re-throwing it later would re-terminate the caller).
+        status(Status::Errored);
+        // A propagated termination is the VM's singleton; storing it would
+        // make a later evaluate() re-terminate the caller.
         if (!vm.hasPendingTerminationException()) {
-            status(Status::Errored);
             if (JSC::Exception* exception = scope.exception())
                 m_evaluationException.set(vm, this, exception);
         }

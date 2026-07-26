@@ -794,8 +794,13 @@ impl FileReader {
             unsafe { (*parent).increment_count() };
             self.pending.with_mut(|p| p.run());
             close_if_needed!();
-            // Re-entrant cancel closed the reader; tell the io caller to stop.
-            let ret = if self.done.get() { false } else { ret };
+            // Re-entrant cancel closed the reader, or re-entrant setFlowing(false)
+            // paused it; either way tell the io caller to stop.
+            let ret = if self.done.get() || !self.flowing.get() {
+                false
+            } else {
+                ret
+            };
             // SAFETY: see `parent()`; the pin keeps the count >= 1, so this
             // never frees. `self` is not accessed after.
             let _ = unsafe { Source::decrement_count(parent) };

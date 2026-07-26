@@ -418,3 +418,64 @@ test.concurrent("pause() and resume() churn while data is in flight never destro
   expect(stdout.trim()).toBe(`TOTAL ${20 * 1024}`);
   expect(exitCode).toBe(0);
 });
+
+test.concurrent("process.stdin.pause() from inside a 'data' handler applies kernel backpressure", async () => {
+  // Before the fix, pause() from inside the 'data' path unregistered the fd
+  // poll but the in-progress read loop re-armed it on return, so the native
+  // reader kept draining the pipe into FileReader.buffered. A drain-throttled
+  // writer could push the whole input through while the consumer was paused,
+  // defeating the events.on 1024-line highWaterMark that
+  // `for await (line of readline)` over piped stdin relies on.
+  //
+  // The inner child pauses stdin on the first chunk and never resumes; the
+  // inner parent pumps 10 MB with drain-based backpressure and reports how
+  // far it got before the pipe stopped accepting writes.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const { spawn } = require("node:child_process");
+      const child = spawn(process.execPath, ["-e",
+        'process.stdin.once("data", () => process.stdin.pause()); setTimeout(() => {}, 1e9);'
+      ], { stdio: ["pipe", "ignore", "inherit"] });
+      const line = Buffer.alloc(1000, 120);
+      const total = 10000;
+      let written = 0;
+      child.stdin.on("error", () => {});
+      (function pump() {
+        while (written < total) {
+          written++;
+          if (!child.stdin.write(line)) return child.stdin.once("drain", pump);
+        }
+      })();
+      // The writer is blocked once 'drain' stops firing; a bounded pipe
+      // buffer makes three idle ticks after a stall conclusive. Without the
+      // fix the writer never stalls and reaches 'total'.
+      let last = -1, stable = 0;
+      const iv = setInterval(() => {
+        if (written === total || (written === last && ++stable >= 3)) {
+          clearInterval(iv);
+          console.log(JSON.stringify({ writtenWhilePaused: written, total }));
+          child.kill();
+        } else if (written !== last) { last = written; stable = 0; }
+      }, 100);
+      child.on("exit", () => process.exit(0));
+      `,
+    ],
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const result = JSON.parse(stdout.trim());
+
+  // Before the fix the parent drained all 10000 lines through the pipe while
+  // the child was paused. With kernel backpressure only the pipe buffer plus
+  // one in-flight chunk fit (a few hundred KB). Node lands at ~300 here.
+  expect(result.writtenWhilePaused).toBeLessThan(2000);
+  expect(result.writtenWhilePaused).toBeLessThan(result.total);
+  expect(exitCode).toBe(0);
+});

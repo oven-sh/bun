@@ -2019,11 +2019,12 @@ describe("bundler", () => {
 
 describe("bundler", () => {
   // An exports pattern target may spell ".." as "..*": the literal segment passes the
-  // pre-substitution target validation because it is not exactly "..", and a specifier that
-  // equals the pattern base ("pkg1/x" against the key "./x*") substitutes an empty string
-  // for "*", turning "./..*/..*/outside.js" into "./../../outside.js". The resolved path must
-  // be re-validated after substitution so the import fails instead of loading a file that
-  // lives above the package directory. The plain "pkg1" import must keep working.
+  // pre-substitution target validation because it is not exactly "..", so an empty "*"
+  // capture would turn "./..*/..*/outside.js" into "./../../outside.js". "pkg1/x" against
+  // the key "./x*" is now rejected at match time (Node requires "*" to capture at least
+  // one character), closing this escape before substitution; the test remains as a guard
+  // that outside.js is unreachable through either mechanism. The plain "pkg1" import must
+  // keep working.
   itBundled("packagejson/ExportsPatternTargetRejectsParentSegmentsAfterSubstitution", {
     files: {
       "/Users/user/project/src/entry.js": /* js */ `

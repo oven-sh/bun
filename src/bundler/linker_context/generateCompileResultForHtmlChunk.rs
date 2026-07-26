@@ -127,11 +127,12 @@ impl<'a> HTMLProcessorHandler for HTMLLoader<'a> {
     ) {
         if url_attribute == b"srcset" {
             let mut out: Vec<u8> = Vec::with_capacity(path.len());
-            let mut remove = false;
             for (url, descriptor) in SrcSetIter::new(path) {
                 let rewritten = self.rewrite_one_url(url);
                 if matches!(rewritten, RewrittenUrl::Remove) {
-                    remove = true;
+                    // Remove means "tag re-emitted elsewhere"; that never applies to an
+                    // <img>/<source>, so drop the one candidate instead of the element.
+                    continue;
                 }
                 if !out.is_empty() {
                     out.extend_from_slice(b", ");
@@ -142,9 +143,7 @@ impl<'a> HTMLProcessorHandler for HTMLLoader<'a> {
                     out.extend_from_slice(descriptor);
                 }
             }
-            if remove {
-                element.remove();
-            } else if out != path {
+            if out != path {
                 set_attribute(element, url_attribute, &out);
             }
             return;

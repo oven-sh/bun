@@ -4198,10 +4198,15 @@ pub mod bv2_impl {
                         for (path, indices) in duplicates.keys().iter().zip(duplicates.values()) {
                             let _ = writeln!(&mut msg, "  {}:", bstr::BStr::new(path));
                             for &j in indices {
+                                let pretty: &[u8] = additional_output_files[j]
+                                    .source_index
+                                    .get()
+                                    .map(|i| sources[i.get() as usize].path.pretty)
+                                    .unwrap_or(additional_output_files[j].src_path.text);
                                 let _ = writeln!(
                                     &mut msg,
                                     "    from input {}",
-                                    bstr::BStr::new(additional_output_files[j].src_path.text)
+                                    bstr::BStr::new(pretty)
                                 );
                             }
                         }

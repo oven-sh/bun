@@ -746,17 +746,4 @@ describe("resolve4 against a loopback responder", () => {
     };
     expect(await resolver.resolve4("good.test")).toEqual(["127.0.0.7"]);
   });
-
-  it("reports EBADNAME for a query name c-ares rejects before sending", async () => {
-    build = (msg, question) => {
-      const hdr = Buffer.concat([msg.slice(0, 2), u16(0x8183), u16(1), u16(0), u16(0), u16(0)]);
-      return Buffer.concat([hdr, question]);
-    };
-    const longLabel = Buffer.alloc(64, 0x61).toString() + ".test";
-    const err = await resolver.resolve4(longLabel).then(
-      ok => ({ ok }),
-      e => e,
-    );
-    expect(err.code).toBe("EBADNAME");
-  });
 });

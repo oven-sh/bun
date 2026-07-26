@@ -2951,11 +2951,7 @@ describe("rm", () => {
       env: bunEnv,
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     const out = JSON.parse(stdout.trim());
     // On Linux the unlink of /tree/a/locked/keep is denied. On macOS node

@@ -9712,11 +9712,7 @@ struct DeleteTreeStackItem {
     iter: DirIterator::WrappedIterator,
 }
 
-pub fn zig_delete_tree(
-    self_: &sys::Dir,
-    sub_path: &[u8],
-    kind_hint: sys::FileKind,
-) -> Maybe<()> {
+pub fn zig_delete_tree(self_: &sys::Dir, sub_path: &[u8], kind_hint: sys::FileKind) -> Maybe<()> {
     let initial_iterable_dir =
         match zig_delete_tree_open_initial_subpath(self_, sub_path, kind_hint, sub_path)? {
             Some(d) => d,

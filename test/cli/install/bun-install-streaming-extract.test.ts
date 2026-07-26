@@ -11,7 +11,7 @@ import { createHash, randomFillSync } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { join } from "node:path";
-import { crc32, deflateRawSync, gzipSync, constants as zconst } from "node:zlib";
+import { crc32, deflateRawSync, gunzipSync, gzipSync, constants as zconst } from "node:zlib";
 
 setDefaultTimeout(1000 * 60);
 
@@ -658,6 +658,14 @@ test.concurrent("buffered extract rejects a registry tarball whose decompressed 
   // Sanity: the download itself stays tiny even though it inflates far
   // past the cap — that is exactly the case the bound exists for.
   expect(tgz.length).toBeLessThan(8 * 1024 * 1024);
+  // Sanity: the hand-assembled stream must be valid gzip. A bounded
+  // gunzip throws ERR_BUFFER_TOO_LARGE when a valid stream exceeds the
+  // limit but a zlib data/format error when the stream is malformed;
+  // both would surface below as the same `decompressing "oversized-pkg"`
+  // line, so this pins the failure mode to the 2 GiB cap.
+  expect(() => gunzipSync(tgz, { maxOutputLength: 4 * 1024 * 1024 })).toThrow(
+    expect.objectContaining({ code: "ERR_BUFFER_TOO_LARGE" }),
+  );
   const shasum = createHash("sha1").update(tgz).digest("hex");
   const integrity = "sha512-" + createHash("sha512").update(tgz).digest("base64");
 

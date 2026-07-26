@@ -754,6 +754,20 @@ describe("unhandled errors after the final test are reported", () => {
   // jest and `node --test` both drain the event loop after the last test
   // settles; a fire-and-forget rejection or a throw inside a leaked
   // setTimeout must fail the run, not exit 0 with the error dropped.
+  async function runFixture(files: Record<string, string>) {
+    const dir = tempDirWithFiles("unhandled-after-last", { ...files, "package.json": "{}" });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", ...Object.keys(files)],
+      cwd: dir,
+      stdout: "ignore",
+      stderr: "pipe",
+      env: bunEnv,
+      timeout: 30_000,
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    return { stderr, exitCode, signalCode: proc.signalCode };
+  }
+
   const cases = [
     [
       "unhandled rejection from a fire-and-forget async IIFE",
@@ -773,8 +787,8 @@ describe("unhandled errors after the final test are reported", () => {
   ] as const;
 
   for (const [name, stmt, needle] of cases) {
-    test(name, () => {
-      const dir = tempDirWithFiles("unhandled-after-last", {
+    test.concurrent(name, async () => {
+      const { stderr, exitCode, signalCode } = await runFixture({
         "late.test.js": `
 import { test, expect } from "bun:test";
 test("only test", async () => {
@@ -783,29 +797,20 @@ test("only test", async () => {
   expect(1).toBe(1);
 });
 `,
-        "package.json": "{}",
       });
 
-      const { stderr, exitCode } = spawnSync({
-        cmd: [bunExe(), "test", "late.test.js"],
-        cwd: dir,
-        stdout: "inherit",
-        stderr: "pipe",
-        env: bunEnv,
-      });
-      const output = stderr.toString();
-
-      expect(output).toContain(needle);
-      expect(output).toContain("Unhandled error between tests");
-      expect(output).toContain("1 pass");
-      expect(output).toContain("0 fail");
-      expect(output).toContain("1 error");
+      expect(stderr).toContain(needle);
+      expect(stderr).toContain("Unhandled error between tests");
+      expect(stderr).toContain("1 pass");
+      expect(stderr).toContain("0 fail");
+      expect(stderr).toContain("1 error");
+      expect(signalCode).toBeNull();
       expect(exitCode).toBe(1);
     });
   }
 
-  test("does not hang when the last test leaves an unref'd handle", () => {
-    const dir = tempDirWithFiles("unhandled-after-last-unref", {
+  test.concurrent("does not hang when the last test leaves an unref'd handle", async () => {
+    const { stderr, exitCode, signalCode } = await runFixture({
       "unref.test.js": `
 import { test, expect } from "bun:test";
 test("only test", () => {
@@ -813,25 +818,16 @@ test("only test", () => {
   expect(1).toBe(1);
 });
 `,
-      "package.json": "{}",
     });
 
-    const { stderr, exitCode } = spawnSync({
-      cmd: [bunExe(), "test", "unref.test.js"],
-      cwd: dir,
-      stdout: "inherit",
-      stderr: "pipe",
-      env: bunEnv,
-    });
-    const output = stderr.toString();
-
-    expect(output).toContain("1 pass");
-    expect(output).toContain("0 fail");
+    expect(stderr).toContain("1 pass");
+    expect(stderr).toContain("0 fail");
+    expect(signalCode).toBeNull();
     expect(exitCode).toBe(0);
   });
 
-  test("does not hang on a far-future ref'd setTimeout/setInterval", () => {
-    const dir = tempDirWithFiles("unhandled-after-last-far", {
+  test.concurrent("does not hang on a far-future ref'd setTimeout/setInterval", async () => {
+    const { stderr, exitCode, signalCode } = await runFixture({
       "far.test.js": `
 import { test, expect } from "bun:test";
 test("only test", () => {
@@ -840,25 +836,16 @@ test("only test", () => {
   expect(1).toBe(1);
 });
 `,
-      "package.json": "{}",
     });
 
-    const { stderr, exitCode } = spawnSync({
-      cmd: [bunExe(), "test", "far.test.js"],
-      cwd: dir,
-      stdout: "inherit",
-      stderr: "pipe",
-      env: bunEnv,
-    });
-    const output = stderr.toString();
-
-    expect(output).toContain("1 pass");
-    expect(output).toContain("0 fail");
+    expect(stderr).toContain("1 pass");
+    expect(stderr).toContain("0 fail");
+    expect(signalCode).toBeNull();
     expect(exitCode).toBe(0);
   });
 
-  test("does not hang when the last test leaks a ref'd Bun.serve()", () => {
-    const dir = tempDirWithFiles("unhandled-after-last-serve", {
+  test.concurrent("does not hang when the last test leaks a ref'd Bun.serve()", async () => {
+    const { stderr, exitCode, signalCode } = await runFixture({
       "serve.test.js": `
 import { test, expect } from "bun:test";
 test("only test", async () => {
@@ -867,22 +854,41 @@ test("only test", async () => {
   expect(1).toBe(1);
 });
 `,
-      "package.json": "{}",
     });
 
-    const { stderr, exitCode } = spawnSync({
-      cmd: [bunExe(), "test", "serve.test.js"],
-      cwd: dir,
-      stdout: "inherit",
-      stderr: "pipe",
-      env: bunEnv,
-    });
-    const output = stderr.toString();
-
-    expect(output).toContain("LATE-THROW");
-    expect(output).toContain("Unhandled error between tests");
-    expect(output).toContain("1 pass");
-    expect(output).toContain("1 error");
+    expect(stderr).toContain("LATE-THROW");
+    expect(stderr).toContain("Unhandled error between tests");
+    expect(stderr).toContain("1 pass");
+    expect(stderr).toContain("1 error");
+    expect(signalCode).toBeNull();
     expect(exitCode).toBe(1);
   });
+
+  test.concurrent(
+    "a short-period interval leaked by an earlier file does not stall later files",
+    async () => {
+      const { stderr, exitCode, signalCode } = await runFixture({
+        "a.test.js": `
+import { test, expect } from "bun:test";
+test("a", () => {
+  setInterval(() => {}, 100);
+  expect(1).toBe(1);
+});
+`,
+        "b.test.js": `
+import { test, expect } from "bun:test";
+test("b", () => { expect(1).toBe(1); });
+`,
+        "c.test.js": `
+import { test, expect } from "bun:test";
+test("c", () => { expect(1).toBe(1); });
+`,
+      });
+
+      expect(stderr).toContain("3 pass");
+      expect(stderr).toContain("0 fail");
+      expect(signalCode).toBeNull();
+      expect(exitCode).toBe(0);
+    },
+  );
 });

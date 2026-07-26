@@ -3432,9 +3432,11 @@ impl TestCommand {
                 // SAFETY: el is the VM-owned event loop; vm is passed back as *mut.
                 unsafe { (*el).tick_immediate_tasks(vm) };
 
-                // Skip once the run already failed so a timed-out test body
-                // is not waited on.
-                if reporter.jest.summary.fail == 0
+                // Only for the final file (earlier files' late errors surface
+                // in the next file's phase loop) and only while the run is
+                // green so a timed-out test body is not waited on.
+                if first_last.last
+                    && reporter.jest.summary.fail == 0
                     && reporter.jest.unhandled_errors_between_tests == 0
                 {
                     drain_for_late_errors(vm);

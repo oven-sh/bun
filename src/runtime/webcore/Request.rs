@@ -1135,10 +1135,12 @@ impl Request {
                     // SAFETY: as_direct returns a live *mut Request payload (m_ctx)
                     let request = unsafe { &*request };
                     if values_to_try.len() == 1 {
-                        // fetch.spec.whatwg.org/#dom-request step 40: input body is consumed.
-                        let input_has_body =
-                            !matches!(request.body_value(), BodyValue::Null | BodyValue::Empty);
-                        if input_has_body {
+                        // fetch.spec.whatwg.org/#dom-request step 40: input body is
+                        // consumed. Only applies when the Request is arguments[0];
+                        // `new Request(url, template)` leaves the template readable.
+                        let consume_input = !is_first_argument_a_url
+                            && !matches!(request.body_value(), BodyValue::Null | BodyValue::Empty);
+                        if consume_input {
                             if let Err(e) = request.throw_if_body_unusable(global_this) {
                                 bail!(Err(e));
                             }
@@ -1152,7 +1154,7 @@ impl Request {
                             Ok(()) => {}
                             Err(e) => bail!(Err(e)),
                         }
-                        if input_has_body {
+                        if consume_input {
                             request.mark_body_consumed(global_this);
                         }
                         success = true;

@@ -1110,7 +1110,7 @@ test("Blob type from a consumed Response keeps the original content-type after c
 // (init has no `body`), the input must be usable and is consumed: a proxy is
 // created for the input body, so input.bodyUsed becomes true and input's body
 // readers reject. Previously Bun cloned the body instead, leaving the input
-// fully readable and buffering a stream body twice.
+// fully readable.
 describe("new Request(request) consumes the input request's body", () => {
   const bodies = {
     "string": () => "payload-0123456789",
@@ -1225,6 +1225,25 @@ describe("new Request(request) consumes the input request's body", () => {
     expect({ inputBodyUsed: input.bodyUsed, inputText: await input.text() }).toEqual({
       inputBodyUsed: false,
       inputText: "",
+    });
+  });
+
+  test("new Request(url, template) leaves the template readable", async () => {
+    // A Request passed as the second argument is not the spec's input; it
+    // contributes its fields like an init dictionary and stays reusable.
+    const template = new Request("http://x/", { method: "POST", body: "payload" });
+    const a = new Request("http://a/", template);
+    const b = new Request("http://b/", template);
+    expect({
+      templateBodyUsed: template.bodyUsed,
+      a: await a.text(),
+      b: await b.text(),
+      template: await template.text(),
+    }).toEqual({
+      templateBodyUsed: false,
+      a: "payload",
+      b: "payload",
+      template: "payload",
     });
   });
 });

@@ -754,10 +754,10 @@ describe("unhandled errors after the final test are reported", () => {
   // jest and `node --test` both drain the event loop after the last test
   // settles; a fire-and-forget rejection or a throw inside a leaked
   // setTimeout must fail the run, not exit 0 with the error dropped.
-  async function runFixture(files: Record<string, string>) {
+  async function runFixture(files: Record<string, string>, extraArgs: string[] = []) {
     const dir = tempDirWithFiles("unhandled-after-last", { ...files, "package.json": "{}" });
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "test", ...Object.keys(files)],
+      cmd: [bunExe(), "test", ...extraArgs, ...Object.keys(files)],
       cwd: dir,
       stdout: "ignore",
       stderr: "pipe",
@@ -986,4 +986,27 @@ test("c", () => { expect(1).toBe(1); });
     expect(signalCode).toBeNull();
     expect(exitCode).toBe(0);
   });
+
+  test.concurrent(
+    "a short-period interval under --rerun-each does not stall later repeats",
+    async () => {
+      const { stderr, exitCode, signalCode } = await runFixture(
+        {
+          "leak.test.js": `
+import { test, expect } from "bun:test";
+test("t", () => {
+  setInterval(() => {}, 100);
+  expect(1).toBe(1);
+});
+`,
+        },
+        ["--rerun-each=3"],
+      );
+
+      expect(stderr).toContain("3 pass");
+      expect(stderr).toContain("0 fail");
+      expect(signalCode).toBeNull();
+      expect(exitCode).toBe(0);
+    },
+  );
 });

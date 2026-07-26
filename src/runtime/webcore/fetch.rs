@@ -2087,7 +2087,6 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         global_this: Some(global_this.into()),
         ssl_config: ssl_config.take(),
         hostname: hostname.take(),
-        upgraded_connection,
         force_http2,
         force_http3,
         force_http1,

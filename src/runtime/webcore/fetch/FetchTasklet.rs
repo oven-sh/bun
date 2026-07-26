@@ -114,7 +114,6 @@ pub struct FetchTasklet {
     // custom checkServerIdentity
     pub check_server_identity: StrongOptional,
     pub reject_unauthorized: bool,
-    pub upgraded_connection: bool,
     /// Caller-supplied `Content-Length` for a streamed body; `None` means
     /// chunked framing, `Some` is enforced against the byte count.
     pub declared_request_content_length: Option<u64>,
@@ -1903,7 +1902,6 @@ impl FetchTasklet {
             abort_reason: StrongOptional::empty(),
             check_server_identity: fetch_options.check_server_identity,
             reject_unauthorized: fetch_options.reject_unauthorized,
-            upgraded_connection: fetch_options.upgraded_connection,
             declared_request_content_length: None,
             request_body_bytes_written: 0,
             hostname: fetch_options.hostname,
@@ -2604,7 +2602,6 @@ pub struct FetchOptions {
     pub check_server_identity: StrongOptional,
     pub unix_socket_path: ZigStringSlice,
     pub ssl_config: Option<http::ssl_config::SharedPtr>,
-    pub upgraded_connection: bool,
     pub force_http2: bool,
     pub force_http3: bool,
     pub force_http1: bool,
@@ -2640,7 +2637,6 @@ impl Default for FetchOptions {
             check_server_identity: StrongOptional::empty(),
             unix_socket_path: ZigStringSlice::EMPTY,
             ssl_config: None,
-            upgraded_connection: false,
             force_http2: false,
             force_http3: false,
             force_http1: false,

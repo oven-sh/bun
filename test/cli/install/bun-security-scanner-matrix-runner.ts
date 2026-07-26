@@ -240,35 +240,40 @@ scanner = "${scannerPath}"`,
   if (hasTTY) {
     let responseSent = false;
 
-    await using terminal = new Bun.Terminal({
-      cols: 80,
-      rows: 24,
-      data(_term, data) {
-        const text = new TextDecoder().decode(data);
-        errAndOut += text;
-
-        if (DO_TEST_DEBUG) {
-          const lines = text.split("\n");
-          for (const line of lines) {
-            process.stdout.write(redSubprocessPrefix);
-            process.stdout.write(" ");
-            process.stdout.write(line);
-            process.stdout.write("\n");
-          }
-        }
-
-        // When we see the prompt, send the configured response
-        if (!responseSent && errAndOut.includes("Continue anyway? [y/N]")) {
-          responseSent = true;
-          terminal.write(ttyResponse + "\n");
-        }
-      },
-    });
-
+    // Use an inline terminal (rather than a pre-created Bun.Terminal) so the
+    // subprocess owns the PTY lifecycle: on process exit Bun drains any
+    // buffered PTY output before `proc.exited` resolves. With a pre-created
+    // terminal the drain is skipped (the user may reuse it), and the child's
+    // final "Continuing with installation..." / "Installation cancelled." line
+    // can race `proc.exited` when the process-exit notification is dispatched
+    // ahead of the PTY-readable event.
     await using proc = Bun.spawn(cmd, {
       cwd: dir,
       env: bunEnv,
-      terminal,
+      terminal: {
+        cols: 80,
+        rows: 24,
+        data(term, data) {
+          const text = new TextDecoder().decode(data);
+          errAndOut += text;
+
+          if (DO_TEST_DEBUG) {
+            const lines = text.split("\n");
+            for (const line of lines) {
+              process.stdout.write(redSubprocessPrefix);
+              process.stdout.write(" ");
+              process.stdout.write(line);
+              process.stdout.write("\n");
+            }
+          }
+
+          // When we see the prompt, send the configured response
+          if (!responseSent && errAndOut.includes("Continue anyway? [y/N]")) {
+            responseSent = true;
+            term.write(ttyResponse + "\n");
+          }
+        },
+      },
     });
 
     exitCode = await proc.exited;

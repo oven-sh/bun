@@ -7491,8 +7491,6 @@ pub mod bv2_impl {
         if path.is_file() || is_node {
             let mut buf2 = bun_paths::path_buffer_pool::get();
             let mut spill: Vec<u8>;
-            // `relative_platform_buf` writes into fixed `MAX_PATH_BYTES` scratch
-            // buffers; an `onResolve` plugin can return a path of any length.
             let rel: &[u8] = if path.text.len() >= bun_paths::MAX_PATH_BYTES {
                 path.text
             } else {

@@ -697,8 +697,7 @@ pub(crate) fn execute_simple_s3_request(
             http_proxy,
             verbose: Some(verbose),
             reject_unauthorized: Some(reject_unauthorized),
-            // S3 stores Content-Encoding as object metadata and returns the body
-            // byte-for-byte; decoding here would corrupt GetObject results.
+            // S3's Content-Encoding is object metadata, not a transport coding.
             disable_decompression: Some(true),
             ..Default::default()
         },

@@ -919,8 +919,7 @@ template JSValue fetchCommonJSModuleNonBuiltin<false>(
 
 extern "C" bool isBunTest;
 
-// Node.js returns one object for `import default` and `require()` of a JSON
-// file; without this, a later require() would hand back the ESM namespace.
+// Node.js: `import default` and `require()` of a JSON file return one object.
 static JSC::JSValue reconcileDataModuleWithRequireCache(
     Zig::GlobalObject* globalObject,
     JSC::JSString* specifierJS,

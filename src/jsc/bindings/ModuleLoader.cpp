@@ -1208,13 +1208,6 @@ static JSValue fetchESMSourceCode(
             RELEASE_AND_RETURN(scope, reject(JSC::createSyntaxError(globalObject, "Failed to parse Object"_s)));
         }
 
-        value = reconcileDataModuleWithRequireCache(globalObject, specifierJS, value);
-        if (scope.exception()) [[unlikely]] {
-            auto* exception = scope.exception();
-            (void)scope.tryClearException();
-            RELEASE_AND_RETURN(scope, reject(exception));
-        }
-
         // JSON can become strings, null, numbers, booleans so we must handle "export default 123"
         auto function = generateJSValueExportDefaultObjectSourceCode(
             globalObject,

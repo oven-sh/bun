@@ -2772,11 +2772,10 @@ impl Source {
 
     pub fn range_of_operator_before(&self, loc: Loc, op: &[u8]) -> Range {
         let text = &self.contents[0..loc.i()];
-        let index = bun_core::strings::index(text, op);
-        if index >= 0 {
+        if let Some(index) = bun_core::strings::last_index_of(text, op) {
             return Range {
                 loc: Loc {
-                    start: loc.start + index,
+                    start: i32::try_from(index).expect("int cast"),
                 },
                 len: i32::try_from(op.len()).expect("int cast"),
             };

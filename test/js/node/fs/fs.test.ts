@@ -8,6 +8,7 @@ import {
   isDebug,
   isIntelMacOS,
   isLinux,
+  isMacOS,
   isPosix,
   isWindows,
   tempDir,
@@ -2966,12 +2967,12 @@ describe("rm", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     const out = JSON.parse(stdout.trim());
-    // On Linux the unlink of /tree/a/locked/keep is denied. On macOS node
-    // (and Bun) report the containing directory's ENOTEMPTY instead. Either
-    // way err.path must point inside the tree, not at its root.
-    const expected = isLinux
-      ? { code: "EACCES", syscall: "unlink", path: "/tree/a/locked/keep" }
-      : { code: "ENOTEMPTY", syscall: "rmdir", path: "/tree/a/locked" };
+    // On Linux/FreeBSD the unlink of /tree/a/locked/keep is denied. On macOS
+    // node (and Bun) report the containing directory's ENOTEMPTY instead.
+    // Either way err.path must point inside the tree, not at its root.
+    const expected = isMacOS
+      ? { code: "ENOTEMPTY", syscall: "rmdir", path: "/tree/a/locked" }
+      : { code: "EACCES", syscall: "unlink", path: "/tree/a/locked/keep" };
     expect({ sync: JSON.parse(out.sync), promise: JSON.parse(out.promise), cb: JSON.parse(out.cb) }).toEqual({
       sync: expected,
       promise: expected,

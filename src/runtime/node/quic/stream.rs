@@ -1046,6 +1046,13 @@ pub(super) unsafe extern "C" fn on_stream_read(ctx: *mut c_void, s: *mut lsquic:
                 s.stop_sending(H3_MESSAGE_ERROR);
             }
             qs.mark_reset(H3_MESSAGE_ERROR);
+            if let Some(session) = qs.session_ref() {
+                session.push_event(SessionEvent::StreamReset {
+                    stream: ctx.cast(),
+                    code: H3_MESSAGE_ERROR,
+                });
+                session.push_event(SessionEvent::StreamWake { stream: ctx.cast() });
+            }
             return;
         }
         // 1xx interim responses are HINTS (RFC 9114 §4.1).

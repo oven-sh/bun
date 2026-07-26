@@ -65,17 +65,12 @@ private:
     void removeOriginal(const String& name);
     void setModified(const String& name, RefPtr<Cookie>&&);
 
-    // Insertion-ordered storage. removeOriginal() tombstones in place (null key) so the
-    // hashed indices below stay valid; setModified() reuses an existing slot for the
-    // same name. Readers skip tombstones.
+    // Ordered storage; removed originals are tombstoned (null key) so indices stay valid.
     Vector<KeyValuePair<String, String>> m_originalCookies;
     Vector<RefPtr<Cookie>> m_modifiedCookies;
 
-    // Name -> indices in m_originalCookies. A Cookie header may legally repeat a name;
-    // get() returns the first, remove() evicts all.
+    // Name -> index. Originals may repeat a name (get() = first, remove() evicts all).
     HashMap<String, Vector<size_t>> m_originalIndex;
-    // Name -> index in m_modifiedCookies. set()/remove() keep at most one live entry
-    // per name.
     HashMap<String, size_t> m_modifiedIndex;
 };
 

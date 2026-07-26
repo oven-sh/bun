@@ -135,8 +135,7 @@ std::optional<String> CookieMap::get(const String& name) const
 
     if (auto it = m_modifiedIndex.find(name); it != m_modifiedIndex.end()) {
         const auto& cookie = m_modifiedCookies[it->value];
-        // A set cookie with an empty value is treated as absent, because that is what
-        // delete() queues as its Set-Cookie tombstone.
+        // delete() queues an empty-value tombstone; treat it as absent.
         if (cookie->value().isEmpty())
             return std::nullopt;
         return cookie->value();
@@ -175,8 +174,6 @@ void CookieMap::removeOriginal(const String& name)
 
 void CookieMap::setModified(const String& name, RefPtr<Cookie>&& cookie)
 {
-    // Reuse an existing slot so repeated set()/delete() on one name does not
-    // accumulate tombstones; live Set-Cookie order is first-write position.
     if (auto it = m_modifiedIndex.find(name); it != m_modifiedIndex.end()) {
         m_modifiedCookies[it->value] = WTF::move(cookie);
         if (!m_modifiedCookies[it->value])
@@ -209,10 +206,7 @@ ExceptionOr<void> CookieMap::remove(const CookieStoreDeleteOptions& options)
 
     removeOriginal(name);
 
-    // The Cookie-header parser accepts names that the Set-Cookie emission grammar
-    // (isValidCookieName) rejects. Such a cookie is still evicted above; there is no
-    // well-formed Set-Cookie header we could emit to clear it on the client, so drop
-    // any earlier modified entry and queue nothing.
+    // Names the parser accepts but the Set-Cookie grammar rejects: evict, queue nothing.
     if (!Cookie::isValidCookieName(name)) {
         setModified(name, nullptr);
         return {};

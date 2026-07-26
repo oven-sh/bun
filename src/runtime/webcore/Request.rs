@@ -220,10 +220,8 @@ impl Request {
         unsafe { &mut (*self.body.as_ptr()).value }
     }
 
-    /// Request ctor step 40 ("create a proxy for inputBody"): the input becomes
-    /// unusable. Clears the cached `body`/`stream` JS slots so a subsequent
-    /// `.body` access reaches `get_body`'s `Value::Used` path instead of the
-    /// orphaned tee branch that `clone_body_value_via_cached_stream` left there.
+    /// Request ctor step 40: input becomes unusable. Clears the cached
+    /// `body`/`stream` JS slots so `.body` reaches `get_body`'s `Used` path.
     fn mark_body_consumed(&self, global_this: &JSGlobalObject) {
         *self.get_body_value() = BodyValue::Used;
         if let Some(js_ref) = <Self as crate::webcore::body::BodyOwnerJs>::js_ref(self) {
@@ -1137,9 +1135,7 @@ impl Request {
                     // SAFETY: as_direct returns a live *mut Request payload (m_ctx)
                     let request = unsafe { &*request };
                     if values_to_try.len() == 1 {
-                        // https://fetch.spec.whatwg.org/#dom-request step 40: when
-                        // init provides no body and input has one, input must be
-                        // usable and is consumed ("create a proxy for inputBody").
+                        // fetch.spec.whatwg.org/#dom-request step 40: input body is consumed.
                         let input_has_body =
                             !matches!(request.body_value(), BodyValue::Null | BodyValue::Empty);
                         if input_has_body {
@@ -1278,9 +1274,7 @@ impl Request {
 
             if !fields.contains(Fields::Body) {
                 match value.fast_get(global_this, bun_jsc::BuiltinName::Body) {
-                    // Spec step 36: init.body is only extracted when it exists and is
-                    // non-null; `{body: null}` behaves like `{}` and falls through to
-                    // the input Request's body.
+                    // Step 36: init.body is only extracted when non-null.
                     Ok(Some(body_)) if !body_.is_null() => {
                         fields.insert(Fields::Body);
                         // fetch spec Request(init): `keepalive: true` with a ReadableStream

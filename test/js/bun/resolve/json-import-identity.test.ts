@@ -18,7 +18,8 @@ async function run(files: Record<string, string>) {
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  return { stdout: normalizeBunSnapshot(stdout, dir), stderr, exitCode };
+  expect(stderr).toBe("");
+  return { stdout: normalizeBunSnapshot(stdout, dir), exitCode };
 }
 
 test.concurrent("static .json imports with and without the type attribute share one module across files", async () => {
@@ -293,7 +294,7 @@ describe("jsonc-loaded filenames are left alone", () => {
   // handling of empty / commented config files.
   for (const name of ["package.json", "tsconfig.json", "jsconfig.json"]) {
     test.concurrent(`static import of an empty ${name} still works`, async () => {
-      const { stdout, stderr, exitCode } = await run({
+      const { stdout, exitCode } = await run({
         [name]: ``,
         "plain.mjs": `import a from "./${name}"; export default a;`,
         "index.mjs": `
@@ -301,20 +302,18 @@ describe("jsonc-loaded filenames are left alone", () => {
           console.log(JSON.stringify(a));
         `,
       });
-      expect(stderr).not.toContain("JSON Parse error");
       expect(stdout).toMatchInlineSnapshot(`"{}"`);
       expect(exitCode).toBe(0);
     });
 
     test.concurrent(`dynamic import of an empty ${name} still works`, async () => {
-      const { stdout, stderr, exitCode } = await run({
+      const { stdout, exitCode } = await run({
         [name]: ``,
         "index.mjs": `
           const a = (await import("./${name}")).default;
           console.log(JSON.stringify(a));
         `,
       });
-      expect(stderr).not.toContain("JSON Parse error");
       expect(stdout).toMatchInlineSnapshot(`"{}"`);
       expect(exitCode).toBe(0);
     });

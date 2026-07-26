@@ -920,8 +920,12 @@ fn drain_for_late_errors(vm: &mut VirtualMachine) {
     use bun_core::{Timespec, TimespecMockMode};
 
     let deadline = Timespec::now(TimespecMockMode::ForceRealTime).add_ms(POST_FILE_DRAIN_GRACE_MS);
+    let el_ptr = vm.event_loop();
 
     loop {
+        vm.tick();
+        // SAFETY: `el_ptr` is the VM-owned event loop; `vm` passed as *mut.
+        unsafe { (*el_ptr).tick_immediate_tasks(vm) };
         vm.tick();
 
         let el = vm.event_loop_shared();
@@ -945,16 +949,28 @@ fn drain_for_late_errors(vm: &mut VirtualMachine) {
         if Timespec::now(TimespecMockMode::ForceRealTime).greater(&deadline) {
             break;
         }
-        // Don't let `auto_tick_active()` park on a heap min past the deadline.
-        if !has_queued && immediate_refs <= 0 && !timers.is_null() {
-            // SAFETY: live per-thread `All`; single JS thread; null-checked.
-            match unsafe { (*timers).timers.peek() } {
-                None => break,
-                Some(min) => {
-                    // SAFETY: `peek()` returns a live heap node.
-                    if unsafe { (*min).next }.greater(&deadline) {
-                        break;
-                    }
+        if has_queued {
+            continue;
+        }
+        // `auto_tick_active()` parks until the soonest heap timer. Internal
+        // runtime timers (GC, WTFTimer) may sit at the heap min, so walk for
+        // the soonest user `TimeoutObject` and only park while one is due
+        // within the deadline; otherwise a far-future user timer cannot
+        // make `auto_tick_active()` park past it.
+        if timers.is_null() {
+            break;
+        }
+        // SAFETY: live per-thread `All`; single JS thread; null-checked.
+        let next_heap_min = unsafe { (*timers).timers.peek() };
+        // SAFETY: live per-thread `All`; walk reads only heap-node fields.
+        let has_js_timer_due = unsafe { (*timers).timers.any_js_timer_due_by(&deadline) };
+        match next_heap_min {
+            None => break,
+            Some(min) => {
+                // SAFETY: `peek()` returns a live heap node.
+                let heap_min_past = unsafe { (*min).next }.greater(&deadline);
+                if heap_min_past || !has_js_timer_due {
+                    break;
                 }
             }
         }
@@ -3410,6 +3426,8 @@ impl TestCommand {
                 // Process event loop while bun_test tests are running
                 vm.event_loop_ref().tick();
 
+                let fail_before = reporter.jest.summary.fail;
+                let unhandled_before = reporter.jest.unhandled_errors_between_tests;
                 let mut prev_unhandled_count = vm.unhandled_error_counter;
                 while buntest.phase != bun_test::Phase::Done {
                     if buntest.wants_wakeup {
@@ -3433,11 +3451,11 @@ impl TestCommand {
                 unsafe { (*el).tick_immediate_tasks(vm) };
 
                 // Only for the final file (earlier files' late errors surface
-                // in the next file's phase loop) and only while the run is
-                // green so a timed-out test body is not waited on.
+                // in the next file's phase loop) and only when this file did
+                // not fail so a timed-out test body is not waited on.
                 if first_last.last
-                    && reporter.jest.summary.fail == 0
-                    && reporter.jest.unhandled_errors_between_tests == 0
+                    && reporter.jest.summary.fail == fail_before
+                    && reporter.jest.unhandled_errors_between_tests == unhandled_before
                 {
                     drain_for_late_errors(vm);
                 }

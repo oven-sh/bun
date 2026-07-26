@@ -844,6 +844,27 @@ test("only test", () => {
     expect(exitCode).toBe(0);
   });
 
+  test.concurrent(
+    "does not hang when a near-term timer queues setImmediate with a far-future timer pending",
+    async () => {
+      const { stderr, exitCode, signalCode } = await runFixture({
+        "imm.test.js": `
+import { test, expect } from "bun:test";
+test("only test", () => {
+  setTimeout(() => {}, 3_600_000);
+  setTimeout(() => setImmediate(() => {}), 5);
+  expect(1).toBe(1);
+});
+`,
+      });
+
+      expect(stderr).toContain("1 pass");
+      expect(stderr).toContain("0 fail");
+      expect(signalCode).toBeNull();
+      expect(exitCode).toBe(0);
+    },
+  );
+
   test.concurrent("does not hang when the last test leaks a ref'd Bun.serve()", async () => {
     const { stderr, exitCode, signalCode } = await runFixture({
       "serve.test.js": `

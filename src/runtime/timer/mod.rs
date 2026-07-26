@@ -341,6 +341,25 @@ impl TimerHeap {
         // live for the heap's lifetime (intrusive invariant maintained by `All`).
         unsafe { self.0.count() }
     }
+
+    /// `true` iff any `TimeoutObject` (user `setTimeout`/`setInterval`) node
+    /// is due at or before `deadline`. O(n) walk; the heap is small.
+    pub(crate) fn any_js_timer_due_by(&self, deadline: &Timespec) -> bool {
+        unsafe fn walk(node: *mut EventLoopTimer, deadline: &Timespec) -> bool {
+            if node.is_null() {
+                return false;
+            }
+            // SAFETY: reachable heap nodes are live (intrusive invariant).
+            let t = unsafe { &*node };
+            if t.tag == EventLoopTimerTag::TimeoutObject && !t.next.greater(deadline) {
+                return true;
+            }
+            // SAFETY: `child`/`next` are valid-or-null heap links.
+            unsafe { walk(t.heap.child, deadline) || walk(t.heap.next, deadline) }
+        }
+        // SAFETY: `self.0.root` is valid-or-null; all reachable nodes are live.
+        unsafe { walk(self.0.root, deadline) }
+    }
 }
 
 /// i32 is exposed to JavaScript and can be used with clearTimeout, clearInterval, etc.

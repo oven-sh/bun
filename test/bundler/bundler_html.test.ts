@@ -1038,9 +1038,7 @@ body {
       const html = api.readFile("out/index.html");
 
       // The preload tag must survive with its href rewritten to a hashed filename.
-      const preload = html.match(
-        /<link rel="preload" as="style" href="(?:\.\/|\/)?(later-[a-zA-Z0-9]+\.css)">/,
-      );
+      const preload = html.match(/<link rel="preload" as="style" href="(?:\.\/|\/)?(later-[a-zA-Z0-9]+\.css)">/);
       expect(preload).not.toBeNull();
 
       // The preloaded CSS must be emitted as its own file, not folded into the
@@ -1050,9 +1048,7 @@ body {
       expect(laterContent).toContain("red");
 
       // The applied stylesheet bundle must NOT contain the preloaded rules.
-      const stylesheet = html.match(
-        /<link rel="stylesheet"[^>]* href="(?:\.\/|\/)?([^"]+\.css)"/,
-      );
+      const stylesheet = html.match(/<link rel="stylesheet"[^>]* href="(?:\.\/|\/)?([^"]+\.css)"/);
       expect(stylesheet).not.toBeNull();
       expect(stylesheet![1]).not.toBe(preload![1]);
       const bundleContent = api.readFile("out/" + stylesheet![1]);

@@ -1330,9 +1330,8 @@ impl WriteFileWaitFromLockedValueTask {
     /// body was read via `readableStreamToBytes`; wrap the resolved bytes as
     /// an `InternalBlob` and hand them to [`then`](Self::then).
     fn on_stream_resolved(global: &JSGlobalObject, callframe: &jsc::CallFrame) -> JSValue {
-        let args = callframe.arguments_old::<2>();
-        let this = args.ptr[args.len - 1].as_promise_ptr::<Self>();
-        let mut value = match args.ptr[0].as_array_buffer(global) {
+        let this = callframe.argument(1).as_promise_ptr::<Self>();
+        let mut value = match callframe.argument(0).as_array_buffer(global) {
             Some(buf) => body::Value::InternalBlob(body::InternalBlob {
                 bytes: buf.slice().to_vec(),
                 was_string: false,
@@ -1344,10 +1343,9 @@ impl WriteFileWaitFromLockedValueTask {
     }
 
     fn on_stream_rejected(global: &JSGlobalObject, callframe: &jsc::CallFrame) -> JSValue {
-        let args = callframe.arguments_old::<2>();
-        let this = args.ptr[args.len - 1].as_promise_ptr::<Self>();
+        let this = callframe.argument(1).as_promise_ptr::<Self>();
         let mut value = body::Value::Error(body::ValueError::JSValue(
-            jsc::strong::Optional::create(args.ptr[0], global),
+            jsc::strong::Optional::create(callframe.argument(0), global),
         ));
         let _ = Self::then(NonNull::new(this).unwrap(), &mut value);
         JSValue::UNDEFINED

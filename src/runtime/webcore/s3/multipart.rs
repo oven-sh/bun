@@ -129,6 +129,8 @@ pub struct MultiPartUpload {
 
     pub current_part_number: u16,
     pub ref_count: Cell<u32>, // intrusive refcount — see bun_ptr::IntrusiveRc
+    /// Server-acknowledged payload bytes; resolves `S3File.write()` / `.writer().end()`.
+    pub uploaded: u64,
     pub ended: bool,
 
     pub options: MultiPartUploadOptions,
@@ -308,6 +310,7 @@ impl UploadPart {
                     this.part_number
                 );
                 let sent = this.data().len();
+                ctx.uploaded += sent as u64;
                 this.free_allocated_slice();
                 // we will need to order this
                 ctx.multipart_etags.push(UploadPartResult {
@@ -459,8 +462,10 @@ impl MultiPartUpload {
             S3UploadResult::Success => {
                 scoped_log!(S3MultiPartUpload, "singleSendUploadResponse success");
 
+                let sent = this.buffered.size() as u64;
+                this.uploaded += sent;
                 if let Some(callback) = this.on_writable {
-                    callback(this, this.callback_context, this.buffered.size() as u64);
+                    callback(this, this.callback_context, sent);
                 }
                 this.done()
             }

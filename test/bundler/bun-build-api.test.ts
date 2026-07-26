@@ -170,6 +170,46 @@ describe("Bun.build", () => {
     ).toThrow();
   });
 
+  test("external: absolute path longer than PATH_MAX does not abort the process", async () => {
+    using dir = tempDir("bun-build-api-external-long", {
+      "e.ts": "console.log(1)\n",
+    });
+    const src = [
+      `const long = "/" + Buffer.alloc(5000, "a").toString();`,
+      `const r = await Bun.build({ entrypoints: ["e.ts"], external: [long], throw: false });`,
+      `console.log("SURVIVED", r.success);`,
+    ].join("\n");
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("SURVIVED true");
+    expect(exitCode).toBe(0);
+  });
+
+  test("bun build --external with path longer than PATH_MAX does not abort the process", async () => {
+    using dir = tempDir("bun-build-cli-external-long", {
+      "e.ts": "console.log(1)\n",
+    });
+    const long = "/" + Buffer.alloc(5000, "a").toString();
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--external", long, "e.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toContain("console.log(1)");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
   test("returns errors properly", async () => {
     Bun.gc(true);
     const build = await buildNoThrow({

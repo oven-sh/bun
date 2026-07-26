@@ -13,6 +13,7 @@ use bun_core::{ZStr, strings};
 // callers must not re-enter the accessor while a previous borrow is alive.
 thread_local! {
     static PARSER_JOIN_INPUT_BUFFER: UnsafeCell<[u8; 4096]> = const { UnsafeCell::new([0u8; 4096]) };
+    static PARSER_JOIN_SPILL: UnsafeCell<Vec<u8>> = const { UnsafeCell::new(Vec::new()) };
     static PARSER_BUFFER: UnsafeCell<[u8; 1024]> = const { UnsafeCell::new([0u8; 1024]) };
 }
 
@@ -1346,6 +1347,39 @@ pub fn join_abs<'a, P: PlatformT>(cwd: &'a [u8], part: &[u8]) -> &'a [u8] {
     join_abs_string::<P>(cwd, &[part])
 }
 
+/// Upper bound on the *normalized* length `_join_abs_string_buf` can write into
+/// its output buffer (including sentinel / NT-prefix slack). Normalization never
+/// grows its input, so the unnormalized concatenation length is the bound.
+#[inline]
+fn join_abs_needed(cwd: &[u8], parts: &[&[u8]]) -> usize {
+    let mut total = cwd.len() + 8;
+    for p in parts {
+        total += p.len() + 1;
+    }
+    total
+}
+
+/// Thread-local output buffer for [`join_abs_string`] / [`join_abs_string_z`]:
+/// the fixed `PARSER_JOIN_INPUT_BUFFER` when the result fits, otherwise the
+/// growable `PARSER_JOIN_SPILL`. Same "valid until next call on this thread"
+/// contract as [`tl_buf_mut`].
+#[inline]
+fn join_abs_tl_buf(needed: usize) -> &'static mut [u8] {
+    if needed <= 4096 {
+        return PARSER_JOIN_INPUT_BUFFER.with(|b| &mut tl_buf_mut(b)[..]);
+    }
+    PARSER_JOIN_SPILL.with(|b| {
+        // SAFETY: see `tl_buf_mut`.
+        let v = unsafe { &mut *b.get() };
+        if v.len() < needed {
+            v.resize(needed, 0);
+        }
+        // SAFETY: thread-local storage; valid until the next call on this
+        // thread reassigns or grows `v`.
+        unsafe { core::slice::from_raw_parts_mut(v.as_mut_ptr(), v.len()) }
+    })
+}
+
 /// Convert parts of potentially invalid file paths into a single valid filpeath
 /// without querying the filesystem
 /// This is the equivalent of path.resolve
@@ -1354,7 +1388,7 @@ pub fn join_abs<'a, P: PlatformT>(cwd: &'a [u8], part: &[u8]) -> &'a [u8] {
 // result borrows the thread-local buffer ('static) OR returns `cwd`
 // directly when `parts.is_empty()`. Return tied to `cwd`'s lifetime ('static: 'a).
 pub fn join_abs_string<'a, P: PlatformT>(cwd: &'a [u8], parts: &[&[u8]]) -> &'a [u8] {
-    PARSER_JOIN_INPUT_BUFFER.with(|b| join_abs_string_buf::<P>(cwd, tl_buf_mut(b), parts))
+    join_abs_string_buf::<P>(cwd, join_abs_tl_buf(join_abs_needed(cwd, parts)), parts)
 }
 
 /// Convert parts of potentially invalid file paths into a single valid filpeath
@@ -1363,7 +1397,7 @@ pub fn join_abs_string<'a, P: PlatformT>(cwd: &'a [u8], parts: &[&[u8]]) -> &'a 
 ///
 /// Returned path is stored in a temporary buffer. It must be copied if it needs to be stored.
 pub fn join_abs_string_z<'a, P: PlatformT>(cwd: &'a [u8], parts: &[&[u8]]) -> &'a ZStr {
-    PARSER_JOIN_INPUT_BUFFER.with(|b| join_abs_string_buf_z::<P>(cwd, tl_buf_mut(b), parts))
+    join_abs_string_buf_z::<P>(cwd, join_abs_tl_buf(join_abs_needed(cwd, parts)), parts)
 }
 
 const JOIN_BUF_LEN: usize = 4096;

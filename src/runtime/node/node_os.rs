@@ -1463,7 +1463,7 @@ mod _impl {
                     errno: -(bun_sys::posix::E::ESRCH as c_int),
                     #[cfg(windows)]
                     errno: libuv::UV_ESRCH,
-                    syscall: BunString::static_("uv_os_getpriority").into(),
+                    syscall: BunString::static_("uv_os_setpriority").into(),
                     ..Default::default()
                 };
                 Err(global.throw_value(err.to_error_instance_with_info_object(global)))
@@ -1476,7 +1476,7 @@ mod _impl {
                     errno: -(bun_sys::posix::E::EACCES as c_int),
                     #[cfg(windows)]
                     errno: libuv::UV_EACCES,
-                    syscall: BunString::static_("uv_os_getpriority").into(),
+                    syscall: BunString::static_("uv_os_setpriority").into(),
                     ..Default::default()
                 };
                 Err(global.throw_value(err.to_error_instance_with_info_object(global)))
@@ -1489,7 +1489,7 @@ mod _impl {
                     errno: -(bun_sys::posix::E::ESRCH as c_int),
                     #[cfg(windows)]
                     errno: libuv::UV_ESRCH,
-                    syscall: BunString::static_("uv_os_getpriority").into(),
+                    syscall: BunString::static_("uv_os_setpriority").into(),
                     ..Default::default()
                 };
                 Err(global.throw_value(err.to_error_instance_with_info_object(global)))

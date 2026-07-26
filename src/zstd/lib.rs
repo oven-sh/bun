@@ -300,8 +300,6 @@ pub fn decompress_alloc(src: &[u8]) -> core::result::Result<Vec<u8>, ZstdError> 
     decompress_alloc_with_limit(src, usize::MAX)
 }
 
-/// [`decompress_alloc`] with a hard cap on the output size. Returns
-/// [`ZstdError::OutputTooLarge`] instead of allocating past `max_output_size`.
 pub fn decompress_alloc_with_limit(
     src: &[u8],
     max_output_size: usize,

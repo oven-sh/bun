@@ -2159,16 +2159,9 @@ impl<'a> Parser<'a> {
             parts.append(&mut after);
         }
 
-        // Apply the "ContainsDirectEval" rules to the module scope. `pop_scope`
-        // does this for every nested scope; the module scope has no parent so
-        // it is handled here instead, after the wrapping decision is known.
-        //
-        // When bundling an ESM file, module-scope symbols are hoisted into the
-        // shared chunk scope and there is no way to guarantee direct eval can
-        // still reach them under their original names, so they stay renameable.
-        // A CJS-wrapped file keeps its module scope inside the `__commonJS`
-        // closure, so pinning there is both safe and required for eval to
-        // resolve the original names (including `exports` and `module`).
+        // Apply the "ContainsDirectEval" rules to the module scope (see
+        // `pop_scope`). Bundled ESM is exempt because its module scope is
+        // hoisted into the shared chunk scope.
         if p.module_scope().contains_direct_eval
             && !(p.options.bundle && exports_kind == js_ast::ExportsKind::Esm)
         {

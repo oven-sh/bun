@@ -4806,12 +4806,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // pinned when direct eval is present, we make an exception for top-level
                 // symbols in an ESM file when bundling is enabled. We make no guarantee
                 // that "eval" will be able to reach these symbols and we allow them to be
-                // renamed or removed by tree shaking.
-                //
-                // Note: the module scope is never popped through this function, so
-                // `current_scope.parent` is always `Some` here and the exception above
-                // never applies. The module-scope equivalent lives in `_parse`, where
-                // the wrapping decision (`exports_kind`) is already known.
+                // renamed or removed by tree shaking. The module scope itself is handled
+                // in `_parse` (after `exports_kind` is known), not here.
 
                 self.symbols[member.1.ref_.inner_index() as usize].set_must_not_be_renamed(true);
             }

@@ -583,12 +583,7 @@ impl Loader {
 
         let environ: &[*const c_char] = bun_sys::environ();
         self.map.map.ensure_total_capacity(environ.len())?;
-        // The kernel accepts duplicate KEY= entries in environ. libc getenv() and
-        // Node both resolve to the FIRST occurrence, so keep the first value from
-        // environ and skip later duplicates. Entries that were already in the map
-        // before this scan (indices < prior_count, e.g. `bun test` pre-seeding
-        // NODE_ENV) are still overwritten so process env retains highest priority.
-        let prior_count = self.map.map.count();
+        let preseeded_before = self.map.map.count();
         for &_env in environ {
             // SAFETY: environ entries are NUL-terminated C strings from the OS
             let env = unsafe { bun_core::ffi::cstr(_env) }.to_bytes();
@@ -599,8 +594,9 @@ impl Loader {
             if key.is_empty() {
                 continue;
             }
+            // environ can hold duplicate keys; libc getenv()/Node take the first, so skip repeats from this scan.
             let gop = self.map.get_or_put_without_value(key)?;
-            if !gop.found_existing || gop.index < prior_count {
+            if !gop.found_existing || gop.index < preseeded_before {
                 *gop.value_ptr = HashTableValue {
                     value: Box::from(value),
                 };

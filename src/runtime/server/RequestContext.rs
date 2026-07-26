@@ -3613,9 +3613,7 @@ where
         // an async hop keep the Response rooted via response_protected.
         let response: &mut Response = self.response_weakref.get().unwrap();
         let mut status = response.status_code();
-        // +0 bitwise copy; `init.status_text` stays live for the whole request
-        // (nothing below mutates it), so the borrowed bytes outlive the
-        // `do_write_status` calls below.
+        // +0 borrow of `init.status_text`; that field is not mutated below.
         let status_text_str = response.get_init_status_text();
         let status_text_slice = status_text_str.to_utf8_without_ref();
         let mut needs_content_range = self.flags.needs_content_range()

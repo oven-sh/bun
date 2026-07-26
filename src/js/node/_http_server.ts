@@ -503,7 +503,8 @@ Server.prototype.closeIdleConnections = function () {
     return;
   }
   for (const socket of connections) {
-    if (socket.parser == null || socket._httpMessage || socket[kPipelinedResponses]?.length) {
+    const message = socket._httpMessage;
+    if (socket.parser == null || (message && !message.finished) || socket[kPipelinedResponses]?.length) {
       continue;
     }
     // Node.js's ConnectionsList.idle() additionally skips parsers whose

@@ -2385,9 +2385,14 @@ extern "C" JSC::EncodedJSValue Bun__createFetchFailedTypeError(
         }
     }
 
+    // Only transplant the fetch() call-site stack for the pre-response
+    // rejection. A body-stage ('terminated') error reaches the consumer via
+    // the body stream/promise, whose reject path attaches the awaiter's async
+    // frames; overwriting those with the fetch() call site would point at the
+    // wrong line.
     auto* destInstance = dynamicDowncast<JSC::ErrorInstance>(result);
     JSC::JSValue stackSrc = JSC::JSValue::decode(stackSourceValue);
-    if (auto* srcInstance = dynamicDowncast<JSC::ErrorInstance>(stackSrc); srcInstance && destInstance) {
+    if (auto* srcInstance = dynamicDowncast<JSC::ErrorInstance>(stackSrc); srcInstance && destInstance && !terminated) {
         if (auto* srcTrace = srcInstance->stackTrace(); srcTrace && !srcTrace->isEmpty()) {
             // Copy: source may be shared across a cloned Response body.
             WTF::Vector<JSC::StackFrame> frames;
@@ -2409,11 +2414,10 @@ extern "C" JSC::EncodedJSValue Bun__createFetchFailedTypeError(
         }
     }
 
-    if (destInstance) {
+    if (destInstance && !terminated) {
         auto* destTrace = destInstance->stackTrace();
         if ((!destTrace || destTrace->isEmpty()) && !result->getDirect(vm, vm.propertyNames->stack)) {
-            auto header = terminated ? "TypeError: terminated"_s : "TypeError: fetch failed"_s;
-            result->putDirect(vm, vm.propertyNames->stack, JSC::jsString(vm, String(header)), JSC::PropertyAttribute::DontEnum | 0);
+            result->putDirect(vm, vm.propertyNames->stack, JSC::jsString(vm, String("TypeError: fetch failed"_s)), JSC::PropertyAttribute::DontEnum | 0);
         }
     }
 

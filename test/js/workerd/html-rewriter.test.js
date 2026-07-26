@@ -114,8 +114,7 @@ describe("HTMLRewriter", () => {
     const fullBody = "<div id=a><p>hello <b>world</b></p></div>";
     // Ties the rejection to the connection failure so an unrelated rejection
     // ("Body already used", an internal rewriter error) can't keep this green.
-    // The exact RST message varies by platform, so match loosely.
-    const connectionError = /socket|connection|ECONNRESET/i;
+    const connectionError = { name: "TypeError", code: "ECONNRESET" };
 
     async function withPartialBodyServer(fn) {
       let release;
@@ -154,20 +153,17 @@ describe("HTMLRewriter", () => {
     function settle(promise) {
       return promise.then(
         value => ({ rejected: false, value }),
-        error => ({ rejected: true, message: String(error?.message) }),
+        error => ({ rejected: true, name: error?.name, code: error?.code }),
       );
     }
-    const rejectedWithConnectionError = {
-      rejected: true,
-      message: expect.stringMatching(connectionError),
-    };
+    const rejectedWithConnectionError = { rejected: true, ...connectionError };
 
     it("control: .text() on the untransformed response rejects", async () => {
       await withPartialBodyServer(async (url, release) => {
         const res = await fetch(url);
         const text = res.text();
         release();
-        await expect(text).rejects.toThrow(connectionError);
+        await expect(text).rejects.toMatchObject(connectionError);
       });
     });
 
@@ -191,7 +187,7 @@ describe("HTMLRewriter", () => {
         const res = await fetch(url);
         const buf = rewriter().transform(res).arrayBuffer();
         release();
-        await expect(buf).rejects.toThrow(connectionError);
+        await expect(buf).rejects.toMatchObject(connectionError);
       });
     });
 
@@ -260,7 +256,7 @@ describe("HTMLRewriter", () => {
         const res = await fetch(url);
         const text = rw.transform(res).text();
         release();
-        await expect(text).rejects.toThrow(connectionError);
+        await expect(text).rejects.toMatchObject(connectionError);
         expect(endCalls).toBe(0);
       });
     });
@@ -274,8 +270,14 @@ describe("HTMLRewriter", () => {
         const text = res.text();
         release();
         // Awaiting the rejection is the barrier: the body is now Value::Error.
-        await expect(text).rejects.toThrow(connectionError);
-        expect(() => rewriter().transform(res)).toThrow(connectionError);
+        await expect(text).rejects.toMatchObject(connectionError);
+        let thrown;
+        try {
+          rewriter().transform(res);
+        } catch (e) {
+          thrown = e;
+        }
+        expect(thrown).toMatchObject(connectionError);
       });
     });
 

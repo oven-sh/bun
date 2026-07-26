@@ -998,6 +998,10 @@ impl FetchTasklet {
                         .store(false, Ordering::Release);
                     self.abort_task();
                     self.mutex.unlock();
+                    if is_done {
+                        // SAFETY: `self` is the live heap tasklet; we hold a ref.
+                        FetchTasklet::deref(std::ptr::from_mut(self));
+                    }
                     return Ok(());
                 }
             }

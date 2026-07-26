@@ -699,11 +699,6 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
     if (tls) {
       this.serverName = tls.serverName || host || "localhost";
     }
-    // Cancel any prior close()'s pending drain before installing a new handle.
-    this[kClosing] = false;
-    this[kPendingDrainClose] = false;
-    this[kCloseCallback] = undefined;
-    this[serverSymbol] = undefined;
     this[serverSymbol] = Bun.serve<any>({
       idleTimeout: 0, // nodejs dont have a idleTimeout by default
       tls,
@@ -1181,6 +1176,11 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
       // },
     });
 
+    // Cancel any prior close()'s pending drain now that the new handle is
+    // installed (after the fallible Bun.serve() so a throw leaves state intact).
+    this[kClosing] = false;
+    this[kPendingDrainClose] = false;
+    this[kCloseCallback] = undefined;
     getBunServerAllClosedPromise(this[serverSymbol]).$then(emitCloseNTServer.bind(this));
     isHTTPS = this[serverSymbol].protocol === "https";
     applyServerCustomOptions(this);

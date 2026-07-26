@@ -7,13 +7,13 @@
 
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, readdirSorted, tempDir } from "harness";
-import { createHash } from "node:crypto";
+import { createHash, randomFillSync } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { join } from "node:path";
-import { createGzip, gzipSync } from "node:zlib";
+import { constants as zconst, crc32, deflateRawSync, gzipSync } from "node:zlib";
 
-setDefaultTimeout(1000 * 60 * 5);
+setDefaultTimeout(1000 * 60);
 
 // -------------------------------------------------------------------
 // Tarball construction helpers. We build the .tgz in-process so the
@@ -109,18 +109,13 @@ function makeEntries(): Entry[] {
       body: Buffer.from("long path ok\n"),
     },
   ];
-  // Bulk entries: SHA-chained bytes so gzip can't collapse them away.
+  // Bulk entries: CSPRNG bytes so gzip can't collapse them away.
   // Sized so the compressed tarball exceeds the default
   // BUN_INSTALL_STREAMING_MIN_SIZE (2 MB) — streaming only commits
-  // when Content-Length is above that threshold.
+  // when Content-Length is above that threshold. Contents vary per
+  // run; the extraction check compares against these same buffers.
   for (let i = 0; i < 48; i++) {
-    const bytes = Buffer.alloc(48 * 1024);
-    let seed = createHash("sha256").update(`chunk-${i}`).digest();
-    for (let off = 0; off < bytes.length; off += 32) {
-      seed.copy(bytes, off);
-      seed = createHash("sha256").update(seed).digest();
-    }
-    entries.push({ path: `data/chunk-${i}.bin`, body: bytes });
+    entries.push({ path: `data/chunk-${i}.bin`, body: randomFillSync(Buffer.alloc(48 * 1024)) });
   }
   return entries;
 }
@@ -211,7 +206,9 @@ async function runInstall(cwd: string, extraEnv: Record<string, string> = {}) {
   return { stdout, stderr, exitCode };
 }
 
-describe("streaming tarball extraction", () => {
+// Every test below owns its own registry (port:0), tempDir and install
+// subprocess, so they share no mutable state and can run concurrently.
+describe.concurrent("streaming tarball extraction", () => {
   const entries = makeEntries();
   const { tgz, shasum, integrity } = buildTarball(entries);
 
@@ -400,6 +397,8 @@ describe("streaming tarball extraction", () => {
 
     const { stderr, exitCode } = await runInstall(String(dir));
     expect(stderr).toContain("Integrity check failed");
+    // The streamed temp tree must not have been promoted into node_modules.
+    expect(existsSync(join(String(dir), "node_modules", "stream-pkg", "package.json"))).toBe(false);
     expect(exitCode).not.toBe(0);
   });
 
@@ -551,7 +550,7 @@ describe("streaming tarball extraction", () => {
 // behaviour change here is the libarchive patch leaking into the shared
 // buffered codepath.
 // -------------------------------------------------------------------
-test("buffered extract: damaged-block retry resets header state (upstream semantics)", async () => {
+test.concurrent("buffered extract: damaged-block retry resets header state (upstream semantics)", async () => {
   // One pax 'g' extended-header payload. libarchive's header_pax_global
   // just skips it, but parsing it sets `seen_headers |= seen_g_header`;
   // seeing a second one without an intervening state reset is what
@@ -611,41 +610,51 @@ test("buffered extract: damaged-block retry resets header state (upstream semant
 // growing the decompression buffer without limit and installing a
 // multi-gigabyte file.
 // -------------------------------------------------------------------
-test("buffered extract rejects a registry tarball whose decompressed size exceeds the limit", async () => {
+test.concurrent("buffered extract rejects a registry tarball whose decompressed size exceeds the limit", async () => {
   // 2.25 GiB of zeros: comfortably above the 2 GiB decompression cap,
   // a multiple of 512 so the tar entry needs no trailing pad block,
   // and its gzip ISIZE footer is far above the 64 MB libdeflate
   // preallocation cutoff so the streaming zlib reader is what runs.
   const PAYLOAD_SIZE = 2304 * 1024 * 1024;
-  const ZERO_CHUNK = Buffer.alloc(64 * 1024 * 1024);
+  const BLOCK = 64 * 1024 * 1024;
+  const zeros = Buffer.alloc(BLOCK);
 
   const pkgJson = Buffer.from(JSON.stringify({ name: "oversized-pkg", version: "1.0.0" }) + "\n");
 
-  // Stream the tar through gzip so the test process never holds the
-  // 2.25 GiB uncompressed archive in memory; only the small compressed
-  // tarball is kept around.
-  const gzip = createGzip({ level: 9 });
-  const compressed: Buffer[] = [];
-  gzip.on("data", c => compressed.push(c as Buffer));
-  const gzipDone = new Promise<void>((resolve, reject) => {
-    gzip.on("end", resolve);
-    gzip.on("error", reject);
-  });
-  const writeTar = (chunk: Buffer) =>
-    new Promise<void>((resolve, reject) => gzip.write(chunk, err => (err ? reject(err) : resolve())));
+  // Build a single gzip member whose deflate stream is a short prefix
+  // followed by one raw-deflate block of 64 MiB zeros repeated 36× and
+  // a BFINAL terminator. Z_FULL_FLUSH resets the dictionary so the
+  // block is self-contained and safe to concatenate; the result is a
+  // valid deflate stream that inflates to the full 2.25 GiB tar
+  // without ever materialising that much input in the test process.
+  const prefix = Buffer.concat([
+    tarHeader("package/package.json", pkgJson.length, "0"),
+    pkgJson,
+    pad512(pkgJson.length),
+    tarHeader("package/data.bin", PAYLOAD_SIZE, "0"),
+  ]);
+  const tail = Buffer.alloc(1024, 0); // two zero blocks = end-of-archive
 
-  await writeTar(tarHeader("package/package.json", pkgJson.length, "0"));
-  await writeTar(pkgJson);
-  await writeTar(pad512(pkgJson.length));
-  await writeTar(tarHeader("package/data.bin", PAYLOAD_SIZE, "0"));
-  for (let written = 0; written < PAYLOAD_SIZE; written += ZERO_CHUNK.length) {
-    await writeTar(ZERO_CHUNK);
-  }
-  await writeTar(Buffer.alloc(1024, 0)); // two zero blocks = end-of-archive
-  gzip.end();
-  await gzipDone;
+  const prefixBlock = deflateRawSync(prefix, { finishFlush: zconst.Z_FULL_FLUSH });
+  const zeroBlock = deflateRawSync(zeros, { level: 1, strategy: zconst.Z_RLE, finishFlush: zconst.Z_FULL_FLUSH });
+  const tailBlock = deflateRawSync(tail); // default Z_FINISH → BFINAL=1
 
-  const tgz = Buffer.concat(compressed);
+  let crc = crc32(prefix);
+  for (let i = 0; i < PAYLOAD_SIZE / BLOCK; i++) crc = crc32(zeros, crc);
+  crc = crc32(tail, crc);
+
+  const trailer = Buffer.alloc(8);
+  trailer.writeUInt32LE(crc >>> 0, 0);
+  trailer.writeUInt32LE((prefix.length + PAYLOAD_SIZE + tail.length) >>> 0, 4);
+
+  const parts: Buffer[] = [Buffer.from([0x1f, 0x8b, 0x08, 0, 0, 0, 0, 0, 0, 0xff]), prefixBlock];
+  for (let i = 0; i < PAYLOAD_SIZE / BLOCK; i++) parts.push(zeroBlock);
+  parts.push(tailBlock, trailer);
+  const tgz = Buffer.concat(parts);
+  // The libdeflate preallocation path keys off the gzip ISIZE trailer;
+  // keeping it above the 64 MiB cutoff forces the zlib reader with the
+  // MAX_DECOMPRESSED_TARBALL_SIZE bound.
+  expect(trailer.readUInt32LE(4)).toBeGreaterThan(64 * 1024 * 1024);
   // Sanity: the download itself stays tiny even though it inflates far
   // past the cap — that is exactly the case the bound exists for.
   expect(tgz.length).toBeLessThan(8 * 1024 * 1024);

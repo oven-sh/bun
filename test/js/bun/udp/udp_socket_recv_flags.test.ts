@@ -37,8 +37,8 @@ describe("udpSocket() receive flags", () => {
   });
 
   // IP_RECVERR is armed on connect (Linux only). An unconnected socket never
-  // sees ICMP at all; a connected one surfaces it through the error handler,
-  // stays open, and can still send.
+  // sees ICMP at all; a connected one surfaces it through the error handler
+  // and stays open.
   test.skipIf(!isLinux)("connected socket surfaces ECONNREFUSED from ICMP and stays open", async () => {
     const errors: (Error & { code?: string; errqueue?: boolean })[] = [];
     const { promise: errPromise, resolve: resolveErr } = Promise.withResolvers<void>();

@@ -132,54 +132,57 @@ describe("CONNECT failure status", () => {
   // origin leg (ProxyTunnel does not reset state between the two), or the
   // origin's Content-Length: N would be rejected as a duplicate-CL conflict.
   for (const connectStatus of [202, 204] as const) {
-    test.concurrent(`CONNECT → ${connectStatus} establishes the tunnel and the origin body arrives intact`, async () => {
-      await using origin = await createAdversarialOrigin({ tls: true, body: "hello-through-2xx-tunnel" });
+    test.concurrent(
+      `CONNECT → ${connectStatus} establishes the tunnel and the origin body arrives intact`,
+      async () => {
+        await using origin = await createAdversarialOrigin({ tls: true, body: "hello-through-2xx-tunnel" });
 
-      const sockets = new Set<net.Socket>();
-      const proxy = net.createServer(client => {
-        sockets.add(client);
-        client.on("close", () => sockets.delete(client));
-        client.on("error", () => {});
-        let head = "";
-        const onHead = (d: Buffer) => {
-          head += d.toString("latin1");
-          const end = head.indexOf("\r\n\r\n");
-          if (end < 0) return;
-          client.removeListener("data", onHead);
-          const [, target] = head.split("\r\n")[0].split(" ");
-          const colon = target.lastIndexOf(":");
-          const upstream = net.connect(Number(target.slice(colon + 1)), "127.0.0.1");
-          sockets.add(upstream);
-          upstream.on("close", () => (sockets.delete(upstream), client.end()));
-          upstream.on("error", () => client.destroy());
-          upstream.once("connect", () => {
-            client.write(`HTTP/1.1 ${connectStatus} ${connectStatus === 204 ? "No Content" : "Accepted"}\r\n\r\n`);
-            client.pipe(upstream);
-            upstream.pipe(client);
-          });
-        };
-        client.on("data", onHead);
-      });
-      proxy.listen(0, "127.0.0.1");
-      await once(proxy, "listening");
-      const port = (proxy.address() as net.AddressInfo).port;
-
-      try {
-        const res = await fetch(origin.url, {
-          proxy: `http://127.0.0.1:${port}`,
-          keepalive: false,
-          tls: laxTls,
-          signal: AbortSignal.timeout(15_000),
+        const sockets = new Set<net.Socket>();
+        const proxy = net.createServer(client => {
+          sockets.add(client);
+          client.on("close", () => sockets.delete(client));
+          client.on("error", () => {});
+          let head = "";
+          const onHead = (d: Buffer) => {
+            head += d.toString("latin1");
+            const end = head.indexOf("\r\n\r\n");
+            if (end < 0) return;
+            client.removeListener("data", onHead);
+            const [, target] = head.split("\r\n")[0].split(" ");
+            const colon = target.lastIndexOf(":");
+            const upstream = net.connect(Number(target.slice(colon + 1)), "127.0.0.1");
+            sockets.add(upstream);
+            upstream.on("close", () => (sockets.delete(upstream), client.end()));
+            upstream.on("error", () => client.destroy());
+            upstream.once("connect", () => {
+              client.write(`HTTP/1.1 ${connectStatus} ${connectStatus === 204 ? "No Content" : "Accepted"}\r\n\r\n`);
+              client.pipe(upstream);
+              upstream.pipe(client);
+            });
+          };
+          client.on("data", onHead);
         });
-        expect(await res.text()).toBe("hello-through-2xx-tunnel");
-        expect(res.status).toBe(200);
-        expect(res.headers.get("content-length")).toBe(String("hello-through-2xx-tunnel".length));
-        expect(origin.requests.length).toBe(1);
-      } finally {
-        for (const s of sockets) s.destroy();
-        proxy.close();
-      }
-    });
+        proxy.listen(0, "127.0.0.1");
+        await once(proxy, "listening");
+        const port = (proxy.address() as net.AddressInfo).port;
+
+        try {
+          const res = await fetch(origin.url, {
+            proxy: `http://127.0.0.1:${port}`,
+            keepalive: false,
+            tls: laxTls,
+            signal: AbortSignal.timeout(15_000),
+          });
+          expect(await res.text()).toBe("hello-through-2xx-tunnel");
+          expect(res.status).toBe(200);
+          expect(res.headers.get("content-length")).toBe(String("hello-through-2xx-tunnel".length));
+          expect(origin.requests.length).toBe(1);
+        } finally {
+          for (const s of sockets) s.destroy();
+          proxy.close();
+        }
+      },
+    );
   }
 
   for (const proxyTls of [false, true] as const) {

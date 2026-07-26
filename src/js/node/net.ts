@@ -2805,7 +2805,7 @@ Socket.prototype._writev = function _writev(data, callback) {
     this._pendingEncoding = "";
     this[kwriteCallback] = callback;
     const retry = onWritevHandleReady.bind(this, data, callback);
-    const onClose = onWritevCloseBeforeReady.bind(this, callback);
+    const onClose = onWritevCloseBeforeReady.bind(this, connecting, callback);
     this.once(connecting ? "connect" : kUpgradeAttached, function () {
       this.off("close", onClose);
       retry();
@@ -2857,10 +2857,10 @@ function onWritevHandleReady(data, callback) {
   }
 }
 
-function onWritevCloseBeforeReady(callback) {
+function onWritevCloseBeforeReady(connecting, callback) {
   if (this[kwriteCallback] !== callback) return;
   this[kwriteCallback] = null;
-  callback($ERR_SOCKET_CLOSED_BEFORE_CONNECTION());
+  callback(connecting ? $ERR_SOCKET_CLOSED_BEFORE_CONNECTION() : $ERR_SOCKET_CLOSED());
 }
 
 Socket.prototype._write = function _write(chunk, encoding, callback) {

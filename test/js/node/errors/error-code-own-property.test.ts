@@ -81,7 +81,7 @@ describe("Node.js ERR_* error .code is an own property", () => {
   });
 
   test("ERR_SYSTEM_ERROR 'code' is own and enumerable", () => {
-    const err = capture(() => os.setPriority(0x7ffffffe, 0));
+    const err = capture(() => os.setPriority(-1, 0));
     expect(err.code).toBe("ERR_SYSTEM_ERROR");
     expect(Object.getOwnPropertyDescriptor(err, "code")).toEqual({
       value: "ERR_SYSTEM_ERROR",

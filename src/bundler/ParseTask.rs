@@ -2199,7 +2199,7 @@ pub mod parse_worker {
             .loader
             // SAFETY: `options` is a disjoint field of the live `*transpiler`.
             .or_else(|| file_path.loader(unsafe { &(*transpiler).options.loaders }))
-            .unwrap_or(Loader::File);
+            .unwrap_or(Loader::Url);
 
         let mut contents_came_from_plugin: bool = false;
         let result = get_code_for_parse_task(
@@ -2271,7 +2271,7 @@ pub mod parse_worker {
             .loader
             // SAFETY: `options` is a disjoint field of the live `*transpiler` (see .rs:1955).
             .or_else(|| file_path.loader(unsafe { &(*transpiler).options.loaders }))
-            .unwrap_or(Loader::File);
+            .unwrap_or(Loader::Url);
 
         // WARNING: Do not change the variant of `task.contents_or_fd` from
         // `.fd` to `.contents` (or back) after this point!

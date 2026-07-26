@@ -356,10 +356,12 @@ pub(crate) mod kind {
                     if len == NOT_SET_LEN {
                         return CacheOutput::NotSet;
                     }
-                    // SAFETY: (ptr, len) were stored together under the seqlock from a
-                    // valid &'static [u8] returned by getenv_z (which borrows from libc's
-                    // environ; the slot for a key that was setenv()'d stays valid because
-                    // glibc/musl never free the previous value).
+                    // SAFETY: (ptr, len) were stored together under the
+                    // seqlock, either from the startup-env `getenv_z` slice
+                    // (valid for process lifetime) or from `set_owned()`'s
+                    // leaked Box. Runtime `process.env` writes go through
+                    // `set_owned()`, so a musl-freed previous setenv string is
+                    // never cached.
                     return CacheOutput::Value(unsafe { core::slice::from_raw_parts(ptr, len) });
                 }
             }
@@ -814,8 +816,18 @@ macro_rules! platform_specific_new {
                 }
             }
 
-            /// Drop the cached value so the next `get()` re-reads libc; used by
-            /// the `process.env` write path after `setenv()`.
+            /// Replace the cached value with an owned copy (leaked for
+            /// `'static`), so the cache never holds a pointer into `environ`
+            /// after a runtime `setenv()`: musl frees the previous setenv-
+            /// allocated string on overwrite, which would dangle a borrowed
+            /// slice. Called by the `process.env` write path.
+            pub fn set_owned(value: Option<&[u8]>) {
+                let leaked: Option<&'static [u8]> =
+                    value.map(|v| &*Box::leak(Box::<[u8]>::from(v)));
+                CACHE.deser_and_invalidate(leaked);
+            }
+
+            /// Drop the cached value so the next `get()` re-reads libc.
             pub fn reset() {
                 CACHE.reset();
             }
@@ -1009,20 +1021,21 @@ macro_rules! new_feature_flag {
 }
 pub(crate) use new_feature_flag;
 
-/// Drop the cached value for the typed accessor whose key matches `name`, so
-/// the next `get()` re-reads libc. `process.env` writes call `setenv()` and
-/// then this — otherwise `os.homedir()` / `os.tmpdir()` would keep returning
-/// the value cached on first read.
+/// Replace the cached value for the typed accessor whose key matches `name`
+/// with an owned copy of `value` (or mark it unset). `process.env` writes call
+/// `setenv()` and then this so `os.homedir()` etc. observe the change; the
+/// cache stores a leaked owned slice rather than a pointer into `environ`,
+/// because musl frees the previous setenv-allocated string on overwrite.
 ///
 /// Only the string-kind accessors that are read at runtime (after VM startup)
 /// are listed; the `BUN_*` flags are read once on boot and intentionally left
 /// cached.
-pub fn invalidate_for_setenv(name: &[u8]) {
+pub fn invalidate_for_setenv(name: &[u8], value: Option<&[u8]>) {
     macro_rules! try_var {
         ($v:ident) => {
             if let Some(k) = $v::platform_key() {
                 if crate::strings::eql(k.as_bytes(), name) {
-                    $v::reset();
+                    $v::set_owned(value);
                     return;
                 }
             }

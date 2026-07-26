@@ -2299,7 +2299,7 @@ pub mod environment_variables {
                 // SAFETY: NUL-terminated C strings; setenv copies both. The
                 // write lock excludes bun_core::getenv_z on other threads.
                 unsafe { libc::setenv(key_z.as_ptr(), val_z.as_ptr(), 1) };
-                bun_core::env_var::invalidate_for_setenv(key);
+                bun_core::env_var::invalidate_for_setenv(key, Some(val));
             }
         }
     }
@@ -2333,7 +2333,7 @@ pub mod environment_variables {
                     let _g = bun_core::environ_write_lock();
                     // SAFETY: NUL-terminated C string.
                     unsafe { libc::unsetenv(key_z.as_ptr()) };
-                    bun_core::env_var::invalidate_for_setenv(key);
+                    bun_core::env_var::invalidate_for_setenv(key, None);
                 }
             }
         }

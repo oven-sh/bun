@@ -356,9 +356,10 @@ pub fn getenv_z(key: &ZStr) -> Option<&'static [u8]> {
             return None;
         }
         // SAFETY: getenv returns a pointer into the process env block; the read
-        // lock serialises against Bun's own setenv path. glibc/musl never free
-        // a previous value string on overwrite, so the returned slice stays
-        // valid after the guard drops.
+        // lock serialises against Bun's own setenv path. glibc leaks previous
+        // values on overwrite but musl frees them, so a caller that needs the
+        // slice to survive a later `process.env[key] = ...` must copy it; the
+        // typed `env_var` cache does (`set_owned`).
         let len = libc::strlen(p);
         return Some(core::slice::from_raw_parts(p.cast::<u8>(), len));
     }

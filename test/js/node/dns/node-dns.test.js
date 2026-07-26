@@ -731,7 +731,14 @@ describe("resolve4 against a loopback responder", () => {
   it("still resolves a well-formed A record from the same path", async () => {
     await withResponder(
       (msg, question) => {
-        const rr = Buffer.concat([Buffer.from([0xc0, 0x0c]), u16(1), u16(1), u32(60), u16(4), Buffer.from([127, 0, 0, 7])]);
+        const rr = Buffer.concat([
+          Buffer.from([0xc0, 0x0c]),
+          u16(1),
+          u16(1),
+          u32(60),
+          u16(4),
+          Buffer.from([127, 0, 0, 7]),
+        ]);
         const hdr = Buffer.concat([msg.slice(0, 2), u16(0x8180), u16(1), u16(1), u16(0), u16(0)]);
         return Buffer.concat([hdr, question, rr]);
       },

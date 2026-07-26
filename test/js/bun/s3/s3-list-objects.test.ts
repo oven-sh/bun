@@ -1,6 +1,6 @@
 import { randomUUIDv7, S3Client, S3Options } from "bun";
 import { afterAll, describe, expect, it } from "bun:test";
-import { getSecret } from "harness";
+import { bunEnv, bunExe, getSecret } from "harness";
 
 const options: S3Options = {
   accessKeyId: "test",
@@ -20,7 +20,11 @@ function createBunServer(fetch: Parameters<typeof Bun.serve>[0]["fetch"]) {
   return server;
 }
 
-describe.concurrent("S3 - List Objects", () => {
+// The S3 client does not honor NO_PROXY, so an inherited HTTP_PROXY hijacks
+// every in-process request to the local stub server.
+const hasHttpProxy = !!(process.env.HTTP_PROXY || process.env.http_proxy);
+
+describe.concurrent.skipIf(hasHttpProxy)("S3 - List Objects", () => {
   it("Should set encoded continuation-token in the request url before list-type", async () => {
     let reqUrl: string;
     using server = createBunServer(async req => {
@@ -1075,6 +1079,85 @@ describe.concurrent("S3 - List Objects", () => {
   });
 });
 
+it("Should reject when a 200 response body is not a ListBucketResult", async () => {
+  const fixture = `
+import { S3Client } from "bun";
+
+const truncated =
+  '<?xml version="1.0"?><ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">' +
+  "<KeyCount>3</KeyCount><IsTruncated>false</IsTruncated>" +
+  "<Contents><Key>k1</Key></Contents>" +
+  "<Contents><Key>k2</Key></Contents>" +
+  "<Contents><Ke";
+
+const bodies: Record<string, string> = {
+  html: "<html><body><h1>502 Bad Gateway</h1></body></html>",
+  empty: "",
+  json: '{"contents":[{"key":"j"}]}',
+  "wrong-root":
+    '<?xml version="1.0"?><ListAllMyBucketsResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Buckets/></ListAllMyBucketsResult>',
+  binary: Buffer.from([0x00, 0x01, 0x02, 0xff, 0xfe, 0x00, 0x3c, 0x00]).toString("binary"),
+  "error-document":
+    '<?xml version="1.0"?><Error><Code>InternalError</Code><Message>We encountered an internal error. Please try again.</Message></Error>',
+  truncated,
+  ok: '<?xml version="1.0"?><ListBucketResult><Name>b</Name></ListBucketResult>',
+};
+
+using server = Bun.serve({
+  port: 0,
+  fetch(req) {
+    const name = new URL(req.url).pathname.split("/")[1];
+    return new Response(bodies[name]!, {
+      headers: { "Content-Type": "application/xml" },
+      status: 200,
+    });
+  },
+});
+
+const results: Record<string, unknown> = {};
+for (const name of Object.keys(bodies)) {
+  const client = new S3Client({
+    accessKeyId: "AK",
+    secretAccessKey: "SK",
+    region: "us-east-1",
+    endpoint: server.url.href,
+    bucket: name,
+  });
+  try {
+    results[name] = { resolved: await client.list() };
+  } catch (e: any) {
+    results[name] = { name: e.name, code: e.code };
+  }
+}
+
+console.log(JSON.stringify(results));
+`;
+
+  // Run in a subprocess with proxy env cleared so the fixture reaches the
+  // local stub even when the harness inherits HTTP_PROXY.
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: { ...bunEnv, HTTP_PROXY: undefined, HTTPS_PROXY: undefined, http_proxy: undefined, https_proxy: undefined },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({
+    html: { name: "S3Error", code: "UnknownError" },
+    empty: { name: "S3Error", code: "UnknownError" },
+    json: { name: "S3Error", code: "UnknownError" },
+    "wrong-root": { name: "S3Error", code: "UnknownError" },
+    binary: { name: "S3Error", code: "UnknownError" },
+    "error-document": { name: "S3Error", code: "InternalError" },
+    truncated: { name: "S3Error", code: "UnknownError" },
+    ok: { resolved: { name: "b" } },
+  });
+  expect(exitCode).toBe(0);
+});
+
 const optionsFromEnv: S3Options = {
   accessKeyId: getSecret("S3_R2_ACCESS_KEY"),
   secretAccessKey: getSecret("S3_R2_SECRET_KEY"),
@@ -1174,7 +1257,7 @@ describe.skipIf(!optionsFromEnv.accessKeyId)("S3 - CI - List Objects", () => {
   });
 });
 
-it("parses a large list response containing repeated unclosed Key tags quickly", async () => {
+it.skipIf(hasHttpProxy)("parses a large list response containing repeated unclosed Key tags quickly", async () => {
   // ListObjectsV2 body with a valid <Name> followed by ~5MB of opening <Key> tags
   // that never have a matching closing tag.
   const malformed = `<ListBucketResult><Name>my_bucket</Name><Contents>${Buffer.alloc(5_000_000, "<Key>").toString()}</ListBucketResult>`;

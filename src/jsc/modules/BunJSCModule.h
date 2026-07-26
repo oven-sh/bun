@@ -704,9 +704,13 @@ JSC_DEFINE_HOST_FUNCTION(functionRunProfiler, (JSGlobalObject * globalObject, Ca
         }
     }
 
-    const auto report = [hasOtherConsumer](JSC::VM& vm,
+    const auto report = [](JSC::VM& vm,
                             JSC::JSGlobalObject* globalObject) -> JSC::JSValue {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
+        // Re-read at report time: on the promise path a node:inspector
+        // Profiler.start inside the awaited callback can begin owning the
+        // sampler between profile() entry and here.
+        const bool hasOtherConsumer = Bun::isCPUProfilerRunning();
 
         auto& samplingProfiler = *vm.samplingProfiler();
         StringPrintStream topFunctions;
@@ -742,8 +746,8 @@ JSC_DEFINE_HOST_FUNCTION(functionRunProfiler, (JSGlobalObject * globalObject, Ca
 
         return result;
     };
-    const auto reportFailure = [hasOtherConsumer](JSC::VM& vm) -> JSC::JSValue {
-        if (!hasOtherConsumer) {
+    const auto reportFailure = [](JSC::VM& vm) -> JSC::JSValue {
+        if (!Bun::isCPUProfilerRunning()) {
             if (auto* samplingProfiler = vm.samplingProfiler()) {
                 auto& lock = samplingProfiler->getLock();
                 WTF::Locker locker { lock };

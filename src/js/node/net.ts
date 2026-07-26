@@ -670,12 +670,7 @@ function SocketEmitEndNT(self, _err?) {
   const pendingWrite = self[kwriteCallback];
   if (pendingWrite && (self.destroyed || _err)) {
     self[kwriteCallback] = null;
-    if (self.secureConnecting && !self._hadError) {
-      onConnectEnd.$call(self);
-      pendingWrite(tlsWriteCanceled());
-    } else {
-      pendingWrite(_err ?? $ERR_SOCKET_CLOSED());
-    }
+    pendingWrite(_err ?? $ERR_SOCKET_CLOSED());
   }
 }
 

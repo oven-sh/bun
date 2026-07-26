@@ -79,13 +79,9 @@ pub(crate) extern "C" fn zig__ModuleInfoDeserialized__toJSModuleRecord(
                 return core::ptr::null_mut();
             }
             match k {
-                // JSModuleRecord no longer stores the VariableEnvironments; the
-                // ModuleProgramCodeBlock built at bytecode-gen time carries the
-                // var declarations, and ModuleAnalyzer reads lexical variables
-                // from the parsed node. Kept in the serialized buffer for
-                // on-disk cache format compatibility but ignored here.
-                RecordKind::DeclaredVariable | RecordKind::LexicalVariable => {}
-                RecordKind::ImportInfoSingle
+                RecordKind::DeclaredVariable
+                | RecordKind::LexicalVariable
+                | RecordKind::ImportInfoSingle
                 | RecordKind::ImportInfoSingleTypeScript
                 | RecordKind::ImportInfoNamespace
                 | RecordKind::ImportInfoNamespaceDefer

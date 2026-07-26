@@ -382,7 +382,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             let mut handled = false;
                             if identifier_opts.assign_target() == js_ast::AssignTarget::Replace {
                                 if let js_ast::ExprData::EBinary(bin) = p.stmt_expr_value {
-                                    if bin.op == js_ast::OpCode::BinAssign {
+                                    if bin.op == js_ast::OpCode::BinAssign
+                                        && matches!(
+                                            &bin.left.data,
+                                            js_ast::ExprData::EDot(d)
+                                                if d.name == b"exports"
+                                                    && matches!(
+                                                        d.target.data,
+                                                        js_ast::ExprData::EIdentifier(inner)
+                                                            if inner.ref_.eql(p.module_ref)
+                                                    )
+                                        )
+                                    {
                                         if let js_ast::ExprData::EObject(obj) = &bin.right.data {
                                             handled = true;
                                             for prop in obj.properties.slice() {

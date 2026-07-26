@@ -1701,7 +1701,8 @@ bool evaluateDeferredCommonJSModuleForESM(
             return jsUndefined();
         PropertySlot slot(exportsObject, PropertySlot::InternalMethodType::Get);
         bool has = exportsObject->getPropertySlot(globalObject, name, slot);
-        RETURN_IF_EXCEPTION(scope, {});
+        if (scope.exception()) [[unlikely]]
+            return {};
         if (!has)
             return jsUndefined();
         JSValue value = slot.getValue(globalObject, name);

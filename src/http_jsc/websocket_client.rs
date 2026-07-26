@@ -342,20 +342,30 @@ impl<const SSL: bool> WebSocket<SSL> {
         // protocol error SHOULD send a Close frame with the status code first
         // so the peer sees 1002/1007/1009 instead of an abnormal 1006.
         if let Some(wire_code) = code.close_frame_code() {
-            if self.has_tcp() && !self.has_pending_close_dispatch() && !self.close_received.get() {
+            if self.outgoing_websocket.get().is_none() || self.has_pending_close_dispatch() {
+                // A Close frame is already on the wire or draining; a second
+                // protocol error in the same read must not fall through to
+                // fail() → cancel() → close(Failure) and RST it away.
+                return;
+            }
+            if self.has_tcp() {
                 if !self.write_close_frame(wire_code) {
                     // enqueue_encoded_bytes already tore down via
                     // terminate(FailedToWrite) → fail().
                     return;
                 }
+                // §7.1.7: stop processing data from the peer once failed.
+                self.close_received.set(true);
                 if self.send_buffer.borrow().readable_length() == 0 {
                     self.shutdown_after_close_frame();
                     self.clear_data();
-                    self.dispatch_abrupt_close(code);
                 } else {
                     self.close_dispatch_pending
                         .replace(Some(PendingClose::Failed(code)));
                 }
+                // Dispatch now (not after the drain) so C++ transitions to
+                // CLOSED and JS/ws.send() cannot queue data after the Close.
+                self.dispatch_abrupt_close(code);
                 return;
             }
         }
@@ -1156,6 +1166,10 @@ impl<const SSL: bool> WebSocket<SSL> {
     }
 
     fn send_pong(&self) -> bool {
+        if self.has_pending_close_dispatch() {
+            // §5.5.1: nothing follows a Close frame on the wire.
+            return true;
+        }
         if !self.has_tcp() {
             self.dispatch_abrupt_close(ErrorCode::Ended);
             return false;
@@ -1367,6 +1381,9 @@ impl<const SSL: bool> WebSocket<SSL> {
         // SAFETY: called from C++ with a valid pointer; guarded above.
         let this = unsafe { &*this_ptr };
 
+        if this.has_pending_close_dispatch() {
+            return;
+        }
         if !this.has_tcp() || op > 0xF {
             this.dispatch_abrupt_close(ErrorCode::Ended);
             return;
@@ -1418,6 +1435,9 @@ impl<const SSL: bool> WebSocket<SSL> {
         // SAFETY: called from C++ with a valid pointer; guarded above.
         let this = unsafe { &*this_ptr };
 
+        if this.has_pending_close_dispatch() {
+            return;
+        }
         if !this.has_tcp() || op > 0xF {
             this.dispatch_abrupt_close(ErrorCode::Ended);
             return;
@@ -1457,6 +1477,9 @@ impl<const SSL: bool> WebSocket<SSL> {
 
         // SAFETY: str_ is a valid pointer from C++
         let str = unsafe { &*str_ };
+        if this.has_pending_close_dispatch() {
+            return;
+        }
         if !this.has_tcp() {
             this.dispatch_abrupt_close(ErrorCode::Ended);
             return;

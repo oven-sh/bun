@@ -676,12 +676,14 @@ describe.concurrent("WebSocket client writes a Close frame when failing on a bad
     await once(server.listen(0, "127.0.0.1"), "listening");
     const port = (server.address() as import("node:net").AddressInfo).port;
     const closed = Promise.withResolvers<{ code: number; wasClean: boolean }>();
+    const messages: unknown[] = [];
     const ws = new WebSocket(`ws://127.0.0.1:${port}/`);
+    ws.onmessage = e => messages.push(e.data);
     ws.onclose = e => closed.resolve({ code: e.code, wasClean: e.wasClean });
     ws.onerror = () => {};
     const [wire, js] = await Promise.all([received, closed.promise]);
     await new Promise<void>(r => server.close(() => r()));
-    return { wire, js };
+    return { wire, js, messages };
   }
 
   it("masked TEXT from server → Close(1002)", async () => {
@@ -714,6 +716,22 @@ describe.concurrent("WebSocket client writes a Close frame when failing on a bad
 
   it("invalid UTF-8 in a TEXT frame → Close(1007)", async () => {
     const { wire, js } = await run(Buffer.from([0x81, 0x02, 0xc3, 0x28]));
+    expect(wire).toEqual({ bytes: 8, opcode: 8, masked: true, code: 1007 });
+    expect(js).toEqual({ code: 1007, wasClean: false });
+  });
+
+  it("frames trailing the protocol error in the same read are dropped", async () => {
+    // §7.1.7: once failed, the endpoint MUST NOT continue to process data
+    // from the peer. A valid TEXT and a Ping packed after the bad frame must
+    // not dispatch onmessage or put a Pong on the wire after the Close.
+    const { wire, js, messages } = await run(
+      Buffer.concat([
+        Buffer.from([0x81, 0x02, 0xc3, 0x28]), // TEXT with invalid UTF-8
+        Buffer.from([0x81, 0x02, 0x68, 0x69]), // TEXT "hi"
+        Buffer.from([0x89, 0x00]), // Ping
+      ]),
+    );
+    expect(messages).toEqual([]);
     expect(wire).toEqual({ bytes: 8, opcode: 8, masked: true, code: 1007 });
     expect(js).toEqual({ code: 1007, wasClean: false });
   });

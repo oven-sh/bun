@@ -450,8 +450,10 @@ function WriteStream(this: FSStream, path: string | null, options?: any): void {
     if (!write) this._write = null;
     if (!writev) this._writev = null;
   } else {
-    // Skip the per-chunk thread-pool dispatch unless positional writes need it.
-    if (!fastPath && start === undefined) this[kSyncWrite] = true;
+    // Skip the per-chunk thread-pool dispatch when we opened the path ourselves
+    // (so the fd is known to be a regular file). A caller-supplied fd may be a
+    // pipe or nonblocking descriptor, which writeSync would block on or EAGAIN.
+    if (!fastPath && fd == null && start === undefined) this[kSyncWrite] = true;
     else this._writev = undefined;
     $assert(this[kFs].write, "assuming user does not delete fs.write!");
   }
@@ -585,7 +587,8 @@ function writeAllSync(stream, data, cb) {
       stream.bytesWritten += n;
       offset += n;
       size -= n;
-      if (n === 0 && ++retries > 5) return cb(new Error("write failed"));
+      retries = n ? 0 : retries + 1;
+      if (retries > 5) return cb(new Error("write failed"));
     }
   } catch (e) {
     return cb(e);

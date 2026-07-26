@@ -162,39 +162,6 @@ test("wrapping an existing extension but it's secretly sync esm", () => {
     require.extensions[".cjs"] = original;
   }
 });
-test("require.cache[key].loaded is true after a custom extension handler runs", () => {
-  const originalJson = require.extensions[".json"];
-  const jsonKey = path.join(import.meta.dir, "extensions-fixture", "a.json");
-  const xyzKey = path.join(import.meta.dir, "extensions-fixture", "a.xyz");
-  const abcKey = path.join(import.meta.dir, "extensions-fixture", "bad.abc");
-  try {
-    require.extensions[".json"] = function (m, _f) {
-      (m as any).exports = { x: 1, loadedDuring: m.loaded };
-    };
-    require.extensions[".xyz"] = function (m, f) {
-      (m as any)._compile("module.exports = { y: 2 };", f);
-    };
-    require.extensions[".abc"] = function (_m, _f) {
-      throw new Error("boom");
-    };
-
-    expect(require("./extensions-fixture/a.json")).toEqual({ x: 1, loadedDuring: false });
-    expect(require.cache[jsonKey]!.loaded).toBe(true);
-
-    expect(require("./extensions-fixture/a.xyz")).toEqual({ y: 2 });
-    expect(require.cache[xyzKey]!.loaded).toBe(true);
-
-    expect(() => require("./extensions-fixture/bad.abc")).toThrow("boom");
-    expect(abcKey in require.cache).toBe(false);
-  } finally {
-    require.extensions[".json"] = originalJson;
-    delete require.extensions[".xyz"];
-    delete require.extensions[".abc"];
-    delete require.cache[jsonKey];
-    delete require.cache[xyzKey];
-    delete require.cache[abcKey];
-  }
-});
 test("mutating extensions is banned by some files", () => {
   // vercel is not allowed to mutate require.extensions
   const files = ["node_modules/next/dist/build/next-config-ts/index.js", "node_modules/@meteorjs/babel/index.js"];

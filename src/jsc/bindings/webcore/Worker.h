@@ -131,7 +131,6 @@ public:
     WorkerOptions& options() { return m_options; }
     size_t heapLimitBytes() const { return m_options.resourceLimits.heapLimitBytes(); }
     void setTerminatedDueToOOM() { m_terminatedDueToOOM.store(true); }
-    bool terminatedDueToOOM() const { return m_terminatedDueToOOM.load(); }
     // See WorkerHeapLimitObserver in Worker.cpp for the lifecycle/threading contract.
     void installHeapLimitObserver(JSC::VM&, void* nativeWorker);
     void disarmHeapLimitObserver() { m_heapLimitDisarmed.store(true, std::memory_order_release); }

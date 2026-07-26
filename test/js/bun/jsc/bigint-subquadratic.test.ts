@@ -1,4 +1,4 @@
-import { test, expect, describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
 
 // BigInt.prototype.toString, multiplication, and exponentiation in
 // JavaScriptCore were O(n^2) in the digit count: toStringGeneric

@@ -5904,28 +5904,36 @@ declare module "bun" {
     ref(): void;
 
     /**
-     * Arm an idle timeout on this socket. After approximately `seconds` of
-     * inactivity the {@link SocketHandler.timeout `timeout`} handler is
-     * called. The socket is **not** closed automatically; call
-     * {@link end `end()`} or {@link terminate `terminate()`} from the handler
-     * if that is the desired behavior, or call `timeout()` again to re-arm.
+     * Arm a timeout on this socket. After approximately `seconds` have
+     * elapsed the {@link SocketHandler.timeout `timeout`} handler is called.
      *
-     * Pass `0` to cancel a previously armed timeout.
+     * The socket is **not** closed automatically; call {@link end `end()`} or
+     * {@link terminate `terminate()`} from the handler if that is the desired
+     * behavior.
+     *
+     * This is a one-shot timer measured from the call, not an inactivity
+     * timer: reading or writing data does **not** reset it. To get
+     * idle-timeout semantics, call `timeout()` again from your `data` handler
+     * to re-arm on each read. Pass `0` to cancel a previously armed timeout.
      *
      * The timer is coarse: it is driven by a periodic sweep with roughly
      * 4-second granularity, so the handler may fire a few seconds earlier or
-     * later than the exact value requested. Values are effectively rounded up
-     * to the next sweep tick.
+     * later than the exact value requested.
      *
-     * @param seconds Approximate idle time in seconds before the `timeout`
-     * handler fires. `0` disarms the timer.
+     * @param seconds Approximate time in seconds until the `timeout` handler
+     * fires. `0` disarms the timer.
      * @example
      * ```ts
-     * socket.timeout(30);
      * // in handlers:
+     * open(socket) {
+     *   socket.timeout(30);
+     * },
+     * data(socket, data) {
+     *   socket.timeout(30); // re-arm on activity for idle-timeout semantics
+     * },
      * timeout(socket) {
      *   socket.end(); // close idle connections
-     * }
+     * },
      * ```
      */
     timeout(seconds: number): void;
@@ -6405,13 +6413,13 @@ declare module "bun" {
     connectError?(socket: Socket<Data>, error: Error): void | Promise<void>;
 
     /**
-     * Called when the socket has been idle for the duration armed by
-     * {@link Socket.timeout `socket.timeout()`}.
+     * Called when a timeout armed by {@link Socket.timeout `socket.timeout()`}
+     * elapses.
      *
      * The socket remains open when this fires. Call
      * {@link Socket.end `socket.end()`} or
      * {@link Socket.terminate `socket.terminate()`} here to close it, or call
-     * `socket.timeout()` again to re-arm the idle timer.
+     * `socket.timeout()` again to re-arm.
      */
     timeout?(socket: Socket<Data>): void | Promise<void>;
     /**

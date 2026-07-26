@@ -283,20 +283,6 @@ static size_t writeUTF8(const WTF::String& string, std::span<uint8_t> destinatio
     return Bun__encoding__writeUTF16(string.span16().data(), string.span16().size(), destination.data(), destination.size(), utf8);
 }
 
-// `obj[name](...args)` with `this` = obj.
-static JSValue invokeMethod(JSC::VM& vm, JSGlobalObject* globalObject, JSObject* object, const Identifier& name, const MarkedArgumentBuffer& args)
-{
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue method = object->get(globalObject, name);
-    RETURN_IF_EXCEPTION(scope, {});
-    auto callData = JSC::getCallData(method);
-    if (callData.type == CallData::Type::None) [[unlikely]] {
-        throwTypeError(globalObject, scope, makeString(name.string(), " is not a function"_s));
-        return {};
-    }
-    RELEASE_AND_RETURN(scope, JSC::call(globalObject, method, callData, object, args));
-}
-
 static JSC::JSUint8Array* encodeStringToUint8Array(JSC::VM& vm, JSGlobalObject* globalObject, JSValue stringValue)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);

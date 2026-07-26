@@ -22,7 +22,9 @@
  *
  * Pitfalls (handled by convention, not by this script — fix at the source):
  *   - File-static names from N files now share a TU. On collision, wrap the
- *     statics in an anonymous or `namespace FILENAME { }` block, or rename.
+ *     statics in a per-file `namespace FILENAME { }` block, or rename.
+ *     (An anonymous namespace does not help: unnamed namespaces merge
+ *     within a TU.)
  *   - `using namespace X;` at file scope leaks into later includes in the
  *     same bundle.
  *   - A file may build only because an earlier sibling already pulled a
@@ -151,14 +153,8 @@ const noUnify: readonly string[] = [
 /**
  * Directories whose every .cpp compiles standalone (repo-root-relative,
  * posix-style, no trailing slash). Same semantics as `noUnify`, per-directory.
- * The streams entry exists because its sibling TUs repeat file-local static
- * helper names; it can be lifted once those are deduplicated.
  */
-const noUnifyDirs: readonly string[] = [
-  // One WHATWG spec algorithm group per TU, each with file-local static
-  // helpers written assuming TU isolation; a unified bundle collides them.
-  "src/jsc/bindings/webcore/streams",
-];
+const noUnifyDirs: readonly string[] = [];
 
 /**
  * How many .cpp files per bundle. WebKit defaults to 8.

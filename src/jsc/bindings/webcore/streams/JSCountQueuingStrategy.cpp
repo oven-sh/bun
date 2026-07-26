@@ -112,27 +112,6 @@ template<> void JSCountQueuingStrategyConstructor::finishCreation(VM& vm, JSDOMG
     m_instanceStructure.set(vm, this, getDOMStructure<JSCountQueuingStrategy>(vm, globalObject));
 }
 
-// `QueuingStrategyInit init` — `highWaterMark` is a required `unrestricted double` member.
-static double convertQueuingStrategyInit(JSC::VM& vm, JSGlobalObject* globalObject, JSValue init)
-{
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!init.isObject()) {
-        if (!init.isUndefinedOrNull()) {
-            throwTypeError(globalObject, scope, "The QueuingStrategyInit argument must be an object"_s);
-            return 0;
-        }
-        throwTypeError(globalObject, scope, "QueuingStrategyInit requires a 'highWaterMark' member"_s);
-        return 0;
-    }
-    JSValue highWaterMark = asObject(init)->get(globalObject, builtinNames(vm).highWaterMarkPublicName());
-    RETURN_IF_EXCEPTION(scope, 0);
-    if (highWaterMark.isUndefined()) {
-        throwTypeError(globalObject, scope, "QueuingStrategyInit requires a 'highWaterMark' member"_s);
-        return 0;
-    }
-    RELEASE_AND_RETURN(scope, highWaterMark.toNumber(globalObject));
-}
-
 template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSCountQueuingStrategyConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);

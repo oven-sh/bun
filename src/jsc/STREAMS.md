@@ -3,9 +3,9 @@
 Bun's WHATWG Streams implementation (`ReadableStream`, `WritableStream`, `TransformStream`,
 their controllers/readers/writers, `TextEncoderStream`/`TextDecoderStream`, and the
 `ByteLength`/`Count` queuing strategies) is written entirely in C++ under
-`src/jsc/bindings/webcore/streams/` — 33 translation units, zero JavaScript builtins.
+`src/jsc/bindings/webcore/streams/` — 35 `.cpp` files, zero JavaScript builtins.
 
-Each TU owns one spec object or one spec algorithm group. Public classes
+Each file owns one spec object or one spec algorithm group. Public classes
 (`JSReadableStream.cpp`, `JSWritableStream.cpp`, …) hold the per-instance state and the
 prototype/constructor tables; the abstract-operation files (`ReadableStreamOperations.cpp`,
 `WritableStreamOperations.cpp`, `TransformStreamOperations.cpp`, `WebStreamsMisc.cpp`) hold
@@ -70,9 +70,11 @@ Blob,JSON,Array,ArrayBuffer,FormData}` and the `Request`/`Response` body consume
   stream classes themselves (only the JSSink classes are generated). For a fast per-TU
   syntax check without a full build, look up the TU's compile command in
   `build/debug/compile_commands.json` and re-run it with `-fsyntax-only`.
-- Each TU compiles standalone (see `noUnifyDirs` in `scripts/build/unified.ts`): file-local
-  `static` helpers are written assuming TU isolation, so don't move them into headers
-  without renaming.
+- The directory is unified-source bundled (see `scripts/build/unified.ts`): sibling `.cpp`
+  files share a translation unit, so file-local `static` helper names must be unique across
+  the directory (an anonymous namespace does not help: unnamed namespaces merge within a
+  TU). A helper used from more than one file belongs in `WebStreamsInternals.h` with its
+  definition in one `.cpp`.
 - Exception discipline: any call that can enter user JS needs `RETURN_IF_EXCEPTION` under a
   `ThrowScope` before its result is used. The `// userJS:` annotations in
   `WebStreamsInternals.h` are the source of truth for which operations can.

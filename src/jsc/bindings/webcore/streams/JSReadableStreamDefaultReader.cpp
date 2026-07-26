@@ -39,34 +39,6 @@ namespace WebStreams {
 using namespace JSC;
 using WebCore::JSStreamsRuntime;
 
-// The only cast of the erased stream->m_controller slot in this file; every switch is TOTAL.
-static WebCore::JSReadableStreamDefaultController* defaultControllerOf(JSReadableStream* stream)
-{
-    ASSERT(stream->m_controllerKind == ControllerKind::Default);
-    return uncheckedDowncast<WebCore::JSReadableStreamDefaultController>(stream->m_controller.get());
-}
-
-static WebCore::JSReadableByteStreamController* byteControllerOf(JSReadableStream* stream)
-{
-    ASSERT(stream->m_controllerKind == ControllerKind::Byte);
-    return uncheckedDowncast<WebCore::JSReadableByteStreamController>(stream->m_controller.get());
-}
-
-// Detaches [[readRequests]] before dispatch ("set to an empty list, then iterate"): once the
-// requests leave the visited deque the MarkedArgumentBuffer is their only root.
-static void detachReadRequests(JSC::VM& vm, JSGlobalObject* globalObject, JSReadableStreamDefaultReader* reader, MarkedArgumentBuffer& out)
-{
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    {
-        WTF::Locker locker { reader->cellLock() };
-        for (auto& request : reader->m_readRequests)
-            out.append(request.get());
-        reader->m_readRequests.clear();
-    }
-    if (out.hasOverflowed()) [[unlikely]]
-        throwOutOfMemoryError(globalObject, scope);
-}
-
 // ReadableStreamDefaultReaderErrorReadRequests(reader, e)
 void readableStreamDefaultReaderErrorReadRequests(JSGlobalObject* globalObject, JSReadableStreamDefaultReader* reader, JSValue error)
 {

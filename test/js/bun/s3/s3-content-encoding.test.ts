@@ -1,7 +1,7 @@
-import { S3Client, gzipSync, deflateSync, zstdCompressSync } from "bun";
+import { S3Client, deflateSync, gzipSync, zstdCompressSync } from "bun";
 import { describe, expect, it } from "bun:test";
-import * as net from "node:net";
 import type { AddressInfo } from "node:net";
+import * as net from "node:net";
 import { brotliCompressSync } from "node:zlib";
 
 // S3 stores Content-Encoding as object metadata and replays it verbatim on GET without
@@ -49,9 +49,7 @@ async function makeOrigin() {
         const enc = obj?.encoding ? `Content-Encoding: ${obj.encoding}\r\n` : "";
         const len = obj ? obj.body.length : 0;
         const responseBody = method === "GET" && obj ? obj.body : Buffer.alloc(0);
-        socket.write(
-          `HTTP/1.1 200 OK\r\nETag: "etag"\r\nAccept-Ranges: bytes\r\n${enc}Content-Length: ${len}\r\n\r\n`,
-        );
+        socket.write(`HTTP/1.1 200 OK\r\nETag: "etag"\r\nAccept-Ranges: bytes\r\n${enc}Content-Length: ${len}\r\n\r\n`);
         if (responseBody.length) socket.write(responseBody);
       }
     });

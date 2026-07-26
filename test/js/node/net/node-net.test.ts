@@ -1840,10 +1840,12 @@ describe("net.Socket write buffering behind a stalled peer", () => {
   // Windows keeps the Buffer.concat path (Winsock only completes a first large
   // send synchronously when it is a single WSASend, and usockets has no
   // vectored send there), so the by-reference bound only applies on POSIX.
-  it.skipIf(isWindows)("holds queued _writev chunks by reference instead of copying into the native buffer", async () => {
-    const CHUNK = 65536;
-    const N = 1024; // 64 MiB queued
-    const fixture = `
+  it.skipIf(isWindows)(
+    "holds queued _writev chunks by reference instead of copying into the native buffer",
+    async () => {
+      const CHUNK = 65536;
+      const N = 1024; // 64 MiB queued
+      const fixture = `
       const net = require("node:net");
       const CHUNK = ${CHUNK};
       const N = ${N};
@@ -1873,28 +1875,29 @@ describe("net.Socket write buffering behind a stalled peer", () => {
         });
       });
     `;
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", fixture],
-      env: bunEnv,
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    const { writableLength, rssDelta, held } = JSON.parse(stdout);
-    const queued = CHUNK * N;
-    expect(held).toBe(N);
-    // Most of the 64 MiB is still queued (a few MiB went to the kernel send
-    // buffer); writableLength reports the queued byte count either way.
-    expect(writableLength).toBeGreaterThan(queued * 0.75);
-    // Holding the queue by reference costs ~1.0x on top of the caller's live
-    // `bufs` (same Buffers). Copying into the native Vec costs another ~1.0x
-    // (plus growth headroom), i.e. >= 2.0x. The bound sits between the two,
-    // with headroom for ASAN/debug per-allocation overhead on the reference
-    // side.
-    const bound = queued * (isASAN || isDebug ? 1.7 : 1.5);
-    expect(rssDelta).toBeLessThan(bound);
-    expect(exitCode).toBe(0);
-  });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", fixture],
+        env: bunEnv,
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      const { writableLength, rssDelta, held } = JSON.parse(stdout);
+      const queued = CHUNK * N;
+      expect(held).toBe(N);
+      // Most of the 64 MiB is still queued (a few MiB went to the kernel send
+      // buffer); writableLength reports the queued byte count either way.
+      expect(writableLength).toBeGreaterThan(queued * 0.75);
+      // Holding the queue by reference costs ~1.0x on top of the caller's live
+      // `bufs` (same Buffers). Copying into the native Vec costs another ~1.0x
+      // (plus growth headroom), i.e. >= 2.0x. The bound sits between the two,
+      // with headroom for ASAN/debug per-allocation overhead on the reference
+      // side.
+      const bound = queued * (isASAN || isDebug ? 1.7 : 1.5);
+      expect(rssDelta).toBeLessThan(bound);
+      expect(exitCode).toBe(0);
+    },
+  );
 
   // The chunk-by-chunk path must still deliver every byte in order once the
   // peer starts reading: this exercises the drain-resume path where

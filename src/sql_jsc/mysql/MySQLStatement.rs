@@ -36,6 +36,10 @@ pub struct MySQLStatement {
     pub execution_flags: ExecutionFlags,
     pub fields_flags: DataCellFlags,
     pub result_count: u64,
+    /// LRU stamp from the owning connection's statement clock, bumped each
+    /// time a later query reuses this cached statement; never-reused
+    /// statements keep 0 and are evicted first.
+    pub last_used: Cell<u64>,
 }
 
 impl MySQLStatement {
@@ -55,6 +59,7 @@ impl MySQLStatement {
             execution_flags: ExecutionFlags::default(),
             fields_flags: DataCellFlags::default(),
             result_count: 0,
+            last_used: Cell::new(0),
         }
     }
 }
@@ -98,6 +103,14 @@ impl MySQLStatement {
     pub(crate) fn init_exact_refs(&mut self, n: u32) {
         debug_assert!(n > 0);
         self.ref_count.set(n);
+    }
+
+    /// Whether the caller holds the only outstanding ref. The statement cache
+    /// only evicts statements it is the sole owner of (no `MySQLQuery` left
+    /// that could still execute the server-side statement id).
+    #[inline]
+    pub(crate) fn has_one_ref(&self) -> bool {
+        bun_ptr::CellRefCounted::ref_count(self).get() == 1
     }
 
     pub(crate) fn reset(&mut self) {

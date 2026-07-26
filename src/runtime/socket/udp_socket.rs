@@ -95,9 +95,19 @@ extern "C" fn on_recv_error(socket: *mut uws::udp::Socket, errno: c_int, is_errq
     // Reached on every POSIX platform. `is_errqueue` distinguishes an ICMP
     // errno drained from Linux's MSG_ERRQUEUE from a real recvmmsg failure —
     // which on the BSDs (no error queue) is also how a connected socket's
-    // ICMP error (so_error) arrives. node:dgram must drop only the former on
-    // unconnected sockets, and the errno namespaces overlap.
+    // ICMP error (so_error) arrives.
     let this: &UDPSocket = UDPSocket::from_uws(socket);
+    // Node never enables IP_RECVERR, so Linux drops ICMP for an unconnected
+    // UDP socket before it can reach sk_err (`__udp4_lib_err`: `if (!harderr
+    // || sk->sk_state != TCP_ESTABLISHED) goto out;`). Bun keeps IP_RECVERR
+    // on to drain the queue, but the only observable effect that matches
+    // Node is to discard those entries here — one layer below node:dgram's
+    // own filter so Bun.udpSocket inherits the same behavior and a reply
+    // server without an error handler is not killed by a vanished client.
+    // Connected sockets keep the error: Node surfaces that via recvmsg too.
+    if is_errqueue != 0 && this.connect_info.get().is_none() {
+        return;
+    }
     let sys_err = bun_sys::Error::from_code_int(errno, bun_sys::Tag::recv);
     let global_this = this.global_this.get();
     // A callback earlier in the same poll dispatch may have left a

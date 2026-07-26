@@ -1,7 +1,7 @@
 import { udpSocket } from "bun";
 import { heapStats } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, disableAggressiveGCScope, isWindows, randomPort } from "harness";
+import { bunEnv, bunExe, disableAggressiveGCScope, isLinux, isWindows, randomPort } from "harness";
 import path from "node:path";
 import { dataCases, dataTypes } from "./testdata";
 
@@ -582,6 +582,100 @@ describe("udpSocket()", () => {
       },
       30_000,
     );
+  });
+});
+
+// IP_RECVERR is Linux-only: on macOS/BSD the kernel never queues ICMP for an
+// unconnected UDP socket, and on Windows SIO_UDP_CONNRESET is already off.
+describe.skipIf(!isLinux)("unconnected socket vs. remote ICMP", () => {
+  // A reply server in the shape the docs show (no error handler) must not be
+  // killed by a client that sends one datagram and closes before the reply
+  // arrives: the reply hits a closed port, the kernel answers with ICMP port
+  // unreachable, and that used to surface as an uncaught ECONNREFUSED.
+  test("reply server without an error handler survives a vanished client", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        import dgram from "node:dgram";
+        const server = await Bun.udpSocket({
+          port: 0,
+          hostname: "127.0.0.1",
+          socket: {
+            data(socket, data, port, address) { socket.send(data, port, address); },
+          },
+        });
+        // First client: send and close immediately so the reply hits a dead port.
+        const c1 = dgram.createSocket("udp4");
+        await new Promise(r => c1.bind(0, "127.0.0.1", r));
+        c1.send("gone", server.port, "127.0.0.1", () => c1.close());
+        // Second client: the server MUST answer it after the ICMP.
+        const c2 = dgram.createSocket("udp4");
+        await new Promise(r => c2.bind(0, "127.0.0.1", r));
+        const got = await new Promise((resolve, reject) => {
+          let n = 0;
+          const t = setInterval(() => {
+            if (server.closed) { clearInterval(t); return reject(new Error("server closed")); }
+            if (++n > 400) { clearInterval(t); return reject(new Error("timeout")); }
+            c2.send("probe", server.port, "127.0.0.1");
+          }, 10);
+          c2.on("message", m => { clearInterval(t); resolve(m.toString()); });
+        });
+        console.log(JSON.stringify({ got, closed: server.closed }));
+        c2.close();
+        server.close();
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe(`{"got":"probe","closed":false}`);
+    expect(exitCode).toBe(0);
+  });
+
+  // send() rejects an oversized payload synchronously with EMSGSIZE; the same
+  // error used to also be queued on the socket's error queue (SO_EE_ORIGIN_LOCAL)
+  // and redelivered asynchronously, turning a caught throw into a process kill.
+  test("oversized send() throws EMSGSIZE once and does not redeliver it asynchronously", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const errs = [];
+        const s = await Bun.udpSocket({
+          port: 0,
+          hostname: "127.0.0.1",
+          socket: {
+            data() {},
+            error(err) { errs.push(err?.code ?? String(err)); },
+          },
+        });
+        let syncErr = null;
+        try {
+          s.send(new Uint8Array(65510), 1, "127.0.0.1");
+        } catch (e) {
+          syncErr = e?.code ?? String(e);
+        }
+        // Drive the loop past the EPOLLERR that draining the local-origin
+        // errqueue entry produces.
+        for (let i = 0; i < 10; i++) await new Promise(r => setImmediate(r));
+        console.log(JSON.stringify({ syncErr, asyncErrs: errs, closed: s.closed }));
+        s.close();
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe(`{"syncErr":"EMSGSIZE","asyncErrs":[],"closed":false}`);
+    expect(exitCode).toBe(0);
   });
 });
 

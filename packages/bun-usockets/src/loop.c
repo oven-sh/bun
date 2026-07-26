@@ -457,6 +457,46 @@ void us_internal_loop_post(struct us_loop_t *loop) {
 #define us_ioctl ioctl
 #endif
 
+#if defined(__linux__)
+/* Drain a UDP socket's MSG_ERRQUEUE. Each remote-origin (ICMP/ICMP6) entry is
+ * surfaced via on_recv_error with is_errqueue=1; SO_EE_ORIGIN_LOCAL entries are
+ * skipped — the failing syscall already returned that errno synchronously, so
+ * redelivering it here is a double report. After draining, SO_ERROR is read to
+ * clear any mirrored sk_err so EPOLLERR does not stay level-set with an empty
+ * queue (which would fall through to recvmmsg and surface the same errno again
+ * without the errqueue flag). Returns the number of entries dequeued. */
+static int us_internal_udp_drain_errqueue(struct us_udp_socket_t *u, LIBUS_SOCKET_DESCRIPTOR fd) {
+    int drained = 0;
+    struct msghdr eh; char ectrl[512]; char ebuf[1];
+    struct iovec eiov = { ebuf, sizeof(ebuf) };
+    while (!u->closed) {
+        memset(&eh, 0, sizeof(eh));
+        eh.msg_iov = &eiov; eh.msg_iovlen = 1;
+        eh.msg_control = ectrl; eh.msg_controllen = sizeof(ectrl);
+        if (recvmsg(fd, &eh, MSG_ERRQUEUE) < 0) break;
+        drained++;
+        if (!u->on_recv_error) continue;
+        int ee = 0, origin = -1;
+        for (struct cmsghdr *cm = CMSG_FIRSTHDR(&eh); cm; cm = CMSG_NXTHDR(&eh, cm)) {
+            if ((cm->cmsg_level == IPPROTO_IP   && cm->cmsg_type == IP_RECVERR) ||
+                (cm->cmsg_level == IPPROTO_IPV6 && cm->cmsg_type == IPV6_RECVERR)) {
+                struct sock_extended_err *se = (struct sock_extended_err *) CMSG_DATA(cm);
+                ee = se->ee_errno;
+                origin = se->ee_origin;
+                break;
+            }
+        }
+        if (origin == SO_EE_ORIGIN_LOCAL) continue;
+        u->on_recv_error(u, ee ? ee : ECONNREFUSED, 1);
+    }
+    if (drained && !u->closed) {
+        int so_err = 0; socklen_t sl = sizeof(so_err);
+        getsockopt(fd, SOL_SOCKET, SO_ERROR, &so_err, &sl);
+    }
+    return drained;
+}
+#endif
+
 void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, int events) {
     switch (us_internal_poll_type(p)) {
     case POLL_TYPE_CALLBACK: {
@@ -904,28 +944,8 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
             int recv_error_surfaced = 0;
             int recv_would_block_only = 0;
             if (error) {
-                struct msghdr eh; char ectrl[512]; char ebuf[1];
-                struct iovec eiov = { ebuf, sizeof(ebuf) };
-                while (!u->closed) {
-                    memset(&eh, 0, sizeof(eh));
-                    eh.msg_iov = &eiov; eh.msg_iovlen = 1;
-                    eh.msg_control = ectrl; eh.msg_controllen = sizeof(ectrl);
-                    if (recvmsg(us_poll_fd(p), &eh, MSG_ERRQUEUE) < 0) break;
-                    recv_error_surfaced = 1;
-                    if (u->on_recv_error) {
-                        /* The queued ICMP error is in sock_extended_err,
-                         * not errno. */
-                        int ee = 0;
-                        for (struct cmsghdr *cm = CMSG_FIRSTHDR(&eh); cm; cm = CMSG_NXTHDR(&eh, cm)) {
-                            if ((cm->cmsg_level == IPPROTO_IP   && cm->cmsg_type == IP_RECVERR) ||
-                                (cm->cmsg_level == IPPROTO_IPV6 && cm->cmsg_type == IPV6_RECVERR)) {
-                                ee = ((struct sock_extended_err *) CMSG_DATA(cm))->ee_errno;
-                                break;
-                            }
-                        }
-                        u->on_recv_error(u, ee ? ee : ECONNREFUSED, 1);
-                    }
-                }
+                recv_error_surfaced =
+                    us_internal_udp_drain_errqueue(u, us_poll_fd(p)) > 0;
             }
 
             /* An EPOLLERR with no EPOLLIN and an empty error queue still has to
@@ -967,6 +987,18 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                                 if (u->on_recv_error) {
 #if defined(__linux__)
                                     recv_error_surfaced = 1;
+                                    /* On Linux the kernel mirrors a queued
+                                     * ICMP into sk_err, so recvmmsg can return
+                                     * it here before EPOLLERR is dispatched
+                                     * (e.g. on_data just sent a reply to a
+                                     * port that already closed). If the error
+                                     * queue has the entry, that is the source
+                                     * and the recvmmsg errno is its mirror —
+                                     * surface the queue (is_errqueue=1), not a
+                                     * second un-flagged copy. */
+                                    if (us_internal_udp_drain_errqueue(u, us_poll_fd(p)) > 0) {
+                                        break;
+                                    }
 #endif
                                     u->on_recv_error(u, recv_err, 0);
                                 } else {

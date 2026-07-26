@@ -1091,9 +1091,7 @@ impl<'a> Parser<'a> {
             }
         }
 
-        // Emit `var define_X_default = {...}` for each object/array `--define`
-        // value that was referenced during the visit. Each goes in its own part
-        // so an unreferenced one can be tree-shaken independently.
+        // `var define_X_default = {...}` for each referenced injected define.
         for i in 0..p.injected_define_refs.len() {
             let ref_ = p.injected_define_refs[i];
             if p.symbols.as_slice()[ref_.inner_index() as usize].use_count_estimate == 0 {

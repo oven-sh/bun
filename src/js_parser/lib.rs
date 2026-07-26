@@ -373,10 +373,7 @@ pub mod defines {
         // tier up for json-parser access) can construct directly.
         pub original_name: Option<Box<[u8]>>,
         pub flags: Flags,
-        /// Set when `value` is an object or array literal. Index into
-        /// `Define.injected`. The parser substitutes the value with a
-        /// reference to a hoisted `var` so every use site shares one
-        /// allocation (matching esbuild's `<define:X>` behaviour).
+        /// Index into `Define.injected` when `value` is an object/array literal.
         pub injected_define_index: Option<u32>,
     }
 
@@ -502,9 +499,7 @@ pub mod defines {
         }
     }
 
-    /// An object/array `--define` value that the parser materializes once as a
-    /// hoisted `var` and references by identifier, so repeated uses share one
-    /// object (esbuild's `<define:X>` synthetic-module analogue, per-file).
+    /// An object/array `--define` value the parser hoists to one shared `var`.
     #[derive(Clone)]
     pub struct InjectedDefine {
         pub name: Box<[u8]>,
@@ -547,10 +542,7 @@ pub mod defines {
             key: &[u8],
             mut value: DefineData,
         ) -> Result<(), bun_alloc::AllocError> {
-            // Object/array literals: hoist to a single shared `var` so every
-            // reference resolves to the same object instead of emitting a fresh
-            // `{...}` at each use site. `parse_env_json` + `deep_clone` produce
-            // `EObject`/`EArray` (not the JSON variants) for user `--define` values.
+            // `deep_clone` normalises JSON-parsed values to EObject/EArray.
             if !value.valueless()
                 && matches!(
                     value.value.tag(),

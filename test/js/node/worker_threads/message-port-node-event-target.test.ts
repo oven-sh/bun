@@ -1,8 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { getEventListeners, once } from "node:events";
-// Load so that a build without the native NodeEventTarget surface falls back
-// to the JS shim; with it present the require is a no-op for the prototype.
 import { Worker } from "node:worker_threads";
 
 // MessagePort is a NodeEventTarget in node: .on/.addListener/.once share the

@@ -655,7 +655,7 @@ function fakeParentPort() {
   function once(this: any, type: string, listener: any) {
     const wrapper = (arg: any) => {
       byType.get(type)?.delete(listener);
-      listener(arg);
+      return listener(arg);
     };
     if (track(type, listener, wrapper))
       self.addEventListener(type, wrapper, { once: true, $kIsNodeStyleListener: true } as AddEventListenerOptions);
@@ -683,7 +683,7 @@ function fakeParentPort() {
         byType.delete(t);
       }
     };
-    if (arguments.length === 0) for (const t of Array.from(byType.keys())) clear(t);
+    if (arguments.length === 0) for (const t of byType.keys()) clear(t);
     else clear(type!);
     return this;
   }

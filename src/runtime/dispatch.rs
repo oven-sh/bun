@@ -107,6 +107,7 @@ use crate::webcore::file_sink::FlushPendingTask as FlushPendingFileSinkTask;
 #[cfg(not(windows))]
 use crate::webcore::file_sink::Poll as FileSinkPoll;
 use crate::webcore::s3::download_stream::S3HttpDownloadStreamingTask;
+use crate::webcore::s3::multipart::{MultiPartUpload, UploadPart as S3UploadPart};
 use crate::webcore::s3::simple_request::S3HttpSimpleTask;
 use crate::webcore::streams::Pending as StreamPending;
 
@@ -1060,6 +1061,16 @@ pub unsafe fn __bun_fire_timer(t: *mut EventLoopTimer, now: *const ElTimespec, v
         EventLoopTimerTag::SubprocessTimeout => {
             timer_arm!(Subprocess<'_>, event_loop_timer, |c, _now, _vm| (*c)
                 .timeout_callback())
+        }
+        EventLoopTimerTag::S3UploadPartRetry => {
+            timer_arm!(S3UploadPart, retry_timer, |c, _now, _vm| {
+                S3UploadPart::on_retry_timer(c)
+            })
+        }
+        EventLoopTimerTag::S3MultiPartUploadRetry => {
+            timer_arm!(MultiPartUpload, retry_timer, |c, _now, _vm| {
+                MultiPartUpload::on_retry_timer(c)
+            })
         }
         EventLoopTimerTag::DevServerSweepSourceMaps => {
             // `sweep_weak_refs` takes the raw `*EventLoopTimer` and recovers

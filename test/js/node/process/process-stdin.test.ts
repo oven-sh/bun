@@ -437,8 +437,9 @@ test.concurrent("process.stdin.pause() from inside a 'data' handler applies kern
       `
       const { spawn } = require("node:child_process");
       const child = spawn(process.execPath, ["-e",
-        'process.stdin.once("data", () => process.stdin.pause()); setTimeout(() => {}, 1e9);'
-      ], { stdio: ["pipe", "ignore", "inherit"] });
+        'process.stdin.once("data", () => { process.stdin.pause(); console.log("PAUSED"); });' +
+        'setTimeout(() => {}, 1e9);'
+      ], { stdio: ["pipe", "pipe", "inherit"] });
       const line = Buffer.alloc(1000, 120);
       const total = 10000;
       let written = 0;
@@ -449,17 +450,27 @@ test.concurrent("process.stdin.pause() from inside a 'data' handler applies kern
           if (!child.stdin.write(line)) return child.stdin.once("drain", pump);
         }
       })();
-      // The writer is blocked once 'drain' stops firing; a bounded pipe
-      // buffer makes three idle ticks after a stall conclusive. Without the
-      // fix the writer never stalls and reaches 'total'.
-      let last = -1, stable = 0;
-      const iv = setInterval(() => {
-        if (written === total || (written === last && ++stable >= 3)) {
-          clearInterval(iv);
-          console.log(JSON.stringify({ writtenWhilePaused: written, total }));
-          child.kill();
-        } else if (written !== last) { last = written; stable = 0; }
-      }, 100);
+      // Stall detection begins only once the child has received the first
+      // chunk and paused, so a slow-starting child does not look like
+      // backpressure.
+      child.stdout.setEncoding("utf8");
+      let out = "";
+      child.stdout.on("data", c => {
+        out += c;
+        if (!out.includes("PAUSED")) return;
+        child.stdout.removeAllListeners("data");
+        // The writer is blocked once 'drain' stops firing; a bounded pipe
+        // buffer makes three idle ticks after a stall conclusive. Without the
+        // fix the writer never stalls and reaches 'total'.
+        let last = -1, stable = 0;
+        const iv = setInterval(() => {
+          if (written === total || (written === last && ++stable >= 3)) {
+            clearInterval(iv);
+            console.log(JSON.stringify({ writtenWhilePaused: written, total }));
+            child.kill();
+          } else if (written !== last) { last = written; stable = 0; }
+        }, 100);
+      });
       child.on("exit", () => process.exit(0));
       `,
     ],

@@ -191,12 +191,8 @@ pub fn parse_s3_list_objects_result(xml: &[u8]) -> Option<S3ListObjectsV2Result<
     let mut common_prefixes: Vec<&[u8]> = Vec::new();
 
     // we dont use trailing ">" as it may finish with xmlns=...
-    let Some(delete_result_pos) = strings::index_of(xml, b"<ListBucketResult") else {
-        return None;
-    };
-    if strings::index_of(&xml[delete_result_pos..], b"</ListBucketResult>").is_none() {
-        return None;
-    }
+    let delete_result_pos = strings::index_of(xml, b"<ListBucketResult")?;
+    strings::index_of(&xml[delete_result_pos..], b"</ListBucketResult>")?;
     {
         let mut i: usize = 0;
         while i < xml[delete_result_pos..].len() {

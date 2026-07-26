@@ -44,6 +44,7 @@ test("dead OutputFile::Value variants do not reappear", () => {
 test("dead shell / http / patch items do not reappear", () => {
   const checks: Array<[string, RegExp]> = [
     ["src/js_parser/parse/parse_entry.rs", /^\s*if false \{$/m],
+    ["src/js_parser/parse/parse_entry.rs", /else if p\.options\.bundle && parts\.is_empty\(\) \{/],
     ["src/runtime/shell/IOWriter.rs", /pub fn run_from_main_thread\b/],
     ["src/event_loop/ConcurrentTask.rs", /^\s*ShellIOWriter,$/m],
     ["src/runtime/shell/builtin/ls.rs", /LsParseError::ShowUsage/],

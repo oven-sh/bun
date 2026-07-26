@@ -1429,19 +1429,6 @@ impl<'a> Parser<'a> {
                     continue 'outer_part_loop;
                 }
             }
-        } else if p.options.bundle && parts.is_empty() {
-            // This flag is disabled because it breaks circular export * as from
-            //
-            //  entry.js:
-            //
-            //    export * from './foo';
-            //
-            //  foo.js:
-            //
-            //    export const foo = 123
-            //    export * as ns from './foo'
-            //
-            // This is permanently disabled (see the circular-export breakage above).
         }
 
         // Analyze cross-part dependencies for tree shaking and code splitting.

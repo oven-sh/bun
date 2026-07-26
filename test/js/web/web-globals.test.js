@@ -29,7 +29,6 @@ test("exists", () => {
   expect(typeof PerformanceObserverEntryList !== "undefined").toBe(true);
   expect(typeof PerformanceResourceTiming !== "undefined").toBe(true);
   expect(typeof PerformanceServerTiming !== "undefined").toBe(true);
-  expect(typeof PerformanceTiming !== "undefined").toBe(true);
   expect(typeof Math.sumPrecise !== "undefined").toBe(true);
 });
 

@@ -17,6 +17,7 @@ test("performance.timing is not defined", () => {
   expect(performance.timing).toBeUndefined();
   expect("timing" in performance).toBe(false);
   expect("timing" in Object.getPrototypeOf(performance)).toBe(false);
+  expect(globalThis.PerformanceTiming).toBeUndefined();
 });
 
 test("performance.toJSON() returns the Node.js shape", () => {

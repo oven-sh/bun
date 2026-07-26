@@ -27,8 +27,8 @@ test(function performanceToJSON() {
 
   assert("timeOrigin" in json);
   assert(json.timeOrigin === performance.timeOrigin);
-  // check there are no other keys
-  assertEquals(Object.keys(json).length, 2);
+  // Bun matches Node.js here: { nodeTiming, timeOrigin, eventLoopUtilization }.
+  assertEquals(Object.keys(json), ["nodeTiming", "timeOrigin", "eventLoopUtilization"]);
 });
 
 test(function performanceMark() {

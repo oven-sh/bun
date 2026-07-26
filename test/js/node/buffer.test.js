@@ -4917,6 +4917,16 @@ describe("read*/write* after JIT tier-up", () => {
     expect(codeOf(() => scratch.writeIntLE(200, "bad", 1))).toBe("ERR_INVALID_ARG_TYPE");
     expect(codeOf(() => scratch.writeUIntLE(2 ** 24, "bad", 2))).toBe("ERR_OUT_OF_RANGE");
     expect(codeOf(() => scratch.writeIntBE(2 ** 24, "bad", 3))).toBe("ERR_OUT_OF_RANGE");
+    // Every accessor validates the offset's type before consulting the receiver, so a bad offset
+    // wins over a garbage receiver across the whole family.
+    for (const f of [
+      () => Buffer.prototype.readIntLE.call({}, "bad", 3),
+      () => Buffer.prototype.readInt32LE.call({}, "bad"),
+      () => Buffer.prototype.writeIntLE.call({}, 1, "bad", 3),
+    ]) {
+      expect(codeOf(f)).toBe("ERR_INVALID_ARG_TYPE");
+      expect(() => f()).toThrow('The "offset" argument must be of type number');
+    }
     // Out-of-range integral offsets, including |offset| > 2**53, get the bounds message.
     expect(() => scratch.readIntLE(2 ** 53, 2)).toThrow(">= 0 and <= 14");
     expect(() => scratch.readIntLE(1.5, 2)).toThrow("an integer");

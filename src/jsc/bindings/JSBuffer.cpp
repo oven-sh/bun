@@ -3406,13 +3406,13 @@ static JSC::EncodedJSValue bufferReadVarWidth(JSC::JSGlobalObject* lexicalGlobal
         return throwBufferInvalidByteLength(lexicalGlobalObject, scope, byteLengthValue);
     size_t byteLength = static_cast<size_t>(byteLengthNumber);
 
+    if (!bufferAccessCheckOffsetType(lexicalGlobalObject, scope, offsetValue)) [[unlikely]]
+        return {};
     auto* view = dynamicDowncast<JSC::JSArrayBufferView>(callFrame->thisValue());
     if (!view) [[unlikely]] {
         bufferAccessReceiver(lexicalGlobalObject, scope, callFrame->thisValue());
         return {};
     }
-    if (!bufferAccessCheckOffsetType(lexicalGlobalObject, scope, offsetValue)) [[unlikely]]
-        return {};
     auto checkedOffset = bufferAccessCheckOffsetBounds(lexicalGlobalObject, scope, offsetValue, view->length(), byteLength, view->type() != JSC::DataViewType);
     RETURN_IF_EXCEPTION(scope, {});
     if (!checkedOffset)

@@ -743,9 +743,11 @@ describe.skipIf(isWindows)("Bun.write to a FIFO by path", () => {
     ["1 MiB string", "string", 1 << 20],
     ["1 MiB Uint8Array", "u8", 1 << 20],
     ["1 MiB Blob", "blob", 1 << 20],
-  ])("delivers a %s in full", async (_label, kind, size) => {
-    using dir = tempDir("bun-write-fifo", {});
-    const script = `
+  ])(
+    "delivers a %s in full",
+    async (_label, kind, size) => {
+      using dir = tempDir("bun-write-fifo", {});
+      const script = `
       const fs = require("fs");
       const { FIFO, KIND, SIZE } = process.env;
       const size = Number(SIZE);
@@ -772,20 +774,22 @@ describe.skipIf(isWindows)("Bun.write to a FIFO by path", () => {
       await reader.exited;
       console.log(JSON.stringify({ wrote, got, size }));
     `;
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", script],
-      env: { ...bunEnv, FIFO: join(String(dir), "fifo"), KIND: kind, SIZE: String(size) },
-      stdout: "pipe",
-      stderr: "pipe",
-      timeout: 20_000,
-      killSignal: "SIGKILL",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stderr, stdout: stdout.trim(), exitCode, signalCode: proc.signalCode }).toEqual({
-      stderr: "",
-      stdout: JSON.stringify({ wrote: size, got: size, size }),
-      exitCode: 0,
-      signalCode: null,
-    });
-  }, 30_000);
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: { ...bunEnv, FIFO: join(String(dir), "fifo"), KIND: kind, SIZE: String(size) },
+        stdout: "pipe",
+        stderr: "pipe",
+        timeout: 20_000,
+        killSignal: "SIGKILL",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stderr, stdout: stdout.trim(), exitCode, signalCode: proc.signalCode }).toEqual({
+        stderr: "",
+        stdout: JSON.stringify({ wrote: size, got: size, size }),
+        exitCode: 0,
+        signalCode: null,
+      });
+    },
+    30_000,
+  );
 });

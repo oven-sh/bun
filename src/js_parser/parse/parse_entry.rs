@@ -2163,7 +2163,7 @@ impl<'a> Parser<'a> {
         // `pop_scope`). Bundled ESM is exempt because its module scope is
         // hoisted into the shared chunk scope.
         if p.module_scope().contains_direct_eval
-            && !(p.options.bundle && exports_kind == js_ast::ExportsKind::Esm)
+            && !(p.options.bundle && exports_kind != js_ast::ExportsKind::Cjs)
         {
             let module_scope = p.module_scope_ref();
             let mut iter = module_scope.members.iter();

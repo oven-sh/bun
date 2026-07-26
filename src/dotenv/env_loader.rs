@@ -583,19 +583,27 @@ impl Loader {
 
         let environ: &[*const c_char] = bun_sys::environ();
         self.map.map.ensure_total_capacity(environ.len())?;
+        // The kernel accepts duplicate KEY= entries in environ. libc getenv() and
+        // Node both resolve to the FIRST occurrence, so keep the first value from
+        // environ and skip later duplicates. Entries that were already in the map
+        // before this scan (indices < prior_count, e.g. `bun test` pre-seeding
+        // NODE_ENV) are still overwritten so process env retains highest priority.
+        let prior_count = self.map.map.count();
         for &_env in environ {
             // SAFETY: environ entries are NUL-terminated C strings from the OS
             let env = unsafe { bun_core::ffi::cstr(_env) }.to_bytes();
-            if let Some(i) = strings::index_of_char(env, b'=') {
-                let key = &env[..i as usize];
-                let value = &env[i as usize + 1..];
-                if !key.is_empty() {
-                    self.map.put(key, value)?;
-                }
-            } else {
-                if !env.is_empty() {
-                    self.map.put(env, b"")?;
-                }
+            let (key, value) = match strings::index_of_char(env, b'=') {
+                Some(i) => (&env[..i as usize], &env[i as usize + 1..]),
+                None => (env, &b""[..]),
+            };
+            if key.is_empty() {
+                continue;
+            }
+            let gop = self.map.get_or_put_without_value(key)?;
+            if !gop.found_existing || gop.index < prior_count {
+                *gop.value_ptr = HashTableValue {
+                    value: Box::from(value),
+                };
             }
         }
         self.did_load_process = true;

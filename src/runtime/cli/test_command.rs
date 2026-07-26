@@ -908,6 +908,72 @@ pub(crate) fn should_drain_event_loop() -> bool {
     env_var::BUN_TEST_DRAIN_EVENT_LOOP.get().unwrap_or(false)
 }
 
+/// Grace window for the post-file drain; long enough for "a few ms later"
+/// fire-and-forget errors to surface under ASAN, short enough that a test
+/// leaking a far-future `setTimeout`/`setInterval` does not stall the run.
+const POST_FILE_DRAIN_GRACE_MS: i64 = 1000;
+
+/// Drain ref'd JS timers, queued tasks, and setImmediate callbacks that are
+/// due within `POST_FILE_DRAIN_GRACE_MS` of now, so an unhandled rejection or
+/// late `setTimeout` throw from a file's final test still surfaces while
+/// `active_file` is set and is counted as an unhandled-between-tests error.
+///
+/// Deliberately excludes `platform_loop.is_active()` and `vm.active_tasks`
+/// so a leaked `Bun.serve()` / open socket / `node:http` response does not
+/// wedge the drain (passive handles that make no progress on their own).
+/// The wall-clock deadline and the timer-heap peek keep a leaked 1h
+/// `setTimeout` / `setInterval` from blocking `auto_tick_active()`.
+fn drain_for_late_errors(vm: &mut VirtualMachine) {
+    use bun_core::{Timespec, TimespecMockMode};
+
+    let deadline =
+        Timespec::now(TimespecMockMode::ForceRealTime).add_ms(POST_FILE_DRAIN_GRACE_MS);
+
+    loop {
+        vm.tick();
+
+        let el = vm.event_loop_shared();
+        let has_queued = el.tasks.readable_length() > 0
+            || !el.immediate_tasks.is_empty()
+            || !el.next_immediate_tasks.is_empty();
+
+        let timers = crate::jsc_hooks::timer_all();
+        // SAFETY: `timer_all()` is the live per-thread `All` once RuntimeState
+        // is installed (always true by the time a test file has run).
+        let (timer_refs, immediate_refs) = if timers.is_null() {
+            (0, 0)
+        } else {
+            unsafe { ((*timers).active_timer_count, (*timers).immediate_ref_count) }
+        };
+
+        if !has_queued && timer_refs <= 0 && immediate_refs <= 0 {
+            break;
+        }
+        if Timespec::now(TimespecMockMode::ForceRealTime).greater(&deadline) {
+            break;
+        }
+        // `auto_tick_active()` parks until the soonest heap timer; when nothing
+        // else is queued and that soonest timer is already past the deadline,
+        // stop now rather than wait for it. Internal runtime timers (GC,
+        // WTFTimer) usually sit closer than any far-future user timer, so
+        // this is a best-effort fast-path; the wall-clock check above is the
+        // guaranteed bound.
+        if !has_queued && immediate_refs <= 0 && !timers.is_null() {
+            // SAFETY: live per-thread `All`; single JS thread.
+            match unsafe { (*timers).timers.peek() } {
+                None => break,
+                // SAFETY: `peek()` returns a live heap node.
+                Some(min) => {
+                    if unsafe { (*min).next }.greater(&deadline) {
+                        break;
+                    }
+                }
+            }
+        }
+        vm.auto_tick_active();
+    }
+}
+
 pub struct CommandLineReporter {
     // `TestRunner<'a>` borrows `TestOptions`/regex from the CLI ctx; the
     // reporter is held in a `Box` local to `TestCommand::exec` which never
@@ -3377,6 +3443,21 @@ impl TestCommand {
                 let el = vm.event_loop();
                 // SAFETY: el is the VM-owned event loop; vm is passed back as *mut.
                 unsafe { (*el).tick_immediate_tasks(vm) };
+
+                // Drain ref'd timers and queued tasks so a fire-and-forget
+                // rejection or a late `setTimeout` throw from this file's
+                // final test still surfaces while `active_file` is set and
+                // bumps `unhandled_errors_between_tests`. jest and
+                // `node --test` both wait for the loop and fail the run;
+                // without this the tail of the final file was a silent-green
+                // window (1 pass, exit 0, error never printed). Skipped once
+                // the run is already failing so a timed-out test body is not
+                // waited on.
+                if reporter.jest.summary.fail == 0
+                    && reporter.jest.unhandled_errors_between_tests == 0
+                {
+                    drain_for_late_errors(vm);
+                }
 
                 // Node parity: a node test file exits only when its loop drains.
                 // on_before_exit() drains and dispatches 'beforeExit' like `bun run`;

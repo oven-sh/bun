@@ -742,11 +742,13 @@ describe.concurrent("--isolate: collects globals pinned by leaked handles", () =
   });
 
   test("long setTimeout/setInterval left pending", async () => {
+    // .unref()'d so the post-file drain doesn't wait on them; the Strong on
+    // the wrapper (what pins the global) is independent of the ref state.
     using dir = tempDir(
       "isolate-leak-timers",
       makeLeakFixture(`
-        setTimeout(() => {}, 3_600_000);
-        setInterval(() => {}, 3_600_000);
+        setTimeout(() => {}, 3_600_000).unref();
+        setInterval(() => {}, 3_600_000).unref();
       `),
     );
     expect(await maxLiveGlobals(String(dir))).toBeLessThanOrEqual(4);

@@ -749,3 +749,140 @@ test("my-test", () => {
     });
   }
 });
+
+describe("unhandled errors after the final test are reported", () => {
+  // jest and `node --test` both drain the event loop after the last test
+  // settles; a fire-and-forget rejection or a throw inside a leaked
+  // setTimeout must fail the run, not exit 0 with the error dropped.
+  const cases = [
+    [
+      "unhandled rejection from a fire-and-forget async IIFE",
+      `(async () => { await Bun.sleep(5); throw new Error("POST-END-REJECT"); })();`,
+      "POST-END-REJECT",
+    ],
+    [
+      "rejection scheduled from setTimeout(0)",
+      `setTimeout(() => { Promise.reject(new Error("T0-REJECT")); }, 0);`,
+      "T0-REJECT",
+    ],
+    [
+      "failing expect inside a leaked setTimeout",
+      `setTimeout(() => { expect("late").toBe("never"); }, 10);`,
+      `expect(received).toBe(expected)`,
+    ],
+  ] as const;
+
+  for (const [name, stmt, needle] of cases) {
+    test(name, () => {
+      const dir = tempDirWithFiles("unhandled-after-last", {
+        "late.test.js": `
+import { test, expect } from "bun:test";
+test("only test", async () => {
+  await Bun.sleep(1);
+  ${stmt}
+  expect(1).toBe(1);
+});
+`,
+        "package.json": "{}",
+      });
+
+      const { stderr, exitCode } = spawnSync({
+        cmd: [bunExe(), "test", "late.test.js"],
+        cwd: dir,
+        stdout: "inherit",
+        stderr: "pipe",
+        env: bunEnv,
+      });
+      const output = stderr.toString();
+
+      expect(output).toContain(needle);
+      expect(output).toContain("Unhandled error between tests");
+      expect(output).toContain("1 pass");
+      expect(output).toContain("0 fail");
+      expect(output).toContain("1 error");
+      expect(exitCode).toBe(1);
+    });
+  }
+
+  test("does not hang when the last test leaves an unref'd handle", () => {
+    const dir = tempDirWithFiles("unhandled-after-last-unref", {
+      "unref.test.js": `
+import { test, expect } from "bun:test";
+test("only test", () => {
+  setInterval(() => {}, 100000).unref();
+  expect(1).toBe(1);
+});
+`,
+      "package.json": "{}",
+    });
+
+    const { stderr, exitCode } = spawnSync({
+      cmd: [bunExe(), "test", "unref.test.js"],
+      cwd: dir,
+      stdout: "inherit",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+    const output = stderr.toString();
+
+    expect(output).toContain("1 pass");
+    expect(output).toContain("0 fail");
+    expect(exitCode).toBe(0);
+  });
+
+  test("does not hang on a far-future ref'd setTimeout/setInterval", () => {
+    const dir = tempDirWithFiles("unhandled-after-last-far", {
+      "far.test.js": `
+import { test, expect } from "bun:test";
+test("only test", () => {
+  setTimeout(() => {}, 3_600_000);
+  setInterval(() => {}, 3_600_000);
+  expect(1).toBe(1);
+});
+`,
+      "package.json": "{}",
+    });
+
+    const { stderr, exitCode } = spawnSync({
+      cmd: [bunExe(), "test", "far.test.js"],
+      cwd: dir,
+      stdout: "inherit",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+    const output = stderr.toString();
+
+    expect(output).toContain("1 pass");
+    expect(output).toContain("0 fail");
+    expect(exitCode).toBe(0);
+  });
+
+  test("does not hang when the last test leaks a ref'd Bun.serve()", () => {
+    const dir = tempDirWithFiles("unhandled-after-last-serve", {
+      "serve.test.js": `
+import { test, expect } from "bun:test";
+test("only test", async () => {
+  Bun.serve({ port: 0, fetch: () => new Response("ok") });
+  setTimeout(() => { throw new Error("LATE-THROW"); }, 5);
+  expect(1).toBe(1);
+});
+`,
+      "package.json": "{}",
+    });
+
+    const { stderr, exitCode } = spawnSync({
+      cmd: [bunExe(), "test", "serve.test.js"],
+      cwd: dir,
+      stdout: "inherit",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+    const output = stderr.toString();
+
+    expect(output).toContain("LATE-THROW");
+    expect(output).toContain("Unhandled error between tests");
+    expect(output).toContain("1 pass");
+    expect(output).toContain("1 error");
+    expect(exitCode).toBe(1);
+  });
+});

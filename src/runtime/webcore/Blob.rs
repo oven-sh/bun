@@ -1089,9 +1089,7 @@ impl BlobExt for Blob {
 
         let show_name = (self.is_jsdom_file.get() && self.get_name_string().is_some())
             || (!self.name.get().is_empty()
-                && self
-                    .store()
-                    .is_some_and(|s| s.data.is_memory_backed()));
+                && self.store().is_some_and(|s| s.data.is_memory_backed()));
         if !self.is_s3()
             && (!self.content_type_slice().is_empty()
                 || self.offset.get() > 0

@@ -70,8 +70,11 @@ describe.each(["text", "arrayBuffer", "bytes"] as const)("Bun.stdin.%s()", metho
   });
 });
 
-test.concurrent("sequential Bun.stdin.text() after the first read completes does not reject", async () => {
-  const { stdout, stderr, exitCode } = await run(`
+test.concurrent(
+  "sequential Bun.stdin.text() still works after process.stdin was referenced without reading",
+  async () => {
+    const { stdout, stderr, exitCode } = await run(`
+    void process.stdin.isTTY;
     const a = await Bun.stdin.text();
     const b = await Bun.stdin.text().then(
       v => ({ state: "resolved", len: v.length }),
@@ -79,13 +82,14 @@ test.concurrent("sequential Bun.stdin.text() after the first read completes does
     );
     process.stdout.write(JSON.stringify({ aLen: a.length, b }));
   `);
-  expect(stderr).toBe("");
-  expect(JSON.parse(stdout)).toEqual({
-    aLen: SIZE,
-    b: { state: "resolved", len: 0 },
-  });
-  expect(exitCode).toBe(0);
-});
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      aLen: SIZE,
+      b: { state: "resolved", len: 0 },
+    });
+    expect(exitCode).toBe(0);
+  },
+);
 
 test.concurrent("Bun.stdin.text() with no other consumer reads every byte", async () => {
   const { stdout, stderr, exitCode } = await run(`process.stdout.write(String((await Bun.stdin.text()).length));`);

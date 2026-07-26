@@ -118,10 +118,9 @@ const SERIALIZATION_VERSION: u8 = 4;
 
 pub use bun_jsc::generated::JSBlob as js;
 
-thread_local! {
-    /// Claimed in `do_read_file`, released in `NewReadFileHandler::run`.
-    static STDIN_BLOB_READ_IN_FLIGHT: Cell<bool> = const { Cell::new(false) };
-}
+/// Claimed in `do_read_file`, released in `NewReadFileHandler::run`.
+static STDIN_BLOB_READ_IN_FLIGHT: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
 
 pub(crate) fn is_stdin_fd_store(blob: &Blob) -> bool {
     matches!(
@@ -137,18 +136,19 @@ pub(crate) fn is_stdin_fd_store(blob: &Blob) -> bool {
 }
 
 pub(crate) fn release_stdin_blob_read_claim() {
-    STDIN_BLOB_READ_IN_FLIGHT.set(false);
+    STDIN_BLOB_READ_IN_FLIGHT.store(false, core::sync::atomic::Ordering::SeqCst);
 }
 
-fn fd_cached_stream(blob: &Blob, this_value: JSValue) -> Option<JSValue> {
-    let store = blob.store.get().as_deref()?;
-    let store::Data::File(f) = &store.data else {
-        return None;
-    };
-    if !matches!(f.pathlike, PathOrFileDescriptor::Fd(_)) {
+fn locked_stdin_stream(
+    blob: &Blob,
+    this_value: JSValue,
+    global: &JSGlobalObject,
+) -> Option<JSValue> {
+    if !is_stdin_fd_store(blob) {
         return None;
     }
-    js::stream_get_cached(this_value)
+    let stream = js::stream_get_cached(this_value)?;
+    ReadableStream::is_locked_value(stream, global).then_some(stream)
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -474,7 +474,9 @@ impl BlobExt for Blob {
     fn do_read_file<F: read_file::ReadFileToJs>(&self, global: &JSGlobalObject) -> JSValue {
         debug!("doReadFile");
 
-        if is_stdin_fd_store(self) && STDIN_BLOB_READ_IN_FLIGHT.replace(true) {
+        if is_stdin_fd_store(self)
+            && STDIN_BLOB_READ_IN_FLIGHT.swap(true, core::sync::atomic::Ordering::SeqCst)
+        {
             return global
                 .err(
                     jsc::ErrorCode::INVALID_STATE,
@@ -1261,7 +1263,7 @@ impl BlobExt for Blob {
         Ok(stream)
     }
     fn get_text(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        if let Some(stream) = fd_cached_stream(self, callframe.this()) {
+        if let Some(stream) = locked_stdin_stream(self, callframe.this(), global_this) {
             return bun_jsc::from_js_host_call(global_this, || {
                 global_this.readable_stream_to_text(stream)
             });
@@ -1275,7 +1277,7 @@ impl BlobExt for Blob {
     }
 
     fn get_json(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        if let Some(stream) = fd_cached_stream(self, callframe.this()) {
+        if let Some(stream) = locked_stdin_stream(self, callframe.this(), global_this) {
             return bun_jsc::from_js_host_call(global_this, || {
                 global_this.readable_stream_to_json(stream)
             });
@@ -1301,7 +1303,7 @@ impl BlobExt for Blob {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        if let Some(stream) = fd_cached_stream(self, callframe.this()) {
+        if let Some(stream) = locked_stdin_stream(self, callframe.this(), global_this) {
             return bun_jsc::from_js_host_call(global_this, || {
                 global_this.readable_stream_to_array_buffer(stream)
             });
@@ -1315,7 +1317,7 @@ impl BlobExt for Blob {
     }
 
     fn get_bytes(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        if let Some(stream) = fd_cached_stream(self, callframe.this()) {
+        if let Some(stream) = locked_stdin_stream(self, callframe.this(), global_this) {
             return bun_jsc::from_js_host_call(global_this, || {
                 global_this.readable_stream_to_bytes(stream)
             });

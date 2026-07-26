@@ -266,6 +266,10 @@ impl ReadableStream {
         ReadableStream__isLocked(self.value, global_object)
     }
 
+    pub fn is_locked_value(value: JSValue, global_object: &JSGlobalObject) -> bool {
+        ReadableStream__isLocked(value, global_object)
+    }
+
     /// A pure `dynamicDowncast<JSReadableStream>` type test: no tagging, no conversion.
     pub fn is_readable_stream(value: JSValue) -> bool {
         ReadableStream__is(value)

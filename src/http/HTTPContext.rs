@@ -308,9 +308,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
         socket.close(uws::CloseKind::Normal);
     }
 
-    /// `recv(MSG_PEEK|MSG_DONTWAIT)` on the pooled fd: 0 = peer FIN queued
-    /// in the kernel but not yet dispatched, so the socket must not be reused.
-    /// POSIX-only; caller skips HTTP/2 (servers send PING/SETTINGS while idle).
+    /// `MSG_PEEK|MSG_DONTWAIT` probe: only `EAGAIN` means an idle, reusable h1 socket. POSIX-only.
     #[cfg_attr(windows, allow(unused_variables))]
     fn probe_idle_socket_alive(socket: HTTPSocket<SSL>) -> bool {
         #[cfg(unix)]
@@ -321,8 +319,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
             }
             let mut buf = [0u8; 1];
             match bun_sys::recv(fd, &mut buf, libc::MSG_PEEK | libc::MSG_DONTWAIT) {
-                Ok(0) => false,
-                Ok(_) => true,
+                Ok(_) => false,
                 Err(e) => e.is_retry(),
             }
         }

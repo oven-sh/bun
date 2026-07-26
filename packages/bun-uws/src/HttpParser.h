@@ -209,6 +209,10 @@ struct HttpResponseData;
          * WARNING: This points to data in the receive buffer and may be stack-allocated.
          * Must be cloned before the request handler returns. */
         std::span<const char> head;
+        /* For an Upgrade request with a body, whether that body completes
+         * within this same parse chunk (so head above is the post-body
+         * remainder, and req.complete can be set at 'upgrade' time). */
+        bool bodyCompleteInHead = false;
 
         bool isAncient()
         {
@@ -1248,8 +1252,41 @@ struct HttpResponseData;
             /* If returned socket is not what we put in we need
              * to break here as we either have upgraded to
              * WebSockets or otherwise closed the socket. */
-            /* Store any remaining data as head for Node.js compat (connect/upgrade events) */
+            /* Store any remaining data as head for Node.js compat (connect/upgrade events).
+             * Node's 'upgrade' head is the chunk remainder AFTER the declared
+             * body, so for a body-carrying Upgrade skip the body bytes (which
+             * are delivered through inStream below) and report whether the
+             * body completes in this chunk. */
+            req->bodyCompleteInHead = false;
             req->head = std::span<const char>(data, length);
+            if constexpr (IsNodeHttp) {
+                if (!isConnectRequest && (transferEncoding.has || contentLengthStringLen)
+                        && req->getHeader("upgrade").data()) [[unlikely]] {
+                    if (transferEncoding.has) {
+                        /* Pre-scan the chunked body with local state so the real
+                         * parse below (which fires inStream per chunk) is unchanged. */
+                        uint64_t scanState = STATE_IS_CHUNKED;
+                        uint64_t scanExt = 0;
+                        std::string scanTrailers;
+                        std::string_view scanView(data, length);
+                        for (auto chunk : uWS::ChunkIterator(&scanView, &scanState, false, &scanExt, &scanTrailers, maxBufferedHeaderSize)) {
+                            (void) chunk;
+                        }
+                        if (!isParsingChunkedEncoding(scanState) && !isParsingInvalidChunkedEncoding(scanState)) {
+                            req->head = std::span<const char>(scanView.data(), scanView.length());
+                            req->bodyCompleteInHead = true;
+                        } else {
+                            req->head = std::span<const char>();
+                        }
+                    } else if (remainingStreamingBytes <= (uint64_t) length) {
+                        unsigned int skip = (unsigned int) remainingStreamingBytes;
+                        req->head = std::span<const char>(data + skip, length - skip);
+                        req->bodyCompleteInHead = true;
+                    } else {
+                        req->head = std::span<const char>();
+                    }
+                }
+            }
             void *returnedUser = requestHandler(user, req);
             if (returnedUser != user) {
                 /* We are upgraded to WebSocket or otherwise broken */

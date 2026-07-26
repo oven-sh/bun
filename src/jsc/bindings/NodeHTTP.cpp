@@ -719,6 +719,7 @@ static EncodedJSValue NodeHTTPServer__onRequest(
     }
 
     args.append(jsBoolean(isPipelinedDispatch));
+    args.append(jsBoolean(request->bodyCompleteInHead));
 
     JSValue returnValue = AsyncContextFrame::profiledCall(globalObject, callbackObject, jsUndefined(), args);
     RETURN_IF_EXCEPTION(scope, {});

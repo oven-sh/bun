@@ -41,6 +41,7 @@ const {
   kPendingCallbacks,
   kRequest,
   kCloseCallback,
+  kDeferredUpgradeEmit,
   NodeHTTPResponseFlags,
   emitErrorNextTickIfErrorListenerNT,
   getIsNextIncomingMessageHTTPS,
@@ -717,6 +718,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
         isAncientHTTP: boolean,
         connectHead?: Buffer,
         isPipelinedDispatch?: boolean,
+        bodyCompleteInHead?: boolean,
       ) {
         const prevIsNextIncomingMessageHTTPS = getIsNextIncomingMessageHTTPS();
         setIsNextIncomingMessageHTTPS(isHTTPS);
@@ -997,8 +999,9 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           // switches into CONNECT-style tunnel mode immediately. With a body
           // (Node 26 semantics) the body keeps being parsed and delivered
           // through req; the connection only switches to tunnel mode once the
-          // message completes, so the upgradeHead is empty and everything after
-          // the end of the message reaches the socket as raw data.
+          // message completes. Node emits 'upgrade' only after parser.execute()
+          // returns, so the head is the remainder of this same chunk AFTER the
+          // body, with the body already buffered on req.
           socketHandle.upgradeToTunnel(hasBody);
           socket[kEnableStreaming](true);
           detachSocketListenersForHandoff(socket);
@@ -1008,28 +1011,40 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
             socket[kUpgradeIncoming] = http_req;
             http_req.once("end", clearUpgradeIncoming.bind(undefined, socket));
           }
-          const upgradeHead = !hasBody && connectHead ? connectHead : kEmptyBuffer;
-          let upgradeHandled;
-          try {
-            upgradeHandled = server.emit("upgrade", http_req, socket, upgradeHead);
-          } catch (err) {
-            // A throwing 'upgrade' listener surfaces as an uncaught
-            // exception, like Node.js (the emit happens outside any JS try
-            // frame there).
-            process.nextTick(rethrowUncaught, err);
-            upgradeHandled = true;
-          }
-          if (!upgradeHandled) {
-            // shouldUpgradeCallback accepted the upgrade but no 'upgrade'
-            // listener is installed: Node.js destroys the socket.
-            socket.destroy();
-            return;
-          }
+          // The parser already sliced connectHead to the post-body remainder
+          // (or an empty span when the body does not complete in this chunk).
+          const upgradeHead = connectHead ? connectHead : kEmptyBuffer;
+          const emitUpgrade = () => {
+            let handled;
+            try {
+              handled = server.emit("upgrade", http_req, socket, upgradeHead);
+            } catch (err) {
+              // A throwing 'upgrade' listener surfaces as an uncaught
+              // exception, like Node.js (the emit happens outside any JS try
+              // frame there).
+              process.nextTick(rethrowUncaught, err);
+              handled = true;
+            }
+            if (!handled) {
+              // shouldUpgradeCallback accepted the upgrade but no 'upgrade'
+              // listener is installed: Node.js destroys the socket.
+              socket.destroy();
+            }
+          };
           // Like CONNECT: the connection is detached from the HTTP request
           // machinery; hold the native callback open until the raw socket
           // closes.
           const { promise: upgradePromise, resolve: resolveUpgrade } = $newPromiseCapability(Promise);
           socket.once("close", resolveUpgrade);
+          if (hasBody && bodyCompleteInHead) {
+            // The same-chunk body is parsed right after this handler returns,
+            // synchronously firing onDataIncomingMessage(isLast=true); emit
+            // 'upgrade' from there so the listener observes req.complete and
+            // the body buffered on req like Node.
+            http_req[kDeferredUpgradeEmit] = emitUpgrade;
+          } else {
+            emitUpgrade();
+          }
           return upgradePromise;
         } else if (
           server.requireHostHeader &&

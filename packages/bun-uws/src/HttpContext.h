@@ -460,6 +460,14 @@ private:
              * while this dispatch is on the stack. */
             if constexpr (IsNodeHttp) {
                 httpResponseData->state &= ~HttpResponseData<SSL>::HTTP_NODE_PIPELINED_DISPATCH;
+                /* Upgrade body (and its post-body remainder) are fully present in
+                 * this same chunk: the remainder was already delivered as the
+                 * 'upgrade' head via req->head, so suppress it from onSocketData
+                 * once the tunnel switch fires below. Cleared at end of onData. */
+                if (httpRequest->bodyCompleteInHead
+                        && (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_TUNNEL_AFTER_BODY)) {
+                    httpResponseData->state |= HttpResponseData<SSL>::HTTP_NODE_TUNNEL_HEAD_PENDING;
+                }
             }
 
             /* Returning from a request handler without responding or attaching an onAborted handler is ill-use */
@@ -500,7 +508,13 @@ private:
             }
 
             if (httpResponseData->isConnectRequest && httpResponseData->socketData && httpContextData->onSocketData) {
-                httpContextData->onSocketData(httpResponseData->socketData, SSL, (struct us_socket_t *) user, data.data(), data.length(), fin);
+                if (IsNodeHttp && (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_TUNNEL_HEAD_PENDING)) {
+                    /* Same-chunk post-body remainder of an Upgrade-with-body: already
+                     * delivered as the 'upgrade' head (req->head), not socket data. */
+                    httpResponseData->state &= ~HttpResponseData<SSL>::HTTP_NODE_TUNNEL_HEAD_PENDING;
+                } else {
+                    httpContextData->onSocketData(httpResponseData->socketData, SSL, (struct us_socket_t *) user, data.data(), data.length(), fin);
+                }
             }
 
             if (switchToTunnelAfterThisChunk) {
@@ -550,6 +564,10 @@ private:
 
         /* Mark that we are no longer parsing Http */
         httpContextData->flags.isParsingHttp = false;
+        if constexpr (IsNodeHttp) {
+            /* Scope the same-chunk-head suppression to this parse call only. */
+            httpResponseData->state &= ~HttpResponseData<SSL>::HTTP_NODE_TUNNEL_HEAD_PENDING;
+        }
         /* If we got fullptr that means the parser wants us to close the socket from error (same as calling the errorHandler) */
         if (httpErrorStatusCode) {
             /* node:http compat: parse errors surface as the server's 'clientError'
@@ -780,13 +798,23 @@ private:
             /* CONNECT/Upgrade tunnels allow half-open: the peer finishing its
              * writable side ends the JS socket's readable side ('end' event) but
              * the server can keep writing until it ends the socket itself, like
-             * Node's http server (allowHalfOpen: true). This includes an accepted
-             * Upgrade whose body never completed (HTTP_NODE_TUNNEL_AFTER_BODY): the
-             * EOF ends the upgrade socket, exactly like Node's UpgradeStream. */
-            if (httpResponseData->isConnectRequest || (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_TUNNEL_AFTER_BODY)) {
+             * Node's http server (allowHalfOpen: true). */
+            if (httpResponseData->isConnectRequest) {
                 if (httpResponseData->socketData && httpContextData->onSocketData) {
                     httpContextData->onSocketData(httpResponseData->socketData, SSL, s, "", 0, true);
                 }
+                return s;
+            }
+            /* Accepted Upgrade whose body never completed: Node's UpgradeStream
+             * ends the socket's readable side and then tears the connection down
+             * (the declared body is unsatisfied, so there is no valid tunnel
+             * state to keep half-open). Closing here drives onClose, which
+             * delivers the body abort and releases the pending-request ref. */
+            if (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_TUNNEL_AFTER_BODY) {
+                if (httpResponseData->socketData && httpContextData->onSocketData) {
+                    httpContextData->onSocketData(httpResponseData->socketData, SSL, s, "", 0, true);
+                }
+                asyncSocket->close();
                 return s;
             }
 

@@ -98,6 +98,7 @@ const serverSymbol = Symbol.for("::bunternal::");
 const kPendingCallbacks = Symbol("pendingCallbacks");
 const kRequest = Symbol("request");
 const kCloseCallback = Symbol("closeCallback");
+const kDeferredUpgradeEmit = Symbol("deferredUpgradeEmit");
 
 const kEmptyObject = Object.freeze(Object.create(null));
 
@@ -272,6 +273,16 @@ function onDataIncomingMessage(this: any, chunk, isLast, aborted: NodeHTTPRespon
     // Like Node's parserOnMessageComplete: any readStop above left the shared
     // socket's flowing=false, which would swallow the next request's 'pause'.
     if (!this.upgrade && socket && !socket._paused && socket.readable) socket.resume();
+    // Node emits 'upgrade' after the parser.execute() that completed the body
+    // returns, with the body already buffered on req and req.complete = true.
+    // The dispatcher stashed the emit here when the body was in the same chunk
+    // as the headers; fire it now that the body has been pushed.
+    const deferred = this[kDeferredUpgradeEmit];
+    if (deferred !== undefined) {
+      this[kDeferredUpgradeEmit] = undefined;
+      this.complete = true;
+      deferred();
+    }
   }
 }
 
@@ -625,6 +636,7 @@ export {
   kBodyChunks,
   kClearTimeout,
   kCloseCallback,
+  kDeferredUpgradeEmit,
   kDeprecatedReplySymbol,
   kEmitState,
   kEmptyObject,

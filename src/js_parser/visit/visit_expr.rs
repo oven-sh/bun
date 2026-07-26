@@ -1226,8 +1226,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 p.visit_expr_in_out(&mut e_.value, ExprIn::default());
                 // `delete <ident>` is a strict-mode early error; wrap substituted operands.
                 if let Data::EIdentifier(id) = e_.value.data {
-                    let name_after =
-                        p.symbols[id.ref_.inner_index() as usize].original_name.slice();
+                    let name_after = p.symbols[id.ref_.inner_index() as usize]
+                        .original_name
+                        .slice();
                     if name_before != Some(name_after) {
                         e_.value = Expr {
                             loc: e_.value.loc,

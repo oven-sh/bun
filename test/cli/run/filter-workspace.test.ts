@@ -661,4 +661,35 @@ describe("bun", () => {
     expect(stderr).toContain("skipping this workspace package");
     expect(exitCode).toBe(0);
   });
+
+  // https://github.com/oven-sh/bun/issues/36004
+  describe.each([
+    ["exact paths", ["packages/UpperPkg", "packages/lowerpkg"]],
+    ["glob", ["packages/*"]],
+  ])("matches packages in mixed-case directories (workspaces: %s)", (_, workspaces) => {
+    const dir = tempDirWithFiles("filter-mixed-case", {
+      packages: {
+        UpperPkg: {
+          "package.json": JSON.stringify({ name: "upper-pkg", scripts: { hi: "echo hello-from-upper" } }),
+        },
+        lowerpkg: {
+          "package.json": JSON.stringify({ name: "lower-pkg", scripts: { hi: "echo hello-from-lower" } }),
+        },
+      },
+      "package.json": JSON.stringify({ name: "root", private: true, workspaces }),
+    });
+
+    test.concurrent("by name", () => {
+      runInCwdSuccess({ cwd: dir, pattern: "upper-pkg", target_pattern: /hello-from-upper/, command: ["hi"] });
+    });
+
+    test.concurrent("by wildcard", () => {
+      runInCwdSuccess({
+        cwd: dir,
+        pattern: "*",
+        target_pattern: [/hello-from-upper/, /hello-from-lower/],
+        command: ["hi"],
+      });
+    });
+  });
 });

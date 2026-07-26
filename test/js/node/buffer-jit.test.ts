@@ -446,8 +446,15 @@ describe.concurrent("Buffer accessor JIT", () => {
     expect(reference.stderr).toBe("");
     expect(jit.exitCode).toBe(0);
     expect(reference.exitCode).toBe(0);
-    const parse = (out: string) => Object.fromEntries(out.trim().split(/\s+/).map(kv => kv.split("=")));
-    const jitResult = parse(jit.stdout), referenceResult = parse(reference.stdout);
+    const parse = (out: string) =>
+      Object.fromEntries(
+        out
+          .trim()
+          .split(/\s+/)
+          .map(kv => kv.split("=")),
+      );
+    const jitResult = parse(jit.stdout),
+      referenceResult = parse(reference.stdout);
     // A meaningful volume actually ran, and the JIT arm reproduces the interpreter's trace exactly.
     expect(Number(referenceResult.ops)).toBeGreaterThan(20_000);
     expect(jitResult.ops).toBe(referenceResult.ops);
@@ -516,4 +523,3 @@ describe.concurrent("Buffer accessor JIT", () => {
     expect(exitCode).toBe(0);
   }, 120_000);
 });
-

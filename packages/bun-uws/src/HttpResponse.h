@@ -388,6 +388,13 @@ public:
         LoopData *loopData = Super::getLoopData();
         int corkedSlot = loopData->findCorkSlot(this);
 
+        /* The socket is leaving this context; its onClose (and so filter -1)
+         * will never fire once adopted. Fire it now so a filter that counts
+         * live HTTP connections stays balanced across every upgrade path. */
+        for (auto &f : httpContextData->filterHandlers) {
+            f((HttpResponse<SSL> *) this, -1);
+        }
+
         /* Adopting a socket invalidates it, do not rely on it directly to carry any data */
         /* The old ext size is only used as an upper bound to keep the block in
          * place (and as the copy length when it cannot be). The base size is

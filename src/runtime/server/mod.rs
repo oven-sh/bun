@@ -1542,12 +1542,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     }
 
     fn note_websocket_opened(&self) {
-        // Upgrade adopts the socket out of the HTTP group, so the filter's
-        // `-1` never fires for it; move the count to the WebSocket tally now.
-        let http = self.active_connection_count.get();
-        if http > 0 {
-            self.active_connection_count.set(http - 1);
-        }
         self.active_websocket_count
             .set(self.active_websocket_count.get().saturating_add(1));
     }

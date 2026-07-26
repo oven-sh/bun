@@ -84,7 +84,10 @@ console.log(JSON.stringify(out));
 test("TypedArray indexed access at 4294967295 on a 2**32-length view", async () => {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", fixture],
-    env: bunEnv,
+    env: {
+      ...bunEnv,
+      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "allocator_may_return_null=1"].filter(Boolean).join(":"),
+    },
     stdout: "pipe",
     stderr: "pipe",
   });

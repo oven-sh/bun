@@ -115,6 +115,7 @@ impl ThreadSafeStreamBuffer {
 
     pub fn clear_drain_callback(&mut self) {
         self.callback = None;
+        self.restart_callback = None;
     }
 
     pub fn set_restart_callback<T>(&mut self, callback: fn(*mut T), context: *mut T) {

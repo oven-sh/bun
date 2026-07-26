@@ -191,7 +191,7 @@ pub(crate) fn drain_send_body(stream: &mut Stream, qs: &mut quic::Stream) {
             sb.report_drain();
         }
         sb.release();
-        if stream.request_body_done {
+        if stream.request_body_done && !client.flags.streaming_body_can_restart {
             body.detach();
         }
         return;

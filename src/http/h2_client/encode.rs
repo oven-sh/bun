@@ -355,7 +355,7 @@ pub(crate) fn drain_send_body(session: &mut ClientSession, stream: &mut Stream, 
                 sb.report_drain();
             }
             sb.release();
-            if stream.local_closed() {
+            if stream.local_closed() && !client.flags.streaming_body_can_restart {
                 body.detach();
             }
         }

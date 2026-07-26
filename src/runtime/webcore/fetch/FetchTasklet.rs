@@ -961,6 +961,11 @@ impl FetchTasklet {
                 else {
                     unreachable!()
                 };
+                if let Some(s) = stream.get(&global_this) {
+                    // Cancel so the old loader's `on_cancel` → `clear_data()`
+                    // closes its fd now instead of waiting for GC.
+                    s.cancel(&global_this);
+                }
                 stream.deinit();
                 multipart_form_stream(&global_this, segments)
             };

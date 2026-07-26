@@ -16,11 +16,19 @@ const S3 = (...args) => new S3Client(...args);
 // external dependency and keeps retry=0, so a real S3 regression still fails
 // there. For R2 only, let bun:test retry a failed test a few times so a
 // transient outage does not fail the lane.
+//
+// Large-transfer tests pass an explicit timeout above 30s. Those stay at
+// retry=0 because 4 x 100s would exceed the 180s per-file CI wall in
+// scripts/runner.node.mjs and SIGTERM the whole file; the 503 flake was
+// observed on the small/fast requests, and the slow-transfer timeouts are
+// covered by #35057.
 const it = bunIt;
 function itForService(service: string): typeof bunIt {
   if (service !== "R2") return bunIt;
-  const withRetry = (opts?: number | TestOptions): TestOptions =>
-    typeof opts === "number" ? { timeout: opts, retry: 3 } : { retry: 3, ...opts };
+  const withRetry = (opts?: number | TestOptions): number | TestOptions | undefined => {
+    if (typeof opts === "number") return opts > 30_000 ? opts : { timeout: opts, retry: 3 };
+    return { retry: 3, ...opts };
+  };
   const wrap = (base: typeof bunIt): typeof bunIt => {
     const w = ((label: string, fn?: any, opts?: number | TestOptions) =>
       base(label, fn, withRetry(opts))) as typeof bunIt;

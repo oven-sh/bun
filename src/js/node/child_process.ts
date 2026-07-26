@@ -1111,9 +1111,7 @@ class ChildProcess extends EventEmitter {
 
   constructor() {
     super();
-    // Node's ChildProcess carries a native Process at `_handle`, which structured
-    // clone rejects as a host object. Bun keeps the handle in a private field the
-    // serializer never walks, so brand the instance to surface the same DataCloneError.
+    // Node's ChildProcess has a native `_handle` the serializer rejects; Bun's #handle is private.
     markAsUncloneable(this);
   }
 

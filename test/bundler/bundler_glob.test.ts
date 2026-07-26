@@ -178,10 +178,7 @@ describe("bundler", () => {
     },
     run: { stdout: "hello" },
     onAfterBundle(api) {
-      const out = api.readFile("/out.js");
-      if (out.includes("import(p, p)")) {
-        throw new Error("fallback parameter shadows user binding 'p'");
-      }
+      api.expectFile("/out.js").not.toContain("import(p, p)");
     },
   });
 
@@ -199,10 +196,7 @@ describe("bundler", () => {
     },
     run: { stdout: "ok" },
     onAfterBundle(api) {
-      const out = api.readFile("/out.js");
-      if (out.includes("__glob")) {
-        throw new Error("bare ./ template should fall through to runtime require");
-      }
+      api.expectFile("/out.js").not.toContain("__glob");
     },
   });
 
@@ -220,10 +214,7 @@ describe("bundler", () => {
     entryPoints: ["/nested/entry.js"],
     run: { stdout: "ok" },
     onAfterBundle(api) {
-      const out = api.readFile("/out.js");
-      if (out.includes("__glob")) {
-        throw new Error("bare ../ template should fall through to runtime require");
-      }
+      api.expectFile("/out.js").not.toContain("__glob");
     },
   });
 
@@ -240,10 +231,7 @@ describe("bundler", () => {
     },
     run: { stdout: "ok" },
     onAfterBundle(api) {
-      const out = api.readFile("/out.js");
-      if (out.includes("__glob")) {
-        throw new Error("zero-match glob should fall through to runtime require");
-      }
+      api.expectFile("/out.js").not.toContain("__glob");
     },
   });
 
@@ -258,10 +246,7 @@ describe("bundler", () => {
     },
     run: { stdout: "function" },
     onAfterBundle(api) {
-      const out = api.readFile("/out.js");
-      if (out.includes("__glob")) {
-        throw new Error("bare package template should not be glob-bundled");
-      }
+      api.expectFile("/out.js").not.toContain("__glob");
     },
   });
 
@@ -282,10 +267,7 @@ describe("bundler", () => {
     onAfterBundle(api) {
       api.expectFile("/out.js").toContain(`"./file-a.js"`);
       api.expectFile("/out.js").toContain(`"./file-b.js"`);
-      const out = api.readFile("/out.js");
-      if (out.includes("file-c")) {
-        throw new Error("mid-segment wildcard should not recurse into subdirectories");
-      }
+      api.expectFile("/out.js").not.toContain("file-c");
     },
   });
 
@@ -336,10 +318,7 @@ describe("bundler", () => {
     },
     run: { stdout: "ok" },
     onAfterBundle(api) {
-      const out = api.readFile("/out.js");
-      if (out.includes("__glob")) {
-        throw new Error("literal * in template should fall through to runtime require");
-      }
+      api.expectFile("/out.js").not.toContain("__glob");
     },
   });
 

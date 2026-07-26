@@ -142,12 +142,23 @@ describe("process.env node semantics", () => {
     expect("ENVFIX_SYMDEF" in process.env).toBe(false);
   });
 
-  test("delete removes the key", () => {
-    process.env.ENVFIX_DEL = "x";
-    expect("ENVFIX_DEL" in process.env).toBe(true);
-    expect(delete process.env.ENVFIX_DEL).toBe(true);
-    expect("ENVFIX_DEL" in process.env).toBe(false);
-    expect(process.env.ENVFIX_DEL).toBeUndefined();
+  test("delete removes the key and preserves remaining key order", () => {
+    process.env.ENVFIX_A = "a";
+    process.env.ENVFIX_B = "b";
+    process.env.ENVFIX_C = "c";
+    expect(delete process.env.ENVFIX_B).toBe(true);
+    expect("ENVFIX_B" in process.env).toBe(false);
+    expect(process.env.ENVFIX_B).toBeUndefined();
+    expect(Object.keys(process.env).filter(k => k.startsWith("ENVFIX_"))).toEqual(["ENVFIX_A", "ENVFIX_C"]);
+  });
+
+  test.skipIf(isWindows)("$-prefixed keys are read back as-is (no bunfig-interpolation strip)", () => {
+    expect(process.env["$PATH"]).toBeUndefined();
+    expect("$PATH" in process.env).toBe(false);
+    process.env["$ENVFIX_DOLLAR"] = "x";
+    expect(process.env["$ENVFIX_DOLLAR"]).toBe("x");
+    expect(process.env["ENVFIX_DOLLAR"]).toBeUndefined();
+    delete process.env["$ENVFIX_DOLLAR"];
   });
 
   test("coerced value reaches a spawned child's inherited env", async () => {

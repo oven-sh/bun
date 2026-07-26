@@ -324,6 +324,20 @@ impl core::ops::Deref for ZStr {
     }
 }
 
+/// Serialises Bun's own `libc::getenv` / `environ` readers against the
+/// `process.env` write path's `libc::setenv`/`unsetenv`. `getenv()` does not
+/// take glibc's internal envlock (it is async-signal-safe), so a concurrent
+/// `setenv()` that `realloc`s `__environ` while the transpiler pool or a
+/// worker is inside `getenv_z()` would be a UAF inside libc. Native addons'
+/// direct `getenv()` calls are not covered (same limitation Node carries).
+static ENVIRON_LOCK: RwLock<()> = RwLock::new(());
+
+/// Hold this write guard around `libc::setenv`/`unsetenv` so [`getenv_z`] and
+/// [`getenv_z_any_case`] on other threads don't walk `__environ` mid-realloc.
+pub fn environ_write_lock() -> RwLockWriteGuard<'static, ()> {
+    ENVIRON_LOCK.write()
+}
+
 /// `bun.getenvZ` — read an environment variable. Returns the value as borrowed
 /// process-static bytes (env block lives for the process). On POSIX wraps
 /// `libc::getenv`; on Windows scans `environ` case-insensitively.
@@ -335,13 +349,16 @@ pub fn getenv_z(key: &ZStr) -> Option<&'static [u8]> {
     }
     #[cfg(unix)]
     unsafe {
+        let _g = ENVIRON_LOCK.read();
         // SAFETY: key is NUL-terminated by ZStr invariant; getenv reads until NUL.
         let p = libc::getenv(key.as_ptr());
         if p.is_null() {
             return None;
         }
-        // SAFETY: getenv returns a pointer into the process env block, valid for
-        // process lifetime (modulo setenv races).
+        // SAFETY: getenv returns a pointer into the process env block; the read
+        // lock serialises against Bun's own setenv path. glibc/musl never free
+        // a previous value string on overwrite, so the returned slice stays
+        // valid after the guard drops.
         let len = libc::strlen(p);
         return Some(core::slice::from_raw_parts(p.cast::<u8>(), len));
     }
@@ -379,6 +396,7 @@ pub fn c_environ() -> *const *const core::ffi::c_char {
 pub fn getenv_z_any_case(key: &ZStr) -> Option<&'static [u8]> {
     #[cfg(unix)]
     unsafe {
+        let _g = ENVIRON_LOCK.read();
         // SAFETY: `environ` is the C env block; entries are NUL-terminated `KEY=VALUE`.
         let mut p = c_environ();
         while !(*p).is_null() {

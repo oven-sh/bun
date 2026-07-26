@@ -2176,7 +2176,9 @@ pub mod environment_variables {
     ) -> bool {
         let vm = global_object.bun_vm();
         let name_slice = name.to_utf8();
-        let Some(val) = vm.env_loader().get(name_slice.slice()) else {
+        // `Loader::get` strips a leading `$` (bunfig/.env interpolation); this
+        // is the `process.env[key]` read path, so look the map up directly.
+        let Some(val) = vm.env_loader().map.get(name_slice.slice()) else {
             return false;
         };
         value.write(BunString::borrow_utf8(val));
@@ -2276,7 +2278,9 @@ pub mod environment_variables {
                 let key_z = std::ffi::CString::new(key).expect("pre-truncated at NUL");
                 let val_z =
                     std::ffi::CString::new(value_slice.slice()).expect("pre-truncated at NUL");
-                // SAFETY: NUL-terminated C strings; setenv copies both.
+                let _g = bun_core::environ_write_lock();
+                // SAFETY: NUL-terminated C strings; setenv copies both. The
+                // write lock excludes bun_core::getenv_z on other threads.
                 unsafe { libc::setenv(key_z.as_ptr(), val_z.as_ptr(), 1) };
                 bun_core::env_var::invalidate_for_setenv(key);
             }
@@ -2296,17 +2300,21 @@ pub mod environment_variables {
 
         {
             let _slots = vm.proxy_env_storage.lock();
-            vm.transpiler.env_mut().map.remove(key);
+            // Ordered remove so Object.keys(process.env) keeps the relative
+            // order of remaining keys after delete (Node/unsetenv shift
+            // environ in place).
+            vm.transpiler.env_mut().map.map.ordered_remove(key);
         }
 
         if vm.is_main_thread() {
             #[cfg(not(windows))]
             {
                 if let Ok(key_z) = std::ffi::CString::new(key) {
+                    let _g = bun_core::environ_write_lock();
                     // SAFETY: NUL-terminated C string.
                     unsafe { libc::unsetenv(key_z.as_ptr()) };
+                    bun_core::env_var::invalidate_for_setenv(key);
                 }
-                bun_core::env_var::invalidate_for_setenv(key);
             }
         }
     }

@@ -525,6 +525,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
 
         Ok(crate::BundledAst {
             parts,
+            directives: bun_ast::StoreSlice::EMPTY,
             module_scope: module_scope_value,
             symbols: bun_alloc::vec_from_iter_in(core::mem::take(&mut self.symbols), self.bump),
             exports_ref: Ref::NONE,

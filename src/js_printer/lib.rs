@@ -7670,6 +7670,13 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
     }
     printer.binary_expression_stack = Vec::new();
 
+    for directive in tree.directives.slice() {
+        printer.print_indent();
+        printer.print_string_literal_utf8(directive.slice(), false);
+        printer.print(b";");
+        printer.print_newline();
+    }
+
     if !printer.options.bundling
         && tree.uses_require_ref
         && tree.exports_kind == js_ast::ExportsKind::Esm
@@ -8015,6 +8022,13 @@ pub fn print_common_js<
     // `defer { if (generate_source_map) printer.source_map_builder.line_offset_tables.deinit(opts.allocator); }`
     // — no longer needed: see `print_ast` above.
     printer.binary_expression_stack = Vec::new();
+
+    for directive in tree.directives.slice() {
+        printer.print_indent();
+        printer.print_string_literal_utf8(directive.slice(), false);
+        printer.print(b";");
+        printer.print_newline();
+    }
 
     for part in tree.parts.iter() {
         for stmt in slice_of(part.stmts).iter() {

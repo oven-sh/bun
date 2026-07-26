@@ -450,9 +450,7 @@ function WriteStream(this: FSStream, path: string | null, options?: any): void {
     if (!write) this._write = null;
     if (!writev) this._writev = null;
   } else {
-    // Skip the per-chunk thread-pool dispatch when we opened the path ourselves
-    // (so the fd is known to be a regular file). A caller-supplied fd may be a
-    // pipe or nonblocking descriptor, which writeSync would block on or EAGAIN.
+    // Only when we open the path ourselves: a caller-supplied fd may be a pipe.
     if (!fastPath && fd == null && start === undefined) this[kSyncWrite] = true;
     else this._writev = undefined;
     $assert(this[kFs].write, "assuming user does not delete fs.write!");

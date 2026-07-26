@@ -902,14 +902,15 @@ for (const shell of ["system", "bun"]) {
     test("forwards --env-file values that expand an unresolved key", () => {
       // --env-file loads no default files, so an unresolved $VAR cannot be
       // NODE_ENV-dependent here; the (possibly defaulted) expansion must be
-      // forwarded.
+      // forwarded, as must NODE_ENV itself (B).
       const tmp = tempDirWithFiles("script-runner-dotenv", {
         "package.json": '{"scripts":{"show-env":"' + show_dotenv_script + '"}}',
-        "custom.env": "BUNTEST_DOTENV_A=${BUNTEST_DOTENV_UNSET:-fallback}",
+        "custom.env":
+          "BUNTEST_DOTENV_A=${BUNTEST_DOTENV_UNSET:-fallback}\nNODE_ENV=from-envfile\nBUNTEST_DOTENV_B=$NODE_ENV",
       });
-      const unset = isWindowsCMD ? ["%BUNTEST_DOTENV_B%", "%BUNTEST_DOTENV_C%", "%BUNTEST_DOTENV_D%"] : ["", "", ""];
+      const unset = isWindowsCMD ? ["%BUNTEST_DOTENV_C%", "%BUNTEST_DOTENV_D%"] : ["", ""];
       expect(bunRunAsScript(tmp, "show-env", {}, ["--env-file=custom.env", "--shell=" + shell]).stdout).toBe(
-        `A=fallback, B=${unset[0]}, C=${unset[1]}, D=${unset[2]}`,
+        `A=fallback, B=from-envfile, C=${unset[0]}, D=${unset[1]}`,
       );
     });
 
@@ -967,6 +968,33 @@ for (const shell of ["system", "bun"]) {
         );
       },
     );
+
+    test.skipIf(isWindowsCMD)("e2e: .env value expanding $NODE_ENV is not pinned", () => {
+      const tmp = tempDirWithFiles("script-runner-dotenv", {
+        "package.json": `{"scripts":{"start":"NODE_ENV=production '${bunExe().replaceAll("\\", "\\\\")}' run index.ts"}}`,
+        "index.ts": "console.log('CONFIG=' + process.env.CONFIG);",
+        ".env": "CONFIG=config.$NODE_ENV.json",
+      });
+      expect(bunRunAsScript(tmp, "start", {}, ["--shell=" + shell]).stdout).toBe("CONFIG=config.production.json");
+    });
+
+    test.skipIf(isWindowsCMD)("e2e: subdirectory .env does not shadow package-root .env in a nested bun", () => {
+      const tmp = tempDirWithFiles("script-runner-dotenv", {
+        "package.json": `{"scripts":{"start":"'${bunExe().replaceAll("\\", "\\\\")}' index.ts"}}`,
+        "index.ts": "console.log('X=' + process.env.X);",
+        ".env": "X=root",
+        "src/.env": "X=cwd",
+        "src/placeholder": "",
+      });
+      const r = Bun.spawnSync([bunExe(), "--shell=" + shell, "run", "start"], {
+        cwd: path.join(tmp, "src"),
+        env: { ...bunEnv, NODE_ENV: undefined },
+      });
+      expect({ stdout: r.stdout.toString("utf8").trim(), exitCode: r.exitCode }).toEqual({
+        stdout: "X=root",
+        exitCode: 0,
+      });
+    });
 
     test("--no-env-file disables .env loading for scripts", () => {
       const tmp = tempDirWithFiles("script-runner-dotenv", {

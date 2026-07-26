@@ -682,7 +682,15 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 let disable_default = this_transpiler.options.env.disable_default_env_files;
                 // Explicit --env-file (if any); skip auto-discovery here.
                 let _ = this_transpiler.run_env_loader(true);
-                if !disable_default && this_transpiler.options.env.files.is_empty() {
+                // Auto-discover only when the script's spawn cwd is the
+                // invocation cwd; otherwise the forwarded values were read from
+                // the wrong directory and would shadow the child's own `.env`.
+                let default_files_loaded = if !disable_default
+                    && this_transpiler.options.env.files.is_empty()
+                    && root_dir_info.enclosing_package_json.is_none_or(|pj| {
+                        strings::without_trailing_slash(pj.source.path.name().dir)
+                            == strings::without_trailing_slash(top_level_dir)
+                    }) {
                     if let Some(entries) =
                         root_dir_info.get_entries(this_transpiler.resolver.generation)
                     {
@@ -693,11 +701,16 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                         let _ = this_transpiler
                             .env_mut()
                             .load_default_files_for_script_runner(dir);
+                        true
+                    } else {
+                        false
                     }
-                }
+                } else {
+                    false
+                };
                 this_transpiler
                     .env_mut()
-                    .take_script_dotenv(process_env_count);
+                    .take_script_dotenv(process_env_count, default_files_loaded);
             } else {
                 // `--filter` / multi-run spawn each script in a different
                 // package cwd; forwarding the invocation-cwd `.env` would

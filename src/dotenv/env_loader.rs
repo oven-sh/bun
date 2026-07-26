@@ -92,6 +92,15 @@ impl DotEnvBehavior {
 /// this T2 crate names no `bun_s3_signing` types — see PORTING.md §Dispatch (cold-path,
 /// upward dep). The high-tier caller constructs the real refcounted `S3Credentials` from
 /// this POD at the call site.
+#[inline]
+fn is_suffix_key(k: &[u8]) -> bool {
+    #[cfg(windows)]
+    return strings::eql_case_insensitive_ascii_check_length(k, b"NODE_ENV")
+        || strings::eql_case_insensitive_ascii_check_length(k, b"BUN_ENV");
+    #[cfg(not(windows))]
+    return k == b"NODE_ENV" || k == b"BUN_ENV";
+}
+
 #[derive(Clone, Default)]
 pub struct S3Credentials {
     pub access_key_id: Box<[u8]>,
@@ -777,20 +786,13 @@ impl Loader {
     /// Move non-conditional dotenv entries (indices `process_env_count..`)
     /// into `script_forward`, truncate `map` to the process-env prefix, and
     /// clear every default-file slot. See #9877 / #9635.
-    pub fn take_script_dotenv(&mut self, process_env_count: usize) {
+    pub fn take_script_dotenv(&mut self, process_env_count: usize, filter_suffix_keys: bool) {
         self.script_forward.clear();
         {
-            #[cfg(windows)]
-            let is_suffix_key = |k: &[u8]| {
-                strings::eql_case_insensitive_ascii_check_length(k, b"NODE_ENV")
-                    || strings::eql_case_insensitive_ascii_check_length(k, b"BUN_ENV")
-            };
-            #[cfg(not(windows))]
-            let is_suffix_key = |k: &[u8]| k == b"NODE_ENV" || k == b"BUN_ENV";
             let keys = self.map.map.keys();
             let values = self.map.map.values();
             for i in process_env_count..keys.len() {
-                if !values[i].conditional && !is_suffix_key(&keys[i]) {
+                if !values[i].conditional && !(filter_suffix_keys && is_suffix_key(&keys[i])) {
                     self.script_forward
                         .push((keys[i].clone(), values[i].value.clone()));
                 }
@@ -1269,7 +1271,11 @@ impl<'a> Parser<'a> {
                             _ => break,
                         }
                     }
-                    let lookup_value = match map.map.get(&value[key_start..end]) {
+                    let referenced_key = &value[key_start..end];
+                    if taint_unresolved && is_suffix_key(referenced_key) {
+                        *touched_conditional = true;
+                    }
+                    let lookup_value = match map.map.get(referenced_key) {
                         Some(entry) => {
                             if entry.conditional {
                                 *touched_conditional = true;

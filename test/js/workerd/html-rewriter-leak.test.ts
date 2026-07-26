@@ -47,11 +47,13 @@ test("onEndTag callbacks are released after the rewrite", () => {
 // LOLHTMLContext.deinit() must destroy those allocations. Previously it only
 // unprotected the held JSValues and leaked the struct memory.
 //
-// RSS is a high-water mark — Bun.gc(true) collects every wrapper and its
-// lol-html builder, but the allocators don't promptly hand pages back to the
-// OS. So warmup runs the *same* workload as the measured phase: the allocator
-// footprint is established before the baseline, and any growth past that is
-// what's actually retained.
+// `process.memoryUsage.rss()` is a point sample; mimalloc hands a ~30 MB
+// segment back to the OS on its own cadence between passes, so two point
+// samples can straddle that release and read as a +31 MB "delta" with nothing
+// retained (observed on the 4-vCPU Windows lane). `resourceUsage().maxRSS` is
+// the kernel's monotone peak (VmHWM / PeakWorkingSetSize), so it never dips:
+// flat when freed memory is reused, strictly rising (~50 MB over 3 passes)
+// when it leaks.
 //
 // Skipped in debug: at this N a debug pass is ~40s and the extra debug-build
 // allocation tracking adds enough RSS noise to drown the signal. CI has no
@@ -70,19 +72,23 @@ test.skipIf(isDebug)(
       }
 
       const N = 4000;
+      const samples = [];
       function pass() {
         for (let i = 0; i < N; i++) once();
         Bun.gc(true);
-        return process.memoryUsage.rss();
+        samples.push(process.memoryUsage.rss());
       }
 
-      pass(); pass();
-      const before = pass();
-      pass(); pass();
-      const after = pass();
+      // ru_maxrss is KB on Linux/Windows, bytes on macOS; normalize to bytes.
+      const maxRSS = () => process.resourceUsage().maxRSS * (process.platform === "darwin" ? 1 : 1024);
+
+      for (let i = 0; i < 3; i++) pass();
+      const before = maxRSS();
+      for (let i = 0; i < 3; i++) pass();
+      const after = maxRSS();
 
       process.stdout.write(
-        JSON.stringify({ before, after, deltaMB: (after - before) / 1024 / 1024 }) + "\\n",
+        JSON.stringify({ samples, before, after, deltaMB: (after - before) / 1024 / 1024 }) + "\\n",
       );
     `;
 
@@ -111,9 +117,11 @@ test.skipIf(isDebug)(
       .trim();
     expect(filteredStderr).toBe("");
 
+    // Logged so a future red carries the per-pass trace without a repro.
+    console.log(stdout.trim());
     const { deltaMB } = JSON.parse(stdout.trim());
 
-    // Unfixed: ~50 MB over 3 measured passes. Fixed: ±1 MB plateau.
+    // Unfixed: ~50 MB over 3 measured passes. Fixed: <1 MB.
     // Threshold sits at ~half the unfixed signal.
     expect(deltaMB).toBeLessThan(25);
     expect(exitCode).toBe(0);

@@ -10,10 +10,8 @@ import { bunEnv, bunExe } from "harness";
 // The child needs ~9 GiB resident (the 4 GiB input plus the ~4 GiB
 // deflateBound() scratch Vec); if the allocation fails it prints "SKIP" and
 // the test passes trivially.
-test(
-  "Bun.gzipSync / Bun.deflateSync compress a 4 GiB input instead of wrapping avail_in to 0",
-  async () => {
-    const script = `
+test("Bun.gzipSync / Bun.deflateSync compress a 4 GiB input instead of wrapping avail_in to 0", async () => {
+  const script = `
       const zlib = require("node:zlib");
       let b;
       try {
@@ -42,32 +40,30 @@ test(
       );
     `;
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", script],
-      env: {
-        ...bunEnv,
-        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "allocator_may_return_null=1"].filter(Boolean).join(":"),
-      },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: {
+      ...bunEnv,
+      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "allocator_may_return_null=1"].filter(Boolean).join(":"),
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    const out = JSON.parse(stdout.trim() || '"NO_OUTPUT"');
-    if (out === "SKIP") return;
+  const out = JSON.parse(stdout.trim() || '"NO_OUTPUT"');
+  if (out === "SKIP") return;
 
-    expect(stderr).toBe("");
-    // With the bug: gzip = 20, deflate = 2, rgLen = 0.
-    expect(out).toEqual({
-      gzip: expect.any(Number),
-      deflate: expect.any(Number),
-      rgLen: 2 ** 32,
-      rgFirst: 0x41,
-      rgSentinel: 0x5a,
-    });
-    expect(out.gzip).toBeGreaterThan(1_000_000);
-    expect(out.deflate).toBeGreaterThan(1_000_000);
-    expect(exitCode).toBe(0);
-  },
-  300_000,
-);
+  expect(stderr).toBe("");
+  // With the bug: gzip = 20, deflate = 2, rgLen = 0.
+  expect(out).toEqual({
+    gzip: expect.any(Number),
+    deflate: expect.any(Number),
+    rgLen: 2 ** 32,
+    rgFirst: 0x41,
+    rgSentinel: 0x5a,
+  });
+  expect(out.gzip).toBeGreaterThan(1_000_000);
+  expect(out.deflate).toBeGreaterThan(1_000_000);
+  expect(exitCode).toBe(0);
+}, 300_000);

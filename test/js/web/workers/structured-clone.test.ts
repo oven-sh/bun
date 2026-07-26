@@ -1048,10 +1048,10 @@ describe("FileHandle and ChildProcess are not structured-cloneable", () => {
     });
   });
 
-  test("v8.serialize(FileHandle) throws", async () => {
+  test("v8.serialize(FileHandle) throws DataCloneError", async () => {
     await withFileHandle(fh => {
-      expect(() => v8.serialize(fh)).toThrow();
-      expect(() => v8.serialize({ nested: fh })).toThrow();
+      expect(() => v8.serialize(fh)).toThrow(dataCloneError);
+      expect(() => v8.serialize({ nested: fh })).toThrow(dataCloneError);
     });
   });
 
@@ -1082,11 +1082,11 @@ describe("FileHandle and ChildProcess are not structured-cloneable", () => {
     }
   });
 
-  test("v8.serialize(ChildProcess) throws", () => {
+  test("v8.serialize(ChildProcess) throws DataCloneError", () => {
     const cp = spawn(bunExe(), ["-e", "0"], { stdio: "ignore", env: bunEnv });
     try {
-      expect(() => v8.serialize(cp)).toThrow();
-      expect(() => v8.serialize({ nested: cp })).toThrow();
+      expect(() => v8.serialize(cp)).toThrow(dataCloneError);
+      expect(() => v8.serialize({ nested: cp })).toThrow(dataCloneError);
     } finally {
       cp.kill();
     }
@@ -1095,7 +1095,7 @@ describe("FileHandle and ChildProcess are not structured-cloneable", () => {
   test("bare new ChildProcess() is also rejected", () => {
     const cp = new ChildProcess();
     expect(() => structuredClone(cp)).toThrow(dataCloneError);
-    expect(() => v8.serialize(cp)).toThrow();
+    expect(() => v8.serialize(cp)).toThrow(dataCloneError);
   });
 
   test("MessagePort.postMessage(FileHandle) without transferList throws", async () => {

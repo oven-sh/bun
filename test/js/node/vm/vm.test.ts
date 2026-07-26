@@ -1383,3 +1383,82 @@ describe("node:vm SourceTextModule cyclic graph linking", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+describe.concurrent("node:vm worker.terminate() during evaluation", () => {
+  // `checkForTermination` used to assume any termination request was its own
+  // watchdog/SIGINT, so a worker.terminate() arriving mid-evaluation either
+  // hit RELEASE_ASSERT_NOT_REACHED (no timeout option) or was downgraded to a
+  // catchable ERR_SCRIPT_EXECUTION_TIMEOUT (timeout option set), defeating the
+  // terminate. Node propagates the termination so the worker stops immediately.
+
+  test("untimed runInNewContext does not abort the process", async () => {
+    const fixture = `
+      const { Worker } = require("node:worker_threads");
+      const w = new Worker(
+        "const {parentPort}=require('node:worker_threads');const vm=require('node:vm');" +
+        "parentPort.postMessage('ready');" +
+        "try { vm.runInNewContext('while(true){}', {}); }" +
+        "catch (e) { parentPort.postMessage('caught:' + (e && e.code)); }",
+        { eval: true },
+      );
+      w.on("message", m => {
+        console.log("msg:" + m);
+        if (m === "ready") setTimeout(() => w.terminate().then(() => {
+          console.log("terminated");
+          process.exit(0);
+        }), 100);
+      });
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+      stdout: "msg:ready\nterminated",
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  }, 30000);
+
+  for (const api of ["runInNewContext", "runInThisContext"] as const) {
+    test(`guest retry loop with timeout cannot defeat terminate() (${api})`, async () => {
+      const evalCall =
+        api === "runInNewContext"
+          ? "vm.runInNewContext('while(true){}', {}, { timeout: 1000 })"
+          : "new vm.Script('while(true){}').runInThisContext({ timeout: 1000 })";
+      const fixture = `
+        const { Worker } = require("node:worker_threads");
+        const w = new Worker(
+          "const {parentPort}=require('node:worker_threads');const vm=require('node:vm');" +
+          "parentPort.postMessage('ready');" +
+          "for(;;){try{ ${evalCall} }catch(e){}}",
+          { eval: true },
+        );
+        w.on("message", m => {
+          if (m === "ready") setTimeout(() => w.terminate().then(() => {
+            console.log("terminated");
+            process.exit(0);
+          }), 100);
+        });
+        setTimeout(() => { console.log("never-terminated"); process.exit(1); }, 15000);
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", fixture],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+        stdout: "terminated",
+        stderr: "",
+        exitCode: 0,
+        signalCode: null,
+      });
+    }, 30000);
+  }
+});

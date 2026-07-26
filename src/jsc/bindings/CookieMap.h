@@ -68,6 +68,7 @@ private:
     void buildOriginalIndex();
     void removeInternal(const String& name);
     void appendModified(Ref<Cookie>&&);
+    void compactModified();
 
     // Holes are marked with key.isNull().
     Vector<KeyValuePair<String, String>> m_originalCookies;

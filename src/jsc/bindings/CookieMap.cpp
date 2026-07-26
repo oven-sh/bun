@@ -226,7 +226,25 @@ void CookieMap::removeInternal(const String& name)
     if (modified != m_modifiedIndex.end()) {
         m_modifiedCookies[modified->value] = nullptr;
         m_modifiedIndex.remove(modified);
+        while (!m_modifiedCookies.isEmpty() && !m_modifiedCookies.last())
+            m_modifiedCookies.removeLast();
     }
+}
+
+void CookieMap::compactModified()
+{
+    size_t write = 0;
+    for (size_t read = 0; read < m_modifiedCookies.size(); ++read) {
+        if (!m_modifiedCookies[read])
+            continue;
+        if (read != write)
+            m_modifiedCookies[write] = WTF::move(m_modifiedCookies[read]);
+        const auto& name = m_modifiedCookies[write]->name();
+        if (!name.isNull())
+            m_modifiedIndex.set(name, write);
+        ++write;
+    }
+    m_modifiedCookies.shrink(write);
 }
 
 void CookieMap::appendModified(Ref<Cookie>&& cookie)
@@ -235,6 +253,15 @@ void CookieMap::appendModified(Ref<Cookie>&& cookie)
     m_modifiedCookies.append(WTF::move(cookie));
     if (!name.isNull())
         m_modifiedIndex.set(WTF::move(name), m_modifiedCookies.size() - 1);
+
+    // Interior holes (from re-setting a name that was not the tail) are reclaimed
+    // once they outnumber live entries, keeping storage within 2x of the live
+    // count. Amortized O(1): compaction does O(live) work and at least halves the
+    // slot count. Checked after the append so the freshly-added entry counts as
+    // live; otherwise an iterate-and-delete loop compacts one step early and
+    // moves the last un-visited entry behind the iterator.
+    if (m_modifiedCookies.size() >= 16 && m_modifiedCookies.size() >= 2 * m_modifiedIndex.size())
+        compactModified();
 }
 
 void CookieMap::set(Ref<Cookie> cookie)

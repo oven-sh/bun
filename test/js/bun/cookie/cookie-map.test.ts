@@ -545,4 +545,22 @@ describe("per-key operations are O(1)", () => {
     const elapsed = performance.now() - t0;
     expect(elapsed).toBeLessThan(budgetMs);
   });
+
+  test(`N=${N} within ${budgetMs}ms: repeated set() of the same name stays bounded`, () => {
+    const t0 = performance.now();
+
+    const m = new Bun.CookieMap();
+    for (let i = 0; i < N; i++) m.set("a", "v" + i);
+    expect(m.size).toBe(1);
+    expect(m.get("a")).toBe("v" + (N - 1));
+    expect(m.toSetCookieHeaders()).toHaveLength(1);
+
+    // Two alternating names exercises the interior-hole compaction path.
+    for (let i = 0; i < N; i++) m.set(i & 1 ? "b" : "a", "w" + i);
+    expect(m.size).toBe(2);
+    expect(m.toSetCookieHeaders()).toHaveLength(2);
+
+    const elapsed = performance.now() - t0;
+    expect(elapsed).toBeLessThan(budgetMs);
+  });
 });

@@ -1165,6 +1165,9 @@ pub mod store {
         /// Collapse a `Rope` into `Bytes` in place. JS thread only: same
         /// single-threaded interior-mutation rule as [`StoreRef::data_mut`].
         pub fn flatten_if_rope(&self) {
+            if !matches!((**self).data, Data::Rope(_)) {
+                return;
+            }
             let data = self.data_mut();
             let Data::Rope(rope) = data else { return };
             let mut bytes = Bytes::init(rope.join());

@@ -257,15 +257,20 @@ export const primordials = {
     };
   },
   // Materializes every primordial and returns one { name, holder, kind, key, value, available }
-  // row per JSCPrimordials.h entry, straight from JSC.
+  // row per JSCPrimordialsTable.h entry, straight from JSC.
   audit: $newCppFunction("PrimordialsAudit.cpp", "Bun__primordialsAudit", 0) as () => Array<{
     name: string;
     holder: string;
-    kind: "Method" | "Getter" | "SymbolMethod" | "SymbolGetter";
-    key: string | symbol;
-    value: Function;
+    kind: "Method" | "Getter" | "Setter" | "Value" | "Self";
+    key: string | symbol | null;
+    value: unknown;
     available: boolean;
   }>,
+  // Node's primordials object as internal modules see it (like Node's
+  // internal/test/binding.primordials); user code has no other way to reach it.
+  get object() {
+    return require("internal/primordials");
+  },
 };
 
 // Userland access to node-internal modules for vendored node tests that

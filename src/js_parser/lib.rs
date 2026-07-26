@@ -373,6 +373,11 @@ pub mod defines {
         // tier up for json-parser access) can construct directly.
         pub original_name: Option<Box<[u8]>>,
         pub flags: Flags,
+        /// Set when `value` is an object or array literal. Index into
+        /// `Define.injected`. The parser substitutes the value with a
+        /// reference to a hoisted `var` so every use site shares one
+        /// allocation (matching esbuild's `<define:X>` behaviour).
+        pub injected_define_index: Option<u32>,
     }
 
     // SAFETY: `ExprData` contains `StoreRef` raw pointers into immutable,
@@ -389,6 +394,7 @@ pub mod defines {
                 value: ExprData::EMissing(E::Missing),
                 original_name: None,
                 flags: Flags::default(),
+                injected_define_index: None,
             }
         }
     }
@@ -427,6 +433,7 @@ pub mod defines {
                     options.method_call_must_be_replaced_with_undefined,
                 ),
                 original_name: options.original_name.map(Box::<[u8]>::from),
+                injected_define_index: None,
             }
         }
 
@@ -490,14 +497,30 @@ pub mod defines {
                         || b.method_call_must_be_replaced_with_undefined(),
                 ),
                 original_name: b.original_name,
+                injected_define_index: b.injected_define_index,
             }
         }
     }
+
+    /// An object/array `--define` value that the parser materializes once as a
+    /// hoisted `var` and references by identifier, so repeated uses share one
+    /// object (esbuild's `<define:X>` synthetic-module analogue, per-file).
+    #[derive(Clone)]
+    pub struct InjectedDefine {
+        pub name: Box<[u8]>,
+        pub value: ExprData,
+    }
+
+    // SAFETY: see `Send`/`Sync` for DefineData — `value` points at immutable
+    // process-lifetime AST stores and is only read after `Define::init`.
+    unsafe impl Send for InjectedDefine {}
+    unsafe impl Sync for InjectedDefine {}
 
     #[derive(Default)]
     pub struct Define {
         pub identifiers: StringHashMap<IdentifierDefine>,
         pub dots: StringHashMap<Vec<DotDefine>>,
+        pub injected: Vec<InjectedDefine>,
         pub drop_debugger: bool,
     }
 
@@ -522,8 +545,25 @@ pub mod defines {
         pub fn insert(
             &mut self,
             key: &[u8],
-            value: DefineData,
+            mut value: DefineData,
         ) -> Result<(), bun_alloc::AllocError> {
+            // Object/array literals: hoist to a single shared `var` so every
+            // reference resolves to the same object instead of emitting a fresh
+            // `{...}` at each use site. `parse_env_json` + `deep_clone` produce
+            // `EObject`/`EArray` (not the JSON variants) for user `--define` values.
+            if !value.valueless()
+                && matches!(
+                    value.value.tag(),
+                    bun_ast::expr::Tag::EObject | bun_ast::expr::Tag::EArray
+                )
+            {
+                value.injected_define_index = Some(self.injected.len() as u32);
+                self.injected.push(InjectedDefine {
+                    name: Box::from(key),
+                    value: value.value,
+                });
+            }
+
             // If it has a dot, then it's a DotDefine. e.g. process.env.NODE_ENV
             if let Some(last_dot) = strings::last_index_of_char(key, b'.') {
                 let tail = &key[last_dot + 1..key.len()];

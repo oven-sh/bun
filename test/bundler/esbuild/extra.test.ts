@@ -671,6 +671,57 @@ describe("bundler", () => {
     run: true,
   });
 
+  // Object/array define values should be hoisted to a single shared binding so
+  // identity holds and mutations are visible across references (esbuild parity).
+  itBundled("extra/DefineObjectIdentity", {
+    files: {
+      "in.js": /* js */ `
+        const a = CFG, b = CFG;
+        if (a !== b) throw "identity: a !== b";
+        if (a.nested !== b.nested) throw "identity: a.nested !== b.nested";
+        a.k = 99;
+        if (b.k !== 99) throw "mutation: b.k !== 99";
+        console.log("ok");
+      `,
+    },
+    define: { CFG: '{"k":1,"nested":{"x":2}}' },
+    run: { stdout: "ok" },
+    onAfterBundle(api) {
+      const out = api.readFile("out.js");
+      const literals = out.match(/\{\s*k:\s*1/g);
+      if ((literals?.length ?? 0) !== 1) {
+        throw new Error("expected exactly one { k: 1 ... } literal in output, got " + (literals?.length ?? 0));
+      }
+    },
+  });
+  itBundled("extra/DefineObjectIdentityDot", {
+    files: {
+      "in.js": /* js */ `
+        const a = process.env.CFG, b = process.env.CFG;
+        if (a !== b) throw "identity: a !== b";
+        if (ARR !== ARR) throw "identity: ARR !== ARR";
+        const arr = ARR;
+        arr.push(4);
+        if (ARR.length !== 4) throw "mutation: ARR.length !== 4";
+        console.log("ok");
+      `,
+    },
+    define: { "process.env.CFG": '{"k":1}', "ARR": "[1,2,3]" },
+    run: { stdout: "ok" },
+  });
+  itBundled("extra/DefineObjectIdentityNoBundle", {
+    files: {
+      "in.js": /* js */ `
+        const a = CFG, b = CFG;
+        if (a !== b) throw "identity: a !== b";
+        console.log("ok");
+      `,
+    },
+    bundling: false,
+    define: { CFG: '{"k":1}' },
+    run: { stdout: "ok" },
+  });
+
   // Various ESM cases
   itBundled("extra/CatchScope1", {
     files: {

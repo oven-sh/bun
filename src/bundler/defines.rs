@@ -232,6 +232,7 @@ impl DefineExt for Define {
         let mut define = Box::new(Define {
             identifiers: StringHashMap::default(),
             dots: StringHashMap::default(),
+            injected: Vec::new(),
             drop_debugger,
         });
         define.dots.reserve(124);
@@ -448,6 +449,7 @@ impl DefineDataExt for DefineData {
                     /* method_call_must_be_replaced_with_undefined: */
                     method_call_must_be_replaced_with_undefined_,
                 ),
+                injected_define_index: None,
             });
         }
 
@@ -476,6 +478,7 @@ impl DefineDataExt for DefineData {
                     /* method_call_must_be_replaced_with_undefined: */
                     method_call_must_be_replaced_with_undefined_,
                 ),
+                injected_define_index: None,
             });
         }
 
@@ -522,6 +525,7 @@ impl DefineDataExt for DefineData {
                 /* method_call_must_be_replaced_with_undefined: */
                 method_call_must_be_replaced_with_undefined_,
             ),
+            injected_define_index: None,
         })
     }
 

@@ -1656,6 +1656,39 @@ size_t uws_req_get_header(uws_req_t *res, const char *lower_case_header,
     }
   }
 
+  // One pass over all request headers for the WebSocket opening-handshake
+  // checks that uws_req_get_header (first match only) cannot answer: the
+  // |Connection| field is a comma-separated token list that may span multiple
+  // field lines, and |Sec-WebSocket-Key| must not appear more than once.
+  // Returns the number of |Sec-WebSocket-Key| field lines; writes whether any
+  // |Connection| token is an ASCII case-insensitive match for "upgrade".
+  uint32_t uws_req_ws_handshake_scan(uws_req_t *res, bool *conn_has_upgrade)
+  {
+    uWS::HttpRequest *uwsReq = (uWS::HttpRequest *)res;
+    uint32_t key_count = 0;
+    bool upgrade = false;
+    for (const auto &h : *uwsReq) {
+      const auto &name = h.first;
+      if (name.length() == 17 && !strncasecmp(name.data(), "sec-websocket-key", 17)) {
+        key_count++;
+      } else if (name.length() == 10 && !strncasecmp(name.data(), "connection", 10)) {
+        const auto &v = h.second;
+        size_t i = 0;
+        while (i < v.length()) {
+          while (i < v.length() && (v[i] == ',' || v[i] == ' ' || v[i] == '\t')) i++;
+          size_t j = i;
+          while (j < v.length() && v[j] != ',') j++;
+          size_t end = j;
+          while (end > i && (v[end - 1] == ' ' || v[end - 1] == '\t')) end--;
+          if (end - i == 7 && !strncasecmp(v.data() + i, "upgrade", 7)) upgrade = true;
+          i = j;
+        }
+      }
+    }
+    *conn_has_upgrade = upgrade;
+    return key_count;
+  }
+
   size_t uws_req_get_query(uws_req_t *res, const char *key, size_t key_length,
                            const char **dest)
   {

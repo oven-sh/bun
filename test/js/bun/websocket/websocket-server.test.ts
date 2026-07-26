@@ -1685,10 +1685,31 @@ describe("server.upgrade() validates the opening handshake", () => {
     expect((await rawHandshake(["Upgrade: WebSocket", C, `Sec-WebSocket-Key: ${K}`, V])).status).toBe(101);
     // Upgrade is an RFC 7230 token list; any "websocket" token suffices.
     expect((await rawHandshake(["Upgrade: keep-alive, websocket", C, `Sec-WebSocket-Key: ${K}`, V])).status).toBe(101);
-    expect(opened).toBe(3);
+    // Connection is a token list; any "upgrade" token suffices (case-insensitive).
+    expect((await rawHandshake([U, "Connection: keep-alive, Upgrade", `Sec-WebSocket-Key: ${K}`, V])).status).toBe(101);
+    expect((await rawHandshake([U, "Connection: upgrade", `Sec-WebSocket-Key: ${K}`, V])).status).toBe(101);
+    // ...and may be split across field lines (RFC 7230 §3.2.2).
+    expect(
+      (await rawHandshake([U, "Connection: keep-alive", "Connection: Upgrade", `Sec-WebSocket-Key: ${K}`, V])).status,
+    ).toBe(101);
+    expect(opened).toBe(6);
 
     // Upgrade token other than "websocket": not a WebSocket handshake.
     expect((await rawHandshake(["Upgrade: h2c", C, `Sec-WebSocket-Key: ${K}`, V])).status).toBe(400);
+
+    // Connection header missing, or without an "upgrade" token.
+    expect((await rawHandshake([U, `Sec-WebSocket-Key: ${K}`, V])).status).toBe(400);
+    expect((await rawHandshake([U, "Connection: close", `Sec-WebSocket-Key: ${K}`, V])).status).toBe(400);
+    expect((await rawHandshake([U, "Connection: keep-alive", `Sec-WebSocket-Key: ${K}`, V])).status).toBe(400);
+    // Substring is not a token.
+    expect((await rawHandshake([U, "Connection: Upgrade-Insecure", `Sec-WebSocket-Key: ${K}`, V])).status).toBe(400);
+
+    // Sec-WebSocket-Key sent more than once (RFC 6455 §11.3.1).
+    expect(
+      (
+        await rawHandshake([U, C, `Sec-WebSocket-Key: ${K}`, "Sec-WebSocket-Key: eHh4eHh4eHh4eHh4eHh4eA==", V])
+      ).status,
+    ).toBe(400);
 
     // Sec-WebSocket-Key is not valid base64 of 16 bytes.
     for (const key of [
@@ -1711,7 +1732,7 @@ describe("server.upgrade() validates the opening handshake", () => {
     }
 
     // None of the rejected handshakes reached open().
-    expect(opened).toBe(3);
+    expect(opened).toBe(6);
   });
 
   it("returns false for an invalid handshake even when fetch() is async", async () => {
@@ -1733,6 +1754,25 @@ describe("server.upgrade() validates the opening handshake", () => {
     const h2c = await rawHandshake(["Upgrade: h2c", C, `Sec-WebSocket-Key: ${K}`, V]);
     expect(h2c.status).toBe(400);
     expect(upgradeResult).toBe(false);
+
+    const noConn = await rawHandshake([U, `Sec-WebSocket-Key: ${K}`, V]);
+    expect({ status: noConn.status, upgradeResult }).toEqual({ status: 400, upgradeResult: false });
+
+    const connClose = await rawHandshake([U, "Connection: close", `Sec-WebSocket-Key: ${K}`, V]);
+    expect({ status: connClose.status, upgradeResult }).toEqual({ status: 400, upgradeResult: false });
+
+    const dupKey = await rawHandshake([
+      U,
+      C,
+      `Sec-WebSocket-Key: ${K}`,
+      "Sec-WebSocket-Key: eHh4eHh4eHh4eHh4eHh4eA==",
+      V,
+    ]);
+    expect({ status: dupKey.status, upgradeResult }).toEqual({ status: 400, upgradeResult: false });
+
+    // Connection as a token list via the FetchHeaders path still upgrades.
+    const connList = await rawHandshake([U, "Connection: keep-alive, Upgrade", `Sec-WebSocket-Key: ${K}`, V]);
+    expect({ status: connList.status, upgradeResult }).toEqual({ status: 101, upgradeResult: true });
 
     // The 426 path writes the response itself and detaches it; the Response
     // returned from fetch() after the await must not be written a second time.

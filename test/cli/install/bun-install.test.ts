@@ -9182,7 +9182,6 @@ describe.concurrent("bun-install", () => {
   ] as const)("hardlink fallback decision caches synthetic volumes: %s", (_, args, useCopyfile) => {
     expect(install_test_helpers.simulateHardlinkFallback(...args)).toEqual({
       copyfileDecisionCount: useCopyfile ? 2 : 0,
-      logDecisionCount: useCopyfile ? 1 : 0,
       cacheProbeCount: 1,
       destinationProbeCount: 1,
     });

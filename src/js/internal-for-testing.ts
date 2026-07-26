@@ -120,7 +120,6 @@ export const install_test_helpers = $rust("install_binding.rs", "bun_install_js_
     destinationVolume: number,
   ) => {
     copyfileDecisionCount: number;
-    logDecisionCount: number;
     cacheProbeCount: number;
     destinationProbeCount: number;
   };

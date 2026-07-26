@@ -50,41 +50,30 @@ pub mod bun_install_js_bindings {
         let cache_probe_count = core::cell::Cell::new(0u32);
         let destination_probe_count = core::cell::Cell::new(0u32);
         let decide = || {
-            let (cache_volume, _) = cache.get_or_init(|| {
+            let cache_volume = cache.get_or_init(|| {
                 cache_probe_count.set(cache_probe_count.get() + 1);
                 cache_volume
             });
-            let (destination_volume, destination_volume_was_unchecked) =
-                destination.get_or_init(|| {
-                    destination_probe_count.set(destination_probe_count.get() + 1);
-                    destination_volume
-                });
+            let destination_volume = destination.get_or_init(|| {
+                destination_probe_count.set(destination_probe_count.get() + 1);
+                destination_volume
+            });
             bun_install::package_installer::hardlink_fallback_decision(
                 cache_volume,
                 destination_volume,
-                destination_volume_was_unchecked,
             )
         };
         let decisions = [decide(), decide()];
         let copyfile_decision_count = decisions
             .iter()
-            .filter(|(use_copyfile, _)| *use_copyfile)
-            .count();
-        let log_decision_count = decisions
-            .iter()
-            .filter(|(_, should_log)| *should_log)
+            .filter(|use_copyfile| **use_copyfile)
             .count();
 
-        let result = JSValue::create_empty_object(global, 4);
+        let result = JSValue::create_empty_object(global, 3);
         result.put(
             global,
             b"copyfileDecisionCount",
             JSValue::js_number(copyfile_decision_count as f64),
-        );
-        result.put(
-            global,
-            b"logDecisionCount",
-            JSValue::js_number(log_decision_count as f64),
         );
         result.put(
             global,

@@ -42,23 +42,17 @@ bun_output::declare_scope!(PackageInstaller, hidden);
 
 type Bitset = DynamicBitSet;
 
-/// Returns `(use_copyfile, should_log)`. `should_log` is true only when the
-/// cross-volume fallback is detected during the destination volume's first lookup.
+/// Returns whether hardlink installation should fall back to copying because
+/// the cache and destination are on different volumes.
 #[doc(hidden)]
 #[inline]
 pub fn hardlink_fallback_decision(
     cache_volume: Option<u64>,
     destination_volume: Option<u64>,
-    destination_volume_was_unchecked: bool,
-) -> (bool, bool) {
-    let use_copyfile = matches!(
+) -> bool {
+    matches!(
         (cache_volume, destination_volume),
         (Some(cache), Some(destination)) if cache != destination
-    );
-
-    (
-        use_copyfile,
-        use_copyfile && destination_volume_was_unchecked,
     )
 }
 
@@ -69,19 +63,18 @@ pub struct CachedVolumeId {
 }
 
 impl CachedVolumeId {
+    #[cfg(windows)]
+    fn is_initialized(&self) -> bool {
+        self.state.get().is_some()
+    }
+
     #[doc(hidden)]
-    pub fn get_or_init(&self, probe: impl FnOnce() -> Option<u64>) -> (Option<u64>, bool) {
-        let was_unchecked = self.state.get().is_none();
-        (*self.state.get_or_init(probe), was_unchecked)
+    pub fn get_or_init(&self, probe: impl FnOnce() -> Option<u64>) -> Option<u64> {
+        *self.state.get_or_init(probe)
     }
 
     #[cfg(windows)]
     fn get(&self, fd: Fd) -> Option<u64> {
-        self.get_with_status(fd).0
-    }
-
-    #[cfg(windows)]
-    fn get_with_status(&self, fd: Fd) -> (Option<u64>, bool) {
         self.get_or_init(|| match Syscall::fstat(fd) {
             Ok(stat) if stat.st_dev != 0 => Some(stat.st_dev),
             _ => None,
@@ -1226,15 +1219,13 @@ impl<'a> PackageInstaller<'a> {
             let cache_volume = self.package_cache_volume.get(installer.cache_dir);
             let destination_volume_cache =
                 &self.trees[self.current_tree_id as usize].destination_volume;
-            let (destination_volume, destination_volume_was_unchecked) =
-                destination_volume_cache.get_with_status(destination_dir.fd());
+            // Check before get(): it initializes the cache even when fstat returns no volume ID.
+            let destination_volume_was_unchecked = !destination_volume_cache.is_initialized();
+            let destination_volume = destination_volume_cache.get(destination_dir.fd());
 
-            let (use_copyfile, should_log) = hardlink_fallback_decision(
-                cache_volume,
-                destination_volume,
-                destination_volume_was_unchecked,
-            );
-            if should_log
+            let use_copyfile = hardlink_fallback_decision(cache_volume, destination_volume);
+            if use_copyfile
+                && destination_volume_was_unchecked
                 && let (Some(cache), Some(destination)) = (cache_volume, destination_volume)
             {
                 bun_output::scoped_log!(

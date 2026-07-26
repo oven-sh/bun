@@ -728,3 +728,43 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
     expect(f.name).toBe(filePath);
   });
 });
+
+// The POSIX async WriteFile path used to compute `could_block = false` for Bun.stdout (the stdio
+// store sets `mode` but not `seekable`), and its EAGAIN handler re-matched a cached write()
+// result in a tight loop instead of re-issuing the syscall or polling. Once fd 1 was O_NONBLOCK
+// (process.stdout.write's FileSink sets it on the shared open file description via a dup), every
+// Bun.write that overflowed the pipe buffer wedged a thread-pool worker at 100% CPU with the
+// returned promise never settling.
+//
+// Runs outside `describe.concurrent` because on an unfixed build the child pegs every core until
+// the spawn timeout fires, which would starve the concurrent neighbours into their 5s default.
+it.skipIf(isWindows)("Bun.write(Bun.stdout, ...) to a full nonblocking pipe completes", async () => {
+  // Two payload sizes: below 256 KiB exercises the sync fast path's EAGAIN -> needs_async
+  // fallback; at/above 256 KiB goes straight to the thread-pool WriteFile path.
+  const script = `
+    process.stdout.write("x"); // constructs the fd 1 FileSink, which flips the pipe O_NONBLOCK
+    const small = Buffer.alloc(64 * 1024, 65).toString();
+    const large = Buffer.alloc(256 * 1024, 66).toString();
+    const ps = [];
+    for (let i = 0; i < 32; i++) ps.push(Bun.write(Bun.stdout, small));
+    for (let i = 0; i < 8; i++) ps.push(Bun.write(Bun.stdout, large));
+    const wrote = await Promise.all(ps);
+    process.stderr.write("wrote=" + wrote.reduce((a, b) => a + b, 0));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+    timeout: 10_000,
+    killSignal: "SIGKILL",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.bytes(), proc.stderr.text(), proc.exited]);
+  const expected = 1 + 32 * 64 * 1024 + 8 * 256 * 1024;
+  expect({ length: stdout.length, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+    length: expected,
+    stderr: "wrote=" + (expected - 1),
+    exitCode: 0,
+    signalCode: null,
+  });
+}, 15_000);

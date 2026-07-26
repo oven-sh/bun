@@ -389,10 +389,10 @@ devTest("resource-hint links pass through in dev server", {
     // dev-server guard and failed the build.
     const html = await (await dev.fetch("/")).text();
     expect(html).toInclude("<h1>Hints</h1>");
+    expect(html).toInclude('<link rel="prefetch" href="./page2.html">');
     // Unresolved hint hrefs pass through untouched rather than being dropped.
     expect(html).toInclude('<link rel="prefetch" href="/some-route">');
     expect(html).toInclude('<link rel="modulepreload" href="/cdn/lib.js">');
-    expect(html).toInclude('rel="prefetch"');
     expect(html).not.toInclude("Browser builds cannot import HTML files");
   },
 });

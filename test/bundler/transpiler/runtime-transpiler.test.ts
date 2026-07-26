@@ -260,6 +260,60 @@ console.log(outer());
     expect(stdout).toBe("number\n");
     expect(exitCode).toBe(0);
   });
+
+  // https://github.com/oven-sh/bun/issues/23633
+  test.concurrent("assigns the hoisted var when a block-level function shadows an outer one", async () => {
+    using dir = tempDir("annex-b-block-fn-shadow", {
+      "foo.cjs": `
+function foo() { console.log('foo') }
+foo();
+{
+  function foo() { console.log('bar') }
+  foo();
+}
+foo();
+`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "foo.cjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("foo\nbar\nbar\n");
+    expect(exitCode).toBe(0);
+  });
+
+  // https://github.com/oven-sh/bun/issues/25737
+  test.concurrent("hoists a labeled function declaration to the enclosing var scope", async () => {
+    using dir = tempDir("annex-b-labeled-fn", {
+      "package.json": `{"type":"commonjs"}`,
+      "top.js": `foo:\n    function bar() { return "bar"; }\nconsole.log(bar());\n`,
+      "nested.js": `
+function lex() {
+  loop: function _lex() { return "ok"; }
+  return _lex();
+}
+console.log(lex());
+`,
+    });
+    for (const file of ["top.js", "nested.js"]) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), file],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout).toBe(file === "top.js" ? "bar\n" : "ok\n");
+      expect(exitCode).toBe(0);
+    }
+  });
 });
 
 test("math.pow", () => {

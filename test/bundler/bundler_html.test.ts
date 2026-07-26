@@ -122,7 +122,7 @@ describe("bundler", () => {
     },
   });
 
-  // https://github.com/oven-sh/bun/issues/5032
+  // https://github.com/oven-sh/bun/issues/19529
   // srcset is a comma-separated list of "<url> <descriptor>" candidates, not a
   // single URL. Each candidate's URL must be resolved and hashed independently
   // and the descriptor preserved.

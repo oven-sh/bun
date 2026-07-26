@@ -119,20 +119,14 @@ type Processor<'a> = HTMLProcessor<HTMLScanner<'a>, false>;
 // HTMLProcessor — generic over visitor `T` and `VISIT_DOCUMENT_TAGS`
 // ───────────────────────────────────────────────────────────────────────────
 
-/// What `HTMLProcessor::run` should do with the URL that triggered an
-/// `on_tag` call. The handler returns the action; `run` applies it (so that
-/// `srcset`'s N candidates can be rewritten into one attribute value).
+/// Returned by `on_tag`; `HTMLProcessor::run` applies it to the element.
 pub(crate) enum TagAction {
-    /// Leave the URL as-is in the attribute.
     Keep,
-    /// Replace the URL with this value.
     Replace(Vec<u8>),
-    /// Remove the whole element (bundled `<script>` / `<link>`).
     Remove,
 }
 
-/// HTML "ASCII whitespace" per <https://infra.spec.whatwg.org/#ascii-whitespace>:
-/// TAB, LF, FF, CR, SPACE. Not Rust's `is_ascii_whitespace` (which also matches VT).
+/// Infra "ASCII whitespace" (no VT, unlike `u8::is_ascii_whitespace`).
 #[inline]
 fn is_html_whitespace(b: u8) -> bool {
     matches!(b, b'\t' | b'\n' | b'\x0C' | b'\r' | b' ')
@@ -140,13 +134,10 @@ fn is_html_whitespace(b: u8) -> bool {
 
 pub(crate) struct SrcsetCandidate<'a> {
     pub url: &'a [u8],
-    /// Raw descriptor text (e.g. `1x`, `480w`), whitespace-trimmed, not validated.
     pub descriptor: &'a [u8],
 }
 
-/// Split a `srcset` attribute into `(url, descriptor)` candidates following
-/// <https://html.spec.whatwg.org/multipage/images.html#parsing-a-srcset-attribute>.
-/// Descriptor text is kept verbatim (trimmed), not validated.
+/// <https://html.spec.whatwg.org/multipage/images.html#parsing-a-srcset-attribute>
 pub(crate) fn parse_srcset(input: &[u8]) -> Vec<SrcsetCandidate<'_>> {
     let mut out = Vec::new();
     let mut pos = 0usize;
@@ -162,7 +153,6 @@ pub(crate) fn parse_srcset(input: &[u8]) -> Vec<SrcsetCandidate<'_>> {
             pos += 1;
         }
         let mut url_end = pos;
-        // Trailing commas on the URL terminate this candidate with no descriptor.
         if url_end > url_start && input[url_end - 1] == b',' {
             while url_end > url_start && input[url_end - 1] == b',' {
                 url_end -= 1;
@@ -175,8 +165,6 @@ pub(crate) fn parse_srcset(input: &[u8]) -> Vec<SrcsetCandidate<'_>> {
             }
             continue;
         }
-        // Descriptor tokenizer: collect to the next top-level comma, treating
-        // commas inside `(...)` as descriptor text.
         while pos < input.len() && is_html_whitespace(input[pos]) {
             pos += 1;
         }
@@ -373,8 +361,6 @@ fn apply_tag_action(element: &mut Element<'_, '_>, attr: &str, action: TagAction
     }
 }
 
-/// Call `on_tag` once per `srcset` candidate URL and, if any candidate was
-/// rewritten, rebuild the attribute with descriptors preserved.
 fn process_srcset<T: HTMLProcessorHandler>(
     this: &mut T,
     element: &mut Element<'_, '_>,

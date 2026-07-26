@@ -114,7 +114,10 @@ describe("new X509Certificate() from DER", () => {
     const der = seq(Buffer.concat([tbs, alg, tlv(0x03, Buffer.concat([Buffer.from([0]), sig]))]));
     const pem =
       "-----BEGIN CERTIFICATE-----\n" +
-      der.toString("base64").match(/.{1,64}/g)!.join("\n") +
+      der
+        .toString("base64")
+        .match(/.{1,64}/g)!
+        .join("\n") +
       "\n-----END CERTIFICATE-----\n";
     return { der, pem };
   }

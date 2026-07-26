@@ -2404,11 +2404,11 @@ extern "C" JSC::EncodedJSValue Bun__createFetchFailedTypeError(
             // below still runs.
             srcInstance->materializeErrorInfoIfNeeded(vm);
             if (scope.exception()) [[unlikely]] {
-                scope.clearException();
+                scope.clearExceptionExceptTermination();
             } else if (JSC::JSValue srcStack = srcInstance->getDirect(vm, vm.propertyNames->stack); srcStack && srcStack.isString()) {
                 auto str = asString(srcStack)->value(globalObject);
                 if (scope.exception()) [[unlikely]] {
-                    scope.clearException();
+                    scope.clearExceptionExceptTermination();
                 } else {
                     size_t nl = str->find('\n');
                     auto frames = nl == WTF::notFound ? WTF::emptyString() : str->substring(nl);

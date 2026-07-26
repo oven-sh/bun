@@ -471,21 +471,15 @@ Server.prototype.unref = function () {
   return this;
 };
 
+// Node.js's ConnectionsList is parser-keyed: freeParser() drops the entry on
+// 'upgrade'/'connect' handoff (releaseServerParserShim nulls socket.parser on
+// that same handoff), so upgraded sockets are outside both drain methods.
 Server.prototype.closeAllConnections = function () {
-  // Node.js destroys every tracked connection and leaves the listen socket
-  // alone: the server keeps accepting. Iterating the tracked-connection set
-  // (rather than routing through the native handle) also keeps this working
-  // once close() has dropped that handle, which is the forced half of the
-  // close() + closeAllConnections() drain used by http-terminator et al.
   const connections = this[kTrackedConnections];
   if (!connections) {
     return;
   }
   for (const socket of connections) {
-    // Node.js's ConnectionsList is parser-keyed; freeParser() removes the
-    // entry when the socket is handed to 'upgrade'/'connect', so upgraded
-    // sockets are not touched. releaseServerParserShim nulls socket.parser on
-    // that same handoff here.
     if (socket.parser == null) {
       continue;
     }
@@ -504,27 +498,17 @@ Server.prototype.getConnections = function (callback) {
 };
 
 Server.prototype.closeIdleConnections = function () {
-  // Node.js destroys each tracked connection that is between request/response
-  // cycles. Iterating the tracked-connection set keeps this working once
-  // close() has dropped the native handle, which is the graceful-drain
-  // pattern:
-  //   server.close(cb); setTimeout(() => server.closeIdleConnections(), grace)
   const connections = this[kTrackedConnections];
   if (!connections) {
     return;
   }
   for (const socket of connections) {
-    // Node.js's ConnectionsList.idle() skips the connection when:
-    // - the parser was released for 'upgrade'/'connect' handoff
-    //   (releaseServerParserShim nulls socket.parser), or
-    // - a request message is currently being received
-    //   (parser.last_message_start_ != 0; the native handle tracks the same
-    //   timestamp as lastMessageStartMs).
-    // _httpMessage covers the "response in flight" half that Node leaves to
-    // the parser's message-complete bookkeeping.
     if (socket.parser == null || socket._httpMessage || socket[kPipelinedResponses]?.length) {
       continue;
     }
+    // Node.js's ConnectionsList.idle() additionally skips parsers whose
+    // last_message_start_ is non-zero (set on accept and on each message
+    // begin); the native handle exposes the same lastMessageStartMs.
     if (socket[kHandle]?.hasIncompleteRequest) {
       continue;
     }

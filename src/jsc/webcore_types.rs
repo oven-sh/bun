@@ -1023,7 +1023,8 @@ pub mod store {
                     + match &self.data {
                         Data::Bytes(bytes) => bytes.len() as usize,
                         Data::Rope(rope) => {
-                            rope.segments.len() * core::mem::size_of::<RopeSegment>()
+                            rope.len() as usize
+                                + rope.segments.len() * core::mem::size_of::<RopeSegment>()
                         }
                         Data::File(_) => 0,
                         Data::S3(s3) => s3.estimated_size(),
@@ -1047,7 +1048,7 @@ pub mod store {
             if let Data::Bytes(bytes) = &self.data {
                 return bytes.slice();
             }
-            debug_assert!(
+            assert!(
                 !matches!(self.data, Data::Rope(_)),
                 "Store::shared_view on an unflattened rope; call StoreRef::flatten_if_rope first"
             );

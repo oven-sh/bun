@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
+import path from "node:path";
 
 // `new Blob([blobA, blobB, ...])` shares each Blob part's backing store as a
 // rope segment instead of memcpy'ing every part into one fresh contiguous
@@ -124,4 +125,18 @@ test("Bun.Archive accepts a rope-backed Blob", async () => {
   const ar = new Bun.Archive(rope);
   const files = await ar.files();
   expect(await files.get("a.txt")!.text()).toBe("hello from rope");
+
+  using dir = tempDir("blob-rope-archive", {});
+  const out = path.join(String(dir), "out.tar");
+  const rope2 = new Blob([new Blob([buf.subarray(0, 10)]), new Blob([buf.subarray(10)])]);
+  await Bun.Archive.write(out, rope2);
+  const back = new Bun.Archive(await Bun.file(out).bytes());
+  expect(await (await back.files()).get("a.txt")!.text()).toBe("hello from rope");
+});
+
+test("Bun.write rejects a rope-backed Blob destination like any other in-memory Blob", () => {
+  const a = new Blob([new Uint8Array([1])]);
+  const b = new Blob([new Uint8Array([2])]);
+  const rope = new Blob([a, b]);
+  expect(() => Bun.write(rope, "data")).toThrow(/read-only/);
 });

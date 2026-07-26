@@ -996,7 +996,13 @@ impl EventLoop {
     /// freshly-allocated or struct-embedded task — never null.
     pub fn enqueue_task_concurrent(&self, task: core::ptr::NonNull<ConcurrentTaskItem>) {
         if cfg!(debug_assertions) {
-            if self.vm_ref().has_terminated {
+            let vm = self.vm_ref();
+            // The main-thread VM box is process-static (never `dealloc`'d), so a
+            // late cross-thread push after `global_exit` → `destroy()` just
+            // lands in a queue that is never drained again. The assert exists
+            // to catch the worker case, where `has_terminated` precedes a raw
+            // `dealloc` and a push is UAF-adjacent.
+            if vm.has_terminated && !vm.is_main_thread() {
                 panic!("EventLoop.enqueueTaskConcurrent: VM has terminated");
             }
         }

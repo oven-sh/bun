@@ -51,6 +51,11 @@ pub struct ResolvedSource {
     /// was used at build time. If empty, the origin is derived from source_url.
     /// This is converted to a file:// URL on the C++ side.
     pub bytecode_origin_path: BunString,
+    /// Statically detected CommonJS export names (`exports.x = ` / `module.exports.x = `),
+    /// NUL-joined. Only populated when `is_commonjs_module` is true; consumed and deref'd
+    /// by `createCommonJSModule` in C++. Left empty on paths that cannot supply the
+    /// names (transpiler-cache hits), which fall back to fetch-time evaluation.
+    pub commonjs_export_names: BunString,
 }
 
 impl Default for ResolvedSource {
@@ -70,8 +75,41 @@ impl Default for ResolvedSource {
             bytecode_cache_size: 0,
             module_info: core::ptr::null_mut(),
             bytecode_origin_path: BunString::empty(),
+            commonjs_export_names: BunString::empty(),
         }
     }
+}
+
+/// Join the transpiler's statically detected CommonJS export names into the
+/// NUL-separated encoding that `createCommonJSModule` splits on the C++ side.
+/// Kept as an owned `Vec<u8>` between the arena-backed `parse_result.ast`
+/// read and the eventual `ResolvedSource` construction so fallible printing
+/// in between cannot strand a `BunString` refcount; convert with
+/// `BunString::clone_utf8` at the use site.
+///
+/// An empty return means "do not defer" (fall back to fetch-time evaluation so
+/// runtime-enumerated named exports keep working). A single NUL byte means
+/// "defer, zero named exports".
+pub fn join_commonjs_export_names(
+    is_commonjs_module: bool,
+    ast: &bun_ast::ast_result::Ast,
+) -> Vec<u8> {
+    if !is_commonjs_module {
+        return Vec::new();
+    }
+    let keys = ast.commonjs_named_exports.keys();
+    if keys.is_empty() {
+        return vec![0];
+    }
+    let cap: usize = keys.iter().map(|k| k.as_ref().len() + 1).sum();
+    let mut joined: Vec<u8> = Vec::with_capacity(cap);
+    for (i, key) in keys.iter().enumerate() {
+        if i > 0 {
+            joined.push(0);
+        }
+        joined.extend_from_slice(key.as_ref());
+    }
+    joined
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -142,5 +180,6 @@ impl Drop for OwnedResolvedSource {
         self.0.specifier.deref();
         self.0.source_url.deref();
         self.0.bytecode_origin_path.deref();
+        self.0.commonjs_export_names.deref();
     }
 }

@@ -70,6 +70,8 @@
 #include "ZigSourceProvider.h"
 #include <JavaScriptCore/FunctionPrototype.h>
 #include "JSCommonJSModule.h"
+#include <JavaScriptCore/AbstractModuleRecord.h>
+#include <JavaScriptCore/JSModuleEnvironment.h>
 #include <JavaScriptCore/JSModuleNamespaceObject.h>
 #include <JavaScriptCore/JSSourceCode.h>
 #include <JavaScriptCore/LazyPropertyInlines.h>
@@ -1477,7 +1479,34 @@ void JSCommonJSModule::evaluateWithPotentiallyOverriddenCompile(
     this->evaluate(globalObject, key, source, false);
 }
 
-static JSC::SourceCode commonJSModuleSyntheticSourceCode(const SourceOrigin& sourceOrigin, const WTF::String& sourceURL);
+static JSC::SourceCode commonJSModuleSyntheticSourceCode(const SourceOrigin& sourceOrigin, const WTF::String& sourceURL, const JSCommonJSModule* moduleObject);
+
+static void assignStaticExportNames(JSC::VM& vm, JSCommonJSModule* moduleObject, const WTF::String& joined)
+{
+    // null (no string sent) => the static scan was incomplete; stay on the
+    // fetch-time evaluation path so runtime-enumerated named exports still work.
+    if (joined.isNull())
+        return;
+
+    moduleObject->m_staticExportNames.clear();
+    moduleObject->m_hasStaticExportNames = true;
+
+    unsigned start = 0;
+    for (unsigned i = 0, length = joined.length(); i <= length; ++i) {
+        if (i == length || joined[i] == '\0') {
+            if (i > start) {
+                auto name = Identifier::fromString(vm, StringView(joined).substring(start, i - start).toString());
+                if (name == vm.propertyNames->defaultKeyword)
+                    ;
+                else if (name == vm.propertyNames->__esModule && !moduleObject->ignoreESModuleAnnotation)
+                    ;
+                else
+                    moduleObject->m_staticExportNames.append(name);
+            }
+            start = i + 1;
+        }
+    }
+}
 
 std::optional<JSC::SourceCode> createCommonJSModule(
     Zig::GlobalObject* globalObject,
@@ -1489,6 +1518,13 @@ std::optional<JSC::SourceCode> createCommonJSModule(
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSCommonJSModule* moduleObject = nullptr;
     WTF::String sourceURL = source.source_url.toWTFString();
+
+    // Claim the static-export-name list up front so the ResolvedSource that
+    // Zig::SourceProvider::create copies into m_resolvedSource below does not
+    // carry a soon-to-be-stale BunString.
+    WTF::String staticExportNames = source.commonjs_export_names.toWTFString(BunString::ZeroCopy);
+    source.commonjs_export_names.deref();
+    source.commonjs_export_names = Zig::BunStringEmpty;
 
     JSValue entry = globalObject->requireMap()->get(globalObject, requireMapKey);
     RETURN_IF_EXCEPTION(scope, {});
@@ -1544,57 +1580,172 @@ std::optional<JSC::SourceCode> createCommonJSModule(
     }
 
     moduleObject->ignoreESModuleAnnotation = ignoreESModuleAnnotation;
+    assignStaticExportNames(vm, moduleObject, staticExportNames);
 
-    return commonJSModuleSyntheticSourceCode(sourceOrigin, sourceURL);
+    return commonJSModuleSyntheticSourceCode(sourceOrigin, sourceURL, moduleObject);
 }
 
-static JSC::SourceCode commonJSModuleSyntheticSourceCode(const SourceOrigin& sourceOrigin, const WTF::String& sourceURL)
+// The wrapper's local binding for the `default` export. GlobalObject::moduleLoaderEvaluate
+// writes the computed default into this slot after running the CommonJS body.
+static constexpr auto cjsWrapperDefaultLocal = "__BUN_CJS_DEFAULT__"_s;
+
+static JSC::SourceCode commonJSModuleSyntheticSourceCode(const SourceOrigin& sourceOrigin, const WTF::String& sourceURL, const JSCommonJSModule* moduleObject)
 {
-    return JSC::SourceCode(
-        JSC::SyntheticSourceProvider::create(
-            [](JSC::JSGlobalObject* lexicalGlobalObject,
-                const JSC::Identifier& moduleKey,
-                Vector<JSC::Identifier, 4>& exportNames,
-                JSC::MarkedArgumentBuffer& exportValues) -> void {
-                auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
-                auto& vm = JSC::getVM(globalObject);
-                auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!moduleObject || !moduleObject->m_hasStaticExportNames) {
+        return JSC::SourceCode(
+            JSC::SyntheticSourceProvider::create(
+                [](JSC::JSGlobalObject* lexicalGlobalObject,
+                    const JSC::Identifier& moduleKey,
+                    Vector<JSC::Identifier, 4>& exportNames,
+                    JSC::MarkedArgumentBuffer& exportValues) -> void {
+                    auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
+                    auto& vm = JSC::getVM(globalObject);
+                    auto scope = DECLARE_THROW_SCOPE(vm);
 
-                JSValue keyValue = identifierToJSValue(vm, moduleKey);
-                JSValue entry = globalObject->requireMap()->get(globalObject, keyValue);
-                RETURN_IF_EXCEPTION(scope, {});
+                    JSValue keyValue = identifierToJSValue(vm, moduleKey);
+                    JSValue entry = globalObject->requireMap()->get(globalObject, keyValue);
+                    RETURN_IF_EXCEPTION(scope, {});
 
-                if (entry) {
-                    if (auto* moduleObject = dynamicDowncast<JSCommonJSModule>(entry)) {
-                        if (!moduleObject->hasEvaluated) {
-                            evaluateCommonJSModuleOnce(
-                                vm,
-                                globalObject,
-                                moduleObject,
-                                moduleObject->m_dirname.get(),
-                                moduleObject->m_filename.get());
-                            if (auto exception = scope.exception()) {
-                                (void)scope.tryClearException();
+                    if (entry) {
+                        if (auto* moduleObject = dynamicDowncast<JSCommonJSModule>(entry)) {
+                            if (!moduleObject->hasEvaluated) {
+                                evaluateCommonJSModuleOnce(
+                                    vm,
+                                    globalObject,
+                                    moduleObject,
+                                    moduleObject->m_dirname.get(),
+                                    moduleObject->m_filename.get());
+                                if (auto exception = scope.exception()) {
+                                    (void)scope.tryClearException();
 
-                                // On error, remove the module from the require map
-                                // so that it can be re-evaluated on the next require.
-                                globalObject->requireMap()->remove(globalObject, moduleObject->filename());
-                                RETURN_IF_EXCEPTION(scope, {});
+                                    // On error, remove the module from the require map
+                                    // so that it can be re-evaluated on the next require.
+                                    globalObject->requireMap()->remove(globalObject, moduleObject->filename());
+                                    RETURN_IF_EXCEPTION(scope, {});
 
-                                scope.throwException(globalObject, exception);
-                                return;
+                                    scope.throwException(globalObject, exception);
+                                    return;
+                                }
                             }
-                        }
 
-                        moduleObject->toSyntheticSource(globalObject, moduleKey, exportNames, exportValues);
-                        RETURN_IF_EXCEPTION(scope, {});
+                            moduleObject->toSyntheticSource(globalObject, moduleKey, exportNames, exportValues);
+                            RETURN_IF_EXCEPTION(scope, {});
+                        }
+                    } else {
+                        // require map was cleared of the entry
                     }
-                } else {
-                    // require map was cleared of the entry
+                },
+                sourceOrigin,
+                sourceURL));
+    }
+
+    // Build an ESM wrapper that declares the export-name table but does no work.
+    // It becomes a JSModuleRecord, so InnerModuleEvaluation reaches it at the
+    // correct post-order position; GlobalObject::moduleLoaderEvaluate detects
+    // the backing JSCommonJSModule via the require map, executes the CommonJS
+    // body there, and then writes the real values into this record's module
+    // environment (the `$e<i>` locals and the default binding).
+    WTF::StringBuilder src;
+    src.append("var "_s);
+    src.append(cjsWrapperDefaultLocal);
+    for (unsigned i = 0; i < moduleObject->m_staticExportNames.size(); ++i) {
+        src.append(",$e"_s);
+        src.append(i);
+    }
+    src.append(";export{"_s);
+    src.append(cjsWrapperDefaultLocal);
+    src.append(" as default"_s);
+    for (unsigned i = 0; i < moduleObject->m_staticExportNames.size(); ++i) {
+        src.append(",$e"_s);
+        src.append(i);
+        src.append(" as "_s);
+        src.appendQuotedJSONString(moduleObject->m_staticExportNames[i].string());
+    }
+    src.append("};"_s);
+
+    return JSC::SourceCode(JSC::StringSourceProvider::create(
+        src.toString(), sourceOrigin, String(sourceURL), SourceTaintedOrigin::Untainted,
+        TextPosition(), JSC::SourceProviderSourceType::Module));
+}
+
+bool evaluateDeferredCommonJSModuleForESM(
+    Zig::GlobalObject* globalObject,
+    JSC::AbstractModuleRecord* moduleRecord,
+    JSValue key)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSValue entry = globalObject->requireMap()->get(globalObject, key);
+    RETURN_IF_EXCEPTION(scope, true);
+    auto* moduleObject = entry ? dynamicDowncast<JSCommonJSModule>(entry) : nullptr;
+    if (!moduleObject || !moduleObject->m_hasStaticExportNames)
+        return false;
+
+    if (!moduleObject->hasEvaluated) {
+        evaluateCommonJSModuleOnce(
+            vm,
+            globalObject,
+            moduleObject,
+            moduleObject->m_dirname.get(),
+            moduleObject->m_filename.get());
+        if (auto exception = scope.exception()) {
+            (void)scope.tryClearException();
+            globalObject->requireMap()->remove(globalObject, moduleObject->filename());
+            RETURN_IF_EXCEPTION(scope, true);
+            scope.throwException(globalObject, exception);
+            return true;
+        }
+    }
+
+    JSC::JSModuleEnvironment* env = moduleRecord->moduleEnvironmentMayBeNull();
+    if (!env)
+        return true;
+
+    Vector<JSC::Identifier, 4> exportNames;
+    JSC::MarkedArgumentBuffer exportValues;
+    moduleObject->toSyntheticSource(globalObject, moduleRecord->moduleKey(), exportNames, exportValues);
+    RETURN_IF_EXCEPTION(scope, true);
+
+    JSValue defaultValue;
+    for (unsigned i = 0; i < exportNames.size(); ++i) {
+        if (exportNames[i] == vm.propertyNames->defaultKeyword) {
+            defaultValue = exportValues.at(i);
+            break;
+        }
+    }
+    if (!defaultValue) {
+        defaultValue = moduleObject->exportsObject();
+        RETURN_IF_EXCEPTION(scope, true);
+    }
+
+    bool putResult = false;
+    symbolTablePutTouchWatchpointSet(env, globalObject, Identifier::fromString(vm, cjsWrapperDefaultLocal), defaultValue, false, true, putResult);
+    RETURN_IF_EXCEPTION(scope, true);
+
+    JSValue exports = moduleObject->exportsObject();
+    RETURN_IF_EXCEPTION(scope, true);
+    JSObject* exportsObject = exports.getObject();
+
+    for (unsigned i = 0; i < moduleObject->m_staticExportNames.size(); ++i) {
+        JSValue value = jsUndefined();
+        if (exportsObject) {
+            PropertySlot slot(exportsObject, PropertySlot::InternalMethodType::Get);
+            if (exportsObject->getPropertySlot(globalObject, moduleObject->m_staticExportNames[i], slot)) {
+                value = slot.getValue(globalObject, moduleObject->m_staticExportNames[i]);
+                if (scope.exception()) [[unlikely]] {
+                    (void)scope.tryClearException();
+                    value = jsUndefined();
                 }
-            },
-            sourceOrigin,
-            sourceURL));
+            }
+            RETURN_IF_EXCEPTION(scope, true);
+        }
+        auto localName = Identifier::fromString(vm, makeString("$e"_s, i));
+        symbolTablePutTouchWatchpointSet(env, globalObject, localName, value, false, true, putResult);
+        RETURN_IF_EXCEPTION(scope, true);
+    }
+
+    return true;
 }
 
 std::optional<JSC::SourceCode> createCommonJSModule(
@@ -1646,7 +1797,7 @@ std::optional<JSC::SourceCode> createCommonJSModule(
 
     moduleObject->ignoreESModuleAnnotation = ignoreESModuleAnnotation;
 
-    return commonJSModuleSyntheticSourceCode(sourceOrigin, sourceURL);
+    return commonJSModuleSyntheticSourceCode(sourceOrigin, sourceURL, moduleObject);
 }
 
 JSObject* JSCommonJSModule::createBoundRequireFunction(VM& vm, JSGlobalObject* lexicalGlobalObject, const WTF::String& pathString)

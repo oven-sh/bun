@@ -3875,8 +3875,20 @@ JSC::JSValue GlobalObject::moduleLoaderEvaluate(JSGlobalObject* lexicalGlobalObj
     JSValue moduleRecordValue, RefPtr<JSC::ScriptFetcher> scriptFetcher,
     JSValue sentValue, JSValue resumeMode)
 {
-    return moduleLoader->evaluateNonVirtual(lexicalGlobalObject, key, moduleRecordValue,
+    auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSValue result = moduleLoader->evaluateNonVirtual(lexicalGlobalObject, key, moduleRecordValue,
         WTF::move(scriptFetcher), sentValue, resumeMode);
+    RETURN_IF_EXCEPTION(scope, result);
+
+    if (auto* record = dynamicDowncast<JSC::AbstractModuleRecord>(moduleRecordValue)) {
+        Bun::evaluateDeferredCommonJSModuleForESM(globalObject, record, key);
+        RETURN_IF_EXCEPTION(scope, result);
+    }
+
+    return result;
 }
 
 extern "C" bool Bun__VM__specifierIsEvalEntryPoint(void*, EncodedJSValue);
@@ -3898,6 +3910,11 @@ JSC::JSValue EvalGlobalObject::moduleLoaderEvaluate(JSGlobalObject* lexicalGloba
     // dispatching here. Don't call back into native code (which opens an
     // ExceptionValidationScope) with an exception still pending.
     RETURN_IF_EXCEPTION(scope, result);
+
+    if (auto* record = dynamicDowncast<JSC::AbstractModuleRecord>(moduleRecordValue)) {
+        Bun::evaluateDeferredCommonJSModuleForESM(globalObject, record, key);
+        RETURN_IF_EXCEPTION(scope, result);
+    }
 
     if (Bun__VM__specifierIsEvalEntryPoint(globalObject->bunVM(), JSValue::encode(key))) {
         // For a module with top-level `await`, JSC compiles the body as a

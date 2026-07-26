@@ -1507,6 +1507,9 @@ impl<'a> Parser<'a> {
 
         if p.is_deoptimized_commonjs() {
             exports_kind = js_ast::ExportsKind::Cjs;
+            if p.options.features.commonjs_at_runtime {
+                wrap_mode = WrapMode::BunCommonjs;
+            }
         } else if p.esm_export_keyword.len > 0 || p.top_level_await_keyword.len > 0 {
             exports_kind = js_ast::ExportsKind::Esm;
         } else if uses_exports_ref || uses_module_ref || p.has_top_level_return || p.has_with_scope

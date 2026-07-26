@@ -1074,6 +1074,10 @@ impl TranspilerJob {
 
         let is_commonjs_module = parse_result.ast.has_commonjs_export_names
             || parse_result.ast.exports_kind == ExportsKind::Cjs;
+        let commonjs_export_names = crate::resolved_source::join_commonjs_export_names(
+            is_commonjs_module,
+            &parse_result.ast,
+        );
         let mut module_info: Option<Box<analyze_transpiled_module::ModuleInfo>> =
             if use_isolation_source_provider_cache
                 && !is_commonjs_module
@@ -1181,6 +1185,7 @@ impl TranspilerJob {
                     bun_core::heap::into_raw(mi.into_deserialized()).cast()
                 })
                 .unwrap_or(ptr::null_mut()),
+            commonjs_export_names: String::clone_utf8(&commonjs_export_names),
             tag: this_tag,
             ..Default::default()
         });

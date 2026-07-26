@@ -2957,6 +2957,10 @@ fn transpile_source_code_inner(
 
                 let is_commonjs_module = parse_result.ast.has_commonjs_export_names
                     || parse_result.ast.exports_kind == bun_ast::ExportsKind::Cjs;
+                let commonjs_export_names = bun_jsc::resolved_source::join_commonjs_export_names(
+                    is_commonjs_module,
+                    &parse_result.ast,
+                );
                 // Collect the ESM record while printing, for the isolation
                 // source-provider cache (same shape as `RuntimeTranspilerStore`).
                 // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
@@ -3088,6 +3092,8 @@ fn transpile_source_code_inner(
                     };
                     resolved_source.is_commonjs_module = is_commonjs_module;
                     resolved_source.module_info = module_info;
+                    resolved_source.commonjs_export_names =
+                        bun_core::String::clone_utf8(&commonjs_export_names);
                     return Ok(OwnedResolvedSource::from(resolved_source));
                 }
 
@@ -3175,6 +3181,7 @@ fn transpile_source_code_inner(
                     source_url: create_if_different(input_specifier, path.text),
                     is_commonjs_module,
                     module_info,
+                    commonjs_export_names: bun_core::String::clone_utf8(&commonjs_export_names),
                     tag,
                     ..Default::default()
                 }));

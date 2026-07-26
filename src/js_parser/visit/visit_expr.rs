@@ -1983,6 +1983,67 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 p.visit_expr(arg);
             }
 
+            // Runtime (non-bundler) CJS static-export-name scan: record names assigned via
+            // `Object.defineProperty(exports|module.exports, "<name>", ...)` so an ESM
+            // importer can resolve them by name. This mirrors Node's cjs-module-lexer
+            // without the cross-file re-export following.
+            if p.options.features.commonjs_at_runtime
+                && !p.options.features.unwrap_commonjs_to_esm
+                && !p.is_control_flow_dead
+            {
+                let exports_ref = p.exports_ref;
+                let module_ref = p.module_ref;
+                let is_exports_expr = |ex: &Expr| -> bool {
+                    match &ex.data {
+                        Data::EIdentifier(id) => id.ref_.eql(exports_ref),
+                        Data::ESpecial(E::Special::ModuleExports) => true,
+                        Data::EDot(d) => {
+                            d.name == b"exports"
+                                && matches!(d.target.data, Data::EIdentifier(inner) if inner.ref_.eql(module_ref))
+                        }
+                        _ => false,
+                    }
+                };
+                let is_object_define_property = matches!(
+                    &e_.target.data,
+                    Data::EDot(dot)
+                        if dot.name == b"defineProperty"
+                            && matches!(
+                                &dot.target.data,
+                                Data::EIdentifier(id)
+                                    if p.symbols.as_slice()[id.ref_.inner_index() as usize].kind
+                                        == bun_ast::symbol::Kind::Unbound
+                                        && p.symbols.as_slice()[id.ref_.inner_index() as usize]
+                                            .original_name
+                                            .slice()
+                                            == b"Object"
+                            )
+                );
+                let args = e_.args.slice();
+                if is_object_define_property && args.len() >= 2 && is_exports_expr(&args[0]) {
+                    if let Data::EString(name_str) = &args[1].data {
+                        if !name_str.is_utf16 {
+                            let name: &[u8] = &name_str.data;
+                            p.has_commonjs_export_names = true;
+                            if !name.is_empty() && !p.commonjs_named_exports.contains(name) {
+                                p.commonjs_named_exports
+                                    .put(
+                                        name,
+                                        bun_ast::ast_result::CommonJSNamedExport {
+                                            loc_ref: bun_ast::LocRef {
+                                                loc: args[1].loc,
+                                                ref_: bun_ast::Ref::NONE,
+                                            },
+                                            needs_decl: false,
+                                        },
+                                    )
+                                    .expect("unreachable");
+                            }
+                        }
+                    }
+                }
+            }
+
             // Restore saved state.
             p.options.ignore_dce_annotations = old_ce;
             p.should_fold_typescript_constant_expressions =

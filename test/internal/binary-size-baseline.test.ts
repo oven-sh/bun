@@ -59,9 +59,10 @@ beforeAll(() => {
     port: 0,
     fetch(req) {
       const url = new URL(req.url);
-      // buildkite.com public .json → build UUID
+      // buildkite.com public .json → build UUID + commit message
       const mBuild = url.pathname.match(/^\/bun\/bun\/builds\/(\d+)\.json$/);
-      if (mBuild) return Response.json({ id: UUID[mBuild[1] as keyof typeof UUID] ?? "uuid-unknown" });
+      if (mBuild)
+        return Response.json({ id: UUID[mBuild[1] as keyof typeof UUID] ?? "uuid-unknown", message: "commit" });
       // everything else → GitHub API
       return Response.json(githubHandler(url));
     },

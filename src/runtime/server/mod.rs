@@ -494,7 +494,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     }
 
     /// uWS filter: `+1` on accept (post-handshake for TLS), `-1` on
-    /// `HttpContext::onClose`. Feeds [`Self::active_connection_count`].
+    /// `HttpContext::onClose` / `HttpResponse::upgrade()`. Feeds
+    /// [`Self::active_connection_count`].
     extern "C" fn on_connection_filter(
         _socket: *mut uws_sys::us_socket_t,
         opened: i32,

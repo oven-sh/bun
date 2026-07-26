@@ -1176,4 +1176,44 @@ body {
       },
     });
   }
+
+  // When the page applies other stylesheets besides the preloaded one, the
+  // preload gets its own output containing only what the source preload
+  // declared (so `onload="this.rel='stylesheet'"` swaps to the source file,
+  // not the whole page bundle). The page bundle separately contains every
+  // applied stylesheet.
+  itBundled("html/preload-as-style-shared-with-extra-stylesheet", {
+    outdir: "out/",
+    files: {
+      "/index.html": `
+<!DOCTYPE html>
+<link rel="preload" as="style" href="./app.css">
+<link rel="stylesheet" href="./app.css">
+<link rel="stylesheet" href="./other.css">
+<script src="./a.js"></script>`,
+      "/app.css": "body { color: red; }",
+      "/other.css": "h1 { font-weight: bold; }",
+      "/a.js": "console.log(1)",
+    },
+    entryPoints: ["/index.html"],
+    onAfterBundle(api) {
+      const html = api.readFile("out/index.html");
+
+      const preload = html.match(/<link rel="preload" as="style" href="(?:\.\/|\/)?([^"]+\.css)">/);
+      expect(preload).not.toBeNull();
+      const stylesheet = html.match(/<link rel="stylesheet"[^>]* href="(?:\.\/|\/)?([^"]+\.css)"/);
+      expect(stylesheet).not.toBeNull();
+
+      // The preload output is just app.css; the page bundle is app.css + other.css.
+      expect(preload![1]).not.toBe(stylesheet![1]);
+
+      const preloaded = api.readFile("out/" + preload![1]);
+      expect(preloaded).toContain("red");
+      expect(preloaded).not.toContain("font-weight");
+
+      const applied = api.readFile("out/" + stylesheet![1]);
+      expect(applied).toContain("red");
+      expect(applied).toContain("font-weight");
+    },
+  });
 });

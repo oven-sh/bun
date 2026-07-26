@@ -1704,8 +1704,7 @@ describe.concurrent("bun test post-run drain", () => {
     `);
     const elapsed = performance.now() - start;
     expect(stderr).not.toContain("never fires");
-    expect(stderr).toContain("scheduled work");
-    expect(stderr).toContain("still pending after its tests finished");
+    expect(stderr).toContain("still pending after the last test finished");
     // The 60s timer must not be waited on. 30s is far below 60s and far above
     // any debug-build startup cost.
     expect(elapsed).toBeLessThan(30_000);
@@ -1717,9 +1716,34 @@ describe.concurrent("bun test post-run drain", () => {
       import { test, expect } from "bun:test";
       test("clean", () => { expect(1).toBe(1); });
     `);
-    expect(stderr).not.toContain("scheduled work");
     expect(stderr).not.toContain("still pending");
     expect(stderr).toContain("1 pass");
+    expect(exitCode).toBe(0);
+  });
+
+  test("the note prints once at the end of a multi-file run, not per file", async () => {
+    using dir = tempDir("post-run-drain-multi", {
+      "a.test.ts": `
+        import { test } from "bun:test";
+        test("leaks a timer", () => { setTimeout(() => {}, 60_000); });
+      `,
+      "b.test.ts": `
+        import { test } from "bun:test";
+        test("clean", () => {});
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "a.test.ts", "b.test.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // Loop liveness is VM-wide, so the note cannot say which file scheduled
+    // the handle; it must not print once per remaining file either.
+    const notes = stderr.split("still pending after the last test finished").length - 1;
+    expect(notes).toBe(1);
     expect(exitCode).toBe(0);
   });
 });

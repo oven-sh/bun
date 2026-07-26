@@ -908,6 +908,30 @@ pub(crate) fn should_drain_event_loop() -> bool {
     env_var::BUN_TEST_DRAIN_EVENT_LOOP.get().unwrap_or(false)
 }
 
+/// Is the next entry in this thread's timer heap due within `window_ms`?
+/// Used to decide whether the post-file drain's second `auto_tick` may block
+/// on its own (bounded by that deadline) or must be `wakeup()`-forced to
+/// return immediately.
+fn has_timer_due_within(window_ms: i64) -> bool {
+    let timers = crate::jsc_hooks::timer_all();
+    if timers.is_null() {
+        return false;
+    }
+    // SAFETY: live per-thread `All`; single JS thread; null-checked above.
+    let Some(min) = (unsafe { &*timers }).timers.peek() else {
+        return false;
+    };
+    // SAFETY: `peek()` returns a live heap node.
+    let next = unsafe { &(*min).next };
+    let deadline =
+        bun_core::Timespec::now(bun_core::TimespecMockMode::ForceRealTime).add_ms(window_ms);
+    !bun_core::Timespec {
+        sec: next.sec,
+        nsec: next.nsec,
+    }
+    .greater(&deadline)
+}
+
 pub struct CommandLineReporter {
     // `TestRunner<'a>` borrows `TestOptions`/regex from the CLI ctx; the
     // reporter is held in a `Box` local to `TestCommand::exec` which never
@@ -3378,13 +3402,16 @@ impl TestCommand {
                 // throw/rejection books as "Unhandled error between tests" instead
                 // of being orphaned at exit. Two ticks: a wakeup left over from
                 // the run loop consumes the first poll, and the second lets a
-                // `setTimeout(fn, 0)` (clamped to 1ms) become due and fire. Both
-                // polls are bounded by the GC controller's 16ms timer (armed in
-                // `process_gc_timer` inside auto_tick), so neither waits on a
-                // far-future user timer or an open socket.
+                // `setTimeout(fn, 0)` (clamped to 1ms) become due and fire.
                 vm.event_loop_ref().auto_tick();
                 vm.event_loop_ref().tick();
                 if vm.is_event_loop_alive() {
+                    // With no timer due soon the poll would wait on a far-future
+                    // one (or forever on a socket); wakeup keeps it non-blocking.
+                    // A near-future timer bounds the poll itself.
+                    if !has_timer_due_within(20) {
+                        vm.wakeup();
+                    }
                     vm.event_loop_ref().auto_tick();
                     vm.event_loop_ref().tick();
                 }
@@ -3395,12 +3422,17 @@ impl TestCommand {
                 // here since such a file already failed. Opt-in; one file per process.
                 if should_drain_event_loop() {
                     vm.on_before_exit();
-                } else if vm.is_event_loop_alive() {
+                } else if first_last.last
+                    && repeat_index + 1 == repeat_count
+                    && vm.is_event_loop_alive()
+                {
                     // Still-live work after the bounded pass (a future-deadline
-                    // timer, a ref'd socket) is abandoned at exit. Surface it so a
-                    // late rejection from that work isn't silently lost.
-                    bun_core::pretty_errorln!(
-                        "<r><yellow>note<r><d>:<r> this file scheduled work (timer or open handle) that is still pending after its tests finished. `bun test` will not wait for it.",
+                    // timer, a ref'd socket) is abandoned at exit. Surface it
+                    // once at the end of the run so a late rejection from that
+                    // work isn't silently lost; the loop is VM-wide, so a
+                    // per-file note would misattribute an earlier file's leak.
+                    bun_core::note!(
+                        "a test left a timer or open handle that is still pending after the last test finished. `bun test` will not wait for it.",
                     );
                 }
                 drop(buntest_strong);

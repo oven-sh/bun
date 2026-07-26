@@ -208,7 +208,7 @@ test("issue 28921: same asset from HTML and CSS keeps the emitted file for the H
   using dir = tempDir("28921-html-and-css", {
     "src/logo.png": Buffer.alloc(256, 0x42).toString(),
     "src/styles.css": `body { background: url('./logo.png'); }`,
-    "src/index.html": `<!DOCTYPE html><html><head><link rel="stylesheet" href="./styles.css"></head><body><img src="./logo.png"></body></html>`,
+    "src/index.html": `<!DOCTYPE html><html><head><link rel="stylesheet" href="./styles.css"><link rel="icon" href="./logo.png"></head><body><img src="./logo.png"></body></html>`,
   });
 
   const result = await Bun.build({
@@ -222,9 +222,12 @@ test("issue 28921: same asset from HTML and CSS keeps the emitted file for the H
   const cssText = await result.outputs.find(o => o.path.endsWith(".css"))!.text();
   expect(cssText).toContain("data:image/png;base64");
 
-  // The <img> tag references the file by URL, so the physical file must be
-  // emitted and the attribute rewritten to its hashed path.
+  // The <img> and <link rel="icon"> tags reference the file by URL, so the
+  // physical file must be emitted and both attributes rewritten to its
+  // hashed path.
   const htmlText = await result.outputs.find(o => o.path.endsWith(".html"))!.text();
+  expect(htmlText).not.toContain("./logo.png");
+  expect(htmlText).toMatch(/rel="icon"\s+href="\.\/logo-[^"]+\.png"/);
   expect(htmlText).toMatch(/src="\.\/logo-[^"]+\.png"/);
   const pngFiles = readdirSync(join(String(dir), "dist")).filter(f => f.endsWith(".png"));
   expect(pngFiles.length).toBe(1);

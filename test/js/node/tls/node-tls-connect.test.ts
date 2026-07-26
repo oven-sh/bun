@@ -1197,12 +1197,8 @@ describe("throwing 'secureConnect' listener", () => {
   });
 });
 
-// A peer that FINs the TCP connection during the TLS handshake (right after
-// ClientHello) is the load-balancer/rate-limiter drop shape. Node reports it as
-// ECONNRESET ("Client network socket disconnected before secure TLS connection
-// was established"), which got/axios retry by default. ERR_SOCKET_CLOSED is
-// Node's code for local use-after-close and would point at the app instead of
-// the peer.
+// A peer FIN during the TLS handshake must surface as ECONNRESET like Node,
+// not ERR_SOCKET_CLOSED (Node's code for local use-after-close).
 describe("peer closes during TLS handshake", () => {
   async function withHandshakeDroppingServer<T>(fn: (port: number) => Promise<T>): Promise<T> {
     const srv = net.createServer(s => {

@@ -1,9 +1,42 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, ospath } from "harness";
-import Module, { _nodeModulePaths, builtinModules, createRequire, isBuiltin, wrap } from "module";
+import Module, { _nodeModulePaths, builtinModules, createRequire, findPackageJSON, isBuiltin, wrap } from "module";
 import path from "path";
 
 describe.concurrent("node-module-module", () => {
+  test("findPackageJSON finds package.json", () => {
+    const pkg = findPackageJSON(import.meta.path);
+    expect(pkg).toBeString();
+    expect(pkg.endsWith("package.json")).toBe(true);
+    const fs = require("fs");
+    expect(fs.existsSync(pkg)).toBe(true);
+  });
+
+  test("findPackageJSON with file URL", () => {
+    const pkg = findPackageJSON(Bun.pathToFileURL(import.meta.path).href);
+    expect(pkg).toBeString();
+    expect(pkg.endsWith("package.json")).toBe(true);
+  });
+
+  test("findPackageJSON returns null for root", () => {
+    const pkg = findPackageJSON("/");
+    expect(pkg).toBeNull();
+  });
+
+  test("findPackageJSON with relative path", () => {
+    const pkg = findPackageJSON("js/node/module/node-module-module.test.js");
+    expect(pkg).toBeString();
+    expect(pkg.endsWith("package.json")).toBe(true);
+  });
+
+  test("findPackageJSON throws on non-string", () => {
+    expect(() => findPackageJSON(123)).toThrow();
+    expect(() => findPackageJSON(null)).toThrow();
+    expect(() => findPackageJSON(undefined)).toThrow();
+    expect(() => findPackageJSON({})).toThrow();
+  });
+
+
   test("builtinModules exists", () => {
     expect(Array.isArray(builtinModules)).toBe(true);
     expect(builtinModules).toHaveLength(77);

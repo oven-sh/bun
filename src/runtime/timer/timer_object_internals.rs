@@ -56,16 +56,21 @@ impl TimerObjectInternals {
     /// remember it in `this_value` (weakly) for later retrieval by
     /// `fire()`/`run_immediate_task()`. If the wrapper is already rooted the
     /// existing slot is kept. JS thread only.
-    fn arm_root(&self, wrapper: JSValue, global: &JSGlobalObject) {
+    fn arm_root(&self, wrapper: JSValue, vm: *mut VirtualMachine) {
         self.this_value.with_mut(|r| r.set_weak(wrapper));
         if !self.root_slot.get().is_none() {
             return;
         }
         let state = crate::jsc_hooks::runtime_state();
         debug_assert!(!state.is_null(), "RuntimeState not installed");
-        // SAFETY: `state` is the boxed per-thread `RuntimeState`;
-        // single-threaded JS heap, `.timer.roots` has `Cell` interior.
-        let slot = unsafe { (*state).timer.roots.arm(wrapper, global) };
+        // SAFETY: `vm` is the live per-thread VM (JS-thread-only call site);
+        // `state` is the boxed per-thread `RuntimeState`. Segments hang off
+        // `vm.global` (not the lexical global) so a ShadowRealm caller uses
+        // the same per-VM list as `disarm_root`.
+        let slot = unsafe {
+            let global = JSGlobalObject::opaque_ref((*vm).global);
+            (*state).timer.roots.arm(wrapper, global)
+        };
         self.root_slot.set(slot);
     }
 
@@ -386,7 +391,7 @@ impl TimerObjectInternals {
             self.reschedule(timer, vm, global.as_ptr());
         }
 
-        self.arm_root(timer, global);
+        self.arm_root(timer, vm);
     }
 
     /// Returns `true` if an
@@ -777,7 +782,7 @@ impl TimerObjectInternals {
         // `opaque_ffi!` ZST — safe deref; `vm.global` never null.
         let global_ref = JSGlobalObject::opaque_ref(global);
         JSTimeout::idle_timeout_set_cached(timer, global_ref, repeat);
-        self.arm_root(timer, global_ref);
+        self.arm_root(timer, vm);
         self.update_flags(|f| f.set_kind(Kind::SetInterval));
         self.interval.set(new_interval);
         self.reschedule(timer, vm, global);
@@ -1013,12 +1018,9 @@ impl TimerObjectInternals {
             return Ok(this_value);
         }
 
-        self.arm_root(this_value, global_object);
-        self.reschedule(
-            this_value,
-            VirtualMachine::get_mut_ptr(),
-            global_object.as_ptr(),
-        );
+        let vm = VirtualMachine::get_mut_ptr();
+        self.arm_root(this_value, vm);
+        self.reschedule(this_value, vm, global_object.as_ptr());
 
         Ok(this_value)
     }

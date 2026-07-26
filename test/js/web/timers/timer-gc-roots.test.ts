@@ -126,6 +126,21 @@ describe("armed timers do not each hold a JSC strong handle", () => {
     expect(stdout).toBe("ok\n");
     expect(exitCode).toBe(0);
   });
+
+  test("ShadowRealm timers use the per-VM segment list", async () => {
+    const src = `
+      new ShadowRealm().evaluate("setTimeout(() => {}, 10); 0");
+      Bun.gc(true);
+      await new Promise(r => setTimeout(r, 50));
+      Bun.gc(true);
+      setTimeout(() => console.log("ok"), 1);
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("ok\n");
+    expect(exitCode).toBe(0);
+  });
 });
 
 describe("AbortSignal.timeout is released when its wrapper is collected", () => {

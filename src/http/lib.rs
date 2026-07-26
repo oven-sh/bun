@@ -1192,14 +1192,10 @@ fn get_tls_sni_hostname<'c>(client: &'c HTTPClient<'_>, allow_proxy_url: bool) -
     client.url.hostname
 }
 
-/// Returns the hostname to verify the peer certificate against (both the
-/// native SAN match and the hostname handed to a JS `checkServerIdentity`).
-/// Priority: tls_props.server_name > client.url.hostname. Unlike the SNI
-/// variant this deliberately skips the Host request header: per RFC 9110 the
-/// Host header is routing metadata chosen by the caller, whereas RFC 6125/9525
-/// bind the verified identity to the reference identifier the client intended
-/// to reach, i.e. the URL authority. `tls.serverName` remains the documented
-/// opt-in override for the "dial an IP, verify a name" case.
+/// Returns the hostname to verify the peer certificate against (native SAN
+/// match and the JS `checkServerIdentity` hostname argument).
+/// Priority: tls_props.server_name > client.url.hostname. The Host request
+/// header is never consulted here (RFC 6125/9525: verify the URL authority).
 fn get_tls_verify_hostname<'c>(client: &'c HTTPClient<'_>, allow_proxy_url: bool) -> &'c [u8] {
     if allow_proxy_url {
         if let Some(proxy) = &client.http_proxy {
@@ -1212,9 +1208,7 @@ fn get_tls_verify_hostname<'c>(client: &'c HTTPClient<'_>, allow_proxy_url: bool
     client.url.hostname
 }
 
-/// Shared first-priority arm of [`get_tls_sni_hostname`] /
-/// [`get_tls_verify_hostname`]: the explicit `tls.serverName` /
-/// `tls.servername` option, if present and non-empty.
+/// The explicit `tls.serverName` option, if present and non-empty.
 #[inline]
 fn tls_props_server_name<'c>(client: &'c HTTPClient<'_>) -> Option<&'c [u8]> {
     let props = client.tls_props.as_ref()?;

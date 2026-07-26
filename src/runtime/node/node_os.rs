@@ -712,12 +712,9 @@ mod _impl {
     }
 
     pub(crate) fn homedir(global: &JSGlobalObject) -> JsResult<BunString> {
-        // In Node.js, this is a wrapper around uv_os_homedir.
-        //
-        // On POSIX the HOME env check lives in `src/js/node/os.ts` so it observes
-        // live `process.env.HOME` mutations; this function is the passwd fallback
-        // (and what `userInfo()` calls directly, matching Node's uv_os_get_passwd).
-        // On Windows uv_os_homedir already reads USERPROFILE live.
+        // In Node.js, this is a wrapper around uv_os_homedir. The live HOME
+        // check lives in `src/js/node/os.ts`; this is the passwd fallback,
+        // which `userInfo()` also calls directly.
         #[cfg(windows)]
         {
             let mut out = PathBuffer::uninit();
@@ -748,8 +745,7 @@ mod _impl {
             let mut result: *mut libc::passwd = core::ptr::null_mut();
 
             let ret: c_int = loop {
-                // libuv's uv__getpwuid_r uses the real uid; userInfo() below reports
-                // uid = getuid(), so geteuid here would desync them under setuid.
+                // Real uid, matching libuv and userInfo()'s uid field.
                 // SAFETY: valid buffers and out-pointer
                 let ret = unsafe {
                     libc::getpwuid_r(

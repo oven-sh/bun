@@ -24,22 +24,16 @@ var tmpdir = function () {
   return tmpdir();
 };
 
-// os.homedir() must honor live mutations of $HOME (Node reads it via
-// uv_os_homedir on every call). The HOME check runs here in JS because on
-// POSIX process.env writes never reach the C environ, so the native binding
-// cannot observe them. The binding is the passwd fallback when HOME is unset,
-// and userInfo() calls it directly (Node's userInfo ignores HOME).
+// Node reads $HOME on every os.homedir() call, but POSIX process.env writes
+// never reach the C environ, so the live check must happen here in JS. The
+// native binding is the passwd fallback, which userInfo() also calls directly.
 function homedirFactory(bindingHomedir) {
   if (process.platform === "win32") {
-    // uv_os_homedir reads USERPROFILE live and falls back to
-    // GetUserProfileDirectoryW, so the binding alone is correct here.
-    return function homedir() {
-      return bindingHomedir();
-    };
+    // uv_os_homedir already reads USERPROFILE live.
+    return bindingHomedir;
   }
   return function homedir() {
-    // uv_os_homedir returns getenv("HOME") verbatim whenever it is non-NULL
-    // (including ""), and only falls through to passwd when HOME is absent.
+    // Like libuv: HOME="" is returned verbatim; only absent HOME falls through.
     const home = Bun.env["HOME"];
     if (home !== undefined) return home;
     return bindingHomedir();

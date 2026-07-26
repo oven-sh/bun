@@ -205,6 +205,14 @@ describe("Bun.serve tls must carry key+cert", () => {
     expect(await res.text()).toBe("ok");
   });
 
+  for (const tls of [false, 0, null, undefined] as const) {
+    test(`tls: ${tls} serves plain HTTP`, async () => {
+      await using server = Bun.serve({ port: 0, tls: tls as any, fetch: () => new Response("ok") });
+      expect(server.url.protocol).toBe("http:");
+      expect(await (await fetch(server.url)).text()).toBe("ok");
+    });
+  }
+
   for (const [label, opts] of [
     ["key without cert", { key: tlsCert.key }],
     ["cert without key", { cert: tlsCert.cert }],

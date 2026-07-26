@@ -1382,7 +1382,9 @@ impl ServerConfig {
 
         let mut saw_tls_key = false;
         if let Some(tls) = arg.get_truthy(global, "tls")? {
-            if tls.js_type().is_array() {
+            if tls.is_falsey() {
+                // `get_truthy` passes `false`/`0`/`NaN` through; treat as no TLS (like `[]`).
+            } else if tls.js_type().is_array() {
                 let mut value_iter = tls.array_iterator(global)?;
                 if value_iter.len == 0 {
                     // `[]` = zero SNI configs (plain HTTP, #21792), unlike `{}` which throws.

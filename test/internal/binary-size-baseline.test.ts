@@ -156,7 +156,7 @@ async function runBinarySize(meta: typeof META) {
 }
 
 // The fake buildkite-agent is a bash script.
-test.skipIf(!isPosix)(
+test.concurrent.skipIf(!isPosix)(
   "PR is not failed when the only over-threshold rows have a baseline older than merge-base",
   async () => {
     const { stdout, stderr, exitCode, annotation } = await runBinarySize(META);
@@ -176,7 +176,7 @@ test.skipIf(!isPosix)(
   },
 );
 
-test.skipIf(!isPosix)("PR still fails when the merge-base baseline itself is over threshold", async () => {
+test.concurrent.skipIf(!isPosix)("PR still fails when the merge-base baseline itself is over threshold", async () => {
   // Bump the PR's own linux-x64 size by 600 KB over merge-base. The baseline for
   // linux-x64 is the merge-base build (#200), so this row is fresh and must fail.
   const big = { ...META, "999": { ...META["999"], "bun-linux-x64": META["200"]["bun-linux-x64"] + 600_000 } };

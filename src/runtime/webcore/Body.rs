@@ -1342,9 +1342,6 @@ impl Value {
             }
 
             if was_disturbed {
-                if let Value::Error(e) = self {
-                    e.reset();
-                }
                 *self = Value::Used;
             }
 
@@ -2164,7 +2161,6 @@ fn handle_body_error(value: &mut Value, global_object: &JSGlobalObject) -> Optio
         return None;
     };
     let js = err.to_js(global_object);
-    err.reset();
     *value = Value::Used;
     Some(JSPromise::rejected_promise(global_object, js).to_js())
 }

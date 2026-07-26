@@ -865,6 +865,49 @@ test("only test", () => {
     },
   );
 
+  test.concurrent(
+    "does not hang when a nested setImmediate clears the near-term timer with a far-future timer pending",
+    async () => {
+      const { stderr, exitCode, signalCode } = await runFixture({
+        "clear.test.js": `
+import { test, expect } from "bun:test";
+test("only test", () => {
+  const near = setTimeout(() => {}, 200);
+  setTimeout(() => {}, 3_600_000);
+  setTimeout(() => setImmediate(() => setImmediate(() => clearTimeout(near))), 5);
+  expect(1).toBe(1);
+});
+`,
+      });
+
+      expect(stderr).toContain("1 pass");
+      expect(stderr).toContain("0 fail");
+      expect(signalCode).toBeNull();
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  test.concurrent(
+    "does not stall on an unref'd near-term interval with a ref'd far-future timer",
+    async () => {
+      const { stderr, exitCode, signalCode } = await runFixture({
+        "unref-near.test.js": `
+import { test, expect } from "bun:test";
+test("only test", () => {
+  setInterval(() => {}, 5).unref();
+  setTimeout(() => {}, 3_600_000);
+  expect(1).toBe(1);
+});
+`,
+      });
+
+      expect(stderr).toContain("1 pass");
+      expect(stderr).toContain("0 fail");
+      expect(signalCode).toBeNull();
+      expect(exitCode).toBe(0);
+    },
+  );
+
   test.concurrent("does not busy-spin on a self-rescheduling setImmediate", async () => {
     const { stderr, exitCode, signalCode } = await runFixture({
       "spin.test.js": `

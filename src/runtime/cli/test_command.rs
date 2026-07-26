@@ -918,9 +918,37 @@ const POST_FILE_DRAIN_GRACE_MS: i64 = 1000;
 /// timer cannot stall the run.
 fn drain_for_late_errors(vm: &mut VirtualMachine) {
     use bun_core::{Timespec, TimespecMockMode};
+    use bun_event_loop::EventLoopTimer::{EventLoopTimer, InHeap, Tag, TimerCallback};
 
     let deadline = Timespec::now(TimespecMockMode::ForceRealTime).add_ms(POST_FILE_DRAIN_GRACE_MS);
     let el_ptr = vm.event_loop();
+    let timers = crate::jsc_hooks::timer_all();
+    if timers.is_null() {
+        return;
+    }
+
+    fn sentinel_fired(c: *mut TimerCallback) {
+        // SAFETY: `c` is the live stack sentinel just popped by `drain_timers`.
+        unsafe { (*c).event_loop_timer.in_heap = InHeap::None };
+    }
+    // A no-op timer at `deadline` caps `get_timeout` inside `auto_tick_active`
+    // so JS that runs between the park-guard and the park (a setImmediate
+    // clearing the near-term timer that admitted us) cannot leave only a
+    // far-future heap min for `tick_with_timeout` to park on.
+    let mut sentinel = TimerCallback {
+        callback: sentinel_fired,
+        ctx: None,
+        event_loop_timer: EventLoopTimer::init_paused(Tag::TimerCallback),
+    };
+    sentinel.event_loop_timer.next = deadline;
+    // SAFETY: live per-thread `All`; `sentinel` lives for this frame.
+    unsafe { (*timers).insert(&raw mut sentinel.event_loop_timer) };
+    scopeguard::defer! {
+        if sentinel.event_loop_timer.in_heap != InHeap::None {
+            // SAFETY: live per-thread `All`; sentinel still in the heap.
+            unsafe { (*timers).remove(&raw mut sentinel.event_loop_timer) };
+        }
+    }
 
     loop {
         vm.tick();
@@ -933,15 +961,9 @@ fn drain_for_late_errors(vm: &mut VirtualMachine) {
             || !el.immediate_tasks.is_empty()
             || !el.next_immediate_tasks.is_empty();
 
-        let timers = crate::jsc_hooks::timer_all();
-        let (timer_refs, immediate_refs) = if timers.is_null() {
-            (0, 0)
-        } else {
-            // SAFETY: `timer_all()` is the live per-thread `All` once
-            // RuntimeState is installed (always true by the time a test file
-            // has run); null-checked above.
-            unsafe { ((*timers).active_timer_count, (*timers).immediate_ref_count) }
-        };
+        // SAFETY: `timer_all()` is the live per-thread `All`; null-checked.
+        let (timer_refs, immediate_refs) =
+            unsafe { ((*timers).active_timer_count, (*timers).immediate_ref_count) };
 
         if !has_queued && timer_refs <= 0 && immediate_refs <= 0 {
             break;
@@ -949,16 +971,12 @@ fn drain_for_late_errors(vm: &mut VirtualMachine) {
         if Timespec::now(TimespecMockMode::ForceRealTime).greater(&deadline) {
             break;
         }
-        // Only park while a user `TimeoutObject` is due within the deadline;
-        // the heap min may be an internal runtime timer, but the min-heap
-        // invariant then bounds the park to that `TimeoutObject`'s due time.
-        // A self-rescheduling setImmediate alone (no near-term user timer)
-        // breaks here instead of busy-spinning.
-        if timers.is_null() {
-            break;
-        }
+        // Only park while a ref'd user `TimeoutObject` is due within the
+        // deadline; a self-rescheduling setImmediate or an unref'd interval
+        // alone breaks here instead of busy-spinning to the wall-clock cap.
+        //
         // SAFETY: live per-thread `All`; walk reads only heap-node fields.
-        if !unsafe { (*timers).timers.any_js_timer_due_by(&deadline) } {
+        if !unsafe { (*timers).timers.any_refd_js_timer_due_by(&deadline) } {
             break;
         }
         vm.auto_tick_active();

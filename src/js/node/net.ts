@@ -422,6 +422,13 @@ const SocketHandlers: SocketHandler = {
     self.connecting = false;
     if (callback) {
       const writeChunk = self._pendingData;
+      if ($isArray(writeChunk)) {
+        // on_writable only dispatches this drain once the native buffer is
+        // empty, so resume directly from the next queued chunk.
+        self._pendingData = self[kwriteCallback] = null;
+        if (writeChunksUntilFull(self, socket, writeChunk, callback)) callback(null);
+        return;
+      }
       const res = socket.$write(writeChunk || "", self._pendingEncoding || "utf8");
       if (res < 0) {
         // The retried send failed for good (peer gone): $write returned -errno.
@@ -1285,6 +1292,16 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
     self.connecting = false;
     if (callback) {
       const writeChunk = self._pendingData;
+      if ($isArray(writeChunk)) {
+        // on_writable only dispatches this drain once the native buffer is
+        // empty, so resume directly from the next queued chunk.
+        self._pendingData = self[kwriteCallback] = null;
+        if (writeChunksUntilFull(self, socket, writeChunk, callback)) {
+          if (self[kended] && !self[kUserUnrefed] && socket === self._handle) socket.unref?.();
+          callback(null);
+        }
+        return;
+      }
       const res = socket.$write(writeChunk || "", self._pendingEncoding || "utf8");
       if (res < 0) {
         // The retried send failed for good (peer gone): $write returned -errno.
@@ -1848,7 +1865,8 @@ Object.defineProperty(Socket.prototype, "bytesWritten", {
       for (let i = 0; i < data.length; i++) {
         const chunk = data[i];
         if (data.allBuffers || chunk instanceof Buffer) bytes += chunk.length;
-        else bytes += Buffer.byteLength(chunk.chunk, chunk.encoding);
+        else if (chunk.chunk !== undefined) bytes += Buffer.byteLength(chunk.chunk, chunk.encoding);
+        else bytes += chunk.length;
       }
     } else if (data) {
       // Writes are either a string or a Buffer.
@@ -2738,33 +2756,107 @@ Socket.prototype.destroySoon = function destroySoon() {
 };
 
 //TODO: migrate to native
-Socket.prototype._writev = function _writev(data, callback) {
-  const allBuffers = data.allBuffers;
-  const chunks = data;
-  if (allBuffers) {
-    if (data.length === 1) {
-      return this._write(data[0], "buffer", callback);
+// Feed `chunks` (already normalized to Buffer-likes) through `socket.$write`
+// one at a time. On the first short write the remainder is parked on
+// `_pendingData` and the drain callback is armed; the native buffer then only
+// ever holds the unsent tail of a single chunk. Returns true when every chunk
+// was fully accepted. Node holds the caller's buffers by reference in a
+// uv_write_t; matching that (no Buffer.concat, no native bulk copy) keeps the
+// queued-past-backpressure RSS at ~1x the queued bytes instead of ~3x.
+function writeChunksUntilFull(self, socket, chunks, callback) {
+  const len = chunks.length;
+  for (let i = 0; i < len; i++) {
+    const res = socket.$write(chunks[i], "buffer");
+    if (res < 0) {
+      self[kBytesWritten] = socket.bytesWritten;
+      process.nextTick(failWrite, self, res, callback);
+      return false;
     }
-    for (let i = 0; i < data.length; i++) {
-      data[i] = data[i].chunk;
-    }
-  } else {
-    if (data.length === 1) {
-      const { chunk, encoding } = data[0];
-      return this._write(chunk, encoding, callback);
-    }
-    for (let i = 0; i < data.length; i++) {
-      const { chunk, encoding } = data[i];
-      if (typeof chunk === "string") {
-        data[i] = Buffer.from(chunk, encoding);
-      } else {
-        data[i] = chunk;
-      }
+    if (!res) {
+      self[kBytesWritten] = socket.bytesWritten;
+      self._pendingData = i + 1 < len ? chunks.slice(i + 1) : null;
+      self._pendingEncoding = "";
+      self[kwriteCallback] = callback;
+      if (self[kended] && !self[kUserUnrefed]) socket.ref?.();
+      return false;
     }
   }
-  const chunk = Buffer.concat(chunks || []);
-  return this._write(chunk, "buffer", callback);
+  self[kBytesWritten] = socket.bytesWritten;
+  return true;
+}
+
+Socket.prototype._writev = function _writev(data, callback) {
+  const allBuffers = data.allBuffers;
+  for (let i = 0; i < data.length; i++) {
+    const entry = data[i];
+    const chunk = entry.chunk;
+    data[i] = allBuffers || typeof chunk !== "string" ? chunk : Buffer.from(chunk, entry.encoding);
+  }
+  if (data.length === 1) {
+    return this._write(data[0], "buffer", callback);
+  }
+
+  // cork()/uncork() can drive _writev before the handle is live, so the
+  // connecting / upgrade-in-flight deferral mirrors _write. _pendingData
+  // carries the Buffer[] and the drain handler resumes it once the handle is
+  // open and the native buffer is empty.
+  if (this.connecting || (!this._handle && this[kupgraded] && !this.destroyed)) {
+    this._pendingData = data;
+    this._pendingEncoding = "";
+    this[kwriteCallback] = callback;
+    const retry = onWritevHandleReady.bind(this, data, callback);
+    const onClose = onWritevCloseBeforeReady.bind(this, callback);
+    this.once(this.connecting ? "connect" : kUpgradeAttached, function () {
+      this.off("close", onClose);
+      retry();
+    });
+    this.once("close", onClose);
+    return;
+  }
+
+  const socket = this._handle;
+  this._pendingData = null;
+  this._pendingEncoding = "";
+  this[kwriteCallback] = null;
+  if (!socket) {
+    callback($ERR_SOCKET_CLOSED());
+    return false;
+  }
+  this._unrefTimer();
+  if (socket.readyState < 0) {
+    const er = new ErrnoException(process.platform === "win32" ? -4047 /* UV_EPIPE */ : -9 /* UV_EBADF */, "write");
+    process.nextTick(callback, er);
+    return false;
+  }
+
+  if (writeChunksUntilFull(this, socket, data, callback)) {
+    if (this.encrypted) process.nextTick(callback);
+    else callback();
+  }
 };
+
+function onWritevHandleReady(data, callback) {
+  if (this[kwriteCallback] !== callback) return;
+  const socket = this._handle;
+  this._pendingData = null;
+  this._pendingEncoding = "";
+  this[kwriteCallback] = null;
+  if (!socket) {
+    callback($ERR_SOCKET_CLOSED());
+    return;
+  }
+  this._unrefTimer();
+  if (writeChunksUntilFull(this, socket, data, callback)) {
+    if (this.encrypted) process.nextTick(callback);
+    else callback();
+  }
+}
+
+function onWritevCloseBeforeReady(callback) {
+  if (this[kwriteCallback] !== callback) return;
+  this[kwriteCallback] = null;
+  callback($ERR_SOCKET_CLOSED_BEFORE_CONNECTION());
+}
 
 Socket.prototype._write = function _write(chunk, encoding, callback) {
   $debug("Socket.prototype._write");

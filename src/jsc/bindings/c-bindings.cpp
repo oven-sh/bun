@@ -315,17 +315,23 @@ extern "C" void on_before_reload_process_linux()
             unset_cloexec(static_cast<int>(fd));
     }
 
-    // Reset signal dispositions to default before unblocking the mask. With
-    // bun's handlers still installed, a SIGTERM arriving between here and
+    // Reset caught signal dispositions to default before unblocking the mask.
+    // With bun's handlers still installed, a SIGTERM arriving between here and
     // execve is consumed (queued for JS dispatch) and then lost when execve
     // replaces the image, wedging a --watch child a parent just tried to
     // kill. execve itself resets caught dispositions, so this only shrinks
-    // the window to zero.
+    // the window to zero. Inherited SIG_IGN (nohup's SIGHUP, job-control
+    // SIGTTIN/SIGTTOU) is left alone so it survives execve like before.
     struct sigaction sa {};
     sa.sa_handler = SIG_DFL;
     sigemptyset(&sa.sa_mask);
     for (int s = 1; s < NSIG; s++) {
         if (s == SIGKILL || s == SIGSTOP)
+            continue;
+        struct sigaction old {};
+        if (sigaction(s, nullptr, &old) != 0)
+            continue;
+        if (old.sa_handler == SIG_IGN || old.sa_handler == SIG_DFL)
             continue;
         sigaction(s, &sa, nullptr);
     }

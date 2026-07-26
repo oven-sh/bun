@@ -314,9 +314,6 @@ pub(crate) const RUNTIME_PARAMS_: &[ParamType] = &[
     parse_param!("--trace-exit"),
     parse_param!("--expose-internals"),
     parse_param!("--stack-trace-limit <STR>"),
-    // `node --interactive` compat: `Command::which()` routes it to the REPL;
-    // declared (hidden) so `Arguments.parse` under the run table accepts it.
-    parse_param!("--interactive"),
 ];
 
 pub(crate) const AUTO_OR_RUN_PARAMS: &[ParamType] = &[

@@ -7,6 +7,22 @@ import { join } from "node:path";
 
 let watchee: Subprocess;
 
+function stdoutWaiter(proc: Subprocess<"ignore", "pipe", any>) {
+  const reader = proc.stdout.getReader();
+  const decoder = new TextDecoder();
+  let output = "";
+  return {
+    waitFor: async (needle: string) => {
+      while (!output.includes(needle)) {
+        const { value, done } = await reader.read();
+        if (done) throw new Error(`stream closed, output so far: ${JSON.stringify(output)}`);
+        output += decoder.decode(value, { stream: true });
+      }
+    },
+    release: () => reader.releaseLock(),
+  };
+}
+
 for (const dir of ["dir", "©️"]) {
   it.todoIf(isBroken && isWindows)(
     `should watch files${dir === "dir" ? "" : " (non-ascii path)"}`,
@@ -211,19 +227,10 @@ it("--watch forces a restart when the kill-signal listener thread is stuck in sy
     cwd: String(dir),
     env: bunEnv,
     stdout: "pipe",
-    stderr: "pipe",
+    stderr: "inherit",
   });
 
-  const reader = watchee.stdout.getReader();
-  const decoder = new TextDecoder();
-  let output = "";
-  const waitFor = async (needle: string) => {
-    while (!output.includes(needle)) {
-      const { value, done } = await reader.read();
-      if (done) throw new Error(`stream closed, output so far: ${JSON.stringify(output)}`);
-      output += decoder.decode(value, { stream: true });
-    }
-  };
+  const { waitFor, release } = stdoutWaiter(watchee);
 
   await waitFor("iter first");
   await Bun.write(
@@ -234,7 +241,7 @@ it("--watch forces a restart when the kill-signal listener thread is stuck in sy
   );
   await waitFor("iter second");
 
-  reader.releaseLock();
+  release();
   watchee.kill("SIGKILL");
   await watchee.exited;
 }, 30000);
@@ -261,19 +268,10 @@ it("--watch forces a restart when the kill-signal handler itself never returns",
     cwd: String(dir),
     env: bunEnv,
     stdout: "pipe",
-    stderr: "pipe",
+    stderr: "inherit",
   });
 
-  const reader = watchee.stdout.getReader();
-  const decoder = new TextDecoder();
-  let output = "";
-  const waitFor = async (needle: string) => {
-    while (!output.includes(needle)) {
-      const { value, done } = await reader.read();
-      if (done) throw new Error(`stream closed, output so far: ${JSON.stringify(output)}`);
-      output += decoder.decode(value, { stream: true });
-    }
-  };
+  const { waitFor, release } = stdoutWaiter(watchee);
 
   await waitFor("iter first");
   await Bun.write(
@@ -283,7 +281,7 @@ it("--watch forces a restart when the kill-signal handler itself never returns",
   );
   await waitFor("iter second");
 
-  reader.releaseLock();
+  release();
   watchee.kill("SIGKILL");
   await watchee.exited;
 }, 30000);
@@ -303,25 +301,16 @@ it("NODE_COMPILE_CACHE persists across a --watch reload", async () => {
     cwd: String(dir),
     env: { ...bunEnv, NODE_COMPILE_CACHE: cacheDir },
     stdout: "pipe",
-    stderr: "pipe",
+    stderr: "inherit",
   });
 
-  const reader = watchee.stdout.getReader();
-  const decoder = new TextDecoder();
-  let output = "";
-  const waitFor = async (needle: string) => {
-    while (!output.includes(needle)) {
-      const { value, done } = await reader.read();
-      if (done) throw new Error(`stream closed, output so far: ${JSON.stringify(output)}`);
-      output += decoder.decode(value, { stream: true });
-    }
-  };
+  const { waitFor, release } = stdoutWaiter(watchee);
 
   await waitFor("iter first");
   await Bun.write(join(String(dir), "app.js"), `require("./dep.js"); console.log("iter second");`);
   await waitFor("iter second");
 
-  reader.releaseLock();
+  release();
   watchee.kill("SIGKILL");
   await watchee.exited;
 
@@ -346,8 +335,8 @@ it.skipIf(isWindows)(
       cmd: [bunExe(), "--watch", "app.js"],
       cwd: String(dir),
       env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
+      stdout: "inherit",
+      stderr: "inherit",
       ipc(message) {
         messages.push(String(message));
       },

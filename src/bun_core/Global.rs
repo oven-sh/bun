@@ -238,15 +238,10 @@ pub fn sleep_forever_if_another_thread_is_crashing() {
 // enum here, the open newtype in `bun_sys`, `SIGNAL_NAMES`, `from_raw`,
 // `from_name` — is generated from it. Never re-spell a signal pair elsewhere.
 //
-// ⚠ Signal NUMBERS are PLATFORM-SPECIFIC. Linux and the BSD family agree on
-// 1–6, 8, 9, 11, 13–15, 21, 22, 24–28 and disagree on everything else.
-// Using the Linux numbers on a BSD sends the WRONG SIGNAL: "SIGUSR1" (10 on
-// Linux) delivers SIGBUS, "SIGUSR2" (12) delivers SIGSYS, and "SIGCHLD" (17)
-// delivers SIGSTOP — so `subprocess.kill("SIGUSR1")` bus-errors the child and
-// a child killed by a real SIGUSR1 (30) is reported as "SIGPWR" (#35296).
-// Darwin, FreeBSD, and the other BSDs share the classic BSD table (verified
-// against the macOS SDK's <sys/signal.h> and libc's shared unix/bsd module).
-// Keep this cfg in lockstep with the description() arms in bun_sys::SignalCode.
+// Signal numbers are platform-specific: the BSD family (Darwin included) and
+// Linux agree only on 1-6, 8, 9, 11, 13-15, 21, 22, 24-28, so the wrong table
+// silently sends the wrong signal (#35296). Keep this cfg in lockstep with the
+// description() arms in bun_sys::SignalCode.
 #[cfg(any(
     target_vendor = "apple",
     target_os = "freebsd",

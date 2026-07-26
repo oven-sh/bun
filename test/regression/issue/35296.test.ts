@@ -36,11 +36,7 @@ async function until(predicate: () => boolean, ms: number): Promise<boolean> {
   return true;
 }
 
-// Signals whose numbers diverge between Linux and the BSD family (USR1: 10 vs
-// 30, USR2: 12 vs 31, URG: 23 vs 16) plus TERM as a same-number control. The
-// expectations are platform-agnostic: the oracle is the OS's own name
-// resolver (bash `trap NAME` / `kill -s NAME`), so these hold on Linux,
-// macOS, and FreeBSD alike and catch any future table drift.
+// Divergent between Linux and BSD numbering, plus TERM as a same-number control.
 const SIGNALS = ["USR1", "USR2", "URG", "TERM"] as const;
 
 test.skipIf(isWindows)("Subprocess.kill(name) delivers the signal the OS knows by that name", async () => {
@@ -61,9 +57,16 @@ test.skipIf(isWindows)("Subprocess.kill(name) delivers the signal the OS knows b
       proc.kill(`SIG${name}`);
       // On a wrong mapping the trap never fires (or the child dies to an
       // unexpected signal); either way GOT-<name> never arrives.
-      const exited = await Promise.race([proc.exited.then(() => true), Bun.sleep(5_000).then(() => false)]);
-      expect(exited).toBe(true);
-      await Promise.race([out.done, Bun.sleep(1_000)]);
+      let exited = false;
+      void proc.exited.then(() => {
+        exited = true;
+      });
+      expect(await until(() => exited, 5_000)).toBe(true);
+      let drained = false;
+      void out.done.then(() => {
+        drained = true;
+      });
+      await until(() => drained, 1_000);
       const saw = out.text.includes(`GOT-${name}`)
         ? `GOT-${name}`
         : (out.text.replace("ready", "").trim() ?? proc.signalCode);
@@ -76,14 +79,15 @@ test.skipIf(isWindows)("Subprocess.kill(name) delivers the signal the OS knows b
 
 test.skipIf(isWindows)("signalCode reports the OS's name for the signal that killed the child", async () => {
   const proc = spawn({ cmd: ["/bin/sleep", "30"] });
-  // Deliver a REAL SIGUSR1 using the OS's own name resolver, bypassing Bun —
-  // and assert the oracle itself worked, so a broken /bin/kill reads as a
-  // setup failure rather than a mapping timeout.
+  // Deliver a real SIGUSR1 through the OS's own name resolver, bypassing Bun.
   const kill = spawnSync({ cmd: ["/bin/kill", "-s", "USR1", String(proc.pid)] });
   expect(kill.exitCode).toBe(0);
-  const exited = await Promise.race([proc.exited.then(() => true), Bun.sleep(5_000).then(() => false)]);
+  let exited = false;
+  void proc.exited.then(() => {
+    exited = true;
+  });
   try {
-    expect(exited).toBe(true);
+    expect(await until(() => exited, 5_000)).toBe(true);
     expect(proc.signalCode).toBe("SIGUSR1");
   } finally {
     proc.kill(9);

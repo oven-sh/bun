@@ -309,6 +309,8 @@ void NodeVMScript::destroy(JSCell* cell)
 
 thread_local NodeVMWatchdogScope* NodeVMWatchdogScope::s_innermost { nullptr };
 
+extern "C" int Bun__VM__scriptExecutionStatus(void*);
+
 bool checkForTermination(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSGlobalObject* evaluationGlobalObject, JSC::ThrowScope& scope, SigintReceiver* receiver, NodeVMWatchdogScope* watchdog)
 {
     if (!vm.hasTerminationRequest())
@@ -316,7 +318,11 @@ bool checkForTermination(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JS
 
     bool sigint = receiver->getSigintReceived();
     bool timedOut = watchdog && watchdog->timedOut();
-    if (!sigint && !timedOut) {
+    // requested_terminate is stored (Release) before notifyNeedTermination, so
+    // a terminate() that raced this scope's own watchdog fire is visible here
+    // even though timedOut is also true.
+    bool stopping = Bun__VM__scriptExecutionStatus(WebCore::clientData(vm)->bunVM) != 0;
+    if (stopping || (!sigint && !timedOut)) {
         // Not ours: leave the request set and propagate the uncatchable
         // TerminationException to whoever raised it.
         scope.throwException(globalObject, vm.ensureTerminationException());

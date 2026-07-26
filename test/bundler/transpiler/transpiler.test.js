@@ -329,7 +329,7 @@ describe("Bun.Transpiler", () => {
       exp("if (x) {} else function g(): void;\nfor (z in {}) {}", "if (x) {}\nfor (z in {}) {}");
 
       // A function declaration with a body in the same position is still wrapped.
-      exp("if(l)function f(ag): g {}\nfor (g in {}) {}", "if (l) {\n  let f = function(ag) {};\n}\nfor (g in {}) {}");
+      exp("if(l)function f(ag): g {}\nfor (g in {}) {}", "if (l) {\n  function f(ag) {}\n}\nfor (g in {}) {}");
 
       // The exact fuzz repro: ts loader, dead-code elimination, trailing \r.
       const dce = new Bun.Transpiler({ loader: "ts", target: "browser", deadCodeElimination: true });
@@ -4956,7 +4956,10 @@ describe("export of a block-scoped function declaration", () => {
   it("does not affect block-level function declarations in sloppy mode", () => {
     const transpiler = new Bun.Transpiler({ loader: "js" });
     const out = transpiler.transformSync("{\n  function f() {}\n}\nmodule.exports = f;");
-    expect(out).toContain("let f = function");
+    // Without a renamer the Annex B transform cannot emit the `var` alias,
+    // so the declaration must be left for the engine to hoist.
+    expect(out).toContain("function f()");
+    expect(out).not.toMatch(/let\s+f\s*=\s*function/);
     expect(out).toContain("module.exports = f");
   });
 

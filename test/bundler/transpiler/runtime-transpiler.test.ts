@@ -195,6 +195,73 @@ describe("with statement", () => {
   });
 });
 
+describe("Annex B.3.3 block-level function hoisting in sloppy mode", () => {
+  const fixture = `
+{ function z() { return 9 } }
+console.log(z());
+if (true) function u() { return 1 }
+console.log(typeof u);
+if (true) { function w() { return 2 } }
+console.log(typeof w);
+function outer() {
+  { function inner() { return "in" } }
+  return inner();
+}
+console.log(outer());
+`;
+
+  test.concurrent("hoists block-level functions to the enclosing var scope in CJS", async () => {
+    using dir = tempDir("annex-b-block-fn-cjs", {
+      "z.cjs": fixture,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "z.cjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("9\nfunction\nfunction\nin\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("keeps block-level functions block-scoped in strict mode (ESM)", async () => {
+    using dir = tempDir("annex-b-block-fn-esm", {
+      "z.mjs": `{ function z() { return 9 } }\nconsole.log(typeof z);\n`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "z.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("undefined\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("does not hoist past a conflicting lexical binding", async () => {
+    using dir = tempDir("annex-b-block-fn-conflict", {
+      "z.cjs": `let z = 1;\n{ function z() {} }\nconsole.log(typeof z);\n`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "z.cjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("number\n");
+    expect(exitCode).toBe(0);
+  });
+});
+
 test("math.pow", () => {
   function foo1(foo) {
     return 10 ** (foo / 20);

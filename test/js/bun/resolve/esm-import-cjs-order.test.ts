@@ -4,7 +4,7 @@
 // async transpile settled, so it could observe state from before earlier ESM
 // siblings ran and, with multiple CJS siblings, in transpile-completion (i.e.
 // nondeterministic) order.
-import { test, expect, describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
 async function run(dir: string, entry: string) {

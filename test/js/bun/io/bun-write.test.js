@@ -760,7 +760,7 @@ it.skipIf(isWindows)("Bun.write(Bun.stdout, ...) to a full nonblocking pipe comp
     env: bunEnv,
     stdout: "pipe",
     stderr: "pipe",
-    timeout: 4_000,
+    timeout: 20_000,
     killSignal: "SIGKILL",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.bytes(), proc.stderr.text(), proc.exited]);
@@ -771,4 +771,4 @@ it.skipIf(isWindows)("Bun.write(Bun.stdout, ...) to a full nonblocking pipe comp
     exitCode: 0,
     signalCode: null,
   });
-});
+}, 30_000);

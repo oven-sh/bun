@@ -39,13 +39,12 @@ const types = require("node:util/types");
 let inspect: typeof import("node:util").inspect | undefined;
 
 const SymbolFor = Symbol.for;
+const ArrayPrototypePop = Array.prototype.pop;
 const ArrayPrototypeUnshift = Array.prototype.unshift;
 const ReflectOwnKeys = Reflect.ownKeys;
 
 const kCapture = Symbol("kCapture");
-// Sticky mark emit() puts on a listener array before iterating it. on/prepend/
-// removeListener mutate in place unless they see this mark, in which case they
-// install a fresh (unmarked) copy so the in-flight emit() keeps a stable view.
+// Sticky mark emit() sets before iterating a listener array; on/off mutate in place unless they see it, then they install a fresh copy so the running emit() stays stable.
 const kIterated = Symbol("kIterated");
 // Set when `_events` was preallocated (streams do this): removeListener then
 // writes `undefined` instead of `delete`, keeping one shared JSC Structure
@@ -145,8 +144,7 @@ function emitError(emitter, args) {
   throw err; // Unhandled 'error' event
 }
 
-// A listener list is a bare function for a single listener, else an array (as
-// in node). kIterated on the array keeps it stable through the loop; see above.
+// A listener list is a bare function for a single listener, else an array (as in node).
 function applyHandlers(handlers, emitter, args) {
   if (typeof handlers === "function") {
     handlers.$apply(emitter, args);
@@ -349,8 +347,7 @@ EventEmitterPrototype.prependListener = function prependListener(type, fn) {
   return this;
 };
 
-// Fresh-array insert for a kIterated `list`. Propagates `warned` so the leak
-// warning fires once. An inline loop beats concat/slice ~10x (host-call cost).
+// Fresh-array insert for a kIterated `list`; propagates `warned`, inline loop beats concat/slice ~10x.
 function copyWithInserted(list, fn, prepend) {
   const n = list.length;
   const copy = $newArrayWithSize(n + 1);
@@ -474,7 +471,7 @@ EventEmitterPrototype.removeListener = function removeListener(type, listener) {
 // Node's internal/util spliceOne: O(1) at the tail, so a tail-first drain is linear.
 function spliceOne(list, index) {
   for (; index + 1 < list.length; index++) list[index] = list[index + 1];
-  list.pop();
+  ArrayPrototypePop.$call(list);
 }
 
 EventEmitterPrototype.off = EventEmitterPrototype.removeListener;
@@ -513,8 +510,7 @@ EventEmitterPrototype.removeAllListeners = function removeAllListeners(type) {
   if (typeof listeners === "function") {
     this.removeListener(type, listeners);
   } else if (listeners !== undefined) {
-    // LIFO, as in node. Unmarked `listeners` shrinks from the tail under us;
-    // a kIterated one is COW'd away on the first call and stays intact.
+    // LIFO, as in node; `listeners` either shrinks from the tail in step with i, or (if kIterated) is COW'd away and stays intact.
     for (let i = listeners.length - 1; i >= 0; i--) this.removeListener(type, listeners[i]);
   }
   return this;

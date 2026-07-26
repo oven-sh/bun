@@ -736,9 +736,7 @@ writeStreamPrototype._writev = function (data, cb) {
       cb(er);
     };
     if (this[kFs].writev === writev) {
-      // The default fs.writev rejects batches past IOV_MAX with EINVAL, so
-      // drain as a single write instead. writeAll already handles short
-      // writes and this.pos.
+      // Default fs.writev EINVALs past IOV_MAX; drain as one write.
       writeAll.$call(this, len === 1 ? chunks[0] : Buffer.concat(chunks, size), size, this.pos, done);
     } else {
       writevAll.$call(this, chunks, size, this.pos, done);

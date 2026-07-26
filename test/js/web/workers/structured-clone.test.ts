@@ -23,6 +23,12 @@ const identityCases: [string, () => object, Function][] = [
   ["Blob", () => new Blob(["hi"], { type: "text/plain" }), Blob],
   ["File", () => new File(["hi"], "a.txt", { type: "text/plain" }), File],
   ["X509Certificate", () => new X509Certificate(tls.cert), X509Certificate],
+];
+
+// node:crypto KeyObject clones through structuredClone / worker postMessage but is
+// rejected by bun:jsc serialize / v8.serialize (matching Node.js), so these run
+// for structuredClone only.
+const keyObjectIdentityCases: [string, () => object, Function][] = [
   ["secret KeyObject", () => createSecretKey(Buffer.from("0123456789abcdef")), KeyObject],
   ["public KeyObject", () => createPublicKey(tls.key), KeyObject],
   ["private KeyObject", () => createPrivateKey(tls.key), KeyObject],
@@ -289,7 +295,9 @@ for (const structuredCloneFn of [structuredClone, jscSerializeRoundtrip, jscSeri
       // Two references to the same object must deserialize to the same object:
       // https://html.spec.whatwg.org/multipage/structured-data.html#structuredserializeinternal
       describe("duplicated references preserve identity", () => {
-        test.each(identityCases)("%s", (_label, make, ctor) => {
+        const cases =
+          structuredCloneFn === structuredClone ? [...identityCases, ...keyObjectIdentityCases] : identityCases;
+        test.each(cases)("%s", (_label, make, ctor) => {
           const value = make();
           const cloned = structuredCloneFn([value, value]);
           expect(cloned[0]).toBeInstanceOf(ctor);
@@ -772,7 +780,7 @@ for (const structuredCloneFn of [
 
 describe("reference pool survives a process boundary", () => {
   // One cold subprocess hop covering the whole identity matrix, so every platform object
-  // type (X509Certificate, KeyObjects, Blob, File, ...) is deserialized in a fresh VM.
+  // type (X509Certificate, Blob, File, ...) is deserialized in a fresh VM.
   test("duplicated references preserve identity for every type", () => {
     const values = identityCases.map(([, make]) => make());
     const cloned = jscSerializeRoundtripCrossProcessCold(values.map(value => [value, value]));

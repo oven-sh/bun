@@ -23,7 +23,8 @@ import {
   verify,
 } from "crypto";
 import fs from "fs";
-import { isWindows } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import v8 from "node:v8";
 import { createContext, runInContext, runInThisContext, Script } from "node:vm";
 import path from "path";
 
@@ -1800,3 +1801,141 @@ test("ECDSA should work", async () => {
 function randomProp() {
   return "prop" + crypto.randomUUID().replace(/-/g, "");
 }
+
+describe("KeyObject serialization", () => {
+  const { privateKey, publicKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
+  const secretKey = createSecretKey(Buffer.from("0123456789abcdef"));
+
+  // Node.js refuses to emit a KeyObject into a byte sink the caller stores verbatim:
+  // v8.serialize() throws, and child_process "advanced" IPC turns it into a plain {}.
+  // structuredClone() and worker postMessage() keep cloning it. Previously Bun wrote
+  // the plaintext PKCS#8 PEM into the v8.serialize() output and delivered a live,
+  // exportable private key to the IPC child.
+  describe.each([
+    ["private", privateKey],
+    ["public", publicKey],
+    ["secret", secretKey],
+  ])("%s", (label, key) => {
+    test("v8.serialize() throws", () => {
+      let bytes: Buffer | undefined;
+      expect(() => {
+        bytes = v8.serialize(key);
+      }).toThrow();
+      expect(bytes).toBeUndefined();
+
+      expect(() => v8.serialize({ nested: key })).toThrow();
+      expect(() => v8.serialize([1, key, 2])).toThrow();
+    });
+
+    test("structuredClone() still produces a working KeyObject", () => {
+      const cloned = structuredClone(key);
+      expect(cloned).toBeInstanceOf(KeyObject);
+      expect(cloned.type).toBe(label);
+      if (label === "secret") {
+        expect(cloned.export()).toEqual(key.export());
+      } else {
+        expect(cloned.asymmetricKeyType).toBe(key.asymmetricKeyType);
+      }
+    });
+  });
+
+  test("v8.serialize() of a private key does not emit plaintext key material", () => {
+    const pem = privateKey.export({ type: "pkcs8", format: "pem" }) as string;
+    const marker = "BEGIN PRIVATE KEY";
+    expect(pem).toContain(marker);
+    let out: Buffer | undefined;
+    try {
+      out = v8.serialize(privateKey);
+    } catch {}
+    expect({
+      containsPlaintextPEM: out ? out.toString("latin1").includes(marker) : false,
+      threw: out === undefined,
+    }).toEqual({ containsPlaintextPEM: false, threw: true });
+  });
+
+  test.concurrent("child_process advanced IPC delivers {} in place of a KeyObject", async () => {
+    using dir = tempDir("keyobject-ipc", {
+      "parent.mjs": `
+        import crypto from "node:crypto";
+        import { fork } from "node:child_process";
+        const { privateKey, publicKey } = crypto.generateKeyPairSync("ec", { namedCurve: "P-256" });
+        const secret = crypto.createSecretKey(Buffer.from("0123456789abcdef"));
+        const c = fork("./child.mjs", [], { serialization: "advanced" });
+        c.on("message", m => { console.log(JSON.stringify(m)); c.kill(); });
+        c.send({ priv: privateKey, pub: publicKey, secret, other: 42, nested: { deep: privateKey } });
+      `,
+      "child.mjs": `
+        process.on("message", m => {
+          const describe = v => ({
+            ctor: v?.constructor?.name,
+            keys: Object.keys(v ?? {}),
+            isKeyObject: typeof v?.export === "function",
+          });
+          process.send({
+            priv: describe(m.priv),
+            pub: describe(m.pub),
+            secret: describe(m.secret),
+            other: m.other,
+            deep: describe(m.nested.deep),
+          });
+          process.exit(0);
+        });
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "parent.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const empty = { ctor: "Object", keys: [], isKeyObject: false };
+    expect(JSON.parse(stdout)).toEqual({
+      priv: empty,
+      pub: empty,
+      secret: empty,
+      other: 42,
+      deep: empty,
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("worker_threads postMessage still carries a private KeyObject", async () => {
+    using dir = tempDir("keyobject-worker", {
+      "main.mjs": `
+        import crypto from "node:crypto";
+        import { Worker } from "node:worker_threads";
+        const { privateKey } = crypto.generateKeyPairSync("ec", { namedCurve: "P-256" });
+        const w = new Worker("./worker.mjs");
+        w.on("message", m => { console.log(JSON.stringify(m)); w.terminate(); });
+        w.on("error", e => { console.error(String(e)); process.exit(1); });
+        w.postMessage(privateKey);
+      `,
+      "worker.mjs": `
+        import { parentPort } from "node:worker_threads";
+        parentPort.on("message", k => {
+          parentPort.postMessage({
+            ctor: k.constructor.name,
+            type: k.type,
+            exportable: k.export({ type: "pkcs8", format: "der" }).length > 0,
+          });
+        });
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ ctor: "KeyObject", type: "private", exportable: true });
+    expect(exitCode).toBe(0);
+  });
+});

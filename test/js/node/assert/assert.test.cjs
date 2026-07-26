@@ -14,6 +14,16 @@ describe("assert.partialDeepStrictEqual", () => {
     expect(() => assert.partialDeepStrictEqual([1, 2, 3, 4], [4, 2])).toThrow(assert.AssertionError);
   });
 
+  test("failure message uses the kReadableOperator header", () => {
+    let err;
+    try {
+      assert.partialDeepStrictEqual({ a: 1 }, { b: 2 });
+    } catch (e) {
+      err = e;
+    }
+    expect(err.message.split("\n")[0]).toBe("Expected values to be partially and strictly deep-equal:");
+  });
+
   test("array subsequence scan skips candidates missing an expected key", () => {
     assert.partialDeepStrictEqual([{ a: 1 }, { b: 2 }], [{ b: 2 }]);
     assert.partialDeepStrictEqual({ items: [{ a: 1 }, { b: 2 }] }, { items: [{ b: 2 }] });

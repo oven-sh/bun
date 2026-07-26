@@ -1424,12 +1424,12 @@ Result<X509Pointer, int> X509Pointer::Parse(
         PEM_read_bio_X509_AUX(bio.get(), nullptr, NoPasswordCallback, nullptr));
     if (pem) return Result<X509Pointer, int>(WTF::move(pem));
 
-    // BoringSSL's d2i_X509_bio caps input at 100 KiB via BIO_read_asn1, which
-    // would reject large certificates that Node.js (OpenSSL) accepts. We already
-    // have the full buffer in memory, so decode it directly.
-    const unsigned char* der_data = buffer.data;
-    X509Pointer der(d2i_X509(nullptr, &der_data, static_cast<long>(buffer.len)));
-    if (der) return Result<X509Pointer, int>(WTF::move(der));
+    // d2i_X509_bio in BoringSSL caps input at 100 KiB; decode the buffer directly.
+    if (buffer.len <= LONG_MAX) {
+        const unsigned char* der_data = buffer.data;
+        X509Pointer der(d2i_X509(nullptr, &der_data, static_cast<long>(buffer.len)));
+        if (der) return Result<X509Pointer, int>(WTF::move(der));
+    }
 
     return Result<X509Pointer, int>(ERR_get_error());
 }

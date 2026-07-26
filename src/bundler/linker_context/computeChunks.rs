@@ -75,9 +75,7 @@ pub fn compute_chunks(this: &mut LinkerContext, unique_key: u64) -> crate::Resul
     let mut html_chunks: ArrayHashMap<&[u8], Chunk> = ArrayHashMap::new();
     let loaders = parse_graph.input_files.items_loader();
     let ast_targets = this.graph.ast.items_target();
-    // Pre-sort `css_chunks` index per `HtmlPreload` entry; remapped to the
-    // post-sort id below so the preload tag's href can find its chunk even when
-    // the chunk deduped into one whose `entry_point.source_index` is the page.
+    // (source_index, pre-sort css_chunks index) per HtmlPreload entry; remapped below.
     let mut html_preload_css_chunk_indices: Vec<(IndexInt, u32)> = Vec::new();
 
     let code_splitting = this.graph.code_splitting;

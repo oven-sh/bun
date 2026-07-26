@@ -2146,6 +2146,61 @@ describe("bundler", () => {
       api.expectFile("/out.js").toMatch(/[^\.:]module/); // `.module` and `node:module` are not ok.
     },
   });
+  itBundled("edgecase/ImportMetaFilenameCjs", {
+    files: {
+      "/entry.ts": /* js */ `
+        console.log(typeof import.meta.filename);
+        console.log(typeof import.meta.dirname);
+        console.log(typeof import.meta.path);
+      `,
+    },
+    target: "node",
+    format: "cjs",
+    onAfterBundle(api) {
+      // `import.meta` is a syntax error in CommonJS under Node.js, so every
+      // property access must be folded to a string literal in cjs output.
+      api.expectFile("/out.js").not.toContain("import.meta");
+    },
+    run: {
+      runtime: "node",
+      stdout: "string\nstring\nstring",
+    },
+  });
+  itBundled("edgecase/WithStatementEsmOutputError", {
+    files: {
+      "/entry.js": /* js */ `
+        with (Math) { console.log(PI); }
+      `,
+    },
+    format: "esm",
+    bundleErrors: {
+      "/entry.js": ["With statements cannot be used with the ESM output format due to strict mode"],
+    },
+  });
+  itBundled("edgecase/WithStatementUseStrictError", {
+    files: {
+      "/entry.js": /* js */ `
+        "use strict";
+        with (Math) { console.log(PI); }
+      `,
+    },
+    format: "cjs",
+    bundleErrors: {
+      "/entry.js": ["With statements cannot be used in strict mode"],
+    },
+  });
+  itBundled("edgecase/WithStatementCjsAllowed", {
+    files: {
+      "/entry.js": /* js */ `
+        with (Math) { console.log(PI); }
+      `,
+    },
+    format: "cjs",
+    target: "node",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("with (Math)");
+    },
+  });
   itBundled("edgecase/IdentifierInEnum#13081", {
     files: {
       "/entry.ts": `

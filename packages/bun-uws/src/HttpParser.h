@@ -1201,6 +1201,17 @@ struct HttpResponseData;
             /* Check Transfer-Encoding header validity and conflicts */
             HttpRequest::TransferEncoding transferEncoding = req->getTransferEncoding();
 
+            /* RFC 9112 6.1: Transfer-Encoding was introduced in HTTP/1.1. A server that
+             * receives an HTTP/1.0 message containing a Transfer-Encoding header field
+             * MUST treat the message as if the framing is faulty and close the connection
+             * after processing the message. Bun.serve rejects such a request outright,
+             * consistent with the TE+CL and non-chunked TE rejections below. node:http
+             * follows llhttp, which dispatches the request (the HTTP/1.0 request already
+             * marks the connection for close via isAncient). */
+            if (!IsNodeHttp && req->ancientHttp && transferEncoding.has) [[unlikely]] {
+                return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_INVALID_TRANSFER_ENCODING);
+            }
+
             /* node:http compat: a Transfer-Encoding that names no chunked coding (e.g.
              * "chunkedchunked") and no Content-Length is rejected by llhttp only after
              * the request head completes - Node dispatches the 'request' first and the

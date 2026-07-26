@@ -570,7 +570,7 @@ mod _impl {
                         };
                     }
                     ret
-                },
+                }
                 _ => unreachable!(),
             } as u64;
         }

@@ -3636,10 +3636,8 @@ pub mod args {
         }
     }
 
-    /// Internal: `fs.Dir` reads entries through an already-open directory fd so
-    /// the handle pins the inode (node's `uv_fs_opendir`/`uv_fs_readdir` model).
-    /// `path` is the original `opendir` argument, used only for Dirent parent
-    /// paths and error messages; it is never re-opened.
+    /// Reads entries through an already-open directory fd for `fs.Dir`.
+    /// `path` is only for Dirent parent paths and error messages.
     pub struct Fdreaddir {
         pub fd: FD,
         pub path: PathLike,

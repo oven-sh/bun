@@ -163,9 +163,7 @@ mod platform {
                             return Ok(None);
                         }
                         let e = sys::last_errno();
-                        // __getdirentries64 can fail with ENOENT when the open
-                        // directory has been rmdir'd. POSIX requires treating
-                        // this as EOF (matches glibc readdir() / node).
+                        // ENOENT iterating an unlinked but still-open dir: POSIX says EOF.
                         if e == libc::ENOENT {
                             self.received_eof = true;
                             return Ok(None);
@@ -375,9 +373,7 @@ mod platform {
                     };
                     if rc < 0 {
                         let e = sys::last_errno();
-                        // getdents64 fails with ENOENT when the open directory
-                        // has been rmdir'd. POSIX requires treating this as EOF;
-                        // glibc's readdir() does the same, so node sees EOF here.
+                        // ENOENT iterating an unlinked but still-open dir: POSIX says EOF.
                         if e == libc::ENOENT {
                             return Ok(None);
                         }

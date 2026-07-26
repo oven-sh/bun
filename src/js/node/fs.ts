@@ -1022,10 +1022,7 @@ function opendirSync(path, options) {
 let dirSetHandle;
 
 class Dir {
-  /**
-   * The directory fd opened by `fs.opendir`. `-1` once closed; `-2` between
-   * option validation and the native open completing (async `opendir`).
-   */
+  /** Directory fd from `fs.opendir`. `-1` once closed; `-2` before the native open completes. */
   #handle: number;
   #path: PathLike;
   #options;

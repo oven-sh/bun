@@ -144,16 +144,12 @@ unsafe extern "C" {
     pub fn crc32(crc: uLong, buf: *const Bytef, len: uInt) -> uLong;
 }
 
-/// zlib's `avail_in` / `avail_out` are `uInt` (u32), so a `usize` length
-/// >= 4 GiB must be clamped and the remainder presented on a later call;
-/// a bare `as uInt` would wrap 2^32 to 0.
+/// `avail_in`/`avail_out` are u32; clamp so a >= 4 GiB length doesn't wrap to 0 via `as uInt`.
 #[inline]
 fn clamp_to_uint(n: usize) -> uInt {
     n.min(uInt::MAX as usize) as uInt
 }
 
-/// Bytes of `input` that zlib has not yet consumed, derived from how far
-/// `strm.next_in` has advanced from `input.as_ptr()`.
 #[inline]
 fn remaining_input(strm: &zStream_struct, input: &[u8]) -> usize {
     // SAFETY: init sets next_in = input.as_ptr(); zlib only advances it

@@ -262,12 +262,9 @@ pub struct NewServer<const SSL: bool, const DEBUG: bool> {
     pub(crate) base_url_string_for_joining: Box<[u8]>,
     pub(crate) config: ServerConfig,
     pub(crate) pending_requests: core::cell::Cell<usize>,
-    /// Live HTTP connections (accepted sockets that have not been closed or
-    /// upgraded to a WebSocket). Fed by the uWS filter hook registered in
-    /// [`NewServer::listen`]. Together with [`Self::active_websocket_count`]
-    /// this is what the graceful-stop drain promise waits for; idle keep-alive
-    /// sockets are not in `pending_requests`, so without this term the promise
-    /// would resolve while they are still open and serving.
+    /// Live HTTP connections (accepted, not yet closed or upgraded), fed by
+    /// the uWS filter in [`NewServer::listen`]. Part of the graceful-stop
+    /// drain predicate so idle keep-alive sockets hold the promise open.
     pub(crate) active_connection_count: core::cell::Cell<u32>,
     /// Live `ServerWebSocket` count. Lives on the server (not the websocket
     /// context) so a reload's context swap cannot reset it, and sits in a
@@ -496,22 +493,18 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         self.pending_requests.set(self.pending_requests.get() + 1);
     }
 
-    /// uWS filter callback: `+1` when an HTTP connection is accepted (for TLS,
-    /// once the handshake completes), `-1` from `HttpContext::onClose`. Feeds
-    /// [`Self::active_connection_count`] so the graceful-stop drain promise
-    /// can wait for every connection (not just in-flight requests) to close.
+    /// uWS filter: `+1` on accept (post-handshake for TLS), `-1` on
+    /// `HttpContext::onClose`. Feeds [`Self::active_connection_count`].
     extern "C" fn on_connection_filter(
         _socket: *mut uws_sys::us_socket_t,
         opened: i32,
         user_data: *mut c_void,
     ) {
-        // SAFETY: `user_data` is the `*mut Self` registered in `listen()`; the
-        // server outlives every socket in its app (`deinit()` destroys the app,
-        // which closes every socket synchronously, before freeing `*self`).
-        // Only a `&Self` is formed — `active_connection_count` is a `Cell` —
-        // so this is sound when reached from inside `app.close()` while
-        // `stop_listening` holds `&mut self`.
         let drained = {
+            // SAFETY: `user_data` is the `*mut Self` registered in `listen()`;
+            // the server outlives every socket in its app. Only `&Self` is
+            // formed (the count is a `Cell`), so this is sound when reached
+            // from inside `app.close()` while `stop_listening` holds `&mut`.
             let this = unsafe { &*user_data.cast::<Self>() };
             if opened == 1 {
                 this.note_connection_opened();
@@ -1549,9 +1542,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     }
 
     fn note_websocket_opened(&self) {
-        // The socket was adopted into the WebSocket group; `HttpContext::onClose`
-        // (and so the filter `-1`) will never fire for it, so move its count
-        // from the HTTP tally to the WebSocket tally here.
+        // Upgrade adopts the socket out of the HTTP group, so the filter's
+        // `-1` never fires for it; move the count to the WebSocket tally now.
         let http = self.active_connection_count.get();
         if http > 0 {
             self.active_connection_count.set(http - 1);
@@ -1659,11 +1651,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 }
             }
             // An earlier graceful stop already took the listener. An abrupt
-            // stop still needs to tear down surviving connections so a
-            // "graceful then force" shutdown can complete; otherwise a caller
-            // that waited on `stop(false)` has no way to drain idle
-            // keep-alive sockets. Gated on the pre-call `TERMINATED` so the
-            // H3 arm's insert above does not mask the TCP teardown.
+            // stop still has to tear down surviving connections; gated on the
+            // pre-call `TERMINATED` so the H3 arm's insert above does not
+            // mask the TCP teardown.
             if abrupt && !already_terminated {
                 self.unref();
                 if let Some(ws) = self.config.websocket.as_mut() {
@@ -2932,9 +2922,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             route_list_value = unsafe { (*this).set_routes() };
         }
 
-        // Per-connection open/close accounting for the graceful-stop drain
-        // predicate (see `active_connection_count`). uWS fires `+1` on open
-        // (post-handshake for TLS) and `-1` from `HttpContext::onClose`.
         // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
         bun_opaque::opaque_deref_mut(app).filter(Self::on_connection_filter, this.cast::<c_void>());
 

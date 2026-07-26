@@ -652,13 +652,13 @@ describe.concurrent("server.stop() drain promise counts open connections", () =>
           // Drain it: either the client hangs up or the caller escalates.
           if (mode === "force") server.stop(true); else c.destroy();
           await stopped;
+          // The client socket's 'close' and the server-side filter → promise
+          // resolution race; poll so the assertion is order-independent.
           let closed = events.includes("close");
-          if (mode === "force") {
-            const until = Date.now() + 2000;
-            while (!closed && Date.now() < until) {
-              await new Promise(r => setImmediate(r));
-              closed = events.includes("close");
-            }
+          const until = Date.now() + 2000;
+          while (!closed && Date.now() < until) {
+            await new Promise(r => setImmediate(r));
+            closed = events.includes("close");
           }
           console.log(JSON.stringify({ resolvedEarly, resolvedWhileOpen, resolved, closed }));
           c.destroy();
@@ -675,7 +675,7 @@ describe.concurrent("server.stop() drain promise counts open connections", () =>
   test("idle keep-alive connection holds the promise until the client closes", async () => {
     expect(await runDrainFixture("idle")).toEqual({
       stderr: "",
-      out: { resolvedEarly: false, resolvedWhileOpen: false, resolved: true, closed: false },
+      out: { resolvedEarly: false, resolvedWhileOpen: false, resolved: true, closed: true },
       exitCode: 0,
     });
   });
@@ -683,7 +683,7 @@ describe.concurrent("server.stop() drain promise counts open connections", () =>
   test("in-flight request's connection holds the promise past response end", async () => {
     expect(await runDrainFixture("inflight")).toEqual({
       stderr: "",
-      out: { resolvedEarly: false, resolvedWhileOpen: false, resolved: true, closed: false },
+      out: { resolvedEarly: false, resolvedWhileOpen: false, resolved: true, closed: true },
       exitCode: 0,
     });
   });
@@ -801,23 +801,24 @@ async function runLateKeepAlive(reqPath: string, serverSnippet: string) {
             },
           });
 
-          // First request: handler parks on \`release\`, keeping
-          // pending_requests > 0 so stop() defers the js_value downgrade.
+          // First request: handler parks on \`release\`, keeping the socket
+          // non-idle through stop().
           sock.write("GET ${reqPath} HTTP/1.1\\r\\nHost: x\\r\\nConnection: keep-alive\\r\\n\\r\\n");
           await inflight.promise;
           // Pipeline the late request behind the held one. uws won't read it
-          // until the first response is sent, by which time js_value is Weak.
+          // until the first response is sent.
           sock.write("GET ${reqPath} HTTP/1.1\\r\\nHost: x\\r\\nConnection: close\\r\\n\\r\\n");
 
-          // Graceful stop: listener closes; downgrade deferred (request in flight).
+          // Graceful stop: listener closes; downgrade deferred while the
+          // connection is open.
           stop();
         })();
         // The only server binding is now out of scope.
 
-        // First request completes → pending_requests → 0 → js_value downgrades
-        // to Weak. The pipelined request then hits the trampoline with the
-        // wrapper still alive (Weak) → handler runs → 200. Previously: panic
-        // (or 503 when the gate checked Strong-only).
+        // First request completes; the connection is still open so the
+        // wrapper stays Strong, and the pipelined request dispatches against
+        // it → 200. Previously: panic (or 503 when the gate checked
+        // Strong-only).
         release.resolve();
         const first = await nextResponse();
         if (!first.includes("200")) throw new Error("first request failed: " + first);
@@ -850,7 +851,7 @@ async function runLateKeepAlive(reqPath: string, serverSnippet: string) {
   });
 }
 
-test("late keep-alive request to a route after stop() dispatches while the wrapper is Weak", async () => {
+test("late keep-alive request to a route after stop() still dispatches", async () => {
   // Per-route handlers live in ServerRouteList, which is reachable from JS only
   // through the Server wrapper — exercises on_user_route_request's gate.
   await runLateKeepAlive(
@@ -950,7 +951,7 @@ test("late keep-alive WebSocket upgrade after stop() succeeds while the connecti
   expect(out.statuses?.[1]).toMatch(/^HTTP\/1\.1 101\b/);
 });
 
-test("late keep-alive request to a node:http server after close() dispatches while the wrapper is Weak", async () => {
+test("late keep-alive request to a node:http server after close() still dispatches", async () => {
   // Same shape but through node:http so the request dispatches via
   // on_node_http_request_with_upgrade_ctx — the trampoline that would panic
   // on a stale shadow without the `js_value_for_dispatch` gate.

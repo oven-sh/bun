@@ -40,9 +40,16 @@ pub enum CmdState {
     ExpandingRedirect {
         idx: u32,
     },
+    BufferingRedirectBody,
     Exec,
     WaitingWriteErr,
     Done,
+}
+
+struct RedirectBodyBufferCtx {
+    interp: *mut Interpreter,
+    cmd: NodeId,
+    keep_alive: bun_io::KeepAlive,
 }
 
 #[derive(Default)]
@@ -263,9 +270,13 @@ impl Cmd {
                         // "already expanded" re-entry (`idx > 0`).
                         _ => {}
                     }
+                    if Self::try_buffer_redirect_body(interp, this, n) {
+                        return Yield::suspended();
+                    }
                     interp.as_cmd_mut(this).state = CmdState::ExpandingArgs { idx: 0 };
                     continue;
                 }
+                CmdState::BufferingRedirectBody => return Yield::suspended(),
                 CmdState::ExpandingArgs { idx } => {
                     let args = n.name_and_args;
                     if (idx as usize) >= args.len() {
@@ -309,6 +320,156 @@ impl Cmd {
         ));
         let parent = interp.as_cmd(this).base.parent;
         interp.child_done(parent, this, 1)
+    }
+
+    fn try_buffer_redirect_body(interp: &Interpreter, this: NodeId, node: &ast::Cmd) -> bool {
+        if !node.redirect.stdin() {
+            return false;
+        }
+        let Some(ast::Redirect::JsBuf(jsbuf)) = &node.redirect_file else {
+            return false;
+        };
+        if interp.global_this_ref().is_none() {
+            return false;
+        }
+        let idx = jsbuf.idx as usize;
+        if idx >= interp.jsobjs.len() {
+            return false;
+        }
+        let Some(body_ptr) =
+            crate::webcore::body::Value::from_request_or_response(interp.jsobjs[idx])
+        else {
+            return false;
+        };
+        let start = {
+            // SAFETY: live JSC-owned `*mut Value` borrowed from the wrapper
+            // while `jsobjs[idx]` is rooted; the borrow ends before `start.fire()`.
+            let body = unsafe { &mut *body_ptr };
+            body.to_blob_if_possible();
+            let crate::webcore::body::Value::Locked(locked) = body else {
+                return false;
+            };
+            let ctx = bun_core::heap::alloc(RedirectBodyBufferCtx {
+                interp: interp.as_ctx_ptr(),
+                cmd: this,
+                keep_alive: bun_io::KeepAlive::default(),
+            });
+            // SAFETY: fresh heap allocation; freed by `on_redirect_body_received`
+            // or reclaimed below when the hook is not installed / was dropped.
+            unsafe {
+                (*ctx)
+                    .keep_alive
+                    .ref_(interp.event_loop.as_event_loop_ctx())
+            };
+            interp.as_cmd_mut(this).state = CmdState::BufferingRedirectBody;
+            match locked.hook_native_receiver(
+                ctx.cast::<core::ffi::c_void>(),
+                Self::on_redirect_body_received,
+            ) {
+                Some(start) => (start, ctx),
+                None => {
+                    interp.as_cmd_mut(this).state = CmdState::ExpandingRedirect { idx: 0 };
+                    // SAFETY: `ctx` was not published; reclaim and drop.
+                    unsafe {
+                        (*ctx)
+                            .keep_alive
+                            .unref(interp.event_loop.as_event_loop_ctx());
+                        bun_core::heap::destroy(ctx);
+                    };
+                    return false;
+                }
+            }
+        };
+        let (start, ctx) = start;
+        start.fire();
+        if matches!(interp.as_cmd(this).state, CmdState::BufferingRedirectBody) {
+            // SAFETY: same JSC-owned location as above, re-read after the
+            // producer callback — which may have resolved the body in place.
+            let still_locked = matches!(
+                unsafe { &*body_ptr },
+                crate::webcore::body::Value::Locked(_)
+            );
+            if !still_locked {
+                // SAFETY: the producer resolved synchronously and dropped the
+                // hook without firing it (server empty-body path); `ctx` is
+                // still the live heap allocation we hold.
+                unsafe {
+                    (*ctx)
+                        .keep_alive
+                        .unref(interp.event_loop.as_event_loop_ctx());
+                    bun_core::heap::destroy(ctx);
+                };
+                interp.as_cmd_mut(this).state = CmdState::ExpandingRedirect { idx: 0 };
+                return false;
+            }
+        }
+        true
+    }
+
+    pub(crate) fn reject_unbufferable_body(
+        body: &crate::webcore::body::Value,
+        global: &crate::jsc::JSGlobalObject,
+        stdin: bool,
+    ) -> crate::jsc::JsResult<()> {
+        match body {
+            crate::webcore::body::Value::Locked(_) => {
+                Err(global.throw_invalid_arguments(format_args!(
+                    "Request/Response body is a ReadableStream, which cannot be redirected in \
+                     Bun Shell yet{}",
+                    if stdin {
+                        ". Read it first: $`cmd < ${await response.bytes()}`"
+                    } else {
+                        ""
+                    },
+                )))
+            }
+            crate::webcore::body::Value::Used => Err(global
+                .err(
+                    crate::jsc::ErrorCode::BODY_ALREADY_USED,
+                    format_args!("Body already used"),
+                )
+                .throw()),
+            crate::webcore::body::Value::Error(err) => {
+                Err(global.throw_value(err.dupe(global).to_js(global)))
+            }
+            _ => Ok(()),
+        }
+    }
+
+    fn on_redirect_body_received(
+        ctx: *mut core::ffi::c_void,
+        value: *mut crate::webcore::body::Value,
+    ) {
+        // SAFETY: `ctx` is the `heap::alloc`'d `RedirectBodyBufferCtx`
+        // installed by `try_buffer_redirect_body`; consumed here.
+        let mut ctx = unsafe { bun_core::heap::take(ctx.cast::<RedirectBodyBufferCtx>()) };
+        // SAFETY: the interpreter outlives the run (`has_pending_activity > 0`
+        // from `run()` to `finish()`), and we are on the JS thread.
+        let interp = unsafe { &*ctx.interp };
+        ctx.keep_alive.unref(interp.event_loop.as_event_loop_ctx());
+        let this = ctx.cmd;
+        debug_assert!(matches!(
+            interp.as_cmd(this).state,
+            CmdState::BufferingRedirectBody
+        ));
+        // SAFETY: `value` aliases the owning body already written in place by
+        // the producer; no other borrow is live once we return.
+        if let crate::webcore::body::Value::Error(err) = unsafe { &*value } {
+            let global = interp.global_this_ref().expect("buffering only on Js loop");
+            let js_err = err.dupe(global).to_js(global);
+            Builtin::cmd_write_failing_error(
+                interp,
+                this,
+                format_args!(
+                    "bun: failed to read body for stdin redirect: {}\n",
+                    js_err.fmt_string(global),
+                ),
+            )
+            .run(interp);
+            return;
+        }
+        interp.as_cmd_mut(this).state = CmdState::ExpandingArgs { idx: 0 };
+        Yield::Next(this).run(interp);
     }
 
     pub fn child_done(
@@ -764,20 +925,24 @@ impl Cmd {
                     }
                 } else if crate::webcore::ReadableStream::from_js(jsval, global)?.is_some() {
                     panic!("TODO SHELL READABLE STREAM");
-                } else if let Some(req) = jsval.as_::<crate::webcore::Response>() {
-                    // SAFETY: `as_` returns a live JSC-owned `*mut Response`.
-                    let req = unsafe { &mut *req };
-                    req.get_body_value().to_blob_if_possible();
+                } else if let Some(body) =
+                    crate::webcore::body::Value::from_request_or_response(jsval)
+                {
+                    // SAFETY: live JSC-owned `*mut Value` borrowed from the
+                    // Request/Response wrapper while `jsval` is rooted.
+                    let body = unsafe { &mut *body };
+                    body.to_blob_if_possible();
+                    Self::reject_unbufferable_body(body, global, flags.stdin())?;
                     if flags.stdin() {
-                        let b = req.get_body_value().use_as_any_blob();
+                        let b = body.use_as_any_blob();
                         stdio[STDIN_NO].extract_blob(global, b, STDIN_NO as i32)?;
                     }
                     if flags.stdout() {
-                        let b = req.get_body_value().use_as_any_blob();
+                        let b = body.use_as_any_blob();
                         stdio[STDOUT_NO].extract_blob(global, b, STDOUT_NO as i32)?;
                     }
                     if flags.stderr() {
-                        let b = req.get_body_value().use_as_any_blob();
+                        let b = body.use_as_any_blob();
                         stdio[STDERR_NO].extract_blob(global, b, STDERR_NO as i32)?;
                     }
                 } else {

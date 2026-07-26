@@ -237,7 +237,7 @@ pub struct PendingValue {
     pub task: Option<*mut c_void>,
 
     /// runs after the data is available.
-    pub on_receive_value: Option<fn(ctx: *mut c_void, value: &mut Value)>,
+    pub on_receive_value: Option<fn(ctx: *mut c_void, value: *mut Value)>,
 
     /// conditionally runs when requesting data
     /// used in HTTP server to ignore request bodies unless asked for it
@@ -317,12 +317,40 @@ impl PendingValue {
         self.to_any_blob_allow_promise()
     }
 
+    pub(crate) fn hook_native_receiver(
+        &mut self,
+        ctx: *mut c_void,
+        on_receive: fn(ctx: *mut c_void, value: *mut Value),
+    ) -> Option<DeferredStartBuffering> {
+        // No producer `task` means nothing will ever call `resolve` on this body.
+        let producer_task = self.task?;
+        if self.readable.has()
+            || self.promise.is_some()
+            || self.on_receive_value.is_some()
+            || !self.action.is_none()
+        {
+            return None;
+        }
+        let on_start_buffering = self.on_start_buffering.take();
+        self.task = Some(ctx);
+        self.on_receive_value = Some(on_receive);
+        // `task` now names the consumer, so the producer-ctx hooks must not fire.
+        self.on_start_streaming = None;
+        self.on_readable_stream_available = None;
+        self.on_stream_cancelled = None;
+        self.on_stream_drained = None;
+        Some(DeferredStartBuffering {
+            on_start_buffering,
+            producer_task,
+        })
+    }
+
     pub(crate) fn is_disturbed<T: BodyOwnerJs>(
         &self,
         global_object: &JSGlobalObject,
         this_value: JSValue,
     ) -> bool {
-        if self.promise.is_some() {
+        if self.promise.is_some() || self.on_receive_value.is_some() {
             return true;
         }
 
@@ -341,7 +369,7 @@ impl PendingValue {
     }
 
     pub(crate) fn is_disturbed2(&self, global_object: &JSGlobalObject) -> bool {
-        if self.promise.is_some() {
+        if self.promise.is_some() || self.on_receive_value.is_some() {
             return true;
         }
 
@@ -424,6 +452,19 @@ impl PendingValue {
                 on_start_buffering(self.task.unwrap());
             }
             Ok(promise_value)
+        }
+    }
+}
+
+pub struct DeferredStartBuffering {
+    on_start_buffering: Option<fn(ctx: *mut c_void)>,
+    producer_task: *mut c_void,
+}
+
+impl DeferredStartBuffering {
+    pub(crate) fn fire(self) {
+        if let Some(f) = self.on_start_buffering {
+            f(self.producer_task);
         }
     }
 }
@@ -777,7 +818,10 @@ impl Value {
                 if let Some(readable) = locked.readable.get(global_this) {
                     return Ok(readable.value);
                 }
-                if locked.promise.is_some() || !locked.action.is_none() {
+                if locked.promise.is_some()
+                    || !locked.action.is_none()
+                    || locked.on_receive_value.is_some()
+                {
                     return ReadableStream::used(global_this);
                 }
                 let mut drain_result = DrainResult::EstimatedSize(0);
@@ -1022,7 +1066,7 @@ impl Value {
             }
 
             if let Some(callback) = locked.on_receive_value.take() {
-                callback(locked.task.unwrap(), new);
+                callback(locked.task.unwrap(), std::ptr::from_mut(new));
                 return Ok(());
             }
 
@@ -1331,7 +1375,7 @@ impl Value {
             if let Some(on_receive_value) = locked.on_receive_value.take() {
                 // `task` is the live request-ctx pointer registered alongside
                 // this callback.
-                on_receive_value(locked.task.unwrap(), self);
+                on_receive_value(locked.task.unwrap(), std::ptr::from_mut(self));
             }
 
             return Ok(());
@@ -1425,7 +1469,11 @@ impl Value {
             }));
         }
 
-        if locked.promise.is_some() || !locked.action.is_none() || locked.readable.has() {
+        if locked.promise.is_some()
+            || !locked.action.is_none()
+            || locked.readable.has()
+            || locked.on_receive_value.is_some()
+        {
             return Ok(Value::Used);
         }
 
@@ -1769,7 +1817,11 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         // so we can't hold a `match` borrow on `get_body_value()` across it.
         match self.get_body_value() {
             Value::Used => true,
-            Value::Locked(pending) if !pending.action.is_none() => true,
+            Value::Locked(pending)
+                if !pending.action.is_none() || pending.on_receive_value.is_some() =>
+            {
+                true
+            }
             Value::Locked(_) => 'brk: {
                 if let Some(readable) = self.get_body_readable_stream(global_object) {
                     break 'brk check(&readable, global_object);
@@ -2491,7 +2543,10 @@ impl<'a> ValueBufferer<'a> {
             unreachable!()
         };
 
-        if locked.on_receive_value.is_some() || locked.task.is_some() {
+        if locked.on_receive_value.is_some() {
+            return Err(crate::Error::StreamAlreadyUsed);
+        }
+        if locked.task.is_some() {
             // ValueBufferer wants the whole body; tell the producer to never
             // pause for JS backpressure before the stream is materialised.
             if let (Some(on_start_buffering), Some(task)) =
@@ -2516,9 +2571,12 @@ impl<'a> ValueBufferer<'a> {
         Ok(())
     }
 
-    fn on_receive_value(ctx: *mut c_void, value: &mut Value) {
+    fn on_receive_value(ctx: *mut c_void, value: *mut Value) {
         // SAFETY: ctx was set from `self as *mut Self` in buffer_locked_body_value.
         let sink = unsafe { bun_ptr::callback_ctx::<Self>(ctx) };
+        // SAFETY: `value` is the live `&mut Value` the caller reborrowed into
+        // this callback; uniquely accessed for the duration.
+        let value = unsafe { &mut *value };
         match value {
             Value::Error(err) => {
                 bun_core::scoped_log!(BodyValueBufferer, "onReceiveValue Error");

@@ -2426,8 +2426,6 @@ JSC::EncodedJSValue SystemError__toErrorInstance(const SystemError* arg0, JSC::J
     return JSC::JSValue::encode(result);
 }
 
-// `new TypeError('fetch failed', {cause: <SystemError as Error>})` (Fetch spec §4.1 step 12.3; undici shape).
-// `.code` is mirrored onto the outer TypeError for existing `err.code` readers.
 JSC::EncodedJSValue SystemError__toFetchTypeErrorInstance(const SystemError* arg0, JSC::JSGlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);

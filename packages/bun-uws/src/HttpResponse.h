@@ -497,10 +497,16 @@ public:
          * which would otherwise drop the corked bytes. */
         Super::uncork();
         /* Connection is being torn down after this response; the buffered
-         * request is discarded and the close path proceeds unchanged. */
+         * request is discarded. On the corked async path internalEnd()'s own
+         * close gate was skipped (isCorked() was true, then its uncork()
+         * released the slot so HttpResponse::cork() early-returns), so close
+         * here rather than leave the socket open until client FIN/timeout. */
         if (httpResponseData->shouldCloseConnection()) {
             httpResponseData->pipelinedBuffer.clear();
-            this->resume();
+            if (((AsyncSocket<SSL> *) this)->hasFullyDrained()) {
+                ((AsyncSocket<SSL> *) this)->shutdown();
+                ((AsyncSocket<SSL> *) this)->close();
+            }
             return;
         }
 

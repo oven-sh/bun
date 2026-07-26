@@ -528,13 +528,14 @@ export function windowsEnv(
       return p in internalEnv;
     },
     deleteProperty(_, p) {
-      const k = String(p).toUpperCase();
+      if (typeof p === "symbol") return true;
+      const k = (p as string).toUpperCase();
       const i = envMapList.findIndex(x => x.toUpperCase() === k);
       if (i !== -1) {
         envMapList.splice(i, 1);
       }
       editWindowsEnvVar(k, null);
-      return typeof p !== "symbol" ? delete internalEnv[k] : false;
+      return delete internalEnv[k];
     },
     defineProperty(_, p, attributes) {
       if (typeof p === "symbol") {

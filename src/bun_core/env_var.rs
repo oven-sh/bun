@@ -310,10 +310,10 @@ pub(crate) mod kind {
         // A single Cache struct; per-var uniqueness comes from each var owning its own
         // `static CACHE: Cache`.
         //
-        // `(ptr, len)` is a split-word cache of a `getenv` result; `seq` is a
-        // seqlock so a concurrent reader never pairs a stale `len` with a new
-        // `ptr` after `reset()`/reload stores a different slice (the
-        // `process.env` write path does `setenv()` then `reset()`).
+        // `(ptr, len)` is a split-word cache of an owned leaked copy of the
+        // env value; `seq` is a seqlock so a concurrent reader never pairs a
+        // stale `len` with a new `ptr` when the cached slice changes (initial
+        // load racing a `process.env` write's `set_owned()`).
         pub(crate) struct Cache {
             seq: AtomicU32,
             ptr_value: AtomicPtr<u8>,
@@ -356,12 +356,11 @@ pub(crate) mod kind {
                     if len == NOT_SET_LEN {
                         return CacheOutput::NotSet;
                     }
-                    // SAFETY: (ptr, len) were stored together under the
-                    // seqlock, either from the startup-env `getenv_z` slice
-                    // (valid for process lifetime) or from `set_owned()`'s
-                    // leaked Box. Runtime `process.env` writes go through
-                    // `set_owned()`, so a musl-freed previous setenv string is
-                    // never cached.
+                    // SAFETY: (ptr, len) were stored together under the seqlock
+                    // from a leaked Box<[u8]> (deser_and_invalidate always
+                    // copies, set_owned leaks directly). No pointer into libc
+                    // environ is ever cached, so musl freeing a previous
+                    // setenv-allocated string cannot dangle it.
                     return CacheOutput::Value(unsafe { core::slice::from_raw_parts(ptr, len) });
                 }
             }
@@ -388,12 +387,19 @@ pub(crate) mod kind {
             }
 
             #[inline]
-            pub(crate) fn deser_and_invalidate(
-                &self,
-                raw_env: Option<&'static [u8]>,
-            ) -> Option<ValueType> {
+            pub(crate) fn deser_and_invalidate(&self, raw_env: Option<&[u8]>) -> Option<ValueType> {
+                // Always store an owned leaked copy: `getenv_z` returns a
+                // borrow into environ, and after a runtime `setenv()` musl's
+                // `__env_rm_add` frees the previous setenv-allocated string on
+                // overwrite. Leaking a Box makes the cached `&'static [u8]`
+                // sound regardless of libc.
+                let owned: Option<&'static [u8]> = raw_env.map(|v| {
+                    let s: &'static [u8] = Box::leak(Box::<[u8]>::from(v));
+                    crate::asan::ignore_object(s.as_ptr());
+                    s
+                });
                 self.write_under_seqlock(|| {
-                    if let Some(ev) = raw_env {
+                    if let Some(ev) = owned {
                         self.ptr_value
                             .store(ev.as_ptr().cast_mut(), Ordering::Release);
                         self.len_value.store(ev.len(), Ordering::Release);
@@ -402,14 +408,7 @@ pub(crate) mod kind {
                         self.len_value.store(NOT_SET_LEN, Ordering::Release);
                     }
                 });
-                raw_env
-            }
-
-            #[inline]
-            pub(crate) fn reset(&self) {
-                self.write_under_seqlock(|| {
-                    self.len_value.store(NOT_LOADED_LEN, Ordering::Release);
-                });
+                owned
             }
         }
     }
@@ -489,12 +488,6 @@ pub(crate) mod kind {
                     Ordering::Relaxed,
                 );
                 Some(string_is_truthy)
-            }
-
-            #[inline]
-            pub(crate) fn reset(&self) {
-                self.value
-                    .store(StoredType::Unknown as u8, Ordering::Relaxed);
             }
         }
     }
@@ -667,11 +660,6 @@ pub(crate) mod kind {
                     }
                 }
             }
-
-            #[inline]
-            pub(crate) fn reset(&self) {
-                self.value.store(UNKNOWN_SENTINEL, Ordering::Relaxed);
-            }
         }
     }
 }
@@ -816,26 +804,12 @@ macro_rules! platform_specific_new {
                 }
             }
 
-            /// Replace the cached value with an owned copy (leaked for
-            /// `'static`), so the cache never holds a pointer into `environ`
-            /// after a runtime `setenv()`: musl frees the previous setenv-
-            /// allocated string on overwrite, which would dangle a borrowed
-            /// slice. Called by the `process.env` write path.
+            /// Replace the cached value from the `process.env` write path.
+            /// The string kind's `deser_and_invalidate` copies into a leaked
+            /// Box so the cache never holds a pointer into `environ` (musl
+            /// frees the previous setenv-allocated string on overwrite).
             pub fn set_owned(value: Option<&[u8]>) {
-                let leaked: Option<&'static [u8]> = value.map(|v| {
-                    let s: &'static [u8] = Box::leak(Box::<[u8]>::from(v));
-                    // A second set_owned overwrites ptr_value, making the
-                    // previous leak unreachable to LSAN; the leak is
-                    // intentional (values are paths, writes are rare).
-                    $crate::asan::ignore_object(s.as_ptr());
-                    s
-                });
-                CACHE.deser_and_invalidate(leaked);
-            }
-
-            /// Drop the cached value so the next `get()` re-reads libc.
-            pub fn reset() {
-                CACHE.reset();
+                CACHE.deser_and_invalidate(value);
             }
 
             /// Retrieve the value of the environment variable, reloading it from the environment.

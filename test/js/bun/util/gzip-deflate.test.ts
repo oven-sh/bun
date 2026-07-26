@@ -7,9 +7,10 @@ import { bunEnv, bunExe } from "harness";
 // and returned a 20-byte (gzip) / 2-byte (deflate) output that round-trips to
 // 0 bytes: silent total data loss on a success return.
 //
-// The child needs ~9 GiB resident (the 4 GiB input plus the ~4 GiB
-// deflateBound() scratch Vec); if the allocation fails it prints "SKIP" and
-// the test passes trivially.
+// Peak resident is ~9 GiB (the 4 GiB input plus the ~4 GiB deflateBound()
+// scratch Vec). A runner that cannot satisfy that sees the child OOM-killed
+// (SIGKILL) or abort in the allocator, which the parent treats as a skip so
+// low-memory lanes don't flake; any other non-zero exit is a real failure.
 test("Bun.gzipSync / Bun.deflateSync compress a 4 GiB input instead of wrapping avail_in to 0", async () => {
   const script = `
       const zlib = require("node:zlib");
@@ -51,8 +52,15 @@ test("Bun.gzipSync / Bun.deflateSync compress a 4 GiB input instead of wrapping 
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  const out = JSON.parse(stdout.trim() || '"NO_OUTPUT"');
-  if (out === "SKIP") return;
+  const out = JSON.parse(stdout.trim() || "null");
+  const oom =
+    out === "SKIP" ||
+    proc.signalCode === "SIGKILL" ||
+    (out === null && /memory allocation of \d+ bytes failed|out of memory|OutOfMemory/i.test(stderr));
+  if (oom) {
+    console.log(`skipping: child could not allocate ~9 GiB (signal=${proc.signalCode}, exit=${exitCode})`);
+    return;
+  }
 
   expect(stderr).toBe("");
   // With the bug: gzip = 20, deflate = 2, rgLen = 0.

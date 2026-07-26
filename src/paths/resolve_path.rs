@@ -1605,9 +1605,7 @@ impl JoinScratch {
     }
 }
 
-/// Join `parts` against `cwd` and normalize into `buf`. Returns `&buf[..0]`
-/// when the normalized result does not fit; use [`join_abs_string_buf_checked`]
-/// to distinguish overflow.
+/// Returns `&buf[..0]` when the normalized result overflows `buf`; see [`join_abs_string_buf_checked`].
 pub fn join_abs_string_buf<'a, P: PlatformT>(
     cwd: &'a [u8],
     buf: &'a mut [u8],
@@ -1788,8 +1786,6 @@ fn _join_abs_string_buf<'a, const IS_SENTINEL: bool, P: PlatformT>(
     &buf[0..result_len + leading_len]
 }
 
-/// Normalize `input` into a heap spill, then copy into `out` if the result
-/// fits `avail`. ALLOW_ABOVE_ROOT=false, so output never exceeds `input.len()`.
 #[cold]
 fn normalize_spill<P: PlatformT>(input: &[u8], out: &mut [u8], avail: usize) -> Option<usize> {
     let mut spill = vec![0u8; input.len()];

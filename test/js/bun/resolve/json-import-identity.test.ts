@@ -21,7 +21,7 @@ async function run(files: Record<string, string>) {
   return { stdout: normalizeBunSnapshot(stdout, dir), stderr, exitCode };
 }
 
-test("static .json imports with and without the type attribute share one module across files", async () => {
+test.concurrent("static .json imports with and without the type attribute share one module across files", async () => {
   const { stdout, exitCode } = await run({
     "cfg.json": `{"n":1}`,
     "plain.mjs": `import a from "./cfg.json"; export default a;`,
@@ -41,7 +41,7 @@ mutation: 42"
   expect(exitCode).toBe(0);
 });
 
-test("static .json imports share one module regardless of load order", async () => {
+test.concurrent("static .json imports share one module regardless of load order", async () => {
   const { stdout, exitCode } = await run({
     "cfg.json": `{"n":1}`,
     "plain.mjs": `import a from "./cfg.json"; export default a;`,
@@ -56,7 +56,7 @@ test("static .json imports share one module regardless of load order", async () 
   expect(exitCode).toBe(0);
 });
 
-test("dynamic import() of a .json with and without the type attribute returns one module", async () => {
+test.concurrent("dynamic import() of a .json with and without the type attribute returns one module", async () => {
   const { stdout, exitCode } = await run({
     "cfg.json": `{"n":1}`,
     "index.mjs": `
@@ -76,7 +76,7 @@ mutation: 99"
   expect(exitCode).toBe(0);
 });
 
-test("dynamic import() of a .json shares one module regardless of order", async () => {
+test.concurrent("dynamic import() of a .json shares one module regardless of order", async () => {
   const { stdout, exitCode } = await run({
     "cfg.json": `{"n":1}`,
     "index.mjs": `
@@ -89,7 +89,7 @@ test("dynamic import() of a .json shares one module regardless of order", async 
   expect(exitCode).toBe(0);
 });
 
-test("a static attribute-less .json import and a dynamic attributed one share one module", async () => {
+test.concurrent("a static attribute-less .json import and a dynamic attributed one share one module", async () => {
   const { stdout, exitCode } = await run({
     "cfg.json": `{"n":1}`,
     "plain.mjs": `import a from "./cfg.json"; export default a;`,
@@ -103,7 +103,7 @@ test("a static attribute-less .json import and a dynamic attributed one share on
   expect(exitCode).toBe(0);
 });
 
-test("export-from of a .json shares one module with an attributed import", async () => {
+test.concurrent("export-from of a .json shares one module with an attributed import", async () => {
   const { stdout, exitCode } = await run({
     "cfg.json": `{"n":1}`,
     "reex.mjs": `export { default as cfg } from "./cfg.json";`,
@@ -118,7 +118,7 @@ test("export-from of a .json shares one module with an attributed import", async
   expect(exitCode).toBe(0);
 });
 
-test("export * as of a .json shares one module with an attributed import", async () => {
+test.concurrent("export * as of a .json shares one module with an attributed import", async () => {
   const { stdout, exitCode } = await run({
     "cfg.json": `{"n":1}`,
     "reex.mjs": `export * as cfg from "./cfg.json";`,
@@ -142,16 +142,22 @@ test('the bun-target transpiler emits `with { type: "json" }` for attribute-less
       `import a from "./cfg.json";`,
       `import b from "./package.json";`,
       `import c from "./data.json" with { type: "text" };`,
-      `export { default as d } from "./other.json";`,
-      `export * as e from "./more.json";`,
+      `import d from "./cfg.json?raw";`,
+      `import e from "pkg/data";`,
+      `import f from "#cfg";`,
+      `export { default as g } from "./other.json";`,
+      `export * as h from "./more.json";`,
     ].join("\n"),
   );
   expect(out).toMatchInlineSnapshot(`
 "import a from "./cfg.json" with { type: "json" };
 import b from "./package.json";
 import c from "./data.json" with { type: "text" };
-export { default as d } from "./other.json" with { type: "json" };
-export * as e from "./more.json" with { type: "json" };
+import d from "./cfg.json?raw";
+import e from "pkg/data";
+import f from "#cfg";
+export { default as g } from "./other.json" with { type: "json" };
+export * as h from "./more.json" with { type: "json" };
 "
 `);
   // Other targets are untouched.
@@ -162,7 +168,7 @@ export * as e from "./more.json" with { type: "json" };
   }
 });
 
-test("an explicit non-json type attribute still produces a distinct module", async () => {
+test.concurrent("an explicit non-json type attribute still produces a distinct module", async () => {
   const { stdout, exitCode } = await run({
     "cfg.json": `{"n":1}`,
     "index.mjs": `
@@ -181,7 +187,7 @@ distinct: true"
   expect(exitCode).toBe(0);
 });
 
-test("a .json specifier with a query string still normalizes to one module", async () => {
+test.concurrent("a .json specifier with a query string still normalizes to one module", async () => {
   const { stdout, exitCode } = await run({
     "cfg.json": `{"n":1}`,
     "index.mjs": `
@@ -194,6 +200,68 @@ test("a .json specifier with a query string still normalizes to one module", asy
   expect(exitCode).toBe(0);
 });
 
+describe("specifiers that resolve to a .json but don't end in one keep a shared module", () => {
+  // The normalization keys on the as-written specifier in both the printer and
+  // `moduleLoaderImportModule`; keying on the resolved path on only one side
+  // would fork static vs dynamic for these.
+  test.concurrent("package exports: `pkg/data` -> data.json, static vs dynamic", async () => {
+    const { stdout, exitCode } = await run({
+      "node_modules/pkg/package.json": `{"name":"pkg","exports":{"./data":"./data.json"}}`,
+      "node_modules/pkg/data.json": `{"n":1}`,
+      "a.mjs": `import a from "pkg/data"; export default a;`,
+      "index.mjs": `
+        const s = (await import("./a.mjs")).default;
+        const d = (await import("pkg/data")).default;
+        console.log("same:", s === d);
+      `,
+    });
+    expect(stdout).toMatchInlineSnapshot(`"same: true"`);
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("subpath import: `#cfg` -> cfg.json, static vs dynamic", async () => {
+    const { stdout, exitCode } = await run({
+      "package.json": `{"imports":{"#cfg":"./cfg.json"}}`,
+      "cfg.json": `{"n":1}`,
+      "a.mjs": `import a from "#cfg"; export default a;`,
+      "index.mjs": `
+        const s = (await import("./a.mjs")).default;
+        const d = (await import("#cfg")).default;
+        console.log("same:", s === d);
+      `,
+    });
+    expect(stdout).toMatchInlineSnapshot(`"same: true"`);
+    expect(exitCode).toBe(0);
+  });
+});
+
+describe("the ?raw query on a .json specifier still selects the text loader", () => {
+  test.concurrent("static", async () => {
+    const { stdout, exitCode } = await run({
+      "cfg.json": `{"n":1}`,
+      "a.mjs": `import a from "./cfg.json?raw"; export default a;`,
+      "index.mjs": `
+        const a = (await import("./a.mjs")).default;
+        console.log(typeof a, a.trimEnd());
+      `,
+    });
+    expect(stdout).toMatchInlineSnapshot(`"string {"n":1}"`);
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("dynamic", async () => {
+    const { stdout, exitCode } = await run({
+      "cfg.json": `{"n":1}`,
+      "index.mjs": `
+        const a = (await import("./cfg.json?raw")).default;
+        console.log(typeof a, a.trimEnd());
+      `,
+    });
+    expect(stdout).toMatchInlineSnapshot(`"string {"n":1}"`);
+    expect(exitCode).toBe(0);
+  });
+});
+
 describe("jsonc-loaded filenames are left alone", () => {
   // package.json / tsconfig.json / jsconfig.json use Bun's jsonc loader even
   // though the extension is `.json`. The normalization must not synthesize
@@ -201,7 +269,7 @@ describe("jsonc-loaded filenames are left alone", () => {
   // explicit `type` override and force strict JSON, breaking Bun's lenient
   // handling of empty / commented config files.
   for (const name of ["package.json", "tsconfig.json", "jsconfig.json"]) {
-    test(`static import of an empty ${name} still works`, async () => {
+    test.concurrent(`static import of an empty ${name} still works`, async () => {
       const { stdout, stderr, exitCode } = await run({
         [name]: ``,
         "plain.mjs": `import a from "./${name}"; export default a;`,
@@ -215,7 +283,7 @@ describe("jsonc-loaded filenames are left alone", () => {
       expect(exitCode).toBe(0);
     });
 
-    test(`dynamic import of an empty ${name} still works`, async () => {
+    test.concurrent(`dynamic import of an empty ${name} still works`, async () => {
       const { stdout, stderr, exitCode } = await run({
         [name]: ``,
         "index.mjs": `

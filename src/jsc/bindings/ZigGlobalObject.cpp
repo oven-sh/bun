@@ -3650,29 +3650,29 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
     }
 }
 
-// Attribute-less dynamic import() of a `.json`: supply Type::JSON so JSC's
-// (specifier, Type) module-map key matches the `with { type: "json" }` form.
-// Skips filenames `loader_for_path` routes to jsonc, where a synthesized
-// attribute would force strict JSON at fetch time.
-static ALWAYS_INLINE void normalizeFetchParametersForResolvedPath(RefPtr<JSC::ScriptFetchParameters>& parameters, const JSC::Identifier& resolved)
+// Attribute-less dynamic import() whose specifier ends in `.json`: supply
+// Type::JSON so JSC's (specifier, Type) module-map key matches the
+// `with { type: "json" }` form and the printer's static-side normalization.
+// Must inspect the as-written specifier, not the resolved path, so a specifier
+// that resolves to a `.json` file but doesn't literally end in one stays
+// consistent with the printer (which never resolves).
+static ALWAYS_INLINE bool specifierImpliesJsonType(StringView specifier)
 {
-    if (parameters)
-        return;
-    auto* impl = resolved.impl();
-    if (!impl || impl->isSymbol())
-        return;
-    StringView path(*impl);
-    if (size_t q = path.find([](char16_t c) { return c == '?' || c == '#'; }); q != notFound)
-        path = path.left(q);
-    if (!path.endsWith(".json"_s))
-        return;
-    size_t slash = path.reverseFind('/');
-    size_t backslash = path.reverseFind('\\');
+    size_t q = specifier.find([](char16_t c) { return c == '?' || c == '#'; });
+    if (q != notFound) {
+        // `?raw` selects the text loader; a synthesized `type: "json"` would override it.
+        if (specifier.substring(q) == "?raw"_s)
+            return false;
+        specifier = specifier.left(q);
+    }
+    if (!specifier.endsWith(".json"_s))
+        return false;
+    size_t slash = specifier.reverseFind('/');
+    size_t backslash = specifier.reverseFind('\\');
     size_t sep = slash == notFound ? backslash : (backslash == notFound ? slash : std::max(slash, backslash));
-    StringView filename = sep == notFound ? path : path.substring(sep + 1);
-    if (filename == "package.json"_s || filename.startsWith("tsconfig."_s) || filename.startsWith("jsconfig."_s))
-        return;
-    parameters = JSC::ScriptFetchParameters::create(JSC::ScriptFetchParameters::Type::JSON);
+    StringView filename = sep == notFound ? specifier : specifier.substring(sep + 1);
+    // `loader_for_path` routes these to jsonc; a synthesized `type: "json"` would force strict JSON.
+    return filename != "package.json"_s && !filename.startsWith("tsconfig."_s) && !filename.startsWith("jsconfig."_s);
 }
 
 JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalObject,
@@ -3701,6 +3701,9 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
     auto moduleName = moduleNameValue->value(globalObject);
     RETURN_IF_EXCEPTION(scope, nullptr);
 
+    if (!parameters && specifierImpliesJsonType(moduleName))
+        parameters = JSC::ScriptFetchParameters::create(JSC::ScriptFetchParameters::Type::JSON);
+
     auto sourceURL = sourceOrigin.url();
     String sourceOriginStringHolder;
     int64_t referrerAsyncOrder = -1;
@@ -3723,7 +3726,6 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
     if (globalObject->onLoadPlugins.hasVirtualModules()) {
         if (auto resolution = globalObject->onLoadPlugins.resolveVirtualModule(moduleName, sourceURL.protocolIsFile() ? sourceOriginStringHolder : String())) {
             resolvedIdentifier = JSC::Identifier::fromString(vm, resolution.value());
-            normalizeFetchParametersForResolvedPath(parameters, resolvedIdentifier);
 
             auto result = JSC::importModule(globalObject, resolvedIdentifier, JSC::Identifier(), parameters, nullptr, /* deferred */ false, referrerAsyncOrder);
             if (scope.exception()) [[unlikely]] {
@@ -3784,7 +3786,6 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
     // The C++ module loader now extracts `with.type` into a
     // ScriptFetchParameters before calling this hook, so `parameters` is
     // already the parsed RefPtr (or null). Just forward it.
-    normalizeFetchParametersForResolvedPath(parameters, resolvedIdentifier);
     auto result = JSC::importModule(globalObject, resolvedIdentifier,
         JSC::Identifier(), WTF::move(parameters), nullptr, /* deferred */ false, referrerAsyncOrder);
     if (scope.exception()) [[unlikely]] {

@@ -6194,8 +6194,8 @@ pub mod __gated_printer {
 
         /// No `with { type }` on a `.json` specifier: emit one so JSC's
         /// `(specifier, ScriptFetchParameters::Type)` module-map key matches
-        /// the attributed form. Skips filenames `loader_for_path` routes to
-        /// jsonc, where a synthesized `type: "json"` would force strict JSON.
+        /// the attributed form. Must agree with `specifierImpliesJsonType` in
+        /// `ZigGlobalObject.cpp` (both inspect the as-written specifier).
         fn record_implies_json_type(record: &ImportRecord) -> bool {
             if record.loader.is_some() {
                 return false;
@@ -6205,10 +6205,15 @@ pub mod __gated_printer {
                 .iter()
                 .position(|&c| c == b'?' || c == b'#')
                 .unwrap_or(text.len());
+            // `?raw` selects the text loader; a synthesized attribute would override it.
+            if &text[end..] == b"?raw" {
+                return false;
+            }
             let path = &text[..end];
             if !strings::has_suffix_comptime(path, b".json") {
                 return false;
             }
+            // `loader_for_path` routes these to jsonc; a synthesized attribute would force strict JSON.
             let filename = bun_paths::basename(path);
             !(filename == b"package.json"
                 || strings::has_prefix_comptime(filename, b"tsconfig.")

@@ -1158,9 +1158,9 @@ class Dir {
   #closeOp() {
     const handle = this.#handle;
     if (handle < 0) throw $ERR_DIR_CLOSED();
+    this.#handle = -1;
     dirHandleRegistry?.unregister(this);
     if (this.#owned) fs.closeSync(handle);
-    this.#handle = -1;
   }
 
   close(cb?: (err?: Error) => void) {
@@ -1176,9 +1176,9 @@ class Dir {
     const handle = this.#handle;
     if (handle < 0) throw $ERR_DIR_CLOSED();
     if (this.#pendingCount > 0) throw this.#dirConcurrentError();
+    this.#handle = -1;
     dirHandleRegistry?.unregister(this);
     if (this.#owned) fs.closeSync(handle);
-    this.#handle = -1;
   }
 
   // Like node, disposing an already-closed Dir is a no-op rather than

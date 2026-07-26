@@ -6384,7 +6384,15 @@ pub mod bv2_impl {
                     && self.dev_server.is_none();
 
                 if let Some(id) = self.path_to_source_index_map(target).get(path.text) {
-                    if self.dev_server.is_some() && loader != Loader::Html {
+                    if import_record
+                        .flags
+                        .contains(bun_ast::ImportRecordFlags::WAS_HTML_RESOURCE_HINT)
+                        && self.graph.input_files.items_loader()[id as usize] == Loader::Html
+                    {
+                        // A hint pointing at another HTML entry point must not
+                        // add a reachability edge: leave the href untouched.
+                        import_record.path.is_disabled = true;
+                    } else if self.dev_server.is_some() && loader != Loader::Html {
                         import_record.path =
                             self.graph.input_files.items_source()[id as usize].path;
                     } else {

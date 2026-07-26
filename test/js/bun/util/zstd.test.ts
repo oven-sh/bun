@@ -389,8 +389,10 @@ describe.skipIf(os.totalmem() < 16 * 1024 ** 3)("decompressed output > ArrayBuff
   // ArrayBuffer::MAX_SIZE). Skipped on Windows: zlib's total_out is a 32-bit
   // c_ulong there and wraps to 0 at 2^32, so the zlib reader's epilogue
   // truncates the output list before the ArrayBuffer guard ever sees it.
-  it.skipIf(isWindows)("Bun.gunzipSync throws ERR_BUFFER_TOO_LARGE instead of panicking", async () => {
-    const script = `
+  it.skipIf(isWindows)(
+    "Bun.gunzipSync throws ERR_BUFFER_TOO_LARGE instead of panicking",
+    async () => {
+      const script = `
       import * as zlib from "node:zlib";
       const chunks = [];
       const gz = zlib.createGzip({ level: 1 });
@@ -419,13 +421,15 @@ describe.skipIf(os.totalmem() < 16 * 1024 ** 3)("decompressed output > ArrayBuff
         console.log(JSON.stringify({ threw: true, code: e.code, isRangeError: e instanceof RangeError }));
       }
     `;
-    const { stdout, stderr, exitCode } = await run(script);
-    expect({ stdout, stderr }).toEqual({
-      stdout: JSON.stringify({ threw: true, code: "ERR_BUFFER_TOO_LARGE", isRangeError: true }),
-      stderr: "",
-    });
-    expect(exitCode).toBe(0);
-  }, 120_000);
+      const { stdout, stderr, exitCode } = await run(script);
+      expect({ stdout, stderr }).toEqual({
+        stdout: JSON.stringify({ threw: true, code: "ERR_BUFFER_TOO_LARGE", isRangeError: true }),
+        stderr: "",
+      });
+      expect(exitCode).toBe(0);
+    },
+    120_000,
+  );
 
   // zstd decoders accept concatenated frames, so a single 64 MiB frame
   // repeated 65x yields 4160 MiB of output from a ~130 KB bomb.

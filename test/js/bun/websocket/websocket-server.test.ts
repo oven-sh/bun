@@ -1706,9 +1706,7 @@ describe("server.upgrade() validates the opening handshake", () => {
 
     // Sec-WebSocket-Key sent more than once (RFC 6455 §11.3.1).
     expect(
-      (
-        await rawHandshake([U, C, `Sec-WebSocket-Key: ${K}`, "Sec-WebSocket-Key: eHh4eHh4eHh4eHh4eHh4eA==", V])
-      ).status,
+      (await rawHandshake([U, C, `Sec-WebSocket-Key: ${K}`, "Sec-WebSocket-Key: eHh4eHh4eHh4eHh4eHh4eA==", V])).status,
     ).toBe(400);
 
     // Sec-WebSocket-Key is not valid base64 of 16 bytes.

@@ -1253,10 +1253,8 @@ public:
         INVALID_NAME,
         OPERATION_FAILED,
     };
-    // OpenSSL's X509_CHECK_FLAG_* values. BoringSSL defines several of these
-    // macros as 0 (no-ops), so callers that need OpenSSL semantics must use
-    // these constants and the checkHost/checkEmail below, which reimplement
-    // OpenSSL's matching rather than delegating to BoringSSL.
+    // OpenSSL's X509_CHECK_FLAG_* values; BoringSSL defines several of these
+    // to 0. checkHost/checkEmail below reimplement OpenSSL's matching.
     struct CheckFlags {
         static constexpr int ALWAYS_CHECK_SUBJECT = 0x1;
         static constexpr int NO_WILDCARDS = 0x2;

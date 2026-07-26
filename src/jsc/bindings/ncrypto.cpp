@@ -1300,12 +1300,10 @@ bool X509View::checkPublicKey(const EVPKeyPointer& pkey) const
     return X509_verify(const_cast<X509*>(cert_), pkey.get()) == 1;
 }
 
-// BoringSSL's X509_check_host/X509_check_email drop several OpenSSL options
-// that Node's X509Certificate.checkHost/checkEmail expose: ALWAYS_CHECK_SUBJECT,
-// NO_PARTIAL_WILDCARDS, MULTI_LABEL_WILDCARDS and SINGLE_LABEL_SUBDOMAINS are
-// all #defined to 0, and the subject-DN fallback / partial-wildcard matching
-// is gone. To match Node, port OpenSSL crypto/x509/v3_utl.c do_x509_check and
-// its helpers here and drive them with X509View::CheckFlags.
+// Port of OpenSSL crypto/x509/v3_utl.c do_x509_check and helpers. BoringSSL
+// #defines several X509_CHECK_FLAG_* to 0 and skips the subject-DN fallback
+// when any SAN is present, so Node's checkHost/checkEmail semantics require
+// the OpenSSL logic.
 namespace {
 
 // Internal flag set when the caller-provided name begins with '.'.

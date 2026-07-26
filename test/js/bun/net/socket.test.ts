@@ -3337,6 +3337,7 @@ describe("Socket.shutdown() / Socket.end() half-close semantics", () => {
   async function halfClose(how: "shutdown()" | "shutdown(false)" | "shutdown(true)" | "end()") {
     let received = 0;
     let readyState: number | undefined;
+    let writeAfterShutRd: number | undefined;
     const { promise, resolve } = Promise.withResolvers<void>();
 
     using server = Bun.listen<{ sent: number }>({
@@ -3365,11 +3366,16 @@ describe("Socket.shutdown() / Socket.end() half-close semantics", () => {
       port: server.port,
       socket: {
         open(socket) {
-          socket.write("hi");
-          if (how === "shutdown()") socket.shutdown();
-          else if (how === "shutdown(false)") socket.shutdown(false);
-          else if (how === "shutdown(true)") socket.shutdown(true);
-          else socket.end();
+          if (how === "shutdown(true)") {
+            socket.shutdown(true);
+            writeAfterShutRd = socket.write("hi");
+            socket.shutdown();
+          } else {
+            socket.write("hi");
+            if (how === "shutdown()") socket.shutdown();
+            else if (how === "shutdown(false)") socket.shutdown(false);
+            else socket.end();
+          }
           readyState = socket.readyState;
         },
         data(_socket, chunk) {
@@ -3383,7 +3389,7 @@ describe("Socket.shutdown() / Socket.end() half-close semantics", () => {
     });
 
     await promise;
-    return { received, readyState };
+    return { received, readyState, writeAfterShutRd };
   }
 
   it.concurrent("shutdown() sends FIN (SHUT_WR) and keeps the read side open", async () => {
@@ -3397,10 +3403,10 @@ describe("Socket.shutdown() / Socket.end() half-close semantics", () => {
   });
 
   it.concurrent.skipIf(isWindows)(
-    "shutdown(true) shuts the read side (SHUT_RD) so the peer's reply is not delivered",
+    "shutdown(true) shuts the read side (SHUT_RD) but leaves the write side open",
     async () => {
-      const { received } = await halfClose("shutdown(true)");
-      expect(received).toBe(0);
+      const { received, writeAfterShutRd } = await halfClose("shutdown(true)");
+      expect({ received, writeAfterShutRd }).toEqual({ received: 0, writeAfterShutRd: 2 });
     },
   );
 

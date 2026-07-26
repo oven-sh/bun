@@ -1156,7 +1156,7 @@ class Dir {
     const handle = this.#handle;
     if (handle < 0) throw $ERR_DIR_CLOSED();
     dirHandleRegistry?.unregister(this);
-    if (handle > 2) fs.closeSync(handle);
+    fs.closeSync(handle);
     this.#handle = -1;
   }
 
@@ -1174,7 +1174,7 @@ class Dir {
     if (handle < 0) throw $ERR_DIR_CLOSED();
     if (this.#pendingCount > 0) throw this.#dirConcurrentError();
     dirHandleRegistry?.unregister(this);
-    if (handle > 2) fs.closeSync(handle);
+    fs.closeSync(handle);
     this.#handle = -1;
   }
 

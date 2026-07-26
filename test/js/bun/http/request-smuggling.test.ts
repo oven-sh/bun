@@ -187,7 +187,7 @@ test.each([
     client.write(maliciousRequest);
   });
 
-  expect(response).toContain("HTTP/1.1 400");
+  expect(response).toStartWith("HTTP/1.1 400 Bad Request\r\n");
   expect(handlerCalled).toBe(false);
 });
 
@@ -214,7 +214,7 @@ test("accepts Transfer-Encoding: chunked on an HTTP/1.1 request", async () => {
     client.write(request);
   });
 
-  expect(response).toContain("HTTP/1.1 200");
+  expect(response).toStartWith("HTTP/1.1 200 OK\r\n");
   expect(received).toBe("hello");
 });
 
@@ -246,7 +246,7 @@ test("node:http dispatches Transfer-Encoding on an HTTP/1.0 request (llhttp pari
       client.write(request);
     });
 
-    expect(response).toContain("HTTP/1.1 200");
+    expect(response).toStartWith("HTTP/1.1 200 OK\r\n");
     expect(hits).toEqual([{ url: "/a", body: "hello", httpVersion: "1.0" }]);
   } finally {
     server.close();

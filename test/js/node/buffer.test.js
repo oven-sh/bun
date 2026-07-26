@@ -4822,6 +4822,12 @@ describe("read*/write* after JIT tier-up", () => {
     expect(() => Buffer.prototype.writeBigInt64LE.call(new DataView(new ArrayBuffer(16)), 2n ** 64n, 0)).toThrow(
       'The value of "value" is out of range',
     );
+    // A garbage receiver never masks the value's own error: the BigInt writers, like their
+    // number siblings, validate the value first.
+    expect(codeOf(() => Buffer.prototype.writeBigInt64LE.call({}, 2n ** 64n, 0))).toBe("ERR_OUT_OF_RANGE");
+    expect(() => Buffer.prototype.writeBigInt64LE.call({}, 2n ** 64n, 0)).toThrow('The value of "value"');
+    // An omitted offset defaults to 0 in the error text, on writes as on reads.
+    expect(() => Buffer.prototype.writeBigInt64LE.call(new DataView(new ArrayBuffer(16)), 5n)).toThrow("Received 0");
     // The offset's type is validated before the receiver's length is consulted, matching the
     // fixed-width writers, so a non-number offset still wins over the DataView receiver.
     expect(codeOf(() => Buffer.prototype.writeBigInt64LE.call(new DataView(new ArrayBuffer(16)), 5n, "bad"))).toBe(
@@ -4923,6 +4929,7 @@ describe("read*/write* after JIT tier-up", () => {
       () => Buffer.prototype.readIntLE.call({}, "bad", 3),
       () => Buffer.prototype.readInt32LE.call({}, "bad"),
       () => Buffer.prototype.writeIntLE.call({}, 1, "bad", 3),
+      () => Buffer.prototype.writeBigInt64LE.call({}, 5n, "bad"),
     ]) {
       expect(codeOf(f)).toBe("ERR_INVALID_ARG_TYPE");
       expect(() => f()).toThrow('The "offset" argument must be of type number');

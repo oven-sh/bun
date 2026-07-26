@@ -2832,7 +2832,7 @@ static size_t validateOffsetBigInt64(JSC::JSGlobalObject* lexicalGlobalObject, J
 
     if (!viewHasLength) [[unlikely]] {
         // A DataView receiver has no `length`, so boundsError() compares against NaN.
-        Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "offset"_s, ">= 0 and <= NaN"_s, offsetVal);
+        Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "offset"_s, ">= 0 and <= NaN"_s, jsNumber(offsetD));
         return 0;
     }
 
@@ -3529,9 +3529,7 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_writeBigInt64LE, (JSGlobalObj
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto* castedThis = bufferAccessReceiver(lexicalGlobalObject, scope, callFrame->thisValue());
-    RETURN_IF_EXCEPTION(scope, {});
-    auto byteLength = castedThis->length();
+    auto* castedThis = dynamicDowncast<JSC::JSArrayBufferView>(callFrame->thisValue());
 
     auto valueVal = callFrame->argument(0);
     auto offsetVal = callFrame->argument(1);
@@ -3547,6 +3545,15 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_writeBigInt64LE, (JSGlobalObj
     if (bigint->sign() && limb - 0x8000000000000000 > 0x7fffffffffffffff) return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "value"_s, ">= -(2n ** 63n) and < 2n ** 63n"_s, valueVal);
     int64_t value = static_cast<int64_t>(limb);
 
+    if (!castedThis) [[unlikely]] {
+        // The offset's type is validated before the receiver in every accessor, so a non-number
+        // offset still wins over a garbage receiver.
+        if (!offsetVal.isUndefined() && !offsetVal.isNumber())
+            return Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "offset"_s, "number"_s, offsetVal);
+        bufferAccessReceiver(lexicalGlobalObject, scope, callFrame->thisValue());
+        return {};
+    }
+    size_t byteLength = castedThis->length();
     size_t offset = validateOffsetBigInt64(lexicalGlobalObject, scope, offsetVal, byteLength, castedThis->type() != JSC::DataViewType);
     RETURN_IF_EXCEPTION(scope, {});
     write_int64_le(static_cast<uint8_t*>(castedThis->vector()) + offset, value);
@@ -3558,9 +3565,7 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_writeBigInt64BE, (JSGlobalObj
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto* castedThis = bufferAccessReceiver(lexicalGlobalObject, scope, callFrame->thisValue());
-    RETURN_IF_EXCEPTION(scope, {});
-    auto byteLength = castedThis->length();
+    auto* castedThis = dynamicDowncast<JSC::JSArrayBufferView>(callFrame->thisValue());
 
     auto valueVal = callFrame->argument(0);
     auto offsetVal = callFrame->argument(1);
@@ -3576,6 +3581,15 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_writeBigInt64BE, (JSGlobalObj
     if (bigint->sign() && limb - 0x8000000000000000 > 0x7fffffffffffffff) return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "value"_s, ">= -(2n ** 63n) and < 2n ** 63n"_s, valueVal);
     int64_t value = static_cast<int64_t>(limb);
 
+    if (!castedThis) [[unlikely]] {
+        // The offset's type is validated before the receiver in every accessor, so a non-number
+        // offset still wins over a garbage receiver.
+        if (!offsetVal.isUndefined() && !offsetVal.isNumber())
+            return Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "offset"_s, "number"_s, offsetVal);
+        bufferAccessReceiver(lexicalGlobalObject, scope, callFrame->thisValue());
+        return {};
+    }
+    size_t byteLength = castedThis->length();
     size_t offset = validateOffsetBigInt64(lexicalGlobalObject, scope, offsetVal, byteLength, castedThis->type() != JSC::DataViewType);
     RETURN_IF_EXCEPTION(scope, {});
     write_int64_be(static_cast<uint8_t*>(castedThis->vector()) + offset, value);
@@ -3587,9 +3601,7 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_writeBigUInt64LE, (JSGlobalOb
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto* castedThis = bufferAccessReceiver(lexicalGlobalObject, scope, callFrame->thisValue());
-    RETURN_IF_EXCEPTION(scope, {});
-    auto byteLength = castedThis->length();
+    auto* castedThis = dynamicDowncast<JSC::JSArrayBufferView>(callFrame->thisValue());
 
     auto valueVal = callFrame->argument(0);
     auto offsetVal = callFrame->argument(1);
@@ -3604,6 +3616,15 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_writeBigUInt64LE, (JSGlobalOb
     uint64_t value = valueVal.toBigUInt64(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
+    if (!castedThis) [[unlikely]] {
+        // The offset's type is validated before the receiver in every accessor, so a non-number
+        // offset still wins over a garbage receiver.
+        if (!offsetVal.isUndefined() && !offsetVal.isNumber())
+            return Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "offset"_s, "number"_s, offsetVal);
+        bufferAccessReceiver(lexicalGlobalObject, scope, callFrame->thisValue());
+        return {};
+    }
+    size_t byteLength = castedThis->length();
     size_t offset = validateOffsetBigInt64(lexicalGlobalObject, scope, offsetVal, byteLength, castedThis->type() != JSC::DataViewType);
     RETURN_IF_EXCEPTION(scope, {});
     write_int64_le(static_cast<uint8_t*>(castedThis->vector()) + offset, value);
@@ -3615,9 +3636,7 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_writeBigUInt64BE, (JSGlobalOb
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto* castedThis = bufferAccessReceiver(lexicalGlobalObject, scope, callFrame->thisValue());
-    RETURN_IF_EXCEPTION(scope, {});
-    auto byteLength = castedThis->length();
+    auto* castedThis = dynamicDowncast<JSC::JSArrayBufferView>(callFrame->thisValue());
 
     auto valueVal = callFrame->argument(0);
     auto offsetVal = callFrame->argument(1);
@@ -3632,6 +3651,15 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_writeBigUInt64BE, (JSGlobalOb
     uint64_t value = valueVal.toBigUInt64(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
+    if (!castedThis) [[unlikely]] {
+        // The offset's type is validated before the receiver in every accessor, so a non-number
+        // offset still wins over a garbage receiver.
+        if (!offsetVal.isUndefined() && !offsetVal.isNumber())
+            return Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "offset"_s, "number"_s, offsetVal);
+        bufferAccessReceiver(lexicalGlobalObject, scope, callFrame->thisValue());
+        return {};
+    }
+    size_t byteLength = castedThis->length();
     size_t offset = validateOffsetBigInt64(lexicalGlobalObject, scope, offsetVal, byteLength, castedThis->type() != JSC::DataViewType);
     RETURN_IF_EXCEPTION(scope, {});
     write_int64_be(static_cast<uint8_t*>(castedThis->vector()) + offset, value);

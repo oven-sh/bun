@@ -3374,9 +3374,20 @@ impl TestCommand {
                     }
                 }
 
-                let el = vm.event_loop();
-                // SAFETY: el is the VM-owned event loop; vm is passed back as *mut.
-                unsafe { (*el).tick_immediate_tasks(vm) };
+                // One bounded macrotask pass after the last test so a due timer's
+                // throw/rejection books as "Unhandled error between tests" instead
+                // of being orphaned at exit. Two ticks: a wakeup left over from
+                // the run loop consumes the first poll, and the second lets a
+                // `setTimeout(fn, 0)` (clamped to 1ms) become due and fire. Both
+                // polls are bounded by the GC controller's 16ms timer (armed in
+                // `process_gc_timer` inside auto_tick), so neither waits on a
+                // far-future user timer or an open socket.
+                vm.event_loop_ref().auto_tick();
+                vm.event_loop_ref().tick();
+                if vm.is_event_loop_alive() {
+                    vm.event_loop_ref().auto_tick();
+                    vm.event_loop_ref().tick();
+                }
 
                 // Node parity: a node test file exits only when its loop drains.
                 // on_before_exit() drains and dispatches 'beforeExit' like `bun run`;
@@ -3384,6 +3395,13 @@ impl TestCommand {
                 // here since such a file already failed. Opt-in; one file per process.
                 if should_drain_event_loop() {
                     vm.on_before_exit();
+                } else if vm.is_event_loop_alive() {
+                    // Still-live work after the bounded pass (a future-deadline
+                    // timer, a ref'd socket) is abandoned at exit. Surface it so a
+                    // late rejection from that work isn't silently lost.
+                    bun_core::pretty_errorln!(
+                        "<r><yellow>note<r><d>:<r> this file scheduled work (timer or open handle) that is still pending after its tests finished. `bun test` will not wait for it.",
+                    );
                 }
                 drop(buntest_strong);
             }

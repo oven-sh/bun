@@ -138,6 +138,17 @@ describe.concurrent("fetch-tls", () => {
     });
     expect(await res.text()).toBe("ok");
     expect(res.status).toBe(200);
+
+    // Inverse of the rejection case above (issue #26579): a garbage Host
+    // header must not cause a request to a server whose certificate matches
+    // the URL authority to fail verification.
+    const ok = await fetch(`https://localhost:${server.port}/`, {
+      keepalive: false,
+      headers: { Host: "whatever.invalid" },
+      tls: { ca: localhostOnlyTls.cert },
+    });
+    expect(await ok.text()).toBe("ok");
+    expect(ok.status).toBe(200);
   });
 
   // The Host request header is still forwarded as the TLS ClientHello SNI so a

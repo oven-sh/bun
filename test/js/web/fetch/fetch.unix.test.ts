@@ -301,6 +301,6 @@ describe.skipIf(isWindows)("tls over unix socket", () => {
     // so the only failure source is the ciphers option itself.
     await expect(
       fetch("https://localhost/", { unix, tls: { rejectUnauthorized: false, ciphers: "NOT-A-REAL-CIPHER" } }),
-    ).rejects.toThrow();
+    ).rejects.toMatchObject({ code: "FailedToOpenSocket" });
   });
 });

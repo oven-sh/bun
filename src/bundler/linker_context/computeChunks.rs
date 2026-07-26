@@ -176,8 +176,7 @@ pub fn compute_chunks(this: &mut LinkerContext, unique_key: u64) -> crate::Resul
                 let order_len = order.len() as usize;
                 *css_chunk_entry.value_ptr = Chunk {
                     entry_point: chunk::EntryPoint::new(source_index, entry_bit, true, false),
-                    // HtmlPreload chunks carry the referencing HTML page's entry
-                    // bit so HTMLImportManifest::write can associate the output.
+                    // Full file bits so HTMLImportManifest picks the owning page.
                     entry_bits: if is_html_preload {
                         entry_bits.clone()?
                     } else {

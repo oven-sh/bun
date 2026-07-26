@@ -357,10 +357,10 @@ pub(crate) mod kind {
                         return CacheOutput::NotSet;
                     }
                     // SAFETY: (ptr, len) were stored together under the seqlock
-                    // from a leaked Box<[u8]> (deser_and_invalidate always
-                    // copies, set_owned leaks directly). No pointer into libc
-                    // environ is ever cached, so musl freeing a previous
-                    // setenv-allocated string cannot dangle it.
+                    // from a leaked Box<[u8]> (getenv_z and set_owned both
+                    // leak before passing in). No pointer into libc environ is
+                    // ever cached, so musl freeing a previous setenv-allocated
+                    // string cannot dangle it.
                     return CacheOutput::Value(unsafe { core::slice::from_raw_parts(ptr, len) });
                 }
             }
@@ -387,19 +387,19 @@ pub(crate) mod kind {
             }
 
             #[inline]
-            pub(crate) fn deser_and_invalidate(&self, raw_env: Option<&[u8]>) -> Option<ValueType> {
-                // Always store an owned leaked copy: `getenv_z` returns a
-                // borrow into environ, and after a runtime `setenv()` musl's
-                // `__env_rm_add` frees the previous setenv-allocated string on
-                // overwrite. Leaking a Box makes the cached `&'static [u8]`
-                // sound regardless of libc.
-                let owned: Option<&'static [u8]> = raw_env.map(|v| {
-                    let s: &'static [u8] = Box::leak(Box::<[u8]>::from(v));
-                    crate::asan::ignore_object(s.as_ptr());
-                    s
-                });
+            pub(crate) fn deser_and_invalidate(
+                &self,
+                raw_env: Option<&'static [u8]>,
+            ) -> Option<ValueType> {
+                // The previous cached slice is deliberately never freed: a
+                // concurrent `get_cached()` may have already returned it past
+                // the seqlock (e.g. into `BunString::init`), so reclaiming it
+                // here would be UAF. Callers pass a leaked Box (`getenv_z`
+                // leaks under its read lock; `set_owned` leaks the
+                // process.env write's value), so the stored `(ptr, len)` is
+                // always Bun-owned and `&'static`.
                 self.write_under_seqlock(|| {
-                    if let Some(ev) = owned {
+                    if let Some(ev) = raw_env {
                         self.ptr_value
                             .store(ev.as_ptr().cast_mut(), Ordering::Release);
                         self.len_value.store(ev.len(), Ordering::Release);
@@ -408,7 +408,7 @@ pub(crate) mod kind {
                         self.len_value.store(NOT_SET_LEN, Ordering::Release);
                     }
                 });
-                owned
+                raw_env
             }
         }
     }
@@ -805,11 +805,18 @@ macro_rules! platform_specific_new {
             }
 
             /// Replace the cached value from the `process.env` write path.
-            /// The string kind's `deser_and_invalidate` copies into a leaked
-            /// Box so the cache never holds a pointer into `environ` (musl
-            /// frees the previous setenv-allocated string on overwrite).
+            /// Leaks a copy so the cache never holds a pointer into `environ`
+            /// (musl frees the previous setenv-allocated string on overwrite);
+            /// the previous cached slice is never freed because a concurrent
+            /// `get()` caller may already hold it past the seqlock. Bounded to
+            /// one small leak per runtime write to one of ten well-known keys.
             pub fn set_owned(value: Option<&[u8]>) {
-                CACHE.deser_and_invalidate(value);
+                let leaked: Option<&'static [u8]> = value.map(|v| {
+                    let s: &'static [u8] = Box::leak(Box::<[u8]>::from(v));
+                    $crate::asan::ignore_object(s.as_ptr());
+                    s
+                });
+                CACHE.deser_and_invalidate(leaked);
             }
 
             /// Retrieve the value of the environment variable, reloading it from the environment.

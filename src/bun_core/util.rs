@@ -338,9 +338,21 @@ pub fn environ_write_lock() -> RwLockWriteGuard<'static, ()> {
     ENVIRON_LOCK.write()
 }
 
-/// `bun.getenvZ` — read an environment variable. Returns the value as borrowed
-/// process-static bytes (env block lives for the process). On POSIX wraps
-/// `libc::getenv`; on Windows scans `environ` case-insensitively.
+// Leak an owned copy of `src` as `&'static [u8]`, LSAN-ignored. Used so the
+// returned slice outlives any later `setenv()` that (on musl) may free the
+// source environ string.
+#[cfg(unix)]
+#[inline]
+fn leak_static_copy(src: &[u8]) -> &'static [u8] {
+    let s: &'static [u8] = Box::leak(Box::<[u8]>::from(src));
+    crate::asan::ignore_object(s.as_ptr());
+    s
+}
+
+/// `bun.getenvZ` — read an environment variable. On POSIX wraps
+/// `libc::getenv`; on Windows scans `environ` case-insensitively. Returns an
+/// owned leaked copy so the `&'static [u8]` is valid regardless of a later
+/// `setenv()` (musl frees the previous setenv-allocated string on overwrite).
 pub fn getenv_z(key: &ZStr) -> Option<&'static [u8]> {
     #[cfg(not(any(unix, windows)))]
     {
@@ -355,13 +367,13 @@ pub fn getenv_z(key: &ZStr) -> Option<&'static [u8]> {
         if p.is_null() {
             return None;
         }
-        // SAFETY: getenv returns a pointer into the process env block; the read
-        // lock serialises against Bun's own setenv path. glibc leaks previous
-        // values on overwrite but musl frees them, so a caller that needs the
-        // slice to survive a later `process.env[key] = ...` must copy it; the
-        // typed `env_var` cache does (`set_owned`).
+        // SAFETY: getenv returns a pointer into the process env block; the
+        // read lock serialises against Bun's own setenv path while we copy.
         let len = libc::strlen(p);
-        return Some(core::slice::from_raw_parts(p.cast::<u8>(), len));
+        return Some(leak_static_copy(core::slice::from_raw_parts(
+            p.cast::<u8>(),
+            len,
+        )));
     }
     #[cfg(windows)]
     {
@@ -407,7 +419,7 @@ pub fn getenv_z_any_case(key: &ZStr) -> Option<&'static [u8]> {
                 &line[..key_end],
                 key.as_bytes(),
             ) {
-                return Some(&line[(key_end + 1).min(line.len())..]);
+                return Some(leak_static_copy(&line[(key_end + 1).min(line.len())..]));
             }
             p = p.add(1);
         }

@@ -20,10 +20,12 @@ async function run(files: Record<string, string>, entry = "index.mjs") {
   return { stdout: normalizeBunSnapshot(stdout, dir), stderr, exitCode };
 }
 
-test.concurrent("require() of a .json already imported via ESM returns the parsed data (no spurious default key)", async () => {
-  const { stdout, stderr, exitCode } = await run({
-    "cfg.json": `{"a":1,"b":{"c":[1,2]}}`,
-    "index.mjs": `
+test.concurrent(
+  "require() of a .json already imported via ESM returns the parsed data (no spurious default key)",
+  async () => {
+    const { stdout, stderr, exitCode } = await run({
+      "cfg.json": `{"a":1,"b":{"c":[1,2]}}`,
+      "index.mjs": `
       import def from "./cfg.json" with { type: "json" };
       import { createRequire } from "node:module";
       const req = createRequire(import.meta.url)("./cfg.json");
@@ -31,20 +33,23 @@ test.concurrent("require() of a .json already imported via ESM returns the parse
       console.log("same:", req === def);
       console.log("own keys:", Object.getOwnPropertyNames(req).sort().join(","));
     `,
-  });
-  expect(stderr).toBe("");
-  expect(stdout).toMatchInlineSnapshot(`
+    });
+    expect(stderr).toBe("");
+    expect(stdout).toMatchInlineSnapshot(`
     "{"a":1,"b":{"c":[1,2]}}
     same: true
     own keys: a,b"
   `);
-  expect(exitCode).toBe(0);
-});
+    expect(exitCode).toBe(0);
+  },
+);
 
-test.concurrent("require() of a .json array already imported via ESM returns the array, not a namespace wrapper", async () => {
-  const { stdout, stderr, exitCode } = await run({
-    "arr.json": `[1,2,3]`,
-    "index.mjs": `
+test.concurrent(
+  "require() of a .json array already imported via ESM returns the array, not a namespace wrapper",
+  async () => {
+    const { stdout, stderr, exitCode } = await run({
+      "arr.json": `[1,2,3]`,
+      "index.mjs": `
       import def from "./arr.json" with { type: "json" };
       import { createRequire } from "node:module";
       const req = createRequire(import.meta.url)("./arr.json");
@@ -52,15 +57,16 @@ test.concurrent("require() of a .json array already imported via ESM returns the
       console.log("isArray:", Array.isArray(req));
       console.log("same:", req === def);
     `,
-  });
-  expect(stderr).toBe("");
-  expect(stdout).toMatchInlineSnapshot(`
+    });
+    expect(stderr).toBe("");
+    expect(stdout).toMatchInlineSnapshot(`
     "[1,2,3]
     isArray: true
     same: true"
   `);
-  expect(exitCode).toBe(0);
-});
+    expect(exitCode).toBe(0);
+  },
+);
 
 test.concurrent("import default of a .json already require()d returns the same object", async () => {
   const { stdout, stderr, exitCode } = await run(
@@ -113,7 +119,7 @@ test.concurrent("require.cache[path].exports is the parsed JSON value after an E
 
 test.concurrent("require() and import default of a .toml file share one object", async () => {
   const { stdout, stderr, exitCode } = await run({
-    "cfg.toml": "a = 1\nb = \"hello\"\n",
+    "cfg.toml": 'a = 1\nb = "hello"\n',
     "index.mjs": `
       import def from "./cfg.toml";
       import { createRequire } from "node:module";
@@ -165,10 +171,12 @@ test.concurrent("import * as ns from a .json has no extra synthetic export names
   expect(exitCode).toBe(0);
 });
 
-test.concurrent("delete require.cache[path] after ESM import lets a subsequent require() re-read from disk", async () => {
-  const { stdout, stderr, exitCode } = await run({
-    "cfg.json": `{"a":1}`,
-    "index.mjs": `
+test.concurrent(
+  "delete require.cache[path] after ESM import lets a subsequent require() re-read from disk",
+  async () => {
+    const { stdout, stderr, exitCode } = await run({
+      "cfg.json": `{"a":1}`,
+      "index.mjs": `
       import def from "./cfg.json" with { type: "json" };
       import { createRequire } from "node:module";
       import { writeFileSync } from "node:fs";
@@ -182,12 +190,13 @@ test.concurrent("delete require.cache[path] after ESM import lets a subsequent r
       console.log("second.a:", second.a);
       console.log("second === first:", second === first);
     `,
-  });
-  expect(stderr).toBe("");
-  expect(stdout).toMatchInlineSnapshot(`
+    });
+    expect(stderr).toBe("");
+    expect(stdout).toMatchInlineSnapshot(`
     "first === default: true
     second.a: 2
     second === first: false"
   `);
-  expect(exitCode).toBe(0);
-});
+    expect(exitCode).toBe(0);
+  },
+);

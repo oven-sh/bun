@@ -141,11 +141,12 @@ describe.skipIf(isWindows)("concurrent Bun.stdin blob reads on a pipe", () => {
     );
     expect(stderr).toBe("");
     const result = JSON.parse(stdout);
-    expect(result[0]).toEqual({ status: "fulfilled", byteLength: 3 });
-    // The unsliced read must not be coalesced onto the 3-byte reader. Its
-    // exact length depends on how the two readers interleave on the fd, but
-    // it must not be the sliced window.
+    // Mismatched (offset, max_length) means the two readers are not coalesced
+    // and race on fd 0 exactly as before this change; either can lose the
+    // epoll_ctl(ADD). The invariant being guarded is that the unsliced read is
+    // never silently resolved with the sliced window.
     expect(result[1]).not.toEqual({ status: "fulfilled", byteLength: 3 });
+    if (result[0].status === "fulfilled") expect(result[0].byteLength).toBe(3);
     expect(exitCode).toBe(0);
   });
 });

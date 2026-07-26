@@ -474,6 +474,18 @@ impl BlobExt for Blob {
         {
             let store = self.store().expect("infallible: store present").clone();
 
+            // Create the Promise only after the store has been ref()'d.
+            // The garbage collector runs on memory allocations
+            // The JSPromise is the next GC'd memory allocation.
+            // This shouldn't really fix anything, but it's a little safer.
+            // `JSPromiseStrong.strong` is private; `init` creates the
+            // JSPromise *and* the strong handle in one step.
+            // SAFETY: handler was just boxed; sole owner.
+            unsafe { (*handler).promise = jsc::JSPromiseStrong::init(global) };
+            // SAFETY: same `handler` as above; still solely owned here.
+            let promise_value = unsafe { (*handler).promise.value() };
+            promise_value.ensure_still_alive();
+
             if read_file::ReadFile::try_coalesce_fd_read(
                 &store,
                 self.offset.get(),
@@ -481,11 +493,6 @@ impl BlobExt for Blob {
                 handler.cast::<c_void>(),
                 read_file::completion_thunk::<Handler<'_, F>>,
             ) {
-                // SAFETY: handler was just boxed; sole owner.
-                unsafe { (*handler).promise = jsc::JSPromiseStrong::init(global) };
-                // SAFETY: same `handler` as above; still solely owned here.
-                let promise_value = unsafe { (*handler).promise.value() };
-                promise_value.ensure_still_alive();
                 debug!("doReadFile: coalesced onto in-flight fd reader");
                 return promise_value;
             }
@@ -501,18 +508,6 @@ impl BlobExt for Blob {
             read_file::ReadFile::mark_in_flight(&store, file_read_ptr);
             let read_file_task =
                 read_file::ReadFileTask::create_on_js_thread(global, file_read_ptr);
-
-            // Create the Promise only after the store has been ref()'d.
-            // The garbage collector runs on memory allocations
-            // The JSPromise is the next GC'd memory allocation.
-            // This shouldn't really fix anything, but it's a little safer.
-            // `JSPromiseStrong.strong` is private; `init` creates the
-            // JSPromise *and* the strong handle in one step.
-            // SAFETY: handler was just boxed; sole owner.
-            unsafe { (*handler).promise = jsc::JSPromiseStrong::init(global) };
-            // SAFETY: same `handler` as above; still solely owned here.
-            let promise_value = unsafe { (*handler).promise.value() };
-            promise_value.ensure_still_alive();
 
             // SAFETY: `read_file_task` was just heap-allocated by `create_on_js_thread`.
             read_file::ReadFileTask::schedule(unsafe { &mut *read_file_task });

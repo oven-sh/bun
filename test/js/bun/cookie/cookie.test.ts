@@ -262,8 +262,8 @@ describe("Bun.serve() cookies", () => {
     map.set("do_modify", "FIVE");
     expect(map.toSetCookieHeaders()).toMatchInlineSnapshot(`
       [
-        "do_delete=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax",
         "do_modify=FIVE; Path=/; SameSite=Lax",
+        "do_delete=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax",
       ]
     `);
     expect(map.toJSON()).toMatchInlineSnapshot(`

@@ -411,6 +411,32 @@ describe("iterator", () => {
     c=d"
   `);
   });
+  test("set in a loop terminates and updates every entry", () => {
+    const m = new Bun.CookieMap();
+    m.set("a", "1");
+    m.set("b", "1");
+    let seen = 0;
+    for (const k of m.keys()) {
+      m.set(k, "2");
+      if (++seen > 100) throw new Error("did not terminate");
+    }
+    expect(seen).toBe(2);
+    expect([...m.entries()]).toEqual([
+      ["a", "2"],
+      ["b", "2"],
+    ]);
+  });
+  test("set in a loop on a parsed header terminates", () => {
+    const m = new Bun.CookieMap("a=1; b=1");
+    let seen = 0;
+    for (const k of m.keys()) {
+      m.set(k, "2");
+      if (++seen > 100) throw new Error("did not terminate");
+    }
+    expect(m.get("a")).toBe("2");
+    expect(m.get("b")).toBe("2");
+    expect(m.size).toBe(2);
+  });
 });
 
 describe("cookie header values with non-ASCII characters", () => {

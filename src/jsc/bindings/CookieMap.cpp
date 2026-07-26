@@ -259,7 +259,15 @@ void CookieMap::appendModified(Ref<Cookie>&& cookie)
 
 void CookieMap::set(Ref<Cookie> cookie)
 {
-    removeInternal(cookie->name());
+    const String& name = cookie->name();
+    if (!name.isNull()) {
+        auto it = m_modifiedIndex.find(name);
+        if (it != m_modifiedIndex.end()) {
+            m_modifiedCookies[it->value] = WTF::move(cookie);
+            return;
+        }
+    }
+    removeInternal(name);
     appendModified(WTF::move(cookie));
 }
 

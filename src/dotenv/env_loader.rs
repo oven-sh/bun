@@ -592,11 +592,10 @@ impl Loader {
                 if !key.is_empty() {
                     self.map.put(key, value)?;
                 }
-            } else {
-                if !env.is_empty() {
-                    self.map.put(env, b"")?;
-                }
             }
+            // An entry with no '=' is malformed per POSIX ("name=value"); glibc
+            // getenv() and Node both ignore it. Dropping it here prevents
+            // fabricating FOO="" and re-serializing it into children as "FOO=".
         }
         self.did_load_process = true;
         Ok(())

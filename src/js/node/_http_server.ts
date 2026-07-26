@@ -2317,11 +2317,23 @@ function renderNativeHeaders(res) {
     const storedTransferEncoding = headersMap === null ? undefined : headersMap["transfer-encoding"];
     const storedContentLength = headersMap === null ? undefined : headersMap["content-length"];
     let defectiveNoBodyResponse = false;
+    // undefined: no TE header line; true/false: chunkExpression result
+    let userTEChunked;
     if (storedTransferEncoding !== undefined) {
       const statusCode = res[kSnapshotStatusCode] ?? res.statusCode;
       if (statusCode === 204 || statusCode === 304) {
         defectiveNoBodyResponse = true;
         res[kMustCloseConnection] = true;
+      }
+      // Like Node.js's matchHeader: the body is chunk-framed iff the user's
+      // Transfer-Encoding value names `chunked`. The native writer otherwise
+      // decides framing from Content-Length alone, so a `TE: chunked` + CL
+      // response would ship a chunked head with an unframed body. An empty
+      // array renders no header line; treat it as no TE (Node's matchHeader
+      // never runs for it), or sentinel "4" would strip the auto-framing.
+      const teValue = storedTransferEncoding[1];
+      if (!($isArray(teValue) && teValue.length === 0)) {
+        userTEChunked = chunkExpression.test($isArray(teValue) ? teValue.join(", ") : String(teValue));
       }
     }
 
@@ -2403,6 +2415,16 @@ function renderNativeHeaders(res) {
       // gate - a HEAD response ends at the first empty line whatever headers
       // it carries (RFC 9112 6.3).
       flat.push("\u0000", "2");
+    } else if (userTEChunked === true) {
+      // Sentinel "3": chunk-frame the body even when a Content-Length header
+      // line was written (Node.js's write_() obeys chunkedEncoding alone).
+      flat.push("\u0000", "3");
+      res.chunkedEncoding = true;
+    } else if (userTEChunked === false && !defectiveNoBodyResponse) {
+      // Sentinel "4": a non-chunked Transfer-Encoding (identity, gzip, ...)
+      // means the body bytes are written raw, like Node.js. Without this the
+      // native writer auto-chunks because it sees no Content-Length.
+      flat.push("\u0000", "4");
     }
 
     if (closeDelimited) {

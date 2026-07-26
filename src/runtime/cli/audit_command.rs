@@ -503,9 +503,8 @@ fn send_audit_request(
 
     let body = response_buf.list.as_slice();
 
-    // The registry's bulk advisory endpoint serves gzip-compressed bodies
-    // without a Content-Encoding header, so the HTTP client leaves them
-    // compressed. Sniff the gzip magic and decompress before parsing.
+    // The registry serves gzip bodies without a Content-Encoding header, so
+    // the HTTP client leaves them compressed (#35887).
     if body.starts_with(&[0x1f, 0x8b]) {
         return gunzip_audit_response(body);
     }
@@ -518,10 +517,8 @@ fn gunzip_audit_response(body: &[u8]) -> Result<Box<[u8]>, bun_alloc::AllocError
 
     let mut decompressor = libdeflate::OwnedDecompressor::new().ok_or(bun_alloc::AllocError)?;
 
-    // The gzip ISIZE trailer holds the uncompressed size mod 2^32; use it as
-    // the initial capacity. The trailer is untrusted network data, so an
-    // implausibly large value starts small instead and lets the grow loop
-    // expand on demand.
+    // Initial capacity from the gzip ISIZE trailer (uncompressed size mod
+    // 2^32); it is untrusted network data, so oversized values start small.
     let size_hint = match body.last_chunk::<4>() {
         Some(trailer) => {
             let isize_hint = u32::from_le_bytes(*trailer) as usize;

@@ -3341,7 +3341,7 @@ describe("Socket.end() / Socket.shutdown() are a write-side half-close", () => {
   // buffer so the server's write-on-end never needs a drain cycle.
   const PAYLOAD = Buffer.alloc(16 * 1024, 0x61);
 
-  type Call = "end()" | "shutdown()" | "shutdown(false)" | "shutdown(true)";
+  type Call = "end()" | "end(data)" | "shutdown()" | "shutdown(false)" | "shutdown(true)";
 
   async function halfClose(call: Call) {
     let received = 0;
@@ -3369,11 +3369,14 @@ describe("Socket.end() / Socket.shutdown() are a write-side half-close", () => {
       port: server.port,
       socket: {
         open(socket) {
-          socket.write("hi");
-          if (call === "end()") socket.end();
-          else if (call === "shutdown()") socket.shutdown();
-          else if (call === "shutdown(false)") socket.shutdown(false);
-          else socket.shutdown(true);
+          if (call === "end(data)") socket.end("hi");
+          else {
+            socket.write("hi");
+            if (call === "end()") socket.end();
+            else if (call === "shutdown()") socket.shutdown();
+            else if (call === "shutdown(false)") socket.shutdown(false);
+            else socket.shutdown(true);
+          }
           readyState = socket.readyState;
           writeAfter = socket.write("x");
         },
@@ -3391,7 +3394,7 @@ describe("Socket.end() / Socket.shutdown() are a write-side half-close", () => {
     return { received, writeAfter, readyState };
   }
 
-  for (const call of ["end()", "shutdown()", "shutdown(false)", "shutdown(true)"] as const) {
+  for (const call of ["end()", "end(data)", "shutdown()", "shutdown(false)", "shutdown(true)"] as const) {
     it.concurrent(`${call} sends FIN and keeps the read side open`, async () => {
       // readyState 1: socket is still established (not detached).
       // writeAfter -1: further writes on the half-closed side are rejected.

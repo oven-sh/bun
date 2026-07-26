@@ -423,8 +423,6 @@ const SocketHandlers: SocketHandler = {
     if (callback) {
       const writeChunk = self._pendingData;
       if ($isArray(writeChunk)) {
-        // on_writable only dispatches this drain once the native buffer is
-        // empty, so resume directly from the next queued chunk.
         self._pendingData = self[kwriteCallback] = null;
         if (writeChunksUntilFull(self, socket, writeChunk, callback)) callback(null);
         return;
@@ -1293,8 +1291,6 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
     if (callback) {
       const writeChunk = self._pendingData;
       if ($isArray(writeChunk)) {
-        // on_writable only dispatches this drain once the native buffer is
-        // empty, so resume directly from the next queued chunk.
         self._pendingData = self[kwriteCallback] = null;
         if (writeChunksUntilFull(self, socket, writeChunk, callback)) {
           if (self[kended] && !self[kUserUnrefed] && socket === self._handle) socket.unref?.();
@@ -2759,13 +2755,9 @@ Socket.prototype.destroySoon = function destroySoon() {
 };
 
 //TODO: migrate to native
-// Feed `chunks` (already normalized to Buffer-likes) through `socket.$write`
-// one at a time. On the first short write the remainder is parked on
-// `_pendingData` and the drain callback is armed; the native buffer then only
-// ever holds the unsent tail of a single chunk. Returns true when every chunk
-// was fully accepted. Node holds the caller's buffers by reference in a
-// uv_write_t; matching that (no Buffer.concat, no native bulk copy) keeps the
-// queued-past-backpressure RSS at ~1x the queued bytes instead of ~3x.
+// Writes `chunks` (normalized Buffer-likes) one at a time; on the first short
+// write parks the remainder on `_pendingData` and arms the drain callback.
+// Returns true when every chunk was fully accepted.
 function writeChunksUntilFull(self, socket, chunks, callback) {
   const len = chunks.length;
   for (let i = 0; i < len; i++) {
@@ -2799,10 +2791,7 @@ Socket.prototype._writev = function _writev(data, callback) {
     return this._write(data[0], "buffer", callback);
   }
 
-  // cork()/uncork() can drive _writev before the handle is live, so the
-  // connecting / upgrade-in-flight deferral mirrors _write. _pendingData
-  // carries the Buffer[] and the drain handler resumes it once the handle is
-  // open and the native buffer is empty.
+  // cork()/uncork() can reach _writev before the handle is live; defer like _write.
   const connecting = this.connecting;
   if (connecting || (!this._handle && this[kupgraded] && !this.destroyed)) {
     this._pendingData = data;

@@ -2251,9 +2251,7 @@ pub mod environment_variables {
     /// `process.env[name] = value`: update the env_loader map, and on the main
     /// thread also `setenv()` so a native library's `getenv()` observes the
     /// write. Key/value are already NUL-truncated by the C++ side; an empty
-    /// key or a key containing `=` was filtered out there too. Returns the
-    /// env_loader map's entry count so the caller (a C++ `put` that may have
-    /// added a key) can tell whether the JS enumeration view needs resizing.
+    /// key or a key containing `=` was filtered out there too.
     #[unsafe(no_mangle)]
     pub(crate) extern "C" fn Bun__ProcessEnv__put(
         global_object: &JSGlobalObject,

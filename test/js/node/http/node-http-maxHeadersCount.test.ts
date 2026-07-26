@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import http from "node:http";
-import net from "node:net";
 import type { AddressInfo } from "node:net";
+import net from "node:net";
 
 // Sends a raw HTTP/1.1 request with `extra` additional x-N header lines
 // (plus Host and Connection: close) and resolves to { status, body }.

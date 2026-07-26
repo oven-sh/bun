@@ -822,8 +822,14 @@ macro_rules! platform_specific_new {
             /// allocated string on overwrite, which would dangle a borrowed
             /// slice. Called by the `process.env` write path.
             pub fn set_owned(value: Option<&[u8]>) {
-                let leaked: Option<&'static [u8]> =
-                    value.map(|v| &*Box::leak(Box::<[u8]>::from(v)));
+                let leaked: Option<&'static [u8]> = value.map(|v| {
+                    let s: &'static [u8] = Box::leak(Box::<[u8]>::from(v));
+                    // A second set_owned overwrites ptr_value, making the
+                    // previous leak unreachable to LSAN; the leak is
+                    // intentional (values are paths, writes are rare).
+                    $crate::asan::ignore_object(s.as_ptr());
+                    s
+                });
                 CACHE.deser_and_invalidate(leaked);
             }
 

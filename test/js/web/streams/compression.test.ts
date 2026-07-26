@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import zlib from "node:zlib";
 
 describe("CompressionStream and DecompressionStream", () => {
   describe("brotli", () => {
@@ -216,6 +217,64 @@ describe("CompressionStream and DecompressionStream", () => {
         const output = decoder.decode(decompressed);
         expect(output).toBe(input);
       }
+    });
+
+    // RFC 8878 §3.1: a zstd stream is one or more concatenated frames; a
+    // decoder MUST decode each in order. pzstd output is multi-frame by
+    // construction, as is `cat a.zst b.zst`.
+    test("decompresses a multi-frame zstd stream", async () => {
+      const f1 = zlib.zstdCompressSync(Buffer.from("first frame\n"));
+      const f2 = zlib.zstdCompressSync(Buffer.from("second frame\n"));
+      const cat = Buffer.concat([f1, f2]);
+
+      const out = await new Response(
+        new Blob([cat]).stream().pipeThrough(new DecompressionStream("zstd")),
+      ).text();
+      expect(out).toBe("first frame\nsecond frame\n");
+    });
+
+    test("decompresses a multi-frame zstd stream split across writes", async () => {
+      const f1 = zlib.zstdCompressSync(Buffer.from("first frame\n"));
+      const f2 = zlib.zstdCompressSync(Buffer.from("second frame\n"));
+      const cat = Buffer.concat([f1, f2]);
+
+      const ds = new DecompressionStream("zstd");
+      const writer = ds.writable.getWriter();
+      // Split in the middle of the second frame's header so the boundary is
+      // not a frame boundary.
+      const split = f1.length + 2;
+      writer.write(cat.subarray(0, split));
+      writer.write(cat.subarray(split));
+      writer.close();
+
+      const out = await new Response(ds.readable).text();
+      expect(out).toBe("first frame\nsecond frame\n");
+    });
+
+    test("decompresses many concatenated zstd frames larger than one output chunk", async () => {
+      const piece = Buffer.alloc(4096, "Z");
+      const frame = zlib.zstdCompressSync(piece);
+      const frames: Buffer[] = [];
+      for (let i = 0; i < 64; i++) frames.push(frame);
+      const cat = Buffer.concat(frames);
+
+      const out = Buffer.from(
+        await new Response(
+          new Blob([cat]).stream().pipeThrough(new DecompressionStream("zstd")),
+        ).arrayBuffer(),
+      );
+      expect(out.length).toBe(piece.length * 64);
+      expect(out.equals(Buffer.alloc(piece.length * 64, "Z"))).toBe(true);
+    });
+
+    test("rejects trailing garbage after a zstd frame", async () => {
+      const frame = zlib.zstdCompressSync(Buffer.from("hello"));
+      const withJunk = Buffer.concat([frame, Buffer.from([0xde, 0xad, 0xbe, 0xef])]);
+
+      const read = new Response(
+        new Blob([withJunk]).stream().pipeThrough(new DecompressionStream("zstd")),
+      ).text();
+      await expect(read).rejects.toThrow();
     });
   });
 

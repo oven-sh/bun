@@ -200,6 +200,11 @@ function ZlibBase(opts, mode, handle, { flush, finishFlush, fullFlush }) {
   this._maxOutputLength = maxOutputLength;
 
   this._rejectGarbageAfterEnd = opts?.rejectGarbageAfterEnd === true;
+  // A zstd stream is one or more concatenated frames (RFC 8878 §3.1).
+  // DecompressionStream("zstd") opts in via rejectGarbageAfterEnd and must
+  // decode every frame; the plain node:zlib zstd stream keeps stopping at
+  // the first frame to match Node.js. See processCallback.
+  this._continueOnFrameEnd = this._rejectGarbageAfterEnd && mode === ZSTD_DECOMPRESS;
 }
 $toClass(ZlibBase, "ZlibBase", Transform);
 
@@ -456,16 +461,22 @@ function processCallback() {
     return;
   }
 
+  // Zstd: a frame boundary with input remaining is the start of the next
+  // frame, not trailing junk. Re-enter the write loop so the native decoder
+  // starts that frame; actual garbage surfaces as ZSTD_error_prefix_unknown
+  // on that call. Only DecompressionStream opts in (see _continueOnFrameEnd).
+  const continueNextFrame = availInAfter > 0 && self._continueOnFrameEnd;
+
   // Exhausted the output buffer, or used all the input create a new one.
   let chunkSize;
-  if (availOutAfter === 0 || self._outOffset >= (chunkSize = self._chunkSize)) {
+  if (availOutAfter === 0 || continueNextFrame || self._outOffset >= (chunkSize = self._chunkSize)) {
     chunkSize ??= self._chunkSize;
     handle.availOutBefore = chunkSize;
     self._outOffset = 0;
     self._outBuffer = Buffer.allocUnsafe(chunkSize);
   }
 
-  if (availOutAfter === 0) {
+  if (availOutAfter === 0 || continueNextFrame) {
     // Not actually done. Need to reprocess.
     // Also, update the availInBefore to the availInAfter value,
     // so that if we have to hit it a third (fourth, etc.) time,

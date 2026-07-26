@@ -146,6 +146,24 @@ fn clone_macro_map(src: &MacroMap) -> MacroMap {
     out
 }
 
+/// Source-code flavoured [`StringOrBuffer::from_js`]: a JS string backed by
+/// 16-bit storage is encoded as WTF-8 (unpaired surrogates preserved) so the
+/// lexer, which reads WTF-8, sees the same code units `eval` would. 8-bit
+/// strings and array buffers cannot carry a lone surrogate and take the
+/// normal path.
+fn source_from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<StringOrBuffer>> {
+    if value.is_string() {
+        let str = OwnedString::new(BunString::from_js(value, global)?);
+        if str.is_utf16() {
+            let bytes = bun_core::strings::to_wtf8_alloc(str.utf16());
+            return Ok(Some(StringOrBuffer::EncodedSlice(
+                bun_core::ZigStringSlice::init_owned(bytes),
+            )));
+        }
+    }
+    StringOrBuffer::from_js(global, value)
+}
+
 const PROP_ITER_OPTS: JSPropertyIteratorOptions = JSPropertyIteratorOptions {
     skip_empty_name: true,
     include_value: true,
@@ -1311,7 +1329,7 @@ impl JSTranspiler {
             return Err(global.throw_invalid_argument_type("scan", "code", "string or Uint8Array"));
         };
 
-        let Some(code_holder) = StringOrBuffer::from_js(global, code_arg)? else {
+        let Some(code_holder) = source_from_js(global, code_arg)? else {
             return Err(global.throw_invalid_argument_type("scan", "code", "string or Uint8Array"));
         };
         // defer code_holder.deinit() → Drop
@@ -1402,21 +1420,36 @@ impl JSTranspiler {
         };
 
         let allow_string_object = true;
-        let Some(code) = StringOrBuffer::from_js_with_encoding_maybe_async(
-            global,
-            code_arg,
-            Encoding::Utf8,
-            true,
-            allow_string_object,
-        )?
-        else {
+        let code = if code_arg.is_string() {
+            // 16-bit strings go through the WTF-8 encoder so unpaired
+            // surrogates survive; 8-bit strings cannot carry any. Either way
+            // the result is an owned `Vec<u8>`, already thread-safe.
+            let str = OwnedString::new(BunString::from_js(code_arg, global)?);
+            let bytes = if str.is_utf16() {
+                bun_core::strings::to_wtf8_alloc(str.utf16())
+            } else {
+                str.to_utf8_bytes()
+            };
+            global.vm().report_extra_memory(bytes.len());
+            Some(StringOrBuffer::EncodedSlice(
+                bun_core::ZigStringSlice::init_owned(bytes),
+            ))
+        } else {
+            StringOrBuffer::from_js_with_encoding_maybe_async(
+                global,
+                code_arg,
+                Encoding::Utf8,
+                true,
+                allow_string_object,
+            )?
+        };
+        let Some(mut code) = code else {
             return Err(global.throw_invalid_argument_type(
                 "transform",
                 "code",
                 "string or Uint8Array",
             ));
         };
-        let mut code = code;
         if matches!(code, StringOrBuffer::Buffer(_)) {
             let bytes = code.slice().to_vec();
             global.vm().report_extra_memory(bytes.len());
@@ -1469,7 +1502,7 @@ impl JSTranspiler {
         };
 
         let arena = Arena::new();
-        let Some(code_holder) = StringOrBuffer::from_js(global, code_arg)? else {
+        let Some(code_holder) = source_from_js(global, code_arg)? else {
             return Err(global.throw_invalid_argument_type(
                 "transformSync",
                 "code",
@@ -1680,7 +1713,7 @@ impl JSTranspiler {
             ));
         };
 
-        let code_holder = match StringOrBuffer::from_js(global, code_arg)? {
+        let code_holder = match source_from_js(global, code_arg)? {
             Some(h) => h,
             None => {
                 if !global.has_exception() {

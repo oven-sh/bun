@@ -1670,6 +1670,49 @@ pub(crate) mod strings_impl {
         convert_utf16_to_utf8(Vec::new(), utf16)
     }
 
+    /// WTF-8 sibling of [`to_utf8_alloc`]: unpaired surrogates are encoded as
+    /// their 3-byte WTF-8 sequence (via [`decode_wtf16_raw`]) instead of being
+    /// replaced with U+FFFD. Use this when the consumer is a WTF-8 reader
+    /// (e.g. the JS lexer) and must observe the same code units the JS engine
+    /// does. For well-formed UTF-16 the output is identical to [`to_utf8_alloc`].
+    pub fn to_wtf8_alloc(utf16: &[u16]) -> Vec<u8> {
+        let need = simdutf::length::utf8::from::utf16::le(utf16);
+        let mut list = Vec::with_capacity(need + 16);
+        // SAFETY: same contract as `convert_utf16_to_utf8_append` — simdutf
+        // writes only initialized bytes into the spare slice and reports the
+        // count; on SURROGATE we commit 0 and fall back to the scalar loop.
+        let r = unsafe {
+            crate::vec::fill_spare(&mut list, 0, |spare| {
+                let r = simdutf::simdutf__convert_utf16le_to_utf8_with_errors(
+                    utf16.as_ptr(),
+                    utf16.len(),
+                    spare.as_mut_ptr(),
+                );
+                (
+                    if r.status == simdutf::Status::SURROGATE {
+                        0
+                    } else {
+                        r.count
+                    },
+                    r,
+                )
+            })
+        };
+        if r.status == simdutf::Status::SURROGATE {
+            // A lone surrogate encodes to 3 WTF-8 bytes, same width as U+FFFD,
+            // so `need` above is already the exact size.
+            let mut i = 0usize;
+            let mut buf = [0u8; 4];
+            while i < utf16.len() {
+                let (cp, adv) = decode_wtf16_raw(&utf16[i..]);
+                i += adv as usize;
+                let n = encode_wtf8_rune(&mut buf, cp);
+                list.extend_from_slice(&buf[..n]);
+            }
+        }
+        list
+    }
+
     /// Transcode raw UTF-16-LE *bytes* (no alignment requirement) to a fresh
     /// UTF-8 `Vec`.
     ///

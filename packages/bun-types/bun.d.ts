@@ -5903,14 +5903,13 @@ declare module "bun" {
      * `seconds` seconds of no reads or writes on this socket.
      *
      * This is a **notification only**: Bun does not close the socket for you. If
-     * you want the socket to close on timeout, call {@link end `end()`} or
+     * you want the socket to close on timeout, call {@link close `close()`} or
      * {@link terminate `terminate()`} from the `timeout` handler. If no
      * `timeout` handler is registered the timer is a no-op.
      *
      * Timeouts are coalesced into a shared sweep that runs every 4 seconds, so
-     * the requested duration is rounded **up** to the next multiple of 4 seconds
-     * (e.g. `timeout(1)` through `timeout(4)` all fire at ~4 s, `timeout(5)`
-     * at ~8 s). Pass `0` to disarm the timer.
+     * the delivered duration is the requested value give or take 4 seconds.
+     * Pass `0` to disarm the timer.
      *
      * This mirrors Node's `net.Socket#setTimeout`, which is also notify-only.
      */
@@ -6295,12 +6294,10 @@ declare module "bun" {
     upgradeTLS<Data>(options: TLSUpgradeOptions<Data>): [raw: Socket<Data>, tls: Socket<Data>];
 
     /**
-     * Closes the socket.
+     * Closes the socket immediately in both directions.
      *
-     * This is a wrapper around `end()` and `shutdown()`.
-     *
-     * @see {@link end}
-     * @see {@link shutdown}
+     * For a graceful write-side half-close that keeps the read side open,
+     * use {@link end `end()`} or {@link shutdown `shutdown()`} instead.
      */
     close(): void;
 

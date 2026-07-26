@@ -599,8 +599,24 @@ async function runTests() {
   const parallelSafeCap = isWindows ? 2 : 4;
   const parallelSafeWidth = parallelism > 1 ? parallelism : Math.min(parallelSafeCap, availableParallelism());
   const parallelSafeLimit = parallelism > 1 ? limit : pLimit(parallelSafeWidth);
+  // Files in the parallel-safe directories whose resource footprint makes them
+  // unsafe to overlap on an 8 GiB no-swap runner:
+  //   * test-docker-build-*: `docker build --no-cache` for 10-20 s, GB-scale RSS
+  //     while layers are pulled and dpkg/apk runs.
+  //   * test-buffer-constants.js: `' '.repeat(MAX_STRING_LENGTH)` is a 2 GiB
+  //     Latin-1 allocation under JSC (V8's limit is ~512 MiB, so upstream
+  //     node's parallel/ placement is fine there). With overcommit the malloc
+  //     succeeds and the memset page-faults, so the OOM killer SIGKILLs the
+  //     process instead of JSC throwing a catchable RangeError.
+  // Shard 19/20 bin-packs the docker builds and test-buffer-constants together,
+  // and once this phase starts them 2-wide the buffer test reliably gets
+  // OOM-killed (builds 82231/82241/82296). Run both serially in phase 1.
+  const parallelSafeMemoryHeavy = p =>
+    p.includes("js/bun/test/parallel/test-docker-build-") ||
+    p.endsWith("js/node/test/parallel/test-buffer-constants.js");
   const isParallelSafeTest = testPath => {
     const p = testPath.replaceAll("\\", "/");
+    if (parallelSafeMemoryHeavy(p)) return false;
     return p.includes("js/node/test/parallel/") || p.includes("js/bun/test/parallel/");
   };
   console.log("parallel-safe width", parallelSafeWidth);

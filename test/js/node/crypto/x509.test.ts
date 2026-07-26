@@ -170,3 +170,51 @@ describe("X509Certificate.checkHost() / checkEmail() options", () => {
     expect(() => email.checkEmail("not\x00hing")).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }));
   });
 });
+
+// OpenSSL's default subject-fallback rule checks the subject CN/emailAddress
+// whenever the certificate has no SAN of the *relevant* type. BoringSSL's
+// X509_check_host/X509_check_email skip the subject as soon as the SAN
+// extension is present at all. Every expected value below is what Node.js
+// (OpenSSL) returns for the same call.
+describe("X509Certificate.checkHost() / checkEmail() default subject fallback", () => {
+  // Subject CN=host.a.test, emailAddress=subj@a.test
+  // subjectAltName: email:san@a.test (no DNS entry)
+  const emailOnlySan = new X509Certificate(
+    "-----BEGIN CERTIFICATE-----\nMIIBbDCCARKgAwIBAgIBBTAKBggqhkjOPQQDAjAyMRowGAYJKoZIhvcNAQkBFgtz\ndWJqQGEudGVzdDEUMBIGA1UEAwwLaG9zdC5hLnRlc3QwHhcNMjQwMTAxMDAwMDAw\nWhcNMzQwMTAxMDAwMDAwWjAyMRowGAYJKoZIhvcNAQkBFgtzdWJqQGEudGVzdDEU\nMBIGA1UEAwwLaG9zdC5hLnRlc3QwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAATA\n8oSTaHTNhZd7xBzP0wK4G63rTE3n+3VgLWtJ094xIurJGsb/Szp1zwlWvs1UqMkD\ns4ggDNQIOV4F/C6H7w+aoxkwFzAVBgNVHREEDjAMgQpzYW5AYS50ZXN0MAoGCCqG\nSM49BAMCA0gAMEUCIQDaDemParcnR+082ph2x+2WLqnX2pE/ekPTaH1ZNcs+9QIg\nNucFI8ZLT94vxoI+iChvM1epdnyPMj0GHxnj9eUgYX0=\n-----END CERTIFICATE-----",
+  );
+  // Subject CN=host.b.test, emailAddress=hidden@b.test
+  // subjectAltName: DNS:host.b.test (no email entry)
+  const dnsOnlySan = new X509Certificate(
+    "-----BEGIN CERTIFICATE-----\nMIIBcTCCARegAwIBAgIBBTAKBggqhkjOPQQDAjA0MRwwGgYJKoZIhvcNAQkBFg1o\naWRkZW5AYi50ZXN0MRQwEgYDVQQDDAtob3N0LmIudGVzdDAeFw0yNDAxMDEwMDAw\nMDBaFw0zNDAxMDEwMDAwMDBaMDQxHDAaBgkqhkiG9w0BCQEWDWhpZGRlbkBiLnRl\nc3QxFDASBgNVBAMMC2hvc3QuYi50ZXN0MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcD\nQgAEwPKEk2h0zYWXe8Qcz9MCuBut60xN5/t1YC1rSdPeMSLqyRrG/0s6dc8JVr7N\nVKjJA7OIIAzUCDleBfwuh+8PmqMaMBgwFgYDVR0RBA8wDYILaG9zdC5iLnRlc3Qw\nCgYIKoZIzj0EAwIDSAAwRQIgLpQQaN9ewR4/libViPKpYMf4v1+3LAJzR91eoIdo\nXP8CIQCBAsQh2Co3UqUWhLzg6cMiB8UsMvJ1fXDUryyBQ6LmYA==\n-----END CERTIFICATE-----",
+  );
+  // Subject CN=host.c.test, emailAddress=subj@c.test
+  // subjectAltName: present but an empty sequence
+  const emptySan = new X509Certificate(
+    "-----BEGIN CERTIFICATE-----\nMIIBYTCCAQagAwIBAgIBBTAKBggqhkjOPQQDAjAyMRowGAYJKoZIhvcNAQkBFgtz\ndWJqQGMudGVzdDEUMBIGA1UEAwwLaG9zdC5jLnRlc3QwHhcNMjQwMTAxMDAwMDAw\nWhcNMzQwMTAxMDAwMDAwWjAyMRowGAYJKoZIhvcNAQkBFgtzdWJqQGMudGVzdDEU\nMBIGA1UEAwwLaG9zdC5jLnRlc3QwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAATA\n8oSTaHTNhZd7xBzP0wK4G63rTE3n+3VgLWtJ094xIurJGsb/Szp1zwlWvs1UqMkD\ns4ggDNQIOV4F/C6H7w+aow0wCzAJBgNVHREEAjAAMAoGCCqGSM49BAMCA0kAMEYC\nIQDNDUdpjkPlDdHOC3GfMVsyqoW8EJQwpF12pGG7Jh3+ZQIhAKR1TAT1tz+qkaRL\nWBHSHNFMPBDhzbM67wHBVQYxoESB\n-----END CERTIFICATE-----",
+  );
+
+  test("checkHost falls back to the subject CN when the SAN has no DNS entries", () => {
+    expect(emailOnlySan.checkHost("host.a.test")).toBe("host.a.test");
+    expect(emailOnlySan.checkHost("host.a.test", { subject: "default" })).toBe("host.a.test");
+    expect(emailOnlySan.checkHost("host.a.test", { subject: "never" })).toBeUndefined();
+    // The SAN email entry is still honoured by checkEmail, and because there is
+    // an email SAN the subject emailAddress is not consulted.
+    expect(emailOnlySan.checkEmail("san@a.test")).toBe("san@a.test");
+    expect(emailOnlySan.checkEmail("subj@a.test")).toBeUndefined();
+  });
+
+  test("checkEmail falls back to the subject emailAddress when the SAN has no email entries", () => {
+    expect(dnsOnlySan.checkEmail("hidden@b.test")).toBe("hidden@b.test");
+    expect(dnsOnlySan.checkEmail("hidden@b.test", { subject: "default" })).toBe("hidden@b.test");
+    expect(dnsOnlySan.checkEmail("hidden@b.test", { subject: "never" })).toBeUndefined();
+    // The SAN DNS entry is still honoured by checkHost.
+    expect(dnsOnlySan.checkHost("host.b.test")).toBe("host.b.test");
+  });
+
+  test("an empty subjectAltName sequence still falls back to the subject", () => {
+    expect(emptySan.checkHost("host.c.test")).toBe("host.c.test");
+    expect(emptySan.checkEmail("subj@c.test")).toBe("subj@c.test");
+    expect(emptySan.checkHost("host.c.test", { subject: "never" })).toBeUndefined();
+    expect(emptySan.checkEmail("subj@c.test", { subject: "never" })).toBeUndefined();
+  });
+});

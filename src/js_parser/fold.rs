@@ -390,8 +390,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                                     || prop
                                                         .flags
                                                         .contains(Flags::Property::IsComputed)
-                                                    || prop.flags.contains(Flags::Property::IsSpread)
-                                                    || prop.flags.contains(Flags::Property::IsMethod)
+                                                    || prop
+                                                        .flags
+                                                        .contains(Flags::Property::IsSpread)
+                                                    || prop
+                                                        .flags
+                                                        .contains(Flags::Property::IsMethod)
                                                 {
                                                     handled = false;
                                                     continue;

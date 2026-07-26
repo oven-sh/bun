@@ -2160,7 +2160,7 @@ impl<'a> Parser<'a> {
         }
 
         // Pop the module scope to apply the "ContainsDirectEval" rules
-        // p.popScope();
+        p.pop_scope();
 
         #[cfg(not(target_arch = "wasm32"))]
         if bun_core::feature_flags::RUNTIME_TRANSPILER_CACHE {

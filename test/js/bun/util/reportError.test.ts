@@ -337,3 +337,28 @@ test("uncaught AggregateError nested several levels deep still unwraps to the le
   expect(proc.signalCode).toBeNull();
   expect(exitCode).toBe(1);
 });
+
+// The shared unwrap budget must also stay clear of realistic wide nesting:
+// an aggregate of 40 aggregates (like Promise.any over failover groups) has
+// 41 aggregate nodes and every leaf cause must still surface.
+test("uncaught AggregateError of 40 nested groups prints every leaf cause", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      'throw new AggregateError(Array.from({ length: 40 }, (_, i) => new AggregateError([new Error("leaf_" + i)], "group")), "outer");',
+    ],
+    env: { ...bunEnv, NO_COLOR: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({
+    first: stderr.includes("error: leaf_0"),
+    last: stderr.includes("error: leaf_39"),
+    stdout,
+  }).toEqual({ first: true, last: true, stdout: "" });
+  expect(proc.signalCode).toBeNull();
+  expect(exitCode).toBe(1);
+});

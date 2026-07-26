@@ -4781,7 +4781,9 @@ impl VirtualMachine {
     ) {
         // Shared across the whole tree: `depth` alone still allows fan_out^depth
         // nodes for a wide cyclic `errors` (e.g. `e.errors = Array(20).fill(e)`).
-        let mut remaining_unwraps: u8 = 32;
+        // 256 fits legitimate nesting (one full level of aggregate children);
+        // a capped child still prints its own header, so truncation is visible.
+        let mut remaining_unwraps: u16 = 256;
         self.print_errorlike_object_at_depth(
             value,
             exception,
@@ -4809,7 +4811,7 @@ impl VirtualMachine {
         allow_ansi_color: bool,
         allow_side_effects: bool,
         depth: u8,
-        remaining_unwraps: &mut u8,
+        remaining_unwraps: &mut u16,
     ) {
         const MAX_AGGREGATE_ERROR_DEPTH: u8 = 8;
         const MAX_AGGREGATE_ERRORS_PER_LEVEL: u64 = 256;

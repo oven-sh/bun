@@ -964,7 +964,10 @@ describe("fs.promises.watch", () => {
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect({ stdout: stdout.trim(), stderr }).toEqual({
-        stdout: JSON.stringify({ code: "ERR_FS_WATCH_QUEUE_OVERFLOW", message: "fs.watch() queued more than 0 events" }),
+        stdout: JSON.stringify({
+          code: "ERR_FS_WATCH_QUEUE_OVERFLOW",
+          message: "fs.watch() queued more than 0 events",
+        }),
         stderr: "",
       });
       expect(exitCode).toBe(0);

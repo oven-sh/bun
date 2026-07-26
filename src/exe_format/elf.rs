@@ -225,8 +225,7 @@ impl ElfFile {
         // flags). Growing an existing PT_LOAD is the layout a linker would
         // naturally produce; WSL1's kernel loader rejects binaries that
         // instead add a late PT_LOAD by repurposing PT_GNU_STACK (#29963).
-        // `-z relro` links have two PF_W PT_LOADs (RELRO then .data/.bss);
-        // .bun is mutable data so it's in the one with the highest file end.
+        // `-z relro` emits two PF_W loads; .bun is in the one that ends last.
         let phdr_size = size_of::<Elf64_Phdr>();
         let mut rw_phdr_index: Option<usize> = None;
         let mut rw_phdr: Elf64_Phdr = Elf64_Phdr::ZEROED;

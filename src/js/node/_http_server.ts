@@ -3667,8 +3667,6 @@ ServerResponse.prototype.flushHeaders = function () {
   }
 };
 
-// The implicit-header fast path skips writeHead(); apply the same |= 0
-// coercion and range check that _writeHead would have done.
 function coerceImplicitStatusCode(res) {
   const originalStatusCode = res.statusCode;
   const statusCode = originalStatusCode | 0;

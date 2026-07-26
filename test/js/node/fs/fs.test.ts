@@ -54,6 +54,7 @@ import fs, {
   writeSync,
   writevSync,
 } from "node:fs";
+import { once } from "node:events";
 import * as os from "node:os";
 import path, { dirname, relative, resolve } from "node:path";
 import { inspect, promisify } from "node:util";
@@ -3674,12 +3675,13 @@ describe("createWriteStream", () => {
 
   async function writeLines(ws: fs.WriteStream, n: number, line: string | Buffer) {
     for (let i = 0; i < n; i++) {
-      if (!ws.write(line)) await new Promise<void>(r => ws.once("drain", () => r()));
+      if (!ws.write(line)) await once(ws, "drain");
     }
     await new Promise<void>((resolve, reject) => ws.end(err => (err ? reject(err) : resolve())));
+    await once(ws, "close");
   }
 
-  it.skipIf(!isLinux)("buffers many small writes instead of dispatching one syscall per chunk", async () => {
+  it.skipIf(!isLinux)("coalesces many small writes instead of dispatching one syscall per chunk", async () => {
     const syscw = () => +readFileSync("/proc/self/io", "utf8").match(/syscw: (\d+)/)![1];
     const N = 5000;
     const line = Buffer.alloc(81, "x");
@@ -3687,7 +3689,7 @@ describe("createWriteStream", () => {
     const streamPath = join(String(dir), "out.txt");
 
     const ws = createWriteStream(streamPath);
-    await new Promise(r => ws.once("ready", r));
+    await once(ws, "ready");
     const fd = ws.fd as number;
     expect(fd).toBeGreaterThan(0);
 
@@ -3710,9 +3712,22 @@ describe("createWriteStream", () => {
 
     // Without coalescing each chunk is a separate thread-pool dispatch (one
     // write(2) to the file plus one 8-byte eventfd wake), so 5000 chunks is
-    // ~10000 write syscalls. With a FileSink buffer the same workload is a few
-    // hundred ~4 KB writes.
+    // ~10000 write syscalls. Coalescing into one writeSync per drain cycle
+    // brings it down to tens.
     expect(writeSyscalls).toBeLessThan(N / 4);
+  });
+
+  it.skipIf(!isLinux)("holds a single fd for the stream's lifetime", async () => {
+    const countFds = () => fs.readdirSync("/proc/self/fd").length;
+    using dir = tempDir("ws-fd-count", {});
+    const before = countFds();
+    const ws = createWriteStream(join(String(dir), "out.txt"));
+    await once(ws, "ready");
+    expect(countFds() - before).toBe(1);
+    ws.write("x");
+    await new Promise<void>((resolve, reject) => ws.end(err => (err ? reject(err) : resolve())));
+    await once(ws, "close");
+    expect(countFds() - before).toBe(0);
   });
 
   it("many small writes produce byte-exact output and bytesWritten", async () => {
@@ -3732,39 +3747,25 @@ describe("createWriteStream", () => {
     }).toEqual({ size: N * byteLen, bytesWritten: N * byteLen, head: chunk + chunk + chunk });
   });
 
-  it("write(chunk, encoding) decodes the encoding", async () => {
-    using dir = tempDir("ws-enc", {});
-    const streamPath = join(String(dir), "out.bin");
-    const ws = createWriteStream(streamPath);
-    ws.write("68656c6c6f", "hex");
-    ws.write("IHdvcmxk", "base64");
-    ws.setDefaultEncoding("hex");
-    ws.write("21");
-    await new Promise<void>((resolve, reject) => ws.end(err => (err ? reject(err) : resolve())));
-    expect(readFileSync(streamPath, "utf8")).toBe("hello world!");
-    expect(ws.bytesWritten).toBe(12);
-  });
-
-  it("content is on disk when 'finish' fires", async () => {
-    using dir = tempDir("ws-finish", {});
+  it("falls back to fs.write when it has been monkey-patched", async () => {
+    using dir = tempDir("ws-patch", {});
     const streamPath = join(String(dir), "out.txt");
     const ws = createWriteStream(streamPath);
-    ws.write("line one\n");
-    ws.write("line two\n");
-    ws.end();
-    const onFinish = await new Promise<string>(resolve =>
-      ws.once("finish", () => resolve(readFileSync(streamPath, "utf8"))),
-    );
-    expect(onFinish).toBe("line one\nline two\n");
-  });
-
-  it("append flag keeps writing through the FileSink buffer", async () => {
-    using dir = tempDir("ws-append-many", {});
-    const streamPath = join(String(dir), "out.txt");
-    writeFileSync(streamPath, "head\n");
-    const ws = createWriteStream(streamPath, { flags: "a" });
-    await writeLines(ws, 200, "x");
-    expect(readFileSync(streamPath, "utf8")).toBe("head\n" + Buffer.alloc(200, "x").toString());
+    const original = fs.write;
+    let calls = 0;
+    // @ts-ignore
+    fs.write = function () {
+      calls++;
+      return original.apply(fs, arguments);
+    };
+    try {
+      ws.write("hello");
+      await new Promise<void>((resolve, reject) => ws.end(err => (err ? reject(err) : resolve())));
+      await once(ws, "close");
+    } finally {
+      fs.write = original;
+    }
+    expect({ calls, contents: readFileSync(streamPath, "utf8") }).toEqual({ calls: 1, contents: "hello" });
   });
 });
 

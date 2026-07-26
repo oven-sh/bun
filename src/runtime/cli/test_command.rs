@@ -933,7 +933,9 @@ fn has_timer_due_within(window_ms: i64) -> bool {
 /// gate: that predicate answers "keep draining?", this one answers "any work left?".
 fn has_pending_loop_work(vm: &VirtualMachine) -> bool {
     let el = vm.event_loop_shared();
-    vm.platform_loop_opt().map(|h| h.is_active()).unwrap_or(false)
+    vm.platform_loop_opt()
+        .map(|h| h.is_active())
+        .unwrap_or(false)
         || vm.active_tasks > 0
         || el.tasks.readable_length() > 0
         || el.has_pending_refs()

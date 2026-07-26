@@ -1518,7 +1518,8 @@ test("onResolve returning a path longer than PATH_MAX surfaces a build error ins
   // The bundler's path prettifier relativizes the onResolve-returned path into
   // a fixed PATH_MAX-sized buffer. An oversized plugin path should surface as a
   // BuildMessage (ENAMETOOLONG / ENOENT), not abort the process with
-  // "panic: range end index N out of range for slice of length 4095".
+  // "panic: range end index N out of range for slice of length 4095". When an
+  // onLoad hook services the path the build should succeed outright.
   using dir = tempDir("onresolve-long-path", {
     "entry.ts": `import { two } from "./two.ts"; console.log(two);`,
     "run.ts": `
@@ -1526,7 +1527,7 @@ test("onResolve returning a path longer than PATH_MAX surfaces a build error ins
       // 4094 exercises the output-buffer overflow on Linux (PATH_MAX 4096);
       // 5000 and 100000 exercise the normalize-buffer overflow on POSIX and
       // Windows respectively. On platforms where a given length is under the
-      // limit the build still fails (the file does not exist).
+      // limit the onResolve-only build still fails (the file does not exist).
       for (const len of [4094, 5000, 100000]) {
         const p = "/" + Buffer.alloc(len - 4, "a").toString() + ".ts";
         const r = await Bun.build({
@@ -1542,6 +1543,30 @@ test("onResolve returning a path longer than PATH_MAX surfaces a build error ins
         });
         console.log(JSON.stringify({ len, success: r.success, hasError: r.logs.length > 0 }));
       }
+      // With an onLoad supplying contents the file is never opened, so the
+      // build proceeds through the linker with the oversized pretty path.
+      const p = "/" + Buffer.alloc(100000 - 4, "a").toString() + ".ts";
+      const r = await Bun.build({
+        entrypoints: [entry],
+        throw: false,
+        target: "bun",
+        plugins: [{
+          name: "long-loaded",
+          setup(b) {
+            b.onResolve({ filter: /^\\.\\/two\\.ts$/ }, () => ({ path: p }));
+            b.onLoad({ filter: /\\.ts$/ }, args => {
+              if (args.path === p) return { contents: "export const two = 2;", loader: "ts" };
+            });
+          },
+        }],
+      });
+      const out = r.success ? await r.outputs[0].text() : "";
+      console.log(JSON.stringify({
+        onLoad: true,
+        success: r.success,
+        hasError: r.logs.length > 0,
+        bundled: out.includes("two = 2"),
+      }));
     `,
   });
 
@@ -1563,6 +1588,7 @@ test("onResolve returning a path longer than PATH_MAX surfaces a build error ins
     { len: 4094, success: false, hasError: true },
     { len: 5000, success: false, hasError: true },
     { len: 100000, success: false, hasError: true },
+    { onLoad: true, success: true, hasError: false, bundled: true },
   ]);
   expect(exitCode).toBe(0);
 });

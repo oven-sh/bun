@@ -653,7 +653,27 @@ pub fn relative_platform_buf<'a, P: PlatformT, const ALWAYS_COPY: bool>(
     // two `&mut` borrows below are disjoint.
     let relative_from_buf = RELATIVE_FROM_BUF.with(lazy_path_buf);
     let relative_to_buf = RELATIVE_TO_BUF.with(lazy_path_buf);
+    relative_platform_buf_with_scratch::<P, ALWAYS_COPY>(
+        buf,
+        from,
+        to,
+        &mut relative_from_buf[..],
+        &mut relative_to_buf[..],
+    )
+}
 
+/// [`relative_platform_buf`] with caller-supplied normalize scratch instead of
+/// the fixed `MAX_PATH_BYTES` thread-locals. Use this when `from` or `to` may
+/// exceed `MAX_PATH_BYTES` (a bundler `onResolve` plugin can return a path of
+/// any length). Each scratch buffer must be at least one byte longer than the
+/// corresponding input.
+pub fn relative_platform_buf_with_scratch<'a, P: PlatformT, const ALWAYS_COPY: bool>(
+    buf: &'a mut [u8],
+    from: &[u8],
+    to: &[u8],
+    relative_from_buf: &'a mut [u8],
+    relative_to_buf: &'a mut [u8],
+) -> &'a [u8] {
     let normalized_from: &[u8] = if P::P.is_absolute(from) {
         'brk: {
             if P::P == Platform::Loose && cfg!(windows) {

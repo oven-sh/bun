@@ -2787,8 +2787,6 @@ pub mod JSZstd {
             .throw_invalid_arguments(format_args!("Expected buffer to be a string or buffer")))
     }
 
-    /// Move `output` into a Node `Buffer` without copying, or throw
-    /// `ERR_BUFFER_TOO_LARGE` when it exceeds the ArrayBuffer max.
     fn leak_vec_into_buffer(global_this: &JSGlobalObject, output: Vec<u8>) -> JsResult<JSValue> {
         let max_output = ArrayBuffer::MAX_SIZE as usize;
         if output.len() > max_output {

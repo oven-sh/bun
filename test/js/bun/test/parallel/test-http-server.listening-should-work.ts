@@ -6,5 +6,9 @@ const { expect } = createTest(import.meta.path);
 const server = http.createServer();
 await once(server.listen(0), "listening");
 expect(server.listening).toBe(true);
+// closeAllConnections() destroys the connections, it does not stop listening.
 server.closeAllConnections();
+expect(server.listening).toBe(true);
+server.close();
 expect(server.listening).toBe(false);
+await once(server, "close");

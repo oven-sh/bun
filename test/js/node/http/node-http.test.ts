@@ -1543,6 +1543,7 @@ describe("HTTP Server Security Tests - Advanced", () => {
     // Close the server if it's still running
     if (server.listening) {
       server.closeAllConnections();
+      server.close();
     }
   });
 
@@ -3465,6 +3466,250 @@ it("server.close(cb) completes after a raw upgrade once both sockets are destroy
   const { promise: closed, resolve: onClosed } = Promise.withResolvers<void>();
   server.close(() => onClosed());
   await closed;
+});
+
+// Node's server.close(cb) waits for every accepted connection to end
+// (net.Server#_emitCloseIfDrained), not for the in-flight request count to
+// reach zero. These four scenarios cover graceful-shutdown shapes that
+// otherwise look identical to the "pending requests == 0" condition.
+describe("server.close() drains connections, not requests", () => {
+  async function startServer(handler: http.RequestListener) {
+    const server = createServer(handler);
+    server.keepAliveTimeout = 60_000;
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as AddressInfo;
+    const sock = connect(port, "127.0.0.1");
+    sock.on("error", () => {});
+    await once(sock, "connect");
+    return { server, sock, port };
+  }
+
+  async function drainTicks() {
+    for (let i = 0; i < 6; i++) await new Promise<void>(r => setImmediate(r));
+  }
+
+  it("A: close() FINs an idle keep-alive connection and fires", async () => {
+    const { server, sock } = await startServer((req, res) => res.end("ok:" + req.url));
+    try {
+      let body = "";
+      sock.on("data", c => (body += c));
+      sock.write("GET /a HTTP/1.1\r\nHost: x\r\n\r\n");
+      while (!body.includes("ok:/a")) await once(sock, "data");
+      await drainTicks();
+
+      const ended = once(sock, "end");
+      const closed = Promise.withResolvers<void>();
+      server.close(() => closed.resolve());
+      await closed.promise;
+      await ended;
+    } finally {
+      sock.destroy();
+      server.closeAllConnections();
+    }
+  });
+
+  it("C: close(cb) waits while a keep-alive connection is still open", async () => {
+    const inHandler = Promise.withResolvers<void>();
+    let finishFirst!: () => void;
+    const paths: string[] = [];
+    const { server, sock } = await startServer((req, res) => {
+      paths.push(req.url as string);
+      if (paths.length === 1) {
+        inHandler.resolve();
+        finishFirst = () => res.end("ok:" + req.url);
+      } else {
+        res.end("ok:" + req.url);
+      }
+    });
+    try {
+      let body = "";
+      sock.on("data", c => (body += c));
+      sock.write("GET /first HTTP/1.1\r\nHost: x\r\n\r\n");
+      await inHandler.promise;
+
+      let closeCbFired = false;
+      let closeEventFired = false;
+      server.once("close", () => (closeEventFired = true));
+      const closed = Promise.withResolvers<void>();
+      server.close(() => {
+        closeCbFired = true;
+        closed.resolve();
+      });
+
+      finishFirst();
+      while (!body.includes("ok:/first")) await once(sock, "data");
+      await drainTicks();
+      expect({ closeCbFired, closeEventFired }).toEqual({ closeCbFired: false, closeEventFired: false });
+
+      sock.write("GET /second HTTP/1.1\r\nHost: x\r\n\r\n");
+      while (!body.includes("ok:/second")) await once(sock, "data");
+      await drainTicks();
+      expect({ closeCbFired, closeEventFired }).toEqual({ closeCbFired: false, closeEventFired: false });
+      expect(paths).toEqual(["/first", "/second"]);
+
+      sock.destroy();
+      await closed.promise;
+      expect({ closeCbFired, closeEventFired }).toEqual({ closeCbFired: true, closeEventFired: true });
+    } finally {
+      sock.destroy();
+      server.closeAllConnections();
+    }
+  });
+
+  it("B: closeIdleConnections() after close() drains a now-idle connection", async () => {
+    const inHandler = Promise.withResolvers<void>();
+    let finishFirst!: () => void;
+    const { server, sock } = await startServer((req, res) => {
+      inHandler.resolve();
+      finishFirst = () => res.end("ok:" + req.url);
+    });
+    try {
+      let body = "";
+      sock.on("data", c => (body += c));
+      const ended = once(sock, "end");
+      sock.write("GET /b HTTP/1.1\r\nHost: x\r\n\r\n");
+      await inHandler.promise;
+
+      let closeCbFired = false;
+      const closed = Promise.withResolvers<void>();
+      server.close(() => {
+        closeCbFired = true;
+        closed.resolve();
+      });
+
+      finishFirst();
+      while (!body.includes("ok:/b")) await once(sock, "data");
+      await drainTicks();
+      expect(closeCbFired).toBe(false);
+
+      // The response has been delivered and the connection is idle; a
+      // post-close closeIdleConnections() must reach it and let the
+      // callback fire.
+      server.closeIdleConnections();
+      await closed.promise;
+      await ended;
+    } finally {
+      sock.destroy();
+      server.closeAllConnections();
+    }
+  });
+
+  it("B': closeAllConnections() after close() drains the in-flight connection", async () => {
+    const inHandler = Promise.withResolvers<void>();
+    const { server, sock } = await startServer((req, res) => {
+      inHandler.resolve();
+      void res;
+    });
+    try {
+      sock.write("GET /b2 HTTP/1.1\r\nHost: x\r\n\r\n");
+      await inHandler.promise;
+
+      const closed = Promise.withResolvers<void>();
+      server.close(() => closed.resolve());
+      await drainTicks();
+
+      // The request handler never responded; closeAllConnections() must
+      // destroy the connection regardless and let the callback fire.
+      server.closeAllConnections();
+      await closed.promise;
+      expect(sock.destroyed || sock.readableEnded).toBe(true);
+    } finally {
+      sock.destroy();
+      server.closeAllConnections();
+    }
+  });
+
+  it("D: close(cb) never fires while a keep-alive client keeps the connection busy", async () => {
+    // SIGTERM shape: close() arrives while a request is in flight, the client
+    // then keeps issuing keep-alive requests on that same connection. The
+    // close callback must not fire (and no request is served "after cb")
+    // until the client releases the connection.
+    const inHandler = Promise.withResolvers<void>();
+    let finishFirst!: () => void;
+    const paths: string[] = [];
+    const { server, sock } = await startServer((req, res) => {
+      paths.push(req.url as string);
+      if (paths.length === 1) {
+        inHandler.resolve();
+        finishFirst = () => res.end("ok:" + req.url);
+      } else {
+        res.end("ok:" + req.url);
+      }
+    });
+    try {
+      let body = "";
+      sock.on("data", c => (body += c));
+      let servedAfterCb = 0;
+      let closeCbFired = false;
+
+      sock.write("GET /d0 HTTP/1.1\r\nHost: x\r\n\r\n");
+      await inHandler.promise;
+
+      const closed = Promise.withResolvers<void>();
+      server.close(() => {
+        closeCbFired = true;
+        closed.resolve();
+      });
+      finishFirst();
+      while (!body.includes("ok:/d0")) await once(sock, "data");
+      await drainTicks();
+      if (closeCbFired) servedAfterCb = -1;
+
+      for (let i = 1; i <= 5; i++) {
+        const marker = "ok:/d" + i;
+        sock.write(`GET /d${i} HTTP/1.1\r\nHost: x\r\n\r\n`);
+        while (!body.includes(marker)) await once(sock, "data");
+        if (closeCbFired) servedAfterCb++;
+        await drainTicks();
+      }
+      expect({ closeCbFired, servedAfterCb }).toEqual({ closeCbFired: false, servedAfterCb: 0 });
+
+      sock.destroy();
+      await closed.promise;
+      expect(paths).toEqual(["/d0", "/d1", "/d2", "/d3", "/d4", "/d5"]);
+    } finally {
+      sock.destroy();
+      server.closeAllConnections();
+    }
+  });
+
+  it("closeAllConnections() leaves the listener running", async () => {
+    const { server, sock, port } = await startServer((req, res) => res.end("ok:" + req.url));
+    try {
+      let body = "";
+      sock.on("data", c => (body += c));
+      sock.write("GET /l HTTP/1.1\r\nHost: x\r\n\r\n");
+      while (!body.includes("ok:/l")) await once(sock, "data");
+
+      let closeEventFired = false;
+      server.once("close", () => (closeEventFired = true));
+      const clientClosed = once(sock, "close");
+      server.closeAllConnections();
+      await clientClosed;
+      await drainTicks();
+      expect(server.listening).toBe(true);
+      expect(closeEventFired).toBe(false);
+
+      // A fresh connection is still accepted.
+      const sock2 = connect(port, "127.0.0.1");
+      sock2.on("error", () => {});
+      await once(sock2, "connect");
+      let body2 = "";
+      sock2.on("data", c => (body2 += c));
+      sock2.write("GET /l2 HTTP/1.1\r\nHost: x\r\n\r\n");
+      while (!body2.includes("ok:/l2")) await once(sock2, "data");
+      sock2.destroy();
+
+      const closed = Promise.withResolvers<void>();
+      server.close(() => closed.resolve());
+      await closed.promise;
+    } finally {
+      sock.destroy();
+      server.closeAllConnections();
+      server.close();
+    }
+  });
 });
 
 it("req.upgrade is true inside the 'connect' listener", async () => {

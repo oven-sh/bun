@@ -94,6 +94,7 @@ test.concurrent("should not crash when closing sockets after upgrade", async () 
             http_socket?.destroy();
           });
           server.closeAllConnections();
+          server.close();
           resolve();
         }, 10);
       }

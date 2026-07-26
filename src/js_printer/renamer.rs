@@ -98,7 +98,7 @@ pub(crate) type NameCountMap =
 pub struct NoOpRenamer<'a> {
     // `symbol::Map` is `Vec<Vec<Symbol>>` (owning). Unlike `MinifyRenamer`/`NumberRenamer` (which the bundler builds over a
     // *borrowed* `LinkerGraph.symbols` and so wrap in `ManuallyDrop`),
-    // `NoOpRenamer` is only constructed by `print_ast`/`print_common_js`, whose
+    // `NoOpRenamer` is only constructed by `print_ast`, whose
     // callers always pass an *owned* Map freshly built by
     // `Map::init_with_one_list(mem::take(&mut ast.symbols))`. Owning + dropping
     // here is required: `ManuallyDrop` leaked the per-file `Vec<Symbol>` on

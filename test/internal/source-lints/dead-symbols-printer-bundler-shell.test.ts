@@ -21,6 +21,9 @@ test("dead js_printer Format::Cjs chain does not reappear", () => {
     ["src/js_printer/lib.rs", /^\s*CjsAscii,$/m],
     ["src/js_printer/lib.rs", /pub fn print_common_js\b/],
     ["src/js_printer/lib.rs", /impl PrintArg for u16\b/],
+    ["src/js_printer/lib.rs", /REWRITE_ESM_TO_CJS/],
+    ["src/js_printer/lib.rs", /fn print_bundled_export\b/],
+    ["src/js_printer/lib.rs", /fn print_module_export_symbol\b/],
     ["src/bundler/transpiler.rs", /fn print_cjs_cold\b/],
     ["src/bundler/transpiler.rs", /Format::CjsAscii => unreachable/],
   ];

@@ -11,11 +11,6 @@ use bun_paths::fs;
 use bun_paths::resolve_path::{self, platform};
 use bun_sys::Fd;
 
-// Instead of keeping files in-memory, we:
-// 1. Write directly to disk
-// 2. (Optional) move the file to the destination
-// This saves us from allocating a buffer
-
 pub struct OutputFile {
     pub loader: Loader,
     pub input_loader: Loader,
@@ -150,24 +145,12 @@ impl FileOperation {
     }
 }
 
+#[derive(Clone)]
 pub enum Value {
     Copy(FileOperation),
     Noop,
     Buffer { bytes: Box<[u8]> },
     Saved(SavedFile),
-}
-
-impl Clone for Value {
-    fn clone(&self) -> Self {
-        match self {
-            Value::Copy(op) => Value::Copy(op.clone()),
-            Value::Noop => Value::Noop,
-            Value::Buffer { bytes } => Value::Buffer {
-                bytes: bytes.clone(),
-            },
-            Value::Saved(s) => Value::Saved(*s),
-        }
-    }
 }
 
 impl Value {

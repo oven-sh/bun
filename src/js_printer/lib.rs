@@ -3,8 +3,8 @@
 //! The `Printer<'a, W, ...>` struct and its full method surface
 //! (`print_expr`, `print_stmt`, `print_binding`, `print_property`, …)
 //! compile against `bun_ast::{e,s,b,g,op,expr,stmt}`. The top-level
-//! `print` / `print_with_writer{,_and_platform}` / `print_common_js` /
-//! `print_json` / `get_source_map_builder` driver fns live at crate root.
+//! `print` / `print_with_writer{,_and_platform}` / `print_json` /
+//! `get_source_map_builder` driver fns live at crate root.
 
 #![warn(unused_must_use)]
 #![feature(adt_const_params)]
@@ -1372,7 +1372,6 @@ pub mod __gated_printer {
         'a,
         W,
         const ASCII_ONLY: bool,
-        const REWRITE_ESM_TO_CJS: bool,
         const IS_BUN_PLATFORM: bool,
         const IS_JSON: bool,
         const GENERATE_SOURCE_MAP: bool,
@@ -1446,15 +1445,14 @@ pub mod __gated_printer {
         'a,
         W,
         const ASCII_ONLY: bool,
-        const REWRITE_ESM_TO_CJS: bool,
         const IS_BUN_PLATFORM: bool,
         const IS_JSON: bool,
         const GENERATE_SOURCE_MAP: bool,
-    > Printer<'a, W, ASCII_ONLY, REWRITE_ESM_TO_CJS, IS_BUN_PLATFORM, IS_JSON, GENERATE_SOURCE_MAP>
+    > Printer<'a, W, ASCII_ONLY, IS_BUN_PLATFORM, IS_JSON, GENERATE_SOURCE_MAP>
     where
         W: WriterTrait,
     {
-        pub const MAY_HAVE_MODULE_INFO: bool = IS_BUN_PLATFORM && !REWRITE_ESM_TO_CJS;
+        pub const MAY_HAVE_MODULE_INFO: bool = IS_BUN_PLATFORM;
 
         /// When Printer is used as a io.Writer, this represents it's error type, aka nothing.
         // Inherent associated types are unstable; callers can name
@@ -3266,16 +3264,14 @@ pub mod __gated_printer {
                     }
                 }
                 ExprData::ERequireString(e) => {
-                    if !REWRITE_ESM_TO_CJS {
-                        self.print_require_or_import_expr(
-                            e.import_record_index,
-                            e.unwrapped_id != u32::MAX,
-                            &[],
-                            Expr::EMPTY,
-                            level,
-                            flags,
-                        );
-                    }
+                    self.print_require_or_import_expr(
+                        e.import_record_index,
+                        e.unwrapped_id != u32::MAX,
+                        &[],
+                        Expr::EMPTY,
+                        level,
+                        flags,
+                    );
                 }
                 ExprData::ERequireResolveString(e) => {
                     let wrap = level.gte(Level::New) || flags.contains(ExprFlag::ForbidCall);
@@ -5002,9 +4998,7 @@ pub mod __gated_printer {
                     let name_ref = name.ref_;
 
                     if s.func.flags.contains(G::FnFlags::IsExport) {
-                        if !REWRITE_ESM_TO_CJS {
-                            self.print(b"export ");
-                        }
+                        self.print(b"export ");
                     }
                     if s.func.flags.contains(G::FnFlags::IsAsync) {
                         self.print(b"async ");
@@ -5037,12 +5031,6 @@ pub mod __gated_printer {
                     }
 
                     self.print_newline();
-
-                    if REWRITE_ESM_TO_CJS && s.func.flags.contains(G::FnFlags::IsExport) {
-                        self.print_indent();
-                        self.print_bundled_export(local_name, local_name);
-                        self.print_semicolon_after_statement();
-                    }
                 }
                 StmtData::SClass(s) => {
                     // Give an extra newline for readaiblity
@@ -5055,9 +5043,7 @@ pub mod __gated_printer {
                     self.add_source_mapping(stmt.loc);
                     let name_ref = s.class.class_name.as_ref().unwrap().ref_;
                     if s.is_export {
-                        if !REWRITE_ESM_TO_CJS {
-                            self.print(b"export ");
-                        }
+                        self.print(b"export ");
                     }
 
                     self.print(b"class ");
@@ -5078,20 +5064,7 @@ pub mod __gated_printer {
                         }
                     }
 
-                    if REWRITE_ESM_TO_CJS && s.is_export {
-                        self.print_semicolon_after_statement();
-                    } else {
-                        self.print_newline();
-                    }
-
-                    if REWRITE_ESM_TO_CJS {
-                        if s.is_export {
-                            self.print_indent();
-                            let n = self.name_for_symbol(name_ref);
-                            self.print_bundled_export(n, n);
-                            self.print_semicolon_after_statement();
-                        }
-                    }
+                    self.print_newline();
                 }
                 StmtData::SEmpty(_) => {
                     if prev_stmt_tag == StmtTag::SEmpty && self.options.indent.count == 0 {
@@ -5267,65 +5240,6 @@ pub mod __gated_printer {
                     }
                 }
                 StmtData::SExportClause(s) => {
-                    if REWRITE_ESM_TO_CJS {
-                        self.print_indent();
-                        self.print_space_before_identifier();
-                        self.add_source_mapping(stmt.loc);
-
-                        match slice_of(s.items).len() {
-                            0 => {}
-                            // Object.assign(__export, {prop1, prop2, prop3});
-                            _ => {
-                                self.print(b"Object.assign");
-                                self.print(b"(");
-                                self.print_module_export_symbol();
-                                self.print(b",");
-                                self.print_space();
-                                self.print(b"{");
-                                self.print_space();
-                                let last = slice_of(s.items).len() - 1;
-                                for (i, item) in slice_of(s.items).iter().enumerate() {
-                                    // reshaped for borrowck — detach symbol from
-                                    // `&self` via `BackRef` (arena-backed table outlives print).
-                                    let symbol = BackRef::<Symbol>::new(
-                                        self.symbols().get_with_link_const(item.name.ref_).unwrap(),
-                                    );
-                                    let name = symbol.original_name.slice();
-                                    let mut did_print = false;
-
-                                    if let Some(namespace) = &symbol.namespace_alias {
-                                        if namespace.was_originally_property_access {
-                                            let import_record = self.import_record(
-                                                namespace.import_record_index as usize,
-                                            );
-                                            self.print_identifier(name);
-                                            self.print(b": () => ");
-                                            self.print_namespace_alias(import_record, namespace);
-                                            did_print = true;
-                                        }
-                                    }
-
-                                    if !did_print {
-                                        self.print_clause_alias(item.alias.slice());
-                                        if name != item.alias.slice() {
-                                            self.print(b":");
-                                            self.print_space_before_identifier();
-                                            self.print_identifier(name);
-                                        }
-                                    }
-
-                                    if i < last {
-                                        self.print(b",");
-                                    }
-                                }
-                                self.print(b"})");
-                                self.print_semicolon_after_statement();
-                            }
-                        }
-                        self.prev_stmt_tag = new_tag;
-                        return Ok(());
-                    }
-
                     // Give an extra newline for export default for readability
                     if !prev_stmt_tag.is_export_like() {
                         self.print_newline();
@@ -6174,11 +6088,6 @@ pub mod __gated_printer {
             Ok(())
         }
 
-        #[inline]
-        pub fn print_module_export_symbol(&mut self) {
-            self.print(b"module.exports");
-        }
-
         pub fn print_import_record_path(&mut self, import_record: &ImportRecord) {
             if IS_JSON {
                 unreachable!();
@@ -6205,17 +6114,6 @@ pub mod __gated_printer {
         #[inline]
         fn print_disabled_import(&mut self) {
             self.print_whitespacer(ws!(b"(() => ({}))"));
-        }
-
-        // We must use Object.defineProperty() to handle re-exports from ESM -> CJS
-        pub fn print_bundled_export(&mut self, name: &[u8], identifier: &[u8]) {
-            self.print(b"Object.defineProperty(");
-            self.print_module_export_symbol();
-            self.print(b",");
-            self.print_string_literal_utf8(name, true);
-            self.print(b",{get: () => ");
-            self.print_identifier(identifier);
-            self.print(b", enumerable: true, configurable: true})");
         }
 
         pub fn print_for_loop_init(&mut self, init_st: Stmt, extra_flags: ExprFlagSet) {
@@ -6438,7 +6336,7 @@ pub mod __gated_printer {
             decls: &[G::Decl],
             tlmtlo: TopLevel,
         ) {
-            if !REWRITE_ESM_TO_CJS && is_export {
+            if is_export {
                 self.print(b"export ");
             }
             let tlm: TopLevelAndIsExport = if Self::MAY_HAVE_MODULE_INFO {
@@ -6465,60 +6363,6 @@ pub mod __gated_printer {
             };
             self.print_decls(keyword, decls, ExprFlag::none(), tlm);
             self.print_semicolon_after_statement();
-
-            if REWRITE_ESM_TO_CJS && is_export && !decls.is_empty() {
-                let export_ref = self.options.runtime_imports.__export;
-                for decl in decls {
-                    self.print_indent();
-                    self.print_symbol(export_ref);
-                    self.print(b"(");
-                    self.print_space_before_identifier();
-                    self.print_module_export_symbol();
-                    self.print(b",");
-                    self.print_space();
-
-                    match &decl.binding.data {
-                        BindingData::BIdentifier(ident) => {
-                            let ident = ident.get();
-                            self.print(b"{");
-                            self.print_space();
-                            self.print_symbol(ident.r#ref);
-                            if self.options.minify_whitespace {
-                                self.print(b":()=>(");
-                            } else {
-                                self.print(b": () => (");
-                            }
-                            self.print_symbol(ident.r#ref);
-                            self.print(b") }");
-                        }
-                        BindingData::BObject(obj) => {
-                            let obj = obj.get();
-                            self.print(b"{");
-                            self.print_space();
-                            for prop in slice_of(obj.properties).iter() {
-                                if let BindingData::BIdentifier(ident) = &prop.value.data {
-                                    let ident = ident.get();
-                                    self.print_symbol(ident.r#ref);
-                                    if self.options.minify_whitespace {
-                                        self.print(b":()=>(");
-                                    } else {
-                                        self.print(b": () => (");
-                                    }
-                                    self.print_symbol(ident.r#ref);
-                                    self.print(b"),");
-                                    self.print_newline();
-                                }
-                            }
-                            self.print(b"}");
-                        }
-                        _ => {
-                            self.print_binding(decl.binding, TopLevelAndIsExport::default());
-                        }
-                    }
-                    self.print(b")");
-                    self.print_semicolon_after_statement();
-                }
-            }
         }
 
         pub fn print_identifier(&mut self, identifier: &[u8]) {
@@ -7622,7 +7466,7 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
 
     // `is_bun_platform = ascii_only` for printAst.
     type PrinterType<'a, W, const A: bool, const G: bool> =
-        Printer<'a, W, A, false, /*IS_BUN_PLATFORM=*/ A, false, G>;
+        Printer<'a, W, A, /*IS_BUN_PLATFORM=*/ A, false, G>;
     let mut writer = _writer;
     // Pre-size the output buffer ~proportional to the source. Transpiled output
     // is almost always within a small factor of the input, so reserving up front
@@ -7759,8 +7603,8 @@ pub fn print_json<W: WriterTrait>(
     source: &bun_ast::Source,
     opts: PrintJsonOptions<'_>,
 ) -> crate::Result<usize> {
-    // NewPrinter(ascii_only=false, Writer, rewrite_esm_to_cjs=false, is_bun_platform=false, is_json=true, generate_source_map=false)
-    type PrinterType<'a, W> = Printer<'a, W, false, false, false, true, false>;
+    // NewPrinter(ascii_only=false, Writer, is_bun_platform=false, is_json=true, generate_source_map=false)
+    type PrinterType<'a, W> = Printer<'a, W, false, false, true, false>;
     let writer = _writer;
     // The printer only needs default-empty `import_records` and `symbols` for
     // the no-op renamer; construct them directly without an `Ast`.
@@ -7881,7 +7725,7 @@ pub fn print_with_writer_and_platform<
     let _ = writer.reserve(source.contents().len() as u64);
 
     type PrinterType<'a, W, const B: bool, const G: bool> =
-        Printer<'a, W, /*ASCII_ONLY=*/ B, false, B, false, G>;
+        Printer<'a, W, /*ASCII_ONLY=*/ B, B, false, G>;
     let module_type = opts.module_type;
     let mut opts = opts;
     let source_map_builder = get_source_map_builder::<IS_BUN_PLATFORM>(

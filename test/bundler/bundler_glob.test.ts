@@ -206,6 +206,27 @@ describe("bundler", () => {
     },
   });
 
+  // Same for a bare "../" prefix: it would glob-bundle the entire parent tree.
+  itBundled("glob/BareDotDotSlashFallsThrough", {
+    target: "bun",
+    files: {
+      "/nested/entry.js": /* js */ `
+        const name = globalThis.__x ?? "a";
+        try { require(\`../\${name}\`); } catch {}
+        console.log("ok");
+      `,
+      "/a.js": `module.exports = "A";`,
+    },
+    entryPoints: ["/nested/entry.js"],
+    run: { stdout: "ok" },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      if (out.includes("__glob")) {
+        throw new Error("bare ../ template should fall through to runtime require");
+      }
+    },
+  });
+
   // No files match the pattern: leave the call as a runtime `require` so
   // `allowUnresolved` still applies and runtime-created files can be loaded.
   itBundled("glob/NoMatchesFallThrough", {

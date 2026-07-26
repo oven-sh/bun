@@ -1269,14 +1269,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return None;
         }
 
-        // Like esbuild, the literal prefix must be `./`/`../` plus at least one
-        // more character, so a bare "./" + x does not glob-bundle everything
-        // next to the importer.
+        // The literal prefix must be `./`/`../` and name a real path component
+        // (not just dots and slashes), so a bare "./" + x or "../" + x does
+        // not glob-bundle an entire directory tree.
         match raw_parts.first() {
             Some((text, false))
-                if text.len() >= 3
-                    && (strings::has_prefix_comptime(text, b"./")
-                        || strings::has_prefix_comptime(text, b"../")) => {}
+                if (strings::has_prefix_comptime(text, b"./")
+                    || strings::has_prefix_comptime(text, b"../"))
+                    && text.iter().any(|&c| c != b'.' && c != b'/') => {}
             _ => return None,
         }
 

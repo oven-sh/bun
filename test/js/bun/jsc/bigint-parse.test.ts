@@ -1,4 +1,4 @@
-import { test, expect, describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
 
 // JSBigInt::parseInt historically routed every radix through a loop that
 // calls multiplyAdd over the full-length digit vector for each small group

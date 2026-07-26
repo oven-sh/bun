@@ -1723,6 +1723,101 @@ test("process.debugPort defaults to 9229 on the main thread", async () => {
   expect(exitCode).toBe(0);
 });
 
+// process.exit() inside a worker arms NeedTermination on the worker's own VM.
+// If that fires while the worker is inside a node:vm evaluation,
+// checkForTermination must propagate the uncatchable TerminationException to
+// the worker run loop rather than attribute it to this evaluation's own
+// {timeout}/{breakOnSigint}. Attributing it to an untimed eval hits
+// RELEASE_ASSERT_NOT_REACHED (whole-process SIGABRT); attributing it to a
+// timed eval converts the kill into a catchable ERR_SCRIPT_EXECUTION_TIMEOUT
+// so the worker's try/catch swallows its own exit request and keeps running.
+describe.concurrent("process.exit() inside a worker's node:vm evaluation", () => {
+  test("untimed runInNewContext: worker exits, parent survives", async () => {
+    const fixture = `
+      const { Worker } = require("node:worker_threads");
+      let beats = 0;
+      const hb = setInterval(() => beats++, 20);
+      const src = "require('node:vm').runInNewContext('process.exit(0)', { process });";
+      const w = new Worker(src, { eval: true });
+      w.on("error", e => { console.error("worker-error:" + (e && e.message)); process.exit(1); });
+      w.on("exit", code => {
+        setTimeout(() => {
+          console.log("PARENT-ALIVE worker-exit=" + code + " beats>0=" + (beats > 0));
+          clearInterval(hb);
+        }, 200);
+      });
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+      stdout: "PARENT-ALIVE worker-exit=0 beats>0=true",
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+
+  test("timed runInNewContext: exit is not converted to ERR_SCRIPT_EXECUTION_TIMEOUT", async () => {
+    const body = [
+      `const vm = require("node:vm");`,
+      `const fs = require("fs");`,
+      `try {`,
+      `  vm.runInNewContext("process.exit(7)", { process }, { timeout: 60000 });`,
+      `} catch (e) { fs.writeSync(2, "CAUGHT:" + (e && e.code) + "\\n"); }`,
+      `fs.writeSync(2, "AFTER-BODY\\n");`,
+    ].join("\n");
+    const fixture = `
+      const { Worker } = require("node:worker_threads");
+      const w = new Worker(${JSON.stringify(body)}, { eval: true });
+      w.on("error", e => { console.error("worker-error:" + (e && e.message)); process.exit(1); });
+      w.on("exit", code => { console.log("worker-exit=" + code); });
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // The worker's try/catch must not observe ERR_SCRIPT_EXECUTION_TIMEOUT and
+    // nothing after the vm call may run; the termination unwinds straight out.
+    expect({ stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+      stdout: "worker-exit=7",
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+
+  test("runInThisContext: worker exits, parent survives", async () => {
+    const fixture = `
+      const { Worker } = require("node:worker_threads");
+      const src = "new (require('node:vm').Script)('process.exit(3)').runInThisContext();";
+      const w = new Worker(src, { eval: true });
+      w.on("error", e => { console.error("worker-error:" + (e && e.message)); process.exit(1); });
+      w.on("exit", code => { console.log("worker-exit=" + code); });
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+      stdout: "worker-exit=3",
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+});
+
 // Founding a SHARE_ENV tree replaces the founding thread's process.env object. If the
 // replacement were orphaned, the founder's later writes would go nowhere. child_process
 // enumerates the JS process.env (a var deleted from the map is invisible to the child),

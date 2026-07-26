@@ -306,28 +306,48 @@ void NodeVMScript::destroy(JSCell* cell)
     static_cast<NodeVMScript*>(cell)->NodeVMScript::~NodeVMScript();
 }
 
+extern "C" int Bun__VM__scriptExecutionStatus(void*);
+
+// A termination request belongs to this evaluation only if this evaluation
+// armed the watchdog ({timeout}) or was the SIGINT watcher's target
+// ({breakOnSigint}). Any other source is foreign: the execution context is
+// being stopped permanently (process.exit() inside a worker, worker.terminate()
+// from the parent, VM shutdown), or an enclosing evaluation's watchdog/SIGINT
+// fired while this untimed inner one was running. Converting a foreign
+// termination to a catchable ERR_SCRIPT_EXECUTION_* lets the caller's
+// try/catch swallow a kill request; propagate it as the uncatchable
+// TerminationException instead so it unwinds to whoever armed it.
+bool isForeignTermination(JSC::VM& vm, bool sigintReceived, bool hasTimeout)
+{
+    if (Bun__VM__scriptExecutionStatus(Bun::vm(vm)) != 0)
+        return true;
+    return !sigintReceived && !hasTimeout;
+}
+
 static bool checkForTermination(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, NodeVMScript* script, std::optional<double> timeout)
 {
-    if (vm.hasTerminationRequest()) {
-        vm.drainMicrotasksForGlobalObject(globalObject);
-        // The termination may have fired inside an afterEvaluate microtask
-        // checkpoint, leaving the termination exception pending; clear it so
-        // the ERR_SCRIPT_EXECUTION_* error below replaces it.
-        if (vm.hasPendingTerminationException())
-            DECLARE_TOP_EXCEPTION_SCOPE(vm).clearException();
-        vm.clearHasTerminationRequest();
-        if (script->getSigintReceived()) {
-            script->setSigintReceived(false);
-            throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_INTERRUPTED, "Script execution was interrupted by `SIGINT`"_s);
-        } else if (timeout) {
-            throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_TIMEOUT, makeString("Script execution timed out after "_s, *timeout, "ms"_s));
-        } else {
-            RELEASE_ASSERT_NOT_REACHED_WITH_MESSAGE("vm.Script terminated due neither to SIGINT nor to timeout");
-        }
+    if (!vm.hasTerminationRequest())
+        return false;
+
+    if (isForeignTermination(vm, script->getSigintReceived(), timeout.has_value())) {
+        scope.throwException(globalObject, vm.ensureTerminationException());
         return true;
     }
 
-    return false;
+    vm.drainMicrotasksForGlobalObject(globalObject);
+    // The termination may have fired inside an afterEvaluate microtask
+    // checkpoint, leaving the termination exception pending; clear it so
+    // the ERR_SCRIPT_EXECUTION_* error below replaces it.
+    if (vm.hasPendingTerminationException())
+        DECLARE_TOP_EXCEPTION_SCOPE(vm).clearException();
+    vm.clearHasTerminationRequest();
+    if (script->getSigintReceived()) {
+        script->setSigintReceived(false);
+        throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_INTERRUPTED, "Script execution was interrupted by `SIGINT`"_s);
+    } else {
+        throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_TIMEOUT, makeString("Script execution timed out after "_s, *timeout, "ms"_s));
+    }
+    return true;
 }
 
 void setupWatchdog(VM& vm, double timeout, double* oldTimeout, double* newTimeout)

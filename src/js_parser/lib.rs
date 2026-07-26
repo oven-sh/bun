@@ -506,9 +506,10 @@ pub mod defines {
         pub value: ExprData,
     }
 
-    // SAFETY: see `Send`/`Sync` for DefineData — `value` points at immutable
+    // SAFETY: see `Send` for DefineData — `value` points at immutable
     // process-lifetime AST stores and is only read after `Define::init`.
     unsafe impl Send for InjectedDefine {}
+    // SAFETY: see `Send` impl above.
     unsafe impl Sync for InjectedDefine {}
 
     #[derive(Default)]

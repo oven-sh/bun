@@ -987,26 +987,23 @@ test("c", () => { expect(1).toBe(1); });
     expect(exitCode).toBe(0);
   });
 
-  test.concurrent(
-    "a short-period interval under --rerun-each does not stall later repeats",
-    async () => {
-      const { stderr, exitCode, signalCode } = await runFixture(
-        {
-          "leak.test.js": `
+  test.concurrent("a short-period interval under --rerun-each does not stall later repeats", async () => {
+    const { stderr, exitCode, signalCode } = await runFixture(
+      {
+        "leak.test.js": `
 import { test, expect } from "bun:test";
 test("t", () => {
   setInterval(() => {}, 100);
   expect(1).toBe(1);
 });
 `,
-        },
-        ["--rerun-each=3"],
-      );
+      },
+      ["--rerun-each=3"],
+    );
 
-      expect(stderr).toContain("3 pass");
-      expect(stderr).toContain("0 fail");
-      expect(signalCode).toBeNull();
-      expect(exitCode).toBe(0);
-    },
-  );
+    expect(stderr).toContain("3 pass");
+    expect(stderr).toContain("0 fail");
+    expect(signalCode).toBeNull();
+    expect(exitCode).toBe(0);
+  });
 });

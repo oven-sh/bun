@@ -1,2 +1,2 @@
-import { trim } from "lodash";
-export const a = () => trim("  XXX  ");
+import lodash from "lodash";
+export const a = () => lodash.trim("  XXX  ");

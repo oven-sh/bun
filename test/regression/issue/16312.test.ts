@@ -1,5 +1,6 @@
 import * as matchers from "@testing-library/jest-dom/matchers";
-import { cleanup } from "@testing-library/react";
+import testingLibraryReact from "@testing-library/react";
+const { cleanup } = testingLibraryReact;
 import { afterEach, expect, test } from "bun:test";
 
 expect.extend(matchers);

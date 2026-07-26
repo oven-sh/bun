@@ -5287,7 +5287,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if self.options.repl_mode {
                 return None;
             }
-            if self.has_es_module_syntax && self.commonjs_named_exports.count() == 0 {
+            if self.has_es_module_syntax
+                && (!self.should_unwrap_common_js_to_esm()
+                    || self.commonjs_named_exports.count() == 0)
+            {
                 // In an ES6 module, "this" is supposed to be undefined. Instead of
                 // doing this at runtime using "fn.call(undefined)", we do it at
                 // compile time using expression substitution here.

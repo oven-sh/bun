@@ -19,7 +19,8 @@ import { Metadata, MetadataObject, MetadataValue } from "@grpc/grpc-js/build/src
 import assert from "assert";
 import { beforeEach, describe, it } from "bun:test";
 import http2 from "http2";
-import { range } from "lodash";
+import lodash from "lodash";
+const { range } = lodash;
 
 class TestMetadata extends Metadata {
   getInternalRepresentation() {

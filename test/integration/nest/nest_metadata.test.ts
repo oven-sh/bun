@@ -1,7 +1,9 @@
 import "reflect-metadata";
 
-import { Inject, Injectable } from "@nestjs/common";
-import { NestContainer } from "@nestjs/core";
+import nestCommon from "@nestjs/common";
+const { Inject, Injectable } = nestCommon;
+import nestCore from "@nestjs/core";
+const { NestContainer } = nestCore;
 
 import { PARAMTYPES_METADATA, SELF_DECLARED_DEPS_METADATA } from "@nestjs/common/constants";
 import { InstanceWrapper } from "@nestjs/core/injector/instance-wrapper";

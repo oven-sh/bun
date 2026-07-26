@@ -482,10 +482,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
                     } else if p.options.features.commonjs_at_runtime
                         && !p.is_control_flow_dead
-                        && id.ref_.eql(p.exports_ref)
                         && identifier_opts.assign_target() != js_ast::AssignTarget::None
                         && !identifier_opts.is_delete_target()
+                        && (id.ref_.eql(p.exports_ref)
+                            || p.symbols.as_slice()[id.ref_.inner_index() as usize]
+                                .original_name
+                                .slice()
+                                == b"exports")
                     {
+                        // Match cjs-module-lexer's lexical scan: any identifier spelled
+                        // `exports` counts, including UMD-factory parameters.
                         p.record_runtime_commonjs_export_name(name, name_loc);
                     }
 

@@ -143,7 +143,6 @@ impl CurrentFile {
         );
     }
 
-    /// `<prefix><title>` — the path as printed in headers, without the `:`.
     /// The file's display path, without `prefix` — that carries the GitHub
     /// Actions `::group::` marker, which must appear exactly once per file.
     pub(crate) fn write_path(&self, out: &mut Vec<u8>) {

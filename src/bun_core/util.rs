@@ -1794,6 +1794,9 @@ pub mod io {
         }
 
         /// Vtable view. Same address as `self`; no two may be live at once.
+        /// Address-identity: callers storing the pointer (e.g.
+        /// `VirtualMachine::error_writer_override`) must not move the
+        /// `VecWriter` until it's cleared.
         #[inline]
         pub fn interface(&mut self) -> &mut Writer {
             // SAFETY: `head` is the first `repr(C)` field, so `*mut Self` and

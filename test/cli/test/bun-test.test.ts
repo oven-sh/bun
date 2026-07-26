@@ -1803,7 +1803,7 @@ describe("nested describe output", () => {
 describe("failure and console attribution", () => {
   /** Everything from the batched failures section onward. */
   function failuresSection(stderr: string): string {
-    const at = stderr.indexOf("tests failed:");
+    const at = stderr.search(/\d+ tests? failed:/);
     return at === -1 ? "" : stderr.slice(at);
   }
 
@@ -2013,6 +2013,7 @@ describe("failure and console attribution", () => {
       cmd: [bunExe(), "test", "exit.test.ts"],
       env: bunEnv,
       cwd: String(dir),
+      stdout: "ignore",
       stderr: "pipe",
     });
     const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
@@ -2028,8 +2029,12 @@ describe("failure and console attribution", () => {
           contents: `
             import { test } from "bun:test";
             test("a", () => {});
-            setTimeout(() => { throw new Error("stray"); }, 1);
-            await new Promise(r => setTimeout(r, 25));
+            const { promise, resolve } = Promise.withResolvers();
+            setTimeout(() => { throw new Error("stray"); }, 0);
+            // Same-delay timers fire in registration order, so this runs after
+            // the throw above — no wall-clock dependence.
+            setTimeout(resolve, 0);
+            await promise;
           `,
         },
       ],

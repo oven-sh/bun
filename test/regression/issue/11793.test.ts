@@ -17,7 +17,7 @@ test("11793", async () => {
     "(fail) test/regression/issue/11793.fixture.ts:
     (fail) %p
 
-    1 tests failed:
+    1 test failed:
 
     (fail) test/regression/issue/11793.fixture.ts:4 > %p
     1 | const { test, expect } = require("bun:test");

@@ -4,7 +4,7 @@ exports[`CLAUDECODE=1 shows quiet test output (only failures) 1`] = `
 "(fail) test2.test.js:
 (fail) failing test
 
-1 tests failed:
+1 test failed:
 
 (fail) test2.test.js:9 > failing test
 4 |       test("passing test", () => {

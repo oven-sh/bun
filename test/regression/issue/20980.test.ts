@@ -18,7 +18,7 @@ test("20980", async () => {
     "(fail) test/regression/issue/20980.fixture.ts:
     (fail) test 0
 
-    1 tests failed:
+    1 test failed:
 
     (fail) test/regression/issue/20980.fixture.ts > test 0
     error: 5

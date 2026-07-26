@@ -1435,14 +1435,19 @@ impl CommandLineReporter {
         }
     }
 
-    /// The `N tests failed:` section: every failure's diagnostics, each under a
+    /// The `N test(s) failed:` section: every failure's diagnostics, each under a
     /// header naming the file and test it came from.
     pub fn render_failure_report(&mut self) {
         if self.failure_report.is_empty() {
             return;
         }
         let _enable_buffering = Output::enable_buffering_scope();
-        pretty_error!("\n<r><d>{} tests failed:<r>\n", self.summary().fail);
+        let fail = self.summary().fail;
+        pretty_error!(
+            "\n<r><d>{} test{} failed:<r>\n",
+            fail,
+            if fail == 1 { "" } else { "s" }
+        );
         if self.failure_report.overflowed() {
             pretty_error!(
                 "<r><d>(diagnostics past {} MB printed inline above)<r>\n",

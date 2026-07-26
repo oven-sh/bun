@@ -41,7 +41,7 @@ describe("Bun.serve HTML manifest", () => {
       "app.js": `console.log("Hello from app");`,
     });
 
-    using cleanup = { [Symbol.dispose]: () => rmScope(dir) };
+    using cleanup = rmScope(dir);
 
     const proc = Bun.spawn({
       cmd: [bunExe(), "run", join(dir, "server.ts")],
@@ -152,7 +152,7 @@ describe("Bun.serve HTML manifest", () => {
       "app.js": `console.log("App loaded");`,
     });
 
-    using cleanup = { [Symbol.dispose]: () => rmScope(dir) };
+    using cleanup = rmScope(dir);
 
     // Build first
     const buildProc = Bun.spawn({
@@ -220,6 +220,125 @@ describe("Bun.serve HTML manifest", () => {
     await serverProc.exited;
   });
 
+  // The manifest produced by `bun build --target=bun` carries the ETag header
+  // values that are written verbatim to the wire at serve time. RFC 9110
+  // 8.8.3 requires an entity-tag to be a quoted-string.
+  it("bundled manifest emits quoted ETags (RFC 9110)", async () => {
+    const dir = tempDirWithFiles("serve-html-etag", {
+      "build.ts": `
+        const result = await Bun.build({
+          entrypoints: ["./server.ts"],
+          target: "bun",
+          outdir: "./dist",
+        });
+        if (!result.success) {
+          console.error("Build failed");
+          process.exit(1);
+        }
+      `,
+      "server.ts": `
+        import index from "./index.html";
+
+        const server = Bun.serve({
+          port: 0,
+          development: false,
+          routes: {
+            "/": index,
+          },
+        });
+
+        console.log("PORT=" + server.port);
+      `,
+      "index.html": `<!DOCTYPE html>
+<html>
+<head>
+  <title>ETag</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <h1>ETag test</h1>
+  <script src="./app.js"></script>
+</body>
+</html>`,
+      "styles.css": `body { margin: 0; }`,
+      "app.js": `console.log("loaded");`,
+    });
+
+    using cleanup = rmScope(dir);
+
+    await using buildProc = Bun.spawn({
+      cmd: [bunExe(), "run", join(dir, "build.ts")],
+      cwd: dir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+    const [, buildStderr, buildExit] = await Promise.all([
+      buildProc.stdout.text(),
+      buildProc.stderr.text(),
+      buildProc.exited,
+    ]);
+    expect(buildStderr).not.toContain("Build failed");
+    expect(buildExit).toBe(0);
+
+    await using serverProc = Bun.spawn({
+      cmd: [bunExe(), "run", join(dir, "dist", "server.js")],
+      cwd: join(dir, "dist"),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+    // Drain stderr as it arrives so the child can never block on a full pipe.
+    const serverStderr = serverProc.stderr.text();
+
+    let port: number | undefined;
+    const reader = serverProc.stdout.getReader();
+    const decoder = new StringDecoder("utf8");
+    let buffer = "";
+
+    while (!port) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.write(value);
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+
+      for (const line of lines) {
+        const portMatch = line.match(/PORT=(\d+)/);
+        if (portMatch) {
+          port = parseInt(portMatch[1]);
+          break;
+        }
+      }
+    }
+
+    reader.releaseLock();
+    if (port === undefined) {
+      // stdout closed without a PORT= line, so the server already exited and
+      // the stderr stream is complete.
+      throw new Error(`server exited before printing its port:\n${await serverStderr}`);
+    }
+
+    // entity-tag = [ weak ] opaque-tag ; opaque-tag = DQUOTE *etagc DQUOTE
+    const entityTag = /^(W\/)?"[!#-~\x80-\xff]*"$/;
+
+    const htmlRes = await fetch(`http://localhost:${port}/`);
+    expect(htmlRes.status).toBe(200);
+    const htmlEtag = htmlRes.headers.get("etag");
+    expect(htmlEtag).not.toBeNull();
+    expect(htmlEtag).toMatch(entityTag);
+
+    const html = await htmlRes.text();
+    const jsSrc = html.match(/<script[^>]+src="([^"]+)"/)?.[1]!;
+    expect(jsSrc).toBeDefined();
+    const jsRes = await fetch(new URL(jsSrc, `http://localhost:${port}/`));
+    expect(jsRes.status).toBe(200);
+    expect(jsRes.headers.get("etag")).toMatch(entityTag);
+  });
+
   it("validates manifest files exist", async () => {
     const dir = tempDirWithFiles("serve-html-validate", {
       "test.ts": `
@@ -255,7 +374,7 @@ describe("Bun.serve HTML manifest", () => {
       `,
     });
 
-    using cleanup = { [Symbol.dispose]: () => rmScope(dir) };
+    using cleanup = rmScope(dir);
 
     const proc = Bun.spawn({
       cmd: [bunExe(), "run", join(dir, "test.ts")],
@@ -310,7 +429,7 @@ describe("Bun.serve HTML manifest", () => {
       "test.css": `h1 { color: red; }`,
     });
 
-    using cleanup = { [Symbol.dispose]: () => rmScope(dir) };
+    using cleanup = rmScope(dir);
 
     // Build first to generate the manifest
     await using buildProc = Bun.spawn({

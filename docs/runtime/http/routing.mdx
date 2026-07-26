@@ -188,6 +188,7 @@ Bun.serve({
 - **Filesystem reads** on each request - checks file existence and reads content
 - **Built-in 404 handling** - Returns `404 Not Found` if file doesn't exist or becomes inaccessible
 - **Last-Modified support** - Uses file modification time for `If-Modified-Since` headers
+- **If-None-Match** - Returns `304 Not Modified` when the route carries an `ETag` header that matches the client's tag. File routes don't generate an `ETag` automatically, so supply one via response headers. When present, `If-None-Match` takes precedence over `If-Modified-Since`
 - **If-Modified-Since** - Returns `304 Not Modified` when file hasn't changed since client's cached version
 - **Range request support** - Automatically handles partial content requests with `Content-Range` headers
 - **Streaming transfers** - Uses buffered reader with backpressure handling for efficient memory usage

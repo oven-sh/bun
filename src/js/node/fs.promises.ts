@@ -109,6 +109,11 @@ function watch(
     }
     if (!isControl && queue.size() >= maxQueue) {
       if (overflow === "error") {
+        // The consumer's `next()` throws on eventType "error" without closing
+        // the watcher (the pre-existing "error" path assumes the native handle
+        // already tore itself down). Close it here so the overflow error is
+        // terminal, matching node's `finally { handle.close() }`.
+        watcher.close();
         queue.clear();
         queue.push({
           __proto__: null,

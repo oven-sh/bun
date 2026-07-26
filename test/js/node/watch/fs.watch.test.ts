@@ -937,23 +937,33 @@ describe("fs.promises.watch", () => {
   describe("maxQueue / overflow", () => {
     // With maxQueue: 0 the very first event is already an overflow, so these
     // tests do not depend on the platform's batching or coalescing behaviour.
-    test("overflow: 'error' rejects with ERR_FS_WATCH_QUEUE_OVERFLOW", async () => {
+    test("overflow: 'error' rejects with ERR_FS_WATCH_QUEUE_OVERFLOW and closes the watcher", async () => {
       using dir = tempDir("watch-maxqueue-error", {});
+      // No process.exit() on the success path: natural exit after the rejection
+      // proves the native watcher was closed (a leaked watcher would keep the
+      // event loop ref'd forever).
       const fixture = /* js */ `
         const fs = require("node:fs");
         const fsp = require("node:fs/promises");
         const path = require("node:path");
         const dir = process.cwd();
-        const it = fsp.watch(dir, { maxQueue: 0, overflow: "error" })[Symbol.asyncIterator]();
-        const armed = it.next();
         let n = 0;
         const iv = setInterval(() => {
           fs.writeFileSync(path.join(dir, "f" + n++), "");
         }, 20);
-        armed.then(
-          r => { console.log(JSON.stringify({ resolved: r.value && { ...r.value } })); process.exit(1); },
-          e => { console.log(JSON.stringify({ code: e.code, message: e.message })); process.exit(0); },
-        ).finally(() => clearInterval(iv));
+        (async () => {
+          let code = null, message = null, delivered = 0;
+          try {
+            for await (const e of fsp.watch(dir, { maxQueue: 0, overflow: "error" })) {
+              if (++delivered > 3) break;
+            }
+          } catch (e) {
+            code = e.code;
+            message = e.message;
+          }
+          clearInterval(iv);
+          console.log(JSON.stringify({ code, message, delivered }));
+        })();
       `;
       await using proc = Bun.spawn({
         cmd: [bunExe(), "-e", fixture],
@@ -967,6 +977,7 @@ describe("fs.promises.watch", () => {
         stdout: JSON.stringify({
           code: "ERR_FS_WATCH_QUEUE_OVERFLOW",
           message: "fs.watch() queued more than 0 events",
+          delivered: 0,
         }),
         stderr: "",
       });

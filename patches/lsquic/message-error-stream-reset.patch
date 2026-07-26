@@ -31,7 +31,7 @@
  void
 --- a/src/liblsquic/lsquic_stream.c
 +++ b/src/liblsquic/lsquic_stream.c
-@@ -1495,6 +1495,72 @@
+@@ -1495,6 +1495,68 @@
  }
  
  
@@ -52,10 +52,6 @@
 +    stream->error_code = error_code;
 +    stream->ss_error_code = error_code;
 +    stream->sm_bflags &= ~SMBF_VERIFY_CL;
-+    /* qdh_hsi_process_wrapper calls us from inside lsqpack's dhi_process_header
-+     * callback; stream_reset() would otherwise re-enter lsqpack via
-+     * lsquic_qdh_cancel_stream and free the read_ctx it still holds. */
-+    stream->sm_qflags &= ~SMQF_QPACK_DEC;
 +    if (!(stream->stream_flags & (STREAM_FIN_RECVD|STREAM_RST_RECVD))
 +                            && !(stream->stream_flags & STREAM_SS_SENT)
 +                            && !(stream->sm_qflags & SMQF_SEND_STOP_SENDING))
@@ -104,7 +100,7 @@
  static void
  verify_cl_on_fin (struct lsquic_stream *stream)
  {
-@@ -1506,6 +1572,11 @@
+@@ -1506,6 +1568,11 @@
       */
      if (stream->sm_data_in != 0 && stream->sm_cont_len != stream->sm_data_in)
      {
@@ -116,7 +112,7 @@
          lconn = stream->conn_pub->lconn;
          lconn->cn_if->ci_abort_error(lconn, 1, HEC_MESSAGE_ERROR,
              "number of bytes in DATA frames of stream %"PRIu64" is %llu, "
-@@ -4977,9 +5048,14 @@
+@@ -4977,9 +5044,14 @@
      stream->sm_data_in += filter->hqfi_left;
      if (stream->sm_data_in > stream->sm_cont_len)
      {
@@ -132,7 +128,7 @@
          lconn->cn_if->ci_abort_error(lconn, 1, HEC_MESSAGE_ERROR,
              "number of bytes in DATA frames of stream %"PRIu64" exceeds "
              "content-length limit of %llu", stream->id, stream->sm_cont_len);
-@@ -5139,6 +5215,20 @@
+@@ -5139,6 +5211,20 @@
                      goto end;
                  default:
                      assert(LQRHS_ERROR == rhs);
@@ -155,7 +151,7 @@
                      LSQ_INFO("error processing header block");
 --- a/src/liblsquic/lsquic_qdec_hdl.c
 +++ b/src/liblsquic/lsquic_qdec_hdl.c
-@@ -551,18 +551,28 @@
+@@ -551,18 +551,34 @@
  
  /* Intercept header errors so that upper-layer errors do not get
   * misinterpreted as QPACK errors.
@@ -181,7 +177,13 @@
 -            "error processing headers");
 +    {
 +        if (qdh->qdh_enpub->enp_settings.es_message_error_is_stream)
++        {
++            /* We are inside lsqpack's dhi_process_header callback; let
++             * stream_reset() skip lsquic_qdh_cancel_stream so it does not
++             * free the read_ctx qdec_header_process still holds. */
++            stream->sm_qflags &= ~SMQF_QPACK_DEC;
 +            lsquic_stream_msg_error(stream, HEC_MESSAGE_ERROR);
++        }
 +        else
 +            qdh->qdh_conn->cn_if->ci_abort_error(qdh->qdh_conn, 1,
 +                HEC_MESSAGE_ERROR, "error processing headers");
@@ -189,7 +191,7 @@
  
      return retval;
  }
-@@ -599,7 +609,7 @@
+@@ -599,7 +615,7 @@
      else if ((qdh->qdh_flags & QDH_SAVE_UA) && !qdh->qdh_ua)
          qdh_maybe_set_user_agent(qdh, xhdr, &qdh->qdh_ua);
  
@@ -198,7 +200,7 @@
  }
  
  
-@@ -658,7 +668,7 @@
+@@ -658,7 +674,7 @@
              uh->uh_exclusive = -1;
              if (qdh->qdh_enpub->enp_hsi_if == lsquic_http1x_if)
                  uh->uh_flags    |= UH_H1H;
@@ -207,7 +209,7 @@
              {
                  LSQ_DEBUG("finishing hset failed");
                  free(uh);
-@@ -696,10 +706,19 @@
+@@ -696,10 +712,19 @@
      {
          qdh_maybe_destroy_hblock_ctx(qdh, stream);
          qerr = lsqpack_dec_get_err_info(&qdh->qdh_decoder);

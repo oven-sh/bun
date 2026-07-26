@@ -167,8 +167,7 @@ impl<'a> HTMLProcessorHandler for HTMLLoader<'a> {
             Loader::File
         };
 
-        // Re-append the original `?query`/`#fragment` (e.g. `sprite.svg#home`)
-        // that the resolver stripped to locate the file. Matches `css::Printer`.
+        // `?query`/`#fragment` the resolver stripped to locate the file (e.g. `sprite.svg#home`).
         let suffix: &[u8] = if kind == ImportKind::Url {
             match strings::index_of_any(path, b"?#") {
                 Some(i) => &path[i..],

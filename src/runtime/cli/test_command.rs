@@ -949,30 +949,17 @@ fn drain_for_late_errors(vm: &mut VirtualMachine) {
         if Timespec::now(TimespecMockMode::ForceRealTime).greater(&deadline) {
             break;
         }
-        if has_queued {
-            continue;
-        }
-        // `auto_tick_active()` parks until the soonest heap timer. Internal
-        // runtime timers (GC, WTFTimer) may sit at the heap min, so walk for
-        // the soonest user `TimeoutObject` and only park while one is due
-        // within the deadline; otherwise a far-future user timer cannot
-        // make `auto_tick_active()` park past it.
+        // Only park while a user `TimeoutObject` is due within the deadline;
+        // the heap min may be an internal runtime timer, but the min-heap
+        // invariant then bounds the park to that `TimeoutObject`'s due time.
+        // A self-rescheduling setImmediate alone (no near-term user timer)
+        // breaks here instead of busy-spinning.
         if timers.is_null() {
             break;
         }
-        // SAFETY: live per-thread `All`; single JS thread; null-checked.
-        let next_heap_min = unsafe { (*timers).timers.peek() };
         // SAFETY: live per-thread `All`; walk reads only heap-node fields.
-        let has_js_timer_due = unsafe { (*timers).timers.any_js_timer_due_by(&deadline) };
-        match next_heap_min {
-            None => break,
-            Some(min) => {
-                // SAFETY: `peek()` returns a live heap node.
-                let heap_min_past = unsafe { (*min).next }.greater(&deadline);
-                if heap_min_past || !has_js_timer_due {
-                    break;
-                }
-            }
+        if !unsafe { (*timers).timers.any_js_timer_due_by(&deadline) } {
+            break;
         }
         vm.auto_tick_active();
     }

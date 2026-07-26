@@ -865,6 +865,46 @@ test("only test", () => {
     },
   );
 
+  test.concurrent("does not busy-spin on a self-rescheduling setImmediate", async () => {
+    const { stderr, exitCode, signalCode } = await runFixture({
+      "spin.test.js": `
+import { test, expect } from "bun:test";
+test("only test", () => {
+  setImmediate(function f() { setImmediate(f); });
+  expect(1).toBe(1);
+});
+`,
+    });
+
+    expect(stderr).toContain("1 pass");
+    expect(stderr).toContain("0 fail");
+    expect(signalCode).toBeNull();
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent(
+    "surfaces a late setTimeout throw alongside a self-rescheduling setImmediate",
+    async () => {
+      const { stderr, exitCode, signalCode } = await runFixture({
+        "spin-throw.test.js": `
+import { test, expect } from "bun:test";
+test("only test", () => {
+  setImmediate(function f() { setImmediate(f); });
+  setTimeout(() => { throw new Error("LATE-THROW"); }, 50);
+  expect(1).toBe(1);
+});
+`,
+      });
+
+      expect(stderr).toContain("LATE-THROW");
+      expect(stderr).toContain("Unhandled error between tests");
+      expect(stderr).toContain("1 pass");
+      expect(stderr).toContain("1 error");
+      expect(signalCode).toBeNull();
+      expect(exitCode).toBe(1);
+    },
+  );
+
   test.concurrent("does not hang when the last test leaks a ref'd Bun.serve()", async () => {
     const { stderr, exitCode, signalCode } = await runFixture({
       "serve.test.js": `

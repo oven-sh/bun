@@ -1014,7 +1014,9 @@ body {
 
   // <link rel="prefetch">, <link rel="modulepreload"> and <link rel="preload"> with
   // as={script,fetch,track,document,embed,object} must not ship dangling source-path
-  // hrefs. Assets are emitted + hashed; JS preloads are folded into the entry chunk.
+  // hrefs. Hints are fetch-only: targets are emitted as raw hashed assets (never
+  // bundled/executed), and when the target was already bundled via <script>/<link
+  // rel=stylesheet> the hint is dropped.
   itBundled("html/link-preload-prefetch", {
     outdir: "out/",
     files: {
@@ -1027,6 +1029,7 @@ body {
     <link rel="preload" as="script" href="./preloaded.js">
     <link rel="preload" as="fetch" href="./data.json" crossorigin>
     <link rel="preload" as="track" href="./captions.vtt">
+    <link rel="prefetch" href="./lazy.js">
   </head>
   <body>
     <img src="./hero.png">
@@ -1034,7 +1037,8 @@ body {
   </body>
 </html>`,
       "/mod.js": `console.log("mod");`,
-      "/preloaded.js": `console.log("preloaded");`,
+      "/preloaded.js": `globalThis.PRELOADED_RAN = true;`,
+      "/lazy.js": `globalThis.LAZY_RAN = true;`,
       "/hero.png": "PNG",
       "/data.json": `{"k":1}`,
       "/captions.vtt": "WEBVTT",
@@ -1050,6 +1054,7 @@ body {
       expect(html).not.toContain('href="./preloaded.js"');
       expect(html).not.toContain('href="./data.json"');
       expect(html).not.toContain('href="./captions.vtt"');
+      expect(html).not.toContain('href="./lazy.js"');
 
       // prefetch: asset is copied + hashed and the href is rewritten.
       expect(html).toMatch(/<link rel="prefetch" href="[^"]*hero-[a-z0-9]+\.png">/);
@@ -1058,28 +1063,64 @@ body {
       expect(html).toMatch(/<link rel="preload" as="fetch" href="[^"]*data-[a-z0-9]+\.json" crossorigin>/);
       expect(html).toMatch(/<link rel="preload" as="track" href="[^"]*captions-[a-z0-9]+\.vtt">/);
 
-      // modulepreload / preload as=script: the referenced module is bundled into the
-      // entry chunk, so the hint tag is dropped (there is no separate file to preload).
+      // modulepreload of ./mod.js: the module is also pulled in via <script src>, so
+      // it is bundled and the hint is dropped (there is no separate file to preload).
       expect(html).not.toMatch(/rel="modulepreload"/);
-      expect(html).not.toMatch(/as="script"/);
+
+      // preload as=script / prefetch of JS not otherwise referenced: emitted as a
+      // separate hashed file and the href is rewritten. The browser fetches but
+      // never executes, matching the source-page semantics.
+      expect(html).toMatch(/<link rel="preload" as="script" href="[^"]*preloaded-[a-z0-9]+\.js">/);
+      expect(html).toMatch(/<link rel="prefetch" href="[^"]*lazy-[a-z0-9]+\.js">/);
 
       // The emitted files exist and carry the original bytes.
       const hero = html.match(/href="(?:\.\/|\/)?(hero-[a-z0-9]+\.png)"/);
       const data = html.match(/href="(?:\.\/|\/)?(data-[a-z0-9]+\.json)"/);
       const vtt = html.match(/href="(?:\.\/|\/)?(captions-[a-z0-9]+\.vtt)"/);
+      const preloaded = html.match(/href="(?:\.\/|\/)?(preloaded-[a-z0-9]+\.js)"/);
+      const lazy = html.match(/href="(?:\.\/|\/)?(lazy-[a-z0-9]+\.js)"/);
       expect(hero).not.toBeNull();
       expect(data).not.toBeNull();
       expect(vtt).not.toBeNull();
+      expect(preloaded).not.toBeNull();
+      expect(lazy).not.toBeNull();
       api.expectFile("out/" + hero![1]).toBe("PNG");
       api.expectFile("out/" + data![1]).toBe(`{"k":1}`);
       api.expectFile("out/" + vtt![1]).toBe("WEBVTT");
+      api.expectFile("out/" + preloaded![1]).toBe(`globalThis.PRELOADED_RAN = true;`);
+      api.expectFile("out/" + lazy![1]).toBe(`globalThis.LAZY_RAN = true;`);
 
-      // Both preloaded scripts end up in the single entry JS chunk.
+      // The entry JS chunk contains only mod.js. Resource-hint JS is never
+      // bundled/executed: PRELOADED_RAN / LAZY_RAN must not be in the chunk.
       const js = html.match(/src="(?:\.\/|\/)?(index-[a-z0-9]+\.js)"/);
       expect(js).not.toBeNull();
       const jsContent = api.readFile("out/" + js![1]);
       expect(jsContent).toContain('"mod"');
-      expect(jsContent).toContain('"preloaded"');
+      expect(jsContent).not.toContain("PRELOADED_RAN");
+      expect(jsContent).not.toContain("LAZY_RAN");
+    },
+  });
+
+  // Resource-hint hrefs that do not resolve to a local file (navigation routes)
+  // pass through untouched instead of failing the build.
+  itBundled("html/link-hint-unresolved", {
+    outdir: "out/",
+    files: {
+      "/index.html": `
+<!DOCTYPE html>
+<html>
+  <head>
+    <link rel="prefetch" href="/dashboard">
+    <link rel="modulepreload" href="https://cdn.example.com/lib.js">
+  </head>
+  <body></body>
+</html>`,
+    },
+    entryPoints: ["/index.html"],
+    onAfterBundle(api) {
+      const html = api.readFile("out/index.html");
+      expect(html).toContain('<link rel="prefetch" href="/dashboard">');
+      expect(html).toContain('<link rel="modulepreload" href="https://cdn.example.com/lib.js">');
     },
   });
 });

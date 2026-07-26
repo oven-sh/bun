@@ -3,13 +3,13 @@ use crate::mal_prelude::*;
 use bstr::BStr;
 
 use bun_ast::Log;
-use bun_ast::{ImportKind, ImportRecord, ImportRecordFlags};
+use bun_ast::{ImportRecord, ImportRecordFlags};
 use bun_core::strings;
 use bun_threading::thread_pool::Task as ThreadPoolLibTask;
 use lol_html::HandlerResult;
 use lol_html::html_content::{ContentType, Element, EndTag};
 
-use crate::HTMLScanner::{HTMLProcessor, HTMLProcessorHandler};
+use crate::HTMLScanner::{HTMLProcessor, HTMLProcessorHandler, TagHandler};
 use crate::linker_context_mod::{GenerateChunkCtx, LinkerContext, debug};
 use crate::options::Loader;
 use crate::{Chunk, CompileResult};
@@ -118,13 +118,8 @@ impl<'a> HTMLProcessorHandler for HTMLLoader<'a> {
         ));
     }
 
-    fn on_tag(
-        &mut self,
-        element: &mut Element<'_, '_>,
-        _path: &[u8],
-        url_attribute: &[u8],
-        _kind: ImportKind,
-    ) {
+    fn on_tag(&mut self, element: &mut Element<'_, '_>, _path: &[u8], tag: TagHandler) {
+        let url_attribute = tag.url_attribute.as_bytes();
         if self.current_import_record_index as usize >= self.import_records.len() {
             bun_core::Output::panic(format_args!(
                 "Assertion failure in HTMLLoader.onTag: current_import_record_index ({}) >= import_records.len ({})",
@@ -162,9 +157,16 @@ impl<'a> HTMLProcessorHandler for HTMLLoader<'a> {
             return;
         }
 
+        let is_resource_hint = import_record
+            .flags
+            .contains(ImportRecordFlags::WAS_HTML_RESOURCE_HINT);
+
         if self.linker.dev_server.is_some() {
             if !unique_key_for_additional_files.is_empty() {
                 set_attribute(element, url_attribute, unique_key_for_additional_files);
+            } else if is_resource_hint && import_record.path.is_disabled {
+                // An unresolved prefetch/modulepreload href (e.g. a navigation
+                // route) passes through untouched.
             } else if import_record.path.is_disabled
                 || loader.is_javascript_like()
                 || loader.is_css()

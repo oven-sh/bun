@@ -70,6 +70,13 @@ bitflags::bitflags! {
         /// calling the "__reExport()" helper function
         const CALLS_RUNTIME_RE_EXPORT_FN = 1 << 6;
 
+        /// This record came from an HTML resource hint (`<link rel="prefetch">`,
+        /// `<link rel="modulepreload">`, `<link rel="preload" as="script">`).
+        /// Hints are fetch-only: the referenced file must be emitted as a raw
+        /// asset (never bundled/executed) and an unresolved href must not fail
+        /// the build.
+        const WAS_HTML_RESOURCE_HINT = 1 << 7;
+
         /// If true, this was originally written as a bare "import 'file'" statement
         const WAS_ORIGINALLY_BARE_IMPORT = 1 << 8;
 

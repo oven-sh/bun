@@ -106,6 +106,11 @@ pub struct ParseTask {
     pub stage: ParseTaskStage,
 
     pub tree_shaking: bool,
+    /// Set while the only import record that has enqueued this path is an
+    /// HTML resource hint (prefetch/modulepreload/preload-as-script). If a
+    /// non-hint record for the same path is seen later, it restores the
+    /// path's native loader and clears this flag.
+    pub is_html_resource_hint: bool,
     pub known_target: options::Target,
     pub module_type: options::ModuleType,
     pub emit_decorator_metadata: bool,
@@ -281,6 +286,7 @@ impl ParseTask {
             },
             stage: ParseTaskStage::NeedsSourceCode,
             tree_shaking: false,
+            is_html_resource_hint: false,
             is_entry_point: false,
         }
     }
@@ -315,6 +321,7 @@ impl Default for ParseTask {
             },
             stage: ParseTaskStage::NeedsSourceCode,
             tree_shaking: false,
+            is_html_resource_hint: false,
             known_target: options::Target::default(),
             module_type: options::ModuleType::Unknown,
             emit_decorator_metadata: false,
@@ -553,6 +560,7 @@ pub mod parse_worker {
             },
             stage: ParseTaskStage::NeedsSourceCode,
             tree_shaking: false,
+            is_html_resource_hint: false,
             module_type: options::ModuleType::Unknown,
             emit_decorator_metadata: false,
             experimental_decorators: false,

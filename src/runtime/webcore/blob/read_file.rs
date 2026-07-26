@@ -169,13 +169,7 @@ pub type ReadFileTask = bun_jsc::work_task::WorkTask<ReadFile>;
 
 #[cfg(not(windows))]
 thread_local! {
-    /// Per-JS-thread map of fd-backed `Store` to its in-flight `ReadFile`, so a
-    /// second concurrent `.arrayBuffer()`/`.text()` on the same store attaches
-    /// to the active reader instead of racing `read()`/`epoll_ctl(ADD)` on the
-    /// shared fd. Thread-local because a `Store` can be reached from multiple
-    /// JS threads (via `ObjectURLRegistry`); insert/lookup/remove all happen on
-    /// the same event loop (`WorkTask::then` runs where the task was created),
-    /// so the `*mut ReadFile` is live while present here.
+    /// Fd-backed `Store` → in-flight `ReadFile`; see `try_coalesce_fd_read`.
     static IN_FLIGHT_FD_READERS: core::cell::RefCell<
         bun_collections::HashMap<*const Store, *mut ReadFile>,
     > = core::cell::RefCell::new(bun_collections::HashMap::new());
@@ -423,7 +417,7 @@ impl ReadFile {
 
     pub const IO_TAG: io::Tag = io::Tag::ReadFile;
 
-    /// JS-thread-only. See `IN_FLIGHT_FD_READERS`.
+    /// JS-thread-only. Attach to this store's in-flight reader instead of racing the fd.
     #[cfg(not(windows))]
     pub fn try_coalesce_fd_read(
         store: &StoreRef,

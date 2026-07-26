@@ -128,7 +128,7 @@ async function buildNumberForCommit(sha: string): Promise<number | undefined> {
 async function sizesFromBuild(n: number, want: string[]): Promise<{ sizes: Sizes; release?: boolean } | undefined> {
   const res = await fetch(`${bkWeb}/${org}/${pipeline}/builds/${n}.json`);
   if (!res.ok) return;
-  const { id, message } = (await res.json()) as { id: string; message?: string };
+  const { id, message, source } = (await res.json()) as { id: string; message?: string; source?: string };
   // Fast path: the binary-size step on this build ran and uploaded a complete
   // snapshot (with the canary/release flag).
   const dir = "binary-size-tmp";
@@ -142,19 +142,27 @@ async function sizesFromBuild(n: number, want: string[]): Promise<{ sizes: Sizes
   // timed out, which Buildkite does not treat as a "failure" that
   // allow_dependency_failure recovers from). Each *-build-bun job that DID
   // finish still set its own binary-size:<triplet> meta-data; read those
-  // directly. Recover the release flag from the commit message (same regex as
-  // .buildkite/ci.mjs) so a [release] baseline still gets filtered by the
-  // like-for-like check below; the meta-data fallback itself is only used for
-  // canary comparisons because release baselines are rare and artifact-backed.
+  // directly.
+  //
+  // The meta-data itself carries no canary/release distinction, so this
+  // fallback is restricted to builds we are confident are canary:
+  //   - the current build is canary (the normal PR path); and
+  //   - the baseline build is webhook-triggered and its commit message carries
+  //     no [release] tag (ci.mjs's commit-message signal). Real Bun releases
+  //     are manual (source:"ui") triggers with RELEASE=1 in the environment;
+  //     the commit message alone does not identify them.
+  // Builds that fail either check return undefined, so the caller claims the
+  // anchor without sizes and everything older is treated as stale (never a
+  // false positive).
   if (isRelease) return;
-  const release = /\[(release|build release|release build)\]/i.test(message ?? "");
+  if ((source && source !== "webhook") || /\[(release|build release|release build)\]/i.test(message ?? "")) return;
   const sizes: Sizes = {};
   for (const triplet of want) {
     const v = agent(["meta-data", "get", `binary-size:${triplet}`, "--build", id], { quiet: true });
     const bytes = v ? parseInt(v, 10) : NaN;
     if (Number.isFinite(bytes)) sizes[triplet] = bytes;
   }
-  return Object.keys(sizes).length > 0 ? { sizes, release } : undefined;
+  return Object.keys(sizes).length > 0 ? { sizes } : undefined;
 }
 
 // Canary: walk main commits starting at this PR's merge-base (so the delta is

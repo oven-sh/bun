@@ -149,13 +149,14 @@ fn clone_macro_map(src: &MacroMap) -> MacroMap {
 /// [`StringOrBuffer::from_js`] with 16-bit strings encoded as WTF-8 (keeps unpaired surrogates).
 fn source_from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<StringOrBuffer>> {
     if value.is_string() {
-        let str = OwnedString::new(BunString::from_js(value, global)?);
-        if str.is_utf16() {
+        let mut str = BunString::from_js(value, global)?;
+        return Ok(Some(if str.is_utf16() {
             let bytes = bun_core::strings::to_wtf8_alloc(str.utf16());
-            return Ok(Some(StringOrBuffer::EncodedSlice(
-                bun_core::ZigStringSlice::init_owned(bytes),
-            )));
-        }
+            str.deref();
+            StringOrBuffer::EncodedSlice(bun_core::ZigStringSlice::init_owned(bytes))
+        } else {
+            StringOrBuffer::String(str.to_slice())
+        }));
     }
     StringOrBuffer::from_js(global, value)
 }

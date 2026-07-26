@@ -332,11 +332,14 @@ function processChunkSync(self, chunk, flushFlag) {
   });
 
   while (true) {
+    // The native binding's in_len is a u32; a single chunk at
+    // buffer.constants.MAX_LENGTH (2^32) must be fed in u32-sized windows.
+    const inLen = availInBefore > 0xffff_ffff ? 0xffff_ffff : availInBefore;
     handle.writeSync(
       flushFlag,
       chunk, // in
       inOff, // in_off
-      availInBefore, // in_len
+      inLen, // in_len
       buffer, // out
       offset, // out_off
       availOutBefore, // out_len
@@ -353,7 +356,7 @@ function processChunkSync(self, chunk, flushFlag) {
     availOutAfter = state[0];
     availInAfter = state[1];
 
-    const inDelta = availInBefore - availInAfter;
+    const inDelta = inLen - availInAfter;
     inputRead += inDelta;
 
     const have = availOutBefore - availOutAfter;
@@ -379,13 +382,13 @@ function processChunkSync(self, chunk, flushFlag) {
       buffer = Buffer.allocUnsafe(chunkSize);
     }
 
-    if (availOutAfter === 0) {
+    if (availOutAfter === 0 || inLen < availInBefore) {
       // Not actually done. Need to reprocess.
       // Also, update the availInBefore to the availInAfter value,
       // so that if we have to hit it a third (fourth, etc.) time,
       // it'll have the correct byte counts.
       inOff += inDelta;
-      availInBefore = availInAfter;
+      availInBefore -= inDelta;
     } else {
       break;
     }
@@ -414,7 +417,7 @@ function processChunk(self, chunk, flushFlag, cb) {
     flushFlag, // flush
     chunk, // in
     0, // in_off
-    handle.availInBefore, // in_len
+    handle.availInBefore > 0xffff_ffff ? 0xffff_ffff : handle.availInBefore, // in_len
     self._outBuffer, // out
     self._outOffset, // out_off
     handle.availOutBefore, // out_len
@@ -438,7 +441,8 @@ function processCallback() {
   const availOutAfter = state[0];
   const availInAfter = state[1];
 
-  const inDelta = handle.availInBefore - availInAfter;
+  const inLen = handle.availInBefore > 0xffff_ffff ? 0xffff_ffff : handle.availInBefore;
+  const inDelta = inLen - availInAfter;
   self.bytesWritten += inDelta;
 
   const have = handle.availOutBefore - availOutAfter;
@@ -465,20 +469,21 @@ function processCallback() {
     self._outBuffer = Buffer.allocUnsafe(chunkSize);
   }
 
-  if (availOutAfter === 0) {
+  if (availOutAfter === 0 || inLen < handle.availInBefore) {
     // Not actually done. Need to reprocess.
     // Also, update the availInBefore to the availInAfter value,
     // so that if we have to hit it a third (fourth, etc.) time,
     // it'll have the correct byte counts.
     handle.inOff += inDelta;
-    handle.availInBefore = availInAfter;
+    handle.availInBefore -= inDelta;
 
+    const nextInLen = handle.availInBefore > 0xffff_ffff ? 0xffff_ffff : handle.availInBefore;
     if (!streamBufferIsFull) {
       this.write(
         handle.flushFlag, // flush
         this.buffer, // in
         handle.inOff, // in_off
-        handle.availInBefore, // in_len
+        nextInLen, // in_len
         self._outBuffer, // out
         self._outOffset, // out_off
         self._chunkSize, // out_len
@@ -491,7 +496,7 @@ function processCallback() {
           handle.flushFlag, // flush
           this.buffer, // in
           handle.inOff, // in_off
-          handle.availInBefore, // in_len
+          nextInLen, // in_len
           self._outBuffer, // out
           self._outOffset, // out_off
           self._chunkSize, // out_len

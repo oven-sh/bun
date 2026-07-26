@@ -132,13 +132,8 @@ public:
     size_t heapLimitBytes() const { return m_options.resourceLimits.heapLimitBytes(); }
     void setTerminatedDueToOOM() { m_terminatedDueToOOM.store(true); }
     bool terminatedDueToOOM() const { return m_terminatedDueToOOM.load(); }
-    // Registers the resourceLimits heap-limit observer on the worker VM's
-    // Heap (no-op without a limit). Called from start_vm(); never removed:
-    // the Heap dies in WebWorker__teardownJSCVM, before ~Worker runs.
+    // See WorkerHeapLimitObserver in Worker.cpp for the lifecycle/threading contract.
     void installHeapLimitObserver(JSC::VM&, void* nativeWorker);
-    // WebWorker__teardownJSCVM disarms before its final Full collection,
-    // which still sees the whole global graph (conservatively rooted from
-    // shutdown()'s stack) and must not relabel a finished worker as an OOM.
     void disarmHeapLimitObserver() { m_heapLimitDisarmed.store(true, std::memory_order_release); }
     bool heapLimitObserverDisarmed() const { return m_heapLimitDisarmed.load(std::memory_order_acquire); }
 
@@ -207,12 +202,8 @@ private:
     std::atomic<State> m_state { State::Pending };
     std::atomic<bool> m_terminateRequested { false };
     std::atomic<bool> m_terminatedDueToOOM { false };
-    // See disarmHeapLimitObserver().
     std::atomic<bool> m_heapLimitDisarmed { false };
-
-    // resourceLimits heap-cap observer, registered on the worker thread and
-    // destroyed by ~Worker (parent thread). Never removeObserver'd: the Heap
-    // and its observer list die in WebWorker__teardownJSCVM, before ~Worker.
+    // SAFETY: never removeObserver'd; the Heap (and its observer list) dies in WebWorker__teardownJSCVM, before ~Worker destroys this.
     std::unique_ptr<WorkerHeapLimitObserver> m_heapLimitObserver;
 
     // Stable for the process lifetime; used with ScriptExecutionContext::

@@ -63,11 +63,6 @@ pub struct CachedVolumeId {
 }
 
 impl CachedVolumeId {
-    #[cfg(windows)]
-    fn is_initialized(&self) -> bool {
-        self.state.get().is_some()
-    }
-
     #[doc(hidden)]
     pub fn get_or_init(&self, probe: impl FnOnce() -> Option<u64>) -> Option<u64> {
         *self.state.get_or_init(probe)
@@ -137,6 +132,8 @@ pub struct PackageInstaller<'a> {
 
     #[cfg(windows)]
     pub(crate) package_cache_volume: CachedVolumeId,
+    #[cfg(windows)]
+    pub(crate) cross_volume_fallback_logged: core::cell::Cell<bool>,
 
     // fields used for running lifecycle scripts when it's safe
     //
@@ -1219,20 +1216,15 @@ impl<'a> PackageInstaller<'a> {
             let cache_volume = self.package_cache_volume.get(installer.cache_dir);
             let destination_volume_cache =
                 &self.trees[self.current_tree_id as usize].destination_volume;
-            // Check before get(): it initializes the cache even when fstat returns no volume ID.
-            let destination_volume_was_unchecked = !destination_volume_cache.is_initialized();
             let destination_volume = destination_volume_cache.get(destination_dir.fd());
 
             let use_copyfile = hardlink_fallback_decision(cache_volume, destination_volume);
             if use_copyfile
-                && destination_volume_was_unchecked
-                && let (Some(cache), Some(destination)) = (cache_volume, destination_volume)
+                && self.manager().options.log_level.is_verbose()
+                && !self.cross_volume_fallback_logged.replace(true)
             {
-                bun_output::scoped_log!(
-                    PackageInstaller,
-                    "Package cache volume ({}) differs from destination volume ({}); using copyfile instead of hardlink",
-                    cache,
-                    destination,
+                bun_core::pretty_errorln!(
+                    "Package cache and destination are on different volumes; using copyfile instead of hardlink"
                 );
             }
 

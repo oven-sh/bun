@@ -421,6 +421,8 @@ pub(crate) fn install_hoisted_packages(
                 pending_lifecycle_scripts: Vec::new(),
                 #[cfg(windows)]
                 package_cache_volume: Default::default(),
+                #[cfg(windows)]
+                cross_volume_fallback_logged: Default::default(),
             };
         };
 

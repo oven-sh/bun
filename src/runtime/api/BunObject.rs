@@ -396,7 +396,6 @@ pub(crate) fn shell_escape(
     callframe: &CallFrame,
 ) -> JsResult<JSValue> {
     use bun_jsc::StringJsc as _;
-    use bun_simdutf_sys::simdutf;
     let [jsval] = callframe.arguments_as_array::<1>();
     if callframe.arguments_count() < 1 {
         return Err(global_this.throw(format_args!("shell escape expected at least 1 argument")));
@@ -408,23 +407,7 @@ pub(crate) fn shell_escape(
     }
     let bunstr = scopeguard::guard(bunstr, |s| s.deref());
 
-    // Same validation as the interpolation path (ShellSrcBuilder::append_js_value_str).
-    if bunstr.index_of_ascii_char(0).is_some() {
-        return Err(global_this
-            .err(
-                jsc::ErrCode::INVALID_ARG_VALUE,
-                format_args!(
-                    "The shell argument must be a string without null bytes. Received \"{}\"",
-                    bunstr.to_zig_string()
-                ),
-            )
-            .throw());
-    }
-    let invalid = (bunstr.is_utf16() && !simdutf::validate::utf16le(bunstr.utf16()))
-        || (bunstr.is_utf8() && !simdutf::validate::utf8(bunstr.byte_slice()));
-    if invalid {
-        return Err(global_this.throw(format_args!("Shell script string contains invalid UTF-16")));
-    }
+    crate::shell::shell_body::validate_shell_arg_bunstr(global_this, *bunstr)?;
 
     let mut outbuf: Vec<u8> = Vec::new();
 

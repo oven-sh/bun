@@ -552,6 +552,32 @@ pub fn handle_template_value(
     Ok(())
 }
 
+/// Reject a shell argument string the parser would refuse: NUL bytes (which
+/// truncate C strings passed to exec) and lone surrogates / invalid UTF-8.
+/// Shared by template interpolation and `$.escape()` so the two cannot drift.
+pub(crate) fn validate_shell_arg_bunstr(
+    global: &JSGlobalObject,
+    bunstr: BunString,
+) -> JsResult<()> {
+    if bunstr.index_of_ascii_char(0).is_some() {
+        return Err(global
+            .err(
+                jsc::ErrorCode::INVALID_ARG_VALUE,
+                format_args!(
+                    "The shell argument must be a string without null bytes. Received \"{}\"",
+                    bunstr.to_zig_string()
+                ),
+            )
+            .throw());
+    }
+    let invalid = (bunstr.is_utf16() && !simdutf::validate::utf16le(bunstr.utf16()))
+        || (bunstr.is_utf8() && !simdutf::validate::utf8(bunstr.byte_slice()));
+    if invalid {
+        return Err(global.throw(format_args!("Shell script string contains invalid UTF-16")));
+    }
+    Ok(())
+}
+
 // ───────────────────────────── ShellSrcBuilder ─────────────────────────────
 
 pub struct ShellSrcBuilder<'a> {
@@ -580,21 +606,7 @@ impl<'a> ShellSrcBuilder<'a> {
         jsval: JSValue,
     ) -> JsResult<bool> {
         let bunstr = OwnedString::new(jsval.to_bun_string(self.global_this)?);
-
-        // Check for null bytes in shell argument (security: prevent null byte injection)
-        if bunstr.index_of_ascii_char(0).is_some() {
-            return Err(self
-                .global_this
-                .err(
-                    jsc::ErrorCode::INVALID_ARG_VALUE,
-                    format_args!(
-                        "The shell argument must be a string without null bytes. Received \"{}\"",
-                        bunstr.to_zig_string()
-                    ),
-                )
-                .throw());
-        }
-
+        validate_shell_arg_bunstr(self.global_this, bunstr.get())?;
         Ok(self.append_bun_str::<ALLOW_ESCAPE>(bunstr.get())?)
     }
 

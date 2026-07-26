@@ -29,11 +29,41 @@ function waitClose(client: Socket) {
 }
 
 describe.each(["closeIdleConnections", "closeAllConnections"] as const)("%s", method => {
+  test("does not touch a socket handed to the 'upgrade' listener", async () => {
+    const server = createServer();
+    let upgraded!: Socket;
+    server.on("upgrade", (req, sock) => {
+      upgraded = sock;
+      sock.write("HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: x\r\n\r\n");
+    });
+    try {
+      const port = await listen(server);
+      const { client } = await openConnection(server, port);
+      const gotResponse = once(client, "data");
+      client.write("GET / HTTP/1.1\r\nHost: x\r\nConnection: Upgrade\r\nUpgrade: x\r\n\r\n");
+      await gotResponse;
+
+      // Node.js's ConnectionsList is parser-keyed; freeParser() removes the
+      // entry before emitting 'upgrade', so neither call reaches this socket.
+      server[method]();
+      expect(upgraded.destroyed).toBe(false);
+
+      upgraded.destroy();
+      client.destroy();
+      await new Promise<void>(r => server.close(() => r()));
+    } finally {
+      server.closeAllConnections();
+      if (server.listening) server.close();
+    }
+  });
+
   test("reaps a connection that went idle after close()", async () => {
     let finishResponse!: () => void;
     const responseGate = new Promise<void>(r => (finishResponse = r));
+    const { promise: requestReceived, resolve: onRequest } = Promise.withResolvers<void>();
     const { promise: responded, resolve: onResponded } = Promise.withResolvers<void>();
     const server = createServer(async (req, res) => {
+      onRequest();
       await responseGate;
       res.on("finish", () => onResponded());
       res.end("ok");
@@ -44,10 +74,12 @@ describe.each(["closeIdleConnections", "closeAllConnections"] as const)("%s", me
       const { client, gotConnection } = await openConnection(server, port);
       const clientClosed = waitClose(client);
 
-      // Request is in flight when close() runs, so close() on its own leaves
-      // this connection open.
+      // Request is in flight (handler running) when close() runs, so close()
+      // on its own leaves this connection open.
       client.write("GET / HTTP/1.1\r\nHost: x\r\nConnection: keep-alive\r\n\r\n");
       const [serverSocket] = await gotConnection;
+      await requestReceived;
+      await new Promise(r => setImmediate(r));
       server.close();
 
       // Let the response finish: the connection is now idle but still open
@@ -69,6 +101,49 @@ describe.each(["closeIdleConnections", "closeAllConnections"] as const)("%s", me
 });
 
 describe("closeIdleConnections", () => {
+  test("skips connections with an incomplete request head", async () => {
+    const server = createServer((req, res) => res.end("ok"));
+    server.keepAliveTimeout = 60_000;
+    server.headersTimeout = 0;
+    try {
+      const port = await listen(server);
+
+      // Fresh accept, zero bytes: Node.js initializes last_message_start_ on
+      // parser creation as DoS protection, so this is not idle.
+      const { client: fresh, gotConnection: freshConn } = await openConnection(server, port);
+      const [freshServerSocket] = await freshConn;
+
+      // Partial request head: last_message_start_ is non-zero, so not idle.
+      const { client: partial, gotConnection: partialConn } = await openConnection(server, port);
+      const [partialServerSocket] = await partialConn;
+      partial.write("GET / HTTP/1.1");
+
+      // Completed cycle, now keep-alive idle: this one is reaped.
+      const { client: idle, gotConnection: idleConn } = await openConnection(server, port);
+      const idleResponse = once(idle, "data");
+      idle.write("GET / HTTP/1.1\r\nHost: x\r\nConnection: keep-alive\r\n\r\n");
+      const [idleServerSocket] = await idleConn;
+      await idleResponse;
+
+      server.closeIdleConnections();
+
+      expect({
+        fresh: freshServerSocket.destroyed,
+        partial: partialServerSocket.destroyed,
+        idle: idleServerSocket.destroyed,
+      }).toEqual({ fresh: false, partial: false, idle: true });
+
+      fresh.destroy();
+      partial.destroy();
+      idle.destroy();
+      server.closeAllConnections();
+      await new Promise<void>(r => server.close(() => r()));
+    } finally {
+      server.closeAllConnections();
+      if (server.listening) server.close();
+    }
+  });
+
   test("skips in-flight connections and reaps idle ones", async () => {
     const inflightResponses: import("node:http").ServerResponse[] = [];
     const server = createServer((req, res) => {

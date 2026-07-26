@@ -2268,7 +2268,7 @@ pub use js_printer::Format as PrintFormat;
 // JSTranspiler.rs, and the in-crate `transform()` path) passes the same concrete
 // `&mut BufferPrinter`. Leaving the public entry points generic forced each
 // downstream crate (bun_runtime / bun_jsc / bun_install / bun_bundler) to stamp
-// out its own copy of the 109-fn `Printer<W,A,B,C,D,E>` recursion tree —
+// out its own copy of the 109-fn `Printer<W,A,B,C,D>` recursion tree —
 // `llvm-nm --print-size` showed `bun_js_printer` .text at 1,367 KB,
 // with both the `_11bun_runtime` and `_7bun_jsc` copies of
 // `print_expr<…>` live in `perf` and thrashing icache against each other
@@ -2324,7 +2324,7 @@ impl<'a> Transpiler<'a> {
         let exports_kind = ast.exports_kind;
 
         // PERF: each `js_printer::print_*::<W, …>` call below stamps out a full
-        // `__gated_printer::Printer<W,A,B,C,D,E>` instantiation tree (~35 kB of
+        // `__gated_printer::Printer<W,A,B,C,D>` instantiation tree (~35 kB of
         // .text per leaf method, 109 fns total). For `bun run` only the
         // `EsmAscii + is_bun=true` arm executes, but rustc lays the Esm /
         // `is_bun=false` trees out adjacent in .text, so the live variant
@@ -3110,13 +3110,6 @@ impl<'a> Transpiler<'a> {
         Ok(crate::output_file::Value::Copy(
             crate::output_file::FileOperation {
                 pathname: pathname.into_boxed_slice(),
-                dir: self
-                    .options
-                    .output_dir_handle
-                    .as_ref()
-                    .map(bun_sys::Dir::fd)
-                    .unwrap_or(bun_sys::Fd::INVALID),
-                ..Default::default()
             },
         ))
     }

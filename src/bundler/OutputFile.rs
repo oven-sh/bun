@@ -112,37 +112,10 @@ pub struct BakeExtra {
 pub type Index = bun_core::GenericIndex<u32, OutputFile>;
 pub type IndexOptional = bun_core::GenericIndexOptional<u32, OutputFile>;
 
-// Depending on:
-// - The target
-// - The number of open file handles
-// - Whether or not a file of the same name exists
-// We may use a different system call
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct FileOperation {
     // Owned copy so the field has a single, obvious lifetime.
     pub pathname: Box<[u8]>,
-    pub fd: Fd,
-    pub dir: Fd,
-}
-
-impl Default for FileOperation {
-    fn default() -> Self {
-        Self {
-            pathname: Box::default(),
-            fd: Fd::INVALID,
-            dir: Fd::INVALID,
-        }
-    }
-}
-
-impl FileOperation {
-    pub fn from_file(fd: Fd, pathname: &[u8]) -> FileOperation {
-        FileOperation {
-            fd,
-            pathname: Box::from(pathname),
-            ..Default::default()
-        }
-    }
 }
 
 #[derive(Clone)]
@@ -200,11 +173,6 @@ pub enum OptionsData {
         // arena dropped — global mimalloc.
         data: Box<[u8]>,
     },
-    File {
-        file: Fd,
-        size: usize,
-        dir: Fd,
-    },
     Saved(usize),
 }
 
@@ -233,7 +201,6 @@ impl OutputFile {
     pub fn init(options: Options) -> OutputFile {
         let size = options.size.unwrap_or(match &options.data {
             OptionsData::Buffer { data } => data.len(),
-            OptionsData::File { size, .. } => *size,
             OptionsData::Saved(_) => 0,
         });
         let owned_src_path_text: Box<[u8]> = options.input_path;
@@ -257,11 +224,6 @@ impl OutputFile {
             is_executable: options.is_executable,
             value: match options.data {
                 OptionsData::Buffer { data } => Value::Buffer { bytes: data },
-                OptionsData::File { file, dir, .. } => Value::Copy('brk: {
-                    let mut op = FileOperation::from_file(file, &options.output_path);
-                    op.dir = dir;
-                    break 'brk op;
-                }),
                 OptionsData::Saved(_) => Value::Saved(SavedFile::default()),
             },
             side: options.side,

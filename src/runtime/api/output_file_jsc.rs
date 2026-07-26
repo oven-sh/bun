@@ -70,11 +70,7 @@ impl OutputFileJsc for OutputFile {
         match value {
             OutputFileValue::Copy(copy) => {
                 let file_blob = match BlobStore::init_file(
-                    if copy.fd.is_valid() {
-                        PathOrFileDescriptor::Fd(copy.fd)
-                    } else {
-                        PathOrFileDescriptor::Path(dupe_path_like(copy.pathname.as_ref()))
-                    },
+                    PathOrFileDescriptor::Path(dupe_path_like(copy.pathname.as_ref())),
                     Some(mime),
                 ) {
                     Ok(b) => b,
@@ -180,11 +176,7 @@ impl OutputFileJsc for OutputFile {
         match value {
             OutputFileValue::Copy(copy) => {
                 let file_blob = BlobStore::init_file(
-                    if copy.fd.is_valid() {
-                        PathOrFileDescriptor::Fd(copy.fd)
-                    } else {
-                        PathOrFileDescriptor::Path(dupe_path_like(copy.pathname.as_ref()))
-                    },
+                    PathOrFileDescriptor::Path(dupe_path_like(copy.pathname.as_ref())),
                     Some(mime),
                 )?;
                 Ok(Blob::init_with_store(file_blob, global_this))

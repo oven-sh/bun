@@ -38,6 +38,9 @@ test("dead OutputFile::Value variants do not reappear", () => {
     ["src/bundler/OutputFile.rs", /pub fn move_to\b/],
     ["src/bundler/OutputFile.rs", /pub fn get_pathname\b/],
     ["src/bundler/OutputFile.rs", /pub enum Kind \{/],
+    ["src/bundler/OutputFile.rs", /OptionsData::File\b/],
+    ["src/bundler/OutputFile.rs", /pub fd: Fd/],
+    ["src/bundler/OutputFile.rs", /pub dir: Fd/],
     ["src/runtime/api/output_file_jsc.rs", /OutputFileValue::Move\b/],
   ];
   const resurrected = checks.filter(([file, re]) => re.test(src(file))).map(([file, re]) => `${file}: ${re.source}`);

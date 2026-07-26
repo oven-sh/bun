@@ -1207,16 +1207,17 @@ impl<const SSL: bool> WebSocket<SSL> {
         }
 
         let body = &body[..body_len];
-        let mut reason = bun_core::String::empty();
-        if body_len > 0 {
-            if !strings::is_valid_utf8(body) {
-                self.terminate(ErrorCode::InvalidUtf8);
-                return;
-            }
-            reason = bun_core::String::clone_utf8(body);
+        if body_len > 0 && !strings::is_valid_utf8(body) {
+            self.terminate(ErrorCode::InvalidUtf8);
+            return;
         }
 
         if self.write_close_frame(code, body) {
+            let mut reason = if body_len > 0 {
+                bun_core::String::clone_utf8(body)
+            } else {
+                bun_core::String::empty()
+            };
             let dispatch_code = dispatch_code.unwrap_or(code);
             if self.send_buffer.borrow().readable_length() == 0 {
                 self.shutdown_after_close_frame();

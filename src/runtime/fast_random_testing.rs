@@ -1,5 +1,4 @@
-//! `bun:internal-for-testing` probe for `bun_core::fast_random()`'s
-//! per-thread seeding (no JS-visible surface of its own).
+//! `bun:internal-for-testing` probe for `bun_core::fast_random()` per-thread seeding.
 
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc};
 

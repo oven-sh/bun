@@ -1506,6 +1506,7 @@ where
         }
         self.response_weakref.deref();
 
+        self.clear_request_body_stream_drain_handler(global_this);
         self.request_body_readable_stream_ref.deinit();
 
         // Releases the ref taken in `set_cookies` (via `CookieMapRef::drop`).
@@ -2374,6 +2375,10 @@ where
         self.request_body_buf = Vec::new();
 
         if let Some(resp) = self.resp.take() {
+            if self.flags.request_body_paused() {
+                self.flags.set_request_body_paused(false);
+                resp.resume_();
+            }
             if self.flags.is_waiting_for_request_body() {
                 self.flags.set_is_waiting_for_request_body(false);
                 resp.clear_on_data();
@@ -3901,6 +3906,7 @@ where
             if this.request_body_streamed_len > server.config().max_request_body_size {
                 this.resp.expect("infallible: resp bound").clear_on_data();
                 this.flags.set_is_waiting_for_request_body(false);
+                this.resume_request_body_socket();
 
                 let _exit = vm.enter_event_loop_scope();
 
@@ -3911,6 +3917,9 @@ where
 
                 readable.value.ensure_still_alive();
                 if let Some(bytes) = readable.ptr.bytes() {
+                    let source = bytes.parent_const();
+                    source.drain_handler.set(None);
+                    source.drain_ctx.set(None);
                     let mut err = Body::ValueError::Message(BunString::static_(
                         "Request body exceeded maxRequestBodySize",
                     ));
@@ -3951,7 +3960,17 @@ where
                 );
                 // TODO: properly propagate exception upwards
                 let _ = bytes.on_data(WebCore::streams::Result::Temporary(borrowed));
+
+                // Backpressure: if the reader did not consume this chunk
+                // synchronously, `on_data` parked it in the ByteStream's
+                // internal buffer. Stop reading from the socket until the JS
+                // side drains it (signalled via `on_stream_drained`).
+                let buffered = bytes.buffer.get().len().saturating_sub(bytes.offset.get());
+                if buffered >= REQUEST_BODY_HIGH_WATER_MARK {
+                    this.pause_request_body_socket();
+                }
             } else {
+                this.resume_request_body_socket();
                 // Moved out so the Strong (and its underlying GC handle) is
                 // released at scope exit via `Drop` on `strong::Optional`.
                 let _strong = core::mem::take(&mut this.request_body_readable_stream_ref);
@@ -3966,6 +3985,9 @@ where
                 let bytes = bun_ptr::BackRef::from(
                     NonNull::new(bytes_ptr).expect("Source::Bytes payload is non-null"),
                 );
+                let source = bytes.parent_const();
+                source.drain_handler.set(None);
+                source.drain_ctx.set(None);
                 // TODO: properly propagate exception upwards
                 let _ = bytes.on_data(WebCore::streams::Result::TemporaryAndDone(borrowed));
             }
@@ -4055,7 +4077,69 @@ where
                 );
             }
             this.request_body_buf.extend_from_slice(chunk);
+
+            // Backpressure for bodies that have not been touched yet: cap the
+            // pre-stream buffer so a handler that delays reading does not have
+            // the whole body queued in memory. Resumed when the handler starts
+            // streaming (first `read()` drains the ByteStream and fires
+            // `on_stream_drained`) or opts into whole-body buffering.
+            if !this.flags.request_body_buffer_all()
+                && this.request_body_buf.len() >= REQUEST_BODY_HIGH_WATER_MARK
+            {
+                this.pause_request_body_socket();
+            }
         }
+    }
+
+    fn pause_request_body_socket(&mut self) {
+        if self.flags.request_body_paused() {
+            return;
+        }
+        let Some(resp) = self.resp else {
+            return;
+        };
+        ctx_log!("pauseRequestBodySocket");
+        self.flags.set_request_body_paused(true);
+        resp.pause();
+    }
+
+    fn resume_request_body_socket(&mut self) {
+        if !self.flags.request_body_paused() {
+            return;
+        }
+        ctx_log!("resumeRequestBodySocket");
+        self.flags.set_request_body_paused(false);
+        if let Some(resp) = self.resp {
+            resp.resume_();
+        }
+    }
+
+    /// Detach `on_request_body_stream_drained_callback` from the body's
+    /// ByteStream source before this context is released (the stream can
+    /// outlive it in JS).
+    fn clear_request_body_stream_drain_handler(&self, global_this: &JSGlobalObject) {
+        let Some(readable) = self.request_body_readable_stream_ref.get(global_this) else {
+            return;
+        };
+        if let Some(bytes) = readable.ptr.bytes() {
+            let source = bytes.parent_const();
+            source.drain_handler.set(None);
+            source.drain_ctx.set(None);
+        }
+    }
+
+    /// # Safety
+    /// `ctx` must be a `*mut RequestContext` previously registered as the body
+    /// `on_stream_drained` context.
+    pub(crate) fn on_request_body_stream_drained_callback(ctx: Option<*mut c_void>) {
+        let Some(ctx) = ctx else { return };
+        // SAFETY: caller upholds the fn-level contract — `ctx` is the
+        // `*mut RequestContext` registered as the body callback context.
+        let this = unsafe { bun_ptr::callback_ctx::<Self>(ctx) };
+        if this.is_aborted_or_ended() {
+            return;
+        }
+        this.resume_request_body_socket();
     }
 
     pub fn on_start_streaming_request_body(&mut self) -> WebCore::DrainResult {
@@ -4089,6 +4173,10 @@ where
     pub fn on_start_buffering(&mut self) {
         if let Some(server) = self.server {
             ctx_log!("onStartBuffering");
+            // `.text()`/`.json()` etc. want the whole body: release any
+            // pre-stream backpressure and stop re-applying it.
+            self.flags.set_request_body_buffer_all(true);
+            self.resume_request_body_socket();
             // TODO: check if is someone calling onStartBuffering other than onStartBufferingCallback
             // if is not, this should be removed and only keep protect + setAbortHandler
             // HTTP/3 (RFC 9114): Content-Length is optional; the body is
@@ -4182,6 +4270,12 @@ where
 }
 
 const MAX_REQUEST_BODY_PREALLOCATE_LENGTH: usize = 1024 * 256;
+
+/// Pause the socket when the request-body ByteStream (or the pre-stream
+/// `request_body_buf`) holds more than this many unconsumed bytes. Two uWS recv
+/// buffers' worth (`LIBUS_RECV_BUFFER_LENGTH` = 512 KB) keeps loopback
+/// throughput high while bounding memory to O(1) per request.
+const REQUEST_BODY_HIGH_WATER_MARK: usize = 1024 * 1024;
 
 // Trap host fn for the `(false, _, true)` arms of `exported_host_fns`. Those
 // `RequestContext` monomorphs (plain-HTTP/3) are type-reachable via the
@@ -4395,7 +4489,7 @@ pub struct SendfileContext {
 // `is_web_browser_navigation` / `has_finalized` accessors on the const params.
 bitflags::bitflags! {
     #[derive(Default, Clone, Copy)]
-    pub struct FlagsBits: u16 {
+    pub struct FlagsBits: u32 {
         const HAS_MARKED_COMPLETE         = 1 << 0;
         const HAS_MARKED_PENDING          = 1 << 1;
         const HAS_ABORT_HANDLER           = 1 << 2;
@@ -4416,6 +4510,13 @@ bitflags::bitflags! {
         const ABORTED                     = 1 << 13;
         const HAS_FINALIZED               = 1 << 14;
         const IS_ERROR_PROMISE_PENDING    = 1 << 15;
+        /// Socket reads are paused because the request-body ByteStream (or the
+        /// pre-stream `request_body_buf`) is over its high-water mark.
+        const REQUEST_BODY_PAUSED         = 1 << 16;
+        /// The handler has asked for the whole body via `.text()`/`.json()`
+        /// etc. (`on_start_buffering` fired). Skip backpressure on the
+        /// pre-stream buffer: the consumer wants everything.
+        const REQUEST_BODY_BUFFER_ALL     = 1 << 17;
     }
 }
 
@@ -4494,6 +4595,16 @@ impl<const DEBUG_MODE: bool> Flags<DEBUG_MODE> {
         is_error_promise_pending,
         set_is_error_promise_pending,
         IS_ERROR_PROMISE_PENDING
+    );
+    flag_accessor!(
+        request_body_paused,
+        set_request_body_paused,
+        REQUEST_BODY_PAUSED
+    );
+    flag_accessor!(
+        request_body_buffer_all,
+        set_request_body_buffer_all,
+        REQUEST_BODY_BUFFER_ALL
     );
 
     #[inline]

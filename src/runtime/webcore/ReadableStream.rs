@@ -332,7 +332,7 @@ impl ReadableStream {
             return ReadableStream::empty(global_this);
         };
         match &store.data {
-            webcore::blob::store::Data::Bytes(_) => {
+            webcore::blob::store::Data::Bytes(_) | webcore::blob::store::Data::Rope(_) => {
                 let reader = NewSource::<ByteBlobLoader>::new_mut(NewSource {
                     global_this: Some(bun_ptr::BackRef::new(global_this)),
                     context: ByteBlobLoader::default(),

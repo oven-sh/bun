@@ -338,6 +338,21 @@ impl Blob {
         &slice[..slice.len().min(self.size.get() as usize)]
     }
 
+    /// Byte length [`shared_view`](Self::shared_view) would return, computed
+    /// without flattening a rope-backed store.
+    pub fn shared_view_len(&self) -> SizeType {
+        let Some(store) = self.store() else { return 0 };
+        if self.size.get() == 0 {
+            return 0;
+        }
+        let store_len = store.size();
+        if store_len == MAX_SIZE {
+            return 0;
+        }
+        let off = self.offset.get().min(store_len);
+        (store_len - off).min(self.size.get())
+    }
+
     /// Release the store ref without
     /// dropping `self`.
     #[inline]
@@ -410,7 +425,7 @@ impl Blob {
         match &self.store()?.data {
             store::Data::File(file) => Some(&file.mime_type.value),
             store::Data::S3(s3) => Some(&s3.mime_type.value),
-            store::Data::Bytes(_) => None,
+            store::Data::Bytes(_) | store::Data::Rope(_) => None,
         }
     }
 
@@ -439,6 +454,10 @@ impl Blob {
         match &self.store.get().as_deref()?.data {
             store::Data::Bytes(bytes) => {
                 let n = &bytes.stored_name[..];
+                if n.is_empty() { None } else { Some(n) }
+            }
+            store::Data::Rope(rope) => {
+                let n = &rope.stored_name[..];
                 if n.is_empty() { None } else { Some(n) }
             }
             store::Data::File(file) => match &file.pathlike {
@@ -537,6 +556,13 @@ pub mod store {
         Bytes(Bytes),
         File(File),
         S3(S3),
+        /// Composite of other in-memory `Store`s. Constructed when `new Blob()`
+        /// receives one or more Blob-typed parts, so their bytes can be shared
+        /// (refcounted) instead of being `memcpy`'d into a fresh contiguous
+        /// buffer at construction time. Flattened in-place to `Bytes` by
+        /// [`Store::flatten_if_rope`] on the first consumer that needs a
+        /// contiguous view.
+        Rope(Rope),
     }
 
     /// Discriminant-only tag for `Data`.
@@ -545,12 +571,20 @@ pub mod store {
         Bytes,
         File,
         S3,
+        Rope,
     }
 
     impl Data {
         bun_core::enum_unwrap!(pub Data, File  => fn as_file  / as_file_mut  -> File);
         bun_core::enum_unwrap!(pub Data, S3    => fn as_s3    / as_s3_mut    -> S3);
         bun_core::enum_unwrap!(pub Data, Bytes => fn as_bytes / as_bytes_mut -> Bytes);
+        bun_core::enum_unwrap!(pub Data, Rope  => fn as_rope  / as_rope_mut  -> Rope);
+
+        /// In-memory backing (no async I/O needed to materialise bytes).
+        #[inline]
+        pub fn is_memory_backed(&self) -> bool {
+            matches!(self, Data::Bytes(_) | Data::Rope(_))
+        }
     }
 
     #[repr(u8)]
@@ -738,6 +772,88 @@ pub mod store {
         }
     }
 
+    // ────────────────────────────────────────────────────────────────────
+    // Rope
+    // ────────────────────────────────────────────────────────────────────
+
+    /// A sequence of windows into other `Store`s. Each segment keeps its
+    /// backing `Store` alive via `StoreRef` and is therefore immutable for the
+    /// lifetime of the rope (a Blob's bytes are frozen by File API semantics,
+    /// and typed-array / string parts are snapshotted into their own `Bytes`
+    /// store at construction time, so no segment can ever observe a mutation).
+    #[derive(Default)]
+    pub struct Rope {
+        pub segments: Vec<RopeSegment>,
+        /// Σ `segments[i].len`. Cached so `Store::size()` stays O(1).
+        pub len: SizeType,
+        /// Same role as [`Bytes::stored_name`] (File ctor / standalone graph).
+        pub stored_name: Box<[u8]>,
+    }
+
+    pub struct RopeSegment {
+        pub store: StoreRef,
+        /// Byte offset into `store.shared_view()`.
+        pub offset: SizeType,
+        /// Byte length of this segment's window.
+        pub len: SizeType,
+    }
+
+    impl Rope {
+        #[inline]
+        pub fn len(&self) -> SizeType {
+            self.len
+        }
+
+        /// Push a window into `store`. Skips zero-length segments and, when
+        /// `store` is itself a `Rope`, splices its segments in-line (windowed
+        /// by `offset..offset+len`) so the resulting rope stays one level deep.
+        pub fn push(&mut self, store: StoreRef, offset: SizeType, len: SizeType) {
+            if len == 0 {
+                return;
+            }
+            if let Data::Rope(inner) = &store.data {
+                let mut skip = offset;
+                let mut take = len;
+                for seg in &inner.segments {
+                    if take == 0 {
+                        break;
+                    }
+                    if skip >= seg.len {
+                        skip -= seg.len;
+                        continue;
+                    }
+                    let piece = (seg.len - skip).min(take);
+                    self.segments.push(RopeSegment {
+                        store: seg.store.clone(),
+                        offset: seg.offset + skip,
+                        len: piece,
+                    });
+                    self.len += piece;
+                    take -= piece;
+                    skip = 0;
+                }
+                return;
+            }
+            self.len += len;
+            self.segments.push(RopeSegment { store, offset, len });
+        }
+
+        /// Join every segment into a fresh contiguous buffer. A nested rope
+        /// segment (possible only if a `Rope` store was pushed directly without
+        /// going through [`Rope::push`]) is resolved recursively via
+        /// `Store::shared_view`, which flattens it first.
+        pub fn join(&self) -> Vec<u8> {
+            let mut out = Vec::<u8>::with_capacity(self.len as usize);
+            for seg in &self.segments {
+                let view = seg.store.shared_view();
+                let off = (seg.offset as usize).min(view.len());
+                let end = off + (seg.len as usize).min(view.len() - off);
+                out.extend_from_slice(&view[off..end]);
+            }
+            out
+        }
+    }
+
     impl Drop for Bytes {
         fn drop(&mut self) {
             // `stored_name` is a `Box<[u8]>`, so its field `Drop` frees it;
@@ -885,10 +1001,24 @@ pub mod store {
             }))
         }
 
+        /// Takes ownership of `rope`. Returns a +1-ref heap `Store`.
+        pub fn init_rope(rope: Rope) -> StoreRef {
+            StoreRef::from(Store::new(Store {
+                data: Data::Rope(rope),
+                mime_type: bun_http_types::MimeType::NONE,
+                ref_count: bun_ptr::ThreadSafeRefCount::init(),
+                is_all_ascii: None,
+            }))
+        }
+
         pub fn get_path(&self) -> Option<&[u8]> {
             match &self.data {
                 Data::Bytes(bytes) => {
                     let n = &bytes.stored_name[..];
+                    if n.is_empty() { None } else { Some(n) }
+                }
+                Data::Rope(rope) => {
+                    let n = &rope.stored_name[..];
                     if n.is_empty() { None } else { Some(n) }
                 }
                 Data::File(file) => {
@@ -907,6 +1037,9 @@ pub mod store {
                 core::mem::size_of::<Self>()
                     + match &self.data {
                         Data::Bytes(bytes) => bytes.len() as usize,
+                        Data::Rope(rope) => {
+                            rope.segments.len() * core::mem::size_of::<RopeSegment>()
+                        }
                         Data::File(_) => 0,
                         Data::S3(s3) => s3.estimated_size(),
                     }
@@ -919,6 +1052,7 @@ pub mod store {
         pub fn size(&self) -> SizeType {
             match &self.data {
                 Data::Bytes(b) => b.len(),
+                Data::Rope(r) => r.len(),
                 Data::File(_) | Data::S3(_) => MAX_SIZE,
             }
         }
@@ -928,6 +1062,13 @@ pub mod store {
             if let Data::Bytes(bytes) = &self.data {
                 return bytes.slice();
             }
+            // A `Rope` must be flattened via `StoreRef::flatten_if_rope`
+            // (which has mutable provenance over the heap `Store`) before a
+            // contiguous view is requested.
+            debug_assert!(
+                !matches!(self.data, Data::Rope(_)),
+                "Store::shared_view on an unflattened rope"
+            );
             &[]
         }
 
@@ -1037,6 +1178,31 @@ pub mod store {
             // SAFETY: caller guarantees no other `&mut` to this `Store` is
             // live; see doc comment.
             unsafe { &mut (*self.as_ptr()).data }
+        }
+
+        /// Collapse a [`Data::Rope`] into a single contiguous [`Data::Bytes`]
+        /// in place, releasing the segment `StoreRef`s. No-op for every other
+        /// variant. Called before any read path that requires a flat `&[u8]`.
+        ///
+        /// Interior mutation through `&self` follows the same single-threaded
+        /// JS-event-loop discipline as [`StoreRef::data_mut`]: the `Store` is
+        /// only ever reached from the JS thread that owns the wrapping `Blob`,
+        /// so no other live `&`/`&mut` to its `data` can overlap this write.
+        /// Mutable provenance comes from the original `heap::into_raw`
+        /// allocation carried by `self.ptr`.
+        pub fn flatten_if_rope(&self) {
+            let data = self.data_mut();
+            let Data::Rope(rope) = data else { return };
+            let mut bytes = Bytes::init(rope.join());
+            bytes.stored_name = core::mem::take(&mut rope.stored_name);
+            *data = Data::Bytes(bytes);
+        }
+
+        /// Flattens a rope in place, then returns [`Store::shared_view`].
+        #[inline]
+        pub fn shared_view(&self) -> &[u8] {
+            self.flatten_if_rope();
+            (**self).shared_view()
         }
     }
 

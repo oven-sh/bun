@@ -449,9 +449,6 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub module_scope: js_ast::StoreRef<js_ast::Scope>,
     pub module_scope_directive_loc: bun_ast::Loc,
     pub is_control_flow_dead: bool,
-
-    /// Ranges of legacy octal numeric literals (`010`), recorded during parse
-    /// and checked for strict-mode errors during visit.
     pub legacy_octal_literals: Vec<bun_ast::Range>,
 
     /// True while `visit_single_stmt` is visiting a non-block body. `if`,

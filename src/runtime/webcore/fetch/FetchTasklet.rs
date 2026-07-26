@@ -1322,7 +1322,7 @@ impl FetchTasklet {
                     hostname,
                 );
                 err.path = path.into();
-                return BodyValueError::SystemError(err);
+                return BodyValueError::SystemTypeError(err);
             }
         }
 
@@ -1562,7 +1562,7 @@ impl FetchTasklet {
             ..Default::default()
         };
 
-        BodyValueError::SystemError(fetch_error)
+        BodyValueError::SystemTypeError(fetch_error)
     }
 
     pub(crate) fn on_readable_stream_available(

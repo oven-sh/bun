@@ -564,6 +564,11 @@ pub enum Tag {
 pub enum ValueError {
     AbortReason(CommonAbortReason),
     SystemError(SystemError),
+    /// A `SystemError` that surfaces as a JS `TypeError` but keeps
+    /// `.code`/`.path`/`.syscall`/`.hostname`. Fetch network errors use this:
+    /// the fetch spec requires `TypeError`, while callers still feature-detect
+    /// on `err.code === "ECONNRESET"` etc.
+    SystemTypeError(SystemError),
     Message(BunString),
     /// Surfaces as a JS `TypeError`. The fetch spec maps every "network
     /// error" to TypeError, so use this for fetch-layer rejections that
@@ -578,7 +583,7 @@ impl ValueError {
     pub fn reset(&mut self) {
         match self {
             // The bun.String fields are dropped by the assignment below.
-            ValueError::SystemError(_system_error) => {}
+            ValueError::SystemError(_) | ValueError::SystemTypeError(_) => {}
             ValueError::Message(message) => message.deref(),
             ValueError::TypeError(message) => message.deref(),
             ValueError::JSValue(v) => v.deinit(),
@@ -612,6 +617,9 @@ impl ValueError {
             ValueError::SystemError(system_error) => {
                 core::mem::take(system_error).to_error_instance(global_object)
             }
+            ValueError::SystemTypeError(system_error) => {
+                core::mem::take(system_error).to_type_error_instance(global_object)
+            }
             ValueError::Message(message) => message.to_error_instance(global_object),
             ValueError::TypeError(message) => message.to_type_error_instance(global_object),
             // do an early return in this case we don't need to create a new Strong
@@ -628,6 +636,7 @@ impl ValueError {
             // `.clone()` on BunString/SystemError already bumps the refcount (paired
             // with their Drop deref); an extra `.ref_()` here would leak +1 per dupe.
             ValueError::SystemError(e) => ValueError::SystemError(e.clone()),
+            ValueError::SystemTypeError(e) => ValueError::SystemTypeError(e.clone()),
             ValueError::Message(m) => ValueError::Message(m.clone()),
             ValueError::TypeError(m) => ValueError::TypeError(m.clone()),
             ValueError::JSValue(js_ref) => {
@@ -1292,6 +1301,10 @@ impl Value {
                 Value::Locked(l) => core::mem::take(l),
                 _ => unreachable!(),
             };
+            // A body reader (`.text()` etc.) had already started consuming this
+            // body; per fetch spec the body's stream is now disturbed regardless
+            // of how the read ends.
+            let was_disturbed = !locked.action.is_none() || locked.promise.is_some();
             *self = Value::Error(err);
             let Value::Error(err_ref) = self else {
                 unreachable!()
@@ -1332,6 +1345,13 @@ impl Value {
                 // `task` is the live request-ctx pointer registered alongside
                 // this callback.
                 on_receive_value(locked.task.unwrap(), self);
+            }
+
+            if was_disturbed {
+                if let Value::Error(e) = self {
+                    e.reset();
+                }
+                *self = Value::Used;
             }
 
             return Ok(());
@@ -2145,11 +2165,18 @@ fn handle_body_already_used(global_object: &JSGlobalObject) -> JSValue {
 /// If the body already failed, reject the read with that error. Every body
 /// reader must call this before its `Locked` handling: `Value::Error` would
 /// otherwise fall through to `use_as_any_blob_*` and resolve empty.
+///
+/// Calling a body reader disturbs the body, so on return `value` is `Used`:
+/// `bodyUsed` reports `true` and a second read rejects with
+/// `ERR_BODY_ALREADY_USED` rather than the stored network error again.
 fn handle_body_error(value: &mut Value, global_object: &JSGlobalObject) -> Option<JSValue> {
     let Value::Error(err) = value else {
         return None;
     };
-    Some(JSPromise::rejected_promise(global_object, err.to_js(global_object)).to_js())
+    let js = err.to_js(global_object);
+    err.reset();
+    *value = Value::Used;
+    Some(JSPromise::rejected_promise(global_object, js).to_js())
 }
 
 // ────────────────────────────────────────────────────────────────────────────

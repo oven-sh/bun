@@ -387,12 +387,9 @@ impl PendingValue {
                         Action::GetText => global_this.readable_stream_to_text(readable.value),
                         Action::GetBlob => global_this.readable_stream_to_blob(readable.value),
                         Action::GetFormData(form_data) => 'brk: {
-                            // `None` means the MIME check already failed; per spec the
-                            // body is still fully read before `packageData` throws, so
-                            // drain the stream and have the C++ fulfillment handler
-                            // reject. The sentinel is `false` (null/undefined are
-                            // dropped by the promise-reaction context plumbing).
                             let encoding_js = match form_data.take() {
+                                // MIME check failed: drain then reject. `false` survives
+                                // the reaction-context plumbing (null/undefined do not).
                                 None => JSValue::FALSE,
                                 Some(fd) => match &fd.encoding {
                                     bun_core::form_data::Encoding::Multipart(multipart) => {
@@ -1991,9 +1988,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
             }
         }
 
-        // Spec "consume body": fully read the body, then run packageData (which
-        // performs the MIME check). A failed MIME check must therefore still
-        // consume the body (bodyUsed becomes true; subsequent reads reject).
+        // Spec "consume body" fully reads before the MIME check, so consume even when encoder is None.
         let encoder = self.get_form_data_encoding()?;
 
         let value = self.get_body_value();

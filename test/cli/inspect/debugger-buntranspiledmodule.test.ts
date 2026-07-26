@@ -55,7 +55,7 @@ test("t", () => { expect(x).toBe(1); });
   (async () => {
     const decoder = new TextDecoder();
     for await (const chunk of proc.stderr as ReadableStream<Uint8Array>) {
-      const text = decoder.decode(chunk);
+      const text = decoder.decode(chunk, { stream: true });
       stderrBuf += text;
       if (urlFound) continue;
       stderrLineBuf += text;
@@ -168,8 +168,10 @@ test("t", () => { expect(x).toBe(1); });
     // stashed the value on globalThis because evaluateOnCallFrame parses its
     // expression as a Program (no `import.meta`) and module scope has no
     // `require`.
+    const callFrameId = paused.callFrames?.[0]?.callFrameId;
+    expect(callFrameId).toEqual(expect.any(String));
     const sourceTypeEval = await send("Debugger.evaluateOnCallFrame", {
-      callFrameId: paused.callFrames?.[0]?.callFrameId,
+      callFrameId,
       expression: `globalThis.__providerSourceType`,
       returnByValue: true,
     });
@@ -177,14 +179,34 @@ test("t", () => { expect(x).toBe(1); });
     const setBreakpoint = await send("Debugger.setBreakpoint", {
       location: { scriptId: userScript.scriptId, lineNumber: 5, columnNumber: 0 },
     });
-    // Assert the inspector-visible shape (breakpoint + module flag + the
+    // Use the URL the inspector reported (bun realpaths the script path before
+    // reporting it) and a different line so the scriptId breakpoint above
+    // doesn't collide.
+    const setBreakpointByUrl = await send("Debugger.setBreakpointByUrl", {
+      url: userScript.url,
+      lineNumber: 2,
+      columnNumber: 0,
+    });
+    // Assert the full inspector replies (breakpoints + module flag + the
     // provider-type self-check) together so a failure shows the full picture.
+    // Matching the whole reply object keeps a CDP `error` or `wasThrown: true`
+    // visible in the diff instead of collapsing to undefined/null.
     expect({
-      providerSourceType: sourceTypeEval?.result?.result?.value ?? null,
+      sourceTypeEval,
       setBreakpoint,
+      setBreakpointByUrl,
       scriptParsedModule: userScript.module,
     }).toEqual({
-      providerSourceType: expectedSourceType,
+      sourceTypeEval: {
+        id: expect.any(Number),
+        result: {
+          result:
+            expectedSourceType === null
+              ? { type: "object", subtype: "null", value: null }
+              : { type: "string", value: expectedSourceType },
+          wasThrown: false,
+        },
+      },
       setBreakpoint: {
         id: expect.any(Number),
         result: {
@@ -196,20 +218,15 @@ test("t", () => { expect(x).toBe(1); });
           },
         },
       },
+      setBreakpointByUrl: {
+        id: expect.any(Number),
+        result: {
+          breakpointId: expect.any(String),
+          locations: [{ scriptId: userScript.scriptId, lineNumber: 2, columnNumber: expect.any(Number) }],
+        },
+      },
       scriptParsedModule: true,
     });
-
-    // Use the URL the inspector reported (bun realpaths the script path before
-    // reporting it) and a different line so the scriptId breakpoint above
-    // doesn't collide.
-    const setBreakpointByUrl = await send("Debugger.setBreakpointByUrl", {
-      url: userScript.url,
-      lineNumber: 2,
-      columnNumber: 0,
-    });
-    expect(setBreakpointByUrl?.result?.locations).toEqual([
-      { scriptId: userScript.scriptId, lineNumber: 2, columnNumber: expect.any(Number) },
-    ]);
 
     await send("Debugger.resume").catch(() => {});
   } finally {

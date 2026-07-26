@@ -162,10 +162,15 @@ mod platform {
                             self.received_eof = true;
                             return Ok(None);
                         }
-                        return Err(sys::Error::from_code_int(
-                            sys::last_errno(),
-                            Tag::getdirentries64,
-                        ));
+                        let e = sys::last_errno();
+                        // __getdirentries64 can fail with ENOENT when the open
+                        // directory has been rmdir'd. POSIX requires treating
+                        // this as EOF (matches glibc readdir() / node).
+                        if e == libc::ENOENT {
+                            self.received_eof = true;
+                            return Ok(None);
+                        }
+                        return Err(sys::Error::from_code_int(e, Tag::getdirentries64));
                     }
 
                     self.index = 0;
@@ -369,10 +374,14 @@ mod platform {
                         )
                     };
                     if rc < 0 {
-                        return Err(sys::Error::from_code_int(
-                            sys::last_errno(),
-                            Tag::getdents64,
-                        ));
+                        let e = sys::last_errno();
+                        // getdents64 fails with ENOENT when the open directory
+                        // has been rmdir'd. POSIX requires treating this as EOF;
+                        // glibc's readdir() does the same, so node sees EOF here.
+                        if e == libc::ENOENT {
+                            return Ok(None);
+                        }
+                        return Err(sys::Error::from_code_int(e, Tag::getdents64));
                     }
                     if rc == 0 {
                         return Ok(None);

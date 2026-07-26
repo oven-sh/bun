@@ -108,6 +108,8 @@ pub mod task_tag {
         NativeZlib,
         NativeZstd,
         Open,
+        Opendir,
+        Fdreaddir,
         PollPendingModulesTask,
         PosixSignalTask,
         MemoryPressureTask,

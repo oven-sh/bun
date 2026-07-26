@@ -43,7 +43,7 @@ use bun_jsc::event_loop::{EventLoop, JsTerminated};
 use bun_jsc::task::report_error_or_terminate;
 use bun_jsc::virtual_machine::VirtualMachine;
 
-/// X-macro: the 42 `node:fs` async ops dispatched via `run_from_js_thread`.
+/// X-macro: the 44 `node:fs` async ops dispatched via `run_from_js_thread`.
 ///
 /// Row shape: `$tag $ty;` — `$tag` is the `bun_event_loop::task_tag::*` const,
 /// `$ty` is the `fs_async::*` alias. They differ in exactly three rows
@@ -64,7 +64,8 @@ macro_rules! for_each_fs_async_op {
             RealpathNonNative RealpathNonNative; Mkdir Mkdir; Fsync Fsync;
             Fdatasync Fdatasync; Access Access; AppendFile AppendFile;
             Mkdtemp Mkdtemp; Exists Exists; Futimes Futimes; Lchmod Lchmod;
-            Lchown Lchown; Unlink Unlink; StatFS Statfs;
+            Lchown Lchown; Unlink Unlink; StatFS Statfs; Opendir Opendir;
+            Fdreaddir Fdreaddir;
         }
     };
 }
@@ -584,7 +585,7 @@ fn run_task_cold(task: Task) {
 /// Compile-time guard that the arm count above tracks
 /// `bun_event_loop::task_tag::COUNT`. Bump when adding a variant.
 const _: () = assert!(
-    task_tag::COUNT == 97,
+    task_tag::COUNT == 99,
     "dispatch::run_task arm count out of sync with bun_event_loop::task_tag",
 );
 

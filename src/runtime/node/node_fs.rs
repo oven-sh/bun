@@ -556,6 +556,10 @@ mod _async_tasks {
         pub type Mkdtemp =
             AsyncFSTask<ret::Mkdtemp, args::MkdirTemp, { NodeFSFunctionEnum::Mkdtemp }>;
         pub type Open = UVFSRequest<ret::Open, args::Open, { NodeFSFunctionEnum::Open }>;
+        pub type Opendir =
+            AsyncFSTask<ret::Opendir, args::Opendir, { NodeFSFunctionEnum::Opendir }>;
+        pub type Fdreaddir =
+            AsyncFSTask<ret::Fdreaddir, args::Fdreaddir, { NodeFSFunctionEnum::Fdreaddir }>;
         pub type Read = UVFSRequest<ret::Read, args::Read, { NodeFSFunctionEnum::Read }>;
         pub type Readdir =
             AsyncFSTask<ret::Readdir, args::Readdir, { NodeFSFunctionEnum::Readdir }>;
@@ -1085,6 +1089,8 @@ mod _async_tasks {
         args::Mkdir,
         args::MkdirTemp,
         args::Readdir,
+        args::Opendir,
+        args::Fdreaddir,
         args::Open,
         args::Write,
         args::Read,
@@ -3619,6 +3625,61 @@ pub mod args {
         }
     }
 
+    pub struct Opendir {
+        pub path: PathLike,
+    }
+    fs_args_path_forwarders!(Opendir; path);
+    impl Opendir {
+        pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Opendir> {
+            let path = PathLike::from_js_required(ctx, arguments, "path")?;
+            Ok(Opendir { path })
+        }
+    }
+
+    /// Internal: `fs.Dir` reads entries through an already-open directory fd so
+    /// the handle pins the inode (node's `uv_fs_opendir`/`uv_fs_readdir` model).
+    /// `path` is the original `opendir` argument, used only for Dirent parent
+    /// paths and error messages; it is never re-opened.
+    pub struct Fdreaddir {
+        pub fd: FD,
+        pub path: PathLike,
+        pub encoding: Encoding,
+        pub with_file_types: bool,
+    }
+    fs_args_path_forwarders!(Fdreaddir; path);
+    impl Fdreaddir {
+        pub fn tag(&self) -> ret::ReaddirTag {
+            match self.encoding {
+                Encoding::Buffer => ret::ReaddirTag::Buffers,
+                _ if self.with_file_types => ret::ReaddirTag::WithFileTypes,
+                _ => ret::ReaddirTag::Files,
+            }
+        }
+        pub fn from_js(
+            ctx: &JSGlobalObject,
+            arguments: &mut ArgumentsSlice,
+        ) -> JsResult<Fdreaddir> {
+            let fd = FD::from_js_required(ctx, arguments)?;
+            let path = PathLike::from_js_required(ctx, arguments, "path")?;
+            let mut encoding = Encoding::Utf8;
+            let mut with_file_types = false;
+            if let Some(val) = arguments.next_eat()
+                && val.is_object()
+            {
+                encoding = get_encoding(val, ctx, encoding)?;
+                if let Some(w) = val.get_boolean_strict(ctx, "withFileTypes")? {
+                    with_file_types = w;
+                }
+            }
+            Ok(Fdreaddir {
+                fd,
+                path,
+                encoding,
+                with_file_types,
+            })
+        }
+    }
+
     pub struct Close {
         pub fd: FD,
     }
@@ -4584,6 +4645,8 @@ pub mod ret {
     pub type Mkdir = StringOrUndefined;
     pub type Mkdtemp = StringOrBuffer;
     pub type Open = FD;
+    pub type Opendir = FD;
+    pub type Fdreaddir = Readdir;
     pub type WriteFile = ();
     pub type Readv = Read;
     pub type StatFS = node::StatFS;
@@ -6405,6 +6468,60 @@ impl NodeFS {
             }),
             Ok(result) => Ok(result),
         }
+    }
+
+    pub fn opendir(&mut self, args: &args::Opendir, _: Flavor) -> Maybe<ret::Opendir> {
+        let path = args.path.slice_z(&mut self.sync_error_buf);
+        #[cfg(not(windows))]
+        let res = Syscall::open(path, sys::O::DIRECTORY | sys::O::RDONLY, 0);
+        #[cfg(windows)]
+        let res = sys::open_dir_at_windows_a(
+            FD::cwd(),
+            path.as_bytes(),
+            sys::WindowsOpenDirOptions {
+                iterable: true,
+                ..Default::default()
+            },
+        );
+        res.map_err(|err| sys::Error {
+            syscall: sys::Tag::opendir,
+            errno: err.errno,
+            path: args.path.slice().into(),
+            ..Default::default()
+        })
+    }
+
+    pub fn fdreaddir(&mut self, args: &args::Fdreaddir, _: Flavor) -> Maybe<ret::Fdreaddir> {
+        let rd = args::Readdir {
+            path: args.path.clone(),
+            encoding: args.encoding,
+            with_file_types: args.with_file_types,
+            recursive: false,
+        };
+        let basename = rd.path.slice_z(&mut self.sync_error_buf);
+        let maybe = match args.tag() {
+            ret::ReaddirTag::Buffers => Self::fdreaddir_inner::<Buffer>(&rd, args.fd, basename),
+            ret::ReaddirTag::WithFileTypes => {
+                Self::fdreaddir_inner::<Dirent>(&rd, args.fd, basename)
+            }
+            ret::ReaddirTag::Files => Self::fdreaddir_inner::<BunString>(&rd, args.fd, basename),
+        };
+        maybe.map_err(|err| sys::Error {
+            syscall: sys::Tag::scandir,
+            errno: err.errno,
+            path: args.path.slice().into(),
+            ..Default::default()
+        })
+    }
+
+    fn fdreaddir_inner<T: ReaddirEntry>(
+        args: &args::Readdir,
+        fd: FD,
+        basename: &ZStr,
+    ) -> Maybe<ret::Readdir> {
+        let mut entries: Vec<T> = Vec::new();
+        Self::readdir_with_entries::<T>(args, fd, basename, &mut entries)?;
+        Ok(T::into_readdir(entries))
     }
 
     fn readdir_with_entries<T: ReaddirEntry>(
@@ -9294,6 +9411,8 @@ node_fs_ops! {
     Mkdir => mkdir, args::Mkdir, ret::Mkdir;
     Mkdtemp => mkdtemp, args::MkdirTemp, ret::Mkdtemp;
     Open => open, args::Open, ret::Open, uv = uv_open;
+    Opendir => opendir, args::Opendir, ret::Opendir;
+    Fdreaddir => fdreaddir, args::Fdreaddir, ret::Fdreaddir;
     Read => read, args::Read, ret::Read, uv = uv_read;
     Readdir => readdir, args::Readdir, ret::Readdir;
     ReadFile => read_file, args::ReadFile, ret::ReadFile;
@@ -10158,6 +10277,8 @@ pub enum NodeFSFunctionEnum {
     Mkdir,
     Mkdtemp,
     Open,
+    Opendir,
+    Fdreaddir,
     Read,
     Readdir,
     ReadFile,
@@ -10207,6 +10328,8 @@ impl NodeFSFunctionEnum {
             Self::Mkdir => task_tag::Mkdir,
             Self::Mkdtemp => task_tag::Mkdtemp,
             Self::Open => task_tag::Open,
+            Self::Opendir => task_tag::Opendir,
+            Self::Fdreaddir => task_tag::Fdreaddir,
             Self::Read => task_tag::Read,
             Self::Readdir => task_tag::Readdir,
             Self::ReadFile => task_tag::ReadFile,

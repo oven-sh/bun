@@ -377,6 +377,8 @@ node_fs_bindings! {
     mkdir_sync        / mkdir             => Mkdir,             args::Mkdir,     ret::Mkdir;
     mkdtemp_sync      / mkdtemp           => Mkdtemp,           args::MkdirTemp, ret::Mkdtemp;
     open_sync         / open              => Open,              args::Open,      ret::Open;
+    opendir_sync      / opendir           => Opendir,           args::Opendir,   ret::Opendir;
+    fdreaddir_sync    / fdreaddir         => Fdreaddir,         args::Fdreaddir, ret::Fdreaddir;
     read_sync         / read              => Read,              args::Read,      ret::Read;
     write_sync        / write             => Write,             args::Write,     ret::Write;
     read_file_sync    / read_file         => ReadFile,          args::ReadFile,  ret::ReadFile;

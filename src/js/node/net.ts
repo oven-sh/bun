@@ -47,6 +47,7 @@ const { kArmHandshakeTimeout, kSecureConnectDone, kVerifyError } = require("inte
 const ArrayPrototypeIncludes = Array.prototype.includes;
 const ArrayPrototypeJoin = Array.prototype.join;
 const ArrayPrototypePush = Array.prototype.push;
+const ArrayPrototypeSlice = Array.prototype.slice;
 const MathMax = Math.max;
 const MathMin = Math.min;
 
@@ -2754,7 +2755,19 @@ Socket.prototype.destroySoon = function destroySoon() {
   else this.once("finish", this.destroy);
 };
 
+function parkPendingChunks(self, socket, chunks, callback) {
+  self._pendingData = chunks;
+  self._pendingEncoding = "";
+  self[kwriteCallback] = callback;
+  if (self[kended] && !self[kUserUnrefed]) socket.ref?.();
+}
+
 function writeChunksUntilFull(self, socket, chunks, callback) {
+  // Never feed a chunk while the native buffer still holds a tail (open() calls drain() manually).
+  if (getBufferedAmount(socket) > 0) {
+    parkPendingChunks(self, socket, chunks, callback);
+    return false;
+  }
   const len = chunks.length;
   for (let i = 0; i < len; i++) {
     const res = socket.$write(chunks[i], "buffer");
@@ -2765,10 +2778,7 @@ function writeChunksUntilFull(self, socket, chunks, callback) {
     }
     if (!res) {
       self[kBytesWritten] = socket.bytesWritten;
-      self._pendingData = i + 1 < len ? chunks.slice(i + 1) : null;
-      self._pendingEncoding = "";
-      self[kwriteCallback] = callback;
-      if (self[kended] && !self[kUserUnrefed]) socket.ref?.();
+      parkPendingChunks(self, socket, i + 1 < len ? ArrayPrototypeSlice.$call(chunks, i + 1) : null, callback);
       return false;
     }
   }
@@ -2836,6 +2846,11 @@ function onWritevHandleReady(data, callback) {
     return;
   }
   this._unrefTimer();
+  if (socket.readyState < 0) {
+    const er = new ErrnoException(process.platform === "win32" ? -4047 /* UV_EPIPE */ : -9 /* UV_EBADF */, "write");
+    process.nextTick(callback, er);
+    return;
+  }
   if (writeChunksUntilFull(this, socket, data, callback)) {
     if (this.encrypted) process.nextTick(callback);
     else callback();

@@ -1898,19 +1898,17 @@ describe("net.Socket write buffering behind a stalled peer", () => {
   it("delivers every queued byte in order once the peer reads", async () => {
     const CHUNK = 65536;
     const N = 512; // 32 MiB
+    const serverRecv = Promise.withResolvers<Buffer>();
     const server = createServer({ pauseOnConnect: true }, sock => {
       setImmediate(() => sock.resume());
       const chunks: Buffer[] = [];
       sock.on("data", d => chunks.push(d));
       sock.on("end", () => {
-        const all = Buffer.concat(chunks);
         sock.destroy();
-        server.close();
-        serverRecv.resolve(all);
+        serverRecv.resolve(Buffer.concat(chunks));
       });
       sock.on("error", serverRecv.reject);
     });
-    const serverRecv = Promise.withResolvers<Buffer>();
     await new Promise<void>((resolve, reject) => {
       server.on("error", reject);
       server.listen(0, "127.0.0.1", resolve);
@@ -1919,24 +1917,29 @@ describe("net.Socket write buffering behind a stalled peer", () => {
 
     const expected = Buffer.allocUnsafe(CHUNK * N);
     const finished = Promise.withResolvers<void>();
-    const c = connect(port, "127.0.0.1", () => {
-      let sawFalse = false;
-      for (let n = 0; n < N; n++) {
-        const b = Buffer.alloc(CHUNK, n & 0xff);
-        b.copy(expected, n * CHUNK);
-        if (!c.write(b)) sawFalse = true;
-      }
+    let sawFalse = false;
+    let c: Socket | undefined;
+    try {
+      c = connect(port, "127.0.0.1", () => {
+        for (let n = 0; n < N; n++) {
+          const b = Buffer.alloc(CHUNK, n & 0xff);
+          b.copy(expected, n * CHUNK);
+          if (!c!.write(b)) sawFalse = true;
+        }
+        c!.end();
+        c!.on("finish", finished.resolve);
+      });
+      c.on("error", finished.reject);
+      const got = await serverRecv.promise;
+      await finished.promise;
       // The test only exercises the _writev queue path if backpressure was hit.
       expect(sawFalse).toBe(true);
-      c.end();
-      c.on("finish", finished.resolve);
-      c.on("error", finished.reject);
-    });
-    const got = await serverRecv.promise;
-    await finished.promise;
-    expect(got.length).toBe(CHUNK * N);
-    expect(got.equals(expected)).toBe(true);
-    expect(c.bytesWritten).toBe(CHUNK * N);
-    c.destroy();
+      expect(got.length).toBe(CHUNK * N);
+      expect(got.equals(expected)).toBe(true);
+      expect(c.bytesWritten).toBe(CHUNK * N);
+    } finally {
+      c?.destroy();
+      server.close();
+    }
   });
 });

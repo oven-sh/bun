@@ -293,11 +293,7 @@ test.concurrent.each([
   ["unhandled Promise.any with no promises", "Promise.any([]);", "AggregateError:"],
   // Nullish sub-errors are skipped, so an all-nullish array behaves like an
   // empty one and the AggregateError itself prints.
-  [
-    "all-nullish errors from Promise.any",
-    "Promise.any([Promise.reject(), Promise.reject(null)]);",
-    "AggregateError:",
-  ],
+  ["all-nullish errors from Promise.any", "Promise.any([Promise.reject(), Promise.reject(null)]);", "AggregateError:"],
 ] as const)(
   "uncaught AggregateError with empty `errors` prints the error itself (%s)",
   async (_name, fixture, expected) => {

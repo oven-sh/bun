@@ -926,8 +926,7 @@ const POST_FILE_DRAIN_GRACE_MS: i64 = 1000;
 fn drain_for_late_errors(vm: &mut VirtualMachine) {
     use bun_core::{Timespec, TimespecMockMode};
 
-    let deadline =
-        Timespec::now(TimespecMockMode::ForceRealTime).add_ms(POST_FILE_DRAIN_GRACE_MS);
+    let deadline = Timespec::now(TimespecMockMode::ForceRealTime).add_ms(POST_FILE_DRAIN_GRACE_MS);
 
     loop {
         vm.tick();

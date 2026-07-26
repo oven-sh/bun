@@ -1,4 +1,5 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
+import { tempDir } from "harness";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -239,5 +240,52 @@ describe("Dir explicit resource management", () => {
     dir.closeSync();
     expect(() => dir[Symbol.dispose]()).not.toThrow();
     await expect(dir[Symbol.asyncDispose]()).resolves.toBeUndefined();
+  });
+});
+
+// A Dir constructed directly with a raw integer must not treat that integer as
+// an fd it owns: node's handle is an opaque DirHandle and calling close() on an
+// integer throws there without touching any descriptor.
+describe("new fs.Dir with a foreign integer handle", () => {
+  function openProbe(cwd: string) {
+    const fd = fs.openSync(path.join(cwd, "probe.txt"), "r");
+    return {
+      fd,
+      [Symbol.dispose]() {
+        try {
+          fs.closeSync(fd);
+        } catch {}
+      },
+    };
+  }
+
+  it("closeSync does not close the unrelated fd", () => {
+    using cwd = tempDir("dir-foreign-fd", { "probe.txt": "x" });
+    using probe = openProbe(String(cwd));
+    const d = new fs.Dir(probe.fd, String(cwd));
+    try {
+      d.closeSync();
+    } catch {
+      // node throws TypeError here; either way the fd must survive
+    }
+    expect(() => fs.fstatSync(probe.fd)).not.toThrow();
+  });
+
+  it("async close does not close the unrelated fd", async () => {
+    using cwd = tempDir("dir-foreign-fd", { "probe.txt": "x" });
+    using probe = openProbe(String(cwd));
+    const d = new fs.Dir(probe.fd, String(cwd));
+    await d.close().catch(() => {});
+    expect(() => fs.fstatSync(probe.fd)).not.toThrow();
+  });
+
+  it("Symbol.dispose does not close the unrelated fd", () => {
+    using cwd = tempDir("dir-foreign-fd", { "probe.txt": "x" });
+    using probe = openProbe(String(cwd));
+    {
+      using d = new fs.Dir(probe.fd, String(cwd));
+      void d;
+    }
+    expect(() => fs.fstatSync(probe.fd)).not.toThrow();
   });
 });

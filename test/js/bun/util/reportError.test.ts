@@ -175,6 +175,12 @@ const tamperedAggregateErrors = [
     "sparse billion-length errors array",
     'const e = new AggregateError([], "agg_boom"); e.errors = Array(1e9); throw e;',
   ],
+  // Own non-terminating iterator: indexed access must be used so the
+  // user-supplied Symbol.iterator never runs (it would loop forever).
+  [
+    "own never-done Symbol.iterator on errors",
+    'const e = new AggregateError([], "agg_boom"); const a = [new Error("inner")]; a[Symbol.iterator] = () => ({ next: () => ({ value: e, done: false }) }); e.errors = a; throw e;',
+  ],
 ] as const;
 
 test.concurrent.each(tamperedAggregateErrors)(
@@ -248,6 +254,32 @@ test("uncaught AggregateError with intact `errors` still prints each sub-error",
   expect(stderr).toContain("error: inner_a");
   expect(stderr).toContain("error: inner_b");
   expect(stdout).toBe("");
+  expect(proc.signalCode).toBeNull();
+  expect(exitCode).toBe(1);
+});
+
+// Past the per-level cap (256), the printer truncates with an elision trailer
+// instead of dropping every sub-error.
+test("uncaught AggregateError with 300 sub-errors prints the first 256 and an elision trailer", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      'throw new AggregateError(Array.from({ length: 300 }, (_, i) => new Error("sub_" + i)), "agg_boom");',
+    ],
+    env: { ...bunEnv, NO_COLOR: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({
+    first: stderr.includes("error: sub_0"),
+    last: stderr.includes("error: sub_255"),
+    truncated: !stderr.includes("error: sub_256"),
+    trailer: stderr.includes("44 more errors"),
+    stdout,
+  }).toEqual({ first: true, last: true, truncated: true, trailer: true, stdout: "" });
   expect(proc.signalCode).toBeNull();
   expect(exitCode).toBe(1);
 });

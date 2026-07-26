@@ -4825,92 +4825,52 @@ impl VirtualMachine {
             // Own data slot only (nothrow, no getter call); only iterate the
             // spec-created shape. Tampered values fall through to plain printing.
             let errors = value.get_errors_property(global_ref);
-            // Iteration is length-linear even when construction was O(1)
-            // (`e.errors = Array(1e9)` is sparse), so cap the per-level count.
-            let errors_len = if errors.is_array() {
-                errors.get_length(global_ref).unwrap_or_else(|_| {
+            if errors.is_array() {
+                // Indexed access instead of the iterator protocol: a
+                // user-supplied `Symbol.iterator` never runs, and a sparse
+                // `Array(1e9)` costs at most the cap, not its length.
+                let len = errors.get_length(global_ref).unwrap_or_else(|_| {
                     global_ref.clear_exception_except_termination();
-                    u64::MAX
-                })
-            } else {
-                u64::MAX
-            };
-            if errors_len <= MAX_AGGREGATE_ERRORS_PER_LEVEL {
-                // `for_each` takes a C-ABI fn pointer, so captures go through a
-                // raw-pointer ctx struct.
-                struct AggCtx<'a> {
-                    formatter: *mut crate::console_object::Formatter<'a>,
-                    writer: *mut bun_core::io::Writer,
-                    exception_list: *mut ExceptionList,
-                    allow_ansi_color: bool,
-                    allow_side_effects: bool,
-                    depth: u8,
-                    remaining_unwraps: *mut u8,
-                    visited_any: bool,
-                }
-                extern "C" fn agg_iter(
-                    _vm: *mut crate::VM,
-                    _global: &JSGlobalObject,
-                    ctx: *mut c_void,
-                    next_value: JSValue,
-                ) {
-                    // SAFETY: `ctx` is `&mut AggCtx` for the duration of `for_each`.
-                    let ctx = unsafe { bun_ptr::callback_ctx::<AggCtx<'_>>(ctx) };
-                    ctx.visited_any = true;
-                    // SAFETY: per-thread VM.
-                    let vm = VirtualMachine::get().as_mut();
-                    let exception_list = if ctx.exception_list.is_null() {
-                        None
-                    } else {
-                        // SAFETY: non-null branch; borrows the caller's stack
-                        // `ExceptionList`, live for the synchronous `for_each`.
-                        Some(unsafe { &mut *ctx.exception_list })
+                    0
+                });
+                let cap = len.min(MAX_AGGREGATE_ERRORS_PER_LEVEL);
+                let mut printed: u64 = 0;
+                for i in 0..cap {
+                    let child = match errors.get_index(global_ref, i as u32) {
+                        Ok(child) => child,
+                        Err(_) => {
+                            // An index getter threw; stop expanding.
+                            global_ref.clear_exception_except_termination();
+                            break;
+                        }
                     };
-                    // SAFETY: `ctx.formatter` borrows the caller's stack local,
-                    // live across the synchronous `for_each` call.
-                    let formatter = unsafe { &mut *ctx.formatter };
-                    // SAFETY: `ctx.writer` borrows the caller's stack local,
-                    // live across the synchronous `for_each` call.
-                    let writer = unsafe { &mut *ctx.writer };
-                    // SAFETY: `ctx.remaining_unwraps` borrows the entry point's
-                    // stack counter, live across the synchronous `for_each` call.
-                    let remaining_unwraps = unsafe { &mut *ctx.remaining_unwraps };
-                    vm.print_errorlike_object_at_depth(
-                        next_value,
+                    // Holes in a sparse array read as `undefined`; printing
+                    // "error: undefined" per hole is noise.
+                    if child.is_undefined_or_null() {
+                        continue;
+                    }
+                    self.print_errorlike_object_at_depth(
+                        child,
                         None,
-                        exception_list,
+                        exception_list.as_deref_mut(),
                         formatter,
                         writer,
-                        ctx.allow_ansi_color,
-                        ctx.allow_side_effects,
-                        ctx.depth,
+                        allow_ansi_color,
+                        allow_side_effects,
+                        depth + 1,
                         remaining_unwraps,
                     );
+                    printed += 1;
                 }
-                let mut ctx = AggCtx {
-                    formatter: std::ptr::from_mut(formatter),
-                    writer: std::ptr::from_mut(writer),
-                    exception_list: exception_list
-                        .as_deref_mut()
-                        .map(std::ptr::from_mut::<ExceptionList>)
-                        .unwrap_or(core::ptr::null_mut()),
-                    allow_ansi_color,
-                    allow_side_effects,
-                    depth: depth + 1,
-                    remaining_unwraps: std::ptr::from_mut(remaining_unwraps),
-                    visited_any: false,
-                };
-                match errors.for_each(global_ref, (&raw mut ctx).cast(), agg_iter) {
-                    // An empty `errors` (e.g. `Promise.any([])`) falls through
-                    // so the AggregateError itself is printed, not nothing.
-                    Ok(()) if ctx.visited_any => return,
-                    Ok(()) => {}
-                    Err(_) => {
-                        // Iteration threw (e.g. poisoned Symbol.iterator):
-                        // clear it and fall through.
-                        global_ref.clear_exception_except_termination();
+                if printed > 0 {
+                    if len > cap {
+                        let _ = writer
+                            .write_all(format!("... {} more errors\n", len - cap).as_bytes());
                     }
+                    return;
                 }
+                // Zero sub-errors printed (e.g. `Promise.any([])`): fall
+                // through so the AggregateError itself is printed, not nothing.
             }
         }
 

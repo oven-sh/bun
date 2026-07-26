@@ -1416,7 +1416,6 @@ impl JSTranspiler {
             ));
         };
 
-        let allow_string_object = true;
         let code = if code_arg.is_string() {
             // WTF-8 so unpaired surrogates survive; owned Vec is thread-safe.
             let str = OwnedString::new(BunString::from_js(code_arg, global)?);
@@ -1430,13 +1429,7 @@ impl JSTranspiler {
                 bun_core::ZigStringSlice::init_owned(bytes),
             ))
         } else {
-            StringOrBuffer::from_js_with_encoding_maybe_async(
-                global,
-                code_arg,
-                Encoding::Utf8,
-                true,
-                allow_string_object,
-            )?
+            StringOrBuffer::from_js_with_encoding_maybe_async(global, code_arg, Encoding::Utf8, true, true)?
         };
         let Some(mut code) = code else {
             return Err(global.throw_invalid_argument_type(

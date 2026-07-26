@@ -1361,10 +1361,13 @@ describe("bundler", () => {
       stdout: "SUCCESS\nSUCCESS",
     },
   });
+  // Diverges from esbuild's upstream test: Node requires the "*" to capture at least
+  // one character (matchKey.length >= expansionKey.length), so "pkg1/foo" against
+  // "./foo*" is ERR_PACKAGE_PATH_NOT_EXPORTED in every supported Node release.
   itBundled("packagejson/ExportsWildcard", {
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
-        import 'pkg1/foo'
+        import 'pkg1/foo1'
         import 'pkg1/foo2'
       `,
       "/Users/user/project/node_modules/pkg1/package.json": /* json */ `
@@ -1374,7 +1377,7 @@ describe("bundler", () => {
           }
         }
       `,
-      "/Users/user/project/node_modules/pkg1/file.js": `console.log('SUCCESS')`,
+      "/Users/user/project/node_modules/pkg1/file1.js": `console.log('SUCCESS')`,
       "/Users/user/project/node_modules/pkg1/file2.js": `console.log('SUCCESS')`,
     },
     run: {

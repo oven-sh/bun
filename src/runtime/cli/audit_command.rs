@@ -501,7 +501,48 @@ fn send_audit_request(
         Global::crash();
     }
 
-    Ok(Box::<[u8]>::from(response_buf.list.as_slice()))
+    let body = response_buf.list.as_slice();
+
+    // The registry's bulk advisory endpoint serves gzip-compressed bodies
+    // without a Content-Encoding header, so the HTTP client leaves them
+    // compressed. Sniff the gzip magic and decompress before parsing.
+    if body.starts_with(&[0x1f, 0x8b]) {
+        return gunzip_audit_response(body);
+    }
+
+    Ok(Box::<[u8]>::from(body))
+}
+
+fn gunzip_audit_response(body: &[u8]) -> Result<Box<[u8]>, bun_alloc::AllocError> {
+    const MAX_DECOMPRESSED_SIZE: usize = 256 * 1024 * 1024;
+
+    let mut decompressor = libdeflate::OwnedDecompressor::new().ok_or(bun_alloc::AllocError)?;
+
+    // The gzip ISIZE trailer holds the uncompressed size mod 2^32; use it as
+    // the initial capacity and let the grow loop correct a lying trailer.
+    let size_hint = match body.last_chunk::<4>() {
+        Some(trailer) => (u32::from_le_bytes(*trailer) as usize).clamp(1024, MAX_DECOMPRESSED_SIZE),
+        None => 1024,
+    };
+    let mut decompressed = Vec::new();
+    decompressed
+        .try_reserve_exact(size_hint)
+        .map_err(|_| bun_alloc::AllocError)?;
+
+    let result = decompressor.decompress_to_vec_grow(
+        body,
+        &mut decompressed,
+        libdeflate::Encoding::Gzip,
+        MAX_DECOMPRESSED_SIZE,
+    );
+    if result.status != libdeflate::Status::Success {
+        bun_core::pretty_errorln!(
+            "<red>error<r>: audit request returned an invalid compressed response. Is the registry down?"
+        );
+        Global::crash();
+    }
+
+    Ok(decompressed.into_boxed_slice())
 }
 
 fn parse_vulnerability(

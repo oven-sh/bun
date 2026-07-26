@@ -1,7 +1,7 @@
 import { serve, ServeOptions, Server } from "bun";
 import { afterAll, describe, expect, it } from "bun:test";
 import { mkdirSync, rmSync } from "fs";
-import { isWindows, tls as validTls, tmpdirSync } from "harness";
+import { isWindows, tmpdirSync, tls as validTls } from "harness";
 import { request } from "http";
 import { join } from "path";
 const tmp_dir = tmpdirSync();

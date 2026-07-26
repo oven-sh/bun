@@ -372,27 +372,26 @@ impl S3HttpSimpleTask {
                 404 => this.error_with_body(ErrorType::NotFound)?,
                 _ => this.error_with_body(ErrorType::Failure)?,
             },
-            Callback::ListObjects(callback) => match response.status_code {
-                200 => {
-                    match this
-                        .result
-                        .body
-                        .as_ref()
-                        .and_then(|b| list_objects::parse_s3_list_objects_result(b.list.as_slice()))
-                    {
-                        Some(success) => callback(
-                            S3ListObjectsResult::Success(Box::new(success)),
-                            this.callback_context,
-                        )?,
-                        // Body was absent or not a complete <ListBucketResult> document.
-                        // error_with_body extracts <Code>/<Message> when the body is an S3
-                        // <Error> document; otherwise it falls back to UnknownError.
-                        None => this.error_with_body(ErrorType::Failure)?,
+            Callback::ListObjects(callback) => {
+                match response.status_code {
+                    200 => {
+                        match this.result.body.as_ref().and_then(|b| {
+                            list_objects::parse_s3_list_objects_result(b.list.as_slice())
+                        }) {
+                            Some(success) => callback(
+                                S3ListObjectsResult::Success(Box::new(success)),
+                                this.callback_context,
+                            )?,
+                            // Body was absent or not a complete <ListBucketResult> document.
+                            // error_with_body extracts <Code>/<Message> when the body is an S3
+                            // <Error> document; otherwise it falls back to UnknownError.
+                            None => this.error_with_body(ErrorType::Failure)?,
+                        }
                     }
+                    404 => this.error_with_body(ErrorType::NotFound)?,
+                    _ => this.error_with_body(ErrorType::Failure)?,
                 }
-                404 => this.error_with_body(ErrorType::NotFound)?,
-                _ => this.error_with_body(ErrorType::Failure)?,
-            },
+            }
             Callback::Upload(callback) => match response.status_code {
                 200 => callback(S3UploadResult::Success, this.callback_context)?,
                 _ => this.error_with_body(ErrorType::Failure)?,

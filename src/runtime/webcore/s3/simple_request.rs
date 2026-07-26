@@ -692,11 +692,7 @@ pub(crate) fn execute_simple_s3_request(
             // the HTTP thread as a live pointer for the duration of the callback.
             S3HttpSimpleTask::http_callback,
         ),
-        // A signed S3 request is only valid against the endpoint it was signed
-        // for. Following a 3xx would replay the SigV4 headers, the session
-        // token and (for PUT) the body to whatever host `Location` names, so
-        // surface the 3xx to `on_response` instead; its `_` arm turns the
-        // <Error><Code>PermanentRedirect</Code>... body into an S3Error.
+        // Signed requests are only valid at the signed host; surface 3xx as an error.
         FetchRedirect::Manual,
         HttpOptions {
             http_proxy,

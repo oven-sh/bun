@@ -361,8 +361,6 @@ pub(crate) fn list_objects(
             // HTTP thread invokes this with that exact pointer.
             S3HttpSimpleTask::http_callback,
         ),
-        // See `execute_simple_s3_request`: never follow a 3xx on a signed
-        // request; surface it so `on_response` can turn the body into an error.
         bun_http::FetchRedirect::Manual,
         bun_http::async_http::Options {
             http_proxy,
@@ -1075,9 +1073,6 @@ pub(crate) fn download_stream(
             // HTTP thread invokes this with that exact pointer.
             S3HttpDownloadStreamingTask::http_callback,
         ),
-        // See `execute_simple_s3_request`: never follow a 3xx on a signed
-        // request; surface it so `report_progress` can turn the body into an
-        // error.
         bun_http::FetchRedirect::Manual,
         bun_http::async_http::Options {
             http_proxy,

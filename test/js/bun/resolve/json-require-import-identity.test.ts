@@ -157,6 +157,32 @@ test.concurrent("require() of a .json alone (no prior import) still returns the 
   expect(exitCode).toBe(0);
 });
 
+test.concurrent("a plain-object require.cache entry for a .json is not clobbered by a later ESM import", async () => {
+  const { stdout, stderr, exitCode } = await run(
+    {
+      "cfg.json": `{"a":1}`,
+      "index.cjs": `
+        const key = require.resolve("./cfg.json");
+        require.cache[key] = { exports: { mocked: true } };
+        (async () => {
+          const def = (await import("./cfg.json", { with: { type: "json" } })).default;
+          console.log("def:", JSON.stringify(def));
+          console.log("entry survived:", require.cache[key].exports.mocked === true);
+          console.log("require:", JSON.stringify(require("./cfg.json")));
+        })();
+      `,
+    },
+    "index.cjs",
+  );
+  expect(stderr).toBe("");
+  expect(stdout).toMatchInlineSnapshot(`
+    "def: {"a":1}
+    entry survived: true
+    require: {"mocked":true}"
+  `);
+  expect(exitCode).toBe(0);
+});
+
 test.concurrent("import * as ns from a .json has no extra synthetic export names", async () => {
   // the fix inserts into require.cache; it must not change the ESM namespace shape.
   const { stdout, stderr, exitCode } = await run({

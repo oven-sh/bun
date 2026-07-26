@@ -1228,12 +1228,15 @@ describe("new Request(request) consumes the input request's body", () => {
     });
   });
 
-  test("new Request(url, template) leaves the template readable", async () => {
-    // A Request passed as the second argument is not the spec's input; it
-    // contributes its fields like an init dictionary and stays reusable.
+  // A Request passed as the second argument is not the spec's input; it
+  // contributes its fields like an init dictionary and stays reusable.
+  test.each([
+    ["new Request(url, template)", () => "http://a/" as const],
+    ["new Request(request, template)", () => new Request("http://a/", { method: "POST", body: "aaa" })],
+  ])("%s leaves the template readable", async (_, first) => {
     const template = new Request("http://x/", { method: "POST", body: "payload" });
-    const a = new Request("http://a/", template);
-    const b = new Request("http://b/", template);
+    const a = new Request(first(), template);
+    const b = new Request(first(), template);
     expect({
       templateBodyUsed: template.bodyUsed,
       a: await a.text(),

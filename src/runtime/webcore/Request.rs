@@ -1198,16 +1198,22 @@ impl Request {
                     }
 
                     if !fields.contains(Fields::Body) {
+                        let is_input = value == url_or_object;
                         match request.body_value() {
                             BodyValue::Null | BodyValue::Empty => {}
+                            BodyValue::Used if !is_input => {}
                             _ => {
-                                if let Err(e) = request.throw_if_body_unusable(global_this) {
-                                    bail!(Err(e));
+                                if is_input {
+                                    if let Err(e) = request.throw_if_body_unusable(global_this) {
+                                        bail!(Err(e));
+                                    }
                                 }
                                 match request.clone_body_value_via_cached_stream(global_this) {
                                     Ok(v) => {
                                         *req.body_value_mut() = v;
-                                        request.mark_body_consumed(global_this);
+                                        if is_input {
+                                            request.mark_body_consumed(global_this);
+                                        }
                                     }
                                     Err(e) => bail!(Err(e)),
                                 }

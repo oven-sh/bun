@@ -638,6 +638,13 @@ test.concurrent("buffered extract rejects a registry tarball whose decompressed 
   const prefixBlock = deflateRawSync(prefix, { finishFlush: zconst.Z_FULL_FLUSH });
   const zeroBlock = deflateRawSync(zeros, { level: 1, strategy: zconst.Z_RLE, finishFlush: zconst.Z_FULL_FLUSH });
   const tailBlock = deflateRawSync(tail); // default Z_FINISH → BFINAL=1
+  // Concatenation is only valid while finishFlush:Z_FULL_FLUSH keeps
+  // BFINAL=0 and ends on the byte-aligned 00 00 ff ff reset marker;
+  // bind that invariant here so a zlib.ts refactor that starts
+  // finishing sync deflate with Z_FINISH fails at the source.
+  for (const b of [prefixBlock, zeroBlock]) {
+    expect({ bfinal: b[0] & 1, tail: [...b.subarray(-4)] }).toEqual({ bfinal: 0, tail: [0, 0, 0xff, 0xff] });
+  }
 
   let crc = crc32(prefix);
   for (let i = 0; i < PAYLOAD_SIZE / BLOCK; i++) crc = crc32(zeros, crc);

@@ -630,7 +630,9 @@ describe.concurrent("WebSocket client writes a Close frame when failing on a bad
 
   function hostileServer(frame: Buffer) {
     const received = Promise.withResolvers<WireResult>();
+    const sockets = new Set<import("node:net").Socket>();
     const server = createServer(sock => {
+      sockets.add(sock);
       let buf = Buffer.alloc(0);
       let shaken = false;
       let got = Buffer.alloc(0);
@@ -655,6 +657,7 @@ describe.concurrent("WebSocket client writes a Close frame when failing on a bad
         sock.write(frame);
       });
       sock.on("close", () => {
+        sockets.delete(sock);
         let code = 0;
         // client frames are masked: 2-byte header + 4-byte mask + 2-byte status
         if (got.length >= 8 && (got[1] & 0x80) === 0x80) {
@@ -668,22 +671,34 @@ describe.concurrent("WebSocket client writes a Close frame when failing on a bad
         });
       });
     });
-    return { server, received: received.promise };
+    return {
+      server,
+      received: received.promise,
+      close: () =>
+        new Promise<void>(r => {
+          for (const s of sockets) s.destroy();
+          server.close(() => r());
+        }),
+    };
   }
 
   async function run(frame: Buffer) {
-    const { server, received } = hostileServer(frame);
+    const { server, received, close } = hostileServer(frame);
     await once(server.listen(0, "127.0.0.1"), "listening");
     const port = (server.address() as import("node:net").AddressInfo).port;
     const closed = Promise.withResolvers<{ code: number; wasClean: boolean }>();
     const messages: unknown[] = [];
     const ws = new WebSocket(`ws://127.0.0.1:${port}/`);
-    ws.onmessage = e => messages.push(e.data);
-    ws.onclose = e => closed.resolve({ code: e.code, wasClean: e.wasClean });
-    ws.onerror = () => {};
-    const [wire, js] = await Promise.all([received, closed.promise]);
-    await new Promise<void>(r => server.close(() => r()));
-    return { wire, js, messages };
+    try {
+      ws.onmessage = e => messages.push(e.data);
+      ws.onclose = e => closed.resolve({ code: e.code, wasClean: e.wasClean });
+      ws.onerror = () => {};
+      const [wire, js] = await Promise.all([received, closed.promise]);
+      return { wire, js, messages };
+    } finally {
+      ws.terminate();
+      await close();
+    }
   }
 
   it("masked TEXT from server → Close(1002)", async () => {

@@ -342,7 +342,7 @@ impl<const SSL: bool> WebSocket<SSL> {
                 return;
             }
             if self.has_tcp() {
-                if !self.write_close_frame(wire_code) {
+                if !self.write_close_frame(wire_code, &[]) {
                     // enqueue_encoded_bytes → terminate(FailedToWrite) already tore down.
                     return;
                 }
@@ -362,20 +362,23 @@ impl<const SSL: bool> WebSocket<SSL> {
         self.fail(code);
     }
 
-    /// Enqueue a masked Close frame carrying `code` (no reason).
-    fn write_close_frame(&self, code: u16) -> bool {
-        let mut frame = [0u8; CONTROL_HEADER_SIZE + 2];
-        let header = WebsocketHeader::new(2, true, Opcode::Close);
+    /// Enqueue a masked Close frame carrying `code` and an optional UTF-8 reason.
+    fn write_close_frame(&self, code: u16, body: &[u8]) -> bool {
+        debug_assert!(body.len() <= MAX_CLOSE_REASON);
+        let payload_len = 2 + body.len();
+        let mut frame = [0u8; CONTROL_HEADER_SIZE + 2 + MAX_CLOSE_REASON];
+        let header = WebsocketHeader::new((payload_len & 0x7F) as u8, true, Opcode::Close);
         frame[..2].copy_from_slice(&header.slice());
-        frame[CONTROL_HEADER_SIZE..].copy_from_slice(&code.to_be_bytes());
+        frame[CONTROL_HEADER_SIZE..][..2].copy_from_slice(&code.to_be_bytes());
+        frame[CONTROL_HEADER_SIZE + 2..][..body.len()].copy_from_slice(body);
         {
             let (head, payload) = frame.split_at_mut(CONTROL_HEADER_SIZE);
             let mask_buf: &mut [u8; 4] = (&mut head[2..CONTROL_HEADER_SIZE])
                 .try_into()
                 .expect("infallible: size matches");
-            Mask::fill_in_place(&self.global_this, mask_buf, payload);
+            Mask::fill_in_place(&self.global_this, mask_buf, &mut payload[..payload_len]);
         }
-        self.enqueue_encoded_bytes(&frame)
+        self.enqueue_encoded_bytes(&frame[..CONTROL_HEADER_SIZE + payload_len])
     }
 
     fn clear_receive_buffers(&self, free: bool) {
@@ -1203,40 +1206,18 @@ impl<const SSL: bool> WebSocket<SSL> {
             self.clear_data();
             return;
         }
-        // shutdown_read/shutdown are deferred to shutdown_after_close_frame()
-        // so the close frame can finish writing first: SHUT_RD on Linux makes
-        // the socket immediately readable (recv → 0), and the resulting on_end
-        // → terminate → cancel(Failure) would RST and discard the buffered
-        // frame.
-        let mut frame = [0u8; CONTROL_HEADER_SIZE + 2 + MAX_CLOSE_REASON];
-        let header = WebsocketHeader::new(((body_len + 2) & 0x7F) as u8, true, Opcode::Close);
-        frame[..2].copy_from_slice(&header.slice());
-        // the 4-byte masking key lives at frame[2..6]
-        frame[CONTROL_HEADER_SIZE..][..2].copy_from_slice(&code.to_be_bytes());
 
+        let body = &body[..body_len];
         let mut reason = bun_core::String::empty();
         if body_len > 0 {
-            let body = &body[..body_len];
-            // close is always utf8
             if !strings::is_valid_utf8(body) {
                 self.terminate(ErrorCode::InvalidUtf8);
                 return;
             }
             reason = bun_core::String::clone_utf8(body);
-            frame[CONTROL_HEADER_SIZE + 2..][..body_len].copy_from_slice(body);
         }
 
-        // we must mask the code (and the reason, if any)
-        let frame_len = CONTROL_HEADER_SIZE + 2 + body_len;
-        {
-            let (head, payload) = frame.split_at_mut(CONTROL_HEADER_SIZE);
-            let mask_buf: &mut [u8; 4] = (&mut head[2..CONTROL_HEADER_SIZE])
-                .try_into()
-                .expect("infallible: size matches");
-            Mask::fill_in_place(&self.global_this, mask_buf, &mut payload[..2 + body_len]);
-        }
-
-        if self.enqueue_encoded_bytes(&frame[..frame_len]) {
+        if self.write_close_frame(code, body) {
             let dispatch_code = dispatch_code.unwrap_or(code);
             if self.send_buffer.borrow().readable_length() == 0 {
                 self.shutdown_after_close_frame();
@@ -2099,21 +2080,30 @@ pub enum ErrorCode {
 impl ErrorCode {
     /// RFC 6455 §7.4.1 wire status code for this failure; `None` for transport errors.
     fn close_frame_code(self) -> Option<u16> {
+        use ErrorCode::*;
         match self {
-            ErrorCode::ControlFrameIsFragmented
-            | ErrorCode::InvalidControlFrame
-            | ErrorCode::CompressionUnsupported
-            | ErrorCode::InvalidCompressedData
-            | ErrorCode::CompressionFailed
-            | ErrorCode::UnexpectedMaskFromServer
-            | ErrorCode::ExpectedControlFrame
-            | ErrorCode::UnsupportedControlFrame
-            | ErrorCode::UnexpectedOpcode
-            | ErrorCode::UnexpectedRsv1
-            | ErrorCode::ProtocolError => Some(1002),
-            ErrorCode::InvalidUtf8 => Some(1007),
-            ErrorCode::MessageTooBig => Some(1009),
-            _ => None,
+            ControlFrameIsFragmented
+            | InvalidControlFrame
+            | CompressionUnsupported
+            | InvalidCompressedData
+            | CompressionFailed
+            | UnexpectedMaskFromServer
+            | ExpectedControlFrame
+            | UnsupportedControlFrame
+            | UnexpectedOpcode
+            | UnexpectedRsv1
+            | ProtocolError => Some(1002),
+            InvalidUtf8 => Some(1007),
+            MessageTooBig => Some(1009),
+            // Handshake / transport / proxy: the socket is dead, never upgraded,
+            // or the write path itself failed, so no Close frame is attempted.
+            Cancel | InvalidResponse | Expected101StatusCode | MissingUpgradeHeader
+            | MissingConnectionHeader | MissingWebsocketAcceptHeader | InvalidUpgradeHeader
+            | InvalidConnectionHeader | InvalidWebsocketVersion | MismatchWebsocketAcceptHeader
+            | MissingClientProtocol | MismatchClientProtocol | Timeout | Closed | FailedToWrite
+            | FailedToConnect | HeadersTooLarge | Ended | FailedToAllocateMemory
+            | TlsHandshakeFailed | ProxyConnectFailed | ProxyAuthenticationRequired
+            | ProxyConnectionRefused | ProxyTunnelFailed => None,
         }
     }
 }

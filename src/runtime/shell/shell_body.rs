@@ -340,9 +340,7 @@ pub fn shell_cmd_from_js(
     let mut i: u32 = 0;
     let last = string_iter.len.saturating_sub(1);
     while let Some(js_value) = string_iter.next()? {
-        if !builder.append_js_value_str::<false>(js_value)? {
-            return Err(global.throw(format_args!("Shell script string contains invalid UTF-16")));
-        }
+        builder.append_js_value_str::<false>(js_value)?;
         if i < last {
             let template_value = match template_args.next()? {
                 Some(v) => v,
@@ -459,11 +457,7 @@ pub fn handle_template_value(
         }
 
         if template_value.is_string() {
-            if !builder.append_js_value_str::<true>(template_value)? {
-                return Err(
-                    global.throw(format_args!("Shell script string contains invalid UTF-16"))
-                );
-            }
+            builder.append_js_value_str::<true>(template_value)?;
             return Ok(());
         }
 
@@ -526,20 +520,12 @@ pub fn handle_template_value(
 
         // Spec `JSValue.isPrimitive()` — `!isObject()` (covers number/bool/null/undef/symbol).
         if !template_value.is_object() {
-            if !builder.append_js_value_str::<true>(template_value)? {
-                return Err(
-                    global.throw(format_args!("Shell script string contains invalid UTF-16"))
-                );
-            }
+            builder.append_js_value_str::<true>(template_value)?;
             return Ok(());
         }
 
         if template_value.implements_to_string(global)? {
-            if !builder.append_js_value_str::<true>(template_value)? {
-                return Err(
-                    global.throw(format_args!("Shell script string contains invalid UTF-16"))
-                );
-            }
+            builder.append_js_value_str::<true>(template_value)?;
             return Ok(());
         }
 
@@ -602,10 +588,13 @@ impl<'a> ShellSrcBuilder<'a> {
     pub fn append_js_value_str<const ALLOW_ESCAPE: bool>(
         &mut self,
         jsval: JSValue,
-    ) -> JsResult<bool> {
+    ) -> JsResult<()> {
         let bunstr = OwnedString::new(jsval.to_bun_string(self.global_this)?);
         validate_shell_arg_bunstr(self.global_this, bunstr.get())?;
-        Ok(self.append_bun_str::<ALLOW_ESCAPE>(bunstr.get())?)
+        // Encoding was just validated, so append_bun_str's only Ok(false) path is unreachable.
+        let ok = self.append_bun_str::<ALLOW_ESCAPE>(bunstr.get())?;
+        debug_assert!(ok);
+        Ok(())
     }
 
     pub fn append_bun_str<const ALLOW_ESCAPE: bool>(

@@ -196,16 +196,18 @@ describe("bunshell", () => {
       expect(() => $.escape("x\uDC00y")).toThrow("Shell script string contains invalid UTF-16");
     });
 
-    test("always returns a string for non-string primitives", async () => {
+    test("always returns a primitive string for non-string inputs", async () => {
       // @ts-expect-error — exercising the runtime coercion contract.
       const escape: (v: unknown) => string = $.escape;
       expect(escape(true)).toBe("true");
       expect(escape(false)).toBe("false");
       expect(escape(null)).toBe("null");
       expect(escape(undefined)).toBe("undefined");
+      expect(escape(new String("hello"))).toBe("hello");
       expect(typeof escape(true)).toBe("string");
       expect(typeof escape(null)).toBe("string");
       expect(typeof escape(undefined)).toBe("string");
+      expect(typeof escape(new String("hello"))).toBe("string");
       // Coerced values the shell rejects as an interpolation must also be rejected here.
       expect(() => escape({ toString: () => "a\0b" })).toThrow(
         expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }),
@@ -215,6 +217,15 @@ describe("bunshell", () => {
         const { stdout } = await $`echo ${{ raw: escape(v) }}`;
         expect(stdout.toString()).toEqual(`${String(v)}\n`);
       }
+    });
+
+    test("quotes if-clause keywords so { raw: } keeps them as command words", async () => {
+      for (const kw of ["if", "then", "elif", "else", "fi"]) {
+        expect($.escape(kw)).toBe(`"${kw}"`);
+      }
+      const { stdout, stderr } = await $`${{ raw: $.escape("if") }} --help; echo done`.nothrow();
+      expect(stderr.toString()).toContain("command not found: if");
+      expect(stdout.toString()).toBe("done\n");
     });
 
     test("escaped values containing interpolation marker bytes stay literal data", async () => {

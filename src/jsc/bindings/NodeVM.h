@@ -45,6 +45,41 @@ bool isUseMainContextDefaultLoaderConstant(JSC::JSGlobalObject* globalObject, JS
 
 } // namespace NodeVM
 
+class SigintReceiver;
+
+// RAII guard that arms the JSC Watchdog for one node:vm evaluation's
+// `timeout` option. The Watchdog is per-VM and has no cancel API, so a bare
+// `setTimeLimit(noTimeLimit)` after the evaluation leaves the already-armed
+// deadline live and the next trap service terminates whatever JS is running.
+// This guard installs a ShouldTerminateCallback that attributes a fire to the
+// innermost active scope (or vetoes it when none is active), and restores the
+// enclosing scope's limit on all exit paths.
+class NodeVMTimeoutScope {
+    WTF_MAKE_NONCOPYABLE(NodeVMTimeoutScope);
+
+public:
+    NodeVMTimeoutScope(JSC::VM&, std::optional<int64_t> timeoutMs);
+    ~NodeVMTimeoutScope();
+
+    bool didFire() const { return m_fired; }
+    double effectiveTimeoutMs() const { return m_effectiveTimeoutMs; }
+
+private:
+    static bool shouldTerminateCallback(JSC::JSGlobalObject*, void* data1, void* data2);
+
+    JSC::VM* m_vm { nullptr };
+    NodeVMTimeoutScope* m_prev { nullptr };
+    double m_effectiveTimeoutMs { 0 };
+    bool m_fired { false };
+};
+
+// Shared by NodeVMScript.cpp and NodeVMModule.cpp: when the VM has a
+// termination request that this evaluation's own watchdog or SIGINT watcher
+// raised, clear it and throw the matching ERR_SCRIPT_EXECUTION_* error.
+// A termination that belongs to someone else (an enclosing evaluation's
+// watchdog, or worker.terminate()) is propagated unchanged.
+bool checkForTermination(JSC::VM&, JSC::JSGlobalObject*, JSC::ThrowScope&, SigintReceiver*, NodeVMTimeoutScope&);
+
 class BaseVMOptions {
 public:
     String filename;

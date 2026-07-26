@@ -1383,3 +1383,122 @@ describe("node:vm SourceTextModule cyclic graph linking", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+describe.concurrent("node:vm timeout watchdog scoping", () => {
+  // A timed evaluation whose script returns before the deadline must not leave
+  // the per-VM JSC Watchdog armed. Previously the deadline outlived the
+  // evaluation, fired inside the host's microtask drain, and left the
+  // termination exception permanently pending so every later JS callback was
+  // skipped and the process exited 0 with no output.
+  test("a timed eval that returns early does not poison the host's microtask drain", async () => {
+    const fixture = `
+      const vm = require("node:vm");
+      const deadline = Date.now() + 300;
+      vm.runInNewContext(
+        "Promise.resolve().then(function f(){ if (Date.now() < deadline) Promise.resolve().then(f); });",
+        { deadline },
+        { timeout: 30 },
+      );
+      setTimeout(() => console.log("timer-fired"), 400);
+      setTimeout(() => { console.log("done"); process.exit(0); }, 600);
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+      stdout: "timer-fired\ndone",
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+
+  // The "disarm" used to be setTimeLimit(noTimeLimit), which leaves the
+  // Watchdog's already-dispatched deadline timer live. When it lands with the
+  // CPU deadline still ahead (the process was idle), Watchdog::startTimer
+  // re-arms and asserts hasTimeLimit() on a debug build.
+  test("a timed eval that returns early does not trip Watchdog::startTimer's hasTimeLimit() assert", async () => {
+    const fixture = `
+      const vm = require("node:vm");
+      vm.runInNewContext("1", {}, { timeout: 20 });
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 60);
+      vm.runInNewContext("for (let i = 0; i < 1e5; i++);", {});
+      console.log("alive");
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+      stdout: "alive",
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+
+  // A termination request serviced inside an untimed evaluation belongs to the
+  // enclosing timed one and must propagate instead of tripping the
+  // "terminated due neither to SIGINT nor to timeout" RELEASE_ASSERT.
+  test("an outer timeout that fires inside a nested untimed eval propagates to the outer frame", async () => {
+    const fixture = `
+      const vm = require("node:vm");
+      const inner = () => vm.runInNewContext("const t=Date.now(); while(Date.now()-t<1000);", {});
+      try {
+        vm.runInNewContext("inner()", { inner }, { timeout: 60 });
+        console.log("FAIL: no throw");
+      } catch (e) {
+        console.log("outer-threw:" + (e && e.code));
+      }
+      console.log("alive");
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+      stdout: "outer-threw:ERR_SCRIPT_EXECUTION_TIMEOUT\nalive",
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+
+  // The watchdog must still interrupt a runaway script and produce
+  // ERR_SCRIPT_EXECUTION_TIMEOUT at the frame that armed it.
+  test("timeout still interrupts a runaway script", async () => {
+    const fixture = `
+      const vm = require("node:vm");
+      try {
+        vm.runInNewContext("for(;;);", {}, { timeout: 50 });
+        console.log("FAIL: no throw");
+      } catch (e) {
+        console.log("threw:" + (e && e.code));
+      }
+      setTimeout(() => console.log("timer-after"), 100);
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+      stdout: "threw:ERR_SCRIPT_EXECUTION_TIMEOUT\ntimer-after",
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+});

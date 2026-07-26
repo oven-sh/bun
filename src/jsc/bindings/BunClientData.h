@@ -30,6 +30,10 @@ namespace Zig {
 class GlobalObject;
 }
 
+namespace Bun {
+class NodeVMTimeoutScope;
+}
+
 namespace WebCore {
 using namespace JSC;
 using namespace Zig;
@@ -126,6 +130,13 @@ public:
 
     void* bunVM;
     Bun::JSCTaskScheduler deferredWorkTimer;
+
+    // Innermost active node:vm `timeout` scope (a stack-allocated RAII guard
+    // around the evaluation). The Watchdog's ShouldTerminateCallback reads
+    // this slot: a fire with no active scope is a stale deadline from an
+    // evaluation that already returned and is vetoed instead of terminating
+    // whatever JS happens to be running.
+    Bun::NodeVMTimeoutScope* nodeVMTimeoutScope { nullptr };
 
     // Backing storage for Bun::IsolatedModuleCache (see IsolatedModuleCache.h).
     // All access should go through that class. Stored as the JSC base type to

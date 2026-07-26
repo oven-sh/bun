@@ -2528,9 +2528,13 @@ impl FetchTasklet {
             }
 
             if let BodyValue::Locked(locked) = body {
+                if locked.on_receive_value.is_some() {
+                    // Scenario 2b.
+                    return;
+                }
                 if let Some(promise) = locked.promise {
                     if promise.is_empty_or_undefined_or_null() {
-                        // Scenario 2b.
+                        // Scenario 2a.
                         this.ignore_remaining_response_body(true);
                     }
                 } else {

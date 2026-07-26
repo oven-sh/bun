@@ -5244,6 +5244,7 @@ pub fn write_file_internal(
                         let BodyValue::Locked(locked) = (unsafe { &mut *body_value }) else {
                             unreachable!()
                         };
+                        locked.take_over_as_buffering_consumer();
                         locked.task = Some(task.cast::<c_void>());
                         locked.on_receive_value = Some(WriteFileWaitFromLockedValueTask::then_wrap);
                         // SAFETY: `task` was just heap-allocated; consumed in `then_wrap`.

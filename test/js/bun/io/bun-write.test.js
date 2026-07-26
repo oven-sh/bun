@@ -1,6 +1,16 @@
 import { describe, expect, it, test } from "bun:test";
 import fs, { mkdirSync } from "fs";
-import { bunEnv, bunExe, exampleHtml, exampleSite, gcTick, isWindows, tempDir, withoutAggressiveGC } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  exampleHtml,
+  exampleSite,
+  gcTick,
+  isASAN,
+  isWindows,
+  tempDir,
+  withoutAggressiveGC,
+} from "harness";
 import path, { join } from "path";
 
 let i = 0;
@@ -365,6 +375,110 @@ const IS_UV_FS_COPYFILE_DISABLED =
     expect(await Bun.write(tmpbase + "fetch.js.out", resp)).toBe(exampleHtml.length);
     expect(await Bun.file(tmpbase + "fetch.js.out").text()).toBe(exampleHtml);
     await gcTick();
+  });
+
+  describe("Bun.write(path, fetch()) with a streaming body", () => {
+    it("Content-Length body settles", async () => {
+      using dir = tempDir("bun-write-fetch-cl", {});
+      const out = join(String(dir), "dl.bin");
+      const body = Buffer.alloc(500_000, "x");
+      await using server = Bun.serve({ port: 0, fetch: () => new Response(body) });
+      const res = await fetch(server.url);
+      expect(res.headers.get("content-length")).toBe(String(body.length));
+      const written = await Bun.write(out, res);
+      expect(written).toBe(body.length);
+      expect(await Bun.file(out).bytes()).toEqual(new Uint8Array(body));
+    });
+
+    it("chunked body settles", async () => {
+      using dir = tempDir("bun-write-fetch-chunked", {});
+      const out = join(String(dir), "dl.bin");
+      const chunk = Buffer.alloc(80_000, "y");
+      const chunks = 4;
+      const { promise: fetched, resolve: markFetched } = Promise.withResolvers();
+      await using server = Bun.serve({
+        port: 0,
+        fetch: () =>
+          new Response(async function* () {
+            yield chunk;
+            await fetched;
+            for (let i = 1; i < chunks; i++) yield chunk;
+          }),
+      });
+      const res = await fetch(server.url);
+      markFetched();
+      expect(res.headers.get("content-length")).toBeNull();
+      const written = await Bun.write(out, res);
+      expect(written).toBe(chunk.length * chunks);
+      expect((await Bun.file(out).bytes()).length).toBe(chunk.length * chunks);
+    });
+
+    it.each([
+      ["AbortError", undefined],
+      ["TimeoutError", new DOMException("The operation timed out.", "TimeoutError")],
+    ])("rejects with %s when the signal aborts mid-transfer", async (name, reason) => {
+      using dir = tempDir("bun-write-fetch-abort", {});
+      const { promise: gate, resolve: openGate } = Promise.withResolvers();
+      await using server = Bun.serve({
+        port: 0,
+        fetch: () =>
+          new Response(async function* () {
+            yield Buffer.alloc(200_000, "z");
+            await gate;
+          }),
+      });
+      try {
+        const ac = new AbortController();
+        // Scope the Response so it is collectible once Bun.write has
+        // registered on the body; on an unfixed build the finalizer then drops
+        // the body and the abort never reaches the write promise.
+        async function start() {
+          const res = await fetch(server.url, { signal: ac.signal });
+          return { write: Bun.write(join(String(dir), "dl.bin"), res) };
+        }
+        const { write } = await start();
+        await gcTick();
+        Bun.gc(true);
+        ac.abort(reason);
+        let caught;
+        await write.catch(e => (caught = e));
+        expect(caught).toBeInstanceOf(DOMException);
+        expect(caught.name).toBe(name);
+      } finally {
+        openGate();
+      }
+    });
+
+    it("settles when aborted after the body has been fully received", async () => {
+      using dir = tempDir("bun-write-fetch-late-abort", {});
+      const out = join(String(dir), "dl.bin");
+      const body = Buffer.alloc(500_000, "q");
+      await using server = Bun.serve({ port: 0, fetch: () => new Response(body) });
+      const ac = new AbortController();
+      const res = await fetch(server.url, { signal: ac.signal });
+      const written = await Bun.write(out, res);
+      ac.abort();
+      expect(written).toBe(body.length);
+      expect((await Bun.file(out).bytes()).length).toBe(body.length);
+    });
+  });
+
+  it.skipIf(!isASAN)("Bun.write(path, fetch()) then resp.body does not crash", async () => {
+    using dir = tempDir("bun-write-fetch-then-body", {});
+    const out = JSON.stringify(join(String(dir), "dl.out"));
+    const fixture = `
+      const server = Bun.serve({ port: 0, fetch: () => new Response(Buffer.alloc(300_000, "y")) });
+      const resp = await fetch(server.url);
+      const p = Bun.write(${out}, resp);
+      if (!(resp.body instanceof ReadableStream)) throw new Error("expected ReadableStream");
+      resp.clone();
+      await Promise.race([p, Bun.sleep(1)]);
+      console.log("OK");
+      process.exit(0);
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", fixture], env: bunEnv, stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "OK", stderr: "", exitCode: 0 });
   });
 
   it("Response -> Bun.file -> Response -> text", async () => {

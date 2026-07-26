@@ -15,7 +15,10 @@ test(
         if (message.url) resolve(message.url);
       },
     });
-    proc.exited.then(code => reject(new Error(`req-url-leak fixture exited (${code}) before sending its URL`)));
+    const stderr = proc.stderr.text();
+    proc.exited.then(async code =>
+      reject(new Error(`req-url-leak fixture exited (${code}) before sending its URL: ${await stderr}`)),
+    );
 
     const baseURL = await promise;
     const url = new URL(Buffer.alloc(1024 * 15, "Z").toString(), baseURL);
@@ -40,7 +43,7 @@ test(
     }
 
     proc.kill();
-    const [stderr] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+    await Promise.all([proc.stdout.text(), proc.exited]);
 
     const growthMB = (samples.at(-1)! - samples[1]) / 1024 / 1024;
     console.log(
@@ -50,7 +53,7 @@ test(
       growthMB.toFixed(1) + "MB",
     );
 
-    expect(stderr).toBe("");
+    expect(await stderr).toBe("");
     // 297 MB on Bun 1.2 vs 44 MB on Bun 1.3 for the old 16 K absolute-RSS check;
     // as a post-GC delta the leak shows as ~30 MB here versus ~0 on a fixed build.
     expect(growthMB).toBeLessThan(15);

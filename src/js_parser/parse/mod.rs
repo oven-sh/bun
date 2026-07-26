@@ -1501,7 +1501,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 if let Some(mut parent) = scope.parent
                                     && parent.kind == js_ast::scope::Kind::FunctionArgs
                                 {
-                                    parent.strict_mode = StrictModeKind::ExplicitStrictMode;
+                                    parent.recursive_set_strict_mode(
+                                        StrictModeKind::ExplicitStrictMode,
+                                    );
                                 }
                                 if p.current_scope == p.module_scope {
                                     p.module_scope_directive_loc = stmt.loc;
@@ -1511,9 +1513,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 stmt.data = js_ast::stmt::Data::SEmpty(S::Empty {});
                             } else {
                                 let bytes = str_.string(p.arena).expect("OOM");
+                                let legacy_octal_loc = str_.legacy_octal_loc;
                                 stmt = Stmt::alloc(
                                     S::Directive {
                                         value: bun_ast::StoreStr::new(bytes),
+                                        legacy_octal_loc,
                                     },
                                     stmt.loc,
                                 );

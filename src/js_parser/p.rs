@@ -2805,7 +2805,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .recursive_set_strict_mode(js_ast::StrictModeKind::ImplicitStrictModeTopLevelAwait);
         }
 
-        if self.has_es_module_syntax {
+        if self.has_es_module_syntax || self.options.module_type == options::ModuleType::Esm {
             for r in &self.lexer.legacy_html_comment_ranges {
                 self.log().add_range_error(
                     Some(self.source),
@@ -8248,6 +8248,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     remaining_stmts[0] = self.s(
                         S::Directive {
                             value: b"use strict".into(),
+                            legacy_octal_loc: bun_ast::Loc::EMPTY,
                         },
                         self.module_scope_directive_loc,
                     );

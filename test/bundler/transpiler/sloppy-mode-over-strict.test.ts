@@ -6,11 +6,12 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
-async function run(body: string, cjs = true) {
+async function run(body: string, cjs = true, ext = "js") {
   const source = cjs ? body + "\nmodule.exports = {};\n" : body;
-  using dir = tempDir("sloppy-mode", { "x.js": source });
+  const name = `x.${ext}`;
+  using dir = tempDir("sloppy-mode", { [name]: source });
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "run", "x.js"],
+    cmd: [bunExe(), "run", name],
     env: bunEnv,
     cwd: String(dir),
     stdout: "pipe",
@@ -229,6 +230,30 @@ describe.concurrent("strict-mode / unique-formal-parameter rejections still fire
   test("--> HTML close comment in an ESM file is rejected", async () => {
     const { exitCode, stderr } = await run(`var h = 1\n--> comment\nexport {};`, false);
     expect(stderr).toContain("Legacy HTML single-line comments are not allowed in ECMAScript modules");
+    expect(exitCode).not.toBe(0);
+  });
+
+  test("HTML comment in a .mjs file without ESM syntax is rejected", async () => {
+    const { exitCode, stderr } = await run(`var h = 1 <!-- comment\nconsole.log(h);`, false, "mjs");
+    expect(stderr).toContain("Legacy HTML single-line comments are not allowed in ECMAScript modules");
+    expect(exitCode).not.toBe(0);
+  });
+
+  test("var await in a .mjs file without ESM syntax is rejected", async () => {
+    const { exitCode, stderr } = await run(`var await = 1;\nconsole.log("x");`, false, "mjs");
+    expect(stderr).toContain(`Cannot use "await" as an identifier in an ECMAScript module`);
+    expect(exitCode).not.toBe(0);
+  });
+
+  test("legacy octal escape in a directive prologue of an ESM file is rejected", async () => {
+    const { exitCode, stderr } = await run(`"\\1"; export {};`, false);
+    expect(stderr).toContain("Legacy octal escape sequences");
+    expect(exitCode).not.toBe(0);
+  });
+
+  test('legacy octal escape in a directive prologue before "use strict" is rejected', async () => {
+    const { exitCode, stderr } = await run(`function f() { "\\1"; "use strict"; }\nvoid f;`);
+    expect(stderr).toContain("Legacy octal escape sequences");
     expect(exitCode).not.toBe(0);
   });
 

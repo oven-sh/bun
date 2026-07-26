@@ -137,6 +137,9 @@ static JSC::JSObject* createErrorPrototype(JSC::VM& vm, JSC::JSGlobalObject* glo
 
     prototype->putDirect(vm, vm.propertyNames->name, jsString(vm, String(name)), 0);
     prototype->putDirect(vm, WebCore::builtinNames(vm).codePublicName(), jsString(vm, String(code)), 0);
+    // Private-name marker so the stack formatter can render the header as
+    // `${name} [${code}]: ${message}` without changing the public .name.
+    prototype->putDirect(vm, WebCore::builtinNames(vm).codePrivateName(), jsString(vm, String(code)), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::ReadOnly | 0);
     prototype->putDirect(vm, vm.propertyNames->toString, JSC::JSFunction::create(vm, globalObject, 0, "toString"_s, NodeError_proto_toString, JSC::ImplementationVisibility::Private), 0);
 
     return prototype;

@@ -32,6 +32,35 @@ using namespace WebCore;
 
 namespace Bun {
 
+// If errorObject was created via Bun::createError (its direct prototype carries the
+// private @code marker from createErrorPrototype), return the error's current
+// public .code value so the stack header can include `[${code}]`, matching
+// Node's prepareStackTraceCallback (which gates on kIsNodeError).
+static String nodeErrorCodeForStackHeader(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSObject* errorObject)
+{
+    JSValue proto = errorObject->getPrototypeDirect();
+    JSObject* protoObj = proto.getObject();
+    if (!protoObj)
+        return {};
+
+    const auto& builtinNames = WebCore::builtinNames(vm);
+    PropertySlot markerSlot(protoObj, PropertySlot::InternalMethodType::VMInquiry, &vm);
+    if (!JSObject::getOwnPropertySlot(protoObj, lexicalGlobalObject, builtinNames.codePrivateName(), markerSlot) || !markerSlot.isValue())
+        return {};
+
+    JSValue codeValue;
+    PropertySlot codeSlot(errorObject, PropertySlot::InternalMethodType::VMInquiry, &vm);
+    if (JSObject::getOwnPropertySlot(errorObject, lexicalGlobalObject, builtinNames.codePublicName(), codeSlot) && codeSlot.isValue()) {
+        codeValue = codeSlot.getValue(lexicalGlobalObject, builtinNames.codePublicName());
+    } else {
+        codeValue = markerSlot.getValue(lexicalGlobalObject, builtinNames.codePrivateName());
+    }
+    auto* codeString = dynamicDowncast<JSC::JSString>(codeValue);
+    if (!codeString)
+        return {};
+    return codeString->getString(lexicalGlobalObject);
+}
+
 static JSValue formatStackTraceToJSValue(JSC::VM& vm, Zig::GlobalObject* globalObject, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSObject* errorObject, JSC::JSArray* callSites)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -41,19 +70,45 @@ static JSValue formatStackTraceToJSValue(JSC::VM& vm, Zig::GlobalObject* globalO
 
     WTF::StringBuilder sb;
 
+    WTF::String name = "Error"_s;
+    auto errorName = errorObject->getIfPropertyExists(lexicalGlobalObject, vm.propertyNames->name);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (errorName && !errorName.isUndefined()) {
+        auto* nameStr = errorName.toString(lexicalGlobalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto nameView = nameStr->view(lexicalGlobalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        name = nameView->toString();
+    }
+
+    WTF::String code = nodeErrorCodeForStackHeader(vm, lexicalGlobalObject, errorObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    WTF::String message;
     auto errorMessage = errorObject->getIfPropertyExists(lexicalGlobalObject, vm.propertyNames->message);
     RETURN_IF_EXCEPTION(scope, {});
-    if (errorMessage) {
+    if (errorMessage && !errorMessage.isUndefined()) {
         auto* str = errorMessage.toString(lexicalGlobalObject);
         RETURN_IF_EXCEPTION(scope, {});
-        if (str->length() > 0) {
-            auto value = str->view(lexicalGlobalObject);
-            RETURN_IF_EXCEPTION(scope, {});
-            sb.append("Error: "_s);
-            sb.append(value.data);
-        } else {
-            sb.append("Error"_s);
+        auto value = str->view(lexicalGlobalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        message = value->toString();
+    }
+
+    if (!code.isEmpty()) {
+        sb.append(name);
+        sb.append(" ["_s);
+        sb.append(code);
+        sb.append("]: "_s);
+        sb.append(message);
+    } else if (!name.isEmpty()) {
+        sb.append(name);
+        if (!message.isEmpty()) {
+            sb.append(": "_s);
+            sb.append(message);
         }
+    } else if (!message.isEmpty()) {
+        sb.append(message);
     } else {
         sb.append("Error"_s);
     }
@@ -418,6 +473,11 @@ static String computeErrorInfoWithoutPrepareStackTrace(
             RETURN_IF_EXCEPTION(scope, {});
             message = instance->sanitizedMessageString(lexicalGlobalObject);
             RETURN_IF_EXCEPTION(scope, {});
+
+            WTF::String code = nodeErrorCodeForStackHeader(vm, lexicalGlobalObject, instance);
+            RETURN_IF_EXCEPTION(scope, {});
+            if (!code.isEmpty())
+                name = makeString(name, " ["_s, code, ']');
         }
     }
 

@@ -2366,6 +2366,15 @@ pub mod JSZlib {
         global_this: &JSGlobalObject,
         mut list: Vec<u8>,
     ) -> JsResult<JSValue> {
+        let max_output = ArrayBuffer::MAX_SIZE as usize;
+        if list.len() > max_output {
+            return Err(global_this
+                .err(
+                    jsc::ErrCode::BUFFER_TOO_LARGE,
+                    format_args!("Cannot create a Buffer larger than {max_output} bytes"),
+                )
+                .throw());
+        }
         list.shrink_to_fit();
         let is_empty = list.is_empty();
         let leaked: &'static mut [u8] = list.leak();
@@ -2852,6 +2861,16 @@ pub mod JSZstd {
             }
         };
 
+        let max_output = ArrayBuffer::MAX_SIZE as usize;
+        if output.len() > max_output {
+            return Err(global_this
+                .err(
+                    jsc::ErrCode::BUFFER_TOO_LARGE,
+                    format_args!("Cannot create a Buffer larger than {max_output} bytes"),
+                )
+                .throw());
+        }
+
         Ok(JSValue::create_buffer(global_this, output.leak()))
     }
 
@@ -2934,6 +2953,19 @@ pub mod JSZstd {
             }
 
             let output_slice = core::mem::take(&mut self.output);
+            let max_output = ArrayBuffer::MAX_SIZE as usize;
+            if output_slice.len() > max_output {
+                promise.reject_with_async_stack(
+                    global_this,
+                    Ok(global_this
+                        .err(
+                            jsc::ErrCode::BUFFER_TOO_LARGE,
+                            format_args!("Cannot create a Buffer larger than {max_output} bytes"),
+                        )
+                        .to_js()),
+                )?;
+                return Ok(());
+            }
             let buffer_value = JSValue::create_buffer(global_this, output_slice.leak());
             promise.resolve(global_this, buffer_value)?;
             Ok(())

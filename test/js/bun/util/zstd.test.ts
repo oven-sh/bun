@@ -10,6 +10,7 @@ import {
 } from "bun";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { bunEnv, bunExe } from "harness";
+import os from "os";
 import path from "path";
 
 describe("Zstandard compression", async () => {
@@ -364,6 +365,104 @@ describe("sync compression argument handling", () => {
     });
     expect(exitCode).toBe(0);
   }, 60_000);
+});
+
+// When the decompressed output exceeds the ArrayBuffer max, the Bun-native
+// decompress APIs must throw ERR_BUFFER_TOO_LARGE (a RangeError) instead of
+// aborting the process. Spawned so the multi-GB allocation is released with
+// the child and so a regression (process abort) fails the test instead of
+// killing the runner.
+describe.skipIf(os.totalmem() < 16 * 1024 ** 3)("decompressed output > ArrayBuffer max", () => {
+  async function run(script: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.trim(), stderr, exitCode };
+  }
+
+  // Bun.gunzipSync stops at the first gzip member, so the bomb has to be a
+  // single stream: compress (4 GiB + 1 KiB) of zeros and decompress that.
+  it("Bun.gunzipSync throws ERR_BUFFER_TOO_LARGE instead of panicking", async () => {
+    const script = `
+      import * as zlib from "node:zlib";
+      const chunks = [];
+      const gz = zlib.createGzip({ level: 1 });
+      gz.on("data", c => chunks.push(c));
+      const done = new Promise(r => gz.on("end", r));
+      const zero = Buffer.alloc(64 << 20);
+      let left = 4 * 1024 ** 3;
+      const feed = () => {
+        while (left > 0) {
+          const n = Math.min(zero.length, left);
+          left -= n;
+          if (!gz.write(zero.subarray(0, n))) return gz.once("drain", feed);
+        }
+        gz.end();
+      };
+      feed();
+      await done;
+      const bomb = Buffer.concat(chunks);
+      try {
+        Bun.gunzipSync(bomb);
+        console.log(JSON.stringify({ threw: false }));
+      } catch (e) {
+        console.log(JSON.stringify({ threw: true, code: e.code, isRangeError: e instanceof RangeError }));
+      }
+    `;
+    const { stdout, stderr, exitCode } = await run(script);
+    expect({ stdout, stderr }).toEqual({
+      stdout: JSON.stringify({ threw: true, code: "ERR_BUFFER_TOO_LARGE", isRangeError: true }),
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  }, 120_000);
+
+  // zstd decoders accept concatenated frames, so a single 64 MiB frame
+  // repeated 65x yields 4160 MiB of output from a ~130 KB bomb.
+  const zstdBomb = `
+    const frame = Bun.zstdCompressSync(Buffer.alloc(64 << 20));
+    const bomb = Buffer.concat(Array(65).fill(frame));
+  `;
+
+  it("Bun.zstdDecompressSync throws ERR_BUFFER_TOO_LARGE instead of aborting", async () => {
+    const script = `
+      ${zstdBomb}
+      try {
+        Bun.zstdDecompressSync(bomb);
+        console.log(JSON.stringify({ threw: false }));
+      } catch (e) {
+        console.log(JSON.stringify({ threw: true, code: e.code, isRangeError: e instanceof RangeError }));
+      }
+    `;
+    const { stdout, stderr, exitCode } = await run(script);
+    expect({ stdout, stderr }).toEqual({
+      stdout: JSON.stringify({ threw: true, code: "ERR_BUFFER_TOO_LARGE", isRangeError: true }),
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  }, 120_000);
+
+  it("Bun.zstdDecompress rejects with ERR_BUFFER_TOO_LARGE instead of aborting", async () => {
+    const script = `
+      ${zstdBomb}
+      try {
+        await Bun.zstdDecompress(bomb);
+        console.log(JSON.stringify({ threw: false }));
+      } catch (e) {
+        console.log(JSON.stringify({ threw: true, code: e.code, isRangeError: e instanceof RangeError }));
+      }
+    `;
+    const { stdout, stderr, exitCode } = await run(script);
+    expect({ stdout, stderr }).toEqual({
+      stdout: JSON.stringify({ threw: true, code: "ERR_BUFFER_TOO_LARGE", isRangeError: true }),
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  }, 120_000);
 });
 
 describe.concurrent("Zstandard HTTP compression", () => {

@@ -693,7 +693,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 return Err(crate::Error::SyntaxError);
             }
 
-            if p.fn_or_arrow_data_parse.await_is_keyword_here() && name_text == b"await" {
+            if name_text == b"await" && p.is_await_identifier_rejected(p.lexer.range()) {
                 p.log().add_range_error(
                     Some(p.source),
                     p.lexer.range(),
@@ -990,7 +990,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         match p.lexer.token {
             T::TIdentifier => {
                 let name = p.lexer.identifier;
-                if (p.fn_or_arrow_data_parse.await_is_keyword_here() && name == b"await")
+                if (name == b"await" && p.is_await_identifier_rejected(p.lexer.range()))
                     || (p.fn_or_arrow_data_parse.allow_yield != AwaitOrYield::AllowIdent
                         && name == b"yield")
                 {

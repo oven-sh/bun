@@ -220,6 +220,7 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub has_import_meta: bool,
     pub has_es_module_syntax: bool,
     pub top_level_await_keyword: bun_ast::Range,
+    pub top_level_await_identifier_range: bun_ast::Range,
     pub fn_or_arrow_data_parse: FnOrArrowDataParse,
     pub fn_or_arrow_data_visit: FnOrArrowDataVisit,
     pub fn_only_data_visit: FnOnlyDataVisit<'a>,
@@ -2812,6 +2813,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     b"Legacy HTML single-line comments are not allowed in ECMAScript modules",
                 );
             }
+            if self.top_level_await_identifier_range.len > 0 {
+                self.log().add_range_error(
+                    Some(self.source),
+                    self.top_level_await_identifier_range,
+                    b"Cannot use \"await\" as an identifier in an ECMAScript module",
+                );
+            }
         }
 
         self.hoist_symbols(self.module_scope_ref());
@@ -4396,6 +4404,24 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             );
         }
         Ok(())
+    }
+
+    /// At top level the goal symbol is unknown; record the range for a deferred ESM check.
+    pub fn is_await_identifier_rejected(&mut self, range: bun_ast::Range) -> bool {
+        match self.fn_or_arrow_data_parse.allow_await {
+            crate::AwaitOrYield::AllowIdent => false,
+            crate::AwaitOrYield::ForbidAll => true,
+            crate::AwaitOrYield::AllowExpr => {
+                if self.fn_or_arrow_data_parse.is_top_level {
+                    if self.top_level_await_identifier_range.len == 0 {
+                        self.top_level_await_identifier_range = range;
+                    }
+                    false
+                } else {
+                    true
+                }
+            }
+        }
     }
 
     #[inline]
@@ -8743,6 +8769,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             has_import_meta: false,
             has_es_module_syntax: false,
             top_level_await_keyword: bun_ast::Range::NONE,
+            top_level_await_identifier_range: bun_ast::Range::NONE,
             fn_or_arrow_data_parse,
             fn_or_arrow_data_visit: FnOrArrowDataVisit::default(),
             fn_only_data_visit: FnOnlyDataVisit::default(),

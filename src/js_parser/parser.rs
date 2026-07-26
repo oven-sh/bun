@@ -1380,17 +1380,6 @@ impl Default for FnOrArrowDataParse {
     }
 }
 
-impl FnOrArrowDataParse {
-    /// `await` must be rejected as an identifier here (top-level TLA sniff excluded).
-    pub fn await_is_keyword_here(&self) -> bool {
-        match self.allow_await {
-            AwaitOrYield::AllowIdent => false,
-            AwaitOrYield::ForbidAll => true,
-            AwaitOrYield::AllowExpr => !self.is_top_level,
-        }
-    }
-}
-
 /// This is function-specific information used during visiting. It is saved and
 /// restored on the call stack around code that parses nested functions and
 /// arrow expressions.

@@ -232,9 +232,25 @@ describe.concurrent("strict-mode / unique-formal-parameter rejections still fire
     expect(exitCode).not.toBe(0);
   });
 
-  test("var await in an ESM file is rejected by the engine", async () => {
+  test("var await in an ESM file is rejected by the parser", async () => {
     const { exitCode, stderr } = await run(`var await = 1;\nexport {};`, false);
-    expect(stderr).toMatch(/await/i);
+    expect(stderr).toContain(`Cannot use "await" as an identifier in an ECMAScript module`);
+    expect(exitCode).not.toBe(0);
+  });
+
+  test("var await in an ESM file is rejected when bundling", async () => {
+    using dir = tempDir("sloppy-await-esm", {
+      "x.js": `export var await = 1;\n`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "x.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain(`Cannot use "await" as an identifier in an ECMAScript module`);
     expect(exitCode).not.toBe(0);
   });
 });

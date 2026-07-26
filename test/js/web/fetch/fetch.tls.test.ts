@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
-import { readFileSync } from "node:fs";
 import { bunEnv, bunExe, isASAN, tmpdirSync } from "harness";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import tls from "node:tls";
 

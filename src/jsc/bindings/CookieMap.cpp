@@ -252,7 +252,6 @@ void CookieMap::appendModified(Ref<Cookie>&& cookie)
     if (!name.isNull())
         m_modifiedIndex.set(WTF::move(name), m_modifiedCookies.size() - 1);
 
-    // Checked post-append so the new entry counts as live and a for-keys-delete loop never compacts past its cursor.
     if (m_modifiedCookies.size() >= 16 && m_modifiedCookies.size() >= 2 * m_modifiedIndex.size())
         compactModified();
 }
@@ -367,11 +366,14 @@ size_t CookieMap::memoryCost() const
 
 std::optional<KeyValuePair<String, String>> CookieMap::Iterator::next()
 {
-    while (m_modifiedIndex < m_target->m_modifiedCookies.size()) {
-        const auto& cookie = m_target->m_modifiedCookies[m_modifiedIndex++];
-        if (!cookie || cookie->value().isEmpty())
-            continue;
-        return KeyValuePair<String, String>(cookie->name(), cookie->value());
+    if (!m_inOriginals) {
+        while (m_modifiedIndex < m_target->m_modifiedCookies.size()) {
+            const auto& cookie = m_target->m_modifiedCookies[m_modifiedIndex++];
+            if (!cookie || cookie->value().isEmpty())
+                continue;
+            return KeyValuePair<String, String>(cookie->name(), cookie->value());
+        }
+        m_inOriginals = true;
     }
     while (m_originalIndex < m_target->m_originalCookies.size()) {
         const auto& cookie = m_target->m_originalCookies[m_originalIndex++];

@@ -426,16 +426,19 @@ describe("iterator", () => {
       ["b", "2"],
     ]);
   });
-  test("set in a loop on a parsed header terminates", () => {
-    const m = new Bun.CookieMap("a=1; b=1");
-    let seen = 0;
-    for (const k of m.keys()) {
-      m.set(k, "2");
-      if (++seen > 100) throw new Error("did not terminate");
+  test("set in a loop on a parsed header visits each key once", () => {
+    const m = new Bun.CookieMap("a=1; b=2; c=3");
+    const seen: string[] = [];
+    for (const [k, v] of m) {
+      m.set(k, v + "!");
+      seen.push(k);
+      if (seen.length > 100) throw new Error("did not terminate");
     }
-    expect(m.get("a")).toBe("2");
-    expect(m.get("b")).toBe("2");
-    expect(m.size).toBe(2);
+    expect(seen).toEqual(["a", "b", "c"]);
+    expect(m.get("a")).toBe("1!");
+    expect(m.get("b")).toBe("2!");
+    expect(m.get("c")).toBe("3!");
+    expect(m.size).toBe(3);
   });
 });
 

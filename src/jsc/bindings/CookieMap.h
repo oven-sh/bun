@@ -56,6 +56,7 @@ public:
         Ref<CookieMap> m_target;
         size_t m_modifiedIndex { 0 };
         size_t m_originalIndex { 0 };
+        bool m_inOriginals { false };
     };
 
     Iterator createIterator() { return Iterator { *this }; }

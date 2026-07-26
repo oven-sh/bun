@@ -126,12 +126,6 @@ pub(crate) enum TagAction {
     Remove,
 }
 
-/// Infra "ASCII whitespace" (no VT, unlike `u8::is_ascii_whitespace`).
-#[inline]
-fn is_html_whitespace(b: u8) -> bool {
-    matches!(b, b'\t' | b'\n' | b'\x0C' | b'\r' | b' ')
-}
-
 pub(crate) struct SrcsetCandidate<'a> {
     pub url: &'a [u8],
     pub descriptor: &'a [u8],
@@ -142,14 +136,14 @@ pub(crate) fn parse_srcset(input: &[u8]) -> Vec<SrcsetCandidate<'_>> {
     let mut out = Vec::new();
     let mut pos = 0usize;
     loop {
-        while pos < input.len() && (is_html_whitespace(input[pos]) || input[pos] == b',') {
+        while pos < input.len() && (input[pos].is_ascii_whitespace() || input[pos] == b',') {
             pos += 1;
         }
         if pos >= input.len() {
             return out;
         }
         let url_start = pos;
-        while pos < input.len() && !is_html_whitespace(input[pos]) {
+        while pos < input.len() && !input[pos].is_ascii_whitespace() {
             pos += 1;
         }
         let mut url_end = pos;
@@ -165,7 +159,7 @@ pub(crate) fn parse_srcset(input: &[u8]) -> Vec<SrcsetCandidate<'_>> {
             }
             continue;
         }
-        while pos < input.len() && is_html_whitespace(input[pos]) {
+        while pos < input.len() && input[pos].is_ascii_whitespace() {
             pos += 1;
         }
         let desc_start = pos;
@@ -184,7 +178,7 @@ pub(crate) fn parse_srcset(input: &[u8]) -> Vec<SrcsetCandidate<'_>> {
             pos += 1;
         }
         let mut desc_end = pos;
-        while desc_end > desc_start && is_html_whitespace(input[desc_end - 1]) {
+        while desc_end > desc_start && input[desc_end - 1].is_ascii_whitespace() {
             desc_end -= 1;
         }
         out.push(SrcsetCandidate {

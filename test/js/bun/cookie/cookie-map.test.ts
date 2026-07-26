@@ -465,4 +465,45 @@ describe("invalid delete usage", () => {
       v2.delete(v2);
     }).toThrow("Cookie name is required");
   });
+
+  describe.each([
+    ["path", { path: "/;bad" }, "Invalid cookie path"],
+    ["domain", { domain: "bad domain" }, "Invalid cookie domain"],
+  ])("delete() that throws on an invalid %s does not mutate the map", (_, options, message) => {
+    test("leaves an existing entry in place and queues no Set-Cookie", () => {
+      const map = new Bun.CookieMap("session=tok; other=1");
+      expect(() => map.delete("session", options)).toThrow(message);
+      expect(map.toJSON()).toEqual({ session: "tok", other: "1" });
+      expect(map.has("session")).toBe(true);
+      expect(map.size).toBe(2);
+      expect(map.toSetCookieHeaders()).toEqual([]);
+    });
+
+    test("leaves a previously set() entry in place", () => {
+      const map = new Bun.CookieMap();
+      map.set("session", "tok");
+      expect(() => map.delete({ name: "session", ...options })).toThrow(message);
+      expect(map.get("session")).toBe("tok");
+      expect(map.toSetCookieHeaders()).toEqual(["session=tok; Path=/; SameSite=Lax"]);
+    });
+  });
+
+  test("delete() that throws on an invalid name does not mutate the map", () => {
+    // The Cookie-header parser accepts names the write APIs reject; a throwing
+    // delete() must not evict such a cookie without queuing its deletion header.
+    const map = new Bun.CookieMap("a b=1; ok=2");
+    expect(map.get("a b")).toBe("1");
+    expect(() => map.delete("a b")).toThrow("Invalid cookie name");
+    expect(map.toJSON()).toEqual({ "a b": "1", ok: "2" });
+    expect(map.has("a b")).toBe(true);
+    expect(map.toSetCookieHeaders()).toEqual([]);
+  });
+
+  test("set() that throws on invalid options does not mutate the map", () => {
+    const map = new Bun.CookieMap("x=1");
+    expect(() => map.set("y", "v", { domain: "bad domain" })).toThrow("Invalid cookie domain");
+    expect(() => map.set("x", "replaced", { path: "/;bad" })).toThrow("Invalid cookie path");
+    expect([...map.entries()]).toEqual([["x", "1"]]);
+    expect(map.toSetCookieHeaders()).toEqual([]);
+  });
 });

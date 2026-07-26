@@ -690,18 +690,18 @@ describe("fs.watch", () => {
 });
 
 describe("fs.promises.watch", () => {
-  test("throws ENOENT for an empty path instead of watching cwd", async () => {
-    let thrown: any;
+  test("throws ENOENT for an empty path instead of watching cwd", () => {
+    let watcher: AsyncIterable<any> | undefined;
     try {
-      const it = fs.promises.watch("")[Symbol.asyncIterator]();
-      await it.next();
-      await it.return?.();
-    } catch (err) {
-      thrown = err;
+      watcher = fs.promises.watch("");
+      expect.unreachable();
+    } catch (err: any) {
+      expect(err).toBeInstanceOf(Error);
+      expect(err.code).toBe("ENOENT");
+      expect(err.syscall).toBe("watch");
+    } finally {
+      watcher?.[Symbol.asyncIterator]().return?.();
     }
-    expect(thrown).toBeInstanceOf(Error);
-    expect(thrown.code).toBe("ENOENT");
-    expect(thrown.syscall).toBe("watch");
   });
 
   test("add file/folder to folder", async () => {

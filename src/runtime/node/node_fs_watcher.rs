@@ -1075,6 +1075,7 @@ impl FSWatcher {
             return Err(bun_sys::Error {
                 errno: SystemErrno::ENOENT as _,
                 syscall: bun_sys::Tag::watch,
+                path: args.path.slice().into(),
                 ..Default::default()
             });
         }

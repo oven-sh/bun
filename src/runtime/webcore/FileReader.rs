@@ -563,22 +563,6 @@ impl FileReader {
         true
     }
 
-    #[inline]
-    fn reader_is_pollable(&self) -> bool {
-        #[cfg(unix)]
-        {
-            self.reader()
-                .flags
-                .contains(bun_io::pipe_reader::PosixFlags::POLLABLE)
-        }
-        #[cfg(windows)]
-        {
-            self.reader()
-                .flags
-                .contains(bun_io::pipe_reader::WindowsFlags::POLLABLE)
-        }
-    }
-
     pub fn on_read_chunk(&self, init_buf: &[u8], state: ReadState) -> bool {
         let mut buf = init_buf;
         bun_core::scoped_log!(
@@ -809,14 +793,19 @@ impl FileReader {
             }
         }
 
-        // For pipes, we have to keep pulling or the other process will block.
+        // No JS read is waiting; the chunk was appended to `self.buffered`.
+        // Stop the read loop once the buffered bytes reach the highwater mark
+        // or the consumer paused (`setFlowing(false)`). A full kernel pipe
+        // buffer blocking the writer is the backpressure signal. `onPull` /
+        // `setFlowing(true)` re-derive demand and restart the reader.
         // SAFETY: see `reader_buffer` decl.
         let reader_buffer_len = unsafe { (*reader_buffer).len() };
-        let ret = !matches!(
-            self.read_inside_on_pull.get(),
-            ReadDuringJSOnPullResult::Temporary(_)
-        ) && !(self.buffered.get().len() + reader_buffer_len >= self.highwater_mark
-            && !self.reader_is_pollable());
+        let ret = self.flowing.get()
+            && !matches!(
+                self.read_inside_on_pull.get(),
+                ReadDuringJSOnPullResult::Temporary(_)
+            )
+            && self.buffered.get().len() + reader_buffer_len < self.highwater_mark;
         close_if_needed!();
         ret
     }
@@ -964,6 +953,16 @@ impl FileReader {
         let global = self.parent_global();
         self.pending_value.with_mut(|p| p.set(&global, array));
         self.pending_view.set(buffer);
+
+        // The read loop returns without re-arming the one-shot poll when
+        // `on_read_chunk` reports the highwater backstop, and pause() skips
+        // the unregister while the poll is already disarmed, so
+        // `has_pending_read()` (which tracks the registration flag, not the
+        // kernel arm state) can be true with no wakeup scheduled. The
+        // consumer is asking for data here, so make sure the poll is armed.
+        if self.flowing.get() {
+            self.reader().watch();
+        }
 
         bun_core::scoped_log!(FileReader, "onPull({}) = pending", buffer_len);
 

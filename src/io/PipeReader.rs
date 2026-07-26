@@ -389,6 +389,13 @@ impl PosixBufferedReader {
     /// embedding `self` (the shell `PipeReader` does exactly that), so the
     /// caller must not touch `self` again after a `false` return.
     pub fn register_poll(&mut self) -> bool {
+        // A pause issued from inside the JS re-entry of the read loop
+        // (on_read_chunk → microtasks → setFlowing(false) → pause()) lands
+        // while the loop's own `register_poll()` is still ahead on the stack;
+        // re-arming here would undo it. `unpause()` + `read()` re-arm.
+        if self.flags.contains(PosixFlags::IS_PAUSED) {
+            return true;
+        }
         // Hoist vtable-derived scalars and
         // normalize self.handle to Poll before taking the single &mut borrow,
         // so no raw-pointer escape is needed.
@@ -503,6 +510,9 @@ impl PosixBufferedReader {
     }
 
     pub fn on_poll(parent: &mut PosixBufferedReader, size_hint: isize, received_hup: bool) {
+        if parent.flags.contains(PosixFlags::IS_PAUSED) {
+            return;
+        }
         let fd = parent.get_fd();
         bun_sys::syslog!("onPoll({}) = {}", fd, size_hint);
 
@@ -662,14 +672,18 @@ impl PosixBufferedReader {
 
                         if streaming {
                             // Stream this chunk and register for next cycle
-                            let _ = parent.vtable.on_read_chunk(
+                            if !parent.vtable.on_read_chunk(
                                 &stack_buffer[..bytes_read],
                                 if received_hup && bytes_read < stack_buffer.len() {
                                     ReadState::Eof
                                 } else {
                                     ReadState::Progress
                                 },
-                            );
+                            ) && !received_hup
+                                && !over_budget
+                            {
+                                return;
+                            }
                         } else {
                             parent
                                 ._buffer

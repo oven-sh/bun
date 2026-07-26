@@ -3718,16 +3718,32 @@ describe("createWriteStream", () => {
   });
 
   it.skipIf(!isLinux)("holds a single fd for the stream's lifetime", async () => {
-    const countFds = () => fs.readdirSync("/proc/self/fd").length;
     using dir = tempDir("ws-fd-count", {});
-    const before = countFds();
-    const ws = createWriteStream(join(String(dir), "out.txt"));
-    await once(ws, "ready");
-    expect(countFds() - before).toBe(1);
-    ws.write("x");
-    await new Promise<void>((resolve, reject) => ws.end(err => (err ? reject(err) : resolve())));
-    await once(ws, "close");
-    expect(countFds() - before).toBe(0);
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const fs = require("node:fs");
+         const { once } = require("node:events");
+         const countFds = () => fs.readdirSync("/proc/self/fd").length;
+         const before = countFds();
+         const ws = fs.createWriteStream(process.argv[1]);
+         await once(ws, "ready");
+         const open = countFds() - before;
+         ws.write("x");
+         await new Promise((res, rej) => ws.end(e => (e ? rej(e) : res())));
+         await once(ws, "close");
+         console.log(JSON.stringify({ open, closed: countFds() - before }));`,
+        join(String(dir), "out.txt"),
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ open: 1, closed: 0 });
+    expect(exitCode).toBe(0);
   });
 
   it("many small writes produce byte-exact output and bytesWritten", async () => {
@@ -3745,6 +3761,42 @@ describe("createWriteStream", () => {
       bytesWritten: ws.bytesWritten,
       head: readFileSync(streamPath, "utf8").slice(0, chunk.length * 3),
     }).toEqual({ size: N * byteLen, bytesWritten: N * byteLen, head: chunk + chunk + chunk });
+  });
+
+  it.skipIf(!isPosix)("keeps the thread-pool write path when the path opens a FIFO", async () => {
+    using dir = tempDir("ws-fifo", {});
+    const fifo = join(String(dir), "pipe");
+    mkfifo(fifo);
+    // Hold the FIFO open for reading so the child's O_WRONLY open does not
+    // block, and never drain it so its write(2) would block if it ran on the
+    // child's JS thread.
+    const readFd = fs.openSync(fifo, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
+    try {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const fs = require("node:fs");
+           const { once } = require("node:events");
+           const ws = fs.createWriteStream(process.argv[1], { flags: "w" });
+           await once(ws, "ready");
+           ws.write(Buffer.alloc(256 * 1024, 0x78));
+           await new Promise(r => setTimeout(r, 50));
+           console.log("alive");
+           process.exit(0);`,
+          fifo,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout.trim()).toBe("alive");
+      expect(exitCode).toBe(0);
+    } finally {
+      fs.closeSync(readFd);
+    }
   });
 
   it("falls back to fs.write when it has been monkey-patched", async () => {

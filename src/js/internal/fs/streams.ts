@@ -2,7 +2,7 @@
 import type { FileSink } from "bun";
 const { Readable, Writable, finished } = require("node:stream");
 const fs: typeof import("node:fs") = require("node:fs");
-const { read, write, fsync, writev, writeSync } = fs;
+const { read, write, fsync, writev, writeSync, fstatSync } = fs;
 const { FileHandle, kRef, kUnref, kFd } = (fs.promises as any).$data as {
   FileHandle: { new (): FileHandle };
   readonly kRef: unique symbol;
@@ -276,6 +276,16 @@ function streamConstruct(this: FSStream, callback: (e?: any) => void) {
         callback(err);
       } else {
         this.fd = fd;
+        if (this[kSyncWrite] === true) {
+          let isFile = false;
+          try {
+            isFile = fstatSync(fd).isFile();
+          } catch {}
+          if (!isFile) {
+            this[kSyncWrite] = false;
+            this._writev = undefined;
+          }
+        }
         callback();
         this.emit("open", this.fd);
         this.emit("ready");

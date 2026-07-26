@@ -430,7 +430,8 @@ static bool mapSubset(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuff
         materialized = true;
         entriesStart = gcBuffer.size();
         auto iter = JSC::JSMapIterator::create(vm, globalObject->mapIteratorStructure(), actualMap, JSC::IterationKind::Entries);
-        RETURN_IF_EXCEPTION(scope, false);
+        if (scope.exception()) [[unlikely]]
+            return false;
         JSValue key, value;
         while (iter->nextKeyValue(globalObject, key, value)) {
             gcBuffer.append(key);
@@ -848,8 +849,8 @@ static bool compareBranch(JSC::JSGlobalObject* globalObject, JSC::MarkedArgument
     if (actualIsArray)
         return withCycleGuard(globalObject, gcBuffer, cycles, scope, actual, expected, arraySubsequence);
 
-    // At least one side is a primitive, null, Error, RegExp, or Date: full
-    // strict deep equality decides.
+    // At least one side is a primitive, null, or callable: full strict deep
+    // equality decides.
     if (isSpecialValue(actual) || isSpecialValue(expected)) {
         bool equal = JSC__JSValue__strictDeepEquals(JSValue::encode(actual), JSValue::encode(expected), globalObject);
         RETURN_IF_EXCEPTION(scope, false);

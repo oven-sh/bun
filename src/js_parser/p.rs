@@ -2843,8 +2843,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .reserve(self.define.injected.len());
             let will_use_renamer = self.will_use_renamer();
             for injected in self.define.injected.iter() {
-                let sanitized = bun_core::MutableString::ensure_valid_identifier(&injected.name)
-                    .unwrap_or_else(|_| Box::from(b"_".as_slice()));
+                let sanitized =
+                    bun_core::MutableString::ensure_valid_identifier(&injected.name)?;
                 // No renamer => printed verbatim, so suffix a hash for collision safety.
                 let name: &'a [u8] = if will_use_renamer {
                     bun_alloc::arena_format!(

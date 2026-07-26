@@ -721,6 +721,24 @@ describe("bundler", () => {
     define: { CFG: '{"k":1}' },
     run: { stdout: "ok" },
   });
+  // `delete` on a hoisted-object dot define must not print `delete <bare identifier>`
+  // (strict-mode early error); the operand has to be wrapped.
+  itBundled("extra/DefineObjectDeleteTarget", {
+    files: {
+      "in.mjs": /* js */ `
+        export {};
+        console.log(delete process.env.CFG, delete import.meta.CFG, process.env.CFG.x);
+      `,
+    },
+    define: { "process.env.CFG": '{"x":1}', "import.meta.CFG": "[1,2]" },
+    run: { stdout: "true true 1" },
+    onAfterBundle(api) {
+      const out = api.readFile("out.js");
+      if (/\bdelete\s+[A-Za-z_$][\w$]*\s*[,;]/.test(out)) {
+        throw new Error("output contains `delete <bare identifier>` (strict-mode SyntaxError):\n" + out);
+      }
+    },
+  });
 
   // Various ESM cases
   itBundled("extra/CatchScope1", {

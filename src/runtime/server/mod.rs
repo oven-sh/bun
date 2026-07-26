@@ -1564,6 +1564,13 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     }
 
     pub(crate) fn register_connection_filter(&mut self) {
+        // node:http's `close()` calls `closeIdleConnections()` itself and
+        // Node's model gives each socket its own lifetime; gating the server
+        // ref on open connections there would hold the loop on half-open
+        // CONNECT tunnels that Node's tests expect to outlive `close()`.
+        if !self.config.on_node_http_request.is_empty() {
+            return;
+        }
         if let Some(app) = self.app {
             bun_opaque::opaque_deref_mut(app).filter(
                 Self::on_connection_filter,
@@ -1658,6 +1665,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             }
         }
 
+        let already_terminated = self.flags.contains(ServerFlags::TERMINATED);
         let Some(listener) = self.listener.take() else {
             if Self::HAS_H3 && self.h3_app.is_some() {
                 self.unref();
@@ -1670,7 +1678,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // still needs to force-close surviving connections so a
             // graceful-then-force shutdown can complete.
             if abrupt
-                && !self.flags.contains(ServerFlags::TERMINATED)
+                && !already_terminated
                 && (self.has_open_http_connections()
                     || self.has_active_web_sockets()
                     || self.pending_requests > 0)

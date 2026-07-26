@@ -101,13 +101,8 @@ extern "C" fn on_recv_error(socket: *mut uws::udp::Socket, errno: c_int, is_errq
     let Some(this_value) = this.this_value.get().try_get() else {
         return;
     };
-    // A receive-path error on a UDP socket is advisory: the socket stays open
-    // and the next datagram is independent. With no `error` handler registered
-    // the documented contract is a `data`-only socket, so an ICMP report about
-    // a peer that stopped listening (or a locally originated EMSGSIZE echoed
-    // through the error queue) must not become an uncaught exception. A caller
-    // that wants these errors registers a handler. node:dgram always does, so
-    // its own connected-socket filter still decides what reaches user code.
+    // Recv-path errors are advisory (socket stays open); with no handler drop
+    // them instead of uncaught_exception. node:dgram always registers one.
     let callback = js::on_error_get_cached(this_value).unwrap_or(JSValue::ZERO);
     if callback.is_empty_or_undefined_or_null() {
         return;

@@ -784,7 +784,6 @@ macro_rules! platform_specific_new {
 
             /// Drop the cached value so the next `get()` re-reads libc; used by
             /// the `process.env` write path after `setenv()`.
-            #[allow(dead_code)]
             pub fn reset() {
                 CACHE.reset();
             }

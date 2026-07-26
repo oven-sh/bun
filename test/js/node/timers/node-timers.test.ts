@@ -1,6 +1,6 @@
 import jsc from "bun:jsc";
 import { describe, expect, it, mock, test } from "bun:test";
-import { bunEnv, bunExe, isWindows } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import path from "node:path";
 import { clearInterval, clearTimeout, promises, setImmediate, setInterval, setTimeout } from "node:timers";
 import { promisify } from "util";
@@ -244,4 +244,58 @@ describe.each(["with", "without"])("setImmediate %s timers running", mode => {
 
 it("should defer microtasks when an exception is thrown in an immediate", async () => {
   expect(["run", path.join(import.meta.dir, "timers-immediate-exception-fixture.js")]).toRun();
+});
+
+// setImmediate callbacks queued by the main script run in the first check
+// phase, before async I/O the script started afterwards can be delivered.
+// Node guarantees this ordering; Bun used to deliver the I/O completion first.
+it("setImmediate queued by the main script runs before async I/O started after it", async () => {
+  using dir = tempDir("immediate-before-io", {
+    "index.js": `const order = [];
+setImmediate(() => order.push("immediate"));
+require("fs").promises.readFile(__filename).then(() => order.push("fs"));
+process.on("exit", () => console.log(JSON.stringify(order)));
+`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "index.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({
+    stdout: stdout.trim(),
+    stderr: /error|panic|assert|abort/i.test(stderr) ? stderr : "",
+    exitCode,
+  }).toEqual({ stdout: '["immediate","fs"]', stderr: "", exitCode: 0 });
+});
+
+// Same ordering one level down: an immediate that queues another immediate and
+// then starts async I/O. The nested immediate runs first (the startup GC must
+// not sit between the check phase and the next task drain).
+it("setImmediate queued inside the first immediate runs before async I/O started after it", async () => {
+  using dir = tempDir("immediate-nested-before-io", {
+    "index.js": `const order = [];
+setImmediate(() => {
+  setImmediate(() => order.push("immediate"));
+  require("fs").promises.readFile(__filename).then(() => order.push("fs"));
+});
+process.on("exit", () => console.log(JSON.stringify(order)));
+`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "index.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({
+    stdout: stdout.trim(),
+    stderr: /error|panic|assert|abort/i.test(stderr) ? stderr : "",
+    exitCode,
+  }).toEqual({ stdout: '["immediate","fs"]', stderr: "", exitCode: 0 });
 });

@@ -44,7 +44,7 @@ describe.concurrent("Bun.serve WebSocket fail-the-connection close codes", () =>
   ): Promise<{ server: ServerView; wire: Wire }> {
     const messages: unknown[] = [];
     const appClose = Promise.withResolvers<ServerView>();
-    const server = serve({
+    using server = serve({
       port: 0,
       fetch(req, server) {
         if (server.upgrade(req)) return;
@@ -62,62 +62,62 @@ describe.concurrent("Bun.serve WebSocket fail-the-connection close codes", () =>
     });
 
     const socket = net.connect(server.port, "127.0.0.1");
-    socket.setNoDelay(true);
-    const upgraded = Promise.withResolvers<void>();
-    const closed = Promise.withResolvers<void>();
-    socket.on("close", () => {
-      closed.resolve();
-      upgraded.reject(new Error("socket closed before the 101 response"));
-    });
-    socket.on("error", () => {
-      closed.resolve();
-      upgraded.reject(new Error("socket error before the 101 response"));
-    });
-
-    let wireBytes = Buffer.alloc(0);
-    const onFrameData = (chunk: Buffer) => {
-      wireBytes = Buffer.concat([wireBytes, chunk]);
-    };
-
-    let head = Buffer.alloc(0);
-    const onHead = (chunk: Buffer) => {
-      head = Buffer.concat([head, chunk]);
-      const end = head.indexOf("\r\n\r\n");
-      if (end === -1) return;
-      socket.off("data", onHead);
-      socket.on("data", onFrameData);
-      const text = head.subarray(0, end).toString();
-      if (!text.startsWith("HTTP/1.1 101")) {
-        upgraded.reject(new Error(`upgrade failed: ${text.split("\r\n")[0]}`));
-        return;
-      }
-      const rest = head.subarray(end + 4);
-      if (rest.length) onFrameData(rest);
-      upgraded.resolve();
-    };
-    socket.on("data", onHead);
-    socket.write(
-      "GET / HTTP/1.1\r\n" +
-        "Host: localhost\r\n" +
-        "Connection: Upgrade\r\n" +
-        "Upgrade: websocket\r\n" +
-        "Sec-WebSocket-Version: 13\r\n" +
-        "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n" +
-        "\r\n",
-    );
     try {
+      socket.setNoDelay(true);
+      const upgraded = Promise.withResolvers<void>();
+      const closed = Promise.withResolvers<void>();
+      socket.on("close", () => {
+        closed.resolve();
+        upgraded.reject(new Error("socket closed before the 101 response"));
+      });
+      socket.on("error", () => {
+        closed.resolve();
+        upgraded.reject(new Error("socket error before the 101 response"));
+      });
+
+      let wireBytes = Buffer.alloc(0);
+      const onFrameData = (chunk: Buffer) => {
+        wireBytes = Buffer.concat([wireBytes, chunk]);
+      };
+
+      let head = Buffer.alloc(0);
+      const onHead = (chunk: Buffer) => {
+        head = Buffer.concat([head, chunk]);
+        const end = head.indexOf("\r\n\r\n");
+        if (end === -1) return;
+        socket.off("data", onHead);
+        socket.on("data", onFrameData);
+        const text = head.subarray(0, end).toString();
+        if (!text.startsWith("HTTP/1.1 101")) {
+          upgraded.reject(new Error(`upgrade failed: ${text.split("\r\n")[0]}`));
+          return;
+        }
+        const rest = head.subarray(end + 4);
+        if (rest.length) onFrameData(rest);
+        upgraded.resolve();
+      };
+      socket.on("data", onHead);
+      socket.write(
+        "GET / HTTP/1.1\r\n" +
+          "Host: localhost\r\n" +
+          "Connection: Upgrade\r\n" +
+          "Upgrade: websocket\r\n" +
+          "Sec-WebSocket-Version: 13\r\n" +
+          "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n" +
+          "\r\n",
+      );
       await upgraded.promise;
-    } catch (error) {
+
+      socket.write(send);
+      const [serverView] = await Promise.all([appClose.promise, closed.promise]);
+
+      return { server: serverView, wire: parseWire(wireBytes) };
+    } finally {
       socket.destroy();
-      server.stop(true);
-      throw error;
     }
+  }
 
-    socket.write(send);
-    const [serverView] = await Promise.all([appClose.promise, closed.promise]);
-    socket.destroy();
-    server.stop(true);
-
+  function parseWire(wireBytes: Buffer): Wire {
     // Walk the server->client frame stream for the (only) Close frame. Server
     // frames are never masked, so the header is 2 bytes for a <126-byte body.
     let closeFrame: Buffer | null = null;
@@ -133,7 +133,7 @@ describe.concurrent("Bun.serve WebSocket fail-the-connection close codes", () =>
       i += 2 + len;
     }
 
-    return { server: serverView, wire: { closeFrame, bytes: wireBytes } };
+    return { closeFrame, bytes: wireBytes };
   }
 
   function closeCodeOf(closeFrame: Buffer | null): number | null {

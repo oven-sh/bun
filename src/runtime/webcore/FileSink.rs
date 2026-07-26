@@ -757,10 +757,14 @@ impl FileSink {
     }
 
     pub fn start(&self, stream_start: &streams::Start) -> sys::Result<()> {
-        match stream_start {
-            streams::Start::FileSink(file)
-                if !matches!(file.input_path, PathOrFileDescriptor::Fd(Fd::INVALID)) =>
-            {
+        if let streams::Start::FileSink(file) = stream_start {
+            #[cfg(unix)]
+            if file.chunk_size > 0 {
+                // SAFETY(JsCell): single-field write; does not call into JS.
+                self.writer
+                    .with_mut(|w| w.chunk_size = file.chunk_size as usize);
+            }
+            if !matches!(file.input_path, PathOrFileDescriptor::Fd(Fd::INVALID)) {
                 match self.setup(file) {
                     sys::Result::Err(err) => {
                         return sys::Result::Err(err);
@@ -768,7 +772,6 @@ impl FileSink {
                     sys::Result::Ok(()) => {}
                 }
             }
-            _ => {}
         }
 
         self.done.set(false);

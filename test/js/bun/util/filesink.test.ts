@@ -599,6 +599,66 @@ it("Bun.file(fd).writer() write/end under GC pressure does not crash", async () 
   expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "ok", stderr: "", exitCode: 0 });
 });
 
+// On POSIX the streaming writer buffers incoming writes until they reach
+// `highWaterMark`, then drains them in one write(2). Previously the option was
+// parsed but never reached the writer, so the threshold was always the page
+// size (4096 / 16384) regardless of what the caller asked for. We spawn a
+// child so the AutoFlusher microtask cannot run between writes and stat() the
+// file while the loop is still synchronous.
+describe.skipIf(isWindows)("FileSink highWaterMark controls the buffer threshold", () => {
+  async function probe(hwm: number | undefined, chunk: number, count: number) {
+    const dir = tmpdirSync();
+    const out = join(dir, "out.bin");
+    const hwmExpr = hwm === undefined ? "undefined" : String(hwm);
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const { statSync } = require("node:fs");
+          const out = ${JSON.stringify(out)};
+          const hwm = ${hwmExpr};
+          const w = hwm === undefined ? Bun.file(out).writer() : Bun.file(out).writer({ highWaterMark: hwm });
+          const s = Buffer.alloc(${chunk}, 0x78).toString();
+          for (let i = 0; i < ${count}; i++) w.write(s);
+          const onDisk = statSync(out).size;
+          await w.end();
+          const total = statSync(out).size;
+          console.log(JSON.stringify({ onDisk, total }));
+        `,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    return JSON.parse(stdout.trim()) as { onDisk: number; total: number };
+  }
+
+  it.concurrent("large highWaterMark keeps small writes buffered", async () => {
+    // 100 B x 200 = 20000 B total. A 1 MiB hwm must hold all of it; the old
+    // fixed 4096/16384 threshold would have drained at least once by now.
+    const r = await probe(1024 * 1024, 100, 200);
+    expect(r).toEqual({ onDisk: 0, total: 20000 });
+  });
+
+  it.concurrent("small highWaterMark drains before the default would", async () => {
+    // 10 B x 100 = 1000 B total. 1000 < every default threshold, so without a
+    // working hwm nothing reaches disk until end(). A 128 B hwm must drain as
+    // soon as the buffer reaches it.
+    const r = await probe(128, 10, 100);
+    expect(r.total).toBe(1000);
+    expect(r.onDisk).toBeGreaterThan(0);
+    expect(r.onDisk).toBeGreaterThanOrEqual(1000 - 128);
+  });
+
+  it.concurrent("default highWaterMark is unchanged", async () => {
+    const r = await probe(undefined, 10, 100);
+    expect(r).toEqual({ onDisk: 0, total: 1000 });
+  });
+});
+
 it("fs.promises.writeFile with iterables under GC pressure does not crash", async () => {
   const dir = tmpdirSync();
   await using proc = Bun.spawn({

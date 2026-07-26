@@ -328,14 +328,9 @@ impl<'arena> BundledAst<'arena> {
         }
     }
 
-    /// Populate `url_for_css` with a base64-encoded `data:` URI for this source,
-    /// used when a CSS `url(...)` reference resolves to this file and the loader
-    /// chose to inline the asset. Callers gate this: the `file` loader never calls
-    /// this (except in standalone-HTML mode, where everything must inline), and
-    /// the `url` loader only calls it when the `asset_inline_limit` threshold is
-    /// satisfied (checked here via `inline_limit`). The fallback when no data URI
-    /// is produced is the `unique_key` placeholder, which the linker rewrites to
-    /// the hashed output path.
+    /// Populate `url_for_css` with a base64 `data:` URI for CSS `url(...)`
+    /// references that inline this file. When no URI is produced, the
+    /// `unique_key` placeholder is later rewritten to the hashed output path.
     pub fn add_url_for_css(
         &mut self,
         bump: &'arena bun_alloc::Arena,

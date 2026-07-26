@@ -1315,11 +1315,8 @@ pub mod parse_worker {
                     )?
                     .unwrap(),
                 );
-                // The `file` loader always emits a physical asset. The `url` loader
-                // inlines the contents as a `data:` URI when referenced from a CSS
-                // `url(...)` and the size is below `asset_inline_limit`, otherwise
-                // it falls back to emitting a file. Standalone HTML always inlines
-                // so every asset lives inside a single output file.
+                // `file` always emits; `url` inlines CSS references below
+                // `asset_inline_limit`; standalone HTML inlines everything.
                 let force_inline = topts.compile_to_standalone_html;
                 let should_inline_for_css = force_inline || loader == Loader::Url;
                 if should_inline_for_css {

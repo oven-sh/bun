@@ -83,10 +83,8 @@ fn write_entry_item<W: Write + ?Sized>(
     loader: Loader,
     kind: OutputKind,
 ) -> Result<(), crate::Error> {
-    // An asset that reached the output directory under the `url` loader behaved
-    // exactly like `file` (its CSS references were either inlined elsewhere or
-    // above the inline limit), so report it as `file` to keep the manifest's
-    // loader vocabulary stable for consumers.
+    // An emitted `url` asset behaved exactly like `file`; report it as `file`
+    // to keep the manifest's loader vocabulary stable.
     let loader = if loader == Loader::Url {
         Loader::File
     } else {

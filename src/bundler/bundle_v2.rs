@@ -1744,9 +1744,8 @@ pub mod bv2_impl {
                     }
                 }
 
-                // JS and HTML importers reference an asset's emitted file by URL, so
-                // either one must keep the physical file alive even when a CSS
-                // `url(...)` reference to the same asset gets inlined as a data: URI.
+                // JS and HTML importers reference the emitted file by URL, so they
+                // keep it alive even when CSS inlines the same asset.
                 let importer_loader = self.all_loaders[source_index.get() as usize];
                 let keeps_emitted_file =
                     importer_loader.is_javascript_like() || importer_loader == Loader::Html;
@@ -2590,8 +2589,7 @@ pub mod bv2_impl {
             self.increment_scan_counter();
             let source_index = Index::source(self.graph.input_files.len() as u32);
 
-            // Explicitly listed entry points always emit a physical output, so
-            // they fall back to `.file` rather than the inline-capable `.url`.
+            // Explicit entry points always emit, so they fall back to `.file`.
             let loader = path
                 .loader(&self.transpiler.options.loaders)
                 .unwrap_or(Loader::File);
@@ -6355,14 +6353,10 @@ pub mod bv2_impl {
                     let user_loader = import_record
                         .loader
                         .or_else(|| path.loader(&transpiler.options.loaders));
-                    // Unknown extensions fall back to `.url`, which behaves like
-                    // `.file` except that CSS `url(...)` references to assets below
-                    // `asset_inline_limit` inline as `data:` URIs. The fallback must
-                    // not depend on the importer: the first importer to resolve a
-                    // path fixes the loader for its single parse task, and parse
-                    // completion order across files is not deterministic. The user
-                    // can opt out of inlining by explicitly configuring
-                    // `loader: { '.ext': 'file' }`, which always emits.
+                    // Unconfigured extensions fall back to `.url`. The fallback must
+                    // not depend on the importer: the first importer to resolve a path
+                    // fixes the loader for the shared parse task, and parse completion
+                    // order across files is nondeterministic.
                     let resolved_loader = user_loader.unwrap_or(Loader::Url);
                     // When an HTML file references a URL asset (e.g. <link rel="manifest" href="./manifest.json" />),
                     // the file must be copied to the output directory as-is. If the resolved loader would

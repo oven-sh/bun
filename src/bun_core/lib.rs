@@ -1670,14 +1670,10 @@ pub(crate) mod strings_impl {
         convert_utf16_to_utf8(Vec::new(), utf16)
     }
 
-    /// WTF-8 sibling of [`to_utf8_alloc`]: unpaired surrogates are encoded as
-    /// their 3-byte WTF-8 sequence (via [`decode_wtf16_raw`]) instead of being
-    /// replaced with U+FFFD. Use this when the consumer is a WTF-8 reader
-    /// (e.g. the JS lexer) and must observe the same code units the JS engine
-    /// does. For well-formed UTF-16 the output is identical to [`to_utf8_alloc`].
+    /// WTF-8 sibling of [`to_utf8_alloc`]: unpaired surrogates are passed
+    /// through via [`decode_wtf16_raw`] instead of replaced with U+FFFD.
     pub fn to_wtf8_alloc(utf16: &[u16]) -> Vec<u8> {
-        // `le_with_replacement` charges 3 bytes per unpaired surrogate, which
-        // is also the WTF-8 width, so `need` is exact for both paths below.
+        // 3 bytes per unpaired surrogate == WTF-8 width, so `need` is exact.
         let need = simdutf::length::utf8::from::utf16::le_with_replacement(utf16);
         let mut list = Vec::with_capacity(need + 16);
         // SAFETY: same contract as `convert_utf16_to_utf8_append` — simdutf

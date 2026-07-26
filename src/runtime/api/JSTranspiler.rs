@@ -146,11 +146,8 @@ fn clone_macro_map(src: &MacroMap) -> MacroMap {
     out
 }
 
-/// Source-code flavoured [`StringOrBuffer::from_js`]: a JS string backed by
-/// 16-bit storage is encoded as WTF-8 (unpaired surrogates preserved) so the
-/// lexer, which reads WTF-8, sees the same code units `eval` would. 8-bit
-/// strings and array buffers cannot carry a lone surrogate and take the
-/// normal path.
+/// [`StringOrBuffer::from_js`] but 16-bit strings are encoded as WTF-8 so the
+/// lexer sees unpaired surrogates instead of U+FFFD.
 fn source_from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<StringOrBuffer>> {
     if value.is_string() {
         let str = OwnedString::new(BunString::from_js(value, global)?);
@@ -1421,9 +1418,7 @@ impl JSTranspiler {
 
         let allow_string_object = true;
         let code = if code_arg.is_string() {
-            // 16-bit strings go through the WTF-8 encoder so unpaired
-            // surrogates survive; 8-bit strings cannot carry any. Either way
-            // the result is an owned `Vec<u8>`, already thread-safe.
+            // WTF-8 so unpaired surrogates survive; owned Vec is thread-safe.
             let str = OwnedString::new(BunString::from_js(code_arg, global)?);
             let bytes = if str.is_utf16() {
                 bun_core::strings::to_wtf8_alloc(str.utf16())

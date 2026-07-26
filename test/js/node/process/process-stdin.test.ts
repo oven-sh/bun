@@ -442,8 +442,8 @@ test.concurrent("process.stdin.pause() from inside a 'data' handler applies kern
       ], { stdio: ["pipe", "pipe", "inherit"] });
       const line = Buffer.alloc(1000, 120);
       const total = 10000;
-      let written = 0;
-      child.stdin.on("error", () => {});
+      let written = 0, stopping = false;
+      child.stdin.on("error", err => { if (!stopping) throw err; });
       (function pump() {
         while (written < total) {
           written++;
@@ -467,6 +467,7 @@ test.concurrent("process.stdin.pause() from inside a 'data' handler applies kern
           if (written === total || (written === last && ++stable >= 3)) {
             clearInterval(iv);
             console.log(JSON.stringify({ writtenWhilePaused: written, total }));
+            stopping = true;
             child.kill();
           } else if (written !== last) { last = written; stable = 0; }
         }, 100);

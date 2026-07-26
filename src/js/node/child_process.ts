@@ -12,6 +12,8 @@ const {
   validateOneOf,
 } = require("internal/validators");
 
+const markAsUncloneable = $newCppFunction("Worker.cpp", "jsFunctionMarkAsUncloneable", 1);
+
 var NetModule;
 
 var ObjectCreate = Object.create;
@@ -1106,6 +1108,14 @@ class ChildProcess extends EventEmitter {
   pid;
   channel;
   killed = false;
+
+  constructor() {
+    super();
+    // Node's ChildProcess carries a native Process at `_handle`, which structured
+    // clone rejects as a host object. Bun keeps the handle in a private field the
+    // serializer never walks, so brand the instance to surface the same DataCloneError.
+    markAsUncloneable(this);
+  }
 
   [Symbol.dispose]() {
     if (!this.killed) {

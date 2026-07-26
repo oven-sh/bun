@@ -101,10 +101,10 @@ extern "C" fn on_recv_error(socket: *mut uws::udp::Socket, errno: c_int, is_errq
     // UDP socket before it can reach sk_err (`__udp4_lib_err`: `if (!harderr
     // || sk->sk_state != TCP_ESTABLISHED) goto out;`). Bun keeps IP_RECVERR
     // on to drain the queue, but the only observable effect that matches
-    // Node is to discard those entries here — one layer below node:dgram's
-    // own filter so Bun.udpSocket inherits the same behavior and a reply
-    // server without an error handler is not killed by a vanished client.
-    // Connected sockets keep the error: Node surfaces that via recvmsg too.
+    // Node is to discard those entries here, so Bun.udpSocket and node:dgram
+    // both inherit Node's semantics and a reply server without an error
+    // handler is not killed by a vanished client. Connected sockets keep the
+    // error: Node surfaces that via recvmsg too.
     if is_errqueue != 0 && this.connect_info.get().is_none() {
         return;
     }
@@ -119,11 +119,7 @@ extern "C" fn on_recv_error(socket: *mut uws::udp::Socket, errno: c_int, is_errq
     if global_this.has_exception() {
         return;
     }
-    let err_value = sys_err.to_js(global_this);
-    if is_errqueue != 0 {
-        err_value.put(global_this, b"errqueue", JSValue::TRUE);
-    }
-    this.call_error_handler(JSValue::ZERO, err_value);
+    this.call_error_handler(JSValue::ZERO, sys_err.to_js(global_this));
 }
 
 extern "C" fn on_drain(socket: *mut uws::udp::Socket) {

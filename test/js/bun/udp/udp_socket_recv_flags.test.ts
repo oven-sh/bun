@@ -37,9 +37,12 @@ describe("udpSocket() receive flags", () => {
   });
 
   // IP_RECVERR is Linux-specific. On BSDs and Windows, ICMP errors on
-  // unconnected UDP sockets are not queued by the kernel at all.
+  // unconnected UDP sockets are not queued by the kernel at all. The
+  // I/O-after-ICMP round-trip is covered by the reply-server test in
+  // udp_socket.test.ts; Bun.udpSocket exposes no public reconnect to
+  // exercise it on the connected path.
   test.skipIf(!isLinux)(
-    "connected socket surfaces ECONNREFUSED from ICMP port unreachable and stays usable",
+    "connected socket surfaces ECONNREFUSED from ICMP port unreachable and stays open",
     async () => {
       const { promise: errPromise, resolve: resolveErr } = Promise.withResolvers<Error & { code?: string }>();
 

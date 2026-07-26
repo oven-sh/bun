@@ -631,7 +631,11 @@ describe.skipIf(!isLinux)("unconnected socket vs. remote ICMP", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, rawStderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const stderr = rawStderr
+      .split("\n")
+      .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
+      .join("\n");
     expect(stderr).toBe("");
     expect(stdout.trim()).toBe(`{"got":"probe","closed":false}`);
     expect(exitCode).toBe(0);
@@ -639,7 +643,8 @@ describe.skipIf(!isLinux)("unconnected socket vs. remote ICMP", () => {
 
   // send() rejects an oversized payload synchronously with EMSGSIZE; the same
   // error used to also be queued on the socket's error queue (SO_EE_ORIGIN_LOCAL)
-  // and redelivered asynchronously, turning a caught throw into a process kill.
+  // and redelivered asynchronously. A connected socket exercises the origin
+  // check directly (on an unconnected one the errqueue drop would mask it).
   test("oversized send() throws EMSGSIZE once and does not redeliver it asynchronously", async () => {
     await using proc = Bun.spawn({
       cmd: [
@@ -647,9 +652,9 @@ describe.skipIf(!isLinux)("unconnected socket vs. remote ICMP", () => {
         "-e",
         `
         const errs = [];
+        const peer = await Bun.udpSocket({ port: 0, hostname: "127.0.0.1" });
         const s = await Bun.udpSocket({
-          port: 0,
-          hostname: "127.0.0.1",
+          connect: { hostname: "127.0.0.1", port: peer.port },
           socket: {
             data() {},
             error(err) { errs.push(err?.code ?? String(err)); },
@@ -657,7 +662,7 @@ describe.skipIf(!isLinux)("unconnected socket vs. remote ICMP", () => {
         });
         let syncErr = null;
         try {
-          s.send(new Uint8Array(65510), 1, "127.0.0.1");
+          s.send(new Uint8Array(65510));
         } catch (e) {
           syncErr = e?.code ?? String(e);
         }
@@ -666,13 +671,18 @@ describe.skipIf(!isLinux)("unconnected socket vs. remote ICMP", () => {
         for (let i = 0; i < 10; i++) await new Promise(r => setImmediate(r));
         console.log(JSON.stringify({ syncErr, asyncErrs: errs, closed: s.closed }));
         s.close();
+        peer.close();
         `,
       ],
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, rawStderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const stderr = rawStderr
+      .split("\n")
+      .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
+      .join("\n");
     expect(stderr).toBe("");
     expect(stdout.trim()).toBe(`{"syncErr":"EMSGSIZE","asyncErrs":[],"closed":false}`);
     expect(exitCode).toBe(0);

@@ -114,10 +114,8 @@ pub struct BundleV2<'a> {
     /// See the comment in `Chunk.OutputPiece`.
     pub unique_key: u64,
     pub dynamic_import_entry_points: ArrayHashMap<IndexInt, ()>,
-    /// CSS files referenced from HTML via `<link rel="preload" as="style">`.
-    /// Each becomes its own CSS entry point so it is emitted as a standalone
-    /// chunk (with `@import`/`url()` resolved) instead of being merged into the
-    /// page's applied stylesheet.
+    /// CSS reached from HTML via `<link rel="preload" as="style">`; each gets
+    /// its own chunk instead of joining the page's applied stylesheet.
     pub html_preload_css_entry_points: ArrayHashMap<IndexInt, ()>,
 
     pub finalizers: Vec<ExternalFreeFunction>,

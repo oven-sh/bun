@@ -185,8 +185,7 @@ impl<'a> HTMLProcessorHandler for HTMLLoader<'a> {
         }
 
         if loader.is_css() && kind == ImportKind::Url {
-            // `<link rel="preload" as="style">`: the CSS was bundled into its own
-            // standalone chunk; rewrite the href to that chunk's unique key.
+            // `<link rel="preload" as="style">`: rewrite href to the file's own CSS chunk.
             let chunk_index = self.linker.graph.files.items_entry_point_chunk_index()
                 [import_record.source_index.get() as usize];
             // SAFETY: `self.chunks` raw `*mut [Chunk]` valid for the link step.

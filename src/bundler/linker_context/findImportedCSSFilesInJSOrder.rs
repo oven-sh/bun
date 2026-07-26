@@ -76,9 +76,8 @@ pub fn find_imported_css_files_in_js_order(
                 if record.source_index.is_valid()
                     && !visited.is_set(record.source_index.get() as usize)
                 {
-                    // `<link rel="preload" as="style">` is a fetch hint, not an
-                    // applied stylesheet; it gets its own CSS chunk instead of
-                    // being merged into the page bundle.
+                    // CSS reached via `<link rel="preload" as="style">` is chunked
+                    // separately (see `html_preload_css_entry_points`).
                     if record.kind == ImportKind::Url
                         && all_loaders[record.source_index.get() as usize].is_css()
                     {

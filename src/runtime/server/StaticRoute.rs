@@ -402,11 +402,17 @@ impl StaticRoute {
     /// `this` must be a live heap-allocated route with write provenance; may free
     /// `*this` via `deref_` when the refcount reaches zero.
     unsafe fn on_response_complete(this: *mut Self, resp: AnyResponse) {
-        // SAFETY: caller contract.
-        unsafe {
+        // HTTP/1: markDone() already nulled these and the wrapper then replayed
+        // any buffered pipelined request, so clearing would null THAT request's
+        // handlers. HTTP/3: Http3Response::markDone() leaves onAborted armed
+        // for on_stream_close, so clear it to avoid a second deref_ here.
+        if let AnyResponse::H3(_) = resp {
             resp.clear_aborted();
             resp.clear_on_writable();
             resp.clear_timeout();
+        }
+        // SAFETY: caller contract.
+        unsafe {
             if let Some(mut server) = (*this).server.get() {
                 server.on_static_request_complete();
             }

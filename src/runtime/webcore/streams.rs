@@ -1402,11 +1402,19 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
             total_written = chunk_len as u64;
 
             if self.requested_end {
-                if let Some(res) = self.any_res() {
-                    res.clear_on_writable();
+                // HTTP/1: `send_readable` drained the parked `try_end`/`end`,
+                // so `markDone()` nulled our `onWritable` and the wrapper then
+                // replayed any buffered pipelined request; the socket now
+                // belongs to THAT request. HTTP/3 has no replay.
+                if HTTP3 {
+                    if let Some(res) = self.any_res() {
+                        res.clear_on_writable();
+                    }
+                } else {
+                    // finalize()'s `if !self.done` block would clear_on_writable
+                    // and end_stream() the replayed request's state.
+                    self.done = true;
                 }
-                // `send_readable` drained the parked `try_end`, so uWS has
-                // `markDone()`d the response and dropped its `onAborted`.
                 self.ended_response = true;
                 self.signal.close(None);
                 let _ = self.flush_promise(); // TODO: properly propagate exception upwards

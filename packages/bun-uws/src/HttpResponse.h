@@ -455,6 +455,71 @@ public:
         return this;
     }
 
+    /* True once this socket is no longer a valid HttpResponse: closed, shut
+     * down, or adopted (in-place or relocated) into a WebSocket. An in-place
+     * adopt leaves is_closed false, so also check the kind byte. */
+    bool isNoLongerHttp() {
+        us_socket_t *s = (us_socket_t *) this;
+        return us_socket_is_closed(s) || us_socket_is_shut_down(s)
+            || us_socket_kind(s) != HttpContext<SSL>::socketKind();
+    }
+
+    /* Dispatch pipelined request bytes that were buffered while the previous
+     * response was still in flight (Bun.serve's async-pipelining path). Called
+     * as the final action of each uws_res_end* C ABI wrapper: the replayed
+     * onData can synchronously close or adopt this socket (parse error,
+     * Connection: close, WebSocket upgrade), destructing HttpResponseData, so
+     * nothing may touch the response after this returns. node:http never
+     * buffers here (it dispatches immediately and queues responses), so replay
+     * is always the IsNodeHttp=false onData. */
+    void replayPipelinedRequests() {
+        /* The caller's own close gate (internalEnd's shouldCloseConnection
+         * branch) may have already destructed HttpResponseData before we run;
+         * isNoLongerHttp reads only us_socket_t flags, so check it first. */
+        if (isNoLongerHttp()) {
+            return;
+        }
+        HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
+        if (httpResponseData->pipelinedBuffer.empty()) {
+            return;
+        }
+        /* Re-entering onData from inside onData would stomp the per-context
+         * isParsingHttp/upgradedWebSocket state; the pathological case is two
+         * connections whose handlers synchronously resolve each other. Leave
+         * the buffer and reads paused; the connection idles out rather than
+         * corrupting the outer parse. */
+        HttpContextData<SSL> *httpContextData = HttpContext<SSL>::getSocketContextDataS((us_socket_t *) this);
+        if (httpContextData->flags.isParsingHttp) {
+            return;
+        }
+        /* Flush the just-completed response before dispatching the next
+         * request: onData's parse-error path closes with uncorkWithoutSending,
+         * which would otherwise drop the corked bytes. */
+        Super::uncork();
+        /* Connection is being torn down after this response; the buffered
+         * request is discarded. On the corked async path internalEnd()'s own
+         * close gate was skipped (isCorked() was true, then its uncork()
+         * released the slot so HttpResponse::cork() early-returns), so close
+         * here rather than leave the socket open until client FIN/timeout. */
+        if (httpResponseData->shouldCloseConnection()) {
+            httpResponseData->pipelinedBuffer.clear();
+            if (((AsyncSocket<SSL> *) this)->hasFullyDrained()) {
+                ((AsyncSocket<SSL> *) this)->shutdown();
+                ((AsyncSocket<SSL> *) this)->close();
+            }
+            return;
+        }
+
+        std::string buffer = std::move(httpResponseData->pipelinedBuffer);
+        httpResponseData->pipelinedBuffer.clear();
+        /* Reads were paused when the buffer became non-empty. */
+        this->resume();
+        /* getHeaders writes post-padding bytes; the buffer reserved them at
+         * append time (see consumePostPadded). */
+        buffer.reserve(buffer.length() + MINIMUM_HTTP_POST_PADDING);
+        HttpContext<SSL>::template onData<false>((us_socket_t *) this, buffer.data(), (int) buffer.length());
+    }
+
     /* Note: Headers are not checked in regards to timeout.
      * We only check when you actively push data or end the request */
 

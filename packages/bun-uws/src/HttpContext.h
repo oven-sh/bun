@@ -472,6 +472,14 @@ private:
                 ((HttpResponse<SSL> *) s)->resetTimeout();
             }
 
+            /* Bun.serve: an async handler left the response pending, so any
+             * pipelined request in this TCP read must be buffered and replayed
+             * once this response completes (markDone). node:http dispatches
+             * pipelined requests immediately and queues their responses above. */
+            if constexpr (!IsNodeHttp) {
+                httpResponseData->deferPipeline = !((HttpResponse<SSL> *) s)->hasResponded();
+            }
+
             /* Continue parsing */
             return s;
 
@@ -543,6 +551,16 @@ private:
                     httpResponseData->inStream = nullptr;
                 }
             }
+
+            /* Bun.serve: the handler may have responded synchronously inside
+             * the body fin callback (e.g. `await req.text()` drains microtasks
+             * and renders), so re-derive from HTTP_RESPONSE_PENDING here. */
+            if constexpr (!IsNodeHttp) {
+                if (fin) {
+                    httpResponseData->deferPipeline =
+                        (httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) != 0;
+                }
+            }
             return user;
         });
 
@@ -596,6 +614,16 @@ private:
                     && httpResponseData->hasBufferedPartialRequestHeaders()) {
                     nodeHttpResponseData->lastMessageStartMs = nodeCompatMonotonicMs();
                     nodeHttpResponseData->headersCompleted = false;
+                }
+            }
+
+            /* Bun.serve async pipelining: pipelined request bytes were buffered
+             * because the current response is still pending. Pause reads so the
+             * buffer stays bounded by this single recv; replayPipelinedRequests()
+             * resumes and replays once the response completes. */
+            if constexpr (!IsNodeHttp) {
+                if (!httpResponseData->pipelinedBuffer.empty()) {
+                    ((HttpResponse<SSL> *) s)->pause();
                 }
             }
 
@@ -699,6 +727,15 @@ private:
             /* We expect the developer to return whether or not write was successful (true).
              * If write was never called, the developer should still return true so that we may drain. */
             bool success = httpResponseData->callOnWritable(reinterpret_cast<HttpResponse<SSL> *>(asyncSocket), httpResponseData->offset);
+
+            /* The writable callback may have completed the response and replayed
+             * a buffered pipelined request whose dispatch closed or adopted this
+             * socket (parse error, Connection: close, WebSocket upgrade); every
+             * httpResponseData read below would then be on a destructed object.
+             * An in-place adopt leaves is_closed false, so also check kind. */
+            if (reinterpret_cast<HttpResponse<SSL> *>(s)->isNoLongerHttp()) {
+                return s;
+            }
 
             if constexpr (!IsNodeHttp) {
                 /* Bun.serve: onEnd deferred close for a tryEnd tail (offset < total,

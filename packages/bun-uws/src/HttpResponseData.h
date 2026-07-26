@@ -57,26 +57,48 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
 
         /* We are done with this request */
         this->state &= ~HttpResponseData<SSL>::HTTP_RESPONSE_PENDING;
+        /* The parse loop may dispatch the next request on this connection. */
+        this->deferPipeline = false;
 
         HttpResponseData<SSL> *httpResponseData = uwsRes->getHttpResponseData();
         httpResponseData->isIdle = true;
+
+        /* Pipelined request bytes buffered while this response was in flight are
+         * NOT replayed here: every caller (internalEnd, uws_res_end_sendfile,
+         * uws_res_end_without_body) still reads our state afterwards, and a
+         * replay can close/adopt the socket and destruct this object. Callers
+         * invoke replayPipelinedRequests() themselves as their final action. */
     }
 
     /* Caller of onWritable. It is possible onWritable calls markDone so we need to borrow it. */
     bool callOnWritable(uWS::HttpResponse<SSL>* response, uint64_t offset) {
         /* Borrow real onWritable */
-        auto* borrowedOnWritable = std::move(onWritable);
+        auto* borrowedOnWritable = onWritable;
 
-        /* Set onWritable to placeholder */
-        onWritable = [](uWS::HttpResponse<SSL>*, uint64_t, void*) {return true;};
+        /* Set onWritable to a placeholder we can identify afterwards: the
+         * borrowed callback may reach markDone() and replay the next pipelined
+         * request, whose handler can install its OWN onWritable. Restoring by
+         * non-null would stomp that with this response's stale callback. */
+        static constexpr OnWritableCallback callOnWritablePlaceholder =
+            [](uWS::HttpResponse<SSL>*, uint64_t, void*) { return true; };
+        onWritable = callOnWritablePlaceholder;
 
         /* Run borrowed onWritable */
         bool ret = borrowedOnWritable(response, offset, writableUserData);
 
-        /* If we still have onWritable (the placeholder) then move back the real one */
-        if (onWritable) {
-            /* We haven't reset onWritable, so give it back */
-            onWritable = std::move(borrowedOnWritable);
+        /* The callback may have completed the response and replayed a buffered
+         * pipelined request whose dispatch closed or adopted this socket,
+         * destructing us; every field access below would then be on a dead
+         * object (or on WebSocketData after an in-place adopt). */
+        if (response->isNoLongerHttp()) {
+            return ret;
+        }
+
+        /* Only restore if onWritable is still OUR placeholder; anything else
+         * (null from markDone, or a new callback from a replayed request)
+         * belongs to whoever set it. */
+        if (onWritable == callOnWritablePlaceholder) {
+            onWritable = borrowedOnWritable;
         }
 
         return ret;

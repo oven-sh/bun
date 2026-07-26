@@ -1096,7 +1096,7 @@ where
         };
         if try_end_ok {
             drop(bb);
-            self.detach_response();
+            self.detach_response_after_end();
             self.end_request_streaming_and_drain();
             self.finalize_without_deinit();
             self.deref();
@@ -1556,7 +1556,7 @@ where
     fn on_file_stream_complete(ctx: *mut c_void, _resp: uws::AnyResponse) {
         // SAFETY: ctx is a *RequestContext registered with FileResponseStream
         let this: &mut Self = unsafe { bun_ptr::callback_ctx::<Self>(ctx) };
-        this.detach_response();
+        this.detach_response_after_end();
         this.end_request_streaming_and_drain();
         this.deref();
     }
@@ -1638,7 +1638,7 @@ where
         let bytes = &bytes_[bytes_.len().min(write_offset)..];
         // SAFETY: FFI handle
         if resp.try_end(bytes, bytes_.len(), self.should_close_connection()) {
-            self.detach_response();
+            self.detach_response_after_end();
             self.end_request_streaming_and_drain();
             self.deref();
             true
@@ -1673,7 +1673,7 @@ where
         let done = resp.try_end(bytes, total_len, close_connection);
         if done {
             self.response_buf_owned.clear();
-            self.detach_response();
+            self.detach_response_after_end();
             self.end_request_streaming_and_drain();
             self.deref();
         } else {
@@ -2387,6 +2387,24 @@ where
                 self.flags.set_has_timeout_handler(false);
             }
         }
+    }
+
+    /// `detach_response` without the HTTP/1 `resp.clear_*` FFI calls: H1's
+    /// `markDone()` already nulled them, and the `uws_res_end*` wrapper then
+    /// replayed any buffered pipelined request, so those handlers now belong
+    /// to the next request. HTTP/3's `markDone()` deliberately leaves
+    /// `onAborted` armed for `on_stream_close`, so fall through to the full
+    /// detach there.
+    fn detach_response_after_end(&mut self) {
+        if HTTP3 {
+            self.detach_response();
+            return;
+        }
+        self.request_body_buf = Vec::new();
+        self.resp.take();
+        self.flags.set_is_waiting_for_request_body(false);
+        self.flags.set_has_abort_handler(false);
+        self.flags.set_has_timeout_handler(false);
     }
 
     pub fn is_aborted_or_ended(&self) -> bool {
@@ -3807,7 +3825,7 @@ where
                 return;
             }
         }
-        self.detach_response();
+        self.detach_response_after_end();
         self.end_request_streaming_and_drain();
         self.deref();
     }

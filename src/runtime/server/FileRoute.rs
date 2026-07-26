@@ -604,9 +604,12 @@ impl FileRoute {
     }
 
     fn on_response_complete(this: *mut FileRoute, resp: AnyResponse) {
-        resp.clear_aborted();
-        resp.clear_on_writable();
-        resp.clear_timeout();
+        // See StaticRoute::on_response_complete.
+        if let AnyResponse::H3(_) = resp {
+            resp.clear_aborted();
+            resp.clear_on_writable();
+            resp.clear_timeout();
+        }
         // SAFETY: `this` is live (ref held by caller); `deref()` may free it.
         unsafe {
             if let Some(mut server) = (*this).server.get() {

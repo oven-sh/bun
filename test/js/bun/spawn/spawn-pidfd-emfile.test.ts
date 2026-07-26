@@ -95,3 +95,42 @@ test.skipIf(!isLinux)("Bun.spawn falls back to the waiter thread when pidfd_open
   expect(result.spawnMs).toBeLessThan(500);
   expect(exitCode).toBe(0);
 });
+
+// With all stdio inherited there are no socketpair fds to release after
+// posix_spawn, so the waiter thread's one-time eventfd() is attempted at the
+// same fd pressure that just failed pidfd_open. Bun.spawn must not abort the
+// process in that case.
+test.skipIf(!isLinux)("Bun.spawn with inherited stdio at fd exhaustion does not panic", async () => {
+  const fixture = `
+    const fs = require("node:fs");
+    const held = [];
+    try { for (;;) held.push(fs.openSync("/dev/null", "r")); } catch {}
+    let proc = null, thrown = null;
+    try {
+      proc = Bun.spawn({
+        cmd: ["sleep", "0.1"],
+        stdin: "inherit", stdout: "inherit", stderr: "inherit",
+      });
+    } catch (e) { thrown = { code: e?.code, syscall: e?.syscall }; }
+    for (const fd of held) fs.closeSync(fd);
+    const exit = proc ? await proc.exited : null;
+    process.stdout.write(JSON.stringify({ gotProc: !!proc, thrown, exit }) + "\\n");
+  `;
+  await using proc = Bun.spawn({
+    cmd: ["/bin/sh", "-c", `ulimit -n 256 && exec "$@"`, "sh", bunExe(), "-e", fixture],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  const line = stdout.trim().split("\n").pop() ?? "";
+  let result: { gotProc: boolean; thrown: unknown; exit: number | null };
+  try {
+    result = JSON.parse(line);
+  } catch {
+    throw new Error(`probe did not emit JSON\nstdout:\n${stdout}\nstderr:\n${stderr}`);
+  }
+  expect(result).toMatchObject({ gotProc: true, thrown: null, exit: 0 });
+  expect(exitCode).toBe(0);
+});

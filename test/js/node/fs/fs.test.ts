@@ -3055,9 +3055,7 @@ describe("createReadStream", () => {
   });
 
   it("rejects invalid path types", () => {
-    expect(() => createReadStream(123 as any)).toThrow(
-      expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
-    );
+    expect(() => createReadStream(123 as any)).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
     expect(() => createReadStream(Buffer.from("a\0b"))).toThrow(
       expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }),
     );

@@ -703,6 +703,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
     this[kClosing] = false;
     this[kPendingDrainClose] = false;
     this[kCloseCallback] = undefined;
+    this[serverSymbol] = undefined;
     this[serverSymbol] = Bun.serve<any>({
       idleTimeout: 0, // nodejs dont have a idleTimeout by default
       tls,

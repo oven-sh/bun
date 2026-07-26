@@ -1676,7 +1676,9 @@ pub(crate) mod strings_impl {
     /// (e.g. the JS lexer) and must observe the same code units the JS engine
     /// does. For well-formed UTF-16 the output is identical to [`to_utf8_alloc`].
     pub fn to_wtf8_alloc(utf16: &[u16]) -> Vec<u8> {
-        let need = simdutf::length::utf8::from::utf16::le(utf16);
+        // `le_with_replacement` charges 3 bytes per unpaired surrogate, which
+        // is also the WTF-8 width, so `need` is exact for both paths below.
+        let need = simdutf::length::utf8::from::utf16::le_with_replacement(utf16);
         let mut list = Vec::with_capacity(need + 16);
         // SAFETY: same contract as `convert_utf16_to_utf8_append` — simdutf
         // writes only initialized bytes into the spare slice and reports the
@@ -1699,8 +1701,6 @@ pub(crate) mod strings_impl {
             })
         };
         if r.status == simdutf::Status::SURROGATE {
-            // A lone surrogate encodes to 3 WTF-8 bytes, same width as U+FFFD,
-            // so `need` above is already the exact size.
             let mut i = 0usize;
             let mut buf = [0u8; 4];
             while i < utf16.len() {

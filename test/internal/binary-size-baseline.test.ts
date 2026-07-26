@@ -35,9 +35,9 @@ const META: Record<string, Record<string, number>> = {
 };
 const UUID = Object.fromEntries(Object.values(SHA2BUILD).map(n => [String(n), `uuid-${n}`]));
 
-// Per-build commit messages: canary by default; tests override to exercise the
-// [release] filter in the meta-data fallback.
-let commitMessages: Record<string, string> = {};
+// Per-build .json overrides: webhook canary by default; tests override to
+// exercise the release filter in the meta-data fallback.
+let buildJsonOverrides: Record<string, { message?: string; source?: string }> = {};
 
 function githubHandler(url: URL): unknown {
   if (url.pathname === "/repos/oven-sh/bun/compare/main...sha-pr") {
@@ -67,10 +67,15 @@ beforeAll(() => {
     port: 0,
     fetch(req) {
       const url = new URL(req.url);
-      // buildkite.com public .json → build UUID + commit message
+      // buildkite.com public .json → build UUID + commit message + trigger source
       const mBuild = url.pathname.match(/^\/bun\/bun\/builds\/(\d+)\.json$/);
       if (mBuild)
-        return Response.json({ id: UUID[mBuild[1]] ?? "uuid-unknown", message: commitMessages[mBuild[1]] ?? "commit" });
+        return Response.json({
+          id: UUID[mBuild[1]] ?? "uuid-unknown",
+          message: "commit",
+          source: "webhook",
+          ...buildJsonOverrides[mBuild[1]],
+        });
       // everything else → GitHub API
       return Response.json(githubHandler(url));
     },
@@ -120,8 +125,8 @@ case "$cmd" in
   *) exit 1 ;;
 esac`;
 
-async function runBinarySize(meta: typeof META, messages: Record<string, string> = {}) {
-  commitMessages = messages;
+async function runBinarySize(meta: typeof META, overrides: typeof buildJsonOverrides = {}) {
+  buildJsonOverrides = overrides;
   using dir = tempDir("binary-size-baseline", { ".keep": "" });
   const agentPath = join(String(dir), "buildkite-agent");
   await Bun.write(agentPath, agentScript);
@@ -182,6 +187,7 @@ test.skipIf(!isPosix)(
     expect(stdout).toMatch(/bun-darwin-aarch64\s+.*\+562\.9 KB\s+\(stale: #100\)/);
     expect(annotation).toContain("all within 0.50 MB (1 stale ignored)");
     expect(annotation).toContain("⚠️ <code>bun-darwin-aarch64</code>");
+    expect(annotation).toContain('<sup><a href="https://buildkite.com/bun/bun/builds/100">#100</a></sup>');
     expect(annotation).not.toContain("❌");
     expect(exitCode).toBe(0);
   },
@@ -197,16 +203,28 @@ test.skipIf(!isPosix)("PR still fails when the merge-base baseline itself is ove
   expect(exitCode).toBe(1);
 });
 
-test.skipIf(!isPosix)("[release] merge-base does not claim the anchor (next canary build is enforced)", async () => {
-  // Merge-base #200 is a [release] build: the like-for-like check rejects it for a
-  // canary PR, and it must NOT claim the anchor (a release-tag commit doesn't itself
-  // change canary sizes). Anchor becomes #150 (next canary back), whose linux-x64 is
-  // 75_560_000; PR is +600 KB over that and must fail rather than being waved through
-  // as "stale".
-  const big = { ...META, "999": { ...META["999"], "bun-linux-x64": META["150"]["bun-linux-x64"] + 600_000 } };
-  const { stdout, stderr, annotation, exitCode } = await runBinarySize(big, { "200": "bump version [release]" });
-  expect(stdout).toContain("main #150");
-  expect(stderr).toContain("error: 1 target(s) exceeded 0.50 MB");
-  expect(annotation).toContain("❌ <code>bun-linux-x64</code>");
-  expect(exitCode).toBe(1);
-});
+for (const [how, override] of [
+  ["source:ui (real Bun releases are manual triggers with RELEASE=1)", { source: "ui" }],
+  ["[release] in the commit message", { message: "bump [release]" }],
+] as const) {
+  test.skipIf(!isPosix)(
+    `meta-data fallback does not enforce release-mode sizes from a merge-base build with ${how}`,
+    async () => {
+      // Merge-base #200's meta-data is from a release build (whose Windows sizes
+      // differ from canary by several MB). The fallback cannot recover an
+      // authoritative release flag from meta-data, so it declines the build
+      // entirely; the walk claims the anchor with no sizes and every row resolves
+      // stale from an older canary build. Even with the PR's linux-x64 +600 KB
+      // over #150, the step annotates the growth but does not hard-fail on a
+      // baseline it cannot prove is like-for-like.
+      const big = { ...META, "999": { ...META["999"], "bun-linux-x64": META["150"]["bun-linux-x64"] + 600_000 } };
+      const { stdout, stderr, annotation, exitCode } = await runBinarySize(big, { "200": override });
+      expect(stderr).not.toContain("error:");
+      expect(stdout).toContain("main #200");
+      expect(stdout).toMatch(/bun-linux-x64\s+.*\+585\.9 KB\s+\(stale: #150\)/);
+      expect(annotation).toContain("all within 0.50 MB (2 stale ignored)");
+      expect(annotation).not.toContain("❌");
+      expect(exitCode).toBe(0);
+    },
+  );
+}

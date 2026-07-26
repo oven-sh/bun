@@ -283,6 +283,10 @@ extern "C" ssize_t bun_close_range(unsigned int start, unsigned int end, unsigne
 }
 #endif
 
+#endif // OS(LINUX) || OS(FREEBSD)
+
+#if !OS(WINDOWS)
+
 static void unset_cloexec(int fd)
 {
     int flags = fcntl(fd, F_GETFD, 0);
@@ -293,16 +297,18 @@ static void unset_cloexec(int fd)
     fcntl(fd, F_SETFD, flags);
 }
 
-extern "C" void on_before_reload_process_linux()
+extern "C" void on_before_reload_process_posix()
 {
     unset_cloexec(STDIN_FILENO);
     unset_cloexec(STDOUT_FILENO);
     unset_cloexec(STDERR_FILENO);
 
+#if OS(LINUX) || OS(FREEBSD)
     // close all file descriptors except stdin, stdout, stderr and possibly IPC.
     // if you're passing additional file descriptors to Bun, you're probably not passing more than 8.
     // If this fails, it's ultimately okay, we're just trying our best to avoid leaking file descriptors.
     bun_close_range(3, ~0U, CLOSE_RANGE_CLOEXEC);
+#endif
 
     // Preserve the IPC channel to the parent across the execve. NODE_CHANNEL_FD
     // survives in environ, and the reloaded image re-attaches to that fd; with
@@ -350,7 +356,7 @@ extern "C" void on_before_reload_process_linux()
     sigprocmask(SIG_SETMASK, &signal_set, nullptr);
 }
 
-#endif
+#endif // !OS(WINDOWS)
 
 #define LSHPACK_MAX_HEADER_SIZE 65536
 

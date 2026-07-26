@@ -4484,9 +4484,10 @@ pub fn maybe_handle_panic_during_process_reload() {
 /// Port of `bun.reloadProcess`. Allocator param dropped (uses libc malloc via
 /// `dupe_z`). `may_return == true` → returns on failure; `false` → panics.
 /// macOS posix_spawn path is deferred to bun_spawn (tier-4); tier-0 falls
-/// back to plain `execve` on all POSIX which is correct on Linux/BSD and
-/// best-effort on macOS (CLOEXEC handled by `on_before_reload_process_linux`
-/// hook on Linux; Darwin gets the simpler path until tier-4 wires spawn).
+/// back to plain `execve` on all POSIX. `on_before_reload_process_posix`
+/// clears CLOEXEC on stdio and the IPC fd and resets caught signal
+/// dispositions on every POSIX target; the close_range sweep is Linux/BSD
+/// only.
 pub fn reload_process(clear_terminal: bool, may_return: bool) {
     // Exactly one thread may perform the reload. The JS thread (draining the
     // WatchReloadTask after emitting kill-signal listeners) and the watcher's
@@ -4549,17 +4550,16 @@ pub fn reload_process(clear_terminal: bool, may_return: bool) {
     }
 
     #[cfg(unix)]
-    // SAFETY: the FFI calls below (`on_before_reload_process_linux`, `execve`)
+    // SAFETY: the FFI calls below (`on_before_reload_process_posix`, `execve`)
     // receive only locally-built NUL-terminated argv/envp arrays terminated by
     // a null pointer; on success `execve` never returns, on failure errno is
     // read. No borrowed Rust state is observed after the exec.
     unsafe {
-        #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
         {
             unsafe extern "C" {
-                safe fn on_before_reload_process_linux();
+                safe fn on_before_reload_process_posix();
             }
-            on_before_reload_process_linux();
+            on_before_reload_process_posix();
         }
 
         // We clone argv so that the memory address isn't the same as the libc one.

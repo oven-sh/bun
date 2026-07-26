@@ -1494,6 +1494,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         expr: Expr,
         out: &mut smallvec::SmallVec<[(&'a [u8], bool); 8]>,
     ) -> bool {
+        if !self.stack_check.is_safe_to_recurse() || self.reported_stack_overflow.get() {
+            self.report_stack_overflow(expr.loc);
+            return false;
+        }
         match expr.data {
             js_ast::ExprData::EString(mut s) => {
                 s.resolve_rope_if_needed(self.arena);

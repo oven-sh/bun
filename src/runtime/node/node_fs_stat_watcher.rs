@@ -1,7 +1,7 @@
 use core::cell::Cell;
 use core::ffi::c_void;
 use core::ptr::NonNull;
-use core::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::thread::{self, ThreadId};
 use std::time::Instant;
 
@@ -25,6 +25,7 @@ use bun_threading::{Guarded, UnboundedQueue};
 
 use crate::node::stat::{StatsBig, StatsSmall};
 use crate::node::types::PathLikeExt;
+use crate::node::util::validators;
 use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 
 bun_output::declare_scope!(StatWatcher, visible);
@@ -49,7 +50,7 @@ fn stat_to_js_stats(
 #[derive(bun_ptr::ThreadSafeRefCounted)]
 #[ref_count(destroy = Self::deinit)]
 pub struct StatWatcherScheduler {
-    current_interval: AtomicI32,
+    current_interval: AtomicU32,
     /// Set by `timer_callback` immediately before scheduling `work_pool_callback`
     /// on the thread pool, cleared by `work_pool_callback` once it has finished
     /// touching `watchers`. `shutdown_for_exit` spin-waits on this so it never
@@ -179,7 +180,7 @@ impl StatWatcherScheduler {
 
     pub fn init(vm: *mut VirtualMachine) -> RefPtr<StatWatcherScheduler> {
         RefPtr::new(StatWatcherScheduler {
-            current_interval: AtomicI32::new(0),
+            current_interval: AtomicU32::new(0),
             work_pool_in_flight: AtomicBool::new(false),
             is_shutdown: AtomicBool::new(false),
             task: WorkPoolTask {
@@ -237,12 +238,12 @@ impl StatWatcherScheduler {
         }
     }
 
-    fn get_interval(&self) -> i32 {
+    fn get_interval(&self) -> u32 {
         self.current_interval.load(Ordering::Relaxed)
     }
 
     /// Update the current interval and set the timer (this function is thread safe)
-    fn set_interval(this: *mut Self, interval: i32) {
+    fn set_interval(this: *mut Self, interval: u32) {
         // BACKREF — `this` is live (caller holds a ref); `ParentRef` Deref
         // gives safe `&Self` for the atomic store / thread-id check below.
         let this_ref = ParentRef::from(NonNull::new(this).expect("set_interval: scheduler"));
@@ -258,7 +259,7 @@ impl StatWatcherScheduler {
     }
 
     /// Set the timer (this function is not thread safe, should be called only from the main thread)
-    fn set_timer(this: *mut Self, interval: i32) {
+    fn set_timer(this: *mut Self, interval: u32) {
         // jsc/runtime crate cycle: `vm.timer: api.Timer.All` lives in `RuntimeState` (this crate),
         // not as a value field on the low-tier `VirtualMachine`. Recover it via
         // the per-thread `runtime_state()` (single JS thread; see jsc_hooks.rs).
@@ -407,8 +408,8 @@ impl StatWatcherScheduler {
         let batch = this_ref.watchers.pop_batch();
         log!("pop batch of {} watchers", batch.count);
         let mut iter = batch.iterator();
-        let mut min_interval: i32 = i32::MAX;
-        let mut closest_next_check: u64 = u64::try_from(min_interval).expect("int cast");
+        let mut min_interval: u32 = u32::MAX;
+        let mut closest_next_check: u64 = u64::from(min_interval);
         let mut contain_watchers = false;
         loop {
             let watcher_raw = iter.next();
@@ -430,7 +431,7 @@ impl StatWatcherScheduler {
 
             let time_since =
                 u64::try_from(now.duration_since(w.last_check.get()).as_nanos()).expect("int cast");
-            let interval = u64::try_from(w.interval).expect("int cast") * 1_000_000;
+            let interval = u64::from(w.interval) * 1_000_000;
 
             if time_since >= interval.saturating_sub(500) {
                 w.last_check.set(now);
@@ -451,7 +452,7 @@ impl StatWatcherScheduler {
             // choose the smallest interval or the closest time to the next check
             Self::set_interval(
                 this,
-                min_interval.min(i32::try_from(closest_next_check).expect("int cast")),
+                min_interval.min(u32::try_from(closest_next_check).expect("int cast")),
             );
         } else {
             // we do not have watchers, we can stop the timer
@@ -553,7 +554,7 @@ pub struct StatWatcher {
     path: ZBox, // owned NUL-terminated path; was `[:0]u8` allocSentinel'd + freed in deinit (Drop frees)
     persistent: Cell<bool>,
     bigint: bool,
-    interval: i32,
+    interval: u32,
     last_check: Cell<Instant>,
 
     // JSC_BORROW per LIFETIMES.tsv — global outlives every watcher; `BackRef`
@@ -1108,7 +1109,7 @@ pub struct Arguments {
 
     pub persistent: bool,
     pub bigint: bool,
-    pub interval: i32,
+    pub interval: u32,
 
     // JSC_BORROW per LIFETIMES.tsv — global outlives the parsed `Arguments`;
     // `BackRef` gives safe `&JSGlobalObject` projection at every read site.
@@ -1125,7 +1126,7 @@ impl Arguments {
         let mut listener: JSValue = JSValue::ZERO;
         let mut persistent: bool = true;
         let mut bigint: bool = false;
-        let mut interval: i32 = 5007;
+        let mut interval: u32 = 5007;
 
         if let Some(options_or_callable) = arguments.next_eat() {
             // options
@@ -1141,11 +1142,7 @@ impl Arguments {
                     .unwrap_or(false);
 
                 if let Some(interval_) = options_or_callable.get(global, "interval")? {
-                    if !interval_.is_number() && !interval_.is_any_int() {
-                        return Err(global
-                            .throw_invalid_arguments(format_args!("interval must be a number")));
-                    }
-                    interval = interval_.coerce::<i32>(global)?;
+                    interval = validators::validate_uint32(global, interval_, "interval", false)?;
                 }
             }
         }

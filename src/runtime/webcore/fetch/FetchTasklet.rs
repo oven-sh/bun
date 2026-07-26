@@ -2510,13 +2510,12 @@ impl FetchTasklet {
     /// no `JSCell` may be touched, so the close arm inlines `abort_task` minus
     /// `tracker.did_cancel`.
     fn abandon_response_body_from_finalizer(&mut self) {
-        // `body_size` is written by HTTP-thread `callback()` under `self.mutex`.
-        self.mutex.lock();
-        let body_size = self.body_size;
-        self.mutex.unlock();
-        // `Content-Length` is wire bytes; `scheduled_response_buffer` is decompressed.
+        // Scenario 2b/3 implies the transport is Paused or already done, so the
+        // HTTP-thread `callback()` is not concurrently assigning `body_size`;
+        // and this finalizer can re-enter on the JS thread while
+        // `on_progress_update` holds `self.mutex`, so locking here deadlocks.
         let drain = matches!(
-            body_size,
+            self.body_size,
             http::BodySize::ContentLength(n) if n <= ABANDONED_RESPONSE_DRAIN_MAX_BYTES
         );
         if !drain && !self.signal_store.aborted.swap(true, Ordering::Relaxed) {

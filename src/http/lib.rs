@@ -2102,7 +2102,7 @@ impl<'a> HTTPClient<'a> {
     }
 
     pub fn on_timeout<const IS_SSL: bool>(&mut self, socket: HttpSocket<IS_SSL>) {
-        if self.flags.disable_timeout {
+        if self.flags.disable_timeout && !self.signals.is_receive_ignored() {
             return;
         }
         bun_core::scoped_log!(fetch, "Timeout  {}\n", BStr::new(self.url.href));

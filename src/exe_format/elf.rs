@@ -30,6 +30,8 @@ pub enum ElfError {
     BunSectionNotFound,
     #[error("NoWritableLoadSegment")]
     NoWritableLoadSegment,
+    #[error("LoadSegmentPastWritableSegment")]
+    LoadSegmentPastWritableSegment,
     #[error("NewVaddrCollides")]
     NewVaddrCollides,
 }
@@ -223,14 +225,8 @@ impl ElfFile {
         // flags). Growing an existing PT_LOAD is the layout a linker would
         // naturally produce; WSL1's kernel loader rejects binaries that
         // instead add a late PT_LOAD by repurposing PT_GNU_STACK (#29963).
-        //
-        // With `-z relro -z now` lld emits TWO PF_W PT_LOADs: the RELRO
-        // segment (.data.rel.ro/.got/.got.plt) first, then the regular
-        // .data/.bss segment. .bun is mutable initialized data so it is in
-        // the second one. We therefore select the PF_W PT_LOAD whose file
-        // extent ends last, and assert it is also the last PT_LOAD overall
-        // so the "everything past its file bytes is non-ALLOC tail" move
-        // below is sound.
+        // `-z relro` links have two PF_W PT_LOADs (RELRO then .data/.bss);
+        // .bun is mutable data so it's in the one with the highest file end.
         let phdr_size = size_of::<Elf64_Phdr>();
         let mut rw_phdr_index: Option<usize> = None;
         let mut rw_phdr: Elf64_Phdr = Elf64_Phdr::ZEROED;
@@ -265,9 +261,7 @@ impl ElfFile {
             return Err(ElfError::NoWritableLoadSegment);
         };
         if rw_phdr.p_offset + rw_phdr.p_filesz != max_load_file_end {
-            // A PT_LOAD with file bytes past the selected RW segment would be
-            // clobbered by the tail relocation below.
-            return Err(ElfError::InvalidElfFile);
+            return Err(ElfError::LoadSegmentPastWritableSegment);
         }
 
         // Place the new data at a page-aligned virtual address past every

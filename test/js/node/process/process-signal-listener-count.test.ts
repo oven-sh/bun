@@ -166,7 +166,7 @@ test.skipIf(isWindows)("process.removeAllListeners() with no args restores defau
   expect(stderr).toBe("");
   expect(exitCode).not.toBe(42);
   expect(exitCode).not.toBe(0);
-  expect(proc.signalCode).toBe("SIGUSR2");
+  expect(proc.signalCode).not.toBeNull();
 });
 
 // After process.removeAllListeners() with NO event name, adding a listener

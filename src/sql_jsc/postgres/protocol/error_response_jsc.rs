@@ -52,7 +52,6 @@ pub(crate) fn to_js(this: &ErrorResponse, global_object: &JSGlobalObject) -> JSV
             FieldMessage::File(str) => file = str,
             FieldMessage::Line(str) => line = str,
             FieldMessage::Routine(str) => routine = str,
-            _ => {}
         }
     }
 

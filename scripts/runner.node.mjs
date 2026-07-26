@@ -61,6 +61,7 @@ import {
   isMacOS,
   isWindows,
   isX64,
+  markBuildkiteStepReported,
   printEnvironment,
   reportAnnotationToBuildKite,
   startGroup,
@@ -77,6 +78,13 @@ const spawnTimeout = 5_000;
 const spawnBunTimeout = 20_000; // when running with ASAN/LSAN bun can take a bit longer to exit, not a bug.
 const testTimeout = 3 * 60_000;
 const integrationTimeout = 5 * 60_000;
+
+const resolutionGatingFlags = new Set([
+  "--expose-internals",
+  "--experimental-quic",
+  "--experimental-stream-iter",
+  "--no-warnings",
+]);
 
 function getNodeParallelTestTimeout(testPath) {
   if (testPath.includes("test-dns")) return 60_000;
@@ -692,6 +700,7 @@ async function runTests() {
     }
 
     if (options["bail"]) {
+      markBuildkiteStepReported();
       process.exit(getExitCode("fail"));
     }
 
@@ -752,17 +761,58 @@ async function runTests() {
       const title = relative(cwd, absoluteTestPath).replaceAll(sep, "/");
       if (isNodeTest(testPath)) {
         const testContent = readFileSync(absoluteTestPath, "utf-8");
+        const flagsMatch = /^\/\/ Flags:[^\S\r\n]+(--[^\r\n]*)$/m.exec(testContent);
+        const testFlags = flagsMatch
+          ? flagsMatch[1].split(/\s+/).filter(flag => resolutionGatingFlags.has(flag.split("=")[0]))
+          : [];
         let runWithBunTest = title.includes("needs-test") || testContent.includes("node:test");
         // don't wanna have a filter for includes("bun:test") but these need our mocks
         runWithBunTest ||= title === "test/js/node/test/parallel/test-fs-append-file-flush.js";
         runWithBunTest ||= title === "test/js/node/test/parallel/test-fs-write-file-flush.js";
         runWithBunTest ||= title === "test/js/node/test/parallel/test-fs-write-stream-flush.js";
+        // A file that only drives node:test's run() is the parent of the run,
+        // not a test file: Node executes it as a plain script, and under
+        // `bun test` a file registering no tests of its own exits before its
+        // run() finishes. Files that also register tests at the top level (as
+        // opposed to inside a NODE_TEST_CONTEXT child branch) still need
+        // `bun test`. run() spawns its own children with `bun test`.
+        const importsRun =
+          /\brun\b[^\n]*=\s*require\(['"]node:test['"]\)/.test(testContent) ||
+          /import\s*{[^}]*\brun\b[^}]*}\s*from\s*['"]node:test['"]/.test(testContent);
+        // Registrations behind a NODE_TEST_CONTEXT guard belong to the child
+        // run() spawns, not to this process; an unindented one is this file's
+        // own and must keep `bun test`, or it silently never runs and the file
+        // "passes" having tested nothing. Requiring the guard as well keeps a
+        // file whose only registrations are indented for some other reason
+        // (inside an `if`, an IIFE) on `bun test`, where the worst case is a
+        // real run rather than a vacuous pass.
+        const registersAtColumnZero = /^(?:test|it|describe|suite)\s*[.(]/m.test(testContent);
+        const registersTests = /(?:^|[^.\w])(?:test|it|describe|suite)\s*[.(]/m.test(testContent);
+        const guardsOnTestContext = testContent.includes("NODE_TEST_CONTEXT");
+        const isRunDriver = importsRun && !registersAtColumnZero && (!registersTests || guardsOnTestContext);
+        // The needs-test filename opt-in wins over this heuristic.
+        if (isRunDriver && !title.includes("needs-test")) runWithBunTest = false;
         const subcommand = runWithBunTest ? "test" : "run";
         const env = {
           FORCE_COLOR: "0",
           NO_COLOR: "1",
           BUN_DEBUG_QUIET_LOGS: "1",
+          // Node parity: a node test process exits only when its event loop
+          // drains, and common.mustCall() verifies counts in 'exit' handlers.
+          BUN_TEST_DRAIN_EVENT_LOOP: "1",
         };
+        if (title.includes("test-util-styletext")) {
+          // These assert styleText's own color decisions against a TTY, so they need a
+          // color-capable environment they can then override per case. Drop the forced
+          // settings above, spawnBun's FORCE_COLOR, and CI (which resolves to "no color"
+          // in containers that don't identify the vendor), and pin TERM so every agent
+          // agrees.
+          env.FORCE_COLOR = undefined;
+          env.NO_COLOR = undefined;
+          env.NODE_DISABLE_COLORS = undefined;
+          env.CI = undefined;
+          env.TERM = "xterm-256color";
+        }
         if (!isWindows && title.includes("/sequential/")) {
           // Sequential node tests share common.PORT (12346); a cluster worker
           // or child_process subprocess that outlives its test can keep that
@@ -788,7 +838,12 @@ async function runTests() {
           async index => {
             const { ok, error, stdout, crashes } = await spawnBun(execPath, {
               cwd: cwd,
-              args: [subcommand, "--config=" + join(import.meta.dirname, "../bunfig.node-test.toml"), absoluteTestPath],
+              args: [
+                subcommand,
+                "--config=" + join(import.meta.dirname, "../bunfig.node-test.toml"),
+                ...(subcommand === "run" ? testFlags : []),
+                absoluteTestPath,
+              ],
               timeout: getNodeParallelTestTimeout(title),
               env: {
                 ...env,
@@ -1365,6 +1420,7 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
     TMPDIR: tmpdirPath,
     BUN_TMPDIR: tmpdirPath,
     USER: username,
+    USERNAME: isWindows ? username : undefined, // %USERNAME% for ported Windows tests
     HOME: homedir,
     SHELL: shellPath,
     FORCE_COLOR: "1",
@@ -1787,10 +1843,16 @@ function parseTestStdout(stdout, testPath) {
  * @returns {Promise<TestResult>}
  */
 async function spawnBunInstall(execPath, options) {
+  // spawnBun sets BUN_INSTALL_CACHE_DIR to a fresh tmpdir so per-test installs
+  // are hermetic. This function only runs the runner's own dependency setup
+  // (root, test/, vendor), which should hit the image's baked cache when one
+  // exists (bootstrap.{sh,ps1} set BUN_INSTALL_CACHE_DIR machine-wide).
+  const cacheDir = process.env.BUN_INSTALL_CACHE_DIR;
   let { ok, error, stdout, duration, crashes } = await spawnBun(execPath, {
     args: ["install"],
     timeout: testTimeout,
     ...options,
+    env: { ...options.env, ...(cacheDir && { BUN_INSTALL_CACHE_DIR: cacheDir }) },
   });
   if (crashes) stdout += crashes;
   const relativePath = relative(cwd, options.cwd);
@@ -2648,6 +2710,7 @@ function isAlwaysFailure(error) {
 function onExit(signal) {
   const label = `${getAnsi("red")}Received ${signal}, exiting...${getAnsi("reset")}`;
   startGroup(label, () => {
+    markBuildkiteStepReported();
     process.exit(getExitCode("cancel"));
   });
 }
@@ -3002,6 +3065,7 @@ export async function main() {
     await new Promise(resolve => setTimeout(resolve, 60_000));
   }
 
+  markBuildkiteStepReported();
   process.exit(getExitCode(ok ? "pass" : "fail"));
 }
 

@@ -275,9 +275,12 @@ ExceptionOr<Ref<PerformanceMeasure>> PerformanceUserTiming::measure(JSC::JSGloba
     }
 }
 
-static bool isNonEmptyDictionary(const PerformanceMeasureOptions& measureOptions)
+// Node (lib/internal/perf/usertiming.js calculateStartDuration) only treats
+// start/end as supplying timing; User Timing L3 also counts detail/duration,
+// but node-compat wins here.
+static bool hasStartOrEnd(const PerformanceMeasureOptions& measureOptions)
 {
-    return !measureOptions.detail.isUndefined() || measureOptions.start || measureOptions.duration || measureOptions.end;
+    return measureOptions.start || measureOptions.end;
 }
 
 ExceptionOr<Ref<PerformanceMeasure>> PerformanceUserTiming::measure(JSC::JSGlobalObject& globalObject, const String& measureName, std::optional<StartOrMeasureOptions>&& startOrMeasureOptions, const String& endMark)
@@ -286,13 +289,21 @@ ExceptionOr<Ref<PerformanceMeasure>> PerformanceUserTiming::measure(JSC::JSGloba
         return std::visit(
             WTF::makeVisitor(
                 [&](const PerformanceMeasureOptions& measureOptions) -> ExceptionOr<Ref<PerformanceMeasure>> {
-                    if (isNonEmptyDictionary(measureOptions)) {
+                    if (hasStartOrEnd(measureOptions)) {
                         if (!endMark.isNull())
-                            return Exception { TypeError };
-                        if (!measureOptions.start && !measureOptions.end)
                             return Exception { TypeError };
                         if (measureOptions.start && measureOptions.duration && measureOptions.end)
                             return Exception { TypeError };
+                        return measure(globalObject, measureName, measureOptions);
+                    }
+
+                    // A dictionary without start/end does not supply timing, but node
+                    // still measures to endMark while keeping detail.
+                    if (!endMark.isNull()) {
+                        PerformanceMeasureOptions optionsWithEndMark = measureOptions;
+                        optionsWithEndMark.end = endMark;
+                        optionsWithEndMark.duration = std::nullopt;
+                        return measure(globalObject, measureName, optionsWithEndMark);
                     }
 
                     return measure(globalObject, measureName, measureOptions);

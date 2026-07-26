@@ -186,7 +186,7 @@ fn normalize_package_json_path<'a>(
     non_normalized_path: &[u8],
 ) -> Paths<'a> {
     let abs: &[u8];
-    let rel: &[u8];
+
     // We consider it valid if there is a package.json in the folder
     let normalized: &[u8] = if non_normalized_path.len() == 1 && non_normalized_path[0] == b'.' {
         non_normalized_path
@@ -198,7 +198,7 @@ fn normalize_package_json_path<'a>(
 
     const PACKAGE_JSON_LEN: usize = "/package.json".len();
 
-    if strings::starts_with_char(normalized, b'.') {
+    let rel: &[u8] = if strings::starts_with_char(normalized, b'.') {
         let mut tempcat = PathBuffer::uninit();
 
         tempcat[..normalized.len()].copy_from_slice(normalized);
@@ -210,10 +210,10 @@ fn normalize_package_json_path<'a>(
             &tempcat[0..normalized.len() + PACKAGE_JSON_LEN],
         ];
         abs = FileSystem::instance().abs_buf(&parts, joined);
-        rel = FileSystem::instance().relative(
+        FileSystem::instance().relative(
             FileSystem::instance().top_level_dir(),
             &abs[0..abs.len() - PACKAGE_JSON_LEN],
-        );
+        )
     } else {
         let joined_len = joined.len();
         let mut remain: &mut [u8] = &mut joined[..];
@@ -246,11 +246,11 @@ fn normalize_package_json_path<'a>(
         let abs_len = joined_len - remain_after;
         abs = &joined[0..abs_len];
         // We store the folder name without package.json
-        rel = FileSystem::instance().relative(
+        FileSystem::instance().relative(
             FileSystem::instance().top_level_dir(),
             &abs[0..abs.len() - PACKAGE_JSON_LEN],
-        );
-    }
+        )
+    };
     let abs_len = abs.len();
     joined[abs_len] = 0;
 

@@ -25,18 +25,6 @@ use core::sync::atomic::{AtomicU64, Ordering};
 
 use crate::mimalloc;
 
-// ── Debug-only mi_heap accounting ─────────────────────────────────────────
-//
-// Tracks `mi_heap_new`/`mi_heap_destroy` calls so leak tests can assert the
-// live-heap count is bounded. Gated on `debug_assertions` (zero cost in
-// release); nothing reads these counters in production.
-#[cfg(debug_assertions)]
-pub(crate) static HEAP_NEW_COUNT: core::sync::atomic::AtomicUsize =
-    core::sync::atomic::AtomicUsize::new(0);
-#[cfg(debug_assertions)]
-pub(crate) static HEAP_DESTROY_COUNT: core::sync::atomic::AtomicUsize =
-    core::sync::atomic::AtomicUsize::new(0);
-
 // ── Debug-only thread-ownership guard ─────────────────────────────────────
 //
 // `bun_alloc` sits below `bun_core` in the crate graph, so we cannot reuse
@@ -110,8 +98,6 @@ impl Default for MimallocArena {
 impl MimallocArena {
     #[inline]
     pub fn new() -> Self {
-        #[cfg(debug_assertions)]
-        HEAP_NEW_COUNT.fetch_add(1, Ordering::Relaxed);
         // SAFETY: FFI call with no preconditions.
         let heap = unsafe { mimalloc::mi_heap_new() };
         let heap = NonNull::new(heap).unwrap_or_else(|| crate::out_of_memory());
@@ -173,12 +159,6 @@ impl MimallocArena {
         }
     }
 
-    /// Alias for [`Self::new`].
-    #[inline]
-    pub fn init() -> Self {
-        Self::new()
-    }
-
     /// Raw `mi_heap_t*`.
     ///
     /// This is the sole accessor for the `heap` field. A `&Heap`-returning
@@ -214,11 +194,6 @@ impl MimallocArena {
             self.owns,
             "MimallocArena::reset() on a borrowing_default() arena — would destroy mi_heap_main()"
         );
-        #[cfg(debug_assertions)]
-        {
-            HEAP_DESTROY_COUNT.fetch_add(1, Ordering::Relaxed);
-            HEAP_NEW_COUNT.fetch_add(1, Ordering::Relaxed);
-        }
         // SAFETY: `self.heap` was obtained from `mi_heap_new` and has not been
         // destroyed (we own it). After this call all outstanding allocations
         // are freed; replacing `self.heap` with a fresh heap restores the
@@ -298,24 +273,6 @@ impl MimallocArena {
         false
     }
 
-    /// `mi_heap_collect(heap, false)`.
-    #[inline]
-    pub fn gc(&self) {
-        // SAFETY: `self.heap` is a live heap.
-        unsafe { mimalloc::mi_heap_collect(self.heap_ptr(), false) };
-    }
-
-    /// Debug-only collect of
-    /// both this heap and the global mimalloc state to surface UAF early.
-    #[inline]
-    pub fn help_catch_memory_issues(&self) {
-        #[cfg(debug_assertions)]
-        {
-            self.gc();
-            mimalloc::mi_collect(false);
-        }
-    }
-
     /// `bumpalo::Bump::allocated_bytes` parity — total bytes currently in use
     /// in this heap. Walks the heap's areas (not its individual blocks); cost
     /// is O(areas), which is cheap. Intended for GC `estimatedSize` reporting.
@@ -346,16 +303,6 @@ impl MimallocArena {
             );
         }
         total
-    }
-
-    /// `mi_heap_contains(heap, p)`.
-    /// `mi_heap_contains` only tests address-range membership and never
-    /// dereferences `addr`, so this takes the address as `usize` (not a raw
-    /// pointer — there is no caller precondition to uphold).
-    #[inline]
-    pub fn owns_ptr(&self, addr: usize) -> bool {
-        // SAFETY: `self.heap` is a live heap; `addr` is only range-tested.
-        unsafe { mimalloc::mi_heap_contains(self.heap_ptr(), core::ptr::without_provenance(addr)) }
     }
 
     /// `mi_heap_malloc[_aligned]` on this
@@ -439,13 +386,6 @@ impl MimallocArena {
         }
     }
 
-    /// `bumpalo::Bump::alloc_slice_clone` parity.
-    #[inline]
-    #[allow(clippy::mut_from_ref)]
-    pub fn alloc_slice_clone<T: Clone>(&self, src: &[T]) -> &mut [T] {
-        self.alloc_slice_fill_iter(src.iter().cloned())
-    }
-
     /// `bumpalo::Bump::alloc_slice_fill_default` parity.
     #[inline]
     #[allow(clippy::mut_from_ref)]
@@ -510,40 +450,12 @@ impl MimallocArena {
 
     // ── StdAllocator vtable bridge ────────────────────────────────────────
 
-    /// Erase to the fat `{ptr, vtable}`
-    /// `StdAllocator` so this arena can flow through code that still threads
-    /// an allocator handle.
-    #[inline]
-    pub fn std_allocator(&self) -> crate::StdAllocator {
-        // `ctx` is `*const MimallocArena` (not the inner `*mut Heap`) so the
-        // vtable thunks can reach `assert_owning_thread()`. They load
-        // `heap_ptr()` from it on every call; this is one extra indirection
-        // vs `ctx == heap`. The only consumer of `ctx` is this vtable;
-        // `is_instance()` compares the *vtable* pointer, not `ctx`.
-        crate::StdAllocator {
-            ptr: ptr::from_ref(self).cast_mut().cast(),
-            vtable: &HEAP_ALLOCATOR_VTABLE,
-        }
-    }
-
     /// Does `alloc` dispatch through one of
     /// this module's vtables (per-heap or process-global mimalloc)?
     #[inline]
     pub fn is_instance(alloc: &crate::StdAllocator) -> bool {
         core::ptr::eq(alloc.vtable, &raw const HEAP_ALLOCATOR_VTABLE)
             || core::ptr::eq(alloc.vtable, &raw const GLOBAL_MIMALLOC_VTABLE)
-    }
-
-    /// A `StdAllocator` that
-    /// routes through the process-wide `mi_malloc`/`mi_free` (no per-heap ctx).
-    /// In mimalloc v3 these are already thread-local-fast, so there is no
-    /// separate per-thread default heap to cache.
-    #[inline]
-    pub fn get_thread_local_default() -> crate::StdAllocator {
-        crate::StdAllocator {
-            ptr: core::ptr::null_mut(),
-            vtable: &GLOBAL_MIMALLOC_VTABLE,
-        }
     }
 }
 
@@ -555,8 +467,6 @@ impl Drop for MimallocArena {
             // destroying it would tear down the global allocator.
             return;
         }
-        #[cfg(debug_assertions)]
-        HEAP_DESTROY_COUNT.fetch_add(1, Ordering::Relaxed);
         // `mi_heap_destroy` destroys the heap and bulk-frees
         // every block still allocated in it without running per-block free.
         // SAFETY: `self.heap` is a live heap obtained from `mi_heap_new` and
@@ -801,26 +711,10 @@ impl<'a> ArenaString<'a> {
         Self { buf }
     }
     #[inline]
-    pub fn push_str(&mut self, s: &str) {
-        self.buf.extend_from_slice(s.as_bytes());
-    }
-    #[inline]
     pub fn as_str(&self) -> &str {
         // SAFETY: `buf` is only ever extended via `push_str`/`write_str`, both
         // of which append UTF-8.
         unsafe { core::str::from_utf8_unchecked(&self.buf) }
-    }
-    #[inline]
-    pub fn as_bytes(&self) -> &[u8] {
-        &self.buf
-    }
-    #[inline]
-    pub fn len(&self) -> usize {
-        self.buf.len()
-    }
-    #[inline]
-    pub fn is_empty(&self) -> bool {
-        self.buf.is_empty()
     }
     /// `bumpalo::collections::String::into_bump_str` parity.
     #[inline]
@@ -850,8 +744,6 @@ impl core::ops::Deref for ArenaString<'_> {
 /// Extension methods on `Vec<T, &MimallocArena>` to cover the
 /// `bumpalo::collections::Vec` API gaps.
 pub trait ArenaVecExt<'a, T> {
-    /// `bumpalo::collections::Vec::from_iter_in` parity.
-    fn from_iter_in<I: IntoIterator<Item = T>>(iter: I, arena: &'a MimallocArena) -> Self;
     /// `bumpalo::collections::Vec::into_bump_slice` parity — leaks into the
     /// arena (reclaimed on `reset`/`Drop`).
     fn into_bump_slice(self) -> &'a [T];
@@ -862,14 +754,6 @@ pub trait ArenaVecExt<'a, T> {
 }
 
 impl<'a, T> ArenaVecExt<'a, T> for Vec<T, &'a MimallocArena> {
-    #[inline]
-    fn from_iter_in<I: IntoIterator<Item = T>>(iter: I, arena: &'a MimallocArena) -> Self {
-        let iter = iter.into_iter();
-        let (lo, _) = iter.size_hint();
-        let mut v = Vec::with_capacity_in(lo, arena);
-        v.extend(iter);
-        v
-    }
     #[inline]
     fn into_bump_slice(self) -> &'a [T] {
         &*self.leak()
@@ -885,10 +769,6 @@ impl<'a, T> ArenaVecExt<'a, T> for Vec<T, &'a MimallocArena> {
 }
 
 impl<'a, T> ArenaVecExt<'a, T> for crate::BabyVec<'a, T> {
-    #[inline]
-    fn from_iter_in<I: IntoIterator<Item = T>>(iter: I, arena: &'a MimallocArena) -> Self {
-        crate::vec_from_iter_in(iter, arena)
-    }
     #[inline]
     fn into_bump_slice(self) -> &'a [T] {
         &*self.leak()

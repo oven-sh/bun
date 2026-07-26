@@ -32,6 +32,8 @@ const {
   validateFunction,
   validateString,
 } = require("internal/validators");
+const { addAbortListener } = require("internal/abort_listener");
+const { resistStopPropagation } = require("internal/shared");
 
 const types = require("node:util/types");
 let inspect: typeof import("node:util").inspect | undefined;
@@ -579,7 +581,8 @@ async function once(emitter, type, options = kEmptyObject) {
     }
     resolve(args);
   };
-  eventTargetAgnosticAddListener(emitter, type, resolver, { once: true });
+  const opts = resistStopPropagation({ __proto__: null, once: true });
+  eventTargetAgnosticAddListener(emitter, type, resolver, opts);
   if (type !== "error" && typeof emitter.once === "function") {
     // EventTarget does not have `error` event semantics like Node
     // EventEmitters, we listen to `error` events only on EventEmitters.
@@ -591,7 +594,7 @@ async function once(emitter, type, options = kEmptyObject) {
     reject($makeAbortError(undefined, { cause: signal?.reason }));
   }
   if (signal != null) {
-    eventTargetAgnosticAddListener(signal, "abort", abortListener, { once: true });
+    eventTargetAgnosticAddListener(signal, "abort", abortListener, opts);
   }
 
   return promise;
@@ -864,34 +867,6 @@ function getMaxListeners(emitterOrTarget) {
   throw $ERR_INVALID_ARG_TYPE("emitter", ["EventEmitter", "EventTarget"], emitterOrTarget);
 }
 Object.defineProperty(getMaxListeners, "name", { value: "getMaxListeners" });
-
-// Copy-pasta from Node.js source code
-function addAbortListener(signal, listener) {
-  if (signal === undefined) {
-    throw $ERR_INVALID_ARG_TYPE("signal", "AbortSignal", signal);
-  }
-
-  validateAbortSignal(signal, "signal");
-  if (typeof listener !== "function") {
-    throw $ERR_INVALID_ARG_TYPE("listener", "function", listener);
-  }
-
-  let removeEventListener;
-  if (signal.aborted) {
-    queueMicrotask(() => listener());
-  } else {
-    signal.addEventListener("abort", listener, { __proto__: null, once: true });
-    removeEventListener = () => {
-      signal.removeEventListener("abort", listener);
-    };
-  }
-  return {
-    __proto__: null,
-    [Symbol.dispose]() {
-      removeEventListener?.();
-    },
-  };
-}
 
 let EventEmitterReferencingAsyncResource;
 function lazyLoadAsyncResource() {

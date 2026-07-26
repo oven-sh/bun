@@ -2545,7 +2545,6 @@ EVPKeyPointer::ParseKeyResult EVPKeyPointer::TryParsePrivateKey(
     const PrivateKeyEncodingConfig& config,
     const Buffer<const unsigned char>& buffer)
 {
-    ClearErrorOnReturn clear_error_on_return;
     static constexpr auto keyOrError = [](EVPKeyPointer pkey,
                                            bool had_passphrase = false) {
         if (int err = ERR_peek_error()) {
@@ -2799,7 +2798,9 @@ bool EVPKeyPointer::isOneShotVariant() const
 {
     if (!pkey_) return false;
     int type = id();
-    return type == EVP_PKEY_ED25519 || type == EVP_PKEY_ED448;
+    return type == EVP_PKEY_ED25519 || type == EVP_PKEY_ED448
+        || type == EVP_PKEY_ML_DSA_44 || type == EVP_PKEY_ML_DSA_65
+        || type == EVP_PKEY_ML_DSA_87;
 }
 
 bool EVPKeyPointer::isSigVariant() const
@@ -5002,3 +5003,11 @@ const Digest Digest::FromName(WTF::StringView name)
 }
 
 } // namespace ncrypto
+
+// `X509_V_ERR_*` -> the code name node reports for a peer-certificate
+// validation failure (crypto::GetValidationErrorCode -> X509Pointer::ErrorCode).
+// Every arm returns a string literal, so the pointer outlives any caller.
+extern "C" const char* Bun__X509__validationErrorCode(int32_t err)
+{
+    return ncrypto::X509Pointer::ErrorCode(err).characters();
+}

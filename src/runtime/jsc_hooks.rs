@@ -17,7 +17,7 @@
 //!      / `load_preloads` / `ensure_debugger` / `auto_tick`.
 //!   3. `__BUN_LOADER_HOOKS` — `transpile_source_code` /
 //!      `fetch_builtin_module` / `transpile_file`.
-//!   4. `__bun_get_vm_ctx` / `__bun_js_vm_get` / `__bun_stdio_blob_store_new` /
+//!   4. `__bun_get_vm_ctx` / `__bun_stdio_blob_store_new` /
 //!      `__bun_http_sync_download_*` — low-tier extern impls.
 
 use bun_core::WTFStringImplExt as _;
@@ -1850,7 +1850,7 @@ fn console_print_runtime_object_inner<const C: bool>(
         let mut w = AsFmt::new(writer_);
         // SAFETY: `as_` returned a non-null `*mut BuildArtifact` to the live
         // native wrapper backing `value`; GC keeps it alive (see above).
-        let _ = unsafe { &*build }.write_format::<_, _, C>(formatter, &mut w);
+        let _ = unsafe { &*build }.write_format::<_, _, C>(value, formatter, &mut w);
         return Ok(true);
     }
     if let Some(blob) = value.as_::<Blob>() {
@@ -2131,8 +2131,6 @@ fn transpile_source_code_inner(
             let mut _ast_scope = bun_ast::ast_memory_allocator::Scope::default();
             _ast_scope.enter();
 
-            // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
-            unsafe { (*jsc_vm).transpiled_count += 1 };
             // `Transpiler::reset_store`. Inline only the
             // block-store half; `AstAlloc` gets its own per-transpile state
             // below, so the side module's long-lived state is not touched.
@@ -2422,7 +2420,7 @@ fn transpile_source_code_inner(
                             bun_paths::fs::Path::init_with_namespace(spec_static, b"node");
                         fallback_source = bun_ast::Source {
                             path: fallback_path,
-                            contents: bun_ptr::Cow::Borrowed(code),
+                            contents: std::borrow::Cow::Borrowed(code),
                             ..Default::default()
                         };
                         virtual_source = Some(&fallback_source);
@@ -2523,7 +2521,6 @@ fn transpile_source_code_inner(
                     // `_fd_guard` scopeguard's tag is not invalidated by a
                     // fresh `&mut` (see Note on `_fd_guard`).
                     file_fd_ptr: Some(unsafe { &mut *input_file_fd_ptr }),
-                    file_hash: Some(hash),
                     macro_remappings,
                     // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
                     jsx: unsafe { &*jsc_vm }.transpiler.options.jsx.clone(),
@@ -2896,8 +2893,6 @@ fn transpile_source_code_inner(
                 }
 
                 // Link import records.
-                // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
-                let start_count = unsafe { &*jsc_vm }.transpiler.linker.import_counter;
                 // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM;
                 // `origin` is read-only and `linker` is JS-thread-exclusive.
                 unsafe {
@@ -2959,17 +2954,6 @@ fn transpile_source_code_inner(
                     }
                     return Err(crate::Error::AsyncModule);
                 }
-
-                if !macro_mode {
-                    // SAFETY: per fn contract — `jsc_vm` is the live per-thread
-                    // VM; both fields are JS-thread-exclusive plain integers.
-                    unsafe {
-                        (*jsc_vm).resolved_count +=
-                            (*jsc_vm).transpiler.linker.import_counter - start_count;
-                    }
-                }
-                // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
-                unsafe { (*jsc_vm).transpiler.linker.import_counter = 0 };
 
                 let is_commonjs_module = parse_result.ast.has_commonjs_export_names
                     || parse_result.ast.exports_kind == bun_ast::ExportsKind::Cjs;
@@ -3059,12 +3043,9 @@ fn transpile_source_code_inner(
                         )
                     };
                     // The printer never took ownership of `module_info`;
-                    // explicit destroy (not Drop) mirrors the async-path
-                    // error arm.
+                    // drop it here mirroring the async-path error arm.
                     if print_result.is_err() {
-                        if let Some(mi) = module_info.take() {
-                            mi.destroy();
-                        }
+                        drop(module_info.take());
                     }
                     print_result?;
                 }
@@ -3409,6 +3390,20 @@ fn transpile_source_code_inner(
             // SAFETY: null-checked above; `global_object` is the live per-thread
             // `JSGlobalObject` for the FFI call.
             let global = unsafe { &*global_object };
+            // The bundler emits `{}` as the JS stub for a plain CSS import
+            // (esbuild parity); match that here instead of leaking the file path
+            // as the default export. `.module.css` still diverges: the bundler
+            // emits a class-name map there, runtime CSS-module scoping is not
+            // implemented.
+            if matches!(loader, L::Css) {
+                return Ok(OwnedResolvedSource::from(ResolvedSource {
+                    jsvalue_for_export: JSValue::create_empty_object(global, 0),
+                    specifier: input_specifier.dupe_ref(),
+                    source_url: create_if_different(input_specifier, path.text),
+                    tag: ResolvedSourceTag::ExportDefaultObject,
+                    ..Default::default()
+                }));
+            }
             // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
             let value = if !unsafe { &*jsc_vm }.origin.is_empty() {
                 // Rewrite `specifier` against `vm.origin` so
@@ -3598,7 +3593,11 @@ fn get_hardcoded_module(
             }
             Some(js_synthetic_module(b"node:zlib/iter", specifier))
         }
-        HardcodedModule::BunInternalForTesting => {
+        HardcodedModule::BunInternalForTesting
+        | HardcodedModule::NodeInternalRepl
+        | HardcodedModule::NodeInternalReplAwait
+        | HardcodedModule::NodeInternalReplHistory
+        | HardcodedModule::NodeInternalUtilInspect => {
             // Gated behind `--expose-internals` (release) / always-on (debug).
             if !bun_core::env::IS_DEBUG {
                 let allowed = bun_jsc::module_loader::IS_ALLOWED_TO_USE_INTERNAL_TESTING_APIS
@@ -3607,7 +3606,8 @@ fn get_hardcoded_module(
                     return None;
                 }
             }
-            Some(js_synthetic_module(b"bun:internal-for-testing", specifier))
+            let name: &'static str = hardcoded.into();
+            Some(js_synthetic_module(name.as_bytes(), specifier))
         }
         HardcodedModule::InternalTestBinding => {
             // Gated behind `--expose-internals` (release) / always-on (debug),
@@ -3674,6 +3674,20 @@ unsafe fn fetch_builtin_module(
             // to filesystem resolution.
             None => FetchBuiltinResult::NotFound,
         };
+    }
+
+    if let Some((name, tag)) = bun_jsc::module_loader::exposed_internal_tag(spec) {
+        let resolved = ResolvedSource {
+            source_code: bun_core::String::empty(),
+            specifier: *specifier,
+            source_url: bun_core::String::clone_utf8(&name),
+            tag,
+            source_code_needs_deref: false,
+            ..ResolvedSource::default()
+        };
+        // SAFETY: per fn contract — `out` is a valid out-param.
+        unsafe { *out = ErrorableResolvedSource::ok(resolved) };
+        return FetchBuiltinResult::Found;
     }
 
     // ── `macro:` namespace ──────────────────────────────────────────────
@@ -4007,7 +4021,7 @@ unsafe fn get_loader_and_virtual_source<'a>(
                         // logger-local `fs::Path` (NOT `bun_resolver::fs::Path`
                         // — see logger/lib.rs:32-). Re-init from `path.text`.
                         path: bun_paths::fs::Path::init(path_text),
-                        contents: bun_ptr::Cow::Borrowed(contents),
+                        contents: std::borrow::Cow::Borrowed(contents),
                         ..Default::default()
                     });
                     virtual_source = virtual_source_to_use.as_ref();
@@ -4901,6 +4915,11 @@ unsafe fn _resolve<'a>(
         return Ok(());
     }
 
+    if bun_jsc::module_loader::exposed_internal_tag(specifier).is_some() {
+        *ret_path = specifier;
+        return Ok(());
+    }
+
     // `[eval]` / `[stdin]` virtual sources.
     // SAFETY: `vm` is the live per-thread VM.
     if unsafe { &*vm }.module_loader.eval_source.is_some()
@@ -5025,9 +5044,6 @@ unsafe fn _resolve<'a>(
     let Some(result_path) = result.path_const() else {
         return Err(crate::Error::ModuleNotFound);
     };
-    // SAFETY: plain usize field.
-    unsafe { (*vm).resolved_count += 1 };
-
     // Note: `result_path.text` is a `&'_ [u8]` borrowed from the
     // resolver's interned `'static` BSSStringList stores (see resolver/lib.rs
     // §allocators) — the same store `load_preloads` reads from. Transmute the
@@ -5147,6 +5163,12 @@ unsafe fn resolve_hook(
         };
         // SAFETY: per fn contract.
         unsafe { *res = ErrorableString::ok(path) };
+        return true;
+    }
+
+    if bun_jsc::module_loader::exposed_internal_tag(specifier_utf8.slice()).is_some() {
+        // SAFETY: per fn contract.
+        unsafe { *res = ErrorableString::ok(specifier.dupe_ref()) };
         return true;
     }
 
@@ -5343,18 +5365,9 @@ pub fn parse_http_date(value: &[u8]) -> Option<u64> {
     }
 }
 
-/// `bun_event_loop::__bun_js_vm_get` body — erased `VirtualMachine::get()` for
-/// `AbstractVM::JsKind`'s `get_vm()`.
-/// Declared `extern "Rust"` in `bun_event_loop::MiniEventLoop`; link-time
-/// resolved.
-#[unsafe(no_mangle)]
-pub(crate) fn __bun_js_vm_get() -> *mut () {
-    bun_jsc::virtual_machine::VirtualMachine::get_mut_ptr().cast()
-}
-
 /// `bun_event_loop::__bun_stdio_blob_store_new` body.
 /// Returns an erased `*mut webcore::blob::Store` with intrusive `ref_count = 2`
-/// (one for `RareData`/`MiniEventLoop`, one for the eventual `Blob` consumer).
+/// (one for `RareData`, one for the eventual `Blob` consumer).
 /// Declared `extern "Rust"` in `bun_event_loop::MiniEventLoop`; link-time
 /// resolved.
 #[unsafe(no_mangle)]

@@ -20,7 +20,7 @@ describe("bundler", () => {
         console.log("Hello, world!");
       `,
     },
-    run: { stdout: "Hello, world!" },
+    run: { stdout: "Hello, world!", stderr: "" },
   });
   // --footer/--banner are concatenated verbatim (UTF-8). Guard against the
   // standalone module graph treating those bytes as Latin-1, which would

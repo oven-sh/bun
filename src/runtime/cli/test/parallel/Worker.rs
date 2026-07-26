@@ -71,7 +71,6 @@ pub struct Worker {
     /// Set when the process-exit notification arrives. Reaping waits for both
     /// this and `ipc.done` so trailing IPC frames are decoded first.
     pub exit_status: Option<Status>,
-    pub extra_fd_stdio: [Stdio; 1],
 }
 
 impl Worker {
@@ -123,9 +122,6 @@ impl Worker {
         {
             // `.buffer` extra_fd creates an AF_UNIX socketpair; the parent end is
             // adopted into a usockets `Channel`.
-            // SpawnOptions.extra_fds is `Box<[Stdio]>` (owned) in the
-            // Rust port, so the `extra_fd_stdio` field is no longer borrowed here.
-            this.extra_fd_stdio = [Stdio::Buffer];
             let options = SpawnOptions {
                 stdin: Stdio::Ignore,
                 stdout: Stdio::Buffer,
@@ -208,9 +204,6 @@ impl Worker {
                 unsafe { uv::Pipe::close_and_destroy(p) };
             });
 
-            // SpawnOptions.extra_fds is `Box<[Stdio]>` (owned) in the
-            // Rust port, so the `extra_fd_stdio` field is no longer borrowed here.
-            this.extra_fd_stdio = [Stdio::Ipc(ipc_pipe)];
             let options = SpawnOptions {
                 stdin: Stdio::Ignore,
                 stdout: Stdio::Buffer(bun_core::heap::into_raw(Box::new(bun_core::ffi::zeroed::<
@@ -383,28 +376,6 @@ impl Worker {
         // Leave the channel open so the reader drains trailing
         // repeat_bufs/junit_file/coverage_file frames; the worker exits on
         // `.shutdown` and its exit closes the peer end.
-    }
-
-    /// `Channel` owner callback: a decoded frame arrived.
-    pub fn on_channel_frame(&mut self, kind: frame::Kind, rd: &mut frame::Reader<'_>) {
-        // SAFETY: coord backref valid; mutation — see `coord` field doc (provenance caveats).
-        unsafe { (*self.coord.cast_mut()).on_frame(self, kind, rd) };
-    }
-
-    /// `Channel` owner callback: peer closed, errored, or sent a corrupt frame.
-    /// Gates `tryReap` so kernel-buffered frames written just before exit() are
-    /// decoded before the worker slot is torn down.
-    pub fn on_channel_done(&mut self) {
-        if self.ipc.is_attached() {
-            // Corrupt frame path — kill the worker so onWorkerExit accounts for
-            // the in-flight file and the slot can respawn.
-            if let Some(p) = self.process {
-                // SAFETY: `p` is the live intrusive-refcounted *mut Process.
-                let _ = unsafe { (*p).kill(9) };
-            }
-        }
-        // SAFETY: coord backref valid; mutation — see `coord` field doc (provenance caveats).
-        unsafe { (*self.coord.cast_mut()).try_reap(self) };
     }
 }
 

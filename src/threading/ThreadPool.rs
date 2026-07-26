@@ -180,7 +180,6 @@ impl AtomicSync {
 }
 
 pub struct ThreadPool {
-    pub sleep_on_idle_network_thread: bool,
     /// When `true` (default), each worker calls
     /// [`Output::Source::configure_named_thread`] on startup, which initializes
     /// the WTF `StackBounds` thread-local via `Bun__StackCheck__initialize`.
@@ -200,8 +199,6 @@ pub struct ThreadPool {
     join_event: Event,
     run_queue: node::Queue,
     threads: AtomicPtr<Thread>,
-    pub name: &'static [u8],
-    pub spawned_thread_count: AtomicU32,
     wait_group: WaitGroup,
     /// Used by `schedule` to optimize for the case where the thread pool isn't running yet.
     is_running: AtomicBool,
@@ -229,7 +226,6 @@ impl ThreadPool {
     /// Statically initialize the thread pool using the configuration.
     pub fn init(config: Config) -> ThreadPool {
         ThreadPool {
-            sleep_on_idle_network_thread: true,
             needs_stack_bounds: true,
             stack_size: 1.max(config.stack_size),
             max_threads: 1.max(config.max_threads),
@@ -238,8 +234,6 @@ impl ThreadPool {
             join_event: Event::default(),
             run_queue: node::Queue::default(),
             threads: AtomicPtr::new(ptr::null_mut()),
-            name: b"",
-            spawned_thread_count: AtomicU32::new(0),
             wait_group: WaitGroup::init(),
             is_running: AtomicBool::new(false),
             stats: PoolStats {
@@ -822,7 +816,6 @@ impl ThreadPool {
                                     return unsafe { Self::unregister(self, ptr::null_mut()) };
                                 }
                             }
-                            // if (self.name.len > 0) thread.setName(self.name) catch {};
                             return;
                         }
 

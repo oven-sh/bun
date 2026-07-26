@@ -1,7 +1,8 @@
 import { spawn, spawnSync } from "bun";
 import { beforeEach, describe, expect, it } from "bun:test";
+import { chmodSync } from "fs";
 import { exists, stat } from "fs/promises";
-import { bunExe, bunEnv as env, tls, tmpdirSync } from "harness";
+import { bunExe, bunEnv as env, isPosix, tempDir, tls, tmpdirSync } from "harness";
 import { once } from "node:events";
 import * as nodetls from "node:tls";
 import { join } from "path";
@@ -170,6 +171,42 @@ it("handles a close-delimited GitHub tarball body split across packets", async (
     for (const s of sockets) s.destroy();
     await new Promise<void>(r => server.close(() => r()));
   }
+});
+
+// GitHandler::wait() used Futex::wait(.., Some(1000)) (1us timeout) in a loop,
+// issuing ~18k futex syscalls/sec while the git thread ran. POSIX-only: stub
+// `git` is a shell script and ru_nvcsw is always 0 on Windows.
+it.skipIf(!isPosix)("does not busy-wait on the futex while git runs", async () => {
+  using dir = tempDir("create-git-futex", {
+    "bin/git": "#!/bin/sh\nsleep 0.5\nexit 0\n",
+    "bun-create/tmpl/index.js": "// hi\n",
+    "bun-create/tmpl/package.json": JSON.stringify({
+      name: "tmpl",
+      version: "1.0.0",
+      dependencies: { localdep: "file:./localdep" },
+    }),
+    "bun-create/tmpl/localdep/package.json": JSON.stringify({ name: "localdep", version: "1.0.0" }),
+  });
+  chmodSync(join(String(dir), "bin", "git"), 0o755);
+
+  const proc = spawnSync({
+    cmd: [bunExe(), "create", "tmpl", join(String(dir), "dest")],
+    cwd: String(dir),
+    env: {
+      ...env,
+      PATH: join(String(dir), "bin") + ":" + process.env.PATH,
+      BUN_CREATE_DIR: join(String(dir), "bun-create"),
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const stderr = proc.stderr.toString();
+  expect(stderr).not.toContain("error:");
+  expect(stderr).toContain("] git");
+  expect(proc.exitCode).toBe(0);
+  // Before the fix this was ~27,000 over the ~1.5s git wait; after, a few dozen.
+  expect(proc.resourceUsage!.contextSwitches.voluntary).toBeLessThan(2000);
 });
 
 it("should create template from local folder", async () => {

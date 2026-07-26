@@ -2,8 +2,7 @@ use core::fmt;
 use core::ptr::NonNull;
 use core::slice;
 
-use crate::string::{String as BunString, StringPointer, ZStr};
-use bun_simdutf_sys::simdutf;
+use crate::string::{StringPointer, ZStr};
 
 /// Two-phase string builder: callers first `count()` every slice they will
 /// append, then `allocate()` once, then `append()` each slice. Returned slices
@@ -43,60 +42,6 @@ impl StringBuilder {
         Ok(())
     }
 
-    pub fn count16(&mut self, slice: &[u16]) {
-        self.cap += crate::strings::element_length_utf16_into_utf8(slice);
-    }
-
-    pub fn count16_z(&mut self, slice: &[u16]) {
-        // Callers pass &[u16] (WStr has no len method on its DST slice yet).
-        // element_length_utf16_into_utf8 charges 3 bytes (U+FFFD) per unpaired
-        // surrogate, which is exactly what append16's fallback writes.
-        self.cap += crate::strings::element_length_utf16_into_utf8(slice) + 1;
-    }
-
-    pub fn append16(&mut self, slice: &[u16]) -> Option<&mut ZStr> {
-        // Borrowck: capture buf ptr, drop the &mut borrow before mutating
-        // self.len, then rebuild ZStr from the raw ptr.
-        let buf = self.writable();
-        let buf_ptr = buf.as_mut_ptr();
-        if slice.is_empty() {
-            buf[0] = 0;
-            self.len += 1;
-            // SAFETY: buf_ptr[0] == 0 written above; len 0 excludes the NUL.
-            return Some(unsafe { ZStr::from_raw_mut(buf_ptr, 0) });
-        }
-
-        let result = simdutf::convert::utf16::to::utf8::with_errors::le(slice, buf);
-        if result.status == simdutf::Status::SUCCESS {
-            let count = result.count;
-            // SAFETY: buf has at least count+1 bytes (count16 reserved them).
-            unsafe { *buf_ptr.add(count) = 0 };
-            self.len += count + 1;
-            // SAFETY: buf_ptr[count] == 0 written above.
-            Some(unsafe { ZStr::from_raw_mut(buf_ptr, count) })
-        } else {
-            // Fallback: WTF-16 → WTF-8 via the slow path that handles lone surrogates.
-            // The signature returns a borrow into `self`, so we copy the WTF-8
-            // bytes into the builder's reserved buffer (count16_z uses the same
-            // replacement-aware length, so the reservation is exact) and drop
-            // the temporary Vec normally. No `mem::forget`.
-            let out = crate::strings::to_utf8_alloc(slice);
-            let len = out.len();
-            let avail = self.cap - self.len;
-            if len + 1 > avail {
-                return None;
-            }
-            // SAFETY: buf_ptr points to `avail` writable bytes (self.writable()).
-            unsafe {
-                core::ptr::copy_nonoverlapping(out.as_ptr(), buf_ptr, len);
-                *buf_ptr.add(len) = 0;
-            }
-            self.len += len + 1;
-            // SAFETY: buf_ptr[len] == 0 written above.
-            Some(unsafe { ZStr::from_raw_mut(buf_ptr, len) })
-        }
-    }
-
     pub fn append_z(&mut self, slice: &[u8]) -> &ZStr {
         debug_assert!(self.len < self.cap); // didn't count everything
         debug_assert!(self.ptr.is_some()); // must call allocate first
@@ -110,11 +55,6 @@ impl StringBuilder {
         debug_assert!(self.len <= self.cap);
 
         ZStr::from_buf(&self.allocated_slice()[start..], slice.len())
-    }
-
-    pub fn append_str(&mut self, str: &BunString) -> &[u8] {
-        let slice = str.to_utf8();
-        self.append(slice.slice())
     }
 
     pub fn append(&mut self, slice: &[u8]) -> &[u8] {
@@ -233,22 +173,6 @@ impl StringBuilder {
         debug_assert!(self.len <= self.cap);
 
         &self.allocated_slice()[start..start + written]
-    }
-
-    pub fn fmt_append_count(&mut self, args: fmt::Arguments<'_>) -> StringPointer {
-        debug_assert!(self.len <= self.cap); // didn't count everything
-        debug_assert!(self.ptr.is_some()); // must call allocate first
-
-        let off = self.len;
-        let written = crate::fmt::buf_print_len(self.writable(), args).expect("unreachable");
-        self.len += written;
-
-        debug_assert!(self.len <= self.cap);
-
-        StringPointer {
-            offset: off as u32,
-            length: written as u32,
-        }
     }
 
     pub fn fmt_append_count_z(&mut self, args: fmt::Arguments<'_>) -> StringPointer {

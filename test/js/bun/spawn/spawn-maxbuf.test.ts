@@ -58,10 +58,12 @@ describe("maxBuffer caps the buffer while the child is still writing", () => {
   // is the same bound Node gives spawnSync.
   const bound = maxBuffer + 64 * 1024;
 
-  // `killSignal: 0` sends no signal at all, so the child outlives the kill and
-  // keeps writing for as long as Bun keeps reading. A child that merely
-  // installs a SIGTERM handler, or is slow to die, behaves the same way.
+  // The child traps SIGTERM so it outlives the maxBuffer kill and keeps
+  // writing for as long as Bun keeps reading. On Windows SIGTERM maps to
+  // TerminateProcess (untrappable), so the child dies; the cap assertion still
+  // holds, it just doesn't exercise the "writer survives" path there.
   const firehose = `
+    process.on("SIGTERM", () => {});
     const { writeSync } = require("fs");
     const chunk = Buffer.alloc(1024 * 1024, 97);
     for (let i = 0; i < 8; i++) {
@@ -73,7 +75,6 @@ describe("maxBuffer caps the buffer while the child is still writing", () => {
   test.concurrent("Bun.spawnSync", () => {
     const proc = Bun.spawnSync([bunExe(), "-e", firehose], {
       maxBuffer,
-      killSignal: 0,
       stdio: ["ignore", "pipe", "pipe"],
     });
     expect(proc.exitedDueToMaxBuffer).toBe(true);
@@ -86,7 +87,6 @@ describe("maxBuffer caps the buffer while the child is still writing", () => {
   test.concurrent("Bun.spawn", async () => {
     await using proc = Bun.spawn([bunExe(), "-e", firehose], {
       maxBuffer,
-      killSignal: 0,
       stdio: ["ignore", "pipe", "pipe"],
     });
     await proc.exited;
@@ -185,6 +185,39 @@ describe("timeout kills the process", () => {
     expect(result).toBe("");
     const stderr = await toUtf8(proc.stderr);
     expect(stderr).toBe("");
+  });
+
+  // A grandchild that inherited the pipe may still hold the write end after
+  // Bun kills the child. Reading stdout/stderr after `proc.exited` must
+  // deliver what was buffered instead of waiting for that grandchild to exit.
+  describe.each([
+    ["timeout", () => ({ timeout: 200 })],
+    ["AbortSignal", () => ({ signal: AbortSignal.timeout(200) })],
+  ] as const)("via %s", (_, opt) => {
+    test.skipIf(isWindows)("Bun.spawn stdout does not hang when a grandchild outlives the kill", async () => {
+      // `sh` spawns `sleep` before the stdout marker so the assertion proves a
+      // grandchild holds the pipe's write end when the kill signal reaches `sh`.
+      await using proc = Bun.spawn({
+        cmd: ["sh", "-c", "sleep 60 & echo $! >&2; echo from-child; read _"],
+        env: bunEnv,
+        ...opt(),
+        killSignal: "SIGTERM",
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+      await proc.exited;
+      const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text()]);
+      const grandchild = parseInt(stderr.trim(), 10);
+      if (Number.isInteger(grandchild))
+        try {
+          process.kill(grandchild);
+        } catch {}
+      expect({ stdout, exitCode: proc.exitCode, signalCode: proc.signalCode }).toEqual({
+        stdout: "from-child\n",
+        exitCode: null,
+        signalCode: "SIGTERM",
+      });
+      expect(stderr).toMatch(/^\d+\n$/);
+    });
   });
 
   test("Bun.spawnSync", () => {

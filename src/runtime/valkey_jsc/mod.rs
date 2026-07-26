@@ -38,10 +38,8 @@ pub mod index;
 
 // ─── back-compat aliases ─────────────────────────────────────────────────────
 // Sibling files were written against `*_body` module names (`valkey.rs`
-// imports `super::js_valkey_body`, `js_valkey.rs` imports
-// `super::valkey_command_body`); keep the aliases so they don't need to churn.
+// imports `super::js_valkey_body`); keep the alias so it doesn't need to churn.
 pub use self::js_valkey as js_valkey_body;
-pub use self::valkey as valkey_body;
 
 // ─── public re-exports ───────────────────────────────────────────────────────
 pub use js_valkey::JSValkeyClient;

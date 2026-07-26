@@ -81,7 +81,7 @@ const hasOpenSSL = (major = 0, minor = 0, patch = 0) => {
   return OPENSSL_VERSION_NUMBER >= opensslVersionNumber(major, minor, patch);
 };
 
-const hasQuic = hasCrypto && !!process.config.variables.openssl_quic;
+const hasQuic = hasCrypto && !!process.features.quic;
 
 function parseTestFlags(filename = process.argv[1]) {
   // The copyright notice is relatively big and the flags could come afterwards.
@@ -127,6 +127,9 @@ if (process.argv.length === 2 &&
     require('cluster').isPrimary &&
     fs.existsSync(process.argv[1])) {
   const flags = parseTestFlags();
+  if (process.versions.bun && process.execArgv.includes("--expose-internals")) {
+    installBunExposeInternalsRequireInterceptor();
+  }
   for (const flag of flags) {
     if (!process.execArgv.includes(flag) &&
         // If the binary is build without `intl` the inspect option is
@@ -139,7 +142,13 @@ if (process.argv.length === 2 &&
         continue;
       }
       if ((flag === "--expose-gc" || flag === "--expose_gc") && process.versions.bun) {
-        globalThis.gc ??= () => Bun.gc(true);
+        // onGCSweepSync (common/gc.js) clears [[KeptAlive]] then collects and
+        // checks onGC()'s WeakRefs synchronously, so ongc() fires before gc()
+        // returns and upstream onGC's one-setImmediate contract holds
+        // regardless of FinalizationRegistry-vs-setImmediate task ordering.
+        const { onGCSweepSync } = require('./gc');
+        const { releaseWeakRefs } = require('bun:jsc');
+        globalThis.gc ??= () => { Bun.gc(true); onGCSweepSync(releaseWeakRefs, Bun.gc); };
         break;
       }
       if ((flag === "--expose-externalize-string" || flag === "--expose_externalize_string") && process.versions.bun) {
@@ -1112,6 +1121,12 @@ function expectRequiredModule(mod, expectation, checkESModule = true) {
   assert.deepStrictEqual(clone, { ...expectation });
 }
 
+function sleepSync(ms) {
+  const sab = new SharedArrayBuffer(4);
+  const i32 = new Int32Array(sab);
+  Atomics.wait(i32, 0, 0, ms);
+}
+
 const common = {
   allowGlobals,
   buildType,
@@ -1170,6 +1185,7 @@ const common = {
   skipIfInspectorDisabled,
   skipIfSQLiteMissing,
   skipIfWorker,
+  sleepSync,
   spawnPromisified,
 
   get enoughTestMem() {

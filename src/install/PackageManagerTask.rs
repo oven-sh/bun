@@ -13,8 +13,8 @@ use bun_wyhash::Wyhash11;
 
 use crate::npm;
 use crate::{
-    DependencyID, ExtractData, ExtractTarball, NetworkTask, PackageID, PackageManager, PatchTask,
-    Repository, RepositoryExt as _, Resolution,
+    DependencyID, ExtractData, ExtractTarball, NetworkTask, PackageManager, PatchTask, Repository,
+    RepositoryExt as _, Resolution,
 };
 
 use bun_dotenv as dot_env;
@@ -120,15 +120,6 @@ impl Id {
         Id(hasher.final_())
     }
 
-    pub fn for_bin_link(package_id: PackageID) -> Id {
-        let mut hasher = Wyhash11::init(0);
-        hasher.update(b"bin-link:");
-        // `PackageID` is `u32`: `bytemuck::bytes_of` gives the
-        // native-endian byte view.
-        hasher.update(bytemuck::bytes_of(&package_id));
-        Id(hasher.final_())
-    }
-
     pub fn for_manifest(name: &[u8]) -> Id {
         let mut hasher = Wyhash11::init(0);
         hasher.update(b"manifest:");
@@ -189,12 +180,6 @@ impl<'a> Task<'a> {
         debug_assert!(self.tag == Tag::Extract || self.tag == Tag::LocalTarball);
         // SAFETY: tag-guarded; `ManuallyDrop` deref.
         unsafe { &*self.data.extract }
-    }
-    #[inline]
-    pub fn data_extract_mut(&mut self) -> &mut ExtractData {
-        debug_assert!(self.tag == Tag::Extract || self.tag == Tag::LocalTarball);
-        // SAFETY: tag-guarded; `&mut self` exclusive.
-        unsafe { &mut *self.data.extract }
     }
     #[inline]
     pub fn data_git_clone(&self) -> Fd {

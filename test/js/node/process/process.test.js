@@ -280,7 +280,7 @@ it("process.version is set", () => {
   expect(process.version).not.toInclude("unset");
 });
 
-it.todo("process.argv0", () => {
+it("process.argv0", () => {
   expect(basename(process.argv0)).toBe(basename(process.argv[0]));
 });
 
@@ -485,6 +485,21 @@ it("process.exit", () => {
   });
   expect(exitCode).toBe(0);
   expect(stdout.toString().trim()).toBe("PASS");
+});
+
+it("process.reallyExit does not emit 'exit'", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `process.on("exit", c => console.log("EXIT-LISTENER fired code=" + c)); process.reallyExit(11);`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "", exitCode: 11 });
 });
 
 describe.concurrent(() => {
@@ -1055,6 +1070,34 @@ describe.concurrent(() => {
     expect(() => process.dlopen({ module: { exports: Symbol("123") } }, Symbol("badddd"))).toThrow();
   });
 
+  it("dlopen rejects over-length paths with ERR_DLOPEN_FAILED", async () => {
+    // Spawn so an unfixed build crashing doesn't take the whole suite down.
+    // On Windows the path is widened into a 32767-unit WPathBuffer; an
+    // over-length path must come back as an error, not a Rust panic across
+    // the extern "C" boundary. POSIX already surfaces dlerror() here.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `try {
+          process.dlopen({ exports: {} }, Buffer.alloc(40000, "x").toString());
+          console.log("FAIL: did not throw");
+        } catch (e) {
+          console.log("CODE:" + e.code);
+        }`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: "CODE:ERR_DLOPEN_FAILED",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   it("dlopen accepts file: URLs", () => {
     const mod = { exports: {} };
     try {
@@ -1523,7 +1566,7 @@ describe("process.exitCode", () => {
     );
   });
 
-  it.todo("exitWithUndefinedFatalException", async () => {
+  it("exitWithUndefinedFatalException", async () => {
     await runInlineFixture(
       `
       process._fatalException = undefined;
@@ -1646,4 +1689,35 @@ it("proxy env vars assigned at runtime propagate to spawned children via {...pro
   const child = spawnSync({ cmd, env });
   const got = JSON.parse(child.stdout.toString().trim());
   expect(got).toEqual({ HTTP_PROXY: "http://x:8080", HTTPS_PROXY: "http://y:8080", NO_PROXY: "z" });
+});
+
+describe("NODE_NO_WARNINGS", () => {
+  // Node suppresses only on the exact string "1" (test-env-var-no-warnings.js).
+  // Bun's generic boolean env parse used to accept "true", "01", etc.
+  async function warn(value) {
+    const env = { ...bunEnv };
+    delete env.NODE_NO_WARNINGS;
+    if (value !== undefined) env.NODE_NO_WARNINGS = value;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", 'process.emitWarning("foo")'],
+      env,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    void stdout;
+    expect(exitCode).toBe(0);
+    return stderr;
+  }
+
+  it.concurrent.each(["true", "0", "01", "2", "foo", undefined])(
+    'does not suppress warnings for NODE_NO_WARNINGS="%s"',
+    async value => {
+      expect(await warn(value)).toMatch(/Warning: foo/);
+    },
+  );
+
+  it.concurrent('suppresses warnings for NODE_NO_WARNINGS="1"', async () => {
+    expect(await warn("1")).not.toMatch(/Warning: foo/);
+  });
 });

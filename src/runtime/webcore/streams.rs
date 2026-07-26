@@ -13,7 +13,6 @@ use bun_sys::{self as sys, Error as SysError, Fd};
 use bun_uws as uws;
 
 use crate::webcore::blob::Any as AnyBlob;
-use crate::webcore::sink::Sink;
 use crate::webcore::{AutoFlusher, ByteListPool};
 
 // scope statics renamed with `Log` suffix so they don't collide with
@@ -357,20 +356,6 @@ impl StreamError {
     }
 }
 
-#[repr(u8)]
-#[derive(Copy, Clone, Eq, PartialEq)]
-pub enum ResultTag {
-    Pending,
-    Err,
-    Done,
-    Owned,
-    OwnedAndDone,
-    TemporaryAndDone,
-    Temporary,
-    IntoArray,
-    IntoArrayAndDone,
-}
-
 impl StreamResult {
     pub fn slice16(&self) -> &[u16] {
         // Caller guarantees bytes are u16-aligned and even length;
@@ -472,38 +457,7 @@ pub struct WritableHandler {
 
 pub type WritableHandlerFn = fn(ctx: *mut c_void, result: Writable);
 
-/// Implementors provide the write-completion callback.
-pub trait WritablePendingCallback {
-    fn on_handle(&mut self, result: Writable);
-}
-
-impl WritableHandler {
-    pub fn init<C: WritablePendingCallback>(&mut self, ctx: &mut C) {
-        self.ctx = std::ptr::from_mut::<C>(ctx).cast::<c_void>();
-        self.handler = {
-            fn on_handle<C: WritablePendingCallback>(ctx_: *mut c_void, result: Writable) {
-                // SAFETY: ctx was stored from &mut C in init()
-                let ctx = unsafe { bun_ptr::callback_ctx::<C>(ctx_) };
-                ctx.on_handle(result);
-            }
-            on_handle::<C>
-        };
-    }
-}
-
 impl WritablePending {
-    /// Record that `bytes` were submitted while the destination is still
-    /// pending. The caller buffers `bytes` itself; this only updates
-    /// `consumed` and pins the state at `Pending` so a later `run()` resolves
-    /// the buffered amount.
-    ///
-    /// This is the minimal implementation matching the html_rewriter
-    /// call shape.
-    pub fn apply_backpressure(&mut self, _output: &mut Sink<'_>, bytes: &[u8]) {
-        self.consumed = self.consumed.saturating_add(bytes.len() as BlobSizeType);
-        self.state = PendingState::Pending;
-    }
-
     pub fn run(&mut self) {
         if self.state != PendingState::Pending {
             return;
@@ -636,17 +590,7 @@ impl Default for Pending {
     }
 }
 
-/// Implementors provide the callback for Result.Pending.
-pub trait PendingCallback {
-    fn on_handle(&mut self, result: StreamResult);
-}
-
 impl Pending {
-    pub fn set<C: PendingCallback>(&mut self, ctx: &mut C) {
-        self.future.init::<C>(ctx);
-        self.state = PendingState::Pending;
-    }
-
     pub fn promise(&mut self, global_object: &JSGlobalObject) -> *mut JSPromise {
         let prom = std::ptr::from_mut::<JSPromise>(JSPromise::create(global_object));
         self.future = PendingFuture::Promise {
@@ -708,37 +652,12 @@ pub enum PendingFuture {
     Handler(PendingHandler),
 }
 
-impl PendingFuture {
-    pub fn init<C: PendingCallback>(&mut self, ctx: &mut C) {
-        let mut handler = PendingHandler {
-            ctx: core::ptr::null_mut(),
-            handler: |_, _| {},
-        };
-        handler.init::<C>(ctx);
-        *self = PendingFuture::Handler(handler);
-    }
-}
-
 pub struct PendingHandler {
     pub ctx: *mut c_void,
     pub handler: PendingHandlerFn,
 }
 
 pub type PendingHandlerFn = fn(ctx: *mut c_void, result: StreamResult);
-
-impl PendingHandler {
-    pub fn init<C: PendingCallback>(&mut self, ctx: &mut C) {
-        self.ctx = std::ptr::from_mut::<C>(ctx).cast::<c_void>();
-        self.handler = {
-            fn on_handle<C: PendingCallback>(ctx_: *mut c_void, result: StreamResult) {
-                // SAFETY: ctx was stored from &mut C in init()
-                let ctx = unsafe { bun_ptr::callback_ctx::<C>(ctx_) };
-                ctx.on_handle(result);
-            }
-            on_handle::<C>
-        };
-    }
-}
 
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq)]
@@ -1063,7 +982,6 @@ pub struct HTTPServerWritable<const SSL: bool, const HTTP3: bool> {
     pub pooled_buffer: Option<NonNull<ByteListPoolNode>>,
     pub offset: BlobSizeType,
 
-    pub is_listening_for_abort: bool,
     pub wrote: BlobSizeType,
 
     // allocator field dropped — global mimalloc per §Allocators
@@ -1106,7 +1024,6 @@ impl<const SSL: bool, const HTTP3: bool> Default for HTTPServerWritable<SSL, HTT
             buffer: Vec::<u8>::default(),
             pooled_buffer: None,
             offset: 0,
-            is_listening_for_abort: false,
             wrote: 0,
             done: false,
             signal: Signal::default(),
@@ -1138,10 +1055,6 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
             .as_ref()
             .expect("HTTPServerWritable.global_this used before init")
             .get()
-    }
-
-    pub fn connect(&mut self, signal: Signal) {
-        self.signal = signal;
     }
 
     /// Don't include @sizeOf(This) because it's already included in the memoryCost of the sink
@@ -1876,10 +1789,6 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         bun_sys::Result::Ok(JSValue::from(self.wrote))
     }
 
-    pub fn sink(&mut self) -> Sink<'_> {
-        Sink::init(self)
-    }
-
     /// Takes `*mut Self`, not `&mut self`: closing the signal runs the controller's
     /// JS `onClose`, which can cancel the stream, drain microtasks, and free this
     /// sink. A `&mut self` argument protector must not be live across that free.
@@ -2067,8 +1976,6 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
     }
 }
 
-crate::impl_sink_handler!([const SSL: bool, const HTTP3: bool] HTTPServerWritable<SSL, HTTP3>);
-
 // `JsSinkType` impl: routes the codegen `${name}__{construct,write,end,flush,
 // start,getInternalFd,memoryCost}` thunks (via `JSSink::<Self>::js_*`) into
 // the inherent streaming methods above. Mirrors `Sink.JSSink(@This(), name)`.
@@ -2076,8 +1983,6 @@ impl<const SSL: bool, const HTTP3: bool> crate::webcore::sink::JsSinkType
     for HTTPServerWritable<SSL, HTTP3>
 {
     const NAME: &'static str = Self::NAME;
-    const HAS_SIGNAL: bool = true;
-    const HAS_DONE: bool = true;
     const HAS_FLUSH_FROM_JS: bool = true;
     const START_TAG: Option<StartTag> = Some(if HTTP3 {
         StartTag::H3ResponseSink
@@ -2226,19 +2131,6 @@ impl NetworkSink {
         bun_sys::Result::Ok(())
     }
 
-    pub fn connect(&mut self, signal: Signal) {
-        self.signal = signal;
-    }
-
-    pub fn sink(&mut self) -> Sink<'_> {
-        Sink::init(self)
-    }
-
-    pub fn to_sink(&mut self) -> *mut NetworkSinkJSSink {
-        // SAFETY: JSSink wraps Self at offset 0 (repr guarantee from codegen)
-        std::ptr::from_mut::<Self>(self).cast::<NetworkSinkJSSink>()
-    }
-
     pub fn finalize(&mut self) {
         self.detach_writable();
     }
@@ -2303,20 +2195,6 @@ impl NetworkSink {
             global_this,
             JSValue::js_number(0.0),
         ))
-    }
-
-    /// # Safety
-    /// `this` must be a valid, uniquely-owned heap pointer to `Self` produced
-    /// by `bun_core::heap::into_raw`; the caller transfers ownership.
-    // Forwards `this` to `bun_core::heap::take` without dereferencing it here;
-    // not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub fn finalize_and_destroy(this: *mut Self) {
-        // SAFETY: this was heap-allocated; reclaim sole ownership before
-        // touching fields so no `&mut *this` is live alongside the Box.
-        let mut this = unsafe { bun_core::heap::take(this) };
-        this.finalize();
-        drop(this);
     }
 
     pub fn abort(&mut self) {
@@ -2435,13 +2313,10 @@ impl NetworkSink {
     pub const NAME: &'static str = "NetworkSink";
 }
 
-crate::impl_sink_handler!(NetworkSink);
 crate::impl_js_sink_abi!(NetworkSink, "NetworkSink");
 
 impl crate::webcore::sink::JsSinkType for NetworkSink {
     const NAME: &'static str = Self::NAME;
-    const HAS_SIGNAL: bool = true;
-    const HAS_DONE: bool = true;
     const HAS_FLUSH_FROM_JS: bool = true;
     const START_TAG: Option<StartTag> = Some(StartTag::NetworkSink);
 
@@ -2565,86 +2440,3 @@ impl BufferAction {
 // ──────────────────────────────────────────────────────────────────────────
 // ReadResult
 // ──────────────────────────────────────────────────────────────────────────
-
-pub enum ReadResult {
-    Pending,
-    Err(SysError),
-    Done,
-    // Ownership of the slice is contextual: consumers compare `slice.ptr != buf.ptr` to
-    // decide whether the bytes are owned or alias the caller's buffer, so a raw slice
-    // pointer (no Drop) is the only honest representation.
-    Read(*mut [u8]),
-}
-
-impl ReadResult {
-    pub fn to_stream(
-        self,
-        pending: *mut Pending,
-        buf: &mut [u8],
-        view: JSValue,
-        close_on_empty: bool,
-    ) -> StreamResult {
-        self.to_stream_with_is_done(pending, buf, view, close_on_empty, false)
-    }
-
-    pub fn to_stream_with_is_done(
-        self,
-        pending: *mut Pending,
-        buf: &mut [u8],
-        view: JSValue,
-        close_on_empty: bool,
-        is_done: bool,
-    ) -> StreamResult {
-        match self {
-            ReadResult::Pending => StreamResult::Pending(pending),
-            ReadResult::Err(err) => StreamResult::Err(StreamError::Error(err)),
-            ReadResult::Done => StreamResult::Done,
-            ReadResult::Read(slice) => 'brk: {
-                // `slice` may point at the same allocation as
-                // `buf` (we check `slice.ptr != buf.ptr`). Forming `&mut *slice`
-                // while the `buf: &mut [u8]` parameter is live would violate
-                // Rust's aliasing rules in the `!owned` case. Stay on raw
-                // pointers: `<*mut [u8]>::len()` reads only the fat-pointer
-                // metadata (no deref), and the cast to `*mut u8` projects the
-                // data pointer without creating a reference.
-                let slice_ptr = slice.cast::<u8>();
-                let slice_len = slice.len();
-                let owned = slice_ptr.cast_const() != buf.as_ptr();
-                let done = is_done || (close_on_empty && slice_len == 0);
-
-                // An existing heap allocation is adopted
-                // by pointer/len (cap = len). The contract is: when
-                // `slice.ptr != buf.ptr` the slice IS a default-allocator heap
-                // allocation whose ownership is being transferred into the
-                // StreamResult, and downstream `Result.release()` frees it via
-                // `clear_and_free`. Mirror that by adopting the raw allocation
-                // instead of copying — copying would leak the original buffer.
-                break 'brk if owned && done {
-                    let len = u32::try_from(slice_len).expect("int cast");
-                    // SAFETY: `owned` branch — `slice` is disjoint from `buf` and
-                    // the caller transfers a default-allocator heap allocation of
-                    // exactly `len` bytes (cap == len), all initialized.
-                    StreamResult::OwnedAndDone(unsafe {
-                        Vec::from_raw_parts(slice_ptr, len as usize, len as usize)
-                    })
-                } else if owned {
-                    let len = u32::try_from(slice_len).expect("int cast");
-                    // SAFETY: see above — ownership of `slice` is transferred here.
-                    StreamResult::Owned(unsafe {
-                        Vec::from_raw_parts(slice_ptr, len as usize, len as usize)
-                    })
-                } else if done {
-                    StreamResult::IntoArrayAndDone(IntoArray {
-                        len: slice_len as BlobSizeType,
-                        value: view,
-                    })
-                } else {
-                    StreamResult::IntoArray(IntoArray {
-                        len: slice_len as BlobSizeType,
-                        value: view,
-                    })
-                };
-            }
-        }
-    }
-}

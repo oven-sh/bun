@@ -31,7 +31,7 @@ use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSObject, JSValue, JsCell, JsResult, LogJsc, StringJsc,
 };
-use bun_paths::{self as path, MAX_PATH_BYTES, PathBuffer};
+use bun_paths::{self as path, MAX_PATH_BYTES};
 use bun_ptr::BackRef;
 
 use bun_http_types::URLPath;
@@ -42,7 +42,6 @@ use bun_url::{CombinedScanner, QueryStringMap, URL, route_param};
 
 use crate::api::bun_object;
 use crate::webcore::{Request, Response};
-use bun_bundler as Transpiler;
 
 // Note: `FrameworkFileSystemRouter` is declared in this file's
 // `filesystem_router.classes.ts`, so codegen looks for the backing struct here
@@ -122,12 +121,11 @@ impl FileSystemRouter {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<Box<FileSystemRouter>> {
-        let argument_ = callframe.arguments_old::<1>();
-        if argument_.len == 0 {
+        let [argument] = callframe.arguments_as_array::<1>();
+        if callframe.arguments_count() == 0 {
             return Err(global_this.throw_invalid_arguments(format_args!("Expected object")));
         }
 
-        let argument = argument_.ptr[0];
         if argument.is_empty_or_undefined_or_null() || !argument.is_object() {
             return Err(global_this.throw_invalid_arguments(format_args!("Expected object")));
         }
@@ -545,13 +543,12 @@ impl FileSystemRouter {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let argument_ = callframe.arguments_old::<2>();
-        if argument_.len == 0 {
+        let [argument] = callframe.arguments_as_array::<1>();
+        if callframe.arguments_count() == 0 {
             return Err(global_this
                 .throw_invalid_arguments(format_args!("Expected string, Request or Response")));
         }
 
-        let argument = argument_.ptr[0];
         if argument.is_empty_or_undefined_or_null() || !argument.is_cell() {
             return Err(global_this
                 .throw_invalid_arguments(format_args!("Expected string, Request or Response")));
@@ -701,15 +698,6 @@ impl FileSystemRouter {
     #[bun_jsc::host_fn(getter)]
     pub fn get_style(_this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         bun_core::String::static_("nextjs").to_js(global_this)
-    }
-
-    #[bun_jsc::host_fn(getter)]
-    pub fn get_asset_prefix(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        if let Some(ref asset_prefix) = this.asset_prefix {
-            return Ok(zs_to_js(asset_prefix.leak(), global_this));
-        }
-
-        Ok(JSValue::NULL)
     }
 
     // Codegen's `host_fn_finalize` calls this via `|b| FileSystemRouter::finalize(b)`
@@ -896,11 +884,6 @@ impl MatchedRoute {
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub fn get_route(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        Ok(zs_to_js(this.route().name, global_this))
-    }
-
-    #[bun_jsc::host_fn(getter)]
     pub fn get_kind(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         Ok(zs_to_js(
             kind_enum::classify(this.route().name),
@@ -955,35 +938,6 @@ impl MatchedRoute {
         let value = JSObject::create_with_initializer(&mut creator, ctx, count);
 
         Ok(value)
-    }
-
-    pub fn get_script_src_string(
-        origin: &URL,
-        // `bun_object::get_public_path` takes `core::fmt::Write`.
-        writer: &mut impl core::fmt::Write,
-        file_path: &[u8],
-        client_framework_enabled: bool,
-    ) {
-        let mut entry_point_tempbuf = PathBuffer::uninit();
-        // We don't store the framework config including the client parts in the server
-        // instead, we just store a boolean saying whether we should generate this whenever the script is requested
-        // this is kind of bad. we should consider instead a way to inline the contents of the script.
-        if client_framework_enabled {
-            // `bun_paths::fs::PathName<'_>` is the lifetime-generic mirror of
-            // `bun_paths::fs::PathName<'static>`; `generate_entry_point_path` only copies
-            // `dir`/`base`/`ext` into `entry_point_tempbuf`, so a borrowed view suffices.
-            let path_name = bun_paths::fs::PathName::init(file_path);
-            bun_object::get_public_path(
-                Transpiler::entry_points::ClientEntryPoint::generate_entry_point_path(
-                    &mut entry_point_tempbuf,
-                    &path_name,
-                ),
-                origin,
-                writer,
-            );
-        } else {
-            bun_object::get_public_path(file_path, origin, writer);
-        }
     }
 
     #[bun_jsc::host_fn(getter)]

@@ -141,17 +141,6 @@ impl T {
         (self as u8) >= (T::TBreak as u8) && (self as u8) <= (T::TWith as u8)
     }
 
-    pub fn is_string(self) -> bool {
-        matches!(
-            self,
-            T::TNoSubstitutionTemplateLiteral
-                | T::TStringLiteral
-                | T::TTemplateHead
-                | T::TTemplateMiddle
-                | T::TTemplateTail
-        )
-    }
-
     pub fn is_close_brace_or_eof(self) -> bool {
         (self as u8) <= (T::TCloseBrace as u8)
     }
@@ -287,13 +276,6 @@ impl core::ops::Index<T> for TokenEnumType {
     #[inline]
     fn index(&self, t: T) -> &&'static [u8] {
         &self.0[t as usize]
-    }
-}
-
-impl TokenEnumType {
-    #[inline]
-    pub fn get(&self, t: T) -> &'static [u8] {
-        self.0[t as usize]
     }
 }
 

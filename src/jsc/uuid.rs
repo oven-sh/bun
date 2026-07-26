@@ -68,9 +68,6 @@ impl UUID {
     pub const ZERO: UUID = UUID { bytes: [0u8; 16] };
 
     // Convenience function to return a new v4 UUID.
-    pub fn new_v4() -> UUID {
-        UUID::init()
-    }
 }
 
 // Indices in the UUID string representation for each byte.

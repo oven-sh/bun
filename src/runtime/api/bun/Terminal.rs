@@ -185,8 +185,8 @@ bitflags::bitflags! {
         const READER_DONE    = 1 << 5;
         const WRITER_DONE    = 1 << 6;
         /// Set once an inline-created terminal is attached to a spawn; blocks
-        /// reuse. Windows: first exit's ClosePseudoConsole would kill a second
-        /// child. POSIX: slave_fd is held until first exit (`drain_and_close_slave_fd`).
+        /// reuse. Windows: the ConDrv `\Reference` handle is released at spawn.
+        /// POSIX: slave_fd is held until first exit (`drain_and_close_slave_fd`).
         const INLINE_SPAWNED = 1 << 7;
     }
 }
@@ -734,15 +734,44 @@ impl Terminal {
         drop(guard);
     }
 
-    /// Windows: close only the ConPTY handle so conhost releases its pipe ends and
-    /// our reader observes EOF. Leaves the Terminal itself open (closed=false),
-    /// matching POSIX semantics where child exit delivers EOF without closing the
-    /// master fd.
-    #[allow(dead_code)]
-    pub(crate) fn close_pseudoconsole(&self) {
-        #[cfg(windows)]
-        if let Some(hpcon) = self.hpcon.take() {
-            self.close_pseudoconsole_off_thread(hpcon);
+    /// Windows analogue of `drain_and_close_slave_fd`'s tail: once the direct
+    /// child has exited the writer no longer pins the event loop. The reader
+    /// stays ref'd so the loop keeps running until conhost delivers the final
+    /// frame and EOF (which `release_pseudoconsole_reference` arranged to
+    /// happen once the last client disconnects); unreffing it here could let
+    /// the loop exit between child-exit and that asynchronous EOF.
+    #[cfg(windows)]
+    pub(crate) fn unref_after_inline_child_exit(&self) {
+        if !self.flags.get().contains(Flags::CLOSED) {
+            let ctx = self.event_loop_handle.as_event_loop_ctx();
+            self.writer.with_mut(|w| w.update_ref(ctx, false));
+        }
+    }
+
+    /// Close this HPCON's ConDrv `\Reference` handle so conhost exits on its own
+    /// once the last attached client disconnects: the output pipe then breaks
+    /// and our reader observes EOF without `on_process_exit` having to tear
+    /// ConPTY down (which races conhost's render thread on older builds and can
+    /// drop the child's last write). Equivalent to kernel32's
+    /// `ReleasePseudoConsole` (Windows 11 24H2+) / conpty.dll's
+    /// `ConptyReleasePseudoConsole`; neither is exported from the inbox
+    /// kernel32 on older builds so we reach into the struct directly. Further
+    /// spawns against this pseudoconsole are impossible afterwards.
+    #[cfg(windows)]
+    pub(crate) fn release_pseudoconsole_reference(&self) {
+        let Some(hpcon) = self.hpcon.get() else {
+            return;
+        };
+        // SAFETY: `hpcon` was returned from inbox `CreatePseudoConsole`, which
+        // heap-allocates a `PseudoConsole` and returns it as HPCON.
+        // `ClosePseudoConsole` later skips the field when it reads null.
+        let pc = hpcon.cast::<PseudoConsole>();
+        unsafe {
+            let r#ref = (*pc).h_pty_reference;
+            if !r#ref.is_null() && r#ref != windows::INVALID_HANDLE_VALUE {
+                let _ = windows::CloseHandle(r#ref);
+                (*pc).h_pty_reference = core::ptr::null_mut();
+            }
         }
     }
 
@@ -1070,6 +1099,17 @@ pub(crate) struct PipePair {
     pub client: windows::HANDLE,
 }
 
+/// Inbox kernel32's HPCON layout. Stable ABI since build 17763: documented as
+/// "part of an ABI shared with the rest of the operating system" in
+/// microsoft/terminal `src/winconpty/winconpty.h`.
+#[cfg(windows)]
+#[repr(C)]
+struct PseudoConsole {
+    h_signal: windows::HANDLE,
+    h_pty_reference: windows::HANDLE,
+    h_conpty_process: windows::HANDLE,
+}
+
 /// Create one end of a pipe pair as an overlapped named pipe (server) and the
 /// other as a synchronous client. Returns both raw HANDLEs. Caller closes
 /// both on error. The "server" end is suitable for libuv (uv_pipe_open) and
@@ -1089,7 +1129,15 @@ fn create_overlapped_pipe_pair(
     let name = {
         use std::io::Write;
         let mut cursor = &mut name_utf8_buf[..];
-        if write!(cursor, "\\\\.\\pipe\\bun-conpty-{}-{}", pid, counter).is_err() {
+        // An AppContainer may only create server pipes under `\\.\pipe\LOCAL\`;
+        // insert the segment only then so the name is unchanged outside one
+        // (matches libuv's uv__unique_pipe_name).
+        let local = if windows::is_app_container() {
+            r"LOCAL\"
+        } else {
+            ""
+        };
+        if write!(cursor, r"\\.\pipe\{local}bun-conpty-{pid}-{counter}").is_err() {
             return Err(CreatePtyError::OpenPtyFailed);
         }
         let written = 96 - cursor.len();
@@ -1537,6 +1585,14 @@ impl Terminal {
 
         #[cfg(windows)]
         {
+            // HRESULT_FROM_WIN32(ERROR_NO_DATA | ERROR_BROKEN_PIPE): the signal
+            // pipe's read end is gone because conhost has exited. For inline
+            // terminals that can happen any time after the child disconnects
+            // (the \Reference handle is released at spawn); treat it as a
+            // no-op so resize() keeps its pre-existing no-throw behaviour in
+            // the window between child exit and reader EOF.
+            const HR_NO_DATA: i32 = 0x8007_00E8u32 as i32;
+            const HR_BROKEN_PIPE: i32 = 0x8007_006Du32 as i32;
             if let Some(hpcon) = self.hpcon.get() {
                 let size = windows::COORD {
                     X: clamp_to_coord(new_cols),
@@ -1544,7 +1600,7 @@ impl Terminal {
                 };
                 // SAFETY: hpcon is a valid open HPCON.
                 let hr = unsafe { windows::ResizePseudoConsole(hpcon, size) };
-                if hr < 0 {
+                if hr < 0 && hr != HR_NO_DATA && hr != HR_BROKEN_PIPE {
                     return Err(global_object.throw(format_args!("Failed to resize terminal")));
                 }
             }
@@ -1688,8 +1744,7 @@ impl Terminal {
             if let Some(hpcon) = self.hpcon.take() {
                 self.close_pseudoconsole_off_thread(hpcon);
             }
-            // Reader stays open even if hpcon was already null (closePseudoconsole
-            // may have dispatched it earlier); onReaderDone closes on EOF.
+            // Leave the reader open; onReaderDone closes it on EOF.
             let flags = self.flags.get();
             if flags.contains(Flags::READER_STARTED) && !flags.contains(Flags::READER_DONE) {
                 return;

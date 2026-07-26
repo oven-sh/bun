@@ -5,12 +5,8 @@ use crate::Printer;
 
 use crate::css_values::image::Image;
 use crate::css_values::length::LengthOrNumber;
-use crate::css_values::length::LengthPercentage;
 use crate::css_values::position::Position;
 use crate::css_values::rect::Rect;
-
-use crate::css_properties::border_radius::BorderRadius;
-use crate::css_properties::shape::FillRule;
 
 use crate::css_properties::background::BackgroundRepeat;
 use crate::css_properties::background::BackgroundSize;
@@ -22,7 +18,6 @@ use crate::css_properties::border_image::BorderImageSlice;
 use crate::VendorPrefix;
 use crate::generics::{CssEql, DeepClone};
 use crate::properties::PropertyId;
-use crate::properties::PropertyIdTag;
 
 /// A [`<geometry-box>`](https://www.w3.org/TR/css-masking-1/#typedef-geometry-box) value
 /// as used in the `mask-clip` and `clip-path` properties.
@@ -56,77 +51,6 @@ impl GeometryBox {
     pub fn into_mask_clip(self) -> MaskClip {
         MaskClip::GeometryBox(self)
     }
-}
-
-/// A CSS [`<basic-shape>`](https://www.w3.org/TR/css-shapes-1/#basic-shape-functions) value.
-pub enum BasicShape {
-    /// An inset rectangle.
-    Inset(InsetRect),
-    /// A circle.
-    Circle(Circle),
-    /// An ellipse.
-    Ellipse(Ellipse),
-    /// A polygon.
-    Polygon(Polygon),
-}
-
-/// An [`inset()`](https://www.w3.org/TR/css-shapes-1/#funcdef-inset) rectangle shape.
-// Reachable via `pub enum BasicShape::Inset`, so it must be `pub`.
-pub struct InsetRect {
-    /// The rectangle.
-    pub rect: Rect<LengthPercentage>,
-    /// A corner radius for the rectangle.
-    pub radius: BorderRadius,
-}
-
-/// A [`circle()`](https://www.w3.org/TR/css-shapes-1/#funcdef-circle) shape.
-pub struct Circle {
-    /// The radius of the circle.
-    pub radius: ShapeRadius,
-    /// The position of the center of the circle.
-    pub position: Position,
-}
-
-/// An [`ellipse()`](https://www.w3.org/TR/css-shapes-1/#funcdef-ellipse) shape.
-pub struct Ellipse {
-    /// The x-radius of the ellipse.
-    pub radius_x: ShapeRadius,
-    /// The y-radius of the ellipse.
-    pub radius_y: ShapeRadius,
-    /// The position of the center of the ellipse.
-    pub position: Position,
-}
-
-/// A [`polygon()`](https://www.w3.org/TR/css-shapes-1/#funcdef-polygon) shape.
-pub struct Polygon {
-    /// The fill rule used to determine the interior of the polygon.
-    pub fill_rule: FillRule,
-    /// The points of each vertex of the polygon.
-    // If Polygon ever becomes arena-fed this must become (§Allocators: AST crates are arena-fed)
-    // `bun_alloc::ArenaVec<'bump, Point>` and Polygon/BasicShape/ClipPath gain `<'bump>`.
-    // Keeping plain Vec<Point> until the arena story is verified.
-    pub points: Vec<Point>,
-}
-
-/// A [`<shape-radius>`](https://www.w3.org/TR/css-shapes-1/#typedef-shape-radius) value
-/// that defines the radius of a `circle()` or `ellipse()` shape.
-pub enum ShapeRadius {
-    /// An explicit length or percentage.
-    LengthPercentage(LengthPercentage),
-    /// The length from the center to the closest side of the box.
-    ClosestSide,
-    /// The length from the center to the farthest side of the box.
-    FarthestSide,
-}
-
-/// A point within a `polygon()` shape.
-///
-/// See [Polygon](Polygon).
-pub struct Point {
-    /// The x position of the point.
-    pub x: LengthPercentage,
-    /// The y position of the point.
-    pub y: LengthPercentage,
 }
 
 /// A value for the [mask-mode](https://www.w3.org/TR/css-masking-1/#the-mask-mode) property.
@@ -208,22 +132,6 @@ pub struct Mask {
 }
 
 impl Mask {
-    // Shorthand field→property map, consumed by shorthand handlers.
-    pub const PROPERTY_FIELD_MAP: &'static [(&'static str, PropertyIdTag)] = &[
-        ("image", PropertyIdTag::MaskImage),
-        ("position", PropertyIdTag::MaskPosition),
-        ("size", PropertyIdTag::MaskSize),
-        ("repeat", PropertyIdTag::MaskRepeat),
-        ("clip", PropertyIdTag::MaskClip),
-        ("origin", PropertyIdTag::MaskOrigin),
-        ("composite", PropertyIdTag::MaskComposite),
-        ("mode", PropertyIdTag::MaskMode),
-    ];
-
-    // Field names that carry a vendor prefix.
-    pub const VENDOR_PREFIX_MAP: &'static [&'static str] =
-        &["image", "position", "size", "repeat", "clip", "origin"];
-
     pub fn parse(input: &mut css::Parser) -> css::Result<Self> {
         let mut image: Option<Image> = None;
         let mut position: Option<Position> = None;
@@ -392,16 +300,6 @@ pub struct MaskBorder {
 
 impl MaskBorder {
     // (old using name space) css.DefineShorthand(@This(), css.PropertyIdTag.@"mask-border", PropertyFieldMap);
-
-    // See the PropertyFieldMap note on Mask::PROPERTY_FIELD_MAP.
-    pub const PROPERTY_FIELD_MAP: &'static [(&'static str, PropertyIdTag)] = &[
-        ("source", PropertyIdTag::MaskBorderSource),
-        ("slice", PropertyIdTag::MaskBorderSlice),
-        ("width", PropertyIdTag::MaskBorderWidth),
-        ("outset", PropertyIdTag::MaskBorderOutset),
-        ("repeat", PropertyIdTag::MaskBorderRepeat),
-        ("mode", PropertyIdTag::MaskBorderMode),
-    ];
 
     pub fn parse(input: &mut css::Parser) -> css::Result<Self> {
         let mut mode: Option<MaskBorderMode> = None;

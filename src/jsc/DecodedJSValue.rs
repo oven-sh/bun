@@ -48,15 +48,6 @@ impl DecodedJSValue {
     pub fn is_cell(self) -> bool {
         self.as_u64() & ffi::NOT_CELL_MASK == 0
     }
-
-    /// Equivalent to `JSC::JSValue::asCell`.
-    pub fn as_cell(self) -> *mut JSCell {
-        debug_assert!(self.is_cell(), "not a cell: 0x{:x}", self.as_u64());
-        // is_cell() guarantees the encoded bits ARE the (possibly-null) JSCell
-        // pointer; safe int→ptr `as` cast replaces the union pun (same idiom as
-        // `JSValue::as_ptr` — provenance is FFI-exposed by JSC's C++ side).
-        self.bits() as usize as *mut JSCell
-    }
 }
 
 const _: () = assert!(

@@ -1975,10 +1975,6 @@ impl<'a> PackageInstall<'a> {
         Ok(InstallResult::Success)
     }
 
-    pub fn uninstall(&self, destination_dir: &Dir) {
-        let _ = destination_dir.delete_tree(self.destination_dir_subpath.as_bytes());
-    }
-
     pub fn uninstall_before_install(&self, destination_dir: &Dir) {
         let mut rand_path_buf = [0u8; 48];
         let rand_bytes = bun_core::fast_random().to_ne_bytes();
@@ -2089,38 +2085,6 @@ impl<'a> PackageInstall<'a> {
         }
     }
 
-    #[cfg(windows)]
-    pub fn is_dangling_windows_bin_link(
-        node_mod_fd: Fd,
-        path: &[u16],
-        temp_buffer: &mut [u8],
-    ) -> bool {
-        let bin_path = 'bin_path: {
-            let Ok(file) =
-                sys::openat_windows(node_mod_fd, path, sys::O::RDONLY, 0).map(sys::File::from_fd)
-            else {
-                return true;
-            };
-            let Ok(size) = file.read_all(temp_buffer) else {
-                return true;
-            };
-            let Some(decoded) = crate::windows_shim::loose_decode(&temp_buffer[..size]) else {
-                return true;
-            };
-            debug_assert!(decoded.flags.is_valid()); // looseDecode ensures valid flags
-            break 'bin_path decoded.bin_path;
-        };
-
-        {
-            let Ok(fd) = sys::openat_windows(node_mod_fd, bin_path, sys::O::RDONLY, 0) else {
-                return true;
-            };
-            fd.close();
-        }
-
-        false
-    }
-
     pub fn install_from_link(&mut self, skip_delete: bool, destination_dir: &Dir) -> InstallResult {
         let dest_path = self.destination_dir_subpath;
         // If this fails, we don't care.
@@ -2160,12 +2124,9 @@ impl<'a> PackageInstall<'a> {
             }
         };
         let to_path: &[u8] = {
-            // `symlinked_path` is always a package *directory*;
-            // bare `O::RDONLY` on Windows routes to the file-open NtCreateFile arm
-            // which requests `FILE_WRITE_ATTRIBUTES` (may be denied on RO dirs).
-            // `O::DIRECTORY` routes to `open_dir_at_windows_nt_path`
-            // (`FILE_LIST_DIRECTORY | SYNCHRONIZE`),
-            // then `get_fd_path` resolves via `GetFinalPathNameByHandleW`.
+            // `symlinked_path` is always a package *directory*; `O::DIRECTORY`
+            // routes to `open_dir_at_windows_nt_path`, then `get_fd_path`
+            // resolves via `GetFinalPathNameByHandleW`.
             let fd = match sys::openat(
                 self.cache_dir,
                 symlinked_path,
@@ -2360,12 +2321,10 @@ impl<'a> PackageInstall<'a> {
                                     .as_mut_slice()
                             };
 
-                            if cfg!(debug_assertions) {
-                                debug_assert!(bun_core::is_slice_in_buffer(
-                                    self.cache_dir_subpath.as_bytes(),
-                                    buf
-                                ));
-                            }
+                            debug_assert!(bun_core::is_slice_in_buffer(
+                                self.cache_dir_subpath.as_bytes(),
+                                buf
+                            ));
 
                             let subpath_len =
                                 strings::without_trailing_slash(self.cache_dir_subpath.as_bytes())

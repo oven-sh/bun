@@ -1103,6 +1103,11 @@ pub unsafe fn __bun_fire_timer(t: *mut EventLoopTimer, now: *const ElTimespec, v
             let c: *mut CronJob = owner!(CronJob, event_loop_timer);
             CronJob::on_timer_fire(c, VirtualMachine::get());
         }
+        EventLoopTimerTag::QuicEndpoint => {
+            let c: *mut crate::node::quic::QuicEndpoint =
+                owner!(crate::node::quic::QuicEndpoint, event_loop_timer);
+            crate::node::quic::QuicEndpoint::on_timer_fire(c);
+        }
     }
 }
 
@@ -1202,7 +1207,7 @@ pub(crate) fn __bun_release_task_at_shutdown(task: bun_event_loop::Task) -> bool
         // completion) enqueued this after the event loop's last tick. The
         // dispatch arm above would have `delete`d it; mirror that here so the
         // re-queue path doesn't keep it alive past worker VM dealloc. Runs
-        // before JSC teardown, so ~Ref<TicketData> is safe.
+        // before JSC teardown, so ~Ref<Ticket> is safe.
         task_tag::JSCDeferredWorkTask => {
             unsafe extern "C" {
                 fn Bun__deleteDeferredWorkTask(task: *mut JSCDeferredWorkTask);

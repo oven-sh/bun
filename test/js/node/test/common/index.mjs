@@ -18,10 +18,10 @@ const {
   getBufferSources,
   getTTYfd,
   hasCrypto,
-  hasQuic,
   hasIntl,
   hasIPv6,
   hasMultiLocalhost,
+  hasQuic,
   hasSQLite,
   isAIX,
   isAlive,
@@ -55,6 +55,7 @@ const {
   skipIfEslintMissing,
   skipIfInspectorDisabled,
   skipIfSQLiteMissing,
+  sleepSync,
   spawnPromisified,
 } = common;
 
@@ -77,10 +78,10 @@ export {
   getPort,
   getTTYfd,
   hasCrypto,
-  hasQuic,
   hasIntl,
   hasIPv6,
   hasMultiLocalhost,
+  hasQuic,
   hasSQLite,
   isAIX,
   isAlive,
@@ -114,5 +115,6 @@ export {
   skipIfEslintMissing,
   skipIfInspectorDisabled,
   skipIfSQLiteMissing,
+  sleepSync,
   spawnPromisified,
 };

@@ -160,9 +160,6 @@ template<> JsonWebKey convertDictionary<JsonWebKey>(JSGlobalObject& lexicalGloba
     if (!ktyValue.isUndefined()) {
         result.kty = convert<IDLDOMString>(lexicalGlobalObject, ktyValue);
         RETURN_IF_EXCEPTION(throwScope, {});
-    } else {
-        throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "kty"_s, "JsonWebKey"_s, "DOMString"_s);
-        return {};
     }
     JSValue nValue;
     if (isNullOrUndefined)
@@ -195,6 +192,28 @@ template<> JsonWebKey convertDictionary<JsonWebKey>(JSGlobalObject& lexicalGloba
     }
     if (!pValue.isUndefined()) {
         result.p = convert<IDLDOMString>(lexicalGlobalObject, pValue);
+        RETURN_IF_EXCEPTION(throwScope, {});
+    }
+    JSValue privValue;
+    if (isNullOrUndefined)
+        privValue = jsUndefined();
+    else {
+        privValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "priv"_s));
+        RETURN_IF_EXCEPTION(throwScope, {});
+    }
+    if (!privValue.isUndefined()) {
+        result.priv = convert<IDLDOMString>(lexicalGlobalObject, privValue);
+        RETURN_IF_EXCEPTION(throwScope, {});
+    }
+    JSValue pubValue;
+    if (isNullOrUndefined)
+        pubValue = jsUndefined();
+    else {
+        pubValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "pub"_s));
+        RETURN_IF_EXCEPTION(throwScope, {});
+    }
+    if (!pubValue.isUndefined()) {
+        result.pub = convert<IDLDOMString>(lexicalGlobalObject, pubValue);
         RETURN_IF_EXCEPTION(throwScope, {});
     }
     JSValue qValue;
@@ -307,9 +326,11 @@ JSC::JSObject* convertDictionaryToJS(JSC::JSGlobalObject& lexicalGlobalObject, J
         RETURN_IF_EXCEPTION(throwScope, {});
         result->putDirect(vm, JSC::Identifier::fromString(vm, "key_ops"_s), key_opsValue);
     }
-    auto ktyValue = toJS<IDLDOMString>(lexicalGlobalObject, throwScope, dictionary.kty);
-    RETURN_IF_EXCEPTION(throwScope, {});
-    result->putDirect(vm, JSC::Identifier::fromString(vm, "kty"_s), ktyValue);
+    if (!IDLDOMString::isNullValue(dictionary.kty)) {
+        auto ktyValue = toJS<IDLDOMString>(lexicalGlobalObject, throwScope, IDLDOMString::extractValueFromNullable(dictionary.kty));
+        RETURN_IF_EXCEPTION(throwScope, {});
+        result->putDirect(vm, JSC::Identifier::fromString(vm, "kty"_s), ktyValue);
+    }
     if (!IDLDOMString::isNullValue(dictionary.n)) {
         auto nValue = toJS<IDLDOMString>(lexicalGlobalObject, throwScope, IDLDOMString::extractValueFromNullable(dictionary.n));
         RETURN_IF_EXCEPTION(throwScope, {});
@@ -324,6 +345,16 @@ JSC::JSObject* convertDictionaryToJS(JSC::JSGlobalObject& lexicalGlobalObject, J
         auto pValue = toJS<IDLDOMString>(lexicalGlobalObject, throwScope, IDLDOMString::extractValueFromNullable(dictionary.p));
         RETURN_IF_EXCEPTION(throwScope, {});
         result->putDirect(vm, JSC::Identifier::fromString(vm, "p"_s), pValue);
+    }
+    if (!IDLDOMString::isNullValue(dictionary.priv)) {
+        auto privValue = toJS<IDLDOMString>(lexicalGlobalObject, throwScope, IDLDOMString::extractValueFromNullable(dictionary.priv));
+        RETURN_IF_EXCEPTION(throwScope, {});
+        result->putDirect(vm, JSC::Identifier::fromString(vm, "priv"_s), privValue);
+    }
+    if (!IDLDOMString::isNullValue(dictionary.pub)) {
+        auto pubValue = toJS<IDLDOMString>(lexicalGlobalObject, throwScope, IDLDOMString::extractValueFromNullable(dictionary.pub));
+        RETURN_IF_EXCEPTION(throwScope, {});
+        result->putDirect(vm, JSC::Identifier::fromString(vm, "pub"_s), pubValue);
     }
     if (!IDLDOMString::isNullValue(dictionary.q)) {
         auto qValue = toJS<IDLDOMString>(lexicalGlobalObject, throwScope, IDLDOMString::extractValueFromNullable(dictionary.q));

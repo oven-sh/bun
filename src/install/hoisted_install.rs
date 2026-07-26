@@ -560,9 +560,7 @@ pub(crate) fn install_hoisted_packages(
         // Index instead of `.iter()` so the immutable borrow of
         // `installer.trees` doesn't overlap `&mut self`.
         for tree_idx in 0..installer.trees.len() {
-            if cfg!(debug_assertions) {
-                debug_assert!(installer.trees[tree_idx].pending_installs.len() == 0);
-            }
+            debug_assert!(installer.trees[tree_idx].pending_installs.len() == 0);
             // force = true
             installer.install_available_packages::<true>(log_level);
         }

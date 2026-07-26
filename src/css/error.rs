@@ -16,13 +16,6 @@ fn bs(p: Str) -> &'static BStr {
 /// A printer error.
 pub type PrinterError = Err<PrinterErrorKind>;
 
-pub fn fmt_printer_error() -> PrinterError {
-    Err {
-        kind: PrinterErrorKind::fmt_error,
-        loc: None,
-    }
-}
-
 /// An error with a source location.
 pub struct Err<T> {
     /// The type of error that occurred.
@@ -178,14 +171,6 @@ pub struct ErrorLocation {
 }
 
 impl ErrorLocation {
-    pub fn with_filename(&self, filename: &[u8]) -> ErrorLocation {
-        ErrorLocation {
-            filename,
-            line: self.line,
-            column: self.column,
-        }
-    }
-
     pub fn to_location(
         &self,
         source: &bun_ast::Source,
@@ -351,13 +336,6 @@ pub struct BasicParseError {
 }
 
 impl BasicParseError {
-    pub fn into_parse_error<T>(self) -> ParseError<T> {
-        ParseError {
-            kind: ParserErrorKind::basic(self.kind),
-            location: self.location,
-        }
-    }
-
     #[inline]
     pub fn into_default_parse_error(self) -> ParseError<ParserError> {
         ParseError {

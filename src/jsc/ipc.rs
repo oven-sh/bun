@@ -2103,11 +2103,6 @@ pub mod IPCHandlers {
             // unref if needed
         }
 
-        pub fn on_long_timeout(_: &mut SendQueue, _: Socket) {
-            log!("onLongTimeout");
-            // onLongTimeout
-        }
-
         pub fn on_connect_error(send_queue: &mut SendQueue, _: Socket, _: c_int) {
             log!("onConnectError");
             // context has not been initialized

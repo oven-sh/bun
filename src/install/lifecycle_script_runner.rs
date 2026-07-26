@@ -383,7 +383,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         unsafe { self.manager.get_mut() }
     }
 
-    pub fn event_loop(&self) -> &AnyEventLoop<'static> {
+    pub fn event_loop(&self) -> &AnyEventLoop {
         &self.manager().event_loop
     }
 
@@ -1072,9 +1072,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
     }
 
     pub fn reset_polls(&mut self) {
-        if cfg!(debug_assertions) {
-            debug_assert!(self.remaining_fds == 0);
-        }
+        debug_assert!(self.remaining_fds == 0);
 
         let process = core::mem::replace(&mut self.process, core::ptr::null_mut());
         if !process.is_null() {

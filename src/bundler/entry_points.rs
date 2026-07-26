@@ -4,7 +4,7 @@ use bstr::BStr;
 
 use bun_core::fmt as bun_fmt;
 use bun_core::strings;
-use bun_paths::{self, MAX_PATH_BYTES, PathBuffer};
+use bun_paths::MAX_PATH_BYTES;
 use bun_wyhash::{self, Wyhash11};
 
 use crate::Transpiler;
@@ -19,238 +19,9 @@ pub mod Fs {
     pub use bun_resolver::fs::FileSystem;
 }
 
-pub struct FallbackEntryPoint {
-    pub code_buffer: [u8; 8192],
-    pub path_buffer: PathBuffer,
-    pub source: bun_ast::Source,
-    // Only ever assigned the literal "" (no writer anywhere in the tree); never freed.
-    pub built_code: &'static [u8],
-}
-
-impl Default for FallbackEntryPoint {
-    fn default() -> Self {
-        Self {
-            code_buffer: [0u8; 8192],
-            path_buffer: PathBuffer::uninit(),
-            source: bun_ast::Source::default(),
-            built_code: b"",
-        }
-    }
-}
-
-impl FallbackEntryPoint {
-    pub fn generate<TranspilerType>(
-        entry: &mut FallbackEntryPoint,
-        input_path: &[u8],
-        transpiler: &mut TranspilerType,
-    ) -> crate::Result<()>
-    where
-        TranspilerType: TranspilerLike,
-    {
-        // This is *extremely* naive.
-        // The basic idea here is this:
-        // --
-        // import * as EntryPoint from 'entry-point';
-        // import boot from 'framework';
-        // boot(EntryPoint);
-        // --
-        // We go through the steps of printing the code -- only to then parse/transpile it because
-        // we want it to go through the linker and the rest of the transpilation process
-
-        let disable_css_imports = transpiler
-            .options()
-            .framework
-            .as_ref()
-            .unwrap()
-            .client_css_in_js
-            != ClientCssInJs::AutoOnImportCss;
-
-        // self-referential — when the rendered code fits in
-        // `entry.code_buffer` the Source borrows it (disjoint-field write to
-        // `entry.source` while `entry.code_buffer` is shared-borrowed). On
-        // overflow the Source owns the bytes via `Cow::Owned` (so Drop
-        // frees it).
-        // assemble bytes directly (not `write!`+`BStr`) so a
-        // non-UTF-8 byte in `input_path` is emitted verbatim,
-        // not lossily replaced with U+FFFD by `BStr as Display`.
-        macro_rules! render_into_entry {
-            ($prefix:expr, $suffix:expr) => {{
-                let prefix: &[u8] = $prefix;
-                let suffix: &[u8] = $suffix;
-                let count = prefix.len() + input_path.len() + suffix.len();
-                if count < entry.code_buffer.len() {
-                    let buf = &mut entry.code_buffer;
-                    buf[..prefix.len()].copy_from_slice(prefix);
-                    buf[prefix.len()..prefix.len() + input_path.len()].copy_from_slice(input_path);
-                    buf[prefix.len() + input_path.len()..count].copy_from_slice(suffix);
-                    entry.source =
-                        bun_ast::Source::init_path_string(input_path, &entry.code_buffer[..count]);
-                } else {
-                    let mut v: Vec<u8> = Vec::with_capacity(count);
-                    v.extend_from_slice(prefix);
-                    v.extend_from_slice(input_path);
-                    v.extend_from_slice(suffix);
-                    entry.source = bun_ast::Source::init_path_string_owned(input_path, v);
-                }
-            }};
-        }
-
-        if disable_css_imports {
-            render_into_entry!(
-                b"globalThis.Bun_disableCSSImports = true;\nimport boot from '",
-                b"';\nboot(globalThis.__BUN_DATA__);"
-            );
-        } else {
-            render_into_entry!(b"import boot from '", b"';\nboot(globalThis.__BUN_DATA__);");
-        }
-
-        entry.source.path.namespace = b"fallback-entry";
-        Ok(())
-    }
-}
-
+#[derive(Default)]
 pub struct ClientEntryPoint {
-    pub code_buffer: [u8; 8192],
-    pub path_buffer: PathBuffer,
     pub source: bun_ast::Source,
-}
-
-impl Default for ClientEntryPoint {
-    fn default() -> Self {
-        Self {
-            code_buffer: [0u8; 8192],
-            path_buffer: PathBuffer::uninit(),
-            source: bun_ast::Source::default(),
-        }
-    }
-}
-
-impl ClientEntryPoint {
-    pub fn is_entry_point_path(extname: &[u8]) -> bool {
-        strings::starts_with(b"entry.", extname)
-    }
-
-    // takes the lifetime-generic `bun_paths::fs::PathName<'_>` (not the
-    // `'static`-field `bun_paths::fs::PathName<'static>`) so callers with a borrowed path
-    // (e.g. `bun_runtime::filesystem_router::get_script_src_string`) needn't forge
-    // `'static`. The body only copies `dir`/`base`/`ext` into `outbuffer`.
-    pub fn generate_entry_point_path<'a>(
-        outbuffer: &'a mut [u8],
-        original_path: &bun_paths::fs::PathName<'_>,
-    ) -> &'a [u8] {
-        let joined_base_and_dir_parts: [&[u8]; 2] = [original_path.dir, original_path.base];
-        // SAFETY: FileSystem singleton is initialized before bundling.
-        let mut generated_path =
-            Fs::FileSystem::get().abs_buf(&joined_base_and_dir_parts, outbuffer);
-
-        // reshaped for borrowck — capture len, drop borrow, re-borrow outbuffer.
-        let mut len = generated_path.len();
-        outbuffer[len..len + b".entry".len()].copy_from_slice(b".entry");
-        len += b".entry".len();
-        generated_path = &outbuffer[..len];
-        let _ = generated_path;
-        outbuffer[len..len + original_path.ext.len()].copy_from_slice(original_path.ext);
-        &outbuffer[..len + original_path.ext.len()]
-    }
-
-    pub fn decode_entry_point_path<'a>(
-        outbuffer: &'a mut [u8],
-        original_path: &Fs::PathName,
-    ) -> &'a [u8] {
-        let joined_base_and_dir_parts: [&[u8]; 2] = [original_path.dir, original_path.base];
-        // SAFETY: FileSystem singleton is initialized before bundling.
-        let generated_path = Fs::FileSystem::get().abs_buf(&joined_base_and_dir_parts, outbuffer);
-        let len = generated_path.len();
-        let mut original_ext = original_path.ext;
-        if let Some(entry_i) = strings::index_of(original_path.ext, b"entry") {
-            original_ext = &original_path.ext[entry_i + b"entry".len()..];
-        }
-
-        outbuffer[len..len + original_ext.len()].copy_from_slice(original_ext);
-
-        &outbuffer[..len + original_ext.len()]
-    }
-
-    pub fn generate<TranspilerType>(
-        &mut self,
-        transpiler: &mut TranspilerType,
-        original_path: &Fs::PathName,
-        client: &[u8],
-    ) -> crate::Result<()>
-    where
-        TranspilerType: TranspilerLike,
-    {
-        let entry = self;
-        // This is *extremely* naive.
-        // The basic idea here is this:
-        // --
-        // import * as EntryPoint from 'entry-point';
-        // import boot from 'framework';
-        // boot(EntryPoint);
-        // --
-        // We go through the steps of printing the code -- only to then parse/transpile it because
-        // we want it to go through the linker and the rest of the transpilation process
-
-        let dir_to_use: &[u8] = original_path.dir_with_trailing_slash();
-        let disable_css_imports = transpiler
-            .options()
-            .framework
-            .as_ref()
-            .unwrap()
-            .client_css_in_js
-            != ClientCssInJs::AutoOnImportCss;
-
-        // INVARIANT: self-referential — `code` borrows `entry.code_buffer` and is
-        // stored into `entry.source` (lifetime erased), so `entry` must not move
-        // or drop while `entry.source` is in use. See note in
-        // FallbackEntryPoint::generate.
-        let code: &[u8] = if disable_css_imports {
-            let mut cursor = std::io::Cursor::new(&mut entry.code_buffer[..]);
-            write!(
-                &mut cursor,
-                "globalThis.Bun_disableCSSImports = true;\n\
-                 import boot from '{}';\n\
-                 import * as EntryPoint from '{}{}';\n\
-                 boot(EntryPoint);",
-                BStr::new(client),
-                BStr::new(dir_to_use),
-                BStr::new(original_path.filename),
-            )
-            .map_err(|_| crate::Error::Sys(bun_errno::SystemErrno::ENOSPC))?;
-            let n = cursor.position() as usize;
-            &entry.code_buffer[..n]
-        } else {
-            let mut cursor = std::io::Cursor::new(&mut entry.code_buffer[..]);
-            write!(
-                &mut cursor,
-                "import boot from '{}';\n\
-                 if ('setLoaded' in boot) boot.setLoaded(loaded);\n\
-                 import * as EntryPoint from '{}{}';\n\
-                 boot(EntryPoint);",
-                BStr::new(client),
-                BStr::new(dir_to_use),
-                BStr::new(original_path.filename),
-            )
-            .map_err(|_| crate::Error::Sys(bun_errno::SystemErrno::ENOSPC))?;
-            let n = cursor.position() as usize;
-            &entry.code_buffer[..n]
-        };
-
-        // `bun_paths::fs::PathName<'static>` → `bun_paths::fs::PathName<'static>`: field-identical
-        // mirrors (see `#[repr(C)]` note on both); spell out the copy instead of a cast.
-        let original_path_borrowed = bun_paths::fs::PathName {
-            dir: original_path.dir,
-            base: original_path.base,
-            ext: original_path.ext,
-            filename: original_path.filename,
-        };
-        entry.source = bun_ast::Source::init_path_string(
-            Self::generate_entry_point_path(&mut entry.path_buffer.0, &original_path_borrowed),
-            code,
-        );
-        entry.source.path.namespace = b"client-entry";
-        Ok(())
-    }
 }
 
 #[derive(Default)]
@@ -358,7 +129,6 @@ impl ServerEntryPoint {
 // functions from C++. When that is resolved, we should remove this.
 pub struct MacroEntryPoint {
     pub code_buffer: [u8; MAX_PATH_BYTES * 2 + 500],
-    pub output_code_buffer: [u8; MAX_PATH_BYTES * 8 + 500],
     pub source: bun_ast::Source,
 }
 
@@ -366,7 +136,6 @@ impl Default for MacroEntryPoint {
     fn default() -> Self {
         Self {
             code_buffer: [0u8; MAX_PATH_BYTES * 2 + 500],
-            output_code_buffer: [0u8; MAX_PATH_BYTES * 8 + 500],
             source: bun_ast::Source::default(),
         }
     }
@@ -521,11 +290,3 @@ impl MacroEntryPoint {
         Ok(())
     }
 }
-
-// Trait abstraction over the transpiler types used by
-// FallbackEntryPoint/ClientEntryPoint.
-pub trait TranspilerLike {
-    fn options(&self) -> &crate::options::Options<'_>;
-}
-
-use crate::options::ClientCssInJs;

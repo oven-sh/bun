@@ -272,7 +272,12 @@ const exports = {
   ftruncate: asyncWrap(fs.ftruncate, "ftruncate"),
   futimes: asyncWrap(fs.futimes, "futimes"),
   glob,
-  lchmod: asyncWrap(fs.lchmod, "lchmod"),
+  lchmod:
+    constants.O_SYMLINK !== undefined
+      ? asyncWrap(fs.lchmod, "lchmod")
+      : async function lchmod(_path, _mode) {
+          throw $ERR_METHOD_NOT_IMPLEMENTED("lchmod()");
+        },
   lchown: asyncWrap(fs.lchown, "lchown"),
   link: asyncWrap(fs.link, "link"),
   lstat: asyncWrap(fs.lstat, "lstat"),
@@ -327,6 +332,12 @@ const exports = {
   utimes: asyncWrap(fs.utimes, "utimes"),
   lutimes: asyncWrap(fs.lutimes, "lutimes"),
   rm: async function rm(path, options) {
+    if (typeof options === "object" && options !== null) {
+      // Node merges the caller's options over the defaults with a spread, which
+      // copies own enumerable keys only -- including ones holding `undefined`.
+      // Normalize here so the native parser sees exactly that set.
+      options = { ...options };
+    }
     if (!options?.recursive) {
       // node validates in JS and reports ERR_FS_EISDIR for directories
       // (same check as rmSync)
@@ -733,11 +744,102 @@ function asyncWrap(fn: any, name: string) {
       return this.close();
     }
 
-    readableWebStream(_options = kEmptyObject) {
+    // Port of Node.js FileHandle.prototype.readableWebStream
+    // (https://github.com/nodejs/node/blob/v26.3.0/lib/internal/fs/promises.js#L324).
+    // The handle is locked for the lifetime of the stream, is kept referenced
+    // until the stream ends or is cancelled, and closing the handle closes the
+    // stream even while a reader holds it.
+    readableWebStream(options = kEmptyObject) {
       const fd = this[kFd];
-      throwEBADFIfNecessary("readableWebStream", fd);
+      // Node reports a closed or closing handle as ERR_INVALID_STATE here
+      // rather than the EBADF the other FileHandle methods use.
+      if (fd === -1) throw $ERR_INVALID_STATE("The FileHandle is closed");
+      if (this[kClosePromise]) throw $ERR_INVALID_STATE("The FileHandle is closing");
+      if (this[kLocked]) throw $ERR_INVALID_STATE("The FileHandle is locked");
+      this[kLocked] = true;
 
-      return Bun.file(fd).stream();
+      validateObject(options, "options");
+      const { type = "bytes", autoClose = false } = options;
+      validateBoolean(autoClose, "options.autoClose");
+
+      if (type !== "bytes") {
+        process.emitWarning(
+          'A non-"bytes" options.type has no effect. A byte-oriented steam is always created.',
+          "ExperimentalWarning",
+        );
+      }
+
+      const handle = this;
+      let controllerRef;
+      let done = false;
+
+      async function ondone() {
+        if (done) return;
+        done = true;
+        // Release the listener with the stream it was cancelling, so a drained
+        // stream is not retained for the rest of the handle's life.
+        handle.removeListener("close", onFileHandleClose);
+        handle[kUnref]();
+        if (autoClose) await handle.close();
+      }
+
+      // Node cancels the stream from here with the internal readableStreamCancel,
+      // which is not reachable from JS. Closing the controller and then settling
+      // any outstanding BYOB request ends the stream the same way, including when
+      // a reader is attached and waiting on a read.
+      function onFileHandleClose() {
+        if (done) return;
+        try {
+          controllerRef?.close();
+        } catch {}
+        try {
+          controllerRef?.byobRequest?.respond(0);
+        } catch {}
+        ondone();
+      }
+
+      const readable = new ReadableStream({
+        type: "bytes",
+        autoAllocateChunkSize: 16384,
+
+        start(controller) {
+          controllerRef = controller;
+        },
+
+        async pull(controller) {
+          const request = controller.byobRequest;
+          // The handle can be closed while a pull is in flight, which settles the
+          // request and drops the fd out from under the read below.
+          if (request === null) return;
+          const view = request.view;
+
+          let bytesRead;
+          try {
+            ({ bytesRead } = await handle.read(view, view.byteOffset, view.byteLength));
+          } catch (err) {
+            if (done) return;
+            await ondone();
+            throw err;
+          }
+          if (done) return;
+
+          if (bytesRead === 0) {
+            controller.close();
+            await ondone();
+          }
+
+          controller.byobRequest.respond(bytesRead);
+        },
+
+        async cancel() {
+          await ondone();
+        },
+      });
+
+      this[kRef]();
+      this.once("close", onFileHandleClose);
+
+      return readable;
     }
 
     createReadStream(options = kEmptyObject) {
@@ -1448,6 +1550,13 @@ function asyncWrap(fn: any, name: string) {
 }
 
 function throwEBADFIfNecessary(fn: string, fd) {
+  if (fd === undefined) {
+    // A FileHandle method invoked with a foreign receiver (fn.call({})); node's
+    // fsCall asserts on the missing internal slot before touching the fd.
+    throw $ERR_INTERNAL_ASSERTION(
+      "handle must be an instance of FileHandle" + require("internal/shared").kInternalAssertionSuffix,
+    );
+  }
   if (fd === -1) {
     const err: any = new Error("Bad file descriptor");
     err.code = "EBADF";

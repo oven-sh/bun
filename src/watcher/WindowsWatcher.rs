@@ -8,7 +8,6 @@ use bun_core::strings;
 use bun_paths::resolve_path::{ParentEqual, is_parent_or_equal};
 use bun_paths::{PathBuffer, WPathBuffer};
 use bun_ptr::{BackRef, RawSlice};
-use bun_threading::Mutex;
 
 use bun_sys::windows as w;
 use bun_sys::windows::HANDLE;
@@ -18,7 +17,6 @@ bun_core::declare_scope!(watcher, visible);
 pub(crate) type Platform = WindowsWatcher;
 
 pub struct WindowsWatcher {
-    pub mutex: Mutex,
     pub iocp: HANDLE,
     pub watcher: DirWatcher,
     pub buf: PathBuffer,
@@ -28,7 +26,6 @@ pub struct WindowsWatcher {
 impl Default for WindowsWatcher {
     fn default() -> Self {
         Self {
-            mutex: Mutex::default(),
             iocp: w::INVALID_HANDLE_VALUE,
             watcher: DirWatcher {
                 overlapped: bun_core::ffi::zeroed(),
@@ -45,12 +42,8 @@ impl Default for WindowsWatcher {
 pub enum Error {
     #[error("IocpFailed")]
     IocpFailed,
-    #[error("ReadDirectoryChangesFailed")]
-    ReadDirectoryChangesFailed,
     #[error("CreateFileFailed")]
     CreateFileFailed,
-    #[error("InvalidPath")]
-    InvalidPath,
 }
 
 #[repr(u32)]
@@ -218,9 +211,16 @@ impl EventIterator {
 }
 
 impl WindowsWatcher {
-    // `self` is the pre-allocated `platform` slot inside crate::Watcher
-    // (64KB+ buffers; avoid moving).
-    pub(crate) fn init(&mut self, root: &[u8]) -> Result<(), crate::Error> {
+    // `Self` carries the 64 KiB `DirWatcher` buffer inline; it is moved once
+    // into `Box::new(Watcher { .. })` in `Watcher::init`.
+    #[allow(clippy::large_stack_frames)]
+    pub(crate) fn new(root: &[u8]) -> crate::Result<Self> {
+        let mut this = Self::default();
+        this.init(root)?;
+        Ok(this)
+    }
+
+    fn init(&mut self, root: &[u8]) -> Result<(), crate::Error> {
         use bun_paths::string_paths as paths;
         let mut pathbuf = WPathBuffer::uninit();
         let wpath = paths::to_nt_path(&mut pathbuf, root);
@@ -529,30 +529,14 @@ fn process_watch_event_batch(this: &mut Watcher, event_count: usize) -> bun_sys:
     if all_events.is_empty() {
         return Ok(());
     }
-    // reshaped for borrowck — copy the (small) deduped slice into a
-    // local so `this` is no longer mutably borrowed via `watch_events` when we
-    // call `write_trace_events` / `on_file_update`. Mirrors INotifyWatcher.
-    let mut deduped: Vec<WatchEvent> = all_events[..last_event_index + 1].to_vec();
 
     bun_core::scoped_log!(
         watcher,
         "calling onFileUpdate (all_events.len = {})",
-        deduped.len()
+        last_event_index + 1
     );
 
-    // Hold `this.mutex` for the on_file_update dispatch — mirrors
-    // KEventWatcher.rs:138 / INotifyWatcher.rs:555. `on_file_update` impls
-    // defer `flush_evictions()`, which assumes the lock is held to serialize
-    // its close+swap_remove against the JS thread's
-    // `snapshot_fd_and_package_json` / `append_file_maybe_lock<true>`.
-    let _guard = this.mutex.lock_guard();
-    if !this.running.load() {
-        return Ok(());
-    }
-    let changed = &this.changed_filepaths[0..last_event_index + 1];
-    this.write_trace_events(&deduped, changed);
-    (this.on_file_update)(this.ctx, &mut deduped, changed, &this.watchlist);
-
+    this.dispatch_file_updates(last_event_index + 1, last_event_index + 1);
     Ok(())
 }
 

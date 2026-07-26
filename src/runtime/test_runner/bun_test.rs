@@ -349,8 +349,6 @@ pub mod js_fns {
         hook!(on_test_finished, OnTestFinished);
     }
 }
-/// Compat alias for sibling drafts (jest.rs) that referenced `bun_test::HookKind`.
-pub use js_fns::GenericHookTag as HookKind;
 
 /// `Rc<BunTestCell>`: single-thread, weak-capable, interior-mutable shared handle.
 ///
@@ -1314,6 +1312,21 @@ impl BunTest {
             return; // the exception should not be visible (eg m_terminationException)
         };
 
+        let junit_ctx: *mut core::ffi::c_void = 'ctx: {
+            if handle_status != HandleUncaughtExceptionResult::ShowHandledError {
+                break 'ctx core::ptr::null_mut();
+            }
+            let Some(reporter) = self.reporter else {
+                break 'ctx core::ptr::null_mut();
+            };
+            // SAFETY: `BunTest.reporter` carries write provenance from `enter_file`'s
+            // `&mut`; single-threaded test runner, no other borrow live here.
+            match unsafe { (*reporter.as_ptr()).reporters.junit.as_deref_mut() } {
+                Some(junit) => core::ptr::from_mut(junit).cast(),
+                None => core::ptr::null_mut(),
+            }
+        };
+
         self.bun_test_root.on_before_print();
         if matches!(
             handle_status,
@@ -1332,7 +1345,17 @@ impl BunTest {
             Output::flush();
         }
 
-        global_this.bun_vm().as_mut().run_error_handler(exception, None);
+        let vm = global_this.bun_vm().as_mut();
+        if !junit_ctx.is_null() {
+            vm.on_print_error_zig_exception =
+                Some(crate::cli::test_command::JunitReporter::record_failure_cb);
+            vm.on_print_error_zig_exception_ctx = junit_ctx;
+        }
+        vm.run_error_handler(exception, None);
+        if !junit_ctx.is_null() {
+            vm.on_print_error_zig_exception = None;
+            vm.on_print_error_zig_exception_ctx = core::ptr::null_mut();
+        }
 
         if matches!(
             handle_status,
@@ -1427,11 +1450,6 @@ pub enum RefDataValue {
 }
 
 impl RefDataValue {
-    pub fn group<'a>(&self, buntest: &'a mut BunTest) -> Option<&'a mut Execution::ConcurrentGroup> {
-        let RefDataValue::Execution { group_index, .. } = self else { return None };
-        Some(&mut buntest.execution.groups[*group_index])
-    }
-
     pub fn sequence<'a>(&self, buntest: &'a mut BunTest) -> Option<&'a mut Execution::ExecutionSequence> {
         let RefDataValue::Execution { group_index, entry_data } = self else { return None };
         let entry_data = (*entry_data)?;
@@ -1972,17 +1990,6 @@ impl TestScheduleEntry {
     }
 }
 
-pub enum RunOneResult {
-    Done,
-    Execute { timeout: Timespec },
-}
-impl Default for RunOneResult {
-    fn default() -> Self {
-        RunOneResult::Execute { timeout: Timespec::EPOCH }
-    }
-}
-
-pub use super::timers::fake_timers::FakeTimers;
 // Module aliases so `Execution::ConcurrentGroup` / `Order::AllOrderResult`
 // resolve as module paths without per-reference rewrites.
 pub use super::execution as Execution;

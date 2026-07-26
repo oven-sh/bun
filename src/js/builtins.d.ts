@@ -468,6 +468,15 @@ declare interface UnderlyingSource {
   $stream?: ReadableStream;
 }
 
+declare interface AddEventListenerOptions {
+  /**
+   * Private symbol read by the native EventTarget. A listener registered with it still
+   * runs after another listener called `stopImmediatePropagation()`. Mirrors Node.js's
+   * internal `kResistStopPropagation`.
+   */
+  $kResistStopPropagation?: boolean;
+}
+
 declare class OutOfMemoryError {
   constructor();
 }
@@ -595,6 +604,13 @@ declare function $ERR_INVALID_FD_TYPE(type): TypeError;
 declare function $ERR_IP_BLOCKED(ip): Error;
 
 declare function $ERR_IPC_DISCONNECTED(): Error;
+declare function $ERR_INSPECTOR_ALREADY_ACTIVATED(message?: string): Error;
+declare function $ERR_INSPECTOR_NOT_ACTIVE(): Error;
+declare function $ERR_INSPECTOR_ALREADY_CONNECTED(): Error;
+declare function $ERR_INSPECTOR_NOT_CONNECTED(): Error;
+declare function $ERR_INSPECTOR_NOT_WORKER(): Error;
+declare function $ERR_INSPECTOR_COMMAND(message: string): Error;
+declare function $ERR_WORKER_UNSUPPORTED_OPERATION(message: string): TypeError;
 declare function $ERR_SERVER_NOT_RUNNING(): Error;
 declare function $ERR_IPC_CHANNEL_CLOSED(): Error;
 declare function $ERR_SOCKET_BAD_TYPE(): Error;

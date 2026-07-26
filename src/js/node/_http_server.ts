@@ -1008,15 +1008,10 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
             socket[kUpgradeIncoming] = http_req;
             http_req.once("end", clearUpgradeIncoming.bind(undefined, socket));
           }
-          // Node.js's parser stops at the end of the HTTP message and hands the
-          // remaining bytes in that read to 'upgrade' as the head buffer. The
-          // native connectHead is the bytes past the header block, so for a
-          // request without a body that is the head. For a Content-Length body
-          // the body is the prefix of connectHead - slice past it like Node.js;
-          // those bytes also reach the tunnel's raw-data path (they are in this
-          // read), so skip them there. A chunked body cannot be sliced without
-          // re-parsing, so its post-body bytes arrive via the raw-data path
-          // instead (Node's own tests concatenate head + socket data).
+          // connectHead is the bytes past the header block; Node.js's head is the
+          // bytes past the end of the HTTP message, so slice off a Content-Length
+          // body prefix (and skip that tail on the tunnel's data path, which
+          // re-delivers it).
           let upgradeHead = kEmptyBuffer;
           if (!hasBody) {
             if (connectHead) upgradeHead = connectHead;
@@ -1394,10 +1389,7 @@ const kEnableStreaming = Symbol("kEnableStreaming");
 // resumes this request, like Node.js's UpgradeStream._read, so an unread body
 // can never stall the upgrade data behind it.
 const kUpgradeIncoming = Symbol("kUpgradeIncoming");
-// Upgrade with a Content-Length body: bytes that arrived past the body in the
-// same read are handed to the 'upgrade' listener as the head buffer (like
-// Node.js), so the tunnel's raw-data path must skip that many leading bytes to
-// avoid delivering them twice.
+// Leading tunnel bytes already handed to 'upgrade' as the head buffer.
 const kSkipTunnelBytes = Symbol("kSkipTunnelBytes");
 
 // Like Node.js's net.Socket onReadableStreamEnd: every socket carries one 'end'

@@ -519,9 +519,18 @@ fn gunzip_audit_response(body: &[u8]) -> Result<Box<[u8]>, bun_alloc::AllocError
     let mut decompressor = libdeflate::OwnedDecompressor::new().ok_or(bun_alloc::AllocError)?;
 
     // The gzip ISIZE trailer holds the uncompressed size mod 2^32; use it as
-    // the initial capacity and let the grow loop correct a lying trailer.
+    // the initial capacity. The trailer is untrusted network data, so an
+    // implausibly large value starts small instead and lets the grow loop
+    // expand on demand.
     let size_hint = match body.last_chunk::<4>() {
-        Some(trailer) => (u32::from_le_bytes(*trailer) as usize).clamp(1024, MAX_DECOMPRESSED_SIZE),
+        Some(trailer) => {
+            let isize_hint = u32::from_le_bytes(*trailer) as usize;
+            if isize_hint < MAX_DECOMPRESSED_SIZE {
+                isize_hint.max(1024)
+            } else {
+                body.len().max(1024)
+            }
+        }
         None => 1024,
     };
     let mut decompressed = Vec::new();

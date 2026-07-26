@@ -591,7 +591,12 @@ function writeAllSync(stream, data, cb) {
   } catch (e) {
     return cb(e);
   }
-  process.nextTick(cb, null);
+  process.nextTick(afterWriteAllSync, stream, cb);
+}
+
+function afterWriteAllSync(stream, cb) {
+  if (stream.destroyed) return cb($ERR_STREAM_DESTROYED("write"));
+  cb(null);
 }
 
 function syncWriteEnabled(stream) {

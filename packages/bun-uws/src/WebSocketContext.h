@@ -88,6 +88,14 @@ private:
         us_socket_close((us_socket_t *) s, (int) reason.length(), (void *) reason.data());
     }
 
+    /* RFC 6455 7.1.7 "Fail the WebSocket Connection": send a Close frame
+     * carrying the status code before dropping TCP. end() queues the Close,
+     * sets isShuttingDown so later inbound bytes are ignored, then half-closes
+     * (FIN) once drained. forceClose() remains for idle-timeout only. */
+    static void failConnection(WebSocketState<isServer> */*wState*/, void *s, uint16_t code, std::string_view reason) {
+        ((WebSocket<SSL, isServer, USERDATA> *) s)->end(code, reason);
+    }
+
     /* Returns true on breakage */
     static bool handleFragment(char *data, size_t length, unsigned int remainingBytes, int opCode, bool fin, WebSocketState<isServer> *webSocketState, void *s) {
         /* WebSocketData and WebSocketContextData */
@@ -113,7 +121,7 @@ private:
                         }
 
                         if (!inflatedFrame.has_value()) {
-                            forceClose(webSocketState, s, ERR_TOO_BIG_MESSAGE_INFLATION);
+                            failConnection(webSocketState, s, CLOSE_MESSAGE_TOO_BIG, ERR_TOO_BIG_MESSAGE_INFLATION);
                             return true;
                         } else {
                             data = (char *) inflatedFrame->data();
@@ -123,7 +131,7 @@ private:
 
                 /* Check text messages for Utf-8 validity */
                 if (opCode == 1 && !protocol::isValidUtf8((unsigned char *) data, length)) {
-                    forceClose(webSocketState, s, ERR_INVALID_TEXT);
+                    failConnection(webSocketState, s, CLOSE_INVALID_DATA, ERR_INVALID_TEXT);
                     return true;
                 }
 
@@ -141,7 +149,7 @@ private:
                 }
                 /* Fragments forming a big message are not caught until appending them */
                 if (refusePayloadLength(length + webSocketData->fragmentBuffer.length(), webSocketState, s)) {
-                    forceClose(webSocketState, s, ERR_TOO_BIG_MESSAGE);
+                    failConnection(webSocketState, s, CLOSE_MESSAGE_TOO_BIG, ERR_TOO_BIG_MESSAGE);
                     return true;
                 }
                 webSocketData->fragmentBuffer.append(data, length);
@@ -168,7 +176,7 @@ private:
                             }
 
                             if (!inflatedFrame.has_value()) {
-                                forceClose(webSocketState, s, ERR_TOO_BIG_MESSAGE_INFLATION);
+                                failConnection(webSocketState, s, CLOSE_MESSAGE_TOO_BIG, ERR_TOO_BIG_MESSAGE_INFLATION);
                                 return true;
                             } else {
                                 data = (char *) inflatedFrame->data();
@@ -184,7 +192,7 @@ private:
 
                     /* Check text messages for Utf-8 validity */
                     if (opCode == 1 && !protocol::isValidUtf8((unsigned char *) data, length)) {
-                        forceClose(webSocketState, s, ERR_INVALID_TEXT);
+                        failConnection(webSocketState, s, CLOSE_INVALID_DATA, ERR_INVALID_TEXT);
                         return true;
                     }
 

@@ -6,7 +6,7 @@ import { describe, expect, it } from "bun:test";
 import net from "node:net";
 import { constants, deflateRawSync } from "node:zlib";
 
-const RSV1_CLOSE = { code: 1006, reason: "Received unexpected RSV1 bit" };
+const RSV1_CLOSE = { code: 1002, reason: "Received unexpected RSV1 bit" };
 
 // A permessage-deflate message payload: raw deflate, sync flushed, with the
 // trailing 0x00 0x00 0xff 0xff removed (RFC 7692 section 7.2.1).
@@ -147,13 +147,18 @@ describe.concurrent("permessage-deflate RSV1 frames", () => {
     };
   }
 
-  // A conforming server neither answers an RSV1 ping nor lets it reach ping().
-  it("a ping with RSV1 set fails the connection and is not answered", async () => {
+  // A conforming server does not answer an RSV1 ping with a pong; it writes a
+  // Close frame carrying 1002 and never lets the ping reach ping().
+  it("a ping with RSV1 set fails the connection with a 1002 Close frame", async () => {
     using raw = await connectDeflated();
     raw.socket.write(frame(0x9, pmdDeflate(Buffer.from("pingy")), { rsv1: true }));
-    expect(await Promise.race([raw.serverClose, raw.waitForFrameBytes(1)])).toEqual(RSV1_CLOSE);
+    expect(await raw.serverClose).toEqual(RSV1_CLOSE);
     expect(raw.pings).toEqual([]);
-    expect(raw.frames()).toEqual(Buffer.alloc(0));
+    await Promise.race([raw.waitForFrameBytes(4), raw.closed]);
+    // The first (and only) frame the server writes is a Close with code 1002,
+    // not a pong (0x8a).
+    expect(raw.frames()[0]).toBe(0x88);
+    expect(raw.frames().readUInt16BE(2)).toBe(1002);
   });
 
   it("an RSV1 ping must not make the next uncompressed data frame get inflated", async () => {

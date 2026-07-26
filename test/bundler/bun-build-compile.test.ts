@@ -443,9 +443,7 @@ if (isLinux) {
       expect(writableLoadCoversBun).toBe(true);
       // The compiled binary must have the same PT_LOAD count as the bun
       // binary it was produced from (3 without `-z relro`, 4 with).
-      const srcHeader = new Uint8Array(
-        await Bun.file(realpathSync(bunExe())).slice(0, 4096).arrayBuffer(),
-      );
+      const srcHeader = new Uint8Array(await Bun.file(realpathSync(bunExe())).slice(0, 4096).arrayBuffer());
       const srcView = new DataView(srcHeader.buffer);
       const srcPhoff = Number(srcView.getBigUint64(32, true));
       const srcPhnum = srcView.getUint16(56, true);

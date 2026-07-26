@@ -1113,7 +1113,8 @@ body {
 
       // page2.html's <script> must not leak into index.html's entry chunk.
       const js = html.match(/src="(?:\.\/|\/)?(index-[a-z0-9]+\.js)"/);
-      if (js) expect(api.readFile("out/" + js[1])).not.toContain("PAGE2_SCRIPT");
+      expect(js).not.toBeNull();
+      expect(api.readFile("out/" + js![1])).not.toContain("PAGE2_SCRIPT");
 
       const page2 = html.match(/href="(?:\.\/|\/)?(page2-[a-z0-9]+\.html)"/);
       expect(page2).not.toBeNull();

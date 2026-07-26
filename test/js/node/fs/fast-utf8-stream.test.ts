@@ -38,7 +38,7 @@ describe.concurrent("fs.Utf8Stream reopen", () => {
       },
     };
 
-    const stream = new Utf8Stream({ dest, sync: false, fs: fsOverride });
+    using stream = new Utf8Stream({ dest, sync: false, fs: fsOverride });
     const events: string[] = [];
 
     stream.write("hello world\n");
@@ -107,7 +107,7 @@ describe.concurrent("fs.Utf8Stream reopen", () => {
     using dir = tempDir("utf8stream-reopen-nowrite", {});
     const dest = join(String(dir), "out.log");
 
-    const stream = new Utf8Stream({ dest, sync: false });
+    using stream = new Utf8Stream({ dest, sync: false });
     stream.write("first\n");
     await once(stream, "drain");
 
@@ -141,7 +141,7 @@ describe.concurrent("fs.Utf8Stream reopen", () => {
       },
     };
 
-    const stream = new Utf8Stream({ dest, sync: false, minLength: 4, fs: fsOverride });
+    using stream = new Utf8Stream({ dest, sync: false, minLength: 4, fs: fsOverride });
     stream.write("first\n");
     await once(stream, "drain");
     writes.length = 0;

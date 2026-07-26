@@ -1008,10 +1008,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
             socket[kUpgradeIncoming] = http_req;
             http_req.once("end", clearUpgradeIncoming.bind(undefined, socket));
           }
-          // connectHead is the bytes past the header block; Node.js's head is the
-          // bytes past the end of the HTTP message, so slice off a Content-Length
-          // body prefix (and skip that tail on the tunnel's data path, which
-          // re-delivers it).
+          // Node.js's head is bytes past end of message: slice off a Content-Length body prefix (and skip that tail on the tunnel data path, which re-delivers it).
           let upgradeHead = kEmptyBuffer;
           if (!hasBody) {
             if (connectHead) upgradeHead = connectHead;

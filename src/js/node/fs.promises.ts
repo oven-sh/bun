@@ -199,8 +199,6 @@ function settleFromNodeCallback(resolve, reject, err, value) {
 }
 
 async function opendir(dir: string, options) {
-  // Delegate to the callback form so the eager path check (ENOTDIR/ENOENT at
-  // open time, like node) runs on an async stat instead of blocking.
   const { promise, resolve, reject } = Promise.withResolvers();
   require("node:fs").opendir(dir, options, settleFromNodeCallback.bind(null, resolve, reject));
   return promise;

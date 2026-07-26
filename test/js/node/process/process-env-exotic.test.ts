@@ -224,6 +224,34 @@ describe.skipIf(!isPosix)("process.env setenv sync + typed-cache invalidation", 
     expect(exitCode).toBe(0);
   });
 
+  test("process.env write still reaches setenv() after founding a SHARE_ENV tree", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        getenvProbe +
+          `
+          const { Worker, SHARE_ENV } = require("node:worker_threads");
+          const w = new Worker("require('node:worker_threads').parentPort.postMessage(1)", { eval: true, env: SHARE_ENV });
+          await new Promise(r => w.on("exit", r));
+          process.env.ENVFIX_POSTSWAP = "after-swap";
+          process.stdout.write(JSON.stringify({ getenv: read("ENVFIX_POSTSWAP"), homedir: (() => {
+            const os = require("node:os");
+            os.homedir();
+            process.env.HOME = "/tmp/envfix-post";
+            return os.homedir();
+          })() }));
+        `,
+      ],
+      env: { ...bunEnv, HOME: "/tmp/envfix-before" },
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ getenv: "after-swap", homedir: "/tmp/envfix-post" });
+    expect(exitCode).toBe(0);
+  });
+
   test("os.homedir() observes process.env.HOME = ... (typed cache invalidated)", async () => {
     await using proc = Bun.spawn({
       cmd: [

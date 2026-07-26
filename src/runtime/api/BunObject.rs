@@ -2263,7 +2263,12 @@ pub mod environment_variables {
         let key = name_slice.slice();
         let value_slice = value.to_utf8();
 
-        bun_core::handle_oom(vm.transpiler.env_mut().map.put(key, value_slice.slice()));
+        {
+            // Serialise against a concurrently-spawning worker's
+            // env.map.clone_with_allocator (web_worker.rs holds this same lock).
+            let _slots = vm.proxy_env_storage.lock();
+            bun_core::handle_oom(vm.transpiler.env_mut().map.put(key, value_slice.slice()));
+        }
 
         if vm.is_main_thread() {
             #[cfg(not(windows))]
@@ -2289,7 +2294,10 @@ pub mod environment_variables {
         let name_slice = name.to_utf8();
         let key = name_slice.slice();
 
-        vm.transpiler.env_mut().map.remove(key);
+        {
+            let _slots = vm.proxy_env_storage.lock();
+            vm.transpiler.env_mut().map.remove(key);
+        }
 
         if vm.is_main_thread() {
             #[cfg(not(windows))]

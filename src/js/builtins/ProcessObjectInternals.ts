@@ -565,7 +565,7 @@ export function windowsEnv(
       if (k === "" || k.indexOf("=") !== -1) {
         return true;
       }
-      if (!(k in internalEnv) && !envMapList.includes(p)) {
+      if (!envMapList.includes(p) && !envMapList.some(x => x.toUpperCase() === k)) {
         envMapList.push(p);
       }
       editWindowsEnvVar(k, value);

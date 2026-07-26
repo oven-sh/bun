@@ -29,7 +29,7 @@
 // `New`/`PlatformSpecificNew` are `macro_rules!` that emit a module per env var; the macros
 // must be defined (or `#[macro_use]`d) before the declarations.
 
-use core::sync::atomic::{AtomicPtr, AtomicU8, AtomicU64, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicPtr, AtomicU8, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 
 // MOVE_DOWN: bun_core::ZStr → bun_core (move-in pass).
 use crate::ZStr;
@@ -309,7 +309,13 @@ pub(crate) mod kind {
 
         // A single Cache struct; per-var uniqueness comes from each var owning its own
         // `static CACHE: Cache`.
+        //
+        // `(ptr, len)` is a split-word cache of a `getenv` result; `seq` is a
+        // seqlock so a concurrent reader never pairs a stale `len` with a new
+        // `ptr` after `reset()`/reload stores a different slice (the
+        // `process.env` write path does `setenv()` then `reset()`).
         pub(crate) struct Cache {
+            seq: AtomicU32,
             ptr_value: AtomicPtr<u8>,
             len_value: AtomicUsize,
         }
@@ -325,27 +331,47 @@ pub(crate) mod kind {
         impl Cache {
             pub(crate) const fn new() -> Self {
                 Self {
+                    seq: AtomicU32::new(0),
                     ptr_value: AtomicPtr::new(NOT_LOADED_PTR),
                     len_value: AtomicUsize::new(NOT_LOADED_LEN),
                 }
             }
 
             pub(crate) fn get_cached(&self) -> Output {
-                let len = self.len_value.load(Ordering::Acquire);
-
-                if len == NOT_LOADED_LEN {
-                    return CacheOutput::Unknown;
+                loop {
+                    let s1 = self.seq.load(Ordering::Acquire);
+                    if s1 & 1 != 0 {
+                        core::hint::spin_loop();
+                        continue;
+                    }
+                    let len = self.len_value.load(Ordering::Acquire);
+                    let ptr = self.ptr_value.load(Ordering::Acquire);
+                    if self.seq.load(Ordering::Acquire) != s1 {
+                        core::hint::spin_loop();
+                        continue;
+                    }
+                    if len == NOT_LOADED_LEN {
+                        return CacheOutput::Unknown;
+                    }
+                    if len == NOT_SET_LEN {
+                        return CacheOutput::NotSet;
+                    }
+                    // SAFETY: (ptr, len) were stored together under the seqlock from a
+                    // valid &'static [u8] returned by getenv_z (which borrows from libc's
+                    // environ; the slot for a key that was setenv()'d stays valid because
+                    // glibc/musl never free the previous value).
+                    return CacheOutput::Value(unsafe { core::slice::from_raw_parts(ptr, len) });
                 }
+            }
 
-                if len == NOT_SET_LEN {
-                    return CacheOutput::NotSet;
-                }
-
-                let ptr = self.ptr_value.load(Ordering::Relaxed);
-
-                // SAFETY: ptr/len were stored together in deser_and_invalidate from a valid
-                // &'static [u8] returned by getenv_z (envp memory lives for process lifetime).
-                CacheOutput::Value(unsafe { core::slice::from_raw_parts(ptr, len) })
+            #[inline]
+            fn write_under_seqlock(&self, f: impl FnOnce()) {
+                // Odd seq = write in progress; even = stable. fetch_add is RMW so
+                // concurrent writers (initial-load race) serialise on seq, and the
+                // reader's Acquire on seq orders it against both Release stores.
+                self.seq.fetch_add(1, Ordering::AcqRel);
+                f();
+                self.seq.fetch_add(1, Ordering::Release);
             }
 
             #[inline]
@@ -353,29 +379,24 @@ pub(crate) mod kind {
                 &self,
                 raw_env: Option<&'static [u8]>,
             ) -> Option<ValueType> {
-                // The implementation is racy and allows two threads to both set the value at
-                // the same time, as long as the value they are setting is the same. This is
-                // difficult to write an assertion for since it requires the DEV path take a
-                // .swap() path rather than a plain .store().
-
-                if let Some(ev) = raw_env {
-                    self.ptr_value
-                        .store(ev.as_ptr().cast_mut(), Ordering::Relaxed);
-                    self.len_value.store(ev.len(), Ordering::Release);
-                } else {
-                    self.ptr_value.store(NOT_SET_PTR, Ordering::Relaxed);
-                    self.len_value.store(NOT_SET_LEN, Ordering::Release);
-                }
-
+                self.write_under_seqlock(|| {
+                    if let Some(ev) = raw_env {
+                        self.ptr_value
+                            .store(ev.as_ptr().cast_mut(), Ordering::Release);
+                        self.len_value.store(ev.len(), Ordering::Release);
+                    } else {
+                        self.ptr_value.store(NOT_SET_PTR, Ordering::Release);
+                        self.len_value.store(NOT_SET_LEN, Ordering::Release);
+                    }
+                });
                 raw_env
             }
 
-            /// Drop the cached value so the next `get()` re-reads libc.
-            /// `process.env` writes call setenv() and then this, so the cached
-            /// pointer into the old environ slot is never dereferenced again.
             #[inline]
             pub(crate) fn reset(&self) {
-                self.len_value.store(NOT_LOADED_LEN, Ordering::Release);
+                self.write_under_seqlock(|| {
+                    self.len_value.store(NOT_LOADED_LEN, Ordering::Release);
+                });
             }
         }
     }

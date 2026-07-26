@@ -11,7 +11,7 @@ import { createHash, randomFillSync } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { join } from "node:path";
-import { constants as zconst, crc32, deflateRawSync, gzipSync } from "node:zlib";
+import { crc32, deflateRawSync, gzipSync, constants as zconst } from "node:zlib";
 
 setDefaultTimeout(1000 * 60);
 

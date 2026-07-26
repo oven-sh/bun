@@ -42,6 +42,26 @@ bun_output::declare_scope!(PackageInstaller, hidden);
 
 type Bitset = DynamicBitSet;
 
+/// Returns `(use_copyfile, should_log)`. `should_log` is true only when the
+/// cross-volume fallback is detected during the destination volume's first lookup.
+#[doc(hidden)]
+#[inline]
+pub fn hardlink_fallback_decision(
+    cache_volume: Option<u64>,
+    destination_volume: Option<u64>,
+    destination_volume_was_unchecked: bool,
+) -> (bool, bool) {
+    let use_copyfile = matches!(
+        (cache_volume, destination_volume),
+        (Some(cache), Some(destination)) if cache != destination
+    );
+
+    (
+        use_copyfile,
+        use_copyfile && destination_volume_was_unchecked,
+    )
+}
+
 #[cfg(windows)]
 #[derive(Clone, Copy, Default)]
 enum CachedVolumeIdState {
@@ -60,8 +80,13 @@ pub(crate) struct CachedVolumeId {
 #[cfg(windows)]
 impl CachedVolumeId {
     fn get(&self, fd: Fd) -> Option<u64> {
+        self.get_with_status(fd).0
+    }
+
+    fn get_with_status(&self, fd: Fd) -> (Option<u64>, bool) {
         let mut state = self.state.get();
-        if matches!(state, CachedVolumeIdState::Unchecked) {
+        let was_unchecked = matches!(state, CachedVolumeIdState::Unchecked);
+        if was_unchecked {
             state = match Syscall::fstat(fd) {
                 Ok(stat) if stat.st_dev != 0 => CachedVolumeIdState::Id(stat.st_dev),
                 _ => CachedVolumeIdState::Unavailable,
@@ -69,10 +94,12 @@ impl CachedVolumeId {
             self.state.set(state);
         }
 
-        match state {
+        let volume = match state {
             CachedVolumeIdState::Id(id) => Some(id),
             CachedVolumeIdState::Unchecked | CachedVolumeIdState::Unavailable => None,
-        }
+        };
+
+        (volume, was_unchecked)
     }
 }
 
@@ -1205,29 +1232,44 @@ impl<'a> PackageInstaller<'a> {
             // Windows hardlink failures fall back per file, unlike Unix where the first
             // EXDEV switches the process-wide backend. Cache the shared package-cache
             // volume and each destination tree's volume to avoid that repeated failure.
-            if method != package_install::Method::Hardlink
-                || !matches!(
-                    resolution_tag,
-                    resolution::Tag::Npm
-                        | resolution::Tag::Git
-                        | resolution::Tag::Github
-                        | resolution::Tag::LocalTarball
-                        | resolution::Tag::RemoteTarball
-                )
-            {
+            let resolution_uses_package_cache = matches!(
+                resolution_tag,
+                resolution::Tag::Npm
+                    | resolution::Tag::Git
+                    | resolution::Tag::Github
+                    | resolution::Tag::LocalTarball
+                    | resolution::Tag::RemoteTarball
+            );
+            if method != package_install::Method::Hardlink || !resolution_uses_package_cache {
                 return method;
             }
 
             let cache_volume = self.package_cache_volume.get(installer.cache_dir);
-            let destination_volume = self.trees[self.current_tree_id as usize]
-                .destination_volume
-                .get(destination_dir.fd());
+            let destination_volume_cache =
+                &self.trees[self.current_tree_id as usize].destination_volume;
+            let (destination_volume, destination_volume_was_unchecked) =
+                destination_volume_cache.get_with_status(destination_dir.fd());
 
-            match (cache_volume, destination_volume) {
-                (Some(cache), Some(destination)) if cache != destination => {
-                    package_install::Method::Copyfile
-                }
-                _ => method,
+            let (use_copyfile, should_log) = hardlink_fallback_decision(
+                cache_volume,
+                destination_volume,
+                destination_volume_was_unchecked,
+            );
+            if should_log
+                && let (Some(cache), Some(destination)) = (cache_volume, destination_volume)
+            {
+                bun_output::scoped_log!(
+                    PackageInstaller,
+                    "Package cache volume ({}) differs from destination volume ({}); using copyfile instead of hardlink",
+                    cache,
+                    destination,
+                );
+            }
+
+            if use_copyfile {
+                package_install::Method::Copyfile
+            } else {
+                method
             }
         }
     }

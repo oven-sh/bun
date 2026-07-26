@@ -1,4 +1,5 @@
 import { file, listen, Socket, spawn, write } from "bun";
+import { install_test_helpers } from "bun:internal-for-testing";
 import { afterAll, beforeAll, describe, expect, it, jest, setDefaultTimeout, test } from "bun:test";
 import { readlinkSync, realpathSync } from "fs";
 import { access, cp, exists, mkdir, readlink, rm, stat, writeFile } from "fs/promises";
@@ -9171,6 +9172,16 @@ describe.concurrent("bun-install", () => {
 
       expect(await exited).toBe(1);
     });
+  });
+
+  test.each([
+    ["different volumes, first check", [1, 2, true], { useCopyfile: true, shouldLog: true }],
+    ["different volumes, cached", [1, 2, false], { useCopyfile: true, shouldLog: false }],
+    ["same volume", [1, 1, true], { useCopyfile: false, shouldLog: false }],
+    ["unavailable cache volume", [0, 2, true], { useCopyfile: false, shouldLog: false }],
+    ["unavailable destination volume", [1, 0, true], { useCopyfile: false, shouldLog: false }],
+  ] as const)("hardlink fallback decision: %s", (_, args, expected) => {
+    expect(install_test_helpers.hardlinkFallbackDecision(...args)).toEqual(expected);
   });
 });
 

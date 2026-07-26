@@ -5,7 +5,7 @@ pub mod bun_install_js_bindings {
 
     pub fn generate(global: &JSGlobalObject) -> JSValue {
         use bun_jsc::JSFunction;
-        let obj = JSValue::create_empty_object(global, 1);
+        let obj = JSValue::create_empty_object(global, 2);
         obj.put(
             global,
             b"parseLockfile",
@@ -19,7 +19,40 @@ pub mod bun_install_js_bindings {
                 Default::default(),
             ),
         );
+        obj.put(
+            global,
+            b"hardlinkFallbackDecision",
+            JSFunction::create(
+                global,
+                bun_core::String::static_(b"hardlinkFallbackDecision"),
+                __jsc_host_js_hardlink_fallback_decision,
+                3,
+                Default::default(),
+            ),
+        );
         obj
+    }
+
+    #[bun_jsc::host_fn]
+    pub(crate) fn js_hardlink_fallback_decision(
+        global: &JSGlobalObject,
+        frame: &bun_jsc::CallFrame,
+    ) -> bun_jsc::JsResult<JSValue> {
+        let args = frame.arguments();
+        let volume = |value: JSValue| match value.to_u32() {
+            0 => None,
+            id => Some(u64::from(id)),
+        };
+        let (use_copyfile, should_log) = bun_install::package_installer::hardlink_fallback_decision(
+            volume(args[0]),
+            volume(args[1]),
+            args[2].to_boolean(),
+        );
+
+        let result = JSValue::create_empty_object(global, 2);
+        result.put(global, b"useCopyfile", JSValue::js_boolean(use_copyfile));
+        result.put(global, b"shouldLog", JSValue::js_boolean(should_log));
+        Ok(result)
     }
 
     // Lives at module scope (not in an `impl`) because the

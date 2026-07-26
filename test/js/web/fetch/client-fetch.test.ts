@@ -840,52 +840,49 @@ test.each([{ "transfer-encoding": "gzip" }, { "upgrade": "H2c" }])(
 test.each([
   [{}, { transferEncoding: "chunked", contentLength: undefined, body: "4\r\nabcd\r\n0\r\n\r\n" }],
   [{ "content-length": "4" }, { transferEncoding: undefined, contentLength: "4", body: "abcd" }],
-])(
-  "an Upgrade header past the user-header cap with %j frames the body to match the wire",
-  async (extra, expected) => {
-    let recorded = Buffer.alloc(0);
-    const { promise: closed, resolve: onClose } = Promise.withResolvers<void>();
-    await using server = net
-      .createServer(sock => {
-        sock.on("error", () => {});
-        sock.on("close", onClose);
-        sock.on("data", d => {
-          recorded = Buffer.concat([recorded, d]);
-          if (recorded.toString("latin1").endsWith(expected.body)) {
-            sock.end("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok");
-          }
-        });
-      })
-      .listen(0, "127.0.0.1");
-    await once(server, "listening");
-    const { port } = server.address() as net.AddressInfo;
+])("an Upgrade header past the user-header cap with %j frames the body to match the wire", async (extra, expected) => {
+  let recorded = Buffer.alloc(0);
+  const { promise: closed, resolve: onClose } = Promise.withResolvers<void>();
+  await using server = net
+    .createServer(sock => {
+      sock.on("error", () => {});
+      sock.on("close", onClose);
+      sock.on("data", d => {
+        recorded = Buffer.concat([recorded, d]);
+        if (recorded.toString("latin1").endsWith(expected.body)) {
+          sock.end("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok");
+        }
+      });
+    })
+    .listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const { port } = server.address() as net.AddressInfo;
 
-    const headers: Record<string, string> = { upgrade: "websocket", ...extra };
-    for (let i = 0; i < 250; i++) headers[`A-${String(i).padStart(3, "0")}`] = "x";
-    const res = await fetch(`http://127.0.0.1:${port}/`, {
-      method: "POST",
-      duplex: "half",
-      headers,
-      body: new ReadableStream({
-        start(c) {
-          c.enqueue(new TextEncoder().encode("abcd"));
-          c.close();
-        },
-      }),
-    });
-    expect(res.status).toBe(200);
-    await closed;
+  const headers: Record<string, string> = { upgrade: "websocket", ...extra };
+  for (let i = 0; i < 250; i++) headers[`A-${String(i).padStart(3, "0")}`] = "x";
+  const res = await fetch(`http://127.0.0.1:${port}/`, {
+    method: "POST",
+    duplex: "half",
+    headers,
+    body: new ReadableStream({
+      start(c) {
+        c.enqueue(new TextEncoder().encode("abcd"));
+        c.close();
+      },
+    }),
+  });
+  expect(res.status).toBe(200);
+  await closed;
 
-    const raw = recorded.toString("latin1");
-    const head = raw.slice(0, raw.indexOf("\r\n\r\n"));
-    const body = raw.slice(raw.indexOf("\r\n\r\n") + 4);
-    expect({
-      transferEncoding: /^transfer-encoding: (.*)$/im.exec(head)?.[1],
-      contentLength: /^content-length: (.*)$/im.exec(head)?.[1],
-      body,
-    }).toEqual(expected);
-  },
-);
+  const raw = recorded.toString("latin1");
+  const head = raw.slice(0, raw.indexOf("\r\n\r\n"));
+  const body = raw.slice(raw.indexOf("\r\n\r\n") + 4);
+  expect({
+    transferEncoding: /^transfer-encoding: (.*)$/im.exec(head)?.[1],
+    contentLength: /^content-length: (.*)$/im.exec(head)?.[1],
+    body,
+  }).toEqual(expected);
+});
 
 // RFC 9112 section 5.2: an obs-fold continuation line in a response must be
 // joined into the preceding field value with SP, or the message rejected.

@@ -1188,6 +1188,36 @@ describe("new Request(input) transfers the input body", () => {
     expect(await copy.text()).toBe("override");
   });
 
+  // Bun extension: a Request supplied as the *init* argument is not the spec's
+  // input Request, so its body is teed (not transferred), matching the
+  // Response-as-init branch and Node.
+  test("new Request(url, requestAsInit) does not consume the init Request's body", async () => {
+    const src = make("from-init");
+    // @ts-expect-error Bun accepts a Request as init
+    const r = new Request("http://example.com/other", src);
+    expect(src.bodyUsed).toBe(false);
+    expect(await r.text()).toBe("from-init");
+    expect(await src.text()).toBe("from-init");
+    // and a consumed Request-as-init does not throw
+    // @ts-expect-error Bun accepts a Request as init
+    expect(() => new Request("http://example.com/other", src)).not.toThrow();
+  });
+
+  test("new Request(inputReq, requestAsInit) does not consume the init Request's body", async () => {
+    const input = make("from-input");
+    const init = make("from-init");
+    // @ts-expect-error Bun accepts a Request as init
+    const r = new Request(input, init);
+    // init supplies the body (like init.body would), so neither is the spec
+    // "inputBody" subject to step 45's transfer.
+    expect({ inputUsed: input.bodyUsed, initUsed: init.bodyUsed, rText: await r.text() }).toEqual({
+      inputUsed: false,
+      initUsed: false,
+      rText: "from-init",
+    });
+    expect(await init.text()).toBe("from-init");
+  });
+
   test("a constructor throw after the input-body check does not consume the input", async () => {
     // Bun's init.url extension validates after the loop; the transfer must not
     // have happened yet when that validation throws.

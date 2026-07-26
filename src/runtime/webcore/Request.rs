@@ -1125,16 +1125,23 @@ impl Request {
                 if let Some(request) = value.as_direct::<Request>() {
                     // SAFETY: as_direct returns a live *mut Request payload (m_ctx)
                     let request = unsafe { &*request };
+                    // Spec step 45's transfer applies only when this Request is
+                    // the *input* (arguments[0]); a Request supplied as *init*
+                    // (Bun extension) keeps the non-consuming tee, matching the
+                    // sibling Response-as-init branch below.
+                    let is_input = value == url_or_object;
                     if values_to_try.len() == 1 {
-                        if let Err(e) = request.throw_if_body_unusable(global_this) {
-                            bail!(Err(e));
+                        if is_input {
+                            if let Err(e) = request.throw_if_body_unusable(global_this) {
+                                bail!(Err(e));
+                            }
                         }
                         match Request::clone_into(
                             request,
                             &mut req,
                             global_this,
                             fields.contains(Fields::Url),
-                            true,
+                            is_input,
                         ) {
                             Ok(()) => {}
                             Err(e) => bail!(Err(e)),
@@ -1182,7 +1189,7 @@ impl Request {
                     if !fields.contains(Fields::Body) {
                         match request.body_value() {
                             BodyValue::Null | BodyValue::Empty => {}
-                            _ => {
+                            _ if is_input => {
                                 if let Err(e) = request.throw_if_body_unusable(global_this) {
                                     bail!(Err(e));
                                 }
@@ -1191,6 +1198,14 @@ impl Request {
                                 // body. `request` stays live via arguments[0].
                                 input_body_to_transfer =
                                     Some(std::ptr::from_ref(request).cast_mut());
+                                fields.insert(Fields::Body);
+                            }
+                            BodyValue::Used => {}
+                            _ => {
+                                match request.clone_body_value_via_cached_stream(global_this) {
+                                    Ok(v) => *req.body_value_mut() = v,
+                                    Err(e) => bail!(Err(e)),
+                                }
                                 fields.insert(Fields::Body);
                             }
                         }

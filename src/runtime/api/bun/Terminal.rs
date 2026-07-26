@@ -693,6 +693,31 @@ impl Terminal {
         }
     }
 
+    /// Pump any buffered PTY output into the data callback without touching
+    /// slave_fd or ref state. Called from `Subprocess::on_process_exit` for
+    /// pre-created terminals so the child's final write reaches the data
+    /// callback before `proc.exited` resolves; inline terminals go through
+    /// `drain_and_close_slave_fd` instead.
+    #[cfg(unix)]
+    pub(crate) fn drain_reader(&self) {
+        let flags = self.flags.get();
+        if flags.contains(Flags::CLOSED)
+            || !flags.contains(Flags::READER_STARTED)
+            || flags.contains(Flags::READER_DONE)
+        {
+            return;
+        }
+        // The data callback re-enters user JS and may deref; hold a +1 so
+        // `self` stays live across the call.
+        self.ref_();
+        let guard = scopeguard::guard((), |()| self.deref_());
+        // SAFETY: single JS thread; re-entrant user JS (the data callback may
+        // call `terminal.close()`) is handled via the raw-pointer dispatch
+        // convention used by `__bun_run_file_poll` for BUFFERED_READER.
+        unsafe { (*self.reader.as_ptr()).read() };
+        drop(guard);
+    }
+
     /// Drain buffered pty output, close our slave_fd, then drive the reader to
     /// EOF and unref both polls so the event loop can exit. BSD kernels flush
     /// the output queue on last slave close; holding ours until

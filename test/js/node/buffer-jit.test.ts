@@ -10,7 +10,7 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
-async function run(source: string) {
+async function run(source: string, extraEnv: Record<string, string> = {}) {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", source],
     env: {
@@ -18,6 +18,7 @@ async function run(source: string) {
       BUN_JSC_useConcurrentJIT: "0",
       // Tier up quickly and deterministically, but not so eagerly that profiling is skipped.
       BUN_JSC_jitPolicyScale: "0.05",
+      ...extraEnv,
     },
     stderr: "pipe",
     stdout: "pipe",
@@ -350,4 +351,169 @@ describe.concurrent("Buffer accessor JIT", () => {
     expect(stdout.trim()).toBe("OK");
     expect(exitCode).toBe(0);
   }, 30_000);
+
+  // Differential fuzzer: an identical seeded operation stream runs once with the JIT and once with
+  // BUN_JSC_useJIT=0; the two traces (return values, error codes/messages, and the buffer bytes
+  // after every write) must match. Ported from JSTests/stress/buffer-accessor-jit-differential.js.
+  const fuzzerSource = `
+    let seed = 0x9e3779b1;
+    function rand() { seed ^= seed << 13; seed |= 0; seed ^= seed >>> 17; seed ^= seed << 5; seed |= 0; return (seed >>> 0) / 4294967296; }
+    function pick(list) { return list[(rand() * list.length) | 0]; }
+    function randInt(lo, hi) { return lo + ((rand() * (hi - lo + 1)) | 0); }
+    const names = Object.getOwnPropertyNames(Buffer.prototype).filter(n => /^(read|write)(U?Int|Float|Double|Big)/.test(n));
+    const readers = names.filter(n => n.startsWith("read")), writers = names.filter(n => n.startsWith("write"));
+    function describeName(name) {
+      const isWrite = name.startsWith("write"), isFloat = /Float|Double/.test(name), isBigInt = /Big/.test(name);
+      const isVarWidth = /Int(LE|BE)$/.test(name) && !/(8|16|32|64)/.test(name), isSigned = !/UInt/.test(name);
+      const byteSize = /Double/.test(name) ? 8 : /Float/.test(name) ? 4 : isBigInt ? 8 : isVarWidth ? 0 : Number(name.match(/(8|16|32|64)/)[0]) / 8;
+      return { isWrite, isFloat, isBigInt, isVarWidth, isSigned, byteSize };
+    }
+    function cleanValue(shape, size) {
+      if (shape.isBigInt) return pick(shape.isSigned ? [-(2n ** 63n), 2n ** 63n - 1n, 0n, -1n, BigInt(randInt(-1e6, 1e6))] : [0n, 2n ** 64n - 1n, 12345678901234567890n, BigInt(randInt(0, 1e6))]);
+      if (shape.isFloat) return pick([() => rand() * 1e6 - 5e5, () => Math.fround(rand() * 100), () => -0, () => Infinity, () => 2 ** -1074, () => 1e300])();
+      const min = shape.isSigned ? -(2 ** (8 * size - 1)) : 0, max = shape.isSigned ? 2 ** (8 * size - 1) - 1 : 2 ** (8 * size) - 1;
+      return pick([() => min, () => max, () => randInt(min, max), () => randInt(min, max), () => 0])();
+    }
+    const dirtyValue = () => pick([() => (rand() * 2 ** 32) | 0, () => -((rand() * 2 ** 31) | 0), () => 2 ** 31, () => 2 ** 32, () => -(2 ** 31) - 1,
+      () => rand() * 1e6 - 5e5, () => 0.5, () => -0.5, () => -0, () => NaN, () => Infinity, () => -Infinity, () => 2 ** 53 + 1,
+      () => "42", () => "abc", () => "", () => true, () => false, () => null, () => undefined,
+      () => 5n, () => 2n ** 63n, () => 2n ** 64n, () => -1n, () => -(2n ** 63n) - 1n, () => Symbol("v")])();
+    const dirtyOffset = length => pick([() => randInt(0, length + 3), () => -randInt(1, 8), () => length - randInt(0, 8), () => rand() * length,
+      () => -0, () => 2 ** 31 + randInt(0, 8), () => 2 ** 32, () => 2 ** 53 + 2, () => NaN, () => Infinity, () => -Infinity,
+      () => undefined, () => null, () => String(randInt(0, length)), () => "not a number", () => true, () => Symbol("s"), () => 3n])();
+    const dirtyByteLength = () => pick([() => randInt(1, 6), () => 0, () => 7, () => -1, () => 2.5, () => NaN, () => "4", () => undefined, () => 9n])();
+    function makeReceiver() {
+      return pick([() => Buffer.alloc(32), () => Buffer.from(new ArrayBuffer(64), 8, 24), () => Buffer.alloc(7),
+        () => Buffer.from(new ArrayBuffer(16, { maxByteLength: 64 })),
+        () => Buffer.from(new ArrayBuffer(48, { maxByteLength: 64 }), 8, 16)])();
+    }
+    function makeInvoker(name) {
+      if (!/^[A-Za-z0-9]+$/.test(name)) throw new Error("bad name " + name);
+      return new Function("return function invoke_" + name + "(receiver, args, box) { try { let result;" +
+        " switch (args.length) { case 0: result = receiver." + name + "(); break;" +
+        " case 1: result = receiver." + name + "(args[0]); break;" +
+        " case 2: result = receiver." + name + "(args[0], args[1]); break;" +
+        " default: result = receiver." + name + "(args[0], args[1], args[2]); break; }" +
+        " box.value = result; box.error = null; } catch (e) { box.value = undefined;" +
+        " box.error = e === null || typeof e !== 'object' ? 'throw:' + String(e) : 'throw:' + e.constructor.name + ':' + (e.code === undefined ? '' : e.code) + ':' + e.message; } };")();
+    }
+    const invokers = new Map();
+    const invokerFor = name => { let f = invokers.get(name); if (!f) invokers.set(name, (f = makeInvoker(name))); return f; };
+    const fmt = v => typeof v === "bigint" ? v + "n" : typeof v === "symbol" ? "Symbol" : Object.is(v, -0) ? "-0" : String(v);
+    let digest = 0x811c9dc5;
+    const mix = str => { for (let i = 0; i < str.length; i++) { digest ^= str.charCodeAt(i); digest = Math.imul(digest, 0x01000193); } };
+    const box = { value: undefined, error: null };
+    let ops = 0;
+    for (let round = 0; round < 40; ++round) {
+      const receiver = makeReceiver();
+      const name = pick(rand() < 0.5 ? readers : writers);
+      const shape = describeName(name), clean = rand() < 0.6, invoke = invokerFor(name);
+      const width = shape.isVarWidth ? randInt(1, 6) : shape.byteSize;
+      let resizeCountdown = clean ? Infinity : 100 + randInt(0, 400);
+      for (let step = 0; step < 850; ++step) {
+        const args = [];
+        const maxOffset = receiver.length - width;
+        if (clean) {
+          if (maxOffset < 0) break;
+          if (shape.isWrite) args.push(cleanValue(shape, width));
+          args.push(randInt(0, maxOffset));
+          if (shape.isVarWidth) args.push(width);
+        } else {
+          if (shape.isWrite) args.push(dirtyValue());
+          if (rand() < 0.9 || shape.isVarWidth) args.push(dirtyOffset(receiver.length));
+          if (shape.isVarWidth) args.push(dirtyByteLength());
+          while (args.length && args[args.length - 1] === undefined && rand() < 0.3) args.pop();
+          if (args.length && typeof args[args.length - 1] === "symbol" && rand() < 0.5) args[args.length - 1] = 0;
+        }
+        invoke(receiver, args, box);
+        ops++;
+        let bytes;
+        try { bytes = Array.prototype.join.call(receiver, ","); } catch { bytes = "<oob>"; }
+        mix(name + "|" + args.map(fmt).join(",") + "=>" + (box.error === null ? fmt(box.value) : box.error) + "|" + bytes);
+        if (--resizeCountdown === 0) {
+          resizeCountdown = 100 + randInt(0, 400);
+          const ab = receiver.buffer;
+          if (typeof ab.resize === "function" && ab.resizable) { try { ab.resize(randInt(0, ab.maxByteLength)); } catch {} }
+        }
+      }
+    }
+    console.log("digest=" + (digest >>> 0).toString(16) + " ops=" + ops);
+  `;
+
+  test("differential fuzzer: JIT and useJIT=0 agree on every result, error and byte", async () => {
+    const [jit, reference] = await Promise.all([run(fuzzerSource), run(fuzzerSource, { BUN_JSC_useJIT: "0" })]);
+    expect(jit.stderr).toBe("");
+    expect(reference.stderr).toBe("");
+    expect(jit.exitCode).toBe(0);
+    expect(reference.exitCode).toBe(0);
+    const parse = (out: string) => Object.fromEntries(out.trim().split(/\s+/).map(kv => kv.split("=")));
+    const jitResult = parse(jit.stdout), referenceResult = parse(reference.stdout);
+    // A meaningful volume actually ran, and the JIT arm reproduces the interpreter's trace exactly.
+    expect(Number(referenceResult.ops)).toBeGreaterThan(20_000);
+    expect(jitResult.ops).toBe(referenceResult.ops);
+    expect(jitResult.digest).toBe(referenceResult.digest);
+  }, 120_000);
+
+  test("a >2GB receiver stays optimized: no exit storm, and OOB still throws", async () => {
+    const { stdout, stderr, exitCode } = await run(
+      prelude +
+        `
+      let big;
+      try { big = new Uint8Array(3 * 2**30); } catch { console.log("OK"); process.exit(0); }
+      Object.setPrototypeOf(big, Buffer.prototype);
+      const small = Buffer.alloc(64);
+      function readAt(b, o) { return b.readInt32LE(o); }
+      function writeAt(b, v, o) { return b.writeInt32LE(v, o); }
+      noInline(readAt); noInline(writeAt);
+      const top = 2 ** 31 - 4;
+      for (let i = 0; i < N * 10; i++) {
+        assert(writeAt(big, i, 100) === 104, "write low");
+        assert(readAt(big, 100) === i, "read low");
+        assert(writeAt(big, ~i, top) === top + 4, "write at the int32 offset ceiling");
+        assert(readAt(big, top) === ~i, "read at the int32 offset ceiling");
+        assert(writeAt(small, i, 60) === 64 && readAt(small, 60) === i, "the same site with a small receiver");
+      }
+      const compiles = Math.max(numberOfDFGCompiles(readAt), numberOfDFGCompiles(writeAt));
+      assert(compiles <= 3, "the large receiver caused recompiles: " + compiles);
+      let threw = 0;
+      for (let i = 0; i < 200; i++) { try { readAt(big, big.length - 3); } catch (e) { threw += e.code === "ERR_OUT_OF_RANGE"; } }
+      assert(threw === 200, "straddling the end of a >2GB view throws");
+      console.log("OK");
+    `,
+    );
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("OK");
+    expect(exitCode).toBe(0);
+  }, 120_000);
+
+  test("views with 2GB and ~4GB byteOffsets read and write correctly after tier-up", async () => {
+    const { stdout, stderr, exitCode } = await run(
+      prelude +
+        `
+      let ab;
+      try { ab = new ArrayBuffer(4 * 2**30); } catch { console.log("OK"); process.exit(0); }
+      const tailOffset = 4 * 2**30 - 64;
+      const tail = Buffer.from(ab, tailOffset, 64);
+      const wide = Buffer.from(ab, 2**31);
+      const raw = new DataView(ab);
+      function readAt(v, o) { return v.readInt32LE(o); }
+      function writeAt(v, x, o) { return v.writeInt32LE(x, o); }
+      noInline(readAt); noInline(writeAt);
+      for (let i = 0; i < N; i++) {
+        assert(writeAt(tail, i, 8) === 12 && readAt(tail, 8) === i, "~4GB byteOffset view");
+        assert(writeAt(wide, ~i, wide.length - 4) === wide.length && readAt(wide, wide.length - 4) === ~i, "2GB byteOffset view");
+      }
+      assert(raw.getInt32(tailOffset + 8, true) === N - 1, "the store landed at byteOffset + offset");
+      assert(raw.getInt32(2**31 + wide.length - 4, true) === ~(N - 1), "the store landed at the 2GB byteOffset");
+      let threw = false;
+      try { readAt(tail, 61); } catch (e) { threw = e.code === "ERR_OUT_OF_RANGE"; }
+      assert(threw, "straddling the end of the tiny high-offset view throws");
+      console.log("OK");
+    `,
+    );
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("OK");
+    expect(exitCode).toBe(0);
+  }, 120_000);
 });
+

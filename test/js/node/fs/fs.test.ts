@@ -2926,6 +2926,12 @@ describe("rm", () => {
           syscall: e.syscall,
           path: String(e.path).slice(R.length).split(path.sep).join("/"),
         });
+      const rearm = () => {
+        fs.chmodSync(path.join(root, "a", "locked"), 0o755);
+        fs.mkdirSync(path.join(root, "a", "locked"), { recursive: true });
+        fs.writeFileSync(path.join(root, "a", "locked", "keep"), "");
+        fs.chmodSync(path.join(root, "a", "locked"), 0o555);
+      };
       const out = {};
       try {
         fs.rmSync(root, { recursive: true });
@@ -2933,18 +2939,24 @@ describe("rm", () => {
       } catch (e) {
         out.sync = report(e);
       }
-      fs.chmodSync(path.join(root, "a", "locked"), 0o755);
-      fs.mkdirSync(path.join(root, "a", "locked"), { recursive: true });
-      fs.writeFileSync(path.join(root, "a", "locked", "keep"), "");
-      fs.chmodSync(path.join(root, "a", "locked"), 0o555);
-      fs.promises.rm(root, { recursive: true }).then(
-        () => (out.promise = "no-error"),
-        e => (out.promise = report(e)),
-      ).then(() => {
-        fs.chmodSync(path.join(root, "a", "locked"), 0o755);
-        fs.rmSync(R, { recursive: true, force: true });
-        console.log(JSON.stringify(out));
-      });
+      rearm();
+      fs.promises
+        .rm(root, { recursive: true })
+        .then(() => (out.promise = "no-error"), e => (out.promise = report(e)))
+        .then(() => {
+          rearm();
+          return new Promise(r =>
+            fs.rm(root, { recursive: true }, e => {
+              out.cb = e ? report(e) : "no-error";
+              r();
+            }),
+          );
+        })
+        .then(() => {
+          fs.chmodSync(path.join(root, "a", "locked"), 0o755);
+          fs.rmSync(R, { recursive: true, force: true });
+          console.log(JSON.stringify(out));
+        });
     `;
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", fixture],
@@ -2960,9 +2972,10 @@ describe("rm", () => {
     const expected = isLinux
       ? { code: "EACCES", syscall: "unlink", path: "/tree/a/locked/keep" }
       : { code: "ENOTEMPTY", syscall: "rmdir", path: "/tree/a/locked" };
-    expect({ sync: JSON.parse(out.sync), promise: JSON.parse(out.promise) }).toEqual({
+    expect({ sync: JSON.parse(out.sync), promise: JSON.parse(out.promise), cb: JSON.parse(out.cb) }).toEqual({
       sync: expected,
       promise: expected,
+      cb: expected,
     });
     expect(exitCode).toBe(0);
   });

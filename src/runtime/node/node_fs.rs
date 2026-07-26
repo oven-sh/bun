@@ -7688,9 +7688,12 @@ impl NodeFS {
             let resolved = args.path.slice_z(&mut self.sync_error_buf).as_bytes();
             #[cfg(not(windows))]
             let resolved = args.path.slice();
-            if let Err(mut err) =
-                zig_delete_tree(&sys::Dir::cwd(), resolved, sys::FileKind::Directory)
-            {
+            if let Err(mut err) = zig_delete_tree(
+                &sys::Dir::cwd(),
+                resolved,
+                args.path.slice(),
+                sys::FileKind::Directory,
+            ) {
                 let mut errno = err.get_errno();
                 if errno == E::EACCES {
                     errno = E::EPERM;
@@ -7731,7 +7734,12 @@ impl NodeFS {
             let resolved = args.path.slice_z(&mut self.sync_error_buf).as_bytes();
             #[cfg(not(windows))]
             let resolved = args.path.slice();
-            if let Err(err) = zig_delete_tree(&sys::Dir::cwd(), resolved, sys::FileKind::File) {
+            if let Err(err) = zig_delete_tree(
+                &sys::Dir::cwd(),
+                resolved,
+                args.path.slice(),
+                sys::FileKind::File,
+            ) {
                 if err.get_errno() == E::ENOENT {
                     if args.force {
                         return Ok(());
@@ -9579,9 +9587,9 @@ fn dt_map_errno(errno: E) -> E {
     }
 }
 
-/// sub_path / stack[1..].name / leaf (stack[0] *is* sub_path, hence skipped).
-fn dt_join_path(sub_path: &[u8], stack: &[DeleteTreeStackItem], leaf: &[u8]) -> Vec<u8> {
-    let mut cap = sub_path.len();
+/// err_root / stack[1..].name / leaf (stack[0] *is* the root, hence skipped).
+fn dt_join_path(err_root: &[u8], stack: &[DeleteTreeStackItem], leaf: &[u8]) -> Vec<u8> {
+    let mut cap = err_root.len();
     for item in stack.iter().skip(1) {
         cap += 1 + item.name.len();
     }
@@ -9589,7 +9597,7 @@ fn dt_join_path(sub_path: &[u8], stack: &[DeleteTreeStackItem], leaf: &[u8]) -> 
         cap += 1 + leaf.len();
     }
     let mut out = Vec::with_capacity(cap);
-    out.extend_from_slice(sub_path);
+    out.extend_from_slice(err_root);
     for item in stack.iter().skip(1) {
         if !matches!(out.last(), Some(&paths::SEP)) {
             out.push(paths::SEP);
@@ -9695,9 +9703,14 @@ struct DeleteTreeStackItem {
 }
 
 /// Recursive delete; errors name the failing entry's full path and syscall. Top-level `ENOENT` propagates (for `{force:false}`).
-pub fn zig_delete_tree(self_: &sys::Dir, sub_path: &[u8], kind_hint: sys::FileKind) -> Maybe<()> {
+pub fn zig_delete_tree(
+    self_: &sys::Dir,
+    sub_path: &[u8],
+    err_root: &[u8],
+    kind_hint: sys::FileKind,
+) -> Maybe<()> {
     let initial_iterable_dir =
-        match zig_delete_tree_open_initial_subpath(self_, sub_path, kind_hint, sub_path)? {
+        match zig_delete_tree_open_initial_subpath(self_, sub_path, kind_hint, err_root)? {
             Some(d) => d,
             None => return Ok(()),
         };
@@ -9733,7 +9746,7 @@ pub fn zig_delete_tree(self_: &sys::Dir, sub_path: &[u8], kind_hint: sys::FileKi
                     return Err(dt_err(
                         err.get_errno(),
                         sys::Tag::scandir,
-                        &dt_join_path(sub_path, &stack[..=top_idx], b""),
+                        &dt_join_path(err_root, &stack[..=top_idx], b""),
                     ));
                 }
             };
@@ -9784,26 +9797,26 @@ pub fn zig_delete_tree(self_: &sys::Dir, sub_path: &[u8], kind_hint: sys::FileKi
                                     return Err(dt_err(
                                         E::ENOTEMPTY,
                                         sys::Tag::rmdir,
-                                        &dt_join_path(sub_path, &stack[..=top_idx], b""),
+                                        &dt_join_path(err_root, &stack[..=top_idx], b""),
                                     ));
                                 }
                                 return Err(dt_err(
                                     e,
                                     sys::Tag::open,
-                                    &dt_join_path(sub_path, &stack[..=top_idx], &entry_name),
+                                    &dt_join_path(err_root, &stack[..=top_idx], &entry_name),
                                 ));
                             }
                             Err(e) => {
                                 return Err(dt_err(
                                     e,
                                     sys::Tag::open,
-                                    &dt_join_path(sub_path, &stack[..=top_idx], &entry_name),
+                                    &dt_join_path(err_root, &stack[..=top_idx], &entry_name),
                                 ));
                             }
                         }
                     } else {
                         let top_fd = stack[top_idx].iter.iter.dir;
-                        let prefix = dt_join_path(sub_path, &stack[..=top_idx], &entry_name);
+                        let prefix = dt_join_path(err_root, &stack[..=top_idx], &entry_name);
                         zig_delete_tree_min_stack_size_with_kind_hint(
                             sys::Dir::borrow(&top_fd),
                             &entry_name,
@@ -9843,20 +9856,20 @@ pub fn zig_delete_tree(self_: &sys::Dir, sub_path: &[u8], kind_hint: sys::FileKi
                                 return Err(dt_err(
                                     E::ENOTEMPTY,
                                     sys::Tag::rmdir,
-                                    &dt_join_path(sub_path, &stack[..=top_idx], b""),
+                                    &dt_join_path(err_root, &stack[..=top_idx], b""),
                                 ));
                             }
                             return Err(dt_err(
                                 e,
                                 sys::Tag::unlink,
-                                &dt_join_path(sub_path, &stack[..=top_idx], &entry_name),
+                                &dt_join_path(err_root, &stack[..=top_idx], &entry_name),
                             ));
                         }
                         Err(e) => {
                             return Err(dt_err(
                                 e,
                                 sys::Tag::unlink,
-                                &dt_join_path(sub_path, &stack[..=top_idx], &entry_name),
+                                &dt_join_path(err_root, &stack[..=top_idx], &entry_name),
                             ));
                         }
                     }
@@ -9880,9 +9893,9 @@ pub fn zig_delete_tree(self_: &sys::Dir, sub_path: &[u8], kind_hint: sys::FileKi
         };
         let popped_path = |stack: &[DeleteTreeStackItem]| -> Vec<u8> {
             if top.name_is_borrowed {
-                sub_path.to_vec()
+                err_root.to_vec()
             } else {
-                dt_join_path(sub_path, stack, &top.name)
+                dt_join_path(err_root, stack, &top.name)
             }
         };
 
@@ -9914,7 +9927,7 @@ pub fn zig_delete_tree(self_: &sys::Dir, sub_path: &[u8], kind_hint: sys::FileKi
                         return Err(dt_err(
                             E::ENOTEMPTY,
                             sys::Tag::rmdir,
-                            &dt_join_path(sub_path, stack, b""),
+                            &dt_join_path(err_root, stack, b""),
                         ));
                     }
                 }

@@ -55,6 +55,90 @@ test(`should not duplicate transfer-encoding header in request`, async () => {
   return promise;
 });
 
+// Node's _storeHeader: an explicit Transfer-Encoding: chunked sets
+// chunkedEncoding=true regardless of Content-Length (matchHeader tests the TE
+// value; the CL branch only records _contentLength). Both headers go on the
+// wire verbatim and the body is chunk-framed. Asserted against Node v26.3.0.
+test("explicit Transfer-Encoding: chunked chunk-frames the body even with Content-Length", async () => {
+  await using server = createServer((req, res) => {
+    res.setHeader("Content-Length", "5");
+    res.setHeader("Transfer-Encoding", "chunked");
+    if (req.url === "/end") {
+      res.end("hello");
+    } else if (req.url === "/write") {
+      res.write("he");
+      res.write("llo");
+      res.end();
+    } else {
+      res.flushHeaders();
+      res.write("hello");
+      res.end();
+    }
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const { port } = server.address() as AddressInfo;
+
+  const wire = (path: string) =>
+    new Promise<string>((resolve, reject) => {
+      const s = connect(port, "127.0.0.1");
+      let data = "";
+      s.on("data", c => (data += c));
+      s.on("close", () => resolve(data));
+      s.on("error", reject);
+      s.write(`GET ${path} HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n`);
+    });
+
+  for (const path of ["/end", "/write", "/flush"]) {
+    const raw = await wire(path);
+    const [head, ...rest] = raw.split("\r\n\r\n");
+    const body = rest.join("\r\n\r\n");
+    // Both user-set headers ship verbatim, once each.
+    expect(head.match(/^transfer-encoding:/gim)).toHaveLength(1);
+    expect(head.match(/^content-length:/gim)).toHaveLength(1);
+    expect(head).toMatch(/^transfer-encoding: chunked$/im);
+    expect(head).toMatch(/^content-length: 5$/im);
+    // Body is chunk-framed: hex-size line(s), then the terminating 0 chunk.
+    expect(body).toMatch(/^[0-9a-f]+\r\n/i);
+    expect(body).toEndWith("0\r\n\r\n");
+    // Reassembled payload is exactly "hello".
+    const chunks: string[] = [];
+    let s = body;
+    for (;;) {
+      const m = /^([0-9a-f]+)\r\n/i.exec(s);
+      if (!m) break;
+      const n = parseInt(m[1], 16);
+      s = s.slice(m[0].length);
+      if (n === 0) break;
+      chunks.push(s.slice(0, n));
+      s = s.slice(n + 2);
+    }
+    expect(chunks.join("")).toBe("hello");
+  }
+});
+
+test("Content-Length with a non-chunked Transfer-Encoding keeps identity framing", async () => {
+  await using server = createServer((req, res) => {
+    res.setHeader("Content-Length", "5");
+    res.setHeader("Transfer-Encoding", "identity");
+    res.end("hello");
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const { port } = server.address() as AddressInfo;
+
+  const raw = await new Promise<string>((resolve, reject) => {
+    const s = connect(port, "127.0.0.1");
+    let data = "";
+    s.on("data", c => (data += c));
+    s.on("close", () => resolve(data));
+    s.on("error", reject);
+    s.write("GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+  });
+  const [head, body] = raw.split("\r\n\r\n");
+  expect(head).toMatch(/^transfer-encoding: identity$/im);
+  expect(head).toMatch(/^content-length: 5$/im);
+  expect(body).toBe("hello");
+});
+
 test("should not duplicate transfer-encoding header in response when explicitly set", async () => {
   await using server = createServer((req, res) => {
     res.writeHead(200, { "Transfer-Encoding": "chunked" });

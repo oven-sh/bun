@@ -981,10 +981,16 @@ static bool NodeHTTPServer__writeHead(
                 // node:http marks framing decisions with a NUL-named sentinel
                 // pair instead of a real header: value "1" = close-delimited
                 // (the user removed the framing headers), value "2" = no body
-                // (HEAD - suppress all body framing like 204/304).
+                // (HEAD - suppress all body framing like 204/304), value "3" =
+                // app-forced chunked (user set both Content-Length and
+                // Transfer-Encoding: chunked; node honours the explicit TE, so
+                // drop the Content-Length bit from the framing decision - both
+                // headers stay on the wire, the body is chunk-framed).
                 if (name.length() == 1 && name[0] == 0) {
                     if (value == "2"_s) {
                         httpResponseData->state |= uWS::HttpResponseData<isSSL>::HTTP_NO_BODY_STATUS;
+                    } else if (value == "3"_s) {
+                        httpResponseData->state &= ~uWS::HttpResponseData<isSSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER;
                     } else {
                         httpResponseData->state |= uWS::HttpResponseData<isSSL>::HTTP_CLOSE_DELIMITED;
                     }

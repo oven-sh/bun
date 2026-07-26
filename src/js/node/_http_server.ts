@@ -2414,6 +2414,17 @@ function renderNativeHeaders(res) {
       // The user removed Content-Length (only): advertise chunked so the native
       // side frames the body instead of auto-writing the removed header back.
       flat.push("Transfer-Encoding", "chunked");
+    } else if (storedTransferEncoding !== undefined && storedContentLength !== undefined) {
+      // Both framing headers set by the user. Node's _storeHeader honours an
+      // explicit Transfer-Encoding: chunked (matchHeader sets chunkedEncoding)
+      // and ships both headers with a chunk-framed body; the native framer's
+      // decision ignores the TE bit once Content-Length is present, so signal
+      // the override through the NUL-named sentinel pair so the Content-Length
+      // state is dropped from the framing decision.
+      const teValue = storedTransferEncoding[1];
+      if (chunkExpression.test($isArray(teValue) ? teValue.join(", ") : String(teValue))) {
+        flat.push("\u0000", "3");
+      }
     }
   } catch (e) {
     // String(value) above can run user toString() that throws; release the

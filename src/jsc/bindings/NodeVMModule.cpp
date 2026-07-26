@@ -49,8 +49,6 @@ JSArray* NodeVMModuleRequest::toJS(JSGlobalObject* globalObject) const
     return array;
 }
 
-bool checkForTermination(JSC::VM&, JSC::JSGlobalObject*, JSC::ThrowScope&, SigintReceiver*, NodeVMWatchdogScope*);
-
 void NodeVMModule::reconcileEvaluationState(JSC::VM& vm)
 {
     if (m_status != Status::Evaluating)
@@ -100,7 +98,7 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
                 watchdog->disarm();
             // Satisfy the exception-check validator before checkForTermination's TOP scope.
             std::ignore = scope.exception();
-            if (checkForTermination(vm, globalObject, scope, this, watchdog ? &*watchdog : nullptr))
+            if (checkForTermination(vm, nodeVmGlobalObject, scope, this, watchdog ? &*watchdog : nullptr))
                 return {};
             RETURN_IF_EXCEPTION(scope, {});
         }

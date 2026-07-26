@@ -1415,6 +1415,21 @@ describe.concurrent("node:vm nested evaluation propagates an enclosing terminati
     ).toEqual({ stdout: "outer:ERR_SCRIPT_EXECUTION_TIMEOUT\nalive", stderr: "", exitCode: 0, signalCode: null });
   });
 
+  test("outer timeout fires inside an inner runInNewContext with a longer timeout", async () => {
+    expect(
+      await run(`
+        const vm = require("node:vm");
+        const inner = () => {
+          try { return vm.runInNewContext("while(true){}", {}, { timeout: 60000 }); }
+          catch (e) { return "inner-threw:" + (e && e.code); }
+        };
+        try { console.log("outer:" + vm.runInNewContext("inner()", { inner }, { timeout: 70 })); }
+        catch (e) { console.log("outer:" + (e && e.code)); }
+        console.log("alive");
+      `),
+    ).toEqual({ stdout: "outer:ERR_SCRIPT_EXECUTION_TIMEOUT\nalive", stderr: "", exitCode: 0, signalCode: null });
+  });
+
   test("outer timeout fires inside an inner untimed runInThisContext", async () => {
     expect(
       await run(`

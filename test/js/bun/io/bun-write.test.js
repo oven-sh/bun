@@ -1,6 +1,6 @@
 import { describe, expect, it, test } from "bun:test";
 import fs, { mkdirSync } from "fs";
-import { bunEnv, bunExe, exampleHtml, exampleSite, gcTick, isWindows, tempDir, withoutAggressiveGC } from "harness";
+import { bunEnv, bunExe, exampleHtml, exampleSite, gcTick, isMacOS, isWindows, tempDir, withoutAggressiveGC } from "harness";
 import path, { join } from "path";
 
 let i = 0;
@@ -826,7 +826,11 @@ it("Bun.write(Bun.stdout, <empty source>) does not truncate the destination", as
   }
 });
 
-it("Bun.write(Bun.stdout, '') does not drop concurrent in-flight writes when stdout is a file", async () => {
+// XNU's dofilewrite updates the shared fg_offset with a non-atomic `+= bytecnt` RMW, so
+// concurrent write(2) on a shared fd without O_APPEND can double-count the increment and
+// leave a NUL sparse hole independently of this PR's fix. Linux f_pos_lock serializes the
+// offset update, so nulBytes === 0 is a real invariant there.
+it.skipIf(isMacOS)("Bun.write(Bun.stdout, '') does not drop concurrent in-flight writes when stdout is a file", async () => {
   // Many fire-and-forget Bun.write(Bun.stdout, chunk) calls are dispatched to the thread
   // pool. An empty-string write used to synchronously ftruncate(fd, 0) on the main thread,
   // which discarded already-written bytes without resetting the kernel file offset, so the
@@ -857,10 +861,6 @@ it("Bun.write(Bun.stdout, '') does not drop concurrent in-flight writes when std
   });
   const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
   const buf = fs.readFileSync(out);
-  // XNU doesn't serialize the file offset for concurrent write(2) on a shared fd without
-  // O_APPEND (unlike Linux f_pos_lock), so bytes from different chunks may overlap and the
-  // exact size / line set isn't portable. Assert only what the fix guarantees: every promise
-  // fulfils with its byte count, and no NUL hole appears (the pre-fix ftruncate left one).
   expect({
     stderr,
     nulBytes: buf.indexOf(0) === -1 ? 0 : Array.prototype.reduce.call(buf, (a, b) => a + (b === 0 ? 1 : 0), 0),

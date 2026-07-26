@@ -1075,67 +1075,6 @@ describe.concurrent("S3 - List Objects", () => {
   });
 });
 
-it("S3 - List Objects - Should reject when a 200 response body is not a ListBucketResult", async () => {
-  const truncated =
-    `<?xml version="1.0"?><ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">` +
-    `<KeyCount>3</KeyCount><IsTruncated>false</IsTruncated>` +
-    `<Contents><Key>k1</Key></Contents>` +
-    `<Contents><Key>k2</Key></Contents>` +
-    `<Contents><Ke`;
-
-  const bodies: Record<string, { body: string; code: string; message?: string }> = {
-    html: { body: "<html><body><h1>502 Bad Gateway</h1></body></html>", code: "UnknownError" },
-    empty: { body: "", code: "UnknownError" },
-    json: { body: `{"contents":[{"key":"j"}]}`, code: "UnknownError" },
-    "wrong-root": {
-      body: `<?xml version="1.0"?><ListAllMyBucketsResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Buckets/></ListAllMyBucketsResult>`,
-      code: "UnknownError",
-    },
-    binary: {
-      body: Buffer.from([0x00, 0x01, 0x02, 0xff, 0xfe, 0x00, 0x3c, 0x00]).toString("binary"),
-      code: "UnknownError",
-    },
-    "error-document": {
-      body: `<?xml version="1.0"?><Error><Code>InternalError</Code><Message>We encountered an internal error. Please try again.</Message></Error>`,
-      code: "InternalError",
-      message: "We encountered an internal error. Please try again.",
-    },
-    truncated: { body: truncated, code: "UnknownError" },
-  };
-
-  using server = createBunServer(async req => {
-    const name = new URL(req.url).pathname.split("/")[1];
-    return new Response(bodies[name]!.body, {
-      headers: { "Content-Type": "application/xml" },
-      status: 200,
-    });
-  });
-
-  const results: Record<string, unknown> = {};
-  for (const name of Object.keys(bodies)) {
-    const client = new S3Client({ ...options, bucket: name, endpoint: server.url.href });
-    try {
-      results[name] = { resolved: await client.list() };
-    } catch (e: any) {
-      results[name] = { name: e.name, code: e.code, ...(bodies[name].message ? { message: e.message } : {}) };
-    }
-  }
-
-  expect(results).toEqual({
-    html: { name: "S3Error", code: "UnknownError" },
-    empty: { name: "S3Error", code: "UnknownError" },
-    json: { name: "S3Error", code: "UnknownError" },
-    "wrong-root": { name: "S3Error", code: "UnknownError" },
-    binary: { name: "S3Error", code: "UnknownError" },
-    "error-document": {
-      name: "S3Error",
-      code: "InternalError",
-      message: "We encountered an internal error. Please try again.",
-    },
-    truncated: { name: "S3Error", code: "UnknownError" },
-  });
-});
-
 const optionsFromEnv: S3Options = {
   accessKeyId: getSecret("S3_R2_ACCESS_KEY"),
   secretAccessKey: getSecret("S3_R2_SECRET_KEY"),

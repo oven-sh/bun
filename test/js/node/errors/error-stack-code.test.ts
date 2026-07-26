@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { Buffer } from "node:buffer";
 import { EventEmitter } from "node:events";
 import fs from "node:fs";
+import { addAbortSignal, Readable } from "node:stream";
 import util from "node:util";
 
 function capture(fn: () => unknown): NodeJS.ErrnoException {
@@ -80,6 +81,20 @@ describe("Node.js ERR_* error .stack header includes [code]", () => {
     const err = capture(() => fs.readFileSync("/nonexistent-path-for-bun-errno-test"));
     expect(err.code).toBe("ENOENT");
     expect(String(err.stack).split("\n")[0]).not.toContain("[ENOENT]");
+  });
+
+  test("AbortError (ABORT_ERR) does not get a bracket", async () => {
+    const ac = new AbortController();
+    const r = new Readable({ read() {} });
+    addAbortSignal(ac.signal, r);
+    const { promise, resolve } = Promise.withResolvers<NodeJS.ErrnoException>();
+    r.on("error", resolve);
+    ac.abort();
+    const err = await promise;
+    expect(err.code).toBe("ABORT_ERR");
+    expect(err.name).toBe("AbortError");
+    Error.captureStackTrace(err);
+    expect(String(err.stack).split("\n")[0]).toStartWith("AbortError: ");
   });
 
   test("default Error.prepareStackTrace() uses name and bracketed code", () => {

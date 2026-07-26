@@ -164,8 +164,10 @@ impl StaticRoute {
                 )));
             }
             if status == 101 {
-                return Err(global_this
-                    .throw_invalid_arguments(format_args!("{}", HTTPStatusText::ROUTE_101_REFUSED)));
+                return Err(global_this.throw_invalid_arguments(format_args!(
+                    "{}",
+                    HTTPStatusText::ROUTE_101_REFUSED
+                )));
             }
 
             // The user may want to pass in the same Response object multiple endpoints

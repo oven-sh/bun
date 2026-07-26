@@ -468,7 +468,7 @@ function getCallSites(frameCount = 10, options) {
       Error.stackTraceLimit = frameCount;
     } catch {}
     Error.captureStackTrace(target, getCallSites);
-    return target.stack;
+    return $isJSArray(target.stack) ? target.stack : [];
   } finally {
     try {
       Error.prepareStackTrace = savedPrepareStackTrace;

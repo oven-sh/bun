@@ -233,13 +233,12 @@ describe("--frozen-intrinsics", () => {
         ["--frozen-intrinsics"],
         `let assertCode;
          try { require("assert").strictEqual(1, 2); assertCode = "no throw"; } catch (e) { assertCode = e.code; }
-         let callSitesThrew = false;
-         try { require("util").getCallSites(); } catch { callSitesThrew = true; }
+         const sites = require("util").getCallSites();
          let traceThrew = false;
          try { require("trace_events").createTracing({categories:["node.console"]}).enable(); } catch { traceThrew = true; }
-         console.log(JSON.stringify({ assert: assertCode, callSitesThrew, traceThrew }));`,
+         console.log(JSON.stringify({ assert: assertCode, callSitesIsArray: Array.isArray(sites), traceThrew }));`,
       );
-      expect(JSON.parse(stdout)).toEqual({ assert: "ERR_ASSERTION", callSitesThrew: false, traceThrew: false });
+      expect(JSON.parse(stdout)).toEqual({ assert: "ERR_ASSERTION", callSitesIsArray: true, traceThrew: false });
       expect(exitCode).toBe(0);
     },
     SLOW,

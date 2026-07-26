@@ -30,21 +30,20 @@ test.skipIf(skip)(
       bv.setUint8(${MAX_LENGTH - 2}, 0x59);
       bv.setUint8(${MAX_LENGTH - 1}, 0x5a);
 
-      const g = zlib.gzipSync(b);
-      b = null;
-      Bun.gc(true);
-
-      const r = zlib.gunzipSync(g);
-      const rv = new DataView(r.buffer, r.byteOffset, r.byteLength);
-      const at = i => (i < r.length ? rv.getUint8(i) : null);
-      console.log(
-        JSON.stringify({
+      const result = {};
+      for (const chunkSize of ["default", 64 * 1024 * 1024]) {
+        const g = zlib.gzipSync(b, chunkSize === "default" ? undefined : { chunkSize });
+        const r = zlib.gunzipSync(g);
+        const rv = new DataView(r.buffer, r.byteOffset, r.byteLength);
+        const at = i => (i < r.length ? rv.getUint8(i) : null);
+        result[chunkSize] = {
           rtLen: r.length,
           first: at(0),
           penult: at(${MAX_LENGTH - 2}),
           last: at(${MAX_LENGTH - 1}),
-        }),
-      );
+        };
+      }
+      console.log(JSON.stringify(result));
     `;
 
     await using proc = Bun.spawn({
@@ -62,13 +61,9 @@ test.skipIf(skip)(
     if (out === "SKIP") return;
 
     expect(stderr).toBe("");
-    // With the bug: { rtLen: 4294967295, first: 65, penult: 90, last: null }.
-    expect(out).toEqual({
-      rtLen: MAX_LENGTH,
-      first: 0x41,
-      penult: 0x59,
-      last: 0x5a,
-    });
+    // With the bug: default -> { rtLen: 4294967295, first: 65, penult: 90, last: null }.
+    const want = { rtLen: MAX_LENGTH, first: 0x41, penult: 0x59, last: 0x5a };
+    expect(out).toEqual({ default: want, [64 * 1024 * 1024]: want });
     expect(exitCode).toBe(0);
   },
   240_000,

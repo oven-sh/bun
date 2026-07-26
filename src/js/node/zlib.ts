@@ -21,6 +21,8 @@ const ArrayBufferIsView = ArrayBuffer.isView;
 const isArrayBufferView = ArrayBufferIsView;
 const isAnyArrayBuffer = b => b instanceof ArrayBuffer || b instanceof SharedArrayBuffer;
 const kMaxLength = $requireMap.$get("buffer")?.exports.kMaxLength ?? BufferModule.kMaxLength;
+// Native write/writeSync read in_len as a u32; anything larger must be windowed.
+const U32_MAX = 0xffff_ffff;
 
 const { Transform, finished } = require("node:stream");
 const owner_symbol = Symbol("owner_symbol");
@@ -332,10 +334,10 @@ function processChunkSync(self, chunk, flushFlag) {
   });
 
   while (true) {
-    // Native in_len is u32; feed a MAX_LENGTH (2^32) chunk in u32 windows.
-    const inLen = availInBefore > 0xffff_ffff ? 0xffff_ffff : availInBefore;
+    const inLen = availInBefore > U32_MAX ? U32_MAX : availInBefore;
+    const lastInputWindow = inLen === availInBefore;
     handle.writeSync(
-      flushFlag,
+      lastInputWindow ? flushFlag : self._defaultFlushFlag,
       chunk, // in
       inOff, // in_off
       inLen, // in_len
@@ -359,6 +361,7 @@ function processChunkSync(self, chunk, flushFlag) {
     inputRead += inDelta;
 
     const have = availOutBefore - availOutAfter;
+    availOutBefore = availOutAfter;
     if (have > 0) {
       const out = buffer.slice(offset, offset + have);
       offset += have;
@@ -381,7 +384,7 @@ function processChunkSync(self, chunk, flushFlag) {
       buffer = Buffer.allocUnsafe(chunkSize);
     }
 
-    if (availOutAfter === 0 || inLen < availInBefore) {
+    if (availOutAfter === 0 || !lastInputWindow) {
       // Not actually done. Need to reprocess.
       // Also, update the availInBefore to the availInAfter value,
       // so that if we have to hit it a third (fourth, etc.) time,
@@ -412,11 +415,12 @@ function processChunk(self, chunk, flushFlag, cb) {
   handle.inOff = 0;
   handle.flushFlag = flushFlag;
 
+  const inLen = handle.availInBefore > U32_MAX ? U32_MAX : handle.availInBefore;
   handle.write(
-    flushFlag, // flush
+    inLen < handle.availInBefore ? self._defaultFlushFlag : flushFlag, // flush
     chunk, // in
     0, // in_off
-    handle.availInBefore > 0xffff_ffff ? 0xffff_ffff : handle.availInBefore, // in_len
+    inLen, // in_len
     self._outBuffer, // out
     self._outOffset, // out_off
     handle.availOutBefore, // out_len
@@ -440,11 +444,12 @@ function processCallback() {
   const availOutAfter = state[0];
   const availInAfter = state[1];
 
-  const inLen = handle.availInBefore > 0xffff_ffff ? 0xffff_ffff : handle.availInBefore;
+  const inLen = handle.availInBefore > U32_MAX ? U32_MAX : handle.availInBefore;
   const inDelta = inLen - availInAfter;
   self.bytesWritten += inDelta;
 
   const have = handle.availOutBefore - availOutAfter;
+  handle.availOutBefore = availOutAfter;
   let streamBufferIsFull = false;
   if (have > 0) {
     const out = self._outBuffer.slice(self._outOffset, self._outOffset + have);
@@ -476,29 +481,30 @@ function processCallback() {
     handle.inOff += inDelta;
     handle.availInBefore -= inDelta;
 
-    const nextInLen = handle.availInBefore > 0xffff_ffff ? 0xffff_ffff : handle.availInBefore;
+    const nextInLen = handle.availInBefore > U32_MAX ? U32_MAX : handle.availInBefore;
+    const nextFlush = nextInLen < handle.availInBefore ? self._defaultFlushFlag : handle.flushFlag;
     if (!streamBufferIsFull) {
       this.write(
-        handle.flushFlag, // flush
+        nextFlush, // flush
         this.buffer, // in
         handle.inOff, // in_off
         nextInLen, // in_len
         self._outBuffer, // out
         self._outOffset, // out_off
-        self._chunkSize, // out_len
+        handle.availOutBefore, // out_len
       );
     } else {
       const oldRead = self._read;
       self._read = n => {
         self._read = oldRead;
         this.write(
-          handle.flushFlag, // flush
+          nextFlush, // flush
           this.buffer, // in
           handle.inOff, // in_off
           nextInLen, // in_len
           self._outBuffer, // out
           self._outOffset, // out_off
-          self._chunkSize, // out_len
+          handle.availOutBefore, // out_len
         );
         self._read(n);
       };

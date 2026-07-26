@@ -6,9 +6,10 @@ import net from "node:net";
 // Sends a raw HTTP/1.1 request with `extra` additional x-N header lines
 // (plus Host and Connection: close) and resolves to { status, body }.
 function rawRequest(port: number, extra: number): Promise<{ status: number; body: string }> {
-  return new Promise(resolve => {
+  return new Promise((resolve, reject) => {
     const sock = net.connect(port, "127.0.0.1");
     let buf = "";
+    sock.on("error", reject);
     sock.on("data", d => (buf += d));
     sock.on("close", () => {
       const statusLine = buf.slice(0, buf.indexOf("\r\n"));
@@ -24,6 +25,13 @@ function rawRequest(port: number, extra: number): Promise<{ status: number; body
   });
 }
 
+function listen(server: http.Server): Promise<number> {
+  return new Promise((resolve, reject) => {
+    server.on("error", reject);
+    server.listen(0, () => resolve((server.address() as AddressInfo).port));
+  });
+}
+
 async function withServer(
   configure: (server: http.Server) => void,
   body: (port: number) => Promise<void>,
@@ -33,8 +41,7 @@ async function withServer(
     res.end(JSON.stringify({ count: req.rawHeaders.length / 2, x0: headers["x-0"], xlast: headers["x-last"] }));
   });
   configure(server);
-  await new Promise<void>(r => server.listen(0, () => r()));
-  const port = (server.address() as AddressInfo).port;
+  const port = await listen(server);
   try {
     await body(port);
   } finally {
@@ -89,8 +96,7 @@ test.concurrent("server.maxHeadersCount preserves every header value across the 
   });
   server.maxHeadersCount = 400;
   (server as any).maxHeaderSize = 1 << 20;
-  await new Promise<void>(r => server.listen(0, () => r()));
-  const port = (server.address() as AddressInfo).port;
+  const port = await listen(server);
   try {
     const { status, body } = await rawRequest(port, 350);
     expect(status).toBe(200);
@@ -98,6 +104,20 @@ test.concurrent("server.maxHeadersCount preserves every header value across the 
   } finally {
     await new Promise<void>(r => server.close(() => r()));
   }
+});
+
+test.concurrent("server.maxHeadersCount near UINT32_MAX is clamped (no overflow, no giant allocation)", async () => {
+  await withServer(
+    server => {
+      server.maxHeadersCount = 0xffff_fffe;
+      (server as any).maxHeaderSize = 1 << 20;
+    },
+    async port => {
+      const { status, body } = await rawRequest(port, 300);
+      expect(status).toBe(200);
+      expect(JSON.parse(body).count).toBe(total(300));
+    },
+  );
 });
 
 test.concurrent("default server still rejects beyond the compiled-in header-field count cap", async () => {

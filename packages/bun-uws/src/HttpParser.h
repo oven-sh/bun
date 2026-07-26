@@ -1387,14 +1387,21 @@ public:
         * Optimize this to skip resetting twice (req could be made global) */
         HttpRequest req;
         /* Two slots are reserved (request line + null-key terminator), so the
-         * inline array holds UWS_HTTP_MAX_HEADERS_COUNT - 2 field lines. */
+         * inline array holds UWS_HTTP_MAX_HEADERS_COUNT - 2 field lines.
+         * The minimum field line is 4 bytes ("a:\r\n"), so maxFallbackSize/4
+         * is the highest count a request can reach before the byte-size check
+         * 431s it; clamping there keeps +2 from overflowing and bounds the
+         * per-connection overflow vector to what the byte cap already admits. */
         if (maxHeadersCount > UWS_HTTP_MAX_HEADERS_COUNT - 2) [[unlikely]] {
-            unsigned int want = maxHeadersCount + 2;
-            if (headerOverflow.size() < want) {
-                headerOverflow.resize(want);
+            size_t capByBytes = (maxFallbackSize / 4) + 2;
+            size_t want = std::min<size_t>((size_t) maxHeadersCount + 2, capByBytes);
+            if (want > UWS_HTTP_MAX_HEADERS_COUNT) {
+                if (headerOverflow.size() < want) {
+                    headerOverflow.resize(want);
+                }
+                req.headers = headerOverflow.data();
+                req.headerCapacity = (unsigned int) want;
             }
-            req.headers = headerOverflow.data();
-            req.headerCapacity = want;
         }
         if (remainingStreamingBytes) {
             if (isConnectRequest) {

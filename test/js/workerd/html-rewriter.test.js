@@ -115,7 +115,7 @@ describe("HTMLRewriter", () => {
     // Ties the rejection to the connection failure so an unrelated rejection
     // ("Body already used", an internal rewriter error) can't keep this green.
     // The exact RST message varies by platform, so match loosely.
-    const connectionError = /socket|connection|ECONNRESET/i;
+    const connectionError = /socket|connection|ECONNRESET|fetch failed/i;
 
     async function withPartialBodyServer(fn) {
       let release;

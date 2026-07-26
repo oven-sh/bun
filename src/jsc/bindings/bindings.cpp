@@ -2426,6 +2426,40 @@ JSC::EncodedJSValue SystemError__toErrorInstance(const SystemError* arg0, JSC::J
     return JSC::JSValue::encode(result);
 }
 
+// Fetch-spec §4.1 step 12.3: a "network error" rejects the fetch promise with a
+// TypeError. Node/undici materialise that as `new TypeError('fetch failed',
+// {cause: <original error>})`, which is what `is-network-error`, `p-retry`,
+// `ky`, and the common `err.cause?.code === 'ECONNREFUSED'` idiom key on.
+//
+// `cause` is the same system-error object `SystemError__toErrorInstance` would
+// have produced; `.code` is mirrored onto the outer TypeError so existing Bun
+// code that reads `err.code` directly keeps working.
+JSC::EncodedJSValue SystemError__toFetchTypeErrorInstance(const SystemError* arg0, JSC::JSGlobalObject* globalObject)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+
+    JSC::JSValue cause = JSValue::decode(SystemError__toErrorInstance(arg0, globalObject));
+    if (scope.exception()) [[unlikely]] {
+        scope.clearException();
+    }
+
+    JSC::JSObject* result = createError(globalObject, ErrorType::TypeError, "fetch failed"_s);
+    result->putDirect(vm, vm.propertyNames->cause, cause, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum));
+
+    if (arg0->code.tag != BunStringTag::Empty) {
+        JSC::JSValue code = Bun::toJS(globalObject, arg0->code);
+        if (scope.exception()) [[unlikely]] {
+            scope.clearException();
+        } else {
+            auto clientData = WebCore::clientData(vm);
+            result->putDirect(vm, clientData->builtinNames().codePublicName(), code, JSC::PropertyAttribute::DontDelete | 0);
+        }
+    }
+
+    return JSC::JSValue::encode(result);
+}
+
 JSC::EncodedJSValue SystemError__toErrorInstanceWithInfoObject(const SystemError* arg0, JSC::JSGlobalObject* globalObject)
 {
     SystemError err = *arg0;

@@ -3,11 +3,9 @@ import type { DatabaseAdapter } from "./shared.ts";
 const _resolve = Symbol("resolve");
 const _reject = Symbol("reject");
 const _handle = Symbol("handle");
-const _queryStatus = Symbol("status");
 const _handler = Symbol("handler");
 const _strings = Symbol("strings");
 const _values = Symbol("values");
-const _flags = Symbol("flags");
 const _results = Symbol("results");
 const _adapter = Symbol("adapter");
 
@@ -26,15 +24,19 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
   public [_reject]: (reason?: Error) => void;
   public [_handle]: Handle | null;
   public [_handler]: (query: Query<T, Handle>, handle: Handle) => T;
-  public [_queryStatus]: SQLQueryStatus;
   public [_strings]: string | TemplateStringsArray;
   public [_values]: any[];
-  public [_flags]: SQLQueryFlags;
 
   public readonly [_adapter]: DatabaseAdapter<any, any, Handle>;
 
+  // Private fields so every prototype member that touches status/flags
+  // brand-checks its receiver (TypeError on a non-Query `this`) instead of
+  // reading `undefined` or stamping a Symbol property onto a foreign object.
+  #queryStatus: SQLQueryStatus = SQLQueryStatus.none;
+  #flags: SQLQueryFlags = SQLQueryFlags.none;
+
   [Symbol.for("nodejs.util.inspect.custom")](): `Query { ${string} }` {
-    const status = this[_queryStatus];
+    const status = this.#queryStatus;
 
     let query = "";
     if ((status & SQLQueryStatus.active) != 0) query += "active ";
@@ -51,9 +53,9 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
     if (!handle) {
       try {
         const [sql, values] = this[_adapter].normalizeQuery(this[_strings], this[_values]);
-        this[_handle] = handle = this[_adapter].createQueryHandle(sql, values, this[_flags]);
+        this[_handle] = handle = this[_adapter].createQueryHandle(sql, values, this.#flags);
       } catch (err) {
-        this[_queryStatus] |= SQLQueryStatus.error | SQLQueryStatus.invalidHandle;
+        this.#queryStatus |= SQLQueryStatus.error | SQLQueryStatus.invalidHandle;
         this.reject(err as Error);
       }
     }
@@ -89,16 +91,17 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
     this[_reject] = reject_!;
     this[_handle] = null;
     this[_handler] = handler;
-    this[_queryStatus] = SQLQueryStatus.none;
+    this.#queryStatus = SQLQueryStatus.none;
     this[_strings] = strings;
     this[_values] = values;
-    this[_flags] = flags;
+    this.#flags = flags;
 
     this[_results] = null;
   }
 
   #run() {
-    const { [_handler]: handler, [_queryStatus]: status } = this;
+    const handler = this[_handler];
+    const status = this.#queryStatus;
 
     if (
       status &
@@ -107,12 +110,12 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
       return;
     }
 
-    if (this[_flags] & SQLQueryFlags.notTagged) {
+    if (this.#flags & SQLQueryFlags.notTagged) {
       this.reject(this[_adapter].notTaggedCallError());
       return;
     }
 
-    this[_queryStatus] |= SQLQueryStatus.executed;
+    this.#queryStatus |= SQLQueryStatus.executed;
     const handle = this.#getQueryHandle();
 
     if (!handle) {
@@ -122,13 +125,14 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
     try {
       return handler(this, handle);
     } catch (err) {
-      this[_queryStatus] |= SQLQueryStatus.error;
+      this.#queryStatus |= SQLQueryStatus.error;
       this.reject(err as Error);
     }
   }
 
   async #runAsync() {
-    const { [_handler]: handler, [_queryStatus]: status } = this;
+    const handler = this[_handler];
+    const status = this.#queryStatus;
 
     if (
       status &
@@ -137,12 +141,12 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
       return;
     }
 
-    if (this[_flags] & SQLQueryFlags.notTagged) {
+    if (this.#flags & SQLQueryFlags.notTagged) {
       this.reject(this[_adapter].notTaggedCallError());
       return;
     }
 
-    this[_queryStatus] |= SQLQueryStatus.executed;
+    this.#queryStatus |= SQLQueryStatus.executed;
     const handle = this.#getQueryHandle();
 
     if (!handle) {
@@ -154,34 +158,34 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
     try {
       return handler(this, handle);
     } catch (err) {
-      this[_queryStatus] |= SQLQueryStatus.error;
+      this.#queryStatus |= SQLQueryStatus.error;
       this.reject(err as Error);
     }
   }
 
   get active() {
-    return (this[_queryStatus] & SQLQueryStatus.active) != 0;
+    return (this.#queryStatus & SQLQueryStatus.active) != 0;
   }
 
   set active(value) {
-    const status = this[_queryStatus];
+    const status = this.#queryStatus;
     if (status & (SQLQueryStatus.cancelled | SQLQueryStatus.error)) {
       return;
     }
 
     if (value) {
-      this[_queryStatus] |= SQLQueryStatus.active;
+      this.#queryStatus |= SQLQueryStatus.active;
     } else {
-      this[_queryStatus] &= ~SQLQueryStatus.active;
+      this.#queryStatus &= ~SQLQueryStatus.active;
     }
   }
 
   get cancelled() {
-    return (this[_queryStatus] & SQLQueryStatus.cancelled) !== 0;
+    return (this.#queryStatus & SQLQueryStatus.cancelled) !== 0;
   }
 
   resolve(x: T) {
-    this[_queryStatus] &= ~SQLQueryStatus.active;
+    this.#queryStatus &= ~SQLQueryStatus.active;
     const handle = this.#getQueryHandle();
 
     if (!handle) {
@@ -194,10 +198,10 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
   }
 
   reject(x: Error) {
-    this[_queryStatus] &= ~SQLQueryStatus.active;
-    this[_queryStatus] |= SQLQueryStatus.error;
+    this.#queryStatus &= ~SQLQueryStatus.active;
+    this.#queryStatus |= SQLQueryStatus.error;
 
-    if (!(this[_queryStatus] & SQLQueryStatus.invalidHandle)) {
+    if (!(this.#queryStatus & SQLQueryStatus.invalidHandle)) {
       const handle = this.#getQueryHandle();
 
       if (!handle) {
@@ -211,12 +215,12 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
   }
 
   cancel() {
-    const status = this[_queryStatus];
+    const status = this.#queryStatus;
     if (status & SQLQueryStatus.cancelled) {
       return this;
     }
 
-    this[_queryStatus] |= SQLQueryStatus.cancelled;
+    this.#queryStatus |= SQLQueryStatus.cancelled;
 
     if (status & SQLQueryStatus.executed) {
       const handle = this.#getQueryHandle();
@@ -235,7 +239,7 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
   }
 
   async run() {
-    if (this[_flags] & SQLQueryFlags.notTagged) {
+    if (this.#flags & SQLQueryFlags.notTagged) {
       throw this[_adapter].notTaggedCallError();
     }
 
@@ -255,7 +259,7 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
   }
 
   simple() {
-    this[_flags] |= SQLQueryFlags.simple;
+    this.#flags |= SQLQueryFlags.simple;
     return this;
   }
 
@@ -296,7 +300,7 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
   }
 
   catch() {
-    if (this[_flags] & SQLQueryFlags.notTagged) {
+    if (this.#flags & SQLQueryFlags.notTagged) {
       throw this[_adapter].notTaggedCallError();
     }
 
@@ -309,7 +313,7 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
   }
 
   finally(_onfinally?: (() => void) | undefined | null) {
-    if (this[_flags] & SQLQueryFlags.notTagged) {
+    if (this.#flags & SQLQueryFlags.notTagged) {
       throw this[_adapter].notTaggedCallError();
     }
 
@@ -356,11 +360,9 @@ export default {
     _resolve,
     _reject,
     _handle,
-    _queryStatus,
     _handler,
     _strings,
     _values,
-    _flags,
     _results,
   },
 };

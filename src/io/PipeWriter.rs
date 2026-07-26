@@ -604,6 +604,12 @@ pub struct PosixStreamingWriter<Parent: PosixStreamingWriterParent> {
     pub is_done: bool,
     pub closed_without_reporting: bool,
     pub force_sync: bool,
+    /// Flush threshold for [`should_buffer`]. Writes accumulate in `outgoing`
+    /// until the buffered size reaches this value, then a single `write(2)`
+    /// drains the batch. Defaults to the page-size [`CHUNK_SIZE`]; `FileSink`
+    /// overwrites this with the user's `highWaterMark` so
+    /// `Bun.file().writer({ highWaterMark })` actually batches to that size.
+    pub chunk_size: usize,
 }
 
 impl<Parent: PosixStreamingWriterParent> Default for PosixStreamingWriter<Parent> {
@@ -615,6 +621,7 @@ impl<Parent: PosixStreamingWriterParent> Default for PosixStreamingWriter<Parent
             is_done: false,
             closed_without_reporting: false,
             force_sync: false,
+            chunk_size: Self::CHUNK_SIZE,
         }
     }
 }
@@ -653,8 +660,10 @@ unsafe impl<Parent: PosixStreamingWriterParent> bun_ptr::LaunderedSelf
 }
 
 impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
-    // The smallest page size the target
-    // supports (16K on Apple Silicon, 4K elsewhere among our targets).
+    // Default flush threshold for `should_buffer`: the smallest page size the
+    // target supports (16K on Apple Silicon, 4K elsewhere among our targets).
+    // Stored per-instance in `self.chunk_size` so callers (FileSink's
+    // `highWaterMark`) can override it.
     const CHUNK_SIZE: usize = if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
         16384
     } else {
@@ -717,7 +726,7 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
     }
 
     pub fn should_buffer(&self, addition: usize) -> bool {
-        !self.force_sync && self.outgoing.size() + addition < Self::CHUNK_SIZE
+        !self.force_sync && self.outgoing.size() + addition < self.chunk_size
     }
 
     pub fn get_buffer(&self) -> &[u8] {

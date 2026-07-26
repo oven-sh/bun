@@ -599,6 +599,50 @@ it("Bun.file(fd).writer() write/end under GC pressure does not crash", async () 
   expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "ok", stderr: "", exitCode: 0 });
 });
 
+// The `highWaterMark` option on `Bun.file().writer()` is parsed into the
+// FileSink's `chunk_size`, but the buffered streaming writer compared against
+// a hardcoded page-size constant instead, so the option had no effect: 20 MB
+// of 100-byte writes with highWaterMark:65536 issued ~4.9k write(2) syscalls
+// (4 KiB batches) instead of ~300. With the threshold wired through, the
+// syscall count scales with the requested batch size.
+//
+// Linux-only because it counts write syscalls via /proc/self/io (the bug and
+// fix are POSIX-wide, but macOS has no cheap equivalent counter).
+it.skipIf(!isLinux)("highWaterMark controls the write(2) batch size", async () => {
+  const dir = tmpdirSync();
+  const child = `
+    const fs = require("fs");
+    const out = ${JSON.stringify(join(dir, "hwm.txt"))};
+    function syscw() {
+      return Number(fs.readFileSync("/proc/self/io", "utf8").match(/syscw:\\s*(\\d+)/)[1]);
+    }
+    const N = 10000;
+    const line = Buffer.alloc(100, 0x78);
+    const w = Bun.file(out).writer({ highWaterMark: 64 * 1024 });
+    const before = syscw();
+    for (let i = 0; i < N; i++) w.write(line);
+    await w.end();
+    const after = syscw();
+    const size = fs.statSync(out).size;
+    fs.unlinkSync(out);
+    console.log(JSON.stringify({ syscw: after - before, size }));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", child],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const { syscw, size } = JSON.parse(stdout);
+  // Before the fix the threshold was locked to 4096 (16384 on Apple Silicon),
+  // so 1 MB in 100-byte chunks produced ~244 write syscalls regardless of
+  // highWaterMark. At 64 KiB the ceiling is 1 MB / 64 KiB = 16, plus a
+  // handful for open/close/eventfd traffic.
+  expect({ size, syscwUnder50: syscw < 50 ? true : syscw }).toEqual({ size: 1_000_000, syscwUnder50: true });
+  expect(exitCode).toBe(0);
+});
+
 it("fs.promises.writeFile with iterables under GC pressure does not crash", async () => {
   const dir = tmpdirSync();
   await using proc = Bun.spawn({

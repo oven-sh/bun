@@ -2389,11 +2389,17 @@ where
         }
     }
 
-    /// `detach_response` without the `resp.clear_*` FFI calls: `markDone()`
-    /// already nulled them, and the `uws_res_end*` wrapper then replayed any
-    /// buffered pipelined request, so those handlers now belong to the next
-    /// request.
+    /// `detach_response` without the HTTP/1 `resp.clear_*` FFI calls: H1's
+    /// `markDone()` already nulled them, and the `uws_res_end*` wrapper then
+    /// replayed any buffered pipelined request, so those handlers now belong
+    /// to the next request. HTTP/3's `markDone()` deliberately leaves
+    /// `onAborted` armed for `on_stream_close`, so fall through to the full
+    /// detach there.
     fn detach_response_after_end(&mut self) {
+        if HTTP3 {
+            self.detach_response();
+            return;
+        }
         self.request_body_buf = Vec::new();
         self.resp.take();
         self.flags.set_is_waiting_for_request_body(false);

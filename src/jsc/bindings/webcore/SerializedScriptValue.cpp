@@ -2123,8 +2123,6 @@ private:
             }
 
             if (auto* keyObject = dynamicDowncast<Bun::JSKeyObject>(obj)) {
-                // Node.js: v8.serialize() throws, child_process advanced IPC delivers {};
-                // only structuredClone / worker postMessage clone a KeyObject.
                 if (m_forStorage == SerializationForStorage::Yes) {
                     code = SerializationReturnCode::DataCloneError;
                     return true;

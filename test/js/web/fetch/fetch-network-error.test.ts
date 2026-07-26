@@ -145,7 +145,10 @@ describe("fetch network errors reject as TypeError('fetch failed') with a cause"
     ]);
     const isNetworkError = (error: unknown): boolean => {
       const isValid =
-        error && (error as Error) instanceof Error && (error as Error).name === "TypeError" && typeof (error as Error).message === "string";
+        error &&
+        (error as Error) instanceof Error &&
+        (error as Error).name === "TypeError" &&
+        typeof (error as Error).message === "string";
       if (!isValid) return false;
       return errorMessages.has((error as Error).message);
     };

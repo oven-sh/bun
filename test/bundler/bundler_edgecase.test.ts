@@ -2887,6 +2887,18 @@ describe("bundler", () => {
       "/entry.js": [`With statements cannot be used in strict mode`],
     },
   });
+  itBundled("edgecase/WithStatementUseStrictSourceError", {
+    files: {
+      "/entry.js": /* js */ `
+        "use strict";
+        with (globalThis) { console.log(1); }
+      `,
+    },
+    format: "cjs",
+    bundleErrors: {
+      "/entry.js": [`With statements cannot be used in strict mode`],
+    },
+  });
   itBundled("edgecase/WithStatementCJSOutputAllowed", {
     files: {
       "/entry.js": /* js */ `

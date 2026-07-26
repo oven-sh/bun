@@ -159,7 +159,7 @@ test.skipIf(!isLinux)("connected socket with no error handler survives ICMP port
       connect: { hostname: "127.0.0.1", port: deadPort },
       socket: { data() {} },
     });
-    for (let i = 0; i < 5; i++) { s.send("x"); await Bun.sleep(20); }
+    for (let i = 0; i < 5; i++) { try { s.send("x"); } catch {} await Bun.sleep(20); }
     console.log(JSON.stringify({ closed: s.closed }));
     process.exit(0);
   `;

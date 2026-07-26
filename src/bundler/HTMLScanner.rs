@@ -216,13 +216,20 @@ impl<'a> Iterator for SrcSetIter<'a> {
             self.rest = &self.rest[url_end..];
             return Some((url, b""));
         }
-        // Descriptor runs until the next comma.
+        // Descriptor runs until the next top-level comma (a comma inside `(...)` is part of the descriptor).
         let mut desc_start = url_end;
         while desc_start < self.rest.len() && Self::is_ascii_ws(self.rest[desc_start]) {
             desc_start += 1;
         }
         let mut desc_end = desc_start;
-        while desc_end < self.rest.len() && self.rest[desc_end] != b',' {
+        let mut depth: u32 = 0;
+        while desc_end < self.rest.len() {
+            match self.rest[desc_end] {
+                b',' if depth == 0 => break,
+                b'(' => depth += 1,
+                b')' => depth = depth.saturating_sub(1),
+                _ => {}
+            }
             desc_end += 1;
         }
         let mut desc_trim = desc_end;

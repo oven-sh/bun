@@ -186,6 +186,14 @@ pub mod js_fns {
                 false
             };
 
+            // Snapshot any active AsyncLocalStorage context now that `.length`
+            // has been read from the bare function (an AsyncContextFrame has no
+            // `.length`). Still synchronous inside the user's `als.run(...)`
+            // body, so the captured frame is the one the caller expects.
+            let callback = args
+                .callback
+                .map(|cb| cb.with_async_context_if_needed(global_this));
+
             let bun_test_root = get_active_test_root(
                 global_this,
                 &GetActiveCfg { signature: Signature::Str(sig_bytes), allow_in_preload: true },
@@ -208,7 +216,7 @@ pub mod js_fns {
 
                 let _ = bun_test_root.hook_scope.append_hook(
                     tag.as_hook_tag().unwrap(),
-                    args.callback,
+                    callback,
                     cfg,
                     BaseScopeCfg::default(),
                     AddedInPhase::Preload,
@@ -226,7 +234,7 @@ pub mod js_fns {
                     }
                     let _ = bun_test.collection.active_scope_mut().append_hook(
                         tag.as_hook_tag().unwrap(),
-                        args.callback,
+                        callback,
                         cfg,
                         BaseScopeCfg::default(),
                         AddedInPhase::Collection,
@@ -299,7 +307,7 @@ pub mod js_fns {
 
                     let new_item = ExecutionEntry::create(
                         None,
-                        args.callback,
+                        callback,
                         cfg,
                         None,
                         BaseScopeCfg::default(),

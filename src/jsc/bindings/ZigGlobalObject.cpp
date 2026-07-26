@@ -3658,7 +3658,7 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
 // consistent with the printer (which never resolves).
 static ALWAYS_INLINE bool specifierImpliesJsonType(StringView specifier)
 {
-    size_t q = specifier.find([](char16_t c) { return c == '?' || c == '#'; });
+    size_t q = specifier.find('?');
     if (q != notFound) {
         // `?raw` selects the text loader; a synthesized `type: "json"` would override it.
         if (specifier.substring(q) == "?raw"_s)

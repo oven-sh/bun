@@ -145,8 +145,9 @@ test('the bun-target transpiler emits `with { type: "json" }` for attribute-less
       `import d from "./cfg.json?raw";`,
       `import e from "pkg/data";`,
       `import f from "#cfg";`,
-      `export { default as g } from "./other.json";`,
-      `export * as h from "./more.json";`,
+      `import g from "#cfg/data.json";`,
+      `export { default as h } from "./other.json";`,
+      `export * as i from "./more.json";`,
     ].join("\n"),
   );
   expect(out).toMatchInlineSnapshot(`
@@ -156,8 +157,9 @@ import c from "./data.json" with { type: "text" };
 import d from "./cfg.json?raw";
 import e from "pkg/data";
 import f from "#cfg";
-export { default as g } from "./other.json" with { type: "json" };
-export * as h from "./more.json" with { type: "json" };
+import g from "#cfg/data.json" with { type: "json" };
+export { default as h } from "./other.json" with { type: "json" };
+export * as i from "./more.json" with { type: "json" };
 "
 `);
   // Other targets are untouched.
@@ -233,6 +235,27 @@ describe("specifiers that resolve to a .json but don't end in one keep a shared 
     expect(stdout).toMatchInlineSnapshot(`"same: true"`);
     expect(exitCode).toBe(0);
   });
+});
+
+test.concurrent("a #subpath specifier that ends in .json shares one module with the attributed form", async () => {
+  const { stdout, exitCode } = await run({
+    "package.json": `{"imports":{"#cfg/*":"./src/*"}}`,
+    "src/data.json": `{"n":1}`,
+    "plain.mjs": `import a from "#cfg/data.json"; export default a;`,
+    "attr.mjs": `import b from "#cfg/data.json" with { type: "json" }; export default b;`,
+    "index.mjs": `
+      const plain = (await import("./plain.mjs")).default;
+      const attr = (await import("./attr.mjs")).default;
+      const dyn = (await import("#cfg/data.json")).default;
+      console.log("plain === attr:", plain === attr);
+      console.log("plain === dyn:", plain === dyn);
+    `,
+  });
+  expect(stdout).toMatchInlineSnapshot(`
+"plain === attr: true
+plain === dyn: true"
+`);
+  expect(exitCode).toBe(0);
 });
 
 describe("the ?raw query on a .json specifier still selects the text loader", () => {

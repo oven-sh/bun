@@ -6201,10 +6201,7 @@ pub mod __gated_printer {
                 return false;
             }
             let text = record.path.text;
-            let end = text
-                .iter()
-                .position(|&c| c == b'?' || c == b'#')
-                .unwrap_or(text.len());
+            let end = text.iter().position(|&c| c == b'?').unwrap_or(text.len());
             // `?raw` selects the text loader; a synthesized attribute would override it.
             if &text[end..] == b"?raw" {
                 return false;

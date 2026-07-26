@@ -5825,6 +5825,23 @@ it("fs path buffers backed by a resizable ArrayBuffer are snapshotted before opt
         if (fs.readFileSync(file, "utf8") !== "sab-write") throw new Error("SAB path failed");
       }
 
+      // Bun.file(): captures the path via the same PathLike funnel (owned
+      // snapshot for resizable). .text() clones the stored PathLike on the JS
+      // thread and again on the worker; the owned-buffer Clone arm must dupe
+      // so both clones are independently droppable.
+      {
+        const file = path.join(dir, "bunfile.txt");
+        fs.writeFileSync(file, "bun-file");
+        const { rab, view } = resizablePath(file);
+        const f = Bun.file(view);
+        rab.resize(0);
+        const got = await f.text();
+        if (got !== "bun-file") throw new Error("Bun.file().text() lost path: " + JSON.stringify(got));
+        // Second read reuses the stored owned PathLike via a fresh clone; the
+        // original must not have been freed by the first.
+        if ((await f.text()) !== "bun-file") throw new Error("Bun.file().text() second read failed");
+      }
+
       console.log("done");
     `,
   });

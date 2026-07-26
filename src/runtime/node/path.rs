@@ -3384,9 +3384,7 @@ pub(crate) fn resolve_js_t<T: PathCharCwd>(
     buf_len += max_path_size::<T>() + 1;
     buf_len = buf_len.max(path_size::<T>());
     // +2 to account for separator and null terminator during path resolution.
-    // Carve buf/buf2/tmp_buf from one pooled slab. tmp_buf holds the
-    // resolved device (may be as long as any single input path for a UNC root)
-    // and the cwd; buf_len already covers both.
+    // Carve buf/buf2/tmp_buf from one pooled slab.
     let mut scratch = PathScratch::<T>::new(pool, (buf_len + 2) * 3);
     let (buf, rest) = scratch.slice().split_at_mut(buf_len + 2);
     let (buf2, tmp_buf) = rest.split_at_mut(buf_len + 2);

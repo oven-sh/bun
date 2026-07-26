@@ -183,8 +183,8 @@ describe("path.resolve", () => {
   test("win32 long UNC device root (> PATH_MAX_WIDE) is pure string algebra", () => {
     // path.win32 functions are pure string operations and must not impose OS
     // path-length limits. A \\?\ or \\.\ prefixed input whose UNC "device"
-    // component alone exceeded PATH_MAX_WIDE used to return an Error *object*
-    // (not throw) with syscall="TODO" instead of a string.
+    // component alone exceeded PATH_MAX_WIDE used to return an ENAMETOOLONG
+    // SystemError object as the return value (not thrown) instead of a string.
     const w = path.win32;
     const seg = Buffer.alloc(120000, "x").toString();
     const dev = "\\\\?\\" + seg; // 120004 chars, whole thing is the UNC device

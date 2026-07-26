@@ -255,10 +255,13 @@ describe("tls over unix socket", () => {
       fetch: () => new Response("ok"),
     });
     // Passing the server's self-signed cert as `ca` must make verification
-    // succeed, exactly as it does for the same server over TCP.
-    const res = await fetch("https://localhost/", { unix, tls: { ca: validTls.cert } });
-    expect(await res.text()).toBe("ok");
-    expect(res.status).toBe(200);
+    // succeed, exactly as it does for the same server over TCP. Second fetch
+    // with the same config goes through the per-config SSL_CTX cache.
+    for (let i = 0; i < 2; i++) {
+      const res = await fetch("https://localhost/", { unix, tls: { ca: validTls.cert } });
+      expect(await res.text()).toBe("ok");
+      expect(res.status).toBe(200);
+    }
   });
 
   it("presents tls.cert + tls.key to a requestCert server (mTLS)", async () => {

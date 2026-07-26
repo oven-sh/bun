@@ -6273,6 +6273,15 @@ pub mod bv2_impl {
                             && (import_record.loader.is_none()
                                 || import_record.loader.unwrap() == Loader::Html)
                         {
+                            if import_record
+                                .flags
+                                .contains(bun_ast::ImportRecordFlags::WAS_HTML_RESOURCE_HINT)
+                            {
+                                // <link rel="prefetch" href="./page2.html"> and similar
+                                // hints are fetch-only; leave the href untouched.
+                                import_record.path.is_disabled = true;
+                                continue 'outer;
+                            }
                             // This use case is currently not supported. This error
                             // blocks an assertion failure because the DevServer
                             // reserves the HTML file's spot in IncrementalGraph for the

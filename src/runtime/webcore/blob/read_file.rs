@@ -11,6 +11,8 @@ use crate::webcore::Lifetime;
 #[cfg(not(windows))]
 use crate::webcore::blob::ClosingState;
 use crate::webcore::blob::store::{Bytes as ByteStore, Data, File as FileStore};
+#[cfg(not(windows))]
+use crate::webcore::blob::Store;
 use crate::webcore::blob::{Blob, FileCloser, FileOpener, MAX_SIZE, SizeType, StoreRef};
 use crate::webcore::node_types::PathOrFileDescriptor;
 #[cfg(windows)]
@@ -164,6 +166,20 @@ pub enum ReadFileResultType {
 }
 
 pub type ReadFileTask = bun_jsc::work_task::WorkTask<ReadFile>;
+
+#[cfg(not(windows))]
+thread_local! {
+    /// Per-JS-thread map of fd-backed `Store` to its in-flight `ReadFile`, so a
+    /// second concurrent `.arrayBuffer()`/`.text()` on the same store attaches
+    /// to the active reader instead of racing `read()`/`epoll_ctl(ADD)` on the
+    /// shared fd. Thread-local because a `Store` can be reached from multiple
+    /// JS threads (via `ObjectURLRegistry`); insert/lookup/remove all happen on
+    /// the same event loop (`WorkTask::then` runs where the task was created),
+    /// so the `*mut ReadFile` is live while present here.
+    static IN_FLIGHT_FD_READERS: core::cell::RefCell<
+        bun_collections::HashMap<*const Store, *mut ReadFile>,
+    > = core::cell::RefCell::new(bun_collections::HashMap::new());
+}
 
 // `WorkTaskContext` fixes `run`/`then` to take `*mut Self`; the trait method
 // cannot be marked `unsafe fn` and the parameter type cannot change, so the
@@ -407,7 +423,7 @@ impl ReadFile {
 
     pub const IO_TAG: io::Tag = io::Tag::ReadFile;
 
-    /// JS-thread-only. See `Store::in_flight_blob_reader`.
+    /// JS-thread-only. See `IN_FLIGHT_FD_READERS`.
     #[cfg(not(windows))]
     pub fn try_coalesce_fd_read(
         store: &StoreRef,
@@ -419,19 +435,17 @@ impl ReadFile {
         if !matches!(&store.data, Data::File(f) if f.pathlike.is_fd()) {
             return false;
         }
-        let existing = store
-            .in_flight_blob_reader
-            .load(core::sync::atomic::Ordering::Acquire);
-        if existing.is_null() {
+        let existing = IN_FLIGHT_FD_READERS
+            .with(|m| m.borrow().get(&store.as_ptr().cast_const()).copied());
+        let Some(existing) = existing else {
             return false;
-        }
-        let existing = existing.cast::<ReadFile>();
-        // SAFETY: `existing` was published on the JS thread before scheduling
-        // and is cleared on the JS thread in `then()` before the `ReadFile` is
-        // dropped; we are on the JS thread, so the pointee is live. The work
-        // pool holds `&mut ReadFile` concurrently, so project fields through
-        // the raw pointer without materialising `&ReadFile`. `offset` and
-        // `max_length` are set at creation and never written afterward.
+        };
+        // SAFETY: `existing` was inserted on this thread before scheduling and
+        // is removed on this thread in `then()` before the `ReadFile` is
+        // dropped (`WorkTask::then` runs on the creating event loop), so the
+        // pointee is live. The work pool holds `&mut ReadFile` concurrently,
+        // so project fields through the raw pointer without materialising
+        // `&ReadFile`. `offset`/`max_length` are set at creation only.
         let (existing_offset, existing_max_length, extras) = unsafe {
             (
                 *core::ptr::addr_of!((*existing).offset),
@@ -446,16 +460,15 @@ impl ReadFile {
         true
     }
 
-    /// JS-thread-only. See `Store::in_flight_blob_reader`.
+    /// JS-thread-only. See `IN_FLIGHT_FD_READERS`.
     #[cfg(not(windows))]
     pub fn mark_in_flight(store: &StoreRef, reader: *mut ReadFile) {
         if matches!(&store.data, Data::File(f) if f.pathlike.is_fd()) {
-            let _ = store.in_flight_blob_reader.compare_exchange(
-                core::ptr::null_mut(),
-                reader.cast(),
-                core::sync::atomic::Ordering::Release,
-                core::sync::atomic::Ordering::Relaxed,
-            );
+            IN_FLIGHT_FD_READERS.with(|m| {
+                m.borrow_mut()
+                    .entry(store.as_ptr().cast_const())
+                    .or_insert_with(|| reader);
+            });
         }
     }
 
@@ -620,16 +633,15 @@ impl ReadFile {
         let mut this = this;
 
         // Clear before the callbacks so a read they schedule starts fresh.
-        let self_ptr = core::ptr::from_ref::<ReadFile>(&this)
-            .cast_mut()
-            .cast::<c_void>();
-        if let Some(store) = this.store.as_deref() {
-            let _ = store.in_flight_blob_reader.compare_exchange(
-                self_ptr,
-                core::ptr::null_mut(),
-                core::sync::atomic::Ordering::AcqRel,
-                core::sync::atomic::Ordering::Relaxed,
-            );
+        #[cfg(not(windows))]
+        if let Some(store) = this.store.as_ref() {
+            let self_ptr = core::ptr::from_ref::<ReadFile>(&this).cast_mut();
+            IN_FLIGHT_FD_READERS.with(|m| {
+                let mut m = m.borrow_mut();
+                if m.get(&store.as_ptr().cast_const()) == Some(&self_ptr) {
+                    m.remove(&store.as_ptr().cast_const());
+                }
+            });
         }
         let extras: Vec<_> = core::mem::take(&mut *this.extra_completions.lock());
 

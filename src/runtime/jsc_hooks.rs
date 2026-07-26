@@ -5388,7 +5388,6 @@ pub(crate) fn __bun_stdio_blob_store_new(
         mime_type: bun_http_types::MimeType::NONE,
         ref_count: bun_ptr::ThreadSafeRefCount::init_exact_refs(2),
         is_all_ascii: None,
-        in_flight_blob_reader: core::sync::atomic::AtomicPtr::new(core::ptr::null_mut()),
     });
     bun_core::heap::into_raw(store).cast()
 }

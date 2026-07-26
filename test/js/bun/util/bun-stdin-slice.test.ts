@@ -62,8 +62,15 @@ describe.skipIf(isWindows)("concurrent Bun.stdin blob reads on a pipe", () => {
       stderr: "pipe",
     });
     proc.stdin.write(payload);
-    await proc.stdin.end();
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // The sliced+unsliced case can exit without reading all of stdin; drain
+    // output concurrently and swallow EPIPE on the end() so that interleaving
+    // is visible as a rejected result rather than a thrown write error here.
+    const [stdout, stderr, exitCode] = await Promise.all([
+      proc.stdout.text(),
+      proc.stderr.text(),
+      proc.exited,
+      proc.stdin.end().catch(() => {}),
+    ]);
     return { stdout, stderr, exitCode };
   }
 

@@ -517,8 +517,6 @@ pub mod store {
         pub mime_type: MimeType,
         pub ref_count: bun_ptr::ThreadSafeRefCount<Store>,
         pub is_all_ascii: Option<bool>,
-        /// JS-thread-only `*mut ReadFile`; see `ReadFile::try_coalesce_fd_read`.
-        pub in_flight_blob_reader: core::sync::atomic::AtomicPtr<core::ffi::c_void>,
     }
 
     impl Default for Store {
@@ -528,7 +526,6 @@ pub mod store {
                 mime_type: bun_http_types::MimeType::NONE,
                 ref_count: bun_ptr::ThreadSafeRefCount::init(),
                 is_all_ascii: None,
-                in_flight_blob_reader: core::sync::atomic::AtomicPtr::new(core::ptr::null_mut()),
             }
         }
     }
@@ -885,7 +882,6 @@ pub mod store {
                 mime_type: bun_http_types::MimeType::NONE,
                 ref_count: bun_ptr::ThreadSafeRefCount::init(),
                 is_all_ascii: None,
-                in_flight_blob_reader: core::sync::atomic::AtomicPtr::new(core::ptr::null_mut()),
             }))
         }
 

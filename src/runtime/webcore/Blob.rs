@@ -2509,9 +2509,6 @@ impl BlobExt for Blob {
                         mime_type: bun_http_types::MimeType::NONE,
                         ref_count: bun_ptr::ThreadSafeRefCount::init(),
                         is_all_ascii: None,
-                        in_flight_blob_reader: core::sync::atomic::AtomicPtr::new(
-                            core::ptr::null_mut(),
-                        ),
                     }));
                     let blob = Blob::init_with_store(store, global_this);
                     if was_string && blob.content_type_slice().is_empty() {
@@ -5641,7 +5638,6 @@ pub fn jsdom_file_construct_(
                 ref_count: bun_ptr::ThreadSafeRefCount::init(),
                 mime_type: bun_http_types::MimeType::NONE,
                 is_all_ascii: None,
-                in_flight_blob_reader: core::sync::atomic::AtomicPtr::new(core::ptr::null_mut()),
             }))));
         }
     }

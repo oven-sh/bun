@@ -19,9 +19,8 @@ use crate::jsc::HTTPHeaderName;
 pub use crate::webcore::InternalBlob;
 use crate::webcore::form_data::AsyncFormDataExt as _;
 use crate::webcore::sink::{self, ArrayBufferSink};
-use bun_core::{MutableString, String as BunString, ZigString};
+use bun_core::{MutableString, String as BunString};
 use bun_core::{WTFStringImpl, WTFStringImplExt as _, WTFStringImplStruct};
-use bun_jsc::ZigStringJsc as _;
 use bun_jsc::{JsCell, StringJsc as _};
 
 /// Deref the `Value::WTFStringImpl` / `AnyBlob::WTFStringImpl` payload.
@@ -388,15 +387,20 @@ impl PendingValue {
                         Action::GetText => global_this.readable_stream_to_text(readable.value),
                         Action::GetBlob => global_this.readable_stream_to_blob(readable.value),
                         Action::GetFormData(form_data) => 'brk: {
-                            let fd = form_data.take().unwrap();
-                            // defer: form_data already taken; action.getFormData = None handled by take()
-                            let encoding_js = match &fd.encoding {
-                                bun_core::form_data::Encoding::Multipart(multipart) => {
-                                    BunString::init(&multipart[..]).to_js(global_this)?
-                                }
-                                bun_core::form_data::Encoding::URLEncoded => JSValue::UNDEFINED,
+                            // `None` means the MIME check already failed; per spec the
+                            // body is still fully read before `packageData` throws, so
+                            // drain the stream and have the C++ fulfillment handler
+                            // reject. The sentinel is `false` (null/undefined are
+                            // dropped by the promise-reaction context plumbing).
+                            let encoding_js = match form_data.take() {
+                                None => JSValue::FALSE,
+                                Some(fd) => match &fd.encoding {
+                                    bun_core::form_data::Encoding::Multipart(multipart) => {
+                                        BunString::init(&multipart[..]).to_js(global_this)?
+                                    }
+                                    bun_core::form_data::Encoding::URLEncoded => JSValue::UNDEFINED,
+                                },
                             };
-                            // fd dropped at end of scope (Box<AsyncFormData> -> Drop)
                             break 'brk global_this
                                 .readable_stream_to_form_data(readable.value, encoding_js);
                         }
@@ -1065,14 +1069,8 @@ impl Value {
                     Action::GetFormData(form_data_slot) => 'inner: {
                         let mut blob = new.use_as_any_blob();
                         let Some(async_form_data) = form_data_slot.take() else {
-                            // `blob.detach()` below covers the reject error path too.
-                            let r = promise.reject(
-                                global,
-                                ZigString::init(
-                                    b"Internal error: task for FormData must not be null",
-                                )
-                                .to_error_instance(global),
-                            );
+                            // MIME check failed up front; body is consumed above, now reject.
+                            let r = promise.reject(global, form_data_mime_error(global));
                             blob.detach();
                             r?;
                             break 'inner;
@@ -1993,17 +1991,10 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
             }
         }
 
-        let Some(encoder) = self.get_form_data_encoding()? else {
-            // TODO: catch specific errors from getFormDataEncoding
-            return Ok(global_object
-                .err(
-                    jsc::ErrorCode::FORMDATA_PARSE_ERROR,
-                    format_args!(
-                        "Can't decode form data from body because of incorrect MIME type/boundary"
-                    ),
-                )
-                .reject());
-        };
+        // Spec "consume body": fully read the body, then run packageData (which
+        // performs the MIME check). A failed MIME check must therefore still
+        // consume the body (bodyUsed becomes true; subsequent reads reject).
+        let encoder = self.get_form_data_encoding()?;
 
         let value = self.get_body_value();
         if let Value::Locked(_locked) = value {
@@ -2015,12 +2006,20 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
             };
             return locked.set_promise(
                 global_object,
-                Action::GetFormData(Some(encoder)),
+                Action::GetFormData(encoder),
                 owned_readable,
             );
         }
 
         let mut blob: AnyBlob = value.use_as_any_blob();
+        let Some(encoder) = encoder else {
+            blob.detach();
+            return Ok(JSPromise::rejected_promise(
+                global_object,
+                form_data_mime_error(global_object),
+            )
+            .to_js());
+        };
         // `encoder.encoding` is `bun_core::form_data::Encoding`; convert
         // to the `webcore::form_data::Encoding` shape FormData::to_js expects.
         let encoding = match encoder.encoding {
@@ -2140,6 +2139,17 @@ fn handle_body_already_used(global_object: &JSGlobalObject) -> JSValue {
             format_args!("Body already used"),
         )
         .reject()
+}
+
+fn form_data_mime_error(global_object: &JSGlobalObject) -> JSValue {
+    global_object
+        .err(
+            jsc::ErrorCode::FORMDATA_PARSE_ERROR,
+            format_args!(
+                "Can't decode form data from body because of incorrect MIME type/boundary"
+            ),
+        )
+        .to_js()
 }
 
 /// If the body already failed, reject the read with that error. Every body

@@ -749,6 +749,82 @@ describe.concurrent("string body consumption does not leak", () => {
   }
 });
 
+// https://fetch.spec.whatwg.org/#concept-body-consume-body
+// The spec fully reads the body before packageData runs (and may throw),
+// so a rejected formData() must still consume the body. Node/undici agree:
+// bodyUsed becomes true and further reads reject with TypeError.
+describe("formData() rejecting on MIME type still consumes the body", () => {
+  const stringStream = () =>
+    new ReadableStream({
+      start(c) {
+        c.enqueue(new TextEncoder().encode("hello world"));
+        c.close();
+      },
+    });
+
+  for (const { body, fn } of bodyTypes) {
+    describe(body.name, () => {
+      test.each([
+        ["string", () => fn("hello world")],
+        ["Uint8Array", () => fn(new TextEncoder().encode("hello world"))],
+        ["Blob", () => fn(new Blob(["hello world"]))],
+        ["ReadableStream", () => fn(stringStream(), { "content-type": "text/plain" })],
+        ["application/json", () => fn(JSON.stringify({ a: 1 }), { "content-type": "application/json" })],
+      ])("%s", async (_, make) => {
+        const r = make();
+        await expect(r.formData()).rejects.toThrow(TypeError);
+        expect(r.bodyUsed).toBe(true);
+        await expect(r.text()).rejects.toThrow(TypeError);
+        await expect(r.json()).rejects.toThrow(TypeError);
+        await expect(r.arrayBuffer()).rejects.toThrow(TypeError);
+        await expect(r.formData()).rejects.toThrow(TypeError);
+      });
+
+      // Null body: spec says body is null so fully-read is vacuous; Node leaves
+      // bodyUsed false and subsequent text() resolves "".
+      test("null body stays unconsumed", async () => {
+        const r = fn();
+        await expect(r.formData()).rejects.toThrow(TypeError);
+        expect(r.bodyUsed).toBe(false);
+        expect(await r.text()).toBe("");
+      });
+    });
+  }
+
+  test("Bun.serve request body", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        let fd: string;
+        try {
+          await req.formData();
+          fd = "RESOLVED";
+        } catch (e) {
+          fd = "REJECTED " + (e as Error).constructor.name;
+        }
+        const bodyUsed = req.bodyUsed;
+        let text: string;
+        try {
+          text = "RESOLVED " + (await req.text());
+        } catch (e) {
+          text = "REJECTED " + (e as Error).constructor.name;
+        }
+        return Response.json({ fd, bodyUsed, text });
+      },
+    });
+    const res = await fetch(`http://localhost:${server.port}/`, {
+      method: "POST",
+      body: "hello server",
+      headers: { "content-type": "text/plain" },
+    });
+    expect(await res.json()).toEqual({
+      fd: "REJECTED TypeError",
+      bodyUsed: true,
+      text: "REJECTED TypeError",
+    });
+  });
+});
+
 // https://github.com/oven-sh/bun/issues/6860
 describe("constructing a body from an unusable ReadableStream", () => {
   const bytes = () =>

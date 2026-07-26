@@ -564,10 +564,7 @@ pub enum Tag {
 pub enum ValueError {
     AbortReason(CommonAbortReason),
     SystemError(SystemError),
-    /// A `SystemError` that surfaces as a JS `TypeError` but keeps
-    /// `.code`/`.path`/`.syscall`/`.hostname`. Fetch network errors use this:
-    /// the fetch spec requires `TypeError`, while callers still feature-detect
-    /// on `err.code === "ECONNRESET"` etc.
+    /// `SystemError` surfaced as a JS `TypeError` (fetch network errors).
     SystemTypeError(SystemError),
     Message(BunString),
     /// Surfaces as a JS `TypeError`. The fetch spec maps every "network
@@ -1301,9 +1298,6 @@ impl Value {
                 Value::Locked(l) => core::mem::take(l),
                 _ => unreachable!(),
             };
-            // A body reader (`.text()` etc.) had already started consuming this
-            // body; per fetch spec the body's stream is now disturbed regardless
-            // of how the read ends.
             let was_disturbed = !locked.action.is_none() || locked.promise.is_some();
             *self = Value::Error(err);
             let Value::Error(err_ref) = self else {
@@ -2164,11 +2158,8 @@ fn handle_body_already_used(global_object: &JSGlobalObject) -> JSValue {
 
 /// If the body already failed, reject the read with that error. Every body
 /// reader must call this before its `Locked` handling: `Value::Error` would
-/// otherwise fall through to `use_as_any_blob_*` and resolve empty.
-///
-/// Calling a body reader disturbs the body, so on return `value` is `Used`:
-/// `bodyUsed` reports `true` and a second read rejects with
-/// `ERR_BODY_ALREADY_USED` rather than the stored network error again.
+/// otherwise fall through to `use_as_any_blob_*` and resolve empty. Leaves the
+/// body `Used` since calling a reader disturbs it.
 fn handle_body_error(value: &mut Value, global_object: &JSGlobalObject) -> Option<JSValue> {
     let Value::Error(err) = value else {
         return None;

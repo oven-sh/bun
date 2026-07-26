@@ -95,9 +95,7 @@ impl SystemError {
         SystemError__toErrorInstance(&self, global)
     }
 
-    /// Same as `to_error_instance` but constructs a JS `TypeError` (still
-    /// carrying `.code`/`.path`/`.syscall`/...). The fetch spec maps every
-    /// network error to `TypeError`.
+    /// `to_error_instance` but as a JS `TypeError` (keeps `.code`/`.path`/...).
     pub fn to_type_error_instance(self, global: &JSGlobalObject) -> JSValue {
         SystemError__toTypeErrorInstance(&self, global)
     }

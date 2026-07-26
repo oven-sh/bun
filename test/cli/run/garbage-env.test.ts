@@ -2,11 +2,12 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isPosix, tempDir } from "harness";
 import path from "path";
 
-describe.if(isPosix)("garbage env", () => {
+const cc = Bun.which("clang") || Bun.which("gcc") || Bun.which("cc");
+
+describe.skipIf(!isPosix || !cc)("garbage env", () => {
   test("garbage env", async () => {
     const cfile = path.join(import.meta.dirname, "garbage-env.c");
     {
-      const cc = Bun.which("clang") || Bun.which("gcc") || Bun.which("cc");
       const { exitCode, stderr } = await Bun.$`${cc} -o garbage-env ${cfile}`;
       const stderrText = stderr.toString();
       if (stderrText.length > 0) {
@@ -27,7 +28,6 @@ describe.if(isPosix)("garbage env", () => {
   // malformed; glibc getenv() and Node both ignore it. Bun must not surface it
   // as process.env.FOOBAR === "" nor re-serialize it into children as "FOOBAR=".
   test("environ entry with no '=' is dropped, not fabricated as empty", async () => {
-    const cc = Bun.which("clang") || Bun.which("gcc") || Bun.which("cc");
     using dir = tempDir("environ-no-equals", {});
     const src = path.join(import.meta.dirname, "environ-no-equals.c");
     const bin = path.join(String(dir), "environ-no-equals");
@@ -58,6 +58,7 @@ describe.if(isPosix)("garbage env", () => {
     await using proc = Bun.spawn({
       cmd: [bin, bunExe(), "-e", script],
       env: bunEnv,
+      cwd: String(dir),
       stdout: "pipe",
       stderr: "pipe",
     });

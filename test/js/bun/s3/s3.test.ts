@@ -1,7 +1,7 @@
 import type { S3Options } from "bun";
 import { S3Client, s3 as defaultS3, file, randomUUIDv7 } from "bun";
-import { describe, expect, it as bunIt } from "bun:test";
 import type { TestOptions } from "bun:test";
+import { it as bunIt, describe, expect } from "bun:test";
 import child_process from "child_process";
 import { randomUUID } from "crypto";
 import { bunEnv, bunExe, dockerExe, getSecret, isCI, isDockerEnabled, tempDirWithFiles } from "harness";
@@ -22,7 +22,8 @@ function itForService(service: string): typeof bunIt {
   const withRetry = (opts?: number | TestOptions): TestOptions =>
     typeof opts === "number" ? { timeout: opts, retry: 3 } : { retry: 3, ...opts };
   const wrap = (base: typeof bunIt): typeof bunIt => {
-    const w = ((label: string, fn?: any, opts?: number | TestOptions) => base(label, fn, withRetry(opts))) as typeof bunIt;
+    const w = ((label: string, fn?: any, opts?: number | TestOptions) =>
+      base(label, fn, withRetry(opts))) as typeof bunIt;
     w.skipIf = cond => wrap(base.skipIf(cond));
     return w;
   };

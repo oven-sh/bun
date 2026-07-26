@@ -662,11 +662,8 @@ pub fn relative_platform_buf<'a, P: PlatformT, const ALWAYS_COPY: bool>(
     )
 }
 
-/// [`relative_platform_buf`] with caller-supplied normalize scratch instead of
-/// the fixed `MAX_PATH_BYTES` thread-locals. Use this when `from` or `to` may
-/// exceed `MAX_PATH_BYTES` (a bundler `onResolve` plugin can return a path of
-/// any length). Each scratch buffer must be at least one byte longer than the
-/// corresponding input.
+/// [`relative_platform_buf`] with caller-supplied normalize scratch. Each
+/// scratch buffer must hold at least `input.len() + 1` bytes.
 pub fn relative_platform_buf_with_scratch<'a, P: PlatformT, const ALWAYS_COPY: bool>(
     buf: &'a mut [u8],
     from: &[u8],

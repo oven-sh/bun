@@ -36,12 +36,11 @@ async function once() {
   if ((await res.text()) === "x") ok++;
 }
 
-const iterations = Number(process.env.ITERATIONS ?? 10000);
-
 // ASAN: run N requests and exit so LeakSanitizer reports the unfreed sinks
 // directly. No warmup, no RSS sampling; the caller diffs the SUMMARY bytes
 // between two iteration counts so fixed one-time leaks cancel out.
 if (process.env.SINK_LEAK_MODE === "lsan") {
+  const iterations = Number(process.env.SINK_LEAK_ITERATIONS);
   for (let i = 0; i < iterations; i++) await once();
   server.stop(true);
   Bun.gc(true);
@@ -50,6 +49,8 @@ if (process.env.SINK_LEAK_MODE === "lsan") {
   process.stdout.write(JSON.stringify({ ok, iterations }));
   process.exit(0);
 }
+
+const iterations = 10000;
 
 // RSS, not currentCommit (which ratchets under hole purging, a discarded hole
 // stays "committed"); a leaked sink keeps its page resident, so RSS sees it.

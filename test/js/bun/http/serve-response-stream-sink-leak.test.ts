@@ -25,7 +25,7 @@ test("HTTPResponseSink is destroyed after a sync pull() that ends later", async 
         env: {
           ...bunEnv,
           SINK_LEAK_MODE: "lsan",
-          ITERATIONS: String(iterations),
+          SINK_LEAK_ITERATIONS: String(iterations),
           ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
           // exitcode=0: baseline one-time leaks (not all suppressed) would
           // otherwise make LSAN exit 1 on the fixed build too; the byte
@@ -36,7 +36,7 @@ test("HTTPResponseSink is destroyed after a sync pull() that ends later", async 
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect({ stdout, exitCode }).toEqual({ stdout: JSON.stringify({ ok: iterations, iterations }), exitCode: 0 });
+      expect({ stdout, exitCode }, stderr).toEqual({ stdout: JSON.stringify({ ok: iterations, iterations }), exitCode: 0 });
       const m = /SUMMARY: AddressSanitizer: (\d+) byte\(s\) leaked/.exec(stderr);
       return { bytes: m ? Number(m[1]) : 0, stderr };
     }
@@ -78,4 +78,4 @@ test("HTTPResponseSink is destroyed after a sync pull() that ends later", async 
   // explains RSS over currentCommit). macOS debug: 1.0 MB fixed vs 3.5 MB leaking
   // (~350 B/req); Linux release: flat fixed vs +4.1 MB on the original #29877 leak.
   expect(delta).toBeLessThan(2 * 1024 * 1024);
-}, 300_000);
+}, 60_000);

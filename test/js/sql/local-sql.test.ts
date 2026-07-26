@@ -9,10 +9,8 @@ if (!isDockerEnabled()) {
 } else {
   describeWithContainer("Postgres TLS (verify-full)", { image: "postgres_tls" }, container => {
     const caPath = path.join(import.meta.dir, "docker-tls", "server.crt");
-    // container.host is 127.0.0.1; the server certificate's CN/SAN is
-    // `localhost`, so use that hostname for sslmode=verify-full.
     const connectionString = () =>
-      `postgres://bun_sql_test@localhost:${container.port}/bun_sql_test?sslmode=verify-full`;
+      `postgres://bun_sql_test@${container.host}:${container.port}/bun_sql_test?sslmode=verify-full`;
 
     test("Connects using connection string", async () => {
       await container.ready;
@@ -20,7 +18,9 @@ if (!isDockerEnabled()) {
         max: 1,
         idleTimeout: 1,
         connectionTimeout: 5,
-        tls: { ca: Bun.file(caPath) },
+        // The server certificate's CN/SAN is `localhost`; pin that for the
+        // identity check so the URL can carry container.host.
+        tls: { ca: Bun.file(caPath), serverName: "localhost" },
       });
       expect(await sql`select 1 as x`).toEqual([{ x: 1 }]);
     });
@@ -133,6 +133,12 @@ if (!isDockerEnabled()) {
       const dropAll = () => {
         for (const s of [...activeSockets]) s.destroy();
       };
+      using _proxy = {
+        [Symbol.dispose]() {
+          dropAll();
+          proxy.close();
+        },
+      };
 
       using dir = tempDir("issue-21351", {
         "index.ts": `
@@ -169,8 +175,8 @@ if (!isDockerEnabled()) {
                   SELECT * FROM cte
                 \`;
                 return Response.json(rows);
-              } catch {
-                return new Response(null, { status: 500 });
+              } catch (e) {
+                return new Response(String(e), { status: 500 });
               }
             },
           });
@@ -214,8 +220,11 @@ if (!isDockerEnabled()) {
       // start dropping connections; this also replaces the old fixed 1s sleep.
       {
         const firstOk = await fetch(url);
-        const rows = await firstOk.json();
-        expect({ status: firstOk.status, rows: rows.length }).toEqual({ status: 200, rows: 100 });
+        const body = await firstOk.text();
+        expect({ status: firstOk.status, body: firstOk.status === 200 ? JSON.parse(body).length : body }).toEqual({
+          status: 200,
+          body: 100,
+        });
       }
 
       // Bombard while repeatedly tearing the proxy connections. The server's
@@ -258,8 +267,6 @@ if (!isDockerEnabled()) {
       // Drops must have actually torn a query mid-flight at least once,
       // otherwise this test wasn't exercising the #21351 path.
       expect(seen.interrupted).toBeGreaterThan(0);
-
-      proxy.close();
     }, 30_000);
   });
 }

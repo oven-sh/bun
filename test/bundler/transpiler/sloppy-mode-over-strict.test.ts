@@ -294,6 +294,15 @@ describe.concurrent("strict-mode / unique-formal-parameter rejections still fire
     expect(exitCode).not.toBe(0);
   });
 
+  test("duplicate parameters in a .cjs file bundled to ESM are rejected", async () => {
+    const [, stderr, exitCode] = await build(
+      { "x.cjs": `function f(a, a) { return a }\nmodule.exports = f;\n` },
+      "x.cjs",
+    );
+    expect(stderr).toContain("cannot be bound multiple times");
+    expect(exitCode).not.toBe(0);
+  });
+
   test("var await in an ESM file is rejected when bundling", async () => {
     using dir = tempDir("sloppy-await-esm", {
       "x.js": `export var await = 1;\n`,

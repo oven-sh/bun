@@ -50,14 +50,15 @@ test("dead shell / http / patch items do not reappear", () => {
     ["src/js_parser/parse/parse_entry.rs", /else if p\.options\.bundle && parts\.is_empty\(\) \{/],
     ["src/runtime/shell/IOWriter.rs", /pub fn run_from_main_thread\b/],
     ["src/event_loop/ConcurrentTask.rs", /^\s*ShellIOWriter,$/m],
-    ["src/runtime/shell/builtin/ls.rs", /LsParseError::ShowUsage/],
+    ["src/runtime/shell/builtin/ls.rs", /LsParseError/],
     ["src/http/InternalState.rs", /^\s*Connect,$/m],
     ["src/http/H2Client.rs", /live_sessions as LIVE_SESSIONS/],
     ["src/http/ssl_config.rs", /global_registry as GlobalRegistry/],
     ["src/patch/lib.rs", /git_diff_preprocess_paths<const SENTINEL/],
     ["src/install/lib.rs", /pub use .*CacheDirAndSubpath;/],
     ["src/runtime/bake/dev_server/mod.rs", /pub use packed_map::PackedMap;/],
-    ["src/runtime/valkey_jsc/mod.rs", /pub use valkey_context::ValkeyContext;/],
+    ["src/runtime/valkey_jsc/mod.rs", /valkey_context/],
+    ["src/runtime/valkey_jsc/valkey.rs", /ValkeyContext/],
   ];
   const resurrected = checks.filter(([file, re]) => re.test(src(file))).map(([file, re]) => `${file}: ${re.source}`);
   expect(resurrected).toEqual([]);

@@ -287,9 +287,9 @@ pub struct NewBuilder<T: SourceMapFormatCtx> {
     pub source_map: SourceMapFormat<T>,
     /// `ManuallyDrop` because in the bundler `printWithWriter` path this is a
     /// shallow bitwise copy of `LinkerGraph.files[i].line_offset_table` and
-    /// must not be dropped here. The runtime/transpiler `printAst`/`printCommonJS`
-    /// paths now defer table construction (see `lazy_line_offset_tables`), so
-    /// this is left `EMPTY` there.
+    /// must not be dropped here. The runtime/transpiler `printAst` path defers
+    /// table construction (see `lazy_line_offset_tables`), so this is left
+    /// `EMPTY` there.
     pub line_offset_tables: core::mem::ManuallyDrop<line_offset_table::List<bun_alloc::AstAlloc>>,
 
     /// Lazily-generated, *owned* line-offset table for the runtime/transpiler

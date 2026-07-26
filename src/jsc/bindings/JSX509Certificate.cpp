@@ -1146,8 +1146,9 @@ JSString* JSX509Certificate::computeSubjectAltName(ncrypto::X509View view, JSGlo
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto bio = view.getSubjectAltName();
-    if (!bio) {
-        return jsEmptyString(vm);
+    if (!bio || bio->length() == 0) {
+        // Return empty string for present-but-empty SAN, nullptr for absent
+        return bio && bio->length() > 0 ? jsString(vm, toWTFString(bio)) : jsEmptyString(vm);
     }
 
     return jsString(vm, toWTFString(bio));

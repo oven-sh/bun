@@ -1774,7 +1774,9 @@ fn _join_abs_string_buf<'a, const IS_SENTINEL: bool, P: PlatformT>(
     buf[..leading_len].copy_from_slice(&leading_buf[..leading_len]);
 
     let input = &temp_buf[leading_len..out];
-    let avail = buf.len().saturating_sub(leading_len + (IS_SENTINEL as usize));
+    let avail = buf
+        .len()
+        .saturating_sub(leading_len + (IS_SENTINEL as usize));
     let result_len = if input.len() <= avail {
         normalize_string_buf::<false, P, true>(input, &mut buf[leading_len..]).len()
     } else {

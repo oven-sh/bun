@@ -1643,7 +1643,7 @@ pub mod bv2_impl {
         pub scb_bitset: Option<DynamicBitSetUnmanaged>,
         pub scb_list: server_component_boundary::Slice<'a>,
 
-        /// Files which are imported by JS and inlined in CSS
+        /// Files inlined in CSS and also imported by a non-CSS source (JS, HTML)
         pub additional_files_imported_by_js_and_inlined_in_css: &'a mut DynamicBitSetUnmanaged,
         /// Files which are imported by CSS and inlined in CSS
         pub additional_files_imported_by_css_and_inlined: &'a mut DynamicBitSetUnmanaged,
@@ -1977,8 +1977,7 @@ pub mod bv2_impl {
             let content_hashes: &mut [u64] = input_files_cols.content_hash_for_additional_file;
             for (index, url_for_css) in all_urls_for_css.iter().enumerate() {
                 if !url_for_css.is_empty() {
-                    // We like to inline additional files in CSS if they fit a size threshold
-                    // If we do inline a file in CSS, and it is not imported by JS, then we don't need to copy the additional file into the output directory
+                    // A file inlined in CSS and not imported by any non-CSS source needn't be copied to the output directory.
                     if additional_files_imported_by_css_and_inlined.is_set(index)
                         && !additional_files_imported_by_js_and_inlined_in_css.is_set(index)
                     {

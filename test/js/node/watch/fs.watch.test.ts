@@ -690,10 +690,10 @@ describe("fs.watch", () => {
 });
 
 describe("fs.promises.watch", () => {
-  test("throws ENOENT for an empty path instead of watching cwd", () => {
+  test.each(["", "file://"])("throws ENOENT for %j instead of watching cwd", input => {
     let watcher: AsyncIterable<any> | undefined;
     try {
-      watcher = fs.promises.watch("");
+      watcher = fs.promises.watch(input);
       expect.unreachable();
     } catch (err: any) {
       expect(err).toBeInstanceOf(Error);

@@ -91,7 +91,14 @@ private:
     /* RFC 6455 7.1.7 "Fail the WebSocket Connection": send a Close frame
      * carrying the status code before dropping TCP. end() queues the Close,
      * sets isShuttingDown so later inbound bytes are ignored, then half-closes
-     * (FIN) once drained. forceClose() remains for idle-timeout only. */
+     * (FIN) once drained. forceClose() remains for idle-timeout only.
+     *
+     * noinline: called from a dozen error branches inside the templated
+     * consume()/consumeMessage()/handleFragment() hot path. Letting end()
+     * (and transitively send()) inline at every site bloats the parser by
+     * hundreds of KB; one out-of-line copy per instantiation is enough for
+     * a cold failure path. */
+    __attribute__((noinline))
     static void failConnection(WebSocketState<isServer> */*wState*/, void *s, uint16_t code, std::string_view reason) {
         ((WebSocket<SSL, isServer, USERDATA> *) s)->end(code, reason);
     }

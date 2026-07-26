@@ -472,15 +472,18 @@ Server.prototype.unref = function () {
 };
 
 Server.prototype.closeAllConnections = function () {
-  const server = this[serverSymbol];
-  if (!server) {
+  // Node.js destroys every tracked connection and leaves the listen socket
+  // alone: the server keeps accepting. Iterating the tracked-connection set
+  // (rather than routing through the native handle) also keeps this working
+  // once close() has dropped that handle, which is the forced half of the
+  // close() + closeAllConnections() drain used by http-terminator et al.
+  const connections = this[kTrackedConnections];
+  if (!connections) {
     return;
   }
-  this[serverSymbol] = undefined;
-  clearInterval(this[kConnectionsCheckingInterval]);
-  this.listening = false;
-
-  server.stop(true);
+  for (const socket of connections) {
+    socket.destroy();
+  }
 };
 
 Server.prototype.getConnections = function (callback) {
@@ -494,8 +497,20 @@ Server.prototype.getConnections = function (callback) {
 };
 
 Server.prototype.closeIdleConnections = function () {
-  const server = this[serverSymbol];
-  server?.closeIdleConnections();
+  // Node.js destroys each tracked connection that has no response in flight.
+  // Iterating the tracked-connection set keeps this working once close() has
+  // dropped the native handle, which is the graceful-drain pattern:
+  //   server.close(cb); setTimeout(() => server.closeIdleConnections(), grace)
+  const connections = this[kTrackedConnections];
+  if (!connections) {
+    return;
+  }
+  for (const socket of connections) {
+    if (socket._httpMessage || socket[kPipelinedResponses]?.length) {
+      continue;
+    }
+    socket.destroy();
+  }
 };
 
 Server.prototype.close = function (optionalCallback?) {

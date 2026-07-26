@@ -390,6 +390,23 @@ impl Process {
         }
     }
 
+    /// Whether this process must be reaped via the waiter thread rather than a
+    /// pidfd poll: either the global opt-out is set (seccomp / old kernel), or
+    /// on Linux this specific process has no pidfd because `pidfd_open` failed
+    /// with a transient error (EMFILE/ENFILE/ENOMEM) after `posix_spawn` had
+    /// already succeeded.
+    #[cfg(unix)]
+    fn needs_waiter_thread(&self) -> bool {
+        if WaiterThread::should_use_waiter_thread() {
+            return true;
+        }
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        if self.pidfd <= 0 {
+            return true;
+        }
+        false
+    }
+
     pub fn watch(&mut self) -> bun_sys::Result<()> {
         #[cfg(windows)]
         {
@@ -402,7 +419,7 @@ impl Process {
         #[cfg(unix)]
         {
             let ctx = self.event_loop_ctx();
-            if WaiterThread::should_use_waiter_thread() {
+            if self.needs_waiter_thread() {
                 self.poller = Poller::WaiterThread(KeepAlive::default());
                 if let Poller::WaiterThread(w) = &mut self.poller {
                     w.ref_(ctx);
@@ -460,7 +477,7 @@ impl Process {
     #[cfg(unix)]
     pub fn rewatch_posix(&mut self) -> bun_sys::Result<()> {
         let ctx = self.event_loop_ctx();
-        if WaiterThread::should_use_waiter_thread() {
+        if self.needs_waiter_thread() {
             if !matches!(self.poller, Poller::WaiterThread(_)) {
                 self.poller = Poller::WaiterThread(KeepAlive::default());
             }
@@ -1312,7 +1329,10 @@ pub mod waiter_thread_posix {
         }
 
         pub fn reload_handlers() {
-            if !bun_spawn_sys::waiter_thread_flag::get() {
+            // Only relevant once the waiter thread exists; it may have been
+            // started for a single process (per-process pidfd fallback) without
+            // the global flag ever being set.
+            if instance_ref().started.load(Ordering::Relaxed) == 0 {
                 return;
             }
 
@@ -1336,8 +1356,6 @@ pub mod waiter_thread_posix {
     }
 
     pub fn init() -> Result<(), std::io::Error> {
-        debug_assert!(bun_spawn_sys::waiter_thread_flag::get());
-
         if instance_ref().started.fetch_max(1, Ordering::Relaxed) > 0 {
             return Ok(());
         }

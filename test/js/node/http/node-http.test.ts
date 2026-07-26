@@ -3710,6 +3710,44 @@ describe("server.close() drains connections, not requests", () => {
       server.close();
     }
   });
+
+  it("closeIdleConnections() on a live server spares a connection mid-header-parse", async () => {
+    // Node's ConnectionsList.idle() excludes parsers with last_message_start != 0
+    // (test-http-server-close-idle.js client1). The JS kTrackedConnections sweep
+    // would treat such a connection as idle, so it must not run on a live server.
+    const server = createServer((req, res) => res.end("ok:" + req.url));
+    server.keepAliveTimeout = 60_000;
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as AddressInfo;
+    const connected = once(server, "connection");
+    const sock = connect(port, "127.0.0.1");
+    sock.on("error", () => {});
+    await once(sock, "connect");
+    try {
+      let ended = false;
+      sock.on("end", () => (ended = true));
+      sock.write("GET /p HTTP/1.1");
+      await connected;
+      await drainTicks();
+
+      server.closeIdleConnections();
+      await drainTicks();
+      expect({ socketDestroyed: sock.destroyed, socketEnded: ended }).toEqual({
+        socketDestroyed: false,
+        socketEnded: false,
+      });
+
+      let body = "";
+      sock.on("data", c => (body += c));
+      sock.write("\r\nHost: x\r\n\r\n");
+      while (!body.includes("ok:/p")) await once(sock, "data");
+    } finally {
+      sock.destroy();
+      server.closeAllConnections();
+      server.close();
+    }
+  });
 });
 
 it("req.upgrade is true inside the 'connect' listener", async () => {

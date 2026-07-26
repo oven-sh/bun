@@ -278,6 +278,7 @@ const {
   kPrivateConstructor,
   kReset,
   kSendHeaders,
+  kSendRawHeaders,
   kSessionTicket,
   kTrailers,
   kVersionNegotiation,
@@ -2429,6 +2430,13 @@ class QuicStream {
     }
     const headerString = buildNgHeaderString(headers, assertValidPseudoHeader, true);
     return this.#handle.sendHeaders(kind, headerString, flags);
+  }
+
+  // Bypasses `buildNgHeaderString`; re-exported through bun:internal-for-testing.
+  [kSendRawHeaders](pairs, kind = kHeadersKindInitial, flags = kHeadersFlagsNone) {
+    let s = "";
+    for (let i = 0; i + 1 < pairs.length; i += 2) s += `${pairs[i]}\0${pairs[i + 1]}\0\0`;
+    return this.#handle.sendHeaders(kind, [s, pairs.length >> 1], flags);
   }
 
   [kFinishClose](error) {

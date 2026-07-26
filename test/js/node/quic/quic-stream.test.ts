@@ -1,7 +1,8 @@
 // `destroy()` after the app committed AND ended a response (which, under
 // `onwanttrailers`, records `trailers_pending` rather than `fin_pending`)
 // must deliver it with a FIN, never retract it with a RESET_STREAM.
-import { describe, expect, test } from "bun:test";
+import { quicSendRawHeaders as kSendRaw } from "bun:internal-for-testing";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { createPrivateKey } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -177,5 +178,231 @@ describe("HTTP/3 header encoding", () => {
 
     expect(seen.length).toBe(1);
     expect(Object.keys(seen[0])).not.toContain("authorization");
+  });
+});
+
+// RFC 9114 §4.1.2/§4.2/§4.3: a peer that sends a malformed field section MUST
+// receive a stream error of type H3_MESSAGE_ERROR (0x10e). Bun's own client
+// validates outbound headers in `buildNgHeaderString`, so the receive-side
+// checks have to be exercised through a raw send hook that bypasses it.
+describe("HTTP/3 inbound field-section validation (RFC 9114)", () => {
+  const H3_MESSAGE_ERROR = 0x10en;
+
+  const valid = [":method", "GET", ":scheme", "https", ":authority", "localhost", ":path", "/"];
+
+  type Row = { name: string; pairs: string[] };
+  // Each of these is a MUST-reject per §4.1.2/§4.2/§4.3.
+  const malformedRequests: Row[] = [
+    { name: "duplicate :path", pairs: [...valid, ":path", "/b"] },
+    { name: "duplicate :method", pairs: [":method", "GET", ...valid] },
+    { name: "unknown pseudo-header", pairs: [...valid, ":foo", "bar"] },
+    { name: ":status in request", pairs: [...valid, ":status", "200"] },
+    { name: "pseudo-header after regular", pairs: [...valid, "x-ok", "v", ":path", "/c"] },
+    { name: "uppercase field name", pairs: [...valid, "X-Upper", "v"] },
+    { name: "non-token field name", pairs: [...valid, "bad name", "v"] },
+    { name: "CR in field value", pairs: [...valid, "x-crlf", "a\r\nb"] },
+    { name: "C0 control in field value", pairs: [...valid, "x-ctl", "a\x01b"] },
+    { name: "DEL in field value", pairs: [...valid, "x-ctl", "a\x7fb"] },
+    { name: "leading SP in field value", pairs: [...valid, "x-ws", " v"] },
+    { name: "trailing HTAB in field value", pairs: [...valid, "x-ws", "v\t"] },
+    { name: "transfer-encoding", pairs: [...valid, "transfer-encoding", "chunked"] },
+    { name: "connection", pairs: [...valid, "connection", "close"] },
+    { name: "keep-alive", pairs: [...valid, "keep-alive", "timeout=5"] },
+    { name: "upgrade", pairs: [...valid, "upgrade", "h2c"] },
+    { name: "te not trailers", pairs: [...valid, "te", "gzip"] },
+    { name: "missing :method", pairs: [":scheme", "https", ":authority", "localhost", ":path", "/"] },
+    { name: "missing :path", pairs: [":method", "GET", ":scheme", "https", ":authority", "localhost"] },
+    { name: "missing :scheme", pairs: [":method", "GET", ":authority", "localhost", ":path", "/"] },
+    { name: "empty :path", pairs: [":method", "GET", ":scheme", "https", ":authority", "localhost", ":path", ""] },
+    { name: ":protocol without CONNECT", pairs: [...valid, ":protocol", "websocket"] },
+    { name: "CONNECT without :authority", pairs: [":method", "CONNECT"] },
+    { name: "plain CONNECT with :path", pairs: [":method", "CONNECT", ":authority", "h", ":path", "/"] },
+    { name: "no :authority and no Host", pairs: [":method", "GET", ":scheme", "https", ":path", "/"] },
+    { name: "empty Host without :authority", pairs: [":method", "GET", ":scheme", "https", ":path", "/", "host", ""] },
+    { name: "empty Host with :authority", pairs: [...valid, "host", ""] },
+    { name: "non-numeric content-length", pairs: [...valid, "content-length", "abc"] },
+    { name: "conflicting content-length", pairs: [...valid, "content-length", "5", "content-length", "100"] },
+    { name: "content-length overflow", pairs: [...valid, "content-length", "99999999999999999999"] },
+    { name: ":method with space", pairs: [":method", "GET POST", ":scheme", "https", ":authority", "h", ":path", "/"] },
+    { name: ":scheme with space", pairs: [":method", "GET", ":scheme", "ht tp", ":authority", "h", ":path", "/"] },
+  ];
+
+  const malformedResponses: Row[] = [
+    { name: "missing :status", pairs: ["content-type", "text/plain"] },
+    { name: "duplicate :status", pairs: [":status", "200", ":status", "404"] },
+    { name: "non-numeric :status", pairs: [":status", "abc"] },
+    { name: ":status < 100", pairs: [":status", "050"] },
+    { name: "request pseudo in response", pairs: [":status", "200", ":path", "/"] },
+    { name: "uppercase field name", pairs: [":status", "200", "X-Upper", "v"] },
+    { name: "transfer-encoding", pairs: [":status", "200", "transfer-encoding", "chunked"] },
+    { name: "connection", pairs: [":status", "200", "connection", "close"] },
+    { name: "pseudo after regular", pairs: ["x-ok", "v", ":status", "200"] },
+  ];
+
+  const publicBadResponses = [
+    { name: "missing :status", headers: { "content-type": "text/plain" } },
+    { name: ":method in response", headers: { ":status": "200", ":method": "GET" } },
+  ];
+
+  const wellFormedRequests: Row[] = [
+    { name: "te: trailers", pairs: [...valid, "te", "trailers"] },
+    { name: "te: Trailers (mixed case)", pairs: [...valid, "te", "Trailers"] },
+    { name: "repeated content-length (same value)", pairs: [...valid, "content-length", "0", "content-length", "0"] },
+    {
+      name: "Host without :authority",
+      pairs: [":method", "GET", ":scheme", "https", ":path", "/", "host", "localhost"],
+    },
+    { name: "CONNECT without :scheme/:path", pairs: [":method", "CONNECT", ":authority", "localhost:443"] },
+    {
+      name: "extended CONNECT",
+      pairs: [":method", "CONNECT", ":protocol", "websocket", ":scheme", "https", ":authority", "h", ":path", "/"],
+    },
+  ];
+
+  // One shared session: a fresh handshake per row is what made this flake under
+  // concurrent load. The server dispatches on x-case so response-side rows can
+  // pick their own malformed reply.
+  const serverSeen: Record<string, unknown[]> = {};
+  let server: any, client: any, serverSession: any;
+  beforeAll(async () => {
+    server = await listen(
+      ss => {
+        serverSession = ss;
+        ss.closed.catch(() => {});
+        ss.onstream = (s: any) => s.closed.catch(() => {});
+      },
+      {
+        sni: { "*": { keys: [key], certs: [cert] } },
+        transportParams: { maxIdleTimeout: 30 },
+        onheaders(this: any, h: any) {
+          this.closed.catch(() => {});
+          const tag = h["x-case"];
+          if (tag?.startsWith("resp/")) {
+            (this as any)[kSendRaw](malformedResponses[+tag.slice(5)].pairs, 1, 1);
+          } else if (tag?.startsWith("pub/")) {
+            this.sendHeaders(publicBadResponses[+tag.slice(4)].headers, { terminal: true });
+          } else {
+            (serverSeen[tag ?? h[":path"]] ??= []).push(h);
+            this.sendHeaders({ ":status": "200" }, { terminal: true });
+          }
+        },
+      },
+    );
+    client = await connect(server.address, {
+      servername: "localhost",
+      verifyPeer: "manual",
+      transportParams: { maxIdleTimeout: 30 },
+    });
+    client.closed.catch(() => {});
+    await client.opened;
+  });
+  afterAll(() => {
+    client?.close();
+    serverSession?.close();
+    server?.close().catch(() => {});
+  });
+
+  const closedErr = (s: any) =>
+    s.closed.then(
+      () => undefined,
+      (e: any) => e,
+    );
+
+  test.concurrent.each(malformedRequests)("server rejects malformed request: $name", async ({ pairs }) => {
+    const stream = await client.createBidirectionalStream();
+    (stream as any)[kSendRaw](pairs, 1, 1);
+    const err = await closedErr(stream);
+    // The RESET_STREAM from the server is the observable proof: onheaders and
+    // the reset path are mutually exclusive in on_stream_read.
+    expect({ code: err?.code, errorCode: err?.errorCode }).toEqual({
+      code: "ERR_QUIC_APPLICATION_ERROR",
+      errorCode: H3_MESSAGE_ERROR,
+    });
+  });
+
+  test.concurrent.each(malformedResponses.map((r, i) => ({ ...r, i })))(
+    "client rejects malformed response: $name",
+    async ({ i }) => {
+      const clientSeen: unknown[] = [];
+      const stream = await client.createBidirectionalStream({
+        headers: { ":method": "GET", ":scheme": "https", ":authority": "h", ":path": "/", "x-case": `resp/${i}` },
+        onheaders: (h: any) => clientSeen.push(h),
+      });
+      const err = await closedErr(stream);
+      expect({ clientSeen, code: err?.code, errorCode: err?.errorCode }).toEqual({
+        clientSeen: [],
+        code: "ERR_QUIC_APPLICATION_ERROR",
+        errorCode: H3_MESSAGE_ERROR,
+      });
+    },
+  );
+
+  test.concurrent.each(wellFormedRequests)("server accepts well-formed request: $name", async ({ name, pairs }) => {
+    const stream = await client.createBidirectionalStream();
+    (stream as any)[kSendRaw]([...pairs, "x-case", name], 1, 1);
+    const err = await closedErr(stream);
+    expect({ seen: serverSeen[name]?.length, err }).toEqual({ seen: 1, err: undefined });
+  });
+
+  // These reach the server through public `sendHeaders`, which does not enforce
+  // role-appropriate or mandatory pseudo-headers: the gap was on the API surface.
+  test.concurrent.each(publicBadResponses.map((r, i) => ({ ...r, i })))(
+    "client rejects response via public sendHeaders: $name",
+    async ({ i }) => {
+      const clientSeen: unknown[] = [];
+      const stream = await client.createBidirectionalStream({
+        headers: { ":method": "GET", ":scheme": "https", ":authority": "h", ":path": "/", "x-case": `pub/${i}` },
+        onheaders: (h: any) => clientSeen.push(h),
+      });
+      const err = await closedErr(stream);
+      expect({ clientSeen, code: err?.code, errorCode: err?.errorCode }).toEqual({
+        clientSeen: [],
+        code: "ERR_QUIC_APPLICATION_ERROR",
+        errorCode: H3_MESSAGE_ERROR,
+      });
+    },
+  );
+
+  test.concurrent("server rejects request missing :scheme (public sendHeaders)", async () => {
+    const stream = await client.createBidirectionalStream();
+    stream.sendHeaders({ ":method": "GET", ":authority": "localhost", ":path": "/" }, { terminal: true });
+    const err = await closedErr(stream);
+    expect({ code: err?.code, errorCode: err?.errorCode }).toEqual({
+      code: "ERR_QUIC_APPLICATION_ERROR",
+      errorCode: H3_MESSAGE_ERROR,
+    });
+  });
+
+  test.concurrent("server rejects pseudo-header in trailers", async () => {
+    // Dedicated session: the assertion is on the server's stream lifetime,
+    // which the shared session does not surface.
+    const serverStreamDone = Promise.withResolvers<void>();
+    const trailersSeen: unknown[] = [];
+    await using server = await listen(
+      async ss => {
+        ss.onerror = () => {};
+        ss.onstream = (s: any) => s.closed.then(serverStreamDone.resolve, serverStreamDone.resolve);
+        await ss.closed.catch(() => {});
+      },
+      {
+        sni: { "*": { keys: [key], certs: [cert] } },
+        onheaders(this: any) {
+          this.ontrailers = (t: any) => trailersSeen.push(t);
+        },
+      },
+    );
+    const c = await connect(server.address, { servername: "localhost", verifyPeer: "manual" });
+    c.onerror = () => {};
+    await c.opened;
+    try {
+      const stream = await c.createBidirectionalStream();
+      stream.closed.catch(() => {});
+      (stream as any)[kSendRaw](valid, 1, 0);
+      (stream as any)[kSendRaw]([":path", "/t"], 2, 1);
+      await serverStreamDone.promise;
+    } finally {
+      c.close();
+    }
+    expect(trailersSeen).toEqual([]);
   });
 });

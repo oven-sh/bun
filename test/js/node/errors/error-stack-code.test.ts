@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import fs from "node:fs";
-import util from "node:util";
 import { Buffer } from "node:buffer";
 import { EventEmitter } from "node:events";
+import fs from "node:fs";
+import util from "node:util";
 
 function capture(fn: () => unknown): NodeJS.ErrnoException {
   try {
@@ -15,10 +15,20 @@ function capture(fn: () => unknown): NodeJS.ErrnoException {
 
 describe("Node.js ERR_* error .stack header includes [code]", () => {
   const cases: Array<[string, () => unknown, string, string]> = [
-    ["fs ERR_INVALID_ARG_TYPE", () => fs.rmSync("/x", { recursive: "yes" as any }), "TypeError", "ERR_INVALID_ARG_TYPE"],
+    [
+      "fs ERR_INVALID_ARG_TYPE",
+      () => fs.rmSync("/x", { recursive: "yes" as any }),
+      "TypeError",
+      "ERR_INVALID_ARG_TYPE",
+    ],
     ["Buffer ERR_OUT_OF_RANGE", () => Buffer.alloc(-1), "RangeError", "ERR_OUT_OF_RANGE"],
     ["URL ERR_INVALID_URL", () => new URL("nope"), "TypeError", "ERR_INVALID_URL"],
-    ["events ERR_INVALID_ARG_TYPE", () => new EventEmitter().setMaxListeners("x" as any), "TypeError", "ERR_INVALID_ARG_TYPE"],
+    [
+      "events ERR_INVALID_ARG_TYPE",
+      () => new EventEmitter().setMaxListeners("x" as any),
+      "TypeError",
+      "ERR_INVALID_ARG_TYPE",
+    ],
   ];
 
   test.each(cases)("%s", (_, fn, expectedName, expectedCode) => {

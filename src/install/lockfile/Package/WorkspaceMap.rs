@@ -351,6 +351,7 @@ impl WorkspaceMap {
                     false,
                     false,
                     true,
+                    false,
                     Some(ignored_workspace_paths),
                 )? {
                     Ok(w) => w,

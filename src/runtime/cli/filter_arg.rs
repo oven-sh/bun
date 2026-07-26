@@ -307,6 +307,7 @@ impl PackageFilterIterator {
             false,
             true,
             true,
+            false,
             Some(glob_ignore_fn),
         )??;
         // Heap-allocate the walker so its address is stable even if `self` moves between

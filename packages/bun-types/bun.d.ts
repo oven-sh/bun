@@ -8190,6 +8190,17 @@ declare module "bun" {
      * @default true
      */
     onlyFiles?: boolean;
+
+    /**
+     * Suppress errors encountered while traversing the filesystem. When
+     * `false` (the default), a directory that cannot be opened (for example,
+     * due to `EACCES`) aborts the entire scan. When `true`, such directories
+     * are skipped and the scan continues returning matches from readable
+     * directories.
+     *
+     * @default false
+     */
+    suppressErrors?: boolean;
   }
 
   /**

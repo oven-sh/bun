@@ -24,7 +24,7 @@ import { Glob, GlobScanOptions } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { execSync } from "child_process";
 import fg from "fast-glob";
-import { bunEnv, bunExe, isWindows, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isPosix, isWindows, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
 import * as fs from "node:fs";
 import * as path from "path";
 import { createTempDirectoryWithBrokenSymlinks, prepareEntries, tempFixturesDir } from "./util";
@@ -1179,4 +1179,144 @@ describe.skipIf(!isWindows)("glob scan descends read-only directories", () => {
       expect(err?.code).toBe("EPERM");
     },
   );
+});
+
+// suppressErrors: a subdirectory that cannot be opened (e.g. mode 000) should
+// be skipped when `suppressErrors: true` is set, and the rest of the tree is
+// still returned. Root bypasses DAC on POSIX so, when running as root, the
+// child is spawned with the `nobody` uid/gid to actually see EACCES.
+describe.skipIf(!isPosix)("suppressErrors", () => {
+  const isRoot = process.getuid?.() === 0;
+  const nobody = (() => {
+    if (!isRoot) return null;
+    try {
+      const line = fs
+        .readFileSync("/etc/passwd", "utf8")
+        .split("\n")
+        .find(l => l.startsWith("nobody:"));
+      if (!line) return null;
+      const parts = line.split(":");
+      const uid = Number(parts[2]);
+      const gid = Number(parts[3]);
+      if (!Number.isInteger(uid) || !Number.isInteger(gid)) return null;
+      return { uid, gid };
+    } catch {
+      return null;
+    }
+  })();
+  const canTriggerEACCES = !isRoot || nobody !== null;
+
+  const fixture = `
+    const { chmodSync } = require("node:fs");
+    const { join } = require("node:path");
+    const dir = process.env.GLOB_SCAN_DIR;
+    const report = (label, f) => {
+      try { console.log(label, JSON.stringify(f().sort())); }
+      catch (e) { console.log(label, "THROWS", e.code ?? e.message); }
+    };
+    chmodSync(join(dir, "locked"), 0o000);
+    try {
+      report("default", () => [...new Bun.Glob("**/*.txt").scanSync({ cwd: dir })]);
+      report("suppress", () => [...new Bun.Glob("**/*.txt").scanSync({ cwd: dir, suppressErrors: true })]);
+    } finally {
+      chmodSync(join(dir, "locked"), 0o755);
+    }
+  `;
+
+  const fixtureAsync = `
+    const { chmodSync } = require("node:fs");
+    const { join } = require("node:path");
+    const dir = process.env.GLOB_SCAN_DIR;
+    const report = async (label, f) => {
+      try { console.log(label, JSON.stringify((await f()).sort())); }
+      catch (e) { console.log(label, "THROWS", e.code ?? e.message); }
+    };
+    chmodSync(join(dir, "locked"), 0o000);
+    try {
+      await report("default", () => Array.fromAsync(new Bun.Glob("**/*.txt").scan({ cwd: dir })));
+      await report("suppress", () => Array.fromAsync(new Bun.Glob("**/*.txt").scan({ cwd: dir, suppressErrors: true })));
+    } finally {
+      chmodSync(join(dir, "locked"), 0o755);
+    }
+  `;
+
+  function makeTree() {
+    const dir = tempDir("glob-scan-suppress-errors", {
+      "a.txt": "",
+      "b.txt": "",
+      "open/c.txt": "",
+      "open/d.txt": "",
+      "locked/inner/secret.txt": "",
+    });
+    if (isRoot && nobody) {
+      // Let `nobody` chmod the locked dir and traverse the tree.
+      for (const p of ["", "a.txt", "b.txt", "open", "open/c.txt", "open/d.txt", "locked", "locked/inner"]) {
+        const full = path.join(String(dir), p);
+        fs.chmodSync(full, 0o777);
+        fs.chownSync(full, nobody.uid, nobody.gid);
+      }
+    }
+    return dir;
+  }
+
+  function spawnOpts(dir: string, script: string) {
+    const opts: Parameters<typeof Bun.spawn>[0] = {
+      cmd: [bunExe(), "-e", script],
+      env: { ...bunEnv, GLOB_SCAN_DIR: dir },
+      stdout: "pipe",
+      stderr: "pipe",
+    };
+    if (isRoot && nobody) {
+      opts.uid = nobody.uid;
+      opts.gid = nobody.gid;
+    }
+    return opts;
+  }
+
+  test.skipIf(!canTriggerEACCES)("scanSync skips unreadable directories with suppressErrors: true", async () => {
+    using dir = makeTree();
+    try {
+      await using proc = Bun.spawn(spawnOpts(String(dir), fixture));
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      const lines = stdout.trim().split("\n");
+      expect(lines).toEqual([
+        `default THROWS EACCES`,
+        `suppress ${JSON.stringify(["a.txt", "b.txt", "open/c.txt", "open/d.txt"])}`,
+      ]);
+      expect(exitCode).toBe(0);
+    } finally {
+      try {
+        fs.chmodSync(path.join(String(dir), "locked"), 0o755);
+      } catch {}
+    }
+  });
+
+  test.skipIf(!canTriggerEACCES)("scan skips unreadable directories with suppressErrors: true", async () => {
+    using dir = makeTree();
+    try {
+      await using proc = Bun.spawn(spawnOpts(String(dir), fixtureAsync));
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      const lines = stdout.trim().split("\n");
+      expect(lines).toEqual([
+        `default THROWS EACCES`,
+        `suppress ${JSON.stringify(["a.txt", "b.txt", "open/c.txt", "open/d.txt"])}`,
+      ]);
+      expect(exitCode).toBe(0);
+    } finally {
+      try {
+        fs.chmodSync(path.join(String(dir), "locked"), 0o755);
+      } catch {}
+    }
+  });
+
+  test("suppressErrors: true yields no matches when cwd itself is unreadable", async () => {
+    // This does not require dropping privileges: a nonexistent cwd fails the
+    // root open on every platform, and ENOENT there is not special-cased.
+    using parent = tempDir("glob-scan-suppress-errors-cwd", {});
+    const missing = path.join(String(parent), "does-not-exist");
+    expect(() => [...new Glob("**/*.txt").scanSync({ cwd: missing })]).toThrow();
+    expect([...new Glob("**/*.txt").scanSync({ cwd: missing, suppressErrors: true })]).toEqual([]);
+  });
 });

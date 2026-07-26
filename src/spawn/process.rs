@@ -390,11 +390,8 @@ impl Process {
         }
     }
 
-    /// Whether this process must be reaped via the waiter thread rather than a
-    /// pidfd poll: either the global opt-out is set (seccomp / old kernel), or
-    /// on Linux this specific process has no pidfd because `pidfd_open` failed
-    /// with a transient error (EMFILE/ENFILE/ENOMEM) after `posix_spawn` had
-    /// already succeeded.
+    /// True when this process has no pidfd to poll: global opt-out, or Linux
+    /// `pidfd_open` failed (EMFILE etc.) after `posix_spawn` already succeeded.
     #[cfg(unix)]
     fn needs_waiter_thread(&self) -> bool {
         if WaiterThread::should_use_waiter_thread() {
@@ -1329,9 +1326,8 @@ pub mod waiter_thread_posix {
         }
 
         pub fn reload_handlers() {
-            // Only relevant once the waiter thread exists; it may have been
-            // started for a single process (per-process pidfd fallback) without
-            // the global flag ever being set.
+            // Keys off thread existence, not the global flag: the thread may
+            // have been started for a single pidfd-less process.
             if instance_ref().started.load(Ordering::Relaxed) == 0 {
                 return;
             }

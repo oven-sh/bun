@@ -543,11 +543,9 @@ impl PosixSpawnResult {
                 ) {
                     crate::waiter_thread_flag::set();
                 }
-                // Any other errno (ESRCH, EMFILE, ENFILE, ENODEV, ENOMEM) is
-                // returned as-is. The child is already running: the caller
-                // decides whether to treat this as a fast-exit (ESRCH) or a
-                // per-process waiter-thread fallback; it must never block on
-                // or report failure for a child that `posix_spawn` accepted.
+                // The child is already running; never block on it here. The
+                // caller maps ESRCH to fast-exit and everything else to a
+                // per-process waiter-thread fallback.
                 Err(err)
             }
             Ok(fd) => Ok(fd.native()),
@@ -978,14 +976,9 @@ pub unsafe fn spawn_process_posix(
                             spawned.pidfd = Some(pidfd);
                         }
                         Err(err) => {
-                            // `posix_spawn` has already succeeded: the child
-                            // is running and the stdio pipes are live, so we
-                            // never surface this as a spawn failure. ESRCH
-                            // means it exited in the window before
-                            // `pidfd_open`; anything else (EMFILE/ENFILE/
-                            // ENOMEM/seccomp) leaves `pidfd = None` and
-                            // `Process::watch` falls back to the waiter
-                            // thread for this process.
+                            // `posix_spawn` already succeeded; never surface
+                            // this as a spawn failure. `pidfd = None` makes
+                            // `Process::watch` fall back to the waiter thread.
                             if err.get_errno() == bun_sys::E::ESRCH {
                                 spawned.has_exited = true;
                             }

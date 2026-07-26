@@ -1014,9 +1014,8 @@ body {
 
   // <link rel="prefetch">, <link rel="modulepreload"> and <link rel="preload"> with
   // as={script,fetch,track,document,embed,object} must not ship dangling source-path
-  // hrefs. Hints are fetch-only: targets are emitted as raw hashed assets (never
-  // bundled/executed), and when the target was already bundled via <script>/<link
-  // rel=stylesheet> the hint is dropped.
+  // hrefs. Non-code targets are emitted + hashed; JS/CSS targets are bundled and
+  // the hint tag is dropped (nothing separate to preload once bundled).
   itBundled("html/link-preload-prefetch", {
     outdir: "out/",
     files: {
@@ -1025,20 +1024,19 @@ body {
 <html>
   <head>
     <link rel="prefetch" href="./hero.png">
-    <link rel="modulepreload" href="./mod.js">
+    <link rel="modulepreload" href="./dep.js">
     <link rel="preload" as="script" href="./preloaded.js">
     <link rel="preload" as="fetch" href="./data.json" crossorigin>
     <link rel="preload" as="track" href="./captions.vtt">
-    <link rel="prefetch" href="./lazy.js">
   </head>
   <body>
     <img src="./hero.png">
-    <script type="module" src="./mod.js"></script>
+    <script type="module" src="./main.js"></script>
   </body>
 </html>`,
-      "/mod.js": `console.log("mod");`,
-      "/preloaded.js": `globalThis.PRELOADED_RAN = true;`,
-      "/lazy.js": `globalThis.LAZY_RAN = true;`,
+      "/main.js": `import { x } from "./dep.js"; console.log("main", x);`,
+      "/dep.js": `export const x = 42; console.log("dep");`,
+      "/preloaded.js": `console.log("preloaded");`,
       "/hero.png": "PNG",
       "/data.json": `{"k":1}`,
       "/captions.vtt": "WEBVTT",
@@ -1050,54 +1048,39 @@ body {
       // No raw source paths should survive in the output; every one of these
       // would have been a guaranteed 404 before.
       expect(html).not.toContain('href="./hero.png"');
-      expect(html).not.toContain('href="./mod.js"');
+      expect(html).not.toContain('href="./dep.js"');
       expect(html).not.toContain('href="./preloaded.js"');
       expect(html).not.toContain('href="./data.json"');
       expect(html).not.toContain('href="./captions.vtt"');
-      expect(html).not.toContain('href="./lazy.js"');
 
-      // prefetch: asset is copied + hashed and the href is rewritten.
+      // prefetch / preload of non-code assets: copied + hashed and href rewritten.
       expect(html).toMatch(/<link rel="prefetch" href="[^"]*hero-[a-z0-9]+\.png">/);
-
-      // preload as=fetch / as=track: assets are copied + hashed and the href is rewritten.
       expect(html).toMatch(/<link rel="preload" as="fetch" href="[^"]*data-[a-z0-9]+\.json" crossorigin>/);
       expect(html).toMatch(/<link rel="preload" as="track" href="[^"]*captions-[a-z0-9]+\.vtt">/);
 
-      // modulepreload of ./mod.js: the module is also pulled in via <script src>, so
-      // it is bundled and the hint is dropped (there is no separate file to preload).
+      // JS hints are bundled and the hint tag is dropped.
       expect(html).not.toMatch(/rel="modulepreload"/);
+      expect(html).not.toMatch(/as="script"/);
 
-      // preload as=script / prefetch of JS not otherwise referenced: emitted as a
-      // separate hashed file and the href is rewritten. The browser fetches but
-      // never executes, matching the source-page semantics.
-      expect(html).toMatch(/<link rel="preload" as="script" href="[^"]*preloaded-[a-z0-9]+\.js">/);
-      expect(html).toMatch(/<link rel="prefetch" href="[^"]*lazy-[a-z0-9]+\.js">/);
-
-      // The emitted files exist and carry the original bytes.
       const hero = html.match(/href="(?:\.\/|\/)?(hero-[a-z0-9]+\.png)"/);
       const data = html.match(/href="(?:\.\/|\/)?(data-[a-z0-9]+\.json)"/);
       const vtt = html.match(/href="(?:\.\/|\/)?(captions-[a-z0-9]+\.vtt)"/);
-      const preloaded = html.match(/href="(?:\.\/|\/)?(preloaded-[a-z0-9]+\.js)"/);
-      const lazy = html.match(/href="(?:\.\/|\/)?(lazy-[a-z0-9]+\.js)"/);
       expect(hero).not.toBeNull();
       expect(data).not.toBeNull();
       expect(vtt).not.toBeNull();
-      expect(preloaded).not.toBeNull();
-      expect(lazy).not.toBeNull();
       api.expectFile("out/" + hero![1]).toBe("PNG");
       api.expectFile("out/" + data![1]).toBe(`{"k":1}`);
       api.expectFile("out/" + vtt![1]).toBe("WEBVTT");
-      api.expectFile("out/" + preloaded![1]).toBe(`globalThis.PRELOADED_RAN = true;`);
-      api.expectFile("out/" + lazy![1]).toBe(`globalThis.LAZY_RAN = true;`);
 
-      // The entry JS chunk contains only mod.js. Resource-hint JS is never
-      // bundled/executed: PRELOADED_RAN / LAZY_RAN must not be in the chunk.
+      // modulepreload of a transitive dep: dep.js is reached via both the hint
+      // and main.js's import. It must be bundled as JS (not pinned to a file
+      // loader), so `import { x } from "./dep.js"` resolves.
       const js = html.match(/src="(?:\.\/|\/)?(index-[a-z0-9]+\.js)"/);
       expect(js).not.toBeNull();
       const jsContent = api.readFile("out/" + js![1]);
-      expect(jsContent).toContain('"mod"');
-      expect(jsContent).not.toContain("PRELOADED_RAN");
-      expect(jsContent).not.toContain("LAZY_RAN");
+      expect(jsContent).toContain('"main"');
+      expect(jsContent).toContain('"dep"');
+      expect(jsContent).toContain('"preloaded"');
     },
   });
 

@@ -106,9 +106,6 @@ pub struct ParseTask {
     pub stage: ParseTaskStage,
 
     pub tree_shaking: bool,
-    /// Only HTML resource-hint records have enqueued this path so far. A later
-    /// non-hint record restores the native `loader` and clears this.
-    pub is_html_resource_hint: bool,
     pub known_target: options::Target,
     pub module_type: options::ModuleType,
     pub emit_decorator_metadata: bool,
@@ -284,7 +281,6 @@ impl ParseTask {
             },
             stage: ParseTaskStage::NeedsSourceCode,
             tree_shaking: false,
-            is_html_resource_hint: false,
             is_entry_point: false,
         }
     }
@@ -319,7 +315,6 @@ impl Default for ParseTask {
             },
             stage: ParseTaskStage::NeedsSourceCode,
             tree_shaking: false,
-            is_html_resource_hint: false,
             known_target: options::Target::default(),
             module_type: options::ModuleType::Unknown,
             emit_decorator_metadata: false,
@@ -558,7 +553,6 @@ pub mod parse_worker {
             },
             stage: ParseTaskStage::NeedsSourceCode,
             tree_shaking: false,
-            is_html_resource_hint: false,
             module_type: options::ModuleType::Unknown,
             emit_decorator_metadata: false,
             experimental_decorators: false,

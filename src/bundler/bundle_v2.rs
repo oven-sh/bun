@@ -6344,20 +6344,11 @@ pub mod bv2_impl {
                     }
                 }
 
-                let is_html_resource_hint = import_record
-                    .flags
-                    .contains(bun_ast::ImportRecordFlags::WAS_HTML_RESOURCE_HINT);
                 let import_record_loader = 'brk: {
                     let resolved_loader = import_record.loader.unwrap_or_else(|| {
                         path.loader(&transpiler.options.loaders)
                             .unwrap_or(Loader::File)
                     });
-                    // HTML resource hints are fetch-only: emit as a raw asset,
-                    // never bundle/execute. A later non-hint record for the same
-                    // path restores the native loader at `found_existing` below.
-                    if is_html_resource_hint && !resolved_loader.should_copy_for_bundling() {
-                        break 'brk Loader::File;
-                    }
                     // When an HTML file references a URL asset (e.g. <link rel="manifest" href="./manifest.json" />),
                     // the file must be copied to the output directory as-is. If the resolved loader would
                     // parse/transform the file (e.g. .json, .toml) rather than copy it, force the .file loader
@@ -6397,12 +6388,8 @@ pub mod bv2_impl {
                 let resolve_entry = resolve_queue.get_or_put(path.text).expect("oom");
                 if resolve_entry.found_existing {
                     // SAFETY: arena-allocated `ParseTask` stored in the queue; arena outlives the pass.
-                    let existing = unsafe { &mut **resolve_entry.value_ptr };
-                    if existing.is_html_resource_hint && !is_html_resource_hint {
-                        existing.is_html_resource_hint = false;
-                        existing.loader = Some(import_record_loader);
-                    }
-                    import_record.path = path_as_static(&existing.path);
+                    import_record.path =
+                        path_as_static(&unsafe { &**resolve_entry.value_ptr }.path);
                     continue;
                 }
 
@@ -6433,7 +6420,6 @@ pub mod bv2_impl {
                 };
 
                 resolve_task.loader = Some(import_record_loader);
-                resolve_task.is_html_resource_hint = is_html_resource_hint;
                 resolve_task.tree_shaking = transpiler.options.tree_shaking;
                 *resolve_entry.value_ptr = resolve_task;
                 if let Some(secondary) = &resolve_result.path_pair.secondary {

@@ -2337,6 +2337,7 @@ impl<'a> HTTPClient<'a> {
         let mut override_connection_header = false;
         let mut override_user_agent = false;
         let mut original_content_length: Option<&[u8]> = None;
+        let mut saw_upgrade = false;
 
         // Reserve slots for default headers that may be appended after user headers
         // (Connection, User-Agent, Accept, Host, Accept-Encoding, Content-Length/Transfer-Encoding).
@@ -2409,10 +2410,15 @@ impl<'a> HTTPClient<'a> {
                     }
                 }
                 h if h == hash_header_const(b"Upgrade") => {
-                    // Always consumed: `upgrade_state` drives body framing.
                     let value = self.header_str(header_values[i]);
                     if !bun_core::strings::eql_any_case_insensitive_ascii(value, &[b"h2", b"h2c"]) {
-                        self.flags.upgrade_state = HTTPUpgradeState::Pending;
+                        // `saw_upgrade` (position-independent) suppresses the
+                        // chunked fallback; `upgrade_state` (wire-dependent)
+                        // only goes Pending when the header is actually sent.
+                        saw_upgrade = true;
+                        if will_append {
+                            self.flags.upgrade_state = HTTPUpgradeState::Pending;
+                        }
                     }
                 }
                 h if h == hash_header_const(CHUNKED_ENCODED_HEADER.name()) => {
@@ -2469,7 +2475,7 @@ impl<'a> HTTPClient<'a> {
                     request_headers_buf[header_count] =
                         picohttp::Header::new(CONTENT_LENGTH_HEADER_NAME, content_length);
                     header_count += 1;
-                } else if self.flags.upgrade_state == HTTPUpgradeState::None {
+                } else if !saw_upgrade {
                     request_headers_buf[header_count] = CHUNKED_ENCODED_HEADER;
                     header_count += 1;
                 }

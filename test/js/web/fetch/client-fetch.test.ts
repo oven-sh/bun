@@ -833,56 +833,51 @@ test.each([{ "transfer-encoding": "gzip" }, { "upgrade": "H2c" }])(
 );
 
 // build_request caps user headers at MAX_USER_HEADERS; an Upgrade entry past
-// the cap used to be read by the body framer (position-independent fast_get)
-// but not by the header writer (will_append gate), so the wire carried
-// Transfer-Encoding: chunked while the body was buffered raw.
-test("an Upgrade header past the user-header cap does not desynchronise body framing", async () => {
-  let recorded = Buffer.alloc(0);
-  const { promise: closed, resolve: onClose } = Promise.withResolvers<void>();
-  await using server = net
-    .createServer(sock => {
-      sock.on("error", () => {});
-      sock.on("close", onClose);
-      sock.on("data", d => {
-        recorded = Buffer.concat([recorded, d]);
-        if (recorded.toString("latin1").includes("\r\n\r\n")) {
-          sock.end("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok");
-        }
-      });
-    })
-    .listen(0, "127.0.0.1");
-  await once(server, "listening");
-  const { port } = server.address() as net.AddressInfo;
+// the cap is read by the body framer (position-independent fast_get) but not
+// written to the wire. The header writer must then not emit Transfer-Encoding:
+// chunked (the body is raw), and must not set upgrade_state Pending (the
+// server never sees the offer, so the body must not be held for a 101).
+test.each([{}, { "content-length": "4" }])(
+  "an Upgrade header past the user-header cap with %j neither desynchronises framing nor hangs",
+  async extra => {
+    let recorded = Buffer.alloc(0);
+    const { promise: closed, resolve: onClose } = Promise.withResolvers<void>();
+    await using server = net
+      .createServer(sock => {
+        sock.on("error", () => {});
+        sock.on("close", onClose);
+        sock.on("data", d => {
+          recorded = Buffer.concat([recorded, d]);
+          // Respond only once body bytes have arrived so a held body hangs.
+          if (recorded.toString("latin1").includes("abcd")) {
+            sock.end("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok");
+          }
+        });
+      })
+      .listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as net.AddressInfo;
 
-  const headers: Record<string, string> = { upgrade: "websocket" };
-  for (let i = 0; i < 250; i++) headers[`A-${String(i).padStart(3, "0")}`] = "x";
-  const res = await fetch(`http://127.0.0.1:${port}/`, {
-    method: "POST",
-    duplex: "half",
-    headers,
-    body: new ReadableStream({
-      start(c) {
-        c.enqueue(new TextEncoder().encode("0\r\n\r\nGET /admin HTTP/1.1\r\n\r\n"));
-        c.close();
-      },
-    }),
-  });
-  expect(res.status).toBe(200);
-  await closed;
+    const headers: Record<string, string> = { upgrade: "websocket", ...extra };
+    for (let i = 0; i < 250; i++) headers[`A-${String(i).padStart(3, "0")}`] = "x";
+    const res = await fetch(`http://127.0.0.1:${port}/`, {
+      method: "POST",
+      duplex: "half",
+      headers,
+      body: new ReadableStream({
+        start(c) {
+          c.enqueue(new TextEncoder().encode("abcd"));
+          c.close();
+        },
+      }),
+    });
+    expect(res.status).toBe(200);
+    await closed;
 
-  const raw = recorded.toString("latin1");
-  const head = raw.slice(0, raw.indexOf("\r\n\r\n"));
-  const body = raw.slice(raw.indexOf("\r\n\r\n") + 4);
-  // Body framing must match the wire header: no Transfer-Encoding means no
-  // chunked body expected, so the raw stream bytes staying out of the wire is
-  // the correct outcome. A regression writes TE: chunked alongside the raw
-  // stream bytes, which a server parses as a zero-length body plus a second
-  // request.
-  expect({ transferEncoding: /^transfer-encoding: (.*)$/im.exec(head)?.[1], body }).toEqual({
-    transferEncoding: undefined,
-    body: "",
-  });
-});
+    const head = recorded.toString("latin1").split("\r\n\r\n")[0];
+    expect(/^transfer-encoding: (.*)$/im.exec(head)?.[1]).toBeUndefined();
+  },
+);
 
 // RFC 9112 section 5.2: an obs-fold continuation line in a response must be
 // joined into the preceding field value with SP, or the message rejected.

@@ -327,6 +327,7 @@ impl Blob {
         if self.size.get() == 0 {
             return b"";
         }
+        store.flatten_if_rope();
         let mut slice = store.shared_view();
         if slice.is_empty() {
             return b"";
@@ -828,6 +829,7 @@ pub mod store {
         pub fn join(&self) -> Vec<u8> {
             let mut out = Vec::<u8>::with_capacity(self.len as usize);
             for seg in &self.segments {
+                seg.store.flatten_if_rope();
                 let view = seg.store.shared_view();
                 let off = (seg.offset as usize).min(view.len());
                 let end = off + (seg.len as usize).min(view.len() - off);
@@ -1160,21 +1162,14 @@ pub mod store {
             unsafe { &mut (*self.as_ptr()).data }
         }
 
-        /// Collapse a `Rope` into `Bytes` in place. Interior mutation follows
-        /// the same single-threaded discipline as [`StoreRef::data_mut`].
+        /// Collapse a `Rope` into `Bytes` in place. JS thread only: same
+        /// single-threaded interior-mutation rule as [`StoreRef::data_mut`].
         pub fn flatten_if_rope(&self) {
             let data = self.data_mut();
             let Data::Rope(rope) = data else { return };
             let mut bytes = Bytes::init(rope.join());
             bytes.stored_name = core::mem::take(&mut rope.stored_name);
             *data = Data::Bytes(bytes);
-        }
-
-        /// Flattens a rope in place, then returns [`Store::shared_view`].
-        #[inline]
-        pub fn shared_view(&self) -> &[u8] {
-            self.flatten_if_rope();
-            (**self).shared_view()
         }
     }
 

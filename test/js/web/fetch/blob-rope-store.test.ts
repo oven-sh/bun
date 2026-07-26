@@ -105,3 +105,23 @@ test("structuredClone of a rope-backed File preserves bytes and name", async () 
   expect(clone.size).toBe(8);
   expect(new Uint8Array(await clone.arrayBuffer())).toEqual(new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8]));
 });
+
+test("FormData.append filename sticks for a rope-backed Blob", async () => {
+  const a = new Blob([new Uint8Array([1, 2])]);
+  const b = new Blob([new Uint8Array([3, 4])]);
+  const rope = new Blob([a, b]);
+  const fd = new FormData();
+  fd.append("k", rope, "x.bin");
+  const entry = fd.get("k") as File;
+  expect(entry.name).toBe("x.bin");
+  expect(new Uint8Array(await entry.arrayBuffer())).toEqual(new Uint8Array([1, 2, 3, 4]));
+});
+
+test("Bun.Archive accepts a rope-backed Blob", async () => {
+  const tar = new Bun.Archive({ "a.txt": "hello from rope" });
+  const buf = await tar.bytes();
+  const rope = new Blob([new Blob([buf.subarray(0, 10)]), new Blob([buf.subarray(10)])]);
+  const ar = new Bun.Archive(rope);
+  const files = await ar.files();
+  expect(await files.get("a.txt")!.text()).toBe("hello from rope");
+});

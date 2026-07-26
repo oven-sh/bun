@@ -75,6 +75,7 @@ impl ByteBlobLoader {
     pub fn setup(&mut self, blob: &Blob, user_chunk_size: blob::SizeType) {
         // In-place init — `self` is a pre-allocated slot inside `Source`.
         let store = blob.store.get().as_ref().unwrap().clone();
+        store.flatten_if_rope();
         // `Blob` is not `Clone`, so use the non-mutating `resolved_size()` helper.
         let (offset, size) = blob.resolved_size();
         let content_type = if blob.content_type_was_set.get() {

@@ -4382,12 +4382,14 @@ pub extern "C" fn Blob__setAsFile(this: &mut Blob, path_str: &mut BunString) {
 
     // This is not 100% correct...
     if let Some(store) = this.store() {
-        if let store::Data::Bytes(bytes) = &mut store.data_mut() {
-            if bytes.stored_name.is_empty() {
-                // Owned heap slice
-                // owned by `stored_name` (`Box<[u8]>`) and freed by `Bytes::Drop`.
+        match store.data_mut() {
+            store::Data::Bytes(bytes) if bytes.stored_name.is_empty() => {
                 bytes.stored_name = path_str.to_owned_slice().into_boxed_slice();
             }
+            store::Data::Rope(rope) if rope.stored_name.is_empty() => {
+                rope.stored_name = path_str.to_owned_slice().into_boxed_slice();
+            }
+            _ => {}
         }
     }
 }

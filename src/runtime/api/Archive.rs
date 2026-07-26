@@ -191,6 +191,7 @@ impl Archive {
         // For Blob/Archive, ref the existing store (zero-copy)
         if let Some(blob) = blob_from_js(data_arg) {
             if let Some(store) = blob.store.get().as_ref() {
+                store.flatten_if_rope();
                 // StoreRef::clone == store.ref()
                 return Ok(Box::new(Archive {
                     store: store.clone(),

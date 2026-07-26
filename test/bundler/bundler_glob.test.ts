@@ -185,6 +185,27 @@ describe("bundler", () => {
     },
   });
 
+  // A bare "./" prefix has no path component to anchor the glob; bundling
+  // every sibling of the importer would be far too greedy (esbuild bails too).
+  itBundled("glob/BareDotSlashFallsThrough", {
+    target: "bun",
+    files: {
+      "/entry.js": /* js */ `
+        const name = globalThis.__x ?? "a";
+        try { require(\`./\${name}\`); } catch {}
+        console.log("ok");
+      `,
+      "/a.js": `module.exports = "A";`,
+    },
+    run: { stdout: "ok" },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      if (out.includes("__glob")) {
+        throw new Error("bare ./ template should fall through to runtime require");
+      }
+    },
+  });
+
   // No files match the pattern: leave the call as a runtime `require` so
   // `allowUnresolved` still applies and runtime-created files can be loaded.
   itBundled("glob/NoMatchesFallThrough", {

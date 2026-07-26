@@ -1269,10 +1269,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return None;
         }
 
+        // Like esbuild, the literal prefix must be `./`/`../` plus at least one
+        // more character, so a bare "./" + x does not glob-bundle everything
+        // next to the importer.
+        match raw_parts.first() {
+            Some((text, false))
+                if text.len() >= 3
+                    && (strings::has_prefix_comptime(text, b"./")
+                        || strings::has_prefix_comptime(text, b"../")) => {}
+            _ => return None,
+        }
+
         // Like esbuild: a wildcard after `/` becomes `**/*` (recursive),
         // mid-segment it becomes `*` so `"./file-" + x + ".js"` stays flat.
         let mut pattern = Vec::<u8>::new();
-        let mut prefix_is_relative = false;
         let mut had_wildcard = false;
         let mut ends_in_slash = true;
         for (text, is_wildcard) in &raw_parts {
@@ -1286,12 +1296,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 ends_in_slash = false;
                 continue;
             }
-            if pattern.is_empty()
-                && (strings::has_prefix_comptime(text, b"./")
-                    || strings::has_prefix_comptime(text, b"../"))
-            {
-                prefix_is_relative = true;
-            }
             // Glob metacharacters in literal text would change the match; bail.
             if bun_glob::detect_glob_syntax(text) {
                 return None;
@@ -1302,7 +1306,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
         // Fully-static strings go through the normal `require("...")` path.
-        if !had_wildcard || !prefix_is_relative {
+        if !had_wildcard {
             return None;
         }
 
@@ -1435,6 +1439,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         } else {
             let param_ref = self.new_symbol(js_ast::symbol::Kind::Other, b"p");
             VecExt::append(&mut self.current_scope_mut().generated, param_ref);
+            self.record_declared_symbol(param_ref);
             let param_expr = self.new_expr(
                 E::Identifier {
                     ref_: param_ref,
@@ -1499,14 +1504,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 out.push((bytes, false));
                 true
             }
-            js_ast::ExprData::ETemplate(tmpl) => {
+            js_ast::ExprData::ETemplate(mut tmpl) => {
                 if tmpl.tag.is_some() {
                     return false;
                 }
-                match &tmpl.head {
+                match &mut tmpl.head {
                     js_ast::e::TemplateContents::Cooked(head) => {
-                        // Copy so folding leftovers (ropes) can be flattened.
-                        let mut head = *head;
+                        // Constant folding can leave the head as a rope.
                         head.resolve_rope_if_needed(self.arena);
                         let bytes = match head.string(self.arena) {
                             Ok(b) => b,
@@ -1516,13 +1520,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                     js_ast::e::TemplateContents::Raw(_) => return false,
                 }
-                for part in tmpl.parts().iter() {
+                for part in tmpl.parts_mut().iter_mut() {
                     if !self.glob_parts_from_expr(part.value, out) {
                         out.push((b"", true));
                     }
-                    match &part.tail {
+                    match &mut part.tail {
                         js_ast::e::TemplateContents::Cooked(tail) => {
-                            let mut tail = *tail;
                             tail.resolve_rope_if_needed(self.arena);
                             let bytes = match tail.string(self.arena) {
                                 Ok(b) => b,

@@ -977,11 +977,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         match p.lexer.token {
             T::TIdentifier => {
                 let name = p.lexer.identifier;
-                // `is_top_level` + AllowExpr is the TLA sniff state; the file may still
-                // be a Script, where `await` is a legal binding identifier.
                 let await_is_keyword = match p.fn_or_arrow_data_parse.allow_await {
                     AwaitOrYield::AllowIdent => false,
                     AwaitOrYield::ForbidAll => true,
+                    // TLA sniff; file may still be a Script where `await` binds as an ident.
                     AwaitOrYield::AllowExpr => !p.fn_or_arrow_data_parse.is_top_level,
                 };
                 if (await_is_keyword && name == b"await")

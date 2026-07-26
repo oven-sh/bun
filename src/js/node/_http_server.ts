@@ -2699,7 +2699,7 @@ function accountQueuedHeaderBytes(res, queued) {
 function bufferPipelinedWrite(res, queued, chunk, encoding, callback) {
   callWriteHeadIfObservable(res, res[headerStateSymbol]);
   if (res[headerStateSymbol] === NodeHTTPHeaderState.none) {
-    updateHasBody(res, res.statusCode);
+    updateHasBody(res, coerceImplicitStatusCode(res));
   }
   accountQueuedHeaderBytes(res, queued);
   if (chunk && !res._hasBody) {
@@ -2728,7 +2728,7 @@ function bufferPipelinedWrite(res, queued, chunk, encoding, callback) {
 function bufferPipelinedEnd(res, queued, chunk, encoding, callback) {
   callWriteHeadIfObservable(res, res[headerStateSymbol]);
   if (res[headerStateSymbol] === NodeHTTPHeaderState.none) {
-    updateHasBody(res, res.statusCode);
+    updateHasBody(res, coerceImplicitStatusCode(res));
   }
   accountQueuedHeaderBytes(res, queued);
   if (chunk && !res._hasBody) {
@@ -3134,7 +3134,7 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
     // the header state without deriving _hasBody and a later body write to
     // a 204/304 would reach the wire chunk-framed with no terminator.
     // updateHasBody only ever clears _hasBody, so this is idempotent.
-    updateHasBody(this, this.statusCode);
+    updateHasBody(this, coerceImplicitStatusCode(this));
   }
   if (chunk && !this._hasBody) {
     if (this[kRejectNonStandardBodyWrites]) {
@@ -3322,7 +3322,7 @@ ServerResponse.prototype.write = function (chunk, encoding, callback) {
     // the header state without deriving _hasBody and a later body write to
     // a 204/304 would reach the wire chunk-framed with no terminator.
     // updateHasBody only ever clears _hasBody, so this is idempotent.
-    updateHasBody(this, this.statusCode);
+    updateHasBody(this, coerceImplicitStatusCode(this));
   }
   if (chunk && !this._hasBody) {
     if (this[kRejectNonStandardBodyWrites]) {
@@ -3666,6 +3666,21 @@ ServerResponse.prototype.flushHeaders = function () {
     this._send("");
   }
 };
+
+// Node's implicit header path is _implicitHeader() -> writeHead(this.statusCode),
+// and writeHead coerces (|= 0) and range-checks the value before rendering, so
+// `res.statusCode = '404'` reaches the wire as 404. The fast path below skips
+// writeHead(); apply the same coercion before any status-dependent decision
+// (updateHasBody, renderNativeHeaders, the native handle's own integer check).
+function coerceImplicitStatusCode(res) {
+  const originalStatusCode = res.statusCode;
+  const statusCode = originalStatusCode | 0;
+  if (statusCode < 100 || statusCode > 999) {
+    throw $ERR_HTTP_INVALID_STATUS_CODE(format("%s", originalStatusCode));
+  }
+  res.statusCode = statusCode;
+  return statusCode;
+}
 
 function updateHasBody(response, statusCode) {
   // RFC 2616, 10.2.5:

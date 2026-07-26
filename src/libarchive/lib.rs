@@ -78,6 +78,7 @@ pub mod lib {
         fn archive_read_free(a: *mut Archive) -> Result;
         fn archive_read_support_format_tar(a: *mut Archive) -> Result;
         fn archive_read_support_format_gnutar(a: *mut Archive) -> Result;
+        fn archive_read_support_format_zip(a: *mut Archive) -> Result;
         fn archive_read_support_filter_gzip(a: *mut Archive) -> Result;
         fn archive_read_set_options(a: *mut Archive, opts: *const c_char) -> Result;
         fn archive_read_open_memory(a: *mut Archive, buf: *const c_void, size: usize) -> Result;
@@ -106,6 +107,12 @@ pub mod lib {
         fn archive_write_free(a: *mut Archive) -> Result;
         fn archive_write_close(a: *mut Archive) -> Result;
         fn archive_write_set_format_pax_restricted(a: *mut Archive) -> Result;
+        fn archive_write_set_format_zip(a: *mut Archive) -> Result;
+        fn archive_write_set_bytes_in_last_block(a: *mut Archive, bytes: c_int) -> Result;
+        // Returns the new state (`ARCHIVE_STATE_FATAL`), not an `ARCHIVE_*` code.
+        fn archive_write_fail(a: *mut Archive) -> c_int;
+        fn archive_write_zip_set_compression_deflate(a: *mut Archive) -> Result;
+        fn archive_write_zip_set_compression_store(a: *mut Archive) -> Result;
         fn archive_write_add_filter_gzip(a: *mut Archive) -> Result;
         fn archive_write_set_filter_option(
             a: *mut Archive,
@@ -184,6 +191,11 @@ pub mod lib {
             // SAFETY: self valid.
             unsafe { archive_read_support_format_gnutar(self.as_mut_ptr()) }
         }
+        /// Enables both the streamable and the seekable zip readers.
+        pub fn read_support_format_zip(&self) -> Result {
+            // SAFETY: self valid.
+            unsafe { archive_read_support_format_zip(self.as_mut_ptr()) }
+        }
         pub fn read_support_filter_gzip(&self) -> Result {
             // SAFETY: self valid.
             unsafe { archive_read_support_filter_gzip(self.as_mut_ptr()) }
@@ -226,9 +238,17 @@ pub mod lib {
                     result: r,
                 });
             }
-            // SAFETY: on ARCHIVE_OK, libarchive guarantees buff[0..size] is
-            // readable until the next read call on this archive.
-            let bytes = unsafe { core::slice::from_raw_parts(buff.cast::<u8>(), size) };
+            // `zip_read_data_none` signals end-of-entry with ARCHIVE_OK and a
+            // null buffer, and `from_raw_parts` rejects a null pointer even for
+            // a zero-length slice.
+            let bytes: &[u8] = if buff.is_null() || size == 0 {
+                &[]
+            } else {
+                // SAFETY: on ARCHIVE_OK with a non-null buffer, libarchive
+                // guarantees buff[0..size] is readable until the next read call
+                // on this archive.
+                unsafe { core::slice::from_raw_parts(buff.cast::<u8>(), size) }
+            };
             Some(Block {
                 bytes,
                 offset: *offset,
@@ -378,9 +398,42 @@ pub mod lib {
             // SAFETY: self valid.
             unsafe { archive_write_close(self.as_mut_ptr()) }
         }
+        /// Put the writer into `ARCHIVE_STATE_FATAL`, so a later
+        /// `archive_write_free` frees it without running a normal close.
+        ///
+        /// `archive_write_free` otherwise calls `archive_write_close`, whose
+        /// `format_finish_entry` pads a half-written entry out to the size its
+        /// header declared (`archive_write_set_format_pax.c`'s
+        /// `__archive_write_nulls(remaining + padding)`), pushing every one of
+        /// those bytes through the client write callback.
+        pub fn write_fail(&self) {
+            // SAFETY: self valid; only mutates the handle's state field.
+            unsafe { archive_write_fail(self.as_mut_ptr()) };
+        }
         pub fn write_set_format_pax_restricted(&self) -> Result {
             // SAFETY: self valid.
             unsafe { archive_write_set_format_pax_restricted(self.as_mut_ptr()) }
+        }
+        pub fn write_set_format_zip(&self) -> Result {
+            // SAFETY: self valid.
+            unsafe { archive_write_set_format_zip(self.as_mut_ptr()) }
+        }
+        /// Block size of the final write. Defaults to padding up to
+        /// `bytes_per_block` (10240, what tar wants); pass `1` for formats that
+        /// must not be padded, like zip.
+        pub fn write_set_bytes_in_last_block(&self, bytes: i32) -> Result {
+            // SAFETY: self valid.
+            unsafe { archive_write_set_bytes_in_last_block(self.as_mut_ptr(), bytes) }
+        }
+        /// Per-entry deflate (the zip default when zlib is available).
+        pub fn write_zip_set_compression_deflate(&self) -> Result {
+            // SAFETY: self valid; only meaningful after `write_set_format_zip`.
+            unsafe { archive_write_zip_set_compression_deflate(self.as_mut_ptr()) }
+        }
+        /// Per-entry "stored" (uncompressed) zip entries.
+        pub fn write_zip_set_compression_store(&self) -> Result {
+            // SAFETY: self valid; only meaningful after `write_set_format_zip`.
+            unsafe { archive_write_zip_set_compression_store(self.as_mut_ptr()) }
         }
         pub fn write_add_filter_gzip(&self) -> Result {
             // SAFETY: self valid.
@@ -928,7 +981,9 @@ impl BufferReadStream {
         unsafe { &*self.buf }
     }
 
-    pub fn open_read(&mut self) -> lib::Result {
+    /// `zip` additionally enables the zip readers. It is off for `bun install`
+    /// (npm packages are always tarballs) and on for `Bun.Archive`.
+    pub fn open_read(&mut self, zip: bool) -> lib::Result {
         // lib.archive_read_set_open_callback(this.archive, this.);
         // _ = lib.archive_read_set_read_callback(this.archive, archive_read_callback);
         // _ = lib.archive_read_set_seek_callback(this.archive, archive_seek_callback);
@@ -941,6 +996,9 @@ impl BufferReadStream {
 
         let _ = archive.read_support_format_tar();
         let _ = archive.read_support_format_gnutar();
+        if zip {
+            let _ = archive.read_support_format_zip();
+        }
         let _ = archive.read_support_filter_gzip();
 
         // Ignore zeroed blocks in the archive, which occurs when multiple tar archives
@@ -1189,6 +1247,8 @@ pub mod archiver {
         pub close_handles: bool,
         pub log: bool,
         pub npm: bool,
+        /// Also accept zip input. Off for `bun install`, on for `Bun.Archive`.
+        pub zip: bool,
     }
 
     impl Default for ExtractOptions {
@@ -1198,6 +1258,7 @@ pub mod archiver {
                 close_handles: true,
                 log: false,
                 npm: false,
+                zip: false,
             }
         }
     }
@@ -1239,7 +1300,7 @@ impl Archiver {
 
         // SAFETY: `file_buffer` outlives `stream` (stack-local, dropped at fn exit).
         let mut stream = unsafe { BufferReadStream::init(file_buffer) };
-        let _ = stream.open_read();
+        let _ = stream.open_read(false);
         let archive = stream.archive;
 
         // Uses the bun_sys directory-fd helpers (open_dir_absolute / open_dir_at).
@@ -1375,7 +1436,7 @@ impl Archiver {
 
         // SAFETY: `file_buffer` outlives `stream` (stack-local, dropped at fn exit).
         let mut stream = unsafe { BufferReadStream::init(file_buffer) };
-        let _ = stream.open_read();
+        let _ = stream.open_read(options.zip);
         let archive = stream.archive;
         let mut count: u32 = 0;
         let dir_fd = dir;

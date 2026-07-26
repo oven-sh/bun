@@ -747,7 +747,10 @@ describe("bundler", () => {
         console.log(delete CFG, delete ARR, delete keep);
       `,
     },
+    format: "iife",
     define: { CFG: '{"k":1}', ARR: "[1,2,3]" },
+    // iife + node keeps the bundle sloppy so `delete keep` stays valid syntax at runtime.
+    run: { runtime: "node", stdout: "true true false" },
     onAfterBundle(api) {
       const out = api.readFile("out.js");
       if (/\bdelete\s+define_[\w$]*\s*[,;)]/.test(out)) {

@@ -2,7 +2,7 @@
 import type { FileSink } from "bun";
 const { Readable, Writable, finished } = require("node:stream");
 const fs: typeof import("node:fs") = require("node:fs");
-const { read, write, fsync, writev, writeSync, fstatSync } = fs;
+const { read, write, fsync, writev } = fs;
 const { FileHandle, kRef, kUnref, kFd } = (fs.promises as any).$data as {
   FileHandle: { new (): FileHandle };
   readonly kRef: unique symbol;
@@ -37,7 +37,6 @@ const { validateInteger, validateInt32, validateFunction } = require("internal/v
 
 const kIsPerformingIO = Symbol("kIsPerformingIO");
 const kIoDone = Symbol("kIoDone");
-const kSyncWrite = Symbol("kSyncWrite");
 // Bun supports a fast path for `createWriteStream("path.txt")` where instead of
 // using `node:fs`, `Bun.file(...).writer()` is used instead.
 const kWriteStreamFastPath = Symbol("kWriteStreamFastPath");
@@ -276,16 +275,6 @@ function streamConstruct(this: FSStream, callback: (e?: any) => void) {
         callback(err);
       } else {
         this.fd = fd;
-        if (this[kSyncWrite] === true) {
-          let isFile = false;
-          try {
-            isFile = fstatSync(fd).isFile();
-          } catch {}
-          if (!isFile) {
-            this[kSyncWrite] = false;
-            this._writev = undefined;
-          }
-        }
         callback();
         this.emit("open", this.fd);
         this.emit("ready");
@@ -460,9 +449,6 @@ function WriteStream(this: FSStream, path: string | null, options?: any): void {
     if (!write) this._write = null;
     if (!writev) this._writev = null;
   } else {
-    // Only when we open the path ourselves: a caller-supplied fd may be a pipe.
-    if (!fastPath && fd == null && start === undefined) this[kSyncWrite] = true;
-    else this._writev = undefined;
     $assert(this[kFs].write, "assuming user does not delete fs.write!");
   }
 
@@ -555,7 +541,7 @@ function writeAll(data, size, pos, cb, retries = 0) {
 }
 
 function writevAll(chunks, size, pos, cb, retries = 0) {
-  this[kFs].writev(this.fd, chunks, this.pos, (er, bytesWritten, buffers) => {
+  this[kFs].writev(this.fd, chunks, pos, (er, bytesWritten, buffers) => {
     // No data currently available and operation should be retried later.
     if (er?.code === "EAGAIN") {
       er = null;
@@ -584,45 +570,7 @@ function writevAll(chunks, size, pos, cb, retries = 0) {
   });
 }
 
-function writeAllSync(stream, data, cb) {
-  if (stream.destroyed) return cb($ERR_STREAM_DESTROYED("write"));
-  let retries = 0;
-  try {
-    let offset = 0;
-    let size = data.length;
-    while (size > 0) {
-      const n = writeSync(stream.fd, data, offset, size);
-      stream.bytesWritten += n;
-      offset += n;
-      size -= n;
-      retries = n ? 0 : retries + 1;
-      if (retries > 5) return cb(new Error("write failed"));
-    }
-  } catch (e) {
-    return cb(e);
-  }
-  process.nextTick(afterWriteAllSync, stream, cb);
-}
-
-function afterWriteAllSync(stream, cb) {
-  if (stream.destroyed) return cb($ERR_STREAM_DESTROYED("write"));
-  cb(null);
-}
-
-function syncWriteEnabled(stream) {
-  if (stream[kSyncWrite] !== true) return false;
-  // Honour a monkey-patched fs.write/fs.writev by falling back.
-  if (fs.write !== write || fs.writev !== writev) {
-    stream[kSyncWrite] = false;
-    stream._writev = undefined;
-    return false;
-  }
-  return true;
-}
-
 function _write(data, encoding, cb) {
-  if (syncWriteEnabled(this)) return writeAllSync(this, data, cb);
-
   const fileSink = this[kWriteStreamFastPath];
 
   if (fileSink && fileSink !== true) {
@@ -761,13 +709,6 @@ writeStreamPrototype._writev = function (data, cb) {
     size += chunk.length;
   }
 
-  if (this[kSyncWrite] === true) {
-    const buf = len === 1 ? chunks[0] : Buffer.concat(chunks, size);
-    if (syncWriteEnabled(this)) return writeAllSync(this, buf, cb);
-    // Patch detected on this drain; honour it for the current batch too.
-    return _write.$call(this, buf, "buffer", cb);
-  }
-
   const fileSink = this[kWriteStreamFastPath];
   if (fileSink && fileSink !== true) {
     const maybePromise = fileSink.write(Buffer.concat(chunks));
@@ -785,7 +726,7 @@ writeStreamPrototype._writev = function (data, cb) {
     }
   } else {
     this[kIsPerformingIO] = true;
-    writevAll.$call(this, chunks, size, this.pos, er => {
+    const done = er => {
       this[kIsPerformingIO] = false;
       if (this.destroyed) {
         // Tell ._destroy() that it's safe to close the fd now.
@@ -793,10 +734,17 @@ writeStreamPrototype._writev = function (data, cb) {
         return this.emit(kIoDone, er);
       }
       cb(er);
-    });
+    };
+    if (this[kFs].writev === writev) {
+      // The default fs.writev rejects batches past IOV_MAX with EINVAL, so
+      // drain as a single write instead. writeAll already handles short
+      // writes and this.pos.
+      writeAll.$call(this, len === 1 ? chunks[0] : Buffer.concat(chunks, size), size, this.pos, done);
+    } else {
+      writevAll.$call(this, chunks, size, this.pos, done);
+    }
 
     if (this.pos !== undefined) this.pos += size;
-    // Don't return anything for legacy path - matches Node.js behavior
   }
 };
 

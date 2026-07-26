@@ -8,8 +8,7 @@
 #include "JavaScriptCore/Exception.h"
 #include "JavaScriptCore/JSModuleRecord.h"
 #include "JavaScriptCore/JSPromise.h"
-#include "JavaScriptCore/Watchdog.h"
-
+#include "../vm/NodeVMWatchdogScope.h"
 #include "../vm/SigintWatcher.h"
 
 namespace Bun {
@@ -50,7 +49,7 @@ JSArray* NodeVMModuleRequest::toJS(JSGlobalObject* globalObject) const
     return array;
 }
 
-void setupWatchdog(VM& vm, double timeout, double* oldTimeout, double* newTimeout);
+bool checkForTermination(JSC::VM&, JSC::JSGlobalObject*, JSC::ThrowScope&, SigintReceiver*, NodeVMWatchdogScope*);
 
 void NodeVMModule::reconcileEvaluationState(JSC::VM& vm)
 {
@@ -93,29 +92,19 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
         NodeVMGlobalObject* nodeVmGlobalObject = NodeVM::getGlobalObjectFromContext(globalObject, m_context.get(), false);
         RETURN_IF_EXCEPTION(scope, {});
         if (nodeVmGlobalObject && nodeVmGlobalObject->hasOwnMicrotaskQueue()) {
-            std::optional<double> oldLimit;
+            std::optional<NodeVMWatchdogScope> watchdog;
             if (timeout != 0)
-                setupWatchdog(vm, timeout, &oldLimit.emplace(), nullptr);
+                watchdog.emplace(vm, timeout);
             nodeVmGlobalObject->drainOwnMicrotasks();
-            if (timeout != 0)
-                vm.watchdog()->setTimeLimit(WTF::Seconds::fromMilliseconds(*oldLimit));
+            if (watchdog)
+                watchdog->disarm();
             // The drain may legitimately leave the termination exception
-            // pending (watchdog fired mid-checkpoint); observe it so the
-            // exception-check validator is satisfied before the TOP scope
-            // below, then convert it to ERR_SCRIPT_EXECUTION_*.
+            // pending; observe it so the exception-check validator is
+            // satisfied before the TOP scope inside checkForTermination.
             std::ignore = scope.exception();
-            if (vm.hasTerminationRequest() || vm.hasPendingTerminationException()) {
-                vm.drainMicrotasksForGlobalObject(nodeVmGlobalObject);
-                DECLARE_TOP_EXCEPTION_SCOPE(vm).clearException();
-                vm.clearHasTerminationRequest();
-                if (getSigintReceived()) {
-                    setSigintReceived(false);
-                    throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_INTERRUPTED, "Script execution was interrupted by `SIGINT`"_s);
-                } else {
-                    throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_TIMEOUT, makeString("Script execution timed out after "_s, timeout, "ms"_s));
-                }
+            if (checkForTermination(vm, globalObject, scope, this, watchdog ? &*watchdog : nullptr))
                 return {};
-            }
+            RETURN_IF_EXCEPTION(scope, {});
         }
         return m_evaluationResult.get();
     }
@@ -220,11 +209,9 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
 
     setSigintReceived(false);
 
-    std::optional<double> oldLimit, newLimit;
-
-    if (timeout != 0) {
-        setupWatchdog(vm, timeout, &oldLimit.emplace(), &newLimit.emplace());
-    }
+    std::optional<NodeVMWatchdogScope> watchdog;
+    if (timeout != 0)
+        watchdog.emplace(vm, timeout);
 
     if (breakOnSigint) {
         auto holder = SigintWatcher::hold(nodeVmGlobalObject, this);
@@ -235,30 +222,15 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
         drainAfterEvaluate();
     }
 
-    if (timeout != 0) {
-        vm.watchdog()->setTimeLimit(WTF::Seconds::fromMilliseconds(*oldLimit));
-    }
+    if (watchdog)
+        watchdog->disarm();
 
-    // Evaluation (or the afterEvaluate drain) may leave an exception pending
-    // — a regular one is rethrown by VM_RETURN_IF_EXCEPTION below, a
-    // termination one is converted to ERR_SCRIPT_EXECUTION_* here. Observe it
-    // so the exception-check validator is satisfied before the TOP scope.
+    // Evaluation (or the afterEvaluate drain) may leave an exception pending;
+    // observe it so the exception-check validator is satisfied before the TOP
+    // scope inside checkForTermination.
     std::ignore = scope.exception();
-    if (vm.hasTerminationRequest() || vm.hasPendingTerminationException()) {
-        vm.drainMicrotasksForGlobalObject(nodeVmGlobalObject);
-        DECLARE_TOP_EXCEPTION_SCOPE(vm).clearException();
-        vm.clearHasTerminationRequest();
-        if (getSigintReceived()) {
-            setSigintReceived(false);
-            throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_INTERRUPTED, "Script execution was interrupted by `SIGINT`"_s);
-        } else if (timeout != 0) {
-            throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_TIMEOUT, makeString("Script execution timed out after "_s, timeout, "ms"_s));
-        } else {
-            RELEASE_ASSERT_NOT_REACHED_WITH_MESSAGE("vm.SourceTextModule evaluation terminated due neither to SIGINT nor to timeout");
-        }
-    } else {
+    if (!checkForTermination(vm, globalObject, scope, this, watchdog ? &*watchdog : nullptr))
         setSigintReceived(false);
-    }
 
     VM_RETURN_IF_EXCEPTION(scope, {});
 

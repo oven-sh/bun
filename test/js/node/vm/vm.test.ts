@@ -1383,3 +1383,51 @@ describe("node:vm SourceTextModule cyclic graph linking", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+// An outer evaluation's watchdog can fire while an inner vm evaluation with no
+// {timeout} of its own is on the stack. The inner post-evaluation check must
+// not claim that termination: the uncatchable exception should unwind past the
+// inner try/catch to the outer evaluation, which owns it.
+describe.concurrent("node:vm nested evaluation propagates an enclosing termination", () => {
+  async function run(fixture: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode };
+  }
+
+  test("outer timeout fires inside an inner untimed runInNewContext", async () => {
+    expect(
+      await run(`
+        const vm = require("node:vm");
+        const inner = () => {
+          try { return vm.runInNewContext("const t0=Date.now(); while(Date.now()-t0<10000); 'done'", {}); }
+          catch (e) { return "inner-threw:" + (e && e.code); }
+        };
+        try { console.log("outer:" + vm.runInNewContext("inner()", { inner }, { timeout: 70 })); }
+        catch (e) { console.log("outer:" + (e && e.code)); }
+        console.log("alive");
+      `),
+    ).toEqual({ stdout: "outer:ERR_SCRIPT_EXECUTION_TIMEOUT\nalive", stderr: "", exitCode: 0, signalCode: null });
+  });
+
+  test("outer timeout fires inside an inner untimed runInThisContext", async () => {
+    expect(
+      await run(`
+        const vm = require("node:vm");
+        globalThis.__inner = () => {
+          try { return new vm.Script("const t0=Date.now(); while(Date.now()-t0<10000); 'done'").runInThisContext(); }
+          catch (e) { return "inner-threw:" + (e && e.code); }
+        };
+        try { console.log("outer:" + new vm.Script("__inner()").runInThisContext({ timeout: 70 })); }
+        catch (e) { console.log("outer:" + (e && e.code)); }
+        delete globalThis.__inner;
+        console.log("alive");
+      `),
+    ).toEqual({ stdout: "outer:ERR_SCRIPT_EXECUTION_TIMEOUT\nalive", stderr: "", exitCode: 0, signalCode: null });
+  });
+});

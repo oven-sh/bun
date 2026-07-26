@@ -132,15 +132,20 @@ describe("AbortSignal", () => {
       // GC stays in the live count.
       const DEADLINE = 60 * 60 * 1000;
 
-      (function () { for (let i = 0; i < N; i++) AbortSignal.timeout(DEADLINE); })();
+      // Retain the wrappers until the baseline is sampled so allocation-
+      // triggered GC cannot finalize any before we read held.
+      let signals = new Array(N);
+      for (let i = 0; i < N; i++) signals[i] = AbortSignal.timeout(DEADLINE);
       const held = abortSignalTimeoutLiveCount();
-      // Give the collector a turn between allocation and the first full GC so
-      // incremental sweep can retire the wrappers.
-      await new Promise(r => setTimeout(r, 10));
-      Bun.gc(true); Bun.gc(true);
-      await new Promise(r => setTimeout(r, 10));
-      Bun.gc(true);
-      const afterGc = abortSignalTimeoutLiveCount();
+      signals = undefined;
+
+      // Poll the live count (condition, not time) with a bounded GC loop.
+      let afterGc = held;
+      for (let i = 0; i < 20 && afterGc >= 100; i++) {
+        Bun.gc(true);
+        await new Promise(r => setImmediate(r));
+        afterGc = abortSignalTimeoutLiveCount();
+      }
       const wrappers = heapStats().objectTypeCounts.AbortSignal || 0;
       console.log(JSON.stringify({ held, afterGc, wrappers }));
     `;
@@ -205,11 +210,14 @@ describe("AbortSignal", () => {
       // All three native timers must have survived GC.
       const liveAfterGc = abortSignalTimeoutLiveCount();
 
-      // AbortSignal.timeout timers are unref'd, so keep a ref'd timer around
-      // until both abort events have fired.
-      const keepalive = setInterval(() => {}, 1000);
+      // AbortSignal.timeout timers are unref'd; keep a ref'd watchdog that also
+      // bounds the failure path if a timer was wrongly cancelled.
+      const watchdog = setTimeout(() => {
+        console.error("abort event(s) never fired");
+        process.exit(1);
+      }, 5000);
       const results = await Promise.all([p1, p2]);
-      clearInterval(keepalive);
+      clearTimeout(watchdog);
       console.log(JSON.stringify({ results, liveAfterGc, reqAlive: req instanceof Request }));
     `;
     await using proc = Bun.spawn({

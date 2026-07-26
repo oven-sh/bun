@@ -2521,7 +2521,8 @@ mod tests {
         assert_eq!(r, b"");
         // Exact-boundary UNC with sentinel: out == buf.len() - 1 == 63.
         let unc_boundary_z: Vec<u8> = [b"\\\\".as_slice(), &vec![b'a'; 60]].concat();
-        let r = join_abs_string_buf_z::<platform::Windows>(b"C:\\cwd", &mut buf, &[&unc_boundary_z]);
+        let r =
+            join_abs_string_buf_z::<platform::Windows>(b"C:\\cwd", &mut buf, &[&unc_boundary_z]);
         assert_eq!(r.as_bytes(), b"");
     }
 

@@ -55,7 +55,8 @@ test("spawn can write to stdin multiple chunks", async () => {
             proc.stdin!.write(line);
             await proc.stdin!.flush();
             while (echoed < line.length * w) {
-              if (stdoutClosed) throw new Error(`child stdout closed after ${echoed} bytes (expected ${line.length * w})`);
+              if (stdoutClosed)
+                throw new Error(`child stdout closed after ${echoed} bytes (expected ${line.length * w})`);
               await new Promise<void>(resolve => {
                 notifyEcho = resolve;
               });

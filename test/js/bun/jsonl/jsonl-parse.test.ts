@@ -2457,6 +2457,15 @@ describe("Bun.JSONL", () => {
       const r = Bun.JSONL.parseChunk(buf);
       expect(r.values).toStrictEqual([{ a: 1 }, "\uFFFD", { b: 2 }]);
       expect(r.done).toBe(true);
+      expect(r.read).toBeLessThanOrEqual(buf.byteLength);
+      expect(r.read).toBe(line1.length + line2.length + '{"b":2}'.length);
+
+      // Same with the invalid-UTF-8 line last: `read` must not overshoot the
+      // input even though U+FFFD re-encodes to 3 bytes.
+      const tail = buf.subarray(0, line1.length + line2.length);
+      const r2 = Bun.JSONL.parseChunk(tail);
+      expect(r2.values).toStrictEqual([{ a: 1 }, "\uFFFD"]);
+      expect(r2.read).toBeLessThanOrEqual(tail.byteLength);
     });
 
     test("interleaved lines: many values match string-path results exactly", () => {
@@ -2486,10 +2495,11 @@ describe("Bun.JSONL", () => {
         // String::fromUTF8ReplacingInvalidSequences, costing roughly 2x the
         // buffer size in peak memory. With per-line segmentation the peak
         // should match the all-ASCII case.
+        const bufMB = 16;
         const prog = `
           const mixed = process.env.JSONL_MIXED === "1";
           const line = '{"id":0,"s":"' + Buffer.alloc(200, "x").toString() + '"}\\n';
-          const nLines = Math.floor((16 * 1024 * 1024) / line.length);
+          const nLines = Math.floor((${bufMB} * 1024 * 1024) / line.length);
           const buf = Buffer.alloc(nLines * line.length + 32);
           for (let i = 0; i < nLines; i++) buf.write(line, i * line.length, "latin1");
           let end = nLines * line.length;
@@ -2519,9 +2529,9 @@ describe("Bun.JSONL", () => {
         };
         const [asciiBytes, mixedBytes] = await Promise.all([run(false), run(true)]);
         const deltaMB = (mixedBytes - asciiBytes) / (1024 * 1024);
-        // Without segmentation the delta is roughly 2x the 16 MB buffer (the
-        // UTF-16 copy). With segmentation the two runs are within noise.
-        expect(deltaMB).toBeLessThan(16);
+        // Without segmentation the delta is roughly 2x the buffer (the UTF-16
+        // copy). With segmentation the two runs are within noise.
+        expect(deltaMB).toBeLessThan(bufMB);
       },
       30_000,
     );

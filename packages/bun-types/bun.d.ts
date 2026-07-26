@@ -5957,9 +5957,12 @@ declare module "bun" {
     /**
      * The ready state of the socket.
      *
-     * A positive value means the socket is open and usable
+     * A positive value means the socket is open and usable.
      *
-     * - `-2` = Shutdown
+     * - `-2` = Shutdown was requested while the socket was still connecting.
+     *   Calling {@link shutdown | `shutdown()`} on an already-established
+     *   socket leaves `readyState` at `1` (the socket is still open for the
+     *   other direction).
      * - `-1` = Detached
      * - `0` = Closed
      * - `1` = Established

@@ -245,6 +245,18 @@ describe.concurrent("strict-mode / unique-formal-parameter rejections still fire
     expect(exitCode).not.toBe(0);
   });
 
+  test("legacy octal escape in a .mjs file without ESM syntax is rejected", async () => {
+    const { exitCode, stderr } = await run(`var s = "x\\7";\nconsole.log(s);`, false, "mjs");
+    expect(stderr).toContain("Legacy octal escape sequences");
+    expect(exitCode).not.toBe(0);
+  });
+
+  test("legacy octal escape in an import specifier is rejected", async () => {
+    const { exitCode, stderr } = await run(`import "\\7";`, false);
+    expect(stderr).toContain("Legacy octal escape sequences");
+    expect(exitCode).not.toBe(0);
+  });
+
   test("legacy octal escape in a directive prologue of an ESM file is rejected", async () => {
     const { exitCode, stderr } = await run(`"\\1"; export {};`, false);
     expect(stderr).toContain("Legacy octal escape sequences");
@@ -280,21 +292,38 @@ describe.concurrent("strict-mode / unique-formal-parameter rejections still fire
   });
 });
 
-describe("bun build accepts sloppy CommonJS", () => {
-  test("duplicate params survive bundling to CJS", async () => {
-    using dir = tempDir("sloppy-build", {
-      "x.js": `function f(a, a) { return a }\nmodule.exports = f(1, 2);\n`,
-    });
+describe.concurrent("bun build accepts sloppy CommonJS", () => {
+  async function build(files: Record<string, string>, entry: string, ...flags: string[]) {
+    using dir = tempDir("sloppy-build", files);
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "build", "x.js", "--format=cjs"],
+      cmd: [bunExe(), "build", entry, ...flags],
       env: bunEnv,
       cwd: String(dir),
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const result = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return result;
+  }
+
+  test("duplicate params survive bundling to CJS", async () => {
+    const [stdout, stderr, exitCode] = await build(
+      { "x.js": `function f(a, a) { return a }\nmodule.exports = f(1, 2);\n` },
+      "x.js",
+      "--format=cjs",
+    );
     expect(stderr).not.toContain("cannot be bound multiple times");
     expect(stdout).toContain("function f(a, a)");
+    expect(exitCode).toBe(0);
+  });
+
+  test("legacy octal escape in a sloppy CJS file bundles to ESM", async () => {
+    const [stdout, stderr, exitCode] = await build(
+      { "x.cjs": `var s = "a\\7b";\nmodule.exports = s;\n` },
+      "x.cjs",
+    );
+    expect(stderr).not.toContain("Legacy octal escape sequences");
+    expect(stdout).toContain("\\x07");
     expect(exitCode).toBe(0);
   });
 });

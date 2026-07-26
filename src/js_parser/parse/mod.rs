@@ -350,6 +350,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
+    /// ESM-only string positions (import specifier, clause alias, attribute) are always strict.
+    pub fn reject_strict_octal_escape(&mut self, loc: bun_ast::Loc) {
+        if loc.start >= 0 {
+            self.log().add_range_error(
+                Some(self.source),
+                bun_ast::Range { loc, len: 2 },
+                b"Legacy octal escape sequences cannot be used in strict mode",
+            );
+        }
+    }
+
     pub fn parse_call_args(&mut self) -> Result<ExprListLoc, Error> {
         // Allow "in" inside call arguments; restored on every exit path
         let old_allow_in = self.allow_in;
@@ -762,6 +773,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // The alias may now be a utf-16 (not wtf-16) string (see https://github.com/tc39/ecma262/pull/2154)
         if p.lexer.token == T::TStringLiteral {
             let estr = p.lexer.to_e_string()?;
+            p.reject_strict_octal_escape(estr.legacy_octal_loc);
             if estr.is_utf8() {
                 // SAFETY: E::String slices are arena-owned for 'a.
                 return Ok(unsafe { bun_collections::detach_lifetime(estr.slice8()) });
@@ -1325,6 +1337,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     pub fn parse_path(&mut self) -> Result<ParsedPath<'a>, Error> {
         let p = self;
         let path_text = p.lexer.to_utf8_e_string()?;
+        p.reject_strict_octal_escape(path_text.legacy_octal_loc);
         let mut path = ParsedPath {
             loc: p.lexer.loc(),
             // SAFETY: E::String slice8() is arena-owned for 'a.
@@ -1377,6 +1390,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
                     } else if p.lexer.token == T::TStringLiteral {
                         let estr = p.lexer.to_utf8_e_string()?;
+                        p.reject_strict_octal_escape(estr.legacy_octal_loc);
                         let string_literal_text = estr.slice8();
                         if string_literal_text == b"type" {
                             break 'brk Some(SupportedAttribute::Type);
@@ -1399,6 +1413,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                 p.lexer.expect(T::TStringLiteral)?;
                 let estr = p.lexer.to_utf8_e_string()?;
+                p.reject_strict_octal_escape(estr.legacy_octal_loc);
                 let string_literal_text = estr.slice8();
                 if let Some(attr) = supported_attribute {
                     match attr {

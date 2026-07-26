@@ -2803,6 +2803,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         } else if self.top_level_await_keyword.len > 0 {
             self.module_scope_mut()
                 .recursive_set_strict_mode(js_ast::StrictModeKind::ImplicitStrictModeTopLevelAwait);
+        } else if self.options.module_type == options::ModuleType::Esm {
+            self.module_scope_mut()
+                .recursive_set_strict_mode(js_ast::StrictModeKind::ImplicitStrictModeModuleType);
         }
 
         if self.has_es_module_syntax || self.options.module_type == options::ModuleType::Esm {
@@ -4321,7 +4324,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         r: bun_ast::Range,
         detail: &[u8],
     ) -> Result<(), crate::Error> {
-        let can_be_transformed = feature == StrictModeFeature::ForInVarInit;
+        let can_be_transformed = matches!(
+            feature,
+            StrictModeFeature::ForInVarInit | StrictModeFeature::LegacyOctalEscape
+        );
         let text: &'a [u8] = match feature {
             StrictModeFeature::WithStatement => b"With statements",
             StrictModeFeature::DeleteBareName => b"\"delete\" of a bare identifier",
@@ -4369,6 +4375,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 js_ast::StrictModeKind::ImplicitStrictModeClass => {
                     why = b"All code inside a class is implicitly in strict mode";
                     where_ = self.enclosing_class_keyword;
+                }
+                js_ast::StrictModeKind::ImplicitStrictModeModuleType => {
+                    why = b"This file is an ECMAScript module because of its extension or package.json";
                 }
                 _ => {}
             }

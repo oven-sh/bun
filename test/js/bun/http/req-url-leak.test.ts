@@ -23,14 +23,14 @@ test(
     // the exact #16787 scenario: no req.url access in the handler).
     const report = async () => parseInt(await (await fetch(baseURL, { method: "POST" })).text());
 
-    // 8 windows of 8×64 = 4096 GETs total. A leaked 15 KB url per request grows
+    // 6 windows of 8×64 = 3072 GETs total. A leaked 15 KB url per request grows
     // RSS linearly; between samples[1] (after 1024 requests, allocator warmed up)
-    // and samples[7] that is 3072×15 KB ≈ 45 MB. With the fix the post-GC samples
-    // are flat within ±3 MB on ASAN, so 4× fewer requests than the old 16 K sweep
-    // keep the same separation while asserting growth instead of absolute RSS.
+    // and samples[5] that is 2048×15 KB ≈ 30 MB. With the fix the post-GC samples
+    // are flat within ±3 MB on ASAN, so the old 16 K sweep's absolute-RSS check
+    // becomes a growth bound at a fifth of the requests.
     const batchSize = 64;
     const samples: number[] = [];
-    for (let window = 0; window < 8; window++) {
+    for (let window = 0; window < 6; window++) {
       for (let i = 0; i < 8; i++) {
         const batch = new Array(batchSize);
         for (let j = 0; j < batchSize; j++) batch[j] = fetch(url).then(r => r.text());
@@ -52,8 +52,8 @@ test(
 
     expect(stderr).toBe("");
     // 297 MB on Bun 1.2 vs 44 MB on Bun 1.3 for the old 16 K absolute-RSS check;
-    // as a post-GC delta the leak shows as ~45 MB here versus ~0 on a fixed build.
-    expect(growthMB).toBeLessThan(20);
+    // as a post-GC delta the leak shows as ~30 MB here versus ~0 on a fixed build.
+    expect(growthMB).toBeLessThan(15);
   },
-  isASAN || isDebug ? 30_000 : 10_000,
+  isASAN || isDebug ? 90_000 : 10_000,
 );

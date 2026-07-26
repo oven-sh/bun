@@ -60,7 +60,9 @@ test.skipIf(!hasMemory)(
     const chunks = [];
     const gz = zlib.createGzip({ level: 1 });
     gz.on("data", c => chunks.push(c));
-    const done = new Promise(r => gz.on("end", r));
+    const { promise: done, resolve, reject } = Promise.withResolvers();
+    gz.on("end", resolve);
+    gz.on("error", reject);
     const zero = Buffer.alloc(64 << 20);
     let left = 4 * 1024 ** 3;
     const feed = () => {

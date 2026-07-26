@@ -5,8 +5,8 @@ import { bunEnv, bunExe, nodeExe, tls as tlsCerts } from "harness";
 import { createHash } from "node:crypto";
 import { once } from "node:events";
 import { createServer } from "node:net";
-import { createServer as createTlsServer } from "node:tls";
 import * as path from "node:path";
+import { createServer as createTlsServer } from "node:tls";
 import { WebSocket as NodeWS, WebSocketServer } from "ws";
 function test(
   label: string,

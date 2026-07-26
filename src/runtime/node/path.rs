@@ -3176,7 +3176,9 @@ pub(crate) fn resolve_windows_t<'a, T: PathCharCwd>(
                             buf_offset = buf_size;
                             let first_part_len = first_part_end - first_part_start;
                             buf_size += first_part_len;
-                            // SAFETY: src/dst within live buffers; ptr::copy handles overlap.
+                            debug_assert!(buf_size <= tmp_buf.len());
+                            // SAFETY: caller sizes tmp_buf to cover any single
+                            // input path (see *_js_t); ptr::copy handles overlap.
                             unsafe {
                                 core::ptr::copy(
                                     path_ptr.add(first_part_start),
@@ -3190,7 +3192,8 @@ pub(crate) fn resolve_windows_t<'a, T: PathCharCwd>(
                             let slice_len = j - last;
                             buf_offset = buf_size;
                             buf_size += slice_len;
-                            // SAFETY: src/dst within live buffers; ptr::copy handles overlap.
+                            debug_assert!(buf_size <= tmp_buf.len());
+                            // SAFETY: same tmp_buf sizing invariant as above.
                             unsafe {
                                 core::ptr::copy(
                                     path_ptr.add(last),

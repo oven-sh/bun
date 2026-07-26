@@ -3961,10 +3961,8 @@ where
                 // TODO: properly propagate exception upwards
                 let _ = bytes.on_data(WebCore::streams::Result::Temporary(borrowed));
 
-                // Backpressure: if the reader did not consume this chunk
-                // synchronously, `on_data` parked it in the ByteStream's
-                // internal buffer. Stop reading from the socket until the JS
-                // side drains it (signalled via `on_stream_drained`).
+                // Whatever `on_data` did not hand to a waiting reader is now in
+                // `bytes.buffer`; `on_stream_drained` resumes once it empties.
                 let buffered = bytes.buffer.get().len().saturating_sub(bytes.offset.get());
                 if buffered >= REQUEST_BODY_HIGH_WATER_MARK {
                     this.pause_request_body_socket();
@@ -4078,11 +4076,8 @@ where
             }
             this.request_body_buf.extend_from_slice(chunk);
 
-            // Backpressure for bodies that have not been touched yet: cap the
-            // pre-stream buffer so a handler that delays reading does not have
-            // the whole body queued in memory. Resumed when the handler starts
-            // streaming (first `read()` drains the ByteStream and fires
-            // `on_stream_drained`) or opts into whole-body buffering.
+            // Pre-stream backpressure; resumed by `on_stream_drained` once the
+            // handler reads, or by `on_start_buffering` for `.text()` etc.
             if !this.flags.request_body_buffer_all()
                 && this.request_body_buf.len() >= REQUEST_BODY_HIGH_WATER_MARK
             {
@@ -4114,9 +4109,8 @@ where
         }
     }
 
-    /// Detach `on_request_body_stream_drained_callback` from the body's
-    /// ByteStream source before this context is released (the stream can
-    /// outlive it in JS).
+    /// Detach the body ByteStream's `drain_handler` before this context is
+    /// released: the stream can outlive it in JS.
     fn clear_request_body_stream_drain_handler(&self, global_this: &JSGlobalObject) {
         let Some(readable) = self.request_body_readable_stream_ref.get(global_this) else {
             return;
@@ -4173,8 +4167,7 @@ where
     pub fn on_start_buffering(&mut self) {
         if let Some(server) = self.server {
             ctx_log!("onStartBuffering");
-            // `.text()`/`.json()` etc. want the whole body: release any
-            // pre-stream backpressure and stop re-applying it.
+            // `.text()`/`.json()` want the whole body; disable pre-stream backpressure.
             self.flags.set_request_body_buffer_all(true);
             self.resume_request_body_socket();
             // TODO: check if is someone calling onStartBuffering other than onStartBufferingCallback
@@ -4271,10 +4264,8 @@ where
 
 const MAX_REQUEST_BODY_PREALLOCATE_LENGTH: usize = 1024 * 256;
 
-/// Pause the socket when the request-body ByteStream (or the pre-stream
-/// `request_body_buf`) holds more than this many unconsumed bytes. Two uWS recv
-/// buffers' worth (`LIBUS_RECV_BUFFER_LENGTH` = 512 KB) keeps loopback
-/// throughput high while bounding memory to O(1) per request.
+/// Pause socket reads once the request-body buffer holds this many unconsumed
+/// bytes: two `LIBUS_RECV_BUFFER_LENGTH` (512 KB) recv buffers.
 const REQUEST_BODY_HIGH_WATER_MARK: usize = 1024 * 1024;
 
 // Trap host fn for the `(false, _, true)` arms of `exported_host_fns`. Those
@@ -4510,12 +4501,9 @@ bitflags::bitflags! {
         const ABORTED                     = 1 << 13;
         const HAS_FINALIZED               = 1 << 14;
         const IS_ERROR_PROMISE_PENDING    = 1 << 15;
-        /// Socket reads are paused because the request-body ByteStream (or the
-        /// pre-stream `request_body_buf`) is over its high-water mark.
+        /// Socket reads are paused because the request-body buffer is over its high-water mark.
         const REQUEST_BODY_PAUSED         = 1 << 16;
-        /// The handler has asked for the whole body via `.text()`/`.json()`
-        /// etc. (`on_start_buffering` fired). Skip backpressure on the
-        /// pre-stream buffer: the consumer wants everything.
+        /// `on_start_buffering` fired (`.text()` etc.); skip pre-stream backpressure.
         const REQUEST_BODY_BUFFER_ALL     = 1 << 17;
     }
 }

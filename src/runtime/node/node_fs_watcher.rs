@@ -1062,15 +1062,6 @@ impl FSWatcher {
     }
 
     pub fn init(args: &Arguments<'_>) -> bun_sys::Result<*mut FSWatcher> {
-        // node throws ENOENT for an empty path (the kernel would too);
-        // without this, the join against cwd below would watch cwd instead.
-        if args.path.slice().is_empty() {
-            return Err(bun_sys::Error {
-                errno: SystemErrno::ENOENT as _,
-                syscall: bun_sys::Tag::watch,
-                ..Default::default()
-            });
-        }
         let mut joined_buf = bun_paths::path_buffer_pool::get();
         let slice = {
             let mut s = args.path.slice();
@@ -1079,6 +1070,18 @@ impl FSWatcher {
             }
             s
         };
+        // node throws ENOENT for an empty path (the kernel would too);
+        // without this, the join against cwd below would watch cwd instead.
+        // Checked after the file:// strip so a bare "file://" (reachable via
+        // fs.promises.watch or a Buffer path, which skip the JS-side URL
+        // conversion) is rejected the same way.
+        if slice.is_empty() {
+            return Err(bun_sys::Error {
+                errno: SystemErrno::ENOENT as _,
+                syscall: bun_sys::Tag::watch,
+                ..Default::default()
+            });
+        }
         // SAFETY: `FileSystem::instance()` returns the process-global singleton
         // initialized at startup; never null once init has run.
         let cwd = bun_resolver::fs::FileSystem::get().top_level_dir;

@@ -2730,21 +2730,7 @@ pub mod JSZlib {
                     )));
                 }
 
-                // Ownership of the allocation transfers to JSC; freed via
-                // `global_deallocator` once the ArrayBuffer is finalized.
-                let leaked: &'static mut [u8] = list.leak();
-                let ptr = leaked.as_mut_ptr();
-                let array_buffer = ArrayBuffer::from_bytes(leaked, jsc::JSType::Uint8Array);
-                // SAFETY: `ptr` is the just-leaked `Vec` allocation, live until
-                // `global_deallocator` (`mi_free_ctx`) frees it exactly once at
-                // GC via the ctx pointer (the data pointer itself).
-                unsafe {
-                    array_buffer.to_js_with_context(
-                        global_this,
-                        ptr.cast::<c_void>(),
-                        Some(global_deallocator),
-                    )
-                }
+                leak_list_into_uint8array(global_this, list)
             }
         }
     }

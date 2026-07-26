@@ -128,7 +128,7 @@ async function buildNumberForCommit(sha: string): Promise<number | undefined> {
 async function sizesFromBuild(n: number, want: string[]): Promise<{ sizes: Sizes; release?: boolean } | undefined> {
   const res = await fetch(`${bkWeb}/${org}/${pipeline}/builds/${n}.json`);
   if (!res.ok) return;
-  const { id } = (await res.json()) as { id: string };
+  const { id, message } = (await res.json()) as { id: string; message?: string };
   // Fast path: the binary-size step on this build ran and uploaded a complete
   // snapshot (with the canary/release flag).
   const dir = "binary-size-tmp";
@@ -142,16 +142,19 @@ async function sizesFromBuild(n: number, want: string[]): Promise<{ sizes: Sizes
   // timed out, which Buildkite does not treat as a "failure" that
   // allow_dependency_failure recovers from). Each *-build-bun job that DID
   // finish still set its own binary-size:<triplet> meta-data; read those
-  // directly. We can't recover the release flag here, so only use this for
-  // canary comparisons (the normal PR path).
+  // directly. Recover the release flag from the commit message (same regex as
+  // .buildkite/ci.mjs) so a [release] baseline still gets filtered by the
+  // like-for-like check below; the meta-data fallback itself is only used for
+  // canary comparisons because release baselines are rare and artifact-backed.
   if (isRelease) return;
+  const release = /\[(release|build release|release build)\]/i.test(message ?? "");
   const sizes: Sizes = {};
   for (const triplet of want) {
     const v = agent(["meta-data", "get", `binary-size:${triplet}`, "--build", id], { quiet: true });
     const bytes = v ? parseInt(v, 10) : NaN;
     if (Number.isFinite(bytes)) sizes[triplet] = bytes;
   }
-  return Object.keys(sizes).length > 0 ? { sizes } : undefined;
+  return Object.keys(sizes).length > 0 ? { sizes, release } : undefined;
 }
 
 // Canary: walk main commits starting at this PR's merge-base (so the delta is
@@ -199,7 +202,7 @@ const canary: Baseline | undefined = await (async () => {
       want.delete(t);
     }
   }
-  if (anchor === undefined) {
+  if (anchor === undefined || Object.keys(acc).length === 0) {
     canaryNote = `no recent ${baseBranch} ${buildKind} build has binary sizes yet`;
     return;
   }

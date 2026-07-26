@@ -2152,6 +2152,8 @@ describe("bundler", () => {
         console.log(typeof import.meta.filename);
         console.log(typeof import.meta.dirname);
         console.log(typeof import.meta.path);
+        console.log(import.meta.filename === import.meta.path);
+        console.log(import.meta.filename.length > import.meta.file.length);
       `,
     },
     target: "node",
@@ -2163,7 +2165,7 @@ describe("bundler", () => {
     },
     run: {
       runtime: "node",
-      stdout: "string\nstring\nstring",
+      stdout: "string\nstring\nstring\ntrue\ntrue",
     },
   });
   itBundled("edgecase/IdentifierInEnum#13081", {

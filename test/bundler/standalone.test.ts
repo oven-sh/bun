@@ -36,6 +36,36 @@ describe("compile --target=browser", () => {
     expect(html).not.toContain('href="');
   });
 
+  test("drops <link rel=preload as=style> instead of inlining CSS into the href", async () => {
+    using dir = tempDir("compile-browser-preload-as-style", {
+      "index.html": `<!DOCTYPE html>
+<link rel="preload" as="style" href="./later.css">
+<script src="./app.js"></script>`,
+      "later.css": `body { content: "preloaded-rule"; }`,
+      "app.js": `console.log("app");`,
+    });
+
+    const result = await Bun.build({
+      entrypoints: [`${dir}/index.html`],
+      compile: true,
+      target: "browser",
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.outputs.length).toBe(1);
+
+    const html = await result.outputs[0].text();
+    // The preload tag is dropped: a single-file bundle has no separate file to
+    // preload, and inlining the CSS into an href attribute would corrupt the
+    // markup.
+    expect(html).not.toContain("preloaded-rule");
+    expect(html).not.toContain('rel="preload"');
+    expect(html).not.toContain('rel="stylesheet"');
+    expect(html).not.toContain('href="');
+    // JS is still inlined.
+    expect(html).toContain('console.log("app")');
+  });
+
   test("uses type=module on inline scripts", async () => {
     using dir = tempDir("compile-browser-module", {
       "index.html": `<!DOCTYPE html><html><body><script src="./app.js"></script></body></html>`,

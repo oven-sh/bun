@@ -185,6 +185,11 @@ impl<'a> HTMLProcessorHandler for HTMLLoader<'a> {
         }
 
         if loader.is_css() && kind == ImportKind::Url {
+            if self.compile_to_standalone_html {
+                // A single-file bundle has no separate file to preload.
+                element.remove();
+                return;
+            }
             // `<link rel="preload" as="style">`: rewrite href to the file's own CSS chunk.
             let chunk_index = self.linker.graph.files.items_entry_point_chunk_index()
                 [import_record.source_index.get() as usize];

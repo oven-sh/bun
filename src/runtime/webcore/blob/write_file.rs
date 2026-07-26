@@ -276,6 +276,7 @@ impl WriteFile {
     pub fn create_with_ctx(
         file_blob: Blob,
         bytes_blob: Blob,
+        opened_fd: Fd,
         on_write_file_context: *mut c_void,
         on_complete_callback: WriteFileOnWriteFileCallback,
         mkdirp_if_not_exists: bool,
@@ -283,7 +284,7 @@ impl WriteFile {
         let write_file = bun_core::heap::into_raw(Box::new(WriteFile {
             file_blob,
             bytes_blob,
-            opened_fd: Fd::INVALID,
+            opened_fd,
             system_error: None,
             errno: None,
             task: WorkPoolTask {
@@ -311,6 +312,7 @@ impl WriteFile {
     pub fn create<C>(
         file_blob: Blob,
         bytes_blob: Blob,
+        opened_fd: Fd,
         context: *mut C,
         callback: WriteFileOnWriteFileCallback,
         mkdirp_if_not_exists: bool,
@@ -321,6 +323,7 @@ impl WriteFile {
         WriteFile::create_with_ctx(
             file_blob,
             bytes_blob,
+            opened_fd,
             context.cast::<c_void>(),
             callback,
             mkdirp_if_not_exists,
@@ -338,35 +341,26 @@ impl WriteFile {
         //
         // On macOS, it is an error to use pwrite() on a
         // non-seekable file.
-        let result: bun_sys::Result<usize> =
-            sys::write(fd, &self.bytes_blob.shared_view()[off..off + len]);
-
-        loop {
-            match &result {
-                bun_sys::Result::Ok(res) => {
-                    *wrote = *res;
-                    self.total_written += *res;
-                }
-                bun_sys::Result::Err(err) => {
-                    if err.get_errno() == io::RETRY {
-                        if !self.could_block {
-                            // regular files cannot use epoll.
-                            // this is fine on kqueue, but not on epoll.
-                            continue;
-                        }
-                        self.wait_for_writable();
-                        return false;
-                    } else {
-                        self.errno = Some(bun_errno::from_errno(err.errno as i32).into());
-                        self.system_error = Some(err.to_system_error().into());
-                        return false;
-                    }
-                }
+        match sys::write(fd, &self.bytes_blob.shared_view()[off..off + len]) {
+            bun_sys::Result::Ok(res) => {
+                *wrote = res;
+                self.total_written += res;
+                true
             }
-            break;
+            bun_sys::Result::Err(err) => {
+                if err.get_errno() == io::RETRY {
+                    // write(2) on a regular file never returns EAGAIN, so reaching
+                    // this arm means the fd is pollable regardless of what the
+                    // open-time classification guessed.
+                    self.could_block = true;
+                    self.wait_for_writable();
+                } else {
+                    self.errno = Some(bun_errno::from_errno(err.errno as i32).into());
+                    self.system_error = Some(err.to_system_error().into());
+                }
+                false
+            }
         }
-
-        true
     }
 
     pub fn then(mut this: Box<WriteFile>, _global: &JSGlobalObject) -> Result<(), JsTerminated> {
@@ -453,21 +447,26 @@ impl WriteFile {
         self.could_block = 'brk: {
             if let Some(store) = self.file_blob.store.get().as_ref() {
                 if let blob::store::Data::File(file) = &store.data {
-                    if file.pathlike.is_fd() {
-                        // If seekable was set, then so was mode
-                        if file.seekable.is_some() {
-                            // This is mostly to handle pipes which were passsed to the process somehow
-                            // such as stderr, stdout. Bun.stdin and Bun.stderr will automatically set `mode` for us.
-                            break 'brk !bun_sys::is_regular_file(file.mode);
+                    match file.pathlike {
+                        PathOrFileDescriptor::Fd(_) => {
+                            // If seekable was set, then so was mode
+                            if file.seekable.is_some() {
+                                // This is mostly to handle pipes which were passsed to the process somehow
+                                // such as stderr, stdout. Bun.stdin and Bun.stderr will automatically set `mode` for us.
+                                break 'brk !bun_sys::is_regular_file(file.mode);
+                            }
+                        }
+                        PathOrFileDescriptor::Path(_) => {
+                            // We just opened the path with O_NONBLOCK. For a FIFO/socket/
+                            // character device that open succeeds and every write can
+                            // EAGAIN, so classify from fstat instead of assuming regular.
+                            if let bun_sys::Result::Ok(st) = sys::fstat(fd) {
+                                break 'brk !bun_sys::is_regular_file(st.st_mode as bun_sys::Mode);
+                            }
                         }
                     }
                 }
             }
-
-            // We opened the file descriptor with O_NONBLOCK, so we
-            // shouldn't have to worry about blocking reads/writes
-            //
-            // We do not call fstat() because that is very expensive.
             false
         };
 
@@ -1381,6 +1380,7 @@ impl WriteFileWaitFromLockedValueTask {
                     global_this,
                     &mut blob,
                     &mut file_blob,
+                    Fd::INVALID,
                     &blob::WriteFileOptions {
                         mkdirp_if_not_exists: Some(this_ref.mkdirp_if_not_exists),
                         ..Default::default()

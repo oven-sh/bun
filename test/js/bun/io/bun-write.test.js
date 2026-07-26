@@ -728,3 +728,64 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
     expect(f.name).toBe(filePath);
   });
 });
+
+// Bun.write(path, ...) on a FIFO used to either (a) tear the payload at the
+// pipe-buffer boundary because the sync fast path closed the fd on EAGAIN and
+// the async fallback's reopen got ENXIO after the reader saw EOF, or (b) never
+// settle because the thread-pool WriteFile kept re-matching a cached EAGAIN
+// without ever calling write() again. Run outside describe.concurrent so an
+// unfixed build's spin doesn't starve neighbours into their default timeout.
+describe.skipIf(isWindows)("Bun.write to a FIFO by path", () => {
+  // 200 KiB exercises the <256 KiB sync fast path; 1 MiB exercises the
+  // thread-pool WriteFile path (string/ArrayBuffer) and the Blob path.
+  it.each([
+    ["200 KiB string", "string", 200 * 1024],
+    ["1 MiB string", "string", 1 << 20],
+    ["1 MiB Uint8Array", "u8", 1 << 20],
+    ["1 MiB Blob", "blob", 1 << 20],
+  ])("delivers a %s in full", async (_label, kind, size) => {
+    using dir = tempDir("bun-write-fifo", {});
+    const script = `
+      const fs = require("fs");
+      const { FIFO, KIND, SIZE } = process.env;
+      const size = Number(SIZE);
+      require("child_process").execFileSync("mkfifo", [FIFO]);
+      // Open the read end synchronously so Bun.write's O_WRONLY|O_NONBLOCK
+      // open has a reader and doesn't ENXIO; hand it to a child to drain so
+      // the write side actually back-pressures.
+      const readFd = fs.openSync(FIFO, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
+      const reader = Bun.spawn({
+        cmd: [process.execPath, "-e",
+          "let n=0; for await (const c of Bun.stdin.stream()) n+=c.length; process.stdout.write(String(n))"],
+        stdin: readFd,
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      fs.closeSync(readFd);
+      const body = Buffer.alloc(size, 0x61);
+      const src =
+        KIND === "string" ? body.toString()
+        : KIND === "u8" ? new Uint8Array(body)
+        : new Blob([body]);
+      const wrote = await Bun.write(FIFO, src);
+      const got = Number(await reader.stdout.text());
+      await reader.exited;
+      console.log(JSON.stringify({ wrote, got, size }));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: { ...bunEnv, FIFO: join(String(dir), "fifo"), KIND: kind, SIZE: String(size) },
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 20_000,
+      killSignal: "SIGKILL",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, stdout: stdout.trim(), exitCode, signalCode: proc.signalCode }).toEqual({
+      stderr: "",
+      stdout: JSON.stringify({ wrote: size, got: size, size }),
+      exitCode: 0,
+      signalCode: null,
+    });
+  }, 30_000);
+});

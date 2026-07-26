@@ -8,21 +8,17 @@ import { join } from "node:path";
 // looked only at the cache bitsets, so once the 32 tracked queries completed
 // the timer was disarmed and any still-pending untracked query never saw its
 // ETIMEOUT: its promise stayed pending forever and the process never exited.
-test(
-  "dns.Resolver: unanswered queries past 32 concurrent still time out",
-  async () => {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), join(import.meta.dir, "dns-resolver-concurrent-timeout-fixture.ts")],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+test("dns.Resolver: unanswered queries past 32 concurrent still time out", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), join(import.meta.dir, "dns-resolver-concurrent-timeout-fixture.ts")],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
 
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(stderr.trim()).toBe("");
-    expect(JSON.parse(stdout.trim())).toEqual({ ok: 32, err: 8 });
-    expect(exitCode).toBe(0);
-  },
-  20_000,
-);
+  expect(stderr.trim()).toBe("");
+  expect(JSON.parse(stdout.trim())).toEqual({ ok: 32, err: 8 });
+  expect(exitCode).toBe(0);
+}, 20_000);

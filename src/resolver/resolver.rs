@@ -4023,11 +4023,8 @@ impl<'a> Resolver<'a> {
             input_path = self.fs_ref().top_level_dir;
         }
 
-        // A path this long cannot name a real directory. Bailing here also
-        // prevents overflowing `dir_info_uncached_path` when called with
-        // user-controlled absolute import paths; `dir_info_cached_miss`
-        // slices `[..input_path.len() + 1]` for the NUL splice, so the bound
-        // is strict.
+        // `dir_info_cached_miss` slices `[..len + 1]` into `dir_info_uncached_path`,
+        // and a path this long cannot name a real directory anyway.
         if input_path.len() >= MAX_PATH_BYTES {
             return Ok(None);
         }
@@ -4117,9 +4114,8 @@ impl<'a> Resolver<'a> {
         dir_info_uncached_path_buf[..input_path_len].copy_from_slice(input_path);
         // The slice spans one byte past the copied path so the NUL-splice/restore at
         // `input_path_len` (queue index 0, processed last in the open-dir loop below)
-        // writes through `path`'s own provenance. `input_path_len + 1 ≤ MAX_PATH_BYTES`
-        // (the caller rejects `>= MAX_PATH_BYTES`), so the safe slice is in-bounds
-        // and the threadlocal buffer outlives this fn.
+        // writes through `path`'s own provenance. The caller bounds `input_path_len
+        // < MAX_PATH_BYTES`, and the threadlocal buffer outlives this fn.
         let path: &mut [u8] = &mut dir_info_uncached_path_buf[..input_path_len + 1];
 
         queue[0].write(DirEntryResolveQueueItem {
@@ -5591,10 +5587,8 @@ impl<'a> Resolver<'a> {
         path: &[u8],
         extension_order: options::ExtOrder,
     ) -> Option<LoadResult> {
-        // A path this long cannot name a real file, and the extension probing
-        // below writes `path` into a fixed `PathBuffer`. Absolute import
-        // specifiers reach here with a short (existing) dirname and an
-        // arbitrarily long basename; bail before that write can overflow.
+        // Extension probing below writes `path` into a fixed `PathBuffer`; an
+        // absolute specifier can carry an arbitrarily long basename here.
         if path.len() >= MAX_PATH_BYTES {
             return None;
         }
@@ -5875,8 +5869,6 @@ impl<'a> Resolver<'a> {
         // `&mut self` calls below (debug_logs / fs_ref) don't conflict, while
         // each read stays a safe `BackRef: Deref`.
         let entries = bun_ptr::BackRef::new(entries);
-        // `load_as_file` has already bounded `path.len() < MAX_PATH_BYTES`, but
-        // appending an extension can still push past the buffer.
         if path.len() + ext.len() > MAX_PATH_BYTES {
             return None;
         }

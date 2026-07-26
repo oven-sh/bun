@@ -365,9 +365,9 @@ fn apply_tag_action(element: &mut Element<'_, '_>, attr: &str, action: TagAction
                     ));
                 }
             }
-            Err(_) => bun_core::Output::panic(format_args!(
-                "unexpected error from Element.setAttribute"
-            )),
+            Err(_) => {
+                bun_core::Output::panic(format_args!("unexpected error from Element.setAttribute"))
+            }
         },
         TagAction::Remove => element.remove(),
     }

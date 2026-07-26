@@ -51,7 +51,7 @@ JSArray* NodeVMModuleRequest::toJS(JSGlobalObject* globalObject) const
 }
 
 void setupWatchdog(VM& vm, double timeout, double* oldTimeout, double* newTimeout);
-bool terminationIsExternalWorkerKill(JSC::VM&);
+bool workerHasRequestedTerminate(JSC::VM&);
 
 void NodeVMModule::reconcileEvaluationState(JSC::VM& vm)
 {
@@ -106,7 +106,7 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
             // below, then convert it to ERR_SCRIPT_EXECUTION_*.
             std::ignore = scope.exception();
             if (vm.hasTerminationRequest() || vm.hasPendingTerminationException()) {
-                if (terminationIsExternalWorkerKill(vm)) {
+                if (workerHasRequestedTerminate(vm)) {
                     scope.throwException(globalObject, vm.ensureTerminationException());
                     return {};
                 }
@@ -250,7 +250,7 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
     // so the exception-check validator is satisfied before the TOP scope.
     std::ignore = scope.exception();
     if (vm.hasTerminationRequest() || vm.hasPendingTerminationException()) {
-        if (terminationIsExternalWorkerKill(vm)) {
+        if (workerHasRequestedTerminate(vm)) {
             scope.throwException(globalObject, vm.ensureTerminationException());
             return {};
         }

@@ -5704,8 +5704,6 @@ impl<'a> Resolver<'a> {
         {
             let buf = bufs!(load_as_file);
             if path.len() >= buf.len() {
-                // Extension probing appends to `path` in this fixed buffer; a path that
-                // already exceeds it cannot name a file the OS would open anyway.
                 dec_ret!(None);
             }
             buf[..path.len()].copy_from_slice(path);

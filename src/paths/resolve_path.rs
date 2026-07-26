@@ -1349,9 +1349,7 @@ pub fn join_abs<'a, P: PlatformT>(cwd: &'a [u8], part: &[u8]) -> &'a [u8] {
 
 #[inline]
 fn join_abs_needed(cwd: &[u8], parts: &[&[u8]]) -> usize {
-    // Normalization never grows the concatenation, so an output buffer of this
-    // length is always sufficient for `_join_abs_string_buf` (+1 sep per part,
-    // +1 leading sep, +1 NUL sentinel).
+    // Normalization never grows the concatenation; +1 sep per part, +1 leading sep, +1 NUL.
     parts.iter().map(|p| p.len() + 1).sum::<usize>() + cwd.len() + 2
 }
 

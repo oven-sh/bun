@@ -734,6 +734,10 @@ describe.concurrent("server.stop() drain promise counts open connections", () =>
               raw.on("connect", resolve);
               raw.on("error", reject);
             });
+            // One junk byte wakes Linux TCP_DEFER_ACCEPT so accept() runs
+            // (and so onClose does), while still not a valid ClientHello so
+            // onHandshake never fires +1.
+            raw.write("\\x00");
             raw.destroy();
           }
           // Give the server a few ticks to process the raw closes.

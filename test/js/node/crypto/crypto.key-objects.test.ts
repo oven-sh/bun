@@ -1816,15 +1816,16 @@ describe("KeyObject serialization", () => {
     ["public", publicKey],
     ["secret", secretKey],
   ])("%s", (label, key) => {
-    test("v8.serialize() throws", () => {
+    test("v8.serialize() throws DataCloneError", () => {
+      const dataCloneError = expect.objectContaining({ name: "DataCloneError" });
       let bytes: Buffer | undefined;
       expect(() => {
         bytes = v8.serialize(key);
-      }).toThrow();
+      }).toThrow(dataCloneError);
       expect(bytes).toBeUndefined();
 
-      expect(() => v8.serialize({ nested: key })).toThrow();
-      expect(() => v8.serialize([1, key, 2])).toThrow();
+      expect(() => v8.serialize({ nested: key })).toThrow(dataCloneError);
+      expect(() => v8.serialize([1, key, 2])).toThrow(dataCloneError);
     });
 
     test("structuredClone() still produces a working KeyObject", () => {

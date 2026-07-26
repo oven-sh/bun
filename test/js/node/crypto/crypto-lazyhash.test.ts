@@ -61,20 +61,14 @@ describe.each([
     expect((emitted as NodeJS.ErrnoException).code).toBe("ERR_CRYPTO_HASH_FINALIZED");
   });
 
-  test("pipeline into finalized stream rejects via stream error (no sync throw)", async () => {
+  test("pipeline into finalized stream rejects with ERR_CRYPTO_HASH_FINALIZED", async () => {
     const h = make();
     h.update("x");
     h.digest("hex");
 
-    let threw: unknown = null;
-    let result: Promise<void> | undefined;
-    try {
-      result = pipeline(Readable.from([Buffer.from("late")]), h);
-    } catch (err) {
-      threw = err;
-    }
-    expect(threw).toBeNull();
-    await expect(result).rejects.toMatchObject({ code: "ERR_CRYPTO_HASH_FINALIZED" });
+    await expect(pipeline(Readable.from([Buffer.from("late")]), h)).rejects.toMatchObject({
+      code: "ERR_CRYPTO_HASH_FINALIZED",
+    });
   });
 
   test("direct update() after digest() still throws synchronously", () => {

@@ -1388,7 +1388,7 @@ impl ServerConfig {
             } else if tls.js_type().is_array() {
                 let mut value_iter = tls.array_iterator(global)?;
                 if value_iter.len == 0 {
-                    // Empty TLS array means no TLS - this is valid
+                    // `[]` = zero SNI configs (plain HTTP, #21792), unlike `{}` which throws.
                 } else {
                     while let Some(item) = value_iter.next()? {
                         let ssl_config = match SSLConfig::from_js(vm, global, item)? {

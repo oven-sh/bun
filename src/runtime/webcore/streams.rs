@@ -1760,9 +1760,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         }
 
         self.requested_end = true;
-        // Release any request-body backpressure pause before `markDone()` drops
-        // `onAborted`, after which the RequestContext's stale `resp` must not
-        // be dereferenced (see `end_already_responded_stream`).
+        // Release any request-body pause while `res` is live (see `end_already_responded_stream`).
         if let Some(res) = self.any_res() {
             res.resume_();
         }

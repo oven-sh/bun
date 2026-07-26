@@ -314,8 +314,8 @@ it("allowHalfOpen: end() fires once when the handler's write is partially accept
     allowHalfOpen: true,
     socket: {
       open(s) {
-        // Clamp SO_SNDBUF so the 4 MiB write from end() is a partial write on
-        // every kernel (no-op on Windows, whose default already makes it so).
+        // Clamp SO_SNDBUF so the write from end() is a partial write on every
+        // POSIX kernel. No-op on Windows; the drainCount assertion is gated.
         setSocketOptions(s, 1, 4096);
         s.data = { sent: 0 };
       },

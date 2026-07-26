@@ -721,7 +721,7 @@ describe("bundler", () => {
     define: { CFG: '{"k":1}' },
     run: { stdout: "ok" },
   });
-  // `delete` on a hoisted-object dot define must not print `delete <bare identifier>`
+  // `delete` on a hoisted-object define must not print `delete <bare identifier>`
   // (strict-mode early error); the operand has to be wrapped.
   itBundled("extra/DefineObjectDeleteTarget", {
     files: {
@@ -736,6 +736,26 @@ describe("bundler", () => {
       const out = api.readFile("out.js");
       if (/\bdelete\s+[A-Za-z_$][\w$]*\s*[,;]/.test(out)) {
         throw new Error("output contains `delete <bare identifier>` (strict-mode SyntaxError):\n" + out);
+      }
+    },
+  });
+  itBundled("extra/DefineObjectDeleteBareIdentifier", {
+    files: {
+      "in.js": /* js */ `
+        // sloppy-mode source: delete <unbound> is valid here
+        var keep = 1;
+        console.log(delete CFG, delete ARR, delete keep);
+      `,
+    },
+    define: { CFG: '{"k":1}', ARR: "[1,2,3]" },
+    onAfterBundle(api) {
+      const out = api.readFile("out.js");
+      if (/\bdelete\s+define_[\w$]*\s*[,;)]/.test(out)) {
+        throw new Error("hoisted define emitted as bare `delete <identifier>`:\n" + out);
+      }
+      // Source-written `delete keep` must stay a bare identifier reference.
+      if (!/\bdelete\s+keep\b/.test(out)) {
+        throw new Error("source-written `delete keep` was wrapped:\n" + out);
       }
     },
   });

@@ -16,35 +16,43 @@ import { join } from "node:path";
 //   main:  sha-old (build 100, full sizes)  →  sha-mid (build 150, +550KB;
 //          its darwin build was canceled so only linux-x64 is recorded)
 //          →  sha-base (build 200, partial sizes: only linux-x64)
+//          →  sha-head (build 250, full sizes; main HEAD, landed AFTER the PR
+//          branched)
 //   PR:    branched from sha-base; adds ~16 KB on both targets.
-// So the only darwin-aarch64 baseline available is two commits behind the PR's
-// merge-base and predates a +550 KB main change the PR already contains.
+// So the only darwin-aarch64 baseline at or before the merge-base is two
+// commits behind it and predates a +550 KB main change the PR already contains.
 const TRIPLETS = ["bun-linux-x64", "bun-darwin-aarch64"] as const;
+const SHA2BUILD = { "sha-head": 250, "sha-base": 200, "sha-mid": 150, "sha-old": 100 } as const;
 
 const META: Record<string, Record<string, number>> = {
   "100": { "bun-linux-x64": 75_000_000, "bun-darwin-aarch64": 60_000_000 },
   "150": { "bun-linux-x64": 75_560_000 },
   "200": { "bun-linux-x64": 75_560_000 },
+  // main HEAD, one commit ahead of the PR's merge-base
+  "250": { "bun-linux-x64": 76_000_000, "bun-darwin-aarch64": 60_700_000 },
   // the PR's own build
   "999": { "bun-linux-x64": 75_576_384, "bun-darwin-aarch64": 60_576_384 },
 };
-const UUID = { "100": "uuid-100", "150": "uuid-150", "200": "uuid-200" };
+const UUID = Object.fromEntries(Object.values(SHA2BUILD).map(n => [String(n), `uuid-${n}`]));
+
+// Per-build commit messages: canary by default; tests override to exercise the
+// [release] filter in the meta-data fallback.
+let commitMessages: Record<string, string> = {};
 
 function githubHandler(url: URL): unknown {
   if (url.pathname === "/repos/oven-sh/bun/compare/main...sha-pr") {
-    return { merge_base_commit: { sha: "sha-base" }, ahead_by: 1, behind_by: 0 };
+    return { merge_base_commit: { sha: "sha-base" }, ahead_by: 1, behind_by: 1 };
   }
   if (url.pathname === "/repos/oven-sh/bun/commits") {
     const from = url.searchParams.get("sha");
     // History as returned by the list-commits endpoint, newest first.
-    const chain = ["sha-base", "sha-mid", "sha-old"];
+    const chain = Object.keys(SHA2BUILD);
     const start = from === "main" ? 0 : chain.indexOf(from ?? "");
     return chain.slice(start < 0 ? 0 : start).map(sha => ({ sha }));
   }
   const mStatus = url.pathname.match(/^\/repos\/oven-sh\/bun\/commits\/(.+)\/status$/);
   if (mStatus) {
-    const sha = mStatus[1];
-    const build = sha === "sha-base" ? 200 : sha === "sha-mid" ? 150 : sha === "sha-old" ? 100 : undefined;
+    const build = SHA2BUILD[mStatus[1] as keyof typeof SHA2BUILD];
     return {
       statuses: build ? [{ context: "buildkite/bun", target_url: `http://127.0.0.1/bun/bun/builds/${build}` }] : [],
     };
@@ -62,7 +70,7 @@ beforeAll(() => {
       // buildkite.com public .json → build UUID + commit message
       const mBuild = url.pathname.match(/^\/bun\/bun\/builds\/(\d+)\.json$/);
       if (mBuild)
-        return Response.json({ id: UUID[mBuild[1] as keyof typeof UUID] ?? "uuid-unknown", message: "commit" });
+        return Response.json({ id: UUID[mBuild[1]] ?? "uuid-unknown", message: commitMessages[mBuild[1]] ?? "commit" });
       // everything else → GitHub API
       return Response.json(githubHandler(url));
     },
@@ -112,7 +120,8 @@ case "$cmd" in
   *) exit 1 ;;
 esac`;
 
-async function runBinarySize(meta: typeof META) {
+async function runBinarySize(meta: typeof META, messages: Record<string, string> = {}) {
+  commitMessages = messages;
   using dir = tempDir("binary-size-baseline", { ".keep": "" });
   const agentPath = join(String(dir), "buildkite-agent");
   await Bun.write(agentPath, agentScript);
@@ -156,8 +165,9 @@ async function runBinarySize(meta: typeof META) {
   return { stdout, stderr, exitCode, annotation };
 }
 
-// The fake buildkite-agent is a bash script.
-test.concurrent.skipIf(!isPosix)(
+// The fake buildkite-agent is a bash script. Tests share one mock server with a
+// mutable commit-message map, so they run sequentially.
+test.skipIf(!isPosix)(
   "PR is not failed when the only over-threshold rows have a baseline older than merge-base",
   async () => {
     const { stdout, stderr, exitCode, annotation } = await runBinarySize(META);
@@ -177,11 +187,25 @@ test.concurrent.skipIf(!isPosix)(
   },
 );
 
-test.concurrent.skipIf(!isPosix)("PR still fails when the merge-base baseline itself is over threshold", async () => {
+test.skipIf(!isPosix)("PR still fails when the merge-base baseline itself is over threshold", async () => {
   // Bump the PR's own linux-x64 size by 600 KB over merge-base. The baseline for
   // linux-x64 is the merge-base build (#200), so this row is fresh and must fail.
   const big = { ...META, "999": { ...META["999"], "bun-linux-x64": META["200"]["bun-linux-x64"] + 600_000 } };
   const { stderr, annotation, exitCode } = await runBinarySize(big);
+  expect(stderr).toContain("error: 1 target(s) exceeded 0.50 MB");
+  expect(annotation).toContain("❌ <code>bun-linux-x64</code>");
+  expect(exitCode).toBe(1);
+});
+
+test.skipIf(!isPosix)("[release] merge-base does not claim the anchor (next canary build is enforced)", async () => {
+  // Merge-base #200 is a [release] build: the like-for-like check rejects it for a
+  // canary PR, and it must NOT claim the anchor (a release-tag commit doesn't itself
+  // change canary sizes). Anchor becomes #150 (next canary back), whose linux-x64 is
+  // 75_560_000; PR is +600 KB over that and must fail rather than being waved through
+  // as "stale".
+  const big = { ...META, "999": { ...META["999"], "bun-linux-x64": META["150"]["bun-linux-x64"] + 600_000 } };
+  const { stdout, stderr, annotation, exitCode } = await runBinarySize(big, { "200": "bump version [release]" });
+  expect(stdout).toContain("main #150");
   expect(stderr).toContain("error: 1 target(s) exceeded 0.50 MB");
   expect(annotation).toContain("❌ <code>bun-linux-x64</code>");
   expect(exitCode).toBe(1);

@@ -176,23 +176,31 @@ const canary: Baseline | undefined = await (async () => {
   const acc: Sizes = {};
   const from: Record<string, number> = {};
   const stale = new Set<string>();
-  // The anchor is the first build we consult (the merge-base for PRs, the
-  // previous main commit for main builds). A triplet whose size came from an
-  // older build is stale: its delta folds in main commits this build already
-  // contains, so we show it but never fail on it.
+  // The anchor is the first like-for-like build we consult (the merge-base for
+  // PRs, the previous main commit for main builds). A triplet whose size came
+  // from an older build is stale: its delta folds in main commits this build
+  // already contains, so we show it but never fail on it.
   let anchor: number | undefined;
   for (const { sha } of commits) {
     if (want.size === 0) break;
     const n = await buildNumberForCommit(sha);
     if (!n || String(n) === String(buildNumber)) continue;
-    anchor ??= n;
     const record = await sizesFromBuild(n, [...want]);
-    if (!record) continue;
+    if (!record) {
+      // This commit had no usable sizes at all (every build-bun job canceled).
+      // It may carry real growth, so claim the anchor here: anything older is
+      // stale and won't be blamed on this PR.
+      anchor ??= n;
+      continue;
+    }
     // Only compare like-for-like: canary builds against canary baselines,
     // release against release. Windows binaries differ by several MB between
-    // the two, so a release build on main would otherwise trip every PR's
-    // threshold.
+    // the two. A mismatched-kind build (e.g. [release] merge-base for a canary
+    // PR) is skipped without claiming the anchor: a release-tag commit does not
+    // itself change canary-mode sizes, so the next canary build back is still a
+    // fair anchor to enforce against.
     if ((record.release ?? false) !== isRelease) continue;
+    anchor ??= n;
     for (const t of want) {
       const s = record.sizes[t];
       if (s === undefined) continue;

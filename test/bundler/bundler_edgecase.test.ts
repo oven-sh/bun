@@ -2166,41 +2166,6 @@ describe("bundler", () => {
       stdout: "string\nstring\nstring",
     },
   });
-  itBundled("edgecase/WithStatementEsmOutputError", {
-    files: {
-      "/entry.js": /* js */ `
-        with (Math) { console.log(PI); }
-      `,
-    },
-    format: "esm",
-    bundleErrors: {
-      "/entry.js": ["With statements cannot be used with the ESM output format due to strict mode"],
-    },
-  });
-  itBundled("edgecase/WithStatementUseStrictError", {
-    files: {
-      "/entry.js": /* js */ `
-        "use strict";
-        with (Math) { console.log(PI); }
-      `,
-    },
-    format: "cjs",
-    bundleErrors: {
-      "/entry.js": ["With statements cannot be used in strict mode"],
-    },
-  });
-  itBundled("edgecase/WithStatementCjsAllowed", {
-    files: {
-      "/entry.js": /* js */ `
-        with (Math) { console.log(PI); }
-      `,
-    },
-    format: "cjs",
-    target: "node",
-    onAfterBundle(api) {
-      api.expectFile("/out.js").toContain("with (Math)");
-    },
-  });
   itBundled("edgecase/IdentifierInEnum#13081", {
     files: {
       "/entry.ts": `

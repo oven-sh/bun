@@ -6471,7 +6471,11 @@ impl NodeFS {
     pub fn opendir(&mut self, args: &args::Opendir, _: Flavor) -> Maybe<ret::Opendir> {
         let path = args.path.slice_z(&mut self.sync_error_buf);
         #[cfg(not(windows))]
-        let res = Syscall::open(path, sys::O::DIRECTORY | sys::O::RDONLY | sys::O::CLOEXEC, 0);
+        let res = Syscall::open(
+            path,
+            sys::O::DIRECTORY | sys::O::RDONLY | sys::O::CLOEXEC,
+            0,
+        );
         #[cfg(windows)]
         let res = sys::open_dir_at_windows_a(
             FD::cwd(),

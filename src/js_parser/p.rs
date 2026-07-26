@@ -9568,7 +9568,7 @@ pub trait GenerateImportSymbols {
 fn walk_glob_for_bundle(source_dir: &[u8], pattern: &[u8], out: &mut Vec<Box<[u8]>>) -> bool {
     let mut walker = match bun_glob::BunGlobWalker::init_with_cwd(
         pattern, source_dir, /*dot*/ false, /*absolute*/ true,
-        /*follow_symlinks*/ false, /*error_on_broken_symlinks*/ false,
+        /*follow_symlinks*/ true, /*error_on_broken_symlinks*/ false,
         /*only_files*/ true, None,
     ) {
         Ok(Ok(w)) => w,

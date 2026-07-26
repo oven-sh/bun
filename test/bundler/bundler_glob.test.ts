@@ -1,4 +1,7 @@
-import { describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
+import { symlinkSync } from "node:fs";
+import { join } from "node:path";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { itBundled } from "./expectBundled";
 
 // Coverage for bundling `require("./dir/" + x)` / `import("./dir/" + x)` by
@@ -344,4 +347,39 @@ describe("bundler", () => {
     },
     run: { stdout: "boa,v8", setCwd: false },
   });
+});
+
+// A symlinked file under the wildcard is followed and bundled like the
+// resolver would. itBundled cannot create symlinks, so this one is manual.
+test.skipIf(isWindows)("glob/SymlinkedFileIsBundled", async () => {
+  using dir = tempDir("bundler-glob-symlink", {
+    "entry.js": `const n = "a";\nconsole.log(require(\`./engines/\${n}.js\`));`,
+    "engines/b.js": `module.exports = "B";`,
+    "real/a.js": `module.exports = "REAL-A";`,
+  });
+  symlinkSync(join(String(dir), "real", "a.js"), join(String(dir), "engines", "a.js"));
+
+  await using build = Bun.spawn({
+    cmd: [bunExe(), "build", "--target=bun", "./entry.js", "--outfile=out.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+  const [buildStderr, buildExitCode] = await Promise.all([build.stderr.text(), build.exited]);
+  expect(buildStderr).toBe("");
+  expect(buildExitCode).toBe(0);
+
+  const out = await Bun.file(join(String(dir), "out.js")).text();
+  expect(out).toContain(`"./engines/a.js"`);
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "./out.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("REAL-A\n");
+  expect(exitCode).toBe(0);
 });

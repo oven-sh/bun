@@ -117,19 +117,11 @@ describe("AbortSignal", () => {
     });
   });
 
-  // AbortSignal.timeout() takes an extra ref on the C++ signal so it stays
-  // alive until the timer fires. If the JS wrapper is collected with no
-  // observers before the deadline, that extra ref (and the native timer heap
-  // entry) must be released then, not at the deadline; otherwise N dropped
-  // AbortSignal.timeout(long) signals hold ~440 B/signal of native state until
-  // the timers all fire as no-ops. Node clears the timeout from a
-  // FinalizationRegistry on the signal.
-  //
-  // Observed via the Timeout live-count exposed through bun:internal-for-testing
-  // (heapStats() only sees JS wrappers, and RSS does not move under ASAN
-  // quarantine). Run in a subprocess so other tests' timeout signals do not
-  // perturb the count and so the far-future timers do not outlive the test.
-  test("AbortSignal.timeout() cancels its native timer when the unobserved signal is collected", async () => {
+  // A timeout signal whose JS wrapper is collected with no observers must
+  // release its native timer then, not at the deadline. Observed via the
+  // Timeout live-count in bun:internal-for-testing; run in a subprocess so
+  // other tests' timeout signals do not perturb the count.
+  test.concurrent("AbortSignal.timeout() cancels its native timer when the unobserved signal is collected", async () => {
     const src = `
       const { heapStats } = require("bun:jsc");
       const { abortSignalTimeoutLiveCount } = require("bun:internal-for-testing");
@@ -174,7 +166,7 @@ describe("AbortSignal", () => {
   // listener, via AbortSignal.any, or via a bare native ref holder like
   // Request) must not have its timer cancelled by GC of whatever reference the
   // user dropped.
-  test("AbortSignal.timeout() still fires after GC when the signal is observed", async () => {
+  test.concurrent("AbortSignal.timeout() still fires after GC when the signal is observed", async () => {
     const src = `
       const { abortSignalTimeoutLiveCount } = require("bun:internal-for-testing");
       const { promise: p1, resolve: r1 } = Promise.withResolvers();
@@ -231,7 +223,7 @@ describe("AbortSignal", () => {
   // Regression guard for releaseTimerIfUnobserved() vs cancel_all_timeout_objects
   // ordering under --isolate: the latter releases timeout()'s extra ref during
   // the global swap, so a later wrapper finalize() must not deref again.
-  test("AbortSignal.timeout() leaked across --isolate files does not crash on GC", async () => {
+  test.concurrent("AbortSignal.timeout() leaked across --isolate files does not crash on GC", async () => {
     using dir = tempDir("abort-isolate-deref", {
       "a.test.ts": `import { test } from "bun:test";
         test("leaves unobserved timeout signals", () => {

@@ -3,11 +3,9 @@ use std::collections::VecDeque;
 use bun_alloc::AllocError;
 use bun_bundler::Transpiler;
 use bun_bundler::options::BundleOptions;
-#[cfg(not(windows))]
-use bun_core::ZStr;
-use bun_core::{StringOrTinyString, strings};
+use bun_core::{StringOrTinyString, ZStr, strings};
 use bun_output::{declare_scope, scoped_log};
-use bun_paths::resolve_path::{join_abs_string_buf, platform};
+use bun_paths::resolve_path::{join_abs_string_buf_checked, platform};
 use bun_paths::{self, PathBuffer};
 use bun_ptr::Interned;
 use bun_resolver::fs::{self as fs, DirEntryIterator, EntriesOption, FileSystem};
@@ -117,8 +115,8 @@ impl<'a> Scanner<'a> {
         top_level_dir: &'static [u8],
         parts: &[&[u8]],
         buf: &'b mut [u8],
-    ) -> &'b [u8] {
-        join_abs_string_buf::<platform::Loose>(top_level_dir, buf, parts)
+    ) -> Option<&'b [u8]> {
+        join_abs_string_buf_checked::<platform::Loose>(top_level_dir, buf, parts)
     }
 
     /// Take the list of test files out of this scanner. Caller owns the returned
@@ -130,7 +128,10 @@ impl<'a> Scanner<'a> {
     pub fn scan(&mut self, path_literal: &[u8]) -> Result<(), ScanError> {
         let mut scan_dir_buf = PathBuffer::uninit();
         let parts: [&[u8]; 2] = [self.top_level_dir(), path_literal];
-        let path: &[u8] = Self::abs_buf_projected(self.top_level_dir(), &parts, &mut scan_dir_buf);
+        let Some(path) = Self::abs_buf_projected(self.top_level_dir(), &parts, &mut scan_dir_buf)
+        else {
+            return Err(ScanError::DoesNotExist);
+        };
 
         let root = self
             .read_dir_with_name(path, None)
@@ -197,7 +198,13 @@ impl<'a> Scanner<'a> {
                 let dir = entry.relative_dir;
 
                 let parts2: [&[u8]; 2] = [entry.dir_path, entry.name.slice()];
-                let path2 = self.fs().abs_buf(&parts2, &mut self.open_dir_buf);
+                let buf_len = self.open_dir_buf.len();
+                let Some(path2) = self
+                    .fs()
+                    .abs_buf_checked(&parts2, &mut self.open_dir_buf[..buf_len - 1])
+                else {
+                    continue;
+                };
                 let path2_len = path2.len();
                 self.open_dir_buf[path2_len] = 0;
                 let name_len = entry.name.slice().len();
@@ -227,7 +234,17 @@ impl<'a> Scanner<'a> {
             {
                 let fs = self.fs();
                 let parts2: [&[u8]; 2] = [entry.dir_path, entry.name.slice()];
-                let path2 = fs.abs_buf_z(&parts2, &mut self.open_dir_buf);
+                let buf_len = self.open_dir_buf.len();
+                let Some(path2_slice) =
+                    fs.abs_buf_checked(&parts2, &mut self.open_dir_buf[..buf_len - 1])
+                else {
+                    continue;
+                };
+                let path2_len = path2_slice.len();
+                self.open_dir_buf[path2_len] = 0;
+                // SAFETY: NUL written at open_dir_buf[path2_len] above.
+                let path2 =
+                    unsafe { ZStr::from_raw(self.open_dir_buf.as_ptr(), path2_len) };
                 let Ok(child_fd) = bun_sys::open_dir_no_renaming_or_deleting_windows(
                     Fd::INVALID,
                     path2.as_bytes(),
@@ -380,12 +397,14 @@ impl<'a> Scanner<'a> {
                     // reshaped for borrowck — drop the &mut borrow from
                     // abs_buf and reborrow open_dir_buf immutably so &self methods
                     // can be called with the slice.
-                    let dir_path_len = Self::abs_buf_projected(
+                    let Some(dir_path_len) = Self::abs_buf_projected(
                         self.top_level_dir(),
                         &parts,
                         &mut self.open_dir_buf,
                     )
-                    .len();
+                    .map(<[u8]>::len) else {
+                        return;
+                    };
                     let dir_path = &self.open_dir_buf[..dir_path_len];
                     if self.matches_path_ignore_pattern(dir_path) {
                         return;
@@ -417,9 +436,12 @@ impl<'a> Scanner<'a> {
                 // reshaped for borrowck — drop the &mut borrow from
                 // abs_buf and reborrow open_dir_buf immutably so &self methods
                 // below can be called with the slice.
-                let path_len =
+                let Some(path_len) =
                     Self::abs_buf_projected(self.top_level_dir(), &parts, &mut self.open_dir_buf)
-                        .len();
+                        .map(<[u8]>::len)
+                else {
+                    return;
+                };
                 let path = &self.open_dir_buf[..path_len];
 
                 if !self.does_absolute_path_match_filter(path) {

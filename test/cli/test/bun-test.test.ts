@@ -1,6 +1,6 @@
 import { spawnSync } from "bun";
 import { beforeAll, describe, expect, it, test } from "bun:test";
-import { bunEnv, bunExe, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 
@@ -1634,5 +1634,50 @@ describe.concurrent("test file discovery (scanner)", () => {
     expect(stdout).not.toContain("RAN other");
     expect(stderr).toContain(" 1 pass");
     expect(exitCode).toBe(0);
+  });
+
+  // MAX_PATH_BYTES is 4096 on Linux, 1024 on macOS, and ~98 KB on Windows.
+  // 100000 bytes exceeds all of them.
+  for (const len of isWindows ? [100_000] : [5000, 100_000]) {
+    test(`path argument longer than MAX_PATH_BYTES (${len}) reports no match instead of panicking`, async () => {
+      using dir = tempDir("scanner-long-arg", {
+        "exists.test.ts": `import { test } from "bun:test"; test("exists", () => {});`,
+      });
+      const sep = isWindows ? "\\" : "/";
+      const longArg = sep + Buffer.alloc(len, "a").toString() + ".test.ts";
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", longArg],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr).toContain("had no matches");
+      expect(stdout).not.toContain("range end index");
+      expect(exitCode).toBe(1);
+    });
+  }
+
+  test("relative path argument longer than MAX_PATH_BYTES reports no match instead of panicking", async () => {
+    using dir = tempDir("scanner-long-rel-arg", {
+      "exists.test.ts": `import { test } from "bun:test"; test("exists", () => {});`,
+    });
+    const longArg = "./" + Buffer.alloc(isWindows ? 100_000 : 5000, "a").toString() + ".test.ts";
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", longArg],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toContain("had no matches");
+    expect(stdout).not.toContain("range end index");
+    expect(exitCode).toBe(1);
   });
 });

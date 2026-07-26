@@ -1318,15 +1318,41 @@ describe("text handler does not transcode unmodified non-UTF-8 bytes", () => {
   const cases = [
     ["lone continuation byte", wrap([0xa9])],
     ["multiple invalid bytes", wrap([0xa9, 0xff, 0x80, 0xc0])],
-    ["mixed valid and invalid UTF-8", Buffer.concat([Buffer.from("<p>héllo"), Buffer.from([0xa9]), Buffer.from("wörld</p>")])],
-    ["truncated 3-byte lead before close tag", Buffer.concat([Buffer.from("<p>aa"), Buffer.from([0xe2]), Buffer.from("</p>")])],
-    ["truncated 3-byte prefix before close tag", Buffer.concat([Buffer.from("<p>aa"), Buffer.from([0xe2, 0x82]), Buffer.from("</p>")])],
+    [
+      "mixed valid and invalid UTF-8",
+      Buffer.concat([Buffer.from("<p>héllo"), Buffer.from([0xa9]), Buffer.from("wörld</p>")]),
+    ],
+    [
+      "truncated 3-byte lead before close tag",
+      Buffer.concat([Buffer.from("<p>aa"), Buffer.from([0xe2]), Buffer.from("</p>")]),
+    ],
+    [
+      "truncated 3-byte prefix before close tag",
+      Buffer.concat([Buffer.from("<p>aa"), Buffer.from([0xe2, 0x82]), Buffer.from("</p>")]),
+    ],
     ["truncated 4-byte prefix before close tag", wrap([0xf0, 0x9f, 0x98])],
     ["text node that is only a truncated lead byte", wrap([0xe2])],
-    ["invalid byte after the 1 KB fast-path cutoff", Buffer.concat([Buffer.from("<p>"), Buffer.alloc(2000, 0x61), Buffer.from([0xa9]), Buffer.from("z</p>")])],
-    ["invalid byte before the 1 KB fast-path cutoff", Buffer.concat([Buffer.from("<p>"), Buffer.from([0xa9]), Buffer.alloc(3000, 0x62), Buffer.from("</p>")])],
+    [
+      "invalid byte after the 1 KB fast-path cutoff",
+      Buffer.concat([Buffer.from("<p>"), Buffer.alloc(2000, 0x61), Buffer.from([0xa9]), Buffer.from("z</p>")]),
+    ],
+    [
+      "invalid byte before the 1 KB fast-path cutoff",
+      Buffer.concat([Buffer.from("<p>"), Buffer.from([0xa9]), Buffer.alloc(3000, 0x62), Buffer.from("</p>")]),
+    ],
     ["script text", Buffer.concat([Buffer.from("<script>var x="), Buffer.from([0xa9]), Buffer.from(";</script>")])],
-    ["multiple text nodes", Buffer.concat([Buffer.from("<p>"), Buffer.from([0xa9]), Buffer.from("<b>"), Buffer.from([0xff]), Buffer.from("</b>"), Buffer.from([0xc0]), Buffer.from("</p>")])],
+    [
+      "multiple text nodes",
+      Buffer.concat([
+        Buffer.from("<p>"),
+        Buffer.from([0xa9]),
+        Buffer.from("<b>"),
+        Buffer.from([0xff]),
+        Buffer.from("</b>"),
+        Buffer.from([0xc0]),
+        Buffer.from("</p>"),
+      ]),
+    ],
   ];
 
   describe.each(cases)("%s", (name, src) => {
@@ -1334,7 +1360,12 @@ describe("text handler does not transcode unmodified non-UTF-8 bytes", () => {
       expect(await rewrite(src, { text() {} })).toEqual(src);
     });
     it("no-op onDocument text handler", async () => {
-      const out = Buffer.from(await new HTMLRewriter().onDocument({ text() {} }).transform(new Response(src)).arrayBuffer());
+      const out = Buffer.from(
+        await new HTMLRewriter()
+          .onDocument({ text() {} })
+          .transform(new Response(src))
+          .arrayBuffer(),
+      );
       expect(out).toEqual(src);
     });
   });

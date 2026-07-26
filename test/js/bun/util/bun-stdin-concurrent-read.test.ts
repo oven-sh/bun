@@ -47,7 +47,7 @@ test.concurrent(
   },
 );
 
-describe.each(["text", "arrayBuffer", "bytes"] as const)("Bun.stdin.%s()", method => {
+describe.each(["text", "arrayBuffer", "bytes", "json"] as const)("Bun.stdin.%s()", method => {
   test.concurrent(`rejects when process.stdin holds the reader; process.stdin receives every byte`, async () => {
     const { stdout, stderr, exitCode } = await run(`
       let n = 0;

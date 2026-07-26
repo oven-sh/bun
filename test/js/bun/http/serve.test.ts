@@ -2481,10 +2481,10 @@ it.concurrent("should not instanciate error instances in each request", async ()
       await Promise.all(batch);
     }
   }
-  // fetch() allocates one Error per call to capture the caller's stack for the
-  // rejection path; it is released with the tasklet. GC first so those
-  // transient instances don't count against the server-side regression this
-  // test guards.
+  // fetch() allocates one Error per call for the rejection stack. GC reclaims
+  // most; conservative stack scanning and the last batch's live Responses can
+  // pin a handful, so allow one batch of headroom (well below the 1000 a
+  // per-request server-side leak would produce, which is what this guards).
   Bun.gc(true);
   expect(heapStats().objectTypeCounts.Error || 0).toBeLessThanOrEqual(startErrorCount + batchSize);
 });

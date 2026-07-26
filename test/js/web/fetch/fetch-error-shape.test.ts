@@ -83,15 +83,19 @@ describe("fetch network error shape", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    const out = JSON.parse(stdout);
-    expect(out.name).toBe("TypeError");
-    expect(out.message).toBe("fetch failed");
-    expect(out.causeSyscall).toBe("getaddrinfo");
-    expect(out.causeHostname).toBe("does.not.exist.invalid");
-    // resolver-dependent code (ENOTFOUND, EAI_AGAIN, ENOTIMP, ...); just must be a string
-    expect(typeof out.causeCode).toBe("string");
-    expect(exitCode).toBe(0);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // resolver-dependent code (ENOTFOUND, EAI_AGAIN, ENOTIMP, ...); assert shape only
+    expect({ out: JSON.parse(stdout), stderr, exitCode }).toEqual({
+      out: {
+        name: "TypeError",
+        message: "fetch failed",
+        causeSyscall: "getaddrinfo",
+        causeHostname: "does.not.exist.invalid",
+        causeCode: expect.any(String),
+      },
+      stderr: "",
+      exitCode: 0,
+    });
   });
 
   test(".catch() consumer still gets a stack", async () => {

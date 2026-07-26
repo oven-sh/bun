@@ -599,6 +599,34 @@ describe("Headers", () => {
     });
   });
 
+  describe("brand checks", () => {
+    const receivers = [{}, null, undefined, 42, "str", new Response(), new Map([["set-cookie", "a=1"]])];
+
+    test.each(receivers)("getSetCookie() throws TypeError on %p", receiver => {
+      expect(() => Headers.prototype.getSetCookie.call(receiver)).toThrow(TypeError);
+    });
+
+    test.each(receivers)("getAll() throws TypeError on %p", receiver => {
+      // @ts-expect-error
+      expect(() => Headers.prototype.getAll.call(receiver, "set-cookie")).toThrow(TypeError);
+    });
+
+    test.each(receivers)("count getter throws TypeError on %p", receiver => {
+      const desc = Object.getOwnPropertyDescriptor(Headers.prototype, "count");
+      expect(desc?.get).toBeFunction();
+      expect(() => desc!.get!.call(receiver)).toThrow(TypeError);
+    });
+
+    test("getSetCookie(), getAll() and count still work on a real Headers", () => {
+      const h = new Headers([["Set-Cookie", "a=1"]]);
+      expect(Headers.prototype.getSetCookie.call(h)).toEqual(["a=1"]);
+      // @ts-expect-error
+      expect(Headers.prototype.getAll.call(h, "set-cookie")).toEqual(["a=1"]);
+      const desc = Object.getOwnPropertyDescriptor(Headers.prototype, "count")!;
+      expect(desc.get!.call(h)).toBe(1);
+    });
+  });
+
   // Header-name lowercasing on iteration (Object.fromEntries / spread / toJSON /
   // keys()) runs through a SIMD kernel on the 8-bit path. Sweep name lengths
   // across the vector-block boundaries and include every ASCII printable that is

@@ -165,8 +165,9 @@ impl<const SSL: bool> WebSocket<SSL> {
         self.clear_send_buffers(true);
         self.control_frame_started.set(false);
         self.ping_len.set(0);
-        if let Some(PendingClose::Clean { reason, .. }) = self.close_dispatch_pending.take() {
-            reason.deref();
+        match self.close_dispatch_pending.take() {
+            Some(PendingClose::Clean { reason, .. }) => reason.deref(),
+            Some(PendingClose::Failed(_)) | None => {}
         }
         self.receiving_compressed.set(false);
         self.message_is_compressed.set(false);
@@ -651,6 +652,7 @@ impl<const SSL: bool> WebSocket<SSL> {
                 ReceiveState::Fail => self.recv_failed(ErrorCode::UnsupportedControlFrame),
             };
             match step {
+                Step::Continue if self.close_received.get() => break true,
                 Step::Continue => {}
                 Step::NeedMoreData => break false,
                 Step::Terminated => break true,

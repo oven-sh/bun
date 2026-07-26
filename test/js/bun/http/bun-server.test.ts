@@ -747,12 +747,14 @@ test.concurrent("server.stop(true) after server.stop() force-closes surviving ke
 // socket that closes before its handshake completes never contributed a +1.
 // onClose's -1 is now gated on a per-socket "open fired" bit so such a close
 // cannot decrement another socket's count and resolve stop() early.
-test.concurrent("server.stop() promise (HTTPS) ignores pre-handshake closes when counting keep-alive connections", async () => {
-  await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `
+test.concurrent(
+  "server.stop() promise (HTTPS) ignores pre-handshake closes when counting keep-alive connections",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
         const net = require("net");
         const tls = require("tls");
         const cert = (${JSON.stringify(tls)});
@@ -795,15 +797,16 @@ test.concurrent("server.stop() promise (HTTPS) ignores pre-handshake closes when
         await stopped;
         console.log(JSON.stringify({ resolvedWhileOpen }));
       `,
-    ],
-    env: bunEnv,
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
-  expect(JSON.parse(stdout.trim())).toEqual({ resolvedWhileOpen: false });
-  expect(exitCode).toBe(0);
-});
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout.trim())).toEqual({ resolvedWhileOpen: false });
+    expect(exitCode).toBe(0);
+  },
+);
 
 // A socket that upgrades to a WebSocket is adopted out of the HTTP socket
 // group; upgrade() fires the filter's -1 so the HTTP-connection count stays

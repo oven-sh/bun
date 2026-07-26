@@ -3330,3 +3330,82 @@ describe("TLS handshake callback throw", () => {
     }
   });
 });
+
+describe("Socket.shutdown() / Socket.end() half-close semantics", () => {
+  const PAYLOAD = Buffer.alloc(256 * 1024, 0x61);
+
+  async function halfClose(how: "shutdown()" | "shutdown(false)" | "shutdown(true)" | "end()") {
+    let received = 0;
+    let readyState: number | undefined;
+    const { promise, resolve } = Promise.withResolvers<void>();
+
+    using server = Bun.listen<{ sent: number }>({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        open(socket) {
+          socket.data = { sent: 0 };
+        },
+        data() {},
+        end(socket) {
+          socket.data.sent = socket.write(PAYLOAD);
+          if (socket.data.sent >= PAYLOAD.length) socket.shutdown();
+        },
+        drain(socket) {
+          if (socket.data.sent === 0) return;
+          socket.data.sent += socket.write(PAYLOAD.subarray(socket.data.sent));
+          if (socket.data.sent >= PAYLOAD.length) socket.shutdown();
+        },
+        close() {},
+      },
+    });
+
+    await Bun.connect({
+      hostname: "127.0.0.1",
+      port: server.port,
+      socket: {
+        open(socket) {
+          socket.write("hi");
+          if (how === "shutdown()") socket.shutdown();
+          else if (how === "shutdown(false)") socket.shutdown(false);
+          else if (how === "shutdown(true)") socket.shutdown(true);
+          else socket.end();
+          readyState = socket.readyState;
+        },
+        data(_socket, chunk) {
+          received += chunk.length;
+        },
+        end() {},
+        close() {
+          resolve();
+        },
+      },
+    });
+
+    await promise;
+    return { received, readyState };
+  }
+
+  it.concurrent("shutdown() sends FIN (SHUT_WR) and keeps the read side open", async () => {
+    const { received, readyState } = await halfClose("shutdown()");
+    expect({ received, readyState }).toEqual({ received: PAYLOAD.length, readyState: 1 });
+  });
+
+  it.concurrent("shutdown(false) is the same as shutdown()", async () => {
+    const { received, readyState } = await halfClose("shutdown(false)");
+    expect({ received, readyState }).toEqual({ received: PAYLOAD.length, readyState: 1 });
+  });
+
+  it.concurrent.skipIf(isWindows)(
+    "shutdown(true) shuts the read side (SHUT_RD) so the peer's reply is not delivered",
+    async () => {
+      const { received } = await halfClose("shutdown(true)");
+      expect(received).toBe(0);
+    },
+  );
+
+  it.concurrent("end() closes the connection; it does not leave the socket readable", async () => {
+    const { received, readyState } = await halfClose("end()");
+    expect({ received, readyState }).toEqual({ received: 0, readyState: -1 });
+  });
+});

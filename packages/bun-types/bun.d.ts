@@ -5871,10 +5871,12 @@ declare module "bun" {
     data: Data;
 
     /**
-     * Sends the final data chunk and initiates a graceful shutdown of the socket's write side.
-     * After calling `end()`, no more data can be written using `write()` or `end()`.
-     * The socket remains readable until the remote end also closes its write side or the connection is terminated.
-     * This sends a TCP FIN packet after writing the data.
+     * Writes the final data chunk (if any), flushes the socket, and closes the connection.
+     *
+     * This fully closes the socket once buffered data has been written. The socket is **not**
+     * left half-open for further reads; any data the peer sends after `end()` returns will be
+     * discarded. Use {@link shutdown | `shutdown()`} for a write-side half-close that keeps
+     * the socket readable.
      *
      * @param data Optional final data to write before closing. Same types as `write()`.
      * @param byteOffset Optional offset for buffer data.
@@ -5882,16 +5884,20 @@ declare module "bun" {
      * @returns The number of bytes written for the final chunk. Returns `-1` if the socket was already closed or shutting down.
      * @example
      * ```ts
-     * // send some data and close the write side
+     * // Send a final chunk and close the connection
      * socket.end("Goodbye!");
-     * // or close write side without sending final data
+     *
+     * // Close without a final chunk
      * socket.end();
+     *
+     * // To half-close (stop writing, keep reading), use shutdown() instead:
+     * socket.shutdown();
      * ```
      */
     end(data?: string | BufferSource, byteOffset?: number, byteLength?: number): number;
 
     /**
-     * Close the socket immediately
+     * Flush any buffered writes and close the socket.
      */
     end(): void;
 
@@ -5925,23 +5931,28 @@ declare module "bun" {
     terminate(): void;
 
     /**
-     * Shuts down the write-half or both halves of the connection.
-     * This allows the socket to enter a half-closed state where it can still receive data
-     * but can no longer send data (`halfClose = true`), or close both read and write
-     * (`halfClose = false`, similar to `end()` but potentially more immediate depending on OS).
-     * Calls the `shutdown(2)` syscall internally.
+     * Half-closes the socket via the `shutdown(2)` syscall.
      *
-     * @param halfClose If `true`, only shuts down the write side (allows receiving). If `false` or omitted, shuts down both read and write. Defaults to `false`.
+     * By default this shuts down the **write** side (`SHUT_WR`): a FIN is sent to the peer,
+     * further `write()` calls fail, and the socket stays open for reading so the peer's
+     * response still arrives via the `data` handler. This is the typical
+     * "request sent, now wait for reply" half-close.
+     *
+     * Passing `true` shuts down the **read** side instead (`SHUT_RD`): the kernel discards
+     * any further inbound data and this socket's `data` handler will not run again, but
+     * writes are still permitted.
+     *
+     * @param shutdownRead If `true`, shut down the read side (`SHUT_RD`). If `false` or omitted, shut down the write side (`SHUT_WR`). Defaults to `false`.
      * @example
      * ```ts
-     * // Stop sending data, but allow receiving
-     * socket.shutdown(true);
-     *
-     * // Shutdown both reading and writing
+     * // Stop sending (send FIN), keep receiving the peer's reply
      * socket.shutdown();
+     *
+     * // Stop receiving, keep the write side open
+     * socket.shutdown(true);
      * ```
      */
-    shutdown(halfClose?: boolean): void;
+    shutdown(shutdownRead?: boolean): void;
 
     /**
      * The ready state of the socket.

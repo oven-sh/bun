@@ -85,6 +85,12 @@ describe.concurrent("sloppy-mode constructs the transpiler must accept", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("\\8 and \\9 are literal 8/9 in sloppy mode", async () => {
+    const { stdout, exitCode } = await run(`console.log("\\8" + "\\9");`);
+    expect(stdout.trim()).toBe("89");
+    expect(exitCode).toBe(0);
+  });
+
   test("legacy octal escapes that already worked keep working", async () => {
     const { stdout, exitCode } = await run(
       `console.log(JSON.stringify(["\\010".charCodeAt(0), "\\101", "\\377".charCodeAt(0), "\\7x".charCodeAt(0)]));`,
@@ -141,6 +147,66 @@ describe.concurrent("strict-mode / unique-formal-parameter rejections still fire
   test("assignment to eval in an ESM file still rejected", async () => {
     const { exitCode, stderr } = await run(`export {};\neval = 1;`, false);
     expect(stderr).toMatch(/eval/);
+    expect(exitCode).not.toBe(0);
+  });
+
+  test('legacy octal escape under "use strict" still rejected', async () => {
+    const { exitCode, stderr } = await run(`"use strict";\nvar s = "x\\7";`);
+    expect(stderr).toContain("Legacy octal escape sequences cannot be used in strict mode");
+    expect(exitCode).not.toBe(0);
+  });
+
+  test("legacy octal escape in an ESM file still rejected", async () => {
+    const { exitCode, stderr } = await run(`var s = "x\\7";\nexport {};`, false);
+    expect(stderr).toContain("Legacy octal escape sequences cannot be used in strict mode");
+    expect(exitCode).not.toBe(0);
+  });
+
+  test("\\8 / \\9 under strict mode still rejected", async () => {
+    const { exitCode, stderr } = await run(`"use strict";\nvar s = "\\8";`);
+    expect(stderr).toContain("Legacy octal escape sequences cannot be used in strict mode");
+    expect(exitCode).not.toBe(0);
+  });
+
+  test("\\0 alone under strict mode is fine", async () => {
+    const { stdout, exitCode } = await run(`"use strict";\nconsole.log("\\0".charCodeAt(0));`);
+    expect(stdout.trim()).toBe("0");
+    expect(exitCode).toBe(0);
+  });
+
+  test("octal escape in a template literal is always rejected", async () => {
+    const { exitCode, stderr } = await run("var s = `x\\7`;");
+    expect(stderr).toContain("Octal escape sequences are not allowed in template literals");
+    expect(exitCode).not.toBe(0);
+  });
+
+  test("octal escape in a template literal with substitution is rejected", async () => {
+    const { exitCode, stderr } = await run("var s = `\\7${1}\\7`;");
+    expect(stderr).toContain("Octal escape sequences are not allowed in template literals");
+    expect(exitCode).not.toBe(0);
+  });
+
+  test("\\0 alone in a template literal is fine", async () => {
+    const { stdout, exitCode } = await run("console.log(`\\0`.charCodeAt(0));");
+    expect(stdout.trim()).toBe("0");
+    expect(exitCode).toBe(0);
+  });
+
+  test("HTML comment in an ESM file is rejected", async () => {
+    const { exitCode, stderr } = await run(`var h = 1 <!-- comment\nexport {};`, false);
+    expect(stderr).toContain("Legacy HTML single-line comments are not allowed in ECMAScript modules");
+    expect(exitCode).not.toBe(0);
+  });
+
+  test("--> HTML close comment in an ESM file is rejected", async () => {
+    const { exitCode, stderr } = await run(`var h = 1\n--> comment\nexport {};`, false);
+    expect(stderr).toContain("Legacy HTML single-line comments are not allowed in ECMAScript modules");
+    expect(exitCode).not.toBe(0);
+  });
+
+  test("var await in an ESM file is rejected by the engine", async () => {
+    const { exitCode, stderr } = await run(`var await = 1;\nexport {};`, false);
+    expect(stderr).toMatch(/await/i);
     expect(exitCode).not.toBe(0);
   });
 });

@@ -1598,6 +1598,7 @@ pub struct EString {
     pub next: Option<StoreRef<EString>>,
     pub end: Option<StoreRef<EString>>,
     pub rope_len: u32,
+    pub legacy_octal_loc: crate::Loc,
     pub prefer_template: bool,
     pub is_utf16: bool,
 }
@@ -1612,6 +1613,7 @@ impl Default for EString {
             next: None,
             end: None,
             rope_len: 0,
+            legacy_octal_loc: crate::Loc::EMPTY,
             is_utf16: false,
         }
     }
@@ -1659,6 +1661,7 @@ impl EString {
             next: None,
             end: None,
             rope_len: 0,
+            legacy_octal_loc: crate::Loc::EMPTY,
             is_utf16: false,
         }
     }
@@ -1904,6 +1907,7 @@ impl EString {
             next: self.next,
             end: self.end,
             rope_len: self.rope_len,
+            legacy_octal_loc: self.legacy_octal_loc,
             is_utf16: self.is_utf16,
         }
     }

@@ -298,7 +298,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.lexer.rescan_close_brace_as_template_token()?;
 
             let tail: E::TemplateContents = if !include_raw {
-                E::TemplateContents::Cooked(p.lexer.to_e_string()?)
+                let cooked = p.lexer.to_e_string()?;
+                p.reject_template_octal_escape(cooked.legacy_octal_loc);
+                E::TemplateContents::Cooked(cooked)
             } else {
                 E::TemplateContents::Raw(p.lexer.raw_template_contents().into())
             };
@@ -329,10 +331,23 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let loc = p.lexer.loc();
         let mut str_ = p.lexer.to_e_string()?;
         str_.prefer_template = p.lexer.token == T::TNoSubstitutionTemplateLiteral;
+        if str_.prefer_template {
+            p.reject_template_octal_escape(str_.legacy_octal_loc);
+        }
 
         let expr = p.new_expr(str_, loc);
         p.lexer.next()?;
         Ok(expr)
+    }
+
+    pub fn reject_template_octal_escape(&mut self, loc: bun_ast::Loc) {
+        if loc.start >= 0 {
+            self.log().add_range_error(
+                Some(self.source),
+                bun_ast::Range { loc, len: 2 },
+                b"Octal escape sequences are not allowed in template literals",
+            );
+        }
     }
 
     pub fn parse_call_args(&mut self) -> Result<ExprListLoc, Error> {

@@ -92,9 +92,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // not emitted: it is not necessary and it was causing breakages.
     }
 
-    fn e_string(_: &mut Self, _e: &mut Expr, _: ExprIn) {
-        // If you're using this, you're probably not using 0-prefixed legacy octal notation
-        // if e.LegacyOctalLoc.Start > 0 {
+    fn e_string(p: &mut Self, e: &mut Expr, _: ExprIn) {
+        if let js_ast::ExprData::EString(s) = &e.data
+            && s.legacy_octal_loc.start >= 0
+        {
+            let r = bun_ast::Range {
+                loc: s.legacy_octal_loc,
+                len: 2,
+            };
+            p.mark_strict_mode_feature(StrictModeFeature::LegacyOctalEscape, r, b"")
+                .expect("unreachable");
+        }
     }
 
     fn e_number(_: &mut Self, _e: &mut Expr, _: ExprIn) {

@@ -2804,6 +2804,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .recursive_set_strict_mode(js_ast::StrictModeKind::ImplicitStrictModeTopLevelAwait);
         }
 
+        if self.has_es_module_syntax {
+            for r in &self.lexer.legacy_html_comment_ranges {
+                self.log().add_range_error(
+                    Some(self.source),
+                    *r,
+                    b"Legacy HTML single-line comments are not allowed in ECMAScript modules",
+                );
+            }
+        }
+
         self.hoist_symbols(self.module_scope_ref());
 
         let mut generated_symbols_count: u32 = 3;
@@ -4347,7 +4357,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 _ => {}
             }
-            if why.is_empty() {
+            if why.is_empty() && where_.len > 0 {
                 why = bun_alloc::arena_format!(
                     in self.arena,
                     "This file is implicitly in strict mode because of the \"{}\" keyword here",
@@ -4357,8 +4367,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .as_bytes();
             }
             // bun_ast::Data is !Copy (Cow) — build the notes Box directly.
-            let notes: Box<[bun_ast::Data]> =
-                Box::new([bun_ast::range_data(Some(self.source), where_, why.to_vec())]);
+            let notes: Box<[bun_ast::Data]> = if why.is_empty() {
+                Box::new([])
+            } else {
+                Box::new([bun_ast::range_data(Some(self.source), where_, why.to_vec())])
+            };
             self.log().add_range_error_fmt_with_notes(
                 Some(self.source),
                 r,

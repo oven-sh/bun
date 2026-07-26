@@ -132,6 +132,23 @@ describe.concurrent("bundler strict-mode early errors", () => {
     });
   }
 
+  test("legacy octal literal error is emitted once under minify-syntax substitution", async () => {
+    using dir = tempDir("strict-mode-bundle-minify", {
+      "entry.js": `"use strict";\nfunction f() { let x = 010; return x + 1; }\nf();\nexport {};\n`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--format=esm", "--minify-syntax", "entry.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const count = (stderr.match(/Legacy octal literals cannot be used/g) || []).length;
+    expect(count).toBe(1);
+    expect(exitCode).not.toBe(0);
+  });
+
   test("for-in var initializer in sloppy CJS bundles to ESM via lowering", async () => {
     using dir = tempDir("strict-mode-bundle-cjs", {
       "entry.js": `import "./loop.cjs";\n`,

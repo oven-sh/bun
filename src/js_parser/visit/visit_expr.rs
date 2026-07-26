@@ -98,6 +98,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     fn e_number(p: &mut Self, e: &mut Expr, _: ExprIn) {
+        if p.is_revisit_for_substitution {
+            return;
+        }
         if !p.legacy_octal_literals.is_empty() && p.is_strict_mode() {
             let loc = e.loc;
             if let Some(r) = p

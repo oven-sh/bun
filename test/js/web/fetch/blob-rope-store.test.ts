@@ -161,11 +161,14 @@ test("URL.createObjectURL flattens a rope before it can be reached from another 
   const rope = new Blob([a, b]);
   const url = URL.createObjectURL(rope);
   const w = new Worker(url);
-  const { promise, resolve, reject } = Promise.withResolvers<string>();
-  w.onmessage = e => resolve(e.data);
-  w.onerror = e => reject(e);
-  expect(await promise).toBe("from-rope");
-  expect(await rope.text()).toBe('self.postMessage("from-rope");');
-  w.terminate();
-  URL.revokeObjectURL(url);
+  try {
+    const { promise, resolve, reject } = Promise.withResolvers<string>();
+    w.onmessage = e => resolve(e.data);
+    w.onerror = e => reject(e);
+    expect(await promise).toBe("from-rope");
+    expect(await rope.text()).toBe('self.postMessage("from-rope");');
+  } finally {
+    w.terminate();
+    URL.revokeObjectURL(url);
+  }
 });

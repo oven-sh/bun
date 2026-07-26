@@ -361,10 +361,7 @@ function onConnectEnd() {
   }
 }
 
-// A write queued before the TLS handshake completed can never be sent once the
-// peer has closed. Node's TLSWrap fails these with ECANCELED from
-// InvokeQueued() during wrap destruction; mirror that so the write callback's
-// error does not mask the socket-level ECONNRESET from onConnectEnd.
+// https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_tls.cc (TLSWrap::InvokeQueued)
 function tlsWriteCanceled() {
   return new ErrnoException(UV_ECANCELED, "write", "Canceled because of SSL destruction");
 }
@@ -1380,11 +1377,8 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
     if (pendingWrite) {
       self[kwriteCallback] = null;
       if (self.secureConnecting && !self._hadError) {
-        // 'end' (and so onConnectEnd) is deferred to nextTick; failing the
-        // write here would destroy the stream first and suppress it, leaving
-        // ERR_SOCKET_CLOSED as the socket error. Run the mid-handshake
-        // disconnect logic now so the socket is destroyed with ECONNRESET,
-        // then report the queued write the way Node's TLSWrap does.
+        // onConnectEnd listens on 'end' (nextTick); the write-error destroy
+        // would win that race and surface the wrong code.
         onConnectEnd.$call(self);
         pendingWrite(tlsWriteCanceled());
       } else {

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isLinux, tempDir } from "harness";
 
 // A thread-pool `fs.write` that is still blocked in the kernel when
 // `process.exit()` runs must not crash the process when it later completes.
@@ -15,9 +15,11 @@ import { bunEnv, bunExe, isLinux, tempDir } from "harness";
 // then sleeps, so the blocked `write()` returns EPIPE while the main thread
 // is still inside the atexit chain.
 //
-// Linux-only: relies on mkfifo, blocking-pipe write semantics, and glibc's
-// `__cxa_atexit`.
-test.skipIf(!isLinux)(
+// Linux + ASAN only: relies on mkfifo and blocking-pipe write semantics, and
+// on `Global::exit` taking the `libc_exit()` branch so `__cxa_atexit` handlers
+// run (non-ASAN Linux uses `quick_exit()`, which skips them). The guard being
+// tested is `cfg!(debug_assertions)`-only, which ASAN builds enable.
+test.skipIf(!isLinux || !isASAN)(
   "process.exit with a thread-pool fs.write still blocked in the kernel exits cleanly",
   async () => {
     using dir = tempDir("fs-write-exit-race", {
@@ -59,10 +61,18 @@ test.skipIf(!isLinux)(
         // the reader fd closes.
         fs.write(wd, Buffer.alloc(1 << 21, 0x41), () => {});
 
-        setTimeout(() => {
-          process.stdout.write("alive\\n");
-          process.exit(0);
-        }, 50);
+        // Wait until the work-pool thread has entered the kernel write(): rd is
+        // O_NONBLOCK, so readSync returns >0 once bytes have landed in the pipe.
+        // Consuming one byte does not unblock the 2 MiB writer.
+        const buf = Buffer.alloc(1);
+        const deadline = Date.now() + 5000;
+        while (Date.now() < deadline) {
+          try { if (fs.readSync(rd, buf) > 0) break; } catch (e) { if (e.code !== "EAGAIN") throw e; }
+          Bun.sleepSync(1);
+        }
+
+        process.stdout.write("alive\\n");
+        process.exit(0);
       `,
     });
 

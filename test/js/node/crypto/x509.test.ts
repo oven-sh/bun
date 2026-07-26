@@ -98,9 +98,6 @@ describe("X509Certificate.subjectAltName", () => {
     expect(cert.toLegacyObject().subjectaltname).toBeUndefined();
   });
 
-  // A present-but-empty SAN prints nothing into the mem BIO. Previously that nullptr/0
-  // span was fed to ExternalStringImpl::create, which aborts the ASAN build with
-  // "ASSERTION FAILED: m_data8" and made release builds return undefined instead of "".
   test("is the empty string when the extension holds an empty GeneralNames sequence", () => {
     const cert = new X509Certificate(emptySanCertPem);
     expect(cert.subjectAltName).toBe("");

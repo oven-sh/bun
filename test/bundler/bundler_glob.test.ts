@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { symlinkSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { itBundled } from "./expectBundled";
 
 // Coverage for bundling `require("./dir/" + x)` / `import("./dir/" + x)` by
@@ -322,6 +322,46 @@ describe("bundler", () => {
     run: { stdout: "ok" },
     onAfterBundle(api) {
       api.expectFile("/out.js").not.toContain("__glob");
+    },
+  });
+
+  // Glob-generated records carry the relative specifier, so onResolve
+  // plugins can redirect them like a hand-written require.
+  itBundled("glob/OnResolvePluginApplies", {
+    target: "bun",
+    files: {
+      "/entry.js": /* js */ `
+        const n = "a";
+        console.log(require(\`./engines/\${n}.js\`));
+      `,
+      "/engines/a.js": `module.exports = "ORIGINAL";`,
+      "/redirected.js": `module.exports = "REDIRECTED";`,
+    },
+    plugins(builder) {
+      builder.onResolve({ filter: /engines\/a\.js$/ }, args => {
+        return { path: resolve(dirname(args.importer), "redirected.js") };
+      });
+    },
+    run: { stdout: "REDIRECTED" },
+  });
+
+  // `--external` patterns match the relative specifier too, leaving the
+  // matched file unbundled.
+  itBundled("glob/ExternalPatternApplies", {
+    target: "bun",
+    files: {
+      "/entry.js": /* js */ `
+        const n = "a";
+        console.log(require(\`./engines/\${n}.js\`));
+      `,
+      "/engines/a.js": `module.exports = "FROM-DISK";`,
+    },
+    external: ["./engines/*"],
+    outfile: "/out.js",
+    run: { stdout: "FROM-DISK", setCwd: true },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain(`require("./engines/a.js")`);
+      api.expectFile("/out.js").not.toContain("FROM-DISK");
     },
   });
 

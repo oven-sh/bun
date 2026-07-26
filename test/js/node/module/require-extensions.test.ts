@@ -1,6 +1,6 @@
 import assert from "assert";
 import { expect, mock, test } from "bun:test";
-import { bunEnv, bunExe, tempDir, tempDirWithFiles } from "harness";
+import { tempDirWithFiles } from "harness";
 import path from "path";
 
 test("require.extensions shape makes sense", () => {
@@ -162,69 +162,38 @@ test("wrapping an existing extension but it's secretly sync esm", () => {
     require.extensions[".cjs"] = original;
   }
 });
-test("require.cache[key].loaded is true after a custom extension handler runs", async () => {
-  using dir = tempDir("require-extensions-loaded", {
-    "package.json": JSON.stringify({ type: "commonjs" }),
-    "cfg.json": "{}",
-    "a.xyz": "ignored",
-    "bad.abc": "ignored",
-    "main.cjs": `
-      const path = require("path");
-      const jsonKey = require.resolve("./cfg.json");
-      const xyzKey = require.resolve("./a.xyz");
-      const abcKey = path.resolve(__dirname, "bad.abc");
+test("require.cache[key].loaded is true after a custom extension handler runs", () => {
+  const originalJson = require.extensions[".json"];
+  const jsonKey = path.join(import.meta.dir, "extensions-fixture", "a.json");
+  const xyzKey = path.join(import.meta.dir, "extensions-fixture", "a.xyz");
+  const abcKey = path.join(import.meta.dir, "extensions-fixture", "bad.abc");
+  try {
+    require.extensions[".json"] = function (m, _f) {
+      (m as any).exports = { x: 1, loadedDuring: m.loaded };
+    };
+    require.extensions[".xyz"] = function (m, f) {
+      (m as any)._compile("module.exports = { y: 2 };", f);
+    };
+    require.extensions[".abc"] = function (_m, _f) {
+      throw new Error("boom");
+    };
 
-      require.extensions[".json"] = function (m, f) {
-        m.exports = { x: 1, loadedDuring: m.loaded };
-      };
-      require.extensions[".xyz"] = function (m, f) {
-        m._compile("module.exports = { y: 2 };", f);
-      };
-      require.extensions[".abc"] = function (m, f) {
-        throw new Error("boom");
-      };
+    expect(require("./extensions-fixture/a.json")).toEqual({ x: 1, loadedDuring: false });
+    expect(require.cache[jsonKey]!.loaded).toBe(true);
 
-      const jsonExports = require(jsonKey);
-      const xyzExports = require(xyzKey);
+    expect(require("./extensions-fixture/a.xyz")).toEqual({ y: 2 });
+    expect(require.cache[xyzKey]!.loaded).toBe(true);
 
-      let abcThrew = false;
-      try {
-        require(abcKey);
-      } catch {
-        abcThrew = true;
-      }
-
-      console.log(
-        JSON.stringify({
-          jsonExports,
-          jsonLoaded: require.cache[jsonKey].loaded,
-          xyzExports,
-          xyzLoaded: require.cache[xyzKey].loaded,
-          abcThrew,
-          abcCached: abcKey in require.cache,
-        }),
-      );
-    `,
-  });
-
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "main.cjs"],
-    env: bunEnv,
-    cwd: String(dir),
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-  expect(stderr).toBe("");
-  expect(JSON.parse(stdout)).toEqual({
-    jsonExports: { x: 1, loadedDuring: false },
-    jsonLoaded: true,
-    xyzExports: { y: 2 },
-    xyzLoaded: true,
-    abcThrew: true,
-    abcCached: false,
-  });
-  expect(exitCode).toBe(0);
+    expect(() => require("./extensions-fixture/bad.abc")).toThrow("boom");
+    expect(abcKey in require.cache).toBe(false);
+  } finally {
+    require.extensions[".json"] = originalJson;
+    delete require.extensions[".xyz"];
+    delete require.extensions[".abc"];
+    delete require.cache[jsonKey];
+    delete require.cache[xyzKey];
+    delete require.cache[abcKey];
+  }
 });
 test("mutating extensions is banned by some files", () => {
   // vercel is not allowed to mutate require.extensions

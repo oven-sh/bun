@@ -7,6 +7,14 @@ import { bunEnv, bunExe } from "harness";
 // on the cause. Bun also keeps `.code` on the outer TypeError for backwards
 // compatibility so `err.code === "ECONNREFUSED"` keeps working.
 
+// Bind an ephemeral port then close it so nothing is listening.
+function refusedPort(): number {
+  using server = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
+  const port = server.port;
+  server.stop(true);
+  return port;
+}
+
 function expectFetchFailed(err: unknown, code: string) {
   expect(err).toBeInstanceOf(TypeError);
   const e = err as TypeError & { code?: string; cause?: Error & { code?: string } };
@@ -22,15 +30,7 @@ function expectFetchFailed(err: unknown, code: string) {
 
 describe("fetch network error shape", () => {
   test("ECONNREFUSED: TypeError('fetch failed') with cause.code", async () => {
-    // Bind to a port then close it so nothing is listening.
-    using server = Bun.listen({
-      hostname: "127.0.0.1",
-      port: 0,
-      socket: { data() {} },
-    });
-    const port = server.port;
-    server.stop(true);
-
+    const port = refusedPort();
     let caught: unknown;
     try {
       await fetch(`http://127.0.0.1:${port}/`);
@@ -85,7 +85,7 @@ describe("fetch network error shape", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     // resolver-dependent code (ENOTFOUND, EAI_AGAIN, ENOTIMP, ...); assert shape only
-    expect({ out: JSON.parse(stdout), stderr, exitCode }).toEqual({
+    expect({ out: JSON.parse(stdout || "null"), stderr, exitCode }).toEqual({
       out: {
         name: "TypeError",
         message: "fetch failed",
@@ -99,11 +99,12 @@ describe("fetch network error shape", () => {
   });
 
   test(".catch() consumer still gets a stack", async () => {
+    const port = refusedPort();
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
         "-e",
-        `fetch("http://127.0.0.1:1/").catch(e => {
+        `fetch("http://127.0.0.1:" + process.env.REFUSED_PORT + "/").catch(e => {
            process.stdout.write(JSON.stringify({
              name: e.name,
              message: e.message,
@@ -114,19 +115,23 @@ describe("fetch network error shape", () => {
            }));
          });`,
       ],
-      env: bunEnv,
+      env: { ...bunEnv, REFUSED_PORT: String(port) },
       stdout: "pipe",
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    const out = JSON.parse(stdout);
-    expect(out.name).toBe("TypeError");
-    expect(out.message).toBe("fetch failed");
-    expect(out.stackIsString).toBe(true);
-    expect(out.stackHasEval).toBe(true);
-    expect(out.code).toBe("ECONNREFUSED");
-    expect(out.causeCode).toBe("ECONNREFUSED");
-    expect(exitCode).toBe(0);
+    expect({ out: JSON.parse(stdout || "null"), stderr, exitCode }).toEqual({
+      out: {
+        name: "TypeError",
+        message: "fetch failed",
+        stackIsString: true,
+        stackHasEval: true,
+        code: "ECONNREFUSED",
+        causeCode: "ECONNREFUSED",
+      },
+      stderr: "",
+      exitCode: 0,
+    });
   });
 
   test("is-network-error heuristic matches", async () => {
@@ -134,7 +139,7 @@ describe("fetch network error shape", () => {
     // Checks: err instanceof TypeError && message in {'fetch failed', ...}
     let caught: unknown;
     try {
-      await fetch("http://127.0.0.1:1/");
+      await fetch(`http://127.0.0.1:${refusedPort()}/`);
     } catch (e) {
       caught = e;
     }

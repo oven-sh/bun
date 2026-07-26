@@ -109,7 +109,7 @@ describe("fetch network errors reject as TypeError('fetch failed') with a cause"
 
   test("body truncated mid-read surfaces as TypeError with cause", async () => {
     const server = net.createServer(socket => {
-      socket.end("HTTP/1.1 200 OK\r\nContent-Length: 100000\r\n\r\n" + "x".repeat(1000));
+      socket.end("HTTP/1.1 200 OK\r\nContent-Length: 100000\r\n\r\n" + Buffer.alloc(1000, "x").toString());
     });
     server.listen(0, "127.0.0.1");
     await once(server, "listening");

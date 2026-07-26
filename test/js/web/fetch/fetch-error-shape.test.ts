@@ -99,7 +99,16 @@ describe("fetch network error shape", () => {
   });
 
   test(".catch() consumer still gets a stack", async () => {
+    // In-process: the caller frame is live for the whole test, so the
+    // captured stack reliably points at this file.
     const port = refusedPort();
+    const caught = await fetch(`http://127.0.0.1:${port}/`).catch(e => e);
+    expectFetchFailed(caught, "ECONNREFUSED");
+
+    // Subprocess: at top level of a `-e` script the module body has finished
+    // by the time the rejection fires, so a GC between capture and reject can
+    // collect the callee and force-materialize the source Error's trace. The
+    // outer TypeError must still have a string `.stack`.
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -109,7 +118,6 @@ describe("fetch network error shape", () => {
              name: e.name,
              message: e.message,
              stackIsString: typeof e.stack === "string",
-             stackHasEval: typeof e.stack === "string" && e.stack.includes("[eval]"),
              code: e.code,
              causeCode: e.cause && e.cause.code,
            }));
@@ -125,7 +133,6 @@ describe("fetch network error shape", () => {
         name: "TypeError",
         message: "fetch failed",
         stackIsString: true,
-        stackHasEval: true,
         code: "ECONNREFUSED",
         causeCode: "ECONNREFUSED",
       },

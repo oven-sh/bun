@@ -2385,15 +2385,35 @@ extern "C" JSC::EncodedJSValue Bun__createFetchFailedTypeError(
         }
     }
 
+    auto* destInstance = dynamicDowncast<JSC::ErrorInstance>(result);
     JSC::JSValue stackSrc = JSC::JSValue::decode(stackSourceValue);
-    if (auto* srcInstance = dynamicDowncast<JSC::ErrorInstance>(stackSrc)) {
-        if (auto* destInstance = dynamicDowncast<JSC::ErrorInstance>(result)) {
-            if (auto* srcTrace = srcInstance->stackTrace(); srcTrace && !srcTrace->isEmpty()) {
-                // Copy: source may be shared across a cloned Response body.
-                WTF::Vector<JSC::StackFrame> frames;
-                frames.appendVector(*srcTrace);
-                destInstance->setStackFrames(vm, WTF::move(frames));
+    if (auto* srcInstance = dynamicDowncast<JSC::ErrorInstance>(stackSrc); srcInstance && destInstance) {
+        if (auto* srcTrace = srcInstance->stackTrace(); srcTrace && !srcTrace->isEmpty()) {
+            // Copy: source may be shared across a cloned Response body.
+            WTF::Vector<JSC::StackFrame> frames;
+            frames.appendVector(*srcTrace);
+            destInstance->setStackFrames(vm, WTF::move(frames));
+        } else {
+            // GC's finalizeUnconditionally may have materialized the source
+            // (clearing its frame vector) if a captured callee was collected
+            // before the rejection ran. Fall back to the source's `.stack`
+            // string, rewriting the header for the outer TypeError.
+            srcInstance->materializeErrorInfoIfNeeded(vm);
+            if (JSC::JSValue srcStack = srcInstance->getDirect(vm, vm.propertyNames->stack); srcStack && srcStack.isString()) {
+                auto str = asString(srcStack)->value(globalObject);
+                size_t nl = str->find('\n');
+                auto frames = nl == WTF::notFound ? WTF::emptyString() : str->substring(nl);
+                auto header = terminated ? "TypeError: terminated"_s : "TypeError: fetch failed"_s;
+                result->putDirect(vm, vm.propertyNames->stack, JSC::jsString(vm, makeString(header, frames)), JSC::PropertyAttribute::DontEnum | 0);
             }
+        }
+    }
+
+    if (destInstance) {
+        auto* destTrace = destInstance->stackTrace();
+        if ((!destTrace || destTrace->isEmpty()) && !result->getDirect(vm, vm.propertyNames->stack)) {
+            auto header = terminated ? "TypeError: terminated"_s : "TypeError: fetch failed"_s;
+            result->putDirect(vm, vm.propertyNames->stack, JSC::jsString(vm, String(header)), JSC::PropertyAttribute::DontEnum | 0);
         }
     }
 

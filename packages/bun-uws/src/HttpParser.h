@@ -1260,7 +1260,13 @@ struct HttpResponseData;
             req->bodyCompleteInHead = false;
             req->head = std::span<const char>(data, length);
             if constexpr (IsNodeHttp) {
-                if (!isConnectRequest && (transferEncoding.has || contentLengthStringLen)
+                /* Match NodeHTTPResponse__createForJS's has_body predicate
+                 * (has_request_body() || GET, i.e. not HEAD/TRACE) so the two
+                 * sides agree on which bytes are body. */
+                std::string_view m = req->getCaseSensitiveMethod();
+                bool methodFramesBody = !(m == "HEAD" || m == "TRACE");
+                if (!isConnectRequest && methodFramesBody
+                        && (transferEncoding.has || contentLengthStringLen)
                         && req->getHeader("upgrade").data()) [[unlikely]] {
                     if (transferEncoding.has) {
                         /* Pre-scan the chunked body with local state so the real

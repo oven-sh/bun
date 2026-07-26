@@ -27,8 +27,10 @@ function sendRaw(port: number, payload: string, thenEnd = false) {
 }
 
 async function observeUpgrade(payload: string): Promise<UpgradeResult> {
-  const { promise, resolve } = Promise.withResolvers<UpgradeResult>();
+  const { promise, resolve, reject } = Promise.withResolvers<UpgradeResult>();
   const server = http.createServer((_req, res) => res.end());
+  server.on("error", reject);
+  server.on("clientError", reject);
   server.on("upgrade", (req, socket, head) => {
     const result: UpgradeResult = {
       head: head.toString(),
@@ -39,6 +41,7 @@ async function observeUpgrade(payload: string): Promise<UpgradeResult> {
     };
     req.on("data", d => (result.reqData += d));
     socket.on("data", d => (result.sockData += d));
+    socket.on("error", reject);
     req.on("end", () => {
       // Resolve from socket 'close' so any late socket 'data' reaches sockData.
       socket.on("close", () => resolve(result));
@@ -49,9 +52,12 @@ async function observeUpgrade(payload: string): Promise<UpgradeResult> {
   const port = (server.address() as net.AddressInfo).port;
   const client = sendRaw(port, payload);
   client.on("end", () => client.end());
-  const result = await promise;
-  await new Promise<void>(r => server.close(() => r()));
-  return result;
+  try {
+    return await promise;
+  } finally {
+    client.destroy();
+    await new Promise<void>(r => server.close(() => r()));
+  }
 }
 
 describe("node:http 'upgrade' with a request body", () => {
@@ -116,8 +122,10 @@ describe("node:http 'upgrade' with a request body", () => {
   // and once the body's fin arrives the post-body remainder in that later
   // packet reaches socket 'data' (not head).
   test.concurrent("split body: head is empty, later post-body bytes reach socket 'data'", async () => {
-    const { promise, resolve } = Promise.withResolvers<UpgradeResult>();
+    const { promise, resolve, reject } = Promise.withResolvers<UpgradeResult>();
     const server = http.createServer((_req, res) => res.end());
+    server.on("error", reject);
+    server.on("clientError", reject);
     server.on("upgrade", (req, socket, head) => {
       const result: UpgradeResult = {
         head: head.toString(),
@@ -127,6 +135,7 @@ describe("node:http 'upgrade' with a request body", () => {
         readableLengthAtUpgrade: req.readableLength,
       };
       req.on("data", d => (result.reqData += d));
+      socket.on("error", reject);
       socket.on("data", d => {
         result.sockData += d;
         socket.end();
@@ -136,32 +145,40 @@ describe("node:http 'upgrade' with a request body", () => {
     await once(server.listen(0), "listening");
     const port = (server.address() as net.AddressInfo).port;
     const client = net.connect(port, "127.0.0.1");
-    await once(client, "connect");
-    client.write("GET / HTTP/1.1\r\nHost: x\r\nConnection: Upgrade\r\nUpgrade: x\r\nContent-Length: 5\r\n\r\n");
-    // Wait for 'upgrade' to fire before writing the body so it is not coalesced
-    // into the header packet.
-    await once(server, "upgrade");
-    client.write("HELLOAFTER");
-    client.on("end", () => client.end());
-    const result = await promise;
-    expect({ head: result.head, reqData: result.reqData, sockData: result.sockData }).toEqual({
-      head: "",
-      reqData: "HELLO",
-      sockData: "AFTER",
-    });
-    expect(result.completeAtUpgrade).toBe(false);
-    await new Promise<void>(r => server.close(() => r()));
+    client.on("error", () => {});
+    try {
+      await once(client, "connect");
+      client.write("GET / HTTP/1.1\r\nHost: x\r\nConnection: Upgrade\r\nUpgrade: x\r\nContent-Length: 5\r\n\r\n");
+      // Wait for 'upgrade' to fire before writing the body so it is not coalesced
+      // into the header packet.
+      await once(server, "upgrade");
+      client.write("HELLOAFTER");
+      client.on("end", () => client.end());
+      const result = await promise;
+      expect({ head: result.head, reqData: result.reqData, sockData: result.sockData }).toEqual({
+        head: "",
+        reqData: "HELLO",
+        sockData: "AFTER",
+      });
+      expect(result.completeAtUpgrade).toBe(false);
+    } finally {
+      client.destroy();
+      await new Promise<void>(r => server.close(() => r()));
+    }
   });
 
   // Same-chunk head, then more tunnel bytes in a later packet: the later bytes
   // reach socket 'data' (the head suppression is scoped to the one parse call).
   test.concurrent("later tunnel bytes after a same-chunk head reach socket 'data'", async () => {
-    const { promise, resolve } = Promise.withResolvers<{ head: string; reqData: string; sockData: string }>();
+    const { promise, resolve, reject } = Promise.withResolvers<{ head: string; reqData: string; sockData: string }>();
     const server = http.createServer((_req, res) => res.end());
+    server.on("error", reject);
+    server.on("clientError", reject);
     server.on("upgrade", (req, socket, head) => {
       let reqData = "";
       let sockData = "";
       req.on("data", d => (reqData += d));
+      socket.on("error", reject);
       socket.on("data", d => {
         sockData += d;
         socket.end();
@@ -171,16 +188,21 @@ describe("node:http 'upgrade' with a request body", () => {
     await once(server.listen(0), "listening");
     const port = (server.address() as net.AddressInfo).port;
     const client = net.connect(port, "127.0.0.1");
-    await once(client, "connect");
-    client.write(
-      "GET / HTTP/1.1\r\nHost: x\r\nConnection: Upgrade\r\nUpgrade: x\r\nContent-Length: 5\r\n\r\nHELLOAFTER",
-    );
-    await once(server, "upgrade");
-    client.write("MORE");
-    client.on("end", () => client.end());
-    const result = await promise;
-    expect(result).toEqual({ head: "AFTER", reqData: "HELLO", sockData: "MORE" });
-    await new Promise<void>(r => server.close(() => r()));
+    client.on("error", () => {});
+    try {
+      await once(client, "connect");
+      client.write(
+        "GET / HTTP/1.1\r\nHost: x\r\nConnection: Upgrade\r\nUpgrade: x\r\nContent-Length: 5\r\n\r\nHELLOAFTER",
+      );
+      await once(server, "upgrade");
+      client.write("MORE");
+      client.on("end", () => client.end());
+      const result = await promise;
+      expect(result).toEqual({ head: "AFTER", reqData: "HELLO", sockData: "MORE" });
+    } finally {
+      client.destroy();
+      await new Promise<void>(r => server.close(() => r()));
+    }
   });
 
   // c: No-body control. Same as CONNECT: post-header bytes are the head.
@@ -196,39 +218,54 @@ describe("node:http 'upgrade' with a request body", () => {
   // d1/d2: Declared body never arrives; the client FINs. Node destroys the
   // handed-off socket (socket 'close' fires) and server.close() completes.
   test.concurrent("peer FIN with unsatisfied body: socket closes and server.close() completes", async () => {
-    const { promise: sockClosed, resolve: onSockClose } = Promise.withResolvers<void>();
-    const { promise: srvClosed, resolve: onSrvClose } = Promise.withResolvers<void>();
+    const { promise: sockClosed, resolve: onSockClose, reject } = Promise.withResolvers<void>();
     const server = http.createServer((_req, res) => res.end());
+    server.on("error", reject);
     server.on("upgrade", (req, socket) => {
       req.on("error", () => {});
+      socket.on("error", reject);
       socket.on("close", onSockClose);
     });
     await once(server.listen(0), "listening");
     const port = (server.address() as net.AddressInfo).port;
-    sendRaw(port, "GET / HTTP/1.1\r\nHost: x\r\nConnection: Upgrade\r\nUpgrade: x\r\nContent-Length: 5\r\n\r\n", true);
-    await sockClosed;
-    server.close(() => onSrvClose());
-    await srvClosed;
+    const client = sendRaw(
+      port,
+      "GET / HTTP/1.1\r\nHost: x\r\nConnection: Upgrade\r\nUpgrade: x\r\nContent-Length: 5\r\n\r\n",
+      true,
+    );
+    try {
+      await sockClosed;
+      await new Promise<void>(r => server.close(() => r()));
+    } finally {
+      client.destroy();
+      server.close();
+    }
   });
 
   // Same for a partially-sent body.
   test.concurrent("peer FIN with partial body: socket closes", async () => {
-    const { promise: sockClosed, resolve: onSockClose } = Promise.withResolvers<void>();
+    const { promise: sockClosed, resolve: onSockClose, reject } = Promise.withResolvers<void>();
     const server = http.createServer((_req, res) => res.end());
+    server.on("error", reject);
     server.on("upgrade", (req, socket) => {
       req.on("data", () => {});
       req.on("error", () => {});
+      socket.on("error", reject);
       socket.on("close", onSockClose);
     });
     await once(server.listen(0), "listening");
     const port = (server.address() as net.AddressInfo).port;
-    sendRaw(
+    const client = sendRaw(
       port,
       "GET / HTTP/1.1\r\nHost: x\r\nConnection: Upgrade\r\nUpgrade: x\r\nContent-Length: 5\r\n\r\nHE",
       true,
     );
-    await sockClosed;
-    await new Promise<void>(r => server.close(() => r()));
+    try {
+      await sockClosed;
+    } finally {
+      client.destroy();
+      await new Promise<void>(r => server.close(() => r()));
+    }
   });
 });
 

@@ -374,17 +374,20 @@ impl S3HttpSimpleTask {
             },
             Callback::ListObjects(callback) => match response.status_code {
                 200 => {
-                    if let Some(body) = &this.result.body {
-                        // parse_s3_list_objects_result is infallible (alloc-only
-                        // failure modes abort).
-                        let success =
-                            list_objects::parse_s3_list_objects_result(body.list.as_slice());
-                        callback(
+                    match this
+                        .result
+                        .body
+                        .as_ref()
+                        .and_then(|b| list_objects::parse_s3_list_objects_result(b.list.as_slice()))
+                    {
+                        Some(success) => callback(
                             S3ListObjectsResult::Success(Box::new(success)),
                             this.callback_context,
-                        )?;
-                    } else {
-                        this.error_with_body(ErrorType::Failure)?;
+                        )?,
+                        // Body was absent or not a complete <ListBucketResult> document.
+                        // error_with_body extracts <Code>/<Message> when the body is an S3
+                        // <Error> document; otherwise it falls back to UnknownError.
+                        None => this.error_with_body(ErrorType::Failure)?,
                     }
                 }
                 404 => this.error_with_body(ErrorType::NotFound)?,

@@ -25,7 +25,7 @@ describe.concurrent("S3 - List Objects", () => {
     let reqUrl: string;
     using server = createBunServer(async req => {
       reqUrl = req.url;
-      return new Response(`<>`, {
+      return new Response(`<ListBucketResult></ListBucketResult>`, {
         headers: {
           "Content-Type": "application/xml",
         },
@@ -49,7 +49,7 @@ describe.concurrent("S3 - List Objects", () => {
     let reqUrl: string;
     using server = createBunServer(async req => {
       reqUrl = req.url;
-      return new Response(`<>`, {
+      return new Response(`<ListBucketResult></ListBucketResult>`, {
         headers: {
           "Content-Type": "application/xml",
         },
@@ -73,7 +73,7 @@ describe.concurrent("S3 - List Objects", () => {
     let reqUrl: string;
     using server = createBunServer(async req => {
       reqUrl = req.url;
-      return new Response(`<>`, {
+      return new Response(`<ListBucketResult></ListBucketResult>`, {
         headers: {
           "Content-Type": "application/xml",
         },
@@ -97,7 +97,7 @@ describe.concurrent("S3 - List Objects", () => {
     let reqUrl: string;
     using server = createBunServer(async req => {
       reqUrl = req.url;
-      return new Response(`<>`, {
+      return new Response(`<ListBucketResult></ListBucketResult>`, {
         headers: {
           "Content-Type": "application/xml",
         },
@@ -121,7 +121,7 @@ describe.concurrent("S3 - List Objects", () => {
     let reqUrl: string;
     using server = createBunServer(async req => {
       reqUrl = req.url;
-      return new Response(`<>`, {
+      return new Response(`<ListBucketResult></ListBucketResult>`, {
         headers: {
           "Content-Type": "application/xml",
         },
@@ -145,7 +145,7 @@ describe.concurrent("S3 - List Objects", () => {
     let reqUrl: string;
     using server = createBunServer(async req => {
       reqUrl = req.url;
-      return new Response(`<>`, {
+      return new Response(`<ListBucketResult></ListBucketResult>`, {
         headers: {
           "Content-Type": "application/xml",
         },
@@ -169,7 +169,7 @@ describe.concurrent("S3 - List Objects", () => {
     let reqUrl: string;
     using server = createBunServer(async req => {
       reqUrl = req.url;
-      return new Response(`<>`, {
+      return new Response(`<ListBucketResult></ListBucketResult>`, {
         headers: {
           "Content-Type": "application/xml",
         },
@@ -193,7 +193,7 @@ describe.concurrent("S3 - List Objects", () => {
     let reqUrl: string;
     using server = createBunServer(async req => {
       reqUrl = req.url;
-      return new Response(`<>`, {
+      return new Response(`<ListBucketResult></ListBucketResult>`, {
         headers: {
           "Content-Type": "application/xml",
         },
@@ -217,7 +217,7 @@ describe.concurrent("S3 - List Objects", () => {
     let reqUrl: string;
     using server = createBunServer(async req => {
       reqUrl = req.url;
-      return new Response(`<>`, {
+      return new Response(`<ListBucketResult></ListBucketResult>`, {
         headers: {
           "Content-Type": "application/xml",
         },
@@ -928,6 +928,97 @@ describe.concurrent("S3 - List Objects", () => {
     });
   });
 
+  describe("Should reject when a 200 response body is not a ListBucketResult", () => {
+    it.each([
+      ["HTML", "<html><body><h1>502 Bad Gateway</h1></body></html>"],
+      ["empty", ""],
+      ["JSON", `{"contents":[{"key":"j"}]}`],
+      [
+        "wrong XML root",
+        `<?xml version="1.0"?><ListAllMyBucketsResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Buckets/></ListAllMyBucketsResult>`,
+      ],
+      ["binary", Buffer.from([0x00, 0x01, 0x02, 0xff, 0xfe, 0x00, 0x3c, 0x00]).toString("binary")],
+    ])("body = %s", async (_name, body) => {
+      using server = createBunServer(async () => {
+        return new Response(body, {
+          headers: { "Content-Type": "application/xml" },
+          status: 200,
+        });
+      });
+
+      const client = new S3Client({ ...options, endpoint: server.url.href });
+
+      let error: any;
+      try {
+        await client.list();
+        expect.unreachable();
+      } catch (e) {
+        error = e;
+      }
+      expect(error).toBeInstanceOf(Error);
+      expect(error.name).toBe("S3Error");
+      expect(error.code).toBe("UnknownError");
+    });
+
+    it("body = <Error> document (200 + error body)", async () => {
+      using server = createBunServer(async () => {
+        return new Response(
+          `<?xml version="1.0"?><Error><Code>InternalError</Code><Message>We encountered an internal error. Please try again.</Message></Error>`,
+          {
+            headers: { "Content-Type": "application/xml" },
+            status: 200,
+          },
+        );
+      });
+
+      const client = new S3Client({ ...options, endpoint: server.url.href });
+
+      let error: any;
+      try {
+        await client.list();
+        expect.unreachable();
+      } catch (e) {
+        error = e;
+      }
+      expect(error).toBeInstanceOf(Error);
+      expect(error.name).toBe("S3Error");
+      expect(error.code).toBe("InternalError");
+      expect(error.message).toBe("We encountered an internal error. Please try again.");
+    });
+
+    it("body = truncated ListBucketResult (no closing tag)", async () => {
+      // Opens <ListBucketResult> and emits two Contents + KeyCount, then cuts
+      // mid-element before </ListBucketResult>. Previously this resolved with a
+      // partial listing (silent data loss for sync/reconcile callers).
+      const truncated =
+        `<?xml version="1.0"?><ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">` +
+        `<KeyCount>3</KeyCount><IsTruncated>false</IsTruncated>` +
+        `<Contents><Key>k1</Key></Contents>` +
+        `<Contents><Key>k2</Key></Contents>` +
+        `<Contents><Ke`;
+
+      using server = createBunServer(async () => {
+        return new Response(truncated, {
+          headers: { "Content-Type": "application/xml" },
+          status: 200,
+        });
+      });
+
+      const client = new S3Client({ ...options, endpoint: server.url.href });
+
+      let error: any;
+      try {
+        await client.list();
+        expect.unreachable();
+      } catch (e) {
+        error = e;
+      }
+      expect(error).toBeInstanceOf(Error);
+      expect(error.name).toBe("S3Error");
+      expect(error.code).toBe("UnknownError");
+    });
+  });
+
   it("Should not crash with bad xml", async () => {
     using server = createBunServer(async => {
       return new Response(
@@ -1177,7 +1268,7 @@ describe.skipIf(!optionsFromEnv.accessKeyId)("S3 - CI - List Objects", () => {
 it("parses a large list response containing repeated unclosed Key tags quickly", async () => {
   // ListObjectsV2 body with a valid <Name> followed by ~5MB of opening <Key> tags
   // that never have a matching closing tag.
-  const malformed = `<ListBucketResult><Name>my_bucket</Name><Contents>${Buffer.alloc(5_000_000, "<Key>").toString()}`;
+  const malformed = `<ListBucketResult><Name>my_bucket</Name><Contents>${Buffer.alloc(5_000_000, "<Key>").toString()}</ListBucketResult>`;
 
   using server = createBunServer(async () => {
     return new Response(malformed, {

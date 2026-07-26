@@ -6358,7 +6358,6 @@ pub mod bv2_impl {
                         && import_record.kind == ImportKind::Url
                         && !resolved_loader.should_copy_for_bundling()
                         && !resolved_loader.is_javascript_like()
-                        && !resolved_loader.is_css()
                         && resolved_loader != Loader::Html
                     {
                         break 'brk Loader::File;

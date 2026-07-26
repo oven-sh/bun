@@ -1011,4 +1011,81 @@ body {
       expect(htmlContent).toMatch(/href=".*\.webmanifest"/);
     },
   });
+
+  // <link rel="preload" as="style"> is a fetch-only hint; it must NOT be merged
+  // into the page's applied stylesheet. It should be emitted as a standalone
+  // asset with its href rewritten, like as="font"/as="image" preloads.
+  itBundled("html/preload-as-style", {
+    outdir: "out/",
+    files: {
+      "/index.html": `
+<!DOCTYPE html>
+<html>
+  <head>
+    <link rel="stylesheet" href="./applied.css">
+    <link rel="preload" as="style" href="./later.css">
+  </head>
+  <body>
+    <script src="./a.js"></script>
+  </body>
+</html>`,
+      "/applied.css": "h1 { font-weight: bold; }",
+      "/later.css": "body { color: red; }",
+      "/a.js": "console.log(1)",
+    },
+    entryPoints: ["/index.html"],
+    onAfterBundle(api) {
+      const html = api.readFile("out/index.html");
+
+      // The preload tag must survive with its href rewritten to a hashed filename.
+      const preload = html.match(
+        /<link rel="preload" as="style" href="(?:\.\/|\/)?(later-[a-zA-Z0-9]+\.css)">/,
+      );
+      expect(preload).not.toBeNull();
+
+      // The preloaded CSS must be emitted as its own file, not folded into the
+      // page bundle.
+      const laterContent = api.readFile("out/" + preload![1]);
+      expect(laterContent).toContain("color");
+      expect(laterContent).toContain("red");
+
+      // The applied stylesheet bundle must NOT contain the preloaded rules.
+      const stylesheet = html.match(
+        /<link rel="stylesheet"[^>]* href="(?:\.\/|\/)?([^"]+\.css)"/,
+      );
+      expect(stylesheet).not.toBeNull();
+      expect(stylesheet![1]).not.toBe(preload![1]);
+      const bundleContent = api.readFile("out/" + stylesheet![1]);
+      expect(bundleContent).toContain("font-weight");
+      expect(bundleContent).not.toContain("color");
+      expect(bundleContent).not.toContain("red");
+    },
+  });
+
+  // When there is no rel="stylesheet" on the page at all, a preload-as-style
+  // reference must not cause a rel="stylesheet" link to be injected.
+  itBundled("html/preload-as-style-only", {
+    outdir: "out/",
+    files: {
+      "/index.html": `
+<!DOCTYPE html>
+<html>
+  <head>
+    <link rel="preload" as="style" href="./later.css">
+  </head>
+  <body>
+    <script src="./a.js"></script>
+  </body>
+</html>`,
+      "/later.css": "body { color: red; }",
+      "/a.js": "console.log(1)",
+    },
+    entryPoints: ["/index.html"],
+    onAfterBundle(api) {
+      const html = api.readFile("out/index.html");
+
+      expect(html).toMatch(/<link rel="preload" as="style" href="(?:\.\/|\/)?later-[a-zA-Z0-9]+\.css">/);
+      expect(html).not.toMatch(/rel="stylesheet"/);
+    },
+  });
 });

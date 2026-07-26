@@ -189,8 +189,10 @@ pub(crate) const TAG_HANDLERS: [TagHandler; 16] = [
     TagHandler::new("script[src]", "src", ImportKind::Stmt),
     // CSS Stylesheets
     TagHandler::new("link[rel='stylesheet'][href]", "href", ImportKind::At),
-    // CSS Assets
-    TagHandler::new("link[as='style'][href]", "href", ImportKind::At),
+    // CSS preloads — `<link rel="preload" as="style">` is a fetch hint, not an
+    // applied stylesheet. Emit the file standalone and rewrite the href (same
+    // as font/image preloads) instead of merging it into the page's CSS chunk.
+    TagHandler::new("link[as='style'][href]", "href", ImportKind::Url),
     // Font files
     TagHandler::new(
         "link[as='font'][href], link[type^='font/'][href]",

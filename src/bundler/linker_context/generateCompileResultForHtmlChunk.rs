@@ -191,7 +191,11 @@ impl<'a> HTMLProcessorHandler for HTMLLoader<'a> {
             // SAFETY: `self.chunks` raw `*mut [Chunk]` valid for the link step.
             let chunks = unsafe { &*self.chunks };
             if (chunk_index as usize) < chunks.len() {
-                set_attribute(element, url_attribute, chunks[chunk_index as usize].unique_key);
+                set_attribute(
+                    element,
+                    url_attribute,
+                    chunks[chunk_index as usize].unique_key,
+                );
             }
             return;
         }

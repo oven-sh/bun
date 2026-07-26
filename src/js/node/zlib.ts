@@ -332,8 +332,7 @@ function processChunkSync(self, chunk, flushFlag) {
   });
 
   while (true) {
-    // The native binding's in_len is a u32; a single chunk at
-    // buffer.constants.MAX_LENGTH (2^32) must be fed in u32-sized windows.
+    // Native in_len is u32; feed a MAX_LENGTH (2^32) chunk in u32 windows.
     const inLen = availInBefore > 0xffff_ffff ? 0xffff_ffff : availInBefore;
     handle.writeSync(
       flushFlag,

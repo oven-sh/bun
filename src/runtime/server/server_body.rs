@@ -2188,6 +2188,8 @@ where
                 bun_opaque::opaque_deref_mut(h3a).clear_routes();
             }
         }
+        // `clear_routes()` also drops uWS filterHandlers.
+        self.register_connection_filter();
 
         // `on_request` / `on_error` keep their previous value when the reload
         // config omits them. The async-context re-wrap is unconditional:
@@ -2296,6 +2298,7 @@ where
                 bun_opaque::opaque_deref_mut(h3a).clear_routes();
             }
         }
+        self.register_connection_filter();
         let route_list_value = self.set_routes();
         if !route_list_value.is_empty() {
             if let Some(server_js_value) = self.js_value_for_dispatch() {
@@ -2729,7 +2732,11 @@ where
     }
 
     pub fn get_all_closed_promise(&mut self, global: &JSGlobalObject) -> JSValue {
-        if !self.has_listener() && self.pending_requests == 0 {
+        if !self.has_listener()
+            && self.pending_requests == 0
+            && !self.has_active_web_sockets()
+            && !self.has_open_http_connections()
+        {
             return JSPromise::resolved_promise(global, JSValue::UNDEFINED).to_js();
         }
         if self.all_closed_promise.has_value() {

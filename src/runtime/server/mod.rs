@@ -257,6 +257,13 @@ pub struct NewServer<const SSL: bool, const DEBUG: bool> {
     /// `Cell` because the open/close accounting arrives through shared
     /// `AnyServer` handles on the JS thread.
     pub active_websocket_count: core::cell::Cell<u32>,
+    /// Live HTTP connection count (sockets currently in the uWS HTTP socket
+    /// group). Fed by the uWS filter hook: +1 at accept (or TLS handshake
+    /// completion) and -1 at close; a WebSocket upgrade adopts the socket out
+    /// of that group without firing -1, so [`note_websocket_opened`] transfers
+    /// the count instead. Lets [`deinit_if_we_can`] gate on idle keep-alive
+    /// connections the way it already does on `active_websocket_count`.
+    pub open_http_connections: core::cell::Cell<u32>,
     /// Set across [`NewServer::deinit_if_we_can`] and the synchronous
     /// `app.close()` drain in `stop_listening`; lets a nested call (reached
     /// via a callback the body fires) early-return instead of re-running the
@@ -1486,6 +1493,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     pub(crate) fn note_websocket_opened(&self) {
         self.active_websocket_count
             .set(self.active_websocket_count.get().saturating_add(1));
+        // `upgrade()` adopts the socket out of the HTTP socket group without
+        // firing the filter's -1; transfer the count so an upgraded socket is
+        // tracked by exactly one term of the idle gate.
+        self.open_http_connections
+            .set(self.open_http_connections.get().saturating_sub(1));
     }
 
     /// Returns true when this close drained the last live websocket.
@@ -1503,6 +1515,60 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
     pub fn has_active_web_sockets(&self) -> bool {
         self.active_sockets_count() > 0
+    }
+
+    pub(crate) fn note_connection_opened(&self) {
+        self.open_http_connections
+            .set(self.open_http_connections.get().saturating_add(1));
+    }
+
+    /// Returns true when this close drained the last open HTTP connection.
+    pub(crate) fn note_connection_closed(&self) -> bool {
+        let prev = self.open_http_connections.get();
+        // Saturate: for TLS, the filter's +1 fires at handshake completion but
+        // its -1 fires on every close, so a socket that closes before the
+        // handshake completes would otherwise underflow.
+        if prev == 0 {
+            return false;
+        }
+        let remaining = prev - 1;
+        self.open_http_connections.set(remaining);
+        remaining == 0
+    }
+
+    pub fn has_open_http_connections(&self) -> bool {
+        self.open_http_connections.get() > 0
+    }
+
+    /// uWS filter thunk: `+1` on accept (TLS: at handshake completion), `-1`
+    /// on close. Runs the idle pass on the last-close edge so a `stop(false)`
+    /// whose promise is gated on open connections resolves once the final
+    /// keep-alive socket goes away.
+    extern "C" fn on_connection_filter(
+        _socket: *mut uws_sys::us_socket_t,
+        delta: i32,
+        user_data: *mut core::ffi::c_void,
+    ) {
+        // SAFETY: `user_data` is the `*mut Self` registered in
+        // `register_connection_filter`; the filter is dropped with the uWS app,
+        // which this server outlives.
+        let this = unsafe { &*user_data.cast::<Self>() };
+        if delta == 1 {
+            this.note_connection_opened();
+        } else if this.note_connection_closed() && !this.has_listener() {
+            // SAFETY: single-threaded JS context; the only outstanding borrow
+            // is the `&*this` above, dropped before this `&mut` is formed.
+            unsafe { &mut *user_data.cast::<Self>() }.deinit_if_we_can();
+        }
+    }
+
+    pub(crate) fn register_connection_filter(&mut self) {
+        if let Some(app) = self.app {
+            bun_opaque::opaque_deref_mut(app).filter(
+                Self::on_connection_filter,
+                core::ptr::from_mut::<Self>(self).cast::<core::ffi::c_void>(),
+            );
+        }
     }
 
     pub fn has_listener(&self) -> bool {
@@ -1591,7 +1657,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             }
             return;
         };
-        if abrupt || (self.pending_requests == 0 && !self.has_active_web_sockets()) {
+        if abrupt
+            || (self.pending_requests == 0
+                && !self.has_active_web_sockets()
+                && !self.has_open_http_connections())
+        {
             self.unref();
         }
         // A graceful stop with work in flight keeps the ref (deinit_if_we_can
@@ -1686,7 +1756,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // pass panicking means this server is unrecoverable anyway.
 
         httplog!(
-            "deinitIfWeCan. requests={}, listener={}, websockets={}, has_handled_all_closed_promise={}, all_closed_promise={}, has_js_deinited={}",
+            "deinitIfWeCan. requests={}, listener={}, websockets={}, connections={}, has_handled_all_closed_promise={}, all_closed_promise={}, has_js_deinited={}",
             self.pending_requests,
             if self.listener.is_none() {
                 "null"
@@ -1698,6 +1768,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             } else {
                 "no"
             },
+            self.open_http_connections.get(),
             self.flags
                 .contains(ServerFlags::HAS_HANDLED_ALL_CLOSED_PROMISE),
             if self.all_closed_promise.has_value() {
@@ -1711,6 +1782,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         if self.pending_requests == 0
             && !self.has_listener()
             && !self.has_active_web_sockets()
+            && !self.has_open_http_connections()
             && !self
                 .flags
                 .contains(ServerFlags::HAS_HANDLED_ALL_CLOSED_PROMISE)
@@ -1744,7 +1816,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 vm_ref,
             );
         }
-        if self.pending_requests == 0 && !self.has_listener() && !self.has_active_web_sockets() {
+        if self.pending_requests == 0
+            && !self.has_listener()
+            && !self.has_active_web_sockets()
+            && !self.has_open_http_connections()
+        {
             // Make the wrapper collectible. Dispatch still works while it is
             // `Weak` (its WriteBarrier slots still root the handlers); the
             // `js_value_for_dispatch` gate only trips once the wrapper is
@@ -2013,6 +2089,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             js_value: jsc::JsRef::empty(),
             pending_requests: 0,
             active_websocket_count: core::cell::Cell::new(0),
+            open_http_connections: core::cell::Cell::new(0),
             deinit_running: core::cell::Cell::new(false),
             request_pool: <Self as ServerPools<SSL, DEBUG>>::request_pool(),
             // Plain HTTP servers never allocate the ~816 KB H3 pool; defer to
@@ -2792,6 +2869,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // SAFETY: `this` is the live boxed server from `init()`; no other borrow is live.
             route_list_value = unsafe { &mut *this }.set_routes();
         }
+
+        // SAFETY: `this` is the live boxed server from `init()`; no other borrow is live.
+        unsafe { &mut *this }.register_connection_filter();
 
         if !this_ref.config.on_node_http_request.is_empty() {
             // SAFETY: `this` is the live boxed server from `init()`; no other borrow is live.

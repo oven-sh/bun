@@ -631,6 +631,111 @@ test("should be able to await server.stop(true) with keep alive", async () => {
   expect(async () => await fetch(server.url)).toThrow();
 });
 
+// The stop() promise is the "all connections closed" signal. An idle
+// keep-alive socket is not counted in pendingRequests or pendingWebSockets,
+// so previously the promise resolved while such a socket was still open. The
+// gate now includes a live HTTP-connection count (fed by uWS' filter hook),
+// so stop() resolves only after the last keep-alive socket closes.
+test.concurrent("server.stop() promise waits for idle keep-alive connections to close", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const net = require("net");
+        const server = Bun.serve({
+          port: 0,
+          hostname: "127.0.0.1",
+          idleTimeout: 0,
+          fetch() { return new Response("hi"); },
+        });
+        const sock = net.connect(server.port, "127.0.0.1");
+        let buf = "";
+        sock.on("data", d => (buf += d));
+        const waitForBody = () =>
+          new Promise((resolve, reject) => {
+            const onData = () => {
+              if (buf.endsWith("hi")) {
+                sock.off("data", onData);
+                resolve();
+              }
+            };
+            sock.on("data", onData);
+            sock.once("error", reject);
+          });
+        await new Promise((resolve, reject) => {
+          sock.once("error", reject);
+          sock.once("connect", resolve);
+        });
+        sock.write("GET / HTTP/1.1\\r\\nHost: x\\r\\nConnection: keep-alive\\r\\n\\r\\n");
+        await waitForBody();
+        if (server.pendingRequests !== 0) throw new Error("pendingRequests=" + server.pendingRequests);
+
+        let resolved = false;
+        const stopped = server.stop();
+        stopped.then(() => (resolved = true));
+        // Second request on the still-open keep-alive socket. The round-trip
+        // proves the connection is live and drives the event loop past the
+        // tick on which an eager resolve (old behaviour) would have fired.
+        buf = "";
+        sock.write("GET / HTTP/1.1\\r\\nHost: x\\r\\nConnection: keep-alive\\r\\n\\r\\n");
+        await waitForBody();
+        const resolvedWhileOpen = resolved;
+        sock.destroy();
+        await stopped;
+        console.log(JSON.stringify({ resolvedWhileOpen }));
+      `,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout.trim())).toEqual({ resolvedWhileOpen: false });
+  expect(exitCode).toBe(0);
+});
+
+// A socket that upgrades to a WebSocket is adopted out of the HTTP socket
+// group (uWS does not fire the filter's -1 for it), so the HTTP-connection
+// count must transfer to the WebSocket count at upgrade time. Without that
+// transfer, stop() would never resolve once a WebSocket had been opened.
+test.concurrent("server.stop() resolves after an upgraded WebSocket closes", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const server = Bun.serve({
+          port: 0,
+          hostname: "127.0.0.1",
+          fetch(req, srv) {
+            if (srv.upgrade(req)) return;
+            return new Response("no upgrade", { status: 400 });
+          },
+          websocket: { message() {} },
+        });
+        const ws = new WebSocket("ws://127.0.0.1:" + server.port);
+        await new Promise((resolve, reject) => {
+          ws.onopen = resolve;
+          ws.onerror = reject;
+        });
+        let wsClosed = false;
+        ws.onclose = () => (wsClosed = true);
+        const stopped = server.stop().then(() => wsClosed);
+        ws.close();
+        const closedAtResolve = await stopped;
+        console.log(JSON.stringify({ closedAtResolve }));
+      `,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout.trim())).toEqual({ closedAtResolve: true });
+  expect(exitCode).toBe(0);
+});
+
 // Shared rig for the two "late keep-alive" tests below: open a raw TCP
 // socket, hold the first request in-flight across stop()/close(), pipeline a
 // second request behind it, release, GC, and print the second response's
@@ -774,15 +879,15 @@ test("late keep-alive request to a route after stop() dispatches while the wrapp
   );
 });
 
-test("late keep-alive WebSocket upgrade after stop()+idle is refused by server.upgrade()", async () => {
+test("late keep-alive WebSocket upgrade after stop() is accepted and tracked", async () => {
   // Sibling of the HTTP late-keep-alive test for the WebSocket upgrade path.
-  // After `deinit_if_we_can` downgrades the wrapper AND clears
-  // `handler.server`/`handler.app`, `js_value_for_dispatch()` still lets the
-  // pipelined request reach `fetch()` while the wrapper is Weak, but
-  // `server.upgrade()` must return false: accepting would create a
-  // `ServerWebSocket` whose open/close accounting is skipped (`handler.server`
-  // is None), so `has_active_web_sockets()` would stay false and the next idle
-  // pass could free the `NewServer` box under a live socket.
+  // The idle gate in `deinit_if_we_can` now includes an open-HTTP-connection
+  // term, so while this keep-alive socket is live the wrapper is NOT
+  // downgraded and `handler.server` stays set. `server.upgrade()` therefore
+  // succeeds, the socket is adopted into the WS group, and its lifetime is
+  // tracked by `active_websocket_count` (the HTTP-connection count is
+  // transferred at upgrade time). Previously the wrapper had already been
+  // downgraded here and `upgrade()` returned false as a safety refusal.
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -844,10 +949,10 @@ test("late keep-alive WebSocket upgrade after stop()+idle is refused by server.u
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   const out = JSON.parse(stdout.trim() || "{}");
   expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
-  // First request 200 (held handler), pipelined upgrade refused → 426 body.
-  expect(out.upgraded).toBe(false);
+  // First request 200 (held handler), pipelined upgrade accepted → 101.
+  expect(out.upgraded).toBe(true);
   expect(out.statuses?.[0]).toMatch(/^HTTP\/1\.1 200\b/);
-  expect(out.statuses?.[1]).toMatch(/^HTTP\/1\.1 426\b/);
+  expect(out.statuses?.[1]).toMatch(/^HTTP\/1\.1 101\b/);
 });
 
 test("late keep-alive request to a node:http server after close() dispatches while the wrapper is Weak", async () => {

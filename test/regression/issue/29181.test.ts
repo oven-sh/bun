@@ -94,7 +94,8 @@ test("Bun.serve static file route: graceful stop resolves after 304 / HEAD", asy
     await r.text();
   }
 
-  // Graceful stop must resolve. Pre-fix this hangs forever because
-  // pending_requests was stuck at 10.
-  await server.stop();
+  // stop() must resolve: pre-fix this hangs forever because pending_requests
+  // was stuck at 10. Force-close because graceful stop now also waits for the
+  // idle keep-alive connection `fetch()` left in its pool.
+  await server.stop(true);
 });

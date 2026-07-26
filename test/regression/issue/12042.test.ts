@@ -24,7 +24,7 @@ await fetch(String(server.url), {
   body: params,
 });
 
-await server.stop();
+await server.stop(true);
     `,
   });
 

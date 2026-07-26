@@ -1713,12 +1713,9 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         if matches!(self.get_body_value(), Value::Null | Value::Empty) {
             return Ok(Value::Null);
         }
-        // A Bun.serve request body shares its hive slot with the RequestContext
-        // (`task` points at it). Moving the Locked out would leave the context
-        // delivering into `Used`. Materialize the source stream in place via
-        // `to_readable_stream` (fires `on_readable_stream_available` so the
-        // context switches to streaming delivery) and hand out a detached
-        // PendingValue that only holds the stream.
+        // A Bun.serve body shares its slot with the RequestContext (= `task`):
+        // materialize the stream in place so the context streams into it, and
+        // hand out a detached PendingValue instead of moving the Locked out.
         if matches!(self.get_body_value(), Value::Locked(l) if l.task.is_some()) {
             let stream_value = self.get_body_value().to_readable_stream(global_this)?;
             let readable = ReadableStream::from_js(stream_value, global_this)?;

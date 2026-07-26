@@ -247,12 +247,14 @@ process.emitWarning("Frozen intristics is an experimental feature and might chan
 
   for (let i = 0; i < intrinsicPrototypes.length; i++) enableDerivedOverrides(intrinsicPrototypes[i]);
 
+  const WeakSetAdd = WeakSet.prototype.add;
+  const WeakSetHas = WeakSet.prototype.has;
   const frozenSet = new WeakSet<object>();
   // In Node.js `console._stdout`/`_stderr` are getters; in Bun they are data
   // properties, so seed them as visited to keep stream prototypes unfrozen.
   const { _stdout, _stderr } = console as { _stdout?: object; _stderr?: object };
-  if (_stdout) frozenSet.add(_stdout);
-  if (_stderr) frozenSet.add(_stderr);
+  if (_stdout) WeakSetAdd.$call(frozenSet, _stdout);
+  if (_stderr) WeakSetAdd.$call(frozenSet, _stderr);
   for (let i = 0; i < intrinsics.length; i++) deepFreeze(intrinsics[i]);
 
   // 19.1 Value Properties of the Global Object
@@ -264,22 +266,25 @@ process.emitWarning("Frozen intristics is an experimental feature and might chan
   } as PropertyDescriptor);
 
   function deepFreeze(root: unknown): void {
-    const freezingSet = new Set<object>();
+    const queue: object[] = [];
 
     function enqueue(val: unknown): void {
-      if (Object(val) !== val) return;
-      if (frozenSet.has(val as object) || freezingSet.has(val as object)) return;
-      freezingSet.add(val as object);
+      const t = typeof val;
+      if ((t !== "object" && t !== "function") || val === null) return;
+      if (WeakSetHas.$call(frozenSet, val as object)) return;
+      WeakSetAdd.$call(frozenSet, val as object);
+      $putByValDirect(queue, queue.length, val as object);
     }
 
-    function doFreeze(obj: object): void {
+    enqueue(root);
+    for (let i = 0; i < queue.length; i++) {
+      const obj = queue[i];
       ObjectFreeze(obj);
-      const proto = ObjectGetPrototypeOf(obj);
+      enqueue(ObjectGetPrototypeOf(obj));
       const descs = ObjectGetOwnPropertyDescriptors(obj);
-      enqueue(proto);
       const keys = ReflectOwnKeys(descs);
-      for (let i = 0; i < keys.length; i++) {
-        const desc = descs[keys[i] as string];
+      for (let k = 0; k < keys.length; k++) {
+        const desc = descs[keys[k] as string];
         if (ObjectPrototypeHasOwnProperty.$call(desc, "value")) {
           enqueue(desc.value);
         } else {
@@ -288,11 +293,6 @@ process.emitWarning("Frozen intristics is an experimental feature and might chan
         }
       }
     }
-
-    enqueue(root);
-    // New values added before forEach() has finished will be visited.
-    freezingSet.forEach(doFreeze);
-    freezingSet.forEach(frozenSet.add, frozenSet);
   }
 
   // Convert data properties to accessors so `derived.prop = x` still defines

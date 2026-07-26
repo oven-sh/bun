@@ -2274,10 +2274,8 @@ impl VirtualMachine {
         }
     }
 
-    /// Runs `internal/freeze_intrinsics` if `--frozen-intrinsics` was passed.
-    /// Called after `load_preloads` so polyfill preloads land before the freeze
-    /// (Node.js documents that `--require`/`--import` run first). The module
-    /// registry caches the evaluation, so repeat calls are no-ops.
+    /// Runs `internal/freeze_intrinsics` for `--frozen-intrinsics`. Called
+    /// after `load_preloads` so `--require`/`--import` polyfills land first.
     fn maybe_freeze_intrinsics(&self) {
         unsafe extern "C" {
             static Bun__Node__FrozenIntrinsics: core::sync::atomic::AtomicBool;

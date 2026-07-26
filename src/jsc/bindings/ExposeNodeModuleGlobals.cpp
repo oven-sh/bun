@@ -108,11 +108,8 @@ extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__preExecutionBootstrap(Zig::GlobalOb
     }
 }
 
-// Evaluate `internal/freeze_intrinsics`. Called from
-// VirtualMachine::reload_entry_point after --require/--import preloads have
-// finished (Node.js documents that polyfill preloads run before the freeze).
-// The registry caches the module, so repeat calls (hot reload, workers) are
-// no-ops after the first.
+// Evaluate `internal/freeze_intrinsics`. Called after load_preloads so
+// --require/--import polyfills land before the freeze (Node.js ordering).
 extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__freezeIntrinsics(Zig::GlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);

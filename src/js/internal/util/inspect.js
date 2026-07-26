@@ -290,8 +290,7 @@ const codes = {}; // exported from errors.js
     return msg;
   });
   codes[sym] = function NodeError(...args) {
-    const stlDesc = Object.getOwnPropertyDescriptor(Error, "stackTraceLimit");
-    const stlWritable = stlDesc ? (stlDesc.writable ?? stlDesc.set !== undefined) : Object.isExtensible(Error);
+    const stlWritable = require("internal/shared").isErrorStackTraceLimitWritable();
     const limit = Error.stackTraceLimit;
     if (stlWritable) Error.stackTraceLimit = 0;
     const error = new TypeError();

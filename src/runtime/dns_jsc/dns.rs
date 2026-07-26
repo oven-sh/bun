@@ -1630,6 +1630,12 @@ impl c_ares::AddrInfoHandler for GetAddrInfoRequest {
         timeouts: i32,
         results: *mut c_ares::AddrInfo,
     ) {
+        // Node's dns.lookup is libc getaddrinfo and never yields EBADNAME; the
+        // resolve* path doesn't reach this handler and keeps EBADNAME intact.
+        let status = match status {
+            Some(c_ares::Error::EBADNAME) => Some(c_ares::Error::ENOTFOUND),
+            other => other,
+        };
         let result = if results.is_null() {
             None
         } else {

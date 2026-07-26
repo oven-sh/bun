@@ -2981,12 +2981,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         self.socket.get().flush();
 
         if self.can_end_after_flush() {
-            // `end()` is a write-side half-close: flush, then SHUT_WR. The
-            // socket stays readable; when the peer's FIN arrives uSockets sees
-            // eof on an already-shut-down socket and closes it cleanly
-            // (loop.c), so `on_close` → `mark_inactive()` runs the teardown
-            // that used to run here. Clear the flag so a later `flush()`
-            // cannot re-enter this arm.
+            // end() = flush + SHUT_WR; teardown runs via on_close once the peer FINs.
             self.update_flags(|f| f.remove(Flags::END_AFTER_FLUSH));
             self.socket.get().shutdown();
         }
@@ -2996,8 +2991,6 @@ impl<const SSL: bool> NewSocket<SSL> {
     #[bun_jsc::host_fn(method)]
     pub fn flush(this: &Self, _global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
         jsc::mark_binding!();
-        // Every other `internal_flush` caller already has this check; a detached
-        // socket has nothing to flush and its SocketHandler is the null sentinel.
         if this.socket.get().is_detached() {
             return Ok(JSValue::UNDEFINED);
         }
@@ -3042,11 +3035,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         _callframe: &CallFrame,
     ) -> JsResult<JSValue> {
         jsc::mark_binding!();
-        // The legacy `halfClose` boolean is accepted and ignored: every form is
-        // a write-side half-close (SHUT_WR). SHUT_RD has no safe user-facing
-        // use (the peer cannot observe it, and uSockets fabricates a local
-        // `end`), and node:net's `_final` already depends on the no-arg form
-        // being SHUT_WR.
+        // `halfClose` is accepted and ignored; every form is SHUT_WR.
         this.socket.get().shutdown();
         Ok(JSValue::UNDEFINED)
     }

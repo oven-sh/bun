@@ -1706,11 +1706,9 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         Ok(cloned)
     }
 
-    /// Fetch §Request ctor step 45: move this body into the returned value and
-    /// leave this owner `Used`, clearing its JS-side `body`/`stream` cache so
-    /// `.body`/`.bodyUsed` reflect the transfer. A stream already migrated to
-    /// the JS cache is re-seated into the returned `Locked.readable`.
-    /// Null/Empty bodies pass through unchanged.
+    /// Fetch §Request ctor step 45: move this body out (re-seating any stream
+    /// already migrated to the JS cache), leave this owner `Used`, and clear
+    /// its `body`/`stream` cache. Null/Empty bodies pass through unchanged.
     fn transfer_body_value(&self, global_this: &JSGlobalObject) -> JsResult<Value> {
         if matches!(self.get_body_value(), Value::Null | Value::Empty) {
             return Ok(Value::Null);

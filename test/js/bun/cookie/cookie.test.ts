@@ -391,9 +391,11 @@ test("delete cookie invalid path option", () => {
   expect(() => map.delete("a", { domain: "\n" })).toThrowErrorMatchingInlineSnapshot(
     `"Invalid cookie domain: contains invalid characters"`,
   );
-  expect(() => map.delete("\n", {})).toThrowErrorMatchingInlineSnapshot(
-    `"Invalid cookie name: contains invalid characters"`,
-  );
+  // Deleting by a name the Set-Cookie grammar rejects removes any matching entry and
+  // queues no tombstone, rather than throwing; the Cookie-header parser accepts such
+  // names, so a throwing delete() would leave them unmanageable.
+  expect(() => map.delete("\n", {})).not.toThrow();
+  expect(map.toSetCookieHeaders()).toEqual([]);
 });
 
 describe("Bun.CookieMap constructor", () => {

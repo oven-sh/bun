@@ -1011,4 +1011,75 @@ body {
       expect(htmlContent).toMatch(/href=".*\.webmanifest"/);
     },
   });
+
+  // <link rel="prefetch">, <link rel="modulepreload"> and <link rel="preload"> with
+  // as={script,fetch,track,document,embed,object} must not ship dangling source-path
+  // hrefs. Assets are emitted + hashed; JS preloads are folded into the entry chunk.
+  itBundled("html/link-preload-prefetch", {
+    outdir: "out/",
+    files: {
+      "/index.html": `
+<!DOCTYPE html>
+<html>
+  <head>
+    <link rel="prefetch" href="./hero.png">
+    <link rel="modulepreload" href="./mod.js">
+    <link rel="preload" as="script" href="./preloaded.js">
+    <link rel="preload" as="fetch" href="./data.json" crossorigin>
+    <link rel="preload" as="track" href="./captions.vtt">
+  </head>
+  <body>
+    <img src="./hero.png">
+    <script type="module" src="./mod.js"></script>
+  </body>
+</html>`,
+      "/mod.js": `console.log("mod");`,
+      "/preloaded.js": `console.log("preloaded");`,
+      "/hero.png": "PNG",
+      "/data.json": `{"k":1}`,
+      "/captions.vtt": "WEBVTT",
+    },
+    entryPoints: ["/index.html"],
+    onAfterBundle(api) {
+      const html = api.readFile("out/index.html");
+
+      // No raw source paths should survive in the output; every one of these
+      // would have been a guaranteed 404 before.
+      expect(html).not.toContain('href="./hero.png"');
+      expect(html).not.toContain('href="./mod.js"');
+      expect(html).not.toContain('href="./preloaded.js"');
+      expect(html).not.toContain('href="./data.json"');
+      expect(html).not.toContain('href="./captions.vtt"');
+
+      // prefetch: asset is copied + hashed and the href is rewritten.
+      expect(html).toMatch(/<link rel="prefetch" href="[^"]*hero-[a-z0-9]+\.png">/);
+
+      // preload as=fetch / as=track: assets are copied + hashed and the href is rewritten.
+      expect(html).toMatch(/<link rel="preload" as="fetch" href="[^"]*data-[a-z0-9]+\.json" crossorigin>/);
+      expect(html).toMatch(/<link rel="preload" as="track" href="[^"]*captions-[a-z0-9]+\.vtt">/);
+
+      // modulepreload / preload as=script: the referenced module is bundled into the
+      // entry chunk, so the hint tag is dropped (there is no separate file to preload).
+      expect(html).not.toMatch(/rel="modulepreload"/);
+      expect(html).not.toMatch(/as="script"/);
+
+      // The emitted files exist and carry the original bytes.
+      const hero = html.match(/href="(?:\.\/|\/)?(hero-[a-z0-9]+\.png)"/);
+      const data = html.match(/href="(?:\.\/|\/)?(data-[a-z0-9]+\.json)"/);
+      const vtt = html.match(/href="(?:\.\/|\/)?(captions-[a-z0-9]+\.vtt)"/);
+      expect(hero).not.toBeNull();
+      expect(data).not.toBeNull();
+      expect(vtt).not.toBeNull();
+      api.expectFile("out/" + hero![1]).toBe("PNG");
+      api.expectFile("out/" + data![1]).toBe(`{"k":1}`);
+      api.expectFile("out/" + vtt![1]).toBe("WEBVTT");
+
+      // Both preloaded scripts end up in the single entry JS chunk.
+      const js = html.match(/src="(?:\.\/|\/)?(index-[a-z0-9]+\.js)"/);
+      expect(js).not.toBeNull();
+      const jsContent = api.readFile("out/" + js![1]);
+      expect(jsContent).toContain('"mod"');
+      expect(jsContent).toContain('"preloaded"');
+    },
+  });
 });

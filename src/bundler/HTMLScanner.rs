@@ -184,7 +184,7 @@ impl TagHandler {
     }
 }
 
-pub(crate) const TAG_HANDLERS: [TagHandler; 16] = [
+pub(crate) const TAG_HANDLERS: [TagHandler; 20] = [
     // Module scripts with src
     TagHandler::new("script[src]", "src", ImportKind::Stmt),
     // CSS Stylesheets
@@ -207,6 +207,18 @@ pub(crate) const TAG_HANDLERS: [TagHandler; 16] = [
     ),
     // Web Workers
     TagHandler::new("link[as='worker'][href]", "href", ImportKind::Stmt),
+    // Preloaded scripts (<link rel="preload" as="script">)
+    TagHandler::new("link[as='script'][href]", "href", ImportKind::Stmt),
+    // Module preloads (<link rel="modulepreload">)
+    TagHandler::new("link[rel='modulepreload'][href]", "href", ImportKind::Stmt),
+    // Generic preload/prefetch targets (fetch/track/document/embed/object)
+    TagHandler::new(
+        "link[as='fetch'][href], link[as='track'][href], link[as='document'][href], link[as='embed'][href], link[as='object'][href]",
+        "href",
+        ImportKind::Url,
+    ),
+    // Prefetch hints (<link rel="prefetch">)
+    TagHandler::new("link[rel='prefetch'][href]", "href", ImportKind::Url),
     // Manifest files
     TagHandler::new("link[rel='manifest'][href]", "href", ImportKind::Url),
     // Icons

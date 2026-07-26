@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
-import { isLinux, isPosix, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, isPosix, tempDir } from "harness";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -287,5 +287,44 @@ describe.skipIf(!isPosix)("Dir pins the directory at open time", () => {
     expect(count() - before).toBe(1);
     dir.closeSync();
     expect(count() - before).toBe(0);
+  });
+
+  it("an unclosed Dir closes its fd and warns when garbage collected", async () => {
+    using root = tempDir("opendir-gc", { "d/x": "" });
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const fs = require("node:fs");
+         let warnings = 0;
+         process.on("warning", w => {
+           if (w.message === "Closing directory handle on garbage collection") warnings++;
+         });
+         (function scope() {
+           for (let i = 0; i < 4; i++) fs.opendirSync(process.argv[1]);
+           fs.opendirSync(process.argv[1]).closeSync(); // explicit close must not warn
+         })();
+         (async () => {
+           // FinalizationRegistry callbacks run on a task, not a microtask.
+           for (let i = 0; i < 10 && warnings < 4; i++) {
+             Bun.gc(true);
+             await new Promise(r => setImmediate(r));
+           }
+           const leaked = process.platform === "linux"
+             ? fs.readdirSync("/proc/self/fd").filter(f => {
+                 try { return fs.readlinkSync("/proc/self/fd/" + f) === process.argv[1]; } catch { return false; }
+               }).length
+             : 0;
+           console.log(JSON.stringify({ warnings, leaked }));
+         })();`,
+        path.join(String(root), "d"),
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout.trim())).toEqual({ warnings: 4, leaked: 0 });
+    expect(exitCode).toBe(0);
   });
 });

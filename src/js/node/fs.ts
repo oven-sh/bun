@@ -1019,6 +1019,17 @@ function opendirSync(path, options) {
   return result;
 }
 
+// Node closes an un-closed Dir's fd from its native finalizer and emits a
+// process warning. Mirror that with a FinalizationRegistry so a dropped Dir
+// doesn't leak the descriptor opened above.
+let dirHandleRegistry: FinalizationRegistry<number> | undefined;
+function onDirHandleCollected(fd: number) {
+  try {
+    fs.closeSync(fd);
+  } catch {}
+  process.emitWarning("Closing directory handle on garbage collection");
+}
+
 let dirSetHandle;
 
 class Dir {
@@ -1032,6 +1043,7 @@ class Dir {
   static {
     dirSetHandle = (dir: Dir, fd: number) => {
       dir.#handle = fd;
+      (dirHandleRegistry ??= new FinalizationRegistry(onDirHandleCollected)).register(dir, fd, dir);
     };
   }
 
@@ -1143,6 +1155,7 @@ class Dir {
   #closeOp() {
     const handle = this.#handle;
     if (handle < 0) throw $ERR_DIR_CLOSED();
+    dirHandleRegistry?.unregister(this);
     if (handle > 2) fs.closeSync(handle);
     this.#handle = -1;
   }
@@ -1160,6 +1173,7 @@ class Dir {
     const handle = this.#handle;
     if (handle < 0) throw $ERR_DIR_CLOSED();
     if (this.#pendingCount > 0) throw this.#dirConcurrentError();
+    dirHandleRegistry?.unregister(this);
     if (handle > 2) fs.closeSync(handle);
     this.#handle = -1;
   }

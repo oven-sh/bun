@@ -74,6 +74,10 @@ static bool hasValidParsedHost(const URL& url)
 // case for every URL that stays on the common path.
 static String applyIDNADeltaToURLAuthority(const String& urlString, StringView specialBaseScheme = {})
 {
+    // A percent-encoded delta source (e.g. `%E1%A0%8E` for U+180E) is
+    // all-ASCII and intentionally excluded: the delta scans for literal code
+    // units only. The durable fix is bundling Unicode-16 ICU data so the
+    // parser's own percent-decode + domain-to-ASCII handles it uniformly.
     if (urlString.is8Bit() || !urlString.length())
         return {};
 

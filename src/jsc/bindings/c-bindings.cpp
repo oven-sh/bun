@@ -322,12 +322,21 @@ extern "C" void on_before_reload_process_linux()
     // kill. execve itself resets caught dispositions, so this only shrinks
     // the window to zero. Inherited SIG_IGN (nohup's SIGHUP, job-control
     // SIGTTIN/SIGTTOU) is left alone so it survives execve like before.
+    // SIGSEGV/SIGBUS (JSC's wasm trap + crash handler) and real-time
+    // signals (JSC's sigThreadSuspendResume, pthread_kill'd by the
+    // SamplingProfiler and concurrent GC) are left for execve to reset
+    // atomically; resetting them here while those threads are still
+    // running turns a sampler tick or stop-the-world into a fatal signal.
     struct sigaction sa {};
     sa.sa_handler = SIG_DFL;
     sigemptyset(&sa.sa_mask);
     for (int s = 1; s < NSIG; s++) {
-        if (s == SIGKILL || s == SIGSTOP)
+        if (s == SIGKILL || s == SIGSTOP || s == SIGSEGV || s == SIGBUS)
             continue;
+#ifdef SIGRTMIN
+        if (s >= SIGRTMIN)
+            break;
+#endif
         struct sigaction old {};
         if (sigaction(s, nullptr, &old) != 0)
             continue;

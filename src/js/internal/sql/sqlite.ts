@@ -245,12 +245,16 @@ class SQLiteQueryHandle implements BaseQueryHandle<BunSQLiteModule.Database> {
         const stmt = db.prepare(sql);
         let result: unknown[] | undefined;
 
+        // Pass the positional parameter list as a single array so bun:sqlite
+        // binds each element by index. Spreading it into the variadic API lets
+        // a user-supplied object/array in the first slot be reinterpreted as
+        // the full binding structure, overriding later trusted parameters.
         if (mode === SQLQueryResultMode.values) {
-          result = stmt.values.$apply(stmt, values);
+          result = stmt.values.$call(stmt, values);
         } else if (mode === SQLQueryResultMode.raw) {
-          result = stmt.raw.$apply(stmt, values);
+          result = stmt.raw.$call(stmt, values);
         } else {
-          result = stmt.all.$apply(stmt, values);
+          result = stmt.all.$call(stmt, values);
         }
 
         const sqlResult = $isArray(result) ? new SQLResultArray(result) : new SQLResultArray([result]);
@@ -262,7 +266,7 @@ class SQLiteQueryHandle implements BaseQueryHandle<BunSQLiteModule.Database> {
         query.resolve(sqlResult);
       } else {
         // For INSERT/UPDATE/DELETE/CREATE etc., use db.run() which handles multiple statements natively
-        const changes = db.run.$apply(db, [sql].concat(values));
+        const changes = db.run.$call(db, sql, values);
         const sqlResult = new SQLResultArray();
 
         sqlResult.command = commandToString(command, parsedInfo.lastToken);

@@ -1186,8 +1186,8 @@ where
     pub fn end_already_responded_stream(&mut self) {
         ctx_log!("endAlreadyRespondedStream");
         debug_assert!(!HTTP3);
-        // Resume before `take()`: READABLE was disabled while paused, so the socket has not been recycled.
-        self.resume_request_body_socket();
+        // `resp` may be freed (see above); the sink resumed the socket at `res.end()` while live.
+        self.flags.set_request_body_paused(false);
         if self.resp.take().is_some() {
             self.flags.set_is_waiting_for_request_body(false);
             self.flags.set_has_abort_handler(false);

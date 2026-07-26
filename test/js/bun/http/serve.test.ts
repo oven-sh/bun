@@ -3419,6 +3419,43 @@ describe("request body backpressure", () => {
     }
   });
 
+  it("resumes a paused request body when the handler calls Bun.write(file, req)", async () => {
+    // Bun.write on a Locked body installs on_receive_value without creating a
+    // ByteStream; the pre-stream pause must release via on_start_buffering.
+    const TOTAL = 32 * 1024 * 1024;
+    const gate = Promise.withResolvers<void>();
+    const serverDone = Promise.withResolvers<number>();
+
+    using dir = tempDir("serve-request-body-bunwrite", {});
+    const out = join(String(dir), "body");
+
+    using server = serve({
+      port: 0,
+      idleTimeout: 0,
+      maxRequestBodySize: TOTAL + 1,
+      error(e) {
+        serverDone.reject(e);
+      },
+      async fetch(req) {
+        await gate.promise;
+        const n = await Bun.write(out, req);
+        serverDone.resolve(n);
+        return new Response("ok");
+      },
+    });
+
+    const { sock, sentBeforeGate } = await pumpUploadUntilPlateau(server.port, TOTAL, 3);
+    try {
+      expect(sentBeforeGate).toBeLessThan(TOTAL);
+
+      gate.resolve();
+      const bytes = await serverDone.promise;
+      expect(bytes).toBe(TOTAL);
+    } finally {
+      sock.destroy();
+    }
+  });
+
   for (const touchBodyFirst of [false, true]) {
     it(`resumes a paused request body when the handler calls .arrayBuffer()${touchBodyFirst ? " after touching req.body" : ""}`, async () => {
       // .arrayBuffer() wants the whole body, so the pre-stream pause must

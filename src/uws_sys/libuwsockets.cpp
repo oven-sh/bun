@@ -1656,12 +1656,9 @@ size_t uws_req_get_header(uws_req_t *res, const char *lower_case_header,
     }
   }
 
-  // One pass over all request headers for the WebSocket opening-handshake
-  // checks that uws_req_get_header (first match only) cannot answer: the
-  // |Connection| field is a comma-separated token list that may span multiple
-  // field lines, and |Sec-WebSocket-Key| must not appear more than once.
-  // Returns the number of |Sec-WebSocket-Key| field lines; writes whether any
-  // |Connection| token is an ASCII case-insensitive match for "upgrade".
+  // RFC 6455 §4.2.1 handshake checks that uws_req_get_header (first match
+  // only) cannot answer: returns the |Sec-WebSocket-Key| count and whether
+  // any |Connection| token equals "upgrade".
   uint32_t uws_req_ws_handshake_scan(uws_req_t *res, bool *conn_has_upgrade)
   {
     uWS::HttpRequest *uwsReq = (uWS::HttpRequest *)res;

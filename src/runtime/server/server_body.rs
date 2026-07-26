@@ -427,8 +427,6 @@ fn is_valid_sec_websocket_key(key: &[u8]) -> bool {
             .all(|&c| c.is_ascii_alphanumeric() || c == b'+' || c == b'/')
 }
 
-/// RFC 7230 §3.2.2 / §6.1: |Connection| and |Upgrade| are comma-separated
-/// token lists; match one token ASCII-case-insensitively.
 #[inline]
 fn header_value_has_token(value: &[u8], lower_token: &[u8]) -> bool {
     value
@@ -1995,10 +1993,7 @@ where
             if upgrade_header.len == 0 {
                 upgrade_header = ZigString::init(r.header(b"upgrade").unwrap_or(b""));
             }
-            // `r.header()` returns only the first field line, so it cannot
-            // answer whether |Connection|'s token list (which may span several
-            // field lines) contains "upgrade", nor whether |Sec-WebSocket-Key|
-            // was sent more than once; scan once for both.
+            // `r.header()` returns only the first field line; scan all of them.
             let (key_count, conn_upgrade) = r.ws_handshake_scan();
             connection_has_upgrade = Some(conn_upgrade);
             if key_count > 1 {
@@ -2006,19 +2001,14 @@ where
             }
         }
 
-        // RFC 6455 §4.2.1: validate the client's opening handshake.
-        // A request that does not name "websocket" in its |Upgrade| token list,
-        // whose |Connection| token list does not contain "upgrade", or whose
-        // |Sec-WebSocket-Key| is not exactly one base64-of-16-bytes value, is
-        // not a WebSocket handshake; fall through so the caller's fetch() can
-        // respond.
+        // RFC 6455 §4.2.1: not a WebSocket handshake; fall through so the
+        // caller's fetch() can respond.
         if !header_value_has_token(upgrade_header.slice(), b"websocket") {
             return Ok(JSValue::FALSE);
         }
-        if !connection_has_upgrade.unwrap_or_else(|| {
-            // `FetchHeaders` comma-joins repeated field lines (HTTPHeaderMap::add).
-            header_value_has_token(connection_header.slice(), b"upgrade")
-        }) {
+        if !connection_has_upgrade
+            .unwrap_or_else(|| header_value_has_token(connection_header.slice(), b"upgrade"))
+        {
             return Ok(JSValue::FALSE);
         }
         if !is_valid_sec_websocket_key(sec_websocket_key_str.slice()) {

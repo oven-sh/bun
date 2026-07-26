@@ -82,8 +82,6 @@ impl Request {
         // ffi::slice tolerates the (null, 0) shape uWS returns when no parameter is present.
         unsafe { bun_core::ffi::slice(ptr, len) }
     }
-    /// One pass over all request headers for the WebSocket opening-handshake
-    /// checks that [`header`](Self::header) (first match only) cannot answer.
     /// Returns `(sec_websocket_key_count, connection_has_upgrade_token)`.
     pub fn ws_handshake_scan(&self) -> (u32, bool) {
         let mut conn_has_upgrade = false;

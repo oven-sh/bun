@@ -604,10 +604,6 @@ pub struct PosixStreamingWriter<Parent: PosixStreamingWriterParent> {
     pub is_done: bool,
     pub closed_without_reporting: bool,
     pub force_sync: bool,
-    /// Buffer threshold for `should_buffer`: incoming writes are accumulated
-    /// in `outgoing` until their total meets this size, then drained in one
-    /// syscall. Defaults to the platform page size; `FileSink` overrides it
-    /// from the user's `highWaterMark`.
     pub chunk_size: usize,
 }
 

@@ -726,38 +726,6 @@ describe("HTMLRewriter", () => {
     expect(lastInTextNode).toBeBoolean();
   });
 
-  describe("does not rewrite non-UTF-8 text bytes when the handler only observes", () => {
-    // <p>a + cp1252 quotes/é + overlong + FF + WTF-8 lone surrogate + b</p> c é d
-    // prettier-ignore
-    const bytes = new Uint8Array([
-      0x3c, 0x70, 0x3e, 0x61, 0x93, 0xe9, 0x94, 0xc0, 0xaf, 0xff, 0xed, 0xa0,
-      0x80, 0x62, 0x3c, 0x2f, 0x70, 0x3e, 0x63, 0xe9, 0x64,
-    ]);
-    const transform = async setup => {
-      const rewriter = new HTMLRewriter();
-      setup(rewriter);
-      return new Uint8Array(await rewriter.transform(new Response(bytes)).arrayBuffer());
-    };
-
-    it.each([
-      ["no handlers", r => r],
-      ["element handler", r => r.on("p", { element() {} })],
-      ["comments handler", r => r.on("p", { comments() {} })],
-      ["text handler that reads .text", r => r.on("p", { text(t) { void t.text; } })], // prettier-ignore
-      ["onDocument text handler", r => r.onDocument({ text() {} })],
-      ["text handler that inserts around the chunk", r => r.on("p", { text(t) { t.before(""); t.after(""); } })], // prettier-ignore
-    ])("%s", async (_, setup) => {
-      expect(await transform(setup)).toEqual(bytes);
-    });
-
-    it("text outside the selector is untouched", async () => {
-      const out = await transform(r => r.on("p", { text(t) { t.replace("x"); } })); // prettier-ignore
-      // The <p> text is replaced (including the empty last-in-node chunk), but
-      // the trailing `c \xe9 d` outside the selector passes through verbatim.
-      expect(out).toEqual(new Uint8Array([...Buffer.from("<p>xx</p>c"), 0xe9, 0x64]));
-    });
-  });
-
   it("it supports selfClosing", async () => {
     const selfClosing = {};
     await new HTMLRewriter()
@@ -1401,5 +1369,17 @@ describe("text handler does not transcode unmodified non-UTF-8 bytes", () => {
     const src = wrap([0xa9]);
     expect(await rewrite(src, { text: t => t.replace("X", { html: true }) })).toEqual(Buffer.from("<p>XX</p>"));
     expect(await rewrite(src, { text: t => t.remove() })).toEqual(Buffer.from("<p></p>"));
+  });
+
+  it("text outside the selector passes through even when matched text is replaced", async () => {
+    // <p>a\xa9b</p>c\xe9d
+    const src = Buffer.concat([wrap([0x61, 0xa9, 0x62]), Buffer.from([0x63, 0xe9, 0x64])]);
+    const out = Buffer.from(
+      await new HTMLRewriter()
+        .on("p", { text: t => t.replace("x", { html: true }) })
+        .transform(new Response(src))
+        .arrayBuffer(),
+    );
+    expect(out).toEqual(Buffer.concat([Buffer.from("<p>xx</p>c"), Buffer.from([0xe9, 0x64])]));
   });
 });

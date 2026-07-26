@@ -89,47 +89,56 @@
  
              if really_last {
                  debug_assert!(self.pending_text_streaming_decoder.is_none());
-@@ -89,6 +110,28 @@
+@@ -89,6 +110,37 @@
                  SourceLocation::from_start_len(next_source_location_bytes_start, read);
              next_source_location_bytes_start = source_location.bytes().end;
  
-+            // Raw-byte accounting for this chunk:
++            // Raw-byte accounting for this chunk (UTF-8 only):
 +            //   raw(chunk) = pending_raw ++ raw_input[..read - tail]
 +            //   pending_raw' = raw_input[read - tail .. read]
 +            // where `tail` is the number of bytes encoding_rs kept as internal
 +            // state (an incomplete sequence at end-of-input). OutputFull and
 +            // last=true never leave state, so `tail` is only nonzero on the
-+            // final InputEmpty of a non-last call.
-+            let consumed = raw_input.get(..read).unwrap_or_default();
-+            let tail = if finished_decoding && !last_in_text_node && encoding == UTF_8 {
-+                utf8_incomplete_tail_len(consumed)
++            // final InputEmpty of a non-last call. For non-UTF-8 document
++            // encodings `raw` is `None` and the serializer re-encodes the
++            // decoded text, which is the pre-patch behaviour: the tail-length
++            // computation is UTF-8-specific and other multi-byte encodings are
++            // not worth the extra state.
++            let (raw, carry): (Option<Cow<'i, [u8]>>, &[u8]) = if encoding == UTF_8 {
++                let consumed = raw_input.get(..read).unwrap_or_default();
++                let tail = if finished_decoding && !last_in_text_node {
++                    utf8_incomplete_tail_len(consumed)
++                } else {
++                    0
++                };
++                let (emit, carry) = consumed.split_at(read - tail);
++                let raw = if self.pending_raw.is_empty() {
++                    Cow::Borrowed(emit)
++                } else {
++                    let mut v = std::mem::take(&mut self.pending_raw);
++                    v.extend_from_slice(emit);
++                    Cow::Owned(v)
++                };
++                (Some(raw), carry)
 +            } else {
-+                0
-+            };
-+            let (emit, carry) = consumed.split_at(read - tail);
-+            let raw: Cow<'i, [u8]> = if self.pending_raw.is_empty() {
-+                Cow::Borrowed(emit)
-+            } else {
-+                let mut v = std::mem::take(&mut self.pending_raw);
-+                v.extend_from_slice(emit);
-+                Cow::Owned(v)
++                (None, &[][..])
 +            };
 +
              if written > 0 || last_in_text_node {
                  // the last call to feed_text() may make multiple calls to output_handler,
                  // but only one call to output_handler can be *the* last one.
-@@ -97,15 +140,25 @@
+@@ -97,15 +149,25 @@
                  (output_handler)(
                      // this will always be in bounds, but unwrap_or_default optimizes better
                      buffer.get(..written).unwrap_or_default(),
-+                    Some(raw),
++                    raw,
                      really_last,
                      encoding,
                      source_location,
                  )?;
 +                self.pending_raw.clear();
 +                self.pending_raw.extend_from_slice(carry);
-+            } else {
++            } else if let Some(raw) = raw {
 +                // Handler call skipped: everything we would have emitted as raw
 +                // (including any carried prefix) defers to the next chunk.
 +                let mut deferred = raw.into_owned();
@@ -144,7 +153,7 @@
                  } else {
                      self.pending_source_location_bytes_start = next_source_location_bytes_start;
                  }
-@@ -152,3 +205,20 @@
+@@ -152,3 +214,20 @@
          }
      }
  }

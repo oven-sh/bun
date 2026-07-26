@@ -7510,7 +7510,7 @@ pub mod bv2_impl {
                 >(out, top_level_dir, path.text)
             } else {
                 spill = vec![0u8; need];
-                to_spill = vec![0u8; path.text.len().saturating_add(2)];
+                to_spill = vec![0u8; need];
                 bun_paths::resolve_path::relative_platform_buf_with_scratch::<
                     bun_paths::resolve_path::platform::Loose,
                     false,

@@ -845,7 +845,6 @@ impl PublishCommand {
             &raw mut response_buf,
             b"",
             None,
-            None,
             http::FetchRedirect::Follow,
         );
 
@@ -970,7 +969,6 @@ impl PublishCommand {
             &raw mut response_buf,
             publish_req_body,
             None,
-            None,
             http::FetchRedirect::Follow,
         );
 
@@ -1066,7 +1064,6 @@ impl PublishCommand {
                     otp_headers.content.written_slice(),
                     &raw mut response_buf,
                     publish_req_body,
-                    None,
                     None,
                     http::FetchRedirect::Follow,
                 );
@@ -1285,7 +1282,6 @@ impl PublishCommand {
                         auth_headers.content.written_slice(),
                         response_buf,
                         b"",
-                        None,
                         None,
                         http::FetchRedirect::Follow,
                     );

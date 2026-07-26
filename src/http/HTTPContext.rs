@@ -724,8 +724,6 @@ impl<const SSL: bool> HTTPContext<SSL> {
                 continue;
             }
 
-            // The hash covers the Host-header SNI override that the handshake
-            // was verified against (see get_tls_hostname / connect()).
             if socket.proxy_auth_hash != proxy_auth_hash {
                 continue;
             }
@@ -870,7 +868,6 @@ impl<const SSL: bool> HTTPContext<SSL> {
         if SSL {
             if client.can_offer_h2() {
                 let cfg = SSLConfig::raw_ptr(client.tls_props.as_ref());
-                let host_header_hash = client.proxy_auth_hash();
                 for &session in &self.active_h2_sessions {
                     // Active sessions are kept alive by registry refs; `&mut`
                     // is unique here (registry is iterated read-only and
@@ -879,7 +876,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
                     // strong-ref-held invariant as the pool/found-slot cases.
                     let s = h2_session_as_mut(NonNull::new(session)).unwrap();
                     if s.has_headroom()
-                        && s.matches(hostname, port, cfg, host_header_hash)
+                        && s.matches(hostname, port, cfg)
                         // Same guard as the pool path: a session whose TLS
                         // handshake ran with reject_unauthorized=false never
                         // validated the peer hostname, so a strict caller
@@ -897,7 +894,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
                     // strict caller must not coalesce onto an in-flight connect
                     // that was initiated with reject_unauthorized=false, since
                     // the resulting session won't have validated the peer.
-                    if pc.matches(hostname, port, cfg_nn, host_header_hash)
+                    if pc.matches(hostname, port, cfg_nn)
                         && (!client.flags.reject_unauthorized || pc.reject_unauthorized)
                     {
                         // client outlives the pending connect (resolved before
@@ -911,8 +908,6 @@ impl<const SSL: bool> HTTPContext<SSL> {
 
         if client.is_keep_alive_possible() {
             let want_tunnel = client.http_proxy.is_some() && client.url.is_https();
-            // CONNECT TCP target (writeProxyConnect line 346). The SNI
-            // override (client.hostname) is hashed into proxyAuthHash.
             let target_hostname: &[u8] = if want_tunnel {
                 client.url.hostname
             } else {
@@ -923,13 +918,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
             } else {
                 0
             };
-            // For a direct TLS connection the handshake verifies the peer
-            // against get_tls_hostname() — which prefers the Host-header
-            // override (client.hostname) over url.hostname — so the override
-            // must discriminate the pool key there too, not just for CONNECT
-            // tunnels. proxy_auth_hash() reduces to exactly the override hash
-            // (or 0) for a non-proxied request.
-            let proxy_auth_hash: u64 = if want_tunnel || (SSL && client.http_proxy.is_none()) {
+            let proxy_auth_hash: u64 = if want_tunnel {
                 client.proxy_auth_hash()
             } else {
                 0
@@ -1031,7 +1020,6 @@ impl<const SSL: bool> HTTPContext<SSL> {
                     port,
                     ssl_config: cfg,
                     reject_unauthorized: client.flags.reject_unauthorized,
-                    host_header_hash: client.proxy_auth_hash(),
                     ..Default::default()
                 });
                 // `client.pending_h2 = pc` stores a *borrowed* backref into the

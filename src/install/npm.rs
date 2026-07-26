@@ -161,7 +161,6 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
         &raw mut response_buf,
         b"",
         None,
-        None,
         http::FetchRedirect::Follow,
     );
 

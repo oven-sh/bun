@@ -158,7 +158,6 @@ fn make_client<'a>(
     url: URL<'a>,
     header_entries: headers::EntryList,
     header_buf: &'a [u8],
-    hostname: Option<&'a [u8]>,
     signals: Signals,
     async_http_id: u32,
     http_proxy: Option<URL<'a>>,
@@ -199,7 +198,6 @@ fn make_client<'a>(
         pending_h2: None,
         signals,
         async_http_id,
-        hostname,
         unix_socket_path: ZigStringSlice::EMPTY,
         compress: None,
         compressed_request_body: Vec::new(),
@@ -252,7 +250,6 @@ pub struct Options<'a> {
     pub http_proxy: Option<URL<'a>>,
     pub proxy_settings: Option<Box<crate::ProxySettings>>,
     pub proxy_headers: Option<Headers>,
-    pub hostname: Option<&'a [u8]>,
     pub signals: Option<Signals>,
     pub unix_socket_path: Option<ZigStringSlice>,
     pub disable_timeout: Option<bool>,
@@ -445,7 +442,6 @@ impl<'a> AsyncHTTP<'a> {
             // and `client.header_entries`; `MultiArrayList` owns its allocation, so clone here.
             headers.clone().expect("OOM"),
             headers_buf,
-            options.hostname,
             signals,
             async_http_id,
             options.http_proxy,
@@ -527,7 +523,6 @@ impl<'a> AsyncHTTP<'a> {
         response_buffer: *mut MutableString,
         request_body: &'a [u8],
         http_proxy: Option<URL<'a>>,
-        hostname: Option<&'a [u8]>,
         redirect_type: FetchRedirect,
     ) -> AsyncHTTP<'a> {
         Self::init(
@@ -541,7 +536,6 @@ impl<'a> AsyncHTTP<'a> {
             redirect_type,
             Options {
                 http_proxy,
-                hostname,
                 ..Options::default()
             },
         )

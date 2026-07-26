@@ -1566,7 +1566,6 @@ pub(crate) fn download_to_path(
                 &raw mut *compressed_archive_bytes,
                 b"",
                 http_proxy,
-                None,
                 bun_http::FetchRedirect::Follow,
             ));
             async_http.client.progress_node =

@@ -237,7 +237,7 @@ fn on_open(ctx: *mut HTTPClient) {
     // `&mut ProxyTunnel` — see ALIASING NOTE.
     let _guard = ProxyTunnel::ref_scope(proxy_nn);
     if let Some(ssl_ptr) = ProxyTunnel::wrapper_ssl(proxy_nn) {
-        let _hostname = this.hostname.unwrap_or(this.url.hostname);
+        let _hostname = this.url.hostname;
 
         // SAFETY: `ssl_ptr` is the live SSL handle from the tunnel's SSLWrapper.
         let ssl = unsafe { &mut *ssl_ptr.as_ptr() };

@@ -164,7 +164,6 @@ test.concurrent(
       {
         "cfg.json": `{"a":1}`,
         "index.cjs": `
-          const fs = require("fs");
           require.extensions[".json"] = (m, f) => { m.exports = { overridden: true }; };
           const r1 = require("./cfg.json");
           (async () => {

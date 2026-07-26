@@ -1744,7 +1744,6 @@ pub mod bv2_impl {
                     }
                 }
 
-                let is_js = self.all_loaders[source_index.get() as usize].is_javascript_like();
                 let is_css = self.all_loaders[source_index.get() as usize].is_css();
 
                 let import_record_list_id = source_index;
@@ -1795,17 +1794,21 @@ pub mod bv2_impl {
                             let import_record = &self.all_import_records
                                 [import_record_list_id.get() as usize]
                                 .as_slice()[ir_idx];
-                            // Mark if the file is imported by JS and its URL is inlined for CSS
+                            // A CSS importer will inline the file as a data: URI; any other
+                            // importer (JS, HTML, ...) needs the asset emitted on disk, so
+                            // treat every non-CSS reference as a copy-forcing context.
                             let is_inlined = import_record.source_index.is_valid()
                                 && !self.all_urls_for_css
                                     [import_record.source_index.get() as usize]
                                     .is_empty();
-                            if is_js && is_inlined {
-                                self.additional_files_imported_by_js_and_inlined_in_css
-                                    .set(import_record.source_index.get() as usize);
-                            } else if is_css && is_inlined {
-                                self.additional_files_imported_by_css_and_inlined
-                                    .set(import_record.source_index.get() as usize);
+                            if is_inlined {
+                                if is_css {
+                                    self.additional_files_imported_by_css_and_inlined
+                                        .set(import_record.source_index.get() as usize);
+                                } else {
+                                    self.additional_files_imported_by_js_and_inlined_in_css
+                                        .set(import_record.source_index.get() as usize);
+                                }
                             }
 
                             let next_source = import_record.source_index;
@@ -4166,6 +4169,60 @@ pub mod bv2_impl {
                         additional_files[index].push(crate::AdditionalFile::OutputFile(
                             (additional_output_files.len() - 1) as u32,
                         ));
+                    }
+                }
+
+                // Distinct-content collisions on the same output path are last-writer-wins on
+                // disk; surface them as the same hard error the chunk pass emits. Identical
+                // content mapping to one path is benign and left alone.
+                {
+                    let mut seen: bun_collections::StringHashMap<(u64, usize)> =
+                        bun_collections::StringHashMap::default();
+                    let mut had_collision = false;
+                    for (i, out) in additional_output_files.iter().enumerate() {
+                        let gop = seen.get_or_put(&out.dest_path)?;
+                        if !gop.found_existing {
+                            *gop.value_ptr = (out.hash, i);
+                            continue;
+                        }
+                        let (prev_hash, prev_i) = *gop.value_ptr;
+                        if prev_hash == out.hash {
+                            continue;
+                        }
+                        had_collision = true;
+                        let mut msg: Vec<u8> = Vec::new();
+                        let _ = writeln!(&mut msg, "Multiple files share the same output path");
+                        let _ = writeln!(&mut msg, "  {}:", bstr::BStr::new(&out.dest_path));
+                        for j in [prev_i, i] {
+                            let _ = writeln!(
+                                &mut msg,
+                                "    from input {}",
+                                bstr::BStr::new(additional_output_files[j].src_path.text)
+                            );
+                        }
+                        self.transpiler
+                            .log_mut()
+                            .add_error(None, bun_ast::Loc::EMPTY, msg);
+                        let template = &self.transpiler.options.asset_naming;
+                        if !template.is_empty() {
+                            let mut note: Vec<u8> = Vec::new();
+                            let _ = write!(
+                                &mut note,
+                                "asset naming is '{}', consider adding '[hash]' to make filenames unique",
+                                bstr::BStr::new(template),
+                            );
+                            self.transpiler.log_mut().add_msg(bun_ast::Msg {
+                                kind: bun_ast::Kind::Note,
+                                data: bun_ast::Data {
+                                    text: std::borrow::Cow::Owned(note),
+                                    ..Default::default()
+                                },
+                                ..Default::default()
+                            });
+                        }
+                    }
+                    if had_collision {
+                        return Err(Error::DuplicateOutputPath);
                     }
                 }
 

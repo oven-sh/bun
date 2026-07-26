@@ -9,7 +9,7 @@ use bun_threading::thread_pool::Task as ThreadPoolLibTask;
 use lol_html::HandlerResult;
 use lol_html::html_content::{ContentType, Element, EndTag};
 
-use crate::HTMLScanner::{HTMLProcessor, HTMLProcessorHandler};
+use crate::HTMLScanner::{HTMLProcessor, HTMLProcessorHandler, SrcSetIter};
 use crate::linker_context_mod::{GenerateChunkCtx, LinkerContext, debug};
 use crate::options::Loader;
 use crate::{Chunk, CompileResult};
@@ -121,10 +121,81 @@ impl<'a> HTMLProcessorHandler for HTMLLoader<'a> {
     fn on_tag(
         &mut self,
         element: &mut Element<'_, '_>,
-        _path: &[u8],
+        path: &[u8],
         url_attribute: &[u8],
         _kind: ImportKind,
     ) {
+        if url_attribute == b"srcset" {
+            // One import record per candidate URL, same split order as the scan
+            // pass. Rewrites the whole attribute so descriptors are preserved.
+            let mut out: Vec<u8> = Vec::with_capacity(path.len());
+            let mut remove = false;
+            for (url, descriptor) in SrcSetIter::new(path) {
+                let rewritten = self.rewrite_one_url(url);
+                if matches!(rewritten, RewrittenUrl::Remove) {
+                    remove = true;
+                }
+                if !out.is_empty() {
+                    out.extend_from_slice(b", ");
+                }
+                out.extend_from_slice(rewritten.as_bytes(url));
+                if !descriptor.is_empty() {
+                    out.push(b' ');
+                    out.extend_from_slice(descriptor);
+                }
+            }
+            if remove {
+                element.remove();
+            } else if out != path {
+                set_attribute(element, url_attribute, &out);
+            }
+            return;
+        }
+
+        match self.rewrite_one_url(path) {
+            RewrittenUrl::Unchanged => {}
+            RewrittenUrl::Remove => element.remove(),
+            RewrittenUrl::Value(v) => set_attribute(element, url_attribute, &v),
+        }
+    }
+
+    fn on_head_tag(&mut self, element: &mut Element<'_, '_>) -> bool {
+        self.register_end_tag_handler(element, Self::end_head_tag_handler)
+    }
+
+    fn on_html_tag(&mut self, element: &mut Element<'_, '_>) -> bool {
+        self.register_end_tag_handler(element, Self::end_html_tag_handler)
+    }
+
+    fn on_body_tag(&mut self, element: &mut Element<'_, '_>) -> bool {
+        self.register_end_tag_handler(element, Self::end_body_tag_handler)
+    }
+}
+
+enum RewrittenUrl {
+    /// Leave the attribute value as-is.
+    Unchanged,
+    /// Remove the element (JS/CSS tags the bundle emits elsewhere).
+    Remove,
+    /// New value to write back.
+    Value(Vec<u8>),
+}
+
+impl RewrittenUrl {
+    fn as_bytes<'a>(&'a self, original: &'a [u8]) -> &'a [u8] {
+        match self {
+            RewrittenUrl::Value(v) => v,
+            _ => original,
+        }
+    }
+}
+
+impl<'a> HTMLLoader<'a> {
+    /// Advances one import record and returns what to write for its attribute
+    /// value. `original` is the URL as it appeared in the source HTML; its
+    /// `?query`/`#fragment` suffix is re-appended to emitted asset references
+    /// (mirroring the CSS printer).
+    fn rewrite_one_url(&mut self, original: &[u8]) -> RewrittenUrl {
         if self.current_import_record_index as usize >= self.import_records.len() {
             bun_core::Output::panic(format_args!(
                 "Assertion failure in HTMLLoader.onTag: current_import_record_index ({}) >= import_records.len ({})",
@@ -159,21 +230,33 @@ impl<'a> HTMLProcessorHandler for HTMLLoader<'a> {
                 "Leaving external import: {}",
                 BStr::new(import_record.path.text)
             );
-            return;
+            return RewrittenUrl::Unchanged;
         }
+
+        let suffix: &[u8] = match strings::index_of_any(original, b"?#") {
+            Some(i) => &original[i..],
+            None => b"",
+        };
+        let with_suffix = |url: &[u8], suffix: &[u8]| -> RewrittenUrl {
+            if suffix.is_empty() {
+                return RewrittenUrl::Value(url.to_vec());
+            }
+            let mut v = Vec::with_capacity(url.len() + suffix.len());
+            v.extend_from_slice(url);
+            v.extend_from_slice(suffix);
+            RewrittenUrl::Value(v)
+        };
 
         if self.linker.dev_server.is_some() {
             if !unique_key_for_additional_files.is_empty() {
-                set_attribute(element, url_attribute, unique_key_for_additional_files);
+                return with_suffix(unique_key_for_additional_files, suffix);
             } else if import_record.path.is_disabled
                 || loader.is_javascript_like()
                 || loader.is_css()
             {
-                element.remove();
-            } else {
-                set_attribute(element, url_attribute, import_record.path.pretty);
+                return RewrittenUrl::Remove;
             }
-            return;
+            return RewrittenUrl::Value(import_record.path.pretty.to_vec());
         }
 
         if import_record.source_index.is_invalid() {
@@ -181,42 +264,42 @@ impl<'a> HTMLProcessorHandler for HTMLLoader<'a> {
                 "Leaving import with invalid source index: {}",
                 BStr::new(import_record.path.text)
             );
-            return;
+            return RewrittenUrl::Unchanged;
         }
 
         if loader.is_javascript_like() || loader.is_css() {
             // Remove the original non-external tags
-            element.remove();
-            return;
+            return RewrittenUrl::Remove;
         }
 
-        if self.compile_to_standalone_html && import_record.source_index.is_valid() {
-            // In standalone HTML mode, inline assets as data: URIs
-            let url_for_css =
-                parse_graph.ast.items_url_for_css()[import_record.source_index.get() as usize];
-            if !url_for_css.is_empty() {
-                set_attribute(element, url_attribute, url_for_css);
-                return;
-            }
+        let url_for_css =
+            parse_graph.ast.items_url_for_css()[import_record.source_index.get() as usize];
+
+        // In standalone HTML mode, inline assets as data: URIs
+        if self.compile_to_standalone_html && !url_for_css.is_empty() {
+            let fragment: &[u8] = match strings::index_of_char(suffix, b'#') {
+                Some(i) => &suffix[i as usize..],
+                None => b"",
+            };
+            return with_suffix(url_for_css, fragment);
         }
 
         if !unique_key_for_additional_files.is_empty() {
             // Replace the external href/src with the unique key so that we later will rewrite it to the final URL or pathname
-            set_attribute(element, url_attribute, unique_key_for_additional_files);
-            return;
+            return with_suffix(unique_key_for_additional_files, suffix);
         }
-    }
 
-    fn on_head_tag(&mut self, element: &mut Element<'_, '_>) -> bool {
-        self.register_end_tag_handler(element, Self::end_head_tag_handler)
-    }
+        // The asset was inlined for CSS and not emitted as a file; reuse its
+        // data: URI here rather than leaving the raw source path in the output.
+        if !url_for_css.is_empty() {
+            let fragment: &[u8] = match strings::index_of_char(suffix, b'#') {
+                Some(i) => &suffix[i as usize..],
+                None => b"",
+            };
+            return with_suffix(url_for_css, fragment);
+        }
 
-    fn on_html_tag(&mut self, element: &mut Element<'_, '_>) -> bool {
-        self.register_end_tag_handler(element, Self::end_html_tag_handler)
-    }
-
-    fn on_body_tag(&mut self, element: &mut Element<'_, '_>) -> bool {
-        self.register_end_tag_handler(element, Self::end_body_tag_handler)
+        RewrittenUrl::Unchanged
     }
 }
 

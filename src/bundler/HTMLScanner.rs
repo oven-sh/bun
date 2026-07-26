@@ -34,38 +34,41 @@ impl<'a> HTMLScanner<'a> {
     fn create_import_record(&mut self, input_path: &[u8], kind: ImportKind) -> Result<(), Error> {
         // In HTML, sometimes people do /src/index.js
         // In that case, we don't want to use the absolute filesystem path, we want to use the path relative to the project root
-        let path_to_use: &[u8] = if input_path.len() > 1 && input_path[0] == b'/' {
-            resolve_path::join_abs_string::<platform::Auto>(
-                fs::FileSystem::instance().top_level_dir,
-                &[&input_path[1..]],
-            )
-        }
-        // Check if imports to (e.g) "App.tsx" are actually relative imoprts w/o the "./"
-        else if input_path.len() > 2 && input_path[0] != b'.' && input_path[1] != b'/' {
-            'blk: {
-                let Some(index_of_dot) = input_path.iter().rposition(|&b| b == b'.') else {
-                    break 'blk input_path;
-                };
-                let ext = &input_path[index_of_dot..];
-                if ext.len() > 4 {
-                    break 'blk input_path;
-                }
-                // /foo/bar/index.html -> /foo/bar
-                let dirname = resolve_path::dirname::<platform::Auto>(self.source.path.text());
-                if dirname.is_empty() {
-                    break 'blk input_path;
-                }
-                let resolved =
-                    resolve_path::join_abs_string_z::<platform::Auto>(dirname, &[input_path]);
-                if sys::exists_z(resolved) {
-                    resolved.as_bytes()
-                } else {
-                    input_path
-                }
+        // A leading `//` is a protocol-relative URL, not a rooted path; leave it for the
+        // resolver's own `starts_with("//")` external rule.
+        let path_to_use: &[u8] =
+            if input_path.len() > 1 && input_path[0] == b'/' && input_path[1] != b'/' {
+                resolve_path::join_abs_string::<platform::Auto>(
+                    fs::FileSystem::instance().top_level_dir,
+                    &[&input_path[1..]],
+                )
             }
-        } else {
-            input_path
-        };
+            // Check if imports to (e.g) "App.tsx" are actually relative imoprts w/o the "./"
+            else if input_path.len() > 2 && input_path[0] != b'.' && input_path[1] != b'/' {
+                'blk: {
+                    let Some(index_of_dot) = input_path.iter().rposition(|&b| b == b'.') else {
+                        break 'blk input_path;
+                    };
+                    let ext = &input_path[index_of_dot..];
+                    if ext.len() > 4 {
+                        break 'blk input_path;
+                    }
+                    // /foo/bar/index.html -> /foo/bar
+                    let dirname = resolve_path::dirname::<platform::Auto>(self.source.path.text());
+                    if dirname.is_empty() {
+                        break 'blk input_path;
+                    }
+                    let resolved =
+                        resolve_path::join_abs_string_z::<platform::Auto>(dirname, &[input_path]);
+                    if sys::exists_z(resolved) {
+                        resolved.as_bytes()
+                    } else {
+                        input_path
+                    }
+                }
+            } else {
+                input_path
+            };
 
         let owned: &'static [u8] =
             Box::leak(AstAlloc::vec_from_slice(path_to_use).into_boxed_slice());
@@ -103,7 +106,12 @@ impl<'a> HTMLScanner<'a> {
         url_attribute: &[u8],
         kind: ImportKind,
     ) {
-        let _ = url_attribute;
+        if url_attribute == b"srcset" {
+            for (url, _) in SrcSetIter::new(path) {
+                let _ = self.create_import_record(url, kind);
+            }
+            return;
+        }
         let _ = self.create_import_record(path, kind);
     }
 
@@ -163,6 +171,77 @@ impl<'a> HTMLProcessorHandler for HTMLScanner<'a> {
 }
 
 pub(crate) struct HTMLProcessor<T, const VISIT_DOCUMENT_TAGS: bool>(PhantomData<T>);
+
+/// Walks an HTML `srcset` attribute yielding `(url, descriptor)` per candidate,
+/// per the WHATWG image-candidate-string grammar. The scan and rewrite passes
+/// both drive this so their import-record counts stay 1:1.
+pub(crate) struct SrcSetIter<'a> {
+    rest: &'a [u8],
+}
+
+impl<'a> SrcSetIter<'a> {
+    pub(crate) fn new(value: &'a [u8]) -> Self {
+        Self { rest: value }
+    }
+
+    #[inline]
+    fn is_ascii_ws(b: u8) -> bool {
+        matches!(b, b' ' | b'\t' | b'\n' | b'\r' | 0x0C)
+    }
+}
+
+impl<'a> Iterator for SrcSetIter<'a> {
+    /// `(url, descriptor)`; `descriptor` is `b""` when absent.
+    type Item = (&'a [u8], &'a [u8]);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        // Skip leading whitespace and commas.
+        let mut i = 0;
+        while i < self.rest.len() && (Self::is_ascii_ws(self.rest[i]) || self.rest[i] == b',') {
+            i += 1;
+        }
+        self.rest = &self.rest[i..];
+        if self.rest.is_empty() {
+            return None;
+        }
+        // URL runs until whitespace.
+        let mut url_end = 0;
+        while url_end < self.rest.len() && !Self::is_ascii_ws(self.rest[url_end]) {
+            url_end += 1;
+        }
+        // Per spec, trailing commas terminate the candidate (they are not part of the URL).
+        let mut url_trim = url_end;
+        while url_trim > 0 && self.rest[url_trim - 1] == b',' {
+            url_trim -= 1;
+        }
+        let url = &self.rest[..url_trim];
+        // If the URL itself ended in a comma there is no descriptor.
+        if url_trim < url_end {
+            self.rest = &self.rest[url_end..];
+            return Some((url, b""));
+        }
+        // Descriptor runs until the next comma.
+        let mut desc_start = url_end;
+        while desc_start < self.rest.len() && Self::is_ascii_ws(self.rest[desc_start]) {
+            desc_start += 1;
+        }
+        let mut desc_end = desc_start;
+        while desc_end < self.rest.len() && self.rest[desc_end] != b',' {
+            desc_end += 1;
+        }
+        let mut desc_trim = desc_end;
+        while desc_trim > desc_start && Self::is_ascii_ws(self.rest[desc_trim - 1]) {
+            desc_trim -= 1;
+        }
+        let descriptor = &self.rest[desc_start..desc_trim];
+        self.rest = if desc_end < self.rest.len() {
+            &self.rest[desc_end + 1..]
+        } else {
+            &self.rest[desc_end..]
+        };
+        Some((url, descriptor))
+    }
+}
 
 #[derive(Clone, Copy)]
 pub struct TagHandler {

@@ -2605,7 +2605,7 @@ where
         _global: &JSGlobalObject,
         _callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        if self.app.is_none() {
+        if self.app.is_none() || self.deinit_running.get() {
             return Ok(JSValue::UNDEFINED);
         }
         // Each close reaches `on_connection_filter(-1)` synchronously; hold the

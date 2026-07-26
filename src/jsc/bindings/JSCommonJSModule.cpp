@@ -1714,22 +1714,25 @@ bool evaluateDeferredCommonJSModuleForESM(
 
     JSValue defaultValue = exports;
     if (exportsObject && !moduleObject->ignoreESModuleAnnotation) {
-        PropertySlot markerSlot(exportsObject, PropertySlot::InternalMethodType::VMInquiry, &vm);
-        bool hasMarker = exportsObject->getPropertySlot(globalObject, vm.propertyNames->__esModule, markerSlot);
-        scope.assertNoException();
-        if (hasMarker) {
-            JSValue marker = markerSlot.getValue(globalObject, vm.propertyNames->__esModule);
-            CLEAR_IF_EXCEPTION(scope);
-            if (!marker.isUndefinedOrNull() && marker.pureToBoolean() == TriState::True) {
-                PropertySlot defaultSlot(exportsObject, PropertySlot::InternalMethodType::Get);
-                bool hasDefault = exportsObject->getPropertySlot(globalObject, vm.propertyNames->defaultKeyword, defaultSlot);
-                RETURN_IF_EXCEPTION(scope, true);
-                if (hasDefault) {
-                    defaultValue = defaultSlot.getValue(globalObject, vm.propertyNames->defaultKeyword);
-                    if (scope.exception()) [[unlikely]] {
-                        (void)scope.tryClearException();
-                        defaultValue = jsUndefined();
-                    }
+        bool hasESModuleMarker = false;
+        {
+            PropertySlot markerSlot(exportsObject, PropertySlot::InternalMethodType::VMInquiry, &vm);
+            if (exportsObject->getPropertySlot(globalObject, vm.propertyNames->__esModule, markerSlot)) {
+                JSValue marker = markerSlot.getValue(globalObject, vm.propertyNames->__esModule);
+                CLEAR_IF_EXCEPTION(scope);
+                hasESModuleMarker = !marker.isUndefinedOrNull() && marker.pureToBoolean() == TriState::True;
+            }
+            scope.assertNoException();
+        }
+        if (hasESModuleMarker) {
+            PropertySlot defaultSlot(exportsObject, PropertySlot::InternalMethodType::Get);
+            bool hasDefault = exportsObject->getPropertySlot(globalObject, vm.propertyNames->defaultKeyword, defaultSlot);
+            RETURN_IF_EXCEPTION(scope, true);
+            if (hasDefault) {
+                defaultValue = defaultSlot.getValue(globalObject, vm.propertyNames->defaultKeyword);
+                if (scope.exception()) [[unlikely]] {
+                    (void)scope.tryClearException();
+                    defaultValue = jsUndefined();
                 }
             }
         }

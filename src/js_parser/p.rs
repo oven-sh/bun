@@ -5223,7 +5223,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// CommonJS export name for the ESM-imports-CJS wrapper. The expression is
     /// not rewritten.
     pub fn record_runtime_commonjs_export_name(&mut self, name: &[u8], loc: bun_ast::Loc) {
-        self.has_commonjs_export_names = true;
         // Names cross to C++ NUL-joined in a single BunString; drop any that
         // would split.
         if name.is_empty() || name.contains(&0) || self.commonjs_named_exports.contains(name) {

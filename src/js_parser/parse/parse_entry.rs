@@ -1505,11 +1505,12 @@ impl<'a> Parser<'a> {
 
         let mut wrap_mode: WrapMode = WrapMode::None;
 
-        if p.is_deoptimized_commonjs() {
+        // `is_deoptimized_commonjs()` is only meaningful on the bundler's
+        // unwrap-CommonJS-to-ESM path; on the runtime path the recorders
+        // populate `commonjs_named_exports` without enabling that optimisation,
+        // and classification falls through to the `uses_exports_ref` branch.
+        if p.should_unwrap_common_js_to_esm() && p.is_deoptimized_commonjs() {
             exports_kind = js_ast::ExportsKind::Cjs;
-            if p.options.features.commonjs_at_runtime {
-                wrap_mode = WrapMode::BunCommonjs;
-            }
         } else if p.esm_export_keyword.len > 0 || p.top_level_await_keyword.len > 0 {
             exports_kind = js_ast::ExportsKind::Esm;
         } else if uses_exports_ref || uses_module_ref || p.has_top_level_return || p.has_with_scope
@@ -1765,6 +1766,7 @@ impl<'a> Parser<'a> {
         }
 
         if exports_kind == js_ast::ExportsKind::Esm
+            && p.should_unwrap_common_js_to_esm()
             && p.commonjs_named_exports.count() > 0
             && !p.unwrap_all_requires
             && !force_esm

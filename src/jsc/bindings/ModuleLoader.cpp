@@ -919,6 +919,37 @@ template JSValue fetchCommonJSModuleNonBuiltin<false>(
 
 extern "C" bool isBunTest;
 
+// JSON/TOML/text-like modules are pure data: the ESM default export and the
+// CommonJS `module.exports` are the same parsed value. Share that value with
+// require.cache so `import default from "./x.json"` and `require("./x.json")`
+// observe one object (Node.js guarantees this identity for JSON).
+static JSC::JSValue reconcileDataModuleWithRequireCache(
+    Zig::GlobalObject* globalObject,
+    JSC::JSString* specifierJS,
+    JSC::JSValue value)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue entry = globalObject->requireMap()->get(globalObject, specifierJS);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (auto* mod = entry ? dynamicDowncast<Bun::JSCommonJSModule>(entry) : nullptr) {
+        if (mod->hasEvaluated) {
+            JSValue existing = mod->exportsObject();
+            RETURN_IF_EXCEPTION(scope, {});
+            if (existing)
+                return existing;
+        }
+        mod->setExportsObject(value);
+        mod->hasEvaluated = true;
+        return value;
+    }
+    auto* mod = Bun::JSCommonJSModule::create(globalObject, specifierJS, value, true, jsUndefined());
+    RETURN_IF_EXCEPTION(scope, {});
+    globalObject->requireMap()->set(globalObject, specifierJS, mod);
+    RETURN_IF_EXCEPTION(scope, {});
+    return value;
+}
+
 template<bool allowPromise>
 static JSValue fetchESMSourceCode(
     Zig::GlobalObject* globalObject,
@@ -1134,6 +1165,13 @@ static JSValue fetchESMSourceCode(
             RELEASE_AND_RETURN(scope, reject(exception));
         }
 
+        value = reconcileDataModuleWithRequireCache(globalObject, specifierJS, value);
+        if (scope.exception()) [[unlikely]] {
+            auto* exception = scope.exception();
+            (void)scope.tryClearException();
+            RELEASE_AND_RETURN(scope, reject(exception));
+        }
+
         // JSON can become strings, null, numbers, booleans so we must handle "export default 123"
         auto function = generateJSValueModuleSourceCode(
             globalObject,
@@ -1151,6 +1189,13 @@ static JSValue fetchESMSourceCode(
             RELEASE_AND_RETURN(scope, reject(JSC::createSyntaxError(globalObject, "Failed to parse Object"_s)));
         }
 
+        value = reconcileDataModuleWithRequireCache(globalObject, specifierJS, value);
+        if (scope.exception()) [[unlikely]] {
+            auto* exception = scope.exception();
+            (void)scope.tryClearException();
+            RELEASE_AND_RETURN(scope, reject(exception));
+        }
+
         // JSON can become strings, null, numbers, booleans so we must handle "export default 123"
         auto function = generateJSValueModuleSourceCode(
             globalObject,
@@ -1164,6 +1209,13 @@ static JSValue fetchESMSourceCode(
         JSC::JSValue value = JSC::JSValue::decode(res->result.value.jsvalue_for_export);
         if (!value) {
             RELEASE_AND_RETURN(scope, reject(JSC::createSyntaxError(globalObject, "Failed to parse Object"_s)));
+        }
+
+        value = reconcileDataModuleWithRequireCache(globalObject, specifierJS, value);
+        if (scope.exception()) [[unlikely]] {
+            auto* exception = scope.exception();
+            (void)scope.tryClearException();
+            RELEASE_AND_RETURN(scope, reject(exception));
         }
 
         // JSON can become strings, null, numbers, booleans so we must handle "export default 123"

@@ -1169,6 +1169,23 @@ describe("new Request(input) transfers the input body", () => {
       expect(await input.text()).toBe(expected);
       expect(await copy.text()).toBe("override");
     });
+
+    test("new Request(input, { body: null }) still consumes the input", async () => {
+      const input = factory();
+      const copy = new Request(input, { body: null });
+      expect({ inputUsed: input.bodyUsed, copyUsed: copy.bodyUsed }).toEqual({
+        inputUsed: true,
+        copyUsed: false,
+      });
+      expect(await copy.text()).toBe(expected);
+    });
+  });
+
+  test("new Request(consumedInput, { body }) does not throw", async () => {
+    const input = make("original");
+    await input.text();
+    const copy = new Request(input, { body: "override" });
+    expect(await copy.text()).toBe("override");
   });
 
   test("constructing twice from the same input throws on the second call", () => {

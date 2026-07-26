@@ -4844,8 +4844,8 @@ impl VirtualMachine {
                             break;
                         }
                     };
-                    // Holes in a sparse array read as `undefined`; printing
-                    // "error: undefined" per hole is noise.
+                    // Skips holes and explicit `undefined`/`null` entries
+                    // alike: an "error: undefined" line carries no information.
                     if child.is_undefined_or_null() {
                         continue;
                     }

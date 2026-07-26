@@ -176,7 +176,13 @@ pub fn compute_chunks(this: &mut LinkerContext, unique_key: u64) -> crate::Resul
                 let order_len = order.len() as usize;
                 *css_chunk_entry.value_ptr = Chunk {
                     entry_point: chunk::EntryPoint::new(source_index, entry_bit, true, false),
-                    entry_bits: entry_point_chunk_bits,
+                    // HtmlPreload chunks carry the referencing HTML page's entry
+                    // bit so HTMLImportManifest::write can associate the output.
+                    entry_bits: if is_html_preload {
+                        entry_bits.clone()?
+                    } else {
+                        entry_point_chunk_bits
+                    },
                     content: chunk::Content::Css(chunk::CssChunk {
                         imports_in_chunk_in_order: order,
                         asts: (0..order_len)

@@ -494,6 +494,9 @@ impl<'a> LinkerContext<'a> {
         // SAFETY: field-disjoint scalar read; `transpiler` is itself a `*mut`.
         let dyn_entry_points =
             unsafe { &mut *core::ptr::addr_of_mut!((*bundle).dynamic_import_entry_points) };
+        // SAFETY: field-disjoint with `self` and with `dyn_entry_points`.
+        let html_preload_css_entry_points =
+            unsafe { &mut *core::ptr::addr_of_mut!((*bundle).html_preload_css_entry_points) };
 
         // SAFETY: `bundle.transpiler` is a `*mut Transpiler` backref valid for
         // the bundle's lifetime; `resolver`/`log`/`options` are stable fields.
@@ -527,10 +530,12 @@ impl<'a> LinkerContext<'a> {
             sources,
             server_component_boundaries,
             dyn_entry_points.keys(),
+            html_preload_css_entry_points.keys(),
             // SAFETY: parse_graph backref
             unsafe { &(*self.parse_graph).entry_point_original_names },
         )?;
         dyn_entry_points.clear_retaining_capacity();
+        html_preload_css_entry_points.clear_retaining_capacity();
 
         let runtime_named_exports =
             &self.graph.ast.items_named_exports()[Index::RUNTIME.get() as usize];

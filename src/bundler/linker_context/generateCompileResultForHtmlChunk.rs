@@ -123,7 +123,7 @@ impl<'a> HTMLProcessorHandler for HTMLLoader<'a> {
         element: &mut Element<'_, '_>,
         _path: &[u8],
         url_attribute: &[u8],
-        _kind: ImportKind,
+        kind: ImportKind,
     ) {
         if self.current_import_record_index as usize >= self.import_records.len() {
             bun_core::Output::panic(format_args!(
@@ -181,6 +181,19 @@ impl<'a> HTMLProcessorHandler for HTMLLoader<'a> {
                 "Leaving import with invalid source index: {}",
                 BStr::new(import_record.path.text)
             );
+            return;
+        }
+
+        if loader.is_css() && kind == ImportKind::Url {
+            // `<link rel="preload" as="style">`: the CSS was bundled into its own
+            // standalone chunk; rewrite the href to that chunk's unique key.
+            let chunk_index = self.linker.graph.files.items_entry_point_chunk_index()
+                [import_record.source_index.get() as usize];
+            // SAFETY: `self.chunks` raw `*mut [Chunk]` valid for the link step.
+            let chunks = unsafe { &*self.chunks };
+            if (chunk_index as usize) < chunks.len() {
+                set_attribute(element, url_attribute, chunks[chunk_index as usize].unique_key);
+            }
             return;
         }
 

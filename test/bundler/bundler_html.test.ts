@@ -1084,4 +1084,91 @@ body {
       expect(html).not.toMatch(/rel="stylesheet"/);
     },
   });
+
+  // The preloaded stylesheet must be bundled through the CSS loader so its own
+  // `@import` and `url()` dependencies are resolved into the standalone output.
+  itBundled("html/preload-as-style-css-deps", {
+    outdir: "out/",
+    files: {
+      "/index.html": `
+<!DOCTYPE html>
+<html>
+  <head>
+    <link rel="preload" as="style" href="./fonts.css">
+  </head>
+  <body>
+    <script src="./a.js"></script>
+  </body>
+</html>`,
+      "/fonts.css": `
+@import './reset.css';
+@font-face { font-family: X; src: url('./x.woff2'); }
+`,
+      "/reset.css": "html { margin: 0; }",
+      "/x.woff2": "FAKE_FONT",
+      "/a.js": "console.log(1)",
+    },
+    entryPoints: ["/index.html"],
+    onAfterBundle(api) {
+      const html = api.readFile("out/index.html");
+
+      const preload = html.match(/<link rel="preload" as="style" href="(?:\.\/|\/)?(fonts-[a-zA-Z0-9]+\.css)">/);
+      expect(preload).not.toBeNull();
+      expect(html).not.toMatch(/rel="stylesheet"/);
+
+      const css = api.readFile("out/" + preload![1]);
+      // @import was inlined
+      expect(css).toContain("margin");
+      expect(css).not.toContain("@import");
+      // url() was resolved (no longer the literal source path)
+      expect(css).not.toContain("./x.woff2");
+      expect(css).toContain("font-family");
+    },
+  });
+
+  // A file referenced by both rel="preload" as="style" and rel="stylesheet"
+  // must go through the CSS loader regardless of which tag appears first.
+  for (const order of ["preload-first", "stylesheet-first"] as const) {
+    itBundled(`html/preload-as-style-shared-${order}`, {
+      outdir: "out/",
+      files: {
+        "/index.html":
+          order === "preload-first"
+            ? `
+<!DOCTYPE html>
+<link rel="preload" as="style" href="./app.css">
+<link rel="stylesheet" href="./app.css">
+<script src="./a.js"></script>`
+            : `
+<!DOCTYPE html>
+<link rel="stylesheet" href="./app.css">
+<link rel="preload" as="style" href="./app.css">
+<script src="./a.js"></script>`,
+        "/app.css": "@import './base.css'; body { color: red; }",
+        "/base.css": "html { padding: 0; }",
+        "/a.js": "console.log(1)",
+      },
+      entryPoints: ["/index.html"],
+      onAfterBundle(api) {
+        const html = api.readFile("out/index.html");
+
+        const preload = html.match(/<link rel="preload" as="style" href="(?:\.\/|\/)?([^"]+\.css)">/);
+        expect(preload).not.toBeNull();
+        const stylesheet = html.match(/<link rel="stylesheet"[^>]* href="(?:\.\/|\/)?([^"]+\.css)"/);
+        expect(stylesheet).not.toBeNull();
+
+        // The applied stylesheet bundle must have the @import resolved.
+        const applied = api.readFile("out/" + stylesheet![1]);
+        expect(applied).toContain("padding");
+        expect(applied).toContain("color");
+        expect(applied).not.toContain("@import");
+
+        // The preloaded output must also have the @import resolved.
+        const preloaded = api.readFile("out/" + preload![1]);
+        expect(preloaded).toContain("padding");
+        expect(preloaded).toContain("color");
+        expect(preloaded).not.toContain("@import");
+      },
+    });
+  }
 });

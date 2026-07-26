@@ -268,7 +268,7 @@ describe("CompressionStream and DecompressionStream", () => {
       const withJunk = Buffer.concat([frame, Buffer.from([0xde, 0xad, 0xbe, 0xef])]);
 
       const read = new Response(new Blob([withJunk]).stream().pipeThrough(new DecompressionStream("zstd"))).text();
-      await expect(read).rejects.toThrow();
+      await expect(read).rejects.toMatchObject({ code: "ZSTD_error_prefix_unknown" });
     });
   });
 

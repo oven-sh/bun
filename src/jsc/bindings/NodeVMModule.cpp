@@ -98,10 +98,8 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
             if (deadline)
                 deadline->disarm();
             // The drain may legitimately leave the termination exception
-            // pending (the deadline fired mid-checkpoint); observe it so the
-            // exception-check validator is satisfied before the TOP scope
-            // inside checkForTermination, which converts it to
-            // ERR_SCRIPT_EXECUTION_*.
+            // pending; observe it so the exception-check validator is
+            // satisfied before the TOP scope inside checkForTermination.
             std::ignore = scope.exception();
             if (NodeVM::checkForTermination(vm, globalObject, nodeVmGlobalObject, scope, this, deadline ? &*deadline : nullptr))
                 return {};
@@ -228,12 +226,9 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
         deadline->disarm();
     }
 
-    // Evaluation (or the afterEvaluate drain) may leave an exception pending.
-    // A regular one is rethrown by VM_RETURN_IF_EXCEPTION below; a
-    // termination raised by this evaluation's own deadline or SIGINT watcher
-    // is converted to ERR_SCRIPT_EXECUTION_* here, and any other termination
-    // keeps propagating. Observe it so the exception-check validator is
-    // satisfied before the TOP scope.
+    // Evaluation (or the afterEvaluate drain) may leave an exception pending;
+    // observe it so the exception-check validator is satisfied before the TOP
+    // scope inside checkForTermination.
     std::ignore = scope.exception();
     if (!NodeVM::checkForTermination(vm, globalObject, nodeVmGlobalObject, scope, this, deadline ? &*deadline : nullptr)) {
         setSigintReceived(false);

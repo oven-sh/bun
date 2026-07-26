@@ -2821,8 +2821,6 @@ void JSC__VM__collectAsync(JSC::VM* vm)
 
 extern "C" bool JSC__VM__hasExecutionTimeLimit(JSC::VM* vm)
 {
-    // True while a `node:vm` evaluation with the `timeout` option is running
-    // (see Bun::NodeVMEvalTimeout). Only read from the VM's own thread.
     return WebCore::clientData(*vm)->nodeVMEvalTimeouts != nullptr;
 }
 

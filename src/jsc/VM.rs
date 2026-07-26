@@ -58,8 +58,6 @@ impl VM {
         JSC__VM__setControlFlowProfiler(self, enabled)
     }
 
-    /// Whether a `node:vm` evaluation with the `timeout` option is currently
-    /// running on this VM.
     pub fn has_execution_time_limit(&self) -> bool {
         JSC__VM__hasExecutionTimeLimit(self)
     }

@@ -647,12 +647,9 @@ bool checkForTermination(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JS
     bool sigintReceived = receiver->getSigintReceived();
 
     if (vm.hasTerminationRequest()) {
-        // The termination was requested by something other than this
-        // evaluation's deadline or SIGINT watcher (e.g. Worker.terminate()).
-        // Leave it in place so it keeps propagating.
+        // A foreign termination (e.g. Worker.terminate()) keeps propagating.
         if (!sigintReceived && !timedOut)
             return false;
-        // Discard microtasks the terminated evaluation already scheduled;
         // clearForGlobalObject(nullptr) is a no-op.
         vm.drainMicrotasksForGlobalObject(evaluationGlobalObject);
         // The termination may have fired inside an afterEvaluate microtask
@@ -664,8 +661,6 @@ bool checkForTermination(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JS
     } else if (!timedOut) {
         return false;
     }
-    // Reaching here with no termination request means the deadline expired
-    // after the evaluation's last trap check; Node reports a timeout anyway.
 
     if (sigintReceived) {
         receiver->setSigintReceived(false);
@@ -673,10 +668,6 @@ bool checkForTermination(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JS
     } else {
         throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_TIMEOUT, makeString("Script execution timed out after "_s, deadline->milliseconds(), "ms"_s));
     }
-    // Now that this evaluation's own error has been thrown, hand the shared
-    // termination signal back to any enclosing deadline that already expired.
-    // This is not gated on `deadline`: a breakOnSigint evaluation with no (or
-    // an unexpired) deadline consumes the same coalesced signal.
     NodeVMEvalTimeout::raiseExpiredDeadline(vm);
     return true;
 }

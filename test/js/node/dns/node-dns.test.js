@@ -1,4 +1,4 @@
-import { beforeAll, describe, expect, it, setDefaultTimeout, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, it, setDefaultTimeout, test } from "bun:test";
 import { isWindows } from "harness";
 import * as dgram from "node:dgram";
 import * as dns from "node:dns";
@@ -687,81 +687,69 @@ describe("resolve4 against a loopback responder", () => {
     return b;
   };
 
-  async function withResponder(build, fn) {
-    const udp = dgram.createSocket("udp4");
-    try {
-      udp.on("message", (msg, rinfo) => {
-        let off = 12;
-        while (off < msg.length && msg[off] !== 0) off += msg[off] + 1;
-        const question = msg.slice(12, off + 5);
-        udp.send(build(msg, question), rinfo.port, rinfo.address);
-      });
-      udp.bind(0, "127.0.0.1");
-      await once(udp, "listening");
-      const resolver = new dns_promises.Resolver({ timeout: 3000, tries: 1 });
-      resolver.setServers([`127.0.0.1:${udp.address().port}`]);
-      await fn(resolver);
-    } finally {
-      udp.close();
-    }
-  }
+  let udp;
+  let resolver;
+  let build;
+
+  beforeAll(async () => {
+    udp = dgram.createSocket("udp4");
+    udp.on("message", (msg, rinfo) => {
+      let off = 12;
+      while (off < msg.length && msg[off] !== 0) off += msg[off] + 1;
+      const question = msg.slice(12, off + 5);
+      udp.send(build(msg, question), rinfo.port, rinfo.address);
+    });
+    udp.bind(0, "127.0.0.1");
+    await once(udp, "listening");
+    resolver = new dns_promises.Resolver({ timeout: 3000, tries: 1 });
+    resolver.setServers([`127.0.0.1:${udp.address().port}`]);
+  });
+
+  afterAll(() => {
+    udp?.close();
+    // Drop the describe-scope reference so the native Resolver channel can be
+    // finalized before LeakSanitizer runs its end-of-process check.
+    resolver = undefined;
+    Bun.gc(true);
+  });
 
   it("reports EFORMERR for an answer RR owner name over 255 octets", async () => {
     // 6 x 63-byte labels = 383 wire octets, above the RFC 1035 255-octet limit.
     const label = Buffer.concat([Buffer.from([63]), Buffer.alloc(63, 0x61)]);
     const owner = Buffer.concat([label, label, label, label, label, label, Buffer.from([0])]);
-    await withResponder(
-      (msg, question) => {
-        const rr = Buffer.concat([owner, u16(1), u16(1), u32(60), u16(4), Buffer.from([127, 0, 0, 7])]);
-        const hdr = Buffer.concat([msg.slice(0, 2), u16(0x8180), u16(1), u16(1), u16(0), u16(0)]);
-        return Buffer.concat([hdr, question, rr]);
-      },
-      async resolver => {
-        const err = await resolver.resolve4("longname.test").then(
-          ok => ({ ok }),
-          e => e,
-        );
-        expect(err.code).toBe("EFORMERR");
-        expect(err.syscall).toBe("queryA");
-        expect(err.hostname).toBe("longname.test");
-      },
+    build = (msg, question) => {
+      const rr = Buffer.concat([owner, u16(1), u16(1), u32(60), u16(4), Buffer.from([127, 0, 0, 7])]);
+      const hdr = Buffer.concat([msg.slice(0, 2), u16(0x8180), u16(1), u16(1), u16(0), u16(0)]);
+      return Buffer.concat([hdr, question, rr]);
+    };
+    const err = await resolver.resolve4("longname.test").then(
+      ok => ({ ok }),
+      e => e,
     );
+    expect(err.code).toBe("EFORMERR");
+    expect(err.syscall).toBe("queryA");
+    expect(err.hostname).toBe("longname.test");
   });
 
   it("still resolves a well-formed A record from the same path", async () => {
-    await withResponder(
-      (msg, question) => {
-        const rr = Buffer.concat([
-          Buffer.from([0xc0, 0x0c]),
-          u16(1),
-          u16(1),
-          u32(60),
-          u16(4),
-          Buffer.from([127, 0, 0, 7]),
-        ]);
-        const hdr = Buffer.concat([msg.slice(0, 2), u16(0x8180), u16(1), u16(1), u16(0), u16(0)]);
-        return Buffer.concat([hdr, question, rr]);
-      },
-      async resolver => {
-        expect(await resolver.resolve4("good.test")).toEqual(["127.0.0.7"]);
-      },
-    );
+    build = (msg, question) => {
+      const rr = Buffer.concat([Buffer.from([0xc0, 0x0c]), u16(1), u16(1), u32(60), u16(4), Buffer.from([127, 0, 0, 7])]);
+      const hdr = Buffer.concat([msg.slice(0, 2), u16(0x8180), u16(1), u16(1), u16(0), u16(0)]);
+      return Buffer.concat([hdr, question, rr]);
+    };
+    expect(await resolver.resolve4("good.test")).toEqual(["127.0.0.7"]);
   });
 
   it("reports EBADNAME for a query name c-ares rejects before sending", async () => {
-    await withResponder(
-      (msg, question) => {
-        const hdr = Buffer.concat([msg.slice(0, 2), u16(0x8183), u16(1), u16(0), u16(0), u16(0)]);
-        return Buffer.concat([hdr, question]);
-      },
-      async resolver => {
-        const longLabel = Buffer.alloc(64, 0x61).toString() + ".test";
-        const err = await resolver.resolve4(longLabel).then(
-          ok => ({ ok }),
-          e => e,
-        );
-        expect(err.code).toBe("EBADNAME");
-      },
+    build = (msg, question) => {
+      const hdr = Buffer.concat([msg.slice(0, 2), u16(0x8183), u16(1), u16(0), u16(0), u16(0)]);
+      return Buffer.concat([hdr, question]);
+    };
+    const longLabel = Buffer.alloc(64, 0x61).toString() + ".test";
+    const err = await resolver.resolve4(longLabel).then(
+      ok => ({ ok }),
+      e => e,
     );
+    expect(err.code).toBe("EBADNAME");
   });
 });

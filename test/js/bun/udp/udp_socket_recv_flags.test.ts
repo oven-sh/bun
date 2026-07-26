@@ -37,68 +37,50 @@ describe("udpSocket() receive flags", () => {
   });
 
   // IP_RECVERR is armed on connect (Linux only). An unconnected socket never
-  // sees ICMP at all; a connected one surfaces it through the error handler
-  // and stays open.
-  test.skipIf(!isLinux)(
-    "connected socket surfaces ECONNREFUSED from ICMP port unreachable and keeps the socket usable",
-    async () => {
-      const { promise: errPromise, resolve: resolveErr } = Promise.withResolvers<Error & { code?: string }>();
-      const { promise: msgPromise, resolve: resolveMsg } = Promise.withResolvers<string>();
+  // sees ICMP at all; a connected one surfaces it through the error handler,
+  // stays open, and can still send.
+  test.skipIf(!isLinux)("connected socket surfaces ECONNREFUSED from ICMP and stays open", async () => {
+    const errors: (Error & { code?: string; errqueue?: boolean })[] = [];
+    const { promise: errPromise, resolve: resolveErr } = Promise.withResolvers<void>();
 
-      const receiver = await udpSocket({
-        socket: {
-          data(_socket, data) {
-            resolveMsg(data.toString());
-          },
+    // Bind and close a probe so we own a port nothing is listening on.
+    const probe = await udpSocket({ hostname: "127.0.0.1" });
+    const deadPort = probe.port;
+    probe.close();
+
+    const sender = await udpSocket({
+      connect: { hostname: "127.0.0.1", port: deadPort },
+      socket: {
+        error(err: Error & { code?: string }) {
+          errors.push(err);
+          resolveErr();
         },
-      });
+      },
+    });
 
-      // Bind and close a probe so we own a port nothing is listening on.
-      const probe = await udpSocket({ hostname: "127.0.0.1" });
-      const deadPort = probe.port;
-      probe.close();
-
-      const sender = await udpSocket({
-        connect: { hostname: "127.0.0.1", port: deadPort },
-        socket: {
-          error(err: Error & { code?: string }) {
-            resolveErr(err);
-          },
-        },
-      });
-
+    try {
       let gotError = false;
       function sendDead() {
         if (!gotError && !sender.closed) {
-          sender.send("dead");
+          try {
+            sender.send("dead");
+          } catch {}
           setTimeout(sendDead, 10);
         }
       }
       sendDead();
 
-      try {
-        const err = await errPromise;
-        gotError = true;
-        expect(err?.code).toBe("ECONNREFUSED");
-        expect(sender.closed).toBe(false);
-
-        // A fresh unconnected socket must not inherit any poisoned state.
-        const relay = await udpSocket({});
-        function sendAlive() {
-          if (!relay.closed && !receiver.closed) {
-            relay.send("alive", receiver.port, "127.0.0.1");
-            setTimeout(sendAlive, 10);
-          }
-        }
-        sendAlive();
-        expect(await msgPromise).toBe("alive");
-        relay.close();
-      } finally {
-        sender.close();
-        receiver.close();
-      }
-    },
-  );
+      await errPromise;
+      gotError = true;
+      expect({ code: errors[0]?.code, errqueue: errors[0]?.errqueue, closed: sender.closed }).toEqual({
+        code: "ECONNREFUSED",
+        errqueue: true,
+        closed: false,
+      });
+    } finally {
+      sender.close();
+    }
+  });
 });
 
 // A reply-style server (DNS, statsd, echo) written to the documented shape

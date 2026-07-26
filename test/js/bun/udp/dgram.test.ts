@@ -850,8 +850,9 @@ test.skipIf(!isLinux)(
       probe.bind(0, "127.0.0.1", () => {
         deadPort = probe.address().port;
         probe.close(() => {
+          let i = 0;
           const pump = () => {
-            if (handled < 5) {
+            if (handled < 5 && i++ < 200) {
               client.send("q", server.address().port, "127.0.0.1");
               return setTimeout(pump, 10);
             }
@@ -879,11 +880,10 @@ test.skipIf(!isLinux)(
 
 // A connected socket's ICMP error must be *emitted*, not treated as fatal.
 // On the BSDs there is no error queue, so the kernel only delivers it via the
-// next recvmsg failing with so_error. On Linux an adopted descriptor has no
-// IP_RECVERR (that deliberately matches libuv's uv_udp_open), so its error
-// queue is empty and the kernel reports a bare EPOLLERR with no EPOLLIN.
-// Either way loop.c used to treat the failure as fatal and silently close the
-// socket; Node emits `recvmsg ECONNREFUSED` and keeps it open.
+// next recvmsg failing with so_error. On Linux us_udp_socket_connect arms
+// IP_RECVERR (for both created and adopted descriptors) so the error arrives
+// via MSG_ERRQUEUE; loop.c's bare-EPOLLERR sk_err fallback is covered by the
+// BSD lanes. Node emits `recvmsg ECONNREFUSED` and keeps the socket open.
 const icmpBindModes = {
   connected: async (socket: any) => {
     await new Promise<void>(resolve => socket.bind(0, "127.0.0.1", resolve));

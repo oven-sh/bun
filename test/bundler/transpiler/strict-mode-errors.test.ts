@@ -106,10 +106,7 @@ describe.concurrent("strict-mode early errors", () => {
   });
 
   test("legacy octal literal is allowed in a sloppy function inside a sloppy file", async () => {
-    const { stdout, stderr, exitCode } = await run(
-      `function f() { return 010; } console.log(f());\n`,
-      "entry.cjs",
-    );
+    const { stdout, stderr, exitCode } = await run(`function f() { return 010; } console.log(f());\n`, "entry.cjs");
     expect(stderr).not.toContain("cannot be used in strict mode");
     expect(stdout.trim()).toBe("8");
     expect(exitCode).toBe(0);

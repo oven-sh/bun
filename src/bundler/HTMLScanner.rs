@@ -32,10 +32,7 @@ impl<'a> HTMLScanner<'a> {
 
 impl<'a> HTMLScanner<'a> {
     fn create_import_record(&mut self, input_path: &[u8], kind: ImportKind) -> Result<(), Error> {
-        // In HTML, sometimes people do /src/index.js
-        // In that case, we don't want to use the absolute filesystem path, we want to use the path relative to the project root
-        // A leading `//` is a protocol-relative URL, not a rooted path; leave it for the
-        // resolver's own `starts_with("//")` external rule.
+        // `/src/x.js` is project-root-relative; `//host/x.js` is protocol-relative (external).
         let path_to_use: &[u8] =
             if input_path.len() > 1 && input_path[0] == b'/' && input_path[1] != b'/' {
                 resolve_path::join_abs_string::<platform::Auto>(
@@ -172,9 +169,8 @@ impl<'a> HTMLProcessorHandler for HTMLScanner<'a> {
 
 pub(crate) struct HTMLProcessor<T, const VISIT_DOCUMENT_TAGS: bool>(PhantomData<T>);
 
-/// Walks an HTML `srcset` attribute yielding `(url, descriptor)` per candidate,
-/// per the WHATWG image-candidate-string grammar. The scan and rewrite passes
-/// both drive this so their import-record counts stay 1:1.
+/// Yields `(url, descriptor)` per `srcset` candidate; scan and rewrite both
+/// use this so their per-candidate import-record counts stay 1:1.
 pub(crate) struct SrcSetIter<'a> {
     rest: &'a [u8],
 }

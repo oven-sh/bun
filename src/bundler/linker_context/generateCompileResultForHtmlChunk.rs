@@ -126,8 +126,6 @@ impl<'a> HTMLProcessorHandler for HTMLLoader<'a> {
         _kind: ImportKind,
     ) {
         if url_attribute == b"srcset" {
-            // One import record per candidate URL, same split order as the scan
-            // pass. Rewrites the whole attribute so descriptors are preserved.
             let mut out: Vec<u8> = Vec::with_capacity(path.len());
             let mut remove = false;
             for (url, descriptor) in SrcSetIter::new(path) {
@@ -191,10 +189,8 @@ impl RewrittenUrl {
 }
 
 impl<'a> HTMLLoader<'a> {
-    /// Advances one import record and returns what to write for its attribute
-    /// value. `original` is the URL as it appeared in the source HTML; its
-    /// `?query`/`#fragment` suffix is re-appended to emitted asset references
-    /// (mirroring the CSS printer).
+    /// Advances one import record; re-appends `original`'s `?#` suffix to the
+    /// rewritten reference (mirroring the CSS printer).
     fn rewrite_one_url(&mut self, original: &[u8]) -> RewrittenUrl {
         if self.current_import_record_index as usize >= self.import_records.len() {
             bun_core::Output::panic(format_args!(
@@ -280,9 +276,7 @@ impl<'a> HTMLLoader<'a> {
         let url_for_css =
             parse_graph.ast.items_url_for_css()[import_record.source_index.get() as usize];
 
-        // Standalone HTML mode inlines assets as data: URIs. Otherwise prefer the
-        // emitted file's unique key, falling back to the data: URI when the asset
-        // was CSS-inlined-only, so the raw source path never reaches the output.
+        // Standalone mode inlines; otherwise the data: URI is only a fallback when no file was emitted.
         if !url_for_css.is_empty()
             && (self.compile_to_standalone_html || unique_key_for_additional_files.is_empty())
         {

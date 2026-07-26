@@ -1794,9 +1794,7 @@ pub mod bv2_impl {
                             let import_record = &self.all_import_records
                                 [import_record_list_id.get() as usize]
                                 .as_slice()[ir_idx];
-                            // A CSS importer will inline the file as a data: URI; any other
-                            // importer (JS, HTML, ...) needs the asset emitted on disk, so
-                            // treat every non-CSS reference as a copy-forcing context.
+                            // CSS inlines as data:; any non-CSS importer (JS, HTML) forces on-disk emission.
                             let is_inlined = import_record.source_index.is_valid()
                                 && !self.all_urls_for_css
                                     [import_record.source_index.get() as usize]
@@ -4172,9 +4170,7 @@ pub mod bv2_impl {
                     }
                 }
 
-                // Distinct-content collisions on the same output path are last-writer-wins on
-                // disk; surface them as the same hard error the chunk pass emits. Identical
-                // content mapping to one path is benign and left alone.
+                // Distinct-content asset collisions on one output path are a hard error; identical content is benign.
                 {
                     let mut seen: bun_collections::StringHashMap<(u64, usize)> =
                         bun_collections::StringHashMap::default();

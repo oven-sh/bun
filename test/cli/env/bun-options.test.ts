@@ -116,6 +116,27 @@ describe("BUN_OPTIONS environment variable", () => {
     expect(cpuProfiles.length).toBeGreaterThanOrEqual(1);
   }, 60_000);
 
+  test("--dns-result-order is honored (standalone executable)", () => {
+    using dir = tempDir("bun-options-dns-order-compile", {
+      "entry.ts": `console.log(require("dns").getDefaultResultOrder());`,
+    });
+
+    const exePath = String(dir) + "/app";
+    const build = spawnSync({
+      cmd: [bunExe(), "build", "--compile", String(dir) + "/entry.ts", "--outfile", exePath],
+      env: bunEnv,
+    });
+    expect(build.exitCode).toBe(0);
+
+    const result = spawnSync({
+      cmd: [exePath],
+      env: { ...bunEnv, BUN_OPTIONS: "--dns-result-order=ipv4first" },
+    });
+
+    expect(result.stdout.toString().trim()).toBe("ipv4first");
+    expect(result.exitCode).toBe(0);
+  }, 60_000);
+
   test("empty BUN_OPTIONS - should work normally", () => {
     const result = spawnSync({
       cmd: [bunExe(), "--print='NORMAL'"],

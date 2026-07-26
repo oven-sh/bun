@@ -73,11 +73,35 @@ describe("process.env node semantics", () => {
     expect(process.env["ENVFIX_K\x00TAIL"]).toBe("v");
   });
 
-  test("Object.freeze / seal / preventExtensions throw TypeError", () => {
-    expect(() => Object.freeze(process.env)).toThrow(TypeError);
-    expect(() => Object.seal(process.env)).toThrow(TypeError);
-    expect(() => Object.preventExtensions(process.env)).toThrow(TypeError);
-    expect(Object.isExtensible(process.env)).toBe(true);
+  test("Object.freeze / seal / preventExtensions throw TypeError", async () => {
+    // A fail-before run (old plain-object process.env) would actually freeze
+    // the runner's env and poison later tests, so probe in a subprocess.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const probe = fn => { try { fn(); return null; } catch (e) { return e.constructor.name; } };
+          process.stdout.write(JSON.stringify({
+            freeze: probe(() => Object.freeze(process.env)),
+            seal: probe(() => Object.seal(process.env)),
+            prevExt: probe(() => Object.preventExtensions(process.env)),
+            isExt: Object.isExtensible(process.env),
+          }));
+        `,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      freeze: "TypeError",
+      seal: "TypeError",
+      prevExt: "TypeError",
+      isExt: true,
+    });
+    expect(exitCode).toBe(0);
   });
 
   test("defineProperty rejects accessor descriptors", () => {

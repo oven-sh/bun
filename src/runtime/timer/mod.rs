@@ -1264,16 +1264,11 @@ impl All {
             }
         }
 
-        // Drop the segment list from the global so wrappers become
-        // collectible. Any `root_slot` still set on a timer above was cleared
-        // by `cancel()`; immediates still queued are disarmed via `deinit()`
-        // when their boxes are freed.
-        // SAFETY: `this` is the live per-thread `All` (JS thread only); `vm`
-        // is the live per-thread VM so `global` is valid.
-        unsafe {
-            let global = crate::jsc::JSGlobalObject::opaque_ref((*vm).global);
-            (*this).roots.clear(global);
-        }
+        // Segments live on the outgoing global and are collected with it, so
+        // only the allocation cursor needs resetting here; the next `arm`
+        // walks the new global's (empty) list.
+        // SAFETY: `this` is the live per-thread `All` (JS thread only).
+        unsafe { (*this).roots.reset() };
     }
 }
 

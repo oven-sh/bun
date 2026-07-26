@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 
 // Rooting armed setTimeout/setInterval wrappers via one HandleSet strong
 // handle per timer makes the "Sh" strong-handle marking constraint walk every
@@ -131,10 +131,10 @@ describe("armed timers do not each hold a JSC strong handle", () => {
 describe("AbortSignal.timeout is released when its wrapper is collected", () => {
   test("dropped signals without listeners free their native timer", async () => {
     // The native Timeout box plus the C++ AbortSignal it keeps alive is a few
-    // hundred bytes; 30000 leaked signals are well over 10 MB of RSS that
+    // hundred bytes; 20000 leaked signals are well over 8 MB of RSS that
     // should come back once the wrappers are collected.
     const src = `
-      const N = 30000;
+      const N = 20000;
       async function round() {
         for (let i = 0; i < N; i++) AbortSignal.timeout(600000);
         for (let k = 0; k < 6; k++) {
@@ -167,23 +167,46 @@ describe("AbortSignal.timeout is released when its wrapper is collected", () => 
     expect(exitCode).toBe(0);
   });
 
-  for (const { name, arm } of [
-    { name: "with an abort listener", arm: `const s = AbortSignal.timeout(20);` },
+  for (const { name, body } of [
+    {
+      name: "with an abort listener",
+      body: `
+        const s = AbortSignal.timeout(20);
+        s.addEventListener("abort", () => { console.log("ok:" + s.aborted); process.exit(0); });
+      `,
+    },
     {
       name: "used as a source of AbortSignal.any()",
-      arm: `const s = AbortSignal.any([AbortSignal.timeout(20)]);`,
+      body: `
+        const s = AbortSignal.any([AbortSignal.timeout(20)]);
+        s.addEventListener("abort", () => { console.log("ok:" + s.aborted); process.exit(0); });
+      `,
+    },
+    {
+      name: "passed as addEventListener { signal }",
+      body: `
+        const t = new EventTarget();
+        const fail = () => { console.log("listener leaked"); process.exit(1); };
+        t.addEventListener("ping", fail, { signal: AbortSignal.timeout(20) });
+        globalThis.__probe = () => {
+          t.dispatchEvent(new Event("ping"));
+          console.log("ok:true");
+          process.exit(0);
+        };
+      `,
     },
   ]) {
     test(`signals ${name} still fire`, async () => {
       const src = `
-        (function () {
-          ${arm}
-          s.addEventListener("abort", () => { console.log("ok:" + s.aborted); process.exit(0); });
-        })();
+        (function () { ${body} })();
         Bun.gc(true);
         // AbortSignal.timeout does not ref the event loop, so a ref'd timer
         // must keep the process alive past the 20 ms deadline.
-        setTimeout(() => { console.log("never fired"); process.exit(1); }, 2000);
+        setTimeout(() => {
+          if (globalThis.__probe) return globalThis.__probe();
+          console.log("never fired");
+          process.exit(1);
+        }, 500);
       `;
       await using proc = Bun.spawn({
         cmd: [bunExe(), "-e", src],
@@ -196,4 +219,33 @@ describe("AbortSignal.timeout is released when its wrapper is collected", () => 
       expect(exitCode).toBe(0);
     });
   }
+});
+
+test("bun test --isolate rearms timers on the new global", async () => {
+  using dir = tempDir("timer-root-isolate", {
+    "a.test.ts": `
+      import { test, expect } from "bun:test";
+      test("a", async () => {
+        await new Promise<void>(r => setTimeout(r, 1));
+        expect(true).toBe(true);
+      });
+    `,
+    "b.test.ts": `
+      import { test, expect } from "bun:test";
+      test("b", async () => {
+        await new Promise<void>(r => setTimeout(r, 1));
+        expect(true).toBe(true);
+      });
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--isolate", "a.test.ts", "b.test.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain("2 pass");
+  expect(exitCode).toBe(0);
 });

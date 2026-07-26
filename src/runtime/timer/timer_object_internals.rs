@@ -78,10 +78,17 @@ impl TimerObjectInternals {
         if slot.is_none() {
             return;
         }
+        // SAFETY: `vm` is the live per-thread VM (JS-thread-only call site).
+        if self.generation != unsafe { (*vm).test_isolation_generation } {
+            // The slot was armed on a prior `--isolate` global's segment list;
+            // that global owns the segment and collects it. Touching it via
+            // the current global would try to unlink it from the wrong list.
+            return;
+        }
         let state = crate::jsc_hooks::runtime_state();
         debug_assert!(!state.is_null(), "RuntimeState not installed");
-        // SAFETY: `vm` is the live per-thread VM (JS-thread-only call site);
-        // `global` is never null. `state` as for `arm_root`.
+        // SAFETY: `vm` live per above; `global` is never null. `state` as for
+        // `arm_root`.
         unsafe {
             let global = JSGlobalObject::opaque_ref((*vm).global);
             (*state).timer.roots.disarm(slot, global);

@@ -43,7 +43,6 @@ unsafe extern "C" {
         index: u32,
     ) -> bool;
     safe fn Bun__TimerRootSegment__findFreeSlot(segment: &Segment) -> u32;
-    safe fn Bun__TimerRootSegment__clearAll(global: &JSGlobalObject);
 }
 
 /// Must match `JSTimerRootSegment::capacity`.
@@ -68,17 +67,12 @@ pub struct RootTable {
     /// Segment most recently returned by `acquire`; checked first on `arm` to
     /// skip the C++ list walk while it still has room.
     cursor: Cell<Option<NonNull<Segment>>>,
-    /// Set by [`clear`] at VM teardown; later `disarm` calls no-op so a stale
-    /// [`RootSlot`] never touches a collected segment.
-    cleared: Cell<bool>,
 }
 
 impl RootTable {
     /// Root `wrapper` and return a handle to its slot. JS thread only.
     pub(super) fn arm(&self, wrapper: JSValue, global: &JSGlobalObject) -> RootSlot {
         debug_assert!(wrapper.is_cell());
-        debug_assert!(!self.cleared.get());
-
         let (segment, index) = self.find_slot(global);
         Bun__TimerRootSegment__set(Segment::opaque_ref(segment.as_ptr()), index, wrapper);
         RootSlot {
@@ -89,31 +83,25 @@ impl RootTable {
 
     /// Clear `slot` and return it to its segment's occupancy map. The segment
     /// is released back to the global's spare slot (or dropped) if this was
-    /// its last occupant. No-op for an empty handle and after [`clear`]. JS
-    /// thread only.
+    /// its last occupant. No-op for an empty handle. JS thread only.
     pub(super) fn disarm(&self, slot: RootSlot, global: &JSGlobalObject) {
         let Some(segment) = slot.segment else { return };
-        if self.cleared.get() {
-            return;
-        }
         let released = Bun__TimerRootSegment__clear(
             global,
             Segment::opaque_ref(segment.as_ptr()),
             u32::from(slot.index),
         );
         if released && self.cursor.get() == Some(segment) {
-            // The cursor pointed at a released segment; drop it so the next
-            // `arm` re-walks from the head.
             self.cursor.set(None);
         }
     }
 
-    /// Drop both segment references from `ZigGlobalObject` so wrappers become
-    /// collectible at VM teardown.
-    pub(super) fn clear(&self, global: &JSGlobalObject) {
-        Bun__TimerRootSegment__clearAll(global);
+    /// Drop the cursor so the next `arm` re-walks from `global`'s head. Called
+    /// when `vm.global` changes (test isolation swap) or at VM teardown; the
+    /// segments themselves live on the outgoing global and are collected with
+    /// it.
+    pub(super) fn reset(&self) {
         self.cursor.set(None);
-        self.cleared.set(true);
     }
 
     fn find_slot(&self, global: &JSGlobalObject) -> (NonNull<Segment>, u32) {

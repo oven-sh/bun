@@ -129,6 +129,20 @@ public:
     bool hasAliveSourceSignals() const { return m_sourceSignals.begin() != m_sourceSignals.end(); }
     bool hasAliveDependentSignals() const { return m_dependentSignals.begin() != m_dependentSignals.end(); }
 
+    // Read-only interested-party probe for GC marker threads: true if anything
+    // would observe this timeout signal aborting (JS/native abort listener,
+    // addAlgorithm hook, addAbortAlgorithmToSignal hook, AbortSignal.any
+    // dependent, or pending native activity). m_abortAlgorithms is probed
+    // without its lock; Vector::isEmpty reads a single word, and a torn-zero
+    // read while the mutator is mid-append is benign because the algorithm
+    // being appended is still on the appending thread's stack.
+    bool hasTimeoutObserver() const WTF_IGNORES_THREAD_SAFETY_ANALYSIS
+    {
+        return hasAbortEventListener() || hasPendingActivity()
+            || !m_algorithms.isEmpty() || !m_abortAlgorithms.isEmpty()
+            || hasAliveDependentSignals();
+    }
+
     // https://github.com/oven-sh/bun/issues/4517
     void incrementPendingActivityCount() { ++pendingActivityCount; }
     void decrementPendingActivityCount() { --pendingActivityCount; }

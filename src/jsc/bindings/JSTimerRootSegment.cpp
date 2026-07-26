@@ -100,11 +100,4 @@ extern "C" uint32_t Bun__TimerRootSegment__findFreeSlot(JSTimerRootSegment* segm
     return segment->findFreeSlot();
 }
 
-extern "C" void Bun__TimerRootSegment__clearAll(JSC::JSGlobalObject* globalObject)
-{
-    auto* zigGlobal = defaultGlobalObject(globalObject);
-    zigGlobal->m_timerRootSegmentHead.clear();
-    zigGlobal->m_timerRootSegmentFree.clear();
-}
-
 } // namespace Bun

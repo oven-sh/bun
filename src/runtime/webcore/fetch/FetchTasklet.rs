@@ -992,6 +992,7 @@ impl FetchTasklet {
                     self.request_stream_restart_pending
                         .store(false, Ordering::Release);
                     self.abort_task();
+                    self.mutex.unlock();
                     return Ok(());
                 }
             }

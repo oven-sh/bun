@@ -552,9 +552,7 @@ pub fn handle_template_value(
     Ok(())
 }
 
-/// Reject a shell argument string the parser would refuse: NUL bytes (which
-/// truncate C strings passed to exec) and lone surrogates / invalid UTF-8.
-/// Shared by template interpolation and `$.escape()` so the two cannot drift.
+/// Shared NUL / invalid-encoding rejection for template interpolation and `$.escape()`.
 pub(crate) fn validate_shell_arg_bunstr(
     global: &JSGlobalObject,
     bunstr: BunString,

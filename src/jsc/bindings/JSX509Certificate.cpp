@@ -46,9 +46,6 @@ WTF::String toWTFString(ncrypto::BIOPointer& bio)
 {
     BUF_MEM* bptr;
     BIO_get_mem_ptr(bio.get(), &bptr);
-    // A mem BIO that was never written to has bptr->data == nullptr. Constructing
-    // an ExternalStringImpl over {nullptr, 0} trips the m_data8 assertion in
-    // debug/ASAN builds, so return the empty singleton instead.
     if (bptr->length == 0) {
         return emptyString();
     }
@@ -1157,9 +1154,6 @@ JSString* JSX509Certificate::computeSubjectAltName(ncrypto::X509View view, JSGlo
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    // Node returns undefined when the extension is absent and "" when it is
-    // present but prints nothing (e.g. an empty GeneralNames sequence), so
-    // signal absence with nullptr and leave the empty string to the caller.
     auto bio = view.getSubjectAltName();
     if (!bio) {
         return nullptr;

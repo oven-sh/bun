@@ -843,11 +843,9 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
         self.try_write_newly_buffered_data(buf_len)
     }
 
-    /// `chunk_len` is the caller's chunk (already appended to `outgoing`).
-    /// `Wrote`/`Done` report bytes of *that chunk*, not bytes drained from the
-    /// buffer (which includes older chunks the buffer path already reported).
-    /// `Pending` keeps the drained count — its caller-facing value is
-    /// re-derived from `buffered_len()` (see `FileSink::bytes_accepted`).
+    /// `chunk_len` is the caller's chunk, already appended to `outgoing`.
+    /// `Wrote`/`Done` report bytes of *that chunk*; `Pending` reports bytes
+    /// drained (callers re-derive the chunk count from `buffered_len()`).
     fn try_write_newly_buffered_data(&mut self, chunk_len: usize) -> WriteResult {
         debug_assert!(!self.is_done);
 

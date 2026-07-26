@@ -1048,6 +1048,8 @@ body {
 <html>
   <body>
     <img srcset="./a.png 1x, ./b.png 2x">
+    <img id="bare" srcset="./a.png,
+      ./b.png  ,">
     <picture>
       <source srcset="./a.png 300w, https://cdn.example.com/big.png 600w">
     </picture>
@@ -1063,6 +1065,12 @@ body {
       const [c1, c2] = img.split(/,\s*/);
       expect(c1).toMatch(/^\.\/a-[a-z0-9]+\.png 1x$/);
       expect(c2).toMatch(/^\.\/b-[a-z0-9]+\.png 2x$/);
+
+      // Descriptor-less, newline-separated, multi-space, trailing comma.
+      const bare = html.match(/<img id="bare" srcset="([^"]+)">/)![1].split(/,\s*/).filter(Boolean);
+      expect(bare).toHaveLength(2);
+      expect(bare[0]).toMatch(/^\.\/a-[a-z0-9]+\.png$/);
+      expect(bare[1]).toMatch(/^\.\/b-[a-z0-9]+\.png$/);
 
       const source = html.match(/<source srcset="([^"]+)">/)![1];
       const [s1, s2] = source.split(/,\s*/);

@@ -3650,6 +3650,35 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
     }
 }
 
+// Bun loads a `.json` path with the JSON loader whether or not the request
+// carried `with { type: "json" }`. JSC's module map is keyed on
+// (specifier, ScriptFetchParameters::Type), so an attribute-less request must
+// reach it as Type::JSON too or the two forms become two live module
+// instances. Applied only when the caller supplied no attributes (an explicit
+// `with { type: ... }` is left untouched) and the filename is not one Bun
+// routes to the jsonc loader (`loader_for_path` in jsc_hooks.rs), for which an
+// inferred `type: "json"` would force strict JSON at fetch time.
+static ALWAYS_INLINE void normalizeFetchParametersForResolvedPath(RefPtr<JSC::ScriptFetchParameters>& parameters, const JSC::Identifier& resolved)
+{
+    if (parameters)
+        return;
+    auto* impl = resolved.impl();
+    if (!impl || impl->isSymbol())
+        return;
+    StringView path(*impl);
+    if (size_t q = path.find([](char16_t c) { return c == '?' || c == '#'; }); q != notFound)
+        path = path.left(q);
+    if (!path.endsWith(".json"_s))
+        return;
+    size_t slash = path.reverseFind('/');
+    size_t backslash = path.reverseFind('\\');
+    size_t sep = slash == notFound ? backslash : (backslash == notFound ? slash : std::max(slash, backslash));
+    StringView filename = sep == notFound ? path : path.substring(sep + 1);
+    if (filename == "package.json"_s || filename.startsWith("tsconfig."_s) || filename.startsWith("jsconfig."_s))
+        return;
+    parameters = JSC::ScriptFetchParameters::create(JSC::ScriptFetchParameters::Type::JSON);
+}
+
 JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalObject,
     JSModuleLoader*,
     JSString* moduleNameValue,
@@ -3698,6 +3727,7 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
     if (globalObject->onLoadPlugins.hasVirtualModules()) {
         if (auto resolution = globalObject->onLoadPlugins.resolveVirtualModule(moduleName, sourceURL.protocolIsFile() ? sourceOriginStringHolder : String())) {
             resolvedIdentifier = JSC::Identifier::fromString(vm, resolution.value());
+            normalizeFetchParametersForResolvedPath(parameters, resolvedIdentifier);
 
             auto result = JSC::importModule(globalObject, resolvedIdentifier, JSC::Identifier(), parameters, nullptr, /* deferred */ false, referrerAsyncOrder);
             if (scope.exception()) [[unlikely]] {
@@ -3758,6 +3788,7 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
     // The C++ module loader now extracts `with.type` into a
     // ScriptFetchParameters before calling this hook, so `parameters` is
     // already the parsed RefPtr (or null). Just forward it.
+    normalizeFetchParametersForResolvedPath(parameters, resolvedIdentifier);
     auto result = JSC::importModule(globalObject, resolvedIdentifier,
         JSC::Identifier(), WTF::move(parameters), nullptr, /* deferred */ false, referrerAsyncOrder);
     if (scope.exception()) [[unlikely]] {

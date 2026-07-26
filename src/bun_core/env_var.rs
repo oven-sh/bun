@@ -730,6 +730,12 @@ macro_rules! platform_specific_new {
                         $crate::hint::cold();
 
                         let env_var = $crate::getenv_z(k);
+                        // A concurrent `set_owned()` may have filled the cache
+                        // while getenv_z ran; don't overwrite it with the
+                        // stale pre-write value.
+                        if !matches!(CACHE.get_cached(), CacheOutput::Unknown) {
+                            return platform_get();
+                        }
                         let maybe_reloaded = CACHE.deser_and_invalidate(env_var);
 
                         if let Some(v) = maybe_reloaded {
@@ -824,6 +830,9 @@ macro_rules! platform_specific_new {
             fn get_force_reload() -> Option<K::ValueType> {
                 assert_platform_supported();
                 let env_var = $crate::getenv_z(key());
+                if !matches!(CACHE.get_cached(), CacheOutput::Unknown) {
+                    return get();
+                }
                 let maybe_reloaded = CACHE.deser_and_invalidate(env_var);
 
                 if let Some(v) = maybe_reloaded {

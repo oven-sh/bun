@@ -485,6 +485,7 @@ static JSC::StreamingJSONParseResult::Status parseJSONLFromBytes(
             localBytes = str.is8Bit()
                 ? simdutf::utf8_length_from_latin1(reinterpret_cast<const char*>(str.span8().data()), r.charactersConsumed)
                 : simdutf::utf8_length_from_utf16le(reinterpret_cast<const char16_t*>(str.span16().data()), r.charactersConsumed);
+            localBytes = std::min(localBytes, n);
         }
         return true;
     };

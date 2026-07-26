@@ -1101,8 +1101,9 @@ body {
     },
   });
 
-  // Resource-hint hrefs that do not resolve to a local file (navigation routes)
-  // pass through untouched instead of failing the build.
+  // Resource-hint hrefs that do not resolve to a local file (navigation routes,
+  // API endpoints, external URLs) pass through untouched instead of failing the
+  // build.
   itBundled("html/link-hint-unresolved", {
     outdir: "out/",
     files: {
@@ -1111,6 +1112,8 @@ body {
 <html>
   <head>
     <link rel="prefetch" href="/dashboard">
+    <link rel="preload" as="fetch" href="/api/user" crossorigin>
+    <link rel="preload" as="document" href="/settings">
     <link rel="modulepreload" href="https://cdn.example.com/lib.js">
   </head>
   <body></body>
@@ -1120,6 +1123,8 @@ body {
     onAfterBundle(api) {
       const html = api.readFile("out/index.html");
       expect(html).toContain('<link rel="prefetch" href="/dashboard">');
+      expect(html).toContain('<link rel="preload" as="fetch" href="/api/user" crossorigin>');
+      expect(html).toContain('<link rel="preload" as="document" href="/settings">');
       expect(html).toContain('<link rel="modulepreload" href="https://cdn.example.com/lib.js">');
     },
   });

@@ -106,10 +106,8 @@ pub struct ParseTask {
     pub stage: ParseTaskStage,
 
     pub tree_shaking: bool,
-    /// Set while the only import record that has enqueued this path is an
-    /// HTML resource hint (prefetch/modulepreload/preload-as-script). If a
-    /// non-hint record for the same path is seen later, it restores the
-    /// path's native loader and clears this flag.
+    /// Only HTML resource-hint records have enqueued this path so far. A later
+    /// non-hint record restores the native `loader` and clears this.
     pub is_html_resource_hint: bool,
     pub known_target: options::Target,
     pub module_type: options::ModuleType,

@@ -76,10 +76,6 @@ impl<'a> HTMLScanner<'a> {
             Box::leak(AstAlloc::vec_from_slice(path_to_use).into_boxed_slice());
         let mut flags = ImportRecordFlags::default();
         if is_resource_hint {
-            // `<link rel="prefetch">` / `rel="modulepreload"` / `rel="preload"
-            // as="script"` are browser fetch-only hints. An unresolved href
-            // (e.g. a navigation route) must not fail the build, and the
-            // bundler must not execute the target.
             flags.insert(ImportRecordFlags::WAS_HTML_RESOURCE_HINT);
             flags.insert(ImportRecordFlags::HANDLES_IMPORT_ERRORS);
         }
@@ -167,9 +163,7 @@ pub struct TagHandler {
     pub url_attribute: &'static str,
     /// The kind of import to create
     pub kind: ImportKind,
-    /// The element is a browser fetch-only hint (prefetch / modulepreload /
-    /// preload as=script). The referenced file is emitted as a raw asset
-    /// rather than bundled, and an unresolved href is tolerated.
+    /// Sets `ImportRecordFlags::WAS_HTML_RESOURCE_HINT` on the record.
     pub is_resource_hint: bool,
 }
 
@@ -216,17 +210,17 @@ pub(crate) const TAG_HANDLERS: [TagHandler; 20] = [
     ),
     // Web Workers
     TagHandler::new("link[as='worker'][href]", "href", ImportKind::Stmt),
-    // Generic preload/prefetch targets (fetch/track/document/embed/object)
-    TagHandler::new(
-        "link[as='fetch'][href], link[as='track'][href], link[as='document'][href], link[as='embed'][href], link[as='object'][href]",
-        "href",
-        ImportKind::Url,
-    ),
     // Manifest files
     TagHandler::new("link[rel='manifest'][href]", "href", ImportKind::Url),
     // Icons
     TagHandler::new(
         "link[rel='icon'][href], link[rel='apple-touch-icon'][href]",
+        "href",
+        ImportKind::Url,
+    ),
+    // Generic preload targets (fetch/track/document/embed/object)
+    TagHandler::hint(
+        "link[as='fetch'][href], link[as='track'][href], link[as='document'][href], link[as='embed'][href], link[as='object'][href]",
         "href",
         ImportKind::Url,
     ),

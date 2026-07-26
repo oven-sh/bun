@@ -6352,13 +6352,9 @@ pub mod bv2_impl {
                         path.loader(&transpiler.options.loaders)
                             .unwrap_or(Loader::File)
                     });
-                    // HTML resource hints (<link rel="prefetch">, rel="modulepreload",
-                    // rel="preload" as="script") are fetch-only: the referenced file
-                    // must be emitted as a raw asset and never bundled/executed.
-                    // Force the file loader regardless of extension. If a non-hint
-                    // record for the same path is seen later in this batch, the
-                    // `resolve_queue.found_existing` branch below restores the
-                    // native loader.
+                    // HTML resource hints are fetch-only: emit as a raw asset,
+                    // never bundle/execute. A later non-hint record for the same
+                    // path restores the native loader at `found_existing` below.
                     if is_html_resource_hint && !resolved_loader.should_copy_for_bundling() {
                         break 'brk Loader::File;
                     }
@@ -6402,10 +6398,6 @@ pub mod bv2_impl {
                 if resolve_entry.found_existing {
                     // SAFETY: arena-allocated `ParseTask` stored in the queue; arena outlives the pass.
                     let existing = unsafe { &mut **resolve_entry.value_ptr };
-                    // If the only earlier record for this path was an HTML
-                    // resource hint (which forced Loader::File above), a
-                    // later non-hint record restores the native loader so the
-                    // file is bundled normally.
                     if existing.is_html_resource_hint && !is_html_resource_hint {
                         existing.is_html_resource_hint = false;
                         existing.loader = Some(import_record_loader);

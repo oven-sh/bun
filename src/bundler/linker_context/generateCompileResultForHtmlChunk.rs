@@ -165,8 +165,7 @@ impl<'a> HTMLProcessorHandler for HTMLLoader<'a> {
             if !unique_key_for_additional_files.is_empty() {
                 set_attribute(element, url_attribute, unique_key_for_additional_files);
             } else if is_resource_hint && import_record.path.is_disabled {
-                // An unresolved prefetch/modulepreload href (e.g. a navigation
-                // route) passes through untouched.
+                // Unresolved hint href: pass through untouched.
             } else if import_record.path.is_disabled
                 || loader.is_javascript_like()
                 || loader.is_css()

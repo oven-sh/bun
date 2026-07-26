@@ -10004,9 +10004,7 @@ fn zig_delete_tree_open_initial_subpath(
         if treat_as_dir {
             return match dt_open_dir(self_, sub_path) {
                 Ok(d) => Ok(Some(d)),
-                // NotDir/FileNotFound surface here (no fall-through to
-                // deleteFile) — deliberate, so `FileNotFound` propagates
-                // (see the zig_delete_tree banner above).
+                // ENOTDIR/ENOENT surface here (no deleteFile fall-through) so top-level ENOENT propagates to the caller.
                 Err(e) => Err(dt_err(e, sys::Tag::open, err_path)),
             };
         } else {

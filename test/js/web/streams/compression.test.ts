@@ -227,9 +227,7 @@ describe("CompressionStream and DecompressionStream", () => {
       const f2 = zlib.zstdCompressSync(Buffer.from("second frame\n"));
       const cat = Buffer.concat([f1, f2]);
 
-      const out = await new Response(
-        new Blob([cat]).stream().pipeThrough(new DecompressionStream("zstd")),
-      ).text();
+      const out = await new Response(new Blob([cat]).stream().pipeThrough(new DecompressionStream("zstd"))).text();
       expect(out).toBe("first frame\nsecond frame\n");
     });
 
@@ -259,9 +257,7 @@ describe("CompressionStream and DecompressionStream", () => {
       const cat = Buffer.concat(frames);
 
       const out = Buffer.from(
-        await new Response(
-          new Blob([cat]).stream().pipeThrough(new DecompressionStream("zstd")),
-        ).arrayBuffer(),
+        await new Response(new Blob([cat]).stream().pipeThrough(new DecompressionStream("zstd"))).arrayBuffer(),
       );
       expect(out.length).toBe(piece.length * 64);
       expect(out.equals(Buffer.alloc(piece.length * 64, "Z"))).toBe(true);
@@ -271,9 +267,7 @@ describe("CompressionStream and DecompressionStream", () => {
       const frame = zlib.zstdCompressSync(Buffer.from("hello"));
       const withJunk = Buffer.concat([frame, Buffer.from([0xde, 0xad, 0xbe, 0xef])]);
 
-      const read = new Response(
-        new Blob([withJunk]).stream().pipeThrough(new DecompressionStream("zstd")),
-      ).text();
+      const read = new Response(new Blob([withJunk]).stream().pipeThrough(new DecompressionStream("zstd"))).text();
       await expect(read).rejects.toThrow();
     });
   });

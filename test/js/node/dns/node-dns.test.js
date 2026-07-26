@@ -427,8 +427,7 @@ describe("test invalid arguments", () => {
       try {
         expect(err).not.toBeNull();
         expect(results).toBeUndefined();
-        // Assert we convert our error codes to Node.js error codes
-        expect(err.code).not.toStartWith("DNS_");
+        expect(err.code).toBe("EBADNAME");
         done();
       } catch (e) {
         done(e);

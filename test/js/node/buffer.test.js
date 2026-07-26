@@ -4647,3 +4647,110 @@ it.skipIf(os.totalmem() < 10 * 1024 ** 3)(
     expect(exitCode).toBe(0);
   },
 );
+
+// A kMaxLength (2**32) buffer's final byte is at offset 2**32 - 1. The write*
+// bounds check must accept that offset even though JSC's TypedArray indexed
+// get currently reports undefined there; the slow path compares against
+// buf.length instead. Exercises every write-side path routed through
+// internal/buffer: writeU_Int8, checkBounds, checkInt.
+it.skipIf(os.totalmem() < 10 * 1024 ** 3)(
+  "Buffer read*/write* accept offsets ending at the last byte of a 2**32 buffer",
+  async () => {
+    const script = `
+      const N = 2 ** 32;
+      const b = Buffer.alloc(N);
+      const out = {};
+      const throws = fn => { try { fn(); return "no throw"; } catch (e) { return e.code; } };
+
+      out.writeUInt8 = b.writeUInt8(0xab, N - 1);
+      out.readUInt8 = b.readUInt8(N - 1);
+      out.writeInt8 = b.writeInt8(-1, N - 1);
+      out.readInt8 = b.readInt8(N - 1);
+
+      out.writeUInt16LE = b.writeUInt16LE(0xbeef, N - 2);
+      out.readUInt16LE = b.readUInt16LE(N - 2);
+      out.writeUInt16BE = b.writeUInt16BE(0xbeef, N - 2);
+      out.writeInt16LE = b.writeInt16LE(-2, N - 2);
+      out.writeInt16BE = b.writeInt16BE(-2, N - 2);
+
+      out.writeUInt32LE = b.writeUInt32LE(0xcafebabe, N - 4);
+      out.readUInt32LE = b.readUInt32LE(N - 4);
+      out.writeUInt32BE = b.writeUInt32BE(0xcafebabe, N - 4);
+      out.writeInt32LE = b.writeInt32LE(-3, N - 4);
+      out.writeInt32BE = b.writeInt32BE(-3, N - 4);
+
+      out.writeFloatLE = b.writeFloatLE(1.5, N - 4);
+      out.readFloatLE = b.readFloatLE(N - 4);
+      out.writeFloatBE = b.writeFloatBE(1.5, N - 4);
+      out.writeDoubleLE = b.writeDoubleLE(2.5, N - 8);
+      out.readDoubleLE = b.readDoubleLE(N - 8);
+      out.writeDoubleBE = b.writeDoubleBE(2.5, N - 8);
+
+      out.writeIntLE1 = b.writeIntLE(0x12, N - 1, 1);
+      out.writeIntBE6 = b.writeIntBE(0x1122334455, N - 6, 6);
+      out.writeUIntLE6 = b.writeUIntLE(0x1122334455, N - 6, 6);
+      out.readUIntLE6 = b.readUIntLE(N - 6, 6);
+      out.writeUIntBE1 = b.writeUIntBE(0x12, N - 1, 1);
+
+      out.writeBigUInt64LE = b.writeBigUInt64LE(0x0102030405060708n, N - 8);
+      out.readBigUInt64LE = b.readBigUInt64LE(N - 8).toString(16);
+
+      out.oob_writeUInt8 = throws(() => b.writeUInt8(1, N));
+      out.oob_writeInt16LE = throws(() => b.writeInt16LE(1, N - 1));
+      out.oob_writeDoubleLE = throws(() => b.writeDoubleLE(1, N - 7));
+      out.oob_writeUIntLE6 = throws(() => b.writeUIntLE(1, N - 5, 6));
+
+      out.frac_writeUInt8 = throws(() => b.writeUInt8(1, N - 1.5));
+      out.neg_writeUInt8 = throws(() => b.writeUInt8(1, -1));
+
+      console.log(JSON.stringify(out));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: { ...bunEnv, BUN_GARBAGE_COLLECTOR_LEVEL: "0" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const N = 2 ** 32;
+    expect({ out: stdout.trim() && JSON.parse(stdout), stderr }).toEqual({
+      out: {
+        writeUInt8: N,
+        readUInt8: 0xab,
+        writeInt8: N,
+        readInt8: -1,
+        writeUInt16LE: N,
+        readUInt16LE: 0xbeef,
+        writeUInt16BE: N,
+        writeInt16LE: N,
+        writeInt16BE: N,
+        writeUInt32LE: N,
+        readUInt32LE: 0xcafebabe,
+        writeUInt32BE: N,
+        writeInt32LE: N,
+        writeInt32BE: N,
+        writeFloatLE: N,
+        readFloatLE: 1.5,
+        writeFloatBE: N,
+        writeDoubleLE: N,
+        readDoubleLE: 2.5,
+        writeDoubleBE: N,
+        writeIntLE1: N,
+        writeIntBE6: N,
+        writeUIntLE6: N,
+        readUIntLE6: 0x1122334455,
+        writeUIntBE1: N,
+        writeBigUInt64LE: N,
+        readBigUInt64LE: "102030405060708",
+        oob_writeUInt8: "ERR_OUT_OF_RANGE",
+        oob_writeInt16LE: "ERR_OUT_OF_RANGE",
+        oob_writeDoubleLE: "ERR_OUT_OF_RANGE",
+        oob_writeUIntLE6: "ERR_OUT_OF_RANGE",
+        frac_writeUInt8: "ERR_OUT_OF_RANGE",
+        neg_writeUInt8: "ERR_OUT_OF_RANGE",
+      },
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  },
+);

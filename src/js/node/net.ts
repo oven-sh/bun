@@ -4127,12 +4127,10 @@ function closeSocketHandle(self, isException, isCleanupPending = false) {
   const handle = self._handle;
   $debug("closeSocketHandle", isException, isCleanupPending, !!handle);
   if (handle) {
-    // A client TLSSocket wrapping a not-yet-connected Duplex stores that stream
-    // as _handle directly (tls.ts sets `this._handle = socket`); Node wraps it
-    // in a JSStreamSocket whose close() destroys the stream. Do the same here.
     if (typeof handle.close === "function") {
       handle.close(onSocketHandleClosed);
     } else if (!handle.destroyed) {
+      // tls.ts stores the wrapped Duplex directly as _handle; it has destroy(), not close().
       handle.destroy?.();
     }
     setImmediate(() => {

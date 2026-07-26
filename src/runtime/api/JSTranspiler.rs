@@ -146,8 +146,7 @@ fn clone_macro_map(src: &MacroMap) -> MacroMap {
     out
 }
 
-/// [`StringOrBuffer::from_js`] but 16-bit strings are encoded as WTF-8 so the
-/// lexer sees unpaired surrogates instead of U+FFFD.
+/// [`StringOrBuffer::from_js`] with 16-bit strings encoded as WTF-8 (keeps unpaired surrogates).
 fn source_from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<StringOrBuffer>> {
     if value.is_string() {
         let str = OwnedString::new(BunString::from_js(value, global)?);

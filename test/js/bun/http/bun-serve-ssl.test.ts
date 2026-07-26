@@ -225,6 +225,17 @@ describe("Bun.serve tls must carry key+cert", () => {
     } as any);
     expect(server.url.protocol).toBe("https:");
   });
+
+  test("tls: [] with top-level key+cert still arms TLS (legacy path)", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      tls: [],
+      key: tlsCert.key,
+      cert: tlsCert.cert,
+      fetch: () => new Response("ok"),
+    } as any);
+    expect(server.url.protocol).toBe("https:");
+  });
 });
 
 describe("node:https without key/cert is TLS fail-closed", () => {

@@ -1382,14 +1382,12 @@ impl ServerConfig {
 
         let mut saw_tls_key = false;
         if let Some(tls) = arg.get_truthy(global, "tls")? {
-            saw_tls_key = true;
-            if tls.is_falsey() {
-                args.ssl_config = None;
-            } else if tls.js_type().is_array() {
+            if tls.js_type().is_array() {
                 let mut value_iter = tls.array_iterator(global)?;
                 if value_iter.len == 0 {
                     // `[]` = zero SNI configs (plain HTTP, #21792), unlike `{}` which throws.
                 } else {
+                    saw_tls_key = true;
                     while let Some(item) = value_iter.next()? {
                         let ssl_config = match SSLConfig::from_js(vm, global, item)? {
                             Some(c) => c,
@@ -1423,6 +1421,7 @@ impl ServerConfig {
                     }
                 }
             } else {
+                saw_tls_key = true;
                 let parsed = SSLConfig::from_js(vm, global, tls)?;
                 if global.has_exception() {
                     return Err(JsError::Thrown);

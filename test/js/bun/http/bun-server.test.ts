@@ -696,6 +696,70 @@ describe.concurrent("server.stop() drain promise counts open connections", () =>
     });
   });
 
+  test("pre-handshake TLS close does not steal another connection's count", async () => {
+    // For TLS, +1 fires in onHandshake, -1 in onClose. A socket that RSTs
+    // before the handshake reaches onClose without a matching +1; without the
+    // per-socket filteredOpen gate that -1 would decrement the count for the
+    // live handshaken connection and stop(false) would resolve under it.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const net = require("net");
+          const tls = require("tls");
+          const { tls: serverTls } = require(${JSON.stringify(require.resolve("harness"))});
+          const server = Bun.serve({
+            port: 0, hostname: "127.0.0.1", tls: serverTls,
+            fetch: () => new Response("ok"),
+          });
+          const port = server.port;
+          // One real TLS keep-alive connection: handshake completes, count=1.
+          const c = tls.connect({ port, host: "127.0.0.1", ca: serverTls.cert, rejectUnauthorized: false });
+          let buf = "";
+          c.on("data", d => (buf += d));
+          c.on("error", () => {});
+          await new Promise((resolve, reject) => {
+            c.on("secureConnect", resolve);
+            c.on("error", reject);
+          });
+          c.write("GET / HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n");
+          while (!buf.includes("\\r\\nok")) await new Promise(r => setImmediate(r));
+          // Three raw TCP connects that close before the handshake. onClose
+          // fires for each; without filteredOpen, each -1 would steal c's
+          // count (and the rest would be swallowed by the prev==0 guard).
+          for (let i = 0; i < 3; i++) {
+            const raw = net.connect(port, "127.0.0.1");
+            await new Promise((resolve, reject) => {
+              raw.on("connect", resolve);
+              raw.on("error", reject);
+            });
+            raw.destroy();
+          }
+          // Give the server a few ticks to process the raw closes.
+          for (let i = 0; i < 10; i++) await new Promise(r => setImmediate(r));
+          let resolved = false;
+          const stopped = server.stop(false).then(() => { resolved = true; });
+          await new Promise(r => setImmediate(r));
+          const resolvedEarly = resolved;
+          c.destroy();
+          await Promise.race([stopped, new Promise(r => setTimeout(r, 2000))]);
+          console.log(JSON.stringify({ resolvedEarly, resolved }));
+          process.exit(0);
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, out: JSON.parse(stdout.trim() || "null"), exitCode }).toEqual({
+      stderr: "",
+      out: { resolvedEarly: false, resolved: true },
+      exitCode: 0,
+    });
+  });
+
   test("server.reload() keeps the connection count coherent", async () => {
     // clearRoutes() used to wipe filterHandlers, so a connection open across
     // reload left active_connection_count stuck > 0 forever.

@@ -366,33 +366,34 @@ fn process_srcset<T: HTMLProcessorHandler>(
         return;
     }
     let mut rebuilt = Vec::<u8>::new();
-    let mut any_replaced = false;
-    let mut remove = false;
-    for (i, cand) in candidates.iter().enumerate() {
+    let mut changed = false;
+    let mut kept = 0usize;
+    for cand in &candidates {
         let action = this.on_tag(element, cand.url, b"srcset", kind);
         let url: &[u8] = match &action {
             TagAction::Keep => cand.url,
             TagAction::Replace(v) => {
-                any_replaced = true;
+                changed = true;
                 v.as_slice()
             }
             TagAction::Remove => {
-                remove = true;
-                cand.url
+                changed = true;
+                continue;
             }
         };
-        if i > 0 {
+        if kept > 0 {
             rebuilt.extend_from_slice(b", ");
         }
+        kept += 1;
         rebuilt.extend_from_slice(url);
         if !cand.descriptor.is_empty() {
             rebuilt.push(b' ');
             rebuilt.extend_from_slice(cand.descriptor);
         }
     }
-    if remove {
+    if kept == 0 {
         element.remove();
-    } else if any_replaced {
+    } else if changed {
         apply_tag_action(element, "srcset", TagAction::Replace(rebuilt));
     }
 }

@@ -800,9 +800,14 @@ struct PersistJob {
 /// out of the entries.
 fn collect_persist_jobs(state: &mut CacheState) -> Vec<PersistJob> {
     let mut jobs = Vec::new();
+    let logging = LOG_ENABLED.load(Ordering::Relaxed);
     for (&key, entry) in state.entries.iter_mut() {
         let tname = type_name(entry.is_cjs);
-        let name = display_name(&entry.filename, entry.is_cjs);
+        let name = if logging {
+            display_name(&entry.filename, entry.is_cjs)
+        } else {
+            String::new()
+        };
         if entry.persisted {
             cclog!(
                 "[compile cache] skip persisting {tname} {name} because cache was already persisted\n"
@@ -845,8 +850,13 @@ fn write_persist_job_locked(
     job: &PersistJob,
     blob: &[u8],
 ) -> Result<(), ()> {
+    let logging = LOG_ENABLED.load(Ordering::Relaxed);
     let tname = type_name(job.is_cjs);
-    let name = display_name(&job.filename, job.is_cjs);
+    let name = if logging {
+        display_name(&job.filename, job.is_cjs)
+    } else {
+        String::new()
+    };
 
     let cache_size = blob.len() as u32;
     let cache_hash = hash32(blob);
@@ -875,12 +885,16 @@ fn write_persist_job_locked(
     };
     let _close = sys::CloseOnDrop::new(tmpfile.fd);
 
-    let tmp_display = format!(
-        "{}{}{}",
-        state.dir.as_bstr(),
-        SEP as char,
-        tmpname_zstr.as_bytes().as_bstr()
-    );
+    let tmp_display = if logging {
+        format!(
+            "{}{}{}",
+            state.dir.as_bstr(),
+            SEP as char,
+            tmpname_zstr.as_bytes().as_bstr()
+        )
+    } else {
+        String::new()
+    };
     cclog!(" -> {tmp_display}\n");
     cclog!(
         "[compile cache] writing cache for {tname} {name} to temporary file {tmp_display} [{} {} {} {} {}]...",
@@ -913,12 +927,16 @@ fn write_persist_job_locked(
     let mut dest_z = [0u8; 9];
     dest_z[..8].copy_from_slice(&basename);
     let dest_zstr = ZStr::from_buf(&dest_z, 8);
-    let final_display = format!(
-        "{}{}{}",
-        state.dir.as_bstr(),
-        SEP as char,
-        core::str::from_utf8(&basename).expect("hex")
-    );
+    let final_display = if logging {
+        format!(
+            "{}{}{}",
+            state.dir.as_bstr(),
+            SEP as char,
+            core::str::from_utf8(&basename).expect("hex")
+        )
+    } else {
+        String::new()
+    };
     cclog!("[compile cache] Renaming {tmp_display} to {final_display}...");
     if let Err(e) = tmpfile.finish(dest_zstr) {
         cclog!("failed: {}\n", errno_name(&e));
@@ -947,9 +965,11 @@ fn persist_pass() {
     for job in jobs {
         let blob = generate_bytecode(job.format, &job.code, &job.filename);
         if blob.is_none() {
-            let tname = type_name(job.is_cjs);
-            let name = display_name(&job.filename, job.is_cjs);
-            cclog!("[compile cache] generating cache for {tname} {name} failed, skipping\n");
+            cclog!(
+                "[compile cache] generating cache for {} {} failed, skipping\n",
+                type_name(job.is_cjs),
+                display_name(&job.filename, job.is_cjs)
+            );
         }
         generated.push((job, blob));
     }

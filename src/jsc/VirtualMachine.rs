@@ -2361,6 +2361,8 @@ impl VirtualMachine {
                     }
                 }
 
+                self.maybe_freeze_intrinsics();
+
                 // Check if Module.runMain was patched.
                 if self.has_patched_run_main {
                     bun_core::hint::cold();

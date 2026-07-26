@@ -265,6 +265,26 @@ describe("--frozen-intrinsics", () => {
     },
     SLOW,
   );
+
+  test(
+    "freeze runs even when a --require preload patches Module.runMain",
+    async () => {
+      using dir = tempDir("frozen-intrinsics-runmain", {
+        "loader.cjs": `const M = require("module"); const orig = M.runMain; M.runMain = function (...a) { return orig.apply(this, a); };`,
+        "entry.js": `console.log(JSON.stringify({ frozen: Object.isFrozen(Array.prototype) }))`,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "--frozen-intrinsics", "--require", "./loader.cjs", "entry.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(JSON.parse(stdout)).toEqual({ frozen: true });
+      expect(exitCode).toBe(0);
+    },
+    SLOW,
+  );
 });
 
 describe("--secure-heap", () => {

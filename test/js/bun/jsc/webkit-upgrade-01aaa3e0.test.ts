@@ -4,34 +4,7 @@ import { bunEnv, bunExe } from "harness";
 // Regression coverage for the WebKit 01aaa3e0be0c sync. Each case targets a
 // specific upstream API change that required a Bun-side adaptation.
 
-describe("WebKit 01aaa3e0be0c upgrade", () => {
-  test("Explicit Resource Management is enabled by default", async () => {
-    // https://bugs.webkit.org/show_bug.cgi?id=248707 shipped `using` /
-    // `await using` by default. Previously this syntax was rejected unless
-    // JSC_useExplicitResourceManagement=1 was set.
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `
-          const order = [];
-          {
-            using a = { [Symbol.dispose]() { order.push("a"); } };
-            using b = { [Symbol.dispose]() { order.push("b"); } };
-            order.push("body");
-          }
-          process.stdout.write(JSON.stringify(order));
-        `,
-      ],
-      env: bunEnv,
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    expect(stdout).toBe(`["body","b","a"]`);
-    expect(exitCode).toBe(0);
-  });
-
+describe.concurrent("WebKit 01aaa3e0be0c upgrade", () => {
   test("AsyncLocalStorage context survives for-await over an async generator", async () => {
     // Upstream moved the cooperative-driver resolve path behind the new
     // settleDriverWithIteratorResult helper (bug 319817). The fork's

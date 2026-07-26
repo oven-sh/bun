@@ -5777,6 +5777,14 @@ impl<'a> Resolver<'a> {
         path: &[u8],
         extension_order: options::ExtOrder,
     ) -> Option<LoadResult> {
+        // A path this long cannot name a real file, and the extension probing
+        // below writes `path` into a fixed `PathBuffer`. Absolute import
+        // specifiers reach here with a short (existing) dirname and an
+        // arbitrarily long basename; bail before that write can overflow.
+        if path.len() >= MAX_PATH_BYTES {
+            return None;
+        }
+
         // SAFETY: RealFS is the global singleton. Derive provenance from the raw
         // `*mut FileSystem` field so intervening `unsafe { &mut *self.fs() }` calls in
         // `load_extension` / `dirname_store.append_slice` don't invalidate `rfs`
@@ -6044,6 +6052,9 @@ impl<'a> Resolver<'a> {
         // field so `unsafe { &mut *self.fs() }` calls below (`filename_store.append_parts`) don't pop
         // its provenance under Stacked Borrows.
         let rfs: *mut Fs::file_system::RealFS = self.rfs_ptr();
+        if path.len() + ext.len() > MAX_PATH_BYTES {
+            return None;
+        }
         let buffer = &mut bufs!(load_as_file)[0..path.len() + ext.len()];
         buffer[path.len()..].copy_from_slice(ext);
         let file_name = &buffer[path.len() - base.len()..buffer.len()];

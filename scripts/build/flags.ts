@@ -1020,17 +1020,21 @@ export const linkerFlags: Flag[] = [
   {
     // Identical-code folding, on top of -dead_strip: dead_strip removes
     // unreferenced functions, ICF merges duplicate ones (template/bindgen
-    // instantiations, mostly). `safe` only folds functions whose address is
-    // never taken, per the -faddrsig table in globalFlags — the aggressive
-    // mode is what folded callBigIntConstructor into constructBigInt on
-    // Windows (/OPT:ICF) and broke `expect.any()`. Matches the Linux
-    // release link's -Wl,-icf=safe. lld-only: Apple's ld has no ICF, so
-    // this is a cross-only divergence (smaller binary than native). The
-    // prebuilt WebKit archives are compiled with -faddrsig too, so WebKit
-    // code participates in the folding.
-    flag: "-Wl,--icf=safe",
+    // instantiations, mostly). `safe_thunks` folds address-insignificant
+    // functions like `safe`, and additionally folds address-*significant*
+    // duplicates behind a per-symbol branch thunk, so function pointers keep
+    // distinct addresses (JSC compares host-function pointers for identity;
+    // the aggressive mode is what folded callBigIntConstructor into
+    // constructBigInt on Windows (/OPT:ICF) and broke `expect.any()`).
+    // ld64.lld implements safe_thunks for arm64 only ("only supported on
+    // arm64 targets"), so darwin-x64 keeps plain `safe`; ELF lld has no
+    // safe_thunks yet, so Linux stays on -Wl,-icf=safe. Apple's ld has no
+    // ICF, so this is a cross-only divergence (smaller binary than native).
+    // The prebuilt WebKit archives are compiled with -faddrsig too, so
+    // WebKit code participates in the folding.
+    flag: c => (c.arm64 ? "-Wl,--icf=safe_thunks" : "-Wl,--icf=safe"),
     when: c => c.darwin && c.crossTarget !== undefined && c.release,
-    desc: "macOS cross-link: fold identical address-insignificant functions",
+    desc: "macOS cross-link: fold identical functions (thunks preserve pointer identity on arm64)",
   },
   {
     // -ld_new selects Apple's new linker — only meaningful (and only

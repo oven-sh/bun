@@ -1241,11 +1241,7 @@ describe("Bun.JSONL", () => {
         });
 
         test("invalid bytes mixed with valid multi-byte stay byte-exact", () => {
-          const buf = new Uint8Array([
-            ...encode('{"s":"日'),
-            0xff,
-            ...encode('本"}\n{"e":"🎉"}\n'),
-          ]);
+          const buf = new Uint8Array([...encode('{"s":"日'), 0xff, ...encode('本"}\n{"e":"🎉"}\n')]);
           const r = Bun.JSONL.parseChunk(buf);
           expect(r.values).toEqual([{ s: "日\uFFFD本" }, { e: "🎉" }]);
           expect(r.read).toBe(buf.byteLength - 1);

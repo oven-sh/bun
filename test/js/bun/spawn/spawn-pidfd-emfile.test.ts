@@ -10,17 +10,15 @@
 // that `posix_spawn` accepted: if no pidfd is available it falls back to the
 // waiter thread for that process and returns a `Subprocess` immediately.
 
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux } from "harness";
 
 // pidfd_open is Linux-only; on other platforms the reap path never needs an
 // fd after the child is live.
-test.skipIf(!isLinux)(
-  "Bun.spawn falls back to the waiter thread when pidfd_open hits EMFILE",
-  async () => {
-    // Run the probe in a child with a low RLIMIT_NOFILE so the parent test
-    // runner's fd table is never disturbed.
-    const fixture = `
+test.skipIf(!isLinux)("Bun.spawn falls back to the waiter thread when pidfd_open hits EMFILE", async () => {
+  // Run the probe in a child with a low RLIMIT_NOFILE so the parent test
+  // runner's fd table is never disturbed.
+  const fixture = `
       const fs = require("node:fs");
       // Exhaust the fd table, then reopen a small hole: three "pipe" stdio
       // slots need six socketpair fds (which posix_spawn's CLOEXEC handling
@@ -66,39 +64,34 @@ test.skipIf(!isLinux)(
       }));
     `;
 
-    await using proc = Bun.spawn({
-      cmd: ["/bin/sh", "-c", `ulimit -n 256 && exec "$@"`, "sh", bunExe(), "-e", fixture],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+  await using proc = Bun.spawn({
+    cmd: ["/bin/sh", "-c", `ulimit -n 256 && exec "$@"`, "sh", bunExe(), "-e", fixture],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    const line = stdout.trim().split("\n").pop() ?? "";
-    let result: {
-      hole: number;
-      spawnMs: number;
-      thrown: { code?: string; syscall?: string } | null;
-      gotProc: boolean;
-      exit: number | null;
-    };
-    try {
-      result = JSON.parse(line);
-    } catch {
-      throw new Error(`probe did not emit JSON\nstdout:\n${stdout}\nstderr:\n${stderr}`);
-    }
+  const line = stdout.trim().split("\n").pop() ?? "";
+  let result: {
+    hole: number;
+    spawnMs: number;
+    thrown: { code?: string; syscall?: string } | null;
+    gotProc: boolean;
+    exit: number | null;
+  };
+  try {
+    result = JSON.parse(line);
+  } catch {
+    throw new Error(`probe did not emit JSON\nstdout:\n${stdout}\nstderr:\n${stderr}`);
+  }
 
-    // Invariant: Bun.spawn never blocks on, and never reports failure for, a
-    // child that ran. Before the fix this reported
-    // thrown = {code: "EMFILE", syscall: "pidfd_open"} with spawnMs at the
-    // child's full lifetime (~1000ms here).
-    expect(result).toMatchObject({ thrown: null, gotProc: true, exit: 0 });
-    // spawn() must return promptly, not after the child's 1s lifetime.
-    expect(result.spawnMs).toBeLessThan(500);
-    expect(exitCode).toBe(0);
-  },
-);
+  // Invariant: Bun.spawn never blocks on, and never reports failure for, a
+  // child that ran. Before the fix this reported
+  // thrown = {code: "EMFILE", syscall: "pidfd_open"} with spawnMs at the
+  // child's full lifetime (~1000ms here).
+  expect(result).toMatchObject({ thrown: null, gotProc: true, exit: 0 });
+  // spawn() must return promptly, not after the child's 1s lifetime.
+  expect(result.spawnMs).toBeLessThan(500);
+  expect(exitCode).toBe(0);
+});

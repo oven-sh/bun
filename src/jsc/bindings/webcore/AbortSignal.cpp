@@ -292,10 +292,7 @@ void AbortSignal::signalFollow(AbortSignal& signal)
 
 void AbortSignal::eventListenersDidChange()
 {
-    // HasAbortEventListener gates JSAbortSignalOwner::isReachableFromOpaqueRoots: it must
-    // reflect every kind of abort observer (JS listeners, native callbacks, m_algorithms,
-    // and m_abortAlgorithms), or consumers that register only via addAlgorithm /
-    // addAbortAlgorithmToSignal (pipeTo, addEventListener({signal})) lose their signal to GC.
+    // HasAbortEventListener gates the wrapper's GC reachability, so every observer kind counts.
     bool hasListeners = hasEventListeners(eventNames().abortEvent)
         || !m_native_callbacks.isEmpty()
         || !m_algorithms.isEmpty();

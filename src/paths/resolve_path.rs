@@ -1605,13 +1605,9 @@ impl JoinScratch {
     }
 }
 
-/// Join `parts` against `cwd` and normalize into `buf`.
-///
-/// When the normalized result would not fit in `buf`, returns an empty slice
-/// (`&buf[..0]`) instead of panicking. Every in-tree caller sizes `buf` to
-/// `MAX_PATH_BYTES`, so overflow means the OS would reject the path with
-/// `ENAMETOOLONG` anyway. Callers that need to distinguish overflow from a
-/// legitimate result should use [`join_abs_string_buf_checked`].
+/// Join `parts` against `cwd` and normalize into `buf`. Returns `&buf[..0]`
+/// when the normalized result does not fit; use [`join_abs_string_buf_checked`]
+/// to distinguish overflow.
 pub fn join_abs_string_buf<'a, P: PlatformT>(
     cwd: &'a [u8],
     buf: &'a mut [u8],
@@ -1780,27 +1776,37 @@ fn _join_abs_string_buf<'a, const IS_SENTINEL: bool, P: PlatformT>(
     let result_len = if input.len() <= avail {
         normalize_string_buf::<false, P, true>(input, &mut buf[leading_len..]).len()
     } else {
-        // `JoinScratch` grows to hold the unnormalized concatenation, but `buf`
-        // is caller-sized and may be smaller. Normalize into a spill buffer
-        // (with ALLOW_ABOVE_ROOT=false the output is never longer than the
-        // input), then copy into `buf` if the normalized result fits; otherwise
-        // return an empty slice. See `join_abs_string_buf` doc.
-        let mut spill = vec![0u8; input.len()];
-        let r = normalize_string_buf::<false, P, true>(input, &mut spill).len();
-        if r > avail {
-            if IS_SENTINEL {
-                buf[0] = 0;
-            }
-            return &buf[..0];
+        match normalize_spill::<P>(input, &mut buf[leading_len..], avail) {
+            Some(r) => r,
+            None => return empty::<IS_SENTINEL>(buf),
         }
-        buf[leading_len..leading_len + r].copy_from_slice(&spill[..r]);
-        r
     };
 
     if IS_SENTINEL {
         buf[result_len + leading_len] = 0;
     }
     &buf[0..result_len + leading_len]
+}
+
+/// Normalize `input` into a heap spill, then copy into `out` if the result
+/// fits `avail`. ALLOW_ABOVE_ROOT=false, so output never exceeds `input.len()`.
+#[cold]
+fn normalize_spill<P: PlatformT>(input: &[u8], out: &mut [u8], avail: usize) -> Option<usize> {
+    let mut spill = vec![0u8; input.len()];
+    let r = normalize_string_buf::<false, P, true>(input, &mut spill).len();
+    if r > avail {
+        return None;
+    }
+    out[..r].copy_from_slice(&spill[..r]);
+    Some(r)
+}
+
+#[cold]
+fn empty<const IS_SENTINEL: bool>(buf: &mut [u8]) -> &[u8] {
+    if IS_SENTINEL {
+        buf[0] = 0;
+    }
+    &buf[..0]
 }
 
 fn _join_abs_string_buf_windows<'a, const IS_SENTINEL: bool>(
@@ -1912,17 +1918,10 @@ fn _join_abs_string_buf_windows<'a, const IS_SENTINEL: bool>(
     let result_len = if input.len() <= avail {
         normalize_string_buf::<false, platform::Windows, true>(input, buf).len()
     } else {
-        // See the matching comment in `_join_abs_string_buf`.
-        let mut spill = vec![0u8; input.len()];
-        let r = normalize_string_buf::<false, platform::Windows, true>(input, &mut spill).len();
-        if r > avail {
-            if IS_SENTINEL {
-                buf[0] = 0;
-            }
-            return &buf[..0];
+        match normalize_spill::<platform::Windows>(input, buf, avail) {
+            Some(r) => r,
+            None => return empty::<IS_SENTINEL>(buf),
         }
-        buf[..r].copy_from_slice(&spill[..r]);
-        r
     };
 
     if IS_SENTINEL {

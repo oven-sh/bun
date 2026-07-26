@@ -130,8 +130,8 @@ describe("S3Client does not follow HTTP redirects", () => {
     expect(ops.write).toEqual({ name: "write", resolved: null, code: "TemporaryRedirect" });
     expect(ops.delete).toEqual({ name: "delete", resolved: null, code: "TemporaryRedirect" });
     expect(ops.list).toEqual({ name: "list", resolved: null, code: "TemporaryRedirect" });
+    expect(ops.stream).toEqual({ name: "stream", resolved: null, code: "TemporaryRedirect" });
     expect(ops.exists.resolved).toBeNull();
-    expect(ops.stream.resolved).toBeNull();
 
     expect(exitCode).toBe(0);
   });

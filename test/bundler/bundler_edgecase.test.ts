@@ -2187,6 +2187,29 @@ describe("bundler", () => {
       `import.meta.main.toString()`,
     ],
   });
+  itBundled("edgecase/ImportMetaMainPrecedenceTargetNode", {
+    files: {
+      "/entry.ts": /* js */ `
+        globalThis['ca' + 'pture'] = x => x;
+        console.log(JSON.stringify([
+          capture(typeof import.meta.main),
+          capture(!import.meta.main),
+          capture("x" + import.meta.main),
+          capture(import.meta.main.toString()),
+        ]));
+      `,
+    },
+    target: "node",
+    capture: [
+      `typeof (__require.main === __require.module)`,
+      `!(__require.main === __require.module)`,
+      `"x" + (__require.main === __require.module)`,
+      `(__require.main === __require.module).toString()`,
+    ],
+    run: {
+      stdout: `["boolean",false,"xtrue","true"]`,
+    },
+  });
   itBundled("edgecase/IdentifierInEnum#13081", {
     files: {
       "/entry.ts": `

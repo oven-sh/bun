@@ -227,14 +227,19 @@ describe("--frozen-intrinsics", () => {
   );
 
   test(
-    "node:assert still throws AssertionError (Error.stackTraceLimit is guarded)",
+    "builtins that write to frozen Error/console are guarded",
     async () => {
       const { stdout, exitCode } = await run(
         ["--frozen-intrinsics"],
-        `try { require("assert").strictEqual(1, 2); console.log("no throw"); }
-         catch (e) { console.log(e.code); }`,
+        `let assertCode;
+         try { require("assert").strictEqual(1, 2); assertCode = "no throw"; } catch (e) { assertCode = e.code; }
+         let callSitesThrew = false;
+         try { require("util").getCallSites(); } catch { callSitesThrew = true; }
+         let traceThrew = false;
+         try { require("trace_events").createTracing({categories:["node.console"]}).enable(); } catch { traceThrew = true; }
+         console.log(JSON.stringify({ assert: assertCode, callSitesThrew, traceThrew }));`,
       );
-      expect(stdout.trim()).toBe("ERR_ASSERTION");
+      expect(JSON.parse(stdout)).toEqual({ assert: "ERR_ASSERTION", callSitesThrew: false, traceThrew: false });
       expect(exitCode).toBe(0);
     },
     SLOW,

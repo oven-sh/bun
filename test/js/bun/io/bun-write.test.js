@@ -1,6 +1,16 @@
 import { describe, expect, it, test } from "bun:test";
 import fs, { mkdirSync } from "fs";
-import { bunEnv, bunExe, exampleHtml, exampleSite, gcTick, isMacOS, isWindows, tempDir, withoutAggressiveGC } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  exampleHtml,
+  exampleSite,
+  gcTick,
+  isMacOS,
+  isWindows,
+  tempDir,
+  withoutAggressiveGC,
+} from "harness";
 import path, { join } from "path";
 
 let i = 0;
@@ -830,14 +840,16 @@ it("Bun.write(Bun.stdout, <empty source>) does not truncate the destination", as
 // concurrent write(2) on a shared fd without O_APPEND can double-count the increment and
 // leave a NUL sparse hole independently of this PR's fix. Linux f_pos_lock serializes the
 // offset update, so nulBytes === 0 is a real invariant there.
-it.skipIf(isMacOS)("Bun.write(Bun.stdout, '') does not drop concurrent in-flight writes when stdout is a file", async () => {
-  // Many fire-and-forget Bun.write(Bun.stdout, chunk) calls are dispatched to the thread
-  // pool. An empty-string write used to synchronously ftruncate(fd, 0) on the main thread,
-  // which discarded already-written bytes without resetting the kernel file offset, so the
-  // remaining thread-pool writes landed past a NUL-filled sparse hole while every promise
-  // still resolved with its full byte count.
-  const N = 2000;
-  const script = `
+it.skipIf(isMacOS)(
+  "Bun.write(Bun.stdout, '') does not drop concurrent in-flight writes when stdout is a file",
+  async () => {
+    // Many fire-and-forget Bun.write(Bun.stdout, chunk) calls are dispatched to the thread
+    // pool. An empty-string write used to synchronously ftruncate(fd, 0) on the main thread,
+    // which discarded already-written bytes without resetting the kernel file offset, so the
+    // remaining thread-pool writes landed past a NUL-filled sparse hole while every promise
+    // still resolved with its full byte count.
+    const N = 2000;
+    const script = `
     const fs = require("fs");
     const ps = [];
     for (let i = 0; i < ${N}; i++) ps.push(Bun.write(Bun.stdout, "C" + i + "\\n"));
@@ -849,25 +861,26 @@ it.skipIf(isMacOS)("Bun.write(Bun.stdout, '') does not drop concurrent in-flight
       " bytes=" + r.reduce((a, x) => a + (x.value || 0), 0) + "\\n",
     );
   `;
-  const expectedBytes = Array.from({ length: N }, (_, i) => ("C" + i).length + 1).reduce((a, b) => a + b, 0);
+    const expectedBytes = Array.from({ length: N }, (_, i) => ("C" + i).length + 1).reduce((a, b) => a + b, 0);
 
-  using dir = tempDir("bun-write-stdout-nul-hole", {});
-  const out = path.join(String(dir), "out.txt");
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", script],
-    env: bunEnv,
-    stdout: Bun.file(out),
-    stderr: "pipe",
-  });
-  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-  const buf = fs.readFileSync(out);
-  expect({
-    stderr,
-    nulBytes: buf.indexOf(0) === -1 ? 0 : Array.prototype.reduce.call(buf, (a, b) => a + (b === 0 ? 1 : 0), 0),
-    exitCode,
-  }).toEqual({
-    stderr: `fulfilled=${N} bytes=${expectedBytes}\n`,
-    nulBytes: 0,
-    exitCode: 0,
-  });
-});
+    using dir = tempDir("bun-write-stdout-nul-hole", {});
+    const out = path.join(String(dir), "out.txt");
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: Bun.file(out),
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const buf = fs.readFileSync(out);
+    expect({
+      stderr,
+      nulBytes: buf.indexOf(0) === -1 ? 0 : Array.prototype.reduce.call(buf, (a, b) => a + (b === 0 ? 1 : 0), 0),
+      exitCode,
+    }).toEqual({
+      stderr: `fulfilled=${N} bytes=${expectedBytes}\n`,
+      nulBytes: 0,
+      exitCode: 0,
+    });
+  },
+);

@@ -588,7 +588,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_subjectAltName, (JSGlobalObject
     }
 
     JSString* san = thisObject->subjectAltName();
-    return JSValue::encode(san ? JSValue(san) : jsUndefined());
+    RELEASE_AND_RETURN(scope, JSValue::encode(san ? JSValue(san) : jsUndefined()));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_infoAccess, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))

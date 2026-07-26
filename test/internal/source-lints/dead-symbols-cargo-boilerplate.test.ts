@@ -11,9 +11,9 @@
 // It also pins a few dead C++/Rust symbols removed alongside, so they stay
 // gone.
 
-import { readFileSync, existsSync } from "node:fs";
+import { describe, expect, test } from "bun:test";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { expect, test, describe } from "bun:test";
 
 const repoRoot = join(import.meta.dir, "../../..");
 
@@ -24,11 +24,58 @@ describe("unused boilerplate Cargo deps stay removed", () => {
     "src/wyhash/Cargo.toml": ["strum", "scopeguard", "const_format", "enum-map", "enumset", "libc", "bitflags"],
     "src/ptr/Cargo.toml": ["strum", "const_format", "enum-map", "enumset", "libc", "bitflags", "thiserror"],
     "src/base64/Cargo.toml": ["bstr", "scopeguard", "const_format", "enum-map", "enumset", "libc", "bitflags"],
-    "src/brotli_sys/Cargo.toml": ["strum", "bstr", "scopeguard", "const_format", "enum-map", "enumset", "libc", "bitflags", "thiserror"],
-    "src/mimalloc_sys/Cargo.toml": ["strum", "bstr", "scopeguard", "const_format", "enum-map", "enumset", "libc", "bitflags"],
-    "src/simdutf_sys/Cargo.toml": ["strum", "bstr", "scopeguard", "const_format", "enum-map", "enumset", "libc", "bitflags"],
-    "src/sha_hmac/Cargo.toml": ["strum", "bstr", "scopeguard", "const_format", "enum-map", "enumset", "libc", "bitflags"],
-    "src/safety/Cargo.toml": ["strum", "bstr", "scopeguard", "const_format", "enum-map", "enumset", "libc", "bitflags", "thiserror"],
+    "src/brotli_sys/Cargo.toml": [
+      "strum",
+      "bstr",
+      "scopeguard",
+      "const_format",
+      "enum-map",
+      "enumset",
+      "libc",
+      "bitflags",
+      "thiserror",
+    ],
+    "src/mimalloc_sys/Cargo.toml": [
+      "strum",
+      "bstr",
+      "scopeguard",
+      "const_format",
+      "enum-map",
+      "enumset",
+      "libc",
+      "bitflags",
+    ],
+    "src/simdutf_sys/Cargo.toml": [
+      "strum",
+      "bstr",
+      "scopeguard",
+      "const_format",
+      "enum-map",
+      "enumset",
+      "libc",
+      "bitflags",
+    ],
+    "src/sha_hmac/Cargo.toml": [
+      "strum",
+      "bstr",
+      "scopeguard",
+      "const_format",
+      "enum-map",
+      "enumset",
+      "libc",
+      "bitflags",
+    ],
+    "src/safety/Cargo.toml": [
+      "strum",
+      "bstr",
+      "scopeguard",
+      "const_format",
+      "enum-map",
+      "enumset",
+      "libc",
+      "bitflags",
+      "thiserror",
+    ],
   };
 
   for (const [rel, deps] of Object.entries(crates)) {

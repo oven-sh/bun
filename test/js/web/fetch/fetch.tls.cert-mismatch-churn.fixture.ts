@@ -94,7 +94,7 @@ for (let i = 0; i < 3; i++) {
       },
       err => {
         const code = typeof err?.code === "string" ? err.code : err?.name;
-        if (code === "Timeout" || code === "TimeoutError" || code === "ETIMEDOUT" || code === "ECONNRESET") {
+        if (code === "TimeoutError" || code === "ETIMEDOUT" || code === "ECONNRESET") {
           bump("stalled");
         } else {
           failures.push(`stalled handshake fetch rejected with ${code ?? err}`);
@@ -164,8 +164,8 @@ for (let batch = 0; batch < 8; batch++) {
             // truncation surface as ECONNRESET-flavored errors.
             if (
               code === "TimeoutError" ||
+              code === "ETIMEDOUT" ||
               code === "ECONNRESET" ||
-              code === "ConnectionClosed" ||
               err?.name === "TimeoutError"
             ) {
               bump("churn");

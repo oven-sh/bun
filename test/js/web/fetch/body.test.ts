@@ -1,8 +1,8 @@
 import { file, spawn, version } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, exampleSite } from "harness";
-import net from "node:net";
 import { once } from "node:events";
+import net from "node:net";
 
 const exampleServer = exampleSite("http");
 
@@ -807,7 +807,10 @@ describe("extract a MIME type from Content-Type", () => {
         const lines: Record<string, string[]> = {
           "/case": ["Content-Type: TEXT/HTML ;  Charset=UTF-8"],
           "/dup-json": ["Content-Type: not a type", "Content-Type: application/json"],
-          "/dup-form": ["Content-Type: multipart/form-data; boundary=B1", "Content-Type: multipart/form-data; boundary=B2"],
+          "/dup-form": [
+            "Content-Type: multipart/form-data; boundary=B1",
+            "Content-Type: multipart/form-data; boundary=B2",
+          ],
         };
         const body = path === "/dup-form" ? multipartBody("B2") : '{"a":1}';
         sock.end(

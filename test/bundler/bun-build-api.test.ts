@@ -767,20 +767,25 @@ describe("Bun.build", () => {
     },
   );
 
-  test.concurrent("HTML entrypoint with rooted <script src> longer than 4096 bytes does not abort", async () => {
+  test.concurrent("HTML entrypoint with rooted <script src> near/over MAX_PATH_BYTES does not abort", async () => {
     // Rooted `/...` script src values are re-based onto the project root via the
     // path-join primitive, whose output buffer is a fixed 4096-byte threadlocal.
     // With an attacker-authored path >= 4096 bytes this used to panic and abort
     // the process instead of surfacing a ResolveMessage.
-    const src = "/" + Buffer.alloc(5000, "a").toString() + ".js";
     using dir = tempDir("bun-build-html-long-rooted-src", {
-      "index.html": `<html><body><script src="${src}"></script></body></html>`,
       "build.mjs": `
+        import { writeFileSync } from "node:fs";
+        // Sweep the MAX_PATH_BYTES boundary so that at least one resolved path
+        // lands in the window where the load_as_file copy fits but the
+        // extension-probe append would overflow, plus one well past it.
+        const max = process.platform === "darwin" ? 1024 : process.platform === "win32" ? 32767 * 3 + 1 : 4096;
+        const lens = [...Array.from({ length: 16 }, (_, i) => max - 8 + i), max + 1000];
+        const tags = lens
+          .map(n => \`<script src="/\${Buffer.alloc(Math.max(1, n - import.meta.dir.length - 4), "a")}.js"></script>\`)
+          .join("");
+        writeFileSync("./index.html", \`<html><body>\${tags}</body></html>\`);
         const r = await Bun.build({ entrypoints: ["./index.html"], throw: false });
-        console.log(JSON.stringify({
-          success: r.success,
-          logs: r.logs.map(l => ({ name: l.name, message: String(l.message) })),
-        }));
+        console.log(JSON.stringify({ success: r.success, logs: r.logs.map(l => l.name) }));
       `,
     });
     await using proc = Bun.spawn({
@@ -792,12 +797,11 @@ describe("Bun.build", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(stderr).not.toContain("range end index");
-    const out = JSON.parse(stdout);
-    expect(out.success).toBe(false);
-    expect(out.logs.length).toBeGreaterThan(0);
-    expect(out.logs[0].name).toBe("ResolveMessage");
-    expect(out.logs[0].message).toContain("Could not resolve");
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      success: false,
+      logs: expect.arrayContaining(["ResolveMessage"]),
+    });
     expect(exitCode).toBe(0);
   });
 });

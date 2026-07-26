@@ -791,7 +791,8 @@ impl BufferOutputSink {
         if !matches!(value, webcore::body::Value::Error(_)) {
             *value = webcore::body::Value::Used;
         }
-        let _ = ResumableHTMLRewriterSink::init(&global, readable_stream, core::ptr::from_mut(self));
+        let _ =
+            ResumableHTMLRewriterSink::init(&global, readable_stream, core::ptr::from_mut(self));
         Ok(())
     }
 

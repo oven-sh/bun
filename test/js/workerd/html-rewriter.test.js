@@ -499,7 +499,10 @@ describe("HTMLRewriter", () => {
             throw new Error("boom");
           },
         });
-        await rw.transform(new Response(streamOf(encode("<p>x</p>")))).text().catch(() => {});
+        await rw
+          .transform(new Response(streamOf(encode("<p>x</p>"))))
+          .text()
+          .catch(() => {});
       };
       const settle = async () => {
         for (let i = 0; i < 3; i++) {

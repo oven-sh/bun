@@ -9,7 +9,9 @@ use bun_core::ZigString;
 use bun_io::{self as io, IntrusiveIoRequest as _};
 use bun_jsc::ZigStringJsc as _;
 use bun_jsc::node_path::PathOrFileDescriptor;
-use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSPromise, JSValue, JsTerminated, SystemError};
+use bun_jsc::{
+    self as jsc, CallFrame, JSGlobalObject, JSPromise, JSValue, JsTerminated, SystemError,
+};
 use bun_sys::{self as sys, Fd};
 use bun_threading::{IntrusiveWorkTask as _, WorkPool, WorkPoolTask};
 

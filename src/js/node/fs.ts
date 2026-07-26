@@ -1035,6 +1035,8 @@ let dirSetHandle;
 class Dir {
   /** Directory fd from `fs.opendir`. `-1` once closed; `-2` before the native open completes. */
   #handle: number;
+  /** Set only by `dirSetHandle`; close is skipped for handles supplied via the public constructor. */
+  #owned = false;
   #path: PathLike;
   #options;
   #entries: DirentType[] | null = null;
@@ -1043,6 +1045,7 @@ class Dir {
   static {
     dirSetHandle = (dir: Dir, fd: number) => {
       dir.#handle = fd;
+      dir.#owned = true;
       (dirHandleRegistry ??= new FinalizationRegistry(onDirHandleCollected)).register(dir, fd, dir);
     };
   }
@@ -1156,7 +1159,7 @@ class Dir {
     const handle = this.#handle;
     if (handle < 0) throw $ERR_DIR_CLOSED();
     dirHandleRegistry?.unregister(this);
-    fs.closeSync(handle);
+    if (this.#owned) fs.closeSync(handle);
     this.#handle = -1;
   }
 
@@ -1174,7 +1177,7 @@ class Dir {
     if (handle < 0) throw $ERR_DIR_CLOSED();
     if (this.#pendingCount > 0) throw this.#dirConcurrentError();
     dirHandleRegistry?.unregister(this);
-    fs.closeSync(handle);
+    if (this.#owned) fs.closeSync(handle);
     this.#handle = -1;
   }
 

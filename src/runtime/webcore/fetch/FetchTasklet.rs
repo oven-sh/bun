@@ -111,10 +111,8 @@ pub struct FetchTasklet {
     // must be stored because AbortSignal stores reason weakly
     pub abort_reason: StrongOptional,
 
-    /// ErrorInstance created at the JS-thread `fetch()` call purely to snapshot
-    /// the caller's synchronous stack. Transplanted onto the rejection
-    /// `TypeError('fetch failed')`, which is otherwise stackless (minted from
-    /// an event-loop task with an empty interpreter stack).
+    /// Error captured at the `fetch()` call site; its frames become the
+    /// rejection TypeError's `.stack` (otherwise empty at event-loop top).
     pub caller_stack_source: StrongOptional,
 
     // custom checkServerIdentity
@@ -1311,9 +1309,7 @@ impl FetchTasklet {
             BunString::EMPTY
         };
 
-        // An error after response headers arrived surfaces on the body reader,
-        // where undici uses `TypeError('terminated')`; before headers the fetch
-        // promise itself rejects with `TypeError('fetch failed')`.
+        // undici: 'terminated' once headers arrived, else 'fetch failed'.
         let terminated = self.metadata.is_some();
         let stack_source = core::mem::take(&mut self.caller_stack_source);
 

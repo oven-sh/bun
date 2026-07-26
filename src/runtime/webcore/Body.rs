@@ -569,12 +569,8 @@ pub enum ValueError {
     /// error" to TypeError, so use this for fetch-layer rejections that
     /// callers feature-detect via `err instanceof TypeError`.
     TypeError(BunString),
-    /// WHATWG fetch "network error": an outer `TypeError('fetch failed')`
-    /// (or `'terminated'` once the response body is streaming) whose `.cause`
-    /// is the underlying system error. `stack_source` carries the caller's
-    /// synchronous stack captured at the original `fetch()` call so the
-    /// rejection (minted at event-loop top with an empty interpreter stack)
-    /// still points at user code.
+    /// `TypeError('fetch failed'|'terminated')` with `.cause`. `stack_source`
+    /// holds the `fetch()` call-site frames for transplant onto the TypeError.
     FetchFailed {
         cause: SystemError,
         terminated: bool,

@@ -644,10 +644,7 @@ impl From<JsError> for bun_event_loop::ErasedJsError {
     }
 }
 
-/// Create a bare `Error` whose only purpose is to snapshot the current JS
-/// stack. Used by `fetch()` to record the call site while the caller is still
-/// on the stack; the frames are later transplanted onto the rejection error
-/// (which is minted from an event-loop task with an empty interpreter stack).
+/// Bare `Error` that snapshots the current JS stack for later transplant.
 #[inline]
 pub fn capture_caller_stack_error(global: &JSGlobalObject) -> JSValue {
     Bun__captureCallerStackError(global)

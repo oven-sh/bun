@@ -2353,23 +2353,15 @@ JSC::EncodedJSValue JSGlobalObject__createOutOfMemoryError(JSC::JSGlobalObject* 
     return JSValue::encode(exception);
 }
 
-// Create a bare Error whose only purpose is to snapshot the caller's
-// synchronous stack. Used by fetch() to record the call site so the later
-// event-loop-created rejection error can point at user code.
+// Bare Error that snapshots the caller's stack for later transplant.
 extern "C" JSC::EncodedJSValue Bun__captureCallerStackError(JSC::JSGlobalObject* globalObject)
 {
     return JSC::JSValue::encode(JSC::createError(globalObject, "fetch"_s));
 }
 
-// Wrap a fetch network error as the WHATWG / undici shape: an outer
-// TypeError('fetch failed' | 'terminated') carrying the underlying error as
-// `.cause`. The outer error also gets `.code` mirrored from the cause so
-// existing `err.code === "ECONNREFUSED"` checks keep working.
-//
-// `stackSourceValue` is an ErrorInstance captured at the original fetch()
-// call site; its frames are transplanted onto the new TypeError so `.stack`
-// points at the caller instead of being empty (the TypeError is created from
-// an event-loop task where the interpreter stack is empty).
+// TypeError('fetch failed'|'terminated') with `.cause`, `.code` mirrored from
+// the cause, and `.stack` transplanted from `stackSourceValue` (the call-site
+// Error captured when fetch() was invoked).
 extern "C" JSC::EncodedJSValue Bun__createFetchFailedTypeError(
     JSC::JSGlobalObject* globalObject,
     JSC::EncodedJSValue causeValue,
@@ -2397,8 +2389,7 @@ extern "C" JSC::EncodedJSValue Bun__createFetchFailedTypeError(
     if (auto* srcInstance = dynamicDowncast<JSC::ErrorInstance>(stackSrc)) {
         if (auto* destInstance = dynamicDowncast<JSC::ErrorInstance>(result)) {
             if (auto* srcTrace = srcInstance->stackTrace(); srcTrace && !srcTrace->isEmpty()) {
-                // Copy (not move): the source may be shared via ValueError::dupe
-                // when a Response body is cloned.
+                // Copy: source may be shared across a cloned Response body.
                 WTF::Vector<JSC::StackFrame> frames;
                 frames.appendVector(*srcTrace);
                 destInstance->setStackFrames(vm, WTF::move(frames));

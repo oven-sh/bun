@@ -328,8 +328,7 @@ impl bun_core::output::ErrName for Error {
 }
 
 impl Error {
-    /// Node.js / undici-compatible errno-style code string for `err.code`.
-    /// Falls back to the Bun label for variants with no established mapping.
+    /// Node.js / undici errno-style `err.code` string (falls back to `name()`).
     #[allow(clippy::trivially_copy_pass_by_ref)]
     pub fn errno_code(&self) -> &'static str {
         match self {

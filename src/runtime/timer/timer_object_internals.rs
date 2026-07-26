@@ -1019,8 +1019,13 @@ impl TimerObjectInternals {
         }
 
         let vm = VirtualMachine::get_mut_ptr();
-        self.arm_root(this_value, vm);
         self.reschedule(this_value, vm, global_object.as_ptr());
+        // `reschedule` early-returns without inserting when `_idleTimeout` is
+        // -1 / `_repeat` is null; only root the wrapper if it actually entered
+        // the heap so a refresh on a self-cancelled timer does not leak a slot.
+        if self.event_loop_timer_state() == EventLoopTimerState::ACTIVE {
+            self.arm_root(this_value, vm);
+        }
 
         Ok(this_value)
     }

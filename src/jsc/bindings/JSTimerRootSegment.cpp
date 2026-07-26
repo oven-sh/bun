@@ -31,6 +31,7 @@ void JSTimerRootSegment::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 
     visitor.append(thisObject->m_next);
     visitor.append(thisObject->m_slots.begin(), thisObject->m_slots.end());
+    visitor.reportExtraMemoryVisited(capacity * sizeof(JSC::WriteBarrier<JSC::Unknown>));
 }
 
 DEFINE_VISIT_CHILDREN(JSTimerRootSegment);

@@ -103,6 +103,7 @@ private:
     {
         Base::finishCreation(vm);
         m_slots.grow(capacity);
+        vm.heap.reportExtraMemoryAllocated(this, capacity * sizeof(Slot));
     }
 };
 

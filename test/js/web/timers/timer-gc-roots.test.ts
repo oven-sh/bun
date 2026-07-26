@@ -6,7 +6,7 @@ import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 // armed timer on every collection, including eden. These tests check that the
 // per-timer root has been replaced with a shared root structure.
 
-describe("armed timers do not each hold a JSC strong handle", () => {
+describe.concurrent("armed timers do not each hold a JSC strong handle", () => {
   test("heapStats().protectedObjectTypeCounts", async () => {
     const src = `
       const { heapStats } = require("bun:jsc");
@@ -143,7 +143,7 @@ describe("armed timers do not each hold a JSC strong handle", () => {
   });
 });
 
-describe("AbortSignal.timeout is released when its wrapper is collected", () => {
+describe.concurrent("AbortSignal.timeout is released when its wrapper is collected", () => {
   test("dropped signals without listeners free their native timer", async () => {
     // The native Timeout box plus the C++ AbortSignal it keeps alive is a few
     // hundred bytes; 20000 leaked signals are well over 8 MB of RSS that
@@ -236,7 +236,7 @@ describe("AbortSignal.timeout is released when its wrapper is collected", () => 
   }
 });
 
-test("bun test --isolate rearms timers on the new global", async () => {
+test.concurrent("bun test --isolate rearms timers on the new global", async () => {
   using dir = tempDir("timer-root-isolate", {
     "a.test.ts": `
       import { test, expect } from "bun:test";

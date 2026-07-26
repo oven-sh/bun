@@ -275,6 +275,7 @@ const errors: ErrorCodeMapping = [
   ["ERR_UNKNOWN_SIGNAL", TypeError],
   ["ERR_ZSTD_INVALID_PARAM", RangeError],
   ["ERR_USE_AFTER_CLOSE", Error],
+  ["ERR_WASI_ALREADY_STARTED", Error],
   ["ERR_WASI_NOT_STARTED", Error],
   ["ERR_WEBASSEMBLY_RESPONSE", TypeError],
   ["ERR_WORKER_INIT_FAILED", Error],

@@ -24,11 +24,42 @@ it("Should support printing 'hello world'", () => {
   });
 });
 
+it("runs a WASI reactor module (exports _initialize, not _start)", () => {
+  // A wasi_snapshot_preview1 module whose _initialize writes "hi\n" to fd 1.
+  const bytes = Buffer.from(
+    "AGFzbQEAAAABDAJgBH9/f38Bf2AAAAIjARZ3YXNpX3NuYXBzaG90X3ByZXZpZXcxCGZkX3dyaXRlAAAD" +
+      "AwIAAQUDAQABBx0DAmYwAAELX2luaXRpYWxpemUAAgZtZW1vcnkCAApBAgwAIAAgASACIAMQAAsyAEEA" +
+      "QSA2AgBBBEEDNgIAQSBB6AA2AgBBIUHpADYCAEEiQQo2AgBBAUEAQQFBDBAAGgs=",
+    "base64",
+  );
+  using dir = tempDir("wasi-reactor", {});
+  const wasmPath = path.join(String(dir), "reactor.wasm");
+  fs.writeFileSync(wasmPath, bytes);
+
+  const { stdout, stderr, exitCode } = spawnSync({
+    cmd: [bunExe(), wasmPath],
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+    cwd: String(dir),
+  });
+
+  expect({
+    stdout: stdout.toString(),
+    stderr: stderr.toString(),
+    exitCode: exitCode,
+  }).toEqual({
+    stdout: "hi\n",
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
 it("fd_fdstat_set_rights only narrows the rights of a descriptor", () => {
   using dir = tempDir("wasi-set-rights", {
     "inside.txt": "inside",
   });
-  const wasi = new WASI({ preopens: { "/": String(dir) } });
+  const wasi = new WASI({ version: "preview1", preopens: { "/": String(dir) } });
   wasi.setMemory(new WebAssembly.Memory({ initial: 1 }));
 
   const WASI_ESUCCESS = 0;
@@ -76,7 +107,7 @@ it("path_open reports the host errno to the guest when the open fails", () => {
   using dir = tempDir("wasi-path-open-errno", {
     "exists.txt": "x",
   });
-  const wasi = new WASI({ preopens: { "/": String(dir) } });
+  const wasi = new WASI({ version: "preview1", preopens: { "/": String(dir) } });
   wasi.setMemory(new WebAssembly.Memory({ initial: 1 }));
   const memory = Buffer.from(wasi.memory.buffer);
   const view = new DataView(wasi.memory.buffer);
@@ -122,7 +153,7 @@ it("path_* syscalls cannot escape the preopened directory", () => {
     fs.symlinkSync(path.join("..", "secret.txt"), path.join(sandbox, "escape"));
   }
 
-  const wasi = new WASI({ preopens: { "/": sandbox } });
+  const wasi = new WASI({ version: "preview1", preopens: { "/": sandbox } });
   wasi.setMemory(new WebAssembly.Memory({ initial: 1 }));
   const memory = Buffer.from(wasi.memory.buffer);
 

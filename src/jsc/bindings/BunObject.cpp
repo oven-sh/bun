@@ -589,8 +589,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionJSONLParseChunk, (JSGlobalObject * globalObje
                 return {};
             }
             result = JSC::streamingJSONParse(globalObject, str, values);
-            // Walk source bytes with the same decoder fromUTF8ReplacingInvalidSequences
-            // uses so invalid sequences map to their real source width, not 3 bytes.
+            // Same decoder as fromUTF8ReplacingInvalidSequences: invalid sequences contribute their real source width.
             size_t byteOffset = 0;
             size_t u16Units = 0;
             while (u16Units < result.charactersConsumed && byteOffset < sliceLen) {

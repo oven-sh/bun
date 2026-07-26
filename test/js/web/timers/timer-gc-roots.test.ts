@@ -152,21 +152,23 @@ describe.concurrent("armed timers do not each hold a JSC strong handle", () => {
 describe.concurrent("AbortSignal.timeout is released when its wrapper is collected", () => {
   test("dropped signals without listeners free their native timer", async () => {
     // The native Timeout box plus the C++ AbortSignal it keeps alive is a few
-    // hundred bytes; 20000 leaked signals are well over 8 MB of RSS that
+    // hundred bytes; 15000 leaked signals are ~7 MB of RSS per round that
     // should come back once the wrappers are collected.
     const src = `
-      const N = 20000;
+      const N = 15000;
       async function round() {
         for (let i = 0; i < N; i++) AbortSignal.timeout(600000);
-        for (let k = 0; k < 6; k++) {
+        for (let k = 0; k < 4; k++) {
           Bun.gc(true);
           await new Promise(r => setTimeout(r, 10));
         }
       }
       // First round warms up the TZone allocator pool and JSC heap so the
-      // second round measures steady-state growth only.
+      // measured rounds see steady-state growth only.
       await round();
       const before = process.memoryUsage().rss;
+      await round();
+      await round();
       await round();
       const after = process.memoryUsage().rss;
       console.log(JSON.stringify({ deltaMB: (after - before) / (1024 * 1024) }));
@@ -180,13 +182,13 @@ describe.concurrent("AbortSignal.timeout is released when its wrapper is collect
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     const { deltaMB } = JSON.parse(stdout);
-    // With the refcount cycle this retains the full batch every round
-    // (tens of MB). With the timer freed at wrapper GC, steady-state growth
-    // is near zero; allow slack for allocator quarantine under ASAN.
-    const limit = isASAN || isDebug ? 8 : 4;
+    // With the refcount cycle this retains ~7 MB per round (20+ MB over three
+    // rounds). With the timer freed at wrapper GC, steady-state growth is
+    // allocator noise; allow slack for ASAN quarantine and musl fragmentation.
+    const limit = isASAN || isDebug ? 14 : 10;
     expect(deltaMB).toBeLessThan(limit);
     expect(exitCode).toBe(0);
-  });
+  }, 10_000);
 
   for (const { name, body } of [
     {

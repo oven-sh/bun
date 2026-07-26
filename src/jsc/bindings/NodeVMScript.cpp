@@ -306,9 +306,31 @@ void NodeVMScript::destroy(JSCell* cell)
     static_cast<NodeVMScript*>(cell)->NodeVMScript::~NodeVMScript();
 }
 
+extern "C" int Bun__VM__scriptExecutionStatus(void*);
+
+bool isContextStoppingPermanently(JSC::VM& vm)
+{
+    // scriptExecutionStatus consults the Rust VirtualMachine (is_shutting_down,
+    // worker.requested_terminate). Those are set only for a permanent stop of
+    // the execution context, never by node:vm's own watchdog / SIGINT watcher,
+    // so this distinguishes a worker.terminate() from a {timeout}/{breakOnSigint}
+    // termination that this evaluation owns. Go through clientData rather than
+    // defaultGlobalObject() so the globalObject argument's type does not matter.
+    return Bun__VM__scriptExecutionStatus(Bun::vm(vm)) != 0;
+}
+
 static bool checkForTermination(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, NodeVMScript* script, std::optional<double> timeout)
 {
     if (vm.hasTerminationRequest()) {
+        if (isContextStoppingPermanently(vm)) {
+            // worker.terminate() (or a permanent VM stop) raised this
+            // termination. Converting it to a catchable error would let the
+            // caller's try/catch swallow the kill request. Leave
+            // hasTerminationRequest set and rethrow the uncatchable
+            // TerminationException so it unwinds to the worker loop.
+            scope.throwException(globalObject, vm.ensureTerminationException());
+            return true;
+        }
         vm.drainMicrotasksForGlobalObject(globalObject);
         // The termination may have fired inside an afterEvaluate microtask
         // checkpoint, leaving the termination exception pending; clear it so

@@ -1723,6 +1723,58 @@ test("process.debugPort defaults to 9229 on the main thread", async () => {
   expect(exitCode).toBe(0);
 });
 
+// A worker.terminate() that lands while the worker is inside a
+// vm.runInNewContext({timeout}) must propagate the uncatchable
+// TerminationException. If node:vm converts it to a catchable
+// ERR_SCRIPT_EXECUTION_TIMEOUT instead, the worker's try/catch swallows the
+// kill request and the worker keeps running whatever is on its microtask
+// queue (here: a self-rescheduling guest microtask loop) until the stale
+// Watchdog timer fires, which in debug trips ASSERT(hasTimeLimit()).
+test("worker.terminate() interrupts a worker blocked in a timed vm.runInNewContext", async () => {
+  const body = [
+    `const { workerData } = require("node:worker_threads");`,
+    `const vm = require("node:vm");`,
+    `const fs = require("fs");`,
+    `try {`,
+    `  vm.runInNewContext("(function loop(){ Promise.resolve().then(loop) })(); 1", {}, { timeout: 4000 });`,
+    `} catch (e) { fs.writeSync(2, "caught1:" + (e && e.code)); }`,
+    `try {`,
+    `  vm.runInNewContext("while(true){ Atomics.store(spin, 0, 1); }", { spin: workerData.spin, Atomics }, { timeout: 30000 });`,
+    `} catch (e) { fs.writeSync(2, "caught2:" + (e && e.code)); }`,
+    `fs.writeSync(2, "after-body");`,
+  ].join("\n");
+  const fixture = `
+    const { Worker } = require("node:worker_threads");
+    const fs = require("fs");
+    const spin = new Int32Array(new SharedArrayBuffer(4));
+    const w = new Worker(${JSON.stringify(body)}, { eval: true, workerData: { spin } });
+    w.on("error", e => { fs.writeSync(2, "worker-error:" + e); process.exit(1); });
+    (async () => {
+      while (Atomics.load(spin, 0) === 0) await new Promise(r => setImmediate(r));
+      const code = await w.terminate();
+      console.log("terminated code=" + code);
+      process.exit(0);
+    })();
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // terminate() raises an uncatchable TerminationException: the try/catch
+  // around the second eval must not observe ERR_SCRIPT_EXECUTION_TIMEOUT,
+  // nothing after it may run, and the subprocess must not abort on the
+  // Watchdog ASSERT(hasTimeLimit()).
+  expect({ stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+    stdout: "terminated code=1",
+    stderr: "",
+    exitCode: 0,
+    signalCode: null,
+  });
+});
+
 // Founding a SHARE_ENV tree replaces the founding thread's process.env object. If the
 // replacement were orphaned, the founder's later writes would go nowhere. child_process
 // enumerates the JS process.env (a var deleted from the map is invisible to the child),

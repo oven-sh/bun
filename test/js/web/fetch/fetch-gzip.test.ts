@@ -258,6 +258,169 @@ describe("fetch() decodes Content-Encoding case-insensitively", () => {
   });
 });
 
+// RFC 9110 §8.4: Content-Encoding lists every coding applied to the body, in
+// order, either as one comma-separated field value or as several field lines.
+// The client must decode all of them (last listed = outermost = decoded
+// first). Decoding only one layer silently hands the caller compressed bytes.
+describe("fetch() decodes multiple Content-Encoding codings", () => {
+  const payload = JSON.stringify({
+    msg: Buffer.alloc(4096, "abcdefghij").toString(),
+    n: 42,
+  });
+  const expected = { msg: Buffer.alloc(4096, "abcdefghij").toString(), n: 42 };
+  const apply: Record<string, (b: Uint8Array | string) => Buffer> = {
+    gzip: gzipSync,
+    "x-gzip": gzipSync,
+    deflate: deflateSync,
+    br: brotliCompressSync,
+    zstd: zstdCompressSync,
+  };
+  // Compress `payload` with each coding in `codings`, in order (so the last
+  // one is the outermost layer on the wire, matching the header's meaning).
+  function encodeBody(codings: string[]): Buffer {
+    let body: Buffer | string = payload;
+    for (const coding of codings) body = apply[coding](body);
+    return body as Buffer;
+  }
+
+  // [Content-Encoding header value(s) as sent on the wire, codings actually applied in order]
+  const cases: Array<[string | string[], string[]]> = [
+    ["br, gzip", ["br", "gzip"]],
+    ["gzip, br", ["gzip", "br"]],
+    ["gzip, gzip", ["gzip", "gzip"]],
+    ["deflate, gzip", ["deflate", "gzip"]],
+    ["zstd, gzip", ["zstd", "gzip"]],
+    ["gzip, zstd", ["gzip", "zstd"]],
+    ["x-gzip, br", ["x-gzip", "br"]],
+    // Three layers, exercising the intermediate ping-pong buffers.
+    ["gzip, br, zstd", ["gzip", "br", "zstd"]],
+    // Case-insensitive with optional whitespace around each element.
+    ["  BR ,  Gzip  ", ["br", "gzip"]],
+    // "identity" is a no-op coding; empty list elements are ignored.
+    ["identity, gzip", ["gzip"]],
+    ["gzip, identity", ["gzip"]],
+    ["br,, gzip,", ["br", "gzip"]],
+    // The same list split across two Content-Encoding field lines is
+    // equivalent to the comma-joined value (RFC 9110 §5.3).
+    [
+      ["br", "gzip"],
+      ["br", "gzip"],
+    ],
+    [
+      ["gzip", "br, gzip"],
+      ["gzip", "br", "gzip"],
+    ],
+  ];
+
+  it.concurrent.each(cases)("Content-Encoding: %j", async (headerValue, codings) => {
+    const body = encodeBody(codings);
+    // node:http so the header value reaches the wire exactly as written.
+    const server = createServer((req, res) => {
+      res.setHeader("Content-Encoding", headerValue);
+      res.setHeader("Content-Type", "application/json");
+      res.end(body);
+    });
+    await once(server.listen(0), "listening");
+    try {
+      const { port } = server.address() as import("node:net").AddressInfo;
+      const res = await fetch(`http://127.0.0.1:${port}/`);
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual(expected);
+    } finally {
+      server.close();
+    }
+  });
+
+  // A coding we can't decode anywhere in the list means the body must be
+  // passed through exactly as received (fetch's "handle content codings"
+  // step; same as node/undici and Chromium). Decoding only the codings we do
+  // know would hand the caller a half-decoded body.
+  it.concurrent.each([
+    ["snappy, gzip", ["gzip"]],
+    ["gzip, snappy", ["gzip"]],
+    ["br, unknown, gzip", ["br", "gzip"]],
+  ])("unsupported coding in the list (%s) passes the body through untouched", async (headerValue, codings) => {
+    const body = encodeBody(codings);
+    const server = createServer((req, res) => {
+      res.setHeader("Content-Encoding", headerValue);
+      res.end(body);
+    });
+    await once(server.listen(0), "listening");
+    try {
+      const { port } = server.address() as import("node:net").AddressInfo;
+      const res = await fetch(`http://127.0.0.1:${port}/`);
+      expect(res.status).toBe(200);
+      expect(Buffer.from(await res.arrayBuffer()).equals(body)).toBe(true);
+    } finally {
+      server.close();
+    }
+  });
+
+  // Same multi-coding chain, but streamed: the body arrives over many small
+  // chunked writes and is consumed through `res.body`, so every decoder in
+  // the chain is driven incrementally across many reads instead of in one
+  // buffered shot.
+  it.concurrent("streams a br, gzip response across many chunks", async () => {
+    const big = JSON.stringify({
+      data: Array.from({ length: 256 }, (_, i) => ({ i, s: `item-${i}` })),
+    });
+    const compressed = gzipSync(brotliCompressSync(big));
+    const server = createNetServer(socket => {
+      socket.setNoDelay(true);
+      socket.write(
+        "HTTP/1.1 200 OK\r\n" +
+          "Content-Encoding: br, gzip\r\n" +
+          "Transfer-Encoding: chunked\r\n" +
+          "Content-Type: application/json\r\n" +
+          "Connection: close\r\n\r\n",
+      );
+      (async () => {
+        for (let i = 0; i < compressed.length; i += 17) {
+          const chunk = compressed.subarray(i, i + 17);
+          socket.write(chunk.length.toString(16) + "\r\n");
+          socket.write(chunk);
+          socket.write("\r\n");
+          await new Promise(r => setImmediate(r));
+        }
+        socket.end("0\r\n\r\n");
+      })().catch(() => socket.destroy());
+    });
+    await once(server.listen(0), "listening");
+    try {
+      const { port } = server.address() as import("node:net").AddressInfo;
+      const res = await fetch(`http://127.0.0.1:${port}/`);
+      const chunks = [];
+      for await (const chunk of res.body!) chunks.push(chunk);
+      expect(Buffer.concat(chunks).toString()).toBe(big);
+    } finally {
+      server.close();
+    }
+  });
+
+  // A truncated inner stream must reject, not resolve with garbage: the gzip
+  // layer decodes fine but the brotli stream inside it is cut short. The
+  // error can surface on fetch() itself (the body is buffered before the
+  // promise resolves) or on the body read, and it must be the decoder's
+  // truncation error, not some unrelated failure.
+  it.concurrent("rejects when an inner coding's stream is truncated", async () => {
+    const brotli = brotliCompressSync(payload);
+    const body = gzipSync(brotli.subarray(0, brotli.length - 8));
+    const server = createServer((req, res) => {
+      res.setHeader("Content-Encoding", "br, gzip");
+      res.end(body);
+    });
+    await once(server.listen(0), "listening");
+    try {
+      const { port } = server.address() as import("node:net").AddressInfo;
+      await expect(fetch(`http://127.0.0.1:${port}/`).then(res => res.text())).rejects.toThrow(
+        /BrotliDecompressionError/,
+      );
+    } finally {
+      server.close();
+    }
+  });
+});
+
 it("fetch() with a gzip response works (multiple chunks, TCP server)", async done => {
   const compressed = await Bun.file(gzipped).arrayBuffer();
   var socketToClose!: Socket;

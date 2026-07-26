@@ -76,3 +76,84 @@ impl Decompressor {
         }
     }
 }
+
+/// Streaming decoder pipeline for the response's whole `Content-Encoding`
+/// chain. `Content-Encoding: br, gzip` means brotli was applied first and
+/// gzip last, so the wire bytes are gunzipped first and that output is then
+/// brotli-decoded: codings decode in the reverse of the listed order
+/// (RFC 9110 section 8.4).
+#[derive(Default)]
+pub struct DecompressorChain {
+    /// One streaming decoder per coding; index 0 decodes the last-listed
+    /// (outermost) coding. Each is created lazily by
+    /// [`Decompressor::decompress_chunk`] on the first bytes it sees, which
+    /// the deflate decoder relies on to sniff raw-vs-zlib framing.
+    stages: Vec<Decompressor>,
+    /// Ping-pong buffers carrying stage `i`'s output to stage `i + 1` when
+    /// there is more than one coding; reused across body chunks.
+    scratch: [MutableString; 2],
+}
+
+impl DecompressorChain {
+    /// Feed one body chunk through every coding, appending the fully decoded
+    /// bytes to `body_out_str`. `codings` is the `Content-Encoding` list in
+    /// the order the codings were applied; it must be non-empty and the same
+    /// on every call for a given response.
+    pub fn decompress_chunk(
+        &mut self,
+        codings: &[Encoding],
+        buffer: &[u8],
+        body_out_str: &mut MutableString,
+        is_done: bool,
+    ) -> crate::Result<()> {
+        // Callers only decompress when `ContentCodings::is_compressed()`.
+        // Erroring (rather than returning Ok) keeps a broken caller from
+        // silently dropping the chunk's bytes.
+        let Some(last) = codings.len().checked_sub(1) else {
+            debug_assert!(false, "decompress_chunk requires at least one coding");
+            return Err(crate::Error::InvalidHTTPResponse);
+        };
+        if self.stages.is_empty() {
+            self.stages
+                .resize_with(codings.len(), Decompressor::default);
+        }
+        debug_assert_eq!(self.stages.len(), codings.len());
+
+        if let ([stage], &[coding]) = (self.stages.as_mut_slice(), codings) {
+            return stage.decompress_chunk(coding, buffer, body_out_str, is_done);
+        }
+        let [ping, pong] = &mut self.scratch;
+        let (mut stage_in, mut stage_out): (&mut MutableString, &mut MutableString) = (ping, pong);
+        for (i, (&coding, stage)) in codings.iter().rev().zip(self.stages.iter_mut()).enumerate() {
+            let input: &[u8] = if i == 0 { buffer } else { &stage_in.list };
+            // A stage that never received a byte has produced none for the
+            // stages after it either, so there is nothing left to do for
+            // this chunk. With `is_done` this is the "response declared a
+            // Content-Encoding but the stream decoded to zero bytes" case,
+            // which the single-coding path also treats as an empty body
+            // rather than a truncated stream.
+            if input.is_empty() && matches!(stage, Decompressor::None) {
+                return Ok(());
+            }
+            let result = if i == last {
+                stage.decompress_chunk(coding, input, body_out_str, is_done)
+            } else {
+                stage_out.list.clear();
+                stage.decompress_chunk(coding, input, stage_out, is_done)
+            };
+            match result {
+                Ok(()) => {}
+                // This layer needs more input before it can make progress.
+                // Not an error while the body is still streaming in, and
+                // whatever it did decode is already in its output buffer for
+                // the next layer to consume.
+                Err(crate::Error::ShortRead) if !is_done => {}
+                Err(err) => return Err(err),
+            }
+            if i != last {
+                core::mem::swap(&mut stage_in, &mut stage_out);
+            }
+        }
+        Ok(())
+    }
+}

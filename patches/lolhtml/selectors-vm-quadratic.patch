@@ -1,3 +1,54 @@
+--- a/src/html/local_name.rs
++++ b/src/html/local_name.rs
+@@ -134,12 +134,31 @@
+ /// `LocalName` is used for the comparison of tag names.
+ /// In the majority of cases it will be represented as a hash, however for long
+ /// non-standard tag names it fallsback to the Name representation.
+-#[derive(Clone, Debug, Eq, Hash)]
++#[derive(Clone, Debug, Eq)]
+ pub enum LocalName<'i> {
+     Hash(LocalNameHash),
+     Bytes(BytesCow<'i>),
+ }
+ 
++// NOTE: `PartialEq` compares the `Bytes` variant case-insensitively, so `Hash`
++// must case-fold too or two equal names would land in different hash-map
++// buckets. This matters for any name that falls off `LocalNameHash` (custom
++// elements, >12 chars, chars outside a-zA-Z1-6).
++impl std::hash::Hash for LocalName<'_> {
++    #[inline]
++    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
++        core::mem::discriminant(self).hash(state);
++        match self {
++            LocalName::Hash(h) => h.hash(state),
++            LocalName::Bytes(b) => {
++                for &byte in b.iter() {
++                    byte.to_ascii_lowercase().hash(state);
++                }
++            }
++        }
++    }
++}
++
+ impl<'i> LocalName<'i> {
+     #[inline]
+     #[must_use]
+@@ -219,4 +238,15 @@
+     fn hash_invalidation_for_long_values() {
+         assert!(LocalNameHash::from("aaaaaaaaaaaaaa").is_empty());
+     }
++
++    #[test]
++    fn bytes_variant_hash_matches_case_insensitive_eq() {
++        use std::hash::{BuildHasher, RandomState};
++        let s = RandomState::new();
++        let a = LocalName::from_str_without_replacements("My-Widget", encoding_rs::UTF_8).unwrap();
++        let b = LocalName::from_str_without_replacements("my-widget", encoding_rs::UTF_8).unwrap();
++        assert!(matches!(a, LocalName::Bytes(_)));
++        assert_eq!(a, b);
++        assert_eq!(s.hash_one(&a), s.hash_one(&b));
++    }
+ }
 --- a/src/selectors_vm/mod.rs
 +++ b/src/selectors_vm/mod.rs
 @@ -59,7 +59,6 @@

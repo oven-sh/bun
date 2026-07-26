@@ -1263,6 +1263,24 @@ describe("tagName, endTag.name, and comment.text setters", () => {
 });
 
 describe("HTMLRewriter pathological nesting stays linear", () => {
+  it("mixed-case custom element end tag still matches its start tag", () => {
+    // Custom elements (and any name containing '-', '_', 0/7/8/9, or >12 chars)
+    // take lol-html's LocalName::Bytes path, which must hash case-insensitively
+    // for the O(1) stray-end-tag guard in the selector VM stack.
+    let end = "";
+    const out = new HTMLRewriter()
+      .on("my-widget", {
+        element(el) {
+          el.onEndTag(t => {
+            end = t.name;
+          });
+        },
+      })
+      .transform("<My-Widget>x</MY-WIDGET><p>y</p>");
+    expect(end).toBe("my-widget");
+    expect(out).toBe("<My-Widget>x</MY-WIDGET><p>y</p>");
+  });
+
   it("stray end tags with a deep open-element stack", () => {
     // Each </b> used to trigger a full reverse scan of the open-element
     // stack in lol-html's selectors_vm, so N unclosed <a> plus N stray </b>

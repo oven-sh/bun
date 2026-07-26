@@ -4764,17 +4764,29 @@ impl<'a> HTTPClient<'a> {
         &mut self,
         response: &mut picohttp::Response,
     ) -> crate::Result<ShouldContinue> {
+        if self.verbose != HTTPVerboseLevel::None {
+            print_response(response);
+        }
+
+        // RFC 9110 §9.3.6: any 2xx to CONNECT establishes the tunnel; a
+        // non-2xx CONNECT reply travelled over the plaintext client→proxy
+        // hop so it must reject the fetch, never surface as an https-origin
+        // Response (CVE-2009-2062). Dispatched before the header loop so no
+        // CONNECT-leg header or status writes `self.state` — ProxyTunnel
+        // does not reset it between the CONNECT leg and the origin leg.
+        if self.flags.proxy_tunneling && self.proxy_tunnel.is_none() {
+            if response.status_code >= 200 && response.status_code < 300 {
+                return Ok(ShouldContinue::ContinueStreaming);
+            }
+            return Err(crate::Error::ProxyConnectFailed(response.status_code));
+        }
+
         let mut location: &[u8] = b"";
         let mut pretend_304 = false;
         let mut is_server_sent_events = false;
         for (header_i, header) in response.headers.list.iter().enumerate() {
             match hash_header_name(header.name()) {
                 h if h == hash_header_const(b"Content-Length") => {
-                    // RFC 9110 §9.3.6: ignore Content-Length in a response to
-                    // CONNECT (2xx → opaque tunnel, non-2xx → rejected below).
-                    if self.flags.proxy_tunneling && self.proxy_tunnel.is_none() {
-                        continue;
-                    }
                     // byte-level parse — header.value() is network bytes, not &str
                     //
                     // RFC 9112 section 6.3: an invalid or conflicting
@@ -4829,12 +4841,6 @@ impl<'a> HTTPClient<'a> {
                     }
                 }
                 h if h == hash_header_const(b"Transfer-Encoding") => {
-                    // RFC 9110 section 9.3.6: as with Content-Length above, a
-                    // client MUST ignore Transfer-Encoding in a successful
-                    // response to CONNECT.
-                    if self.flags.proxy_tunneling && self.proxy_tunnel.is_none() {
-                        continue;
-                    }
                     // RFC 9112 §7: transfer-coding names are case-insensitive.
                     let value = header.value();
                     if strings::eql_case_insensitive_ascii_check_length(value, b"gzip")
@@ -4906,25 +4912,6 @@ impl<'a> HTTPClient<'a> {
                 }
                 _ => {}
             }
-        }
-
-        if self.verbose != HTTPVerboseLevel::None {
-            print_response(response);
-        }
-
-        // RFC 9110 §9.3.6: any 2xx to CONNECT establishes the tunnel; a
-        // non-2xx CONNECT reply travelled over the plaintext client→proxy
-        // hop so it must reject the fetch, never surface as an https-origin
-        // Response (CVE-2009-2062). Dispatched here, before the state writes
-        // below, because ProxyTunnel does not reset `state` between the
-        // CONNECT leg and the origin leg.
-        if self.flags.proxy_tunneling && self.proxy_tunnel.is_none() {
-            if response.status_code >= 200 && response.status_code < 300 {
-                // signal to continue the proxing
-                return Ok(ShouldContinue::ContinueStreaming);
-            }
-
-            return Err(crate::Error::ProxyConnectFailed(response.status_code));
         }
 
         if pretend_304 {

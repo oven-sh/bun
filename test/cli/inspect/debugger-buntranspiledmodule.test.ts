@@ -11,14 +11,15 @@
 // `localhost`-based websocket cases are environment-sensitive; this file runs
 // clean on its own.
 //
-// Skipped under the CI ASAN build: the WebSocket inspector transport is known
-// to be unreliable there (see test/expectations.txt for inspect.test.ts and
-// test/regression/issue/21654 for the same skip). The JSC switch-arm fix being
-// tested is in C++ and behaves identically with or without ASAN; it is still
-// exercised on every other lane.
+// Skipped on the CI ASAN lane only: the WebSocket inspector transport is
+// known to be unreliable there (see test/expectations.txt for inspect.test.ts).
+// Gated on isCI && isASAN (not bare isASAN) so a local `bun bd` debug+ASAN
+// build still runs these, matching test/cli/hot/watch-many-dirs.test.ts. The
+// JSC switch-arm fix being tested is in C++ and behaves identically with or
+// without ASAN; it is still exercised on every other CI lane.
 import { spawn } from "bun";
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isCI, tempDir } from "harness";
 import { join } from "node:path";
 
 async function runDebuggerProbe(extraArgs: readonly string[], expectedSourceType: string | null) {
@@ -236,7 +237,7 @@ test("t", () => { expect(x).toBe(1); });
   }
 }
 
-test.concurrent.skipIf(isASAN)(
+test.concurrent.skipIf(isCI && isASAN)(
   "bun test --isolate: Debugger.scriptParsed reports module and breakpoints resolve",
   async () => {
     await runDebuggerProbe(["--isolate"], "BunTranspiledModule");
@@ -246,7 +247,7 @@ test.concurrent.skipIf(isASAN)(
 // Sanity: without --isolate the provider is plain Module, the isolation cache
 // is empty (hence null), and this has always worked; pinning it alongside
 // ensures the --isolate case is being compared against the correct baseline.
-test.concurrent.skipIf(isASAN)(
+test.concurrent.skipIf(isCI && isASAN)(
   "bun test (no --isolate): Debugger.scriptParsed reports module and breakpoints resolve",
   async () => {
     await runDebuggerProbe([], null);

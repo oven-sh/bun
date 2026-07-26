@@ -58,15 +58,6 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
         /* We are done with this request */
         this->state &= ~HttpResponseData<SSL>::HTTP_RESPONSE_PENDING;
 
-        /* Release any request-body backpressure pause: onAborted is gone so
-         * the holder can no longer safely resume, and a keep-alive socket
-         * left paused never reads the next request. Skip when the node:http
-         * pipeline-flood guard owns the pause (HTTP_NODE_READS_PAUSED): that
-         * path has its own gated release points. */
-        if (!(this->state & HttpResponseData<SSL>::HTTP_NODE_READS_PAUSED)) {
-            ((AsyncSocket<SSL> *) uwsRes)->resume();
-        }
-
         HttpResponseData<SSL> *httpResponseData = uwsRes->getHttpResponseData();
         httpResponseData->isIdle = true;
     }

@@ -1186,7 +1186,7 @@ where
     pub fn end_already_responded_stream(&mut self) {
         ctx_log!("endAlreadyRespondedStream");
         debug_assert!(!HTTP3);
-        // `resp` may be freed (see above); uWS `markDone()` resumed the socket while it was live.
+        // `resp` may be freed (see above); the sink resumed it at `ended_response = true`.
         self.flags.set_request_body_paused(false);
         if self.resp.take().is_some() {
             self.flags.set_is_waiting_for_request_body(false);
@@ -2862,6 +2862,13 @@ where
             req.flags.set_aborted(aborted);
             wrote_anything = wrapper.sink.wrote > 0;
             ended_response = wrapper.sink.ended_response;
+            if ended_response {
+                // `resp` may be freed; the sink already resumed it. Clear these
+                // before `detach()` below re-enters JS so any drain callback /
+                // `on_start_buffering` reached from there early-returns.
+                req.flags.set_request_body_paused(false);
+                req.clear_request_body_stream_drain_handler(req.server().global_this());
+            }
 
             wrapper.sink.finalize();
             let sink_global = wrapper
@@ -2946,6 +2953,11 @@ where
         if let Some(wrapper) = req.sink_mut() {
             let wrapper_ptr = req.sink.take().expect("infallible: sink_mut returned Some");
             ended_response = wrapper.sink.ended_response;
+            if ended_response {
+                // `resp` may be freed; the sink already resumed it. Clear before JS below.
+                req.flags.set_request_body_paused(false);
+                req.clear_request_body_stream_drain_handler(global_this);
+            }
             if let Some(prom) = wrapper.sink.pending_flush.take() {
                 // The promise value was protected when pending_flush was
                 // assigned (flushFromJS / endFromJS). Drop that root before
@@ -4107,9 +4119,24 @@ where
         }
         ctx_log!("resumeRequestBodySocket");
         self.flags.set_request_body_paused(false);
+        if self.resp_may_be_freed() {
+            return;
+        }
         if let Some(resp) = self.resp {
             resp.resume_();
         }
+    }
+
+    /// After a streaming-response sink has set `ended_response`, `markDone()`
+    /// dropped `onAborted` and `resp` may point at a freed `us_socket_t` (see
+    /// `end_already_responded_stream`). The sink already resumed the socket.
+    #[inline]
+    fn resp_may_be_freed(&self) -> bool {
+        if let Some(sink) = self.sink {
+            // SAFETY: `sink` is owned by this context and freed in `handle_resolve_stream`/`deinit`.
+            return unsafe { (*sink.as_ptr()).sink.ended_response };
+        }
+        false
     }
 
     /// Detach the body ByteStream's `drain_handler` (the stream can outlive this ctx in JS).
@@ -4138,19 +4165,10 @@ where
             if !(*flags).request_body_paused() {
                 return;
             }
-            if (*this).resp.is_none() || (*flags).aborted() {
+            (*flags).set_request_body_paused(false);
+            if (*this).resp.is_none() || (*flags).aborted() || (*this).resp_may_be_freed() {
                 return;
             }
-            // A sink that already ended the response reached `markDone()` (which
-            // resumed the socket and dropped `onAborted`); `resp` may since be
-            // freed — see `end_already_responded_stream`. Just clear the flag.
-            if let Some(sink) = (*this).sink {
-                if (*sink.as_ptr()).sink.ended_response {
-                    (*flags).set_request_body_paused(false);
-                    return;
-                }
-            }
-            (*flags).set_request_body_paused(false);
             if let Some(resp) = (*this).resp {
                 resp.resume_();
             }

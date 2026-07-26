@@ -4141,6 +4141,15 @@ where
             if (*this).resp.is_none() || (*flags).aborted() {
                 return;
             }
+            // A sink that already ended the response reached `markDone()` (which
+            // resumed the socket and dropped `onAborted`); `resp` may since be
+            // freed — see `end_already_responded_stream`. Just clear the flag.
+            if let Some(sink) = (*this).sink {
+                if (*sink.as_ptr()).sink.ended_response {
+                    (*flags).set_request_body_paused(false);
+                    return;
+                }
+            }
             (*flags).set_request_body_paused(false);
             if let Some(resp) = (*this).resp {
                 resp.resume_();

@@ -292,7 +292,17 @@ void AbortSignal::signalFollow(AbortSignal& signal)
 
 void AbortSignal::eventListenersDidChange()
 {
-    bool hasListeners = hasEventListeners(eventNames().abortEvent) or !m_native_callbacks.isEmpty();
+    // HasAbortEventListener gates JSAbortSignalOwner::isReachableFromOpaqueRoots: it must
+    // reflect every kind of abort observer (JS listeners, native callbacks, m_algorithms,
+    // and m_abortAlgorithms), or consumers that register only via addAlgorithm /
+    // addAbortAlgorithmToSignal (pipeTo, addEventListener({signal})) lose their signal to GC.
+    bool hasListeners = hasEventListeners(eventNames().abortEvent)
+        || !m_native_callbacks.isEmpty()
+        || !m_algorithms.isEmpty();
+    if (!hasListeners) {
+        Locker locker { m_abortAlgorithmsLock };
+        hasListeners = !m_abortAlgorithms.isEmpty();
+    }
     setHasAbortEventListener(hasListeners);
 
     // When a timeout signal loses all observers (no JS listeners, no native
@@ -301,20 +311,11 @@ void AbortSignal::eventListenersDidChange()
     // ref that timeout() took to keep the signal alive, so the C++ object can
     // be destroyed normally.
     if (!hasListeners && m_timeout && !aborted()
-        && m_algorithms.isEmpty() && !hasPendingActivity()
+        && !hasPendingActivity()
         && m_dependentSignals.isEmptyIgnoringNullReferences()) {
-        bool shouldDeref = false;
-        {
-            Locker locker { m_abortAlgorithmsLock };
-            if (m_abortAlgorithms.isEmpty()) {
-                cancelTimer();
-                shouldDeref = true;
-            }
-        }
-        // Release the extra ref after the lock is released, since deref()
-        // may destroy `this` (and m_abortAlgorithmsLock with it).
-        if (shouldDeref)
-            deref(); // balances the ref() in AbortSignal::timeout()
+        cancelTimer();
+        // balances the ref() in AbortSignal::timeout(); may destroy `this`.
+        deref();
     }
 }
 
@@ -326,22 +327,29 @@ uint32_t AbortSignal::addAbortAlgorithmToSignal(AbortSignal& signal, Ref<AbortAl
         return 0;
     }
     auto identifier = ++signal.m_algorithmIdentifier;
-    Locker locker { signal.m_abortAlgorithmsLock };
-    signal.m_abortAlgorithms.append(std::make_pair(identifier, WTF::move(algorithm)));
+    {
+        Locker locker { signal.m_abortAlgorithmsLock };
+        signal.m_abortAlgorithms.append(std::make_pair(identifier, WTF::move(algorithm)));
+    }
+    signal.eventListenersDidChange();
     return identifier;
 }
 
 void AbortSignal::removeAbortAlgorithmFromSignal(AbortSignal& signal, uint32_t algorithmIdentifier)
 {
-    Locker locker { signal.m_abortAlgorithmsLock };
-    signal.m_abortAlgorithms.removeFirstMatching([algorithmIdentifier](auto& pair) {
-        return pair.first == algorithmIdentifier;
-    });
+    {
+        Locker locker { signal.m_abortAlgorithmsLock };
+        signal.m_abortAlgorithms.removeFirstMatching([algorithmIdentifier](auto& pair) {
+            return pair.first == algorithmIdentifier;
+        });
+    }
+    signal.eventListenersDidChange();
 }
 
 uint32_t AbortSignal::addAlgorithm(Algorithm&& algorithm)
 {
     m_algorithms.append(std::make_pair(++m_algorithmIdentifier, WTF::move(algorithm)));
+    eventListenersDidChange();
     return m_algorithmIdentifier;
 }
 
@@ -350,6 +358,7 @@ void AbortSignal::removeAlgorithm(uint32_t algorithmIdentifier)
     m_algorithms.removeFirstMatching([algorithmIdentifier](auto& pair) {
         return pair.first == algorithmIdentifier;
     });
+    eventListenersDidChange();
 }
 
 void AbortSignal::throwIfAborted(JSC::JSGlobalObject& lexicalGlobalObject)

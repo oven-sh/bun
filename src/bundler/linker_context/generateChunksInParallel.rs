@@ -467,10 +467,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             return Err(crate::Error::DuplicateOutputPath);
         }
 
-        // Two assets whose naming template yields the same output path are only
-        // valid when their content is identical; otherwise one file would
-        // silently overwrite the other on disk. This also catches an asset
-        // whose path collides with a chunk computed above.
+        // Same check for copy-loader assets; identical-content collisions are allowed.
         let additional = c.parse_graph().additional_output_files.as_slice();
         if !additional.is_empty() {
             #[derive(Default)]

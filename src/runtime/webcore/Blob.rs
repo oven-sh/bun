@@ -4483,9 +4483,7 @@ fn write_file_with_empty_source_to_destination(
 
     match &destination_store.data {
         store::Data::File(file) => {
-            // Writing zero bytes to a caller-supplied fd is a no-op. Truncating
-            // here would wipe data already written to a redirected stdout/stderr
-            // and fails outright on pipes/char devices.
+            // Writing zero bytes to a caller-supplied fd is a no-op; don't truncate it.
             if matches!(file.pathlike, PathOrFileDescriptor::Fd(_)) {
                 return Ok(JSPromise::resolved_promise_value(
                     ctx,
@@ -4513,9 +4511,7 @@ fn write_file_with_empty_source_to_destination(
                     let mut current = errno;
                     loop {
                         match current {
-                            // truncate(2) on a non-regular file (char device, FIFO,
-                            // socket) returns EINVAL. Writing zero bytes there is a
-                            // no-op, so resolve 0 to match the non-empty-source path.
+                            // truncate(2) on a non-regular file is EINVAL; treat as wrote 0 bytes.
                             bun_sys::E::EINVAL => {
                                 return Ok(JSPromise::resolved_promise_value(
                                     ctx,
@@ -5508,8 +5504,6 @@ fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
 
     // TODO: on windows this is always synchronous
 
-    // we only truncate if it's a path
-    // if it's a file descriptor, we assume they want manual control over that behavior
     let truncate = NEEDS_OPEN;
     let mut written: usize = 0;
     let _close = NEEDS_OPEN.then(|| bun_sys::CloseOnDrop::new(fd));

@@ -30,7 +30,8 @@ function makeServer(attempts: Attempts, failFirstN: number) {
         });
       }
       const headers = { "Content-Type": "application/xml", "ETag": '"etag"', "Connection": "close" };
-      if (req.method === "HEAD") return new Response(null, { status: 200, headers: { ...headers, "Content-Length": "2" } });
+      if (req.method === "HEAD")
+        return new Response(null, { status: 200, headers: { ...headers, "Content-Length": "2" } });
       if (req.method === "DELETE") return new Response(null, { status: 204, headers });
       if (req.method === "GET" && url.search.includes("list-type=2"))
         return new Response(listOkBody, { status: 200, headers });

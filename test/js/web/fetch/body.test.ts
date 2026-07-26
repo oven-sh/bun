@@ -796,7 +796,7 @@ describe("extract a MIME type from Content-Type", () => {
       ];
       const fd = await fn(multipartBody("B2"), headers).formData();
       expect(fd.get("f")).toBe("val");
-      await expect(fn(multipartBody("B1"), headers).formData()).rejects.toThrow();
+      await expect(fn(multipartBody("B1"), headers).formData()).rejects.toThrow(TypeError);
     });
   }
 

@@ -42,12 +42,12 @@ test("statusCode assigned as a numeric string is coerced like writeHead()", asyn
     const { port } = server.address() as AddressInfo;
 
     const wire = (path: string) =>
-      new Promise<string>((resolve, reject) => {
+      new Promise<string>(resolve => {
         const socket = connect(port, "127.0.0.1");
         let data = "";
         socket.on("data", chunk => (data += chunk));
+        socket.on("error", () => {});
         socket.on("close", () => resolve(data));
-        socket.on("error", reject);
         socket.write(`GET ${path} HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n`);
       });
 
@@ -66,8 +66,9 @@ test("statusCode assigned as a numeric string is coerced like writeHead()", asyn
 
     const outBad = await wire("/bad");
     const err = (await errP) as NodeJS.ErrnoException;
+    expect(err).toBeInstanceOf(RangeError);
     expect(err?.code).toBe("ERR_HTTP_INVALID_STATUS_CODE");
-    expect(outBad).not.toStartWith("HTTP/1.1 200 ");
+    expect(outBad).toBe("");
   } finally {
     server.close();
   }

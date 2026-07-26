@@ -15,6 +15,7 @@ type UpgradeResult = {
   sockData: string;
   completeAtUpgrade: boolean;
   readableLengthAtUpgrade: number;
+  trailersAtUpgrade: Record<string, string>;
 };
 
 function sendRaw(port: number, payload: string, thenEnd = false) {
@@ -38,6 +39,7 @@ async function observeUpgrade(payload: string): Promise<UpgradeResult> {
       sockData: "",
       completeAtUpgrade: req.complete,
       readableLengthAtUpgrade: req.readableLength,
+      trailersAtUpgrade: { ...req.trailers },
     };
     req.on("data", d => (result.reqData += d));
     socket.on("data", d => (result.sockData += d));
@@ -74,6 +76,7 @@ describe("node:http 'upgrade' with a request body", () => {
       sockData: "",
       completeAtUpgrade: true,
       readableLengthAtUpgrade: 5,
+      trailersAtUpgrade: {},
     });
   });
 
@@ -89,6 +92,7 @@ describe("node:http 'upgrade' with a request body", () => {
       sockData: "",
       completeAtUpgrade: true,
       readableLengthAtUpgrade: 5,
+      trailersAtUpgrade: {},
     });
   });
 
@@ -97,10 +101,13 @@ describe("node:http 'upgrade' with a request body", () => {
       "GET / HTTP/1.1\r\nHost: x\r\nConnection: Upgrade\r\nUpgrade: x\r\nTransfer-Encoding: chunked\r\n\r\n" +
         "5\r\nHELLO\r\n0\r\nExtra: abc\r\n\r\nAFTER",
     );
-    expect({ head: result.head, reqData: result.reqData, sockData: result.sockData }).toEqual({
+    expect(result).toEqual({
       head: "AFTER",
       reqData: "HELLO",
       sockData: "",
+      completeAtUpgrade: true,
+      readableLengthAtUpgrade: 5,
+      trailersAtUpgrade: { extra: "abc" },
     });
   });
 
@@ -133,6 +140,7 @@ describe("node:http 'upgrade' with a request body", () => {
         sockData: "",
         completeAtUpgrade: req.complete,
         readableLengthAtUpgrade: req.readableLength,
+        trailersAtUpgrade: { ...req.trailers },
       };
       req.on("data", d => (result.reqData += d));
       socket.on("error", reject);

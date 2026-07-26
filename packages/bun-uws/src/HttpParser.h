@@ -1281,16 +1281,19 @@ struct HttpResponseData;
                          * parse below (which fires inStream per chunk) is unchanged. */
                         uint64_t scanState = STATE_IS_CHUNKED;
                         uint64_t scanExt = 0;
+                        bool scanExtOverflow = false;
                         std::string scanTrailers;
                         std::string_view scanView(data, length);
                         for (auto chunk : uWS::ChunkIterator(&scanView, &scanState, false, &scanExt, &scanTrailers, maxBufferedHeaderSize)) {
                             (void) chunk;
+                            /* The real parse checks this per-chunk; the counter is
+                             * reset by consumeHexNumber at each fresh chunk-size line. */
+                            if (scanExt > MAX_CHUNK_EXTENSION_SIZE) { scanExtOverflow = true; break; }
                         }
                         /* Mirror the real parse's gates so bodyCompleteInHead
                          * is never true for a body the real parse will reject
                          * (stranding the JS deferred emit). */
-                        if (!isParsingChunkedEncoding(scanState) && !isParsingInvalidChunkedEncoding(scanState)
-                                && scanExt <= MAX_CHUNK_EXTENSION_SIZE
+                        if (!scanExtOverflow && !isParsingChunkedEncoding(scanState) && !isParsingInvalidChunkedEncoding(scanState)
                                 && validateNodeTrailerSection(&scanTrailers, useInsecureHTTPParser) == HTTP_PARSER_ERROR_NONE) {
                             req->head = std::span<const char>(scanView.data(), scanView.length());
                             req->bodyCompleteInHead = true;

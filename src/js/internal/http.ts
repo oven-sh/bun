@@ -269,18 +269,23 @@ function onDataIncomingMessage(this: any, chunk, isLast, aborted: NodeHTTPRespon
   }
 
   if (isLast) {
+    // Deferred 'upgrade' emit: body was in the same chunk as the headers, so
+    // fire now that it is buffered on req (Node's parser.execute() order). Run
+    // the EOF completion synchronously first so the listener also observes
+    // req.trailers (Node's parserOnMessageComplete populates both before
+    // onParserExecuteCommon emits 'upgrade').
+    const deferred = this[kDeferredUpgradeEmit];
+    if (deferred !== undefined) {
+      this[kDeferredUpgradeEmit] = undefined;
+      this[eofInProgress] = true;
+      emitEOFIncomingMessageOuter(this);
+      deferred();
+      return;
+    }
     emitEOFIncomingMessage(this);
     // Like Node's parserOnMessageComplete: any readStop above left the shared
     // socket's flowing=false, which would swallow the next request's 'pause'.
     if (!this.upgrade && socket && !socket._paused && socket.readable) socket.resume();
-    // Deferred 'upgrade' emit: body was in the same chunk as the headers, so
-    // fire now that it is buffered on req (Node's parser.execute() order).
-    const deferred = this[kDeferredUpgradeEmit];
-    if (deferred !== undefined) {
-      this[kDeferredUpgradeEmit] = undefined;
-      this.complete = true;
-      deferred();
-    }
   }
 }
 

@@ -236,8 +236,9 @@ bool readableStreamHasDefaultReader(JSReadableStream*); // userJS: no — Readab
 bool readableStreamHasBYOBReader(JSReadableStream*); // userJS: no — ReadableStreamOperations.cpp
 
 // Tee / from / pipe entry points.
-// Bun: `cloneForBranch2` is Bun's `shouldClone` (Response.clone passes true; the public
-// tee() passes false). ALSO runs materializeIfNeeded first.
+// Bun: `cloneForBranch2` is the spec's per-chunk StructuredClone into branch2. Both the public
+// tee() and Response.clone() pass false (see WebStreamsExports.cpp). ALSO runs
+// materializeIfNeeded first.
 std::pair<JSReadableStream*, JSReadableStream*> readableStreamTee(JSC::JSGlobalObject*, JSReadableStream*, bool cloneForBranch2); // userJS: yes — ReadableStreamOperations.cpp
 std::pair<JSReadableStream*, JSReadableStream*> readableStreamDefaultTee(JSC::JSGlobalObject*, JSReadableStream*, bool cloneForBranch2); // userJS: yes — ReadableStreamOperations.cpp
 std::pair<JSReadableStream*, JSReadableStream*> readableByteStreamTee(JSC::JSGlobalObject*, JSReadableStream*); // userJS: yes — ReadableStreamOperations.cpp

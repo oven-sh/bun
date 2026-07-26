@@ -1929,7 +1929,10 @@ describe("net.Socket write buffering behind a stalled peer", () => {
         c!.end();
         c!.on("finish", finished.resolve);
       });
-      c.on("error", finished.reject);
+      c.on("error", err => {
+        finished.reject(err);
+        serverRecv.reject(err);
+      });
       const got = await serverRecv.promise;
       await finished.promise;
       // The test only exercises the _writev queue path if backpressure was hit.

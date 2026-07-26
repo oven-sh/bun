@@ -416,6 +416,11 @@ impl PosixBufferedReader {
         let Some(poll) = self.handle.get_poll_mut() else {
             return true;
         };
+        if poll.is_watching() {
+            // Already armed kernel-side; a redundant `register_with_fd`
+            // issues an idempotent `epoll_ctl(CTL_MOD)` / `kevent64`.
+            return true;
+        }
         poll.set_owner(Owner::new(PollTag::BufferedReader, owner_ptr.cast()));
 
         if !poll.has_flag(FilePollFlag::WasEverRegistered)

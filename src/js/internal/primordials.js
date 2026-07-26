@@ -444,7 +444,7 @@ const primordials = {
   NumberIsSafeInteger: $NumberIsSafeInteger,
   NumberPrototype: $NumberPrototype,
   NumberEPSILON: 2.220446049250313e-16,
-  NumberMAX_VALUE: 1.7976931348623157e+308,
+  NumberMAX_VALUE: 1.7976931348623157e308,
   NumberMIN_VALUE: 5e-324,
   NumberMAX_SAFE_INTEGER: 9007199254740991,
   NumberMIN_SAFE_INTEGER: -9007199254740991,
@@ -878,12 +878,36 @@ pristineDescriptors.MapPrototype = {
   has: { __proto__: null, value: $MapPrototypeHas, writable: true, enumerable: false, configurable: true },
   keys: { __proto__: null, value: $MapPrototypeKeys, writable: true, enumerable: false, configurable: true },
   set: { __proto__: null, value: $MapPrototypeSet, writable: true, enumerable: false, configurable: true },
-  getOrInsert: { __proto__: null, value: $MapPrototypeGetOrInsert, writable: true, enumerable: false, configurable: true },
-  getOrInsertComputed: { __proto__: null, value: $MapPrototypeGetOrInsertComputed, writable: true, enumerable: false, configurable: true },
+  getOrInsert: {
+    __proto__: null,
+    value: $MapPrototypeGetOrInsert,
+    writable: true,
+    enumerable: false,
+    configurable: true,
+  },
+  getOrInsertComputed: {
+    __proto__: null,
+    value: $MapPrototypeGetOrInsertComputed,
+    writable: true,
+    enumerable: false,
+    configurable: true,
+  },
   size: { __proto__: null, get: $MapPrototypeGetSize, enumerable: false, configurable: true },
   values: { __proto__: null, value: $MapPrototypeValues, writable: true, enumerable: false, configurable: true },
-  constructor: { __proto__: null, value: $MapPrototypeConstructor, writable: true, enumerable: false, configurable: true },
-  [$SymbolIterator]: { __proto__: null, value: $MapPrototypeSymbolIterator, writable: true, enumerable: false, configurable: true },
+  constructor: {
+    __proto__: null,
+    value: $MapPrototypeConstructor,
+    writable: true,
+    enumerable: false,
+    configurable: true,
+  },
+  [$SymbolIterator]: {
+    __proto__: null,
+    value: $MapPrototypeSymbolIterator,
+    writable: true,
+    enumerable: false,
+    configurable: true,
+  },
   [$SymbolToStringTag]: { __proto__: null, value: "Map", writable: false, enumerable: false, configurable: true },
 };
 pristineDescriptors.MapConstructor = {
@@ -905,14 +929,62 @@ pristineDescriptors.SetPrototype = {
   size: { __proto__: null, get: $SetPrototypeGetSize, enumerable: false, configurable: true },
   values: { __proto__: null, value: $SetPrototypeValues, writable: true, enumerable: false, configurable: true },
   union: { __proto__: null, value: $SetPrototypeUnion, writable: true, enumerable: false, configurable: true },
-  intersection: { __proto__: null, value: $SetPrototypeIntersection, writable: true, enumerable: false, configurable: true },
-  difference: { __proto__: null, value: $SetPrototypeDifference, writable: true, enumerable: false, configurable: true },
-  symmetricDifference: { __proto__: null, value: $SetPrototypeSymmetricDifference, writable: true, enumerable: false, configurable: true },
-  isSubsetOf: { __proto__: null, value: $SetPrototypeIsSubsetOf, writable: true, enumerable: false, configurable: true },
-  isSupersetOf: { __proto__: null, value: $SetPrototypeIsSupersetOf, writable: true, enumerable: false, configurable: true },
-  isDisjointFrom: { __proto__: null, value: $SetPrototypeIsDisjointFrom, writable: true, enumerable: false, configurable: true },
-  constructor: { __proto__: null, value: $SetPrototypeConstructor, writable: true, enumerable: false, configurable: true },
-  [$SymbolIterator]: { __proto__: null, value: $SetPrototypeSymbolIterator, writable: true, enumerable: false, configurable: true },
+  intersection: {
+    __proto__: null,
+    value: $SetPrototypeIntersection,
+    writable: true,
+    enumerable: false,
+    configurable: true,
+  },
+  difference: {
+    __proto__: null,
+    value: $SetPrototypeDifference,
+    writable: true,
+    enumerable: false,
+    configurable: true,
+  },
+  symmetricDifference: {
+    __proto__: null,
+    value: $SetPrototypeSymmetricDifference,
+    writable: true,
+    enumerable: false,
+    configurable: true,
+  },
+  isSubsetOf: {
+    __proto__: null,
+    value: $SetPrototypeIsSubsetOf,
+    writable: true,
+    enumerable: false,
+    configurable: true,
+  },
+  isSupersetOf: {
+    __proto__: null,
+    value: $SetPrototypeIsSupersetOf,
+    writable: true,
+    enumerable: false,
+    configurable: true,
+  },
+  isDisjointFrom: {
+    __proto__: null,
+    value: $SetPrototypeIsDisjointFrom,
+    writable: true,
+    enumerable: false,
+    configurable: true,
+  },
+  constructor: {
+    __proto__: null,
+    value: $SetPrototypeConstructor,
+    writable: true,
+    enumerable: false,
+    configurable: true,
+  },
+  [$SymbolIterator]: {
+    __proto__: null,
+    value: $SetPrototypeSymbolIterator,
+    writable: true,
+    enumerable: false,
+    configurable: true,
+  },
   [$SymbolToStringTag]: { __proto__: null, value: "Set", writable: false, enumerable: false, configurable: true },
 };
 pristineDescriptors.SetConstructor = {
@@ -927,9 +999,27 @@ pristineDescriptors.WeakMapPrototype = {
   get: { __proto__: null, value: $WeakMapPrototypeGet, writable: true, enumerable: false, configurable: true },
   has: { __proto__: null, value: $WeakMapPrototypeHas, writable: true, enumerable: false, configurable: true },
   set: { __proto__: null, value: $WeakMapPrototypeSet, writable: true, enumerable: false, configurable: true },
-  getOrInsert: { __proto__: null, value: $WeakMapPrototypeGetOrInsert, writable: true, enumerable: false, configurable: true },
-  getOrInsertComputed: { __proto__: null, value: $WeakMapPrototypeGetOrInsertComputed, writable: true, enumerable: false, configurable: true },
-  constructor: { __proto__: null, value: $WeakMapPrototypeConstructor, writable: true, enumerable: false, configurable: true },
+  getOrInsert: {
+    __proto__: null,
+    value: $WeakMapPrototypeGetOrInsert,
+    writable: true,
+    enumerable: false,
+    configurable: true,
+  },
+  getOrInsertComputed: {
+    __proto__: null,
+    value: $WeakMapPrototypeGetOrInsertComputed,
+    writable: true,
+    enumerable: false,
+    configurable: true,
+  },
+  constructor: {
+    __proto__: null,
+    value: $WeakMapPrototypeConstructor,
+    writable: true,
+    enumerable: false,
+    configurable: true,
+  },
   [$SymbolToStringTag]: { __proto__: null, value: "WeakMap", writable: false, enumerable: false, configurable: true },
 };
 pristineDescriptors.WeakMapConstructor = {
@@ -942,7 +1032,13 @@ pristineDescriptors.WeakSetPrototype = {
   delete: { __proto__: null, value: $WeakSetPrototypeDelete, writable: true, enumerable: false, configurable: true },
   has: { __proto__: null, value: $WeakSetPrototypeHas, writable: true, enumerable: false, configurable: true },
   add: { __proto__: null, value: $WeakSetPrototypeAdd, writable: true, enumerable: false, configurable: true },
-  constructor: { __proto__: null, value: $WeakSetPrototypeConstructor, writable: true, enumerable: false, configurable: true },
+  constructor: {
+    __proto__: null,
+    value: $WeakSetPrototypeConstructor,
+    writable: true,
+    enumerable: false,
+    configurable: true,
+  },
   [$SymbolToStringTag]: { __proto__: null, value: "WeakSet", writable: false, enumerable: false, configurable: true },
 };
 pristineDescriptors.WeakSetConstructor = {
@@ -952,10 +1048,34 @@ pristineDescriptors.WeakSetConstructor = {
 };
 pristineDescriptors.FinalizationRegistryPrototype = {
   __proto__: null,
-  register: { __proto__: null, value: $FinalizationRegistryPrototypeRegister, writable: true, enumerable: false, configurable: true },
-  unregister: { __proto__: null, value: $FinalizationRegistryPrototypeUnregister, writable: true, enumerable: false, configurable: true },
-  constructor: { __proto__: null, value: $FinalizationRegistryPrototypeConstructor, writable: true, enumerable: false, configurable: true },
-  [$SymbolToStringTag]: { __proto__: null, value: "FinalizationRegistry", writable: false, enumerable: false, configurable: true },
+  register: {
+    __proto__: null,
+    value: $FinalizationRegistryPrototypeRegister,
+    writable: true,
+    enumerable: false,
+    configurable: true,
+  },
+  unregister: {
+    __proto__: null,
+    value: $FinalizationRegistryPrototypeUnregister,
+    writable: true,
+    enumerable: false,
+    configurable: true,
+  },
+  constructor: {
+    __proto__: null,
+    value: $FinalizationRegistryPrototypeConstructor,
+    writable: true,
+    enumerable: false,
+    configurable: true,
+  },
+  [$SymbolToStringTag]: {
+    __proto__: null,
+    value: "FinalizationRegistry",
+    writable: false,
+    enumerable: false,
+    configurable: true,
+  },
 };
 pristineDescriptors.FinalizationRegistryConstructor = {
   __proto__: null,
@@ -965,7 +1085,13 @@ pristineDescriptors.FinalizationRegistryConstructor = {
 pristineDescriptors.WeakRefPrototype = {
   __proto__: null,
   deref: { __proto__: null, value: $WeakRefPrototypeDeref, writable: true, enumerable: false, configurable: true },
-  constructor: { __proto__: null, value: $WeakRefPrototypeConstructor, writable: true, enumerable: false, configurable: true },
+  constructor: {
+    __proto__: null,
+    value: $WeakRefPrototypeConstructor,
+    writable: true,
+    enumerable: false,
+    configurable: true,
+  },
   [$SymbolToStringTag]: { __proto__: null, value: "WeakRef", writable: false, enumerable: false, configurable: true },
 };
 pristineDescriptors.WeakRefConstructor = {
@@ -978,7 +1104,13 @@ pristineDescriptors.PromisePrototype = {
   finally: { __proto__: null, value: $PromisePrototypeFinally, writable: true, enumerable: false, configurable: true },
   then: { __proto__: null, value: $PromisePrototypeThen, writable: true, enumerable: false, configurable: true },
   catch: { __proto__: null, value: $PromisePrototypeCatch, writable: true, enumerable: false, configurable: true },
-  constructor: { __proto__: null, value: $PromisePrototypeConstructor, writable: true, enumerable: false, configurable: true },
+  constructor: {
+    __proto__: null,
+    value: $PromisePrototypeConstructor,
+    writable: true,
+    enumerable: false,
+    configurable: true,
+  },
   [$SymbolToStringTag]: { __proto__: null, value: "Promise", writable: false, enumerable: false, configurable: true },
 };
 pristineDescriptors.PromiseConstructor = {
@@ -991,7 +1123,13 @@ pristineDescriptors.PromiseConstructor = {
   all: { __proto__: null, value: $PromiseAll, writable: true, enumerable: false, configurable: true },
   allSettled: { __proto__: null, value: $PromiseAllSettled, writable: true, enumerable: false, configurable: true },
   any: { __proto__: null, value: $PromiseAny, writable: true, enumerable: false, configurable: true },
-  withResolvers: { __proto__: null, value: $PromiseWithResolvers, writable: true, enumerable: false, configurable: true },
+  withResolvers: {
+    __proto__: null,
+    value: $PromiseWithResolvers,
+    writable: true,
+    enumerable: false,
+    configurable: true,
+  },
   try: { __proto__: null, value: $PromiseTry, writable: true, enumerable: false, configurable: true },
   [$SymbolSpecies]: { __proto__: null, get: $PromiseGetSymbolSpecies, enumerable: false, configurable: true },
 };

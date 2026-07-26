@@ -84,8 +84,7 @@ function copyOwnProperties(object, holder, prefix, mode) {
       const literal = type === "string" ? JSON.stringify(value) : String(value);
       record({ name, holder, key: keyDescription(key), symbolKey, kind: "Literal", literal, attributes });
     }
-    if (varargsMethods.includes(name))
-      record({ name: `${name}Apply`, kind: "ApplyVariant", base: name });
+    if (varargsMethods.includes(name)) record({ name: `${name}Apply`, kind: "ApplyVariant", base: name });
   }
 }
 

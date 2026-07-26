@@ -10,17 +10,16 @@
 //   $MapPrototypeGetSize.$call(map);
 //   $ObjectDefineProperty(target, key, descriptor);
 
-type PrimordialMethod<Holder, Key extends PropertyKey> = Holder extends Record<Key, infer Method>
-  ? Method extends (...args: infer Args) => infer Return
-    ? (this: Holder, ...args: Args) => Return
-    : Function
-  : Function;
-type PrimordialGetter<Holder, Key extends PropertyKey> = Holder extends Record<Key, infer Value>
-  ? (this: Holder) => Value
-  : Function;
-type PrimordialSetter<Holder, Key extends PropertyKey> = Holder extends Record<Key, infer Value>
-  ? (this: Holder, value: Value) => void
-  : Function;
+type PrimordialMethod<Holder, Key extends PropertyKey> =
+  Holder extends Record<Key, infer Method>
+    ? Method extends (...args: infer Args) => infer Return
+      ? (this: Holder, ...args: Args) => Return
+      : Function
+    : Function;
+type PrimordialGetter<Holder, Key extends PropertyKey> =
+  Holder extends Record<Key, infer Value> ? (this: Holder) => Value : Function;
+type PrimordialSetter<Holder, Key extends PropertyKey> =
+  Holder extends Record<Key, infer Value> ? (this: Holder, value: Value) => void : Function;
 type PrimordialValue<Holder, Key extends PropertyKey> = Holder extends Record<Key, infer Value> ? Value : unknown;
 
 declare const $Proxy: ProxyConstructor;
@@ -648,8 +647,14 @@ declare const $AsyncGeneratorFunctionPrototype: AsyncGeneratorFunction;
 declare const $AsyncGeneratorFunctionPrototypeConstructor: PrimordialMethod<AsyncGeneratorFunction, "constructor">;
 declare const $AsyncGeneratorFunctionPrototypePrototype: PrimordialValue<AsyncGeneratorFunction, "prototype">;
 declare const $AsyncIteratorPrototype: AsyncIteratorObject<any>;
-declare const $AsyncIteratorPrototypeSymbolAsyncIterator: PrimordialMethod<AsyncIteratorObject<any>, typeof Symbol.asyncIterator>;
-declare const $AsyncIteratorPrototypeSymbolAsyncDispose: PrimordialMethod<AsyncIteratorObject<any>, typeof Symbol.asyncDispose>;
+declare const $AsyncIteratorPrototypeSymbolAsyncIterator: PrimordialMethod<
+  AsyncIteratorObject<any>,
+  typeof Symbol.asyncIterator
+>;
+declare const $AsyncIteratorPrototypeSymbolAsyncDispose: PrimordialMethod<
+  AsyncIteratorObject<any>,
+  typeof Symbol.asyncDispose
+>;
 declare const $GeneratorFunctionPrototype: GeneratorFunction;
 declare const $GeneratorFunctionPrototypeConstructor: PrimordialMethod<GeneratorFunction, "constructor">;
 declare const $GeneratorFunctionPrototypePrototype: PrimordialValue<GeneratorFunction, "prototype">;

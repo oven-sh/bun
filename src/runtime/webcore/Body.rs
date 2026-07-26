@@ -1298,7 +1298,9 @@ impl Value {
                 Value::Locked(l) => core::mem::take(l),
                 _ => unreachable!(),
             };
-            let was_disturbed = !locked.action.is_none() || locked.promise.is_some();
+            let was_disturbed = !locked.action.is_none()
+                || locked.promise.is_some()
+                || locked.readable.is_disturbed(global);
             *self = Value::Error(err);
             let Value::Error(err_ref) = self else {
                 unreachable!()

@@ -88,6 +88,26 @@ describe("body-mixin-errors", () => {
     });
   });
 
+  it.concurrent("fetch: reading .body directly marks body used when the stream errors", async () => {
+    await withTruncatedBodyServer(async url => {
+      const res = await fetch(url);
+      const reader = res.body!.getReader();
+      let firstErr: unknown;
+      try {
+        while (!(await reader.read()).done) {}
+      } catch (e) {
+        firstErr = e;
+      }
+      expect(firstErr).toBeInstanceOf(TypeError);
+
+      expect(res.bodyUsed).toBe(true);
+
+      let secondErr: unknown;
+      await res.text().catch(e => (secondErr = e));
+      expectBodyAlreadyUsed(secondErr);
+    });
+  });
+
   it.concurrent.each(["arrayBuffer", "bytes", "blob", "json"] as const)(
     "fetch: truncated body %s() marks body used",
     async method => {

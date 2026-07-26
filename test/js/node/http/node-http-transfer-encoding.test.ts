@@ -717,6 +717,18 @@ describe("response body framing matches the user's Transfer-Encoding header", ()
       const { body } = await rawGet((server.address() as AddressInfo).port, "/");
       expect(body).toBe("2\r\nok\r\n0\r\n\r\n");
     });
+
+    test.concurrent("addTrailers are emitted (the trailer gate keys on the TE value, not CL)", async () => {
+      await using server = createServer((req, res) => {
+        res.setHeader("Content-Length", "2");
+        res.setHeader("Transfer-Encoding", "chunked");
+        res.addTrailers({ "X-Foo": "bar" });
+        res.end("ok");
+      });
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      const { body } = await rawGet((server.address() as AddressInfo).port, "/");
+      expect(body).toBe("2\r\nok\r\n0\r\nX-Foo: bar\r\n\r\n");
+    });
   });
 
   test.concurrent("Content-Length + Transfer-Encoding: identity stays identity", async () => {

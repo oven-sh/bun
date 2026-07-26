@@ -3168,7 +3168,7 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
   if (
     trailer &&
     this._hasBody &&
-    !this.hasHeader("content-length") &&
+    willBeChunked(this) &&
     this.req?.httpVersionMajor === 1 &&
     this.req?.httpVersionMinor >= 1
   ) {

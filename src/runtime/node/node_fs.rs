@@ -9550,12 +9550,6 @@ pub unsafe extern "C" fn Bun__mkdirp(global_this: &JSGlobalObject, path: *const 
         .is_ok()
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// zig_delete_tree — recursive delete-tree. Top-level `ENOENT` propagates (for
-// `force:false`); other errors carry the failing entry's full path + real
-// syscall tag, matching node's async rimraf.
-// ──────────────────────────────────────────────────────────────────────────
-
 #[inline]
 fn dt_err(errno: E, syscall: sys::Tag, path: &[u8]) -> sys::Error {
     sys::Error::from_code(dt_map_errno(errno), syscall).with_path(path)
@@ -9585,8 +9579,7 @@ fn dt_map_errno(errno: E) -> E {
     }
 }
 
-/// `sub_path` / stack[1..].name / leaf. `stack[0]` is the `sub_path` frame
-/// itself and skipped.
+/// sub_path / stack[1..].name / leaf (stack[0] *is* sub_path, hence skipped).
 fn dt_join_path(sub_path: &[u8], stack: &[DeleteTreeStackItem], leaf: &[u8]) -> Vec<u8> {
     let mut cap = sub_path.len();
     for item in stack.iter().skip(1) {
@@ -9701,6 +9694,7 @@ struct DeleteTreeStackItem {
     iter: DirIterator::WrappedIterator,
 }
 
+/// Recursive delete; errors name the failing entry's full path and syscall. Top-level `ENOENT` propagates (for `{force:false}`).
 pub fn zig_delete_tree(self_: &sys::Dir, sub_path: &[u8], kind_hint: sys::FileKind) -> Maybe<()> {
     let initial_iterable_dir =
         match zig_delete_tree_open_initial_subpath(self_, sub_path, kind_hint, sub_path)? {

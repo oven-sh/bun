@@ -244,6 +244,10 @@ void AbortSignal::signalAbort(JSC::JSGlobalObject* globalObject, CommonAbortReas
     if (aborted())
         return;
 
+    // toJS() allocates a DOMException, which can GC. For an unobserved
+    // timeout signal the wrapper is collectible at that point, so protect
+    // `this` before the allocation rather than only inside signalAbort(JSValue).
+    Ref protectedThis { *this };
     m_commonReason = reason;
     signalAbort(toJS(globalObject, reason));
 }

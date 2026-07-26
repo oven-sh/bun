@@ -556,9 +556,12 @@ describe("hashed lookup", () => {
     const N = 2000;
     const map = new Bun.CookieMap();
     for (let i = 0; i < N; i++) map.set("c" + i, "v" + i);
-    let ok = true;
-    for (let i = 0; i < N; i++) ok &&= map.get("c" + i) === "v" + i;
-    expect(ok).toBe(true);
+    const mismatches: string[] = [];
+    for (let i = 0; i < N; i++) {
+      const got = map.get("c" + i);
+      if (got !== "v" + i) mismatches.push(`c${i}=${got}`);
+    }
+    expect(mismatches).toEqual([]);
     for (let i = 0; i < N; i++) map.delete("c" + i);
     expect(map.size).toBe(0);
     expect(map.toSetCookieHeaders().length).toBe(N);

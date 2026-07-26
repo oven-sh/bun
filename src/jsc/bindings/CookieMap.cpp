@@ -204,17 +204,19 @@ ExceptionOr<void> CookieMap::remove(const CookieStoreDeleteOptions& options)
     if (!Cookie::isValidCookieDomain(domain))
         return Exception { TypeError, "Invalid cookie domain: contains invalid characters"_s };
 
-    removeOriginal(name);
-
     // Names the parser accepts but the Set-Cookie grammar rejects: evict, queue nothing.
     if (!Cookie::isValidCookieName(name)) {
+        removeOriginal(name);
         setModified(name, nullptr);
         return {};
     }
 
     bool secure = name.startsWithIgnoringASCIICase("__Secure-"_s) || name.startsWithIgnoringASCIICase("__Host-"_s);
     auto cookieOr = Cookie::create(name, ""_s, domain, path, 1, secure, CookieSameSite::Lax, false, std::numeric_limits<double>::quiet_NaN(), false);
-    ASSERT(!cookieOr.hasException());
+    if (cookieOr.hasException()) [[unlikely]]
+        return cookieOr.releaseException();
+
+    removeOriginal(name);
     setModified(name, cookieOr.releaseReturnValue());
     return {};
 }

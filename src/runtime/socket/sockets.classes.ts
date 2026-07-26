@@ -162,7 +162,7 @@ function generate(ssl) {
       },
 
       "@@dispose": {
-        fn: "end",
+        fn: "close",
         length: 0,
       },
 

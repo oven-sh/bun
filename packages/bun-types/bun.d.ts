@@ -5933,8 +5933,8 @@ declare module "bun" {
      * `shutdown(fd, SHUT_WR)`).
      *
      * After `shutdown()` no more data can be written, but the socket stays open
-     * for reading: the peer's reply is still delivered to the `data` handler
-     * and the peer's FIN to the `end`/`close` handlers.
+     * for reading: the peer's reply is still delivered to the `data` handler,
+     * and the `close` handler runs once the peer closes its side.
      *
      * This is equivalent to {@link end `end()`} without a data argument.
      *
@@ -6237,14 +6237,14 @@ declare module "bun" {
     readonly bytesWritten: number;
 
     /**
-     * Alias for `socket.end()`. Allows the socket to be used with `using` declarations
-     * for automatic resource management.
+     * Alias for {@link close `socket.close()`}. Allows the socket to be used with
+     * `using` declarations for automatic resource management.
      * @example
      * ```ts
      * async function processSocket() {
      *   using socket = await Bun.connect({ ... });
      *   socket.write("Data");
-     *   // socket.end() is called automatically when exiting the scope
+     *   // socket.close() is called automatically when exiting the scope
      * }
      * ```
      */

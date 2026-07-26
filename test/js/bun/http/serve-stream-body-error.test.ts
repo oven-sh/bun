@@ -314,7 +314,7 @@ test.skipIf(!isASAN)(
 
     // The stream errors after "EB" is on the wire, so the body is force-closed
     // without the terminating 0\r\n\r\n chunk (RFC 9112 section 7).
-    const expected = Array(6).fill({ status: "HTTP/1.1 597 HM", terminated: false });
+    const expected = Array(6).fill({ status: "HTTP/1.1 597 ", terminated: false });
     expect({ stderr, results: stdout.trim() ? JSON.parse(stdout) : stdout, exitCode }).toEqual({
       stderr: "",
       results: expected,

@@ -34,6 +34,7 @@ pub struct FileRoute {
     blob: Blob,
     headers: Headers,
     status_code: u16,
+    status_text: Box<[u8]>,
     // Mutated on every request (`on()` runs `hash()`); FileRoute is reached via
     // a shared `*const Self` from the route table, so wrap for interior
     // mutability. `StatHash` is small POD with `Default`, so `Cell` +
@@ -85,6 +86,7 @@ impl FileRoute {
         size_of::<FileRoute>()
             + self.headers.memory_cost()
             + self.blob.reported_estimated_size.get()
+            + self.status_text.len()
     }
 
     pub fn last_modified_date(&self) -> JsResult<Option<u64>> {
@@ -127,6 +129,7 @@ impl FileRoute {
             blob,
             headers,
             status_code: opts.status_code,
+            status_text: Box::default(),
             stat_hash: Cell::new(StatHash::default()),
         }))
     }
@@ -176,6 +179,8 @@ impl FileRoute {
                 *body_value = BodyValue::Blob(blob.dupe());
                 let headers = headers_from(response.get_init_headers(), &blob);
                 let status_code = response.status_code();
+                let status_text_str = response.get_init_status_text();
+                let status_text_slice = status_text_str.to_utf8_without_ref();
 
                 return Ok(Some(bun_core::heap::into_raw(Box::new(FileRoute {
                     ref_count: Cell::new(1),
@@ -187,6 +192,7 @@ impl FileRoute {
                     blob,
                     headers,
                     status_code,
+                    status_text: Box::from(status_text_slice.slice()),
                     stat_hash: Cell::new(StatHash::default()),
                 }))));
             }
@@ -210,6 +216,7 @@ impl FileRoute {
                     has_content_range_header: false,
                     has_date_header: false,
                     status_code: 200,
+                    status_text: Box::default(),
                     stat_hash: Cell::new(StatHash::default()),
                 }))));
             }
@@ -273,10 +280,10 @@ impl FileRoute {
         }
     }
 
-    fn write_status_code(&self, status: u16, resp: AnyResponse) {
+    fn write_status_code(&self, status: u16, status_text: &[u8], resp: AnyResponse) {
         match resp {
-            AnyResponse::SSL(r) => write_status::<true>(r, status, &[]),
-            AnyResponse::TCP(r) => write_status::<false>(r, status, &[]),
+            AnyResponse::SSL(r) => write_status::<true>(r, status, status_text),
+            AnyResponse::TCP(r) => write_status::<false>(r, status, status_text),
             AnyResponse::H3(r) => {
                 let mut b = bun_core::fmt::ItoaBuf::new();
                 let s = bun_core::fmt::itoa(&mut b, status);
@@ -520,7 +527,12 @@ impl FileRoute {
 
         req.set_yield(false);
 
-        this.write_status_code(status_code, resp);
+        let status_text: &[u8] = if status_code == this.status_code {
+            &this.status_text
+        } else {
+            &[]
+        };
+        this.write_status_code(status_code, status_text, resp);
         if this.has_date_header {
             resp.mark_wrote_date_header();
         }

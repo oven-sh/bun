@@ -1447,6 +1447,7 @@ describe("status line reason phrase", () => {
   }
 
   it("writes the Response statusText and never the HM placeholder", async () => {
+    using dir = tempDir("serve-status-text", { "payload.txt": "hello" });
     using server = Bun.serve({
       port: 0,
       hostname: "127.0.0.1",
@@ -1454,6 +1455,13 @@ describe("status line reason phrase", () => {
         "/static-known": new Response("x", { status: 201, statusText: "Static Custom" }),
         "/static-unknown": new Response("x", { status: 599, statusText: "Edge Cache Error" }),
         "/static-unknown-bare": new Response("x", { status: 520 }),
+        "/file-known": new Response(Bun.file(join(String(dir), "payload.txt")), {
+          status: 201,
+          statusText: "File Custom",
+        }),
+        "/file-unknown-bare": new Response(Bun.file(join(String(dir), "payload.txt")), {
+          status: 520,
+        }),
       },
       fetch(req) {
         switch (new URL(req.url).pathname) {
@@ -1487,6 +1495,8 @@ describe("status line reason phrase", () => {
       "/static-known": "HTTP/1.1 201 Static Custom",
       "/static-unknown": "HTTP/1.1 599 Edge Cache Error",
       "/static-unknown-bare": "HTTP/1.1 520 ",
+      "/file-known": "HTTP/1.1 201 File Custom",
+      "/file-unknown-bare": "HTTP/1.1 520 ",
     };
     const got: Record<string, string> = {};
     for (const path of Object.keys(cases)) {

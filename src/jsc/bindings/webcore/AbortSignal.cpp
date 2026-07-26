@@ -297,16 +297,9 @@ void AbortSignal::eventListenersDidChange()
     releaseTimerIfUnobserved();
 }
 
-// When a timeout signal has no remaining observers (no JS listeners, no
-// native callbacks, no algorithms, no dependent signals, no pending
-// activity), the timer can only fire as a no-op. Cancel it now and release
-// the extra ref that timeout() took so the C++ object can be destroyed
-// promptly instead of surviving until the deadline. Called from
-// eventListenersDidChange() (last listener removed) and from
-// JSAbortSignalOwner::finalize() (JS wrapper collected); the latter mirrors
-// Node's SafeFinalizationRegistry(clearTimeout) for AbortSignal.timeout().
-// Must be called on the owning JS thread: cancelTimer() routes through
-// AbortSignal__Timeout__deinit which touches the per-VM timer heap.
+// A timeout signal with no remaining observers can only fire as a no-op;
+// cancel the timer and drop the ref timeout() took so nothing survives until
+// the deadline. JS thread only (cancelTimer() touches the per-VM timer heap).
 void AbortSignal::releaseTimerIfUnobserved()
 {
     if (!m_timeout || aborted())
@@ -322,8 +315,7 @@ void AbortSignal::releaseTimerIfUnobserved()
             shouldDeref = true;
         }
     }
-    // Release the extra ref after the lock is released, since deref()
-    // may destroy `this` (and m_abortAlgorithmsLock with it).
+    // deref() may destroy `this` (and m_abortAlgorithmsLock with it).
     if (shouldDeref)
         deref(); // balances the ref() in AbortSignal::timeout()
 }

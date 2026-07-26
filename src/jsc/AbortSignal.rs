@@ -169,12 +169,10 @@ impl AbortSignal {
         WebCore__AbortSignal__unref(self)
     }
 
-    /// Null `m_timeout` on the C++ side and free the `Timeout` box via
-    /// `AbortSignal__Timeout__deinit`. Paired with [`AbortSignal::unref`] this
-    /// is the shutdown-time release of the `timeout()` ref that preserves the
-    /// invariant `m_timeout != null ⇔ timeout()'s extra ref is held`, so a
-    /// later `JSAbortSignalOwner::finalize` → `releaseTimerIfUnobserved`
-    /// cannot double-deref. JS thread only.
+    /// Null `m_timeout` and free the `Timeout` box. Call before `unref()` on
+    /// any path that drops `timeout()`'s ref without going through
+    /// `signalAbort`, so `m_timeout != null ⇔ that ref is held` stays true.
+    /// JS thread only.
     pub fn cancel_timer(&self) {
         WebCore__AbortSignal__cancelTimer(self)
     }
@@ -318,10 +316,8 @@ pub struct Timeout {
 
 bun_event_loop::impl_timer_owner!(Timeout; from_timer_ptr => event_loop_timer);
 
-/// Live boxed `Timeout` instances (`init` increments, `deinit` decrements).
-/// Surfaced via `bun:internal-for-testing` so leak tests can observe native
-/// timer lifetime directly, since `heapStats()` only sees JS wrappers and RSS
-/// does not move under ASAN quarantine.
+/// Live boxed `Timeout` count, surfaced via `bun:internal-for-testing` so
+/// leak tests see native timer lifetime (heapStats only counts JS wrappers).
 static LIVE_COUNT: AtomicI64 = AtomicI64::new(0);
 
 #[unsafe(no_mangle)]
@@ -394,13 +390,10 @@ impl Timeout {
 
             // The signal and its handlers belong to a previous isolated test
             // file's global; firing now would run them against the new global.
-            // Release via cancel_timer() (nulls m_timeout, frees `this`) then
-            // unref(), so a later JSAbortSignalOwner::finalize sees
-            // m_timeout == null and cannot double-deref.
             if (*this).generation != (*vm).test_isolation_generation {
                 let signal = AbortSignal::opaque_ref((*this).signal);
+                // cancel_timer() frees `this`; don't touch it after.
                 signal.cancel_timer();
-                // `this` is freed; don't touch it again.
                 signal.unref();
                 return;
             }

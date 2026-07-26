@@ -1240,16 +1240,12 @@ impl All {
             unsafe { (*internals).cancel(vm) };
         }
 
-        // `AbortSignal.timeout()` boxes form a refcount cycle: the C++
-        // `AbortSignal` owns `m_timeout` (raw `*mut Timeout`) and the Timeout
-        // holds a `+1` on the signal. Neither can release first, so a pending
-        // timeout at exit leaks both. Release via C++ `cancelTimer()` (nulls
-        // `m_timeout`, frees the box through `AbortSignal__Timeout__deinit`,
-        // whose `Timeout::cancel` unlinks the still-ACTIVE heap node) then
-        // `unref()` the `+1`. Routing through `cancelTimer()` preserves the
-        // invariant `m_timeout != null ⇔ timeout()'s extra ref is held`, so a
-        // later `JSAbortSignalOwner::finalize` → `releaseTimerIfUnobserved`
-        // cannot double-deref.
+        // `AbortSignal.timeout()` boxes form a refcount cycle (C++ `m_timeout`
+        // ↔ Timeout's `+1` on the signal), so a pending timeout at exit leaks
+        // both. Break it via C++ `cancelTimer()` (nulls `m_timeout`, frees the
+        // box, unlinks the heap node) then `unref()` — nulling `m_timeout`
+        // here is what keeps `releaseTimerIfUnobserved()` from double-derefing
+        // when the wrapper is later finalized.
         for t in signal_timeouts {
             // SAFETY: each `t` was collected from the live heap above; the
             // `+1` we release here is the one keeping the signal (and thus

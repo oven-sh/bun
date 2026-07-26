@@ -408,18 +408,11 @@ void JSAbortSignalOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* contex
     auto& world = *static_cast<DOMWrapperWorld*>(context);
     Ref signal = jsAbortSignal->protectedWrapped();
     uncacheWrapper(world, signal.ptr(), jsAbortSignal);
-    // The wrapper is gone, so JS can no longer observe the abort. If nothing
-    // native is observing either, cancel the pending timer now rather than
-    // letting it (and the C++ AbortSignal kept alive by timeout()'s extra ref)
-    // survive until the deadline and fire as a no-op.
-    //
-    // The known refs here are exactly: the cell's m_wrapped (+1, released when
-    // the cell is swept after this returns), timeout()'s own (+1), and our
-    // local Ref (+1). A higher count means a bare C++ holder (e.g. Request's
-    // AbortSignalRef) still references the signal and may register an observer
-    // later, so the timer must stay armed. A lower count means
-    // cancel_all_timeout_objects already released timeout()'s ref while
-    // leaving the wrapper to free m_timeout; releasing again would over-deref.
+    // JS can no longer observe the abort; drop the native timer so nothing
+    // survives until the deadline. refCount == 3 is exactly m_wrapped (+1) +
+    // timeout()'s ref (+1) + our local Ref (+1): higher means a bare native
+    // holder (e.g. Request) may still observe, lower means timeout()'s ref was
+    // already released elsewhere and derefing here would over-deref.
     if (signal->hasActiveTimeoutTimer() && signal->refCount() == 3)
         signal->releaseTimerIfUnobserved();
 }

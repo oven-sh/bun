@@ -7,9 +7,29 @@ export function main() {
 
 // This function is bound when constructing instances of CommonJSModule
 $visibility = "Private";
-export function require(this: JSCommonJSModule, _: string) {
-  // Do not use $tailCallForwardArguments here, it causes https://github.com/oven-sh/bun/issues/9225
-  return $overridableRequire.$apply(this, arguments);
+export function require(this: JSCommonJSModule, id: string) {
+  const ch = require("internal/module_tracing").requireChannel;
+  if (!ch.hasSubscribers) {
+    // Do not use $tailCallForwardArguments here, it causes https://github.com/oven-sh/bun/issues/9225
+    return $overridableRequire.$apply(this, arguments);
+  }
+  const context = { __proto__: null, id, parentFilename: this && this.filename };
+  const self = this;
+  const args = arguments;
+  const { start, end, error } = ch;
+  return start.runStores(context, () => {
+    try {
+      const result = $overridableRequire.$apply(self, args);
+      context.result = result;
+      return result;
+    } catch (err) {
+      context.error = err;
+      error.publish(context);
+      throw err;
+    } finally {
+      end.publish(context);
+    }
+  });
 }
 
 // overridableRequire can be overridden by setting `Module.prototype.require`

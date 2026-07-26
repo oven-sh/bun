@@ -328,7 +328,9 @@ impl<'a> ZlibReaderArrayList<'a> {
         let list_len = zlib_reader.list_ptr.len();
         zlib_reader.zlib = zStream_struct {
             next_in: input.as_ptr(),
-            avail_in: input.len() as uInt,
+            // avail_in is a u32; inputs >= 4 GiB are fed in u32::MAX windows by
+            // read_all().
+            avail_in: input.len().min(uInt::MAX as usize) as uInt,
             total_in: input.len() as _,
 
             next_out: zlib_reader.list_ptr.as_mut_ptr(),
@@ -417,6 +419,19 @@ impl<'a> ZlibReaderArrayList<'a> {
                 //   or no more space in the output buffer (see below about the
                 //   flush parameter).
 
+                // Refill the input window when zlib has drained it: avail_in
+                // is a u32, so inputs >= 4 GiB must be presented in slices.
+                if self.zlib.avail_in == 0 {
+                    // SAFETY: next_in is initialized to input.as_ptr() and zlib
+                    // only advances it within the provided window.
+                    let consumed =
+                        unsafe { self.zlib.next_in.offset_from(self.input.as_ptr()) } as usize;
+                    let remaining = self.input.len() - consumed;
+                    if remaining > 0 {
+                        self.zlib.avail_in = remaining.min(uInt::MAX as usize) as uInt;
+                    }
+                }
+
                 if self.zlib.avail_out == 0 {
                     let produced = self.zlib.total_out as usize;
                     let remaining_budget = self.max_output_size.saturating_sub(produced);
@@ -431,7 +446,8 @@ impl<'a> ZlibReaderArrayList<'a> {
                     };
                     self.zlib.next_out = next_out;
                     // Clamp so a single inflate call cannot write past `max_output_size`.
-                    self.zlib.avail_out = avail_out.min(remaining_budget) as uInt;
+                    self.zlib.avail_out =
+                        avail_out.min(remaining_budget).min(uInt::MAX as usize) as uInt;
                 }
 
                 // Try to inflate even if avail_in is 0, as this could be a valid empty gzip stream
@@ -827,7 +843,10 @@ impl<'a> ZlibCompressorArrayList<'a> {
         let list_len = zlib_reader.list_ptr.len();
         zlib_reader.zlib = zStream_struct {
             next_in: input.as_ptr(),
-            avail_in: input.len() as uInt,
+            // avail_in is a u32; inputs >= 4 GiB are fed in u32::MAX windows by
+            // read_all(). A bare `as uInt` here wraps 2^32 to 0 and compresses
+            // an empty stream.
+            avail_in: input.len().min(uInt::MAX as usize) as uInt,
             total_in: input.len() as _,
 
             next_out: zlib_reader.list_ptr.as_mut_ptr(),
@@ -874,7 +893,8 @@ impl<'a> ZlibCompressorArrayList<'a> {
                 // ensureTotalCapacityPrecise → reserve_exact
                 let need = (bound as usize).saturating_sub(zlib_reader.list_ptr.len());
                 zlib_reader.list_ptr.reserve_exact(need);
-                zlib_reader.zlib.avail_out = zlib_reader.list_ptr.capacity() as uInt;
+                zlib_reader.zlib.avail_out =
+                    zlib_reader.list_ptr.capacity().min(uInt::MAX as usize) as uInt;
                 zlib_reader.zlib.next_out = zlib_reader.list_ptr.as_mut_ptr();
 
                 Ok(zlib_reader)
@@ -936,19 +956,43 @@ impl<'a> ZlibCompressorArrayList<'a> {
                 //   or no more space in the output buffer (see below about the
                 //   flush parameter).
 
+                // Refill the input window when zlib has drained it: avail_in
+                // is a u32, so inputs >= 4 GiB must be presented in slices.
+                // SAFETY: next_in is initialized to input.as_ptr() and zlib
+                // only advances it within the provided window.
+                let consumed =
+                    unsafe { self.zlib.next_in.offset_from(self.input.as_ptr()) } as usize;
+                if self.zlib.avail_in == 0 {
+                    let remaining = self.input.len() - consumed;
+                    if remaining > 0 {
+                        self.zlib.avail_in = remaining.min(uInt::MAX as usize) as uInt;
+                    }
+                }
+
                 if self.zlib.avail_out == 0 {
+                    // SAFETY: zlib has written `total_out` bytes into list_ptr's buffer.
+                    unsafe { self.list_ptr.set_len(self.zlib.total_out as usize) };
                     // SAFETY: zlib writes the tail; len is truncated to `total_out` before any read.
                     let (next_out, avail_out) = unsafe { self.list_ptr.reserve_expand_tail(4096) };
                     self.zlib.next_out = next_out;
-                    self.zlib.avail_out = avail_out as uInt;
+                    self.zlib.avail_out = avail_out.min(uInt::MAX as usize) as uInt;
                 }
 
                 if self.zlib.avail_out == 0 {
                     return Err(ZlibError::ShortRead);
                 }
 
+                // Finish only once the final input window is loaded; otherwise
+                // zlib would emit the trailer before the tail of the input is
+                // presented.
+                let flush = if consumed + self.zlib.avail_in as usize >= self.input.len() {
+                    FlushValue::Finish
+                } else {
+                    FlushValue::NoFlush
+                };
+
                 // SAFETY: self.zlib was initialized via deflateInit2_.
-                let rc = unsafe { deflate(&raw mut self.zlib, FlushValue::Finish) };
+                let rc = unsafe { deflate(&raw mut self.zlib, flush) };
                 self.state = ZlibCompressorArrayListState::Inflating;
 
                 match rc {

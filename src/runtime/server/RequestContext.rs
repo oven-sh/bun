@@ -4486,9 +4486,9 @@ pub struct SendfileContext {
     pub total: BlobSizeType,
 }
 
-// All flags are bool (with two debug-conditional ones), so `bitflags!` over u16
-// works. We keep all bits in every build and just gate the
-// `is_web_browser_navigation` / `has_finalized` accessors on the const params.
+// All flags are bool (with two debug-conditional ones). We keep all bits in
+// every build and just gate the `is_web_browser_navigation` / `has_finalized`
+// accessors on the const params.
 bitflags::bitflags! {
     #[derive(Default, Clone, Copy)]
     pub struct FlagsBits: u32 {

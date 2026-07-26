@@ -85,7 +85,7 @@ pub fn join_commonjs_export_names(
     is_commonjs_module: bool,
     ast: &bun_ast::ast_result::Ast,
 ) -> Vec<u8> {
-    if !is_commonjs_module {
+    if !is_commonjs_module || ast.commonjs_module_exports_assigned_deoptimized {
         return Vec::new();
     }
     let keys = ast.commonjs_named_exports.keys();

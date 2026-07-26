@@ -370,6 +370,52 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             // inline module.path
                             p.ignore_usage(p.module_ref);
                             return Some(p.new_expr(e_string_init(p.source.path.pretty), name_loc));
+                        } else if p.options.features.commonjs_at_runtime
+                            && !p.should_unwrap_common_js_to_esm()
+                            && name == b"exports"
+                            && identifier_opts.assign_target() != js_ast::AssignTarget::None
+                            && !identifier_opts.is_delete_target()
+                        {
+                            // `module.exports = { a, b, ... }` (cjs-module-lexer MODULE_EXPORTS_ASSIGN).
+                            // Any other reassignment (`module.exports = require(..)` etc.) makes
+                            // the static export set unknown; fall back to fetch-time evaluation.
+                            let mut handled = false;
+                            if identifier_opts.assign_target() == js_ast::AssignTarget::Replace {
+                                if let js_ast::ExprData::EBinary(bin) = p.stmt_expr_value {
+                                    if bin.op == js_ast::OpCode::BinAssign {
+                                        if let js_ast::ExprData::EObject(obj) = &bin.right.data {
+                                            handled = true;
+                                            for prop in obj.properties.slice() {
+                                                if prop.kind != G::PropertyKind::Normal
+                                                    || prop
+                                                        .flags
+                                                        .contains(Flags::Property::IsComputed)
+                                                    || prop.flags.contains(Flags::Property::IsSpread)
+                                                    || prop.flags.contains(Flags::Property::IsMethod)
+                                                {
+                                                    handled = false;
+                                                    continue;
+                                                }
+                                                if let Some(key) = prop.key {
+                                                    if let js_ast::ExprData::EString(key_str) =
+                                                        &key.data
+                                                    {
+                                                        if !key_str.is_utf16 {
+                                                            p.record_runtime_commonjs_export_name(
+                                                                &key_str.data,
+                                                                key.loc,
+                                                            );
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            if !handled {
+                                p.commonjs_module_exports_assigned_deoptimized = true;
+                            }
                         }
                     }
 

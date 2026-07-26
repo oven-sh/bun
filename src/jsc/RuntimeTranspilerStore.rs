@@ -971,6 +971,7 @@ impl TranspilerJob {
                 ptr::null_mut()
             };
 
+            let is_commonjs_module = entry.metadata.module_type == CacheModuleType::Cjs;
             self.resolved_source = OwnedResolvedSource::from(ResolvedSource {
                 source_code: match &mut entry.output_code {
                     OutputCode::String(s) => *s,
@@ -980,8 +981,13 @@ impl TranspilerJob {
                         result
                     }
                 },
-                is_commonjs_module: entry.metadata.module_type == CacheModuleType::Cjs,
+                is_commonjs_module,
                 module_info,
+                commonjs_export_names: if is_commonjs_module {
+                    String::clone_utf8(&entry.esm_record)
+                } else {
+                    String::empty()
+                },
                 tag: this_tag,
                 ..Default::default()
             });
@@ -1078,6 +1084,7 @@ impl TranspilerJob {
             is_commonjs_module,
             &parse_result.ast,
         );
+        cache.cjs_export_names.clone_from(&commonjs_export_names);
         let mut module_info: Option<Box<analyze_transpiled_module::ModuleInfo>> =
             if use_isolation_source_provider_cache
                 && !is_commonjs_module

@@ -7,10 +7,14 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
+// Pad the ESM sibling so its async transpile reliably settles *after* a tiny
+// CJS sibling's. Without the fix that is enough to reorder them.
+const pad = "/* " + Buffer.alloc(256 * 1024, "x").toString() + " */\n";
+
 async function run(dir: string, entry: string) {
   await using proc = Bun.spawn({
     cmd: [bunExe(), entry],
-    env: bunEnv,
+    env: { ...bunEnv, BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0" },
     cwd: String(dir),
     stderr: "pipe",
   });
@@ -25,7 +29,9 @@ describe("ESM importing CommonJS: evaluation order", () => {
         import "./setup.mjs";
         import "./dep.cjs";
       `,
-      "setup.mjs": `
+      "setup.mjs":
+        pad +
+        `
         globalThis.__ORDER__ = ["setup.mjs"];
         globalThis.__CONFIG__ = { db: "postgres://localhost" };
       `,
@@ -53,7 +59,7 @@ describe("ESM importing CommonJS: evaluation order", () => {
         import "./c.mjs";
         console.log(JSON.stringify(globalThis.__O__));
       `,
-      "a.mjs": `(globalThis.__O__ ||= []).push("a");`,
+      "a.mjs": pad + `(globalThis.__O__ ||= []).push("a");`,
       "b.cjs": `(globalThis.__O__ ||= []).push("b"); module.exports.b = 1;`,
       "c.mjs": `(globalThis.__O__ ||= []).push("c");`,
     });
@@ -88,7 +94,7 @@ describe("ESM importing CommonJS: evaluation order", () => {
         import { url } from "./db.cjs";
         console.log(url);
       `,
-      "load-env.mjs": `process.env.DB_URL = "postgres://set-by-load-env";`,
+      "load-env.mjs": pad + `process.env.DB_URL = "postgres://set-by-load-env";`,
       "db.cjs": `exports.url = process.env.DB_URL;`,
     });
     const { stdout, stderr, exitCode } = await run(String(dir), "entry.mjs");
@@ -104,7 +110,9 @@ describe("ESM importing CommonJS: evaluation order", () => {
         import def, { foo, bar, baz } from "./lib.cjs";
         console.log(JSON.stringify({ def, foo, bar, baz, order: globalThis.__ORDER__ }));
       `,
-      "setup.mjs": `
+      "setup.mjs":
+        pad +
+        `
         globalThis.__ORDER__ = ["setup"];
         globalThis.__VAL__ = 42;
       `,
@@ -125,6 +133,25 @@ describe("ESM importing CommonJS: evaluation order", () => {
       baz: "baz",
       order: ["setup", "lib"],
     });
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("module.exports = { X, Y } exposes each literal key as a named export", async () => {
+    using dir = tempDir("esm-cjs-order-object-literal", {
+      "entry.mjs": `
+        import "./setup.mjs";
+        import { value, other } from "./lib.cjs";
+        console.log(JSON.stringify({ value, other }));
+      `,
+      "setup.mjs": pad + `globalThis.__V__ = 42;`,
+      "lib.cjs": `
+        const value = globalThis.__V__;
+        module.exports = { value, other: "x" };
+      `,
+    });
+    const { stdout, stderr, exitCode } = await run(String(dir), "entry.mjs");
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ value: 42, other: "x" });
     expect(exitCode).toBe(0);
   });
 

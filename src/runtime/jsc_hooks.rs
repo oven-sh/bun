@@ -2887,6 +2887,11 @@ fn transpile_source_code_inner(
                         source_url: create_if_different(input_specifier, path.text),
                         is_commonjs_module,
                         module_info,
+                        commonjs_export_names: if is_commonjs_module {
+                            bun_core::String::clone_utf8(&entry.esm_record)
+                        } else {
+                            bun_core::String::empty()
+                        },
                         tag,
                         ..Default::default()
                     }));
@@ -2961,6 +2966,7 @@ fn transpile_source_code_inner(
                     is_commonjs_module,
                     &parse_result.ast,
                 );
+                cache.cjs_export_names.clone_from(&commonjs_export_names);
                 // Collect the ESM record while printing, for the isolation
                 // source-provider cache (same shape as `RuntimeTranspilerStore`).
                 // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.

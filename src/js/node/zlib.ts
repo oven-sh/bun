@@ -200,8 +200,6 @@ function ZlibBase(opts, mode, handle, { flush, finishFlush, fullFlush }) {
   this._maxOutputLength = maxOutputLength;
 
   this._rejectGarbageAfterEnd = opts?.rejectGarbageAfterEnd === true;
-  // zstd is multi-frame (RFC 8878 §3.1); scoped so createZstdDecompress stays Node-compatible.
-  this._continueOnFrameEnd = this._rejectGarbageAfterEnd && mode === ZSTD_DECOMPRESS;
 }
 $toClass(ZlibBase, "ZlibBase", Transform);
 
@@ -458,19 +456,16 @@ function processCallback() {
     return;
   }
 
-  // zstd: input remaining after a frame is the next frame, not trailing junk.
-  const continueNextFrame = availInAfter > 0 && self._continueOnFrameEnd;
-
   // Exhausted the output buffer, or used all the input create a new one.
   let chunkSize;
-  if (availOutAfter === 0 || continueNextFrame || self._outOffset >= (chunkSize = self._chunkSize)) {
+  if (availOutAfter === 0 || self._outOffset >= (chunkSize = self._chunkSize)) {
     chunkSize ??= self._chunkSize;
     handle.availOutBefore = chunkSize;
     self._outOffset = 0;
     self._outBuffer = Buffer.allocUnsafe(chunkSize);
   }
 
-  if (availOutAfter === 0 || continueNextFrame) {
+  if (availOutAfter === 0) {
     // Not actually done. Need to reprocess.
     // Also, update the availInBefore to the availInAfter value,
     // so that if we have to hit it a third (fourth, etc.) time,

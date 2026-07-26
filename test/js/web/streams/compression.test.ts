@@ -263,12 +263,26 @@ describe("CompressionStream and DecompressionStream", () => {
       expect(out.equals(Buffer.alloc(piece.length * 64, "Z"))).toBe(true);
     });
 
+    test("decompresses a zstd stream with a leading skippable frame", async () => {
+      // Skippable frame: magic 0x184D2A50..5F, 4-byte LE size, then size bytes.
+      const skippable = Buffer.concat([
+        Buffer.from([0x55, 0x2a, 0x4d, 0x18]), // magic (variant 5)
+        Buffer.from([0x03, 0x00, 0x00, 0x00]), // size = 3
+        Buffer.from([0xaa, 0xbb, 0xcc]),
+      ]);
+      const frame = zlib.zstdCompressSync(Buffer.from("payload"));
+      const cat = Buffer.concat([skippable, frame, skippable]);
+
+      const out = await new Response(new Blob([cat]).stream().pipeThrough(new DecompressionStream("zstd"))).text();
+      expect(out).toBe("payload");
+    });
+
     test("rejects trailing garbage after a zstd frame", async () => {
       const frame = zlib.zstdCompressSync(Buffer.from("hello"));
       const withJunk = Buffer.concat([frame, Buffer.from([0xde, 0xad, 0xbe, 0xef])]);
 
       const read = new Response(new Blob([withJunk]).stream().pipeThrough(new DecompressionStream("zstd"))).text();
-      await expect(read).rejects.toMatchObject({ code: "ZSTD_error_prefix_unknown" });
+      await expect(read).rejects.toMatchObject({ code: "ERR_TRAILING_JUNK_AFTER_STREAM_END" });
     });
   });
 

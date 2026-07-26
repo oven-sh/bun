@@ -1762,16 +1762,11 @@ where
             return Ok(JSValue::FALSE);
         }
 
-        // After a graceful stop() has drained to idle, `deinit_if_we_can`
-        // downgrades the wrapper and clears `handler.server` / `handler.app`.
-        // `js_value_for_dispatch` still lets a late keep-alive request reach
-        // `fetch()` while the wrapper is `Weak`, but accepting a new websocket
-        // there would create a `ServerWebSocket` whose `init`/`on_open` skip
-        // the `m_server` trace edge and `on_websocket_opened()` (because
-        // `handler.server` is `None`), so `has_active_web_sockets()` would
-        // stay false and the next idle pass could free the `NewServer` box
-        // under a live socket. Refuse the upgrade once idle; the caller sees
-        // `false` and can fall through to a regular response.
+        // `deinit_if_we_can` only clears `handler.server` once every
+        // connection has closed, so this is defensive for the `Finalized`
+        // window between the wrapper's `finalize()` and the next-tick
+        // `schedule_deinit`: accepting an upgrade there would create a
+        // `ServerWebSocket` whose open/close accounting is skipped.
         if self
             .config
             .websocket

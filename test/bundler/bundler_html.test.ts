@@ -1120,17 +1120,26 @@ body {
       // @import was inlined
       expect(css).toContain("margin");
       expect(css).not.toContain("@import");
-      // url() was resolved (no longer the literal source path)
-      expect(css).not.toContain("./x.woff2");
-      expect(css).toContain("font-family");
+      // url() was resolved: the asset is small enough to inline as a data URI,
+      // so assert the encoded bytes are present (not just that the source path
+      // is absent).
+      expect(css).not.toContain("x.woff2");
+      expect(css).toMatch(/src:\s*url\("data:font\/woff2;base64,RkFLRV9GT05U"\)/);
     },
   });
 
   // A file referenced by both rel="preload" as="style" and rel="stylesheet"
-  // must go through the CSS loader regardless of which tag appears first.
-  for (const order of ["preload-first", "stylesheet-first"] as const) {
-    itBundled(`html/preload-as-style-shared-${order}`, {
+  // must go through the CSS loader regardless of which tag appears first, and
+  // both hrefs must resolve to the same output file so the preload is useful.
+  for (const [order, production] of [
+    ["preload-first", false],
+    ["stylesheet-first", false],
+    ["preload-first", true],
+    ["stylesheet-first", true],
+  ] as const) {
+    itBundled(`html/preload-as-style-shared-${order}${production ? "-production" : ""}`, {
       outdir: "out/",
+      production,
       files: {
         "/index.html":
           order === "preload-first"
@@ -1157,17 +1166,13 @@ body {
         const stylesheet = html.match(/<link rel="stylesheet"[^>]* href="(?:\.\/|\/)?([^"]+\.css)"/);
         expect(stylesheet).not.toBeNull();
 
-        // The applied stylesheet bundle must have the @import resolved.
-        const applied = api.readFile("out/" + stylesheet![1]);
-        expect(applied).toContain("padding");
-        expect(applied).toContain("color");
-        expect(applied).not.toContain("@import");
+        // The preload and the applied stylesheet must be the same file.
+        expect(preload![1]).toBe(stylesheet![1]);
 
-        // The preloaded output must also have the @import resolved.
-        const preloaded = api.readFile("out/" + preload![1]);
-        expect(preloaded).toContain("padding");
-        expect(preloaded).toContain("color");
-        expect(preloaded).not.toContain("@import");
+        const css = api.readFile("out/" + stylesheet![1]);
+        expect(css).toContain("padding");
+        expect(css).toContain("red");
+        expect(css).not.toContain("@import");
       },
     });
   }

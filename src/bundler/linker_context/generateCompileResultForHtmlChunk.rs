@@ -190,12 +190,21 @@ impl<'a> HTMLProcessorHandler for HTMLLoader<'a> {
                 [import_record.source_index.get() as usize];
             // SAFETY: `self.chunks` raw `*mut [Chunk]` valid for the link step.
             let chunks = unsafe { &*self.chunks };
-            if (chunk_index as usize) < chunks.len() {
+            debug_assert!(
+                (chunk_index as usize) < chunks.len()
+                    && chunks[chunk_index as usize].content.is_css(),
+                "html_preload_css_chunk_indices did not assign a CSS chunk",
+            );
+            if (chunk_index as usize) < chunks.len()
+                && chunks[chunk_index as usize].content.is_css()
+            {
                 set_attribute(
                     element,
                     url_attribute,
                     chunks[chunk_index as usize].unique_key,
                 );
+            } else {
+                element.remove();
             }
             return;
         }

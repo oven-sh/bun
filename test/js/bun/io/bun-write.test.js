@@ -740,13 +740,20 @@ it.skipIf(isWindows)("Bun.write(Bun.stdout, ...) to a full nonblocking pipe comp
   // 256 KiB goes straight to the thread-pool WriteFile path.
   const script = `
     process.stdout.write("x"); // constructs the fd 1 FileSink, which flips the pipe O_NONBLOCK
+    const fdDir = process.platform === "darwin" ? "/dev/fd" : "/proc/self/fd";
+    const fdCount = () => require("fs").readdirSync(fdDir).length;
     const small = Buffer.alloc(64 * 1024, 65).toString();
     const large = Buffer.alloc(256 * 1024, 66).toString();
-    const ps = [];
-    for (let i = 0; i < 16; i++) ps.push(Bun.write(Bun.stdout, small));
-    for (let i = 0; i < 4; i++) ps.push(Bun.write(Bun.stdout, large));
-    const wrote = await Promise.all(ps);
-    process.stderr.write("wrote=" + wrote.reduce((a, b) => a + b, 0));
+    let wrote = 0, fdsBefore, fdsAfter;
+    for (let round = 0; round < 2; round++) {
+      fdsBefore = fdCount();
+      const ps = [];
+      for (let i = 0; i < 16; i++) ps.push(Bun.write(Bun.stdout, small));
+      for (let i = 0; i < 4; i++) ps.push(Bun.write(Bun.stdout, large));
+      for (const n of await Promise.all(ps)) wrote += n;
+      fdsAfter = fdCount();
+    }
+    process.stderr.write("wrote=" + wrote + " fdDelta=" + (fdsAfter - fdsBefore));
   `;
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", script],
@@ -757,10 +764,10 @@ it.skipIf(isWindows)("Bun.write(Bun.stdout, ...) to a full nonblocking pipe comp
     killSignal: "SIGKILL",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.bytes(), proc.stderr.text(), proc.exited]);
-  const expected = 1 + 16 * 64 * 1024 + 4 * 256 * 1024;
+  const expected = 1 + 2 * (16 * 64 * 1024 + 4 * 256 * 1024);
   expect({ length: stdout.length, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
     length: expected,
-    stderr: "wrote=" + (expected - 1),
+    stderr: "wrote=" + (expected - 1) + " fdDelta=0",
     exitCode: 0,
     signalCode: null,
   });

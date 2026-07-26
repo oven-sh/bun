@@ -464,7 +464,7 @@ impl WriteFile {
 
         // The IO thread's epoll/kqueue keys interest by fd number, so concurrent WriteFiles on
         // one caller-supplied fd would collide; dup so this instance polls a private fd number.
-        if self.could_block && caller_supplied_fd {
+        if caller_supplied_fd {
             match bun_sys::dup(fd) {
                 bun_sys::Result::Ok(duped) => self.opened_fd = duped,
                 bun_sys::Result::Err(err) => {

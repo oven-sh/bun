@@ -908,21 +908,14 @@ pub(crate) fn should_drain_event_loop() -> bool {
     env_var::BUN_TEST_DRAIN_EVENT_LOOP.get().unwrap_or(false)
 }
 
-/// Grace window for the post-file drain; long enough for "a few ms later"
-/// fire-and-forget errors to surface under ASAN, short enough that a test
-/// leaking a far-future `setTimeout`/`setInterval` does not stall the run.
 const POST_FILE_DRAIN_GRACE_MS: i64 = 1000;
 
-/// Drain ref'd JS timers, queued tasks, and setImmediate callbacks that are
-/// due within `POST_FILE_DRAIN_GRACE_MS` of now, so an unhandled rejection or
-/// late `setTimeout` throw from a file's final test still surfaces while
-/// `active_file` is set and is counted as an unhandled-between-tests error.
-///
-/// Deliberately excludes `platform_loop.is_active()` and `vm.active_tasks`
-/// so a leaked `Bun.serve()` / open socket / `node:http` response does not
-/// wedge the drain (passive handles that make no progress on their own).
-/// The wall-clock deadline and the timer-heap peek keep a leaked 1h
-/// `setTimeout` / `setInterval` from blocking `auto_tick_active()`.
+/// Drain ref'd JS timers, queued tasks and setImmediate callbacks due within
+/// `POST_FILE_DRAIN_GRACE_MS`, so a late rejection or `setTimeout` throw from
+/// a file's final test still surfaces while `active_file` is set. Ignores
+/// `platform_loop.is_active()` / `vm.active_tasks` (leaked `Bun.serve()` /
+/// sockets never make progress) and is wall-clock bounded so a far-future
+/// timer cannot stall the run.
 fn drain_for_late_errors(vm: &mut VirtualMachine) {
     use bun_core::{Timespec, TimespecMockMode};
 
@@ -951,12 +944,7 @@ fn drain_for_late_errors(vm: &mut VirtualMachine) {
         if Timespec::now(TimespecMockMode::ForceRealTime).greater(&deadline) {
             break;
         }
-        // `auto_tick_active()` parks until the soonest heap timer; when nothing
-        // else is queued and that soonest timer is already past the deadline,
-        // stop now rather than wait for it. Internal runtime timers (GC,
-        // WTFTimer) usually sit closer than any far-future user timer, so
-        // this is a best-effort fast-path; the wall-clock check above is the
-        // guaranteed bound.
+        // Don't let `auto_tick_active()` park on a heap min past the deadline.
         if !has_queued && immediate_refs <= 0 && !timers.is_null() {
             // SAFETY: live per-thread `All`; single JS thread.
             match unsafe { (*timers).timers.peek() } {
@@ -3443,15 +3431,8 @@ impl TestCommand {
                 // SAFETY: el is the VM-owned event loop; vm is passed back as *mut.
                 unsafe { (*el).tick_immediate_tasks(vm) };
 
-                // Drain ref'd timers and queued tasks so a fire-and-forget
-                // rejection or a late `setTimeout` throw from this file's
-                // final test still surfaces while `active_file` is set and
-                // bumps `unhandled_errors_between_tests`. jest and
-                // `node --test` both wait for the loop and fail the run;
-                // without this the tail of the final file was a silent-green
-                // window (1 pass, exit 0, error never printed). Skipped once
-                // the run is already failing so a timed-out test body is not
-                // waited on.
+                // Skip once the run already failed so a timed-out test body
+                // is not waited on.
                 if reporter.jest.summary.fail == 0
                     && reporter.jest.unhandled_errors_between_tests == 0
                 {

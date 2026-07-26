@@ -930,11 +930,12 @@ fn drain_for_late_errors(vm: &mut VirtualMachine) {
             || !el.next_immediate_tasks.is_empty();
 
         let timers = crate::jsc_hooks::timer_all();
-        // SAFETY: `timer_all()` is the live per-thread `All` once RuntimeState
-        // is installed (always true by the time a test file has run).
         let (timer_refs, immediate_refs) = if timers.is_null() {
             (0, 0)
         } else {
+            // SAFETY: `timer_all()` is the live per-thread `All` once
+            // RuntimeState is installed (always true by the time a test file
+            // has run); null-checked above.
             unsafe { ((*timers).active_timer_count, (*timers).immediate_ref_count) }
         };
 
@@ -946,11 +947,11 @@ fn drain_for_late_errors(vm: &mut VirtualMachine) {
         }
         // Don't let `auto_tick_active()` park on a heap min past the deadline.
         if !has_queued && immediate_refs <= 0 && !timers.is_null() {
-            // SAFETY: live per-thread `All`; single JS thread.
+            // SAFETY: live per-thread `All`; single JS thread; null-checked.
             match unsafe { (*timers).timers.peek() } {
                 None => break,
-                // SAFETY: `peek()` returns a live heap node.
                 Some(min) => {
+                    // SAFETY: `peek()` returns a live heap node.
                     if unsafe { (*min).next }.greater(&deadline) {
                         break;
                     }

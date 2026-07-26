@@ -1474,6 +1474,69 @@ describe.concurrent("node:vm timeout watchdog scoping", () => {
     });
   });
 
+  // A timeout firing inside runInThisContext must not discard promise
+  // reactions the caller had already queued on its own global. Previously
+  // checkForTermination cleared the caller's microtask queue wholesale.
+  test("a timed runInThisContext does not discard the caller's queued microtasks on timeout", async () => {
+    const fixture = `
+      const vm = require("node:vm");
+      Promise.resolve().then(() => console.log("microtask-before"));
+      try {
+        new vm.Script("for(;;);").runInThisContext({ timeout: 100 });
+      } catch (e) {
+        console.log("threw:" + (e && e.code));
+      }
+      Promise.resolve().then(() => console.log("microtask-after"));
+      setTimeout(() => { console.log("done"); process.exit(0); }, 200);
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+      stdout: "threw:ERR_SCRIPT_EXECUTION_TIMEOUT\nmicrotask-before\nmicrotask-after\ndone",
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+
+  // Regression guard for test-vm-module-basic.js: a context-less
+  // SourceTextModule.evaluate({ timeout }) that fires must not discard other
+  // modules' pending evaluate() reactions (they share the caller's queue).
+  test("a timed context-less module evaluate() does not discard other modules' pending reactions", async () => {
+    const fixture = `
+      (async () => {
+        const { SourceTextModule } = require("node:vm");
+        const a = new SourceTextModule("globalThis.__a = 1;");
+        await a.link(() => {});
+        const pa = a.evaluate();
+        const b = new SourceTextModule("for(;;);");
+        await b.link(() => {});
+        let threw;
+        await b.evaluate({ timeout: 200 }).then(() => {}, e => { threw = e && e.code; });
+        await pa;
+        console.log("a=" + globalThis.__a + " b-threw=" + threw);
+      })().then(() => process.exit(0), e => { console.error(String(e)); process.exit(1); });
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--experimental-vm-modules", "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+      stdout: "a=1 b-threw=ERR_SCRIPT_EXECUTION_TIMEOUT",
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+
   // The watchdog must still interrupt a runaway script and produce
   // ERR_SCRIPT_EXECUTION_TIMEOUT at the frame that armed it.
   test("timeout still interrupts a runaway script", async () => {

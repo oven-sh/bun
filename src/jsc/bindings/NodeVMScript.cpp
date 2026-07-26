@@ -379,7 +379,12 @@ bool checkForTermination(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Th
         return true;
     }
 
-    vm.drainMicrotasksForGlobalObject(globalObject);
+    // Drop microtasks the aborted evaluation scheduled on its own context.
+    // runInThisContext and context-less modules share the caller's queue,
+    // where we cannot tell the script's jobs from unrelated ones, so those
+    // are left in place.
+    if (auto* vmGlobal = dynamicDowncast<NodeVMGlobalObject>(globalObject))
+        vm.drainMicrotasksForGlobalObject(vmGlobal);
     if (vm.hasPendingTerminationException())
         DECLARE_TOP_EXCEPTION_SCOPE(vm).clearException();
     vm.clearHasTerminationRequest();

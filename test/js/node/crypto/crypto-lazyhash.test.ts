@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { Hash, createHash, createHmac } from "crypto";
+import { once } from "events";
 import { Readable, Transform } from "stream";
 import { pipeline } from "stream/promises";
-import { once } from "events";
 
 describe("LazyHash quirks", () => {
   test("hash instanceof Transform", () => {

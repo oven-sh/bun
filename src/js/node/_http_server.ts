@@ -1657,8 +1657,9 @@ const NodeHTTPServerSocket = class Socket extends NetSocket {
     this._unrefTimer();
     const skip = this[kSkipTunnelBytes];
     if (skip > 0 && chunk) {
-      if (chunk.length <= skip) {
-        this[kSkipTunnelBytes] = skip - chunk.length;
+      const chunkLength = chunk.length;
+      if (chunkLength <= skip) {
+        this[kSkipTunnelBytes] = skip - chunkLength;
         chunk = null;
       } else {
         this[kSkipTunnelBytes] = 0;

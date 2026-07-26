@@ -3340,7 +3340,7 @@ impl<'a> HTTPClient<'a> {
             }
             RequestStage::Body => {
                 bun_core::scoped_log!(fetch, "send body");
-                if !self.state.flags.receive_paused {
+                if !self.state.flags.receive_paused && !self.signals.is_receive_ignored() {
                     self.set_timeout(&socket);
                 }
 

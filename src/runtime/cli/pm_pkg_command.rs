@@ -69,6 +69,9 @@ impl PmPkgCommand {
             Global::exit(1);
         };
 
+        let mut ast_arena = bun_alloc::AstArena::new();
+        let _scope = ast_arena.enter();
+
         match subcommand {
             SubCommand::Get => Self::exec_get(ctx, pm, &positionals[2..], cwd)?,
             SubCommand::Set => Self::exec_set(ctx, pm, &positionals[2..], cwd)?,

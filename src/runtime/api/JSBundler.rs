@@ -1788,12 +1788,11 @@ pub mod js_bundler {
                 let _ = global.clear_exception_except_termination();
                 bun_ast::Msg {
                     data: bun_ast::Data {
-                        text: std::borrow::Cow::Owned(
-                            b"A bundler plugin threw a value that could not be converted to a string"
-                                .to_vec(),
-                        ),
+                        text: b"A bundler plugin threw a value that could not be converted to a string"
+                            .to_vec()
+                            .into_boxed_slice(),
                         location: Some(bun_ast::Location {
-                            file: std::borrow::Cow::Owned(file.to_vec()),
+                            file: file.to_vec().into_boxed_slice(),
                             line: -1,
                             column: -1,
                             ..Default::default()

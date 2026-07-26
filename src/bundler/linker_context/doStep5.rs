@@ -66,14 +66,12 @@ impl LinkerContext<'_> {
         // form `&mut BundleV2` here (concurrent tasks would alias it).
         let bundle_v2: &BundleV2<'_> = unsafe { &*LinkerContext::bundle_v2_ptr(this) };
         let worker = ThreadPool::Worker::get(bundle_v2);
-        // `Worker::get` returns the thread-local worker
-        // (not RAII), so balance with `unget` explicitly via scopeguard.
-        let worker = scopeguard::guard(worker, |w| w.unget());
 
         // we must use this arena here
         // SAFETY: `Worker::create` initializes `arena` to point at
         // `worker.heap`; valid for the worker's lifetime.
         let arena: &Bump = worker.arena();
+        let _scope = worker.ast_arena.enter();
 
         // ── raw SoA column pointers (root provenance) ─────────────────────
         // `split_raw()` derives `*mut [T]` directly from the buffer base with
@@ -381,17 +379,10 @@ impl LinkerContext<'_> {
         ast_flags: &mut AstFlags,
         ast_parts: &mut bun_ast::PartList,
     ) {
-        // `Stmt.Disabler`/`Expr.Disabler` are debug-only guards
-        // around the global thread-local block store. `Disabler::scope()`
-        // calls `disable()` and re-`enable()`s on drop. In debug builds the
-        // disabler only fires when `Store::append` falls through to that
-        // global slab — i.e. when no `ASTMemoryAllocator` scope is installed.
-        // Bundler workers always install one (`Worker::get` pushes
-        // `ast_memory_store`), so appends in this step — including
-        // `Stmt::assign` below — route to the worker allocator and bypass the
-        // check entirely. The guard
-        // exists to catch accidental global-slab use if this code ever runs
-        // without that allocator installed.
+        // `Stmt.Disabler`/`Expr.Disabler` are debug-only guards that assert an
+        // `AstArena` scope is installed for the worker (via `enter()` in
+        // `do_step_5`), so appends in this step — including `Stmt::assign`
+        // below — route to the worker allocator instead of the global fallback.
         let _stmt_guard = bun_ast::stmt::Disabler::scope();
         let _expr_guard = bun_ast::expr::Disabler::scope();
 

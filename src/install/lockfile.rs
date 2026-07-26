@@ -549,6 +549,8 @@ impl Lockfile {
         if lockfile_format == LockfileFormat::Text {
             let source = bun_ast::Source::init_path_string(b"bun.lock", buf.as_slice());
             initialize_store();
+            let mut ast_arena = bun_alloc::AstArena::new();
+            let _scope = ast_arena.enter();
             let parsed = match JSON::ParsedJson::parse_package_json(&source, log) {
                 Ok(j) => j,
                 Err(e) => {
@@ -623,6 +625,8 @@ impl Lockfile {
 
                 let source = bun_ast::Source::init_path_string(b"bun.lock", writer_buf.as_slice());
                 initialize_store();
+                let mut ast_arena = bun_alloc::AstArena::new();
+                let _scope = ast_arena.enter();
                 let parsed = match JSON::ParsedJson::parse_package_json(&source, log) {
                     Ok(j) => j,
                     Err(e) => Output::panic(format_args!(

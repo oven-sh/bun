@@ -1069,12 +1069,17 @@ mod tests {
         first_msg: String,
         _bump: Box<Bump>,
         _tape: Option<Box<E::JsonTape>>,
-        _scope: js_ast::StoreResetGuard,
+        // Drop order: scope restores `ACTIVE` before the arena it installed is freed.
+        _scope: bun_alloc::AstScope<'static>,
+        _arena: bun_alloc::AstArena,
     }
 
     fn run(contents: &[u8], which: Which) -> Parsed {
-        bun_ast::initialize_store_or_reset();
-        let scope = js_ast::StoreResetGuard::new();
+        let mut arena = bun_alloc::AstArena::new();
+        // SAFETY (test-only): `AstScope` borrows `arena` via `PhantomData` only; the
+        // pinned `AstArenaInner` it installed in `ACTIVE` does not move with the
+        // `AstArena` wrapper. `Parsed` owns both and drops `_scope` before `_arena`.
+        let scope: bun_alloc::AstScope<'static> = unsafe { core::mem::transmute(arena.enter()) };
         let mut log = bun_ast::Log::init();
         let bump = Box::new(Bump::new());
         let source = bun_ast::Source::init_path_string("fixture.json", contents);
@@ -1108,6 +1113,7 @@ mod tests {
             _bump: bump,
             _tape: tape,
             _scope: scope,
+            _arena: arena,
         }
     }
 
@@ -1529,7 +1535,6 @@ mod tests {
 
     #[test]
     fn duplicate_key_warnings_skipped_under_node_modules() {
-        bun_ast::initialize_store_or_reset();
         let doc = br#"{"a":1,"b":2,"a":3}"#;
         let sep = std::path::MAIN_SEPARATOR;
         for (path, warnings) in [
@@ -1539,7 +1544,8 @@ mod tests {
             ),
             (format!("{sep}app{sep}package.json"), 1),
         ] {
-            let _scope = js_ast::StoreResetGuard::new();
+            let mut arena = bun_alloc::AstArena::new();
+            let _scope = arena.enter();
             let mut log = bun_ast::Log::init();
             let source = bun_ast::Source::init_path_string(path.as_str(), &doc[..]);
             let parsed = ParsedJson::parse_package_json(&source, &mut log).unwrap();
@@ -1849,7 +1855,12 @@ mod tests {
                 out.push('\n');
             }
 
-            writeln!(out, "bool={:?}", Expr::get_boolean(&root, b"private")).unwrap();
+            writeln!(
+                out,
+                "bool={:?}",
+                root.as_property(b"private").and_then(|q| q.expr.as_bool())
+            )
+            .unwrap();
             writeln!(out, "num={:?}", root.get_number(b"count").map(|(n, _)| n)).unwrap();
             writeln!(
                 out,
@@ -2158,8 +2169,8 @@ mod tests {
 
     #[test]
     fn package_json_version_checker() {
-        bun_ast::initialize_store_or_reset();
-        let _scope = js_ast::StoreResetGuard::new();
+        let mut arena = bun_alloc::AstArena::new();
+        let _scope = arena.enter();
         let mut log = bun_ast::Log::init();
         let source = bun_ast::Source::init_path_string(
             "package.json",

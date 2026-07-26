@@ -402,7 +402,8 @@ impl InitCommand {
         let mut package_json_file: Option<bun_sys::File> =
             bun_sys::File::openat(destination_dir, b"package.json", bun_sys::O::RDWR, 0).ok();
         let mut package_json_contents: MutableString = MutableString::init_empty();
-        bun_ast::initialize_store();
+        let mut ast_arena = bun_alloc::AstArena::new();
+        let _scope = ast_arena.enter();
         // Arena for JSON parse / Expr building.
         let bump = bun_alloc::Arena::new();
         'read_package_json: {
@@ -1114,7 +1115,7 @@ impl Assets {
 pub struct PackageJSONFields {
     pub name: Vec<u8>,
     pub type_: &'static [u8],
-    /// ARENA: allocated from `bun_ast::Expr` Store via `initialize_store()`; no deinit.
+    /// ARENA: allocated from the caller's `AstArena` scope; no deinit.
     pub object: Option<StoreRef<bun_ast::E::Object>>,
     pub entry_point: Vec<u8>,
     pub private: bool,

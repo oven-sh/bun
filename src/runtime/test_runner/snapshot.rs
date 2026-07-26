@@ -220,6 +220,8 @@ impl<'a> Snapshots<'a> {
         );
         // Thread a per-call arena — js_parser is bump-allocated.
         let arena = bun_alloc::Arena::new();
+        let mut ast_arena = bun_alloc::AstArena::new();
+        let _scope = ast_arena.enter();
         let mut temp_log = bun_ast::Log::init();
 
         // do NOT call `Jest::runner()` here — it hands out an exclusive ref to the global TestRunner,
@@ -367,11 +369,14 @@ impl<'a> Snapshots<'a> {
 
         // The arena is reset() inside the loop, bulk-freeing per-iteration scratch.
         let mut arena = bun_alloc::Arena::new();
+        let mut ast_arena = bun_alloc::AstArena::new();
 
         // reshaped for borrowck — iterate by index to allow &mut access to values while reading keys.
         let file_ids: Vec<FileId> = self.inline_snapshots_to_write.keys().to_vec();
         for file_id in file_ids {
             arena.reset();
+            ast_arena.reset();
+            let _scope = ast_arena.enter();
             let ils_info = self
                 .inline_snapshots_to_write
                 .get_mut(&file_id)

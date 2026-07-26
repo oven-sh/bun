@@ -889,17 +889,14 @@ pub fn parse_url(
 /// The mappings are owned by the global allocator.
 pub fn parse_json(source: &[u8], hint: ParseUrlResultHint) -> crate::Result<ParseUrl> {
     use crate::mapping::SourceMap as SourceMapLog;
-    use bun_ast::StoreResetGuard as DataStoreScope;
     use std::sync::Arc;
 
     let json_src = bun_ast::Source::init_path_string("sourcemap.json", source);
     let mut log = bun_ast::Log::init();
     // `defer log.deinit()` → Drop
 
-    // the allocator given to the JS parser is not respected for all parts
-    // of the parse, so we need to remember to reset the ast store on entry
-    // and on every exit path.
-    let _store_scope = DataStoreScope::new();
+    let mut ast_arena = bun_alloc::AstArena::new();
+    let _scope = ast_arena.enter();
     bun_core::scoped_log!(SourceMapLog, "parse (JSON, {} bytes)", source.len());
     let parsed = match bun_parsers::json::ParsedJson::parse_json(&json_src, &mut log) {
         Ok(p) => p,

@@ -232,18 +232,19 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
     bun_core::analytics::Features::pnpm_migration_inc(1);
 
     // The YAML parser allocates `Expr::Data` nodes into the thread-local
-    // `Store` (via `Expr::init`). Later `workspace_package_json_cache.get_with_path`
-    // calls (with default `init_reset_store: true`) invoke `initialize_store()`,
-    // which `Store::reset()`s — invalidating every `StoreRef` in the parsed
-    // YAML tree. Clone the tree out of the Store into `yaml_arena` (which
-    // lives for the whole function) so `root` survives those resets.
+    // `ACTIVE` arena (via `Expr::init`). Later
+    // `workspace_package_json_cache.get_with_path` enters its own per-entry
+    // `json_arena`, so the YAML tree — which lives in `yaml_arena` for the
+    // whole function — survives those nested scopes.
     let yaml_source = bun_ast::Source::init_path_string(b"pnpm-lock.yaml", data);
-    let yaml_arena = bun_alloc::Arena::new();
-    let _root: Expr = match bun_parsers::yaml::YAML::parse(&yaml_source, log, &yaml_arena) {
+    let mut yaml_arena = bun_alloc::AstArena::new();
+    let _scope = yaml_arena.enter();
+    let arena = bun_alloc::AstAlloc.arena();
+    let _root: Expr = match bun_parsers::yaml::YAML::parse(&yaml_source, log, arena) {
         Ok(r) => r,
         Err(_) => return Err(MigratePnpmLockfileError::YamlParseError),
     };
-    let root: Expr = bun_core::handle_oom(_root.deep_clone(&yaml_arena));
+    let root: Expr = bun_core::handle_oom(_root.deep_clone(arena));
 
     if !root.is_object() {
         log.add_error_fmt(
@@ -1611,8 +1612,6 @@ fn update_package_json_after_migration(
     let mut pkg_json_path = bun_paths::AutoAbsPath::init_top_level_dir();
     let _ = pkg_json_path.append(b"package.json"); // OOM/capacity error is non-actionable here
 
-    let bump = bun_alloc::Arena::new();
-
     let root_pkg_json = match manager
         .workspace_package_json_cache
         .get_with_path(
@@ -1628,6 +1627,9 @@ fn update_package_json_after_migration(
         Ok(j) => j,
         Err(_) => return Ok(()),
     };
+
+    let _scope = root_pkg_json.json_arena.enter();
+    let bump = bun_alloc::Arena::new();
 
     let mut json = root_pkg_json.root;
     if !json.is_object() {
@@ -1788,8 +1790,8 @@ fn update_package_json_after_migration(
             // `Expr::data_store_reset`).
             let contents: &'static [u8] = js_ast::data_store_dupe_str(&contents);
             let yaml_source = bun_ast::Source::init_path_string(b"pnpm-workspace.yaml", contents);
-            let arena = bun_alloc::Arena::new();
-            let Ok(ws_root) = bun_parsers::yaml::YAML::parse(&yaml_source, log, &arena) else {
+            let arena = bun_alloc::AstAlloc.arena();
+            let Ok(ws_root) = bun_parsers::yaml::YAML::parse(&yaml_source, log, arena) else {
                 break 'read_pnpm_workspace_yaml;
             };
 

@@ -292,7 +292,8 @@ impl UpgradeCommand {
         let mut log = bun_ast::Log::init();
         let source =
             bun_ast::Source::init_path_string(b"releases.json", metadata_body.list.as_slice());
-        bun_ast::initialize_store();
+        let mut ast_arena = bun_alloc::AstArena::new();
+        let _scope = ast_arena.enter();
         // `JSON::parse_utf8` needs a bump arena; this is a one-shot
         // CLI path so use the process-lifetime CLI arena.
         let bump: &'static Bump = crate::cli::cli_arena();

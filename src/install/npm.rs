@@ -192,6 +192,8 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
 
     let mut log = bun_ast::Log::init();
     let source = bun_ast::Source::init_path_string("???", response_buf.list.as_slice());
+    let mut ast_arena = bun_alloc::AstArena::new();
+    let _scope = ast_arena.enter();
     let parsed = match JSON::ParsedJson::parse_json(&source, &mut log) {
         Ok(j) => j,
         Err(bun_parsers::Error::Alloc(bun_alloc::AllocError)) => {
@@ -229,6 +231,8 @@ pub fn response_error<const OTP_RESPONSE: bool>(
     let message: Option<Vec<u8>> = 'message: {
         let mut log = bun_ast::Log::init();
         let source = bun_ast::Source::init_path_string("???", response_body.list.as_slice());
+        let mut ast_arena = bun_alloc::AstArena::new();
+        let _scope = ast_arena.enter();
         let parsed = match JSON::ParsedJson::parse_json(&source, &mut log) {
             Ok(j) => j,
             Err(bun_parsers::Error::Alloc(bun_alloc::AllocError)) => {
@@ -1950,15 +1954,13 @@ impl PackageManifest {
         // `'static` references here (PORTING.md §Forbidden lifetime extension).
         let source = bun_ast::Source::init_path_string(expected_name, json_buffer);
         initialize_store();
-        // `initialize_mini_store` deliberately keeps the allocator pushed
-        // across calls (the AstAlloc state stays installed for the re-arm) and
-        // bulk-frees via `reset_retain_with_limit` on the next call — see
-        // `initialize_mini_store` in lib.rs for why.
+        let mut ast_arena = bun_alloc::AstArena::new();
+        let _scope = ast_arena.enter();
         let parsed = match JSON::ParsedJson::parse_npm_manifest(&source, log) {
             Ok(j) => j,
             Err(_) => {
                 let mut cloned_log = bun_ast::Log::init();
-                log.clone_to_with_recycled(&mut cloned_log, true);
+                log.clone_to(&mut cloned_log);
                 *log = cloned_log;
                 return Ok(None);
             }

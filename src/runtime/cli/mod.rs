@@ -251,8 +251,8 @@ pub mod open {
 }
 
 // ─── non-JSC subcommand bodies ───────────────────────────────────────────────
-// `init_command.rs` pulls bun_json/bun_js_parser/bun_js_printer/bun_bundler +
-// `bun_ast::initialize_store`; `package_manager_command.rs` needs
+// `init_command.rs` pulls bun_json/bun_js_parser/bun_js_printer/bun_bundler;
+// `package_manager_command.rs` needs
 // bun_install::PackageManager + a real `Command::Context` (blocked on
 // `create_context_data`), so its help/print-only paths are handled inline in
 // `Command::start()` below. `install_completions_command.rs` is fully wired

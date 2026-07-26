@@ -973,6 +973,8 @@ impl<'a> PackageInstall<'a> {
         let mut log = bun_ast::Log::init();
 
         initialize_store();
+        let mut ast_arena = bun_alloc::AstArena::new();
+        let _scope = ast_arena.enter();
 
         let mut package_json_checker = bun_json::PackageJSONVersionChecker::init(source, &mut log);
         if package_json_checker.parse().is_err() {

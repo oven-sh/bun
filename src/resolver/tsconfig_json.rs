@@ -29,7 +29,7 @@ pub enum JsonMode {
 /// `parse_*` themselves — eagerly constructing `Arena::new()` here costs one
 /// `mi_heap_new` per worker (≈11 empty heaps on a typical build/elysia run).
 pub struct JsonCache {
-    bump: Option<bun_alloc::Arena>,
+    bump: Option<bun_alloc::AstArena>,
 }
 
 impl JsonCache {
@@ -49,9 +49,12 @@ impl JsonCache {
         ) -> Result<bun_ast::Expr, bun_parsers::Error>,
     ) -> Result<Option<bun_ast::Expr>, crate::Error> {
         let mut temp_log = bun_ast::Log::init();
-        let bump = self.bump.get_or_insert_with(bun_alloc::Arena::new);
-        let result = func(source, &mut temp_log, bump).ok();
-        let _ = temp_log.append_to_maybe_recycled(log, source);
+        let _scope = self
+            .bump
+            .get_or_insert_with(bun_alloc::AstArena::new)
+            .enter();
+        let result = func(source, &mut temp_log, bun_alloc::AstAlloc.arena()).ok();
+        let _ = temp_log.append_to(log);
         Ok(result)
     }
 
@@ -66,8 +69,12 @@ impl JsonCache {
         ) -> Result<json_parser::ParsedJson, bun_parsers::Error>,
     ) -> Result<Option<json_parser::ParsedJson>, crate::Error> {
         let mut temp_log = bun_ast::Log::init();
+        let _scope = self
+            .bump
+            .get_or_insert_with(bun_alloc::AstArena::new)
+            .enter();
         let result = func(source, &mut temp_log).ok();
-        let _ = temp_log.append_to_maybe_recycled(log, source);
+        let _ = temp_log.append_to(log);
         Ok(result)
     }
 

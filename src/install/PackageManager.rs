@@ -306,7 +306,7 @@ pub struct PackageManager {
     // — i.e. nodes that must outlive `Expr.Data.Store.reset()` across workspace
     // iterations — use `ast_arena` instead. The manager is a leaked singleton, so
     // this arena has process lifetime.
-    pub ast_arena: bun_alloc::Arena,
+    pub ast_arena: bun_alloc::AstArena,
     // Raw ptr rather than `&'a mut bun_ast::Log`: PackageManager is a leaked singleton
     // stored in a `static`, which cannot carry a lifetime parameter. Invariant: the
     // pointed-to Log must outlive every use of the singleton.
@@ -1570,6 +1570,8 @@ pub fn init(
                     let json_source =
                         bun_ast::Source::init_path_string(&*json_path, &json_buf[..json_len]);
                     initialize_store();
+                    let mut ast_arena = bun_alloc::AstArena::new();
+                    let _scope = ast_arena.enter();
                     // SAFETY: `ctx.log` is a borrow of the CLI's `Log`; valid for the
                     // duration of `init()` (set by `Command::create()` before any install
                     // entry point runs).
@@ -1756,6 +1758,8 @@ pub fn init(
     )?;
 
     initialize_store();
+    let mut ast_arena = bun_alloc::AstArena::new();
+    let _scope = ast_arena.enter();
 
     if let Some(data_dir) = bun_core::env_var::XDG_CONFIG_HOME
         .get()
@@ -1872,7 +1876,7 @@ pub fn init(
         wr!(patch_task_fifo, PatchTaskFifo::init());
         wr!(log, ctx.log);
         wr!(root_dir, entries_option);
-        wr!(ast_arena, bun_alloc::Arena::new());
+        wr!(ast_arena, bun_alloc::AstArena::new());
         // reborrow `&mut *env` so the local stays usable for
         // the post-construction `BUN_MANIFEST_CACHE` / `options.load`
         // reads. `BackRef` stores a raw pointer —
@@ -2302,7 +2306,7 @@ pub(crate) fn init_with_runtime_once(
         wr!(network_task_fifo, NetworkQueue::init());
         wr!(log, std::ptr::from_mut(log));
         wr!(root_dir, root_dir);
-        wr!(ast_arena, bun_alloc::Arena::new());
+        wr!(ast_arena, bun_alloc::AstArena::new());
         // reborrow `&mut *env` so the local stays usable for
         // the post-construction `BUN_MANIFEST_CACHE` / `options.load`
         // reads. `BackRef` stores a raw pointer —

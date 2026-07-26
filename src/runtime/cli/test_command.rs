@@ -2283,7 +2283,6 @@ impl TestCommand {
             reporter.reporters.only_failures = true; // only-failures defaults to true for ai agents
         }
 
-        bun_ast::initialize_store();
         // SAFETY: `init` returns the heap-allocated process-lifetime VM; deref once.
         let vm: &mut VirtualMachine = unsafe {
             &mut *VirtualMachine::init(jsc::virtual_machine::InitOptions {
@@ -3185,9 +3184,6 @@ impl TestCommand {
         // Capture the raw log pointer (Copy) so the guard does not borrow `vm`.
         let vm_log = vm.log;
         scopeguard::defer! {
-            bun_ast::Expr::data_store_reset();
-            bun_ast::Stmt::data_store_reset();
-
             if let Some(log_ptr) = vm_log {
                 // SAFETY: vm.log points at the VM-owned Log for the lifetime of the run.
                 let log = unsafe { &mut *log_ptr.as_ptr() };

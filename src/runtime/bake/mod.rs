@@ -208,8 +208,8 @@ impl Framework {
     ) -> crate::Result<*mut bun_bundler::bake_types::Framework> {
         use bun_options_types::schema as bun_schema;
 
-        let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(arena);
-        let _ast_scope = ast_memory_allocator.enter();
+        let mut ast_arena = bun_alloc::AstArena::new();
+        let _ast_scope = ast_arena.enter();
 
         let out: &mut bun_bundler::Transpiler = out.write(bun_bundler::Transpiler::init(
             arena,

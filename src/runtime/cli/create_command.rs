@@ -731,8 +731,6 @@ impl CreateCommand {
                         pkg.seek_to(prev_file_pos)?;
                         // The printer doesn't truncate, so we must do so manually
                         let _ = bun_sys::ftruncate(pkg.handle(), 0);
-
-                        bun_ast::initialize_store();
                     }
                 }
             }
@@ -783,7 +781,8 @@ impl CreateCommand {
             }
 
             if let Some(package_json_file) = &package_json_file {
-                bun_ast::initialize_store();
+                let mut ast_arena = bun_alloc::AstArena::new();
+                let _scope = ast_arena.enter();
 
                 let source = bun_ast::Source::init_path_string(
                     b"package.json",
@@ -979,7 +978,7 @@ impl CreateCommand {
                         // the temporary `Query`.
                         let arena_str = |s: &[u8]| -> &'static [u8] {
                             // SAFETY: `s` always points into the JSON arena
-                            // (initialized via `initialize_store()`), which
+                            // (entered via `ast_arena.enter()` above), which
                             // lives for the rest of `exec`.
                             unsafe { &*std::ptr::from_ref::<[u8]>(s) }
                         };
@@ -2085,7 +2084,8 @@ impl Example {
 
         progress.name = b"Parsing package.json";
         refresher.refresh();
-        bun_ast::initialize_store();
+        let mut ast_arena = bun_alloc::AstArena::new();
+        let _scope = ast_arena.enter();
         let source = bun_ast::Source::init_path_string(b"package.json", mutable.list.as_slice());
         // SAFETY: single-threaded CLI dispatch; no other borrow of the
         // process-static `Cli::LOG_` is live across this scope.
@@ -2242,7 +2242,8 @@ impl Example {
             Global::exit(1);
         }
 
-        bun_ast::initialize_store();
+        let mut ast_arena = bun_alloc::AstArena::new();
+        let _scope = ast_arena.enter();
         let source = bun_ast::Source::init_path_string(b"examples.json", mutable.list.as_slice());
         // Use the process-lifetime CLI arena (examples slices borrow from it
         // and the CLI exits shortly after).

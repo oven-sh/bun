@@ -1793,6 +1793,8 @@ impl<'a> Repl<'a> {
 
         // Create arena for parsing
         let arena = bun_alloc::Arena::new();
+        let mut ast_arena = bun_alloc::AstArena::new();
+        let _scope = ast_arena.enter();
 
         // Set up parser options with repl_mode enabled
         let mut opts = bun_js_parser::ParserOptions::init(

@@ -1563,6 +1563,8 @@ impl Package<u64> {
         features: Features,
     ) -> crate::Result<()> {
         initialize_store();
+        let mut ast_arena = bun_alloc::AstArena::new();
+        let _scope = ast_arena.enter();
         let parsed = match crate::bun_json::ParsedJson::parse_package_json(source, log) {
             Ok(p) => p,
             Err(err) => {

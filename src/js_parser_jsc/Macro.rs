@@ -3,7 +3,6 @@ use core::cell::Cell;
 use core::ffi::c_void;
 use core::ptr::NonNull;
 
-use bun_ast::DisableStoreReset;
 use bun_ast::{E, Expr, ExprData, ExprNodeList, G, ToJSError};
 use bun_ast::{Log, Range, Source};
 use bun_bundler::{Transpiler, entry_points::MacroEntryPoint};
@@ -68,7 +67,7 @@ pub struct MacroContext {
     /// avoids one `mi_heap_new`/`mi_heap_destroy` pair on every dynamic
     /// `import()` (require-cache.test.ts T040 — on macOS arm64 the per-iter
     /// heap churn fragments mimalloc's segment cache).
-    pub bump: Option<bun_alloc::Arena>,
+    pub bump: Option<bun_alloc::AstArena>,
 }
 
 pub(crate) type MacroMap = ArrayHashMap<i32, Macro>;
@@ -108,7 +107,6 @@ impl MacroContext {
         caller: Expr,
         function_name: &[u8],
     ) -> crate::Result<Expr> {
-        let _store_guard = DisableStoreReset::new();
         // const is_package_path = isPackagePath(specifier);
         let import_record_path_without_macro_prefix = if is_macro_path(import_record_path) {
             &import_record_path[NAMESPACE_WITH_COLON.len()..]
@@ -224,8 +222,9 @@ impl MacroContext {
         // as a raw pointer so the closure does not extend `&mut self`.
         // Lazy-init the backing arena now that a macro is actually being
         // invoked (see field doc — avoids per-`import()` `mi_heap_new`).
-        let bump: *const bun_alloc::Arena =
-            &raw const *self.bump.get_or_insert_with(bun_alloc::Arena::new);
+        let ast_arena = self.bump.get_or_insert_with(bun_alloc::AstArena::new);
+        let _scope = ast_arena.enter();
+        let bump: *const bun_alloc::Arena = bun_alloc::AstAlloc.arena();
         let ret = VirtualMachine::get().run_with_api_lock(|| {
             // SAFETY: `macro_` points into `self.macros` which is not mutated
             // for the duration of this closure; `bump` points into `*self`,

@@ -47,10 +47,10 @@ pub struct JSTranspiler {
     pub scan_pass_result: JsCell<ScanPassResult>,
     pub buffer_writer: JsCell<Option<JSPrinter::BufferWriter>>,
     pub log_level: bun_ast::Level,
-    // Arena bulk-frees the config strings. Boxed so its
+    // Arena bulk-frees the config strings. Pinned-box interior, so its
     // address is stable across the move into `Box<JSTranspiler>` —
     // `transpiler.arena` holds a `&'static Arena` pointing into it.
-    pub arena: Box<Arena>,
+    pub arena: bun_alloc::AstArena,
     // Intrusive refcount field for `bun_ptr::IntrusiveRc<JSTranspiler>`:
     // single-thread intrusive `bun.ptr.RefCount` because `*JSTranspiler`
     // crosses FFI as `m_ctx` (per PORTING.md §Pointers; not `Arc`).
@@ -743,7 +743,8 @@ impl<'a> TransformTask<'a> {
     pub(crate) fn run(&mut self) {
         let name = self.loader.stdin_name();
 
-        let arena = Arena::new();
+        let mut ast_arena = bun_alloc::AstArena::new();
+        let _scope = ast_arena.enter();
 
         // `self.transpiler` is a `ManuallyDrop` bytewise copy of the
         // `JSTranspiler`'s long-lived transpiler (`ptr::read` in `create()`),
@@ -765,12 +766,7 @@ impl<'a> TransformTask<'a> {
             },
         );
 
-        let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
-        let _ast_scope = ast_memory_allocator.enter();
-
-        // SAFETY: `arena` outlives every use through `self.transpiler` in this fn body;
-        // Transpiler<'static> forces the borrow to 'static, so launder through a raw ptr.
-        let arena_ref: &'static Arena = unsafe { bun_ptr::detach_lifetime_ref(&arena) };
+        let arena_ref: &'static Arena = bun_alloc::AstAlloc.arena();
         let source: &bun_ast::Source = arena_ref.alloc(bun_ast::Source::init_path_string(
             name,
             self.input_code.slice(),
@@ -827,9 +823,9 @@ impl<'a> TransformTask<'a> {
         buffer_writer.reset();
 
         let mut printer = JSPrinter::BufferPrinter::init(buffer_writer);
-        // Same per-call `arena` that `set_arena(&arena)` and `parse()` used.
+        // Same per-call `arena` that `set_arena(arena_ref)` and `parse()` used.
         let printed = match self.transpiler.print(
-            &arena,
+            arena_ref,
             parse_result,
             &mut printer,
             Transpiler::transpiler::PrintFormat::EsmAscii,
@@ -979,12 +975,13 @@ impl JSTranspiler {
             log: bun_ast::Log::init(),
             ..Default::default()
         };
-        let arena = Box::new(Arena::new());
-        // SAFETY: `arena` is heap-allocated and moved (as a Box) into `Box<JSTranspiler>` below;
-        // its address is stable for the lifetime of the JSTranspiler. `Transpiler<'static>` forces
-        // the borrow to 'static, so launder through a raw ptr.
-        let arena_ref: &'static Arena =
-            unsafe { bun_ptr::detach_lifetime_ref::<Arena>(arena.as_ref()) };
+        let mut arena = bun_alloc::AstArena::new();
+        // `AstArena` pins its interior on the heap; the `&'static Arena`
+        // derived from it stays valid as `arena` moves into
+        // `Box<JSTranspiler>` below.
+        // SAFETY: pinned-heap interior — address is move-stable.
+        let arena_ref: &'static Arena = unsafe { bun_ptr::detach_lifetime_ref(arena.arena()) };
+        let _scope = arena.enter();
 
         // errdefer { ... } — on any `?` below, stack `config`/`arena` drop and run Drop, which
         // covers config.log, config.tsconfig, arena. ref_count.clearWithoutDestructor is a
@@ -1022,6 +1019,7 @@ impl JSTranspiler {
             }
         };
 
+        drop(_scope);
         let this: Box<JSTranspiler> = Box::new(JSTranspiler {
             config: JsCell::new(config),
             arena,
@@ -1330,14 +1328,14 @@ impl JSTranspiler {
             return Ok(JSValue::ZERO);
         }
 
-        let arena = Arena::new();
+        let mut ast_arena = bun_alloc::AstArena::new();
+        let _scope = ast_arena.enter();
         let mut log = bun_ast::Log::init();
         // defer log.deinit() → Drop
-        // SAFETY: `arena` outlives every use through `self.transpiler` in this fn body;
-        // `_restore` (declared after `arena`/`log`, so dropped first) restores
+        // `_restore` (declared after `ast_arena`/`log`, so dropped first) restores
         // `prev_arena` and `&self.config.log` before either local drops.
         // `with_mut` borrow is closure-scoped; no JS re-entry inside.
-        let arena_ref: &'static Arena = unsafe { bun_ptr::detach_lifetime_ref(&arena) };
+        let arena_ref: &'static Arena = bun_alloc::AstAlloc.arena();
         let prev_arena = self.transpiler.with_mut(|t| {
             let prev = t.arena;
             t.set_arena(arena_ref);
@@ -1350,9 +1348,6 @@ impl JSTranspiler {
             restore_log: self.config_log_ptr(),
             prev_macro_context: None,
         };
-
-        let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
-        let _ast_scope = ast_memory_allocator.enter();
 
         let parse_result = self.get_parse_result(arena_ref, code, loader, MacroJSCtx::ZERO);
         let log_ref = self.transpiler.get().log_mut();
@@ -1468,7 +1463,8 @@ impl JSTranspiler {
             ));
         };
 
-        let arena = Arena::new();
+        let mut ast_arena = bun_alloc::AstArena::new();
+        let _scope = ast_arena.enter();
         let Some(code_holder) = StringOrBuffer::from_js(global, code_arg)? else {
             return Err(global.throw_invalid_argument_type(
                 "transformSync",
@@ -1519,20 +1515,16 @@ impl JSTranspiler {
             None
         };
 
-        let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
-        let _ast_scope = ast_memory_allocator.enter();
-
         // NOTE: spec snapshots the WHOLE `this.transpiler` by value
         // (`prev_bundler = this.transpiler`) and restores it on exit. `Transpiler` is not
         // bitwise-copyable in Rust, so explicitly snapshot the fields the body mutates
         // (`allocator`, `log`, `macro_context`) and restore them via RAII guard.
         let mut log = bun_ast::Log::init();
         log.level = self.config.get().log.level;
-        // SAFETY: `arena` outlives every use through `self.transpiler` in this fn body;
-        // `_restore` (declared after `arena`/`log`, so dropped first) restores
+        // `_restore` (declared after `ast_arena`/`log`, so dropped first) restores
         // `prev_arena`, `&self.config.log`, and `prev_macro_context` before either drops.
         // `with_mut` borrow is closure-scoped; no JS re-entry inside.
-        let arena_ref: &'static Arena = unsafe { bun_ptr::detach_lifetime_ref(&arena) };
+        let arena_ref: &'static Arena = bun_alloc::AstAlloc.arena();
         let (prev_arena, prev_macro_context) = self.transpiler.with_mut(|t| {
             let prev_arena = t.arena;
             // `take()` both reads the prior value AND nulls it.
@@ -1575,9 +1567,9 @@ impl JSTranspiler {
         buffer_writer.reset();
         let mut printer = JSPrinter::BufferPrinter::init(buffer_writer);
         // SAFETY: see `transpiler_mut` — `print` does not re-enter JS.
-        // Same per-call `arena` that `set_arena(&arena)` and `parse()` used.
+        // Same per-call `arena` that `set_arena(arena_ref)` and `parse()` used.
         if let Err(err) = unsafe { self.transpiler_mut() }.print(
-            &arena,
+            arena_ref,
             parse_result,
             &mut printer,
             Transpiler::transpiler::PrintFormat::EsmAscii,
@@ -1711,18 +1703,17 @@ impl JSTranspiler {
             )));
         }
 
-        let arena = Arena::new();
+        let mut ast_arena = bun_alloc::AstArena::new();
+        let _scope = ast_arena.enter();
+        let arena_ref: &'static Arena = bun_alloc::AstAlloc.arena();
         let mut log = bun_ast::Log::init();
         // defer log.deinit() → Drop
-        // SAFETY: `arena` outlives every use through `self.transpiler` in this fn body;
-        // `_restore` (declared after `arena`/`log`, so dropped first) restores
+        // `_restore` (declared after `ast_arena`/`log`, so dropped first) restores
         // `prev_arena` and `&self.config.log` before either local drops.
         // `with_mut` borrow is closure-scoped; no JS re-entry inside.
         let prev_arena = self.transpiler.with_mut(|t| {
             let prev = t.arena;
-            // SAFETY: `arena` outlives every use through `t` — `_restore` below
-            // restores `prev_arena` before `arena` drops (reverse-decl order).
-            t.set_arena(unsafe { bun_ptr::detach_lifetime_ref(&arena) });
+            t.set_arena(arena_ref);
             t.set_log(&raw mut log);
             prev
         });
@@ -1732,9 +1723,6 @@ impl JSTranspiler {
             restore_log: self.config_log_ptr(),
             prev_macro_context: None,
         };
-
-        let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
-        let _ast_scope = ast_memory_allocator.enter();
 
         let source = bun_ast::Source::init_path_string(loader.stdin_name(), code);
         let jsx = match self.config.get().tsconfig.as_deref() {
@@ -1764,7 +1752,7 @@ impl JSTranspiler {
         // directly is equivalent.
         // SAFETY: `scan_pass_result` JsCell — `scan()` does not re-enter JS.
         let scan_result = bun_bundler::cache::JavaScript::init().scan(
-            &arena,
+            arena_ref,
             unsafe { self.scan_pass_result.get_mut() },
             opts,
             define,

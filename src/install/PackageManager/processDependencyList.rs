@@ -299,6 +299,8 @@ impl PackageManager {
                     let package_json_source =
                         &bun_ast::Source::init_path_string(&json.path[..], &json.buf[..]);
                     initialize_store();
+                    let mut ast_arena = bun_alloc::AstArena::new();
+                    let _scope = ast_arena.enter();
                     // SAFETY: `self.log` is set once by `PackageManager::init()` and
                     // never null while tasks run.
                     let log = self.log_mut();

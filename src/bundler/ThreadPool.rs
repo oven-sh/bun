@@ -12,6 +12,7 @@ use core::ptr::{self, NonNull};
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use bun_alloc::Arena as ThreadLocalArena;
+use bun_alloc::AstArena;
 use bun_collections::{ArrayHashMap, MapEntry};
 use bun_core::{self, env_var, output as Output};
 use bun_sys::Fd;
@@ -410,7 +411,7 @@ impl ThreadPool {
                     .map(bun_ptr::ParentRef::from),
                 data: None,
                 quit: false,
-                ast_memory_store: ManuallyDrop::new(bun_ast::ASTMemoryAllocator::default()),
+                ast_arena: ManuallyDrop::new(AstArena::new()),
                 has_created: false,
                 deinit_task: ThreadPoolLib::Task {
                     node: ThreadPoolLib::Node::default(),
@@ -467,7 +468,7 @@ pub struct Worker {
     pub data: Option<WorkerData>,
     pub quit: bool,
 
-    pub ast_memory_store: ManuallyDrop<bun_ast::ASTMemoryAllocator>,
+    pub ast_arena: ManuallyDrop<AstArena>,
     pub has_created: bool,
     /// `ThreadPoolLib.Thread.current` — `None` when called off a pool thread.
     /// `ParentRef` (not raw `*mut`) because the pool-owned `Thread` strictly
@@ -523,7 +524,7 @@ pub struct WorkerData {
 impl Worker {
     // CONCURRENCY: thread-pool callback — runs on the worker's own OS thread
     // during pool drain (scheduled via `deinit_soon`). Writes: own `Worker`
-    // fields only (`heap`, `data`, `ast_memory_store` teardown). The `Worker`
+    // fields only (`heap`, `data`, `ast_arena` teardown). The `Worker`
     // is per-OS-thread (`Thread::current()`-keyed), so `&mut *this` is unique.
     // `Worker` is `Send` because its arena/backref pointers are
     // owned-heap or per-thread; the `unsafe impl Send for ThreadPool` (the
@@ -555,7 +556,7 @@ impl Worker {
             // iterates `workers_assignments`), so we are on the owning thread
             // and can tear down synchronously. Skipping teardown here would
             // leak the Worker — including its
-            // `ast_memory_store` mi_heap (every `AstAlloc` buffer the inline
+            // `ast_arena` mi_heap (every `AstAlloc` buffer the inline
             // parse produced) and `data.transpiler` per `Bun.build()` call.
             //
             // SAFETY: `self` is the heap-allocated Worker; sole owner now that
@@ -596,21 +597,17 @@ impl Worker {
             worker.temporary_arena = None;
             worker.stmt_list = None;
         }
-        // SAFETY: `ast_memory_store` is always a valid `ManuallyDrop` —
-        // `get_worker` unconditionally writes `ASTMemoryAllocator::default()`,
-        // and `create()` may overwrite it
-        // via `*ast_memory_store = ...`. Dropped exactly once here, *outside*
-        // the `has_created` guard so the default-constructed arena is freed
-        // even when `create()` never ran.
-        // Ordered before `heap = None` in case `ASTMemoryAllocator::new`
-        // ever threads `arena_ref` (= `&self.heap`) through.
-        unsafe { ManuallyDrop::drop(&mut worker.ast_memory_store) };
+        // SAFETY: `ast_arena` is always a valid `ManuallyDrop` — `get_worker`
+        // unconditionally writes `AstArena::new()`. Dropped exactly once here,
+        // *outside* the `has_created` guard so the arena is freed even when
+        // `create()` never ran. Ordered before `heap = None`.
+        unsafe { ManuallyDrop::drop(&mut worker.ast_arena) };
         if worker.has_created {
             worker.heap = None;
         }
         // SAFETY: caller contract — `this` was heap-allocated via `get_worker`.
         // Runs full field drop glue: remaining `Option` fields are `None`
-        // (no-op), `ast_memory_store` is `ManuallyDrop` (no auto-drop), so no
+        // (no-op), `ast_arena` is `ManuallyDrop` (no auto-drop), so no
         // double-free; defends against future `Drop`-carrying fields.
         unsafe { bun_core::heap::destroy(this) };
     }
@@ -631,14 +628,10 @@ impl Worker {
             worker.create(ctx);
         }
 
-        worker.ast_memory_store.push();
-
         worker
     }
 
-    pub fn unget(&mut self) {
-        self.ast_memory_store.pop();
-    }
+    pub fn unget(&mut self) {}
 
     pub fn init(&mut self, v2: &BundleV2<'_>) {
         // Lifetime-erase `'_` → `'static` via `NonNull::cast` (BACKREF: the
@@ -666,11 +659,7 @@ impl Worker {
         let arena_ref: &'static ThreadLocalArena =
             unsafe { bun_ptr::detach_lifetime_ref(self.arena.get()) };
 
-        // The
-        // ASTMemoryAllocator owns its bump arena internally and ignores the
-        // passed fallback (see ASTMemoryAllocator::new doc).
-        *self.ast_memory_store = bun_ast::ASTMemoryAllocator::new(arena_ref);
-        self.ast_memory_store.reset();
+        self.ast_arena.reset();
 
         let log: *mut bun_ast::Log = arena_ref.alloc(bun_ast::Log::init());
         self.ctx = bun_ptr::BackRef::from(NonNull::from(ctx).cast::<BundleV2<'static>>());

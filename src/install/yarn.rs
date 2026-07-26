@@ -634,6 +634,8 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
 
     this.init_empty();
     install::initialize_store();
+    let mut ast_arena = bun_alloc::AstArena::new();
+    let _scope = ast_arena.enter();
     bun_core::analytics::Features::yarn_migration_inc(1);
 
     // A single `Buf` for the whole function would hold

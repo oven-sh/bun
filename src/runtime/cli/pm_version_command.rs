@@ -105,6 +105,8 @@ impl PmVersionCommand {
             &*package_json_contents,
         );
         // Hand the parser a local bump arena for its scratch allocations.
+        let mut ast_arena = bun_alloc::AstArena::new();
+        let _scope = ast_arena.enter();
         let json_bump = Arena::new();
         let json_result = match JSON::parse_package_json_utf8_with_opts(
             JSON::JSONOptions {
@@ -356,6 +358,8 @@ impl PmVersionCommand {
             package_json_path.as_bytes(),
             &*package_json_contents,
         );
+        let mut ast_arena = bun_alloc::AstArena::new();
+        let _scope = ast_arena.enter();
         let json_bump = Arena::new();
         let Ok(json) = JSON::parse_package_json_utf8(
             &package_json_source,

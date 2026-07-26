@@ -751,6 +751,14 @@ impl<'a> LinkerContext<'a> {
         server_component_boundaries: &bun_ast::server_component_boundary::List,
         reachable: &[Index],
     ) -> Result<Box<[Chunk]>, LinkError> {
+        // Install the linker's arena for the whole link phase so synthetic
+        // parts / wrapper stmts land there. Split-borrow via raw ptr: the rest
+        // of this function uses `&mut self` freely and never touches
+        // `self.graph.ast_arena` again.
+        // SAFETY: `self.graph.ast_arena` is not accessed for the guard's
+        // lifetime except via the thread-local `ACTIVE` slot.
+        let _scope = unsafe { bun_alloc::AstArena::enter_raw(&raw mut self.graph.ast_arena) };
+
         // SAFETY: forwarded; see fn-level contract.
         unsafe { self.load(bundle, entry_points, server_component_boundaries, reachable)? };
 
@@ -1429,8 +1437,9 @@ impl SourceMapDataTask {
         // only a shared borrow is formed and it ends before any per-slot write.
         let worker = crate::thread_pool::Worker::get(unsafe { &*bundle });
         // SAFETY: `worker.arena` points at `worker.heap` (init by `Worker::create`).
-        SourceMapData::compute_line_offsets(ctx, worker.arena(), task.source_index);
-        worker.unget();
+        let worker_arena = worker.arena();
+        let _scope = worker.ast_arena.enter();
+        SourceMapData::compute_line_offsets(ctx, worker_arena, task.source_index);
     }
 
     // CONCURRENCY: thread-pool callback — runs on worker threads, one task per
@@ -1470,8 +1479,9 @@ impl SourceMapDataTask {
         // handed (it allocates via the default allocator internally), so we
         // pass the worker arena unconditionally; `DevServerHandle` does not
         // expose an arena accessor (§Dispatch).
-        SourceMapData::compute_quoted_source_contents(ctx, worker.arena(), task.source_index);
-        worker.unget();
+        let worker_arena = worker.arena();
+        let _scope = worker.ast_arena.enter();
+        SourceMapData::compute_quoted_source_contents(ctx, worker_arena, task.source_index);
     }
 }
 
@@ -1524,8 +1534,7 @@ impl SourceMapData {
 
         let _ = alloc;
         // SAFETY: sole writer to this slot (disjoint by source_index).
-        // `Worker::get` (the caller) brackets this in `ast_memory_store.push()/
-        // pop()`, so the active `AstAlloc` state is this worker's and the
+        // The caller installs this worker's `ast_arena` via `enter()`, so the
         // `AstAlloc` route lands the SoA slab + every `columns_for_non_ascii`
         // payload there for bulk-free on `pool.deinit()`.
         unsafe {

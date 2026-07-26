@@ -47,9 +47,8 @@ pub(crate) fn get_candidate_package_patterns<'a>(
     workdir_: &[u8],
     root_buf: &'a mut PathBuffer,
 ) -> Result<&'a [u8], crate::Error> {
-    bun_ast::expr::data::Store::create();
-    bun_ast::stmt::data::Store::create();
-    let _store_guard = bun_ast::StoreResetGuard::new();
+    let mut ast_arena = bun_alloc::AstArena::new();
+    let _scope = ast_arena.enter();
 
     let mut workdir = workdir_;
 

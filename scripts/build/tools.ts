@@ -7,9 +7,9 @@
  */
 
 import { execSync, spawnSync } from "node:child_process";
-import { accessSync, constants, existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { accessSync, constants, existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { delimiter, join } from "node:path";
+import { delimiter, join, resolve, sep } from "node:path";
 import type { Arch, OS, Toolchain } from "./config.ts";
 import { BuildError } from "./error.ts";
 
@@ -113,24 +113,52 @@ interface Rejection {
  * using Bun APIs). Must be the actual bun binary — NOT process.execPath,
  * since configure may run under node.
  *
- * Search order: ~/.bun/bin (curl-install location), then PATH, then
- * process.execPath only if it's actually bun. CI agents pin an old system
- * bun but codegen scripts need newer CLI flags, so the user install goes
- * first.
+ * Search order: ~/.bun/bin (curl-install location), then process.execPath
+ * if it's bun, then PATH. CI agents pin an old system bun but codegen
+ * scripts need newer CLI flags, so the user install goes first.
+ *
+ * Never returns a binary from this repo's own `build/` — that's the output
+ * being (re)built. A stale one (left over from another branch) can be
+ * divergent enough to hang the bundle-modules codegen step forever, which
+ * bootstraps the build into a wedge that `bun bd` can't escape.
  */
 export function findBun(os: OS): string {
   const exe = os === "windows" ? "bun.exe" : "bun";
   const userBun = join(homedir(), ".bun", "bin", exe);
   if (isExecutable(userBun)) return userBun;
 
-  // Running under bun at a non-standard path — use that.
-  if (process.versions.bun !== undefined) return process.execPath;
+  // Reject anything under <repo>/build/. Resolve symlinks so a
+  // `bun → bun-debug` alias in PATH is caught too.
+  const buildDir = resolve(import.meta.dirname, "..", "..", "build");
+  let repoBuild: string;
+  try {
+    repoBuild = realpathSync(buildDir) + sep;
+  } catch {
+    repoBuild = buildDir + sep;
+  }
+  const inTree = (p: string): boolean => {
+    try {
+      return realpathSync(p).startsWith(repoBuild);
+    } catch {
+      return false;
+    }
+  };
 
-  return findTool({
-    names: ["bun"],
-    required: true,
+  // Running under bun — use that, unless it IS the in-tree build.
+  if (process.versions.bun !== undefined && !inTree(process.execPath)) {
+    return process.execPath;
+  }
+
+  // PATH search, skipping the repo's build/ dirs for the same reason.
+  for (const dir of (process.env.PATH ?? "").split(delimiter)) {
+    if (dir.length === 0) continue;
+    const cand = join(dir, exe);
+    if (isExecutable(cand) && !inTree(cand)) return cand;
+  }
+
+  throw new BuildError("Could not find bun", {
     hint: "Codegen requires bun (for `bun install`, `bun build`, and scripts using Bun APIs). Install: curl -fsSL https://bun.sh/install | bash",
-  })!.path;
+  });
 }
 
 /**

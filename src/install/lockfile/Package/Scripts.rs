@@ -330,6 +330,9 @@ impl Scripts {
         log: &mut bun_ast::Log,
         folder_path: &mut bun_paths::AutoAbsPath,
     ) -> Result<(), crate::Error> {
+        initialize_store();
+        let mut ast_arena = bun_alloc::AstArena::new();
+        let _scope = ast_arena.enter();
         let json_buf;
         let parsed;
         let json: Expr = {
@@ -341,7 +344,6 @@ impl Scripts {
             json_buf = bun_sys::File::read_from(Fd::cwd(), save.slice_z())?;
             let json_src = bun_ast::Source::init_path_string(save.slice(), json_buf.as_slice());
 
-            initialize_store();
             parsed = bun_json::ParsedJson::parse_package_json(&json_src, log)?;
             parsed.root
         };

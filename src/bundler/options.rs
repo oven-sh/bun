@@ -837,6 +837,12 @@ pub fn defines_from_transform_options(
     omit_unused_global_calls: bool,
     bump: &bun_alloc::Arena,
 ) -> Result<Box<defines::Define>, crate::Error> {
+    // Install a stack `AstArena` for any AST-building below (env-define
+    // `E::String` slabs, JSON-parsed `--define` values). No field on `Define`
+    // — the long-lived node payloads are `deep_clone`d into `bump`.
+    let mut ast_arena = bun_alloc::AstArena::new();
+    let _scope = ast_arena.enter();
+
     let (input_keys, input_values): (&[Box<[u8]>], &[Box<[u8]>]) = match maybe_input_define {
         Some(m) => (&m.keys, &m.values),
         None => (&[], &[]),

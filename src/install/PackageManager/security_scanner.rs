@@ -1537,6 +1537,8 @@ impl<'a> SecurityScanSubprocess<'a> {
 
         let mut temp_log = bun_ast::Log::init();
 
+        let mut ast_arena = bun_alloc::AstArena::new();
+        let _scope = ast_arena.enter();
         let parsed = match crate::bun_json::ParsedJson::parse_json(&json_source, &mut temp_log) {
             Ok(e) => e,
             Err(e) => {

@@ -24,6 +24,8 @@ pub(crate) fn view(
     property_path: Option<&[u8]>,
     json_output: bool,
 ) -> Result<(), crate::Error> {
+    let mut ast_arena = bun_alloc::AstArena::new();
+    let _scope = ast_arena.enter();
     let bump = Bump::new();
     let (name, mut version) = dependency::split_name_and_version_or_latest('brk: {
         // Extremely best effort.

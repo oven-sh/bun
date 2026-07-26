@@ -550,6 +550,8 @@ impl TrustCommand {
             package_json_contents.as_slice(),
         );
 
+        let mut ast_arena = bun_alloc::AstArena::new();
+        let _scope = ast_arena.enter();
         let bump = Bump::new();
         // SAFETY: `ctx.log` set by `Command::init`, non-null for the command.
         // Layering: `parse_utf8` returns the T2

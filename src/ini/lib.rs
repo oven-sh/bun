@@ -1287,8 +1287,9 @@ mod draft {
         source: &Source,
         configs: &mut Vec<ConfigItem>,
     ) -> OOM<()> {
-        let arena = Arena::new();
-        let bump = &arena;
+        let mut ast_arena = bun_alloc::AstArena::new();
+        let _scope = ast_arena.enter();
+        let bump: &Arena = bun_alloc::AstAlloc.arena();
         let mut parser = Parser::init(source, env);
         parser.parse(bump)?;
         // Need to be very, very careful here with strings.

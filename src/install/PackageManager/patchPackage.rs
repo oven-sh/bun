@@ -163,6 +163,8 @@ pub fn do_patch_commit(
                     };
 
                 initialize_store();
+                let mut ast_arena = bun_alloc::AstArena::new();
+                let _scope = ast_arena.enter();
                 let log = manager.log_mut();
                 let parsed = match JSON::ParsedJson::parse_package_json(&package_json_source, log) {
                     Ok(p) => p,
@@ -774,6 +776,8 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
                     };
 
                 initialize_store();
+                let mut ast_arena = bun_alloc::AstArena::new();
+                let _scope = ast_arena.enter();
                 let log = manager.log_mut();
                 let parsed = match JSON::ParsedJson::parse_package_json(&package_json_source, log) {
                     Ok(p) => p,

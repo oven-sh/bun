@@ -1100,6 +1100,8 @@ mod tests {
 
     #[test]
     fn test_environment_has_globals() {
+        let mut arena = bun_alloc::AstArena::new();
+        let _scope = arena.enter();
         let env = Environment::new();
         assert!(env.globals().contains_key("useState"));
         assert!(env.globals().contains_key("useEffect"));
@@ -1112,6 +1114,8 @@ mod tests {
 
     #[test]
     fn test_get_property_type_array() {
+        let mut arena = bun_alloc::AstArena::new();
+        let _scope = arena.enter();
         let mut env = Environment::new();
         let array_type = Type::Object {
             shape_id: Some("BuiltInArray"),
@@ -1128,6 +1132,8 @@ mod tests {
 
     #[test]
     fn test_get_function_signature() {
+        let mut arena = bun_alloc::AstArena::new();
+        let _scope = arena.enter();
         let env = Environment::new();
         let use_state_type = env.globals().get("useState").unwrap();
         let sig = env.get_function_signature(use_state_type).unwrap();
@@ -1139,6 +1145,8 @@ mod tests {
 
     #[test]
     fn test_get_global_declaration() {
+        let mut arena = bun_alloc::AstArena::new();
+        let _scope = arena.enter();
         let mut env = Environment::new();
         // Global binding
         let binding = NonLocalBinding {

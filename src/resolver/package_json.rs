@@ -483,6 +483,8 @@ impl PackageJSON {
         let contents_static: &'static [u8] = unsafe { bun_ptr::detach_lifetime(&entry_contents) };
         let json_source = bun_ast::Source::init_path_string(package_json_path, contents_static);
 
+        let mut ast_arena = bun_alloc::AstArena::new();
+        let _scope = ast_arena.enter();
         let parsed_json = match r.caches.json.parse_package_json(r_log, &json_source) {
             Ok(Some(v)) => v,
             Ok(None) => return None,

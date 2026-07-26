@@ -11,9 +11,7 @@ use crate::{
     ThreadPool,
 };
 use bun_alloc::Arena;
-use bun_ast::{
-    self as js_ast, B, Binding, E, Expr, G, Part, Ref, S, Scope, Stmt, StmtData, StmtOrExpr,
-};
+use bun_ast::{B, Binding, E, Expr, G, Part, Ref, S, Scope, Stmt, StmtData, StmtOrExpr};
 use bun_ast::{ImportRecord, ImportRecordFlags, ImportRecordTag};
 use bun_collections::MultiArrayList;
 use bun_collections::VecExt;
@@ -55,12 +53,8 @@ pub fn post_process_js_chunk(
         crate::chunk::Content::Javascript(_)
     ));
 
-    bun_ast::expr::data::Store::create();
-    bun_ast::stmt::data::Store::create();
-    // Side arena for `AstAlloc` — linker thread builds wrapper/runtime AST
-    // nodes here outside any `ASTMemoryAllocator` scope; without this their
-    // embedded `Vec<Property>`/`Vec<Expr>` buffers leak from the global heap.
-    let _ast_alloc_heap = js_ast::StoreAstAllocHeap::new();
+    let mut ast_arena = bun_alloc::AstArena::new();
+    let _scope = ast_arena.enter();
 
     // The renamer is
     // not used after this function, so it is reset to `None` before returning

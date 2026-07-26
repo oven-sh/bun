@@ -1,6 +1,5 @@
 use core::ffi::c_void;
 
-use bun_alloc::Arena as ArenaAllocator;
 use bun_bundler::transpiler::ParseResult;
 use bun_core::{OwnedString, String as BunString, ZigString};
 use bun_install::dependency::Dependency;
@@ -30,10 +29,9 @@ pub struct InitOpts<'a> {
     pub package_json: Option<&'a PackageJSON>,
     pub loader: bun_ast::Loader,
     pub hash: u32,
-    pub arena: Box<ArenaAllocator>,
-    /// Backs `parse_result`'s small `AstVec`s (inline bump chunk); must stay
-    /// alive alongside `arena` until the module finishes loading.
-    pub ast_alloc_state: Option<Box<bun_alloc::ast_alloc::AstAllocState>>,
+    /// Owns the `MimallocArena` + AST allocator state backing
+    /// `parse_result`; must stay alive until the module finishes loading.
+    pub ast_arena: bun_alloc::AstArena,
 }
 
 pub struct AsyncModule {
@@ -56,9 +54,8 @@ pub struct AsyncModule {
     pub loader: api::Loader,
     pub hash: u32, // default = u32::MAX
     pub global_this: crate::GlobalRef,
-    pub arena: Box<ArenaAllocator>,
-    /// See [`InitOpts::ast_alloc_state`].
-    pub ast_alloc_state: Option<Box<bun_alloc::ast_alloc::AstAllocState>>,
+    /// See [`InitOpts::ast_arena`].
+    pub ast_arena: bun_alloc::AstArena,
 
     // This is the specific state for making it async
     pub poll_ref: KeepAlive,
@@ -659,8 +656,7 @@ impl AsyncModule {
             // .stmt_blocks = stmt_blocks,
             // .expr_blocks = expr_blocks,
             global_this: crate::GlobalRef::new(global_object),
-            arena: opts.arena,
-            ast_alloc_state: opts.ast_alloc_state,
+            ast_arena: opts.ast_arena,
             poll_ref: KeepAlive::default(),
             any_task: AnyTask::AnyTask::default(),
         })
@@ -1191,10 +1187,14 @@ impl AsyncModule {
             "resumeLoadingModule: {}",
             bstr::BStr::new(self.specifier())
         );
+        // Install the arena that backs `parse_result.ast` as the active
+        // `AstAlloc` for the link + print below.
+        // SAFETY: `self.ast_arena` outlives `_scope` (field vs. stack local).
+        let _scope = unsafe { bun_alloc::AstArena::enter_raw(&raw mut self.ast_arena) };
+        let arena: &'static bun_alloc::Arena = bun_alloc::AstAlloc.arena();
         // Take `parse_result` by value via `mem::take`, then restore below, to
         // satisfy borrowck around `linker.link(&mut parse_result)` while
         // `self` is also borrowed.
-        let arena = *self.parse_result.ast.parts.allocator();
         let mut parse_result =
             core::mem::replace(&mut self.parse_result, ParseResult::empty(arena));
         // SAFETY: `string_buf` is a `Box<[u8]>` whose backing allocation is
@@ -1256,7 +1256,6 @@ impl AsyncModule {
         let is_commonjs_module = self.parse_result.ast.has_commonjs_export_names
             || self.parse_result.ast.exports_kind == bun_ast::ExportsKind::Cjs;
         let input_fd = self.parse_result.input_fd;
-        let arena = *self.parse_result.ast.parts.allocator();
         let parse_result = core::mem::replace(&mut self.parse_result, ParseResult::empty(arena));
 
         // `VirtualMachine.source_code_printer` is a thread-local
@@ -1299,12 +1298,12 @@ impl AsyncModule {
             // SAFETY: per-thread VM.
             let _ = unsafe {
                 (*jsc_vm).transpiler.print_with_source_map(
-                    // `self.arena` is the same per-call arena that built
+                    // `self.ast_arena` is the same per-call arena that built
                     // `parse_result.ast` (handed to the queue via
-                    // `InitOpts::arena` after the original parse). The
+                    // `InitOpts::ast_arena` after the original parse). The
                     // printer's rope-flattening scratch belongs in it, not
                     // in the per-VM `transpiler_arena`.
-                    &self.arena,
+                    arena,
                     parse_result,
                     &mut printer,
                     bun_js_printer::Format::EsmAscii,

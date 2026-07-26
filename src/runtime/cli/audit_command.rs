@@ -141,6 +141,8 @@ impl AuditCommand {
                     bun_ast::Source::init_path_string(b"audit-response.json", &response_text[..]);
                 let mut log = bun_ast::Log::init();
 
+                let mut ast_arena = bun_alloc::AstArena::new();
+                let _scope = ast_arena.enter();
                 let parsed = match bun_json::ParsedJson::parse_json(&source, &mut log) {
                     Ok(e) => e,
                     Err(_) => {
@@ -727,6 +729,8 @@ fn print_enhanced_audit_report(
     let source = bun_ast::Source::init_path_string(b"audit-response.json", response_text);
     let mut log = bun_ast::Log::init();
 
+    let mut ast_arena = bun_alloc::AstArena::new();
+    let _scope = ast_arena.enter();
     let parsed = match bun_json::ParsedJson::parse_json(&source, &mut log) {
         Ok(e) => e,
         Err(_) => {

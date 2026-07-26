@@ -1114,6 +1114,9 @@ impl Bunfig {
         let log: &mut bun_ast::Log = unsafe { &mut *log_ptr };
         let log_count = log.errors + log.warnings;
 
+        let mut ast_arena = bun_alloc::AstArena::new();
+        let _scope = ast_arena.enter();
+
         // This previously called `Arena::new()` (= `mi_heap_new` +
         // `mi_heap_destroy` on drop), which perf attributed ~1.6% of
         // `bun -e ''` startup to. Borrow the process default heap instead so

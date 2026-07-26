@@ -217,6 +217,14 @@ pub struct LinkerGraph<'a> {
     // const_values: bun_ast::Ast::ConstValuesMap,
     /// This is for cross-module inlining of TypeScript enum constants
     pub ts_enums: bun_ast::ast_result::TsEnumsMap,
+
+    /// Owns the AST-allocation arena for linker-generated nodes (synthetic
+    /// parts, wrapper stmts, etc.). Installed via `AstArena::enter` at the
+    /// top of `LinkerContext::link`.
+    ///
+    /// Declared last so it drops after every `AstAlloc`-backed field above
+    /// (`files`, `meta`, `ts_enums`): their element drops read arena memory.
+    pub ast_arena: bun_alloc::AstArena,
 }
 
 // SAFETY: `LinkerGraph` is shared read-mostly across worker threads during
@@ -275,6 +283,7 @@ impl<'a> LinkerGraph<'a> {
             stable_source_indices: Vec::new(),
             is_scb_bitset: BitSet::default(),
             ts_enums: bun_ast::ast_result::TsEnumsMap::default(),
+            ast_arena: bun_alloc::AstArena::new(),
         })
     }
 }
@@ -297,6 +306,7 @@ impl Default for LinkerGraph<'_> {
             stable_source_indices: Vec::new(),
             is_scb_bitset: BitSet::default(),
             ts_enums: bun_ast::ast_result::TsEnumsMap::default(),
+            ast_arena: bun_alloc::AstArena::new(),
         }
     }
 }

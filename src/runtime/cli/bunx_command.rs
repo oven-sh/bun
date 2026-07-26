@@ -295,7 +295,8 @@ impl BunxCommand {
         let package_json_contents = package_json_bytes.as_slice();
         let source = bun_ast::Source::init_path_string(subpath_z.as_bytes(), package_json_contents);
 
-        bun_ast::initialize_store();
+        let mut ast_arena = bun_alloc::AstArena::new();
+        let _scope = ast_arena.enter();
 
         let log = transpiler.log_mut();
         let parsed = json::ParsedJson::parse_package_json(&source, log)?;

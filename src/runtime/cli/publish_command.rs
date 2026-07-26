@@ -330,6 +330,8 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
         // alive across `normalized_package`. Zero-copy.
         let package_json_contents: &'static [u8] = crate::cli::cli_adopt(package_json_contents);
 
+        let mut ast_arena = bun_alloc::AstArena::new();
+        let _scope = ast_arena.enter();
         let bump = bun_alloc::Arena::new();
         let (package_name, package_version, json, json_source) = {
             let source = bun_ast::Source::init_path_string(b"package.json", package_json_contents);
@@ -859,6 +861,8 @@ impl PublishCommand {
         // Parse the response to check if this specific version exists
         let source = bun_ast::Source::init_path_string(b"???", response_buf.list.as_slice());
         let mut log = bun_ast::Log::init();
+        let mut ast_arena = bun_alloc::AstArena::new();
+        let _scope = ast_arena.enter();
         let bump = bun_alloc::Arena::new();
         let Ok(json) = json_mod::parse_utf8(&source, &mut log, &bump) else {
             return false;
@@ -1147,6 +1151,8 @@ impl PublishCommand {
         response_buf: &mut MutableString,
         print_buf: &mut Vec<u8>,
     ) -> Result<Box<[u8]>, GetOTPError> {
+        let mut ast_arena = bun_alloc::AstArena::new();
+        let _scope = ast_arena.enter();
         let bump = bun_alloc::Arena::new();
         let manager_log: &mut bun_ast::Log = ctx.manager.log_mut();
         let res_source = bun_ast::Source::init_path_string(b"???", response_buf.list.as_slice());
@@ -1326,6 +1332,8 @@ impl PublishCommand {
                         }
                         200 => {
                             // login successful
+                            let mut done_arena = bun_alloc::AstArena::new();
+                            let _done_scope = done_arena.enter();
                             let done_bump = bun_alloc::Arena::new();
                             let otp_done_source = bun_ast::Source::init_path_string(
                                 b"???",
@@ -1411,6 +1419,8 @@ impl PublishCommand {
     ) -> Result<Box<[u8]>, AllocError> {
         debug_assert!(json.is_object());
 
+        let mut ast_arena = bun_alloc::AstArena::new();
+        let _scope = ast_arena.enter();
         let bump = bun_alloc::Arena::new();
         // Note: `E::String` stores `&'static [u8]` (lifetime erased per the
         // parser's Str convention); dupe formatted buffers into the

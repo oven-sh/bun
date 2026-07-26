@@ -354,6 +354,11 @@ impl UpdateInteractiveCommand {
                     GetJsonResult::Entry(entry) => entry,
                 };
 
+            // Allocate new nodes into the entry's own `json_arena` so they live
+            // as long as the cached AST (survives `install_with_manager`
+            // re-reads).
+            let _scope = package_json.json_arena.enter();
+
             let mut modified = false;
 
             // Update each package in this workspace's package.json
@@ -382,24 +387,16 @@ impl UpdateInteractiveCommand {
                 let version_with_prefix =
                     preserve_version_prefix(original_version, &update.target_version)?;
 
-                // Update the version using hash map put
-                // `Expr::init` would put the `E.String` *node*
-                // in the Store, which `install_with_manager` resets via
-                // `initialize_store()` before re-reading this cached `root`.
-                // Allocate into the entry's own `json_arena` instead so the
-                // node lives as long as the cached AST. The string *bytes* go
+                // Update the version using hash map put. The string *bytes* go
                 // through the CLI arena (matches PackageJSONEditor `leak_str`).
                 let interned: &'static [u8] = crate::cli::cli_dupe(&version_with_prefix);
-                let new_expr = Expr::allocate(
-                    &package_json.json_arena,
-                    E::EString::init(interned),
-                    version_query.expr.loc,
-                );
+                let new_expr = Expr::init(E::EString::init(interned), version_query.expr.loc);
                 dep_obj
                     .put(&bump, &update.name, new_expr)
                     .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
                 modified = true;
             }
+            drop(_scope);
 
             // Write the updated package.json if modified
             if modified {
@@ -482,7 +479,9 @@ impl UpdateInteractiveCommand {
                 };
 
             // Use the PackageJSONEditor to update catalogs
+            let _scope = package_json.json_arena.enter();
             edit_catalog_definitions(&mut updates_for_workspace[..], &mut package_json.root)?;
+            drop(_scope);
 
             // Save the updated package.json
             Self::save_package_json(package_json, package_json_path)?;
@@ -2247,13 +2246,6 @@ pub(crate) fn edit_catalog_definitions(
     updates: &mut [CatalogUpdateRequest],
     current_package_json: &mut Expr,
 ) -> crate::Result<()> {
-    // using data store is going to result in undefined memory issues as
-    // the store is cleared in some workspace situations. the solution
-    // is to always avoid the store
-    // `Expr.Disabler` is a debug-only guard around the T4
-    // `bun_js_parser` Store; the lower-tier `bun_ast::js_ast` `Expr` used
-    // here boxes via its own thread-local `DATA_STORE` (see js_ast.rs), so
-    // toggling the parser-tier disabler is a no-op for these allocations.
     let bump = Bump::new();
 
     for update in updates.iter() {

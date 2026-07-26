@@ -209,7 +209,7 @@ pub use crate::webview::host_process as WebViewHostProcess;
 
 // ─── shared scaffold for Bun.{TOML,JSONC,JSON5,YAML}.parse ───────────────────
 //
-// All four host fns repeat: Arena + ASTMemoryAllocator scope + Log +
+// All four host fns repeat: AstArena scope + Log +
 // frame.argument(0) → bytes → Source::init_path_string. They diverge on
 // (a) whether nullish input throws, (b) whether Blob/Buffer is accepted, and
 // (c) parse-error class + Expr→JS tail — so this helper owns ONLY the scaffold
@@ -226,9 +226,8 @@ pub(crate) fn with_text_format_source<R>(
 ) -> bun_jsc::JsResult<R> {
     use crate::node::{BlobOrStringOrBuffer, StringOrBuffer};
 
-    let arena = bun_alloc::Arena::new();
-    let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
-    let _ast_scope = ast_memory_allocator.enter();
+    let mut ast_arena = bun_alloc::AstArena::new();
+    let _scope = ast_arena.enter();
 
     let input_value = frame.argument(0);
     if reject_nullish && input_value.is_empty_or_undefined_or_null() {
@@ -273,7 +272,7 @@ pub(crate) fn with_text_format_source<R>(
     let mut log = bun_ast::Log::init();
     let source = bun_ast::Source::init_path_string(path, bytes);
 
-    f(&arena, &mut log, &source)
+    f(bun_alloc::AstAlloc.arena(), &mut log, &source)
 }
 
 // ─── shared Expr → JS conversion for the text-format parsers ─────────────────

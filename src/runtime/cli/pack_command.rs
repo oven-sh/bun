@@ -1907,6 +1907,8 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
     // `Publish::Context`.
     let manager_ptr: *mut PackageManager = &raw mut *ctx.manager;
     let log_level = ctx.manager.options.log_level;
+    let mut ast_arena = bun_alloc::AstArena::new();
+    let _scope = ast_arena.enter();
     let bump = pack_bump();
     // Note: `workspace_package_json_cache` and `log` are disjoint fields on
     // `PackageManager`; route through raw-pointer field projections so the

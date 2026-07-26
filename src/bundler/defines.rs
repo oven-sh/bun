@@ -480,12 +480,12 @@ impl DefineDataExt for DefineData {
         }
 
         // `parse_env_json` builds `E::String`/`E::Object` nodes in the
-        // thread-local AST `Expr`/`Stmt` stores, so create them now — done
-        // lazily here (idempotent no-ops once created) instead of eagerly in
-        // `Transpiler::configure_defines`, since most inits resolve every define
-        // through the fast path above and never need an AST store.
-        bun_ast::Expr::data_store_create();
-        bun_ast::Stmt::data_store_create();
+        // thread-local AST arena, so install a scratch one for this call — done
+        // lazily here instead of eagerly in `Transpiler::configure_defines`,
+        // since most inits resolve every define through the fast path above and
+        // never need an AST arena.
+        let mut ast_arena = bun_alloc::AstArena::new();
+        let _scope = ast_arena.enter();
         let arena_value: &[u8] = bump.alloc_slice_copy(value_str);
         let source = bun_ast::Source {
             // `Source.contents` is typed `&'static [u8]` as a stand-in for an
@@ -501,11 +501,9 @@ impl DefineDataExt for DefineData {
         // The `deep_clone` is load-bearing even though `.data` bytes already
         // live in `bump`: `parse_env_json` → `new_expr` → `Expr::init` allocates
         // the `E::String` *payload* (the `StoreRef` target) in the thread-local
-        // AST store, which `configure_defines` resets on return via
-        // `StoreResetGuard`. Before the `bun_ast` unification this was masked by
-        // `.into()` deep-walking T2→T4 and re-boxing the payload; now `.into()`
-        // is identity, so without `deep_clone` the `DefineData.value` dangles
-        // into a freed slab and `process.env.NODE_ENV` reads garbage.
+        // AST arena installed above, which is bulk-freed when `_scope` drops.
+        // Without `deep_clone` the `DefineData.value` would dangle into a freed
+        // slab and `process.env.NODE_ENV` would read garbage.
         let data: ExprData = expr.data.deep_clone(bump)?;
         let can_be_removed_if_unused = bun_ast::expr::Tag::is_primitive_literal(data.tag());
         Ok(DefineData {

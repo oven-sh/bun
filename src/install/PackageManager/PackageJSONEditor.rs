@@ -58,7 +58,8 @@ pub(crate) fn edit_patched_dependencies(
     patch_key: &[u8],
     patchfile_path: &[u8],
 ) -> Result<(), bun_alloc::AllocError> {
-    let arena = &manager.ast_arena;
+    let _scope = manager.ast_arena.enter();
+    let arena = bun_alloc::AstAlloc.arena();
     // const pkg_to_patch = manager.
     let mut patched_dependencies = E::Object::default();
     if let Some(query) = package_json.as_property(b"patchedDependencies") {
@@ -252,9 +253,10 @@ pub(crate) fn edit_update_no_args(
 
     // Process-lifetime arena for AST
     // nodes that must outlive `Expr.Data.Store.reset()`. See `PackageManager.ast_arena`.
-    // `arena` is a disjoint-field borrow held across
+    // `_scope` is a disjoint-field borrow held across
     // the `&mut manager.updating_packages` accesses below.
-    let arena = &manager.ast_arena;
+    let _scope = manager.ast_arena.enter();
+    let arena = bun_alloc::AstAlloc.arena();
 
     for group in DEPENDENCY_GROUPS {
         let group_str = group.prop;
@@ -546,9 +548,10 @@ pub(crate) fn edit(
 
     // Process-lifetime arena for AST
     // nodes that must outlive `Expr.Data.Store.reset()`. See `PackageManager.ast_arena`.
-    // `arena` is a disjoint-field borrow held across
+    // `_scope` is a disjoint-field borrow held across
     // the `&mut manager.{updating_packages,trusted_deps_to_add_to_package_json}` accesses below.
-    let arena = &manager.ast_arena;
+    let _scope = manager.ast_arena.enter();
+    let arena = bun_alloc::AstAlloc.arena();
 
     let mut remaining = updates.len();
     let mut replacing: usize = 0;

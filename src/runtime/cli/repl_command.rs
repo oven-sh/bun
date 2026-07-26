@@ -58,7 +58,6 @@ impl ReplCommand {
         // Initialize JSC
         jsc::initialize(true); // true for eval mode
 
-        bun_ast::initialize_store();
         // The arena is threaded into VirtualMachine (vm.arena). `bun_alloc::Arena`
         // is `MimallocArena` (a per-heap mimalloc wrapper).
         let arena = Arena::new();

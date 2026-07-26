@@ -92,6 +92,8 @@ fn generate_compile_result_for_js_chunk_impl(
     let _trace = bun_core::perf::trace("Bundler.generateCodeForFileInChunkJS");
     // `defer trace.end()` → handled by Drop on _trace
 
+    let _scope = worker.ast_arena.enter();
+
     // Client and server bundles for Bake must outlive the bundle task.
     // `BufferWriter::init()` output is allocated from the global heap and
     // `DeclCollector.decls` from the worker heap (`worker.arena`, alive until

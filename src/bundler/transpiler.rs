@@ -174,12 +174,12 @@ impl<'a> Transpiler<'a> {
     ///
     /// # Safety
     /// Calls `drop_in_place` on `options` / `result` / `resolver.opts` /
-    /// `resolve_results`, leaving them logically uninitialized. After this
-    /// returns, `self` must never be dropped (or `deinit`'d again) — every
-    /// caller holds a `Transpiler` that bypasses `Drop`: a raw-`dealloc`'d
-    /// `VirtualMachine` field, a `MaybeUninit` stack slot, or an arena-backed
-    /// `&'static mut`. Owned `Transpiler`s from [`Self::for_worker`] must use
-    /// normal `Drop` instead.
+    /// `resolver.caches` / `resolve_results`, leaving them logically
+    /// uninitialized. After this returns, `self` must never be dropped (or
+    /// `deinit`'d again) — every caller holds a `Transpiler` that bypasses
+    /// `Drop`: a raw-`dealloc`'d `VirtualMachine` field, a `MaybeUninit` stack
+    /// slot, or an arena-backed `&'static mut`. Owned `Transpiler`s from
+    /// [`Self::for_worker`] must use normal `Drop` instead.
     pub unsafe fn deinit(&mut self) {
         // The lazily-created `Box<bun_js_parser_jsc::Macro::MacroContext>` is
         // process-lifetime by default, but
@@ -190,13 +190,19 @@ impl<'a> Transpiler<'a> {
         if let Some(ctx) = self.macro_context.take() {
             ctx.deinit();
         }
-        // SAFETY: `options`, `result`, and `resolver.opts` are init'd and never
-        // read past `destroy()` / the `--changed` scan teardown. Caller upholds
-        // the no-auto-drop contract above.
+        // SAFETY: `options`, `result`, `resolver.opts`, `resolver.caches`, and
+        // `resolve_results` are init'd and never read past `destroy()` / the
+        // `--changed` scan teardown. Caller upholds the no-auto-drop contract
+        // above.
         unsafe {
             core::ptr::drop_in_place(&raw mut self.options);
             core::ptr::drop_in_place(&raw mut self.result);
             core::ptr::drop_in_place(&raw mut self.resolver.opts);
+            // `caches.json.bump` is a lazily-populated `AstArena` whose
+            // `Pin<Box<AstArenaInner>>` is system-heap (16 KB); without this,
+            // `bun pm pack`'s stack-local `MaybeUninit<Transpiler>` strands it
+            // and LSAN flags the box.
+            core::ptr::drop_in_place(&raw mut self.resolver.caches);
             core::ptr::drop_in_place(&raw mut self.resolve_results);
         }
     }
@@ -394,32 +400,10 @@ impl<'a> Transpiler<'a> {
         self.resolver.get_package_manager().map_err(Into::into)
     }
 
-    /// Reset the thread-local AST block stores (`Expr`/`Stmt`) and the side
-    /// `AstAlloc` arena.
-    pub fn reset_store(&self) {
-        bun_ast::Expr::data_store_reset();
-        bun_ast::Stmt::data_store_reset();
-        // Side-arena for `AstAlloc` (e.g. `Vec<Property>` inside arena
-        // `E::Object`) — same lifetime as the block-store. Only the bundler
-        // resets it; install/`--define` (which also use the block-store) hold
-        // `StoreRef`s across reset, see `store_ast_alloc_heap` doc. Must mirror
-        // the block-store's FULL early-return gate (`DISABLE_RESET ||
-        // memory_allocator() != null`, Stmt.rs `Store::reset`): macro
-        // evaluation pins the store via `DisableStoreReset`, and
-        // `ParseTask`/`RuntimeTranspilerStore` call this from inside an
-        // `ASTMemoryAllocator::Scope` (where the block-store reset is a no-op
-        // and the active `AstAlloc` state belongs to that scope, NOT the
-        // side module). If we ran `store_ast_alloc_heap::reset()` there it
-        // would bulk-free whatever side-state buffers earlier main-thread
-        // transpiles left while `--define`/install still hold `StoreRef`s
-        // into them (and the side module's debug assert that *its* state is
-        // the installed one would fire).
-        if !bun_ast::stmt::data::Store::disable_reset()
-            && bun_ast::stmt::data::Store::memory_allocator().is_null()
-        {
-            bun_ast::store_ast_alloc_heap::reset();
-        }
-    }
+    /// No-op: the AST allocator is now a passed-by-value [`bun_alloc::AstArena`]
+    /// owned by the caller (worker / parse task), which `reset()`s it between
+    /// parses. Kept for out-of-crate call-site compatibility.
+    pub fn reset_store(&self) {}
 
     fn _resolve_entry_point(&mut self, entry_point: &[u8]) -> crate::Result<resolver::Result> {
         let top_level_dir = self.fs().top_level_dir;
@@ -558,14 +542,11 @@ impl<'a> Transpiler<'a> {
                         .any(|k| &**k == options::default_user_defines::node_env::KEY)
                 });
 
-        // `parse_env_json` needs a thread-local AST store to build
-        // `E::String` nodes in. That work
-        // is now done lazily inside `DefineData::parse`, only on the JSON-parse
-        // slow path — the common case (`bun run` with no user `--define`)
-        // resolves every define through the literal fast path and never
-        // allocates an AST store. A store lazily created on the slow path is
-        // reclaimed by the next `Store::begin()` (every subsequent file parse),
-        // so the dropped `defer reset` is a no-op in practice.
+        // `parse_env_json` needs a thread-local AST arena to build
+        // `E::String` nodes in. That work is done lazily inside
+        // `DefineData::from_input_entry`, only on the JSON-parse slow path —
+        // the common case (`bun run` with no user `--define`) resolves every
+        // define through the literal fast path and never allocates an arena.
 
         // Spec passed `&this.options.env` as a separate arg; `load_defines` now
         // reads `&self.env` internally so the disjoint borrow is resolved
@@ -1178,27 +1159,6 @@ impl<'a> Transpiler<'a> {
         // deref sites below go through `NonNull` rather than the raw argument.
         let log_nn =
             core::ptr::NonNull::new(log).expect("Transpiler::init_in_place: log is non-null");
-        bun_ast::expr::data::Store::create();
-        bun_ast::stmt::data::Store::create();
-        // These two `create()`s are eager (not deferred to the first `parse()`)
-        // because option setup below needs the AST stores *unconditionally*:
-        // `from_api` → `defines_from_transform_options` always materialises at
-        // least `process.env.NODE_ENV` via `parse_env_json`, whose `E::String`
-        // payload lands in the thread-local Expr store (then a `StoreResetGuard`
-        // resets it — which `expect()`s the store exists). So there is no
-        // "transpile nothing" spawn that skips them. They are *cheap*, though:
-        // `Store::init()` only allocates the small `Store` header — the first
-        // `~BLOCK_SIZE` `Block` buffer is malloc'd lazily on the first
-        // `append()` (`ast/new_store.rs`), so a store that is `create()`d but
-        // never written to here (the `Stmt` store — `load_defines` only emits
-        // `E::String` expression nodes) costs nothing beyond that header.
-        // `store_ast_alloc_heap::enter()` is NOT called here: `--define`
-        // object-literal JSON is parsed below (during option setup) and the
-        // bundler holds its `StoreRef<E::Object>` across every `reset_store()`,
-        // so its embedded `Vec<Property>` must stay on the global heap.
-        // `reset_store()`'s first call lazily `enter()`s (the side arena's
-        // `reset()` branches to `enter()` on null ARENA), so per-file ASTs
-        // *do* get the side arena from the first parsed file onward.
 
         // `FileSystem::init` wants `&'static [u8]`. Intern via `DirnameStore`
         // (the same path `FileSystem::init` already uses for the
@@ -2706,8 +2666,6 @@ impl<'a> Transpiler<'a> {
                 _entry
             };
 
-            let _reset = bun_ast::StoreResetGuard::new();
-
             let result = match self.resolver.resolve(
                 top_level_dir,
                 entry,
@@ -2830,10 +2788,10 @@ impl<'a> Transpiler<'a> {
         import_path_format: options::ImportPathFormat,
         outstream: TransformOutstream,
     ) -> crate::Result<()> {
+        let mut ast_arena = bun_alloc::AstArena::new();
         while let Some(item) = self.resolve_queue.pop_front() {
-            bun_ast::Expr::data_store_reset();
-            bun_ast::Stmt::data_store_reset();
-            bun_ast::store_ast_alloc_heap::reset();
+            ast_arena.reset();
+            let _scope = ast_arena.enter();
 
             let output_file = match self.build_with_resolve_result_eager(
                 &item,

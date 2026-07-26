@@ -81,7 +81,7 @@ impl JavaScript {
         let parser = match js_parser::Parser::init(opts, &mut temp_log, source, defines, bump) {
             Ok(p) => p,
             Err(_) => {
-                let _ = temp_log.append_to_maybe_recycled(log, source);
+                let _ = temp_log.append_to(log);
                 return Ok(None);
             }
         };
@@ -99,12 +99,12 @@ impl JavaScript {
                 if temp_log.errors == 0 {
                     log.add_range_error(Some(source), bun_ast::Range::None, err.name().as_bytes());
                 }
-                let _ = temp_log.append_to_maybe_recycled(log, source);
+                let _ = temp_log.append_to(log);
                 return Ok(None);
             }
         };
 
-        let _ = temp_log.append_to_maybe_recycled(log, source);
+        let _ = temp_log.append_to(log);
         Ok(Some(result))
     }
 
@@ -123,19 +123,19 @@ impl JavaScript {
 
         let mut temp_log = bun_ast::Log::init();
         // scopeguard cannot capture &mut temp_log while it's used below;
-        // explicit `append_to_maybe_recycled` calls at each exit.
+        // explicit `append_to` calls at each exit.
 
         let mut parser = match js_parser::Parser::init(opts, &mut temp_log, source, defines, bump) {
             Ok(p) => p,
             Err(_) => {
-                let _ = temp_log.append_to_maybe_recycled(log, source);
+                let _ = temp_log.append_to(log);
                 return Ok(());
             }
         };
 
         let res = parser.scan_imports(scan_pass_result);
         drop(parser);
-        let _ = temp_log.append_to_maybe_recycled(log, source);
+        let _ = temp_log.append_to(log);
         res.map_err(Into::into)
     }
 }

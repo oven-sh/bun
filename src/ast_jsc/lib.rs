@@ -2,9 +2,7 @@
 
 #![warn(unused_must_use)]
 
-use std::borrow::Cow;
-
-use bun_ast::{Data, Location, Log, Metadata, Msg};
+use bun_ast::{Data, IntoText, Location, Log, Metadata, Msg};
 use bun_core::ZigString;
 
 use bun_jsc::{self as jsc, BuildMessage, JSGlobalObject, JSValue, JsResult, ResolveMessage};
@@ -20,14 +18,13 @@ pub fn msg_from_js(global_object: &JSGlobalObject, file: Vec<u8>, err: JSValue) 
 
     Ok(Msg {
         data: Data {
-            text: Cow::Owned(
-                zig_exception_holder
-                    .zig_exception()
-                    .message
-                    .to_owned_slice(),
-            ),
+            text: zig_exception_holder
+                .zig_exception()
+                .message
+                .to_owned_slice()
+                .into_text(),
             location: Some(Location {
-                file: Cow::Owned(file),
+                file: file.into_text(),
                 line: 0,
                 column: 0,
                 ..Default::default()

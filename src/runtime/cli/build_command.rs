@@ -511,6 +511,8 @@ impl BuildCommand {
                 use bun_bundler::DefineExt as _;
                 // Feed `--define` entries into
                 // the client transpiler's Define table.
+                let mut ast_arena = bun_alloc::AstArena::new();
+                let _scope = ast_arena.enter();
                 let user_defines = match &ctx.args.define {
                     Some(input) => {
                         let mut raw = bun_bundler::defines::RawDefines::default();

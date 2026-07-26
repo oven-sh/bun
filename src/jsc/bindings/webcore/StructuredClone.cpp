@@ -37,25 +37,6 @@
 namespace WebCore {
 using namespace JSC;
 
-JSC_DEFINE_HOST_FUNCTION(cloneArrayBuffer, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
-{
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-
-    ASSERT(lexicalGlobalObject);
-    ASSERT(callFrame->argumentCount() == 3);
-    ASSERT(callFrame->lexicalGlobalObject(vm) == lexicalGlobalObject);
-
-    auto* buffer = toUnsharedArrayBuffer(vm, callFrame->uncheckedArgument(0));
-    if (!buffer) {
-        auto scope = DECLARE_THROW_SCOPE(vm);
-        throwDataCloneError(*lexicalGlobalObject, scope);
-        return {};
-    }
-    int srcByteOffset = static_cast<int>(callFrame->uncheckedArgument(1).toNumber(lexicalGlobalObject));
-    int srcLength = static_cast<int>(callFrame->uncheckedArgument(2).toNumber(lexicalGlobalObject));
-    return JSValue::encode(JSArrayBuffer::create(lexicalGlobalObject->vm(), lexicalGlobalObject->arrayBufferStructure(ArrayBufferSharingMode::Default), buffer->slice(srcByteOffset, srcByteOffset + srcLength)));
-}
-
 JSC_DEFINE_HOST_FUNCTION(jsFunctionStructuredClone, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);

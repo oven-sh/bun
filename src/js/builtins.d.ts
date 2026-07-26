@@ -331,7 +331,6 @@ declare function $bunNativePtr(): TODO;
 declare function $bunNativeType(): TODO;
 declare function $byobRequest(): TODO;
 declare function $cancel(): TODO;
-declare function $cloneArrayBuffer(a, b, c): TODO;
 declare function $close(): TODO;
 declare function $code(): TODO;
 declare function $controller(): TODO;

@@ -161,6 +161,44 @@ describe.concurrent("Bun.build with an async plugin setup()", () => {
     expect(await result.outputs[0].text()).toContain("after-await");
   });
 
+  test("lets a caller escape a never-settling setup() with Promise.race", async () => {
+    using dir = tempDir("bun-build-async-setup-race", {
+      "entry.js": entry,
+      "race-fixture.ts": /* ts */ `
+          const cfg = {
+            entrypoints: ["./entry.js"],
+            plugins: [
+              {
+                name: "never-settles",
+                async setup() {
+                  await new Promise(() => {});
+                },
+              },
+            ],
+          };
+          const buildPromise = Bun.build(cfg);
+          const winner = await Promise.race([
+            buildPromise.then(() => "build"),
+            Bun.sleep(200).then(() => "timeout"),
+          ]);
+          console.log(JSON.stringify({ winner }));
+          process.exit(winner === "timeout" ? 0 : 1);
+        `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "race-fixture.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 15_000,
+      killSignal: "SIGKILL",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(exitCode === 0 ? JSON.parse(stdout.trim()) : { exitCode, stdout, stderr }).toEqual({ winner: "timeout" });
+  }, 30_000);
+
   test("rejects the build promise when an async setup() rejects", async () => {
     using dir = tempDir("bun-build-async-setup-reject", { "entry.js": entry });
     await expect(

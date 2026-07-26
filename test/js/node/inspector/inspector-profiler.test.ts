@@ -1,7 +1,15 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { readdirSync, readFileSync } from "node:fs";
 import inspector from "node:inspector";
 import inspectorPromises from "node:inspector/promises";
+
+// Node's Session.post() without a callback is fire-and-forget (command errors
+// are dropped), so tests that assert on a command error must go through the
+// callback path.
+function postErr(session: inspector.Session, method: string, params?: object): Promise<any> {
+  return new Promise(resolve => session.post(method, params as any, err => resolve(err)));
+}
 
 // Mirrors how vitest's @vitest/coverage-v8 provider drives the inspector: a
 // promise Session, Profiler.enable, startPreciseCoverage, evaluating modules
@@ -209,8 +217,10 @@ describe("node:inspector", () => {
       expect(result).toEqual({});
     });
 
-    test("Profiler.start without enable throws", () => {
-      expect(() => session.post("Profiler.start")).toThrow("not enabled");
+    test("Profiler.start without enable reports an error", async () => {
+      const err = await postErr(session, "Profiler.start");
+      expect(err).toBeInstanceOf(Error);
+      expect(err.message).toContain("not enabled");
     });
 
     test("Profiler.start after enable succeeds", () => {
@@ -219,9 +229,11 @@ describe("node:inspector", () => {
       expect(result).toEqual({});
     });
 
-    test("Profiler.stop without start throws", () => {
+    test("Profiler.stop without start reports an error", async () => {
       session.post("Profiler.enable");
-      expect(() => session.post("Profiler.stop")).toThrow("not started");
+      const err = await postErr(session, "Profiler.stop");
+      expect(err).toBeInstanceOf(Error);
+      expect(err.message).toContain("not started");
     });
 
     test("Profiler.stop returns valid profile", () => {
@@ -326,19 +338,19 @@ describe("node:inspector", () => {
       expect(result).toEqual({});
     });
 
-    test("Profiler.setSamplingInterval throws if profiler is running", () => {
+    test("Profiler.setSamplingInterval reports an error if profiler is running", async () => {
       session.post("Profiler.enable");
       session.post("Profiler.start");
-      expect(() => session.post("Profiler.setSamplingInterval", { interval: 500 })).toThrow(
-        "Cannot change sampling interval while profiler is running",
-      );
+      const err = await postErr(session, "Profiler.setSamplingInterval", { interval: 500 });
+      expect(err).toBeInstanceOf(Error);
+      expect(err.message).toContain("Cannot change sampling interval while profiler is running");
       session.post("Profiler.stop");
     });
 
-    test("Profiler.setSamplingInterval requires positive interval", () => {
+    test("Profiler.setSamplingInterval requires positive interval", async () => {
       session.post("Profiler.enable");
-      expect(() => session.post("Profiler.setSamplingInterval", { interval: 0 })).toThrow();
-      expect(() => session.post("Profiler.setSamplingInterval", { interval: -1 })).toThrow();
+      expect(await postErr(session, "Profiler.setSamplingInterval", { interval: 0 })).toBeInstanceOf(Error);
+      expect(await postErr(session, "Profiler.setSamplingInterval", { interval: -1 })).toBeInstanceOf(Error);
     });
 
     test("double Profiler.start is a no-op", () => {
@@ -386,6 +398,138 @@ describe("node:inspector", () => {
     });
   });
 
+  // A single JSC SamplingProfiler backs every profiler owner on a VM, so each
+  // inspector Session and the CLI `--cpu-prof` flag must hold independent
+  // claims on it. These run in subprocesses because they assert on the
+  // VM-global profiler state and do real CPU-bound work.
+  describe("profiler ownership", () => {
+    const work =
+      "const work = ms => { const t = performance.now(); let x = 0; while (performance.now() - t < ms) x += Math.sqrt(x + 1); };";
+    const postFn =
+      "const post = (s, m, p) => new Promise((res, rej) => s.post(m, p, (e, r) => (e ? rej(e) : res(r))));";
+
+    test.concurrent("a bare Session connect/disconnect does not clear --cpu-prof's samples", async () => {
+      using dir = tempDir("inspector-cpuprof-owner", {
+        "child.mjs": `
+          import inspector from "node:inspector";
+          ${work}
+          work(200);
+          const s = new inspector.Session();
+          s.connect();
+          s.disconnect();
+          work(200);
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "--cpu-prof", "--cpu-prof-dir", String(dir), "child.mjs"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      const file = readdirSync(String(dir)).find(f => f.endsWith(".cpuprofile"));
+      expect({ stderr, exitCode, hasFile: !!file }).toEqual({ stderr: "", exitCode: 0, hasFile: true });
+      const profile = JSON.parse(readFileSync(`${dir}/${file}`, "utf8"));
+      // Before the ownership fix the disconnect() drained and cleared the
+      // shared buffer, so the at-exit writer emitted an empty stub.
+      expect(profile.samples.length).toBeGreaterThan(0);
+    });
+
+    test.concurrent("concurrent Sessions each get a profile for their own window", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+          import inspector from "node:inspector";
+          ${work}
+          ${postFn}
+          const A = new inspector.Session(); A.connect();
+          const B = new inspector.Session(); B.connect();
+          await post(A, "Profiler.enable"); await post(A, "Profiler.start");
+          work(400);
+          await post(B, "Profiler.enable"); await post(B, "Profiler.start");
+          work(300);
+          const b = (await post(B, "Profiler.stop")).profile;
+          work(150);
+          const a = (await post(A, "Profiler.stop")).profile;
+          B.disconnect(); A.disconnect();
+          console.log(JSON.stringify({
+            aSamples: a.samples.length,
+            bSamples: b.samples.length,
+            bDurationMicros: b.endTime - b.startTime,
+          }));
+        `,
+        ],
+        env: bunEnv,
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stderrIfFailed: exitCode === 0 ? "" : stderr, exitCode }).toEqual({ stderrIfFailed: "", exitCode: 0 });
+      const { aSamples, bSamples, bDurationMicros } = JSON.parse(stdout);
+      // Both profiles are independently populated (previously the first stop
+      // consumed the shared buffer and the second got -32000 "not started").
+      expect(aSamples).toBeGreaterThan(0);
+      expect(bSamples).toBeGreaterThan(0);
+      // B ran for ~300ms; before the fix it inherited A's startTime and
+      // reported the whole ~700ms. Allow generous slack for slow CI.
+      expect(bDurationMicros).toBeLessThan(550_000);
+    });
+
+    test.concurrent("Profiler.disable on one Session does not stop another Session's profile", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+          import inspector from "node:inspector";
+          ${work}
+          ${postFn}
+          const A = new inspector.Session(); A.connect();
+          const B = new inspector.Session(); B.connect();
+          await post(A, "Profiler.enable"); await post(A, "Profiler.start");
+          await post(B, "Profiler.enable");
+          // B never started a profile, but disabling it used to stop A's.
+          await post(B, "Profiler.disable");
+          B.disconnect();
+          work(200);
+          const a = (await post(A, "Profiler.stop")).profile;
+          A.disconnect();
+          console.log(JSON.stringify({ aSamples: a.samples.length }));
+        `,
+        ],
+        env: bunEnv,
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stderrIfFailed: exitCode === 0 ? "" : stderr, exitCode }).toEqual({ stderrIfFailed: "", exitCode: 0 });
+      expect(JSON.parse(stdout).aSamples).toBeGreaterThan(0);
+    });
+  });
+
+  describe("post() without a callback", () => {
+    test("drops command failures instead of throwing", () => {
+      const session = new inspector.Session();
+      session.connect();
+      // Method-not-found and command errors reach the callback but are dropped
+      // when there is none, matching Node's fire-and-forget post().
+      expect(session.post("Runtime.notADomain.foo")).toBeUndefined();
+      expect(session.post("Profiler.start")).toBeUndefined();
+      session.disconnect();
+    });
+
+    test("still throws for argument validation and not-connected", () => {
+      const session = new inspector.Session();
+      expect(() => session.post("Profiler.enable")).toThrow(
+        expect.objectContaining({ code: "ERR_INSPECTOR_NOT_CONNECTED" }),
+      );
+      session.connect();
+      expect(() => session.post(42 as any)).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
+      expect(() => session.post("x", 42 as any)).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
+      session.disconnect();
+    });
+  });
+
   describe("callback API", () => {
     test("post() with callback receives result", async () => {
       const session = new inspector.Session();
@@ -419,41 +563,42 @@ describe("node:inspector", () => {
   });
 
   describe("unsupported methods", () => {
-    test("unsupported method throws ERR_INSPECTOR_COMMAND", () => {
+    test("unsupported method reports ERR_INSPECTOR_COMMAND to the callback", async () => {
       const session = new inspector.Session();
       session.connect();
-      expect(() => session.post("Runtime.evaluate")).toThrow(
-        expect.objectContaining({ code: "ERR_INSPECTOR_COMMAND" }),
-      );
+      const err = await postErr(session, "Runtime.evaluate");
+      expect(err).toEqual(expect.objectContaining({ code: "ERR_INSPECTOR_COMMAND" }));
       session.disconnect();
     });
   });
 
   describe("precise coverage", () => {
-    test("startPreciseCoverage requires Profiler.enable", () => {
+    test("startPreciseCoverage requires Profiler.enable", async () => {
       const session = new inspector.Session();
       session.connect();
-      expect(() => session.post("Profiler.startPreciseCoverage")).toThrow("Profiler is not enabled");
-      expect(() => session.post("Profiler.stopPreciseCoverage")).toThrow("Profiler is not enabled");
+      expect((await postErr(session, "Profiler.startPreciseCoverage"))?.message).toContain("Profiler is not enabled");
+      expect((await postErr(session, "Profiler.stopPreciseCoverage"))?.message).toContain("Profiler is not enabled");
       session.disconnect();
     });
 
-    test("takePreciseCoverage before startPreciseCoverage throws", () => {
+    test("takePreciseCoverage before startPreciseCoverage reports an error", async () => {
       const session = new inspector.Session();
       session.connect();
       session.post("Profiler.enable");
-      expect(() => session.post("Profiler.takePreciseCoverage")).toThrow("Precise coverage has not been started.");
+      const err = await postErr(session, "Profiler.takePreciseCoverage");
+      expect(err?.message).toContain("Precise coverage has not been started.");
       session.disconnect();
     });
 
-    test("Profiler.disable stops precise coverage, like V8", () => {
+    test("Profiler.disable stops precise coverage, like V8", async () => {
       const session = new inspector.Session();
       session.connect();
       session.post("Profiler.enable");
       session.post("Profiler.startPreciseCoverage", { callCount: true, detailed: true });
       session.post("Profiler.disable");
       session.post("Profiler.enable");
-      expect(() => session.post("Profiler.takePreciseCoverage")).toThrow("Precise coverage has not been started.");
+      const err = await postErr(session, "Profiler.takePreciseCoverage");
+      expect(err?.message).toContain("Precise coverage has not been started.");
       session.disconnect();
     });
 

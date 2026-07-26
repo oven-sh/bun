@@ -16,9 +16,11 @@ const DateNow = Date.now;
 // errors as plain objects, not Error instances).
 const kProtocolError = Symbol("kProtocolError");
 
-// Native profiler functions exposed via $newCppFunction
+// Native profiler functions exposed via $newCppFunction.
+// startCPUProfiler() returns a per-call owner token; stopCPUProfiler(owner)
+// returns the JSON profile covering that owner's window.
 const startCPUProfiler = $newCppFunction("JSInspectorProfiler.cpp", "jsFunction_startCPUProfiler", 0);
-const stopCPUProfiler = $newCppFunction("JSInspectorProfiler.cpp", "jsFunction_stopCPUProfiler", 0);
+const stopCPUProfiler = $newCppFunction("JSInspectorProfiler.cpp", "jsFunction_stopCPUProfiler", 1);
 const setCPUSamplingInterval = $newCppFunction("JSInspectorProfiler.cpp", "jsFunction_setCPUSamplingInterval", 1);
 const isCPUProfilerRunning = $newCppFunction("JSInspectorProfiler.cpp", "jsFunction_isCPUProfilerRunning", 0);
 const startPreciseCoverage = $newCppFunction("JSInspectorProfiler.cpp", "jsFunction_startPreciseCoverage", 0);
@@ -415,6 +417,11 @@ function collectCoverageScripts(): any[] | Error {
 class Session extends EventEmitter {
   #connected = false;
   #profilerEnabled = false;
+  // Nonzero while this session holds a live CPU-profiler owner. The underlying
+  // JSC SamplingProfiler is shared VM-wide (CLI `--cpu-prof` and other
+  // Sessions may own it concurrently), so Profiler.stop/disable/disconnect
+  // must release only this session's claim.
+  #cpuProfilerOwner = 0;
   #preciseCoverageEnabled = false;
   #preciseCoverageCallCount = false;
   #preciseCoverageDetailed = false;
@@ -439,7 +446,10 @@ class Session extends EventEmitter {
 
   disconnect() {
     if (!this.#connected) return;
-    if (isCPUProfilerRunning()) stopCPUProfiler();
+    if (this.#cpuProfilerOwner !== 0) {
+      stopCPUProfiler(this.#cpuProfilerOwner);
+      this.#cpuProfilerOwner = 0;
+    }
     if (this.#preciseCoverageEnabled) {
       stopPreciseCoverage();
       this.#preciseCoverageEnabled = false;
@@ -497,15 +507,13 @@ class Session extends EventEmitter {
         }
       });
     } else {
-      // Sync throw for errors when no callback
-      if (result instanceof Error) {
-        throw result;
-      }
-      if (result !== null && typeof result === "object" && kProtocolError in result) {
-        const protocolError = result[kProtocolError];
-        const error = new Error(protocolError.message);
-        error.code = protocolError.code;
-        throw error;
+      // Node's post() without a callback is fire-and-forget: an error
+      // response to the dispatched command is dropped, never thrown. The
+      // synchronous throws above (argument validation, not-connected) run
+      // before dispatch and match Node. Returning the success result is a
+      // Bun convenience; Node returns undefined.
+      if (result instanceof Error || (result !== null && typeof result === "object" && kProtocolError in result)) {
+        return undefined;
       }
       return result;
     }
@@ -528,8 +536,9 @@ class Session extends EventEmitter {
         return {};
 
       case "Profiler.disable":
-        if (isCPUProfilerRunning()) {
-          stopCPUProfiler();
+        if (this.#cpuProfilerOwner !== 0) {
+          stopCPUProfiler(this.#cpuProfilerOwner);
+          this.#cpuProfilerOwner = 0;
         }
         // V8's Profiler agent stops precise coverage on disable; without this
         // the control-flow profiler keeps instrumenting newly-compiled code.
@@ -542,16 +551,19 @@ class Session extends EventEmitter {
 
       case "Profiler.start":
         if (!this.#profilerEnabled) return $ERR_INSPECTOR_COMMAND("-32000: Profiler is not enabled");
-        if (!isCPUProfilerRunning()) startCPUProfiler();
+        if (this.#cpuProfilerOwner === 0) this.#cpuProfilerOwner = startCPUProfiler();
         return {};
 
-      case "Profiler.stop":
-        if (!isCPUProfilerRunning()) return $ERR_INSPECTOR_COMMAND("-32000: Profiler is not started");
+      case "Profiler.stop": {
+        if (this.#cpuProfilerOwner === 0) return $ERR_INSPECTOR_COMMAND("-32000: Profiler is not started");
+        const owner = this.#cpuProfilerOwner;
+        this.#cpuProfilerOwner = 0;
         try {
-          return { profile: JSON.parse(stopCPUProfiler()) };
+          return { profile: JSON.parse(stopCPUProfiler(owner)) };
         } catch (e) {
           return $ERR_INSPECTOR_COMMAND(`-32000: Failed to parse profile JSON: ${e}`);
         }
+      }
 
       case "Profiler.setSamplingInterval": {
         if (isCPUProfilerRunning())

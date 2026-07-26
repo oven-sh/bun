@@ -608,7 +608,7 @@ test("Runtime.consoleAPICalled encodes -0/NaN/Infinity/bigint as unserializableV
   }
 });
 
-test("Session errors carry Node's ERR_INSPECTOR_* codes and post() validates its arguments", () => {
+test("Session errors carry Node's ERR_INSPECTOR_* codes and post() validates its arguments", async () => {
   const session = new inspector.Session();
   expect(() => session.post("Runtime.enable")).toThrow(
     expect.objectContaining({ code: "ERR_INSPECTOR_NOT_CONNECTED", message: "Session is not connected" }),
@@ -632,7 +632,12 @@ test("Session errors carry Node's ERR_INSPECTOR_* codes and post() validates its
   expect(() => session.post("Runtime.enable", (() => {}) as any, () => {})).toThrow(
     expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
   );
-  expect(() => session.post("Nonexistent.domain")).toThrow(expect.objectContaining({ code: "ERR_INSPECTOR_COMMAND" }));
+  // Command failures (method-not-found, protocol errors) are delivered to the
+  // callback; without one, Node drops them rather than throwing.
+  const { promise, resolve } = Promise.withResolvers<any>();
+  session.post("Nonexistent.domain", err => resolve(err));
+  expect(await promise).toEqual(expect.objectContaining({ code: "ERR_INSPECTOR_COMMAND" }));
+  expect(session.post("Nonexistent.domain")).toBeUndefined();
   session.disconnect();
 
   // connectToMainThread() throws ERR_INSPECTOR_NOT_WORKER on the main thread.

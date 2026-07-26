@@ -19,16 +19,17 @@ using namespace JSC;
 JSC_DECLARE_HOST_FUNCTION(jsFunction_startCPUProfiler);
 JSC_DEFINE_HOST_FUNCTION(jsFunction_startCPUProfiler, (JSGlobalObject * globalObject, CallFrame*))
 {
-    Bun::startCPUProfiler(globalObject->vm());
-    return JSValue::encode(jsUndefined());
+    uint32_t owner = Bun::acquireCPUProfilerOwner(globalObject->vm());
+    return JSValue::encode(jsNumber(owner));
 }
 
 JSC_DECLARE_HOST_FUNCTION(jsFunction_stopCPUProfiler);
-JSC_DEFINE_HOST_FUNCTION(jsFunction_stopCPUProfiler, (JSGlobalObject * globalObject, CallFrame*))
+JSC_DEFINE_HOST_FUNCTION(jsFunction_stopCPUProfiler, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto& vm = globalObject->vm();
+    uint32_t owner = callFrame->argument(0).toUInt32(globalObject);
     WTF::String result;
-    Bun::stopCPUProfiler(vm, &result, nullptr);
+    Bun::releaseCPUProfilerOwner(vm, owner, &result, nullptr);
     return JSValue::encode(jsString(vm, result));
 }
 

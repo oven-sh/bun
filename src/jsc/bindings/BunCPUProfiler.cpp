@@ -29,11 +29,33 @@ void Bun__setSamplingInterval(int intervalMicroseconds)
 
 namespace Bun {
 
-// Store the profiling start time in microseconds since Unix epoch
-static thread_local double s_profilingStartTime = 0.0;
 // Set sampling interval to 1ms (1000 microseconds) to match Node.js
 static thread_local int s_samplingInterval = 1000;
-static thread_local bool s_isProfilerRunning = false;
+
+// A single JSC::SamplingProfiler exists per VM, but multiple independent
+// profile windows can be open at once (e.g. `--cpu-prof` at the CLI plus one
+// or more `node:inspector` Sessions). Each caller acquires an owner, which
+// records its own start timestamp. The underlying sampler only runs while at
+// least one owner is live, and stopping one owner snapshots the shared trace
+// buffer filtered to that owner's window without disturbing the others.
+struct ProfilerOwner {
+    uint32_t id;
+    // Wall-clock start in microseconds since epoch, used as profile.startTime.
+    double startTimeMicros;
+    // Monotonic timestamp at acquisition, used to filter traces.
+    MonotonicTime startTimestamp;
+};
+
+static thread_local WTF::Vector<ProfilerOwner> s_profilerOwners;
+static thread_local uint32_t s_nextProfilerOwnerId = 1;
+// Owner held on behalf of the legacy void-returning start/stop entry points
+// (CLI `--cpu-prof` and per-Worker profiling). 0 means not held.
+static thread_local uint32_t s_implicitProfilerOwner = 0;
+// Traces drained from the SamplingProfiler while more than one owner is live.
+// The referenced executables/callees stay alive via the profiler's
+// m_liveCellPointers (visited during GC) until clearData() runs when the last
+// owner releases.
+static thread_local WTF::Vector<JSC::SamplingProfiler::StackTrace> s_retainedTraces;
 
 void setSamplingInterval(int intervalMicroseconds)
 {
@@ -42,24 +64,32 @@ void setSamplingInterval(int intervalMicroseconds)
 
 bool isCPUProfilerRunning()
 {
-    return s_isProfilerRunning;
+    return !s_profilerOwners.isEmpty();
+}
+
+uint32_t acquireCPUProfilerOwner(JSC::VM& vm)
+{
+    uint32_t id = s_nextProfilerOwnerId++;
+    MonotonicTime now = MonotonicTime::now();
+    double startTimeMicros = now.approximate<WTF::WallTime>().secondsSinceEpoch().value() * 1000000.0;
+    bool firstOwner = s_profilerOwners.isEmpty();
+    s_profilerOwners.append({ id, startTimeMicros, now });
+
+    if (firstOwner) {
+        auto stopwatch = WTF::Stopwatch::create();
+        stopwatch->start();
+        JSC::SamplingProfiler& samplingProfiler = vm.ensureSamplingProfiler(WTF::move(stopwatch));
+        samplingProfiler.setTimingInterval(WTF::Seconds::fromMicroseconds(s_samplingInterval));
+        samplingProfiler.noticeCurrentThreadAsJSCExecutionThread();
+        samplingProfiler.start();
+    }
+    return id;
 }
 
 void startCPUProfiler(JSC::VM& vm)
 {
-    // Capture the wall clock time when profiling starts (before creating stopwatch)
-    // This will be used as the profile's startTime
-    s_profilingStartTime = MonotonicTime::now().approximate<WTF::WallTime>().secondsSinceEpoch().value() * 1000000.0;
-
-    // Create a stopwatch and start it
-    auto stopwatch = WTF::Stopwatch::create();
-    stopwatch->start();
-
-    JSC::SamplingProfiler& samplingProfiler = vm.ensureSamplingProfiler(WTF::move(stopwatch));
-    samplingProfiler.setTimingInterval(WTF::Seconds::fromMicroseconds(s_samplingInterval));
-    samplingProfiler.noticeCurrentThreadAsJSCExecutionThread();
-    samplingProfiler.start();
-    s_isProfilerRunning = true;
+    if (s_implicitProfilerOwner == 0)
+        s_implicitProfilerOwner = acquireCPUProfilerOwner(vm);
 }
 
 struct ProfileNode {
@@ -270,13 +300,11 @@ static WTF::String formatCodeSpan(const WTF::String& str)
 }
 
 // Helper to generate a minimal valid cpuprofile JSON with no samples
-static WTF::String generateEmptyProfileJSON()
+static WTF::String generateEmptyProfileJSON(double startTimeMicros)
 {
-    // Return a minimal valid Chrome DevTools CPU profile format
-    // Use s_profilingStartTime if available, otherwise fall back to current time
     long long timestamp;
-    if (s_profilingStartTime > 0)
-        timestamp = static_cast<long long>(s_profilingStartTime);
+    if (startTimeMicros > 0)
+        timestamp = static_cast<long long>(startTimeMicros);
     else
         timestamp = static_cast<long long>(WTF::WallTime::now().secondsSinceEpoch().value() * 1000000.0);
 
@@ -289,52 +317,33 @@ static WTF::String generateEmptyProfileJSON()
     return sb.toString();
 }
 
-// Unified function that stops the profiler and generates requested output formats
-void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
+// Builds the Chrome DevTools JSON and/or Markdown text report from the
+// already-drained traces, including only those with timestamp >= minTimestamp
+// and using startTimeMicros as the profile's startTime baseline. Must be
+// called under JSLockHolder + DeferGC; frames reference live GC cells.
+static void buildProfileOutput(JSC::VM& vm, WTF::Vector<JSC::SamplingProfiler::StackTrace>& stackTraces,
+    MonotonicTime minTimestamp, double startTimeMicros, WTF::String* outJSON, WTF::String* outText)
 {
-    s_isProfilerRunning = false;
-
-    JSC::SamplingProfiler* profiler = vm.samplingProfiler();
-    if (!profiler) {
-        if (outJSON) *outJSON = WTF::String();
-        if (outText) *outText = WTF::String();
-        return;
-    }
-
-    // JSLock is re-entrant, so always acquiring it handles both JS and shutdown contexts
-    JSC::JSLockHolder locker(vm);
-
-    // Defer GC while we're working with stack traces
-    JSC::DeferGC deferGC(vm);
-
-    // Pause the profiler while holding the lock
-    auto& lock = profiler->getLock();
-    WTF::Locker profilerLocker { lock };
-    profiler->pause();
-
-    // releaseStackTraces() calls processUnverifiedStackTraces() internally
-    auto stackTraces = profiler->releaseStackTraces();
-    profiler->clearData();
-
-    // If neither output is requested, we're done
     if (!outJSON && !outText)
         return;
 
-    if (stackTraces.isEmpty()) {
-        if (outJSON) *outJSON = generateEmptyProfileJSON();
-        if (outText) *outText = "No samples collected.\n"_s;
-        return;
-    }
-
-    // Sort traces by timestamp once for both formats
+    // Sort traces by timestamp once for both formats, including only those in
+    // this owner's window.
     WTF::Vector<size_t> sortedIndices;
     sortedIndices.reserveInitialCapacity(stackTraces.size());
     for (size_t i = 0; i < stackTraces.size(); i++) {
-        sortedIndices.append(i);
+        if (stackTraces[i].timestamp >= minTimestamp)
+            sortedIndices.append(i);
     }
     std::sort(sortedIndices.begin(), sortedIndices.end(), [&stackTraces](size_t a, size_t b) {
         return stackTraces[a].timestamp < stackTraces[b].timestamp;
     });
+
+    if (sortedIndices.isEmpty()) {
+        if (outJSON) *outJSON = generateEmptyProfileJSON(startTimeMicros);
+        if (outText) *outText = "No samples collected.\n"_s;
+        return;
+    }
 
     // Generate JSON format if requested
     if (outJSON) {
@@ -357,8 +366,8 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
         WTF::Vector<int> samples;
         WTF::Vector<long long> timeDeltas;
 
-        double startTime = s_profilingStartTime;
-        double lastTime = s_profilingStartTime;
+        double startTime = startTimeMicros;
+        double lastTime = startTimeMicros;
 
         for (size_t idx : sortedIndices) {
             auto& stackTrace = stackTraces[idx];
@@ -617,14 +626,14 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
 
     // Generate text format if requested
     if (outText) {
-        double startTime = s_profilingStartTime;
-        double lastTime = s_profilingStartTime;
+        double startTime = startTimeMicros;
+        double lastTime = startTimeMicros;
         double endTime = startTime;
 
         WTF::HashMap<WTF::String, FunctionStats> functionStatsMap;
 
         long long totalTimeUs = 0;
-        int totalSamples = static_cast<int>(stackTraces.size());
+        int totalSamples = static_cast<int>(sortedIndices.size());
 
         for (size_t idx : sortedIndices) {
             auto& stackTrace = stackTraces[idx];
@@ -926,6 +935,85 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
 
         *outText = output.toString();
     }
+}
+
+void releaseCPUProfilerOwner(JSC::VM& vm, uint32_t ownerId, WTF::String* outJSON, WTF::String* outText)
+{
+    size_t ownerIndex = WTF::notFound;
+    for (size_t i = 0; i < s_profilerOwners.size(); i++) {
+        if (s_profilerOwners[i].id == ownerId) {
+            ownerIndex = i;
+            break;
+        }
+    }
+    if (ownerIndex == WTF::notFound) {
+        if (outJSON) *outJSON = WTF::String();
+        if (outText) *outText = WTF::String();
+        return;
+    }
+    ProfilerOwner owner = s_profilerOwners[ownerIndex];
+    s_profilerOwners.removeAt(ownerIndex);
+    bool lastOwner = s_profilerOwners.isEmpty();
+
+    JSC::SamplingProfiler* profiler = vm.samplingProfiler();
+    if (!profiler) {
+        if (outJSON) *outJSON = generateEmptyProfileJSON(owner.startTimeMicros);
+        if (outText) *outText = "No samples collected.\n"_s;
+        s_retainedTraces.clear();
+        return;
+    }
+
+    // JSLock is re-entrant, so always acquiring it handles both JS and shutdown contexts
+    JSC::JSLockHolder locker(vm);
+    JSC::DeferGC deferGC(vm);
+
+    auto& lock = profiler->getLock();
+    WTF::Locker profilerLocker { lock };
+
+    // Drain newly-collected traces into the retained buffer. releaseStackTraces()
+    // moves m_stackTraces out but leaves m_liveCellPointers intact, so the
+    // executables/callees referenced by s_retainedTraces stay GC-live until the
+    // final owner's clearData() below.
+    {
+        auto newTraces = profiler->releaseStackTraces();
+        s_retainedTraces.reserveCapacity(s_retainedTraces.size() + newTraces.size());
+        for (auto& trace : newTraces)
+            s_retainedTraces.append(WTF::move(trace));
+    }
+
+    buildProfileOutput(vm, s_retainedTraces, owner.startTimestamp, owner.startTimeMicros, outJSON, outText);
+
+    if (lastOwner) {
+        profiler->pause();
+        profiler->clearData();
+        s_retainedTraces.clear();
+    } else {
+        // Bound memory: drop traces older than every remaining owner's window.
+        // StackTrace is move-constructible but not move-assignable, so rebuild
+        // rather than compact in place.
+        MonotonicTime minStart = s_profilerOwners[0].startTimestamp;
+        for (size_t i = 1; i < s_profilerOwners.size(); i++)
+            minStart = std::min(minStart, s_profilerOwners[i].startTimestamp);
+        WTF::Vector<JSC::SamplingProfiler::StackTrace> survivors;
+        survivors.reserveInitialCapacity(s_retainedTraces.size());
+        for (auto& t : s_retainedTraces) {
+            if (t.timestamp >= minStart)
+                survivors.append(WTF::move(t));
+        }
+        s_retainedTraces = WTF::move(survivors);
+    }
+}
+
+void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
+{
+    if (s_implicitProfilerOwner == 0) {
+        if (outJSON) *outJSON = WTF::String();
+        if (outText) *outText = WTF::String();
+        return;
+    }
+    uint32_t owner = s_implicitProfilerOwner;
+    s_implicitProfilerOwner = 0;
+    releaseCPUProfilerOwner(vm, owner, outJSON, outText);
 }
 
 } // namespace Bun

@@ -2079,7 +2079,11 @@ describe("maxRedirects", () => {
   });
 
   it("rejects once the chain exceeds maxRedirects", async () => {
-    expect(fetch(`${server.url}hop/0`, { maxRedirects: 2 })).rejects.toThrow("redirected too many times");
+    await expect(fetch(`${server.url}hop/0`, { maxRedirects: 2 })).rejects.toMatchObject({
+      name: "TypeError",
+      message: "fetch failed",
+      code: "TooManyRedirects",
+    });
   });
 
   it("follows the chain when maxRedirects is large enough", async () => {
@@ -2673,7 +2677,7 @@ it("rejects a response with an unparseable Content-Length instead of treating it
       .then(res => res.text())
       .catch(e => e);
     expect(result).toBeInstanceOf(Error);
-    expect((result as any).code).toBe("InvalidContentLength");
+    expect((result as any).code).toBe("UND_ERR_RES_CONTENT_LENGTH_MISMATCH");
   }
 
   // A well-formed Content-Length is still delivered normally.

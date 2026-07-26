@@ -72,7 +72,7 @@ describe.skipIf(skip)("fetch() under injected syscall faults (http)", () => {
     });
     expect(r.signal).toBeNull();
     expect(r.ok).toBe(false);
-    expect(["ECONNRESET", "ConnectionClosed"]).toContain(r.code);
+    expect(r.code).toBe("ECONNRESET");
   });
 
   test("recv → short reads (1 byte) deliver complete body", async () => {
@@ -127,7 +127,7 @@ describe.skipIf(skip)("fetch() under injected syscall faults (http)", () => {
     expect(r.signal).toBeNull();
     expect(r.ok).toBe(false);
     // fetch wraps connect failure as a generic open-socket error.
-    expect(["ECONNREFUSED", "FailedToOpenSocket", "ConnectionRefused"]).toContain(r.code);
+    expect(["ECONNREFUSED", "FailedToOpenSocket"]).toContain(r.code);
   });
 
   test("recv → 0 (peer closed) before any byte rejects cleanly (no hang)", async () => {

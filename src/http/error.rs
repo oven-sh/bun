@@ -327,6 +327,32 @@ impl bun_core::output::ErrName for Error {
     }
 }
 
+impl Error {
+    /// Node.js / undici-compatible errno-style code string for `err.code`.
+    /// Falls back to the Bun label for variants with no established mapping.
+    #[allow(clippy::trivially_copy_pass_by_ref)]
+    pub fn errno_code(&self) -> &'static str {
+        match self {
+            Self::ConnectionRefused => "ECONNREFUSED",
+            Self::ConnectionClosed => "ECONNRESET",
+            Self::Timeout => "ETIMEDOUT",
+            Self::InvalidHTTPResponse => "HPE_INVALID_CHUNK_SIZE",
+            Self::ResponseHeadersTooLarge => "UND_ERR_HEADERS_OVERFLOW",
+            Self::InvalidContentLength => "UND_ERR_RES_CONTENT_LENGTH_MISMATCH",
+            Self::HTTP2ContentLengthMismatch | Self::HTTP3ContentLengthMismatch => {
+                "UND_ERR_RES_CONTENT_LENGTH_MISMATCH"
+            }
+            Self::Zlib(_) => "Z_DATA_ERROR",
+            Self::Picohttp(bun_picohttp::ParseResponseError::MalformedHttpResponse) => {
+                "HPE_INVALID_CONSTANT"
+            }
+            Self::Cert(e) => <&'static str>::from(e),
+            Self::Sys(e) => <&'static str>::from(e),
+            _ => self.name(),
+        }
+    }
+}
+
 impl From<bun_zlib::ZlibError> for Error {
     fn from(e: bun_zlib::ZlibError) -> Self {
         match e {

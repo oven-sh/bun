@@ -29,6 +29,8 @@ try {
   await res.text();
   expect(true).toBe("unreacheable");
 } catch (err) {
+  expect(err.name).toBe("TypeError");
+  expect(err.message).toBe("fetch failed");
   expect(err.code).toBe("FailedToOpenSocket");
-  expect(err.message).toBe("Was there a typo in the url or port?");
+  expect(err.cause?.message).toBe("Was there a typo in the url or port?");
 }

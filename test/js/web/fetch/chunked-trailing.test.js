@@ -670,6 +670,6 @@ it("proper error if missing CRLF after chunk data", async () => {
     await fetch(`http://localhost:${address.port}`).then(res => res.text());
     expect.unreachable();
   } catch (e) {
-    expect(e?.code).toBe("InvalidHTTPResponse");
+    expect(e?.code).toBe("HPE_INVALID_CHUNK_SIZE");
   }
 });

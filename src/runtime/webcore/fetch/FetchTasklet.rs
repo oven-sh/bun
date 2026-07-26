@@ -111,6 +111,12 @@ pub struct FetchTasklet {
     // must be stored because AbortSignal stores reason weakly
     pub abort_reason: StrongOptional,
 
+    /// ErrorInstance created at the JS-thread `fetch()` call purely to snapshot
+    /// the caller's synchronous stack. Transplanted onto the rejection
+    /// `TypeError('fetch failed')`, which is otherwise stackless (minted from
+    /// an event-loop task with an empty interpreter stack).
+    pub caller_stack_source: StrongOptional,
+
     // custom checkServerIdentity
     pub check_server_identity: StrongOptional,
     pub reject_unauthorized: bool,
@@ -486,6 +492,7 @@ impl FetchTasklet {
         self.request_body.detach();
 
         self.abort_reason.deinit();
+        self.caller_stack_source.deinit();
         self.check_server_identity.deinit();
         self.clear_abort_signal();
         // Clear the sink only after the requested ended otherwise we would potentialy lose the last chunk
@@ -1304,6 +1311,12 @@ impl FetchTasklet {
             BunString::EMPTY
         };
 
+        // An error after response headers arrived surfaces on the body reader,
+        // where undici uses `TypeError('terminated')`; before headers the fetch
+        // promise itself rejects with `TypeError('fetch failed')`.
+        let terminated = self.metadata.is_some();
+        let stack_source = core::mem::take(&mut self.caller_stack_source);
+
         // The hostname never resolved: report the resolver error (`ENOTFOUND`,
         // ...) with `syscall`/`hostname`, the same shape `node:dns` produces,
         // rather than a generic connect-failure message. `dns_error` is the
@@ -1322,15 +1335,15 @@ impl FetchTasklet {
                     hostname,
                 );
                 err.path = path.into();
-                return BodyValueError::SystemError(err);
+                return BodyValueError::FetchFailed {
+                    cause: err,
+                    terminated,
+                    stack_source,
+                };
             }
         }
 
-        let code = if fail == http::Error::ConnectionClosed {
-            BunString::static_("ECONNRESET")
-        } else {
-            BunString::static_(fail.name())
-        };
+        let code = BunString::static_(fail.errno_code());
 
         let message = match fail {
             http::Error::ConnectionClosed => BunString::static_(
@@ -1562,7 +1575,11 @@ impl FetchTasklet {
             ..Default::default()
         };
 
-        BodyValueError::SystemError(fetch_error)
+        BodyValueError::FetchFailed {
+            cause: fetch_error,
+            terminated,
+            stack_source,
+        }
     }
 
     pub(crate) fn on_readable_stream_available(
@@ -1897,6 +1914,7 @@ impl FetchTasklet {
             signal_store: http::signals::Store::default(),
             has_schedule_callback: AtomicBool::new(false),
             abort_reason: StrongOptional::empty(),
+            caller_stack_source: fetch_options.caller_stack_source,
             check_server_identity: fetch_options.check_server_identity,
             reject_unauthorized: fetch_options.reject_unauthorized,
             upgraded_connection: fetch_options.upgraded_connection,
@@ -2564,6 +2582,7 @@ pub struct FetchOptions {
     // Custom Hostname
     pub hostname: Option<Box<[u8]>>,
     pub check_server_identity: StrongOptional,
+    pub caller_stack_source: StrongOptional,
     pub unix_socket_path: ZigStringSlice,
     pub ssl_config: Option<http::ssl_config::SharedPtr>,
     pub upgraded_connection: bool,
@@ -2600,6 +2619,7 @@ impl Default for FetchOptions {
             global_this: None,
             hostname: None,
             check_server_identity: StrongOptional::empty(),
+            caller_stack_source: StrongOptional::empty(),
             unix_socket_path: ZigStringSlice::EMPTY,
             ssl_config: None,
             upgraded_connection: false,

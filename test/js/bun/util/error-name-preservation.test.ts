@@ -45,11 +45,21 @@ describe("native error name/code preservation", () => {
       err = e;
     }
     expect(err).toBeDefined();
-    // The exact message string from the fetch error match arm (was a
-    // ~40-arm `e if e == err!(X)` guard chain, now a real match).
-    expect({ code: err.code, message: String(err.message) }).toEqual({
-      code: "ConnectionRefused",
-      message: "Unable to connect. Is the computer able to access the url?",
+    // The WHATWG fetch shape: outer TypeError('fetch failed') with the
+    // underlying error as `.cause`. The on_reject match-arm message lives on
+    // the cause; the outer error also mirrors `.code` for compatibility.
+    expect({
+      name: err.name,
+      code: err.code,
+      message: String(err.message),
+      causeCode: err.cause?.code,
+      causeMessage: String(err.cause?.message),
+    }).toEqual({
+      name: "TypeError",
+      code: "ECONNREFUSED",
+      message: "fetch failed",
+      causeCode: "ECONNREFUSED",
+      causeMessage: "Unable to connect. Is the computer able to access the url?",
     });
   });
 });

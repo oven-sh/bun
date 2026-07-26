@@ -202,7 +202,7 @@ it.each([
       () => ({ rejected: false as const, code: undefined }),
       e => ({ rejected: true as const, code: e.code }),
     );
-    expect(outcome).toEqual({ rejected: true, code: "Malformed_HTTP_Response" });
+    expect(outcome).toEqual({ rejected: true, code: "HPE_INVALID_CONSTANT" });
     expect(requests).toHaveLength(1);
   } finally {
     server.close();

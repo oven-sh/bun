@@ -422,7 +422,14 @@ test("unresolvable hostname rejects with the resolver error", async () => {
       `const out = [];
        const report = p => p.then(
          () => "resolved",
-         ({ name, code, syscall, hostname, message }) => ({ name, code, syscall, hostname, message }),
+         ({ name, code, cause }) => ({
+           name,
+           code,
+           causeCode: cause?.code,
+           syscall: cause?.syscall,
+           hostname: cause?.hostname,
+           message: cause?.message,
+         }),
        );
        for (let i = 0; i < 3; i++) {
          out.push(await report(fetch("http://" + ${JSON.stringify(host)} + "/")));
@@ -448,8 +455,9 @@ test("unresolvable hostname rejects with the resolver error", async () => {
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   const notFound = (hostname: string) => ({
-    name: "Error",
+    name: "TypeError",
     code: "ENOTFOUND",
+    causeCode: "ENOTFOUND",
     syscall: "getaddrinfo",
     hostname,
     message: `getaddrinfo ENOTFOUND ${hostname}`,
@@ -508,11 +516,11 @@ test("error on redirect", async () => {
   }).listen(0);
   await once(server, "listening");
 
-  expect(
+  await expect(
     fetch(`http://localhost:${server.address().port}`, {
       redirect: "error",
     }),
-  ).rejects.toThrow(/UnexpectedRedirect/);
+  ).rejects.toMatchObject({ name: "TypeError", code: "UnexpectedRedirect" });
 });
 
 test("Receiving non-Latin1 headers", async () => {
@@ -674,5 +682,5 @@ test("a response with an obs-fold header continuation is rejected, not silently 
     r => ({ rejected: false as const, setCookie: r.headers.get("set-cookie") }),
     e => ({ rejected: true as const, code: e.code }),
   );
-  expect(outcome).toEqual({ rejected: true, code: "Malformed_HTTP_Response" });
+  expect(outcome).toEqual({ rejected: true, code: "HPE_INVALID_CONSTANT" });
 });

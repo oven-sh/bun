@@ -2353,6 +2353,62 @@ JSC::EncodedJSValue JSGlobalObject__createOutOfMemoryError(JSC::JSGlobalObject* 
     return JSValue::encode(exception);
 }
 
+// Create a bare Error whose only purpose is to snapshot the caller's
+// synchronous stack. Used by fetch() to record the call site so the later
+// event-loop-created rejection error can point at user code.
+extern "C" JSC::EncodedJSValue Bun__captureCallerStackError(JSC::JSGlobalObject* globalObject)
+{
+    return JSC::JSValue::encode(JSC::createError(globalObject, "fetch"_s));
+}
+
+// Wrap a fetch network error as the WHATWG / undici shape: an outer
+// TypeError('fetch failed' | 'terminated') carrying the underlying error as
+// `.cause`. The outer error also gets `.code` mirrored from the cause so
+// existing `err.code === "ECONNREFUSED"` checks keep working.
+//
+// `stackSourceValue` is an ErrorInstance captured at the original fetch()
+// call site; its frames are transplanted onto the new TypeError so `.stack`
+// points at the caller instead of being empty (the TypeError is created from
+// an event-loop task where the interpreter stack is empty).
+extern "C" JSC::EncodedJSValue Bun__createFetchFailedTypeError(
+    JSC::JSGlobalObject* globalObject,
+    JSC::EncodedJSValue causeValue,
+    JSC::EncodedJSValue stackSourceValue,
+    bool terminated)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto clientData = WebCore::clientData(vm);
+
+    JSC::JSObject* result = JSC::createTypeError(globalObject,
+        terminated ? "terminated"_s : "fetch failed"_s);
+
+    JSC::JSValue cause = JSC::JSValue::decode(causeValue);
+    if (cause && !cause.isEmpty() && !cause.isUndefined()) {
+        result->putDirect(vm, vm.propertyNames->cause, cause, JSC::PropertyAttribute::DontEnum | 0);
+
+        if (auto* causeObj = cause.getObject()) {
+            JSC::JSValue code = causeObj->getDirect(vm, clientData->builtinNames().codePublicName());
+            if (code && !code.isUndefined())
+                result->putDirect(vm, clientData->builtinNames().codePublicName(), code, 0);
+        }
+    }
+
+    JSC::JSValue stackSrc = JSC::JSValue::decode(stackSourceValue);
+    if (auto* srcInstance = dynamicDowncast<JSC::ErrorInstance>(stackSrc)) {
+        if (auto* destInstance = dynamicDowncast<JSC::ErrorInstance>(result)) {
+            if (auto* srcTrace = srcInstance->stackTrace(); srcTrace && !srcTrace->isEmpty()) {
+                // Copy (not move): the source may be shared via ValueError::dupe
+                // when a Response body is cloned.
+                WTF::Vector<JSC::StackFrame> frames;
+                frames.appendVector(*srcTrace);
+                destInstance->setStackFrames(vm, WTF::move(frames));
+            }
+        }
+    }
+
+    return JSC::JSValue::encode(result);
+}
+
 JSC::EncodedJSValue SystemError__toErrorInstance(const SystemError* arg0, JSC::JSGlobalObject* globalObject)
 {
     SystemError err = *arg0;

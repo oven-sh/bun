@@ -460,12 +460,12 @@ describe.concurrent("Server", () => {
     {
       expect(
         async () => await fetch(server.url, { tls: { rejectUnauthorized: true } }).then(res => res.text()),
-      ).toThrow("self signed certificate");
+      ).toThrow("fetch failed");
     }
 
     {
       using _ = rejectUnauthorizedScope(true);
-      expect(async () => await fetch(server.url).then(res => res.text())).toThrow("self signed certificate");
+      expect(async () => await fetch(server.url).then(res => res.text())).toThrow("fetch failed");
     }
 
     {

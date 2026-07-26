@@ -1224,8 +1224,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     _ => None,
                 };
                 p.visit_expr_in_out(&mut e_.value, ExprIn::default());
-                // `delete <identifier>` is a strict-mode early error; wrap as `(0, x)`
-                // when define substitution produced an identifier the source didn't name.
+                // `delete <ident>` is a strict-mode early error; wrap substituted operands.
                 if let Data::EIdentifier(id) = e_.value.data {
                     let name_after =
                         p.symbols[id.ref_.inner_index() as usize].original_name.slice();

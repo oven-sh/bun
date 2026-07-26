@@ -1497,8 +1497,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 // Track "use strict" directives
                                 let scope = p.current_scope_mut();
                                 scope.strict_mode = StrictModeKind::ExplicitStrictMode;
-                                // A "use strict" directive in a function body makes the
-                                // parameter list strict-mode code too (ECMA-262 11.2.2).
+                                // A body directive makes the parameter list strict too.
                                 if let Some(mut parent) = scope.parent
                                     && parent.kind == js_ast::scope::Kind::FunctionArgs
                                 {

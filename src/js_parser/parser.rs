@@ -1381,9 +1381,7 @@ impl Default for FnOrArrowDataParse {
 }
 
 impl FnOrArrowDataParse {
-    /// True when `await` must be rejected as an identifier at the current position.
-    /// At top level with `AllowExpr` the file may still be a Script, so `await`
-    /// stays usable as a binding/class/property name there.
+    /// `await` must be rejected as an identifier here (top-level TLA sniff excluded).
     pub fn await_is_keyword_here(&self) -> bool {
         match self.allow_await {
             AwaitOrYield::AllowIdent => false,

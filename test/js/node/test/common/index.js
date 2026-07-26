@@ -177,6 +177,13 @@ if (process.argv.length === 2 &&
         // does not exist, so don't re-spawn just to pass the flag through.
         continue;
       }
+      if (process.versions.bun &&
+          /^--(permission(-audit)?|experimental-permission|allow-(fs-read|fs-write|child-process|worker|addons|wasi|net|inspector|ffi))(=|$)/.test(flag)) {
+        // Bun refuses to start under Node's permission-model flags. Vendored
+        // tests that carry them are granting a capability the test needs; under
+        // Bun that capability is never restricted, so drop the flag.
+        continue;
+      }
       if (flag === "test") {
         process.env.SKIP_FLAG_CHECK = "1";
         break;
@@ -188,6 +195,7 @@ if (process.argv.length === 2 &&
       );
       const args = [...flags, ...process.execArgv, ...process.argv.slice(1)];
       const options = { encoding: 'utf8', stdio: 'inherit' };
+      if (process.versions.bun) options.env = { ...process.env, BUN_IGNORE_NODE_PERMISSION_FLAGS: '1' };
       const result = spawnSync(process.execPath, args, options);
       if (result.signal) {
         process.kill(process.pid, result.signal);

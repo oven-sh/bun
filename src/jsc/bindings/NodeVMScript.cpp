@@ -317,18 +317,13 @@ bool checkForTermination(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Th
     bool sigint = receiver->getSigintReceived();
     bool timedOut = watchdog && watchdog->timedOut();
     if (!sigint && !timedOut) {
-        // A foreign termination (worker.terminate(), process.exit() inside the
-        // worker, or an enclosing evaluation's watchdog/SIGINT). Leave the
-        // request set and propagate the uncatchable TerminationException so
-        // whoever raised it handles the unwind.
+        // Not ours: leave the request set and propagate the uncatchable
+        // TerminationException to whoever raised it.
         scope.throwException(globalObject, vm.ensureTerminationException());
         return true;
     }
 
     vm.drainMicrotasksForGlobalObject(globalObject);
-    // The termination may have fired inside an afterEvaluate microtask
-    // checkpoint, leaving the termination exception pending; clear it so
-    // the ERR_SCRIPT_EXECUTION_* error below replaces it.
     if (vm.hasPendingTerminationException())
         DECLARE_TOP_EXCEPTION_SCOPE(vm).clearException();
     vm.clearHasTerminationRequest();

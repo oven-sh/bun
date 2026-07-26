@@ -6,15 +6,10 @@
 
 namespace Bun {
 
-// RAII wrapper around the JSC Watchdog for a single node:vm `{timeout}`
-// evaluation. Installs a ShouldTerminateCallback that records whether the
-// watchdog itself raised the termination, so the post-evaluation check can
-// tell its own timeout apart from a foreign termination (worker.terminate(),
-// process.exit() inside the worker, or an enclosing evaluation's watchdog).
-//
-// Scopes nest strictly, tracked through a thread_local innermost pointer so
-// disarm() can re-install the enclosing scope's callback when restoring the
-// previous limit.
+// Arms the JSC Watchdog for one node:vm `{timeout}` evaluation and records,
+// via ShouldTerminateCallback, whether the watchdog itself fired. Lets
+// checkForTermination tell its own timeout apart from a foreign termination
+// (worker.terminate(), process.exit(), an enclosing evaluation's watchdog).
 class NodeVMWatchdogScope {
     WTF_MAKE_NONCOPYABLE(NodeVMWatchdogScope);
     WTF_MAKE_NONMOVABLE(NodeVMWatchdogScope);

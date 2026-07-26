@@ -98,9 +98,7 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
             nodeVmGlobalObject->drainOwnMicrotasks();
             if (watchdog)
                 watchdog->disarm();
-            // The drain may legitimately leave the termination exception
-            // pending; observe it so the exception-check validator is
-            // satisfied before the TOP scope inside checkForTermination.
+            // Satisfy the exception-check validator before checkForTermination's TOP scope.
             std::ignore = scope.exception();
             if (checkForTermination(vm, globalObject, scope, this, watchdog ? &*watchdog : nullptr))
                 return {};
@@ -225,16 +223,11 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
     if (watchdog)
         watchdog->disarm();
 
-    // Evaluation (or the afterEvaluate drain) may leave an exception pending;
-    // observe it so the exception-check validator is satisfied before the TOP
-    // scope inside checkForTermination.
+    // Satisfy the exception-check validator before checkForTermination's TOP scope.
     std::ignore = scope.exception();
     if (checkForTermination(vm, globalObject, scope, this, watchdog ? &*watchdog : nullptr)) {
-        // A foreign termination leaves the uncatchable TerminationException
-        // pending. Do not record that singleton as this module's evaluation
-        // error: re-throwing it later from the Status::Errored branch is
-        // uncatchable and trips VM::setException's isTerminationException
-        // assert when no termination request is armed.
+        // Never store the TerminationException singleton as m_evaluationException;
+        // re-throwing it later is uncatchable and asserts in VM::setException.
         if (vm.hasPendingTerminationException())
             return {};
     } else {

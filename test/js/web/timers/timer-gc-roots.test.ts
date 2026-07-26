@@ -167,23 +167,33 @@ describe("AbortSignal.timeout is released when its wrapper is collected", () => 
     expect(exitCode).toBe(0);
   });
 
-  test("signals with an abort listener still fire", async () => {
-    const src = `
-      (function () {
-        const s = AbortSignal.timeout(20);
-        s.addEventListener("abort", () => console.log("ok:" + s.aborted));
-      })();
-      Bun.gc(true);
-      await new Promise(r => setTimeout(r, 200));
-    `;
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", src],
-      env: bunEnv,
-      stderr: "pipe",
+  for (const { name, arm } of [
+    { name: "with an abort listener", arm: `const s = AbortSignal.timeout(20);` },
+    {
+      name: "used as a source of AbortSignal.any()",
+      arm: `const s = AbortSignal.any([AbortSignal.timeout(20)]);`,
+    },
+  ]) {
+    test(`signals ${name} still fire`, async () => {
+      const src = `
+        (function () {
+          ${arm}
+          s.addEventListener("abort", () => { console.log("ok:" + s.aborted); process.exit(0); });
+        })();
+        Bun.gc(true);
+        // AbortSignal.timeout does not ref the event loop, so a ref'd timer
+        // must keep the process alive past the 20 ms deadline.
+        setTimeout(() => { console.log("never fired"); process.exit(1); }, 2000);
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", src],
+        env: bunEnv,
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("ok:true\n");
+      expect(exitCode).toBe(0);
     });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    expect(stdout).toBe("ok:true\n");
-    expect(exitCode).toBe(0);
-  });
+  }
 });

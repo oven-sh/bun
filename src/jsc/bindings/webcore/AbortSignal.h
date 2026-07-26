@@ -127,6 +127,7 @@ public:
     // WeakListHashSet::isEmptyIgnoringNullReferences() prunes dead entries, destroying WeakPtrs whose
     // single-threaded impls (and the nodes holding them) may only be released on the owning thread.
     bool hasAliveSourceSignals() const { return m_sourceSignals.begin() != m_sourceSignals.end(); }
+    bool hasAliveDependentSignals() const { return m_dependentSignals.begin() != m_dependentSignals.end(); }
 
     // https://github.com/oven-sh/bun/issues/4517
     void incrementPendingActivityCount() { ++pendingActivityCount; }

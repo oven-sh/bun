@@ -67,10 +67,10 @@ Ref<AbortSignal> AbortSignal::timeout(ScriptExecutionContext& context, uint64_t 
 {
     auto signal = adoptRef(*new AbortSignal(&context));
     // The native timer holds a raw back-pointer to the signal but no refcount.
-    // The JS wrapper keeps the signal alive (and is itself kept alive by
-    // JSAbortSignalOwner::isReachableFromOpaqueRoots while an abort listener
-    // is registered). When no listener is interested, collecting the wrapper
-    // destroys the signal and ~AbortSignal() cancels and frees the timer.
+    // The JS wrapper is the sole owner; isReachableFromOpaqueRoots keeps it
+    // alive while an abort listener or an AbortSignal.any() dependent observes
+    // the timeout. With no observer, collecting the wrapper destroys the
+    // signal and ~AbortSignal() cancels and frees the timer.
     signal->m_timeout = AbortSignal__Timeout__create(bunVM(context.vm()), signal.ptr(), milliseconds);
     ASSERT(signal->m_timeout);
     return signal;

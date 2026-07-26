@@ -46,12 +46,18 @@ bool JSAbortSignalOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> ha
             return true;
         }
 
-        if (abortSignal.hasAbortEventListener()) {
-            if (abortSignal.hasActiveTimeoutTimer()) {
+        if (abortSignal.hasActiveTimeoutTimer()) {
+            // A dependent AbortSignal.any() result observes this signal via
+            // m_dependentSignals without registering an abort listener, so
+            // treat it as an observer alongside JS/native listeners.
+            if (abortSignal.hasAbortEventListener() || abortSignal.hasAliveDependentSignals()) {
                 if (reason) [[unlikely]]
-                    *reason = "Has Timeout And Abort Event Listener"_s;
+                    *reason = "Has Observed Timeout"_s;
                 return true;
             }
+        }
+
+        if (abortSignal.hasAbortEventListener()) {
             if (abortSignal.isDependent()) {
                 // This runs on GC marker threads, so it must not mutate the signal:
                 // sourceSignals().isEmptyIgnoringNullReferences() prunes dead entries.

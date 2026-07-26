@@ -3433,11 +3433,11 @@ impl TestCommand {
                     vm.on_before_exit();
                 } else if first_last.last
                     && repeat_index + 1 == repeat_count
-                    && reporter.worker_ipc_file_idx.is_none()
+                    && !vm.test_isolation_enabled
                     && has_pending_loop_work(vm)
                 {
-                    // Once, at end of run: liveness is VM-wide and a --parallel
-                    // worker's own IPC socket would otherwise count.
+                    // Default serial mode only: --isolate/--parallel tear down
+                    // per-file handles (and a worker's IPC socket would count).
                     bun_core::note!(
                         "a test left a timer or open handle that is still pending after the last test finished. `bun test` will not wait for it.",
                     );

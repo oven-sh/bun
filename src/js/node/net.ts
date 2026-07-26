@@ -361,6 +361,14 @@ function onConnectEnd() {
   }
 }
 
+// A write queued before the TLS handshake completed can never be sent once the
+// peer has closed. Node's TLSWrap fails these with ECANCELED from
+// InvokeQueued() during wrap destruction; mirror that so the write callback's
+// error does not mask the socket-level ECONNRESET from onConnectEnd.
+function tlsWriteCanceled() {
+  return new ErrnoException(UV_ECANCELED, "write", "Canceled because of SSL destruction");
+}
+
 /**
  * Build the Error for a handshake that failed before completing. A fatal SSL
  * protocol error (wrong version number, bad record, ...) carries the OpenSSL
@@ -665,7 +673,12 @@ function SocketEmitEndNT(self, _err?) {
   const pendingWrite = self[kwriteCallback];
   if (pendingWrite && (self.destroyed || _err)) {
     self[kwriteCallback] = null;
-    pendingWrite(_err ?? $ERR_SOCKET_CLOSED());
+    if (self.secureConnecting && !self._hadError) {
+      onConnectEnd.$call(self);
+      pendingWrite(tlsWriteCanceled());
+    } else {
+      pendingWrite(_err ?? $ERR_SOCKET_CLOSED());
+    }
   }
 }
 
@@ -1366,7 +1379,17 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
     const pendingWrite = self[kwriteCallback];
     if (pendingWrite) {
       self[kwriteCallback] = null;
-      pendingWrite($ERR_SOCKET_CLOSED());
+      if (self.secureConnecting && !self._hadError) {
+        // 'end' (and so onConnectEnd) is deferred to nextTick; failing the
+        // write here would destroy the stream first and suppress it, leaving
+        // ERR_SOCKET_CLOSED as the socket error. Run the mid-handshake
+        // disconnect logic now so the socket is destroyed with ECONNRESET,
+        // then report the queued write the way Node's TLSWrap does.
+        onConnectEnd.$call(self);
+        pendingWrite(tlsWriteCanceled());
+      } else {
+        pendingWrite($ERR_SOCKET_CLOSED());
+      }
     }
   },
   handshake(socket, success, verifyError) {

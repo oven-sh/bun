@@ -237,6 +237,11 @@ impl<'a> HTMLLoader<'a> {
             Some(i) => &original[i..],
             None => b"",
         };
+        // A `?query` appended to a data: URI lands in the base64 body; keep only `#fragment`.
+        let fragment: &[u8] = match strings::index_of_char(suffix, b'#') {
+            Some(i) => &suffix[i as usize..],
+            None => b"",
+        };
         let with_suffix = |url: &[u8], suffix: &[u8]| -> RewrittenUrl {
             if suffix.is_empty() {
                 return RewrittenUrl::Value(url.to_vec());
@@ -275,28 +280,18 @@ impl<'a> HTMLLoader<'a> {
         let url_for_css =
             parse_graph.ast.items_url_for_css()[import_record.source_index.get() as usize];
 
-        // In standalone HTML mode, inline assets as data: URIs
-        if self.compile_to_standalone_html && !url_for_css.is_empty() {
-            let fragment: &[u8] = match strings::index_of_char(suffix, b'#') {
-                Some(i) => &suffix[i as usize..],
-                None => b"",
-            };
+        // Standalone HTML mode inlines assets as data: URIs. Otherwise prefer the
+        // emitted file's unique key, falling back to the data: URI when the asset
+        // was CSS-inlined-only, so the raw source path never reaches the output.
+        if !url_for_css.is_empty()
+            && (self.compile_to_standalone_html || unique_key_for_additional_files.is_empty())
+        {
             return with_suffix(url_for_css, fragment);
         }
 
         if !unique_key_for_additional_files.is_empty() {
             // Replace the external href/src with the unique key so that we later will rewrite it to the final URL or pathname
             return with_suffix(unique_key_for_additional_files, suffix);
-        }
-
-        // The asset was inlined for CSS and not emitted as a file; reuse its
-        // data: URI here rather than leaving the raw source path in the output.
-        if !url_for_css.is_empty() {
-            let fragment: &[u8] = match strings::index_of_char(suffix, b'#') {
-                Some(i) => &suffix[i as usize..],
-                None => b"",
-            };
-            return with_suffix(url_for_css, fragment);
         }
 
         RewrittenUrl::Unchanged

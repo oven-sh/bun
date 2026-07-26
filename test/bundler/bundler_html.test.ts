@@ -1118,15 +1118,9 @@ body {
     onAfterBundle(api) {
       const html = api.readFile("out/index.html");
       // HTML got the emitted asset path, not the raw "./tiny.png"
-      expect(html).not.toContain('src="./tiny.png"');
       const img = html.match(/<img src="([^"]+)">/)![1];
-      // Either the hashed asset path or (as a fallback) the inlined data: URL;
-      // the source path is never left raw.
-      expect(img === "./tiny.png").toBe(false);
-      if (!img.startsWith("data:")) {
-        expect(img).toMatch(/tiny-[a-z0-9]+\.png$/);
-        expect(api.readFile("out/" + img.replace(/^\.\//, ""))).toBe("x");
-      }
+      expect(img).toMatch(/^\.\/tiny-[a-z0-9]+\.png$/);
+      expect(api.readFile("out/" + img.replace(/^\.\//, ""))).toBe("x");
       // CSS kept its data: URL inlining
       const cssHref = html.match(/href="([^"]+\.css)"/)![1];
       expect(api.readFile("out/" + cssHref.replace(/^\.\//, ""))).toContain("data:");

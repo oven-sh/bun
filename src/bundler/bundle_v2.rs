@@ -4178,7 +4178,8 @@ pub mod bv2_impl {
                 {
                     let mut seen: bun_collections::StringHashMap<(u64, usize)> =
                         bun_collections::StringHashMap::default();
-                    let mut had_collision = false;
+                    let mut duplicates: bun_collections::StringArrayHashMap<Vec<usize>> =
+                        bun_collections::StringArrayHashMap::default();
                     for (i, out) in additional_output_files.iter().enumerate() {
                         let gop = seen.get_or_put(&out.dest_path)?;
                         if !gop.found_existing {
@@ -4189,16 +4190,24 @@ pub mod bv2_impl {
                         if prev_hash == out.hash {
                             continue;
                         }
-                        had_collision = true;
+                        let dup = duplicates.get_or_put(&out.dest_path)?;
+                        if !dup.found_existing {
+                            dup.value_ptr.push(prev_i);
+                        }
+                        dup.value_ptr.push(i);
+                    }
+                    if duplicates.count() > 0 {
                         let mut msg: Vec<u8> = Vec::new();
                         let _ = writeln!(&mut msg, "Multiple files share the same output path");
-                        let _ = writeln!(&mut msg, "  {}:", bstr::BStr::new(&out.dest_path));
-                        for j in [prev_i, i] {
-                            let _ = writeln!(
-                                &mut msg,
-                                "    from input {}",
-                                bstr::BStr::new(additional_output_files[j].src_path.text)
-                            );
+                        for (path, indices) in duplicates.keys().iter().zip(duplicates.values()) {
+                            let _ = writeln!(&mut msg, "  {}:", bstr::BStr::new(path));
+                            for &j in indices {
+                                let _ = writeln!(
+                                    &mut msg,
+                                    "    from input {}",
+                                    bstr::BStr::new(additional_output_files[j].src_path.text)
+                                );
+                            }
                         }
                         self.transpiler
                             .log_mut()
@@ -4220,8 +4229,6 @@ pub mod bv2_impl {
                                 ..Default::default()
                             });
                         }
-                    }
-                    if had_collision {
                         return Err(Error::DuplicateOutputPath);
                     }
                 }

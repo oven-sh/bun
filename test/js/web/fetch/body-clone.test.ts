@@ -629,12 +629,10 @@ test.each(["Request", "Response"])(
   },
 );
 
-// clone()'s usability check now fires before the stream is teed, so the
-// readableStreamTee C++ bridge's exception propagation (which used to be
-// covered by the test above) is exercised via `new Request(lockedRequest)`,
-// which still tees. It must throw a single catchable TypeError, not also
-// report it as uncaught (exit code 1) or surface a bogus follow-up error.
-test("new Request(request) with a locked stream body throws a catchable TypeError from the tee and does not fail the process", async () => {
+// `new Request(lockedRequest)` must throw a single catchable TypeError from
+// the step-40 usability check, not also report it as uncaught (exit code 1)
+// or surface a bogus follow-up error.
+test("new Request(request) with a locked stream body throws a catchable TypeError and does not fail the process", async () => {
   const script = `
     const stream = new ReadableStream({ start() {} });
     const source = new Request("http://example.com/", { method: "POST", body: stream, duplex: "half" });
@@ -660,7 +658,7 @@ test("new Request(request) with a locked stream body throws a catchable TypeErro
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect({ stdout: stdout.trim().split("\n"), stderr, exitCode }).toEqual({
-    stdout: ["caught TypeError: Invalid state: ReadableStream is locked", "done"],
+    stdout: ["caught TypeError: Body is disturbed or locked", "done"],
     stderr: "",
     exitCode: 0,
   });
@@ -1014,14 +1012,13 @@ describe.concurrent("clone() after `.body` was observed returns a fresh tee bran
   });
 });
 
-// The two-arg `new Request(src, init)` constructor tees the source body via a
+// The two-arg `new Request(src, init)` constructor takes the source body via a
 // separate path from single-arg / .clone(); with a user ReadableStream body
 // (migrated into the source wrapper's stream cache at construction) it must
-// consult that cache instead of teeing the now-empty native slot, or the
-// derived request's body is a branch of a disconnected stream and reads hang.
-// After the tee, the source's cached stream must also be repointed to its own
-// branch so reading the source still works.
-test("new Request(src, init) with a user ReadableStream body: both derived and source read the bytes", async () => {
+// consult that cache instead of the now-empty native slot, or the derived
+// request's body is a branch of a disconnected stream and reads hang.
+// Per spec step 40 the source becomes unusable; reads on it reject.
+test("new Request(src, init) with a user ReadableStream body: the derived request reads the bytes and the source is consumed", async () => {
   const stream = () =>
     new ReadableStream({
       start(controller) {
@@ -1031,7 +1028,13 @@ test("new Request(src, init) with a user ReadableStream body: both derived and s
     });
   // @ts-expect-error duplex
   const make = () => new Request("http://example.com/", { method: "POST", body: stream(), duplex: "half" });
-  const bytes = async (r: Request | Response) => [...new Uint8Array(await r.arrayBuffer())];
+  const bytes = async (r: Request | Response) => {
+    try {
+      return [...new Uint8Array(await r.arrayBuffer())];
+    } catch (e) {
+      return (e as Error).constructor.name;
+    }
+  };
 
   const twoArgSrc = make();
   const twoArg = new Request(twoArgSrc, { headers: { "x-a": "1" } });
@@ -1047,8 +1050,8 @@ test("new Request(src, init) with a user ReadableStream body: both derived and s
     oneArg: { derived: await bytes(oneArg), src: await bytes(oneArgSrc) },
     fromResponse: { derived: await bytes(fromResponse), src: await bytes(responseSrc) },
   }).toEqual({
-    twoArg: { derived: [1, 2, 3], src: [1, 2, 3] },
-    oneArg: { derived: [1, 2, 3], src: [1, 2, 3] },
+    twoArg: { derived: [1, 2, 3], src: "TypeError" },
+    oneArg: { derived: [1, 2, 3], src: "TypeError" },
     fromResponse: { derived: [1, 2, 3], src: [1, 2, 3] },
   });
 });
@@ -1100,4 +1103,106 @@ test("Blob type from a consumed Response keeps the original content-type after c
 
   expect(stdout.trim().split("\n")).toEqual(["application/x-original-type-0000000000000001", "clone-ok", "churn-ok"]);
   expect(exitCode).toBe(0);
+});
+
+// https://fetch.spec.whatwg.org/#dom-request step 40:
+// when `new Request(input[, init])` takes its body from the input Request
+// (init has no `body`), the input must be usable and is consumed: a proxy is
+// created for the input body, so input.bodyUsed becomes true and input's body
+// readers reject. Previously Bun cloned the body instead, leaving the input
+// fully readable and buffering a stream body twice.
+describe("new Request(request) consumes the input request's body", () => {
+  const bodies = {
+    "string": () => "payload-0123456789",
+    "Uint8Array": () => new TextEncoder().encode("payload-0123456789"),
+    "Blob": () => new Blob(["payload-0123456789"]),
+    "ReadableStream (push)": () =>
+      new ReadableStream({
+        start(c) {
+          c.enqueue(new TextEncoder().encode("payload-0123456789"));
+          c.close();
+        },
+      }),
+    "ReadableStream (pull)": () => {
+      let done = false;
+      return new ReadableStream({
+        pull(c) {
+          if (done) return c.close();
+          c.enqueue(new TextEncoder().encode("payload-0123456789"));
+          done = true;
+        },
+      });
+    },
+  };
+
+  async function settle(r: Request) {
+    try {
+      return { resolved: await r.text() };
+    } catch (e) {
+      return { rejected: (e as Error).constructor.name };
+    }
+  }
+
+  describe.each(["no init", "init without body", "empty init"])("(%s)", variant => {
+    for (const [label, makeBody] of Object.entries(bodies)) {
+      test(label, async () => {
+        const input = new Request("http://example.com/", { method: "POST", body: makeBody(), duplex: "half" });
+        const copy =
+          variant === "no init"
+            ? new Request(input)
+            : variant === "empty init"
+              ? new Request(input, {})
+              : new Request(input, { headers: { "x-foo": "bar" } });
+
+        expect({
+          inputBodyUsed: input.bodyUsed,
+          copyBodyUsed: copy.bodyUsed,
+          copyText: await settle(copy),
+          inputText: await settle(input),
+        }).toEqual({
+          inputBodyUsed: true,
+          copyBodyUsed: false,
+          copyText: { resolved: "payload-0123456789" },
+          inputText: { rejected: "TypeError" },
+        });
+      });
+    }
+  });
+
+  test("throws a TypeError when the input body is already consumed", async () => {
+    const input = new Request("http://example.com/", { method: "POST", body: "payload" });
+    await input.text();
+    expect(() => new Request(input)).toThrow(TypeError);
+    expect(() => new Request(input, { headers: {} })).toThrow(TypeError);
+  });
+
+  test("does not consume the input body when init provides its own body", async () => {
+    const input = new Request("http://example.com/", { method: "POST", body: "original" });
+    const copy = new Request(input, { body: "override" });
+    expect({
+      inputBodyUsed: input.bodyUsed,
+      inputText: await input.text(),
+      copyText: await copy.text(),
+    }).toEqual({
+      inputBodyUsed: false,
+      inputText: "original",
+      copyText: "override",
+    });
+  });
+
+  test("init body override works even when the input body is already consumed", async () => {
+    const input = new Request("http://example.com/", { method: "POST", body: "original" });
+    await input.text();
+    const copy = new Request(input, { body: "override" });
+    expect(await copy.text()).toBe("override");
+  });
+
+  test("does not consume when the input has no body", async () => {
+    const input = new Request("http://example.com/");
+    new Request(input);
+    expect({ inputBodyUsed: input.bodyUsed, inputText: await input.text() }).toEqual({
+      inputBodyUsed: false,
+      inputText: "",
+    });
+  });
 });

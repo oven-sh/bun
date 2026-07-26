@@ -1125,6 +1125,16 @@ impl Request {
                     // SAFETY: as_direct returns a live *mut Request payload (m_ctx)
                     let request = unsafe { &*request };
                     if values_to_try.len() == 1 {
+                        // https://fetch.spec.whatwg.org/#dom-request step 40: when
+                        // init provides no body and input has one, input must be
+                        // usable and is consumed ("create a proxy for inputBody").
+                        let input_has_body =
+                            !matches!(request.body_value(), BodyValue::Null | BodyValue::Empty);
+                        if input_has_body {
+                            if let Err(e) = request.throw_if_body_unusable(global_this) {
+                                bail!(Err(e));
+                            }
+                        }
                         match Request::clone_into(
                             request,
                             &mut req,
@@ -1133,6 +1143,9 @@ impl Request {
                         ) {
                             Ok(()) => {}
                             Err(e) => bail!(Err(e)),
+                        }
+                        if input_has_body {
+                            *request.get_body_value() = BodyValue::Used;
                         }
                         success = true;
                         cleanup(&mut req, body_seed_ptr, success);
@@ -1176,11 +1189,15 @@ impl Request {
 
                     if !fields.contains(Fields::Body) {
                         match request.body_value() {
-                            BodyValue::Null | BodyValue::Empty | BodyValue::Used => {}
+                            BodyValue::Null | BodyValue::Empty => {}
                             _ => {
+                                if let Err(e) = request.throw_if_body_unusable(global_this) {
+                                    bail!(Err(e));
+                                }
                                 match request.clone_body_value_via_cached_stream(global_this) {
                                     Ok(v) => {
                                         *req.body_value_mut() = v;
+                                        *request.get_body_value() = BodyValue::Used;
                                     }
                                     Err(e) => bail!(Err(e)),
                                 }

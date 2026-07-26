@@ -5911,14 +5911,14 @@ declare module "bun" {
      * {@link terminate `terminate()`} from the handler if that is the desired
      * behavior.
      *
-     * This is a one-shot timer measured from the call, not an inactivity
-     * timer: reading or writing data does **not** reset it. To get
-     * idle-timeout semantics, call `timeout()` again from your `data` handler
-     * to re-arm on each read. Pass `0` to cancel a previously armed timeout.
+     * For TCP sockets this is a one-shot timer measured from the call:
+     * reading or writing data does **not** reset it, and it is driven by a
+     * periodic sweep with roughly 4-second granularity, so the handler may
+     * fire a few seconds earlier or later than the exact value requested. To
+     * get idle-timeout semantics for TCP, call `timeout()` again from your
+     * `data` handler to re-arm on each read.
      *
-     * The timer is coarse: it is driven by a periodic sweep with roughly
-     * 4-second granularity, so the handler may fire a few seconds earlier or
-     * later than the exact value requested.
+     * Pass `0` to cancel a previously armed timeout.
      *
      * @param seconds Approximate time in seconds until the `timeout` handler
      * fires. `0` disarms the timer.

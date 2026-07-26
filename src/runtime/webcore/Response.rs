@@ -395,7 +395,12 @@ impl Response {
             return Ok(None);
         };
         // content_type_slice drops at scope exit
-        let Some(encoding) = bun_core::form_data::Encoding::get(content_type_slice.slice()) else {
+        let Some(extracted) =
+            bun_http_types::mime_sniff::extract_mime_type(content_type_slice.slice())
+        else {
+            return Ok(None);
+        };
+        let Some(encoding) = bun_core::form_data::Encoding::get(&extracted) else {
             return Ok(None);
         };
         Ok(Some(bun_core::form_data::AsyncFormData::init(encoding)))

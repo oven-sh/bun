@@ -170,9 +170,9 @@ pub type ReadFileTask = bun_jsc::work_task::WorkTask<ReadFile>;
 
 #[cfg(not(windows))]
 thread_local! {
-    /// Fd-backed `Store` → in-flight `ReadFile`; see `try_coalesce_fd_read`.
+    /// (fd-backed `Store`, offset, max_length) → in-flight `ReadFile`; see `try_coalesce_fd_read`.
     static IN_FLIGHT_FD_READERS: core::cell::RefCell<
-        bun_collections::HashMap<*const Store, *mut ReadFile>,
+        bun_collections::HashMap<(*const Store, SizeType, SizeType), *mut ReadFile>,
     > = core::cell::RefCell::new(bun_collections::HashMap::new());
 }
 
@@ -430,38 +430,33 @@ impl ReadFile {
         if !matches!(&store.data, Data::File(f) if f.pathlike.is_fd()) {
             return false;
         }
-        let existing =
-            IN_FLIGHT_FD_READERS.with(|m| m.borrow().get(&store.as_ptr().cast_const()).copied());
-        let Some(existing) = existing else {
+        let key = (store.as_ptr().cast_const(), offset, max_length);
+        let Some(existing) = IN_FLIGHT_FD_READERS.with(|m| m.borrow().get(&key).copied()) else {
             return false;
         };
         // SAFETY: `existing` was inserted on this thread before scheduling and
         // is removed on this thread in `then()` before the `ReadFile` is
         // dropped (`WorkTask::then` runs on the creating event loop), so the
         // pointee is live. The work pool holds `&mut ReadFile` concurrently,
-        // so project fields through the raw pointer without materialising
-        // `&ReadFile`. `offset`/`max_length` are set at creation only.
-        let (existing_offset, existing_max_length, extras) = unsafe {
-            (
-                *core::ptr::addr_of!((*existing).offset),
-                *core::ptr::addr_of!((*existing).max_length),
-                &*core::ptr::addr_of!((*existing).extra_completions),
-            )
-        };
-        if offset != existing_offset || max_length != existing_max_length {
-            return false;
-        }
+        // so project the `Guarded` field through the raw pointer without
+        // materialising `&ReadFile`.
+        let extras = unsafe { &*core::ptr::addr_of!((*existing).extra_completions) };
         extras.lock().push((callback, ctx));
         true
     }
 
     /// JS-thread-only. See `IN_FLIGHT_FD_READERS`.
     #[cfg(not(windows))]
-    pub fn mark_in_flight(store: &StoreRef, reader: *mut ReadFile) {
+    pub fn mark_in_flight(
+        store: &StoreRef,
+        offset: SizeType,
+        max_length: SizeType,
+        reader: *mut ReadFile,
+    ) {
         if matches!(&store.data, Data::File(f) if f.pathlike.is_fd()) {
             IN_FLIGHT_FD_READERS.with(|m| {
                 m.borrow_mut()
-                    .entry(store.as_ptr().cast_const())
+                    .entry((store.as_ptr().cast_const(), offset, max_length))
                     .or_insert_with(|| reader);
             });
         }
@@ -630,11 +625,12 @@ impl ReadFile {
         // Clear before the callbacks so a read they schedule starts fresh.
         #[cfg(not(windows))]
         if let Some(store) = this.store.as_ref() {
+            let key = (store.as_ptr().cast_const(), this.offset, this.max_length);
             let self_ptr = core::ptr::from_ref::<ReadFile>(&this).cast_mut();
             IN_FLIGHT_FD_READERS.with(|m| {
                 let mut m = m.borrow_mut();
-                if m.get(&store.as_ptr().cast_const()) == Some(&self_ptr) {
-                    m.remove(&store.as_ptr().cast_const());
+                if m.get(&key) == Some(&self_ptr) {
+                    m.remove(&key);
                 }
             });
         }

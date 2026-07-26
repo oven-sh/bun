@@ -149,10 +149,20 @@ describe.concurrent("bundler strict-mode early errors", () => {
     expect(exitCode).not.toBe(0);
   });
 
-  test("for-in var initializer in sloppy CJS bundles to ESM via lowering", async () => {
+  // Legacy octal literals, for-in var initializers, and function declarations
+  // in if/label bodies are all lowered to valid strict-mode code when bundling
+  // a sloppy CJS file into ESM, so they must not be rejected by the
+  // `is_strict_mode_output_format()` fallback. This matches esbuild.
+  test("sloppy CJS constructs are lowered (not rejected) when bundled to ESM", async () => {
     using dir = tempDir("strict-mode-bundle-cjs", {
-      "entry.js": `import "./loop.cjs";\n`,
-      "loop.cjs": `for (var i = 0 in { a: 1 }) { console.log(i); }\n`,
+      "entry.js": `import "./sloppy.cjs";\n`,
+      "sloppy.cjs": [
+        `for (var i = 0 in { a: 1 }) { console.log(i); }`,
+        `if (1) function f() { return 1; }`,
+        `lab: function g() {}`,
+        `console.log(010);`,
+        ``,
+      ].join("\n"),
     });
     await using proc = Bun.spawn({
       cmd: [bunExe(), "build", "--format=esm", "entry.js"],
@@ -164,6 +174,7 @@ describe.concurrent("bundler strict-mode early errors", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).not.toContain("cannot be used");
     expect(stdout).not.toMatch(/for\s*\(\s*var\s+\w+\s*=/);
+    expect(stdout).not.toMatch(/\b010\b/);
     expect(exitCode).toBe(0);
   });
 });

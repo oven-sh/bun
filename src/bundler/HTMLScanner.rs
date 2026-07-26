@@ -110,12 +110,7 @@ impl<'a> HTMLScanner<'a> {
             .add_error(Some(self.source), Loc::EMPTY, message.to_vec());
     }
 
-    pub(crate) fn on_tag(
-        &mut self,
-        _element: &mut Element<'_, '_>,
-        path: &[u8],
-        tag: TagHandler,
-    ) {
+    pub(crate) fn on_tag(&mut self, _element: &mut Element<'_, '_>, path: &[u8], tag: TagHandler) {
         let _ = self.create_import_record(path, tag.kind, tag.is_resource_hint);
     }
 

@@ -608,9 +608,8 @@ async function runTests() {
   //     node's parallel/ placement is fine there). With overcommit the malloc
   //     succeeds and the memset page-faults, so the OOM killer SIGKILLs the
   //     process instead of JSC throwing a catchable RangeError.
-  // Shard 19/20 bin-packs the docker builds and test-buffer-constants together,
-  // and once this phase starts them 2-wide the buffer test reliably gets
-  // OOM-killed (builds 82231/82241/82296). Run both serially in phase 1.
+  // LPT bin-packing can co-locate these on one shard; when this phase starts
+  // them 2-wide the buffer test gets OOM-killed. Run both serially in phase 1.
   const parallelSafeMemoryHeavy = p =>
     p.includes("js/bun/test/parallel/test-docker-build-") ||
     p.endsWith("js/node/test/parallel/test-buffer-constants.js");

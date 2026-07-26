@@ -14,7 +14,7 @@ pub const fn is_sendable(code: u16) -> bool {
 pub fn get(code: u16) -> Option<&'static [u8]> {
     match code {
         100 => Some(b"100 Continue"),
-        101 => Some(b"101 Switching protocols"),
+        101 => Some(b"101 Switching Protocols"),
         102 => Some(b"102 Processing"),
         103 => Some(b"103 Early Hints"),
         200 => Some(b"200 OK"),

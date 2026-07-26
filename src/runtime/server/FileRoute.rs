@@ -166,6 +166,13 @@ impl FileRoute {
                     ));
                 }
 
+                let status_code = response.status_code();
+                if status_code == 101 {
+                    return Err(global.throw_invalid_arguments(format_args!(
+                        "Cannot use a Response with status 101 (Switching Protocols) as a static route: Bun.serve has no way to hand the connection over after the protocol switch. Use server.upgrade() for WebSocket upgrades.",
+                    )));
+                }
+
                 let blob = body_value.use_();
 
                 blob.global_this.set(std::ptr::from_ref(global));
@@ -175,7 +182,6 @@ impl FileRoute {
                 );
                 *body_value = BodyValue::Blob(blob.dupe());
                 let headers = headers_from(response.get_init_headers(), &blob);
-                let status_code = response.status_code();
 
                 return Ok(Some(bun_core::heap::into_raw(Box::new(FileRoute {
                     ref_count: Cell::new(1),

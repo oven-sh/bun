@@ -3394,10 +3394,16 @@ where
     /// has no HTTP status line, so the Response can never reach the client:
     /// report it like a thrown error rather than writing an unparseable one.
     ///
+    /// A 101 is also refused: the fetch handler has no way to take over the
+    /// connection after a protocol switch, so a 101 on the wire would be an
+    /// unfulfilled promise (the connection keeps parsing HTTP/1.1 and the
+    /// client's post-switch bytes come back as 400). `server.upgrade()` is the
+    /// only supported upgrade path today and it writes its own 101.
+    ///
     /// Takes the status, not the Response: `run_error_handler` below runs user
     /// JS, which may write through the cell pointer the caller holds.
     fn reject_unsendable_response(&mut self, status: u16) -> bool {
-        if HTTPStatusText::is_sendable(status) {
+        if HTTPStatusText::is_sendable(status) && status != 101 {
             return false;
         }
         let Some(server) = self.server else {
@@ -3406,9 +3412,15 @@ where
         };
         // SAFETY: BACKREF
         let global_this = (*server).global_this();
-        let err = global_this.create_error_instance(format_args!(
-            "Cannot send a Response with status {status}. HTTP status codes must be between 100 and 999 (Response.error() returns status 0).",
-        ));
+        let err = if status == 101 {
+            global_this.create_error_instance(format_args!(
+                "Bun.serve cannot send a Response with status 101 (Switching Protocols): the fetch handler has no way to take over the connection after the protocol switch. Use server.upgrade() for WebSocket upgrades.",
+            ))
+        } else {
+            global_this.create_error_instance(format_args!(
+                "Cannot send a Response with status {status}. HTTP status codes must be between 100 and 999 (Response.error() returns status 0).",
+            ))
+        };
         self.run_error_handler(err);
         true
     }
@@ -3502,7 +3514,8 @@ where
                         // An unsendable Response from the error handler itself
                         // falls through to the default error page below.
                         // SAFETY: `response` is the live, rooted cell pointer.
-                        if HTTPStatusText::is_sendable(unsafe { (*response).status_code() }) {
+                        let status = unsafe { (*response).status_code() };
+                        if HTTPStatusText::is_sendable(status) && status != 101 {
                             // SAFETY: as above.
                             unsafe { self.render(response) };
                             return;
@@ -3556,7 +3569,8 @@ where
                 };
 
                 // SAFETY: `response` is the live, rooted cell pointer.
-                if !HTTPStatusText::is_sendable(unsafe { (*response).status_code() }) {
+                let fulfilled_status = unsafe { (*response).status_code() };
+                if !HTTPStatusText::is_sendable(fulfilled_status) || fulfilled_status == 101 {
                     ctx.finish_running_error_handler(value, status);
                     return;
                 }

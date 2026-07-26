@@ -305,13 +305,17 @@ for (const structuredCloneFn of [structuredClone, jscSerializeRoundtrip, jscSeri
           expect(cloned[0]).toBe(cloned[1]);
         });
 
-        test("CryptoKey", async () => {
-          const key = await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, true, ["encrypt"]);
-          const cloned = structuredCloneFn([key, key]);
-          expect(cloned[0]).toBeInstanceOf(CryptoKey);
-          expect(cloned[0]).not.toBe(key);
-          expect(cloned[0]).toBe(cloned[1]);
-        });
+        if (structuredCloneFn === structuredClone) {
+          // CryptoKey clones through structuredClone / worker postMessage but is rejected
+          // by bun:jsc serialize / v8.serialize (matching Node.js).
+          test("CryptoKey", async () => {
+            const key = await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, true, ["encrypt"]);
+            const cloned = structuredCloneFn([key, key]);
+            expect(cloned[0]).toBeInstanceOf(CryptoKey);
+            expect(cloned[0]).not.toBe(key);
+            expect(cloned[0]).toBe(cloned[1]);
+          });
+        }
 
         test("same object reachable through object, array, Map, and Set paths", () => {
           const d = new Date(7);
@@ -757,14 +761,18 @@ for (const structuredCloneFn of [
   jscSerializeRoundtripCrossProcessCold,
 ]) {
   describe(`${structuredCloneFn.name}: object pool back-references after platform objects`, () => {
-    test("a duplicated object after a CryptoKey keeps its identity", async () => {
-      const key = await crypto.subtle.generateKey({ name: "AES-GCM", length: 128 }, true, ["encrypt", "decrypt"]);
-      const o = { x: 1 };
-      const c = await structuredCloneFn([key, o, o]);
-      expect(c[0]).toBeInstanceOf(CryptoKey);
-      expect(c[1]).toEqual({ x: 1 });
-      expect(c[2]).toBe(c[1]);
-    });
+    if (structuredCloneFn === structuredClone) {
+      // bun:jsc serialize / v8.serialize rejects CryptoKey (matching Node.js); the
+      // back-reference path it covers is still reachable through structuredClone.
+      test("a duplicated object after a CryptoKey keeps its identity", async () => {
+        const key = await crypto.subtle.generateKey({ name: "AES-GCM", length: 128 }, true, ["encrypt", "decrypt"]);
+        const o = { x: 1 };
+        const c = await structuredCloneFn([key, o, o]);
+        expect(c[0]).toBeInstanceOf(CryptoKey);
+        expect(c[1]).toEqual({ x: 1 });
+        expect(c[2]).toBe(c[1]);
+      });
+    }
 
     test("a duplicated object after an X509Certificate keeps its identity", async () => {
       const cert = new X509Certificate(tls.cert);

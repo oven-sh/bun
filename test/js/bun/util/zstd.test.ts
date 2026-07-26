@@ -393,7 +393,10 @@ describe.skipIf(os.totalmem() < 16 * 1024 ** 3)("decompressed output > ArrayBuff
       const chunks = [];
       const gz = zlib.createGzip({ level: 1 });
       gz.on("data", c => chunks.push(c));
-      const done = new Promise(r => gz.on("end", r));
+      const done = new Promise((resolve, reject) => {
+        gz.on("end", resolve);
+        gz.on("error", reject);
+      });
       const zero = Buffer.alloc(64 << 20);
       let left = 4 * 1024 ** 3;
       const feed = () => {

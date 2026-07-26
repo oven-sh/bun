@@ -135,7 +135,7 @@ pub fn uv_getrusage(process: &mut bun_libuv_sys::uv_process_t) -> WinRusage {
     let Ok(memory) = bun_sys::windows::GetProcessMemoryInfo(process_pid) else {
         return usage_info;
     };
-    usage_info.maxrss = (memory.PeakWorkingSetSize / 1024) as u64;
+    usage_info.maxrss = memory.PeakWorkingSetSize as u64;
 
     usage_info
 }
@@ -162,7 +162,11 @@ pub trait RusageFields {
     fn utime_usec(&self) -> i64;
     fn stime_sec(&self) -> i64;
     fn stime_usec(&self) -> i64;
-    fn maxrss_(&self) -> f64;
+    /// Peak resident set size in **bytes**. `getrusage(2)` reports `ru_maxrss`
+    /// in kilobytes on Linux and the BSDs but in bytes on Darwin, and Windows'
+    /// `PeakWorkingSetSize` is bytes; the impls normalize so the JS-facing
+    /// `Subprocess.resourceUsage().maxRSS` is bytes on every platform.
+    fn maxrss_bytes(&self) -> f64;
     fn ixrss_(&self) -> f64;
     fn nswap_(&self) -> f64;
     fn inblock_(&self) -> f64;
@@ -195,8 +199,17 @@ impl RusageFields for libc::rusage {
         self.ru_stime.tv_usec as i64
     }
     #[inline]
-    fn maxrss_(&self) -> f64 {
-        self.ru_maxrss as f64
+    fn maxrss_bytes(&self) -> f64 {
+        // Darwin's `ru_maxrss` is bytes; every other Unix (Linux, *BSD,
+        // Solaris) reports kilobytes.
+        #[cfg(target_vendor = "apple")]
+        {
+            self.ru_maxrss as f64
+        }
+        #[cfg(not(target_vendor = "apple"))]
+        {
+            self.ru_maxrss as f64 * 1024.0
+        }
     }
     #[inline]
     fn ixrss_(&self) -> f64 {
@@ -254,7 +267,7 @@ impl RusageFields for WinRusage {
         self.stime.usec
     }
     #[inline]
-    fn maxrss_(&self) -> f64 {
+    fn maxrss_bytes(&self) -> f64 {
         self.maxrss as f64
     }
     // These counters do not exist on Windows — always zero.

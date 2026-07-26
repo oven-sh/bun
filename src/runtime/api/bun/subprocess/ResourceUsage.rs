@@ -39,7 +39,7 @@ impl ResourceUsage {
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_max_rss(this: &Self, _global: &JSGlobalObject) -> JSValue {
-        JSValue::js_number(this.rusage.maxrss_())
+        JSValue::js_number(this.rusage.maxrss_bytes())
     }
 
     #[bun_jsc::host_fn(getter)]

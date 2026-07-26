@@ -355,8 +355,7 @@ describe("homedir live $HOME mutations (#29244)", () => {
   it.concurrent.skipIf(isWindows)("returns '' when HOME is set to empty string", async () => {
     // Match Node / libuv: uv_os_homedir returns whatever getenv("HOME") gives
     // when non-NULL, including "". Only an absent HOME falls through to the
-    // passwd entry. Previously Bun treated "" as unset — divergent and now
-    // fixed.
+    // passwd entry.
     const { stdout, exitCode } = await runBun(`
       process.env.HOME = '';
       console.log(JSON.stringify(require('node:os').homedir()));

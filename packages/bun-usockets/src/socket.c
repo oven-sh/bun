@@ -868,14 +868,16 @@ void us_socket_resume(struct us_socket_t *s) {
     // closed cannot be resumed
     if (us_socket_is_closed(s)) return;
 
-    /* The peer's FIN was already delivered; recv() can only return 0 now.
-     * Re-arming READABLE would just re-derive eof on the next tick. */
-    int readable = s->readable_ended ? 0 : LIBUS_SOCKET_READABLE;
     if (us_socket_is_shut_down(s)) {
-        // we already sent FIN so we resume only readable side we are read-only
-        us_poll_change(&s->p, s->group->loop, readable);
+        /* We already sent FIN. Re-deriving eof here is what closes us (loop.c
+         * checks is_shut_down before readable_ended), so READABLE stays on
+         * even if readable_ended - same as raw_shutdown. */
+        us_poll_change(&s->p, s->group->loop, LIBUS_SOCKET_READABLE);
         return;
     }
-    // we are readable and writable so we resume everything
-    us_poll_change(&s->p, s->group->loop, readable | LIBUS_SOCKET_WRITABLE);
+    /* Peer FIN already delivered: recv() can only return 0 now, so skip
+     * READABLE and leave the half-open poll at WRITABLE-only. */
+    us_poll_change(&s->p, s->group->loop,
+                   LIBUS_SOCKET_WRITABLE |
+                       (s->readable_ended ? 0 : LIBUS_SOCKET_READABLE));
 }

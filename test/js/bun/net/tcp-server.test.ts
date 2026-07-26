@@ -1,4 +1,5 @@
 import { connect, listen, SocketHandler, TCPSocketListener } from "bun";
+import { setSocketOptions } from "bun:internal-for-testing";
 import { describe, expect, it } from "bun:test";
 import { expectMaxObjectTypeCount, isWindows } from "harness";
 
@@ -301,20 +302,21 @@ describe("tcp socket binaryType", () => {
 // set it to WRITABLE-only, so the next epoll tick re-derived recv()==0 -> eof
 // and re-dispatched end(), forever. Drain fired at most once between re-entries.
 it("allowHalfOpen: end() fires once when the handler's write is partially accepted", async () => {
-  // 4 MiB reliably exceeds the loopback send buffer on every platform, so the
-  // write from inside end() lands partial and arms the writable poll.
-  const PAYLOAD = Buffer.alloc(4 * 1024 * 1024, 0x61);
+  const PAYLOAD = Buffer.alloc(256 * 1024, 0x61);
   let endCount = 0;
   let drainCount = 0;
   const serverClosed = Promise.withResolvers<void>();
   const clientClosed = Promise.withResolvers<void>();
 
-  using server = listen({
+  using server = listen<{ sent: number }>({
     hostname: "127.0.0.1",
     port: 0,
     allowHalfOpen: true,
     socket: {
       open(s) {
+        // Clamp SO_SNDBUF so the 4 MiB write from end() is a partial write on
+        // every kernel (no-op on Windows, whose default already makes it so).
+        setSocketOptions(s, 1, 4096);
         s.data = { sent: 0 };
       },
       data() {},
@@ -338,7 +340,6 @@ it("allowHalfOpen: end() fires once when the handler's write is partially accept
         serverClosed.resolve();
       },
     },
-    data: null! as { sent: number },
   });
 
   let received = 0;
@@ -363,10 +364,7 @@ it("allowHalfOpen: end() fires once when the handler's write is partially accept
   await Promise.all([serverClosed.promise, clientClosed.promise]);
 
   expect({ endCount, received }).toEqual({ endCount: 1, received: PAYLOAD.length });
-  // drainCount is informational: any platform where 4 MiB is a partial write
-  // (all of them, in practice) will fire drain at least once. Not asserted so
-  // a future kernel with a huge default send buffer cannot flake this.
-  void drainCount;
+  expect(drainCount).toBeGreaterThanOrEqual(1);
 });
 
 it("should not leak memory", async () => {

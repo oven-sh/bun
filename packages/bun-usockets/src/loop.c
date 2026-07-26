@@ -849,10 +849,12 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                     return;
                 }
                 if (s->readable_ended) {
-                    /* on_end already fired (half-open); something re-armed
-                     * READABLE regardless (resume, or a partial write before
-                     * readable_ended latched). Don't re-dispatch or force
-                     * WRITABLE; just drop READABLE again. */
+                    /* on_end already fired (half-open). rearm_writable/resume
+                     * both honour readable_ended, so reaching here means an eof
+                     * hint that arrives without READABLE (Windows AFD
+                     * UV_DISCONNECT, the low-prio requeue) or a caller that
+                     * us_poll_change'd READABLE directly. Drop READABLE and
+                     * don't re-dispatch. */
                     us_poll_change(&s->p, loop, us_poll_events(&s->p) & LIBUS_SOCKET_WRITABLE);
                 } else if(s->flags.allow_half_open) {
                     /* EOF with half-open allowed: stop polling readable but KEEP

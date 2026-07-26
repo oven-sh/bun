@@ -253,7 +253,10 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
         if (isForeignTermination(vm, getSigintReceived(), timeout != 0)) {
             status(Status::Errored);
             JSC::Exception* termination = vm.ensureTerminationException();
-            m_evaluationException.set(vm, this, termination);
+            // Store a fresh Exception wrapping TerminatedExecutionError, not the
+            // VM singleton: the errored fast path re-throws m_evaluationException,
+            // and re-throwing the singleton is uncatchable by pointer identity.
+            m_evaluationException.set(vm, this, JSC::Exception::create(vm, termination->value()));
             scope.throwException(globalObject, termination);
             return {};
         }

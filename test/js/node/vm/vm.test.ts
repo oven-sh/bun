@@ -1383,3 +1383,32 @@ describe("node:vm SourceTextModule cyclic graph linking", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+// An outer {timeout} watchdog firing while an option-less inner evaluation is
+// on the stack must propagate through the inner eval (which armed nothing) to
+// the outer one, which converts it to ERR_SCRIPT_EXECUTION_TIMEOUT. This pins
+// the !sigintReceived && !hasTimeout clause of isForeignTermination on a VM
+// that is not permanently stopping (main thread, no worker).
+test("node:vm outer timeout propagates through an untimed inner runInNewContext", async () => {
+  const src = `
+    const vm = require("node:vm");
+    const inner = () => vm.runInNewContext("for(;;){}", {});
+    try {
+      vm.runInNewContext("inner()", { inner }, { timeout: 100 });
+    } catch (e) { console.log("CODE=" + (e && e.code)); }
+    console.log("alive");
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+    stdout: "CODE=ERR_SCRIPT_EXECUTION_TIMEOUT\nalive",
+    stderr: "",
+    exitCode: 0,
+    signalCode: null,
+  });
+});

@@ -34,4 +34,5 @@ bun_platform.workspace = true
 # Phase-C: bun_runtime now compiles green; pulled in for `Cli::start()`.
 # bun_jsc remains gated until the JSC bridge links.
 bun_runtime.workspace = true
+bun_standalone_graph.workspace = true
 # bun_jsc.workspace = true

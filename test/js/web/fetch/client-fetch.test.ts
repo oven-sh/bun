@@ -511,7 +511,7 @@ test("error on redirect", async () => {
   }).listen(0);
   await once(server, "listening");
 
-  expect(
+  await expect(
     fetch(`http://localhost:${server.address().port}`, {
       redirect: "error",
     }),

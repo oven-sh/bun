@@ -3437,10 +3437,12 @@ impl TestCommand {
                 // SAFETY: el is the VM-owned event loop; vm is passed back as *mut.
                 unsafe { (*el).tick_immediate_tasks(vm) };
 
-                // Only for the final file (earlier files' late errors surface
-                // in the next file's phase loop) and only when this file did
-                // not fail so a timed-out test body is not waited on.
+                // Only for the final repeat of the final file (earlier files'
+                // and earlier repeats' late errors surface in the next phase
+                // loop) and only when this repeat did not fail, so a timed-out
+                // test body is not waited on.
                 if first_last.last
+                    && repeat_index + 1 == repeat_count
                     && reporter.jest.summary.fail == fail_before
                     && reporter.jest.unhandled_errors_between_tests == unhandled_before
                 {

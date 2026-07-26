@@ -120,9 +120,7 @@ console.log(lex());
     // executes (V8: yes, JSC: no), so the runtime behaviour above only checks
     // post-label access. The transpiler still prints the source shape verbatim
     // so downstream tools that evaluate the output under V8 see B.3.2 timing.
-    const out = new Bun.Transpiler({ loader: "js" }).transformSync(
-      `foo: function bar() {}\nmodule.exports = bar;\n`,
-    );
+    const out = new Bun.Transpiler({ loader: "js" }).transformSync(`foo: function bar() {}\nmodule.exports = bar;\n`);
     expect(out).toMatch(/foo:\s*function bar\(\)/);
     expect(out).not.toMatch(/foo:\s*{/);
   });

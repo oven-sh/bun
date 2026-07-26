@@ -273,10 +273,8 @@ function onDataIncomingMessage(this: any, chunk, isLast, aborted: NodeHTTPRespon
     // Like Node's parserOnMessageComplete: any readStop above left the shared
     // socket's flowing=false, which would swallow the next request's 'pause'.
     if (!this.upgrade && socket && !socket._paused && socket.readable) socket.resume();
-    // Node emits 'upgrade' after the parser.execute() that completed the body
-    // returns, with the body already buffered on req and req.complete = true.
-    // The dispatcher stashed the emit here when the body was in the same chunk
-    // as the headers; fire it now that the body has been pushed.
+    // Deferred 'upgrade' emit: body was in the same chunk as the headers, so
+    // fire now that it is buffered on req (Node's parser.execute() order).
     const deferred = this[kDeferredUpgradeEmit];
     if (deferred !== undefined) {
       this[kDeferredUpgradeEmit] = undefined;

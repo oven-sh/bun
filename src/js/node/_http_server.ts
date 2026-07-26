@@ -994,14 +994,10 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           }
         } else if (is_upgrade) {
           // Hand the raw socket over to the 'upgrade' listener, like Node.js.
-          // Without a body the message is already complete: bytes that arrived
-          // after the request head become the upgradeHead and the connection
-          // switches into CONNECT-style tunnel mode immediately. With a body
-          // (Node 26 semantics) the body keeps being parsed and delivered
-          // through req; the connection only switches to tunnel mode once the
-          // message completes. Node emits 'upgrade' only after parser.execute()
-          // returns, so the head is the remainder of this same chunk AFTER the
-          // body, with the body already buffered on req.
+          // With a body (Node 26 semantics) the body keeps being parsed and
+          // delivered through req; the connection only switches to tunnel mode
+          // once the message completes, and head is the post-body remainder of
+          // the same chunk (the parser already computed it in connectHead).
           socketHandle.upgradeToTunnel(hasBody);
           socket[kEnableStreaming](true);
           detachSocketListenersForHandoff(socket);
@@ -1011,8 +1007,6 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
             socket[kUpgradeIncoming] = http_req;
             http_req.once("end", clearUpgradeIncoming.bind(undefined, socket));
           }
-          // The parser already sliced connectHead to the post-body remainder
-          // (or an empty span when the body does not complete in this chunk).
           const upgradeHead = connectHead ? connectHead : kEmptyBuffer;
           const emitUpgrade = () => {
             let handled;
@@ -1037,10 +1031,8 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           const { promise: upgradePromise, resolve: resolveUpgrade } = $newPromiseCapability(Promise);
           socket.once("close", resolveUpgrade);
           if (hasBody && bodyCompleteInHead) {
-            // The same-chunk body is parsed right after this handler returns,
-            // synchronously firing onDataIncomingMessage(isLast=true); emit
-            // 'upgrade' from there so the listener observes req.complete and
-            // the body buffered on req like Node.
+            // Body is in this chunk: defer to onDataIncomingMessage's fin so
+            // the listener observes req.complete and the buffered body.
             http_req[kDeferredUpgradeEmit] = emitUpgrade;
           } else {
             emitUpgrade();

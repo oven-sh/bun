@@ -12,8 +12,10 @@ import * as os from "node:os";
 const MAX_LENGTH = 2 ** 32;
 const skip = os.totalmem() < 14 * 1024 * 1024 * 1024;
 
-test.skipIf(skip)("node:zlib gzipSync round-trips a 2^32-byte chunk without dropping a byte", async () => {
-  const script = `
+test.skipIf(skip)(
+  "node:zlib gzipSync round-trips a 2^32-byte chunk without dropping a byte",
+  async () => {
+    const script = `
       const zlib = require("node:zlib");
       let b;
       try {
@@ -45,33 +47,37 @@ test.skipIf(skip)("node:zlib gzipSync round-trips a 2^32-byte chunk without drop
       );
     `;
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", script],
-    env: {
-      ...bunEnv,
-      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "allocator_may_return_null=1"].filter(Boolean).join(":"),
-    },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: {
+        ...bunEnv,
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "allocator_may_return_null=1"].filter(Boolean).join(":"),
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  const out = JSON.parse(stdout.trim() || '"NO_OUTPUT"');
-  if (out === "SKIP") return;
+    const out = JSON.parse(stdout.trim() || '"NO_OUTPUT"');
+    if (out === "SKIP") return;
 
-  expect(stderr).toBe("");
-  // With the bug: { rtLen: 4294967295, first: 65, penult: 90, last: null }.
-  expect(out).toEqual({
-    rtLen: MAX_LENGTH,
-    first: 0x41,
-    penult: 0x59,
-    last: 0x5a,
-  });
-  expect(exitCode).toBe(0);
-}, 240_000);
+    expect(stderr).toBe("");
+    // With the bug: { rtLen: 4294967295, first: 65, penult: 90, last: null }.
+    expect(out).toEqual({
+      rtLen: MAX_LENGTH,
+      first: 0x41,
+      penult: 0x59,
+      last: 0x5a,
+    });
+    expect(exitCode).toBe(0);
+  },
+  240_000,
+);
 
-test.skipIf(skip)("node:zlib async gzip round-trips a 2^32-byte chunk without dropping a byte", async () => {
-  const script = `
+test.skipIf(skip)(
+  "node:zlib async gzip round-trips a 2^32-byte chunk without dropping a byte",
+  async () => {
+    const script = `
       const zlib = require("node:zlib");
       const { promisify } = require("node:util");
       let b;
@@ -97,21 +103,23 @@ test.skipIf(skip)("node:zlib async gzip round-trips a 2^32-byte chunk without dr
       );
     `;
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", script],
-    env: {
-      ...bunEnv,
-      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "allocator_may_return_null=1"].filter(Boolean).join(":"),
-    },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: {
+        ...bunEnv,
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "allocator_may_return_null=1"].filter(Boolean).join(":"),
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  const out = JSON.parse(stdout.trim() || '"NO_OUTPUT"');
-  if (out === "SKIP") return;
+    const out = JSON.parse(stdout.trim() || '"NO_OUTPUT"');
+    if (out === "SKIP") return;
 
-  expect(stderr).toBe("");
-  expect(out).toEqual({ rtLen: MAX_LENGTH, last: 0x5a });
-  expect(exitCode).toBe(0);
-}, 240_000);
+    expect(stderr).toBe("");
+    expect(out).toEqual({ rtLen: MAX_LENGTH, last: 0x5a });
+    expect(exitCode).toBe(0);
+  },
+  240_000,
+);

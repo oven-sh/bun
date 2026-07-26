@@ -1513,3 +1513,56 @@ test("Bun.build can be called thousands of times in one process without crashing
   expect(stdout.trim()).toBe("OK 400");
   expect(exitCode).toBe(0);
 }, 180_000);
+
+test("onResolve returning a path longer than PATH_MAX surfaces a build error instead of aborting", async () => {
+  // The bundler's path prettifier relativizes the onResolve-returned path into
+  // a fixed PATH_MAX-sized buffer. An oversized plugin path should surface as a
+  // BuildMessage (ENAMETOOLONG / ENOENT), not abort the process with
+  // "panic: range end index N out of range for slice of length 4095".
+  using dir = tempDir("onresolve-long-path", {
+    "entry.ts": `import { two } from "./two.ts"; console.log(two);`,
+    "run.ts": `
+      const entry = process.argv[2];
+      // 4094 exercises the output-buffer overflow on Linux (PATH_MAX 4096);
+      // 5000 and 100000 exercise the normalize-buffer overflow on POSIX and
+      // Windows respectively. On platforms where a given length is under the
+      // limit the build still fails (the file does not exist).
+      for (const len of [4094, 5000, 100000]) {
+        const p = "/" + Buffer.alloc(len - 4, "a").toString() + ".ts";
+        const r = await Bun.build({
+          entrypoints: [entry],
+          throw: false,
+          target: "bun",
+          plugins: [{
+            name: "long",
+            setup(b) {
+              b.onResolve({ filter: /^\\.\\/two\\.ts$/ }, () => ({ path: p }));
+            },
+          }],
+        });
+        console.log(JSON.stringify({ len, success: r.success, hasError: r.logs.length > 0 }));
+      }
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), path.join(String(dir), "run.ts"), path.join(String(dir), "entry.ts")],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(
+    stdout
+      .trim()
+      .split("\n")
+      .map(l => JSON.parse(l)),
+  ).toEqual([
+    { len: 4094, success: false, hasError: true },
+    { len: 5000, success: false, hasError: true },
+    { len: 100000, success: false, hasError: true },
+  ]);
+  expect(exitCode).toBe(0);
+});

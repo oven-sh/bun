@@ -7490,10 +7490,34 @@ pub mod bv2_impl {
 
         if path.is_file() || is_node {
             let mut buf2 = bun_paths::path_buffer_pool::get();
-            let rel = bun_paths::resolve_path::relative_platform_buf::<
-                bun_paths::resolve_path::platform::Loose,
-                false,
-            >(&mut **buf2, top_level_dir, path.text);
+            let mut spill: Vec<u8>;
+            // `relative_platform_buf` normalizes `path.text` into a fixed
+            // `MAX_PATH_BYTES - 1` thread-local, and the relative result can
+            // grow past `path.text.len()` by the `../` prefix derived from
+            // `top_level_dir`. An `onResolve` plugin can return a path of any
+            // length, so both the normalize scratch and the output buffer can
+            // overflow. Fall back to `path.text` when it cannot be normalized,
+            // and spill the output buffer to the heap when the pooled one is
+            // too small; the file open will surface `ENAMETOOLONG`.
+            let rel: &[u8] = if path.text.len() >= bun_paths::MAX_PATH_BYTES {
+                path.text
+            } else {
+                let need = path
+                    .text
+                    .len()
+                    .saturating_add(top_level_dir.len().saturating_mul(2))
+                    .saturating_add(8);
+                let out: &mut [u8] = if need <= buf2.0.len() {
+                    &mut buf2.0[..]
+                } else {
+                    spill = vec![0u8; need];
+                    &mut spill[..]
+                };
+                bun_paths::resolve_path::relative_platform_buf::<
+                    bun_paths::resolve_path::platform::Loose,
+                    false,
+                >(out, top_level_dir, path.text)
+            };
             let mut path_clone: crate::bun_fs::Path<'_> = *path;
             if target == options::Target::ServerComponentsSsr {
                 let mut fbs = bun_io::FixedBufferStream::new_mut(&mut buf.0[..]);

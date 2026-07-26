@@ -392,7 +392,7 @@ fn process_srcset<T: HTMLProcessorHandler>(
         }
     }
     if kept == 0 {
-        element.remove();
+        element.remove_attribute("srcset");
     } else if changed {
         apply_tag_action(element, "srcset", TagAction::Replace(rebuilt));
     }

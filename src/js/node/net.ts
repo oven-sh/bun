@@ -2797,6 +2797,12 @@ Socket.prototype._writev = function _writev(data, callback) {
   if (data.length === 1) {
     return this._write(data[0], "buffer", callback);
   }
+  // Winsock completes a first large send synchronously only when it is one
+  // WSASend; usockets has no vectored send on Windows, so concat to one buffer
+  // there (test-http-agent-reuse-drained-socket-only.js depends on this).
+  if (process.platform === "win32") {
+    return this._write(Buffer.concat(data), "buffer", callback);
+  }
 
   // cork()/uncork() can reach _writev before the handle is live; defer like _write.
   const connecting = this.connecting;

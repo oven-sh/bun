@@ -1836,7 +1836,11 @@ describe("net.Socket write buffering behind a stalled peer", () => {
   // sample is deterministic; the `bufs` array keeps the caller's references
   // live so the steady-state difference (native copy vs. reference) is what is
   // measured, not the GC-raceable transient peak.
-  it("holds queued _writev chunks by reference instead of copying into the native buffer", async () => {
+  //
+  // Windows keeps the Buffer.concat path (Winsock only completes a first large
+  // send synchronously when it is a single WSASend, and usockets has no
+  // vectored send there), so the by-reference bound only applies on POSIX.
+  it.skipIf(isWindows)("holds queued _writev chunks by reference instead of copying into the native buffer", async () => {
     const CHUNK = 65536;
     const N = 1024; // 64 MiB queued
     const fixture = `

@@ -410,7 +410,6 @@ declare function $streamClosed(): TODO;
 declare function $streamErrored(): TODO;
 declare function $streamReadable(): TODO;
 declare function $streamWritable(): TODO;
-declare function $structuredCloneForStream(): TODO;
 declare function $syscall(): TODO;
 declare function $textDecoderStreamDecoder(): TODO;
 declare function $textEncoderStreamEncoder(): TODO;

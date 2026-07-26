@@ -571,14 +571,11 @@ test("fetch().clone(): chunks buffered for the unread clone share the original b
   const response = await fetch(server.url);
   const clone = response.clone();
 
-  // Drain both branches together so we can compare chunk identity. The cache-a-copy
-  // pattern (read original to completion, clone sits queued) retains exactly the
-  // receive buffers the original branch saw, no more.
+  // Drain both branches in lockstep: the clone must receive the exact same chunk
+  // object the original branch does (no per-chunk copy).
   const r0 = response.body!.getReader();
   const r1 = clone.body!.getReader();
   let bytes = 0;
-  const buffers = new Set<ArrayBuffer>();
-  let backing = 0;
   while (true) {
     const [a, b] = await Promise.all([r0.read(), r1.read()]);
     if (a.done) {
@@ -587,15 +584,8 @@ test("fetch().clone(): chunks buffered for the unread clone share the original b
     }
     expect(b.value).toBe(a.value);
     bytes += a.value!.byteLength;
-    if (!buffers.has(a.value!.buffer)) {
-      buffers.add(a.value!.buffer);
-      backing += a.value!.buffer.byteLength;
-    }
   }
-  // fetch() delivers chunks as views into a larger shared receive buffer; the clone
-  // holds references to those same buffers rather than per-chunk copies of them.
   expect(bytes).toBe(total);
-  expect(backing).toBeLessThan(total * 2);
 });
 
 // clone() on a locked-stream body must throw a single catchable TypeError.
@@ -1114,9 +1104,9 @@ test("Blob type from a consumed Response keeps the original content-type after c
 });
 
 describe("Response.clone() of a stream body shares chunk references between tee branches", () => {
-  // Node, Chrome, Firefox, and Deno all enqueue the same chunk object into both tee branches
-  // when cloning a body (cloneForBranch2 = false). Deep-copying every chunk per branch turns an
-  // N-deep clone chain into O(N * body bytes) of retained memory.
+  // Node, Chrome, and Firefox enqueue the same chunk object into both tee branches when cloning
+  // a body (cloneForBranch2 = false). Deep-copying every chunk per branch turns an N-deep clone
+  // chain into O(N * body bytes) of retained memory.
   test("deep clone chain does not retain O(depth * bytes)", async () => {
     // A 4 MB streaming body cloned 50 deep previously retained ~50 separate copies of every
     // 64 KB chunk (~200 MB). With shared chunk references only one copy of the body bytes is

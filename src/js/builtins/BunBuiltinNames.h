@@ -187,7 +187,6 @@ using namespace JSC;
     macro(statusMessage) \
     macro(statusText) \
     macro(stream) \
-    macro(structuredCloneForStream) \
     macro(syscall) \
     macro(text) \
     macro(textDecoder) \

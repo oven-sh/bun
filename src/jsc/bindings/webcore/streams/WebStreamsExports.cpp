@@ -101,10 +101,10 @@ extern "C" bool ReadableStream__tee(JSC::EncodedJSValue possibleReadableStream, 
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     // The fetch spec's "clone a body" step calls ReadableStreamTee with cloneForBranch2 = true,
-    // which StructuredClone-copies every chunk into branch2. No shipping engine does that: Node
-    // (undici), Chrome, Firefox, and Deno all share the chunk reference between branches. Copying
-    // turns an N-deep Response.clone() chain into O(N * body bytes) of retained memory, so we
-    // share the reference too. See whatwg/streams#1156.
+    // which StructuredClone-copies every chunk into branch2. Node (undici), Chrome, and Firefox
+    // all share the chunk reference between branches instead; copying turns an N-deep
+    // Response.clone() chain into O(N * body bytes) of retained memory. Follow Node here. See
+    // whatwg/streams#1156.
     auto branches = readableStreamTee(globalObject, stream, /* cloneForBranch2 */ false);
     RETURN_IF_EXCEPTION(scope, false);
 

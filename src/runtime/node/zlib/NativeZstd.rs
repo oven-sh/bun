@@ -495,19 +495,15 @@ mod _impl {
         const ZSTD_MAGIC_SKIPPABLE_START: u32 = 0x184D2A50;
         const ZSTD_MAGIC_SKIPPABLE_MASK: u32 = 0xFFFFFFF0;
 
-        /// A zstd stream is one or more concatenated frames (RFC 8878 §3.1).
-        /// After `ZSTD_decompressStream` returns 0 (frame complete) with input
-        /// remaining, decide whether those bytes begin another frame so the
-        /// caller can loop. Bytes that are not a frame/skippable magic (or a
-        /// prefix of one when fewer than 4 remain) are left unconsumed so the
-        /// JS layer can treat them as trailing data.
+        /// RFC 8878 §3.1: a zstd stream is one or more concatenated frames.
+        /// True when the unconsumed input begins a zstd or skippable frame
+        /// magic (or a prefix of one when fewer than 4 bytes remain).
         fn next_input_is_frame(&self) -> bool {
             let avail = self.input.size - self.input.pos;
             if avail == 0 {
                 return false;
             }
-            // SAFETY: `input.src[..input.size]` is the caller-kept-alive input
-            // slice installed by `set_buffers`; `input.pos < input.size` here.
+            // SAFETY: input.src[..input.size] is the caller-kept-alive slice from set_buffers; pos < size here.
             let rest = unsafe {
                 core::slice::from_raw_parts(
                     self.input.src.cast::<u8>().add(self.input.pos),
@@ -517,8 +513,6 @@ mod _impl {
             let frame = Self::ZSTD_MAGICNUMBER.to_le_bytes();
             let skippable = Self::ZSTD_MAGIC_SKIPPABLE_START.to_le_bytes();
             if rest.len() < 4 {
-                // The low nibble of a skippable magic's first byte varies, so
-                // compare it under the mask.
                 return rest == &frame[..rest.len()]
                     || (rest[0] & 0xF0 == skippable[0] && rest[1..] == skippable[1..rest.len()]);
             }
@@ -553,9 +547,7 @@ mod _impl {
                             &raw mut self.input,
                         )
                     };
-                    // ret == 0 is frame-complete. Mirrors GUNZIP multi-member
-                    // handling in NativeZlib::do_work_inflate; libzstd resets
-                    // the DCtx to start-of-frame itself so no explicit reset.
+                    // ret == 0 is frame-complete; mirrors NativeZlib::do_work_inflate's GUNZIP loop.
                     while ret == 0
                         && self.output.pos < self.output.size
                         && self.next_input_is_frame()

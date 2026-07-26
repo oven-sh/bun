@@ -59,6 +59,22 @@ describe.concurrent("sloppy-mode constructs the transpiler must accept", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("await as a top-level class name in a Script", async () => {
+    const { stdout, stderr, exitCode } = await run(
+      `class await {}\nfunction g() { return await.name; }\nconsole.log(g());`,
+    );
+    expect(stderr).not.toContain(`Cannot use "await" as an identifier`);
+    expect(stdout.trim()).toBe("await");
+    expect(exitCode).toBe(0);
+  });
+
+  test("await as a shorthand property name at top level", async () => {
+    const { stdout, stderr, exitCode } = await run(`var await = 7;\nvar o = { await };\nconsole.log(o.await);`);
+    expect(stderr).not.toContain(`Cannot use "await"`);
+    expect(stdout.trim()).toBe("7");
+    expect(exitCode).toBe(0);
+  });
+
   test("legacy octal escape at end of string (1 digit)", async () => {
     const { stdout, stderr, exitCode } = await run(`console.log("x\\7".charCodeAt(1));`);
     expect(stderr).not.toContain("Syntax Error");
@@ -132,6 +148,12 @@ describe.concurrent("strict-mode / unique-formal-parameter rejections still fire
     expect(exitCode).not.toBe(0);
   });
 
+  test('duplicate parameters with "use strict" in the function body', async () => {
+    const { exitCode, stderr } = await run(`function f(a, a) { "use strict"; return a }\nvoid f;`);
+    expect(stderr).toContain("cannot be bound multiple times");
+    expect(exitCode).not.toBe(0);
+  });
+
   test("duplicate parameters with non-simple parameter list", async () => {
     const { exitCode, stderr } = await run(`function f(a, a = 1) { return a }\nvoid f;`);
     expect(stderr).toContain("cannot be bound multiple times");
@@ -144,9 +166,15 @@ describe.concurrent("strict-mode / unique-formal-parameter rejections still fire
     expect(exitCode).not.toBe(0);
   });
 
+  test("class await inside async function still rejected", async () => {
+    const { exitCode, stderr } = await run(`async function f() { class await {} }\nf();`);
+    expect(stderr).toContain(`Cannot use "await" as an identifier here`);
+    expect(exitCode).not.toBe(0);
+  });
+
   test("assignment to eval in an ESM file still rejected", async () => {
     const { exitCode, stderr } = await run(`export {};\neval = 1;`, false);
-    expect(stderr).toMatch(/eval/);
+    expect(stderr).toContain(`Assigning to "eval"`);
     expect(exitCode).not.toBe(0);
   });
 

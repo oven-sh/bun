@@ -1177,6 +1177,7 @@ pub enum StrictModeFeature {
     DeleteBareName,
     ForInVarInit,
     EvalOrArguments,
+    AssignToEvalOrArguments,
     ReservedWord,
     LegacyOctalLiteral,
     LegacyOctalEscape,
@@ -1375,6 +1376,19 @@ impl Default for FnOrArrowDataParse {
             track_arrow_arg_errors: false,
             allow_missing_body_for_type_script: false,
             allow_ts_decorators: false,
+        }
+    }
+}
+
+impl FnOrArrowDataParse {
+    /// True when `await` must be rejected as an identifier at the current position.
+    /// At top level with `AllowExpr` the file may still be a Script, so `await`
+    /// stays usable as a binding/class/property name there.
+    pub fn await_is_keyword_here(&self) -> bool {
+        match self.allow_await {
+            AwaitOrYield::AllowIdent => false,
+            AwaitOrYield::ForbidAll => true,
+            AwaitOrYield::AllowExpr => !self.is_top_level,
         }
     }
 }

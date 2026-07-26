@@ -548,9 +548,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if p.lexer.token == T::TIdentifier {
             let name_text = p.lexer.identifier;
             if !Self::IS_TYPESCRIPT_ENABLED || name_text != b"implements" {
-                if p.fn_or_arrow_data_parse.allow_await != AwaitOrYield::AllowIdent
-                    && name_text == b"await"
-                {
+                if p.fn_or_arrow_data_parse.await_is_keyword_here() && name_text == b"await" {
                     p.log().add_range_error(
                         Some(p.source),
                         p.lexer.range(),
@@ -611,9 +609,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if p.lexer.token == T::TIdentifier {
             let name_text = p.lexer.identifier;
             if !Self::IS_TYPESCRIPT_ENABLED || name_text != b"implements" {
-                if p.fn_or_arrow_data_parse.allow_await != AwaitOrYield::AllowIdent
-                    && name_text == b"await"
-                {
+                if p.fn_or_arrow_data_parse.await_is_keyword_here() && name_text == b"await" {
                     p.log().add_range_error(
                         Some(p.source),
                         p.lexer.range(),

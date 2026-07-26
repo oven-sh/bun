@@ -693,9 +693,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 return Err(crate::Error::SyntaxError);
             }
 
-            if p.fn_or_arrow_data_parse.allow_await != AwaitOrYield::AllowIdent
-                && name_text == b"await"
-            {
+            if p.fn_or_arrow_data_parse.await_is_keyword_here() && name_text == b"await" {
                 p.log().add_range_error(
                     Some(p.source),
                     p.lexer.range(),
@@ -992,13 +990,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         match p.lexer.token {
             T::TIdentifier => {
                 let name = p.lexer.identifier;
-                let await_is_keyword = match p.fn_or_arrow_data_parse.allow_await {
-                    AwaitOrYield::AllowIdent => false,
-                    AwaitOrYield::ForbidAll => true,
-                    // TLA sniff; file may still be a Script where `await` binds as an ident.
-                    AwaitOrYield::AllowExpr => !p.fn_or_arrow_data_parse.is_top_level,
-                };
-                if (await_is_keyword && name == b"await")
+                if (p.fn_or_arrow_data_parse.await_is_keyword_here() && name == b"await")
                     || (p.fn_or_arrow_data_parse.allow_yield != AwaitOrYield::AllowIdent
                         && name == b"yield")
                 {
@@ -1503,8 +1495,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             if str_.eql_comptime(b"use strict") {
                                 skip = true;
                                 // Track "use strict" directives
-                                p.current_scope_mut().strict_mode =
-                                    StrictModeKind::ExplicitStrictMode;
+                                let scope = p.current_scope_mut();
+                                scope.strict_mode = StrictModeKind::ExplicitStrictMode;
+                                // A "use strict" directive in a function body makes the
+                                // parameter list strict-mode code too (ECMA-262 11.2.2).
+                                if let Some(mut parent) = scope.parent
+                                    && parent.kind == js_ast::scope::Kind::FunctionArgs
+                                {
+                                    parent.strict_mode = StrictModeKind::ExplicitStrictMode;
+                                }
                                 if p.current_scope == p.module_scope {
                                     p.module_scope_directive_loc = stmt.loc;
                                 }

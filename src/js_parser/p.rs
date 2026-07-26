@@ -4325,6 +4325,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             )
             .into_bump_str()
             .as_bytes(),
+            StrictModeFeature::AssignToEvalOrArguments => bun_alloc::arena_format!(
+                in self.arena,
+                "Assigning to \"{}\"",
+                bstr::BStr::new(detail)
+            )
+            .into_bump_str()
+            .as_bytes(),
             StrictModeFeature::ReservedWord => bun_alloc::arena_format!(
                 in self.arena,
                 "\"{}\" is a reserved word and",

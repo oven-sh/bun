@@ -668,9 +668,7 @@ test("NodeTracing notifications also arrive on inspectorNotification", async () 
     session.on("NodeTracing.tracingComplete", m => specific.push(m));
     session.on("inspectorNotification", m => generic.push(m));
     const post = (method: string, params?: object) =>
-      new Promise<void>((resolve, reject) =>
-        session.post(method, params, err => (err ? reject(err) : resolve())),
-      );
+      new Promise<void>((resolve, reject) => session.post(method, params, err => (err ? reject(err) : resolve())));
     await post("NodeTracing.start", { traceConfig: { includedCategories: ["node.perf"] } });
     performance.mark("inspectorNotification-probe");
     await post("NodeTracing.stop");

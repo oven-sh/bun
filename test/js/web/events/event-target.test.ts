@@ -32,10 +32,11 @@ describe("EventTarget addEventListener", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    expect(exitCode).toBe(0);
-    const { registered } = JSON.parse(stdout);
-    expect(registered).toBe(n);
+    expect({ stderr, stdout, exitCode }).toEqual({
+      stderr: "",
+      stdout: JSON.stringify({ n, registered: n }) + "\n",
+      exitCode: 0,
+    });
   });
 
   test("duplicate detection past the index threshold", () => {
@@ -196,6 +197,26 @@ describe("EventTarget addEventListener", () => {
 
     ac.abort();
     expect(calls).toBe(1);
+  });
+
+  test("clearing an attribute listener after reassignment past threshold removes it", () => {
+    // onabort = a; onabort = b replaces the listener's jsFunction in place
+    // without touching the index, so remove() must not trust an index miss as
+    // proof of absence.
+    const ac = new AbortController();
+    const sig = ac.signal;
+    for (let i = 0; i < 40; i++) sig.addEventListener("abort", () => {});
+
+    let calls = 0;
+    const a = () => calls++;
+    const b = () => calls++;
+    sig.onabort = a;
+    sig.onabort = b;
+    sig.onabort = null;
+
+    expect(sig.onabort).toBeNull();
+    ac.abort();
+    expect(calls).toBe(0);
   });
 
   test("signal-controlled listener removal past threshold", () => {

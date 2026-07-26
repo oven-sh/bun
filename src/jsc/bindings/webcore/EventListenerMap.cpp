@@ -196,10 +196,11 @@ bool EventListenerMap::remove(const AtomString& eventType, EventListener& listen
         if (entry.type == eventType) {
             // `listener` may be owned solely by the vector (setAttributeEventListener
             // and the AbortSignal removal path hold no extra ref), so sample the key
-            // before removeListenerFromVector can drop the last reference.
+            // before removeListenerFromVector can drop the last reference. The index
+            // is not consulted for an early return here because an in-place
+            // replaceJSFunctionForAttributeListener can leave a listener's current
+            // key absent from it.
             uintptr_t key = callbackKey(listener, useCapture);
-            if (key && entry.callbackIndex && !entry.callbackIndex->contains(key))
-                return false;
 
             bool wasRemoved = removeListenerFromVector(entry.listeners, listener, useCapture);
             if (entry.listeners.isEmpty()) {

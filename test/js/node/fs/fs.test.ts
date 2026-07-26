@@ -5742,6 +5742,104 @@ it("fs.promises.writeFile keeps a buffer path argument attached while options ar
   expect(readFileSync(file, "utf8")).toBe("hello world");
 });
 
+it("fs path buffers backed by a resizable ArrayBuffer are snapshotted before option getters run", async () => {
+  // Pinning the backing ArrayBuffer blocks transfer()/detach but not
+  // ArrayBuffer.prototype.resize: shrinking decommits the tail pages, so a
+  // later read of the captured (ptr, len) faults. That later read can be a
+  // sync op's own option getter (writeFileSync reading `flag`) or a work-pool
+  // thread for an async op. The path bytes must instead be copied at capture
+  // time. Growable SharedArrayBuffers never shrink so they stay zero-copy.
+  using dir = tempDir("fs-rab-path", {
+    "rab-path-fixture.js": String.raw`
+      import fs from "node:fs";
+      import path from "node:path";
+
+      const dir = process.cwd();
+
+      function resizablePath(p) {
+        const bytes = Buffer.from(p);
+        const rab = new ArrayBuffer(bytes.length, { maxByteLength: 64 * 1024 });
+        new Uint8Array(rab).set(bytes);
+        return { rab, view: new Uint8Array(rab, 0, bytes.length) };
+      }
+
+      // sync: writeFileSync — Uint8Array path, getter on the options object
+      // resizes the backing store to 0 between capture and use.
+      {
+        const file = path.join(dir, "w.txt");
+        const { rab, view } = resizablePath(file);
+        fs.writeFileSync(view, "sync-write", {
+          get flag() { rab.resize(0); return "w"; },
+        });
+        if (fs.readFileSync(file, "utf8") !== "sync-write") throw new Error("writeFileSync lost path");
+      }
+
+      // sync: readFileSync — DataView path over a resizable ArrayBuffer.
+      {
+        const file = path.join(dir, "r.txt");
+        fs.writeFileSync(file, "sync-read");
+        const bytes = Buffer.from(file);
+        const rab = new ArrayBuffer(bytes.length, { maxByteLength: 64 * 1024 });
+        new Uint8Array(rab).set(bytes);
+        const dv = new DataView(rab, 0, bytes.length);
+        const got = fs.readFileSync(dv, {
+          get encoding() { rab.resize(0); return "utf8"; },
+        });
+        if (got !== "sync-read") throw new Error("readFileSync lost path: " + JSON.stringify(got));
+      }
+
+      // sync: mkdirSync — resizable ArrayBuffer passed directly as the path.
+      {
+        const target = path.join(dir, "made");
+        const bytes = Buffer.from(target);
+        const rab = new ArrayBuffer(bytes.length, { maxByteLength: bytes.length });
+        new Uint8Array(rab).set(bytes);
+        fs.mkdirSync(rab, {
+          get recursive() { rab.resize(0); return true; },
+        });
+        if (!fs.existsSync(target)) throw new Error("mkdirSync lost path");
+      }
+
+      // async: rename — shrinking right after the call must not affect the
+      // work-pool thread's read of the path bytes.
+      {
+        const src = path.join(dir, "src.txt");
+        fs.writeFileSync(src, "hi");
+        const { rab, view } = resizablePath(src);
+        const renamed = fs.promises.rename(view, path.join(dir, "dst.txt"));
+        rab.resize(0);
+        await renamed;
+        if (!fs.existsSync(path.join(dir, "dst.txt"))) throw new Error("rename lost path");
+      }
+
+      // Growable SharedArrayBuffer: stays zero-copy (only grows in place), so
+      // the path is read from the live backing and the write still lands.
+      {
+        const file = path.join(dir, "sab.txt");
+        const bytes = Buffer.from(file);
+        const sab = new SharedArrayBuffer(bytes.length, { maxByteLength: 64 * 1024 });
+        new Uint8Array(sab).set(bytes);
+        fs.writeFileSync(new Uint8Array(sab, 0, bytes.length), "sab-write", {
+          get flag() { sab.grow(bytes.length + 16); return "w"; },
+        });
+        if (fs.readFileSync(file, "utf8") !== "sab-write") throw new Error("SAB path failed");
+      }
+
+      console.log("done");
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "rab-path-fixture.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "done\n", stderr: "", exitCode: 0 });
+});
+
 describe("fs.close on stdio descriptors", () => {
   it.skipIf(isWindows)("closeSync(2) actually closes fd 2 and allows redirect", async () => {
     using dir = tempDir("fs-close-stdio", {

@@ -915,6 +915,27 @@ pub(crate) trait PathOrFdExt {
         Self: Sized;
 }
 
+/// The pin taken by [`Buffer::from_js_pinned`] blocks `transfer()`/detach but
+/// not `ArrayBuffer.prototype.resize`: shrinking a resizable ArrayBuffer
+/// decommits its tail pages (`JSC::ArrayBuffer::resize` → `OSAllocator::protect`),
+/// so any later read of the captured `(ptr, len)` faults. That later read can be
+/// a work-pool thread (async ops) or a sync op's own `slice_z` after an options
+/// getter (`flag`/`mode`/`encoding`/...) re-entered JS. Copy the path bytes
+/// instead; they are already bounded by `MAX_PATH_BYTES`. Growable
+/// SharedArrayBuffers never shrink and keep a stable data pointer, so they stay
+/// on the borrowed path.
+fn snapshot_resizable_path_buffer(buffer: &mut Buffer) {
+    if !(buffer.buffer.resizable && !buffer.buffer.shared) {
+        return;
+    }
+    let copy = bun_core::handle_oom(Buffer::from_string(buffer.slice()));
+    if buffer.pinned {
+        buffer.pinned = false;
+        buffer.buffer.unpin();
+    }
+    *buffer = copy;
+}
+
 impl PathLikeExt for PathLike {
     // Const-generics can't change return mutability, so this always returns
     // `&ZStr`. A future force=true caller that needs `&mut ZStr` will need a
@@ -1151,8 +1172,13 @@ impl PathLikeExt for PathLike {
                     }
                     return Err(err);
                 }
+                snapshot_resizable_path_buffer(&mut buffer);
 
-                arguments.protect_eat();
+                if buffer.owns_buffer {
+                    arguments.eat();
+                } else {
+                    arguments.protect_eat();
+                }
                 Ok(Some(Self::Buffer(buffer)))
             }
 
@@ -1168,8 +1194,13 @@ impl PathLikeExt for PathLike {
                     }
                     return Err(err);
                 }
+                snapshot_resizable_path_buffer(&mut buffer);
 
-                arguments.protect_eat();
+                if buffer.owns_buffer {
+                    arguments.eat();
+                } else {
+                    arguments.protect_eat();
+                }
                 Ok(Some(Self::Buffer(buffer)))
             }
 

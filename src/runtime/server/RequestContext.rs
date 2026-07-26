@@ -1186,7 +1186,7 @@ where
     pub fn end_already_responded_stream(&mut self) {
         ctx_log!("endAlreadyRespondedStream");
         debug_assert!(!HTTP3);
-        // `resp` may be freed (see above); the sink resumed the socket at `res.end()` while live.
+        // `resp` may be freed (see above); uWS `markDone()` resumed the socket while it was live.
         self.flags.set_request_body_paused(false);
         if self.resp.take().is_some() {
             self.flags.set_is_waiting_for_request_body(false);

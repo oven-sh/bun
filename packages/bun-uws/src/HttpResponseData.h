@@ -58,6 +58,12 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
         /* We are done with this request */
         this->state &= ~HttpResponseData<SSL>::HTTP_RESPONSE_PENDING;
 
+        /* Release any request-body backpressure pause: onAborted is gone so
+         * the holder can no longer safely resume, and a keep-alive socket
+         * left paused never reads the next request. us_socket_resume is a
+         * no-op when not paused. */
+        ((AsyncSocket<SSL> *) uwsRes)->resume();
+
         HttpResponseData<SSL> *httpResponseData = uwsRes->getHttpResponseData();
         httpResponseData->isIdle = true;
     }

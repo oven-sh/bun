@@ -1760,10 +1760,6 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         }
 
         self.requested_end = true;
-        // Release any request-body pause while `res` is live (see `end_already_responded_stream`).
-        if let Some(res) = self.any_res() {
-            res.resume_();
-        }
         let readable_len = self.readable_slice().len();
         self.end_len = readable_len;
 

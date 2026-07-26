@@ -450,11 +450,7 @@ function WriteStream(this: FSStream, path: string | null, options?: any): void {
     if (!write) this._write = null;
     if (!writev) this._writev = null;
   } else {
-    // For the common createWriteStream(path) case, write on the JS thread via
-    // writeSync so small writes do not each cost a thread-pool dispatch plus
-    // an eventfd wake. _write defers its completion so the Writable buffer
-    // fills and _writev drains the batch in one writeSync. Positional writes
-    // (`start`) keep the per-chunk fs.write path so the offset is honoured.
+    // Skip the per-chunk thread-pool dispatch unless positional writes need it.
     if (!fastPath && start === undefined) this[kSyncWrite] = true;
     else this._writev = undefined;
     $assert(this[kFs].write, "assuming user does not delete fs.write!");
@@ -599,9 +595,7 @@ function writeAllSync(stream, data, cb) {
 
 function syncWriteEnabled(stream) {
   if (stream[kSyncWrite] !== true) return false;
-  // A caller that monkey-patches fs.write (or its writev) expects the stream
-  // to route through it; fall back to the per-chunk fs.write path so the patch
-  // is honoured.
+  // Honour a monkey-patched fs.write/fs.writev by falling back.
   if (fs.write !== write || fs.writev !== writev) {
     stream[kSyncWrite] = false;
     stream._writev = undefined;

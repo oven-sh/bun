@@ -122,6 +122,63 @@ describe("bundler", () => {
     },
   });
 
+  // https://github.com/oven-sh/bun/issues/5032
+  // srcset is a comma-separated list of "<url> <descriptor>" candidates, not a
+  // single URL. Each candidate's URL must be resolved and hashed independently
+  // and the descriptor preserved.
+  itBundled("html/srcset", {
+    outdir: "out/",
+    files: {
+      "/index.html": `
+<!DOCTYPE html>
+<html>
+  <body>
+    <img srcset="./small.png 1x, ./big.png 2x">
+    <picture>
+      <source srcset="./small.png 480w, ./big.png 800w">
+      <img src="./small.png" alt="image">
+    </picture>
+    <img srcset="./small.png 2x">
+    <img srcset="
+      ./small.png 480w,
+      ./big.png   800w
+    ">
+    <img srcset="./small.png, ./big.png">
+    <img srcset="https://example.com/ext.png 1x, ./big.png 2x">
+  </body>
+</html>`,
+      "/small.png": "smallsmall",
+      "/big.png": "bigbigbigbig",
+    },
+    entryPoints: ["/index.html"],
+    onAfterBundle(api) {
+      const html = api.readFile("out/index.html");
+      const srcsets = [...html.matchAll(/srcset="([^"]*)"/g)].map(m => m[1]);
+      expect(srcsets).toHaveLength(6);
+
+      // Two local candidates with density descriptors.
+      expect(srcsets[0]).toMatch(/^\.\/small-[a-z0-9]+\.png 1x, \.\/big-[a-z0-9]+\.png 2x$/);
+      // <source> with width descriptors.
+      expect(srcsets[1]).toMatch(/^\.\/small-[a-z0-9]+\.png 480w, \.\/big-[a-z0-9]+\.png 800w$/);
+      // Single candidate with descriptor.
+      expect(srcsets[2]).toMatch(/^\.\/small-[a-z0-9]+\.png 2x$/);
+      // Newlines and extra whitespace between candidates are normalized.
+      expect(srcsets[3]).toMatch(/^\.\/small-[a-z0-9]+\.png 480w, \.\/big-[a-z0-9]+\.png 800w$/);
+      // No descriptors; comma directly follows the URL.
+      expect(srcsets[4]).toMatch(/^\.\/small-[a-z0-9]+\.png, \.\/big-[a-z0-9]+\.png$/);
+      // External candidate is left alone; local one is hashed.
+      expect(srcsets[5]).toMatch(/^https:\/\/example\.com\/ext\.png 1x, \.\/big-[a-z0-9]+\.png 2x$/);
+
+      // The <img src> inside <picture> is hashed too.
+      api.expectFile("out/index.html").toMatch(/<img src="\.\/small-[a-z0-9]+\.png" alt="image">/);
+
+      // The hashed assets referenced from the srcset were actually emitted.
+      const [, small, big] = srcsets[0].match(/^\.\/(small-[a-z0-9]+\.png) 1x, \.\/(big-[a-z0-9]+\.png) 2x$/)!;
+      api.assertFileExists(`out/${small}`);
+      api.assertFileExists(`out/${big}`);
+    },
+  });
+
   // Test external assets preservation
   itBundled("html/external-assets", {
     outdir: "out/",

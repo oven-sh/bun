@@ -173,8 +173,9 @@ describe("AbortSignal", () => {
 
     // Registering/removing an abort algorithm must not disarm a user-held timeout signal.
     test("timeout still fires after a pipeTo using it completes early", async () => {
-      const s = AbortSignal.timeout(50);
+      const s = AbortSignal.timeout(100);
       await new ReadableStream({ start: c => c.close() }).pipeTo(new WritableStream({}), { signal: s });
+      expect(s.aborted).toBe(false);
       const result = await Promise.race([
         new Promise(r => s.addEventListener("abort", () => r("aborted"), { once: true })),
         Bun.sleep(2000).then(() => "timeout-never-fired"),
@@ -183,11 +184,12 @@ describe("AbortSignal", () => {
     });
 
     test("timeout still fires after addEventListener({signal})+removeEventListener", async () => {
-      const s = AbortSignal.timeout(50);
+      const s = AbortSignal.timeout(100);
       const et = new EventTarget();
       const fn = () => {};
       et.addEventListener("x", fn, { signal: s });
       et.removeEventListener("x", fn);
+      expect(s.aborted).toBe(false);
       const result = await Promise.race([
         new Promise(r => s.addEventListener("abort", () => r("aborted"), { once: true })),
         Bun.sleep(2000).then(() => "timeout-never-fired"),

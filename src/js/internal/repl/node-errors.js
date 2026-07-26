@@ -74,11 +74,7 @@ for (const fn of [
   });
 }
 
-function isErrorStackTraceLimitWritable() {
-  const desc = Object.getOwnPropertyDescriptor(Error, "stackTraceLimit");
-  if (desc === undefined) return Object.isExtensible(Error);
-  return Object.prototype.hasOwnProperty.$call(desc, "writable") ? desc.writable : desc.set !== undefined;
-}
+const { isErrorStackTraceLimitWritable } = require("internal/shared");
 
 export default {
   isErrorStackTraceLimitWritable,

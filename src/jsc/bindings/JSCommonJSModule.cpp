@@ -1692,44 +1692,56 @@ bool evaluateDeferredCommonJSModuleForESM(
     if (!env)
         return true;
 
-    Vector<JSC::Identifier, 4> exportNames;
-    JSC::MarkedArgumentBuffer exportValues;
-    moduleObject->toSyntheticSource(globalObject, moduleRecord->moduleKey(), exportNames, exportValues);
+    JSValue exports = moduleObject->exportsObject();
     RETURN_IF_EXCEPTION(scope, true);
+    JSObject* exportsObject = exports.getObject();
 
-    JSValue defaultValue;
-    for (unsigned i = 0; i < exportNames.size(); ++i) {
-        if (exportNames[i] == vm.propertyNames->defaultKeyword) {
-            defaultValue = exportValues.at(i);
-            break;
+    auto readExport = [&](const Identifier& name) -> JSValue {
+        if (!exportsObject)
+            return jsUndefined();
+        PropertySlot slot(exportsObject, PropertySlot::InternalMethodType::Get);
+        bool has = exportsObject->getPropertySlot(globalObject, name, slot);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (!has)
+            return jsUndefined();
+        JSValue value = slot.getValue(globalObject, name);
+        if (scope.exception()) [[unlikely]] {
+            (void)scope.tryClearException();
+            return jsUndefined();
         }
-    }
-    if (!defaultValue) {
-        defaultValue = moduleObject->exportsObject();
-        RETURN_IF_EXCEPTION(scope, true);
+        return value;
+    };
+
+    JSValue defaultValue = exports;
+    if (exportsObject && !moduleObject->ignoreESModuleAnnotation) {
+        PropertySlot markerSlot(exportsObject, PropertySlot::InternalMethodType::VMInquiry, &vm);
+        bool hasMarker = exportsObject->getPropertySlot(globalObject, vm.propertyNames->__esModule, markerSlot);
+        scope.assertNoException();
+        if (hasMarker) {
+            JSValue marker = markerSlot.getValue(globalObject, vm.propertyNames->__esModule);
+            CLEAR_IF_EXCEPTION(scope);
+            if (!marker.isUndefinedOrNull() && marker.pureToBoolean() == TriState::True) {
+                PropertySlot defaultSlot(exportsObject, PropertySlot::InternalMethodType::Get);
+                bool hasDefault = exportsObject->getPropertySlot(globalObject, vm.propertyNames->defaultKeyword, defaultSlot);
+                RETURN_IF_EXCEPTION(scope, true);
+                if (hasDefault) {
+                    defaultValue = defaultSlot.getValue(globalObject, vm.propertyNames->defaultKeyword);
+                    if (scope.exception()) [[unlikely]] {
+                        (void)scope.tryClearException();
+                        defaultValue = jsUndefined();
+                    }
+                }
+            }
+        }
     }
 
     bool putResult = false;
     symbolTablePutTouchWatchpointSet(env, globalObject, Identifier::fromString(vm, cjsWrapperDefaultLocal), defaultValue, false, true, putResult);
     RETURN_IF_EXCEPTION(scope, true);
 
-    JSValue exports = moduleObject->exportsObject();
-    RETURN_IF_EXCEPTION(scope, true);
-    JSObject* exportsObject = exports.getObject();
-
     for (unsigned i = 0; i < moduleObject->m_staticExportNames.size(); ++i) {
-        JSValue value = jsUndefined();
-        if (exportsObject) {
-            PropertySlot slot(exportsObject, PropertySlot::InternalMethodType::Get);
-            if (exportsObject->getPropertySlot(globalObject, moduleObject->m_staticExportNames[i], slot)) {
-                value = slot.getValue(globalObject, moduleObject->m_staticExportNames[i]);
-                if (scope.exception()) [[unlikely]] {
-                    (void)scope.tryClearException();
-                    value = jsUndefined();
-                }
-            }
-            RETURN_IF_EXCEPTION(scope, true);
-        }
+        JSValue value = readExport(moduleObject->m_staticExportNames[i]);
+        RETURN_IF_EXCEPTION(scope, true);
         auto localName = Identifier::fromString(vm, makeString("$e"_s, i));
         symbolTablePutTouchWatchpointSet(env, globalObject, localName, value, false, true, putResult);
         RETURN_IF_EXCEPTION(scope, true);

@@ -128,6 +128,25 @@ describe("ESM importing CommonJS: evaluation order", () => {
     expect(exitCode).toBe(0);
   });
 
+  test.concurrent("getter-backed exports are read once per named binding", async () => {
+    using dir = tempDir("esm-cjs-order-getter", {
+      "entry.mjs": `
+        import def, { foo } from "./lib.cjs";
+        console.log(JSON.stringify({ foo, hits: def.getHits() }));
+      `,
+      "lib.cjs": `
+        Object.defineProperty(exports, "__esModule", { value: true });
+        let hits = 0;
+        Object.defineProperty(exports, "foo", { enumerable: true, get() { hits++; return 1; } });
+        exports.getHits = () => hits;
+      `,
+    });
+    const { stdout, stderr, exitCode } = await run(String(dir), "entry.mjs");
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ foo: 1, hits: 1 });
+    expect(exitCode).toBe(0);
+  });
+
   test.concurrent("an error thrown by the CJS body rejects the importing promise", async () => {
     using dir = tempDir("esm-cjs-order-throws", {
       "entry.mjs": `

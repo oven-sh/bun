@@ -322,15 +322,11 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::
 
         JSValue resourceLimitsValue = optionsObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "resourceLimits"_s));
         RETURN_IF_EXCEPTION(throwScope, {});
-        // Node's parseResourceLimits silently ignores anything that is not
-        // `typeof === 'object'` (null, primitives, callables). JSC's
-        // isObject() is true for callables, hence the extra check.
+        // Node ignores non-objects (JSC isObject() is true for callables, hence !isCallable).
         if (resourceLimitsValue && resourceLimitsValue.isObject() && !resourceLimitsValue.isCallable()) {
             auto* limitsObject = asObject(resourceLimitsValue);
             WorkerResourceLimits limits;
             // Only `typeof === 'number'` values are accepted, like Node.
-            // This is the ONLY parse of the user's option: enforcement and
-            // both resourceLimits getters read back from its result.
             auto readLimit = [&](ASCIILiteral key, double& out) -> bool {
                 JSValue v = limitsObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, key));
                 if (throwScope.exception()) return false;
@@ -462,12 +458,9 @@ JSC_DEFINE_CUSTOM_GETTER(jsWorker_resourceLimitsGetter, (JSGlobalObject * lexica
         return JSValue::encode(jsUndefined());
 
     auto& worker = castedThis->wrapped();
-    // {} once the worker has stopped, like Node. The close task stores
-    // State::Closing before it dispatches the ERR_WORKER_OUT_OF_MEMORY
-    // error event, so this already holds inside an OOM 'error' handler.
+    // {} once stopped (Node); State::Closing is set before the OOM error event.
     if (worker.wasTerminated())
         return JSValue::encode(constructEmptyObject(lexicalGlobalObject));
-    // A fresh object per read, from the single parse in the constructor.
     return JSValue::encode(createResourceLimitsObject(lexicalGlobalObject, worker.options().resourceLimits));
 }
 

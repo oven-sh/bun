@@ -8,10 +8,7 @@
 
 namespace WebCore {
 
-// node:worker_threads resourceLimits. JavaScriptCore has no generational split
-// and no per-VM hard heap cap; maxOldGenerationSizeMb + maxYoungGenerationSizeMb
-// are summed into a single heap limit checked after each garbage collection.
-// codeRangeSizeMb and stackSizeMb are echoed back for API compat, not enforced.
+// JSC has no generational split: old+young sum to one post-GC heap cap; codeRangeSizeMb/stackSizeMb echoed for compat, not enforced.
 struct WorkerResourceLimits {
     double maxYoungGenerationSizeMb { -1 };
     double maxOldGenerationSizeMb { -1 };
@@ -28,9 +25,7 @@ struct WorkerResourceLimits {
             mb += maxYoungGenerationSizeMb;
         if (mb <= 0)
             return 0;
-        // The Mb values come straight from JS. Compare in double and clamp
-        // before casting: a double-to-size_t conversion of an out-of-range
-        // value is UB.
+        // SAFETY: compare in double and clamp; out-of-range double-to-size_t is UB.
         double bytes = mb * 1024.0 * 1024.0;
         if (bytes >= static_cast<double>(std::numeric_limits<size_t>::max()))
             return std::numeric_limits<size_t>::max();

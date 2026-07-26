@@ -228,16 +228,10 @@ unsafe extern "C" {
         message: &mut BunString,
         err: JSValue,
     );
-    // Register the resourceLimits heap-limit observer on the worker VM (no-op
-    // when no limit is configured). Called from `start_vm()` so `native_worker`
-    // (`self`) is captured race-free on the worker thread; the observer's
-    // `didGarbageCollect` may later run on JSC's heap-collector thread, so it
-    // must not rely on Bun's per-thread VM and reaches back into Rust only
-    // through this pointer (`WebWorker__setRequestedTerminate` /
-    // `WebWorker__hasRequestedTerminate`).
-    // `native_worker` is `*const WebWorker` passed as an opaque `c_void`
-    // (non-`repr(C)` types may not be named in an `extern` block, even behind
-    // a pointer); C++ only round-trips it.
+    // SAFETY: `native_worker` is `*const WebWorker` as opaque c_void (non-repr(C)
+    // types cannot be named in extern blocks); C++ only round-trips it. The
+    // observer may run on JSC's heap-collector thread, so it reaches Rust only
+    // through this captured pointer, never the per-thread VirtualMachine.
     safe fn WebWorker__installHeapLimitObserver(
         cpp_worker: *mut c_void,
         global: &JSGlobalObject,
@@ -418,43 +412,29 @@ pub(crate) extern "C" fn WebWorker__getParentWorker(vm: &VirtualMachine) -> *mut
         .unwrap_or(core::ptr::null_mut())
 }
 
-/// Set `requested_terminate` so that `load_entry_point_for_web_worker` /
-/// `spin()` observe termination and exit through the normal shutdown path
-/// instead of routing the JSC TerminationException through
-/// `on_unhandled_rejection`. Called from the resourceLimits heap-limit
-/// observer, which JSC may run on its dedicated heap-collector thread —
-/// hence the explicit pointer (captured race-free at install time) rather
-/// than this crate's per-thread `VirtualMachine`, which is not installed
-/// there. Only the atomic is touched; safe from any thread.
+/// SAFETY: called from the heap-limit observer, which JSC may run on its
+/// heap-collector thread where the per-thread `VirtualMachine` is not
+/// installed. Touches only the atomic through the captured pointer.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn WebWorker__setRequestedTerminate(this: *mut WebWorker) {
-    // `this` is a valid heap allocation owned by C++ `WebCore::Worker`, alive
-    // for at least as long as its JSC heap — `ParentRef` invariant holds.
+    // SAFETY: owned by WebCore::Worker, alive for the JSC heap's lifetime.
     let this = bun_ptr::ParentRef::from(NonNull::new(this).expect("WebWorker FFI ptr"));
     let _ = this.set_requested_terminate();
 }
 
-/// Whether `requested_terminate` is set: `worker.terminate()` from the
-/// parent, `process.exit()` inside the worker, a previous heap-limit breach,
-/// or process-exit teardown. Same pointer contract and thread-safety as
-/// [`WebWorker__setRequestedTerminate`].
+/// Same pointer contract and thread-safety as [`WebWorker__setRequestedTerminate`].
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn WebWorker__hasRequestedTerminate(this: *const WebWorker) -> bool {
-    // Same lifetime argument as `WebWorker__setRequestedTerminate`.
+    // SAFETY: see WebWorker__setRequestedTerminate.
     let this = bun_ptr::ParentRef::from(NonNull::new(this.cast_mut()).expect("WebWorker FFI ptr"));
     this.has_requested_terminate()
 }
 
-/// `true` when the current thread is a worker whose `requested_terminate`
-/// flag is set. node:vm's `checkForTermination` uses this to distinguish a
-/// worker-level `TerminationException` from the vm.Script timeout/SIGINT it
-/// owns.
+/// node:vm's `checkForTermination` uses this to distinguish a worker-level
+/// `TerminationException` from its own vm.Script timeout/SIGINT.
 ///
-/// Mutator-thread only: this reads the per-thread `VirtualMachine`, which is
-/// not installed on JSC-internal threads. Its only caller runs inside a
-/// vm.Script / SourceTextModule evaluation on the JS thread. GC-side code
-/// (the heap-limit observer) must use [`WebWorker__hasRequestedTerminate`]
-/// instead.
+/// SAFETY: mutator-thread only (reads the per-thread `VirtualMachine`).
+/// GC-side code must use [`WebWorker__hasRequestedTerminate`] instead.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn WebWorker__currentWorkerHasRequestedTerminate() -> bool {
     VirtualMachine::get()

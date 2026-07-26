@@ -51,8 +51,7 @@ JSArray* NodeVMModuleRequest::toJS(JSGlobalObject* globalObject) const
 }
 
 void setupWatchdog(VM& vm, double timeout, double* oldTimeout, double* newTimeout);
-// Defined in NodeVMScript.cpp (see the comment there): a worker-level
-// termination must propagate, not become an ERR_SCRIPT_EXECUTION_* error.
+// Defined in NodeVMScript.cpp.
 bool propagateWorkerTermination(JSC::VM& vm, JSC::ThrowScope& scope);
 
 void NodeVMModule::reconcileEvaluationState(JSC::VM& vm)
@@ -250,8 +249,7 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
     // so the exception-check validator is satisfied before the TOP scope.
     std::ignore = scope.exception();
     if (vm.hasTerminationRequest() || vm.hasPendingTerminationException()) {
-        // A worker-level termination falls through to VM_RETURN_IF_EXCEPTION
-        // below with the TerminationException pending.
+        // Worker-level termination falls through with the TerminationException pending.
         if (!propagateWorkerTermination(vm, scope)) {
             vm.drainMicrotasksForGlobalObject(nodeVmGlobalObject);
             DECLARE_TOP_EXCEPTION_SCOPE(vm).clearException();

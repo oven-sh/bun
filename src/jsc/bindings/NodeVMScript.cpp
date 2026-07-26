@@ -309,15 +309,7 @@ void NodeVMScript::destroy(JSCell* cell)
 // See src/jsc/web_worker.rs.
 extern "C" bool WebWorker__currentWorkerHasRequestedTerminate();
 
-// A worker that has been asked to terminate (worker.terminate() from the
-// parent, process.exit() inside the worker, a resourceLimits heap-limit
-// breach, or process-exit teardown) interrupts a running vm.Script or
-// SourceTextModule exactly like `timeout` does, but that termination belongs
-// to the worker, not the script. When it does, leave the termination request
-// armed and propagate the TerminationException so the worker's event loop
-// unwinds and shuts down, instead of asserting or converting it into an
-// ERR_SCRIPT_EXECUTION_* error. Returns true iff the caller must bail with
-// the (already pending) exception. Also declared in NodeVMModule.cpp.
+// A worker-level termination must unwind the event loop, not become ERR_SCRIPT_EXECUTION_*; true => bail with the pending exception.
 bool propagateWorkerTermination(JSC::VM& vm, JSC::ThrowScope& scope)
 {
     if (!WebWorker__currentWorkerHasRequestedTerminate())

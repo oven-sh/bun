@@ -1103,9 +1103,7 @@ class Worker extends EventEmitter {
   }
 
   get resourceLimits() {
-    // Read back from native so the user's option is parsed exactly once,
-    // like Node's kHandle.getResourceLimits(): reported and enforced limits
-    // cannot diverge. A fresh object per read; {} once the worker stopped.
+    // Native owns the single parse; fresh object per read, {} after stop (Node compat).
     return this.#worker.resourceLimits;
   }
 

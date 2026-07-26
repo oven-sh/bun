@@ -2175,10 +2175,36 @@ pub mod __gated_printer {
             open_paren_loc: Option<bun_ast::Loc>,
             args: &[G::Arg],
             has_rest_arg: bool,
-            // is_arrow can be used for minifying later
-            _is_arrow: bool,
+            is_arrow: bool,
         ) {
-            let wrap = true;
+            // Gated on minify_whitespace (matches esbuild): the runtime
+            // transpiler enables minify_syntax silently, and dropping the
+            // parens there would change `Function.prototype.toString()` output.
+            let wrap = 'wrap: {
+                if !is_arrow {
+                    break 'wrap true;
+                }
+                if !self.options.minify_whitespace {
+                    break 'wrap true;
+                }
+                if args.len() != 1 {
+                    break 'wrap true;
+                }
+                if has_rest_arg {
+                    break 'wrap true;
+                }
+                let arg = &args[0];
+                if !matches!(arg.binding.data, BindingData::BIdentifier(_)) {
+                    break 'wrap true;
+                }
+                if arg.default.is_some() {
+                    break 'wrap true;
+                }
+                if !arg.ts_decorators.is_empty() {
+                    break 'wrap true;
+                }
+                false
+            };
 
             if wrap {
                 if let Some(loc) = open_paren_loc {

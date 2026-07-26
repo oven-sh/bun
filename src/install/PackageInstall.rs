@@ -2289,10 +2289,10 @@ impl<'a> PackageInstall<'a> {
         if self.cache_dir_subpath.as_bytes() == b"."
             || self.cache_dir_subpath.as_bytes().starts_with(b"..")
         {
-            return Method::Symlink;
+            Method::Symlink
+        } else {
+            Self::supported_method()
         }
-
-        Self::supported_method()
     }
 
     pub fn package_missing_from_cache(

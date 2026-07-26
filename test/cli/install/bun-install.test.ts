@@ -9175,13 +9175,17 @@ describe.concurrent("bun-install", () => {
   });
 
   test.each([
-    ["different volumes, first check", [1, 2, true], { useCopyfile: true, shouldLog: true }],
-    ["different volumes, cached", [1, 2, false], { useCopyfile: true, shouldLog: false }],
-    ["same volume", [1, 1, true], { useCopyfile: false, shouldLog: false }],
-    ["unavailable cache volume", [0, 2, true], { useCopyfile: false, shouldLog: false }],
-    ["unavailable destination volume", [1, 0, true], { useCopyfile: false, shouldLog: false }],
-  ] as const)("hardlink fallback decision: %s", (_, args, expected) => {
-    expect(install_test_helpers.hardlinkFallbackDecision(...args)).toEqual(expected);
+    ["different volumes", [1, 2], true],
+    ["same volume", [1, 1], false],
+    ["unavailable cache volume", [0, 2], false],
+    ["unavailable destination volume", [1, 0], false],
+  ] as const)("hardlink fallback decision caches synthetic volumes: %s", (_, args, useCopyfile) => {
+    expect(install_test_helpers.simulateHardlinkFallback(...args)).toEqual({
+      copyfileDecisionCount: useCopyfile ? 2 : 0,
+      logDecisionCount: useCopyfile ? 1 : 0,
+      cacheProbeCount: 1,
+      destinationProbeCount: 1,
+    });
   });
 });
 

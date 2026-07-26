@@ -21,12 +21,12 @@ pub mod bun_install_js_bindings {
         );
         obj.put(
             global,
-            b"hardlinkFallbackDecision",
+            b"simulateHardlinkFallback",
             JSFunction::create(
                 global,
-                bun_core::String::static_(b"hardlinkFallbackDecision"),
-                __jsc_host_js_hardlink_fallback_decision,
-                3,
+                bun_core::String::static_(b"simulateHardlinkFallback"),
+                __jsc_host_js_simulate_hardlink_fallback,
+                2,
                 Default::default(),
             ),
         );
@@ -34,7 +34,7 @@ pub mod bun_install_js_bindings {
     }
 
     #[bun_jsc::host_fn]
-    pub(crate) fn js_hardlink_fallback_decision(
+    pub(crate) fn js_simulate_hardlink_fallback(
         global: &JSGlobalObject,
         frame: &bun_jsc::CallFrame,
     ) -> bun_jsc::JsResult<JSValue> {
@@ -43,15 +43,59 @@ pub mod bun_install_js_bindings {
             0 => None,
             id => Some(u64::from(id)),
         };
-        let (use_copyfile, should_log) = bun_install::package_installer::hardlink_fallback_decision(
-            volume(args[0]),
-            volume(args[1]),
-            args[2].to_boolean(),
-        );
+        let cache_volume = volume(args[0]);
+        let destination_volume = volume(args[1]);
+        let cache = bun_install::package_installer::CachedVolumeId::default();
+        let destination = bun_install::package_installer::CachedVolumeId::default();
+        let cache_probe_count = core::cell::Cell::new(0u32);
+        let destination_probe_count = core::cell::Cell::new(0u32);
+        let decide = || {
+            let (cache_volume, _) = cache.get_or_init(|| {
+                cache_probe_count.set(cache_probe_count.get() + 1);
+                cache_volume
+            });
+            let (destination_volume, destination_volume_was_unchecked) =
+                destination.get_or_init(|| {
+                    destination_probe_count.set(destination_probe_count.get() + 1);
+                    destination_volume
+                });
+            bun_install::package_installer::hardlink_fallback_decision(
+                cache_volume,
+                destination_volume,
+                destination_volume_was_unchecked,
+            )
+        };
+        let decisions = [decide(), decide()];
+        let copyfile_decision_count = decisions
+            .iter()
+            .filter(|(use_copyfile, _)| *use_copyfile)
+            .count();
+        let log_decision_count = decisions
+            .iter()
+            .filter(|(_, should_log)| *should_log)
+            .count();
 
-        let result = JSValue::create_empty_object(global, 2);
-        result.put(global, b"useCopyfile", JSValue::js_boolean(use_copyfile));
-        result.put(global, b"shouldLog", JSValue::js_boolean(should_log));
+        let result = JSValue::create_empty_object(global, 4);
+        result.put(
+            global,
+            b"copyfileDecisionCount",
+            JSValue::js_number(copyfile_decision_count as f64),
+        );
+        result.put(
+            global,
+            b"logDecisionCount",
+            JSValue::js_number(log_decision_count as f64),
+        );
+        result.put(
+            global,
+            b"cacheProbeCount",
+            JSValue::js_number(cache_probe_count.get() as f64),
+        );
+        result.put(
+            global,
+            b"destinationProbeCount",
+            JSValue::js_number(destination_probe_count.get() as f64),
+        );
         Ok(result)
     }
 

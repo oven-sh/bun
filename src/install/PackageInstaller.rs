@@ -62,44 +62,30 @@ pub fn hardlink_fallback_decision(
     )
 }
 
-#[cfg(windows)]
-#[derive(Clone, Copy, Default)]
-enum CachedVolumeIdState {
-    #[default]
-    Unchecked,
-    Unavailable,
-    Id(u64),
-}
-
-#[cfg(windows)]
+#[doc(hidden)]
 #[derive(Default)]
-pub(crate) struct CachedVolumeId {
-    state: core::cell::Cell<CachedVolumeIdState>,
+pub struct CachedVolumeId {
+    state: core::cell::OnceCell<Option<u64>>,
 }
 
-#[cfg(windows)]
 impl CachedVolumeId {
+    #[doc(hidden)]
+    pub fn get_or_init(&self, probe: impl FnOnce() -> Option<u64>) -> (Option<u64>, bool) {
+        let was_unchecked = self.state.get().is_none();
+        (*self.state.get_or_init(probe), was_unchecked)
+    }
+
+    #[cfg(windows)]
     fn get(&self, fd: Fd) -> Option<u64> {
         self.get_with_status(fd).0
     }
 
+    #[cfg(windows)]
     fn get_with_status(&self, fd: Fd) -> (Option<u64>, bool) {
-        let mut state = self.state.get();
-        let was_unchecked = matches!(state, CachedVolumeIdState::Unchecked);
-        if was_unchecked {
-            state = match Syscall::fstat(fd) {
-                Ok(stat) if stat.st_dev != 0 => CachedVolumeIdState::Id(stat.st_dev),
-                _ => CachedVolumeIdState::Unavailable,
-            };
-            self.state.set(state);
-        }
-
-        let volume = match state {
-            CachedVolumeIdState::Id(id) => Some(id),
-            CachedVolumeIdState::Unchecked | CachedVolumeIdState::Unavailable => None,
-        };
-
-        (volume, was_unchecked)
+        self.get_or_init(|| match Syscall::fstat(fd) {
+            Ok(stat) if stat.st_dev != 0 => Some(stat.st_dev),
+            _ => None,
+        })
     }
 }
 
@@ -1232,14 +1218,7 @@ impl<'a> PackageInstaller<'a> {
             // Windows hardlink failures fall back per file, unlike Unix where the first
             // EXDEV switches the process-wide backend. Cache the shared package-cache
             // volume and each destination tree's volume to avoid that repeated failure.
-            let resolution_uses_package_cache = matches!(
-                resolution_tag,
-                resolution::Tag::Npm
-                    | resolution::Tag::Git
-                    | resolution::Tag::Github
-                    | resolution::Tag::LocalTarball
-                    | resolution::Tag::RemoteTarball
-            );
+            let resolution_uses_package_cache = resolution_tag.can_enqueue_install_task();
             if method != package_install::Method::Hardlink || !resolution_uses_package_cache {
                 return method;
             }

@@ -176,7 +176,8 @@ test("no 'close' is emitted on a re-listened server when an earlier connection e
     socket.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n");
     await inHandler.promise;
 
-    server.close();
+    let cb1Fired = false;
+    server.close(() => (cb1Fired = true));
     releaseResponse();
     while (!body.includes("ok")) await once(socket, "data");
     for (let i = 0; i < 4; i++) await new Promise<void>(r => setImmediate(r));
@@ -192,13 +193,17 @@ test("no 'close' is emitted on a re-listened server when an earlier connection e
     socket.destroy();
     for (let i = 0; i < 4; i++) await new Promise<void>(r => setImmediate(r));
     expect(closeEmitted).toBe(0);
+    expect(cb1Fired).toBe(false);
     expect(server.listening).toBe(true);
 
-    // Closing the new server then emits 'close' exactly once.
+    // Closing the new server then emits 'close' exactly once. The first
+    // cycle's callback was registered via once('close') and fires now too,
+    // like Node (and passing a second callback does not throw).
     const closed = Promise.withResolvers<void>();
     server.close(() => closed.resolve());
     await closed.promise;
     expect(closeEmitted).toBe(1);
+    expect(cb1Fired).toBe(true);
   } finally {
     socket.destroy();
     server.closeAllConnections();

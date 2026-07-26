@@ -129,7 +129,6 @@ function emitCloseServer(self: Server) {
     return;
   }
   self[kPendingDrainClose] = false;
-  callCloseCallback(self);
   self.emit("close");
 }
 function emitCloseNTServer(this: Server) {
@@ -532,7 +531,7 @@ Server.prototype.close = function (optionalCallback?) {
     return this;
   }
   this[serverSymbol] = undefined;
-  if (typeof optionalCallback === "function") setCloseCallback(this, optionalCallback);
+  if (typeof optionalCallback === "function") this.once("close", optionalCallback);
   this.listening = false;
   server.closeIdleConnections();
   server.stop();

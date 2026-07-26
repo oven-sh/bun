@@ -37,6 +37,7 @@ test("spawn can write to stdin multiple chunks", async () => {
         let echoed = 0;
         let stdoutClosed = false;
         let notifyEcho: (() => void) | undefined;
+        const stderrPromise = proc.stderr.text();
 
         const readerTask = (async function () {
           const chunks: Uint8Array[] = [];
@@ -55,8 +56,12 @@ test("spawn can write to stdin multiple chunks", async () => {
             proc.stdin!.write(line);
             await proc.stdin!.flush();
             while (echoed < line.length * w) {
-              if (stdoutClosed)
-                throw new Error(`child stdout closed after ${echoed} bytes (expected ${line.length * w})`);
+              if (stdoutClosed) {
+                const err = await stderrPromise;
+                throw new Error(
+                  `child stdout closed after ${echoed}/${line.length * writes} bytes; stderr:\n${err}`,
+                );
+              }
               await new Promise<void>(resolve => {
                 notifyEcho = resolve;
               });
@@ -68,7 +73,7 @@ test("spawn can write to stdin multiple chunks", async () => {
 
         const [received, stderr, , exitCode] = await Promise.all([
           readerTask,
-          proc.stderr.text(),
+          stderrPromise,
           writerTask,
           proc.exited,
         ]);

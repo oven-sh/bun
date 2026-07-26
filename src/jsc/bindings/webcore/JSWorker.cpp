@@ -815,8 +815,13 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_startCpuProfileInter
     uint64_t reqId = worker.registerCrossVMRequest(vm, promise);
     auto parentId = globalObject->scriptExecutionContext()->identifier();
     bool accepted = worker.postTaskToWorkerGlobalScope([reqId, parentId, protectedWorker = Ref { worker }](ScriptExecutionContext& workerCtx) mutable {
-        if (!Bun::isCPUProfilerRunning())
-            Bun::startCPUProfiler(workerCtx.vm());
+        // The worker thread's sampling profiler is reference-counted across
+        // this API and any in-worker node:inspector Session, so take a ref
+        // rather than guarding on isCPUProfilerRunning(). Tasks posted here run
+        // serially on the worker thread, so the load/store is not racy, and a
+        // second startCpuProfile() before stop stays idempotent.
+        if (protectedWorker->cpuProfileStartTime() == 0.0)
+            protectedWorker->setCpuProfileStartTime(Bun::startCPUProfiler(workerCtx.vm()));
         ScriptExecutionContext::postTaskTo(parentId, [reqId, protectedWorker = WTF::move(protectedWorker)](ScriptExecutionContext& parentCtx) {
             resolveCrossVMRequest(protectedWorker.get(), reqId, parentCtx, jsUndefined());
         });
@@ -840,8 +845,11 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_stopCpuProfileIntern
     auto parentId = globalObject->scriptExecutionContext()->identifier();
     bool accepted = worker.postTaskToWorkerGlobalScope([reqId, parentId, protectedWorker = Ref { worker }](ScriptExecutionContext& workerCtx) mutable {
         WTF::String result;
-        if (Bun::isCPUProfilerRunning())
-            Bun::stopCPUProfiler(workerCtx.vm(), &result, nullptr);
+        double since = protectedWorker->cpuProfileStartTime();
+        if (since != 0.0) {
+            protectedWorker->setCpuProfileStartTime(0.0);
+            Bun::stopCPUProfiler(workerCtx.vm(), &result, nullptr, since);
+        }
         if (result.isEmpty())
             result = kEmptyCpuProfileJSON;
         ScriptExecutionContext::postTaskTo(parentId, [reqId, protectedWorker = WTF::move(protectedWorker), result = result.isolatedCopy()](ScriptExecutionContext& parentCtx) {

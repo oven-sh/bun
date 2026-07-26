@@ -163,6 +163,13 @@ public:
     void enqueueToParent(MessageWithMessagePorts&&);
     void drainToWorker(ScriptExecutionContext&);
 
+    // Worker.{start,stop}CpuProfile's hold on the worker thread's shared
+    // sampling profiler: the timestamp startCPUProfiler() returned, or 0 if no
+    // profile is held. Read and written only from the worker thread's task
+    // queue (serial), so atomicity is for cross-thread destruction visibility.
+    double cpuProfileStartTime() const { return m_cpuProfileStartTime.load(); }
+    void setCpuProfileStartTime(double ts) { m_cpuProfileStartTime.store(ts); }
+
 private:
     Worker(ScriptExecutionContext&, WorkerOptions&&);
 
@@ -193,6 +200,7 @@ private:
 
     std::atomic<State> m_state { State::Pending };
     std::atomic<bool> m_terminateRequested { false };
+    std::atomic<double> m_cpuProfileStartTime { 0.0 };
 
     // Stable for the process lifetime; used with ScriptExecutionContext::
     // postTaskTo() so the worker thread never dereferences the parent context

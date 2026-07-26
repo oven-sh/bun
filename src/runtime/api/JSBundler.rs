@@ -677,7 +677,8 @@ pub mod js_bundler {
                                 this.env_behavior = api::DotEnvBehavior::LoadAll;
                             } else {
                                 this.env_behavior = api::DotEnvBehavior::Prefix;
-                                this.env_prefix.append_slice_exact(&s[..asterisk as usize])?;
+                                this.env_prefix
+                                    .append_slice_exact(&s[..asterisk as usize])?;
                             }
                         } else if s == b"inline" || s == b"1" {
                             this.env_behavior = api::DotEnvBehavior::LoadAll;

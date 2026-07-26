@@ -7,6 +7,8 @@ use bun_collections::VecExt;
 use bun_core::{StackCheck, String as BunString, strings};
 use bun_jsc::{JSGlobalObject, JSValue, JsError, bun_string_jsc};
 
+use E::TemplateContents;
+
 /// Map a `bun_jsc::JsError` into the AST-layer `ToJSError`. Orphan rules forbid
 /// `impl From<JsError> for ToJSError` here (both foreign), so callers use
 /// `.map_err(js_err)?` instead of bare `?`.
@@ -74,6 +76,7 @@ fn data_to_js_with_check(
         ExprData::EInlinedEnum(inlined) => {
             data_to_js_with_check(&inlined.value.data, global, stack_check)
         }
+        ExprData::ETemplate(tmpl) => template_to_js(tmpl, global, stack_check),
 
         ExprData::EIdentifier(_)
         | ExprData::EImportIdentifier(_)
@@ -82,6 +85,126 @@ fn data_to_js_with_check(
 
         _ => Err(ToJSError::CannotConvertArgumentTypeToJS),
     }
+}
+
+fn append_e_string_utf16(s: &E::String, out: &mut Vec<u16>) {
+    if s.is_utf8() {
+        let bytes = s.slice8();
+        match strings::wtf8_to_utf16_alloc(bytes) {
+            Some(wide) => out.extend_from_slice(&wide),
+            None => out.extend(bytes.iter().map(|&b| u16::from(b))),
+        }
+        let mut next = s.next;
+        while let Some(part) = next {
+            let part = part.get();
+            match strings::wtf8_to_utf16_alloc(&part.data) {
+                Some(wide) => out.extend_from_slice(&wide),
+                None => out.extend(part.data.iter().map(|&b| u16::from(b))),
+            }
+            next = part.next;
+        }
+    } else {
+        out.extend_from_slice(s.slice16());
+    }
+}
+
+fn append_template_contents_utf16(
+    c: &TemplateContents,
+    out: &mut Vec<u16>,
+) -> Result<(), ToJSError> {
+    match c {
+        TemplateContents::Cooked(s) => {
+            append_e_string_utf16(s, out);
+            Ok(())
+        }
+        // A non-tagged template never carries a raw (undefined-cooked) part.
+        TemplateContents::Raw(_) => Err(ToJSError::CannotConvertArgumentTypeToJS),
+    }
+}
+
+fn append_ascii_utf16(s: &[u8], out: &mut Vec<u16>) {
+    out.extend(s.iter().map(|&b| u16::from(b)));
+}
+
+fn append_template_part_value_utf16(
+    data: &ExprData,
+    out: &mut Vec<u16>,
+    stack_check: StackCheck,
+) -> Result<(), ToJSError> {
+    if !stack_check.is_safe_to_recurse() {
+        return Err(ToJSError::CannotConvertArgumentTypeToJS);
+    }
+    match data {
+        ExprData::EString(s) => append_e_string_utf16(s, out),
+        ExprData::ENumber(n) => {
+            let v = n.value();
+            if v.is_nan() {
+                append_ascii_utf16(b"NaN", out);
+            } else if v.is_infinite() {
+                append_ascii_utf16(
+                    if v.is_sign_negative() {
+                        b"-Infinity"
+                    } else {
+                        b"Infinity"
+                    },
+                    out,
+                );
+            } else {
+                let mut buf = [0u8; 124];
+                let s = bun_core::fmt::FormatDouble::dtoa(&mut buf, v);
+                append_ascii_utf16(s, out);
+            }
+        }
+        ExprData::ENull(_) => append_ascii_utf16(b"null", out),
+        ExprData::EUndefined(_) => append_ascii_utf16(b"undefined", out),
+        ExprData::EBoolean(b) | ExprData::EBranchBoolean(b) => {
+            append_ascii_utf16(if b.value { b"true" } else { b"false" }, out)
+        }
+        ExprData::EInlinedEnum(inlined) => {
+            return append_template_part_value_utf16(&inlined.value.data, out, stack_check);
+        }
+        ExprData::ETemplate(inner) => {
+            if inner.tag.is_some() {
+                return Err(ToJSError::CannotConvertArgumentTypeToJS);
+            }
+            append_template_contents_utf16(&inner.head, out)?;
+            for part in inner.parts() {
+                append_template_part_value_utf16(&part.value.data, out, stack_check)?;
+                append_template_contents_utf16(&part.tail, out)?;
+            }
+        }
+        ExprData::EIdentifier(_)
+        | ExprData::EImportIdentifier(_)
+        | ExprData::EPrivateIdentifier(_)
+        | ExprData::ECommonjsExportIdentifier(_) => {
+            return Err(ToJSError::CannotConvertIdentifierToJS);
+        }
+        _ => return Err(ToJSError::CannotConvertArgumentTypeToJS),
+    }
+    Ok(())
+}
+
+pub(crate) fn template_to_js(
+    tmpl: &E::Template,
+    global: &JSGlobalObject,
+    stack_check: StackCheck,
+) -> Result<JSValue, ToJSError> {
+    if tmpl.tag.is_some() {
+        return Err(ToJSError::CannotConvertArgumentTypeToJS);
+    }
+    let mut out: Vec<u16> = Vec::new();
+    append_template_contents_utf16(&tmpl.head, &mut out)?;
+    for part in tmpl.parts() {
+        append_template_part_value_utf16(&part.value.data, &mut out, stack_check)?;
+        append_template_contents_utf16(&part.tail, &mut out)?;
+    }
+    if out.is_empty() {
+        let emp = BunString::EMPTY;
+        return bun_string_jsc::to_js(&emp, global).map_err(js_err);
+    }
+    let (mut s, chars) = BunString::create_uninitialized_utf16(out.len());
+    chars.copy_from_slice(&out);
+    bun_string_jsc::transfer_to_js(&mut s, global).map_err(js_err)
 }
 
 pub(crate) fn array_to_js(

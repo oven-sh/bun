@@ -95,9 +95,7 @@ impl SystemError {
         SystemError__toErrorInstance(&self, global)
     }
 
-    /// `TypeError('fetch failed', {cause: <this as Error>})`, mirroring
-    /// node/undici's fetch rejection shape. `.code` is copied onto the outer
-    /// `TypeError` so callers that read it directly keep working.
+    /// `TypeError('fetch failed', {cause: <this as Error>})` with `.code` copied onto the outer error.
     pub fn to_fetch_type_error_instance(self, global: &JSGlobalObject) -> JSValue {
         SystemError__toFetchTypeErrorInstance(&self, global)
     }

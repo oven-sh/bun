@@ -1323,9 +1323,7 @@ impl FetchTasklet {
             }
         }
 
-        // `.code` on the cause is what portable error handlers branch on, so
-        // map the failures that have a direct Node/libuv errno equivalent to
-        // that errno string. Everything else keeps Bun's HTTP error name.
+        // Map failures with a direct Node/libuv errno equivalent to that errno string.
         let (code, syscall) = match fail {
             http::Error::ConnectionClosed => ("ECONNRESET", None),
             http::Error::ConnectionRefused => ("ECONNREFUSED", Some("connect")),

@@ -2426,14 +2426,8 @@ JSC::EncodedJSValue SystemError__toErrorInstance(const SystemError* arg0, JSC::J
     return JSC::JSValue::encode(result);
 }
 
-// Fetch-spec §4.1 step 12.3: a "network error" rejects the fetch promise with a
-// TypeError. Node/undici materialise that as `new TypeError('fetch failed',
-// {cause: <original error>})`, which is what `is-network-error`, `p-retry`,
-// `ky`, and the common `err.cause?.code === 'ECONNREFUSED'` idiom key on.
-//
-// `cause` is the same system-error object `SystemError__toErrorInstance` would
-// have produced; `.code` is mirrored onto the outer TypeError so existing Bun
-// code that reads `err.code` directly keeps working.
+// `new TypeError('fetch failed', {cause: <SystemError as Error>})` (Fetch spec §4.1 step 12.3; undici shape).
+// `.code` is mirrored onto the outer TypeError for existing `err.code` readers.
 JSC::EncodedJSValue SystemError__toFetchTypeErrorInstance(const SystemError* arg0, JSC::JSGlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);

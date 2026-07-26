@@ -564,8 +564,7 @@ pub enum Tag {
 pub enum ValueError {
     AbortReason(CommonAbortReason),
     SystemError(SystemError),
-    /// `TypeError('fetch failed', {cause: <SystemError>})`, the undici/node
-    /// rejection shape for fetch network errors.
+    /// `TypeError('fetch failed', {cause: <SystemError>})`.
     FetchError(SystemError),
     Message(BunString),
     /// Surfaces as a JS `TypeError`. The fetch spec maps every "network

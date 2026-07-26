@@ -95,11 +95,9 @@ extern "C" fn on_recv_error(socket: *mut uws::udp::Socket, errno: c_int, is_errq
     // Reached on every POSIX platform. `is_errqueue` distinguishes an ICMP
     // errno drained from Linux's MSG_ERRQUEUE from a real recvmmsg failure —
     // which on the BSDs (no error queue) is also how a connected socket's
-    // ICMP error (so_error) arrives.
+    // ICMP error (so_error) arrives. Node never enables IP_RECVERR, so its
+    // kernel drops ICMP for an unconnected socket; do the same here.
     let this: &UDPSocket = UDPSocket::from_uws(socket);
-    // Node never enables IP_RECVERR, so the kernel drops ICMP for an
-    // unconnected socket; match that here so a reply server is not killed
-    // by a vanished client. Connected sockets keep the error.
     if is_errqueue != 0 && this.connect_info.get().is_none() {
         return;
     }

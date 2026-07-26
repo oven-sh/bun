@@ -872,7 +872,8 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
                 return WriteResult::Wrote(chunk_len);
             }
             WriteResult::Done(amt) => {
-                let old_buffered = self.outgoing.size().saturating_sub(chunk_len);
+                debug_assert!(self.outgoing.size() >= chunk_len);
+                let old_buffered = self.outgoing.size() - chunk_len;
                 self.outgoing.reset();
                 self.parent_on_write(amt, WriteStatus::EndOfFile);
                 return WriteResult::Done(amt.saturating_sub(old_buffered));

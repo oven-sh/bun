@@ -225,7 +225,10 @@ it.skipIf(!isPosix)("write result is not cumulative when the chunk flushes buffe
 
   const ascii = Buffer.alloc(505, "a").toString();
   const bytes = Buffer.alloc(64 * 1024, "c");
-  const latin1 = Buffer.alloc(40_000, "é").toString();
+  // Decoding as "latin1" keeps the JSString 8-bit so writer.write() reaches
+  // write_latin1's non-ASCII branch; decoding via utf8 would yield a 16-bit
+  // string that routes to write_utf16 instead.
+  const latin1 = Buffer.alloc(40_000, 0xe9).toString("latin1");
   const utf16 = Buffer.alloc(20_000, "😀").toString();
 
   const results = [

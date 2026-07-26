@@ -2158,8 +2158,7 @@ fn handle_body_already_used(global_object: &JSGlobalObject) -> JSValue {
 
 /// If the body already failed, reject the read with that error. Every body
 /// reader must call this before its `Locked` handling: `Value::Error` would
-/// otherwise fall through to `use_as_any_blob_*` and resolve empty. Leaves the
-/// body `Used` since calling a reader disturbs it.
+/// otherwise fall through to `use_as_any_blob_*` and resolve empty.
 fn handle_body_error(value: &mut Value, global_object: &JSGlobalObject) -> Option<JSValue> {
     let Value::Error(err) = value else {
         return None;

@@ -6926,14 +6926,6 @@ impl PrintArg for u8 {
         w.print_byte(self);
     }
 }
-// `u16` narrows to one byte so wide-int char callers (e.g. UTF-16 iteration)
-// compile and emit a single byte.
-impl PrintArg for u16 {
-    #[inline]
-    fn print_into<W: WriterTrait>(self, w: &mut W) {
-        w.print_byte(self as u8);
-    }
-}
 impl PrintArg for &[u8] {
     fn print_into<W: WriterTrait>(self, w: &mut W) {
         w.print_slice(self);
@@ -7409,14 +7401,12 @@ pub type BufferPrinter = Writer<BufferWriter>;
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Format {
     Esm,
-    Cjs,
     // bun.js must escape non-latin1 identifiers in the output This is because
     // we load JavaScript as a UTF-8 buffer instead of a UTF-16 buffer
     // JavaScriptCore does not support UTF-8 identifiers when the source code
     // string is loaded as const char* We don't want to double the size of code
     // in memory...
     EsmAscii,
-    CjsAscii,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, core::marker::ConstParamTy)]
@@ -7439,7 +7429,7 @@ impl GenerateSourceMap {
 
 // ───────────────────────────────────────────────────────────────────────────
 // Top-level print entry points — `get_source_map_builder` / `print` /
-// `print_with_writer{,_and_platform}` / `print_common_js` are live (the
+// `print_with_writer{,_and_platform}` are live (the
 // `bun_crash_handler::current_action` / `bun_core::perf::trace` /
 // `bun_sourcemap::chunk::Builder: Default` blockers are all real now, so the
 // former `__gated_entry_points` wrapper has been flattened away).
@@ -7973,73 +7963,6 @@ pub fn print_with_writer_and_platform<
         code: buffer.take_slice().into(),
         source_map,
     })
-}
-
-pub fn print_common_js<
-    'a,
-    W: WriterTrait,
-    const ASCII_ONLY: bool,
-    const GENERATE_SOURCE_MAP: bool,
->(
-    _writer: W,
-    bump: &'a bun_alloc::Arena,
-    tree: &'a Ast,
-    symbols: js_ast::symbol::Map,
-    source: &'a bun_ast::Source,
-    opts: Options<'a>,
-) -> crate::Result<usize> {
-    let _restore =
-        bun_crash_handler::scoped_action(bun_crash_handler::Action::Print(source.path.text));
-
-    type PrinterType<'a, W, const A: bool, const G: bool> =
-        Printer<'a, W, A, true, false, false, G>;
-    let mut writer = _writer;
-    // See `print_ast`: pre-size the output buffer to avoid grow+memmove churn.
-    let _ = writer.reserve(source.contents().len() as u64);
-    let mut opts = opts;
-    let mut renamer = rename::NoOpRenamer::init(symbols, source);
-    let source_map_builder = get_source_map_builder::<false>(
-        GenerateSourceMap::lazy_if(GENERATE_SOURCE_MAP),
-        &mut opts,
-        source,
-        tree,
-    );
-    let mut printer = PrinterType::<W, ASCII_ONLY, GENERATE_SOURCE_MAP>::init(
-        writer,
-        bump,
-        tree.import_records.as_slice(),
-        opts,
-        renamer.to_renamer(),
-        source_map_builder,
-    );
-    // `defer { if (generate_source_map) printer.source_map_builder.line_offset_tables.deinit(opts.allocator); }`
-    // — no longer needed: see `print_ast` above.
-    printer.binary_expression_stack = Vec::new();
-
-    for part in tree.parts.iter() {
-        for stmt in slice_of(part.stmts).iter() {
-            printer.print_stmt(*stmt, TopLevel::init(IsTopLevel::Yes))?;
-            printer.writer.get_error()?;
-            printer.print_semicolon_if_needed();
-        }
-    }
-    printer.check_stack_overflow()?;
-
-    // Add a couple extra newlines at the end
-    printer.writer.print_slice(b"\n\n");
-
-    if GENERATE_SOURCE_MAP {
-        if let Some(handler) = &printer.options.source_map_handler {
-            let chunk = printer
-                .source_map_builder
-                .generate_chunk(printer.writer.slice());
-            handler.on_source_map_chunk(chunk, source)?;
-        }
-    }
-
-    printer.writer.done()?;
-
-    Ok(usize::try_from(printer.writer.written().max(0)).expect("int cast"))
 }
 
 /// Serializes ModuleInfo to an owned byte slice. Returns null on failure.

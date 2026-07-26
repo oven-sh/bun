@@ -1725,26 +1725,12 @@ pub fn diff_post_process(
     Ok(Ok(stdout))
 }
 
-// Returns owned `Vec<u8>` pairs (NUL-appended when SENTINEL).
-pub fn git_diff_preprocess_paths<const SENTINEL: bool>(
-    old_folder_: &[u8],
-    new_folder_: &[u8],
-) -> [Vec<u8>; 2] {
-    let bump: usize = if SENTINEL { 1 } else { 0 };
-
+pub fn git_diff_preprocess_paths(old_folder_: &[u8], new_folder_: &[u8]) -> [Vec<u8>; 2] {
     #[cfg(windows)]
     let old_folder: Vec<u8> = {
         // backslash in the path fucks everything up
-        let mut cpy = vec![0u8; old_folder_.len() + bump];
-        cpy[..old_folder_.len()].copy_from_slice(old_folder_);
+        let mut cpy = old_folder_.to_vec();
         paths::slashes_to_posix_in_place(&mut cpy[..]);
-        if SENTINEL {
-            cpy[old_folder_.len()] = 0;
-            // The sentinel slice's `.len` excludes the NUL. Truncate so
-            // `Vec::len()` matches; the NUL byte stays in
-            // spare capacity for callers that need a C string via `.as_ptr()`.
-            cpy.truncate(old_folder_.len());
-        }
         cpy
     };
     #[cfg(not(windows))]
@@ -1752,30 +1738,13 @@ pub fn git_diff_preprocess_paths<const SENTINEL: bool>(
 
     #[cfg(windows)]
     let new_folder: Vec<u8> = {
-        let mut cpy = vec![0u8; new_folder_.len() + bump];
-        cpy[..new_folder_.len()].copy_from_slice(new_folder_);
+        let mut cpy = new_folder_.to_vec();
         paths::slashes_to_posix_in_place(&mut cpy[..]);
-        if SENTINEL {
-            cpy[new_folder_.len()] = 0;
-            // `.len` excludes the sentinel.
-            cpy.truncate(new_folder_.len());
-        }
         cpy
     };
     #[cfg(not(windows))]
     let new_folder: Vec<u8> = new_folder_.to_vec();
 
-    #[cfg(unix)]
-    if SENTINEL {
-        // Append NUL.
-        let mut o = old_folder;
-        o.push(0);
-        let mut n = new_folder;
-        n.push(0);
-        return [o, n];
-    }
-
-    let _ = bump;
     [old_folder, new_folder]
 }
 
@@ -1784,7 +1753,7 @@ pub fn git_diff_internal(
     new_folder_: &[u8],
     loop_: &mut bun_event_loop::AnyEventLoop,
 ) -> crate::Result<core::result::Result<Vec<u8>, Vec<u8>>> {
-    let paths = git_diff_preprocess_paths::<false>(old_folder_, new_folder_);
+    let paths = git_diff_preprocess_paths(old_folder_, new_folder_);
     let old_folder = &paths[0][..];
     let new_folder = &paths[1][..];
 

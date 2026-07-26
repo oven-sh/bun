@@ -46,7 +46,6 @@ pub struct ExecState {
 pub enum LsParseError {
     /// Carries an owned 1-byte copy of the offending flag char.
     IllegalOption(Box<[u8]>),
-    ShowUsage,
 }
 
 enum ParseFlag {
@@ -80,17 +79,14 @@ impl Ls {
                 // which case we run once with ".".
                 let paths_start = match Self::parse_opts(interp, cmd) {
                     Ok(p) => p,
-                    Err(e) => {
-                        let buf: Vec<u8> = match e {
-                            LsParseError::IllegalOption(opt) => Builtin::fmt_error_arena(
-                                interp,
-                                cmd,
-                                Some(Kind::Ls),
-                                format_args!("illegal option -- {}\n", bstr::BStr::new(&opt[..])),
-                            )
-                            .to_vec(),
-                            LsParseError::ShowUsage => Kind::Ls.usage_string().to_vec(),
-                        };
+                    Err(LsParseError::IllegalOption(opt)) => {
+                        let buf: Vec<u8> = Builtin::fmt_error_arena(
+                            interp,
+                            cmd,
+                            Some(Kind::Ls),
+                            format_args!("illegal option -- {}\n", bstr::BStr::new(&opt[..])),
+                        )
+                        .to_vec();
                         Self::state_mut(interp, cmd).state = State::WaitingWriteErr;
                         return Builtin::write_failing_error(interp, cmd, &buf, 1);
                     }

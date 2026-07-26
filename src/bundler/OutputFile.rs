@@ -148,52 +148,23 @@ impl FileOperation {
             ..Default::default()
         }
     }
-
-    pub fn get_pathname(&self) -> &[u8] {
-        &self.pathname
-    }
 }
 
-#[repr(u8)]
-#[derive(Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
-pub enum Kind {
-    Move,
-    Copy,
-    Noop,
-    Buffer,
-    Pending,
-    Saved,
-}
-
-// TODO: document how and why all variants of this union(enum) are used,
-// specifically .move and .copy; the new bundler has to load files in memory
-// in order to hash them, so i think it uses .buffer for those
 pub enum Value {
-    Move(FileOperation),
     Copy(FileOperation),
     Noop,
     Buffer { bytes: Box<[u8]> },
-    // Note: boxed to avoid blowing up `Value`'s inline size (`resolver::Result`
-    // is several hundred bytes).
-    Pending(Box<bun_resolver::Result>),
     Saved(SavedFile),
 }
 
-// Cloning is only used to splice finished output files into the final list.
-// The `Pending` arm is never present
-// at that stage (only `buffer`/`copy`/`saved` are produced by `init`), so its
-// clone is intentionally unreachable rather than forcing `resolver::Result` to
-// be `Clone`.
 impl Clone for Value {
     fn clone(&self) -> Self {
         match self {
-            Value::Move(op) => Value::Move(op.clone()),
             Value::Copy(op) => Value::Copy(op.clone()),
             Value::Noop => Value::Noop,
             Value::Buffer { bytes } => Value::Buffer {
                 bytes: bytes.clone(),
             },
-            Value::Pending(_) => unreachable!("OutputFile.Value::Pending is never cloned"),
             Value::Saved(s) => Value::Saved(*s),
         }
     }
@@ -231,19 +202,9 @@ impl Value {
                     noop,
                 )
             }
-            Value::Pending(_) => unreachable!(),
-            other => bun_core::todo_panic!("handle .{}", <&'static str>::from(other.kind())),
-        }
-    }
-
-    pub fn kind(&self) -> Kind {
-        match self {
-            Value::Move(_) => Kind::Move,
-            Value::Copy(_) => Kind::Copy,
-            Value::Noop => Kind::Noop,
-            Value::Buffer { .. } => Kind::Buffer,
-            Value::Pending(_) => Kind::Pending,
-            Value::Saved(_) => Kind::Saved,
+            Value::Copy(_) | Value::Saved(_) => {
+                bun_core::todo_panic!("to_bun_string_ref: Copy/Saved")
+            }
         }
     }
 }
@@ -356,27 +317,10 @@ impl OutputFile {
                     },
                 )?;
             }
-            Value::Move(value) => {
-                self.move_to(root_dir_path, &value.pathname, root_dir)?;
-            }
             Value::Copy(value) => {
                 self.copy_to(root_dir_path, &value.pathname, root_dir)?;
             }
-            Value::Pending(_) => unreachable!(),
         }
-        Ok(())
-    }
-
-    pub fn move_to(&self, _: &[u8], rel_path: &[u8], dir: Fd) -> Result<(), Error> {
-        let Value::Move(mv) = &self.value else {
-            unreachable!()
-        };
-        // NUL-terminate both paths into stack buffers via `resolve_path::z`.
-        let mut src_buf = PathBuffer::uninit();
-        let mut dst_buf = PathBuffer::uninit();
-        let src = resolve_path::z(mv.get_pathname(), &mut src_buf);
-        let dst = resolve_path::z(rel_path, &mut dst_buf);
-        bun_sys::move_file_z(mv.dir, src, dir, dst)?;
         Ok(())
     }
 

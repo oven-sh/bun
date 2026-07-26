@@ -47,7 +47,6 @@ pub use protocol_jsc::{
     ToJSOptions, resp_value_to_js, resp_value_to_js_with_options, valkey_error_to_js,
 };
 pub use valkey::{Options, Protocol, Status, ValkeyClient};
-pub use valkey_context::ValkeyContext;
 
 // ── ValkeyCommand ────────────────────────────────────────────────────────────
 // `ValkeyCommand` is both a namespace

@@ -43,7 +43,6 @@ pub const WRITE_BUFFER_CONTROL_LIMIT: usize = 1024 * 1024;
 pub static live_sessions: AtomicI32 = AtomicI32::new(0);
 #[allow(non_upper_case_globals)]
 pub static live_streams: AtomicI32 = AtomicI32::new(0);
-pub use live_sessions as LIVE_SESSIONS;
 pub use live_streams as LIVE_STREAMS;
 
 #[path = "h2_client/ClientSession.rs"]

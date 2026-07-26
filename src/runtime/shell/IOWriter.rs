@@ -181,13 +181,6 @@ pub fn on_poll(writer: &mut Poll, size_hint: isize, hup: bool) {
 }
 
 impl IOWriter {
-    /// Explicitly a no-op. Kept only because `task_tag::ShellIOWriter`
-    /// exists in the task-tag dispatch table. No code path enqueues this tag.
-    pub fn run_from_main_thread(_this: *mut IOWriter) {
-        // intentionally empty. No unsafe operations; the pointer is never
-        // dereferenced.
-    }
-
     /// Tears down the underlying `WriterImpl` and drops the last strong ref.
     ///
     /// # Safety

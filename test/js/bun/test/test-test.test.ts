@@ -864,31 +864,28 @@ test("only test", async () => {
     expect(exitCode).toBe(1);
   });
 
-  test.concurrent(
-    "a short-period interval leaked by an earlier file does not stall later files",
-    async () => {
-      const { stderr, exitCode, signalCode } = await runFixture({
-        "a.test.js": `
+  test.concurrent("a short-period interval leaked by an earlier file does not stall later files", async () => {
+    const { stderr, exitCode, signalCode } = await runFixture({
+      "a.test.js": `
 import { test, expect } from "bun:test";
 test("a", () => {
   setInterval(() => {}, 100);
   expect(1).toBe(1);
 });
 `,
-        "b.test.js": `
+      "b.test.js": `
 import { test, expect } from "bun:test";
 test("b", () => { expect(1).toBe(1); });
 `,
-        "c.test.js": `
+      "c.test.js": `
 import { test, expect } from "bun:test";
 test("c", () => { expect(1).toBe(1); });
 `,
-      });
+    });
 
-      expect(stderr).toContain("3 pass");
-      expect(stderr).toContain("0 fail");
-      expect(signalCode).toBeNull();
-      expect(exitCode).toBe(0);
-    },
-  );
+    expect(stderr).toContain("3 pass");
+    expect(stderr).toContain("0 fail");
+    expect(signalCode).toBeNull();
+    expect(exitCode).toBe(0);
+  });
 });

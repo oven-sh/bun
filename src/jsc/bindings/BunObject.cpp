@@ -541,8 +541,7 @@ static JSC::StreamingJSONParseResult::Status parseJSONLFromBytes(
             if (segAscii) {
                 from = segStart + localBytes;
             } else {
-                // localBytes is derived from the *converted* string and can exceed
-                // the original byte span when invalid UTF-8 was replaced, so rewind.
+                // localBytes may overshoot the input when invalid UTF-8 was replaced; rewind.
                 while (values.size() > sizeBefore)
                     values.removeLast();
                 consumedBytes = consumedBefore;

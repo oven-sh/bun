@@ -2797,10 +2797,8 @@ Socket.prototype._writev = function _writev(data, callback) {
   if (data.length === 1) {
     return this._write(data[0], "buffer", callback);
   }
-  // Winsock completes a first large send synchronously only when it is one
-  // WSASend; usockets has no vectored send on Windows, so concat to one buffer
-  // there (test-http-agent-reuse-drained-socket-only.js depends on this).
   if (process.platform === "win32") {
+    // Winsock only sync-completes a first large send as one WSASend; no vectored send in usockets here.
     return this._write(Buffer.concat(data), "buffer", callback);
   }
 

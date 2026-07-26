@@ -382,9 +382,6 @@ impl S3HttpSimpleTask {
                                 S3ListObjectsResult::Success(Box::new(success)),
                                 this.callback_context,
                             )?,
-                            // Body was absent or not a complete <ListBucketResult> document.
-                            // error_with_body extracts <Code>/<Message> when the body is an S3
-                            // <Error> document; otherwise it falls back to UnknownError.
                             None => this.error_with_body(ErrorType::Failure)?,
                         }
                     }

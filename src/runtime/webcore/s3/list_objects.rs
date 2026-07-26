@@ -170,9 +170,7 @@ impl<'a> S3ListObjectsV2Result<'a> {
     }
 }
 
-// Returns None if the body does not contain a complete <ListBucketResult> … </ListBucketResult>
-// document. Callers treat None as a parse failure and surface an error instead of a
-// silently-empty success.
+/// Returns `None` when the body is not a complete `<ListBucketResult>` document.
 pub fn parse_s3_list_objects_result(xml: &[u8]) -> Option<S3ListObjectsV2Result<'_>> {
     let mut result = S3ListObjectsV2Result {
         contents: None,
@@ -196,8 +194,6 @@ pub fn parse_s3_list_objects_result(xml: &[u8]) -> Option<S3ListObjectsV2Result<
     let Some(delete_result_pos) = strings::index_of(xml, b"<ListBucketResult") else {
         return None;
     };
-    // A body that opens <ListBucketResult> but never closes it (truncated stream, proxy
-    // cut mid-transfer) must not be reported as a partial success.
     if strings::index_of(&xml[delete_result_pos..], b"</ListBucketResult>").is_none() {
         return None;
     }

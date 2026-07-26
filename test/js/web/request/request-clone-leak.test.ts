@@ -62,12 +62,13 @@ for (let i = 0; i < constructorArgs.length; i++) {
   // iteration. The url/URL-input cases ignore `r` and reuse the shared args.
   const chain = args.length === 1 && args[0] instanceof Request;
   const seed = () => (chain ? (args[0] as Request).clone() : (args[0] as string | URL));
+  const step = chain ? (r: Request) => new Request(r) : () => new Request(...(args as [string, RequestInit]));
   test("new Request(test #" + i + ")", () => {
     Bun.gc(true);
 
     let r = seed();
     for (let i = 0; i < 1000 * ASAN_MULTIPLIER; i++) {
-      r = chain ? new Request(r) : new Request(...args);
+      r = step(r as Request);
     }
 
     Bun.gc(true);
@@ -75,7 +76,7 @@ for (let i = 0; i < constructorArgs.length; i++) {
     r = seed();
     for (let i = 0; i < 2000 * ASAN_MULTIPLIER; i++) {
       for (let j = 0; j < 500 * ASAN_MULTIPLIER; j++) {
-        r = chain ? new Request(r) : new Request(...args);
+        r = step(r as Request);
       }
       Bun.gc();
     }
@@ -89,14 +90,14 @@ for (let i = 0; i < constructorArgs.length; i++) {
     // iteration multiplier vs <10 MB native. The unfixed leak presents as
     // 100+ MB so 64 MB still catches it.
     expect(delta).toBeLessThan(isASAN ? 64 : 30);
-  });
+  }, 20_000);
 
   test("request.clone(test #" + i + ")", () => {
     Bun.gc(true);
 
     let r = seed();
     for (let i = 0; i < 1000 * ASAN_MULTIPLIER; i++) {
-      r = chain ? new Request(r) : new Request(...args);
+      r = step(r as Request);
       r.clone();
     }
 
@@ -105,7 +106,7 @@ for (let i = 0; i < constructorArgs.length; i++) {
     r = seed();
     for (let i = 0; i < 2000 * ASAN_MULTIPLIER; i++) {
       for (let j = 0; j < 500 * ASAN_MULTIPLIER; j++) {
-        r = chain ? new Request(r) : new Request(...args);
+        r = step(r as Request);
         r.clone();
       }
       Bun.gc();
@@ -120,5 +121,5 @@ for (let i = 0; i < constructorArgs.length; i++) {
     // iteration multiplier vs <10 MB native. The unfixed leak presents as
     // 100+ MB so 64 MB still catches it.
     expect(delta).toBeLessThan(isASAN ? 64 : 30);
-  });
+  }, 20_000);
 }

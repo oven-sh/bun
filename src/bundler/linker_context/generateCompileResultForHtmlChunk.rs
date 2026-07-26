@@ -167,10 +167,8 @@ impl<'a> HTMLProcessorHandler for HTMLLoader<'a> {
             Loader::File
         };
 
-        // The resolver strips a `?query`/`#fragment` to find the file on disk
-        // (e.g. `sprite.svg#home`, `clip.mp4#t=10,20`); carry it across to the
-        // rewritten reference so the fragment still addresses the SVG symbol /
-        // media range. Matches CSS's `url()` handling (see `css::Printer`).
+        // Re-append the original `?query`/`#fragment` (e.g. `sprite.svg#home`)
+        // that the resolver stripped to locate the file. Matches `css::Printer`.
         let suffix: &[u8] = if kind == ImportKind::Url {
             match strings::index_of_any(path, b"?#") {
                 Some(i) => &path[i..],
@@ -234,8 +232,7 @@ impl<'a> HTMLProcessorHandler for HTMLLoader<'a> {
             let url_for_css =
                 parse_graph.ast.items_url_for_css()[import_record.source_index.get() as usize];
             if !url_for_css.is_empty() {
-                // A `?query` appended to a data: URI lands in the base64 body
-                // and breaks decoding; keep only the `#fragment`.
+                // data: URIs have no `?query` component; keep only `#fragment`.
                 let fragment: &[u8] = match strings::index_of_char(suffix, b'#') {
                     Some(i) => &suffix[i as usize..],
                     None => b"",

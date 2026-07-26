@@ -1345,10 +1345,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             _ => {}
         }
 
-        // Annex B.3.2: `foo: function bar() {}` is a top-level var-scoped
-        // declaration, so without a renamer (which would lower it to
-        // `let`+`var` anyway) keep the bare `SFunction` rather than the
-        // block `stmts_to_single_stmt` wraps it in.
+        // Annex B.3.2: keep `label: function f(){}` bare on the no-renamer
+        // path; `stmts_to_single_stmt` would otherwise block-wrap it.
         let was_bare_fn =
             !p.will_use_renamer() && matches!(data.stmt.data, StmtData::SFunction(_));
         data.stmt = p.visit_single_stmt(data.stmt, StmtsKind::None);

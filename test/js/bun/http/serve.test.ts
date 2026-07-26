@@ -14,6 +14,7 @@ import {
   tls,
   tmpdirSync,
 } from "harness";
+import { connect } from "net";
 import { join, resolve } from "path";
 // import { renderToReadableStream } from "react-dom/server";
 // import app_jsx from "./app.jsx";
@@ -21,6 +22,7 @@ import { heapStats } from "bun:jsc";
 import { spawn } from "child_process";
 import net from "node:net";
 import { networkInterfaces } from "node:os";
+import nodeTls from "node:tls";
 import { tmpdir } from "os";
 
 let renderToReadableStream: any = null;
@@ -1244,6 +1246,54 @@ it("should support reloading", async () => {
       server.reload({ fetch: second });
       const response2 = await fetch(server.url.origin);
       expect(await response2.text()).toBe("second");
+    },
+  );
+});
+
+// Reloading a server that was CREATED as a node:http one re-applies node-compat mode to
+// the live, already-listening native context (reload -> set_routes); it must be an
+// idempotent no-op. On assert-enabled builds a real re-switch aborts the process, so the
+// repro runs in a subprocess. `bun --hot` takes this exact path on every reload.
+it("reload() of a node:http-backed server is not treated as a mode switch", async () => {
+  const code = `
+    const noop = function () {};
+    const server = Bun.serve({ port: 0, fetch: () => new Response("x"), onNodeHTTPRequest: noop });
+    server.reload({ fetch: () => new Response("y"), onNodeHTTPRequest: noop });
+    server.stop(true);
+    console.log("OK");
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", code], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("OK\n");
+  expect(exitCode).toBe(0);
+});
+
+it("reload() cannot turn a Bun.serve server into a node:http server", async () => {
+  // The server's kind is fixed when listen() sizes its connections' native
+  // per-socket block; a reload that smuggles in the node:http handler used by
+  // node's http.Server wrapper must be ignored, not flip the context into
+  // node-compat mode under connections allocated with the smaller block.
+  const first: Handler = () => new Response("first");
+  const second: Handler = () => new Response("second");
+  await runTest(
+    {
+      fetch: first,
+    },
+    async server => {
+      expect(await (await fetch(server.url.origin)).text()).toBe("first");
+      server.reload({
+        fetch: second,
+        // @ts-expect-error internal option used by node:http's Server
+        onNodeHTTPRequest: () => {
+          throw new Error("must never be routed");
+        },
+      });
+      // Fresh connections after the reload (fetch pools per-origin, so mix in
+      // explicit no-keepalive requests to force new native sockets).
+      for (let i = 0; i < 8; i++) {
+        const res = await fetch(server.url.origin, { headers: { connection: "close" } });
+        expect(await res.text()).toBe("second");
+      }
     },
   );
 });
@@ -2906,9 +2956,7 @@ it.concurrent("#20283", async () => {
 // copies the raw bytes and the underlying C socket layer truncates at the first NUL, so
 // `"127.0.0.1\0ignored"` behaves like `"127.0.0.1"` (or at worst surfaces as a catchable JS error).
 // A port that uses CString::new(...).expect(...) would panic and crash the process instead.
-// TODO(zig-rust-divergence): Rust port currently panics on interior NUL;
-// see docs/ZIG_RUST_DIVERGENCE_AUDIT.md.
-it.todo("Bun.serve hostname with interior NUL byte does not crash the process", async () => {
+it("Bun.serve hostname with interior NUL byte does not crash the process", async () => {
   const script = `
     try {
       const server = Bun.serve({
@@ -3464,4 +3512,167 @@ it("survives aborted uploads while responding with a tee()d request-body branch"
     exitCode: 0,
     signalCode: null,
   });
+});
+
+// A client that half-closes its write side right after the request (the raw
+// socket.end(request) pattern) must receive every response byte already handed
+// to uWS, not just what the kernel accepted on the first send. No
+// Connection: close on the request: the post-drain shutdown is driven by the
+// HTTP_NODE_RECEIVED_FIN clause of shouldCloseConnection(), not by
+// HTTP_CONNECTION_CLOSE.
+describe("a client half-close after the request does not truncate a large response body", () => {
+  const BODY = 8 * 1024 * 1024;
+
+  function countBody(socket: net.Socket | nodeTls.TLSSocket) {
+    const out = { body: 0, ended: false };
+    let head = "";
+    let gotHead = false;
+    socket.on("data", chunk => {
+      if (!gotHead) {
+        head += chunk.toString("latin1");
+        const i = head.indexOf("\r\n\r\n");
+        if (i >= 0) {
+          gotHead = true;
+          out.body = Buffer.byteLength(head.slice(i + 4), "latin1");
+        }
+      } else {
+        out.body += chunk.length;
+      }
+    });
+    socket.on("end", () => (out.ended = true));
+    socket.on("error", () => {});
+    return out;
+  }
+
+  async function halfCloseRequest(port: number): Promise<{ body: number; ended: boolean }> {
+    const socket = connect(port, "127.0.0.1");
+    const out = countBody(socket);
+    const closed = new Promise<void>(r => socket.once("close", () => r()));
+    await new Promise<void>(r => socket.once("connect", () => r()));
+    socket.end("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+    await closed;
+    return out;
+  }
+
+  it("fetch handler (tryEnd tail)", async () => {
+    using server = serve({
+      port: 0,
+      fetch: () => new Response(Buffer.alloc(BODY, "a"), { headers: { "content-length": String(BODY) } }),
+    });
+    expect(await halfCloseRequest(server.port)).toEqual({ body: BODY, ended: true });
+  });
+
+  it("static route (tryEnd tail)", async () => {
+    using server = serve({
+      port: 0,
+      routes: {
+        "/": new Response(Buffer.alloc(BODY, "a"), { headers: { "content-length": String(BODY) } }),
+      },
+      fetch: () => new Response("miss", { status: 404 }),
+    });
+    expect(await halfCloseRequest(server.port)).toEqual({ body: BODY, ended: true });
+  });
+
+  it("https fetch handler (tryEnd tail)", async () => {
+    using server = serve({
+      port: 0,
+      tls,
+      fetch: () => new Response(Buffer.alloc(BODY, "a"), { headers: { "content-length": String(BODY) } }),
+    });
+    const socket = nodeTls.connect({ port: server.port, host: "127.0.0.1", rejectUnauthorized: false });
+    const out = countBody(socket);
+    const closed = new Promise<void>(r => socket.once("close", () => r()));
+    await new Promise<void>(r => socket.once("secureConnect", () => r()));
+    socket.end("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+    await closed;
+    expect(out).toEqual({ body: BODY, ended: true });
+  });
+
+  // The deferred connection must close promptly, not spin the writable
+  // dispatch, when the peer goes away mid-drain (tryEnd retry hits EPIPE):
+  // half-close to enter the defer, then destroy() on first data. idleTimeout
+  // is high so a spin would miss the poll deadline rather than be masked by
+  // an idle-timeout close. On platforms whose loopback send buffer swallows
+  // the whole body (Windows) there is no tryEnd tail and the response
+  // completes before first data; pendingRequests is the portable signal
+  // that the connection has closed one way or the other.
+  it("closes without spinning when the peer goes away mid-drain", async () => {
+    const dispatched = Promise.withResolvers<void>();
+    using server = serve({
+      port: 0,
+      idleTimeout: 60,
+      fetch() {
+        dispatched.resolve();
+        return new Response(Buffer.alloc(BODY, "a"), { headers: { "content-length": String(BODY) } });
+      },
+    });
+    const socket = connect(server.port, "127.0.0.1");
+    socket.on("error", () => {});
+    await new Promise<void>(r => socket.once("connect", () => r()));
+    socket.end("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+    socket.once("data", () => socket.destroy());
+    await dispatched.promise;
+    const deadline = Date.now() + 4000;
+    while (server.pendingRequests > 0 && Date.now() < deadline) await Bun.sleep(5);
+    expect(server.pendingRequests).toBe(0);
+  });
+
+  // The defer in onEnd is gated on the response being fully determined
+  // (HTTP_END_CALLED). A streaming body the handler is still producing must
+  // close on client FIN so onAborted / request.signal fires.
+  it("request.signal still fires on client FIN for a streaming body", async () => {
+    const aborted = Promise.withResolvers<void>();
+    using server = serve({
+      port: 0,
+      fetch(req) {
+        req.signal.addEventListener("abort", () => aborted.resolve());
+        return new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode("data: hi\n\n"));
+            },
+            cancel() {},
+          }),
+          { headers: { "content-type": "text/event-stream" } },
+        );
+      },
+    });
+    const socket = connect(server.port, "127.0.0.1");
+    const gotData = Promise.withResolvers<void>();
+    socket.once("data", () => gotData.resolve());
+    socket.on("error", () => {});
+    await new Promise<void>(r => socket.once("connect", () => r()));
+    socket.write("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+    await gotData.promise;
+    socket.end();
+    await aborted.promise;
+    socket.destroy();
+  });
+});
+
+// The node:http compat parser tolerates empty lines (and a bare CR/LF) before the
+// request-line like llhttp's s_start state. That leniency must stay behind the
+// node-http flag: Bun.serve still rejects a request that does not begin with the
+// request-line.
+it.each([
+  ["CRLF", "\r\n"],
+  ["bare LF", "\n"],
+  ["bare CR", "\r"],
+])("Bun.serve rejects a leading %s before the request-line", async (_label, prefix) => {
+  using server = serve({ port: 0, fetch: () => new Response("ok") });
+
+  const { promise, resolve, reject } = Promise.withResolvers<string>();
+  const socket = connect(server.port, "127.0.0.1", () => {
+    socket.write(`${prefix}GET / HTTP/1.1\r\nHost: localhost\r\n\r\n`);
+  });
+  let received = "";
+  socket.on("data", chunk => {
+    received += chunk;
+  });
+  socket.on("error", reject);
+  socket.on("close", () => resolve(received));
+  const statusLine = (await promise).split("\r\n")[0];
+  socket.destroy();
+
+  expect(statusLine).toBe("HTTP/1.1 400 Bad Request");
 });

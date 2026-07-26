@@ -84,15 +84,27 @@ impl InternalMsgHolder {
             .push(crate::StrongOptional::create(message, global));
     }
 
-    pub fn dispatch(&mut self, message: JSValue, global: &JSGlobalObject) -> JsResult<()> {
+    pub fn dispatch(
+        &mut self,
+        message: JSValue,
+        handle: JSValue,
+        global: &JSGlobalObject,
+    ) -> JsResult<()> {
         if !self.is_ready() {
+            // Queued messages drop their handle; the cluster listener is
+            // installed before any handle-bearing reply can arrive.
             self.enqueue(message, global);
             return Ok(());
         }
-        self.dispatch_unsafe(message, global)
+        self.dispatch_unsafe(message, handle, global)
     }
 
-    fn dispatch_unsafe(&mut self, message: JSValue, global: &JSGlobalObject) -> JsResult<()> {
+    fn dispatch_unsafe(
+        &mut self,
+        message: JSValue,
+        handle: JSValue,
+        global: &JSGlobalObject,
+    ) -> JsResult<()> {
         let cb = self.cb.get().unwrap();
         let worker = self.worker.get().unwrap();
 
@@ -111,25 +123,14 @@ impl InternalMsgHolder {
                             callback,
                             global,
                             self.worker.get().unwrap(),
-                            &[
-                                message,
-                                JSValue::NULL, // handle
-                            ],
+                            &[message, handle],
                         );
                     }
                     return Ok(());
                 }
             }
         }
-        event_loop.run_callback(
-            cb,
-            global,
-            worker,
-            &[
-                message,
-                JSValue::NULL, // handle
-            ],
-        );
+        event_loop.run_callback(cb, global, worker, &[message, handle]);
         Ok(())
     }
 
@@ -152,7 +153,7 @@ impl InternalMsgHolder {
                 // dispatcher is owned by the Subprocess/Worker which outlives
                 // this `flush` frame; `&mut *this` is the unique mutable view
                 // for this call.
-                unsafe { &mut *this }.dispatch_unsafe(message, global)?;
+                unsafe { &mut *this }.dispatch_unsafe(message, JSValue::NULL, global)?;
             }
             // strong drops here (== `strong.deinit()`)
         }
@@ -2100,11 +2101,6 @@ pub mod IPCHandlers {
         pub fn on_timeout(_: &mut SendQueue, _: Socket) {
             log!("onTimeout");
             // unref if needed
-        }
-
-        pub fn on_long_timeout(_: &mut SendQueue, _: Socket) {
-            log!("onLongTimeout");
-            // onLongTimeout
         }
 
         pub fn on_connect_error(send_queue: &mut SendQueue, _: Socket, _: c_int) {

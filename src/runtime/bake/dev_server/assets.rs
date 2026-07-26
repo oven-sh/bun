@@ -1,7 +1,7 @@
 //! `DevServer.Assets` — content-addressable store on `/_bun/asset/{hash}.ext`.
 
 use bun_collections::{ArrayHashMap, StringArrayHashMap};
-use bun_core::{Output, fmt as bun_fmt, scoped_log};
+use bun_core::{fmt as bun_fmt, scoped_log};
 use bun_http::MimeType::MimeType;
 
 use super::memory_cost::{memory_cost_array_hash_map, memory_cost_array_list};
@@ -149,45 +149,6 @@ impl Assets {
         self.path_map.values_mut()[path_index] = entry;
         debug_assert_eq!(self.files.count(), self.refs.len());
         Ok(entry)
-    }
-
-    /// Returns a slot to insert the `*mut StaticRoute`. If `None` is returned,
-    /// then there is already data here.
-    pub fn put_or_increment_ref_count(
-        &mut self,
-        content_hash: u64,
-        ref_count: u32,
-    ) -> Result<Option<&mut *mut StaticRoute>, bun_alloc::AllocError> {
-        // Invariant: `files.count() == refs.len()`. `gop.value_ptr` borrows
-        // `self.files` mutably, so re-derive the slot via
-        // `values_mut()[index]` after the invariant assert.
-        let file_index_gop = self.files.get_or_put(content_hash)?;
-        let index = file_index_gop.index;
-        let found = file_index_gop.found_existing;
-        if !found {
-            self.refs.push(ref_count);
-        } else {
-            self.refs[index] += ref_count;
-        }
-        debug_assert_eq!(self.files.count(), self.refs.len());
-        Ok(if found {
-            None
-        } else {
-            Some(&mut self.files.values_mut()[index])
-        })
-    }
-
-    pub fn unref_by_hash(&mut self, content_hash: u64, dec_count: u32) {
-        let index = self.files.get_index(&content_hash).unwrap_or_else(|| {
-            Output::panic(format_args!(
-                "Asset double unref: {:x?}",
-                content_hash.to_ne_bytes()
-            ))
-        });
-        self.unref_by_index(
-            EntryIndex::init(u32::try_from(index).expect("int cast")),
-            dec_count,
-        );
     }
 
     pub fn unref_by_index(&mut self, index: EntryIndex, dec_count: u32) {

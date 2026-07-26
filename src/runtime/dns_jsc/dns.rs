@@ -536,16 +536,8 @@ impl CacheConfig {
         self.0 & 0x0001 != 0
     }
     #[inline]
-    pub const fn entry_cache(self) -> bool {
-        self.0 & 0x0002 != 0
-    }
-    #[inline]
     pub const fn pos_in_pending(self) -> u8 {
         ((self.0 >> 2) & 0x1F) as u8
-    }
-    #[inline]
-    pub const fn name_len(self) -> u16 {
-        (self.0 >> 7) & 0x1FF
     }
     #[inline]
     pub const fn new(
@@ -1284,10 +1276,7 @@ pub mod get_addr_info_request {
             });
 
             // SAFETY: addrinfo is non-null (checked above); freed by `_free` guard after copy.
-            *self =
-                LibcBackend::Success(bun_core::handle_oom(GetAddrInfoResult::to_list(unsafe {
-                    &*addrinfo
-                })));
+            *self = LibcBackend::Success(GetAddrInfoResult::to_list(unsafe { &*addrinfo }));
         }
     }
 
@@ -1600,7 +1589,7 @@ impl GetAddrInfoRequest {
             let result_any = if addrinfo.is_null() {
                 GetAddrInfoResultAny::Addrinfo(ptr::null_mut())
             } else {
-                let list = GetAddrInfoResult::to_list(&*addrinfo).unwrap_or_default();
+                let list = GetAddrInfoResult::to_list(&*addrinfo);
                 libuv::uv_freeaddrinfo(addrinfo.cast());
                 GetAddrInfoResultAny::List(list)
             };
@@ -2135,6 +2124,27 @@ impl Drop for GlobalData {
             // SAFETY: `channel` is the live handle from `ares_init_options`, owned by this resolver.
             unsafe { c_ares::Channel::destroy(channel) };
         }
+    }
+}
+
+impl Resolver {
+    /// Worker-terminate / main-VM-destruct hook: tear down the c-ares channel
+    /// while the JSC VM, `RareData.file_polls`, event loop, and `runtime_state`
+    /// are all still live. `ares_destroy()` synchronously fires every pending
+    /// query callback with `ARES_EDESTRUCTION` and then the socket-state
+    /// callback for each fd it closes; those callback chains dereference
+    /// `DNSLookup::global_this` (to enqueue the rejection task) and the hive
+    /// `FilePoll` (to unregister it from the loop). Running this after either
+    /// is freed is a UAF (Node `test-worker-dns-terminate.js`).
+    pub fn close_channel_for_terminate(&self) {
+        if let Some(channel) = self.channel.take() {
+            // SAFETY: `channel` is the live handle from `ares_init_options`, owned by this resolver.
+            unsafe { c_ares::Channel::destroy(channel) };
+        }
+        // `GetAddrInfoRequest`'s EDESTRUCTION path does not call
+        // `request_completed()`, so the c-ares timeout timer (and its +1 ref on
+        // this resolver plus the uws active-handle bump) can still be linked.
+        self.remove_timer();
     }
 }
 
@@ -2940,6 +2950,14 @@ pub mod internal {
                     }
                 }
             }
+        }
+        // Every path that reaches here has finished with the mach-port poll;
+        // return its hive slot (mirrors `get_addr_info_async_callback`).
+        // SAFETY: `req` is live; we are on the loop thread that owns the poll.
+        if let Some(poll) = unsafe { (*req).libinfo.file_poll.take() } {
+            // SAFETY: `poll` is the hive slot `lookup_libinfo` allocated; nothing
+            // else aliases it. `deinit` handles being called during dispatch.
+            unsafe { (*poll.as_ptr()).deinit() };
         }
         after_result(req, addr_info, status_int);
     }
@@ -4191,9 +4209,11 @@ impl Resolver {
         let this = self.as_ctx_ptr();
         scopeguard::defer! {
             // SAFETY: `this` is the heap allocation from `init`. This releases the
-            // ref taken by `add_timer`; all callers of `request_completed` (the only
-            // path here) hold an `IntrusiveRc<Resolver>`, so the timer ref is never
-            // the last and this `deref` cannot reach 0 while `&self` is live.
+            // ref taken by `add_timer`. Callers via `request_completed` hold an
+            // `IntrusiveRc<Resolver>`; the `close_channel_for_terminate` caller is
+            // the global resolver, which carries a permanent +1 pin from
+            // `global_resolver()`. Either way the timer ref is never the last and
+            // this `deref` cannot reach 0 while `&self` is live.
             unsafe {
                 let uws_loop = (*this).vm().uws_loop();
                 let state = crate::jsc_hooks::runtime_state();
@@ -4726,13 +4746,9 @@ impl Resolver {
             ChannelResult::Err(err) => {
                 let system_error = SystemError {
                     errno: -1,
-                    code: bun_core::String::static_(err.code()),
-                    message: bun_core::String::static_(err.label()),
-                    path: bun_core::String::default(),
-                    syscall: bun_core::String::default(),
-                    hostname: bun_core::String::default(),
-                    fd: -1,
-                    dest: bun_core::String::default(),
+                    code: bun_core::String::static_(err.code()).into(),
+                    message: bun_core::String::static_(err.label()).into(),
+                    ..Default::default()
                 };
                 Err(global_this.throw_value(system_error.to_error_instance(global_this)))
             }
@@ -4971,16 +4987,17 @@ impl Resolver {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let arguments = callframe.arguments_old::<3>();
-        if arguments.len < 1 {
-            return Err(global_this.throw_not_enough_arguments("resolve", 3, arguments.len));
+        let arguments = callframe.arguments_as_array::<3>();
+        let arguments_len = callframe.arguments_count() as usize;
+        if arguments_len < 1 {
+            return Err(global_this.throw_not_enough_arguments("resolve", 3, arguments_len));
         }
 
-        let record_type: RecordType = if arguments.len <= 1 {
+        let record_type: RecordType = if arguments_len <= 1 {
             RecordType::DEFAULT
         } else {
             'brk: {
-                let record_type_value = arguments.ptr[1];
+                let record_type_value = arguments[1];
                 if record_type_value.is_empty_or_undefined_or_null()
                     || !record_type_value.is_string()
                 {
@@ -5004,7 +5021,7 @@ impl Resolver {
             }
         };
 
-        let name_value = arguments.ptr[0];
+        let name_value = arguments[0];
         if name_value.is_empty_or_undefined_or_null() || !name_value.is_string() {
             return Err(global_this.throw_invalid_argument_type("resolve", "name", "string"));
         }
@@ -5062,12 +5079,13 @@ impl Resolver {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let arguments = callframe.arguments_old::<2>();
-        if arguments.len < 1 {
-            return Err(global_this.throw_not_enough_arguments("reverse", 1, arguments.len));
+        let arguments = callframe.arguments_as_array::<2>();
+        let arguments_len = callframe.arguments_count() as usize;
+        if arguments_len < 1 {
+            return Err(global_this.throw_not_enough_arguments("reverse", 1, arguments_len));
         }
 
-        let ip_value = arguments.ptr[0];
+        let ip_value = arguments[0];
         if ip_value.is_empty_or_undefined_or_null() || !ip_value.is_string() {
             return Err(global_this.throw_invalid_argument_type("reverse", "ip", "string"));
         }
@@ -5128,12 +5146,13 @@ impl Resolver {
 
     // JSC-ABI shim emitted by `export_host_fn!` at module scope (see `global_resolve`).
     pub fn global_lookup(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let arguments = callframe.arguments_old::<2>();
-        if arguments.len < 1 {
-            return Err(global_this.throw_not_enough_arguments("lookup", 2, arguments.len));
+        let arguments = callframe.arguments_as_array::<2>();
+        let arguments_len = callframe.arguments_count() as usize;
+        if arguments_len < 1 {
+            return Err(global_this.throw_not_enough_arguments("lookup", 2, arguments_len));
         }
 
-        let name_value = arguments.ptr[0];
+        let name_value = arguments[0];
         if name_value.is_empty_or_undefined_or_null() || !name_value.is_string() {
             return Err(global_this.throw_invalid_argument_type("lookup", "hostname", "string"));
         }
@@ -5150,8 +5169,8 @@ impl Resolver {
         let mut options = GetAddrInfoOptions::default();
         let mut port: u16 = 0;
 
-        if arguments.len > 1 && arguments.ptr[1].is_object() {
-            let options_object = arguments.ptr[1];
+        if arguments_len > 1 && arguments[1].is_object() {
+            let options_object = arguments[1];
 
             if let Some(port_value) = options_object.get_truthy(global_this, "port")? {
                 port = port_value.to_port_number(global_this)?;
@@ -5267,11 +5286,12 @@ macro_rules! resolve_record_fn {
             global_this: &JSGlobalObject,
             callframe: &CallFrame,
         ) -> JsResult<JSValue> {
-            let arguments = callframe.arguments_old::<2>();
-            if arguments.len < 1 {
-                return Err(global_this.throw_not_enough_arguments($jsname, 1, arguments.len));
+            let arguments = callframe.arguments_as_array::<2>();
+            let arguments_len = callframe.arguments_count() as usize;
+            if arguments_len < 1 {
+                return Err(global_this.throw_not_enough_arguments($jsname, 1, arguments_len));
             }
-            let name_value = arguments.ptr[0];
+            let name_value = arguments[0];
             if name_value.is_empty_or_undefined_or_null() || !name_value.is_string() {
                 return Err(global_this.throw_invalid_argument_type($jsname, "hostname", "string"));
             }
@@ -5433,17 +5453,12 @@ impl Resolver {
             ChannelResult::Result(res) => res,
             ChannelResult::Err(err) => {
                 let syscall = bun_core::String::create_atom(&query.name);
-                // SystemError has no Default impl upstream; spell out
-                // the field defaults (empty strings, fd = c_int::MIN).
                 let system_error = SystemError {
                     errno: -1,
-                    code: bun_core::String::static_(err.code()),
-                    message: bun_core::String::static_(err.label()),
-                    path: bun_core::String::empty(),
-                    syscall,
-                    hostname: bun_core::String::empty(),
-                    fd: c_int::MIN,
-                    dest: bun_core::String::empty(),
+                    code: bun_core::String::static_(err.code()).into(),
+                    message: bun_core::String::static_(err.label()).into(),
+                    syscall: syscall.into(),
+                    ..Default::default()
                 };
                 return Err(global_this.throw_value(system_error.to_error_instance(global_this)));
             }
@@ -5917,12 +5932,13 @@ impl Resolver {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let arguments = callframe.arguments_old::<2>();
-        if arguments.len < 2 {
-            return Err(global_this.throw_not_enough_arguments("lookupService", 2, arguments.len));
+        let arguments = callframe.arguments_as_array::<2>();
+        let arguments_len = callframe.arguments_count() as usize;
+        if arguments_len < 2 {
+            return Err(global_this.throw_not_enough_arguments("lookupService", 2, arguments_len));
         }
 
-        let addr_value = arguments.ptr[0];
+        let addr_value = arguments[0];
         if addr_value.is_empty_or_undefined_or_null() || !addr_value.is_string() {
             return Err(global_this.throw_invalid_argument_type(
                 "lookupService",
@@ -5941,7 +5957,7 @@ impl Resolver {
         let addr_slice = addr_str.to_slice(global_this);
         let addr_s = addr_slice.slice();
 
-        let port_value = arguments.ptr[1];
+        let port_value = arguments[1];
         let port: u16 = port_value.to_port_number(global_this)?;
 
         let mut sa: SockaddrStorage = bun_core::ffi::zeroed();

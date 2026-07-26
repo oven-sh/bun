@@ -43,15 +43,13 @@ struct State {
     fd: Fd,
     buf: Vec<u8>,
     readers: Readers,
-    err: Option<sys::SystemError>,
-    /// The raw `sys::Error` that produced `err`. `SystemError` is not `Clone`
+    /// The raw `sys::Error`. `SystemError` is not `Clone`
     /// in the Rust port yet, so we keep the source error to re-derive a fresh
     /// `SystemError` per callee in `on_reader_done_cb`.
     raw_err: Option<sys::Error>,
     evtloop: EventLoopHandle,
     #[cfg(windows)]
     is_reading: bool,
-    started: bool,
     /// Weak self-ref so `keepalive()` can bump the strong count from `&self`
     /// without unsafe Arc-pointer reconstruction. Set via `Arc::new_cyclic` in
     /// `init()` (the sole constructor).
@@ -145,12 +143,10 @@ impl IOReader {
                 fd,
                 buf: Vec::new(),
                 readers: Readers::new(),
-                err: None,
                 raw_err: None,
                 evtloop,
                 #[cfg(windows)]
                 is_reading: false,
-                started: false,
                 self_weak: std::sync::Weak::clone(w),
                 interp: None,
             }),
@@ -187,11 +183,6 @@ impl IOReader {
         self.state().fd
     }
 
-    #[inline]
-    pub fn evtloop(&self) -> EventLoopHandle {
-        self.state().evtloop
-    }
-
     pub fn memory_cost(&self) -> usize {
         let s = self.state();
         core::mem::size_of::<IOReader>()
@@ -222,7 +213,6 @@ impl IOReader {
 
     /// Idempotent function to start the reading.
     pub fn start(&self) -> Yield {
-        self.state().started = true;
         #[cfg(not(windows))]
         {
             let r = self.reader();
@@ -324,7 +314,6 @@ impl IOReader {
         let _keepalive = self.keepalive();
         self.set_reading(false);
         let s = self.state();
-        s.err = Some(err.to_shell_system_error());
         s.raw_err = Some(err.clone());
         // NOTE: reshaped for borrowck — copy out before dispatching.
         let readers: Vec<ChildPtr> = s.readers.clone();

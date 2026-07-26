@@ -82,12 +82,6 @@ pub struct ExpansionOut {
     pub has_quoted_empty: bool,
 }
 
-#[derive(Clone, Copy, Default)]
-pub struct ExpansionOpts {
-    pub for_spawn: bool,
-    pub single: bool,
-}
-
 impl Expansion {
     pub fn init(
         interp: &Interpreter,
@@ -95,10 +89,9 @@ impl Expansion {
         node: *const ast::Atom,
         parent: NodeId,
         io: IO,
-        _opts: ExpansionOpts,
     ) -> NodeId {
         interp.alloc_node(Node::Expansion(Expansion {
-            base: Base::new(StateKind::Expansion, parent, shell),
+            base: Base::new(parent, shell),
             // SAFETY: `node` is non-null and points into the AST arena
             // (`ShellArgs::__arena`), which the interpreter holds for its
             // entire lifetime — strictly outliving every state node (the
@@ -318,24 +311,32 @@ impl Expansion {
             return;
         }
         let count = count as usize;
-        let mut expanded: Vec<Vec<u8>> = (0..count).map(|_| Vec::new()).collect();
-
-        let arena = bun_alloc::Arena::new();
-        if let Err(e) = braces::expand(
-            &arena,
-            &mut lexer_output.tokens[..],
-            &mut expanded[..],
-            lexer_output.contains_nested,
-        ) {
-            if matches!(e, braces::ParserError::TooManyBraces) {
-                let msg = "too many braces in brace expansion".to_string();
-                me.state = ExpansionState::Err(Box::new(ShellErr::Custom(msg.into_bytes().into())));
-                return;
+        let expanded: Vec<Vec<u8>> = if count == 0 {
+            // No `{...}` group formed an expansion (no top-level comma, or
+            // unbalanced); emit the word unchanged. `expand` would index
+            // `out[0]` of an empty slice here. Keep `current_out` for glob.
+            vec![me.current_out.clone()]
+        } else {
+            let mut expanded: Vec<Vec<u8>> = (0..count).map(|_| Vec::new()).collect();
+            let arena = bun_alloc::Arena::new();
+            if let Err(e) = braces::expand(
+                &arena,
+                &mut lexer_output.tokens[..],
+                &mut expanded[..],
+                lexer_output.contains_nested,
+            ) {
+                if matches!(e, braces::ParserError::TooManyBraces) {
+                    let msg = "too many braces in brace expansion".to_string();
+                    me.state =
+                        ExpansionState::Err(Box::new(ShellErr::Custom(msg.into_bytes().into())));
+                    return;
+                }
+                // An unexpected token from brace expansion is a parser bug.
+                panic!("unexpected error from Braces.expand: {e:?}");
             }
-            // An unexpected token from brace expansion is a parser bug.
-            panic!("unexpected error from Braces.expand: {e:?}");
-        }
-        drop(arena);
+            drop(arena);
+            expanded
+        };
 
         // Push each variant as its own word; word boundaries are recorded
         // via `bounds`.

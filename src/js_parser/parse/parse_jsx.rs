@@ -25,7 +25,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // The tag may have TypeScript type arguments: "<Foo<T>/>"
         if TYPESCRIPT {
             // Pass a flag to the type argument skipper because we need to call
-            let _ = p.skip_type_script_type_arguments::<true>()?;
+            let _ = p.skip_type_script_type_arguments::<true, false>()?;
         }
 
         let mut previous_string_with_backslash_loc = bun_ast::Loc::default();
@@ -348,7 +348,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             Some(p.source),
                             end_tag.range,
                             format_args!(
-                                "Expected closing JSX tag to match opening tag \"\\<{}\\>\"",
+                                "Expected closing JSX tag to match opening tag \"<{}>\"",
                                 bstr::BStr::new(tag.name)
                             ),
                             format_args!("Opening tag here:"),

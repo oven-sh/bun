@@ -8,8 +8,6 @@
 //! byte slice.
 //!
 //! This module also provides:
-//!   * [`BufWriter`] — buffered wrapper
-//!     over a borrowed `&mut [u8]` scratch buffer (no heap allocation).
 //!   * [`FmtAdapter`] — bridge a `core::fmt::Write` sink (e.g. a
 //!     `core::fmt::Formatter`) into a byte-level [`Write`], so byte-producing
 //!     `print()`/`format()` impls can drive `Display`.
@@ -29,7 +27,7 @@ pub type Result<T = ()> = core::result::Result<T, bun_core::Error>;
 // upward dep on this crate. Re-exported here so downstream keeps spelling it
 // `bun_io::Write` / `bun_io::IntLe`.
 // ════════════════════════════════════════════════════════════════════════════
-pub use bun_core::write::{IntBe, IntLe, Write};
+pub use bun_core::write::{IntLe, Write};
 
 // ════════════════════════════════════════════════════════════════════════════
 // DiscardingWriter — counting null sink
@@ -162,14 +160,6 @@ impl<B: AsRef<[u8]>> FixedBufferStream<B> {
         Ok(I::from_le_bytes(bytes))
     }
 
-    /// Read a big-endian (network-order) integer.
-    #[inline]
-    pub fn read_int_be<I: IntBe>(&mut self) -> Result<I> {
-        let mut bytes = I::Bytes::default();
-        self.read_exact(bytes.as_mut())?;
-        Ok(I::from_be_bytes(bytes))
-    }
-
     /// Read a POD struct.
     ///
     /// SAFETY: caller is responsible for `T` being `#[repr(C)]` POD with no
@@ -215,92 +205,6 @@ impl<B: AsMut<[u8]>> Write for FixedBufferStream<B> {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// BufWriter — borrowed-buffer buffered writer
-// ════════════════════════════════════════════════════════════════════════════
-
-/// Buffered writer over a caller-provided scratch slice.
-///
-/// The caller owns the byte buffer (typically a stack `[0u8; 4096]`), so this
-/// type performs **no heap allocation**. Writes accumulate into `buf` and are
-/// flushed to `inner` when full or on explicit [`flush`](Write::flush).
-///
-/// `Drop` does **not** flush — forgetting to
-/// `flush()` is a bug the caller owns (and flushing in `Drop` would swallow the
-/// error). Callers must `writer.flush()?` before the buffer goes out of scope.
-pub struct BufWriter<'a, W: Write> {
-    buf: &'a mut [u8],
-    pos: usize,
-    inner: W,
-}
-
-impl<'a, W: Write> BufWriter<'a, W> {
-    /// Wrap `inner` with `buf` as the staging buffer.
-    #[inline]
-    pub fn with_buffer(buf: &'a mut [u8], inner: W) -> Self {
-        Self { buf, pos: 0, inner }
-    }
-
-    /// Bytes currently buffered (not yet flushed).
-    #[inline]
-    pub fn buffered(&self) -> &[u8] {
-        &self.buf[..self.pos]
-    }
-
-    /// Recover the inner writer. Buffered bytes are **discarded**; call
-    /// `flush()` first if they matter.
-    #[inline]
-    pub fn into_inner(self) -> W {
-        self.inner
-    }
-
-    /// Borrow the inner writer.
-    #[inline]
-    pub fn inner(&mut self) -> &mut W {
-        &mut self.inner
-    }
-
-    #[inline]
-    fn flush_buf(&mut self) -> Result<()> {
-        if self.pos > 0 {
-            self.inner.write_all(&self.buf[..self.pos])?;
-            self.pos = 0;
-        }
-        Ok(())
-    }
-}
-
-impl<'a, W: Write> Write for BufWriter<'a, W> {
-    fn write_all(&mut self, mut src: &[u8]) -> Result<()> {
-        // Degenerate zero-capacity buffer: pass straight through.
-        if self.buf.is_empty() {
-            return self.inner.write_all(src);
-        }
-        // Large write that won't fit even after a flush: drain then bypass.
-        if src.len() >= self.buf.len() {
-            self.flush_buf()?;
-            return self.inner.write_all(src);
-        }
-        // Fill remaining capacity; flush on overflow; copy the tail.
-        let avail = self.buf.len() - self.pos;
-        if src.len() > avail {
-            self.buf[self.pos..].copy_from_slice(&src[..avail]);
-            self.pos = self.buf.len();
-            self.flush_buf()?;
-            src = &src[avail..];
-        }
-        self.buf[self.pos..self.pos + src.len()].copy_from_slice(src);
-        self.pos += src.len();
-        Ok(())
-    }
-
-    #[inline]
-    fn flush(&mut self) -> Result<()> {
-        self.flush_buf()?;
-        self.inner.flush()
-    }
-}
-
-// ════════════════════════════════════════════════════════════════════════════
 // FmtAdapter — core::fmt::Write → bun_io::Write bridge
 // ════════════════════════════════════════════════════════════════════════════
 
@@ -317,12 +221,6 @@ impl<'a, W: fmt::Write + ?Sized> FmtAdapter<'a, W> {
     #[inline]
     pub fn new(inner: &'a mut W) -> Self {
         Self { inner }
-    }
-
-    /// Borrow the wrapped `fmt::Write` sink.
-    #[inline]
-    pub fn inner(&mut self) -> &mut W {
-        self.inner
     }
 }
 
@@ -378,18 +276,13 @@ impl<W: fmt::Write> Write for FmtAdapter<'_, W> {
 /// `Msg::write_format`) but you hold a `bun_io::Write` byte sink — `Vec<u8>`,
 /// `bun_core::io::Writer`, `&mut dyn Write`, etc.
 ///
-/// `write_str` routes through `write_all(s.as_bytes())`; the underlying I/O
-/// error is stashed in [`err`](AsFmt::err) so callers that care can recover it
-/// instead of seeing only the unit `fmt::Error`. Callers that don't care just
-/// drop the wrapper.
+/// `write_str` routes through `write_all(s.as_bytes())`.
 ///
 /// Erased to `dyn Write` (not generic over `W`) so this type does not pair
 /// with [`FmtAdapter`]'s `impl Write` to form an infinite
 /// `FmtAdapter<AsFmt<…>>` tower (E0275) — see the note on that impl.
 pub struct AsFmt<'a> {
     sink: &'a mut dyn Write,
-    /// Last I/O error from the underlying sink, if `write_str` failed.
-    pub err: Option<bun_core::Error>,
 }
 
 impl<'a> AsFmt<'a> {
@@ -399,20 +292,14 @@ impl<'a> AsFmt<'a> {
     /// (auto-coerced) and an existing `&mut dyn Write` pass with one signature.
     #[inline]
     pub fn new(sink: &'a mut dyn Write) -> Self {
-        Self { sink, err: None }
+        Self { sink }
     }
 }
 
 impl fmt::Write for AsFmt<'_> {
     #[inline]
     fn write_str(&mut self, s: &str) -> fmt::Result {
-        match self.sink.write_all(s.as_bytes()) {
-            Ok(()) => Ok(()),
-            Err(e) => {
-                self.err = Some(e);
-                Err(fmt::Error)
-            }
-        }
+        self.sink.write_all(s.as_bytes()).map_err(|_| fmt::Error)
     }
 }
 
@@ -430,31 +317,6 @@ mod tests {
         v.splat_byte_all(b'!', 3).unwrap();
         v.write_int_le::<u16>(0x0201).unwrap();
         assert_eq!(v, b"hello !!!\x01\x02");
-    }
-
-    #[test]
-    fn buf_writer_basic() {
-        let mut sink = Vec::new();
-        let mut scratch = [0u8; 4];
-        {
-            let mut w = BufWriter::with_buffer(&mut scratch, &mut sink);
-            w.write_all(b"ab").unwrap();
-            w.write_all(b"cd").unwrap(); // exactly fills
-            w.write_all(b"e").unwrap(); // forces flush of "abcd"
-            w.flush().unwrap();
-        }
-        assert_eq!(sink, b"abcde");
-    }
-
-    #[test]
-    fn buf_writer_large_bypass() {
-        let mut sink = Vec::new();
-        let mut scratch = [0u8; 4];
-        let mut w = BufWriter::with_buffer(&mut scratch, &mut sink);
-        w.write_all(b"x").unwrap();
-        w.write_all(b"0123456789").unwrap(); // > capacity → flush + bypass
-        w.flush().unwrap();
-        assert_eq!(sink, b"x0123456789");
     }
 
     #[test]

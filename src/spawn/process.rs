@@ -946,10 +946,9 @@ impl PollerWindows {
     }
 
     pub fn disable_keeping_event_loop_alive(&mut self, _event_loop: bun_io::EventLoopCtx) {
-        // This is disabled on Windows
-        // uv_unref() causes the onExitUV callback to *never* be called
-        // This breaks a lot of stuff...
-        // Once fixed, re-enable "should not hang after unref" test in spawn.test
+        // uv_unref() drops this handle from loop->active_handles. us_loop_pump
+        // forces a non-blocking uv_run iteration regardless, so the
+        // wait-thread's IOCP exit packet is still dequeued and on_exit_uv fires.
         match self {
             PollerWindows::Uv(p) => {
                 p.unref();
@@ -2121,9 +2120,7 @@ mod spawn_process_body {
         // defer dup_fds cleanup — handled below at each exit
         let cleanup_dup = |failed: bool| {
             if dup_src.is_some() {
-                if cfg!(debug_assertions) {
-                    debug_assert!(dup_src.is_some() && dup_tgt.is_some());
-                }
+                debug_assert!(dup_src.is_some() && dup_tgt.is_some());
             }
             if failed && dup_fds[0] != -1 {
                 Fd::from_uv(dup_fds[0]).close();

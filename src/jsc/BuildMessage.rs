@@ -28,7 +28,7 @@ impl Default for BuildMessage {
 impl BuildMessage {
     // `#[JsClass]` emits `BuildMessageClass__construct` calling this.
     pub fn constructor(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<*mut BuildMessage> {
-        Err(global.throw_illegal_constructor("BuildMessage"))
+        Err(global.throw_illegal_constructor())
     }
 
     #[crate::host_fn(getter)]
@@ -106,8 +106,7 @@ impl BuildMessage {
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let args_ = callframe.arguments_old::<1>();
-        let args = &args_.ptr[0..args_.len];
+        let args = callframe.arguments();
         if !args.is_empty() {
             if !args[0].is_string() {
                 return Ok(JSValue::NULL);
@@ -145,17 +144,17 @@ impl BuildMessage {
         object.put(
             global,
             b"lineText",
-            ZigString::init(location.line_text.as_deref().unwrap_or(b"")).to_js(global),
+            ZigString::init_utf8(location.line_text.as_deref().unwrap_or(b"")).to_js(global),
         );
         object.put(
             global,
             b"file",
-            ZigString::init(&location.file).to_js(global),
+            ZigString::init_utf8(&location.file).to_js(global),
         );
         object.put(
             global,
             b"namespace",
-            ZigString::init(location.namespace).to_js(global),
+            ZigString::init_utf8(location.namespace).to_js(global),
         );
         object.put(global, b"line", JSValue::from(location.line));
         object.put(global, b"column", JSValue::from(location.column));
@@ -191,7 +190,7 @@ impl BuildMessage {
 
     #[crate::host_fn(getter)]
     pub fn get_message(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        Ok(ZigString::init(&self.msg.data.text).to_js(global))
+        Ok(ZigString::init_utf8(&self.msg.data.text).to_js(global))
     }
 
     #[crate::host_fn(getter)]

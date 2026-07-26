@@ -20,7 +20,7 @@ describe("bundler", () => {
         console.log("Hello, world!");
       `,
     },
-    run: { stdout: "Hello, world!" },
+    run: { stdout: "Hello, world!", stderr: "" },
   });
   // --footer/--banner are concatenated verbatim (UTF-8). Guard against the
   // standalone module graph treating those bytes as Latin-1, which would
@@ -1102,9 +1102,9 @@ test("compile --compile-executable-path rejects a Mach-O template whose __BUN se
   const LC_SEGMENT_64 = 0x19;
 
   // Minimal Mach-O "base executable": a __BUN segment with one __bun section followed by a
-  // __LINKEDIT segment. `bunFileOff` is where the load commands claim the __BUN data lives.
-  function machoTemplate(bunFileOff: number): Buffer {
-    const fileSize = 0x8100; // 33 KB of actual bytes
+  // __LINKEDIT segment. `bunFileOff`/`bunFileSize` are where the load commands claim the
+  // __BUN data lives; `fileSize` is how many bytes the template actually contains.
+  function machoTemplate(bunFileOff: number, bunFileSize = 0x4000, fileSize = 0x8100): Buffer {
     const segCmdSize = 72; // sizeof(segment_command_64)
     const sectSize = 80; // sizeof(section_64)
     const sizeofcmds = segCmdSize + sectSize + segCmdSize;
@@ -1125,9 +1125,9 @@ test("compile --compile-executable-path rejects a Mach-O template whose __BUN se
     buf.writeUInt32LE(segCmdSize + sectSize, o + 4); // cmdsize
     writeName(o + 8, "__BUN");
     buf.writeBigUInt64LE(0x1_0000_4000n, o + 24); // vmaddr
-    buf.writeBigUInt64LE(0x4000n, o + 32); // vmsize
+    buf.writeBigUInt64LE(BigInt(bunFileSize), o + 32); // vmsize
     buf.writeBigUInt64LE(BigInt(bunFileOff), o + 40); // fileoff
-    buf.writeBigUInt64LE(0x4000n, o + 48); // filesize
+    buf.writeBigUInt64LE(BigInt(bunFileSize), o + 48); // filesize
     buf.writeInt32LE(7, o + 56); // maxprot
     buf.writeInt32LE(3, o + 60); // initprot
     buf.writeUInt32LE(1, o + 64); // nsects
@@ -1137,7 +1137,7 @@ test("compile --compile-executable-path rejects a Mach-O template whose __BUN se
     writeName(o, "__bun");
     writeName(o + 16, "__BUN");
     buf.writeBigUInt64LE(0x1_0000_4000n, o + 32); // addr
-    buf.writeBigUInt64LE(0x4000n, o + 40); // size
+    buf.writeBigUInt64LE(BigInt(bunFileSize), o + 40); // size
     buf.writeUInt32LE(bunFileOff, o + 48); // offset
     buf.writeUInt32LE(14, o + 52); // align = 2^14
 
@@ -1146,9 +1146,9 @@ test("compile --compile-executable-path rejects a Mach-O template whose __BUN se
     buf.writeUInt32LE(LC_SEGMENT_64, o);
     buf.writeUInt32LE(segCmdSize, o + 4);
     writeName(o + 8, "__LINKEDIT");
-    buf.writeBigUInt64LE(0x1_0000_8000n, o + 24); // vmaddr
+    buf.writeBigUInt64LE(0x1_0001_0000n, o + 24); // vmaddr
     buf.writeBigUInt64LE(0x1000n, o + 32); // vmsize
-    buf.writeBigUInt64LE(BigInt(bunFileOff + 0x4000), o + 40); // fileoff (right after __BUN)
+    buf.writeBigUInt64LE(BigInt(bunFileOff + bunFileSize), o + 40); // fileoff (right after __BUN)
     buf.writeBigUInt64LE(0x100n, o + 48); // filesize
     buf.writeInt32LE(1, o + 56); // maxprot
     buf.writeInt32LE(1, o + 60); // initprot
@@ -1161,11 +1161,19 @@ test("compile --compile-executable-path rejects a Mach-O template whose __BUN se
   });
   const cwd = String(dir);
 
-  // Template whose __BUN offsets point 1 GiB past the end of the 33 KB file.
-  const badTemplate = join(cwd, "template-bad");
-  await Bun.write(badTemplate, machoTemplate(0x40000000));
-  const outBad = join(cwd, "out-bad");
-  {
+  for (const [name, bytes, wantErr] of [
+    // __BUN fileoff points 1 GiB past the end of the 33 KB file.
+    ["fileoff-past-eof", machoTemplate(0x40000000), "OffsetOutOfRange"],
+    // __BUN filesize (32 KB) exceeds the 256-byte file: the bounds check must reject this
+    // before the growth `reserve()` (which would otherwise see a negative size_diff).
+    ["filesize-past-eof", machoTemplate(0, 0x8000, 256), "OffsetOutOfRange"],
+    // __BUN filesize (32 KB) is in-bounds but larger than the 16 KB aligned bundle slot;
+    // write_section only grows, so a template that would require shrinking is rejected.
+    ["filesize-needs-shrink", machoTemplate(0x4000, 0x8000, 0xc100), "InvalidObject"],
+  ] as const) {
+    const badTemplate = join(cwd, `template-${name}`);
+    await Bun.write(badTemplate, bytes);
+    const outBad = join(cwd, `out-${name}`);
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -1184,8 +1192,8 @@ test("compile --compile-executable-path rejects a Mach-O template whose __BUN se
       stderr: "pipe",
     });
     const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    // The out-of-range offsets must be reported as a clean error...
-    expect(stderr).toContain("OffsetOutOfRange");
+    // The invalid template must be reported as a clean error...
+    expect({ name, stderr }).toEqual({ name, stderr: expect.stringContaining(wantErr) });
     // ...no output executable is produced...
     expect(await Bun.file(outBad).exists()).toBe(false);
     // ...and the build exits with a normal failure code instead of crashing.

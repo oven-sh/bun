@@ -37,7 +37,7 @@ env:
   LLVM_VERSION_MAJOR: "21"
   # Pin so rustup ignores rust-toolchain.toml's `targets` list (11 cross
   # triples ≈ 450 MB we don't need). Keep in sync with `channel` there.
-  RUSTUP_TOOLCHAIN: nightly-2026-05-06
+  RUSTUP_TOOLCHAIN: nightly-2026-07-20
 
 jobs:
   miri:

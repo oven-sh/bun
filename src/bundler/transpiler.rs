@@ -7,10 +7,8 @@ use bun_collections::HashMap;
 use bun_collections::VecExt;
 use bun_dotenv as dot_env;
 use bun_js_parser as js_ast;
-use bun_perf::system_timer::Timer as SystemTimer;
 use bun_resolver::fs as Fs;
 use bun_resolver::{self as resolver, Resolver};
-use bun_router::Router;
 
 use crate::options;
 
@@ -136,24 +134,18 @@ pub struct Transpiler<'a> {
     pub resolve_results: Box<ResolveResults>,
     pub resolve_queue: ResolveQueue,
     pub elapsed: u64,
-    pub needs_runtime: bool,
-    pub router: Option<Router<'a>>,
-    pub source_map: options::SourceMapOption,
 
     // `ModuleLoader::transpile_source_code` (jsc_hooks.rs) calls
-    // `transpiler.linker.link()` / reads `import_counter`. Back-pointers wired
+    // `transpiler.linker.link()`. Back-pointers wired
     // by `configure_linker` below; `set_log` keeps `linker.log` in sync.
     pub linker: crate::linker::Linker,
-    pub timer: SystemTimer,
     // Raw ptr — the global `DotEnv::Loader` singleton.
-    pub env: *mut dot_env::Loader<'a>,
+    pub env: *mut dot_env::Loader,
 
     pub macro_context: Option<js_ast::Macro::MacroContext>,
 }
 
 impl<'a> Transpiler<'a> {
-    pub const IS_CACHE_ENABLED: bool = false;
-
     /// Takes `*mut Log` (not `&'a mut`) because the same
     /// `*Log` is aliased into `linker.log` / `resolver.log`; the struct
     /// field is a raw pointer for that reason.
@@ -270,7 +262,7 @@ impl<'a> Transpiler<'a> {
     /// [`Self::env_mut`] when only inspecting env vars (e.g. `.get()`), so
     /// call sites can overlap with other `&` borrows of the same loader.
     #[inline]
-    pub fn env(&self) -> &'a dot_env::Loader<'a> {
+    pub fn env(&self) -> &'a dot_env::Loader {
         // SAFETY: `self.env` is non-null after `init` — set to either the
         // caller-provided loader or the `dot_env::INSTANCE` singleton, both of
         // which live for at least `'a`. Shared access cannot conflict with the
@@ -285,7 +277,7 @@ impl<'a> Transpiler<'a> {
     /// borrows.
     #[inline]
     #[allow(clippy::mut_from_ref)]
-    pub fn env_mut(&self) -> &'a mut dot_env::Loader<'a> {
+    pub fn env_mut(&self) -> &'a mut dot_env::Loader {
         // SAFETY: `self.env` is non-null after `init` — set to either the
         // caller-provided loader or the `dot_env::INSTANCE` singleton, both of
         // which live for at least `'a`. No other live `&mut Loader` exists at
@@ -352,11 +344,6 @@ impl<'a> Transpiler<'a> {
             resolve_results: Box::new(ResolveResults::default()),
             resolve_queue: ResolveQueue::default(),
             elapsed: 0,
-            needs_runtime: from.needs_runtime,
-            // Router carries owned routes/config and is unused by bundle_v2
-            // workers; per-worker fresh.
-            router: None,
-            source_map: from.source_map,
             // Self-referential — wired by `wire_after_move`. Null back-pointers
             // for now (matches `Transpiler::init`; never derefed before then).
             linker: crate::linker::Linker::init(
@@ -367,10 +354,7 @@ impl<'a> Transpiler<'a> {
                 core::ptr::null_mut(),
                 from.fs,
             ),
-            timer: SystemTimer::start().expect("Timer fail"),
-            // SAFETY: lifetime-widen the `Loader<'from>` raw pointer to `'a`
-            // (process-lifetime singleton; see fn doc).
-            env: from.env.cast(),
+            env: from.env,
             // `MacroContext::init(transpiler)` takes the
             // transpiler's *address*; deferred to `wire_after_move`.
             macro_context: None,
@@ -389,9 +373,7 @@ impl<'a> Transpiler<'a> {
         self.resolver.log = core::ptr::NonNull::new(log).expect("wire_after_move: log is non-null");
         self.resolver.fs = self.fs;
         // Only reseat the back-pointers — do NOT `Linker::init` here: that
-        // would clobber `import_counter` / `plugin_runner` /
-        // `tagged_resolutions` / `any_needs_runtime`, which must be
-        // preserved across the move.
+        // would clobber `plugin_runner`, which must be preserved across the move.
         self.linker.reseat_self_refs(
             log,
             core::ptr::addr_of_mut!(self.resolve_queue),
@@ -561,6 +543,21 @@ impl<'a> Transpiler<'a> {
         let env_loader = self.env_mut();
         let mut is_production = env_loader.is_production();
 
+        // `load_defines` injects a default `process.env.NODE_ENV`; sample the
+        // explicit sources first so that default isn't mistaken for user intent
+        // and `force_node_env` stays `Unspecified` (tsconfig jsx stays in control).
+        let had_explicit_node_env = env_loader.get_node_env().is_some()
+            || self
+                .options
+                .transform_options
+                .define
+                .as_ref()
+                .is_some_and(|m| {
+                    m.keys
+                        .iter()
+                        .any(|k| &**k == options::default_user_defines::node_env::KEY)
+                });
+
         // `parse_env_json` needs a thread-local AST store to build
         // `E::String` nodes in. That work
         // is now done lazily inside `DefineData::parse`, only on the JSON-parse
@@ -576,13 +573,15 @@ impl<'a> Transpiler<'a> {
         self.options.load_defines(self.arena, Some(env_loader))?;
 
         let mut is_development = false;
-        if let Some(node_env) = self.options.define.dots.get(b"NODE_ENV".as_slice()) {
-            if !node_env.is_empty() {
-                if let Some(s) = node_env[0].data.value.e_string() {
-                    if s.eql_comptime(b"production") {
-                        is_production = true;
-                    } else if s.eql_comptime(b"development") {
-                        is_development = true;
+        if had_explicit_node_env {
+            if let Some(node_env) = self.options.define.dots.get(b"NODE_ENV".as_slice()) {
+                if !node_env.is_empty() {
+                    if let Some(s) = node_env[0].data.value.e_string() {
+                        if s.eql_comptime(b"production") {
+                            is_production = true;
+                        } else if s.eql_comptime(b"development") {
+                            is_development = true;
+                        }
                     }
                 }
             }
@@ -718,7 +717,7 @@ impl<'a> Transpiler<'a> {
         use bun_options_types::schema::api::DotEnvBehavior;
         // Derived once up front; no other live `&mut` to this `Loader` exists
         // for the duration of this call.
-        let env: &mut dot_env::Loader<'_> = self.env_mut();
+        let env: &mut dot_env::Loader = self.env_mut();
 
         match self.options.env.behavior {
             DotEnvBehavior::prefix
@@ -828,13 +827,6 @@ pub enum AlreadyBundled {
 }
 
 impl AlreadyBundled {
-    pub fn is_bytecode(&self) -> bool {
-        matches!(
-            self,
-            AlreadyBundled::Bytecode(_) | AlreadyBundled::BytecodeCjs(_)
-        )
-    }
-
     pub fn is_common_js(&self) -> bool {
         matches!(
             self,
@@ -940,7 +932,6 @@ pub struct ParseOptions<'a, 'b> {
     pub arena: &'a Arena,
     pub dirname_fd: FD,
     pub file_descriptor: Option<FD>,
-    pub file_hash: Option<u32>,
 
     /// On exception, we might still want to watch the file.
     pub file_fd_ptr: Option<&'b mut FD>,
@@ -1157,7 +1148,7 @@ impl<'a> Transpiler<'a> {
         arena: &'a Arena,
         log: *mut bun_ast::Log,
         opts: api::TransformOptions,
-        env_loader_: Option<*mut dot_env::Loader<'static>>,
+        env_loader_: Option<*mut dot_env::Loader>,
     ) -> crate::Result<Transpiler<'a>> {
         let mut slot = core::mem::MaybeUninit::<Transpiler<'a>>::uninit();
         Self::init_in_place(&mut slot, arena, log, opts, env_loader_)?;
@@ -1180,7 +1171,7 @@ impl<'a> Transpiler<'a> {
         arena: &'a Arena,
         log: *mut bun_ast::Log,
         opts: api::TransformOptions,
-        env_loader_: Option<*mut dot_env::Loader<'static>>,
+        env_loader_: Option<*mut dot_env::Loader>,
     ) -> crate::Result<()> {
         // Caller contract: `log` is the freshly-boxed per-VM `Log` from
         // `VirtualMachine::init` and is never null. Validate up front so the
@@ -1222,25 +1213,16 @@ impl<'a> Transpiler<'a> {
         };
         let fs: *mut Fs::FileSystem = init_file_system(cwd)?;
 
-        let env_loader: *mut dot_env::Loader<'static> = match env_loader_ {
+        let env_loader: *mut dot_env::Loader = match env_loader_ {
             Some(l) => l,
             None => match dot_env::instance() {
                 Some(l) => l,
                 None => {
                     // PORTING.md §Forbidden bars `Box::leak` even for
-                    // process-lifetime singletons. `bun_dotenv::INSTANCE` is an
-                    // `AtomicPtr<Loader<'static>>` and `Loader` borrows
-                    // an unbounded `&mut Map`, so a `OnceLock<Loader>` here can't
-                    // be expressed without changing `bun_dotenv`'s API.
-                    // Transfer ownership of both allocations into the global
-                    // singleton via `heap::alloc` (the AtomicPtr becomes the
-                    // owner; matches `MiniEventLoop::init_global`).
-                    let map: *mut dot_env::Map =
-                        bun_core::heap::into_raw(Box::new(dot_env::Map::init()));
-                    // SAFETY: `map` is a fresh heap allocation with no other
-                    // alias; `Loader` stores it for process lifetime and is
-                    // itself installed into `dot_env::INSTANCE` below.
-                    bun_core::heap::into_raw(Box::new(dot_env::Loader::init(unsafe { &mut *map })))
+                    // process-lifetime singletons. Transfer ownership into the
+                    // global singleton via `heap::alloc` (the AtomicPtr becomes
+                    // the owner; matches `MiniEventLoop::init_global`).
+                    bun_core::heap::into_raw(Box::new(dot_env::Loader::init()))
                 }
             },
         };
@@ -1293,10 +1275,7 @@ impl<'a> Transpiler<'a> {
         let p = dst.as_mut_ptr();
         // SAFETY: `dst` is an exclusively-borrowed, currently-uninitialised
         // `MaybeUninit<Transpiler>`; each `write` initialises a distinct field
-        // and no field is read before it is written. `env_loader.cast()` matches
-        // the field's `*mut Loader<'a>` (raw-pointer lifetime reinterpretation —
-        // the pointee is the process-lifetime singleton or caller-supplied
-        // loader, as in the original struct literal).
+        // and no field is read before it is written.
         unsafe {
             core::ptr::addr_of_mut!((*p).options).write(bundle_options);
             core::ptr::addr_of_mut!((*p).log).write(log_nn.as_ptr());
@@ -1315,9 +1294,6 @@ impl<'a> Transpiler<'a> {
             core::ptr::addr_of_mut!((*p).resolve_results).write(resolve_results);
             core::ptr::addr_of_mut!((*p).resolve_queue).write(ResolveQueue::default());
             core::ptr::addr_of_mut!((*p).elapsed).write(0);
-            core::ptr::addr_of_mut!((*p).needs_runtime).write(false);
-            core::ptr::addr_of_mut!((*p).router).write(None);
-            core::ptr::addr_of_mut!((*p).source_map).write(options::SourceMapOption::None);
             // .thread_pool = pool,
             core::ptr::addr_of_mut!((*p).linker).write(crate::linker::Linker::init(
                 log,
@@ -1327,8 +1303,7 @@ impl<'a> Transpiler<'a> {
                 core::ptr::null_mut(),
                 fs,
             ));
-            core::ptr::addr_of_mut!((*p).timer).write(SystemTimer::start().expect("Timer fail"));
-            core::ptr::addr_of_mut!((*p).env).write(env_loader.cast());
+            core::ptr::addr_of_mut!((*p).env).write(env_loader);
             core::ptr::addr_of_mut!((*p).macro_context).write(None);
         }
         Ok(())
@@ -1366,7 +1341,6 @@ impl<'a> Transpiler<'a> {
         let arena = this_parse.arena;
         let dirname_fd = this_parse.dirname_fd;
         let file_descriptor = this_parse.file_descriptor;
-        let file_hash = this_parse.file_hash;
         let path = this_parse.path;
         let loader = this_parse.loader;
         // Every `Log` access in this function body goes through the `log`
@@ -1568,7 +1542,6 @@ impl<'a> Transpiler<'a> {
                     preserve_unused_imports_ts: false,
                     use_define_for_class_fields: false,
                     suppress_warnings_about_weird_code: true,
-                    filepath_hash_for_hmr: file_hash.unwrap_or(0),
                     features: js_ast::RuntimeFeatures::default(),
                     tree_shaking: self.options.tree_shaking,
                     bundle: false,
@@ -2683,38 +2656,6 @@ impl<'a> Transpiler<'a> {
         )
     }
 
-    // PERF: like `print` (no `SourceMapHandler`, `ENABLE_SOURCE_MAP = false`, so
-    // the printer skips every per-token `add_source_mapping` /
-    // `update_generated_line_and_column` and never builds/flushes a VLQ chunk)
-    // but still threads `result.runtime_transpiler_cache` so the transpiled
-    // output is written to the on-disk cache. Used by the runtime module loader
-    // when no inspector is attached: `Bun__remapStackFramePositions` degrades
-    // gracefully (keeps the raw transpiled position) when a path has no entry in
-    // `SavedSourceMap`, so eagerly building a per-module source map nothing will
-    // consume is pure overhead. See jsc_hooks.rs `transpile_source_code_inner`.
-    /// `print_arena` is the same per-call arena that built `result.ast` —
-    /// see [`Self::print`].
-    #[inline(never)]
-    pub fn print_skip_source_map(
-        &mut self,
-        print_arena: &Arena,
-        result: ParseResult,
-        writer: &mut js_printer::BufferPrinter,
-        format: js_printer::Format,
-        module_info: Option<*mut analyze_transpiled_module::ModuleInfo>,
-    ) -> crate::Result<usize> {
-        self.print_with_source_map_maybe::<false>(
-            print_arena,
-            result.ast,
-            &result.source,
-            writer,
-            format,
-            None,
-            result.runtime_transpiler_cache,
-            module_info,
-        )
-    }
-
     fn normalize_entry_point_path(&self, _entry: &[u8]) -> &'static [u8] {
         let fs = self.fs();
         let entry = fs.abs(&[_entry]);
@@ -2877,14 +2818,8 @@ impl<'a> Transpiler<'a> {
         let output_files: Box<[options::OutputFile]> =
             std::mem::take(&mut self.output_files).into_boxed_slice();
         // SAFETY: see above (`self.log` is the same pointer as `log`).
-        let mut final_result =
+        let final_result =
             options::TransformResult::init(outbase, output_files, unsafe { &mut *self.log })?;
-        // Non-owning fd view; `output_dir_handle` keeps ownership.
-        final_result.root_dir = self
-            .options
-            .output_dir_handle
-            .as_ref()
-            .map(bun_sys::Dir::fd);
         Ok(final_result)
     }
 
@@ -3006,7 +2941,6 @@ impl<'a> Transpiler<'a> {
                     loader,
                     dirname_fd,
                     file_descriptor: None,
-                    file_hash: None,
                     file_fd_ptr: None,
                     macro_remappings,
                     macro_js_ctx: default_macro_js_value(),
@@ -3240,7 +3174,6 @@ impl<'a> Transpiler<'a> {
                     .as_ref()
                     .map(bun_sys::Dir::fd)
                     .unwrap_or(bun_sys::Fd::INVALID),
-                is_outdir: true,
                 ..Default::default()
             },
         ))

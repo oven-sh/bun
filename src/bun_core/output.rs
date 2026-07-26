@@ -1275,21 +1275,6 @@ pub fn print_start_end_stdout(start: i128, end: i128) {
     print_elapsed_stdout(elapsed as f64);
 }
 
-/// Minimal timer abstraction so bun_core doesn't depend on bun_perf.
-/// bun_perf::SystemTimer impls this (move-in pass).
-pub trait ReadTimer {
-    fn read(&mut self) -> u64;
-}
-
-pub fn print_timer(timer: &mut impl ReadTimer) {
-    #[cfg(target_arch = "wasm32")]
-    {
-        return;
-    }
-    let elapsed = timer.read() / crate::time::NS_PER_MS;
-    print_elapsed(elapsed as f64);
-}
-
 // ──────────────────────────────────────────────────────────────────────────
 // Print routing
 //
@@ -1406,12 +1391,6 @@ pub fn print_to(dest: Destination, args: fmt::Arguments<'_>) {
     });
 }
 
-#[inline]
-pub fn print_errorable(args: fmt::Arguments<'_>) -> crate::CrateResult<()> {
-    print_to(Destination::Stdout, args);
-    Ok(())
-}
-
 /// Print to stdout
 /// This will appear in the terminal, including in production.
 /// Text automatically buffers
@@ -1440,16 +1419,6 @@ macro_rules! debug {
     };
 }
 
-/// NOTE: this fn form cannot inspect the template and therefore *always*
-/// appends `\n`. Callers must NOT pass a template that already ends in `\n`.
-/// Prefer the `debug!` macro.
-#[inline]
-pub(crate) fn _debug(args: fmt::Arguments<'_>) {
-    debug_assert!(SOURCE_SET.get());
-    print_to(Destination::Stdout, args);
-    write_bytes(Destination::Stdout, b"\n");
-}
-
 #[inline]
 pub fn print(args: fmt::Arguments<'_>) {
     print_to(Destination::Stdout, args);
@@ -1466,34 +1435,14 @@ pub fn println(args: fmt::Arguments<'_>) {
 // Scoped debug logging
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Debug-only logs which should not appear in release mode.
-///
-/// To enable a specific log at runtime, set the environment variable
-///   `BUN_DEBUG_${TAG}` to 1.
-///
-/// For example, to enable the "foo" log, set the environment variable
-///   BUN_DEBUG_foo=1
-/// To enable all logs, set the environment variable
-///   BUN_DEBUG_ALL=1
-pub type LogFunction = fn(fmt::Arguments<'_>);
-
+/// Default visibility of a [`ScopedLogger`]: whether it emits without
+/// `BUN_DEBUG_${TAG}=1` set.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum Visibility {
     /// Hide logs for this scope by default.
     Hidden,
     /// Show logs for this scope by default.
     Visible,
-}
-
-impl Visibility {
-    /// Show logs for this scope by default if and only if `condition` is true.
-    pub const fn visible_if(condition: bool) -> Visibility {
-        if condition {
-            Visibility::Visible
-        } else {
-            Visibility::Hidden
-        }
-    }
 }
 
 /// Runtime state for one scoped logger. One static instance per `declare_scope!`.
@@ -2429,10 +2378,6 @@ pub fn enable_ansi_colors_stdout() -> bool {
 pub fn enable_ansi_colors_stderr() -> bool {
     ENABLE_ANSI_COLORS_STDERR.load(Ordering::Relaxed)
 }
-#[inline]
-pub fn enable_ansi_colors() -> bool {
-    ENABLE_ANSI_COLORS_STDERR.load(Ordering::Relaxed)
-}
 
 // ── DebugTimer ────────────────────────────────────────────────────────────
 
@@ -2850,11 +2795,6 @@ impl StdinReader {
             0 => Err(crate::CrateError::EndOfStream),
             _ => Ok(one[0]),
         }
-    }
-    /// Alias for callers that spell it `read_byte`.
-    #[inline]
-    pub fn read_byte(&mut self) -> crate::CrateResult<u8> {
-        self.take_byte()
     }
 }
 

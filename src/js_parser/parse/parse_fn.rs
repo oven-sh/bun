@@ -35,13 +35,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         match opts.lexical_decl {
             LexicalDecl::Forbid => {
-                p.forbid_lexical_decl(loc)?;
+                p.forbid_lexical_decl(loc);
             }
 
             // Allow certain function statements in certain single-statement contexts
             LexicalDecl::AllowFnInsideIf | LexicalDecl::AllowFnInsideLabel => {
                 if opts.is_typescript_declare || is_generator || is_async {
-                    p.forbid_lexical_decl(loc)?;
+                    p.forbid_lexical_decl(loc);
                 }
             }
             _ => {}
@@ -56,7 +56,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             name_text = p.lexer.identifier;
             p.lexer.expect(T::TIdentifier)?;
             // Difference
-            let ref_ = p.new_symbol(js_ast::symbol::Kind::Other, name_text)?;
+            let ref_ = p.new_symbol(js_ast::symbol::Kind::Other, name_text);
             name = Some(js_ast::LocRef {
                 loc: name_loc,
                 ref_,
@@ -83,7 +83,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             FnOrArrowDataParse {
                 needs_async_loc: loc,
                 async_range: async_range.unwrap_or(bun_ast::Range::NONE),
-                has_async_range: async_range.is_some(),
                 allow_await: if is_async {
                     AwaitOrYield::AllowExpr
                 } else {
@@ -448,7 +447,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let ref_ = if !text.is_empty() && text != arguments_str {
                 p.declare_symbol(js_ast::symbol::Kind::HoistedFunction, name_loc, text)?
             } else {
-                p.new_symbol(js_ast::symbol::Kind::HoistedFunction, text)?
+                p.new_symbol(js_ast::symbol::Kind::HoistedFunction, text)
             };
             name = Some(js_ast::LocRef {
                 loc: name_loc,

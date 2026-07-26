@@ -152,10 +152,6 @@ impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
         unsafe { &(*core::ptr::from_ref(&self.value)).git }
     }
 
-    pub fn is_git(&self) -> bool {
-        self.tag.is_git()
-    }
-
     pub fn can_enqueue_install_task(&self) -> bool {
         self.tag.can_enqueue_install_task()
     }

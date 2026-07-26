@@ -1,7 +1,7 @@
 import { spawnSync } from "bun";
 import { constants, Database, SQLiteError } from "bun:sqlite";
 import { describe, expect, it } from "bun:test";
-import { readdirSync, readFileSync, realpathSync, writeFileSync } from "fs";
+import { existsSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isMacOS, isMacOSVersionAtLeast, isWindows, tempDirWithFiles } from "harness";
 import { tmpdir } from "os";
 import path from "path";
@@ -527,6 +527,58 @@ it("supports serialize/deserialize", () => {
 
   // https://github.com/oven-sh/bun/issues/3712#issuecomment-1725259824
   expect(Database.deserialize(input)).toBeInstanceOf(Database);
+});
+
+// Coercing the schema-name argument to serialize() can re-enter JavaScript
+// via toString(). If that JS closes the database, sqlite3_serialize must not
+// be called on the freed handle. Run in a subprocess because the unsafe
+// variant operates on freed memory.
+it("serialize(name) rejects a db closed during name toString()", async () => {
+  const src = `
+    const { Database } = require("bun:sqlite");
+    const out = {};
+
+    const db = new Database(":memory:");
+    db.run("CREATE TABLE t(a)");
+
+    let message = "did not throw";
+    try {
+      db.serialize({
+        toString() {
+          db.close();
+          return "main";
+        },
+      });
+    } catch (e) {
+      message = e.message;
+    }
+    out.closeDuringToString = message;
+
+    const db2 = new Database(":memory:");
+    db2.run("CREATE TABLE t(a)");
+    out.plain = Buffer.isBuffer(db2.serialize("main"));
+    db2.close();
+
+    console.log(JSON.stringify(out));
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+    stdout: JSON.stringify({
+      closeDuringToString: "Can't do this on a closed database",
+      plain: true,
+    }),
+    stderr: "",
+    exitCode: 0,
+  });
 });
 
 it("Database.deserialize should support strict mode", () => {
@@ -1337,6 +1389,114 @@ it("issue#6597 with many columns", () => {
   db.close();
 });
 
+describe("empty and duplicate column names", () => {
+  it('an empty alias (AS "") keeps its column and all preceding columns', () => {
+    using db = new Database(":memory:");
+    using stmt = db.prepare('select 1 as a, 2 as "", 3 as b');
+    expect(stmt.get()).toEqual({ a: 1, "": 2, b: 3 });
+    expect(stmt.all()).toEqual([{ a: 1, "": 2, b: 3 }]);
+    expect([...stmt.iterate()]).toEqual([{ a: 1, "": 2, b: 3 }]);
+    expect(stmt.values()).toEqual([[1, 2, 3]]);
+    expect(stmt.columnNames).toEqual(["a", "", "b"]);
+  });
+
+  it("a trailing empty alias does not wipe the whole row", () => {
+    using db = new Database(":memory:");
+    using stmt = db.prepare('select 10 as first_col, 20 as second_col, 30 as ""');
+    expect(stmt.get()).toEqual({ first_col: 10, second_col: 20, "": 30 });
+    expect(stmt.columnNames).toEqual(["first_col", "second_col", ""]);
+  });
+
+  it('a trailing AS "" SELECT is still row-returning (all/values/raw return arrays, not a number)', () => {
+    using db = new Database(":memory:");
+    db.run("create table t(v)");
+    db.run("insert into t values ('r1'),('r2')");
+    using stmt = db.prepare('select v as name, 1 as "" from t');
+
+    // Previously: .all() returned the stale sqlite3_changes() count (a number),
+    // .values()/.raw() returned the column count, and .get() returned {}.
+    expect(stmt.all()).toEqual([
+      { name: "r1", "": 1 },
+      { name: "r2", "": 1 },
+    ]);
+    expect(stmt.values()).toEqual([
+      ["r1", 1],
+      ["r2", 1],
+    ]);
+    expect(Array.isArray(stmt.raw())).toBe(true);
+    expect(stmt.get()).toEqual({ name: "r1", "": 1 });
+    expect([...stmt.iterate()]).toEqual([
+      { name: "r1", "": 1 },
+      { name: "r2", "": 1 },
+    ]);
+    expect(stmt.columnNames).toEqual(["name", ""]);
+
+    using lone = db.prepare('select 9 as ""');
+    expect(lone.all()).toEqual([{ "": 9 }]);
+    expect(lone.values()).toEqual([[9]]);
+  });
+
+  it('a trailing AS "" SELECT with zero rows returns [], not null', () => {
+    using db = new Database(":memory:");
+    db.run("create table t(v)");
+    using stmt = db.prepare('select v as name, 1 as "" from t');
+    expect(stmt.all()).toEqual([]);
+    expect(stmt.values()).toEqual([]);
+    expect(stmt.raw()).toEqual([]);
+  });
+
+  it("multiple empty aliases: last value wins on the row object, columnNames keeps all", () => {
+    using db = new Database(":memory:");
+    using stmt = db.prepare('select 1 as "", 2 as x, 3 as ""');
+    expect(stmt.get()).toEqual({ "": 3, x: 2 });
+    expect(stmt.columnNames).toEqual(["", "x", ""]);
+    expect(stmt.values()).toEqual([[1, 2, 3]]);
+  });
+
+  it("columnNames preserves duplicates and order, matching columnTypes / declaredTypes / values()", () => {
+    using db = new Database(":memory:");
+    using stmt = db.prepare("select 1 as a, 2 as b, 3 as a");
+    // row object: last duplicate wins (better-sqlite3/node:sqlite semantics)
+    expect(stmt.get()).toEqual({ a: 3, b: 2 });
+    expect(stmt.columnNames).toEqual(["a", "b", "a"]);
+    expect(stmt.columnNames.length).toBe(stmt.columnTypes.length);
+    expect(stmt.columnNames.length).toBe(stmt.declaredTypes.length);
+    expect(stmt.columnNames.length).toBe(stmt.values()[0].length);
+  });
+
+  it("columnNames preserves all columns on the >64-column slow path with an empty alias", () => {
+    using db = new Database(":memory:");
+    const cols = Array.from({ length: 70 }, (_, i) => `${i} as c${i}`);
+    cols[3] = `999 as ""`;
+    using stmt = db.prepare(`select ${cols.join(", ")}`);
+    const row = stmt.get();
+    const names = stmt.columnNames;
+    expect(names.length).toBe(70);
+    expect(names[0]).toBe("c0");
+    expect(names[3]).toBe("");
+    expect(names[69]).toBe("c69");
+    expect(row.c0).toBe(0);
+    expect(row[""]).toBe(999);
+    expect(row.c69).toBe(69);
+    expect(Object.keys(row).length).toBe(70);
+  });
+
+  it("columnNames preserves duplicates on the >64-column slow path", () => {
+    using db = new Database(":memory:");
+    const cols = Array.from({ length: 70 }, (_, i) => `${i} as c${i}`);
+    cols[50] = `777 as c0`;
+    using stmt = db.prepare(`select ${cols.join(", ")}`);
+    const names = stmt.columnNames;
+    expect(names.length).toBe(70);
+    expect(names[0]).toBe("c0");
+    expect(names[50]).toBe("c0");
+    const row = stmt.get();
+    expect(row.c0).toBe(777);
+    expect(row.c49).toBe(49);
+    expect(row.c51).toBe(51);
+  });
+});
+
 it("issue#7147", () => {
   const db = new Database(":memory:");
   db.exec("CREATE TABLE foos (foo_id INTEGER NOT NULL PRIMARY KEY, foo_a TEXT, foo_b TEXT)");
@@ -2052,6 +2212,42 @@ it("keeps database handles working when many Workers open databases concurrently
     exitCode: 0,
   });
 }, 30000);
+
+it("exit-time WAL checkpoint runs even with a never-finalized prepared statement", async () => {
+  // Sibling of the node:sqlite test. With un-finalized statements, close_v2
+  // zombifies the connection and defers the WAL checkpoint to a finalize
+  // that never comes; Bun__closeAllSQLiteDatabasesForTermination now
+  // checkpoints explicitly first.
+  const dir = tempDirWithFiles("bun-sqlite-exit-zombie", {});
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const { Database } = require('bun:sqlite');
+       const db = new Database('exit.db');
+       db.exec('PRAGMA journal_mode = WAL');
+       db.exec('CREATE TABLE t (x INTEGER)');
+       const stmt = db.prepare('INSERT INTO t VALUES (?)');
+       stmt.run(42);
+       // stmt stays referenced and is never finalized; db is never closed.
+       console.log(require('node:fs').statSync('exit.db-wal').size > 0);`,
+    ],
+    env: bunEnv,
+    cwd: dir,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("true\n");
+  const wal = path.join(dir, "exit.db-wal");
+  // TRUNCATE moved every frame into exit.db (or the sidecar was unlinked
+  // by a full close). Either way, no un-checkpointed data is stranded.
+  expect(existsSync(wal) ? statSync(wal).size : 0).toBe(0);
+  const verify = new Database(path.join(dir, "exit.db"));
+  expect(verify.query("SELECT x FROM t").get().x).toBe(42);
+  verify.close();
+  expect(exitCode).toBe(0);
+});
 
 // sqlite3_prepare_v3 treats an interior NUL byte as end-of-SQL. The exec/run
 // multi-statement loop used to re-prepare the same empty statement forever

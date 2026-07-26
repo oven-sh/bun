@@ -8,7 +8,6 @@ use bun_collections::{HashMap, IdentityContext, TaggedPtrUnion};
 use bun_core::MutableString;
 use bun_core::Ordinal;
 use bun_ptr::tagged_pointer::TagType;
-use bun_sourcemap::internal_source_map::FindCache;
 use bun_sourcemap::parsed_source_map::AnySourceProvider;
 use bun_sourcemap::{self as SourceMap, InternalSourceMap, ParsedSourceMap};
 use bun_threading::Mutex;
@@ -18,13 +17,6 @@ pub struct SavedSourceMap {
     /// This is a pointer to the map located on the VirtualMachine struct
     pub map: *mut HashTable,
     pub mutex: Mutex,
-
-    /// Warm cache for `remapStackFramePositions`: the last decoded sync window and
-    /// the last (path_hash -> ISM) resolution. Guarded by `mutex`. Invalidated on
-    /// any `putValue` since that may free the cached blob.
-    pub find_cache: FindCache,
-    pub last_path_hash: u64,
-    pub last_ism: Option<InternalSourceMap>,
 }
 
 impl Default for SavedSourceMap {
@@ -32,9 +24,6 @@ impl Default for SavedSourceMap {
         Self {
             map: ptr::null_mut(),
             mutex: Mutex::default(),
-            find_cache: FindCache::default(),
-            last_path_hash: 0,
-            last_ism: None,
         }
     }
 }
@@ -45,9 +34,6 @@ impl SavedSourceMap {
         this.write(Self {
             map,
             mutex: Mutex::default(),
-            find_cache: FindCache::default(),
-            last_path_hash: 0,
-            last_ism: None,
         });
 
         // SAFETY: `map` is a valid pointer to the sibling HashTable on VirtualMachine.
@@ -95,28 +81,16 @@ pub type Value = TaggedPtrUnion<ValueTypes>;
 pub struct ValueTypes;
 
 impl bun_ptr::tagged_pointer::TypeList for ValueTypes {
-    const LEN: usize = 3;
     const MIN_TAG: TagType = 1024 - 2;
-    fn type_name_from_tag(tag: TagType) -> Option<&'static str> {
-        match tag {
-            1024 => Some("ParsedSourceMap"),
-            1023 => Some("AnySourceProvider"),
-            1022 => Some("InternalSourceMap"),
-            _ => None,
-        }
-    }
 }
 impl bun_ptr::tagged_pointer::UnionMember<ValueTypes> for ParsedSourceMap {
     const TAG: TagType = 1024;
-    const NAME: &'static str = "ParsedSourceMap";
 }
 impl bun_ptr::tagged_pointer::UnionMember<ValueTypes> for AnySourceProvider {
     const TAG: TagType = 1023;
-    const NAME: &'static str = "AnySourceProvider";
 }
 impl bun_ptr::tagged_pointer::UnionMember<ValueTypes> for InternalSourceMap {
     const TAG: TagType = 1022;
-    const NAME: &'static str = "InternalSourceMap";
 }
 
 impl SavedSourceMap {
@@ -151,10 +125,6 @@ impl SavedSourceMap {
 /// `bun_sourcemap::SavedSourceMap::MissingSourceMapNoteInfo` so the path
 /// recorded here is the same one `run_command` prints.
 pub mod missing_source_map_note_info {
-    pub use bun_sourcemap::SavedSourceMap::MissingSourceMapNoteInfo::{
-        print, seen_invalid, set_seen_invalid,
-    };
-
     #[inline]
     pub(super) fn record(path: &[u8]) {
         bun_sourcemap::SavedSourceMap::MissingSourceMapNoteInfo::set_path(path);
@@ -227,10 +197,6 @@ impl bun_js_printer::OnSourceMapChunk for SavedSourceMap {
         self.put_mappings(source, chunk.buffer)
     }
 }
-
-/// `SourceMapHandler::for_::<SavedSourceMap>` is
-/// monomorphized over the `OnSourceMapChunk` impl above.
-pub type SourceMapHandler<'a> = bun_js_printer::SourceMapHandler<'a>;
 
 impl Drop for SavedSourceMap {
     fn drop(&mut self) {
@@ -311,9 +277,6 @@ impl SavedSourceMap {
 
         self.lock();
         // Note: reshaped for borrowck — explicit unlock paired manually.
-
-        self.find_cache.invalidate_all();
-        self.last_ism = None;
 
         // `bun_collections::HashMap` derefs to `std::collections::HashMap`, so
         // the std `entry()` API is used directly.
@@ -434,12 +397,6 @@ impl SavedSourceMap {
             .map
     }
 
-    /// Mutex must already be held. Returns the raw table value for `hash` if any.
-    pub fn get_value_locked(&mut self, h: u64) -> Option<Value> {
-        let raw = *self.map_mut().get(&h)?;
-        Some(Value::from(Some(raw)))
-    }
-
     pub fn resolve_mapping(
         &mut self,
         path: &[u8],
@@ -477,7 +434,6 @@ impl SavedSourceMap {
             mapping,
             source_map: Some(map),
             prefetched_source_code: parse.source_contents,
-            name: None,
         })
     }
 }

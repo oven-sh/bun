@@ -3,6 +3,7 @@ use super::make_formatter;
 
 use super::Expect;
 use super::get_signature;
+use super::throw;
 
 // Free fn (this module can't open `impl Expect`); bridged into `impl Expect` by the
 // `__forward_matcher!` macro in expect.rs, where the JsClass codegen host_fn shim picks it up.
@@ -28,17 +29,19 @@ pub(crate) fn to_be_valid_date(
 
     if not {
         let signature = get_signature("toBeValidDate", "", true);
-        return this.throw(
+        return throw!(
+            this,
             global,
             signature,
-            format_args!("\n\nReceived: <red>{}<r>\n", received),
+            "\n\nReceived: <red>{}<r>\n", received,
         );
     }
 
     let signature = get_signature("toBeValidDate", "", false);
-    this.throw(
+    throw!(
+        this,
         global,
         signature,
-        format_args!("\n\nReceived: <red>{}<r>\n", received),
+        "\n\nReceived: <red>{}<r>\n", received,
     )
 }

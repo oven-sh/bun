@@ -7,10 +7,9 @@ use core::fmt;
 use crate::Loc;
 use bun_alloc::{AllocError, Arena as Bump};
 use bun_collections::VecExt;
-use bun_core::ZStr;
 use bun_core::{self};
 
-use crate::{DebugOnlyDisabler, E, G, Op, Ref, S, Stmt};
+use crate::{DebugOnlyDisabler, E, G, Op, Ref};
 use bun_alloc::ArenaVecExt as _;
 // Re-export so downstream crates can name `ast::expr::StoreRef` (some callers
 // route through `expr::`).
@@ -105,23 +104,9 @@ impl Expr {
     pub fn data_store_create() {
         data::Store::create();
     }
-
-    /// Debug-only "Store must be init'd" guard. The re-entrancy `Disabler`
-    /// check lives in `Store::append`.
-    #[inline]
-    pub fn data_store_assert() {
-        data::Store::assert();
-    }
 }
 
 impl Expr {
-    pub fn clone_in(&self, bump: &Bump) -> Result<Expr, crate::Error> {
-        Ok(Expr {
-            loc: self.loc,
-            data: Data::clone_in(self.data, bump)?,
-        })
-    }
-
     pub fn deep_clone(&self, bump: &Bump) -> Result<Expr, AllocError> {
         let _g = bun_alloc::ast_alloc::DetachAstHeap::new();
         self.deep_clone_no_detach(bump)
@@ -132,23 +117,6 @@ impl Expr {
             loc: self.loc,
             data: self.data.deep_clone_no_detach(bump)?,
         })
-    }
-
-    pub fn wrap_in_arrow(this: Expr, bump: &Bump) -> Result<Expr, crate::Error> {
-        let stmts: &mut [Stmt] = bump.alloc_slice_fill_with(1, |_| {
-            Stmt::alloc(S::Return { value: Some(this) }, this.loc)
-        });
-
-        Ok(Expr::init(
-            E::Arrow {
-                body: G::FnBody {
-                    loc: this.loc,
-                    stmts: crate::StoreSlice::new_mut(stmts),
-                },
-                ..Default::default()
-            },
-            this.loc,
-        ))
     }
 
     // `Expr::fromBlob` is JSC-tier — it parses JSON via `bun_parsers` and
@@ -348,14 +316,6 @@ impl Expr {
     pub fn as_string_cloned<'b>(&self, bump: &'b Bump) -> Result<Option<&'b [u8]>, AllocError> {
         match &self.data {
             Data::EString(str) => Ok(Some(str.string_cloned(bump)?)),
-            _ => Ok(None),
-        }
-    }
-
-    #[inline]
-    pub fn as_string_z<'b>(&self, bump: &'b Bump) -> Result<Option<&'b ZStr>, AllocError> {
-        match &self.data {
-            Data::EString(str) => Ok(Some(str.string_z(bump)?)),
             _ => Ok(None),
         }
     }
@@ -626,16 +586,6 @@ impl Expr {
         Ok(())
     }
 
-    pub fn get_boolean(expr: &Expr, name: &[u8]) -> Option<bool> {
-        if let Some(query) = expr.as_property(name) {
-            match query.expr.data {
-                Data::EBoolean(b) | Data::EBranchBoolean(b) => return Some(b.value),
-                _ => {}
-            }
-        }
-        None
-    }
-
     pub fn get_string<'b>(
         &self,
         bump: &'b Bump,
@@ -670,60 +620,12 @@ impl Expr {
         }
     }
 
-    pub fn get_string_cloned_z<'b>(
-        expr: &Expr,
-        bump: &'b Bump,
-        name: &[u8],
-    ) -> Result<Option<&'b ZStr>, AllocError> {
-        match expr.as_property(name) {
-            Some(q) => q.expr.as_string_z(bump),
-            None => Ok(None),
-        }
-    }
-
     // `Query` holds `expr` by value (Copy). The iterator stores the
     // `StoreRef<E::Array>` directly (Copy, arena-backed) so no lifetime is tied
     // to a local temporary — `StoreRef::Deref` re-borrows the arena slot on use.
     pub fn get_array(&self, name: &[u8]) -> Option<ArrayIterator> {
         let q = self.as_property(name)?;
         q.expr.as_array()
-    }
-
-    pub fn get_rope<'a>(&self, rope: &'a E::Rope) -> Option<E::RopeQuery<'a>> {
-        if let Some(existing) = self.get(&rope.head.data.as_e_string().unwrap().data) {
-            match &existing.data {
-                Data::EArray(array) => {
-                    if let Some(next) = rope.next_ref() {
-                        let array = *array;
-                        if let Some(end) = array.items.last() {
-                            return end.get_rope(next);
-                        }
-                    }
-                    return Some(E::RopeQuery {
-                        expr: existing,
-                        rope,
-                    });
-                }
-                Data::EObject(_) => {
-                    if let Some(next) = rope.next_ref() {
-                        if let Some(end) = existing.get_rope(next) {
-                            return Some(end);
-                        }
-                    }
-                    return Some(E::RopeQuery {
-                        expr: existing,
-                        rope,
-                    });
-                }
-                _ => {
-                    return Some(E::RopeQuery {
-                        expr: existing,
-                        rope,
-                    });
-                }
-            }
-        }
-        None
     }
 }
 
@@ -927,58 +829,6 @@ impl Expr {
         }
     }
 
-    // `ctx` is passed by `&mut` so a single `&mut P` (the parser state) can be
-    // reborrowed for each callback invocation without `Copy`.
-    pub fn join_all_with_comma_callback<C: ?Sized>(
-        all: &[Expr],
-        ctx: &mut C,
-        callback: fn(ctx: &mut C, expr: Expr) -> Option<Expr>,
-    ) -> Option<Expr> {
-        match all.len() {
-            0 => None,
-            1 => callback(ctx, all[0]),
-            2 => {
-                let result = Expr::join_with_comma(
-                    callback(ctx, all[0]).unwrap_or(Expr {
-                        data: Data::EMissing(E::Missing {}),
-                        loc: all[0].loc,
-                    }),
-                    callback(ctx, all[1]).unwrap_or(Expr {
-                        data: Data::EMissing(E::Missing {}),
-                        loc: all[1].loc,
-                    }),
-                );
-                if result.is_missing() {
-                    return None;
-                }
-                Some(result)
-            }
-            _ => {
-                let mut i: usize = 1;
-                let mut expr = callback(ctx, all[0]).unwrap_or(Expr {
-                    data: Data::EMissing(E::Missing {}),
-                    loc: all[0].loc,
-                });
-
-                while i < all.len() {
-                    expr = Expr::join_with_comma(
-                        expr,
-                        callback(ctx, all[i]).unwrap_or(Expr {
-                            data: Data::EMissing(E::Missing {}),
-                            loc: all[i].loc,
-                        }),
-                    );
-                    i += 1;
-                }
-
-                if expr.is_missing() {
-                    return None;
-                }
-                Some(expr)
-            }
-        }
-    }
-
     pub fn extract_numeric_values_in_safe_range(left: &Data, right: &Data) -> Option<[f64; 2]> {
         let l_value = left.extract_numeric_value()?;
         let r_value = right.extract_numeric_value()?;
@@ -1027,16 +877,6 @@ impl Expr {
         Some([l_string, r_string])
     }
 }
-
-// ───────────────────────────────────────────────────────────────────────────
-// Static state
-// ───────────────────────────────────────────────────────────────────────────
-
-// Debug-only allocation counter: in release the `lock xadd` per node was a
-// contended cache line bouncing across the bundler worker pool on every Expr
-// allocation.
-#[cfg(debug_assertions)]
-pub(crate) static ICOUNT: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
 
 // We don't need to dynamically allocate booleans: `E::Boolean` is inline in
 // `Data`, not a pointer to a pooled singleton.
@@ -1205,8 +1045,6 @@ impl Expr {
     /// Also, prefer Expr.init or Expr.alloc when possible. This will be slower.
     #[inline]
     pub fn allocate<T: IntoExprData>(bump: &Bump, st: T, loc: Loc) -> Expr {
-        #[cfg(debug_assertions)]
-        ICOUNT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
         data::Store::assert();
         Expr {
             loc,
@@ -1216,8 +1054,6 @@ impl Expr {
 
     #[inline]
     pub fn init<T: IntoExprData>(st: T, loc: Loc) -> Expr {
-        #[cfg(debug_assertions)]
-        ICOUNT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
         data::Store::assert();
         Expr {
             loc,
@@ -1253,15 +1089,6 @@ impl Expr {
     #[inline]
     pub fn is_primitive_literal(&self) -> bool {
         Tag::is_primitive_literal(self.data.tag())
-    }
-
-    #[inline]
-    pub fn is_ref(this: &Expr, ref_: Ref) -> bool {
-        match this.data {
-            Data::EImportIdentifier(ii) => ii.ref_.eql(ref_),
-            Data::EIdentifier(i) => i.ref_.eql(ref_),
-            _ => false,
-        }
     }
 }
 
@@ -1341,132 +1168,28 @@ impl Tag {
     }
 
     pub fn typeof_(tag: Tag) -> Option<&'static [u8]> {
+        // This must only return `Some` when the operand is guaranteed to have
+        // no side effects. Array/object/class literals are omitted because
+        // their elements, properties, and static initializers can run code.
         Some(match tag {
-            Tag::EArray
-            | Tag::EObject
-            | Tag::EArrayJSON
-            | Tag::EObjectJSON
-            | Tag::ENull
-            | Tag::ERegExp => b"object",
+            Tag::EArrayJSON | Tag::EObjectJSON | Tag::ENull | Tag::ERegExp => b"object",
             Tag::EUndefined => b"undefined",
             Tag::EBoolean | Tag::EBranchBoolean => b"boolean",
             Tag::ENumber => b"number",
             Tag::EBigInt => b"bigint",
             Tag::EString => b"string",
-            Tag::EClass | Tag::EFunction | Tag::EArrow => b"function",
+            Tag::EFunction | Tag::EArrow => b"function",
             _ => return None,
         })
     }
-
-    pub fn is_array(self) -> bool {
-        matches!(self, Tag::EArray | Tag::EArrayJSON)
-    }
-    pub fn is_unary(self) -> bool {
-        matches!(self, Tag::EUnary)
-    }
-    pub fn is_binary(self) -> bool {
-        matches!(self, Tag::EBinary)
-    }
-    pub fn is_this(self) -> bool {
-        matches!(self, Tag::EThis)
-    }
-    pub fn is_class(self) -> bool {
-        matches!(self, Tag::EClass)
-    }
-    pub fn is_boolean(self) -> bool {
-        matches!(self, Tag::EBoolean | Tag::EBranchBoolean)
-    }
-    pub fn is_super(self) -> bool {
-        matches!(self, Tag::ESuper)
-    }
-    pub fn is_null(self) -> bool {
-        matches!(self, Tag::ENull)
-    }
-    pub fn is_undefined(self) -> bool {
-        matches!(self, Tag::EUndefined)
-    }
-    pub fn is_new(self) -> bool {
-        matches!(self, Tag::ENew)
-    }
-    pub fn is_new_target(self) -> bool {
-        matches!(self, Tag::ENewTarget)
-    }
-    pub fn is_function(self) -> bool {
-        matches!(self, Tag::EFunction)
-    }
-    pub fn is_import_meta(self) -> bool {
-        matches!(self, Tag::EImportMeta)
-    }
-    pub fn is_call(self) -> bool {
-        matches!(self, Tag::ECall)
-    }
-    pub fn is_dot(self) -> bool {
-        matches!(self, Tag::EDot)
-    }
-    pub fn is_index(self) -> bool {
-        matches!(self, Tag::EIndex)
-    }
-    pub fn is_arrow(self) -> bool {
-        matches!(self, Tag::EArrow)
-    }
-    pub fn is_identifier(self) -> bool {
-        matches!(self, Tag::EIdentifier)
-    }
-    pub fn is_import_identifier(self) -> bool {
-        matches!(self, Tag::EImportIdentifier)
-    }
-    pub fn is_private_identifier(self) -> bool {
-        matches!(self, Tag::EPrivateIdentifier)
-    }
-    pub fn is_jsx_element(self) -> bool {
-        matches!(self, Tag::EJsxElement)
-    }
-    pub fn is_missing(self) -> bool {
-        matches!(self, Tag::EMissing)
-    }
-    pub fn is_number(self) -> bool {
-        matches!(self, Tag::ENumber)
-    }
-    pub fn is_big_int(self) -> bool {
-        matches!(self, Tag::EBigInt)
-    }
-    pub fn is_object(self) -> bool {
-        matches!(self, Tag::EObject | Tag::EObjectJSON)
-    }
-    pub fn is_spread(self) -> bool {
-        matches!(self, Tag::ESpread)
-    }
-    pub fn is_string(self) -> bool {
-        matches!(self, Tag::EString)
-    }
-    pub fn is_template(self) -> bool {
-        matches!(self, Tag::ETemplate)
-    }
-    pub fn is_reg_exp(self) -> bool {
-        matches!(self, Tag::ERegExp)
-    }
-    pub fn is_await(self) -> bool {
-        matches!(self, Tag::EAwait)
-    }
-    pub fn is_yield(self) -> bool {
-        matches!(self, Tag::EYield)
-    }
-    pub fn is_if(self) -> bool {
-        matches!(self, Tag::EIf)
-    }
-    pub fn is_require_resolve_string(self) -> bool {
-        matches!(self, Tag::ERequireResolveString)
-    }
-    pub fn is_import(self) -> bool {
-        matches!(self, Tag::EImport)
-    }
 }
 
-impl fmt::Display for Tag {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
+impl Tag {
+    /// Human-readable variant name for diagnostics (`"string"`, `"boolean"`, …).
+    pub fn type_name(self) -> &'static str {
+        match self {
             Tag::EString => "string",
-            Tag::EArray => "array",
+            Tag::EArray | Tag::EArrayJSON => "array",
             Tag::EUnary => "unary",
             Tag::EBinary => "binary",
             Tag::EBoolean | Tag::EBranchBoolean => "boolean",
@@ -1488,7 +1211,7 @@ impl fmt::Display for Tag {
             Tag::EMissing => "<missing>",
             Tag::ENumber => "number",
             Tag::EBigInt => "BigInt",
-            Tag::EObject => "object",
+            Tag::EObject | Tag::EObjectJSON => "object",
             Tag::ESpread => "...",
             Tag::ETemplate => "template",
             Tag::ERegExp => "regexp",
@@ -1500,8 +1223,14 @@ impl fmt::Display for Tag {
             Tag::EThis => "this",
             Tag::EClass => "class",
             Tag::ERequireString => "require",
-            other => <&'static str>::from(*other),
-        })
+            other => <&'static str>::from(other),
+        }
+    }
+}
+
+impl fmt::Display for Tag {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.type_name())
     }
 }
 
@@ -1563,11 +1292,6 @@ impl Expr {
         matches!(self.data, Data::EDot(_) | Data::EIndex(_))
     }
 
-    #[inline]
-    pub fn is_property_access(&self) -> bool {
-        self.has_value_for_this_in_call()
-    }
-
     /// The given "expr" argument should be the operand of a "!" prefix operator
     /// (i.e. the "x" in "!x"). This returns a simplified expression for the
     /// whole operator (i.e. the "!x") if it can be simplified, or false if not.
@@ -1588,9 +1312,9 @@ impl Expr {
                 }));
             }
             Data::EBigInt(b) => {
-                return Some(expr.at(E::Boolean {
-                    value: b.value == b"0",
-                }));
+                if let Some(equal) = E::BigInt::check_equality(&b.value, b"0") {
+                    return Some(expr.at(E::Boolean { value: equal }));
+                }
             }
             Data::EFunction(_) | Data::EArrow(_) | Data::ERegExp(_) => {
                 return Some(expr.at(E::Boolean { value: false }));
@@ -1660,7 +1384,13 @@ impl Expr {
             Data::EBoolean(data) | Data::EBranchBoolean(data) => {
                 Some(if data.value { b"true" } else { b"false" })
             }
-            Data::EBigInt(bigint) => Some(bigint.value.slice()),
+            Data::EBigInt(bigint) => {
+                if E::BigInt::has_radix(&bigint.value) {
+                    None
+                } else {
+                    Some(bigint.value.slice())
+                }
+            }
             Data::ENumber(num) => num.to_string(bump).map(|s| s.slice()),
             Data::ERegExp(regexp) => Some(regexp.value.slice()),
             Data::EDot(dot) => 'brk: {
@@ -1687,15 +1417,6 @@ impl Expr {
         })
     }
 
-    pub fn is_optional_chain(&self) -> bool {
-        match self.data {
-            Data::EDot(d) => d.optional_chain.is_some(),
-            Data::EIndex(i) => i.optional_chain.is_some(),
-            Data::ECall(c) => c.optional_chain.is_some(),
-            _ => false,
-        }
-    }
-
     #[inline]
     pub fn known_primitive(&self) -> PrimitiveType {
         self.data.known_primitive()
@@ -1720,22 +1441,6 @@ pub enum PrimitiveType {
 }
 
 impl PrimitiveType {
-    pub const STATIC: enumset::EnumSet<PrimitiveType> = enumset::enum_set!(
-        PrimitiveType::Mixed
-            | PrimitiveType::Null
-            | PrimitiveType::Undefined
-            | PrimitiveType::Boolean
-            | PrimitiveType::Number
-            | PrimitiveType::String // for our purposes, bigint is dynamic
-                                    // it is technically static though
-                                    // | PrimitiveType::Bigint
-    );
-
-    #[inline]
-    pub fn is_static(this: PrimitiveType) -> bool {
-        Self::STATIC.contains(this)
-    }
-
     pub fn merge(left_known: PrimitiveType, right_known: PrimitiveType) -> PrimitiveType {
         if right_known == PrimitiveType::Unknown || left_known == PrimitiveType::Unknown {
             return PrimitiveType::Unknown;
@@ -1949,11 +1654,6 @@ impl Data {
     pub fn is_e_string(&self) -> bool {
         matches!(self, Data::EString(_))
     }
-    /// True if this is an `ENumber`.
-    #[inline]
-    pub fn is_e_number(&self) -> bool {
-        matches!(self, Data::ENumber(_))
-    }
 
     // ── Remaining StoreRef<E::*> field-style accessors ──────────────────
     // Callers `.unwrap()` (or pattern-match) — the `Option` is the cheapest
@@ -1962,14 +1662,6 @@ impl Data {
     pub fn e_unary(&self) -> Option<StoreRef<E::Unary>> {
         if let Data::EUnary(v) = *self {
             Some(v)
-        } else {
-            None
-        }
-    }
-    #[inline]
-    pub fn e_unary_mut(&mut self) -> Option<&mut E::Unary> {
-        if let Data::EUnary(v) = self {
-            Some(&mut **v)
         } else {
             None
         }
@@ -1999,14 +1691,6 @@ impl Data {
         }
     }
     #[inline]
-    pub fn e_class_mut(&mut self) -> Option<&mut E::Class> {
-        if let Data::EClass(v) = self {
-            Some(&mut **v)
-        } else {
-            None
-        }
-    }
-    #[inline]
     pub fn e_new(&self) -> Option<StoreRef<E::New>> {
         if let Data::ENew(v) = *self {
             Some(v)
@@ -2015,25 +1699,9 @@ impl Data {
         }
     }
     #[inline]
-    pub fn e_new_mut(&mut self) -> Option<&mut E::New> {
-        if let Data::ENew(v) = self {
-            Some(&mut **v)
-        } else {
-            None
-        }
-    }
-    #[inline]
     pub fn e_function(&self) -> Option<StoreRef<E::Function>> {
         if let Data::EFunction(v) = *self {
             Some(v)
-        } else {
-            None
-        }
-    }
-    #[inline]
-    pub fn e_function_mut(&mut self) -> Option<&mut E::Function> {
-        if let Data::EFunction(v) = self {
-            Some(&mut **v)
         } else {
             None
         }
@@ -2079,25 +1747,9 @@ impl Data {
         }
     }
     #[inline]
-    pub fn e_index_mut(&mut self) -> Option<&mut E::Index> {
-        if let Data::EIndex(v) = self {
-            Some(&mut **v)
-        } else {
-            None
-        }
-    }
-    #[inline]
     pub fn e_arrow(&self) -> Option<StoreRef<E::Arrow>> {
         if let Data::EArrow(v) = *self {
             Some(v)
-        } else {
-            None
-        }
-    }
-    #[inline]
-    pub fn e_arrow_mut(&mut self) -> Option<&mut E::Arrow> {
-        if let Data::EArrow(v) = self {
-            Some(&mut **v)
         } else {
             None
         }
@@ -2111,14 +1763,6 @@ impl Data {
         }
     }
     #[inline]
-    pub fn e_jsx_element_mut(&mut self) -> Option<&mut E::JSXElement> {
-        if let Data::EJsxElement(v) = self {
-            Some(&mut **v)
-        } else {
-            None
-        }
-    }
-    #[inline]
     pub fn e_spread(&self) -> Option<StoreRef<E::Spread>> {
         if let Data::ESpread(v) = *self {
             Some(v)
@@ -2127,40 +1771,8 @@ impl Data {
         }
     }
     #[inline]
-    pub fn e_spread_mut(&mut self) -> Option<&mut E::Spread> {
-        if let Data::ESpread(v) = self {
-            Some(&mut **v)
-        } else {
-            None
-        }
-    }
-    #[inline]
     pub fn e_template(&self) -> Option<StoreRef<E::Template>> {
         if let Data::ETemplate(v) = *self {
-            Some(v)
-        } else {
-            None
-        }
-    }
-    #[inline]
-    pub fn e_template_mut(&mut self) -> Option<&mut E::Template> {
-        if let Data::ETemplate(v) = self {
-            Some(&mut **v)
-        } else {
-            None
-        }
-    }
-    #[inline]
-    pub fn e_reg_exp(&self) -> Option<StoreRef<E::RegExp>> {
-        if let Data::ERegExp(v) = *self {
-            Some(v)
-        } else {
-            None
-        }
-    }
-    #[inline]
-    pub fn e_await(&self) -> Option<StoreRef<E::Await>> {
-        if let Data::EAwait(v) = *self {
             Some(v)
         } else {
             None
@@ -2175,22 +1787,6 @@ impl Data {
         }
     }
     #[inline]
-    pub fn e_yield(&self) -> Option<StoreRef<E::Yield>> {
-        if let Data::EYield(v) = *self {
-            Some(v)
-        } else {
-            None
-        }
-    }
-    #[inline]
-    pub fn e_yield_mut(&mut self) -> Option<&mut E::Yield> {
-        if let Data::EYield(v) = self {
-            Some(&mut **v)
-        } else {
-            None
-        }
-    }
-    #[inline]
     pub fn e_if(&self) -> Option<StoreRef<E::If>> {
         if let Data::EIf(v) = *self {
             Some(v)
@@ -2199,48 +1795,8 @@ impl Data {
         }
     }
     #[inline]
-    pub fn e_if_mut(&mut self) -> Option<&mut E::If> {
-        if let Data::EIf(v) = self {
-            Some(&mut **v)
-        } else {
-            None
-        }
-    }
-    #[inline]
     pub fn e_import(&self) -> Option<StoreRef<E::Import>> {
         if let Data::EImport(v) = *self {
-            Some(v)
-        } else {
-            None
-        }
-    }
-    #[inline]
-    pub fn e_import_mut(&mut self) -> Option<&mut E::Import> {
-        if let Data::EImport(v) = self {
-            Some(&mut **v)
-        } else {
-            None
-        }
-    }
-    #[inline]
-    pub fn e_big_int(&self) -> Option<StoreRef<E::BigInt>> {
-        if let Data::EBigInt(v) = *self {
-            Some(v)
-        } else {
-            None
-        }
-    }
-    #[inline]
-    pub fn e_inlined_enum(&self) -> Option<StoreRef<E::InlinedEnum>> {
-        if let Data::EInlinedEnum(v) = *self {
-            Some(v)
-        } else {
-            None
-        }
-    }
-    #[inline]
-    pub fn e_name_of_symbol(&self) -> Option<StoreRef<E::NameOfSymbol>> {
-        if let Data::ENameOfSymbol(v) = *self {
             Some(v)
         } else {
             None
@@ -2267,56 +1823,8 @@ impl Data {
         }
     }
     #[inline]
-    pub fn e_private_identifier(&self) -> Option<E::PrivateIdentifier> {
-        if let Data::EPrivateIdentifier(v) = *self {
-            Some(v)
-        } else {
-            None
-        }
-    }
-    #[inline]
-    pub fn e_commonjs_export_identifier(&self) -> Option<E::CommonJSExportIdentifier> {
-        if let Data::ECommonjsExportIdentifier(v) = *self {
-            Some(v)
-        } else {
-            None
-        }
-    }
-    #[inline]
-    pub fn e_boolean(&self) -> Option<E::Boolean> {
-        if let Data::EBoolean(v) = *self {
-            Some(v)
-        } else {
-            None
-        }
-    }
-    #[inline]
     pub fn e_number(&self) -> Option<E::Number> {
         if let Data::ENumber(v) = *self {
-            Some(v)
-        } else {
-            None
-        }
-    }
-    #[inline]
-    pub fn e_require_string(&self) -> Option<E::RequireString> {
-        if let Data::ERequireString(v) = *self {
-            Some(v)
-        } else {
-            None
-        }
-    }
-    #[inline]
-    pub fn e_require_resolve_string(&self) -> Option<E::RequireResolveString> {
-        if let Data::ERequireResolveString(v) = *self {
-            Some(v)
-        } else {
-            None
-        }
-    }
-    #[inline]
-    pub fn e_import_meta_main(&self) -> Option<E::ImportMetaMain> {
-        if let Data::EImportMetaMain(v) = *self {
             Some(v)
         } else {
             None
@@ -2358,7 +1866,7 @@ impl Data {
     /// Human-readable variant name for diagnostics (`"string"`, `"object"`, …).
     #[inline]
     pub fn tag_name(&self) -> &'static str {
-        self.tag().into()
+        self.tag().type_name()
     }
 
     // Per-variant `as_*` accessors live alongside the enum decl above
@@ -2370,66 +1878,12 @@ impl Data {
             None
         }
     }
-    pub fn as_e_inlined_enum(&self) -> Option<StoreRef<E::InlinedEnum>> {
-        if let Data::EInlinedEnum(i) = *self {
-            Some(i)
-        } else {
-            None
-        }
-    }
 }
 
 // ───────────────────────────────────────────────────────────────────────────
 // Data — heavy transform/analysis methods (clone/deep_clone/fold/etc).
 
 impl Data {
-    /// Shallow clone: re-allocate the boxed payload (so the caller owns a fresh
-    /// arena slot) but don't recurse into children.
-    ///
-    /// The `E::*` payloads do not derive `Clone` (they hold raw arena
-    /// pointers / `Vec`), so this does a `core::ptr::read` of the payload,
-    /// which is sound because every
-    /// payload is `Copy`-shaped (no `Drop`, no owned heap state — `Vec`
-    /// stores a raw pointer + len/cap into the arena).
-    pub fn clone_in(this: Data, bump: &Bump) -> Result<Data, crate::Error> {
-        macro_rules! shallow {
-            ($variant:ident, $el:expr) => {{
-                // SAFETY: `$el` is a `StoreRef<T>` deref to a live arena `T`; `T` is
-                // POD-shaped (no `Drop`). `ptr::read` performs a bitwise copy.
-                let copied = unsafe { core::ptr::read($el.as_ptr()) };
-                let item = bump.alloc(copied);
-                return Ok(Data::$variant(StoreRef::from_bump(item)));
-            }};
-        }
-        match &this {
-            Data::EArray(el) => shallow!(EArray, el),
-            Data::EUnary(el) => shallow!(EUnary, el),
-            Data::EBinary(el) => shallow!(EBinary, el),
-            Data::EClass(el) => shallow!(EClass, el),
-            Data::ENew(el) => shallow!(ENew, el),
-            Data::EFunction(el) => shallow!(EFunction, el),
-            Data::ECall(el) => shallow!(ECall, el),
-            Data::EDot(el) => shallow!(EDot, el),
-            Data::EIndex(el) => shallow!(EIndex, el),
-            Data::EArrow(el) => shallow!(EArrow, el),
-            Data::EJsxElement(el) => shallow!(EJsxElement, el),
-            Data::EObject(el) => shallow!(EObject, el),
-            Data::EObjectJSON(el) => shallow!(EObjectJSON, el),
-            Data::EArrayJSON(el) => shallow!(EArrayJSON, el),
-            Data::ESpread(el) => shallow!(ESpread, el),
-            Data::ETemplate(el) => shallow!(ETemplate, el),
-            Data::ERegExp(el) => shallow!(ERegExp, el),
-            Data::EAwait(el) => shallow!(EAwait, el),
-            Data::EYield(el) => shallow!(EYield, el),
-            Data::EIf(el) => shallow!(EIf, el),
-            Data::EImport(el) => shallow!(EImport, el),
-            Data::EBigInt(el) => shallow!(EBigInt, el),
-            Data::EString(el) => shallow!(EString, el),
-            Data::EInlinedEnum(el) => shallow!(EInlinedEnum, el),
-            _ => Ok(this),
-        }
-    }
-
     /// Deep-clone this subtree into `bump`.
     ///
     /// Nodes go into `bump`; embedded `AstVec`s (`items`/`properties`/…)
@@ -2731,7 +2185,7 @@ impl Data {
             _ => Ok(this),
         }
     }
-} // end `impl Data` (clone_in/deep_clone)
+} // end `impl Data` (deep_clone)
 
 impl Data {
     /// `hasher` should be something with `fn update(&[u8])`;
@@ -3126,10 +2580,6 @@ impl Data {
         }
     }
 
-    pub fn merge_known_primitive(&self, rhs: &Data) -> PrimitiveType {
-        self.merge_known_primitive_with_check(rhs, bun_core::StackCheck::init())
-    }
-
     fn merge_known_primitive_with_check(
         &self,
         rhs: &Data,
@@ -3402,13 +2852,16 @@ impl Data {
             },
             Data::EBigInt(l) => {
                 if let Data::EBigInt(r) = right {
-                    if bun_core::strings::eql_long(&l.value, &r.value, true) {
-                        return Equality::TRUE;
-                    }
-                    // 0x0000n == 0n is true
-                    return Equality {
-                        ok: false,
-                        ..Default::default()
+                    return match E::BigInt::check_equality(&l.value, &r.value) {
+                        Some(equal) => Equality {
+                            ok: true,
+                            equal,
+                            ..Default::default()
+                        },
+                        None => Equality {
+                            ok: false,
+                            ..Default::default()
+                        },
                     };
                 } else {
                     return Equality {

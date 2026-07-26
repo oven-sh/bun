@@ -15,7 +15,7 @@ use crate::{
 /// source map store (SavedSourceMap), so the reference count must be thread-safe.
 pub struct ParsedSourceMap {
     // bun.ptr.ThreadSafeRefCount → intrusive atomic count; managed via
-    // `bun_ptr::IntrusiveArc<ParsedSourceMap>`. `ref`/`deref` are methods on IntrusiveArc.
+    // `bun_ptr::RefPtr<ParsedSourceMap>`. `ref`/`deref` are methods on RefPtr.
     pub ref_count: AtomicU32,
 
     pub input_line_count: usize,
@@ -203,7 +203,7 @@ impl SourceContentPtr {
 }
 
 impl ParsedSourceMap {
-    /// Thread-safe ref-count helpers.
+    /// Thread-safe ref-count helper.
     ///
     /// Every
     /// table-stored `ParsedSourceMap` is allocated via `Arc::into_raw` (see
@@ -212,21 +212,10 @@ impl ParsedSourceMap {
     /// header *before* the data pointer. Reconstituting that pointer with
     /// `heap::take` would free an interior offset and trips
     /// `mi_validate_block_from_ptr` (mimalloc free.c:123). Route through
-    /// `Arc::{increment,decrement}_strong_count` instead — same observable
-    /// `ref()`/`deref()` semantics, with the allocator that
+    /// `Arc::decrement_strong_count` instead — same observable
+    /// `deref()` semantics, with the allocator that
     /// actually owns the bytes. The embedded `ref_count` field is kept for
     /// layout/ABI parity but is NOT the live counter.
-    ///
-    /// # Safety
-    /// `this` must come from `Arc::<Self>::into_raw` (or a value the table
-    /// stored that way) and must still have at least one strong ref.
-    #[inline]
-    pub unsafe fn ref_(this: *mut Self) {
-        // SAFETY: caller contract — `this` is a live `Arc::into_raw` pointer.
-        unsafe { std::sync::Arc::increment_strong_count(this.cast_const()) };
-    }
-
-    /// See [`ref_`].
     ///
     /// # Safety
     /// `this` must come from `Arc::<Self>::into_raw` and must still have at

@@ -2,7 +2,7 @@ use alloc::borrow::Cow;
 use core::ffi::{c_uint, c_void};
 
 use crate::virtual_machine::VirtualMachine;
-use crate::{JSGlobalObject, JSValue, VM};
+use crate::{JSGlobalObject, JSValue};
 use bun_collections::IntegerBitSet;
 #[cfg(debug_assertions)]
 use bun_core::ZStr;
@@ -35,7 +35,7 @@ impl CallFrame {
     pub fn arguments_as_array<const COUNT: usize>(&self) -> [JSValue; COUNT] {
         let slice = self.arguments();
         let mut value: [JSValue; COUNT] = [JSValue::UNDEFINED; COUNT];
-        let n = (self.arguments_count() as usize).min(COUNT);
+        let n = slice.len().min(COUNT);
         value[0..n].copy_from_slice(&slice[0..n]);
         value
     }
@@ -64,13 +64,6 @@ impl CallFrame {
     pub fn callee(&self) -> JSValue {
         // SAFETY: OFFSET_CALLEE is a valid slot in the JSC register file.
         unsafe { *self.as_unsafe_js_value_array().add(OFFSET_CALLEE) }
-    }
-
-    /// Return a basic iterator.
-    pub fn iterate(&self) -> Iterator<'_> {
-        Iterator {
-            rest: self.arguments(),
-        }
     }
 
     /// From JavaScriptCore/interpreter/CallFrame.h
@@ -136,24 +129,6 @@ impl CallFrame {
     }
 
     /// Do not use this function. Migration path:
-    /// arguments(n).ptr[k] -> arguments_as_array::<n>()[k]
-    /// arguments(n).slice() -> arguments()
-    /// arguments(n).mut() -> `let mut args = arguments_as_array::<n>(); &mut args`
-    pub fn arguments_old<const MAX: usize>(&self) -> Arguments<MAX> {
-        let slice = self.arguments();
-        debug_assert!(MAX <= 15);
-        let count = slice.len().min(MAX);
-        if count == 0 {
-            Arguments {
-                ptr: [JSValue::ZERO; MAX],
-                len: 0,
-            }
-        } else {
-            Arguments::<MAX>::init(count.min(MAX), slice)
-        }
-    }
-
-    /// Do not use this function. Migration path:
     /// arguments_as_array::<n>()
     pub fn arguments_undef<const MAX: usize>(&self) -> Arguments<MAX> {
         let slice = self.arguments();
@@ -167,10 +142,6 @@ impl CallFrame {
         } else {
             Arguments::<MAX>::init_undef(count.min(MAX), slice)
         }
-    }
-
-    pub fn is_from_bun_main(&self, vm: &VM) -> bool {
-        Bun__CallFrame__isFromBunMain(self, vm)
     }
 
     pub fn get_caller_src_loc(&self, global_this: &JSGlobalObject) -> CallerSrcLoc {
@@ -232,13 +203,6 @@ pub struct Arguments<const MAX: usize> {
 
 impl<const MAX: usize> Arguments<MAX> {
     #[inline]
-    pub fn init(i: usize, src: &[JSValue]) -> Self {
-        let mut args: [JSValue; MAX] = [JSValue::ZERO; MAX];
-        args[0..i].copy_from_slice(&src[0..i]);
-        Self { ptr: args, len: i }
-    }
-
-    #[inline]
     pub fn init_undef(i: usize, src: &[JSValue]) -> Self {
         let mut args: [JSValue; MAX] = [JSValue::UNDEFINED; MAX];
         args[0..i].copy_from_slice(&src[0..i]);
@@ -262,26 +226,9 @@ pub struct CallerSrcLoc {
     pub column: c_uint,
 }
 
-pub struct Iterator<'a> {
-    pub rest: &'a [JSValue],
-}
-
-impl<'a> Iterator<'a> {
-    pub fn next(&mut self) -> Option<JSValue> {
-        if self.rest.is_empty() {
-            return None;
-        }
-        let current = self.rest[0];
-        self.rest = &self.rest[1..];
-        Some(current)
-    }
-}
-
 /// This is an advanced iterator struct which is used by various APIs. In
 /// Node.fs, `will_be_async` is set to true which allows string/path APIs to
 /// know if they have to do threadsafe clones.
-///
-/// Prefer `Iterator` for a simpler iterator.
 pub struct ArgumentsSlice<'a> {
     /// Backing storage for the remaining-args view. Both [`Self::init`] and
     /// [`Self::init_async`] borrow — `all: &'a [JSValue]` already ties this
@@ -298,7 +245,6 @@ pub struct ArgumentsSlice<'a> {
     /// caller actually needs scratch storage (currently none do).
     pub arena: Option<bun_alloc::Arena>,
     pub all: &'a [JSValue],
-    pub threw: bool,
     pub protected: IntegerBitSet<32>,
     pub will_be_async: bool,
 }
@@ -350,23 +296,6 @@ impl<'a> ArgumentsSlice<'a> {
             vm,
             all: slice,
             arena: None,
-            threw: false,
-            protected: IntegerBitSet::<32>::init_empty(),
-            will_be_async: false,
-        }
-    }
-
-    pub fn init_async(vm: &'a VirtualMachine, slice: &'a [JSValue]) -> ArgumentsSlice<'a> {
-        // `all: &'a [JSValue]` already pins the struct lifetime to `slice`, so a
-        // heap-owned dupe of `remaining` cannot outlive `slice` anyway — borrow instead of copying.
-        // `all` stays borrowed so `protect_eat` index math holds.
-        ArgumentsSlice {
-            remaining_buf: Cow::Borrowed(slice),
-            remaining_start: 0,
-            vm,
-            all: slice,
-            arena: None,
-            threw: false,
             protected: IntegerBitSet::<32>::init_empty(),
             will_be_async: false,
         }
@@ -408,7 +337,6 @@ impl<'a> Drop for ArgumentsSlice<'a> {
 // to plain `#[repr(C)]` PODs. `describeFrame` returns a raw C string that the
 // caller must NUL-scan, so it stays `unsafe fn`.
 unsafe extern "C" {
-    safe fn Bun__CallFrame__isFromBunMain(cf: &CallFrame, vm: &VM) -> bool;
     safe fn Bun__CallFrame__getCallerSrcLoc(
         cf: &CallFrame,
         global: &JSGlobalObject,

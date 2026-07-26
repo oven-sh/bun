@@ -1,7 +1,6 @@
 use crate::css_parser as css;
 use bun_alloc::Arena as Bump;
 use bun_alloc::ArenaVecExt as _;
-pub use css::Error;
 use css::{CssResult as Result, PrintErr, Printer};
 
 use crate::css_properties::align::AlignHandler;
@@ -20,7 +19,6 @@ use crate::css_properties::text::Direction;
 use crate::css_properties::transform::TransformHandler;
 use crate::css_properties::transition::TransitionHandler;
 use crate::css_properties::ui::ColorSchemeHandler;
-// const GridHandler = css.css_properties.g
 
 pub type DeclarationList<'bump> = bun_alloc::ArenaVec<'bump, css::Property>;
 
@@ -39,42 +37,7 @@ pub struct DeclarationBlock<'bump> {
     pub declarations: DeclarationList<'bump>,
 }
 
-pub struct DebugFmt<'a, 'bump>(&'a DeclarationBlock<'bump>);
-
-impl<'a, 'bump> core::fmt::Display for DebugFmt<'a, 'bump> {
-    fn fmt(&self, writer: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        // Debug formatter: uses a throwaway local arena for the printer's
-        // scratch buffers.
-        let bump = Bump::new();
-        let mut arraylist: Vec<u8> = Vec::new();
-        let symbols = bun_ast::symbol::Map::init_list(Default::default());
-        let mut printer = css::Printer::new(
-            &bump,
-            bun_alloc::ArenaVec::<u8>::new_in(&bump),
-            &mut arraylist,
-            &css::PrinterOptions::default(),
-            None,
-            None,
-            &symbols,
-        );
-        let res = self.0.to_css(&mut printer);
-        // Release the printer's `&mut arraylist` borrow before reading it back.
-        drop(printer);
-        match res {
-            Ok(()) => {}
-            Err(e) => {
-                return writeln!(writer, "<error writing declaration block: {}>", e.name());
-            }
-        }
-        write!(writer, "{}", bstr::BStr::new(&arraylist))
-    }
-}
-
 impl<'bump> DeclarationBlock<'bump> {
-    pub fn debug(&self) -> DebugFmt<'_, 'bump> {
-        DebugFmt(self)
-    }
-
     pub fn is_empty(&self) -> bool {
         self.declarations.is_empty() && self.important_declarations.is_empty()
     }
@@ -175,37 +138,6 @@ impl<'bump> DeclarationBlock<'bump> {
 
         Ok(())
     }
-
-    /// Writes the declarations to a CSS block, including starting and ending braces.
-    pub fn to_css_block(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
-        dest.whitespace()?;
-        dest.write_char(b'{')?;
-        dest.indent();
-
-        let mut i: usize = 0;
-        let length = self.len();
-
-        for decl in self.declarations.iter() {
-            dest.newline()?;
-            decl.to_css(dest, false)?;
-            if i != length - 1 || !dest.minify {
-                dest.write_char(b';')?;
-            }
-            i += 1;
-        }
-        for decl in self.important_declarations.iter() {
-            dest.newline()?;
-            decl.to_css(dest, true)?;
-            if i != length - 1 || !dest.minify {
-                dest.write_char(b';')?;
-            }
-            i += 1;
-        }
-
-        dest.dedent();
-        dest.newline()?;
-        dest.write_char(b'}')
-    }
 }
 
 // ─── parse ────────────────────────────────────────────────────────────────
@@ -258,16 +190,6 @@ impl DeclarationBlock<'static> {
 // ─── hash / eql / deep_clone ──────────────────────────────────────────────
 
 impl<'bump> DeclarationBlock<'bump> {
-    pub fn hash_property_ids(&self, hasher: &mut bun_wyhash::Wyhash) {
-        use std::hash::Hash;
-        for decl in self.declarations.iter() {
-            decl.property_id().hash(hasher);
-        }
-        for decl in self.important_declarations.iter() {
-            decl.property_id().hash(hasher);
-        }
-    }
-
     pub fn eql(&self, other: &Self) -> bool {
         if self.declarations.len() != other.declarations.len()
             || self.important_declarations.len() != other.important_declarations.len()

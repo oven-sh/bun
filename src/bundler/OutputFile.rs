@@ -11,8 +11,6 @@ use bun_paths::fs;
 use bun_paths::resolve_path::{self, platform};
 use bun_sys::Fd;
 
-use crate::bun_fs::RealFS;
-
 // Instead of keeping files in-memory, we:
 // 1. Write directly to disk
 // 2. (Optional) move the file to the destination
@@ -130,10 +128,6 @@ pub struct FileOperation {
     pub pathname: Box<[u8]>,
     pub fd: Fd,
     pub dir: Fd,
-    pub is_tmpdir: bool,
-    pub is_outdir: bool,
-    pub close_handle_on_complete: bool,
-    pub autowatch: bool,
 }
 
 impl Default for FileOperation {
@@ -142,10 +136,6 @@ impl Default for FileOperation {
             pathname: Box::default(),
             fd: Fd::INVALID,
             dir: Fd::INVALID,
-            is_tmpdir: false,
-            is_outdir: false,
-            close_handle_on_complete: false,
-            autowatch: true,
         }
     }
 }
@@ -160,11 +150,6 @@ impl FileOperation {
     }
 
     pub fn get_pathname(&self) -> &[u8] {
-        if self.is_tmpdir {
-            // Note: `join_abs` returns a borrow into a threadlocal buffer
-            // (`'static`), which coerces to the `&self` lifetime here.
-            return resolve_path::join_abs::<platform::Auto>(RealFS::tmpdir_path(), &self.pathname);
-        }
         &self.pathname
     }
 }
@@ -222,47 +207,6 @@ impl Value {
         }
     }
 
-    pub fn to_bun_string(self) -> BunString {
-        match self {
-            Value::Noop => BunString::EMPTY,
-            Value::Buffer { bytes } => {
-                if bytes.is_empty() {
-                    return BunString::EMPTY;
-                }
-                // Use ExternalStringImpl to avoid cloning the string, at
-                // the cost of allocating space to remember the arena.
-                //
-                // The free callback needs no context beyond the
-                // (ptr, len) pair it is already passed.
-                extern "C" fn on_free(_ctx: *mut c_void, buffer: *mut c_void, len: usize) {
-                    // SAFETY: `buffer`/`len` were produced by `heap::alloc` on a
-                    // `Box<[u8]>` below; reconstructing and dropping is sound.
-                    unsafe {
-                        drop(bun_core::heap::take(core::ptr::slice_from_raw_parts_mut(
-                            buffer.cast::<u8>(),
-                            len,
-                        )));
-                    }
-                }
-                // Hand the `Box<[u8]>` to the ExternalStringImpl: `heap::release`
-                // (= `Box::leak`) yields a `&'static mut [u8]` borrow of the
-                // now-JSC-owned allocation; `on_free` reclaims it on GC.
-                let bytes: &'static mut [u8] = bun_core::heap::release(bytes);
-                // latin1 flag = true.
-                BunString::create_external::<*mut c_void>(
-                    bytes,
-                    true,
-                    core::ptr::null_mut::<c_void>(),
-                    on_free,
-                )
-            }
-            Value::Pending(_) => unreachable!(),
-            // An intentional shipped runtime panic for `.move`/`.copy`/`.saved`,
-            // not a placeholder.
-            other => bun_core::todo_panic!("handle .{}", <&'static str>::from(other.kind())),
-        }
-    }
-
     /// Borrowing variant of [`Self::to_bun_string`]: wraps the buffer in a
     /// `WTF::ExternalStringImpl` that aliases `bytes` with a **no-op** free
     /// callback (zero-copy). Caller guarantees `self` outlives every use of the
@@ -305,48 +249,7 @@ impl Value {
 }
 
 #[derive(Default, Clone, Copy)]
-pub struct SavedFile {
-    pub byte_size: u64,
-}
-
-impl OutputFile {
-    pub fn init_pending(loader: Loader, pending: bun_resolver::Result) -> OutputFile {
-        // Note: `bun_paths::fs::Path<'static>` and `bun_resolver::fs::Path<'static>` are
-        // distinct nominal types with identical layout; re-init from `text` (the
-        // resolver path borrows arena/static memory, so the `'static` bound holds).
-        let src_path = fs::Path::init(pending.path_const().expect("path").text);
-        OutputFile {
-            loader,
-            src_path,
-            size: 0,
-            value: Value::Pending(Box::new(pending)),
-            ..OutputFile::zero_value()
-        }
-    }
-
-    pub fn init_file(file: Fd, pathname: &'static [u8], size: usize) -> OutputFile {
-        OutputFile {
-            loader: Loader::File,
-            src_path: fs::Path::init(pathname),
-            size,
-            value: Value::Copy(FileOperation::from_file(file, pathname)),
-            ..OutputFile::zero_value()
-        }
-    }
-
-    pub fn init_file_with_dir(
-        file: Fd,
-        pathname: &'static [u8],
-        size: usize,
-        dir: Fd,
-    ) -> OutputFile {
-        let mut res = Self::init_file(file, pathname, size);
-        if let Value::Copy(op) = &mut res.value {
-            op.dir = dir;
-        }
-        res
-    }
-}
+pub struct SavedFile {}
 
 pub enum OptionsData {
     Buffer {

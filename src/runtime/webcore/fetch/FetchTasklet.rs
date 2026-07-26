@@ -1321,7 +1321,7 @@ impl FetchTasklet {
                     b"getaddrinfo",
                     hostname,
                 );
-                err.path = path;
+                err.path = path.into();
                 return BodyValueError::SystemError(err);
             }
         }
@@ -1555,17 +1555,11 @@ impl FetchTasklet {
             )),
         };
 
-        // `jsc::SystemError` has no `Default` impl upstream — spell out
-        // every field's default.
         let fetch_error = jsc::SystemError {
-            errno: 0,
-            code,
-            message,
-            path,
-            syscall: BunString::EMPTY,
-            hostname: BunString::EMPTY,
-            fd: core::ffi::c_int::MIN,
-            dest: BunString::EMPTY,
+            code: code.into(),
+            message: message.into(),
+            path: path.into(),
+            ..Default::default()
         };
 
         BodyValueError::SystemError(fetch_error)

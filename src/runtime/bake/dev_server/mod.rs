@@ -23,6 +23,7 @@ use super::{Graph, Side};
 // ─── submodules ──────────────────────────────────────────────────────────────
 pub(crate) mod error_report_request;
 pub(crate) mod hmr_socket;
+pub(crate) mod js_escape;
 pub(crate) mod memory_cost;
 
 // NOTE: the `DevServer` scoped-log static (`ScopedLogger`) is declared in
@@ -30,12 +31,8 @@ pub(crate) mod memory_cost;
 // re-exported via the `pub use` block below alongside the `struct DevServer`
 // type. Declaring it again here would collide in the value namespace.
 
-pub const INTERNAL_PREFIX: &str = "/_bun";
 pub const ASSET_PREFIX: &str = "/_bun/asset";
 pub const CLIENT_PREFIX: &str = "/_bun/client";
-
-/// `bun.jsc.Debugger.DevServerId`.
-pub type DebuggerId = jsc::DebuggerId;
 
 // LAYERING: the 4.8 kL of method bodies live in `../DevServer.rs` (mounted as
 // `super::dev_server_body`). The struct definitions are owned there so impl
@@ -57,12 +54,6 @@ pub enum FileKind {
     Js = 1,
     Asset = 2,
     Css = 3,
-}
-impl FileKind {
-    #[inline]
-    pub fn has_inline_js_code_chunk(self) -> bool {
-        matches!(self, FileKind::Js | FileKind::Asset)
-    }
 }
 
 #[repr(u8)]
@@ -306,7 +297,6 @@ pub trait ResponseLike {
     fn write_status(&mut self, status: &[u8]);
     fn end(&mut self, data: &[u8], close_connection: bool);
     fn as_any_response(&mut self) -> bun_uws::AnyResponse;
-    fn get_remote_socket_info(&mut self) -> Option<bun_uws::SocketAddress>;
     fn upgrade<D>(
         &mut self,
         data: D,
@@ -330,16 +320,6 @@ impl ResponseLike for bun_uws::AnyResponse {
     }
     fn as_any_response(&mut self) -> bun_uws::AnyResponse {
         *self
-    }
-    fn get_remote_socket_info(&mut self) -> Option<bun_uws::SocketAddress> {
-        // Re-box into the owned `bun_uws::SocketAddress` shape this trait uses.
-        (*self)
-            .get_remote_socket_info()
-            .map(|a| bun_uws::SocketAddress {
-                ip: a.ip().to_vec().into_boxed_slice(),
-                port: a.port,
-                is_ipv6: a.is_ipv6,
-            })
     }
     fn upgrade<D>(
         &mut self,
@@ -368,8 +348,6 @@ pub struct HmrSocket {
     pub dev: bun_ptr::BackRef<DevServer>,
     pub underlying: Option<bun_uws::AnyWebSocket>,
     pub subscriptions: super::dev_server_body::HmrTopicBits,
-    /// Allows actions which inspect or mutate sensitive DevServer state.
-    pub is_from_localhost: bool,
     /// By telling DevServer the active route, this enables receiving detailed
     /// `hot_update` events for when the route is updated.
     pub active_route: route_bundle::IndexOptional,

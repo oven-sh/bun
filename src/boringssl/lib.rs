@@ -82,50 +82,12 @@ pub fn load() {
 // Remove once the bindgen pipeline lands these in the sys crate.
 // ──────────────────────────────────────────────────────────────────────────
 
-/// `enum ssl_verify_result_t` is `BORINGSSL_ENUM_INT`-backed; `ssl_verify_ok == 0`.
-#[allow(non_camel_case_types)]
-type ssl_verify_result_t = c_int;
-#[allow(non_upper_case_globals)]
-const ssl_verify_ok: ssl_verify_result_t = 0;
-
 /// `#define SSL_DEFAULT_CIPHER_LIST "ALL"`
 pub const SSL_DEFAULT_CIPHER_LIST: &core::ffi::CStr = c"ALL";
 
 use boring::{
     CRYPTO_BUFFER_POOL, CRYPTO_BUFFER_POOL_new, SSL_CTX_set_cipher_list, SSL_CTX_set0_buffer_pool,
 };
-
-type SslCustomVerifyCb =
-    Option<unsafe extern "C" fn(ssl: *mut boring::SSL, out_alert: *mut u8) -> ssl_verify_result_t>;
-
-unsafe extern "C" {
-    fn SSL_CTX_set_custom_verify(
-        ctx: *mut boring::SSL_CTX,
-        mode: c_int,
-        callback: SslCustomVerifyCb,
-    );
-}
-
-unsafe extern "C" fn noop_custom_verify(
-    _ssl: *mut boring::SSL,
-    _out_alert: *mut u8,
-) -> ssl_verify_result_t {
-    ssl_verify_ok
-}
-
-/// `Send + Sync` newtype around the process-lifetime client `SSL_CTX*` so it
-/// can sit inside a `OnceLock` (raw pointers opt out of `Send`/`Sync`).
-struct CtxStore(ptr::NonNull<boring::SSL_CTX>);
-// SAFETY: `SSL_CTX` is internally thread-safe per BoringSSL docs (its refcount
-// and method tables are guarded by `CRYPTO_MUTEX`); we only ever bump the
-// refcount and hand it to `SSL_new`, both of which BoringSSL documents as
-// thread-safe on a shared `SSL_CTX*`.
-unsafe impl Send for CtxStore {}
-// SAFETY: same invariant as `Send` above — BoringSSL documents `SSL_CTX` as
-// safe for concurrent use across threads, so sharing `&CtxStore` is sound.
-unsafe impl Sync for CtxStore {}
-
-static CTX_STORE: std::sync::OnceLock<CtxStore> = std::sync::OnceLock::new();
 
 std::thread_local! {
     // One pool per thread, lazily allocated on the first `ssl_ctx_setup()`
@@ -152,35 +114,6 @@ pub unsafe fn ssl_ctx_setup(ctx: *mut boring::SSL_CTX) {
             let _ = SSL_CTX_set_cipher_list(ctx, SSL_DEFAULT_CIPHER_LIST.as_ptr());
         }
     });
-}
-
-pub fn init_client() -> *mut boring::SSL {
-    // SAFETY: BoringSSL FFI; single-threaded startup assumption.
-    unsafe {
-        // Bump the refcount on every call after the first; the first call's
-        // `SSL_CTX_new` already returns refcount = 1.
-        if let Some(stored) = CTX_STORE.get() {
-            let _ = boring::SSL_CTX_up_ref(stored.0.as_ptr());
-        }
-        let ctx = CTX_STORE
-            .get_or_init(|| {
-                // Three steps:
-                //   1. SSL_CTX_new(TLS_with_buffers_method())
-                //   2. setCustomVerify(noop_custom_verify) → SSL_CTX_set_custom_verify(ctx, 0, cb)
-                //   3. setup() → CRYPTO_BUFFER_POOL_new + set0_buffer_pool + set_cipher_list("ALL")
-                let ctx = boring::SSL_CTX_new(boring::TLS_with_buffers_method());
-                SSL_CTX_set_custom_verify(ctx, 0, Some(noop_custom_verify));
-                ssl_ctx_setup(ctx);
-                CtxStore(ptr::NonNull::new(ctx).expect("SSL_CTX_new"))
-            })
-            .0
-            .as_ptr();
-
-        let ssl = boring::SSL_new(ctx);
-        boring::SSL_set_connect_state(ssl);
-
-        ssl
-    }
 }
 
 // void*, OPENSSL_memory_alloc, (size_t size)
@@ -392,8 +325,8 @@ impl core::fmt::Display for AltNameIp<'_> {
         match self.0 {
             [a, b, c, d] => write!(f, "{a}.{b}.{c}.{d}"),
             octets if octets.len() == 16 => {
-                for (i, pair) in octets.chunks_exact(2).enumerate() {
-                    let group = u16::from_be_bytes([pair[0], pair[1]]);
+                for (i, pair) in octets.as_chunks::<2>().0.iter().enumerate() {
+                    let group = u16::from_be_bytes(*pair);
                     if i > 0 {
                         f.write_str(":")?;
                     }

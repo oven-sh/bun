@@ -14,7 +14,7 @@ use bun_event_loop::MiniEventLoop::__bun_stdio_blob_store_new;
 use bun_http::MimeType as mime_type;
 use bun_io::{self as Async};
 use bun_paths::MAX_PATH_BYTES;
-use bun_sys::{self as syscall, Fd, FdExt as _, Mode};
+use bun_sys::{self as syscall, Fd, Mode};
 use bun_uws::{self as uws, SocketGroup, SslCtx};
 
 use bun_event_loop::SpawnSyncEventLoop::SpawnSyncEventLoop;
@@ -37,7 +37,7 @@ use super::uuid::UUID;
 //     `bun_runtime::jsc_hooks::IsolationHandles` so the entries keep their
 //     concrete types.
 //   - `stdin/stdout/stderr_store` → erased `*mut blob::Store` constructed via
-//     `__bun_stdio_blob_store_new` (link-time extern; same fn MiniEventLoop uses).
+//     `__bun_stdio_blob_store_new` (link-time extern).
 //   - `valkey_context` was a stateless ZST with empty `deinit`; dropped.
 //   - `s3_default_client` / `default_client_ssl_ctx` / typed HotMap get/insert
 //     → bodies live in `bun_runtime` (they call high-tier ctors); RareData
@@ -277,6 +277,8 @@ pub struct RareData {
     // practice). Hosting it in the consumer crate removes the upward
     // `s3_signing → jsc` hook.
     pub s3_default_client: Strong,
+    /// Per-VM, like Node's quic `BindingData` (node/src/quic/bindingdata.h).
+    pub node_quic_callbacks: Strong,
     pub default_csrf_secret: Box<[u8]>,
 
     /// Owned NUL-terminated buffer. `len()` includes the trailing 0;
@@ -328,6 +330,7 @@ impl Default for RareData {
             listening_sockets_for_watch_mode: Mutex::new(Vec::new()),
             temp_pipe_read_buffer: None,
             s3_default_client: Strong::empty(),
+            node_quic_callbacks: Strong::empty(),
             default_csrf_secret: Box::default(),
             tls_default_ciphers: None,
             spawn_sync_event_loop_: None,
@@ -342,7 +345,6 @@ impl Default for RareData {
 
 /// Reusable heap buffer for path.resolve, path.relative, and path.toNamespacedPath.
 /// Three fixed-size tiers, lazily allocated on first use. Safe because JS is single-threaded.
-/// The buffer is used via a FixedBufferAllocator as the backing for a stackFallback.
 #[derive(Default)]
 pub struct PathBuf {
     pub small: Option<Box<[u8; 2 * MAX_PATH_BYTES]>>,
@@ -548,11 +550,6 @@ impl RefCountedEnvValue {
     }
 }
 
-// `AWSSignatureCache` moved DOWN to `bun_s3_signing::credentials` (process
-// static). Re-exported for any out-of-tree callers that named the type via
-// `bun_jsc::rare_data::AWSSignatureCache`.
-pub use bun_s3_signing::credentials::AWSSignatureCache;
-
 // ──────────────────────────────────────────────────────────────────────────
 // RareData methods — simple accessors / lazy-init
 // ──────────────────────────────────────────────────────────────────────────
@@ -620,6 +617,11 @@ macro_rules! for_each_socket_group {
 }
 
 impl RareData {
+    pub fn release_js_handles(&mut self) {
+        self.s3_default_client.deinit();
+        self.node_quic_callbacks.deinit();
+    }
+
     // ── trivial field accessors ────────────────────────────────────────────
 
     /// Raw slot — lazy-init body lives in `bun_runtime::node::node_fs_stat_watcher`
@@ -660,11 +662,6 @@ impl RareData {
     pub fn pipe_read_buffer(&mut self) -> &mut PipeReadBuffer {
         self.temp_pipe_read_buffer
             .get_or_insert_with(bun_core::boxed_zeroed::<PipeReadBuffer>)
-    }
-
-    pub fn file_polls(&mut self, _vm: &mut VirtualMachine) -> &mut FilePollStore {
-        self.file_polls_
-            .get_or_insert_with(|| Box::new(FilePollStore::init()))
     }
 
     pub fn boring_engine(&mut self) -> *mut boring::ENGINE {
@@ -753,90 +750,92 @@ impl RareData {
         }
     }
 
-    pub fn close_all_listen_sockets_for_watch_mode(&self) {
-        for socket in core::mem::take(&mut *self.listening_sockets_for_watch_mode.lock()) {
-            // Prevent TIME_WAIT state so the relaunched process can rebind.
-            syscall::disable_linger(socket);
-            socket.close();
-        }
-    }
-
     // ── socket groups: lazy init ──────────────────────────────────────────
+    //
+    // These take the `uws::Loop` pointer directly (rather than
+    // `&VirtualMachine`) because every caller reaches `&mut RareData` through
+    // `vm.rare_data()`, which already holds `&mut VirtualMachine`; requiring a
+    // second `&VirtualMachine` just to read `vm.uws_loop()` forced a raw-pointer
+    // split-borrow at every call site. The loop pointer is `Copy` and read
+    // before `rare_data()` is borrowed, so no aliasing.
     #[inline]
-    fn lazy_group<'a>(g: &'a mut SocketGroup, vm: &VirtualMachine) -> &'a mut SocketGroup {
+    fn lazy_group(g: &mut SocketGroup, loop_: *mut uws::Loop) -> &mut SocketGroup {
         if g.loop_.is_null() {
-            g.init(vm.uws_loop(), None, core::ptr::null_mut());
+            g.init(loop_, None, core::ptr::null_mut());
         }
         g
     }
 
-    pub fn spawn_ipc_group(&mut self, vm: &VirtualMachine) -> &mut SocketGroup {
-        Self::lazy_group(&mut self.spawn_ipc_group, vm)
+    pub fn spawn_ipc_group(&mut self, loop_: *mut uws::Loop) -> &mut SocketGroup {
+        Self::lazy_group(&mut self.spawn_ipc_group, loop_)
     }
-    pub fn test_parallel_ipc_group(&mut self, vm: &VirtualMachine) -> &mut SocketGroup {
-        Self::lazy_group(&mut self.test_parallel_ipc_group, vm)
+    pub fn test_parallel_ipc_group(&mut self, loop_: *mut uws::Loop) -> &mut SocketGroup {
+        Self::lazy_group(&mut self.test_parallel_ipc_group, loop_)
     }
     /// One shared group per (VM, ssl) for every `Bun.connect` / `tls.connect`
     /// client socket. Replaces the old per-connection `us_socket_context_t`
     /// allocation that was the root of the SSL_CTX-per-connect leak.
-    pub fn bun_connect_group<const SSL: bool>(&mut self, vm: &VirtualMachine) -> &mut SocketGroup {
+    pub fn bun_connect_group<const SSL: bool>(
+        &mut self,
+        loop_: *mut uws::Loop,
+    ) -> &mut SocketGroup {
         Self::lazy_group(
             if SSL {
                 &mut self.bun_connect_group_tls
             } else {
                 &mut self.bun_connect_group_tcp
             },
-            vm,
+            loop_,
         )
     }
-    pub fn postgres_group<const SSL: bool>(&mut self, vm: &VirtualMachine) -> &mut SocketGroup {
+    pub fn postgres_group<const SSL: bool>(&mut self, loop_: *mut uws::Loop) -> &mut SocketGroup {
         Self::lazy_group(
             if SSL {
                 &mut self.postgres_tls_group
             } else {
                 &mut self.postgres_group
             },
-            vm,
+            loop_,
         )
     }
-    pub fn mysql_group<const SSL: bool>(&mut self, vm: &VirtualMachine) -> &mut SocketGroup {
+    pub fn mysql_group<const SSL: bool>(&mut self, loop_: *mut uws::Loop) -> &mut SocketGroup {
         Self::lazy_group(
             if SSL {
                 &mut self.mysql_tls_group
             } else {
                 &mut self.mysql_group_
             },
-            vm,
+            loop_,
         )
     }
-    pub fn valkey_group<const SSL: bool>(&mut self, vm: &VirtualMachine) -> &mut SocketGroup {
+    pub fn valkey_group<const SSL: bool>(&mut self, loop_: *mut uws::Loop) -> &mut SocketGroup {
         Self::lazy_group(
             if SSL {
                 &mut self.valkey_tls_group
             } else {
                 &mut self.valkey_group_
             },
-            vm,
+            loop_,
         )
     }
-    pub fn ws_upgrade_group<const SSL: bool>(&mut self, vm: &VirtualMachine) -> &mut SocketGroup {
+    pub fn ws_upgrade_group<const SSL: bool>(&mut self, loop_: *mut uws::Loop) -> &mut SocketGroup {
         Self::lazy_group(
             if SSL {
                 &mut self.ws_upgrade_tls_group
             } else {
                 &mut self.ws_upgrade_group_
             },
-            vm,
+            loop_,
         )
     }
-    pub fn ws_client_group<const SSL: bool>(&mut self, vm: &VirtualMachine) -> &mut SocketGroup {
+    pub fn ws_client_group<const SSL: bool>(&mut self, loop_: *mut uws::Loop) -> &mut SocketGroup {
         Self::lazy_group(
             if SSL {
                 &mut self.ws_client_tls_group
             } else {
                 &mut self.ws_client_group_
             },
-            vm,
+            loop_,
         )
     }
 
@@ -1093,5 +1092,3 @@ impl Drop for RareData {
         });
     }
 }
-
-pub use bun_event_loop::SpawnSyncEventLoop::SpawnSyncEventLoop as SpawnSyncEventLoopReexport;

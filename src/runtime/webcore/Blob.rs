@@ -3635,15 +3635,7 @@ impl BlobExt for Blob {
 
         flush(&mut joiner, &mut rope);
 
-        let blob = if rope.segments.len() == 1 {
-            let seg = rope.segments.pop().expect("len == 1");
-            let b = Blob::init_with_store(seg.store, global);
-            b.offset.set(seg.offset);
-            b.size.set(seg.len);
-            b
-        } else {
-            Blob::init_with_store(Store::init_rope(rope), global)
-        };
+        let blob = Blob::init_with_store(Store::init_rope(rope), global);
         if !could_have_non_ascii {
             blob.charset.set(strings::AsciiStatus::AllAscii);
         }

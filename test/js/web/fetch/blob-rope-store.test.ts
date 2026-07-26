@@ -140,3 +140,32 @@ test("Bun.write rejects a rope-backed Blob destination like any other in-memory 
   const rope = new Blob([a, b]);
   expect(() => Bun.write(rope, "data")).toThrow(/read-only/);
 });
+
+test("a multi-part File whose non-Blob parts are empty does not alias the source Blob's stored_name", async () => {
+  const src = new Blob([new Uint8Array([1, 2, 3])]);
+  const f1 = new File([new Blob(), src], "one.bin");
+  const f2 = new File([new Blob(), src], "two.bin");
+  expect(f1.name).toBe("one.bin");
+  expect(f2.name).toBe("two.bin");
+  expect(new Uint8Array(await f1.arrayBuffer())).toEqual(new Uint8Array([1, 2, 3]));
+
+  const g1 = new File([src, "", new Uint8Array(0)], "g1.bin");
+  const g2 = new File([src, "", new Uint8Array(0)], "g2.bin");
+  expect(g1.name).toBe("g1.bin");
+  expect(g2.name).toBe("g2.bin");
+});
+
+test("URL.createObjectURL flattens a rope before it can be reached from another JS thread", async () => {
+  const a = new Blob(['self.postMessage("from-rope")']);
+  const b = new Blob([";"]);
+  const rope = new Blob([a, b]);
+  const url = URL.createObjectURL(rope);
+  const w = new Worker(url);
+  const { promise, resolve, reject } = Promise.withResolvers<string>();
+  w.onmessage = e => resolve(e.data);
+  w.onerror = e => reject(e);
+  expect(await promise).toBe("from-rope");
+  expect(await rope.text()).toBe('self.postMessage("from-rope");');
+  w.terminate();
+  URL.revokeObjectURL(url);
+});

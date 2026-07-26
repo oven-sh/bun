@@ -388,8 +388,7 @@ console.log(a, b);
       expect(manifestMatches.length).toBe(2);
       const manifests = manifestMatches.map(m => JSON.parse(JSON.parse('"' + m[1] + '"')));
 
-      const [aManifest, bManifest] =
-        manifests[0].index.includes("a.html") ? manifests : [manifests[1], manifests[0]];
+      const [aManifest, bManifest] = manifests[0].index.includes("a.html") ? manifests : [manifests[1], manifests[0]];
 
       const aFiles = aManifest.files.map((f: any) => ({ loader: f.loader, path: f.path }));
       const aCss = aFiles.find((f: any) => f.loader === "css");

@@ -31,7 +31,7 @@
  void
 --- a/src/liblsquic/lsquic_stream.c
 +++ b/src/liblsquic/lsquic_stream.c
-@@ -1495,6 +1495,66 @@
+@@ -1495,6 +1495,72 @@
  }
  
  
@@ -52,6 +52,10 @@
 +    stream->error_code = error_code;
 +    stream->ss_error_code = error_code;
 +    stream->sm_bflags &= ~SMBF_VERIFY_CL;
++    /* qdh_hsi_process_wrapper calls us from inside lsqpack's dhi_process_header
++     * callback; stream_reset() would otherwise re-enter lsqpack via
++     * lsquic_qdh_cancel_stream and free the read_ctx it still holds. */
++    stream->sm_qflags &= ~SMQF_QPACK_DEC;
 +    if (!(stream->stream_flags & (STREAM_FIN_RECVD|STREAM_RST_RECVD))
 +                            && !(stream->stream_flags & STREAM_SS_SENT)
 +                            && !(stream->sm_qflags & SMQF_SEND_STOP_SENDING))
@@ -65,12 +69,14 @@
 +         * SMQF_SELF_FLAGS check would keep the stream alive forever. */
 +        stream->sm_qflags |= SMQF_SEND_STOP_SENDING;
 +    }
-+    /* stream_reset() clears every SMQF_SENDING flag; re-arm the STOP_SENDING
-+     * we just queued so both frames reach the peer. */
++    /* RFC 9000 sec 3.1 permits RESET_STREAM in Data Sent, so FIN_SENT does not
++     * skip the reset: SMQF_SEND_RST is what keeps stream_is_finished() false
++     * until both frames reach the wire.  stream_reset() clears every
++     * SMQF_SENDING flag, so re-arm the STOP_SENDING we just queued. */
 +    {
 +        const enum stream_q_flags had_ss =
 +                            stream->sm_qflags & SMQF_SEND_STOP_SENDING;
-+        if (!(stream->stream_flags & (STREAM_RST_SENT|STREAM_FIN_SENT))
++        if (!(stream->stream_flags & STREAM_RST_SENT)
 +                                    && !(stream->sm_qflags & SMQF_SEND_RST))
 +            stream_reset(stream, error_code, 0);
 +        if (had_ss)
@@ -98,7 +104,7 @@
  static void
  verify_cl_on_fin (struct lsquic_stream *stream)
  {
-@@ -1506,6 +1566,11 @@
+@@ -1506,6 +1572,11 @@
       */
      if (stream->sm_data_in != 0 && stream->sm_cont_len != stream->sm_data_in)
      {
@@ -110,7 +116,7 @@
          lconn = stream->conn_pub->lconn;
          lconn->cn_if->ci_abort_error(lconn, 1, HEC_MESSAGE_ERROR,
              "number of bytes in DATA frames of stream %"PRIu64" is %llu, "
-@@ -4977,9 +5042,14 @@
+@@ -4977,9 +5048,14 @@
      stream->sm_data_in += filter->hqfi_left;
      if (stream->sm_data_in > stream->sm_cont_len)
      {
@@ -126,7 +132,7 @@
          lconn->cn_if->ci_abort_error(lconn, 1, HEC_MESSAGE_ERROR,
              "number of bytes in DATA frames of stream %"PRIu64" exceeds "
              "content-length limit of %llu", stream->id, stream->sm_cont_len);
-@@ -5139,6 +5209,20 @@
+@@ -5139,6 +5215,20 @@
                      goto end;
                  default:
                      assert(LQRHS_ERROR == rhs);

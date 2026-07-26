@@ -1154,7 +1154,7 @@ pub(crate) fn unregister_abort_tracker_for_socket(socket: uws::InternalSocket) {
 /// Priority: tls_props.server_name > client.url.hostname. The Host request
 /// header is never consulted: a header-forwarding caller must not be able to
 /// steer the peer-identity check.
-fn get_tls_hostname<'c>(client: &'c HTTPClient<'_>, allow_proxy_url: bool) -> &'c [u8] {
+pub(crate) fn get_tls_hostname<'c>(client: &'c HTTPClient<'_>, allow_proxy_url: bool) -> &'c [u8] {
     if allow_proxy_url {
         if let Some(proxy) = &client.http_proxy {
             return proxy.hostname;

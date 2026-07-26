@@ -24,9 +24,9 @@ bun_core::declare_scope!(AsyncHTTP, visible);
 
 // Lifetime `'a` covers every borrowed input the caller hands in: `url`,
 // `http_proxy`, `request_header_buf`, the borrowed `HTTPRequestBody::Bytes`
-// payload, and `client.{header_buf,hostname,if_modified_since}`. Intrusive
-// fields (`real`, `next`) are raw pointers and thus lifetime-erased; the
-// HTTP-thread copy uses the same `'a` as the JS-thread original it mirrors.
+// payload, and `client.{header_buf,if_modified_since}`. Intrusive fields
+// (`real`, `next`) are raw pointers and thus lifetime-erased; the HTTP-thread
+// copy uses the same `'a` as the JS-thread original it mirrors.
 pub struct AsyncHTTP<'a> {
     pub response: Option<picohttp::Response<'static>>,
     pub request_headers: headers::EntryList,
@@ -510,11 +510,10 @@ impl<'a> AsyncHTTP<'a> {
     /// Construct an `AsyncHTTP` for a synchronous request driven via
     /// [`send_sync`].
     ///
-    /// Borrowed inputs (`url`, `headers_buf`, `request_body`, `http_proxy`,
-    /// `hostname`) are tied to lifetime `'a` and must outlive the returned
-    /// value — in practice they live on the calling stack frame and the
-    /// request is driven to completion via `send_sync` before that frame
-    /// returns.
+    /// Borrowed inputs (`url`, `headers_buf`, `request_body`, `http_proxy`)
+    /// are tied to lifetime `'a` and must outlive the returned value — in
+    /// practice they live on the calling stack frame and the request is driven
+    /// to completion via `send_sync` before that frame returns.
     pub fn init_sync(
         method: Method,
         url: URL<'a>,

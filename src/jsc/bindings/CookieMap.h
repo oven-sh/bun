@@ -75,15 +75,12 @@ private:
     // Holes are marked with nullptr.
     Vector<RefPtr<Cookie>> m_modifiedCookies;
 
-    // name -> first index in m_originalCookies. Duplicate occurrences (rare) are
-    // chained through m_originalNext so removeInternal can hole-punch every one
-    // without scanning. m_originalNext stays empty when there are no duplicates.
+    // name -> first index; duplicates chained via m_originalNext (empty when none).
     HashMap<String, size_t> m_originalIndex;
     Vector<size_t> m_originalNext;
     size_t m_originalHoles { 0 };
 
-    // name -> index in m_modifiedCookies. Names are unique because
-    // set()/remove() always clear the prior entry before appending.
+    // name -> index; unique because set()/remove() clear the prior entry first.
     HashMap<String, size_t> m_modifiedIndex;
 };
 

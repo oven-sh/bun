@@ -66,8 +66,6 @@ void CookieMap::buildOriginalIndex()
     if (n == 0)
         return;
     m_originalIndex.reserveInitialCapacity(n);
-    // Tracks the last-seen index for each name so duplicate chains can be linked
-    // in O(1) per entry. Discarded on return.
     HashMap<String, size_t> tails;
     for (size_t i = 0; i < n; ++i) {
         const auto& key = m_originalCookies[i].key;
@@ -254,12 +252,7 @@ void CookieMap::appendModified(Ref<Cookie>&& cookie)
     if (!name.isNull())
         m_modifiedIndex.set(WTF::move(name), m_modifiedCookies.size() - 1);
 
-    // Interior holes (from re-setting a name that was not the tail) are reclaimed
-    // once they outnumber live entries, keeping storage within 2x of the live
-    // count. Amortized O(1): compaction does O(live) work and at least halves the
-    // slot count. Checked after the append so the freshly-added entry counts as
-    // live; otherwise an iterate-and-delete loop compacts one step early and
-    // moves the last un-visited entry behind the iterator.
+    // Checked post-append so the new entry counts as live and a for-keys-delete loop never compacts past its cursor.
     if (m_modifiedCookies.size() >= 16 && m_modifiedCookies.size() >= 2 * m_modifiedIndex.size())
         compactModified();
 }

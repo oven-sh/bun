@@ -91,7 +91,6 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
     this[_reject] = reject_!;
     this[_handle] = null;
     this[_handler] = handler;
-    this.#queryStatus = SQLQueryStatus.none;
     this[_strings] = strings;
     this[_values] = values;
     this.#flags = flags;

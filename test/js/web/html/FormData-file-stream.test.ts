@@ -83,18 +83,39 @@ test("fetch replays a streaming FormData+Bun.file() body across a redirect", asy
           for await (const _ of req.body ?? []) {}
           return new Response(null, { status: code, headers: { Location: "/b?code=" + code } });
         }
-        let n = 0;
-        for await (const c of req.body ?? []) n += c.length;
-        return new Response(JSON.stringify({ method: req.method, n }));
+        const cl = req.headers.get("content-length");
+        const ct = req.headers.get("content-type");
+        let n = 0, hash = 0;
+        for await (const c of req.body ?? []) {
+          n += c.length;
+          for (let i = 0; i < c.length; i++) hash = (((hash << 1) | (hash >>> 31)) ^ c[i]) >>> 0;
+        }
+        return new Response(JSON.stringify({ method: req.method, n, cl, ct, hash }));
       },
     });
+    function hashParts(parts) {
+      let hash = 0;
+      for (const p of parts) for (let i = 0; i < p.length; i++) hash = (((hash << 1) | (hash >>> 31)) ^ p[i]) >>> 0;
+      return hash;
+    }
     const filePath = ${JSON.stringify(join(String(dir), "payload.bin"))};
     const out = {};
     for (const code of [301, 302, 303, 307, 308]) {
       const fd = new FormData();
       fd.append("f", Bun.file(filePath), "p.bin");
       const r = await fetch(\`http://127.0.0.1:\${srv.port}/a?code=\${code}\`, { method: "POST", body: fd });
-      out[code] = await r.json();
+      const j = await r.json();
+      if (j.ct) {
+        const b = /boundary=(.*)$/.exec(j.ct)[1];
+        const enc = new TextEncoder();
+        j.expectedHash = hashParts([
+          enc.encode(\`--\${b}\\r\\nContent-Disposition: form-data; name="f"; filename="p.bin"\\r\\nContent-Type: application/octet-stream\\r\\n\\r\\n\`),
+          new Uint8Array(1024).fill(0x78),
+          enc.encode(\`\\r\\n--\${b}--\\r\\n\`),
+        ]);
+      }
+      delete j.ct;
+      out[code] = j;
     }
     console.log(JSON.stringify(out));
     srv.stop(true);
@@ -110,16 +131,20 @@ test("fetch replays a streaming FormData+Bun.file() body across a redirect", asy
   if (exitCode !== 0) console.error(stderr);
 
   const out = JSON.parse(stdout.trim());
-  // 307/308 preserve the method and re-send the body; the byte count must
-  // match each other and exceed the file size (body + multipart framing).
-  expect(out[307]).toEqual(out[308]);
-  expect(out[307].method).toBe("POST");
-  expect(out[307].n).toBeGreaterThan(1024);
+  // 307/308 preserve the method and re-send the body byte-for-byte: the
+  // received hash must match an independently rebuilt multipart body, and
+  // Content-Length must match what arrived.
+  for (const code of [307, 308]) {
+    expect(out[code].method).toBe("POST");
+    expect(out[code].hash).toBe(out[code].expectedHash);
+    expect(Number(out[code].cl)).toBe(out[code].n);
+    expect(out[code].n).toBeGreaterThan(1024);
+  }
   // 301/302/303 downgrade to GET with no body.
   expect([out[301], out[302], out[303]]).toEqual([
-    { method: "GET", n: 0 },
-    { method: "GET", n: 0 },
-    { method: "GET", n: 0 },
+    { method: "GET", n: 0, cl: null, hash: 0 },
+    { method: "GET", n: 0, cl: null, hash: 0 },
+    { method: "GET", n: 0, cl: null, hash: 0 },
   ]);
   expect(exitCode).toBe(0);
 }, 30_000);

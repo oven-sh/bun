@@ -1,7 +1,7 @@
-import { describe, test, expect } from "bun:test";
-import fs from "node:fs";
+import { describe, expect, test } from "bun:test";
 import { Buffer } from "node:buffer";
 import { EventEmitter } from "node:events";
+import fs from "node:fs";
 
 // Node.js defines `code` on ERR_* errors as an own, enumerable, writable,
 // configurable data property on the instance. That makes it visible to

@@ -1188,6 +1188,16 @@ describe("new Request(input) transfers the input body", () => {
     expect(await copy.text()).toBe("override");
   });
 
+  test("a constructor throw after the input-body check does not consume the input", async () => {
+    // Bun's init.url extension validates after the loop; the transfer must not
+    // have happened yet when that validation throws.
+    const input = make("survivor");
+    // @ts-expect-error Bun-specific init.url
+    expect(() => new Request(input, { url: "http://[" })).toThrow();
+    expect(input.bodyUsed).toBe(false);
+    expect(await input.text()).toBe("survivor");
+  });
+
   test("constructing twice from the same input throws on the second call", () => {
     const input = make("once");
     new Request(input);

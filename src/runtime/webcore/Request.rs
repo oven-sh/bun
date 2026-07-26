@@ -1075,6 +1075,7 @@ impl Request {
         let url_or_object = arguments[0];
         let url_or_object_type = url_or_object.js_type();
         let mut fields: EnumSet<Fields> = EnumSet::empty();
+        let mut input_body_to_transfer: Option<*mut Request> = None;
 
         let is_first_argument_a_url =
             // fastest path:
@@ -1185,12 +1186,11 @@ impl Request {
                                 if let Err(e) = request.throw_if_body_unusable(global_this) {
                                     bail!(Err(e));
                                 }
-                                match request.transfer_body_value(global_this) {
-                                    Ok(v) => {
-                                        *req.body_value_mut() = v;
-                                    }
-                                    Err(e) => bail!(Err(e)),
-                                }
+                                // Deferred until after URL validation so a
+                                // later bail! doesn't drop an already-taken
+                                // body. `request` stays live via arguments[0].
+                                input_body_to_transfer =
+                                    Some(std::ptr::from_ref(request).cast_mut());
                                 fields.insert(Fields::Body);
                             }
                         }
@@ -1485,6 +1485,15 @@ impl Request {
         // decrement it to be perfectly balanced.
 
         req.url.set(href);
+
+        if let Some(input) = input_body_to_transfer {
+            // SAFETY: `input` is the live `*mut Request` payload of a
+            // DOMWrapper in `arguments`, rooted for this call.
+            match unsafe { &*input }.transfer_body_value(global_this) {
+                Ok(v) => *req.body_value_mut() = v,
+                Err(e) => bail!(Err(e)),
+            }
+        }
 
         if matches!(req.body_value(), BodyValue::Blob(_)) && req.headers.get().is_some() {
             if let BodyValue::Blob(blob) = req.body_value() {

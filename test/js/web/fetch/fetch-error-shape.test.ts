@@ -1,4 +1,4 @@
-import { test, expect, describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
 // fetch() network errors must be TypeError('fetch failed') with a `.cause`
@@ -114,11 +114,7 @@ describe("fetch network error shape", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     const out = JSON.parse(stdout);
     expect(out.name).toBe("TypeError");
     expect(out.message).toBe("fetch failed");

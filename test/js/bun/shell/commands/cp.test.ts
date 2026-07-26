@@ -1,7 +1,8 @@
 import { $ } from "bun";
 import { shellInternals } from "bun:internal-for-testing";
-import { describe, expect } from "bun:test";
-import { tempDirWithFiles } from "harness";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, isMacOS, tempDir, tempDirWithFiles } from "harness";
+import { join } from "path";
 import { bunExe, createTestBuilder } from "../test_builder";
 import { sortedShellOutput } from "../util";
 const { builtinDisabled } = shellInternals;
@@ -59,6 +60,47 @@ describe.if(!builtinDisabled("cp"))("bunshell cp", async () => {
     .exitCode(1)
     .testMini()
     .runAsTest("dir -> ? fails without -R");
+
+  // #14595
+  describe("recursive flag aliases", () => {
+    for (const flag of ["-r", "-R", "-rf", "-Rf", "-fR", "--recursive"]) {
+      TestBuilder.command`mkdir src; echo hi > src/a.txt; cp ${{ raw: flag }} src dest`
+        .ensureTempDir()
+        .exitCode(0)
+        .stderr("")
+        .fileEquals("dest/a.txt", "hi\n")
+        .testMini()
+        .runAsTest(`cp ${flag} copies a directory`);
+    }
+
+    for (const flag of ["-rv", "-vr", "-Rv", "-vR", "-nrv", "-frv"]) {
+      TestBuilder.command`mkdir src; echo hi > src/a.txt; cp ${{ raw: flag }} src dest`
+        .ensureTempDir()
+        .exitCode(0)
+        .stderr("")
+        .stdout(s => expect(s).toContain("a.txt"))
+        .fileEquals("dest/a.txt", "hi\n")
+        .testMini()
+        .runAsTest(`cp ${flag} copies a directory verbosely`);
+    }
+
+    TestBuilder.command`echo hi > a.txt; cp --verbose a.txt b.txt`
+      .ensureTempDir()
+      .exitCode(0)
+      .stderr("")
+      .stdout(p("$TEMP_DIR/a.txt -> $TEMP_DIR/b.txt\n"))
+      .fileEquals("b.txt", "hi\n")
+      .testMini()
+      .runAsTest("cp --verbose copies a file");
+
+    TestBuilder.command`echo hi > a.txt; cp --force a.txt b.txt`
+      .ensureTempDir()
+      .exitCode(0)
+      .stderr("")
+      .fileEquals("b.txt", "hi\n")
+      .testMini()
+      .runAsTest("cp --force copies a file");
+  });
 
   describe("EBUSY windows", () => {
     TestBuilder.command /* sh */ `
@@ -179,3 +221,64 @@ function expectSortedOutput(expected: string) {
       sortedShellOutput(expected).join("\n").replaceAll("$TEMP_DIR", tempdir),
     );
 }
+
+// #14595: the cp builtin is disabled on POSIX (falls through to /bin/cp), so
+// force-enable it via BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS to cover the flag
+// parser on all platforms.
+describe.each([
+  { flag: "-r", verbose: false },
+  { flag: "-R", verbose: false },
+  { flag: "-rf", verbose: false },
+  { flag: "-Rf", verbose: false },
+  { flag: "-fR", verbose: false },
+  { flag: "--recursive", verbose: false },
+  { flag: "-rv", verbose: true },
+  { flag: "-vr", verbose: true },
+  { flag: "-Rv", verbose: true },
+  { flag: "-vR", verbose: true },
+  { flag: "-nrv", verbose: true },
+  { flag: "-frv", verbose: true },
+])("bunshell cp $flag (builtin)", ({ flag, verbose }) => {
+  test.concurrent(`copies a directory`, async () => {
+    using dir = tempDir("cp-recursive", {
+      "src/a.txt": "hi",
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `await Bun.$\`cp ${flag} src dest\``],
+      env: { ...bunEnv, BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS: "1" },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    if (verbose) {
+      // On macOS the clonefile() fast path for whole-directory copies returns
+      // before the per-file on_copy callback ever runs, so -v is silent there.
+      if (!isMacOS) expect(stdout).toContain("a.txt");
+    } else {
+      expect(stdout).toBe("");
+    }
+    expect(await Bun.file(join(String(dir), "dest", "a.txt")).text()).toBe("hi");
+    expect(exitCode).toBe(0);
+  });
+});
+
+test.concurrent("bunshell cp --verbose (builtin)", async () => {
+  using dir = tempDir("cp-verbose", {
+    "a.txt": "hi",
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", `await Bun.$\`cp --verbose a.txt b.txt\``],
+    env: { ...bunEnv, BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS: "1" },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toContain("a.txt");
+  expect(stdout).toContain("b.txt");
+  expect(await Bun.file(join(String(dir), "b.txt")).text()).toBe("hi");
+  expect(exitCode).toBe(0);
+});

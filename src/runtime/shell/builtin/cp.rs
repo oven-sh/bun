@@ -770,34 +770,47 @@ impl crate::shell::interpreter::ShellTaskCtx for ShellCpTask {
 
 #[derive(Clone, Copy, Default)]
 pub struct Opts {
-    /// `-R` — copy file hierarchies
+    /// `-r`, `-R`, `--recursive` — copy file hierarchies
     pub recursive: bool,
-    /// `-v` — verbose
+    /// `-v`, `--verbose` — verbose
     pub verbose: bool,
 }
 
 impl FlagParser for Opts {
-    fn parse_long(&mut self, _flag: &[u8]) -> Option<ParseFlagResult> {
-        None
+    fn parse_long(&mut self, flag: &[u8]) -> Option<ParseFlagResult> {
+        match flag {
+            b"--recursive" => {
+                self.recursive = true;
+                Some(ParseFlagResult::ContinueParsing)
+            }
+            b"--verbose" => {
+                self.verbose = true;
+                Some(ParseFlagResult::ContinueParsing)
+            }
+            // `force: true` is already the default (see `CpFlags` below).
+            b"--force" => Some(ParseFlagResult::ContinueParsing),
+            _ => None,
+        }
     }
 
     fn parse_short(&mut self, ch: u8, smallflags: &[u8], i: usize) -> Option<ParseFlagResult> {
         match ch {
-            b'f' => Some(ParseFlagResult::Unsupported(unsupported_flag(b"-f"))),
             b'H' => Some(ParseFlagResult::Unsupported(unsupported_flag(b"-H"))),
             b'i' => Some(ParseFlagResult::Unsupported(unsupported_flag(b"-i"))),
             b'L' => Some(ParseFlagResult::Unsupported(unsupported_flag(b"-L"))),
             b'P' => Some(ParseFlagResult::Unsupported(unsupported_flag(b"-P"))),
-            b'p' => Some(ParseFlagResult::Unsupported(unsupported_flag(b"-P"))),
-            b'R' => {
+            b'p' => Some(ParseFlagResult::Unsupported(unsupported_flag(b"-p"))),
+            b'r' | b'R' => {
                 self.recursive = true;
-                Some(ParseFlagResult::ContinueParsing)
+                None
             }
             b'v' => {
                 self.verbose = true;
-                Some(ParseFlagResult::ContinueParsing)
+                None
             }
-            b'n' => Some(ParseFlagResult::ContinueParsing),
+            // `force: true` is already the default (see `CpFlags` below).
+            b'f' => None,
+            b'n' => None,
             _ => Some(ParseFlagResult::IllegalOption(&raw const smallflags[i..])),
         }
     }

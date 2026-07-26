@@ -430,6 +430,57 @@ it("serialize rejects CryptoKey regardless of extractability", async () => {
   expect(exitCode).toBe(0);
 });
 
+// serialize() no longer emits CryptoKey bytes, so the deserializer corruption
+// tests run against records captured from a build that predates that gate.
+const frozenEd25519PublicKey = Buffer.from(
+  "DgAAACE4AAAADgAAAAEAAAABAAAAAQAAAAMFFgEgAAAA2D0jBddySeu2kPeQNwjXqXxleqjLRdoeheXsYdbKZO8=",
+  "base64",
+);
+const frozenRsaOaepPublicKey = Buffer.from(
+  "DgAAACEkAQAADgAAAAEAAAABAAAAAQAAAAACAwEAAAAQAAABAADDin23FvsGxGcc2pDpAIBKOU172cD2PwMwFRHXXtU8J/TDv32L+4mkJnpFG5kx5c+L98j0a4XrlqkziylK8ER7tXvt/D+kvUiC0ZevGEWUML2EwSIwr8nAPHM7/Uvbn9sj14QpM0iop8gGhyp/ggZLvNbChp2624EIBiCQUnWEbhx53Y27teJ4zqUKw87X3fQ7nLpbRLcVRVoQk3SreIu0cPcXGDBQf6o5z0+n4iYQgCrtvcCcq8nadxIn5Ffvyas1UZjuvwiaNL34lIYdk37J1owIroxZfXnvWnghAjj55HnJOeGlHJbh0suWOsYnXU2x1mllRhWYNtIOdyizuLX3AwAAAAEAAQ==",
+  "base64",
+);
+
+function indexOfPattern(bytes: Uint8Array, pattern: number[]): number {
+  outer: for (let i = 0; i + pattern.length <= bytes.length; i++) {
+    for (let j = 0; j < pattern.length; j++) if (bytes[i + j] !== pattern[j]) continue outer;
+    return i;
+  }
+  return -1;
+}
+
+it("deserialize rejects a CryptoKey whose named curve does not match its algorithm", () => {
+  const bytes = new Uint8Array(frozenEd25519PublicKey);
+  const offset = indexOfPattern(bytes, [5, 22, 1, 32, 0, 0, 0]);
+  expect(offset).toBeGreaterThanOrEqual(0);
+
+  const roundTripped = deserialize(bytes);
+  expect({ isCryptoKey: roundTripped instanceof CryptoKey, algorithm: roundTripped.algorithm.name }).toEqual({
+    isCryptoKey: true,
+    algorithm: "Ed25519",
+  });
+
+  const mutated = bytes.slice();
+  mutated[offset + 2] = 0;
+  expect(() => deserialize(mutated)).toThrow(expect.objectContaining({ name: "TypeError" }));
+});
+
+it("deserialize rejects a CryptoKey whose algorithm does not belong to its key class", () => {
+  const bytes = new Uint8Array(frozenRsaOaepPublicKey);
+  const offset = indexOfPattern(bytes, [2, 3, 1, 0, 0, 0, 16]);
+  expect(offset).toBeGreaterThanOrEqual(0);
+
+  const roundTripped = deserialize(bytes);
+  expect({ isCryptoKey: roundTripped instanceof CryptoKey, algorithm: roundTripped.algorithm.name }).toEqual({
+    isCryptoKey: true,
+    algorithm: "RSA-OAEP",
+  });
+
+  const mutated = bytes.slice();
+  mutated[offset + 1] = 20;
+  expect(() => deserialize(mutated)).toThrow(expect.objectContaining({ name: "TypeError" }));
+});
+
 it("deserialize rejects a CryptoKey record with no key bytes", async () => {
   const script = `
     import { serialize, deserialize } from "bun:jsc";

@@ -727,6 +727,11 @@ impl TimerObjectInternals {
 
             if is_timer_done {
                 s.set_enable_keeping_event_loop_alive(vm, false);
+                // A setInterval that stopped itself via `_idleTimeout = -1` /
+                // `_repeat = null` reaches here with the root still armed
+                // (only `kind != SetInterval` disarmed above). No-op for paths
+                // that already disarmed.
+                s.disarm_root(vm);
                 // The timer will not be re-entered into the event loop at this point.
                 s.deref();
             }
@@ -1070,6 +1075,10 @@ impl TimerObjectInternals {
     /// `JSValue`/`Strong` content here.
     pub fn finalize(&self) {
         self.this_value.with_mut(|r| r.finalize());
+        // The segment cell is freed by the same sweep; drop the handle so a
+        // post-teardown `cancel_pending_immediate` → `disarm_root` sees an
+        // empty slot and does not touch freed memory.
+        self.root_slot.set(super::RootSlot::default());
         self.deref();
     }
 

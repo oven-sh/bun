@@ -230,6 +230,102 @@
              TextType::PlainText,
              true,
              encoding,
+@@ -444,6 +456,7 @@
+ 
+     mod serialization {
+         use super::*;
++        use crate::{ElementContentHandlers, HandlerResult, HtmlRewriter, Settings};
+ 
+         const HTML: &str = "Lorem ipsum dolor sit amet, cÔnsectetur adipiscing elit, sed do eiusmod tempor \
+              incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud \
+@@ -568,5 +581,87 @@
+             });
+             assert_eq!("<p>\u{fffd}\u{fffd}\u{fffd} last</p>", rewritten);
+         }
++
++        fn rewrite_with_writes(
++            writes: &[&[u8]],
++            handler: impl FnMut(&mut TextChunk<'_>) -> HandlerResult + 'static,
++        ) -> Vec<u8> {
++            let mut out = Vec::new();
++            let mut r = HtmlRewriter::new(
++                Settings {
++                    element_content_handlers: vec![(
++                        std::borrow::Cow::Owned("p".parse().unwrap()),
++                        ElementContentHandlers::default().text(handler),
++                    )],
++                    ..Settings::new()
++                },
++                |c: &[u8]| out.extend_from_slice(c),
++            );
++            for w in writes {
++                r.write(w).unwrap();
++            }
++            r.end().unwrap();
++            out
++        }
++
++        #[test]
++        fn unmodified_chunk_raw_bytes_stay_code_point_aligned_across_writes() {
++            // `<p>a😀b</p>` with the write boundary inside 😀 (F0 9F 98 80),
++            // and a handler that conditionally replaces only one of the two
++            // resulting chunks. Each unmodified chunk's raw bytes must begin
++            // and end on a code-point boundary, so the output stays valid
++            // UTF-8 regardless of which neighbour was replaced.
++            let writes: &[&[u8]] = &[b"<p>a\xF0\x9F", b"\x98\x80b</p>"];
++
++            assert_eq!(
++                rewrite_with_writes(writes, |t| {
++                    if t.as_str().contains('\u{1F600}') {
++                        t.replace(":)", ContentType::Text);
++                    }
++                    Ok(())
++                }),
++                b"<p>a:)</p>",
++            );
++
++            assert_eq!(
++                rewrite_with_writes(writes, |t| {
++                    if t.as_str() == "a" {
++                        t.replace("X", ContentType::Text);
++                    }
++                    Ok(())
++                }),
++                "<p>X\u{1F600}b</p>".as_bytes(),
++            );
++
++            assert_eq!(
++                rewrite_with_writes(writes, |_| Ok(())),
++                "<p>a\u{1F600}b</p>".as_bytes(),
++            );
++        }
++
++        #[test]
++        fn write_containing_only_an_incomplete_lead_does_not_emit_an_empty_chunk() {
++            // `<p>a€b</p>` with the € split as `E2 82` / `AC`. The first text
++            // write (lexeme "a") is followed by one whose decoded text would
++            // be empty (just the buffered `E2 82`): the handler must not be
++            // invoked for that empty chunk, and a later `before()` must not
++            // land between the lead bytes and the continuation.
++            let writes: &[&[u8]] = &[b"<p>a", b"\xE2\x82", b"\xACb</p>"];
++            let out = rewrite_with_writes(writes, |t| {
++                assert!(t.last_in_text_node() || !t.as_str().is_empty());
++                t.before("|", ContentType::Text);
++                Ok(())
++            });
++            assert_eq!(std::str::from_utf8(&out).unwrap(), "<p>|a|\u{20AC}b|</p>");
++        }
++
++        #[test]
++        fn non_utf8_bytes_pass_through_when_unmodified() {
++            let input: &[u8] = b"<p>a\x93\xE9\x94\xC0\xAF\xFF\xED\xA0\x80b</p>c\xE9d";
++            assert_eq!(
++                rewrite_with_writes(&[input], |_| Ok(())),
++                input,
++            );
++        }
+     }
+ }
 --- a/src/transform_stream/dispatcher.rs
 +++ b/src/transform_stream/dispatcher.rs
 @@ -11,6 +11,7 @@

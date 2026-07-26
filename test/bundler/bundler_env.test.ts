@@ -1,4 +1,4 @@
-import { describe } from "bun:test";
+import { describe, expect } from "bun:test";
 import { itBundled } from "./expectBundled";
 
 for (let backend of ["api", "cli"] as const) {
@@ -62,6 +62,30 @@ for (let backend of ["api", "cli"] as const) {
       },
       run: {
         stdout: "undefined\nundefined\n",
+      },
+    });
+
+    // env: "disable" must also suppress the implicit process.env.NODE_ENV define
+    // so the bundle reads NODE_ENV at runtime (matches `bun build --env disable`).
+    itBundled("env/disable-node-env", {
+      backend: backend,
+      dotenv: "disable",
+      target: "node",
+      files: {
+        "/a.js": `
+          console.log(JSON.stringify({
+            dot: process.env.NODE_ENV,
+            bracket: process.env["NODE_ENV"],
+          }));
+        `,
+      },
+      onAfterBundle(api) {
+        const out = api.readFile("out.js");
+        expect(out).toContain("process.env.NODE_ENV");
+      },
+      run: {
+        env: { NODE_ENV: "production" },
+        stdout: JSON.stringify({ dot: "production", bracket: "production" }) + "\n",
       },
     });
 

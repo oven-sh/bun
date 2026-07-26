@@ -121,8 +121,7 @@ pub(crate) fn get_body_stream_or_bytes_for_wasm_streaming(
         _ => body.use_as_any_blob(),
     };
 
-    // `Any::store()` only yields `Some` for the `Blob` variant; a non-memory
-    // store (file/S3) must go through a ReadableStream.
+    // File/S3-backed stores must go through a ReadableStream.
     if any_blob
         .store()
         .is_some_and(|store| !store.data.is_memory_backed())

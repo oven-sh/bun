@@ -3391,10 +3391,7 @@ impl BlobExt for Blob {
         // JS object graph, so a heap `Vec<JSValue>` is GC-safe with
         // unbounded capacity (a prior `BoundedArray<_, 128>` panicked on overflow).
         let mut stack: Vec<JSValue> = Vec::new();
-        // Consecutive non-Blob parts (strings, typed arrays, ArrayBuffers, …)
-        // are accumulated here and flushed to a single owned `Bytes` segment
-        // whenever a Blob-typed part is encountered, so `[hdr, big, ftr]`
-        // produces three rope segments rather than one store per scalar part.
+        // Non-Blob parts accumulate here; flushed to one `Bytes` segment per run.
         let mut joiner = bun_core::string_joiner::StringJoiner::default();
         let mut rope = store::Rope::default();
         let flush = |joiner: &mut bun_core::string_joiner::StringJoiner<'_>,
@@ -3629,8 +3626,6 @@ impl BlobExt for Blob {
         }
 
         if rope.segments.is_empty() {
-            // No in-memory Blob parts were shared: the entire payload is the
-            // joiner's accumulated run, which is exactly the pre-rope behaviour.
             let joined: Vec<u8> = joiner.done().expect("oom").into_vec();
             if !could_have_non_ascii {
                 return Ok(Blob::init_with_all_ascii(joined, global, true));
@@ -3675,8 +3670,6 @@ impl BlobExt for Blob {
                 store::Data::Rope(rope) => {
                     size += rope.stored_name.len();
                     size += rope.segments.len() * core::mem::size_of::<store::RopeSegment>();
-                    // Segment bytes are shared with their source stores, so
-                    // only the view length the Blob itself reports counts here.
                     size += if self.size.get() != MAX_SIZE {
                         self.size.get() as usize
                     } else {
@@ -4749,8 +4742,6 @@ pub fn write_file_with_source_destination(
     let Some(source_store) = source_blob.store.get().clone() else {
         return write_file_with_empty_source_to_destination(ctx, destination_blob, options);
     };
-    // A rope source is flattened once here so the `DataTag::Bytes` paths below
-    // (async `WriteFile`, single-shot S3 upload) see a contiguous buffer.
     source_store.flatten_if_rope();
     let source_type = source_store.data.tag();
 

@@ -4807,22 +4807,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // symbols in an ESM file when bundling is enabled. We make no guarantee
                 // that "eval" will be able to reach these symbols and we allow them to be
                 // renamed or removed by tree shaking.
-                if self.options.bundle
-                    && current_scope.parent.is_none()
-                    && self.has_es_module_syntax
-                {
-                    continue;
-                }
+                //
+                // Note: the module scope is never popped through this function, so
+                // `current_scope.parent` is always `Some` here and the exception above
+                // never applies. The module-scope equivalent lives in `_parse`, where
+                // the wrapping decision (`exports_kind`) is already known.
 
                 self.symbols[member.1.ref_.inner_index() as usize].set_must_not_be_renamed(true);
             }
         }
 
-        // Popping the module scope leaves `current_scope` in place; only the
-        // terminal pop at the end of parsing reaches this.
-        if let Some(parent) = current_scope.parent {
-            self.current_scope = parent;
-        }
+        self.current_scope = current_scope.parent.unwrap_or_else(|| {
+            self.panic(
+                "Internal error: attempted to call popScope() on the topmost scope",
+                format_args!(""),
+            )
+        });
     }
 
     pub fn mark_expr_as_parenthesized(&mut self, expr: &mut Expr) {

@@ -2159,8 +2159,25 @@ impl<'a> Parser<'a> {
             parts.append(&mut after);
         }
 
-        // Pop the module scope to apply the "ContainsDirectEval" rules
-        p.pop_scope();
+        // Apply the "ContainsDirectEval" rules to the module scope. `pop_scope`
+        // does this for every nested scope; the module scope has no parent so
+        // it is handled here instead, after the wrapping decision is known.
+        //
+        // When bundling an ESM file, module-scope symbols are hoisted into the
+        // shared chunk scope and there is no way to guarantee direct eval can
+        // still reach them under their original names, so they stay renameable.
+        // A CJS-wrapped file keeps its module scope inside the `__commonJS`
+        // closure, so pinning there is both safe and required for eval to
+        // resolve the original names (including `exports` and `module`).
+        if p.module_scope().contains_direct_eval
+            && !(p.options.bundle && exports_kind == js_ast::ExportsKind::Esm)
+        {
+            let module_scope = p.module_scope_ref();
+            let mut iter = module_scope.members.iter();
+            while let Some(member) = iter.next() {
+                p.symbols[member.1.ref_.inner_index() as usize].set_must_not_be_renamed(true);
+            }
+        }
 
         #[cfg(not(target_arch = "wasm32"))]
         if bun_core::feature_flags::RUNTIME_TRANSPILER_CACHE {

@@ -245,10 +245,8 @@ class SQLiteQueryHandle implements BaseQueryHandle<BunSQLiteModule.Database> {
         const stmt = db.prepare(sql);
         let result: unknown[] | undefined;
 
-        // Pass the positional parameter list as a single array so bun:sqlite
-        // binds each element by index. Spreading it into the variadic API lets
-        // a user-supplied object/array in the first slot be reinterpreted as
-        // the full binding structure, overriding later trusted parameters.
+        // `values` must be passed as one array so bun:sqlite binds positionally;
+        // spreading it lets a user-supplied values[0] hijack the whole binding list.
         if (mode === SQLQueryResultMode.values) {
           result = stmt.values.$call(stmt, values);
         } else if (mode === SQLQueryResultMode.raw) {

@@ -4770,13 +4770,8 @@ impl<'a> HTTPClient<'a> {
         for (header_i, header) in response.headers.list.iter().enumerate() {
             match hash_header_name(header.name()) {
                 h if h == hash_header_const(b"Content-Length") => {
-                    // RFC 9110 section 9.3.6: a client MUST ignore
-                    // Content-Length in a successful response to CONNECT —
-                    // the connection becomes an opaque tunnel and is never
-                    // pooled, so the framing-desync concern below does not
-                    // apply. A non-2xx CONNECT reply is rejected outright
-                    // below (ProxyConnectFailed), so no framing is needed for
-                    // that case either.
+                    // RFC 9110 §9.3.6: ignore Content-Length in a response to
+                    // CONNECT (2xx → opaque tunnel, non-2xx → rejected below).
                     if self.flags.proxy_tunneling && self.proxy_tunnel.is_none() {
                         continue;
                     }
@@ -4917,19 +4912,12 @@ impl<'a> HTTPClient<'a> {
             print_response(response);
         }
 
-        // RFC 9110 §9.3.6: any 2xx response to CONNECT means the tunnel is
-        // established and the bytes after the header section are from the
-        // origin. A non-2xx response means the tunnel was not established;
-        // the proxy's status/headers/body arrived over the plaintext
-        // client→proxy hop, so they MUST NOT be returned as an https-origin
-        // Response — reject the fetch instead (curl / Node undici / browsers
-        // all do this; see CVE-2009-2062). The socket is closed by the
-        // caller's close_and_fail on Err.
-        //
-        // This runs before the status-code-driven state writes below: none of
-        // the CONNECT reply's properties (pretend_304, the 204/304
-        // content_length = Some(0) write) may leak into the origin response's
-        // pass — ProxyTunnel does not reset `state` between the two legs.
+        // RFC 9110 §9.3.6: any 2xx to CONNECT establishes the tunnel; a
+        // non-2xx CONNECT reply travelled over the plaintext client→proxy
+        // hop so it must reject the fetch, never surface as an https-origin
+        // Response (CVE-2009-2062). Dispatched here, before the state writes
+        // below, because ProxyTunnel does not reset `state` between the
+        // CONNECT leg and the origin leg.
         if self.flags.proxy_tunneling && self.proxy_tunnel.is_none() {
             if response.status_code >= 200 && response.status_code < 300 {
                 // signal to continue the proxing

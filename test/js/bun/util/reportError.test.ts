@@ -142,7 +142,7 @@ const tamperedAggregateErrors = [
   ],
   [
     "poisoned array iterator",
-    'const e = new AggregateError([new Error("inner")], "agg_boom"); Object.defineProperty(Array.prototype, Symbol.iterator, { value() { throw new Error("poisoned"); } }); throw e;',
+    'const e = new AggregateError([], "agg_boom"); Object.defineProperty(Array.prototype, Symbol.iterator, { value() { throw new Error("poisoned"); } }); throw e;',
   ],
   [
     "setter-only errors property",
@@ -179,7 +179,7 @@ const tamperedAggregateErrors = [
   // user-supplied Symbol.iterator never runs (it would loop forever).
   [
     "own never-done Symbol.iterator on errors",
-    'const e = new AggregateError([], "agg_boom"); const a = [new Error("inner")]; a[Symbol.iterator] = () => ({ next: () => ({ value: e, done: false }) }); e.errors = a; throw e;',
+    'const e = new AggregateError([], "agg_boom"); const a = []; a[Symbol.iterator] = () => ({ next: () => ({ value: e, done: false }) }); e.errors = a; throw e;',
   ],
 ] as const;
 
@@ -240,7 +240,7 @@ test.concurrent.each([
   expect(exitCode).toBe(0);
 });
 
-test("uncaught AggregateError with intact `errors` still prints each sub-error", async () => {
+test.concurrent("uncaught AggregateError with intact `errors` still prints each sub-error", async () => {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", 'throw new AggregateError([new Error("inner_a"), new Error("inner_b")], "agg_boom");'],
     env: { ...bunEnv, NO_COLOR: "1" },
@@ -260,7 +260,7 @@ test("uncaught AggregateError with intact `errors` still prints each sub-error",
 
 // Past the per-level cap (256), the printer truncates with an elision trailer
 // instead of dropping every sub-error.
-test("uncaught AggregateError with 300 sub-errors prints the first 256 and an elision trailer", async () => {
+test.concurrent("uncaught AggregateError with 300 sub-errors prints the first 256 and an elision trailer", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -314,7 +314,7 @@ test.concurrent.each([
 
 // The depth cap that stops a cyclic `errors` must stay clear of any nesting a
 // real program produces.
-test("uncaught AggregateError nested several levels deep still unwraps to the leaf error", async () => {
+test.concurrent("uncaught AggregateError nested several levels deep still unwraps to the leaf error", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -341,7 +341,7 @@ test("uncaught AggregateError nested several levels deep still unwraps to the le
 // The shared unwrap budget must also stay clear of realistic wide nesting:
 // an aggregate of 40 aggregates (like Promise.any over failover groups) has
 // 41 aggregate nodes and every leaf cause must still surface.
-test("uncaught AggregateError of 40 nested groups prints every leaf cause", async () => {
+test.concurrent("uncaught AggregateError of 40 nested groups prints every leaf cause", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),

@@ -4864,8 +4864,7 @@ impl VirtualMachine {
                 }
                 if printed > 0 {
                     if len > cap {
-                        let _ =
-                            writer.write_all(format!("... {} more errors\n", len - cap).as_bytes());
+                        let _ = write!(writer, "... {} more errors\n", len - cap);
                     }
                     return;
                 }

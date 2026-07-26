@@ -5904,11 +5904,29 @@ declare module "bun" {
     ref(): void;
 
     /**
-     * Set a timeout until the socket automatically closes.
+     * Arm an idle timeout on this socket. After approximately `seconds` of
+     * inactivity the {@link SocketHandler.timeout `timeout`} handler is
+     * called. The socket is **not** closed automatically; call
+     * {@link end `end()`} or {@link terminate `terminate()`} from the handler
+     * if that is the desired behavior, or call `timeout()` again to re-arm.
      *
-     * To reset the timeout, call this function again.
+     * Pass `0` to cancel a previously armed timeout.
      *
-     * When a timeout happens, the `timeout` callback is called and the socket is closed.
+     * The timer is coarse: it is driven by a periodic sweep with roughly
+     * 4-second granularity, so the handler may fire a few seconds earlier or
+     * later than the exact value requested. Values are effectively rounded up
+     * to the next sweep tick.
+     *
+     * @param seconds Approximate idle time in seconds before the `timeout`
+     * handler fires. `0` disarms the timer.
+     * @example
+     * ```ts
+     * socket.timeout(30);
+     * // in handlers:
+     * timeout(socket) {
+     *   socket.end(); // close idle connections
+     * }
+     * ```
      */
     timeout(seconds: number): void;
 
@@ -6387,7 +6405,13 @@ declare module "bun" {
     connectError?(socket: Socket<Data>, error: Error): void | Promise<void>;
 
     /**
-     * Called when a message times out.
+     * Called when the socket has been idle for the duration armed by
+     * {@link Socket.timeout `socket.timeout()`}.
+     *
+     * The socket remains open when this fires. Call
+     * {@link Socket.end `socket.end()`} or
+     * {@link Socket.terminate `socket.terminate()`} here to close it, or call
+     * `socket.timeout()` again to re-arm the idle timer.
      */
     timeout?(socket: Socket<Data>): void | Promise<void>;
     /**

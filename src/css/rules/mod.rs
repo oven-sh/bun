@@ -785,6 +785,29 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
         supports: Vec<CssRule<R>>,
         logical: Vec<CssRule<R>>,
     }
+    if incompatible.len() > 0 {
+        // Each split-off selector clones this rule's declarations and entire
+        // nested-rule subtree (loop below). The subtree already contains the
+        // clones split off while minifying deeper levels, so under nesting the
+        // cloned payload compounds exponentially with depth.
+        // `charge_selector_expansion` bounds how many rules this produces but
+        // not their size; bound the cumulative cloned payload too, so huge
+        // token lists or declaration blocks can't multiply into gigabytes
+        // while staying under the selector-count cap.
+        let per_clone = clone_weight::RULE
+            .saturating_add(clone_weight::decl_block(&sty.declarations))
+            .saturating_add(clone_weight::rule_list(&sty.rules));
+        context.split_clone_weight_total = context
+            .split_clone_weight_total
+            .saturating_add(per_clone.saturating_mul(incompatible.len() as u64));
+        if context.split_clone_weight_total > MAX_SELECTOR_SPLIT_CLONE_WEIGHT {
+            context.err = Some(crate::error::MinifyError {
+                kind: crate::error::MinifyErrorKind::selector_split_clone_limit_exceeded,
+                loc: sty.loc,
+            });
+            return Err(MinifyErr::minify_err);
+        }
+    }
     let mut incompatible_rules: SmallList<IncompatibleRuleEntry<R>, 1> =
         SmallList::init_capacity(incompatible.len());
     while incompatible.len() > 0 {
@@ -901,6 +924,407 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
     }
 
     Ok(())
+}
+
+/// Weight estimate for the rule clones made by `minify_style_arm`'s
+/// incompatible-selector split, in roughly byte-sized units, charged against
+/// [`MAX_SELECTOR_SPLIT_CLONE_WEIGHT`].
+///
+/// The walk counts the structures whose count or size scales with user input:
+/// rules, declarations, selector components (recursing into selector-list
+/// arguments), and raw token lists (token count plus borrowed text length —
+/// the text is borrowed by the clone but re-emitted per clone when printed).
+/// Every variant that stores its text inline is charged that text: token
+/// payloads (including dimension units and dashed idents), var()/env()/
+/// function and pseudo-class names, custom-property names, and selector
+/// text (classes, ids, element and attribute names, attribute values).
+/// Parsed leaf values and `url()` (whose text lives in the stylesheet's
+/// import records, not reachable here) are charged a flat constant: their
+/// per-rule size is bounded by the input, and the number of clones is bounded
+/// by [`MAX_SELECTOR_EXPANSION`]. The walk runs once per split rule, so its
+/// own cost stays proportional to the weight it charges.
+mod clone_weight {
+    use super::{CssRule, CssRuleList};
+    use crate as css;
+    use css::properties::Property;
+    use css::properties::custom::{TokenList, TokenOrValue};
+    use css::selectors::{Component, PseudoClass, PseudoElement, Selector, SelectorList};
+
+    /// Flat weight of one rule (struct + bookkeeping).
+    pub(super) const RULE: u64 = 64;
+    /// Flat weight of one declaration.
+    const DECL: u64 = 64;
+    const COMPONENT: u64 = 16;
+    const TOKEN: u64 = 16;
+
+    pub(super) fn rule_list<R>(rules: &CssRuleList<R>) -> u64 {
+        rules.v.iter().map(rule).fold(0u64, u64::saturating_add)
+    }
+
+    fn rule<R>(rule: &CssRule<R>) -> u64 {
+        let nested = match rule {
+            CssRule::Style(sty) => selector_list(&sty.selectors)
+                .saturating_add(decl_block(&sty.declarations))
+                .saturating_add(rule_list(&sty.rules)),
+            CssRule::Media(r) => media_list(&r.query).saturating_add(rule_list(&r.rules)),
+            CssRule::Supports(r) => {
+                supports_condition(&r.condition).saturating_add(rule_list(&r.rules))
+            }
+            CssRule::Container(r) => (r.name.as_ref().map_or(0, |n| n.v.v().len() as u64))
+                .saturating_add(container_condition(&r.condition))
+                .saturating_add(rule_list(&r.rules)),
+            CssRule::LayerBlock(r) => r
+                .name
+                .as_ref()
+                .map_or(0, |n| {
+                    n.v.slice()
+                        .iter()
+                        .map(|segment| segment.len() as u64)
+                        .fold(0u64, u64::saturating_add)
+                })
+                .saturating_add(rule_list(&r.rules)),
+            CssRule::MozDocument(r) => rule_list(&r.rules),
+            CssRule::Scope(r) => (r.scope_start.as_ref().map_or(0, selector_list))
+                .saturating_add(r.scope_end.as_ref().map_or(0, selector_list))
+                .saturating_add(rule_list(&r.rules)),
+            CssRule::StartingStyle(r) => rule_list(&r.rules),
+            CssRule::Nesting(r) => selector_list(&r.style.selectors)
+                .saturating_add(decl_block(&r.style.declarations))
+                .saturating_add(rule_list(&r.style.rules)),
+            CssRule::Keyframes(r) => r
+                .keyframes
+                .iter()
+                .map(|k| decl_block(&k.declarations))
+                .fold(0u64, u64::saturating_add),
+            CssRule::Unknown(r) => (r.name.len() as u64)
+                .saturating_add(token_list(&r.prelude))
+                .saturating_add(r.block.as_ref().map_or(0, token_list)),
+            // Remaining rules can't contain nested style rules; their payload
+            // is bounded per rule by the input.
+            _ => 0,
+        };
+        RULE.saturating_add(nested)
+    }
+
+    fn media_list(list: &css::media_query::MediaList) -> u64 {
+        use css::media_query::MediaType;
+        list.media_queries
+            .iter()
+            .map(|q| {
+                (match q.media_type {
+                    // SAFETY: arena-owned slice; only its length is read.
+                    MediaType::Custom(name) => name.len() as u64,
+                    _ => 0,
+                })
+                .saturating_add(q.condition.as_ref().map_or(0, media_condition))
+            })
+            .fold(0u64, u64::saturating_add)
+    }
+
+    fn media_condition(condition: &css::media_query::MediaCondition) -> u64 {
+        use css::media_query::MediaCondition;
+        match condition {
+            MediaCondition::Feature(feature) => query_feature(feature),
+            MediaCondition::Not(inner) => media_condition(inner),
+            MediaCondition::Operation { conditions, .. } => conditions
+                .iter()
+                .map(media_condition)
+                .fold(0u64, u64::saturating_add),
+        }
+    }
+
+    fn query_feature<F: css::media_query::FeatureIdTrait>(
+        feature: &css::media_query::QueryFeature<F>,
+    ) -> u64 {
+        use css::media_query::QueryFeature;
+        match feature {
+            QueryFeature::Plain { name, value } | QueryFeature::Range { name, value, .. } => {
+                feature_name(name).saturating_add(feature_value(value))
+            }
+            QueryFeature::Boolean { name } => feature_name(name),
+            QueryFeature::Interval {
+                name, start, end, ..
+            } => feature_name(name)
+                .saturating_add(feature_value(start))
+                .saturating_add(feature_value(end)),
+        }
+    }
+
+    fn feature_name<F: css::media_query::FeatureIdTrait>(
+        name: &css::media_query::MediaFeatureName<F>,
+    ) -> u64 {
+        use css::media_query::MediaFeatureName;
+        match name {
+            MediaFeatureName::Standard(_) => 0,
+            MediaFeatureName::Custom(ident) => ident.v().len() as u64,
+            MediaFeatureName::Unknown(ident) => ident.v().len() as u64,
+        }
+    }
+
+    fn feature_value(value: &css::media_query::MediaFeatureValue) -> u64 {
+        use css::media_query::MediaFeatureValue;
+        match value {
+            MediaFeatureValue::Ident(ident) => ident.v().len() as u64,
+            MediaFeatureValue::Env(env) => {
+                env_name_len(&env.name).saturating_add(env.fallback.as_ref().map_or(0, token_list))
+            }
+            _ => 0,
+        }
+    }
+
+    fn supports_condition(condition: &super::supports::SupportsCondition) -> u64 {
+        use super::supports::SupportsCondition;
+        match condition {
+            SupportsCondition::Not(inner) => supports_condition(inner),
+            SupportsCondition::And(conditions) | SupportsCondition::Or(conditions) => conditions
+                .iter()
+                .map(supports_condition)
+                .fold(0u64, u64::saturating_add),
+            SupportsCondition::Declaration(decl) => {
+                (decl.property_id.name().len() as u64).saturating_add(decl.value.len() as u64)
+            }
+            SupportsCondition::Selector(text) | SupportsCondition::Unknown(text) => {
+                text.len() as u64
+            }
+        }
+    }
+
+    fn container_condition(condition: &super::container::ContainerCondition) -> u64 {
+        use super::container::ContainerCondition;
+        match condition {
+            ContainerCondition::Feature(feature) => query_feature(feature),
+            ContainerCondition::Not(inner) => container_condition(inner),
+            ContainerCondition::Operation { conditions, .. } => conditions
+                .iter()
+                .map(container_condition)
+                .fold(0u64, u64::saturating_add),
+            ContainerCondition::Style(query) => style_query(query),
+        }
+    }
+
+    fn style_query(query: &super::container::StyleQuery) -> u64 {
+        use super::container::StyleQuery;
+        match query {
+            StyleQuery::Feature(feature) => property(feature),
+            StyleQuery::Not(inner) => style_query(inner),
+            StyleQuery::Operation { conditions, .. } => conditions
+                .iter()
+                .map(style_query)
+                .fold(0u64, u64::saturating_add),
+        }
+    }
+
+    pub(super) fn decl_block(decls: &css::DeclarationBlock) -> u64 {
+        decls
+            .declarations
+            .iter()
+            .chain(decls.important_declarations.iter())
+            .map(property)
+            .fold(0u64, u64::saturating_add)
+    }
+
+    fn property(property: &Property) -> u64 {
+        use css::properties::custom::CustomPropertyName;
+        DECL.saturating_add(match property {
+            Property::Custom(c) => {
+                let name_len = match &c.name {
+                    CustomPropertyName::Custom(ident) => ident.v().len(),
+                    CustomPropertyName::Unknown(ident) => ident.v().len(),
+                };
+                (name_len as u64).saturating_add(token_list(&c.value))
+            }
+            Property::Unparsed(u) => token_list(&u.value),
+            _ => 0,
+        })
+    }
+
+    pub(super) fn selector_list(list: &SelectorList) -> u64 {
+        selector_slice(list.v.slice())
+    }
+
+    fn selector_slice(selectors: &[Selector]) -> u64 {
+        selectors
+            .iter()
+            .map(|sel| {
+                sel.components
+                    .iter()
+                    .map(component)
+                    .fold(0u64, u64::saturating_add)
+            })
+            .fold(0u64, u64::saturating_add)
+    }
+
+    fn component(component: &Component) -> u64 {
+        use css::selectors::parser::attrs::ParsedAttrSelectorOperation;
+        COMPONENT.saturating_add(match component {
+            Component::Negation(list)
+            | Component::Where(list)
+            | Component::Is(list)
+            | Component::Has(list)
+            | Component::Any {
+                selectors: list, ..
+            } => selector_slice(list),
+            Component::NthOf(data) => selector_slice(&data.selectors),
+            Component::Slotted(sel) => selector_slice(core::slice::from_ref(sel)),
+            Component::Host(Some(sel)) => selector_slice(core::slice::from_ref(sel)),
+            Component::NonTsPseudoClass(pseudo) => pseudo_class(pseudo),
+            Component::PseudoElement(pseudo) => pseudo_element(pseudo),
+            // CSS-modules locals (`IdentOrRef::is_ref`) print a symbol-table
+            // name instead of inline text; they are charged the flat constant.
+            Component::Id(ident) | Component::Class(ident) => {
+                ident.as_ident().map_or(0, |i| i.v().len() as u64)
+            }
+            Component::LocalName(name) => name.name.v().len() as u64,
+            Component::Namespace { prefix, url } => {
+                (prefix.v().len() as u64).saturating_add(url.len() as u64)
+            }
+            Component::DefaultNamespace(url) => url.len() as u64,
+            Component::Part(idents) => idents
+                .iter()
+                .map(|i| i.v().len() as u64)
+                .fold(0u64, u64::saturating_add),
+            Component::AttributeInNoNamespaceExists { local_name, .. } => {
+                local_name.v().len() as u64
+            }
+            Component::AttributeInNoNamespace {
+                local_name, value, ..
+            } => (local_name.v().len() as u64).saturating_add(value.len() as u64),
+            Component::AttributeOther(attr) => {
+                use css::selectors::parser::attrs::NamespaceConstraint;
+                (match &attr.namespace {
+                    Some(NamespaceConstraint::Specific(ns)) => {
+                        (ns.prefix.v().len() as u64).saturating_add(ns.url.len() as u64)
+                    }
+                    _ => 0,
+                })
+                .saturating_add(attr.local_name.v().len() as u64)
+                .saturating_add(match &attr.operation {
+                    ParsedAttrSelectorOperation::WithValue { expected_value, .. } => {
+                        expected_value.len() as u64
+                    }
+                    ParsedAttrSelectorOperation::Exists => 0,
+                })
+            }
+            _ => 0,
+        })
+    }
+
+    fn pseudo_class(pseudo: &PseudoClass) -> u64 {
+        match pseudo {
+            PseudoClass::CustomFunction { name, arguments } => {
+                (name.len() as u64).saturating_add(token_list(arguments))
+            }
+            PseudoClass::Custom { name } => name.len() as u64,
+            PseudoClass::Lang { languages } => languages
+                .iter()
+                .map(|l| l.len() as u64)
+                .fold(0u64, u64::saturating_add),
+            PseudoClass::Local { selector } | PseudoClass::Global { selector } => {
+                selector_slice(core::slice::from_ref(&**selector))
+            }
+            _ => 0,
+        }
+    }
+
+    fn pseudo_element(pseudo: &PseudoElement) -> u64 {
+        use css::selectors::parser::ViewTransitionPartName;
+        match pseudo {
+            PseudoElement::CustomFunction { name, arguments } => {
+                (name.len() as u64).saturating_add(token_list(arguments))
+            }
+            PseudoElement::Custom { name } => name.len() as u64,
+            PseudoElement::CueFunction { selector }
+            | PseudoElement::CueRegionFunction { selector } => {
+                selector_slice(core::slice::from_ref(&**selector))
+            }
+            PseudoElement::ViewTransitionGroup { part_name }
+            | PseudoElement::ViewTransitionImagePair { part_name }
+            | PseudoElement::ViewTransitionOld { part_name }
+            | PseudoElement::ViewTransitionNew { part_name } => match part_name {
+                ViewTransitionPartName::All => 0,
+                ViewTransitionPartName::Name(ident) | ViewTransitionPartName::Class(ident) => {
+                    ident.v().len() as u64
+                }
+            },
+            _ => 0,
+        }
+    }
+
+    fn token_list(tokens: &TokenList) -> u64 {
+        tokens
+            .v
+            .iter()
+            .map(|t| {
+                TOKEN.saturating_add(match t {
+                    TokenOrValue::Token(token) => token_text_len(token),
+                    TokenOrValue::Var(var) => (var.name.ident.v().len() as u64)
+                        .saturating_add(var.fallback.as_ref().map_or(0, token_list)),
+                    TokenOrValue::Env(env) => env_name_len(&env.name)
+                        .saturating_add(env.fallback.as_ref().map_or(0, token_list)),
+                    TokenOrValue::Function(f) => {
+                        (f.name.v().len() as u64).saturating_add(token_list(&f.arguments))
+                    }
+                    TokenOrValue::UnresolvedColor(color) => unresolved_color(color),
+                    TokenOrValue::DashedIdent(ident) => ident.v().len() as u64,
+                    TokenOrValue::AnimationName(name) => animation_name_len(name),
+                    // `Url` stores only an import-record index; see the module
+                    // doc. Remaining variants are fixed-size parsed values.
+                    _ => 0,
+                })
+            })
+            .fold(0u64, u64::saturating_add)
+    }
+
+    fn env_name_len(name: &css::properties::custom::EnvironmentVariableName) -> u64 {
+        use css::properties::custom::EnvironmentVariableName;
+        match name {
+            EnvironmentVariableName::Ua(_) => 0,
+            EnvironmentVariableName::Custom(reference) => reference.ident.v().len() as u64,
+            EnvironmentVariableName::Unknown(ident) => ident.v().len() as u64,
+        }
+    }
+
+    fn animation_name_len(name: &css::properties::animation::AnimationName) -> u64 {
+        use css::properties::animation::AnimationName;
+        match name {
+            AnimationName::None => 0,
+            AnimationName::Ident(ident) => ident.v().len() as u64,
+            AnimationName::String(s) => s.len() as u64,
+        }
+    }
+
+    fn unresolved_color(color: &css::properties::custom::UnresolvedColor) -> u64 {
+        use css::properties::custom::UnresolvedColor;
+        match color {
+            UnresolvedColor::RGB { alpha, .. } | UnresolvedColor::HSL { alpha, .. } => {
+                token_list(alpha)
+            }
+            UnresolvedColor::LightDark { light, dark } => {
+                token_list(light).saturating_add(token_list(dark))
+            }
+        }
+    }
+
+    fn token_text_len(token: &css::Token) -> u64 {
+        use css::Token;
+        match token {
+            Token::Ident(v)
+            | Token::Function(v)
+            | Token::AtKeyword(v)
+            | Token::UnrestrictedHash(v)
+            | Token::IdHash(v)
+            | Token::QuotedString(v)
+            | Token::BadString(v)
+            | Token::UnquotedUrl(v)
+            | Token::BadUrl(v)
+            | Token::Whitespace(v)
+            | Token::Comment(v) => v.len() as u64,
+            // The unit of an unknown dimension is arbitrary-length ident text
+            // (e.g. `1aaaa...`), kept as a raw token.
+            Token::Dimension(d) => d.unit.len() as u64,
+            _ => 0,
+        }
+    }
 }
 
 // ─── StyleRuleKey ──────────────────────────────────────────────────────────
@@ -1221,6 +1645,21 @@ pub struct StyleContext<'a> {
 /// instead.
 pub const MAX_SELECTOR_EXPANSION: u32 = 65_536;
 
+/// Upper bound on the cumulative weight (roughly bytes of AST payload) of
+/// style-rule clones produced by splitting selector lists that are
+/// incompatible with the configured targets.
+///
+/// `minify_style_arm` clones a rule's declarations and its entire nested-rule
+/// subtree once per split-off selector. Under CSS nesting the subtree at each
+/// level already contains the clones split off at deeper levels, so the cloned
+/// payload compounds exponentially with nesting depth. [`MAX_SELECTOR_EXPANSION`]
+/// bounds how many rules the split can produce but not their size: each clone
+/// can carry arbitrarily large token lists or declaration blocks, so a few
+/// hundred kilobytes of adversarial input could otherwise clone (and later
+/// print) gigabytes while staying under the selector-count cap. Real-world
+/// stylesheets duplicate at most a few kilobytes here.
+pub const MAX_SELECTOR_SPLIT_CLONE_WEIGHT: u64 = 64 << 20;
+
 /// Per-stylesheet minification state threaded through `CssRuleList::minify`
 /// and every leaf rule's `minify`.
 ///
@@ -1256,4 +1695,8 @@ pub struct MinifyContext<'a, 'bump> {
     /// Running total of selectors that compiling nested rules for the targets
     /// will expand to, checked against [`MAX_SELECTOR_EXPANSION`].
     pub selector_expansion_total: u32,
+    /// Running total of the weight of rule clones made when splitting
+    /// target-incompatible selector lists, checked against
+    /// [`MAX_SELECTOR_SPLIT_CLONE_WEIGHT`].
+    pub split_clone_weight_total: u64,
 }

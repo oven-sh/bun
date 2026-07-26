@@ -53,12 +53,12 @@ struct RetainedSample {
     WTF::Vector<RetainedFrame> frames;
 };
 
-static thread_local WTF::Vector<RetainedSample>* s_retainedSamples = nullptr;
+static thread_local std::unique_ptr<WTF::Vector<RetainedSample>> s_retainedSamples;
 
 static WTF::Vector<RetainedSample>& retainedSamples()
 {
     if (!s_retainedSamples)
-        s_retainedSamples = new WTF::Vector<RetainedSample>();
+        s_retainedSamples = std::make_unique<WTF::Vector<RetainedSample>>();
     return *s_retainedSamples;
 }
 

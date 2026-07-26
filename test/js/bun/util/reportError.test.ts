@@ -1,5 +1,5 @@
 import { spawnSync } from "bun";
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { join } from "path";
 
@@ -121,4 +121,27 @@ test("native error printer handles lone surrogates in message and stack frame na
   // Printer must not have crashed: normal uncaught-error exit (1), no signal.
   expect(proc.signalCode).toBeNull();
   expect(exitCode).toBe(1);
+});
+
+describe.each([
+  ["array", "[a]", "throw a;"],
+  ["array", "[a]", "Promise.reject(a);"],
+  ["Proxy", "new Proxy(a,{})", "throw a;"],
+])("%s / %s / %s", (_, wrap, stmt) => {
+  test.concurrent("native error printer survives a deeply nested thrown value", async () => {
+    const src = `
+      let a = {};
+      for (let i = 0; i < 50000; i++) a = ${wrap};
+      ${stmt}
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      env: bunEnv,
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    await proc.exited;
+    expect(proc.signalCode).toBeNull();
+    expect(proc.exitCode).toBe(1);
+  });
 });

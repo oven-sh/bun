@@ -423,14 +423,9 @@ it("serialize rejects CryptoKey regardless of extractability", async () => {
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
   expect(stdout).toBe(
-    [
-      "nonExtractable rejected DataCloneError",
-      "extractable rejected DataCloneError",
-      "32",
-      "32",
-      "true HMAC",
-      "",
-    ].join("\n"),
+    ["nonExtractable rejected DataCloneError", "extractable rejected DataCloneError", "32", "32", "true HMAC", ""].join(
+      "\n",
+    ),
   );
   expect(exitCode).toBe(0);
 });

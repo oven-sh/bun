@@ -2095,8 +2095,7 @@ impl ErrorCode {
             | ProtocolError => Some(1002),
             InvalidUtf8 => Some(1007),
             MessageTooBig => Some(1009),
-            // Handshake / transport / proxy: the socket is dead, never upgraded,
-            // or the write path itself failed, so no Close frame is attempted.
+            // Handshake / transport / proxy failures: nothing to write a Close frame to.
             Cancel | InvalidResponse | Expected101StatusCode | MissingUpgradeHeader
             | MissingConnectionHeader | MissingWebsocketAcceptHeader | InvalidUpgradeHeader
             | InvalidConnectionHeader | InvalidWebsocketVersion | MismatchWebsocketAcceptHeader

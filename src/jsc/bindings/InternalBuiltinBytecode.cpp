@@ -27,7 +27,6 @@ extern "C" __attribute__((weak)) const uint64_t bun_builtin_bytecode_blob_size =
 #endif
 
 namespace Bun {
-WTF::String inflateInternalModuleSource(unsigned moduleIndex);
 namespace BuiltinBytecode {
 
 using namespace JSC;
@@ -57,10 +56,9 @@ static std::span<const uint8_t> blob()
     return { bun_builtin_bytecode_blob, size };
 }
 
-static SourceCode makeBuiltinModuleSource(unsigned moduleIndex)
+static SourceCode makeBuiltinModuleSource(const InternalModuleRegistryConstants::InternalModuleSpan& span)
 {
-    auto& span = InternalModuleRegistryConstants::kInternalModuleSpans[moduleIndex];
-    auto sourceText = inflateInternalModuleSource(moduleIndex);
+    auto sourceText = WTF::String(WTF::StringImpl::createWithoutCopying(std::span<const char>(bun_internal_modules_data + span.offset, span.length)));
     auto&& origin = SourceOrigin(WTF::URL(String(ASCIILiteral::fromLiteralUnsafe(span.url))));
     return JSC::makeSource(sourceText, origin, JSC::SourceTaintedOrigin::Untainted, String(ASCIILiteral::fromLiteralUnsafe(span.moduleName)));
 }
@@ -77,7 +75,7 @@ void generateBlobAndExit(JSC::JSGlobalObject* globalObject, JSC::VM& vm, const c
 
     for (size_t i = 0; i < count; i++) {
         auto& span = InternalModuleRegistryConstants::kInternalModuleSpans[i];
-        SourceCode source = makeBuiltinModuleSource(static_cast<unsigned>(i));
+        SourceCode source = makeBuiltinModuleSource(span);
         auto moduleName = String(ASCIILiteral::fromLiteralUnsafe(span.moduleName));
         auto* executable = createBuiltinExecutable(vm, source, Identifier::fromString(vm, moduleName), ImplementationVisibility::Public, ConstructorKind::None, ConstructAbility::CannotConstruct, InlineAttribute::None);
         ParserError parserError;

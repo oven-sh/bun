@@ -352,18 +352,7 @@ writeIfNotChanged(
 //
 // In debug builds the module sources are read from disk (BUN_DYNAMIC_JS_LOAD_PATH),
 // so every module offset/length is 0. The functions span is still real in debug.
-// Cold modules are stored as independent zstd frames (~4.5x smaller) and
-// inflated on first use; modules on common startup paths stay raw so hot loads
-// never decompress. `length` is the text size; `compressedLength` is the
-// frame size at `offset`, or 0 for a raw entry.
-const hotModules = new Set(
-  fs
-    .readFileSync(path.join(import.meta.dir, "hot-builtin-modules.txt"), "utf8")
-    .split("\n")
-    .map(l => l.trim())
-    .filter(l => l && !l.startsWith("#")),
-);
-const moduleSpans: { id: string; enumName: string; offset: number; length: number; compressedLength: number }[] = [];
+const moduleSpans: { id: string; enumName: string; offset: number; length: number }[] = [];
 let blob: Buffer;
 {
   const chunks: Buffer[] = [Buffer.from(functionsSource + "\0", "latin1")];
@@ -371,26 +360,18 @@ let blob: Buffer;
   for (const id of moduleList.slice(0, nativeStartIndex)) {
     const enumName = idToEnumName(id);
     if (debug) {
-      moduleSpans.push({ id, enumName, offset: 0, length: 0, compressedLength: 0 });
+      moduleSpans.push({ id, enumName, offset: 0, length: 0 });
       continue;
     }
     const out = outputs.get(id.slice(0, -3).replaceAll("/", path.sep));
     if (!out) throw new Error(`Missing output for ${id}`);
     checkAscii(out);
-    // Trailing "\n\0" on raw entries keeps each a valid C string in the blob.
+    // Trailing "\n\0": the NUL keeps each entry a valid C string should anything
+    // downstream ever strlen into the blob.
     const bytes = Buffer.from(out + "\n\0", "latin1");
-    if (hotModules.has(enumName)) {
-      // Hot path: stored raw so loading never pays for decompression.
-      chunks.push(bytes);
-      moduleSpans.push({ id, enumName, offset, length: bytes.length - 1, compressedLength: 0 });
-      offset += bytes.length;
-    } else {
-      // Cold tail: independent zstd frame, inflated on first use (~4.5x smaller).
-      const frame = Buffer.from(Bun.zstdCompressSync(bytes.subarray(0, -1), { level: 19 }));
-      chunks.push(frame);
-      moduleSpans.push({ id, enumName, offset, length: bytes.length - 1, compressedLength: frame.length });
-      offset += frame.length;
-    }
+    chunks.push(bytes);
+    moduleSpans.push({ id, enumName, offset, length: bytes.length - 1 });
+    offset += bytes.length;
   }
   blob = Buffer.concat(chunks);
 }
@@ -464,16 +445,15 @@ namespace InternalModuleRegistryConstants {
 
 ${moduleSpans
   .map(
-    ({ enumName, offset, length, compressedLength }) =>
+    ({ enumName, offset, length }) =>
       `static constexpr uint32_t ${enumName}CodeOffset = ${offset};\n` +
-      `static constexpr uint32_t ${enumName}CodeLength = ${length};\n` +
-      `static constexpr uint32_t ${enumName}CompressedLength = ${compressedLength};`,
+      `static constexpr uint32_t ${enumName}CodeLength = ${length};`,
   )
   .join("\n")}
 
-struct InternalModuleSpan { const char* enumName; const char* moduleName; const char* url; uint32_t offset; uint32_t length; uint32_t compressedLength; };
+struct InternalModuleSpan { const char* enumName; const char* moduleName; const char* url; uint32_t offset; uint32_t length; };
 static constexpr InternalModuleSpan kInternalModuleSpans[] = {
-${moduleSpans.map(({ id, enumName, offset, length, compressedLength }) => `  { "${enumName}", "${idToPublicSpecifierOrEnumName(id)}", "${"builtin://" + id.replace(/\.[mc]?[tj]s$/, "").replace(/[^a-zA-Z0-9]+/g, "/")}", ${offset}, ${length}, ${compressedLength} },`).join("\n")}
+${moduleSpans.map(({ id, enumName, offset, length }) => `  { "${enumName}", "${idToPublicSpecifierOrEnumName(id)}", "${"builtin://" + id.replace(/\.[mc]?[tj]s$/, "").replace(/[^a-zA-Z0-9]+/g, "/")}", ${offset}, ${length} },`).join("\n")}
 };
 
 } // namespace InternalModuleRegistryConstants

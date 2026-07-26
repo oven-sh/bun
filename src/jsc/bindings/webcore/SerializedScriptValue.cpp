@@ -2123,10 +2123,8 @@ private:
             }
 
             if (auto* keyObject = dynamicDowncast<Bun::JSKeyObject>(obj)) {
-                // Node.js allows KeyObject through structuredClone() and worker postMessage(),
-                // but v8.serialize() throws and child_process "advanced" IPC delivers {}.
-                // Without this gate the plaintext PEM (including private-key material) lands
-                // in any byte sink that stores v8.serialize() output.
+                // Node.js: v8.serialize() throws, child_process advanced IPC delivers {};
+                // only structuredClone / worker postMessage clone a KeyObject.
                 if (m_forStorage == SerializationForStorage::Yes) {
                     code = SerializationReturnCode::DataCloneError;
                     return true;

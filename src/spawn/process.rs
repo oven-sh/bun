@@ -418,8 +418,6 @@ impl Process {
             let ctx = self.event_loop_ctx();
             if self.needs_waiter_thread() {
                 if waiter_thread_posix::init().is_err() {
-                    // Zero fds free for the one-time eventfd: reap this child
-                    // synchronously so it is never orphaned.
                     self.wait_posix(true);
                     return Ok(());
                 }

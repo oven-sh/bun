@@ -716,7 +716,10 @@ impl BlobExt for Blob {
         writer: &mut W,
     ) -> crate::Result<()> {
         let is_memory_backed = if let Some(store) = self.store.get() {
-            matches!(store.data, store::Data::Bytes(_))
+            matches!(
+                store.data,
+                store::Data::Bytes(_) | store::Data::Composite(_)
+            )
         } else {
             false
         };
@@ -746,12 +749,16 @@ impl BlobExt for Blob {
         writer.write_int_le::<u8>(store_tag as u8)?;
 
         if let Some(store) = self.store.get() {
-            if let store::Data::Bytes(bytes) = &store.data {
+            let stored_name: Option<&[u8]> = match &store.data {
+                store::Data::Bytes(bytes) => Some(&bytes.stored_name),
+                store::Data::Composite(c) => Some(&c.stored_name),
+                _ => None,
+            };
+            if let Some(stored_name) = stored_name {
                 let view = self.shared_view();
                 writer.write_int_le::<u32>(view.len() as u32)?;
                 writer.write_all(view)?;
 
-                let stored_name = &bytes.stored_name[..];
                 writer.write_int_le::<u32>(stored_name.len() as u32)?;
                 writer.write_all(stored_name)?;
             } else {
@@ -1077,7 +1084,7 @@ impl BlobExt for Blob {
                         }
                     }
                 }
-                store::Data::Bytes(_) => {
+                store::Data::Bytes(_) | store::Data::Composite(_) => {
                     write_format_for_size::<W, ENABLE_ANSI_COLORS>(
                         self.is_jsdom_file.get(),
                         self.size.get() as usize,
@@ -1092,7 +1099,7 @@ impl BlobExt for Blob {
                 && self.store.get().is_some()
                 && matches!(
                     self.store().expect("infallible: store present").data,
-                    store::Data::Bytes(_)
+                    store::Data::Bytes(_) | store::Data::Composite(_)
                 ));
         if !self.is_s3()
             && (!self.content_type_slice().is_empty()
@@ -1368,7 +1375,8 @@ impl BlobExt for Blob {
         match &store.data {
             store::Data::S3(s3) => s3.unlink(store, global_this, args.next_eat()),
             store::Data::File(file) => file.unlink(global_this),
-            store::Data::Bytes(_) => unreachable!(), // validate_writable_blob should have caught this
+            // validate_writable_blob should have caught this
+            store::Data::Bytes(_) | store::Data::Composite(_) => unreachable!(),
         }
     }
 
@@ -2256,7 +2264,7 @@ impl BlobExt for Blob {
                 }
             }
             store::DataTag::S3 => crate::webcore::s3_file::get_stat(self, global_this, callback),
-            store::DataTag::Bytes => Ok(JSValue::UNDEFINED),
+            store::DataTag::Bytes | store::DataTag::Composite => Ok(JSValue::UNDEFINED),
         }
     }
 
@@ -2296,7 +2304,7 @@ impl BlobExt for Blob {
         // through to `self.size.get() = 0`. `StoreRef::data_mut` centralises
         // the raw-ptr deref so each read here is a fresh, safe borrow.
         match store.data_mut().tag() {
-            store::DataTag::Bytes => {
+            store::DataTag::Bytes | store::DataTag::Composite => {
                 let offset = self.offset.get();
                 let store_size = store.size();
                 if store_size != MAX_SIZE {
@@ -2345,7 +2353,7 @@ impl BlobExt for Blob {
         // via `StoreRef::data_mut` after `resolve_file_stat` so no
         // `Deref`-produced `&Data`/`&File` is live across the mutating call.
         match store.data_mut().tag() {
-            store::DataTag::Bytes => {
+            store::DataTag::Bytes | store::DataTag::Composite => {
                 let offset = self.offset.get();
                 let store_size = store.size();
                 if store_size != MAX_SIZE {
@@ -2555,23 +2563,24 @@ impl BlobExt for Blob {
         // not alias any outstanding borrow (other `StoreRef`s only hold raw
         // `NonNull<Store>`, never a long-lived `&Store`; JS execution is
         // single-threaded).
-        match store_ref.data_mut() {
-            store::Data::Bytes(bytes) => {
-                let v: &mut [u8] = bytes.as_array_list_leak();
-                let len = v.len();
-                if len == 0 {
-                    return empty();
-                }
-                // Defensive: `offset` may originate from untrusted structured-clone data.
-                let off = (self.offset.get() as usize).min(len);
-                let clamped = (len - off).min(self.size.get() as usize);
-                // `v` already carries mutable provenance (derived through
-                // `StoreRef::data_mut`); safe sub-slicing then raw-ptr coercion
-                // preserves it without `from_raw_parts_mut`/`ptr::add`.
-                core::ptr::from_mut::<[u8]>(&mut v[off..off + clamped])
-            }
-            _ => empty(),
+        let full: *mut [u8] = match store_ref.data_mut() {
+            store::Data::Bytes(bytes) => core::ptr::from_mut::<[u8]>(bytes.as_array_list_leak()),
+            store::Data::Composite(c) => c.flatten_mut(),
+            _ => return empty(),
+        };
+        let len = full.len();
+        if len == 0 {
+            return empty();
         }
+        // Defensive: `offset` may originate from untrusted structured-clone data.
+        let off = (self.offset.get() as usize).min(len);
+        let clamped = (len - off).min(self.size.get() as usize);
+        // `full` already carries mutable provenance (derived through
+        // `StoreRef::data_mut`); safe sub-slicing via `&mut *full` then raw-ptr
+        // coercion preserves it without `from_raw_parts_mut`/`ptr::add`.
+        // SAFETY: `full` points at the store-owned buffer we just obtained
+        // above; no other `&`/`&mut` to it is live in this frame.
+        core::ptr::from_mut::<[u8]>(unsafe { &mut (&mut *full)[off..off + clamped] })
     }
 
     fn set_is_ascii_flag(&self, is_all_ascii: bool) {
@@ -3396,6 +3405,39 @@ impl BlobExt for Blob {
         let mut joiner = bun_core::string_joiner::StringJoiner::default();
         let mut could_have_non_ascii = false;
 
+        // Blob-typed parts with in-memory stores are referenced, not copied, so
+        // that `new Blob(Array(n).fill(big))` and header/footer framing don't
+        // duplicate the payload. `shared` records each reference together with
+        // `joiner.len` at the time it was encountered; the final assembly then
+        // interleaves slices of the joined literal bytes with the references.
+        // Empty `shared` => no Blob parts, fall through to the flat path as
+        // before.
+        let mut shared: Vec<(usize, store::Part)> = Vec::new();
+        let mut shared_len: SizeType = 0;
+        let mut push_blob_part =
+            |shared: &mut Vec<(usize, store::Part)>,
+             joiner: &bun_core::string_joiner::StringJoiner<'_>,
+             blob: &Blob| {
+                let Some(store) = blob.store.get() else { return false };
+                if !matches!(store.data, store::Data::Bytes(_) | store::Data::Composite(_)) {
+                    return false;
+                }
+                let size = blob.size.get();
+                if size == 0 || size == MAX_SIZE {
+                    return false;
+                }
+                shared.push((
+                    joiner.len,
+                    store::Part {
+                        store: store.clone(),
+                        offset: blob.offset.get(),
+                        len: size,
+                    },
+                ));
+                shared_len = shared_len.saturating_add(size);
+                true
+            };
+
         loop {
             match current.js_type_loose() {
                 jsc::JSType::NumberObject
@@ -3513,8 +3555,12 @@ impl BlobExt for Blob {
                                     if let Some(blob) = item.as_class_ref::<Blob>() {
                                         could_have_non_ascii = could_have_non_ascii
                                             || blob.charset.get() != strings::AsciiStatus::AllAscii;
-                                        // A later part may run user JS that drops the
-                                        // last ref to this Blob's Store before `done()`.
+                                        if push_blob_part(&mut shared, &joiner, blob) {
+                                            continue;
+                                        }
+                                        // File/S3-backed or empty: preserve the prior
+                                        // behaviour (contributes `shared_view()`, which
+                                        // is `&[]` for non-in-memory stores).
                                         if parts_can_run_js {
                                             joiner.push_cloned(blob.shared_view());
                                         } else {
@@ -3550,10 +3596,11 @@ impl BlobExt for Blob {
                     if let Some(blob) = current.as_class_ref::<Blob>() {
                         could_have_non_ascii = could_have_non_ascii
                             || blob.charset.get() != strings::AsciiStatus::AllAscii;
-                        // This arm only handles entries deferred onto the walk
-                        // stack; other pending entries may still run user JS and
-                        // free this Blob's Store before `done()`, so always copy.
-                        joiner.push_cloned(blob.shared_view());
+                        if push_blob_part(&mut shared, &joiner, blob) {
+                            // referenced
+                        } else {
+                            joiner.push_cloned(blob.shared_view());
+                        }
                     } else {
                         let sliced = current.to_slice_clone(global)?;
                         could_have_non_ascii = could_have_non_ascii || sliced.is_allocated();
@@ -3600,12 +3647,52 @@ impl BlobExt for Blob {
             };
         }
 
-        let joined: Vec<u8> = joiner.done().expect("oom").into_vec();
-
-        if !could_have_non_ascii {
-            return Ok(Blob::init_with_all_ascii(joined, global, true));
+        if shared.is_empty() {
+            let joined: Vec<u8> = joiner.done().expect("oom").into_vec();
+            if !could_have_non_ascii {
+                return Ok(Blob::init_with_all_ascii(joined, global, true));
+            }
+            return Ok(Blob::init(joined, global));
         }
-        Ok(Blob::init(joined, global))
+
+        // Assemble the composite: runs of literal bytes from `joiner` become
+        // fresh `Bytes` stores interleaved with the shared `Part`s in order.
+        let joined: Box<[u8]> = joiner.done().expect("oom");
+        let mut parts: Vec<store::Part> = Vec::with_capacity(shared.len() * 2 + 1);
+        let mut cursor: usize = 0;
+        let push_literal = |parts: &mut Vec<store::Part>, from: usize, to: usize| {
+            if from < to {
+                let bytes = joined[from..to].to_vec();
+                let len = bytes.len() as SizeType;
+                parts.push(store::Part {
+                    store: Store::init(bytes),
+                    offset: 0,
+                    len,
+                });
+            }
+        };
+        for (mark, part) in shared {
+            push_literal(&mut parts, cursor, mark);
+            cursor = mark;
+            parts.push(part);
+        }
+        push_literal(&mut parts, cursor, joined.len());
+        let total_len: SizeType = shared_len + joined.len() as SizeType;
+        drop(joined);
+        debug_assert_eq!(total_len, parts.iter().map(|p| p.len).sum::<SizeType>());
+
+        let store = Store::init_composite(parts.into_boxed_slice(), total_len);
+        if !could_have_non_ascii {
+            // SAFETY: freshly-minted Store with refcount==1; no other alias.
+            unsafe { (*store.as_ptr()).is_all_ascii = Some(true) };
+        }
+        let blob = Blob::init_with_store(store, global);
+        blob.charset.set(if could_have_non_ascii {
+            strings::AsciiStatus::Unknown
+        } else {
+            strings::AsciiStatus::AllAscii
+        });
+        Ok(blob)
     }
 
     // is_detached: defined once above; duplicate removed to fix E0034.
@@ -3625,6 +3712,7 @@ impl BlobExt for Blob {
                         bytes.len() as usize
                     };
                 }
+                store::Data::Composite(c) => size += c.memory_cost(),
                 store::Data::File(file) => size += file.pathlike.estimated_size(),
                 store::Data::S3(s3) => size += s3.estimated_size(),
             }
@@ -4044,7 +4132,7 @@ impl FormDataContext<'_> {
                                 }
                             }
                         }
-                        store::Data::Bytes(_) => {
+                        store::Data::Bytes(_) | store::Data::Composite(_) => {
                             // SAFETY: borrowed from the blob's store, which the
                             // `DOMFormData` entry keeps alive until after
                             // `joiner.done()`.
@@ -4659,7 +4747,7 @@ fn write_file_with_empty_source_to_destination(
         }
         // Writing to a buffer-backed blob should be a type error,
         // making this unreachable. TODO: `{}` -> `unreachable`
-        store::Data::Bytes(_) => {}
+        store::Data::Bytes(_) | store::Data::Composite(_) => {}
     }
 
     Ok(JSPromise::resolved_promise_value(
@@ -4690,7 +4778,17 @@ pub fn write_file_with_source_destination(
     let Some(source_store) = source_blob.store.get().clone() else {
         return write_file_with_empty_source_to_destination(ctx, destination_blob, options);
     };
-    let source_type = source_store.data.tag();
+    // `WriteFile` reads the source via `Blob::shared_view()` on the threadpool,
+    // which for `Composite` fills `OnceLock<Box<[u8]>>` on first call. That is
+    // thread-safe, but populating it here on the JS thread keeps every
+    // off-thread read on the `Bytes`-equivalent fast path.
+    if let store::Data::Composite(c) = &source_store.data {
+        c.flatten();
+    }
+    let source_type = match source_store.data.tag() {
+        store::DataTag::Composite => store::DataTag::Bytes,
+        t => t,
+    };
 
     if destination_type == store::DataTag::File && source_type == store::DataTag::Bytes {
         let write_file_promise = bun_core::heap::into_raw(Box::new(WriteFilePromise {
@@ -4837,8 +4935,9 @@ pub fn write_file_with_source_destination(
         let proxy_owned = http_proxy_href(ctx);
         let proxy_url = proxy_owned.as_deref();
         match &source_store.data {
-            store::Data::Bytes(bytes) => {
-                if bytes.len() as usize > S3::MultiPartUploadOptions::MAX_SINGLE_UPLOAD_SIZE {
+            store::Data::Bytes(_) | store::Data::Composite(_) => {
+                let bytes = source_store.shared_view();
+                if bytes.len() > S3::MultiPartUploadOptions::MAX_SINGLE_UPLOAD_SIZE {
                     if let Some(stream) = ReadableStream::from_js(
                         ReadableStream::from_blob_copy_ref(
                             ctx,
@@ -4894,7 +4993,7 @@ pub fn write_file_with_source_destination(
                                 S3UploadResult::Success => {
                                     this.promise.resolve(
                                         global,
-                                        JSValue::js_number(this.store.data.as_bytes().len() as f64),
+                                        JSValue::js_number(this.store.size() as f64),
                                     )?;
                                 }
                                 S3UploadResult::Failure(err) => {
@@ -4916,7 +5015,7 @@ pub fn write_file_with_source_destination(
                     s3_client::upload(
                         &aws_options.credentials,
                         s3.path(),
-                        bytes.slice(),
+                        bytes,
                         destination_blob.content_type_or_mime_type(),
                         // SAFETY: `*const [u8]` borrows from sibling `_*_slice` fields
                         // on `aws_options`, which outlives this call.
@@ -5601,6 +5700,9 @@ pub fn jsdom_file_construct_(
                     // carry an owned `stored_name` from the source blob; the
                     // assignment drops (frees) the previous `Box<[u8]>`.
                     bytes.stored_name = name_value_str.to_owned_slice().into_boxed_slice();
+                }
+                store::Data::Composite(c) => {
+                    c.stored_name = name_value_str.to_owned_slice().into_boxed_slice();
                 }
                 store::Data::S3(_) | store::Data::File(_) => {
                     blob.name.set(name_value_str.dupe_ref());

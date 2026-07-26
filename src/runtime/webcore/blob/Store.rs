@@ -30,7 +30,7 @@ use super::SizeType;
 // ──────────────────────────────────────────────────────────────────────────
 
 pub use bun_jsc::webcore_types::store::{
-    Bytes, Data, DataTag, File, S3, SerializeTag, Store, StoreRef,
+    Bytes, Composite, Data, DataTag, File, Part, S3, SerializeTag, Store, StoreRef,
 };
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -215,6 +215,14 @@ impl StoreExt for Store {
 
                 writer.write_int_le::<u32>(bytes.stored_name.len() as u32)?;
                 writer.write_all(&bytes.stored_name)?;
+            }
+            Data::Composite(c) => {
+                let slice = c.flatten();
+                writer.write_int_le::<u32>(slice.len() as u32)?;
+                writer.write_all(slice)?;
+
+                writer.write_int_le::<u32>(c.stored_name.len() as u32)?;
+                writer.write_all(&c.stored_name)?;
             }
         }
         Ok(())

@@ -410,7 +410,7 @@ impl Blob {
         match &self.store()?.data {
             store::Data::File(file) => Some(&file.mime_type.value),
             store::Data::S3(s3) => Some(&s3.mime_type.value),
-            store::Data::Bytes(_) => None,
+            store::Data::Bytes(_) | store::Data::Composite(_) => None,
         }
     }
 
@@ -439,6 +439,10 @@ impl Blob {
         match &self.store.get().as_deref()?.data {
             store::Data::Bytes(bytes) => {
                 let n = &bytes.stored_name[..];
+                if n.is_empty() { None } else { Some(n) }
+            }
+            store::Data::Composite(c) => {
+                let n = &c.stored_name[..];
                 if n.is_empty() { None } else { Some(n) }
             }
             store::Data::File(file) => match &file.pathlike {
@@ -537,6 +541,11 @@ pub mod store {
         Bytes(Bytes),
         File(File),
         S3(S3),
+        /// A list of `(store, offset, len)` windows into other in-memory stores.
+        /// Created by `new Blob(parts)` so that Blob-typed parts are referenced
+        /// instead of copied. Flattened to a single contiguous buffer on the
+        /// first call that needs one (`shared_view()`), cached in `flat`.
+        Composite(Composite),
     }
 
     /// Discriminant-only tag for `Data`.
@@ -545,6 +554,7 @@ pub mod store {
         Bytes,
         File,
         S3,
+        Composite,
     }
 
     impl Data {
@@ -738,6 +748,76 @@ pub mod store {
         }
     }
 
+    // ────────────────────────────────────────────────────────────────────
+    // Composite
+    // ────────────────────────────────────────────────────────────────────
+
+    /// One windowed reference into another in-memory `Store`.
+    pub struct Part {
+        pub store: StoreRef,
+        pub offset: SizeType,
+        pub len: SizeType,
+    }
+
+    /// A rope of in-memory parts. See [`Data::Composite`].
+    pub struct Composite {
+        pub parts: Box<[Part]>,
+        pub total_len: SizeType,
+        /// Used by the `File` constructor; mirrors [`Bytes::stored_name`].
+        pub stored_name: Box<[u8]>,
+        /// Lazily materialised contiguous buffer, filled on the first call to
+        /// [`Composite::flatten`]. `OnceLock` so `Store::shared_view(&self)`
+        /// stays read-only and thread-safe.
+        flat: std::sync::OnceLock<Box<[u8]>>,
+    }
+
+    impl Composite {
+        #[inline]
+        pub fn new(parts: Box<[Part]>, total_len: SizeType) -> Composite {
+            Composite {
+                parts,
+                total_len,
+                stored_name: Box::default(),
+                flat: std::sync::OnceLock::new(),
+            }
+        }
+
+        /// Borrow the contiguous buffer, concatenating every part on first
+        /// call. Subsequent calls return the cached buffer.
+        pub fn flatten(&self) -> &[u8] {
+            self.flat.get_or_init(|| {
+                let mut out = Vec::with_capacity(self.total_len as usize);
+                for p in &*self.parts {
+                    let view = p.store.shared_view();
+                    let off = (p.offset as usize).min(view.len());
+                    let len = (p.len as usize).min(view.len() - off);
+                    out.extend_from_slice(&view[off..off + len]);
+                }
+                debug_assert_eq!(out.len(), self.total_len as usize);
+                out.into_boxed_slice()
+            })
+        }
+
+        /// Mutable access to the flattened buffer, populating it first.
+        /// Returns a raw fat pointer (mutable provenance via `&mut self`) for
+        /// the `shared_view_raw()` → external-ArrayBuffer path.
+        pub fn flatten_mut(&mut self) -> *mut [u8] {
+            self.flatten();
+            let buf: &mut Box<[u8]> = self
+                .flat
+                .get_mut()
+                .expect("infallible: populated by flatten() above");
+            core::ptr::from_mut::<[u8]>(&mut **buf)
+        }
+
+        #[inline]
+        pub fn memory_cost(&self) -> usize {
+            self.parts.len() * core::mem::size_of::<Part>()
+                + self.stored_name.len()
+                + self.flat.get().map(|b| b.len()).unwrap_or(0)
+        }
+    }
+
     impl Drop for Bytes {
         fn drop(&mut self) {
             // `stored_name` is a `Box<[u8]>`, so its field `Drop` frees it;
@@ -891,6 +971,10 @@ pub mod store {
                     let n = &bytes.stored_name[..];
                     if n.is_empty() { None } else { Some(n) }
                 }
+                Data::Composite(c) => {
+                    let n = &c.stored_name[..];
+                    if n.is_empty() { None } else { Some(n) }
+                }
                 Data::File(file) => {
                     if let PathOrFileDescriptor::Path(path) = &file.pathlike {
                         Some(path.slice())
@@ -907,6 +991,7 @@ pub mod store {
                 core::mem::size_of::<Self>()
                     + match &self.data {
                         Data::Bytes(bytes) => bytes.len() as usize,
+                        Data::Composite(c) => c.memory_cost(),
                         Data::File(_) => 0,
                         Data::S3(s3) => s3.estimated_size(),
                     }
@@ -919,16 +1004,29 @@ pub mod store {
         pub fn size(&self) -> SizeType {
             match &self.data {
                 Data::Bytes(b) => b.len(),
+                Data::Composite(c) => c.total_len,
                 Data::File(_) | Data::S3(_) => MAX_SIZE,
             }
         }
 
         #[inline]
         pub fn shared_view(&self) -> &[u8] {
-            if let Data::Bytes(bytes) = &self.data {
-                return bytes.slice();
+            match &self.data {
+                Data::Bytes(bytes) => bytes.slice(),
+                Data::Composite(c) => c.flatten(),
+                _ => &[],
             }
-            &[]
+        }
+
+        /// Heap-allocate a `Composite` store. `parts` must reference in-memory
+        /// (`Bytes`/`Composite`) stores only.
+        pub fn init_composite(parts: Box<[Part]>, total_len: SizeType) -> StoreRef {
+            StoreRef::from(Store::new(Store {
+                data: Data::Composite(Composite::new(parts, total_len)),
+                mime_type: bun_http_types::MimeType::NONE,
+                ref_count: bun_ptr::ThreadSafeRefCount::init(),
+                is_all_ascii: None,
+            }))
         }
 
         /// Bump the intrusive refcount.

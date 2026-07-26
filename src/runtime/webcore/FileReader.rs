@@ -341,7 +341,9 @@ impl FileReader {
             // `StoreRef` liveness invariant (single-threaded JS event loop; we
             // hold the only mutating handle).
             match store.data_mut() {
-                blob::store::Data::S3(_) | blob::store::Data::Bytes(_) => {
+                blob::store::Data::S3(_)
+                | blob::store::Data::Bytes(_)
+                | blob::store::Data::Composite(_) => {
                     panic!("Invalid state in FileReader: expected file ")
                 }
                 blob::store::Data::File(file) => {

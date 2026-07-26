@@ -1788,7 +1788,8 @@ fn _join_abs_string_buf<'a, const IS_SENTINEL: bool, P: PlatformT>(
 
 #[cold]
 fn normalize_spill<P: PlatformT>(input: &[u8], out: &mut [u8], avail: usize) -> Option<usize> {
-    let mut spill = vec![0u8; input.len()];
+    // +1: the Windows UNC branch writes `buf[vol_len] = sep` with vol_len up to input.len().
+    let mut spill = vec![0u8; input.len() + 1];
     let r = normalize_string_buf::<false, P, true>(input, &mut spill).len();
     if r > avail {
         return None;
@@ -2506,6 +2507,12 @@ mod tests {
         let mut buf = [0u8; 64];
         let long = vec![b'a'; 5000];
         let r = join_abs_string_buf::<platform::Windows>(b"C:\\cwd", &mut buf, &[&long]);
+        assert_eq!(r, b"");
+        // UNC: normalize_string_generic_tz writes buf[vol_len] = sep with vol_len == input.len().
+        let long_unc: Vec<u8> = [b"\\\\".as_slice(), &vec![b'a'; 5000]].concat();
+        let r = join_abs_string_buf::<platform::Windows>(b"C:\\cwd", &mut buf, &[&long_unc]);
+        assert_eq!(r, b"");
+        let r = join_abs_string_buf::<platform::Windows>(b"C:\\cwd", &mut buf, &[&long_unc, b"x"]);
         assert_eq!(r, b"");
     }
 

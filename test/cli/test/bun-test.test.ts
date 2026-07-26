@@ -1636,48 +1636,52 @@ describe.concurrent("test file discovery (scanner)", () => {
     expect(exitCode).toBe(0);
   });
 
-  // MAX_PATH_BYTES is 4096 on Linux, 1024 on macOS, and ~98 KB on Windows.
-  // 100000 bytes exceeds all of them.
-  for (const len of isWindows ? [100_000] : [5000, 100_000]) {
-    test(`path argument longer than MAX_PATH_BYTES (${len}) reports no match instead of panicking`, async () => {
-      using dir = tempDir("scanner-long-arg", {
+  // MAX_PATH_BYTES is 4096 on Linux and 1024 on macOS. On Windows it is
+  // 32767*3+1, which exceeds the 32767-wide-char CreateProcessW command-line
+  // limit for ASCII argv, so this delivery vector cannot reach the overflow
+  // there; the Windows primitive is covered by the cargo unit test in
+  // bun_paths::resolve_path::tests.
+  for (const len of [5000, 100_000]) {
+    test.skipIf(isWindows)(
+      `path argument longer than MAX_PATH_BYTES (${len}) reports no match instead of panicking`,
+      async () => {
+        using dir = tempDir("scanner-long-arg", {
+          "exists.test.ts": `import { test } from "bun:test"; test("exists", () => {});`,
+        });
+        const longArg = "/" + Buffer.alloc(len, "a").toString() + ".test.ts";
+
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "test", longArg],
+          env: bunEnv,
+          cwd: String(dir),
+          stderr: "pipe",
+        });
+        const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+        expect(stderr).toContain("had no matches");
+        expect(exitCode).toBe(1);
+      },
+    );
+  }
+
+  test.skipIf(isWindows)(
+    "relative path argument longer than MAX_PATH_BYTES reports no match instead of panicking",
+    async () => {
+      using dir = tempDir("scanner-long-rel-arg", {
         "exists.test.ts": `import { test } from "bun:test"; test("exists", () => {});`,
       });
-      const sep = isWindows ? "\\" : "/";
-      const longArg = sep + Buffer.alloc(len, "a").toString() + ".test.ts";
+      const longArg = "./" + Buffer.alloc(5000, "a").toString() + ".test.ts";
 
       await using proc = Bun.spawn({
         cmd: [bunExe(), "test", longArg],
         env: bunEnv,
         cwd: String(dir),
-        stdout: "pipe",
         stderr: "pipe",
       });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
       expect(stderr).toContain("had no matches");
-      expect(stdout).not.toContain("range end index");
       expect(exitCode).toBe(1);
-    });
-  }
-
-  test("relative path argument longer than MAX_PATH_BYTES reports no match instead of panicking", async () => {
-    using dir = tempDir("scanner-long-rel-arg", {
-      "exists.test.ts": `import { test } from "bun:test"; test("exists", () => {});`,
-    });
-    const longArg = "./" + Buffer.alloc(isWindows ? 100_000 : 5000, "a").toString() + ".test.ts";
-
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "test", longArg],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-    expect(stderr).toContain("had no matches");
-    expect(stdout).not.toContain("range end index");
-    expect(exitCode).toBe(1);
-  });
+    },
+  );
 });

@@ -433,22 +433,28 @@ describe.each(["content-length", "chunked"] as const)("fetch() abandoned Respons
         await new Promise(r => server.listen(0, "127.0.0.1", r));
         const base = "http://127.0.0.1:" + server.address().port;
 
-        await (async () => {
-          const res = await fetch(base + "/big");
-          if (res.status !== 200) throw new Error("status " + res.status);
-        })();
+        let res = await fetch(base + "/big");
+        if (res.status !== 200) throw new Error("status " + res.status);
+        const ref = new WeakRef(res);
+        res = null;
 
         // Collect the unreachable Response. Weak finalizers run in
         // WeakBlock::sweep, which needs an allocation between GCs to sweep the
-        // block the dead Response sits in.
-        for (let i = 0; i < 5; i++) {
+        // block the dead Response sits in; the number of cycles needed varies
+        // by platform.
+        let outcome;
+        for (let i = 0; i < 200; i++) {
           new Error("alloc");
           Bun.gc(true);
-          await Bun.sleep(0);
+          new Error("alloc");
+          Bun.gc(true);
+          await Bun.sleep(1);
+          // Either the server sees the first socket close (fix) or it finishes
+          // pushing the whole body into a still-open socket (the drain path).
+          outcome = await Promise.race([settled, Promise.resolve()]);
+          if (outcome) break;
         }
-        // Either the server sees the first socket close (fix) or it finishes
-        // pushing the whole body into a still-open socket (the drain path).
-        const outcome = await settled;
+        outcome ??= ref.deref() ? "not-collected" : "settle-timeout";
         const written = conns[0].written;
 
         let second = "skipped";

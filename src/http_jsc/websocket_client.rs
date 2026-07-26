@@ -347,15 +347,14 @@ impl<const SSL: bool> WebSocket<SSL> {
                     return;
                 }
                 self.close_received.set(true);
+                // Dispatch now so C++ → CLOSED and later ws.send() is a no-op.
+                self.dispatch_abrupt_close(code);
                 if self.send_buffer.borrow().readable_length() == 0 {
-                    self.shutdown_after_close_frame();
-                    self.clear_data();
+                    self.close_tcp_after_failed_close();
                 } else {
                     self.close_dispatch_pending
                         .replace(Some(PendingClose::Failed(code)));
                 }
-                // Dispatch now so C++ → CLOSED and later ws.send() is a no-op.
-                self.dispatch_abrupt_close(code);
                 return;
             }
         }
@@ -1250,11 +1249,25 @@ impl<const SSL: bool> WebSocket<SSL> {
         }
     }
 
+    /// §7.1.1: after failing, close the transport ourselves rather than waiting on the peer.
+    fn close_tcp_after_failed_close(&self) {
+        self.shutdown_after_close_frame();
+        self.clear_data();
+        if SSL {
+            // shutdown_after_close_frame is a no-op for SSL; match cancel()'s SSL branch.
+            self.tcp.get().close(uws::CloseKind::Normal);
+        }
+    }
+
     fn finish_pending_close(&self) {
-        if let Some(pending) = self.close_dispatch_pending.take() {
-            self.shutdown_after_close_frame();
-            self.clear_data();
-            self.dispatch_pending_close(pending);
+        match self.close_dispatch_pending.take() {
+            Some(PendingClose::Clean { code, mut reason }) => {
+                self.shutdown_after_close_frame();
+                self.clear_data();
+                self.dispatch_close(code, &mut reason);
+            }
+            Some(PendingClose::Failed(_)) => self.close_tcp_after_failed_close(),
+            None => {}
         }
     }
 

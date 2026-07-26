@@ -1,10 +1,11 @@
 import type { Subprocess } from "bun";
 import { spawn } from "bun";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, nodeExe } from "harness";
+import { bunEnv, bunExe, nodeExe, tls as tlsCerts } from "harness";
 import { createHash } from "node:crypto";
 import { once } from "node:events";
 import { createServer } from "node:net";
+import { createServer as createTlsServer } from "node:tls";
 import * as path from "node:path";
 import { WebSocket as NodeWS, WebSocketServer } from "ws";
 function test(
@@ -628,10 +629,13 @@ describe.concurrent("WebSocket client writes a Close frame when failing on a bad
 
   type WireResult = { bytes: number; opcode: number; masked: boolean; code: number };
 
-  function hostileServer(frame: Buffer) {
+  function hostileServer(frame: Buffer, tls = false) {
     const received = Promise.withResolvers<WireResult>();
     const sockets = new Set<import("node:net").Socket>();
-    const server = createServer(sock => {
+    const makeServer = tls
+      ? (h: (s: import("node:net").Socket) => void) => createTlsServer({ key: tlsCerts.key, cert: tlsCerts.cert }, h)
+      : createServer;
+    const server = makeServer(sock => {
       sockets.add(sock);
       let buf = Buffer.alloc(0);
       let shaken = false;
@@ -682,13 +686,14 @@ describe.concurrent("WebSocket client writes a Close frame when failing on a bad
     };
   }
 
-  async function run(frame: Buffer) {
-    const { server, received, close } = hostileServer(frame);
+  async function run(frame: Buffer, tls = false) {
+    const { server, received, close } = hostileServer(frame, tls);
     await once(server.listen(0, "127.0.0.1"), "listening");
     const port = (server.address() as import("node:net").AddressInfo).port;
     const closed = Promise.withResolvers<{ code: number; wasClean: boolean }>();
     const messages: unknown[] = [];
-    const ws = new WebSocket(`ws://127.0.0.1:${port}/`);
+    const scheme = tls ? "wss" : "ws";
+    const ws = new WebSocket(`${scheme}://127.0.0.1:${port}/`, { tls: { rejectUnauthorized: false } });
     try {
       ws.onmessage = e => messages.push(e.data);
       ws.onclose = e => closed.resolve({ code: e.code, wasClean: e.wasClean });
@@ -733,6 +738,23 @@ describe.concurrent("WebSocket client writes a Close frame when failing on a bad
     const { wire, js } = await run(Buffer.from([0x81, 0x02, 0xc3, 0x28]));
     expect(wire).toEqual({ bytes: 8, opcode: 8, masked: true, code: 1007 });
     expect(js).toEqual({ code: 1007, wasClean: false });
+  });
+
+  it("declared payload > 128 MiB → Close(1009)", async () => {
+    // recv_body checks the header-declared length before reading, so a 10-byte
+    // frame with an 8-byte extended length of 128 MiB + 1 trips MessageTooBig.
+    const { wire, js } = await run(Buffer.from([0x82, 0x7f, 0x00, 0x00, 0x00, 0x00, 0x08, 0x00, 0x00, 0x01]));
+    expect(wire).toEqual({ bytes: 8, opcode: 8, masked: true, code: 1009 });
+    expect(js).toEqual({ code: 1009, wasClean: false });
+  });
+
+  it("masked TEXT over wss:// → Close(1002) and the client closes the TLS socket", async () => {
+    // shutdown_after_close_frame is a no-op for SSL; the client must still
+    // close the transport itself (§7.1.1) so this does not hang on a hostile
+    // server that never sends close_notify.
+    const { wire, js } = await run(Buffer.from([0x81, 0x82, 1, 2, 3, 4, 0x68 ^ 1, 0x69 ^ 2]), true);
+    expect(wire).toEqual({ bytes: 8, opcode: 8, masked: true, code: 1002 });
+    expect(js).toEqual({ code: 1002, wasClean: false });
   });
 
   it("frames trailing the protocol error in the same read are dropped", async () => {

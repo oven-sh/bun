@@ -1354,6 +1354,7 @@ impl BlobExt for Blob {
                 mkdirp_if_not_exists,
                 extra_options: options,
                 mode: None,
+                handoff_fd: None,
             },
         )
     }
@@ -4456,6 +4457,10 @@ pub struct WriteFileOptions {
     pub mkdirp_if_not_exists: Option<bool>,
     pub extra_options: Option<JSValue>,
     pub mode: Option<bun_sys::Mode>,
+    /// An fd the sync fast path already opened for the destination. When set,
+    /// the async `WriteFile` adopts it instead of reopening the path so a
+    /// FIFO's reader never sees an intermediate EOF.
+    pub handoff_fd: Option<Fd>,
 }
 
 /// Write an empty string to a file by truncating it.
@@ -4674,6 +4679,16 @@ pub fn write_file_with_source_destination(
     destination_blob: &mut Blob,
     options: &WriteFileOptions,
 ) -> JsResult<JSValue> {
+    // The fast path may have opened the destination and handed the fd over.
+    // Only the posix File←Bytes branch adopts it; any other branch (or an
+    // early error) must not leak it.
+    let handoff_fd = core::cell::Cell::new(options.handoff_fd);
+    let _close_handoff_fd = scopeguard::guard((), |()| {
+        if let Some(fd) = handoff_fd.get() {
+            let _ = bun_sys::close(fd);
+        }
+    });
+
     let destination_store = destination_blob
         .store
         .get()
@@ -4734,6 +4749,10 @@ pub fn write_file_with_source_destination(
                 options.mkdirp_if_not_exists.unwrap_or(true),
             )
             .expect("unreachable");
+            if let Some(fd) = handoff_fd.take() {
+                // SAFETY: file_copier was just produced by heap::into_raw; sole owner.
+                unsafe { (*file_copier).opened_fd = fd };
+            }
             let task = write_file_mod::WriteFileTask::create_on_js_thread(ctx, file_copier);
             // Defer promise creation until we're just about to schedule the task.
             // `JSPromiseStrong.strong` is private in `bun_jsc`, so use `init` (which
@@ -5040,6 +5059,18 @@ pub fn write_file_internal(
         }
     }
 
+    #[cfg(not(windows))]
+    let handoff_fd = core::cell::Cell::new(None::<Fd>);
+    // If the fast path opened an fd and handed it off, make sure it closes on
+    // any early-return between here and `write_file_with_source_destination`
+    // consuming it.
+    #[cfg(not(windows))]
+    let _close_handoff_fd = scopeguard::guard((), |()| {
+        if let Some(fd) = handoff_fd.get() {
+            let _ = bun_sys::close(fd);
+        }
+    });
+
     // If you're doing Bun.write(), try to go fast by writing short input on the main thread.
     // This is a heuristic, but it's a good one.
     //
@@ -5047,6 +5078,7 @@ pub fn write_file_internal(
     #[cfg(not(windows))]
     {
         let mut needs_async = false;
+        let mut fast_path_fd: Option<Fd> = None;
         let fast_path_ok = matches!(*path_or_blob, PathOrBlob::Path(_))
             || (matches!(*path_or_blob, PathOrBlob::Blob(ref b)
                 if b.offset.get() == 0 && !b.is_s3()
@@ -5075,6 +5107,7 @@ pub fn write_file_internal(
                             &pathlike,
                             str.get(),
                             &mut needs_async,
+                            &mut fast_path_fd,
                         )
                     } else {
                         write_string_to_file_fast::<false>(
@@ -5082,6 +5115,7 @@ pub fn write_file_internal(
                             &pathlike,
                             str.get(),
                             &mut needs_async,
+                            &mut fast_path_fd,
                         )
                     };
                     if !needs_async {
@@ -5106,6 +5140,7 @@ pub fn write_file_internal(
                             &pathlike,
                             buffer_view.byte_slice(),
                             &mut needs_async,
+                            &mut fast_path_fd,
                         )
                     } else {
                         write_bytes_to_file_fast::<false>(
@@ -5113,6 +5148,7 @@ pub fn write_file_internal(
                             &pathlike,
                             buffer_view.byte_slice(),
                             &mut needs_async,
+                            &mut fast_path_fd,
                         )
                     };
                     if !needs_async {
@@ -5121,6 +5157,7 @@ pub fn write_file_internal(
                 }
             }
         }
+        handoff_fd.set(fast_path_fd);
     }
 
     // if path_or_blob is a path, convert it into a file blob
@@ -5285,6 +5322,12 @@ pub fn write_file_internal(
     // StoreRef clone+drop keeps the destination store alive across the call.
     let _dest_hold = destination_store;
 
+    #[cfg(not(windows))]
+    let options = WriteFileOptions {
+        handoff_fd: handoff_fd.take(),
+        ..options
+    };
+
     write_file_with_source_destination(
         global_this,
         &mut *source_blob,
@@ -5375,6 +5418,7 @@ pub fn write_file(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResu
             mkdirp_if_not_exists,
             extra_options: options,
             mode,
+            handoff_fd: None,
         },
     )
 }
@@ -5387,6 +5431,7 @@ fn write_string_to_file_fast<const NEEDS_OPEN: bool>(
     pathlike: &PathOrFileDescriptor,
     str: BunString,
     needs_async: &mut bool,
+    handoff_fd: &mut Option<Fd>,
 ) -> JSValue {
     let fd: Fd = if !NEEDS_OPEN {
         pathlike.fd()
@@ -5412,6 +5457,20 @@ fn write_string_to_file_fast<const NEEDS_OPEN: bool>(
             }
         }
     };
+
+    // A FIFO/socket/chardev opened O_NONBLOCK will EAGAIN once the pipe
+    // buffer fills. Closing mid-payload would deliver a torn prefix and EOF
+    // to the reader, so hand the open fd to the async WriteFile path instead
+    // and let it drive POLLOUT. Regular files never EAGAIN; keep the fast path.
+    if NEEDS_OPEN {
+        if let bun_sys::Result::Ok(st) = bun_sys::fstat(fd) {
+            if !bun_sys::is_regular_file(st.st_mode as bun_sys::Mode) {
+                *needs_async = true;
+                *handoff_fd = Some(fd);
+                return JSValue::ZERO;
+            }
+        }
+    }
 
     // Declared before the truncate guard so it drops *after* it (close runs last).
     let _close = NEEDS_OPEN.then(|| bun_sys::CloseOnDrop::new(fd));
@@ -5471,6 +5530,7 @@ fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
     pathlike: &PathOrFileDescriptor,
     bytes: &[u8],
     _needs_async: &mut bool,
+    handoff_fd: &mut Option<Fd>,
 ) -> JSValue {
     let fd: Fd = if !NEEDS_OPEN {
         pathlike.fd()
@@ -5500,6 +5560,19 @@ fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
             }
         }
     };
+
+    // See write_string_to_file_fast: route non-regular files to the async
+    // path with the fd we just opened, so a FIFO write never closes+reopens
+    // mid-payload.
+    if NEEDS_OPEN {
+        if let bun_sys::Result::Ok(st) = bun_sys::fstat(fd) {
+            if !bun_sys::is_regular_file(st.st_mode as bun_sys::Mode) {
+                *_needs_async = true;
+                *handoff_fd = Some(fd);
+                return JSValue::ZERO;
+            }
+        }
+    }
 
     // TODO: on windows this is always synchronous
 

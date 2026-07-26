@@ -594,6 +594,7 @@ impl S3Client {
                 mkdirp_if_not_exists: Some(false),
                 extra_options: options,
                 mode: None,
+                handoff_fd: None,
             },
         )
     }

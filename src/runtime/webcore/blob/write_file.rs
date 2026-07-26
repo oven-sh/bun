@@ -333,15 +333,15 @@ impl WriteFile {
         let fd = self.opened_fd;
         debug_assert!(fd != Fd::INVALID);
 
-        // We do not use pwrite() because the file may not be
-        // seekable (such as stdout)
-        //
-        // On macOS, it is an error to use pwrite() on a
-        // non-seekable file.
-        let result: bun_sys::Result<usize> =
-            sys::write(fd, &self.bytes_blob.shared_view()[off..off + len]);
-
         loop {
+            // We do not use pwrite() because the file may not be
+            // seekable (such as stdout)
+            //
+            // On macOS, it is an error to use pwrite() on a
+            // non-seekable file.
+            let result: bun_sys::Result<usize> =
+                sys::write(fd, &self.bytes_blob.shared_view()[off..off + len]);
+
             match &result {
                 bun_sys::Result::Ok(res) => {
                     *wrote = *res;
@@ -464,10 +464,13 @@ impl WriteFile {
                 }
             }
 
-            // We opened the file descriptor with O_NONBLOCK, so we
-            // shouldn't have to worry about blocking reads/writes
-            //
-            // We do not call fstat() because that is very expensive.
+            // We opened with O_NONBLOCK. For a regular file that flag is a
+            // no-op, but for a FIFO/socket/chardev write() can return EAGAIN
+            // and we must wait for POLLOUT rather than spin. One fstat on the
+            // just-opened fd is cheap and tells us which we have.
+            if let bun_sys::Result::Ok(st) = sys::fstat(fd) {
+                break 'brk !bun_sys::is_regular_file(st.st_mode as bun_sys::Mode);
+            }
             false
         };
 

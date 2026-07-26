@@ -1,6 +1,7 @@
 import { describe, expect, it, test } from "bun:test";
 import fs, { mkdirSync } from "fs";
 import { bunEnv, bunExe, exampleHtml, exampleSite, gcTick, isWindows, tempDir, withoutAggressiveGC } from "harness";
+import { mkfifo } from "mkfifo";
 import path, { join } from "path";
 
 let i = 0;
@@ -726,5 +727,69 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
     Bun.gc(true);
 
     expect(f.name).toBe(filePath);
+  });
+
+  // Writing more than the kernel pipe buffer to a FIFO used to deliver only the
+  // first partial write to the reader and then either reject ENXIO (fast path
+  // closed and reopened the fifo) or never settle (async path spun on EAGAIN
+  // with could_block=false). Both must now deliver the full payload.
+  describe.skipIf(isWindows).each([
+    ["string", payload => payload],
+    ["Uint8Array", payload => new TextEncoder().encode(payload)],
+    ["Blob", payload => new Blob([payload])],
+    ["Response", payload => new Response(payload)],
+  ])("Bun.write(fifo, %s) larger than the pipe buffer", (label, toSource) => {
+    it("delivers every byte to the reader", async () => {
+      using dir = tempDir(`bun-write-fifo-${label}`, {});
+      const fifo = join(String(dir), "f.fifo");
+      mkfifo(fifo);
+
+      // 200003 bytes: well over the 64 KiB Linux pipe buffer (and the 8 KiB
+      // minimum some CI kernels use), with a distinct tail so a torn prefix
+      // is visible.
+      const N = 200003;
+      const payload = Buffer.alloc(N - 3, "x").toString() + "END";
+
+      // Reader: a node:fs read stream opens O_RDONLY in the thread pool
+      // (blocks there until our write side opens) and drains to EOF.
+      const { promise: opened, resolve: onOpen, reject: onOpenErr } = Promise.withResolvers();
+      const { promise: drained, resolve: onEnd, reject: onReadErr } = Promise.withResolvers();
+      const chunks = [];
+      const reader = fs
+        .createReadStream(fifo)
+        .once("open", onOpen)
+        .on("data", c => chunks.push(c))
+        .once("end", () => onEnd(Buffer.concat(chunks)))
+        .once("error", e => {
+          onOpenErr(e);
+          onReadErr(e);
+        });
+
+      try {
+        // Our O_WRONLY|O_NONBLOCK open returns ENXIO until the reader's open
+        // has started. Retry the write until the reader is attached instead
+        // of sleeping for a guess.
+        let written;
+        while (true) {
+          try {
+            written = await Bun.write(fifo, toSource(payload));
+            break;
+          } catch (e) {
+            if (e?.code !== "ENXIO") throw e;
+            await Bun.sleep(0);
+          }
+        }
+        await opened;
+
+        const got = await drained;
+        expect({ bytes: got.length, tail: got.subarray(-3).toString(), written }).toEqual({
+          bytes: N,
+          tail: "END",
+          written: N,
+        });
+      } finally {
+        reader.destroy();
+      }
+    });
   });
 });

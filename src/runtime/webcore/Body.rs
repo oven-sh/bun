@@ -68,10 +68,7 @@ fn set_blob_content_type(blob: &Blob, mime_type: MimeType) {
         .set(blob::BlobContentType::from(mime_type));
 }
 
-/// Fetch's "extract a MIME type" over the comma-combined `Content-Type` header
-/// value, then the File API's `Blob.type` normalization (drop if any byte is
-/// outside U+0020..=U+007E, else ASCII-lowercase). Sets `content_type_was_set`
-/// regardless so a failed extraction surfaces as an empty `type`.
+/// <https://fetch.spec.whatwg.org/#concept-header-extract-mime-type> + `Blob.type` lowercasing.
 fn set_blob_content_type_from_header(blob: &Blob, header_value: &[u8]) {
     blob.content_type_was_set.set(true);
     let content_type = bun_http_types::mime_sniff::extract_mime_type(header_value)

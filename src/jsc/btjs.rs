@@ -1,11 +1,11 @@
-use core::ffi::c_char;
 #[cfg(debug_assertions)]
-use std::io::Write as _;
+use bun_io::Write as _;
+use core::ffi::c_char;
 
 #[cfg(debug_assertions)]
 use crate::{CallFrame, VirtualMachineRef as VirtualMachine};
 #[cfg(debug_assertions)]
-use bun_core::{self, Error, err};
+use bun_crash_handler::Error;
 
 // `SelfInfo`, `StackIterator`, plus the symbol-lookup helpers. The
 // frame-pointer unwinder lives in `bun_core::debug`.
@@ -206,7 +206,7 @@ fn print_source_at_address(
     }
     let module = match get_module_for_address(debug_info, address) {
         Ok(m) => m,
-        Err(e) if e == err!("MissingDebugInfo") || e == err!("InvalidDebugInfo") => {
+        Err(Error::MissingDebugInfo) | Err(Error::InvalidDebugInfo) => {
             return print_unknown_source(debug_info, out_stream, address, tty_config);
         }
         Err(e) => return Err(e),
@@ -214,7 +214,7 @@ fn print_source_at_address(
 
     let symbol_info: SymbolInfo = match get_symbol_at_address(module, address) {
         Ok(s) => s,
-        Err(e) if e == err!("MissingDebugInfo") || e == err!("InvalidDebugInfo") => {
+        Err(Error::MissingDebugInfo) | Err(Error::InvalidDebugInfo) => {
             return print_unknown_source(debug_info, out_stream, address, tty_config);
         }
         Err(e) => return Err(e),
@@ -357,11 +357,10 @@ fn print_line_info(
                 }
                 out_stream.extend_from_slice(b"\n");
             }
-            Err(e)
-                if e == err!("EndOfFile")
-                    || e == err!("FileNotFound")
-                    || e == err!("BadPathName")
-                    || e == err!("AccessDenied") => {}
+            Err(Error::EndOfFile)
+            | Err(Error::Sys(bun_errno::SystemErrno::ENOENT))
+            | Err(Error::Sys(bun_errno::SystemErrno::EINVAL))
+            | Err(Error::Sys(bun_errno::SystemErrno::EACCES)) => {}
             Err(e) => return Err(e),
         }
     }
@@ -408,7 +407,7 @@ fn print_line_from_file_any_os(
                     current_line_start += pos + 1;
                 }
             } else if amt_read < buf.len() {
-                return Err(err!("EndOfFile"));
+                return Err(Error::EndOfFile);
             } else {
                 amt_read = f.read(&mut buf[..]).map_err(Into::<Error>::into)?;
                 current_line_start = 0;

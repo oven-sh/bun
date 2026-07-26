@@ -2,8 +2,8 @@ use bun_collections::VecExt;
 use std::borrow::Cow;
 use std::io::Write as _;
 
+use crate::Error;
 use bun_collections::{HashMap, StringHashMap};
-use bun_core::Error;
 use bun_install::bin::Bin;
 use bun_install::dependency::{self, Dependency, DependencyExt as _};
 use bun_install::install::{self, DependencyID, PackageID, PackageManager};
@@ -127,64 +127,6 @@ impl<'a> Entry<'a> {
             return &unquoted[0..idx];
         }
         unquoted
-    }
-
-    pub fn get_version_from_spec(spec: &[u8]) -> Option<&[u8]> {
-        let unquoted = if spec[0] == b'"' && spec[spec.len() - 1] == b'"' {
-            &spec[1..spec.len() - 1]
-        } else {
-            spec
-        };
-
-        if unquoted[0] == b'@' {
-            if let Some(second_at_pos) = strings::index_of_char(&unquoted[1..], b'@') {
-                let version_start = second_at_pos as usize + b"@".len() + 1;
-                let version_part = &unquoted[version_start..];
-
-                if version_part.starts_with(b"npm:") && version_part.len() > 4 {
-                    return Some(&version_part[b"npm:".len()..]);
-                }
-                return Some(version_part);
-            }
-            return None;
-        } else if let Some(npm_idx) = strings::index_of(unquoted, b"@npm:") {
-            let after_npm = npm_idx + b"npm:".len() + 1;
-            if after_npm < unquoted.len() {
-                return Some(&unquoted[after_npm..]);
-            }
-            return None;
-        } else if let Some(url_idx) = strings::index_of(unquoted, b"@https://") {
-            let after_at = url_idx + 1;
-            if after_at < unquoted.len() {
-                return Some(&unquoted[after_at..]);
-            }
-            return None;
-        } else if let Some(git_idx) = strings::index_of(unquoted, b"@git+") {
-            let after_at = git_idx + 1;
-            if after_at < unquoted.len() {
-                return Some(&unquoted[after_at..]);
-            }
-            return None;
-        } else if let Some(gh_idx) = strings::index_of(unquoted, b"@github:") {
-            let after_at = gh_idx + 1;
-            if after_at < unquoted.len() {
-                return Some(&unquoted[after_at..]);
-            }
-            return None;
-        } else if let Some(file_idx) = strings::index_of(unquoted, b"@file:") {
-            let after_at = file_idx + 1;
-            if after_at < unquoted.len() {
-                return Some(&unquoted[after_at..]);
-            }
-            return None;
-        } else if let Some(idx) = strings::index_of(unquoted, b"@") {
-            let after_at = idx + 1;
-            if after_at < unquoted.len() {
-                return Some(&unquoted[after_at..]);
-            }
-            return None;
-        }
-        None
     }
 
     pub fn is_git_dependency(version: &[u8]) -> bool {
@@ -684,7 +626,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
 ) -> Result<LoadResult<'a>, Error> {
     // yarn v2+ (berry) lockfiles are not supported; only the v1 format migrates.
     if !strings::index_of(data, b"# yarn lockfile v1").is_some() {
-        return Err(bun_core::err!("UnsupportedYarnLockfileVersion"));
+        return Err(crate::Error::UnsupportedYarnLockfileVersion);
     }
 
     let mut yarn_lock = YarnLock::init();
@@ -719,10 +661,10 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
         let Ok(package_json_fd) =
             bun_sys::File::openat(dir, b"package.json", bun_sys::O::RDONLY, 0)
         else {
-            return Err(bun_core::err!("InvalidPackageJSON"));
+            return Err(crate::Error::InvalidPackageJSON);
         };
         let Ok(package_json_contents) = package_json_fd.read_to_end() else {
-            return Err(bun_core::err!("InvalidPackageJSON"));
+            return Err(crate::Error::InvalidPackageJSON);
         };
 
         // The path buffer must outlive `package_json_source`: `Source.path.text`
@@ -733,26 +675,24 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
             let Ok(package_json_path) =
                 bun_sys::get_fd_path(package_json_fd.handle(), &mut package_json_path_buf)
             else {
-                return Err(bun_core::err!("InvalidPackageJSON"));
+                return Err(crate::Error::InvalidPackageJSON);
             };
             bun_ast::Source::init_path_string(&*package_json_path, package_json_contents.as_slice())
         };
         drop(package_json_fd); // close now; fd no longer needed past path resolution
 
-        // The 8 JSON option flags are spelled out as const generics (stable
-        // Rust has no struct const-generics).
         let json_bump = bun_alloc::Arena::new();
-        let Ok(package_json_expr) = bun_json::parse_package_json_utf8_with_opts::<
-            true,  // IS_JSON
-            true,  // ALLOW_COMMENTS
-            true,  // ALLOW_TRAILING_COMMAS
-            false, // IGNORE_LEADING_ESCAPE_SEQUENCES
-            false, // IGNORE_TRAILING_ESCAPE_SEQUENCES
-            false, // JSON_WARN_DUPLICATE_KEYS
-            false, // WAS_ORIGINALLY_MACRO
-            true,  // GUESS_INDENTATION
-        >(&package_json_source, log, &json_bump) else {
-            return Err(bun_core::err!("InvalidPackageJSON"));
+        let Ok(package_json_expr) = bun_json::parse_package_json_utf8_with_opts(
+            bun_json::JSONOptions {
+                json_warn_duplicate_keys: false,
+                guess_indentation: true,
+                ..bun_json::PACKAGE_JSON_OPTS
+            },
+            &package_json_source,
+            log,
+            &json_bump,
+        ) else {
+            return Err(crate::Error::InvalidPackageJSON);
         };
 
         let package_json = package_json_expr.root;
@@ -1438,25 +1378,13 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
                 )
                 .expect("unreachable");
 
-                // reshaped for borrowck — find_entry_by_spec via index search
-                // instead of returning &mut to avoid overlapping borrow with the loop below.
-                let dep_entry_specs: Option<Vec<&[u8]>> = {
-                    let mut found: Option<Vec<&[u8]>> = None;
-                    for e in yarn_lock.entries.iter() {
-                        for entry_spec in e.specs.iter() {
-                            if *entry_spec == dep_spec.as_slice() {
-                                found = Some(e.specs.clone());
-                                break;
-                            }
-                        }
-                        if found.is_some() {
-                            break;
-                        }
-                    }
-                    found
-                };
+                let found_entry_idx: Option<usize> = yarn_lock
+                    .entries
+                    .iter()
+                    .position(|e| e.specs.contains(&dep_spec.as_slice()));
 
-                if let Some(dep_entry_specs) = dep_entry_specs {
+                if let Some(found_entry_idx) = found_entry_idx {
+                    let dep_entry_specs = &yarn_lock.entries[found_entry_idx].specs;
                     for (idx, e) in yarn_lock.entries.iter().enumerate() {
                         let mut found = false;
                         for spec in e.specs.iter() {
@@ -2023,9 +1951,9 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
     }
 
     // `Lockfile::resolve` returns `Result<(), tree::SubtreeError>`; surface as
-    // a tagged `bun_core::Error` until `From<SubtreeError>` lands.
+    // a tagged error until `From<SubtreeError>` lands.
     if let Err(_e) = this.resolve(log) {
-        return Err(bun_core::err!("LockfileResolveFailed"));
+        return Err(crate::Error::LockfileResolveFailed);
     }
 
     this.fetch_necessary_package_metadata_after_yarn_or_pnpm_migration::<true>(manager)?;

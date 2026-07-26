@@ -463,11 +463,72 @@ describe("flags", () => {
     expect(out).not.toContain("Packed size:");
     expect(out).not.toContain("bun pack v");
 
-    // Should only contain the tarball name
-    expect(out.trim()).toBe("pack-quiet-test-1.1.1.tgz");
+    // Exactly the tarball name with no leading newline, so `$(bun pm pack --quiet)` works.
+    expect(out).toBe("pack-quiet-test-1.1.1.tgz\n");
 
     // Should still create the tarball
     expect(await exists(join(packageDir, "pack-quiet-test-1.1.1.tgz"))).toBeTrue();
+  });
+
+  test("--silent", async () => {
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "pack-silent-test",
+          version: "1.1.1",
+        }),
+      ),
+      write(join(packageDir, "index.js"), "console.log('hello ./index.js')"),
+    ]);
+
+    const { out } = await pack(packageDir, bunEnv, "--silent");
+
+    expect(out).toBe("pack-silent-test-1.1.1.tgz\n");
+    expect(await exists(join(packageDir, "pack-silent-test-1.1.1.tgz"))).toBeTrue();
+  });
+
+  test("--quiet with --destination", async () => {
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "pack-quiet-dest-test",
+          version: "1.1.1",
+        }),
+      ),
+      write(join(packageDir, "index.js"), "console.log('hello ./index.js')"),
+    ]);
+
+    const dest = join(packageDir, "out");
+    const { out } = await pack(packageDir, bunEnv, "--quiet", `--destination=${dest}`);
+
+    const tarballPath = join(dest, "pack-quiet-dest-test-1.1.1.tgz");
+    expect(out).toBe(`${tarballPath}\n`);
+    expect(await exists(tarballPath)).toBeTrue();
+  });
+
+  test("--quiet with --dry-run", async () => {
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "pack-quiet-dry-test",
+          version: "1.1.1",
+        }),
+      ),
+      write(join(packageDir, "index.js"), "console.log('hello ./index.js')"),
+    ]);
+
+    const { out } = await pack(packageDir, bunEnv, "--quiet", "--dry-run");
+    expect(out).toBe("pack-quiet-dry-test-1.1.1.tgz\n");
+
+    const dest = join(packageDir, "out");
+    const { out: destOut } = await pack(packageDir, bunEnv, "--quiet", "--dry-run", `--destination=${dest}`);
+    expect(destOut).toBe(`${join(dest, "pack-quiet-dry-test-1.1.1.tgz")}\n`);
+
+    // --dry-run never writes the tarball.
+    expect(await exists(join(packageDir, "pack-quiet-dry-test-1.1.1.tgz"))).toBeFalse();
   });
 });
 
@@ -1038,6 +1099,74 @@ describe("files", () => {
     const tarball = readTarball(join(packageDir, "pack-files-changelog-1.1.1.tgz"));
     expect(tarball.entries).toMatchObject([
       { "pathname": "package/package.json" },
+      { "pathname": "package/lib/index.js" },
+    ]);
+  });
+
+  test("'files' overrides the overridable default ignores but never .git/.npmrc/lockfiles", async () => {
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "pack-files-default-ignores",
+          version: "1.1.1",
+          files: ["lib", ".git", ".npmrc", ".gitignore", "bunfig.toml", "package-lock.json", ".hg", ".svn", "CVS"],
+        }),
+      ),
+      write(join(packageDir, "lib", "index.js"), "console.log('hello ./lib/index.js')"),
+      write(join(packageDir, ".git", "config"), "[core]"),
+      write(join(packageDir, ".npmrc"), "registry=https://registry.npmjs.org/"),
+      write(join(packageDir, ".gitignore"), "node_modules"),
+      write(join(packageDir, "bunfig.toml"), "[install]"),
+      write(join(packageDir, "package-lock.json"), "{}"),
+      write(join(packageDir, ".hg", "store"), "hg"),
+      write(join(packageDir, ".svn", "entries"), "svn"),
+      write(join(packageDir, "CVS", "Root"), "cvs"),
+    ]);
+
+    await pack(packageDir, bunEnv);
+    const tarball = readTarball(join(packageDir, "pack-files-default-ignores-1.1.1.tgz"));
+    expect(tarball.entries).toMatchObject([
+      { "pathname": "package/package.json" },
+      { "pathname": "package/.gitignore" },
+      { "pathname": "package/.hg/store" },
+      { "pathname": "package/.svn/entries" },
+      { "pathname": "package/CVS/Root" },
+      { "pathname": "package/bunfig.toml" },
+      { "pathname": "package/lib/index.js" },
+    ]);
+  });
+
+  test("non-overridable default ignores are not packed when 'files' matches everything", async () => {
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "pack-files-default-ignores-glob",
+          version: "1.1.1",
+          files: ["**"],
+        }),
+      ),
+      write(join(packageDir, "lib", "index.js"), "console.log('hello ./lib/index.js')"),
+      write(join(packageDir, ".git", "config"), "[core]"),
+      write(join(packageDir, ".npmrc"), "registry=https://registry.npmjs.org/"),
+      write(join(packageDir, ".gitignore"), "node_modules"),
+      write(join(packageDir, "bunfig.toml"), "[install]"),
+      write(join(packageDir, "package-lock.json"), "{}"),
+      write(join(packageDir, ".hg", "store"), "hg"),
+      write(join(packageDir, ".svn", "entries"), "svn"),
+      write(join(packageDir, "CVS", "Root"), "cvs"),
+    ]);
+
+    await pack(packageDir, bunEnv);
+    const tarball = readTarball(join(packageDir, "pack-files-default-ignores-glob-1.1.1.tgz"));
+    expect(tarball.entries).toMatchObject([
+      { "pathname": "package/package.json" },
+      { "pathname": "package/.gitignore" },
+      { "pathname": "package/.hg/store" },
+      { "pathname": "package/.svn/entries" },
+      { "pathname": "package/CVS/Root" },
+      { "pathname": "package/bunfig.toml" },
       { "pathname": "package/lib/index.js" },
     ]);
   });

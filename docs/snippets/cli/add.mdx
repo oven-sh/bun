@@ -49,7 +49,7 @@ bun add <package> <@version>
 </ParamField>
 
 <ParamField path="--save" type="boolean" default="true">
-  Save to <code>package.json</code> (true by default)
+  Save to <code>package.json</code>
 </ParamField>
 
 <ParamField path="--frozen-lockfile" type="boolean">
@@ -107,18 +107,18 @@ bun add <package> <@version>
 </ParamField>
 
 <ParamField path="--network-concurrency" type="number" default="48">
-  Maximum number of concurrent network requests (default 48)
+  Maximum number of concurrent network requests
 </ParamField>
 
 ### Performance &amp; Resource
 
 <ParamField path="--backend" type="string" default="clonefile">
-  Platform-specific optimizations for installing dependencies. Possible values: <code>clonefile</code> (default),{" "}
-  <code>hardlink</code>, <code>symlink</code>, <code>copyfile</code>
+  Platform-specific optimizations for installing dependencies. One of <code>clonefile</code>, <code>hardlink</code>,{" "}
+  <code>symlink</code>, or <code>copyfile</code>
 </ParamField>
 
-<ParamField path="--concurrent-scripts" type="number" default="5">
-  Maximum number of concurrent jobs for lifecycle scripts (default 5)
+<ParamField path="--concurrent-scripts" type="number">
+  Maximum number of concurrent jobs for lifecycle scripts (default: 2x CPU cores)
 </ParamField>
 
 ### Caching

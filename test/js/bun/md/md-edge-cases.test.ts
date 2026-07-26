@@ -1093,7 +1093,10 @@ describe("pathological reference definition inputs", () => {
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
-      timeout: 30_000,
+      // 220k lines through a debug+ASAN child run close to 30s on a loaded
+      // runner, which made this the flakiest test in the file; the hard stop
+      // only has to stay under the test's own 90s timeout.
+      timeout: 75_000,
       killSignal: "SIGKILL",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
@@ -1107,6 +1110,32 @@ describe("pathological reference definition inputs", () => {
     expect(resolved).toContain('<a href="/url">text</a>');
     expect(resolved).toContain("[missing]");
   }, 90_000);
+
+  test("caps the total destination and title bytes emitted by expanding reference links", () => {
+    const dest = "/" + Buffer.alloc(2000, "x").toString();
+    const title = Buffer.alloc(500, "t").toString();
+    const lines = [`[a]: ${dest} "${title}"`, ""];
+    for (let i = 0; i < 1000; i++) {
+      lines.push("[a]", "", "[a][]", "", "[text][a]", "");
+    }
+    // The budget is md4c's: min(16 * input size, 1 MiB). On exhaustion the parse
+    // still succeeds; remaining references degrade to literal bracket text.
+    const html = Markdown.html(lines.join("\n"));
+    const resolved = html.match(/<a href=/g)!.length;
+    expect(resolved).toBeGreaterThan(0);
+    expect(resolved).toBeLessThan(3000);
+    expect(html).toStartWith(`<p><a href="${dest}" title="${title}">a</a></p>`);
+    expect(html).toContain("<p>[a]</p>");
+    expect(html).toContain("<p>[a][]</p>");
+    expect(html).toContain("<p>[text][a]</p>");
+
+    const small = Markdown.html('[a]: /url "title"\n\n[a]\n\n[a][]\n\n[text][a]\n');
+    expect(small).toBe(
+      '<p><a href="/url" title="title">a</a></p>\n' +
+        '<p><a href="/url" title="title">a</a></p>\n' +
+        '<p><a href="/url" title="title">text</a></p>\n',
+    );
+  });
 });
 
 // ============================================================================
@@ -1190,21 +1219,24 @@ describe("pathological autolink opener inputs", () => {
   }, 90_000);
 });
 
-describe("inputs of 2^32 bytes or more", () => {
-  // The parser addresses its input with u32 offsets, so a 2^32-byte input
-  // cannot be represented and must be rejected with a catchable RangeError by
-  // every entry point. One subprocess covers all four: a crash must not take
-  // down the test runner, and one 4 GiB reservation (virtual only, never
-  // written) keeps this cheap. The SKIP branch covers runners that cannot
-  // reserve 4 GiB; under ASAN the allocator must be allowed to return null
-  // for that to surface as a catchable error rather than an abort. The
-  // explicit timeout is for the debug+ASAN lanes, where a spawned child is
-  // slow under load (same as the linear-time test above).
-  test("html, ansi, render and react reject a 2^32-byte input", async () => {
+describe("inputs the parser cannot address", () => {
+  // The parser addresses its input with u32 offsets and probes up to 9 bytes
+  // past an offset (the `<![CDATA[` check), so everything longer than
+  // 4294967286 bytes (u32::MAX - 9) must be rejected with a catchable
+  // RangeError by every entry point: at u32::MAX exactly, the probe's
+  // `off + 9` would wrap. One subprocess covers the four entry points at
+  // 2^32 bytes and the first rejected length; both buffers are virtual only
+  // (never written), so this is cheap. The SKIP branch covers runners that
+  // cannot reserve the address space; under ASAN the allocator must be
+  // allowed to return null for that to surface as a catchable error rather
+  // than an abort. The explicit timeout is for the debug+ASAN lanes, where a
+  // spawned child is slow under load (same as the linear-time test above).
+  test("html, ansi, render and react reject inputs past the addressable limit", async () => {
     const script = `
-      let big;
+      let big, boundary;
       try {
         big = new Uint8Array(2 ** 32);
+        boundary = new Uint8Array(2 ** 32 - 1);
       } catch {
         console.log(JSON.stringify("SKIP"));
         process.exit(0);
@@ -1214,6 +1246,9 @@ describe("inputs of 2^32 bytes or more", () => {
         () => Bun.markdown.ansi(big),
         () => Bun.markdown.render(big, {}),
         () => Bun.markdown.react(big, undefined, { reactVersion: 18 }),
+        // One past the accepted maximum of 4294967286 from the other side:
+        // the largest allocatable length that must still be rejected.
+        () => Bun.markdown.html(boundary),
       ];
       const results = [];
       for (const run of runs) {
@@ -1236,11 +1271,70 @@ describe("inputs of 2^32 bytes or more", () => {
       stderr: "inherit",
     });
     const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    const rangeError =
-      'RangeError | ERR_OUT_OF_RANGE | The value of "input.byteLength" is out of range. It must be <= 4294967295. Received 4294967296';
-    expect(["SKIP", [rangeError, rangeError, rangeError, rangeError]]).toContainEqual(
-      JSON.parse(stdout.trim() || '"NO_OUTPUT"'),
-    );
+    const message = (received: number) =>
+      `RangeError | ERR_OUT_OF_RANGE | The value of "input.byteLength" is out of range. It must be <= 4294967286. Received ${received}`;
+    expect([
+      "SKIP",
+      [message(2 ** 32), message(2 ** 32), message(2 ** 32), message(2 ** 32), message(2 ** 32 - 1)],
+    ]).toContainEqual(JSON.parse(stdout.trim() || '"NO_OUTPUT"'));
+    expect(exitCode).toBe(0);
+  }, 30_000);
+});
+
+describe("documents whose block metadata the parser cannot address", () => {
+  // Block offsets are u32s too, so `block_bytes` (the flat buffer of block
+  // headers and verbatim-line records) is capped independently of the input
+  // length. Filling the real ~4 GiB cap needs ~256M blocks, so the child
+  // shrinks it through `setMaxMarkdownBlockBytesForTesting`
+  // (bun:internal-for-testing) and proves the exact boundary: a document
+  // whose metadata lands exactly on the cap renders, and one more block (or
+  // the container openers of a nested blockquote) raises the catchable
+  // RangeError that replaced the release-build integer-cast panic.
+  test("a document needing more block metadata than the cap throws a RangeError", async () => {
+    const script = `
+      import { setMaxMarkdownBlockBytesForTesting } from "bun:internal-for-testing";
+      // One single-line paragraph costs exactly one 16-byte BlockHeader plus
+      // one 12-byte VerbatimLine in block_bytes, with no alignment padding.
+      const PARAGRAPH_BYTES = 16 + 12;
+      const AT_LIMIT = 40;
+      const paragraphs = n => Array.from({ length: n }, (_, i) => "p" + i).join("\\n\\n");
+      const nestedQuotes = Buffer.alloc(128, "> ").toString() + "deep";
+      const render = input => {
+        try {
+          return typeof Bun.markdown.html(input);
+        } catch (e) {
+          return [e.constructor.name, e.code, e.message].join(" | ");
+        }
+      };
+      const results = [];
+      const previous = setMaxMarkdownBlockBytesForTesting(AT_LIMIT * PARAGRAPH_BYTES);
+      try {
+        results.push(render(paragraphs(AT_LIMIT)));
+        results.push(render(paragraphs(AT_LIMIT + 1)));
+        results.push(render(nestedQuotes));
+      } finally {
+        setMaxMarkdownBlockBytesForTesting(previous);
+      }
+      // The restore took: the same over-limit documents render again.
+      results.push(render(paragraphs(AT_LIMIT + 1)), render(nestedQuotes));
+      console.log(JSON.stringify(results));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const tooManyBlocks =
+      "RangeError | ERR_OUT_OF_RANGE | markdown input requires more block metadata than the parser can address (4 GiB)";
+    expect(JSON.parse(stdout.trim() || '"NO_OUTPUT"')).toEqual([
+      "string",
+      tooManyBlocks,
+      tooManyBlocks,
+      "string",
+      "string",
+    ]);
     expect(exitCode).toBe(0);
   }, 30_000);
 });

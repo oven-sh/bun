@@ -11,7 +11,7 @@ The result: warm installs are roughly **7× faster** (one symlink per package in
 
 ## Enabling
 
-The global virtual store is **off by default**. It only applies to the isolated linker; it is not used by the hoisted linker.
+The global virtual store is **off by default**. It only applies to the [isolated linker](/pm/isolated-installs); it is not used by the hoisted linker.
 
 To enable it for a project:
 
@@ -21,7 +21,7 @@ linker = "isolated"
 globalStore = true
 ```
 
-Or per-invocation via the environment:
+Or per invocation, through the environment:
 
 ```bash terminal icon="terminal"
 BUN_INSTALL_GLOBAL_STORE=1 bun install --linker isolated
@@ -128,7 +128,7 @@ When packages live under the project's `node_modules/.bun/`, Node's module resol
 
 In practice this only affects **true phantom dependencies**: a package doing `require('helper')` for something it never declared in `dependencies`, `peerDependencies`, or `peerDependenciesMeta`. If you hit this, add the helper to the consuming package's dependencies (the right fix) or set `globalStore = false`.
 
-Note that [`publicHoistPattern`](/runtime/bunfig#install-publichoistpattern) and [`hoistPattern`](/runtime/bunfig#install-hoistpattern) hoist into the project's `node_modules`, which packages inside the global store can't reach. They still work for resolving hoisted packages from your own source code.
+[`publicHoistPattern`](/runtime/bunfig#install-publichoistpattern) and [`hoistPattern`](/runtime/bunfig#install-hoistpattern) hoist into the project's `node_modules`, which packages inside the global store can't reach. They still work for resolving hoisted packages from your own source code.
 
 ### `node_modules` is mostly symlinks
 

@@ -25,19 +25,6 @@ use super::{FetchHeaders, ReadableStream, Request};
 pub use super::blob::Blob;
 use bun_ptr::weak_ptr::WeakPtrData;
 
-// C++ helper functions for AsyncLocalStorage integration
-unsafe extern "C" {
-    pub safe fn Response__getAsyncLocalStorageStore(
-        global: &JSGlobalObject,
-        als: JSValue,
-    ) -> JSValue;
-    pub safe fn Response__mergeAsyncLocalStorageOptions(
-        global: &JSGlobalObject,
-        als_store: JSValue,
-        init_options: JSValue,
-    );
-}
-
 /// RAII handle to a C++-owned `WebCore::FetchHeaders`.
 ///
 /// Holds exactly one ref on the C++ intrusive refcount; `Drop` releases it via
@@ -482,8 +469,7 @@ mod _jsc_host_fns {
         _global: *mut JSGlobalObject,
         callframe: &CallFrame,
     ) -> JSValue {
-        let arguments = callframe.arguments_old::<1>();
-        let this_value = arguments.ptr[0];
+        let [this_value] = callframe.arguments_as_array::<1>();
         if this_value.is_empty_or_undefined_or_null() {
             return JSValue::FALSE;
         }
@@ -509,8 +495,7 @@ mod _jsc_host_fns {
             bun_opaque::opaque_deref(global_object),
             bun_opaque::opaque_deref(callframe),
         );
-        let arguments = callframe.arguments_old::<1>();
-        let this_value = arguments.ptr[0];
+        let [this_value] = callframe.arguments_as_array::<1>();
         if this_value.is_empty_or_undefined_or_null() {
             return JSValue::UNDEFINED;
         }
@@ -566,10 +551,6 @@ impl Response {
 
 // ─── getters & header helpers ───────────────────────────────────────────────
 impl Response {
-    pub fn redirect_location(&self) -> Option<ZigString> {
-        self.header(HTTPHeaderName::Location)
-    }
-
     pub fn header(&self, name: HTTPHeaderName) -> Option<ZigString> {
         // reshaped for borrowck — `FetchHeaders::fast_get` takes
         // `&mut self` (FFI writes through an out-param), so we return the
@@ -618,7 +599,10 @@ impl Response {
     }
 
     #[allow(clippy::mut_from_ref)]
-    fn get_or_create_headers(&self, global_this: &JSGlobalObject) -> JsResult<&mut HeadersRef> {
+    pub(crate) fn get_or_create_headers(
+        &self,
+        global_this: &JSGlobalObject,
+    ) -> JsResult<&mut HeadersRef> {
         // R-2 escape hatch via `init_mut()` — the returned `&mut HeadersRef`
         // borrows `self.init`; callers (`get_headers`, `construct_*`) do not
         // hold the borrow across calls that re-enter Response host-fns.
@@ -631,7 +615,7 @@ impl Response {
                 if !content_type.is_empty() {
                     init.headers.as_mut().unwrap().put(
                         HTTPHeaderName::ContentType,
-                        content_type,
+                        &BunString::ascii(content_type),
                         global_this,
                     )?;
                 }
@@ -676,7 +660,7 @@ impl Response {
         W: core::fmt::Write,
     {
         // return type narrowed to `core::fmt::Result`. The trait
-        // methods produce `fmt::Error`/`JsError`/`bun_core::Error`; none of
+        // methods produce `fmt::Error`/`JsError`/`crate::Error`; none of
         // those convert into the others, so funnel everything through
         // `fmt::Error`.
         let js_err = |_: JsError| core::fmt::Error;
@@ -803,6 +787,7 @@ impl Response {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
+        this.throw_if_body_unusable(global_this)?;
         let this_value = callframe.this();
         let cloned = this.clone(global_this)?;
 
@@ -922,12 +907,10 @@ impl Response {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let args_list = callframe.arguments_old::<2>();
         // https://github.com/remix-run/remix/blob/db2c31f64affb2095e4286b91306b96435967969/packages/remix-server-runtime/responses.ts#L4
         // SAFETY: `bun_vm()` returns a raw `*mut VirtualMachine` (PORTING.md
         // §raw-ptr) — borrow it for the duration of args parsing.
-        let mut args =
-            bun_jsc::ArgumentsSlice::init(global_this.bun_vm(), &args_list.ptr[0..args_list.len]);
+        let mut args = bun_jsc::ArgumentsSlice::init(global_this.bun_vm(), callframe.arguments());
 
         // `Init`'s field drop glue (HeadersRef + OwnedString)
         // releases its refs on `?`. `Body` has NO `Drop` and its
@@ -1027,7 +1010,7 @@ impl Response {
         let json_mime = bun_http_types::MimeType::JSON;
         headers_ref.put_default(
             HTTPHeaderName::ContentType,
-            json_mime.value.as_ref(),
+            &BunString::ascii(json_mime.value.as_ref()),
             global_this,
         )?;
         // Disarm the body-reset guard: all fallible ops have succeeded.
@@ -1068,14 +1051,12 @@ impl Response {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<Response> {
-        let args_list = callframe.arguments_old::<4>();
         // https://github.com/remix-run/remix/blob/db2c31f64affb2095e4286b91306b96435967969/packages/remix-server-runtime/responses.ts#L4
         // SAFETY: see `construct_json`.
-        let mut args =
-            bun_jsc::ArgumentsSlice::init(global_this.bun_vm(), &args_list.ptr[0..args_list.len]);
+        let mut args = bun_jsc::ArgumentsSlice::init(global_this.bun_vm(), callframe.arguments());
 
-        let url_string_slice;
-        // url_string_slice drops at scope exit
+        // url_string drops (derefs the WTF string) at scope exit
+        let url_string: OwnedString;
         let response: Response = 'brk: {
             let response = Response {
                 init: JsCell::new(Init {
@@ -1087,12 +1068,11 @@ impl Response {
             };
 
             let url_string_value = args.next_eat().unwrap_or(JSValue::ZERO);
-            let mut url_string = ZigString::init(b"");
-
-            if !url_string_value.is_empty() {
-                url_string = url_string_value.get_zig_string(global_this)?;
-            }
-            url_string_slice = url_string.to_slice();
+            url_string = OwnedString::new(if url_string_value.is_empty() {
+                BunString::empty()
+            } else {
+                url_string_value.to_bun_string(global_this)?
+            });
             // `Init`'s drop glue (HeadersRef + OwnedString)
             // handles cleanup on `?`.
 
@@ -1122,13 +1102,15 @@ impl Response {
             break 'brk response;
         };
 
-        let headers = response.get_or_create_headers(global_this)?;
         // `get_or_create_headers` already populated init.headers.
-        headers.put(
-            HTTPHeaderName::Location,
-            url_string_slice.slice(),
-            global_this,
-        )?;
+        let headers = response.get_or_create_headers(global_this)?;
+        // https://fetch.spec.whatwg.org/#dom-response-redirect steps 1 & 6: `Location`
+        // gets the serialization of the parsed url, not the raw input. Non-absolute
+        // input keeps the raw string: relative redirects are documented Bun behavior.
+        let href = OwnedString::new(bun_url::href_from_string(&url_string));
+        // The JS string's own WTF string (no re-encode), same as `Headers.prototype.set`.
+        let location = if href.is_empty() { &url_string } else { &href };
+        headers.put(HTTPHeaderName::Location, location, global_this)?;
         Ok(response)
     }
 
@@ -1213,7 +1195,11 @@ impl Response {
                     // `defer result.deinit()` — SignResult: Drop frees owned buffers at scope exit.
                     response.redirected.set(true);
                     let headers = response.get_or_create_headers(global_this)?;
-                    headers.put(HTTPHeaderName::Location, &result.url, global_this)?;
+                    headers.put(
+                        HTTPHeaderName::Location,
+                        &BunString::ascii(&result.url),
+                        global_this,
+                    )?;
                     return Ok(bun_core::heap::into_raw(Box::new(response)));
                 }
             }
@@ -1265,7 +1251,11 @@ impl Response {
             if let Some(headers) = init.headers.as_deref_mut() {
                 let content_type = blob.content_type_slice();
                 if !content_type.is_empty() && !headers.fast_has(HTTPHeaderName::ContentType) {
-                    headers.put(HTTPHeaderName::ContentType, content_type, global_this)?;
+                    headers.put(
+                        HTTPHeaderName::ContentType,
+                        &BunString::ascii(content_type),
+                        global_this,
+                    )?;
                 }
             }
         }
@@ -1440,26 +1430,6 @@ impl Init {
 
         Ok(Some(result))
     }
-}
-
-pub fn status_404(global_this: &JSGlobalObject) -> *mut Response {
-    empty_with_status(global_this, 404)
-}
-
-pub fn status_200(global_this: &JSGlobalObject) -> *mut Response {
-    empty_with_status(global_this, 200)
-}
-
-#[inline]
-fn empty_with_status(_global: &JSGlobalObject, status: u16) -> *mut Response {
-    bun_core::heap::into_raw(Box::new(Response {
-        body: JsCell::new(Body::new(BodyValue::Null)),
-        init: JsCell::new(Init {
-            status_code: status,
-            ..Default::default()
-        }),
-        ..Default::default()
-    }))
 }
 
 // https://developer.mozilla.org/en-US/docs/Web/API/Headers

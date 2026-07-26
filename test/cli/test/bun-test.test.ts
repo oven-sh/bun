@@ -607,6 +607,40 @@ describe("bun test", () => {
       });
       expect(stderr).toMatch(/::error file=.*,line=\d+,col=\d+,title=error: Oops!::/m);
     });
+    test("should annotate an error message containing non-ASCII bytes", () => {
+      const stderr = runTest({
+        input: `
+          import { test } from "bun:test";
+          test("fail", () => {
+            throw "hello é world";
+          });
+        `,
+        env: {
+          FORCE_COLOR: "1",
+          GITHUB_ACTIONS: "true",
+        },
+      });
+      const annotation = stderr.split("\n").find(l => l.startsWith("::error"));
+      expect(annotation).toMatch(/^::error file=.*,line=\d+,col=\d+,title=error: hello é world::%0A {6}at /);
+    });
+    test("should annotate an error message containing emoji and newlines", () => {
+      const stderr = runTest({
+        input: `
+          import { test } from "bun:test";
+          test("fail", () => {
+            throw "before 😋 after\\nsecond 😋 line";
+          });
+        `,
+        env: {
+          FORCE_COLOR: "1",
+          GITHUB_ACTIONS: "true",
+        },
+      });
+      const annotation = stderr.split("\n").find(l => l.startsWith("::error"));
+      expect(annotation).toMatch(
+        /^::error file=.*,line=\d+,col=\d+,title=error: before 😋 after::second 😋 line%0A {6}at /,
+      );
+    });
     test("should annotate a test timeout", () => {
       const stderr = runTest({
         input: `
@@ -1421,6 +1455,51 @@ describe("bun test", () => {
     const output = stdout + stderr;
     expect(output).toContain("1 pass");
     expect(output).toContain("app message");
+  });
+
+  test("runs process.on('exit') handlers", async () => {
+    using dir = tempDir("bun-test-exit-handler", {
+      "exit.test.ts": `
+        import { test } from "bun:test";
+        process.on("exit", () => console.log("exit handler ran"));
+        test("a test", () => {});
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "exit.test.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toContain("exit handler ran");
+    expect(stderr).toContain("1 pass");
+    expect(exitCode).toBe(0);
+  });
+
+  test("an exit handler can fail the run, like node's common.mustCall()", async () => {
+    using dir = tempDir("bun-test-exit-handler-code", {
+      "exit-code.test.ts": `
+        import { test } from "bun:test";
+        process.on("exit", () => process.exit(1));
+        test("a passing test", () => {});
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "exit-code.test.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // Windows prints the banner to stdout; only assert nothing test-shaped leaks.
+    expect(stdout).not.toContain("pass");
+    expect(stderr).toContain("1 pass");
+    expect(exitCode).toBe(1);
   });
 });
 

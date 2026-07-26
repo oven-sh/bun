@@ -202,7 +202,7 @@ pub(crate) struct WalkTask<'a> {
 
 pub(crate) enum WalkTaskErr {
     Syscall(syscall::Error),
-    Unknown(bun_core::Error),
+    Unknown(crate::Error),
 }
 
 impl WalkTaskErr {
@@ -243,7 +243,7 @@ impl<'a> ConcurrentPromiseTaskContext for WalkTask<'a> {
         let result = match self.walker.walk() {
             Ok(r) => r,
             Err(err) => {
-                self.err = Some(WalkTaskErr::Unknown(err));
+                self.err = Some(WalkTaskErr::Unknown(err.into()));
                 drop(guard);
                 return;
             }
@@ -323,7 +323,9 @@ impl Glob {
                 error_on_broken_symlinks,
                 only_files,
                 None,
-            )? {
+            )
+            .map_err(crate::Error::from)?
+            {
                 bun_sys::Result::Err(err) => {
                     return Err(global_this.throw_value(err.to_js(global_this)));
                 }
@@ -340,7 +342,9 @@ impl Glob {
             error_on_broken_symlinks,
             only_files,
             None,
-        )? {
+        )
+        .map_err(crate::Error::from)?
+        {
             bun_sys::Result::Err(err) => {
                 return Err(global_this.throw_value(err.to_js(global_this)));
             }
@@ -354,9 +358,8 @@ impl Glob {
     // `<Glob>::constructor(..)`. The free-fn `host_fn` expansion can't name an
     // associated fn without a receiver.
     pub fn constructor(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<Box<Glob>> {
-        let arguments_ = callframe.arguments_old::<1>();
         // SAFETY: bun_vm() returns a non-null *mut to the live VirtualMachine for this global.
-        let mut arguments = ArgumentsSlice::init(global_this.bun_vm(), arguments_.slice());
+        let mut arguments = ArgumentsSlice::init(global_this.bun_vm(), callframe.arguments());
         // `arguments` drops at scope exit.
         let Some(pat_arg) = arguments.next_eat() else {
             return Err(global_this.throw(format_args!(
@@ -406,9 +409,8 @@ impl Glob {
     // `this: &mut Glob`; `&mut T` auto-derefs to `&T`.
     #[bun_jsc::host_fn(method)]
     pub fn __scan(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let arguments_ = callframe.arguments_old::<1>();
         // SAFETY: bun_vm() returns a non-null *mut to the live VirtualMachine for this global.
-        let mut arguments = ArgumentsSlice::init(global_this.bun_vm(), arguments_.slice());
+        let mut arguments = ArgumentsSlice::init(global_this.bun_vm(), callframe.arguments());
         // `arguments` drops at scope exit.
 
         let mut arena = Arena::new();
@@ -447,9 +449,8 @@ impl Glob {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let arguments_ = callframe.arguments_old::<1>();
         // SAFETY: bun_vm() returns a non-null *mut to the live VirtualMachine for this global.
-        let mut arguments = ArgumentsSlice::init(global_this.bun_vm(), arguments_.slice());
+        let mut arguments = ArgumentsSlice::init(global_this.bun_vm(), callframe.arguments());
 
         let mut arena = Arena::new();
         let mut glob_walker =
@@ -466,7 +467,7 @@ impl Glob {
             };
         // Box<GlobWalker> drops at scope exit.
 
-        match glob_walker.walk()? {
+        match glob_walker.walk().map_err(crate::Error::from)? {
             bun_sys::Result::Err(err) => {
                 return Err(global_this.throw_value(err.to_js(global_this)));
             }
@@ -482,9 +483,8 @@ impl Glob {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let arguments_ = callframe.arguments_old::<1>();
         // SAFETY: bun_vm() returns a non-null *mut to the live VirtualMachine for this global.
-        let mut arguments = ArgumentsSlice::init(global_this.bun_vm(), arguments_.slice());
+        let mut arguments = ArgumentsSlice::init(global_this.bun_vm(), callframe.arguments());
         let Some(str_arg) = arguments.next_eat() else {
             return Err(global_this.throw(format_args!(
                 "Glob.matchString: expected 1 arguments, got 0"

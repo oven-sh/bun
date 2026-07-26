@@ -943,42 +943,49 @@ describe("WebSocket tls option does not leak SSLConfig on error paths", () => {
   });
 });
 
-describe("WebSocket CloseEvent reports the received close code", () => {
-  // Raw TCP server: complete the WS handshake, then run `afterUpgrade(socket)`.
-  function rawWsServer(afterUpgrade) {
-    return new Promise(resolveServer => {
-      const server = createServer(sock => {
-        let buf = "";
-        let upgraded = false;
-        sock.on("data", chunk => {
-          if (upgraded) {
+// Raw TCP server: complete the WS handshake, then run `afterUpgrade(socket)`.
+// Post-upgrade client->server bytes go to `onClientData(socket, chunk)` when
+// provided; otherwise the socket is half-closed (the historical default the
+// CloseEvent tests below rely on).
+function rawWsServer(afterUpgrade, onClientData) {
+  return new Promise(resolveServer => {
+    const server = createServer(sock => {
+      let buf = "";
+      let upgraded = false;
+      sock.on("data", chunk => {
+        if (upgraded) {
+          if (onClientData) {
+            onClientData(sock, chunk);
+          } else {
             sock.end();
-            return;
           }
-          buf += chunk.toString("latin1");
-          if (!buf.includes("\r\n\r\n")) return;
-          const key = /Sec-WebSocket-Key:\s*(.*)\r\n/i.exec(buf)[1].trim();
-          const accept = crypto
-            .createHash("sha1")
-            .update(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")
-            .digest("base64");
-          sock.write(
-            "HTTP/1.1 101 Switching Protocols\r\n" +
-              "Upgrade: websocket\r\n" +
-              "Connection: Upgrade\r\n" +
-              "Sec-WebSocket-Accept: " +
-              accept +
-              "\r\n\r\n",
-          );
-          upgraded = true;
-          afterUpgrade(sock);
-        });
-        sock.on("error", () => {});
+          return;
+        }
+        buf += chunk.toString("latin1");
+        if (!buf.includes("\r\n\r\n")) return;
+        const key = /Sec-WebSocket-Key:\s*(.*)\r\n/i.exec(buf)[1].trim();
+        const accept = crypto
+          .createHash("sha1")
+          .update(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")
+          .digest("base64");
+        sock.write(
+          "HTTP/1.1 101 Switching Protocols\r\n" +
+            "Upgrade: websocket\r\n" +
+            "Connection: Upgrade\r\n" +
+            "Sec-WebSocket-Accept: " +
+            accept +
+            "\r\n\r\n",
+        );
+        upgraded = true;
+        afterUpgrade(sock);
       });
-      server.listen(0, "127.0.0.1", () => resolveServer(server));
+      sock.on("error", () => {});
     });
-  }
+    server.listen(0, "127.0.0.1", () => resolveServer(server));
+  });
+}
 
+describe("WebSocket CloseEvent reports the received close code", () => {
   function closeFrame(code, reason = "") {
     const r = Buffer.from(reason);
     const f = Buffer.alloc(4 + r.length);
@@ -1041,5 +1048,103 @@ describe("WebSocket CloseEvent reports the received close code", () => {
   it("abnormal close (socket destroyed without Close frame) reports wasClean=false", async () => {
     const server = await rawWsServer(sock => sock.destroy());
     expect(await connectAndAwaitClose(server)).toEqual({ code: 1006, reason: "Connection ended", wasClean: false });
+  });
+});
+
+describe("WebSocket message handler re-entrancy during a multi-frame read", () => {
+  // Unmasked server->client text frame: FIN=1, opcode=1, 7-bit length.
+  function textFrame(str) {
+    const payload = Buffer.from(str);
+    expect(payload.length).toBeLessThan(126);
+    return Buffer.concat([Buffer.from([0x81, payload.length]), payload]);
+  }
+
+  // Decode the first masked client->server text frame.
+  function decodeClientTextFrame(buf) {
+    expect(buf.length).toBeGreaterThanOrEqual(6);
+    expect(buf[0] & 0x0f).toBe(0x1);
+    expect(buf[1] & 0x80).toBe(0x80);
+    const len = buf[1] & 0x7f;
+    expect(len).toBeLessThan(126);
+    expect(buf.length).toBeGreaterThanOrEqual(6 + len);
+    const mask = buf.subarray(2, 6);
+    const payload = Buffer.from(buf.subarray(6, 6 + len));
+    for (let i = 0; i < len; i++) payload[i] ^= mask[i % 4];
+    return payload.toString();
+  }
+
+  // 2 header bytes + 4 mask bytes + "from-handler".length
+  const CLIENT_TEXT_FRAME_LEN = 6 + "from-handler".length;
+
+  // The server writes A, B and C as three text frames in ONE TCP segment so a
+  // single native receive pass dispatches all of them; `onMessage` runs
+  // synchronously inside that dispatch.
+  async function run(onMessage, { awaitClientFrame = false } = {}) {
+    const clientChunks = [];
+    const gotClientFrame = Promise.withResolvers();
+    let conn;
+    const server = await rawWsServer(
+      sock => {
+        conn = sock;
+        sock.write(Buffer.concat([textFrame("A"), textFrame("B"), textFrame("C")]));
+      },
+      (_sock, chunk) => {
+        clientChunks.push(chunk);
+        if (Buffer.concat(clientChunks).length >= CLIENT_TEXT_FRAME_LEN) gotClientFrame.resolve();
+      },
+    );
+    try {
+      const closed = Promise.withResolvers();
+      const messages = [];
+      const ws = new WebSocket(`ws://127.0.0.1:${server.address().port}`);
+      ws.addEventListener("error", () => {});
+      ws.addEventListener("close", e => closed.resolve({ code: e.code, wasClean: e.wasClean }));
+      ws.addEventListener("message", e => {
+        messages.push(e.data);
+        onMessage(ws, messages);
+      });
+      const close = await closed.promise;
+      if (awaitClientFrame) await gotClientFrame.promise;
+      return { messages, close, clientFrames: Buffer.concat(clientChunks) };
+    } finally {
+      conn?.destroy();
+      await new Promise(r => server.close(r));
+    }
+  }
+
+  it("a synchronous send() from the message handler preserves the remaining frames", async () => {
+    const { messages, close, clientFrames } = await run(
+      (ws, messages) => {
+        if (messages.length === 1) ws.send("from-handler");
+        if (messages.length === 3) ws.close(1000);
+      },
+      { awaitClientFrame: true },
+    );
+    expect(messages).toEqual(["A", "B", "C"]);
+    // The re-entrant write actually went out mid-loop.
+    expect(decodeClientTextFrame(clientFrames)).toBe("from-handler");
+    expect(close).toEqual({ code: 1000, wasClean: true });
+  });
+
+  it("a synchronous close() from the message handler suppresses the remaining frames", async () => {
+    const { messages, close } = await run((ws, messages) => {
+      if (messages.length === 1) {
+        ws.send("from-handler");
+        ws.close(1000, "bye");
+      }
+    });
+    expect(messages).toEqual(["A"]);
+    expect(close).toEqual({ code: 1000, wasClean: true });
+  });
+
+  it("a synchronous terminate() from the message handler suppresses the remaining frames", async () => {
+    const { messages, close } = await run((ws, messages) => {
+      if (messages.length === 1) {
+        ws.send("from-handler");
+        ws.terminate();
+      }
+    });
+    expect(messages).toEqual(["A"]);
+    expect(close).toEqual({ code: 1006, wasClean: false });
   });
 });

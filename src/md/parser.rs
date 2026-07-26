@@ -2,6 +2,7 @@
 
 use core::cell::Cell;
 use core::ffi::c_void;
+use core::sync::atomic::{AtomicUsize, Ordering};
 
 use bun_collections::bit_set::{ArrayBitSet, num_masks_for};
 
@@ -16,14 +17,13 @@ use bun_core::StackCheck;
 use super::helpers;
 use super::html_renderer::HtmlRenderer;
 use super::types::{
-    Align, BlockType, Container, Flags, Mark, NUM_OPENER_STACKS, OFF, OpenerStack, Renderer,
-    TABLE_MAXCOLCOUNT, VerbatimLine,
+    Align, BlockType, Container, Flags, OFF, Renderer, TABLE_MAXCOLCOUNT, VerbatimLine,
 };
 use crate::RenderOptions;
 
 // Rust has no struct-scoped type
 // aliases, so these live at module scope as `parser::EmphDelim` etc.
-pub use super::inlines::{EmphDelim, HtmlScanMemo, MAX_EMPH_MATCHES};
+pub use super::inlines::{EmphDelim, HtmlScanMemo};
 pub use super::ref_defs::RefDef;
 
 /// Parser context holding all state during parsing.
@@ -42,13 +42,11 @@ pub struct Parser<'a> {
 
     // Code indent offset: 4 normally, maxInt if no_indented_code_blocks
     pub code_indent_offset: u32,
-    pub doc_ends_with_newline: bool,
 
     // Mark character map — bitset of characters that need special handling
     pub mark_char_map: MarkCharMap,
 
     // Dynamic arrays
-    pub marks: Vec<Mark>,
     pub containers: Vec<Container>,
     // 4-byte alignment is
     // load-bearing for the `BlockHeader` reinterpretation in
@@ -77,22 +75,12 @@ pub struct Parser<'a> {
     pub current_block: Option<usize>,
     pub current_block_lines: Vec<VerbatimLine>,
 
-    // Opener stacks
-    pub opener_stacks: [OpenerStack; NUM_OPENER_STACKS],
-
-    // Linked lists through marks
-    pub unresolved_link_head: i32,
-    pub unresolved_link_tail: i32,
-    pub table_cell_boundaries_head: i32,
-    pub table_cell_boundaries_tail: i32,
-
     // HTML block tracking
     pub html_block_type: u8,
     // Fenced code block indent
     pub fence_indent: u32,
 
     // Table column alignments
-    pub table_col_count: u32,
     pub table_alignments: [Align; TABLE_MAXCOLCOUNT as usize],
 
     // Ref defs
@@ -130,7 +118,7 @@ impl Default for BlockHeader {
 }
 
 /// `Parser`'s error type: the union of `{ OutOfMemory, JSError, JSTerminated }`
-/// with the parser-specific `{ StackOverflow, InputTooLarge }`.
+/// with the parser-specific `{ StackOverflow, InputTooLarge, TooManyBlocks }`.
 // (`bun_jsc::JsError` covers the first three, but the md crate sits below
 // `bun_jsc` in the layering, so the variants stay flat here.)
 pub type Error = ParserError;
@@ -141,25 +129,87 @@ pub enum ParserError {
     JSError,
     JSTerminated,
     StackOverflow,
-    /// The input is longer than `OFF::MAX` bytes, so its offsets cannot be
-    /// represented by the parser's `u32` offset type.
+    /// The input is longer than [`MAX_INPUT_LEN`], so the parser's `u32`
+    /// offset arithmetic cannot address it.
     InputTooLarge,
+    /// The document needs more than [`MAX_BLOCK_BYTES`] of block metadata,
+    /// so the parser's `u32` block offsets cannot address it.
+    TooManyBlocks,
 }
 
 bun_core::oom_from_alloc!(ParserError);
 
-impl From<ParserError> for bun_core::Error {
-    fn from(e: ParserError) -> Self {
-        bun_core::err!(from e)
+impl core::fmt::Display for ParserError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str(<&'static str>::from(*self))
     }
 }
 
-/// Every offset, mark and span boundary in the parser is an `OFF` (u32), so an
-/// input of 2^32 bytes or more cannot be indexed. Callers that size anything
-/// from the input length must reject it with this before allocating.
+impl core::error::Error for ParserError {}
+
+/// The longest `OFF`-typed fixed lookahead the parser performs from an
+/// in-bounds offset: the `<![CDATA[` probe in `is_html_block_start_condition`
+/// checks `off + MAX_LOOKAHEAD <= size`. (Probes that add in `usize`, like
+/// `match_html_tag`, cannot wrap and do not bound this.)
+pub(crate) const MAX_LOOKAHEAD: OFF = 1 + crate::line_analysis::CDATA_OPEN.len() as OFF;
+
+/// The largest input `input_size` accepts. Every offset, mark and span
+/// boundary in the parser is an `OFF` (u32), and bounds checks are written as
+/// `off + k <= size` for fixed lookaheads `k`, so the input must leave
+/// [`MAX_LOOKAHEAD`] bytes of headroom below `OFF::MAX` for that arithmetic
+/// never to wrap.
+pub const MAX_INPUT_LEN: usize = (OFF::MAX - MAX_LOOKAHEAD) as usize;
+
+/// The most bytes `block_bytes` may hold: a block's offset into the buffer
+/// is stored as a `u32` (`Container.block_byte_off` and the casts that feed
+/// it), and each new header is written at the end of `block_bytes` rounded
+/// up to its alignment, so the buffer must stop one aligned header short of
+/// `OFF::MAX`.
+pub(crate) const MAX_BLOCK_BYTES: usize =
+    OFF::MAX as usize - (size_of::<BlockHeader>() + align_of::<BlockHeader>());
+
+// The headroom proof: a buffer filled to the cap can still be aligned up and
+// take one more header without leaving `OFF` range.
+const _: () = assert!(
+    ((MAX_BLOCK_BYTES + (align_of::<BlockHeader>() - 1)) & !(align_of::<BlockHeader>() - 1))
+        + size_of::<BlockHeader>()
+        <= OFF::MAX as usize
+);
+
+/// The runtime block-metadata cap checked by [`check_block_bytes_len`]:
+/// always [`MAX_BLOCK_BYTES`] outside of tests, shrinkable only through
+/// [`set_max_block_bytes_for_testing`].
+static BLOCK_BYTES_LIMIT: AtomicUsize = AtomicUsize::new(MAX_BLOCK_BYTES);
+
+/// `bun:internal-for-testing` (`setMaxMarkdownBlockBytesForTesting`): shrink
+/// the block-metadata cap so the `TooManyBlocks` path is reachable without
+/// allocating 4 GiB of headers. The cap can only be lowered, never raised
+/// past [`MAX_BLOCK_BYTES`]. Returns the previous value so callers can
+/// restore it.
+pub fn set_max_block_bytes_for_testing(limit: usize) -> usize {
+    BLOCK_BYTES_LIMIT.swap(limit.min(MAX_BLOCK_BYTES), Ordering::Relaxed)
+}
+
+/// Rejects growing `block_bytes` to `needed` bytes once the parser's u32
+/// block offsets could no longer address it. Every site that grows the
+/// buffer (`append_block_header`, `end_current_block`) checks this before
+/// appending.
+#[inline]
+pub(crate) fn check_block_bytes_len(needed: usize) -> Result<(), ParserError> {
+    if needed > BLOCK_BYTES_LIMIT.load(Ordering::Relaxed) {
+        return Err(ParserError::TooManyBlocks);
+    }
+    Ok(())
+}
+
+/// Callers that size anything from the input length must reject oversized
+/// inputs with this before allocating.
 #[inline]
 pub(crate) fn input_size(text: &[u8]) -> Result<OFF, ParserError> {
-    OFF::try_from(text.len()).map_err(|_| ParserError::InputTooLarge)
+    if text.len() > MAX_INPUT_LEN {
+        return Err(ParserError::InputTooLarge);
+    }
+    Ok(text.len() as OFF)
 }
 
 impl<'a> Parser<'a> {
@@ -185,6 +235,40 @@ impl<'a> Parser<'a> {
         self.get_block_header_at(off)
     }
 
+    /// Appends one aligned `BlockHeader` to `block_bytes` and returns its
+    /// byte offset. This is the only way a header is added, so the
+    /// block-metadata cap cannot be forgotten by a new caller.
+    pub(crate) fn append_block_header(
+        &mut self,
+        header: BlockHeader,
+    ) -> Result<usize, ParserError> {
+        let align_mask: usize = align_of::<BlockHeader>() - 1;
+        let aligned = (self.block_bytes.len() + align_mask) & !align_mask;
+        let needed = aligned + size_of::<BlockHeader>();
+        check_block_bytes_len(needed)?;
+        self.block_bytes
+            .reserve(needed.saturating_sub(self.block_bytes.len()));
+        // Zero-fill to `needed`; bytes in [aligned, needed) are immediately
+        // overwritten by the header write below.
+        self.block_bytes.resize(needed, 0);
+        *self.get_block_header_at(aligned) = header;
+        Ok(aligned)
+    }
+
+    /// Charge one resolved reference link/image against the reference-definition
+    /// output budget (`max_ref_def_output`). On exhaustion the budget is zeroed, so
+    /// this and every later reference degrade to literal text (md4c, mity/md4c#238).
+    pub(crate) fn charge_ref_def_output(&mut self, dest_len: usize, title_len: usize) -> bool {
+        let n = dest_len as u64 + title_len as u64;
+        if n < self.max_ref_def_output {
+            self.max_ref_def_output -= n;
+            true
+        } else {
+            self.max_ref_def_output = 0;
+            false
+        }
+    }
+
     fn init(text: &'a [u8], flags: Flags, rend: Renderer<'a>) -> Result<Parser<'a>, ParserError> {
         let size = input_size(text)?;
         let mut p = Parser {
@@ -199,9 +283,7 @@ impl<'a> Parser<'a> {
             } else {
                 4
             },
-            doc_ends_with_newline: size > 0 && helpers::is_newline(text[(size - 1) as usize]),
             mark_char_map: MarkCharMap::init_empty(),
-            marks: Vec::new(),
             containers: Vec::new(),
             block_bytes: Vec::new(),
             buffer: Vec::new(),
@@ -212,20 +294,14 @@ impl<'a> Parser<'a> {
             n_containers: 0,
             current_block: None,
             current_block_lines: Vec::new(),
-            opener_stacks: [(); NUM_OPENER_STACKS].map(|_| OpenerStack::default()),
-            unresolved_link_head: -1,
-            unresolved_link_tail: -1,
-            table_cell_boundaries_head: -1,
-            table_cell_boundaries_tail: -1,
             html_block_type: 0,
             fence_indent: 0,
-            table_col_count: 0,
             table_alignments: [Align::Default; TABLE_MAXCOLCOUNT as usize],
             ref_defs: Vec::new(),
             ref_def_labels: bun_collections::StringSet::new(),
             last_line_has_list_loosening_effect: false,
             last_list_item_starts_with_two_blank_lines: false,
-            max_ref_def_output: (16 * (size as u64)).min(1024 * 1024).min(u32::MAX as u64),
+            max_ref_def_output: 16 * (size as u64).min(1024 * 1024 / 16),
             stack_check: StackCheck::init(),
         };
         p.build_mark_char_map();

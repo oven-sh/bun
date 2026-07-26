@@ -325,7 +325,7 @@ pub struct DependencyUrlFormatter<'a> {
 impl Display for DependencyUrlFormatter<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         let mut remain = self.url;
-        while let Some(slash) = crate::strings_impl::index_of_char(remain, b'/') {
+        while let Some(slash) = crate::strings::index_of_char_usize(remain, b'/') {
             write_bytes(f, &remain[..slash])?;
             f.write_str("%2f")?;
             remain = &remain[slash + 1..];
@@ -341,16 +341,6 @@ pub fn dependency_url(url: &[u8]) -> DependencyUrlFormatter<'_> {
 // ───────────────────────────────────────────────────────────────────────────
 // IntegrityFormatter
 // ───────────────────────────────────────────────────────────────────────────
-
-// adt_const_params (enum const-generic) is nightly. Stable rewrite: const bool.
-pub const INTEGRITY_SHORT: bool = true;
-pub const INTEGRITY_FULL: bool = false;
-#[doc(hidden)]
-#[derive(PartialEq, Eq, Clone, Copy)]
-pub enum IntegrityFormatStyle {
-    Short,
-    Full,
-} // kept for callers that name the enum
 
 pub struct IntegrityFormatter<const SHORT: bool> {
     pub bytes: [u8; SHA512_DIGEST],
@@ -546,7 +536,7 @@ pub fn format_utf16_type_with_path_options(
             write_bytes(writer, to_write)?;
         } else {
             let mut ptr = to_write;
-            while let Some(i) = crate::strings_impl::index_of_any(ptr, b"\\/") {
+            while let Some(i) = crate::strings::index_of_any(ptr, b"\\/") {
                 let sep = match opts.path_sep {
                     PathSep::Windows => b'\\',
                     PathSep::Posix => b'/',
@@ -573,37 +563,6 @@ pub fn utf16(slice_: &[u16]) -> FormatUTF16<'_> {
     FormatUTF16 {
         buf: slice_,
         path_fmt_opts: None,
-    }
-}
-
-/// Debug, this does not handle invalid utf32
-#[inline]
-pub fn debug_utf32_path_formatter(path: &[u32]) -> DebugUTF32PathFormatter<'_> {
-    DebugUTF32PathFormatter { path }
-}
-
-pub struct DebugUTF32PathFormatter<'a> {
-    pub path: &'a [u32],
-}
-
-impl Display for DebugUTF32PathFormatter<'_> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        let mut path_buf = crate::PathBuffer::uninit();
-        let buf = path_buf.as_mut_slice();
-        // SAFETY: FFI reads exactly path.len() u32s and writes ≤ MAX_PATH_BYTES bytes.
-        let result = unsafe {
-            bun_simdutf_sys::simdutf::simdutf__convert_utf32_to_utf8_with_errors(
-                self.path.as_ptr(),
-                self.path.len(),
-                buf.as_mut_ptr(),
-            )
-        };
-        let converted: &[u8] = if result.is_successful() {
-            &buf[..result.count]
-        } else {
-            b"Invalid UTF32!"
-        };
-        write_bytes(f, converted)
     }
 }
 
@@ -635,7 +594,7 @@ impl Display for FormatUTF8<'_> {
             }
 
             let mut ptr = self.buf;
-            while let Some(i) = crate::strings_impl::index_of_any(ptr, b"\\/") {
+            while let Some(i) = crate::strings::index_of_any(ptr, b"\\/") {
                 let sep = match opts.path_sep {
                     PathSep::Windows => b'\\',
                     PathSep::Posix => b'/',
@@ -753,10 +712,10 @@ pub use bun_alloc::{SliceCursor, buf_print, buf_print_len};
 
 impl crate::io::Write for SliceCursor<'_> {
     #[inline]
-    fn write_all(&mut self, bytes: &[u8]) -> Result<(), crate::Error> {
+    fn write_all(&mut self, bytes: &[u8]) -> crate::CrateResult<()> {
         let end = self.at + bytes.len();
         if end > self.buf.len() {
-            return Err(crate::err!("NoSpaceLeft"));
+            return Err(crate::CrateError::NoSpaceLeft);
         }
         self.buf[self.at..end].copy_from_slice(bytes);
         self.at = end;
@@ -995,10 +954,10 @@ impl core::fmt::Display for InvalidCharacter {
     }
 }
 impl core::error::Error for InvalidCharacter {}
-impl From<InvalidCharacter> for crate::Error {
+impl From<InvalidCharacter> for crate::CrateError {
     #[inline]
     fn from(_: InvalidCharacter) -> Self {
-        crate::Error::from_name("InvalidCharacter")
+        crate::CrateError::InvalidCharacter
     }
 }
 
@@ -1101,7 +1060,7 @@ pub fn format_latin1(slice_: &[u8], writer: &mut impl fmt::Write) -> fmt::Result
     let chunk = borrow.chunk();
     let mut slice = slice_;
 
-    while let Some(i) = crate::strings_impl::first_non_ascii(slice) {
+    while let Some(i) = crate::strings::first_non_ascii_usize(slice) {
         if i > 0 {
             write_bytes(writer, &slice[..i])?;
             slice = &slice[i..];
@@ -1200,7 +1159,7 @@ pub struct HostFormatter<'a> {
 
 impl Display for HostFormatter<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        if crate::strings_impl::index_of_char(self.host, b':').is_some() {
+        if crate::strings::index_of_char_usize(self.host, b':').is_some() {
             return write_bytes(f, self.host);
         }
 
@@ -1234,10 +1193,10 @@ pub struct FormatValidIdentifier<'a> {
 
 impl Display for FormatValidIdentifier<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        use crate::js_lexer;
+        use crate::string::lexer as js_lexer;
 
-        let mut iterator = crate::CodepointIterator::init(self.name);
-        let mut cursor = crate::CodepointIteratorCursor::default();
+        let mut iterator = strings::CodepointIterator::init(self.name);
+        let mut cursor = strings::Cursor::default();
 
         let mut has_needed_gap = false;
         let mut needs_gap;
@@ -1248,13 +1207,13 @@ impl Display for FormatValidIdentifier<'_> {
         }
 
         // Common case: no gap necessary. No allocation necessary.
-        needs_gap = !js_lexer::is_identifier_start(cursor.c);
+        needs_gap = !js_lexer::is_identifier_start(cursor.c as u32);
         if !needs_gap {
             // Are there any non-alphanumeric chars at all?
             while iterator.next(&mut cursor) {
-                if !js_lexer::is_identifier_continue(cursor.c) || cursor.width > 1 {
+                if !js_lexer::is_identifier_continue(cursor.c as u32) {
                     needs_gap = true;
-                    start_i = cursor.i;
+                    start_i = cursor.i as usize;
                     break;
                 }
             }
@@ -1270,17 +1229,17 @@ impl Display for FormatValidIdentifier<'_> {
                 f.write_str("_")?;
             }
             let slice = &self.name[start_i..];
-            iterator = crate::CodepointIterator::init(slice);
-            cursor = crate::CodepointIteratorCursor::default();
+            iterator = strings::CodepointIterator::init(slice);
+            cursor = strings::Cursor::default();
 
             while iterator.next(&mut cursor) {
-                if js_lexer::is_identifier_continue(cursor.c) && cursor.width == 1 {
+                if js_lexer::is_identifier_continue(cursor.c as u32) {
                     if needs_gap {
                         f.write_str("_")?;
                         needs_gap = false;
                         has_needed_gap = true;
                     }
-                    let i = cursor.i;
+                    let i = cursor.i as usize;
                     write_bytes(f, &slice[i..i + cursor.width as usize])?;
                 } else if !needs_gap {
                     needs_gap = true;
@@ -1319,7 +1278,15 @@ pub fn github_action_writer(writer: &mut impl fmt::Write, self_: &[u8]) -> fmt::
             let i = i as usize;
             let byte = self_[i];
             if byte > 0x7F {
-                offset = i + (strings::wtf8_byte_sequence_length(byte) as usize).max(1);
+                let seq_len = strings::wtf8_byte_sequence_length(byte) as usize;
+                if i + seq_len > end as usize {
+                    // Truncated trailing sequence; emit the pending ASCII and stop
+                    // rather than hand an invalid slice to from_utf8_unchecked.
+                    write_bytes(writer, &self_[offset..i])?;
+                    break;
+                }
+                write_bytes(writer, &self_[offset..i + seq_len])?;
+                offset = i + seq_len;
                 continue;
             }
             if i > 0 {
@@ -1338,7 +1305,7 @@ pub fn github_action_writer(writer: &mut impl fmt::Write, self_: &[u8]) -> fmt::
                     if (i + 2) < end as usize {
                         let upper = (i + 5).min(end as usize);
                         let remain = &self_[(i + 2)..upper];
-                        if let Some(j) = crate::strings_impl::index_of_char(remain, b'm') {
+                        if let Some(j) = crate::strings::index_of_char_usize(remain, b'm') {
                             n += j + 1;
                         }
                     }
@@ -1351,20 +1318,6 @@ pub fn github_action_writer(writer: &mut impl fmt::Write, self_: &[u8]) -> fmt::
         }
     }
     Ok(())
-}
-
-pub struct GithubActionFormatter<'a> {
-    pub text: &'a [u8],
-}
-
-impl Display for GithubActionFormatter<'_> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        github_action_writer(f, self.text)
-    }
-}
-
-pub fn github_action(self_: &[u8]) -> GithubActionFormatter<'_> {
-    GithubActionFormatter { text: self_ }
 }
 
 /// Formats a string to be safe to use as a Github Actions workflow-command
@@ -1437,13 +1390,6 @@ impl Display for QuotedFormatter<'_> {
 // ───────────────────────────────────────────────────────────────────────────
 // QuickAndDirtyJavaScriptSyntaxHighlighter
 // ───────────────────────────────────────────────────────────────────────────
-
-pub fn fmt_java_script(
-    text: &[u8],
-    opts: HighlighterOptions,
-) -> QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
-    QuickAndDirtyJavaScriptSyntaxHighlighter { text, opts }
-}
 
 /// snake_case alias of `fmt_java_script`. Several
 /// downstream crates spell it `fmt_javascript`.
@@ -1711,15 +1657,6 @@ impl Keywords {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum RedactedKeyword {
-    Auth,      // _auth
-    AuthToken, // _authToken
-    Token,     // token
-    Password,  // _password
-    Email,     // email
-}
-
 pub struct RedactedKeywords;
 impl RedactedKeywords {
     // 5 entries — a `matches!` chain is plenty at this size (the big keyword
@@ -1862,7 +1799,7 @@ impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
                         if self.opts.redact_sensitive_information {
                             if should_redact_value {
                                 should_redact_value = false;
-                                let end = crate::strings_impl::index_of_char(text, b'\n')
+                                let end = crate::strings::index_of_char_usize(text, b'\n')
                                     .unwrap_or(text.len());
                                 text = &text[end..];
                                 write!(writer, crate::pretty_fmt!("<r><yellow>***<r>", true))?;
@@ -2068,7 +2005,7 @@ impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
 
                         if should_redact_value {
                             should_redact_value = false;
-                            let len = crate::strings_impl::index_of_char(text, b'\n')
+                            let len = crate::strings::index_of_char_usize(text, b'\n')
                                 .unwrap_or(text.len());
                             splat_byte_all(writer, b'*', len)?;
                             text = &text[len..];
@@ -2159,7 +2096,7 @@ impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
 
                         if should_redact_value {
                             should_redact_value = false;
-                            let len = crate::strings_impl::index_of_char(text, b'\n')
+                            let len = crate::strings::index_of_char_usize(text, b'\n')
                                 .unwrap_or(text.len());
                             splat_byte_all(writer, b'*', len)?;
                             text = &text[len..];
@@ -2173,7 +2110,7 @@ impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
                         prev_keyword = None;
                         if should_redact_value {
                             should_redact_value = false;
-                            let len = crate::strings_impl::index_of_char(text, b'\n')
+                            let len = crate::strings::index_of_char_usize(text, b'\n')
                                 .unwrap_or(text.len());
                             splat_byte_all(writer, b'*', len)?;
                             text = &text[len..];
@@ -2186,7 +2123,7 @@ impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
                         prev_keyword = None;
                         if should_redact_value {
                             should_redact_value = false;
-                            let len = crate::strings_impl::index_of_char(text, b'\n')
+                            let len = crate::strings::index_of_char_usize(text, b'\n')
                                 .unwrap_or(text.len());
                             splat_byte_all(writer, b'*', len)?;
                             text = &text[len..];
@@ -2200,7 +2137,7 @@ impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
 
                         if should_redact_value {
                             should_redact_value = false;
-                            let len = crate::strings_impl::index_of_char(text, b'\n')
+                            let len = crate::strings::index_of_char_usize(text, b'\n')
                                 .unwrap_or(text.len());
                             splat_byte_all(writer, b'*', len)?;
                             text = &text[len..];
@@ -2237,7 +2174,7 @@ impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
                     b'<' => {
                         if should_redact_value {
                             should_redact_value = false;
-                            let len = crate::strings_impl::index_of_char(text, b'\n')
+                            let len = crate::strings::index_of_char_usize(text, b'\n')
                                 .unwrap_or(text.len());
                             splat_byte_all(writer, b'*', len)?;
                             text = &text[len..];
@@ -2275,7 +2212,7 @@ impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
                     c => {
                         if should_redact_value {
                             should_redact_value = false;
-                            let len = crate::strings_impl::index_of_char(text, b'\n')
+                            let len = crate::strings::index_of_char_usize(text, b'\n')
                                 .unwrap_or(text.len());
                             splat_byte_all(writer, b'*', len)?;
                             text = &text[len..];
@@ -2300,14 +2237,7 @@ pub fn quote(self_: &[u8]) -> QuotedFormatter<'_> {
 // ───────────────────────────────────────────────────────────────────────────
 
 // ConstParamTy is nightly, so use a runtime value instead.
-// adt_const_params rewrite: SEPARATOR enum → const bool (only 2 variants).
-pub const SEP_LIST: bool = true;
 pub const SEP_DASH: bool = false;
-#[doc(hidden)]
-pub enum EnumTagListSeparator {
-    List,
-    Dash,
-} // kept for callers naming the enum
 
 pub struct EnumTagListFormatter<E: strum::VariantNames, const LIST: bool> {
     pub pretty: bool,
@@ -2352,13 +2282,13 @@ pub fn enum_tag_list<E: strum::VariantNames, const LIST: bool>() -> EnumTagListF
 pub fn format_ip<'a>(
     address: &impl Display,
     into: &'a mut [u8],
-) -> Result<&'a mut [u8], crate::Error> {
+) -> crate::CrateResult<&'a mut [u8]> {
     // The `Display` form includes `:<port>` and square brackets (IPv6)
     //  while Node does neither.  This uses format then strips these to bring
     //  the result into conformance with Node.
     use std::io::Write;
     let mut cursor = std::io::Cursor::new(&mut into[..]);
-    write!(cursor, "{}", address).map_err(|_| crate::err!("NoSpaceLeft"))?;
+    write!(cursor, "{}", address).map_err(|_| crate::CrateError::NoSpaceLeft)?;
     let written = cursor.position() as usize;
 
     // Reshaped for borrowck — compute (start, end) offsets against `into`
@@ -2376,6 +2306,12 @@ pub fn format_ip<'a>(
     if start < end && into[start] == b'[' && into[end - 1] == b']' {
         start += 1;
         end -= 1;
+    }
+    // Strip `%<zone>` — Node formats addresses via uv_inet_ntop on the bare
+    // in6_addr and never includes the zone identifier; the scope is exposed
+    // separately (e.g. `scopeid` in os.networkInterfaces()).
+    if let Some(percent) = into[start..end].iter().position(|&b| b == b'%') {
+        end = start + percent;
     }
     Ok(&mut into[start..end])
 }
@@ -2567,20 +2503,6 @@ macro_rules! impl_digit_count_signed {
 impl_digit_count_unsigned!(u8, u16, u32, u64, usize);
 impl_digit_count_signed!(i8, i16, i32, i64, isize);
 
-#[deprecated(note = "use digit_count / digit_count_u64")]
-#[doc(hidden)]
-#[inline]
-pub fn fast_digit_count(x: u64) -> u64 {
-    digit_count_u64(x) as u64
-}
-
-#[deprecated(note = "use digit_count / digit_count_i64")]
-#[doc(hidden)]
-#[inline]
-pub fn count_int(n: i64) -> usize {
-    digit_count_i64(n)
-}
-
 // ───────────────────────────────────────────────────────────────────────────
 // SizeFormatter
 // ───────────────────────────────────────────────────────────────────────────
@@ -2682,22 +2604,6 @@ pub fn bytes_to_hex_lower_string(input: &[u8]) -> String {
     bytes_to_hex_lower(input, &mut out);
     // SAFETY: hex alphabet is ASCII.
     unsafe { String::from_utf8_unchecked(out) }
-}
-pub fn size_f64(bytes: f64, opts: SizeFormatterOptions) -> SizeFormatter {
-    SizeFormatter {
-        value: bytes as usize,
-        opts,
-    }
-}
-pub fn size_i64(bytes: i64, opts: SizeFormatterOptions) -> SizeFormatter {
-    // Clamp to 0 instead of panicking so release builds never crash on a
-    // transiently negative size, while keeping the safe-build trap via
-    // debug_assert.
-    debug_assert!(bytes >= 0);
-    SizeFormatter {
-        value: bytes.max(0) as usize,
-        opts,
-    }
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -2916,16 +2822,6 @@ pub const fn hex_byte_upper(b: u8) -> [u8; 2] {
     ]
 }
 
-/// Two hex nibbles for a `u8` (`\\xXX`). `LOWER == false` → uppercase.
-#[inline]
-pub const fn hex_u8<const LOWER: bool>(b: u8) -> [u8; 2] {
-    if LOWER {
-        hex_byte_lower(b)
-    } else {
-        hex_byte_upper(b)
-    }
-}
-
 // ── compat aliases (pre-dedup names) ──────────────────────────────────────
 #[doc(hidden)]
 #[inline]
@@ -2942,12 +2838,6 @@ pub const fn hex2_lower(b: u8) -> [u8; 2] {
 pub const fn hex4_upper(v: u16) -> [u8; 4] {
     hex_u16::<false>(v)
 }
-#[doc(hidden)]
-#[inline]
-pub const fn hex4_lower(v: u16) -> [u8; 4] {
-    hex_u16::<true>(v)
-}
-
 /// Four hex nibbles for a `u16` (`\\uXXXX`). `LOWER == false` → uppercase.
 #[inline]
 pub const fn hex_u16<const LOWER: bool>(v: u16) -> [u8; 4] {
@@ -2992,12 +2882,6 @@ impl<const LOWER: bool, const NIBBLES: usize> Display for HexIntFormatter<LOWER,
         let buf = Self::get_out_buf(self.value);
         write_bytes(f, &buf)
     }
-}
-
-pub fn hex_int<const LOWER: bool, const NIBBLES: usize>(
-    value: u64,
-) -> HexIntFormatter<LOWER, NIBBLES> {
-    HexIntFormatter { value }
 }
 
 pub fn hex_int_lower<const NIBBLES: usize>(value: u64) -> HexIntFormatter<true, NIBBLES> {
@@ -3457,7 +3341,7 @@ impl Display for EscapePowershell<'_> {
 
 fn escape_powershell_impl(str: &[u8], writer: &mut impl fmt::Write) -> fmt::Result {
     let mut remain = str;
-    while let Some(i) = crate::strings_impl::index_of_any(remain, b"\"`") {
+    while let Some(i) = crate::strings::index_of_any(remain, b"\"`") {
         write_bytes(writer, &remain[..i])?;
         writer.write_str("`")?;
         writer.write_char(remain[i] as char)?;
@@ -3563,11 +3447,6 @@ impl<T: OutOfRangeValue> Display for NewOutOfRangeFormatter<'_, T> {
         self.value.write_received(f)
     }
 }
-
-pub type DoubleOutOfRangeFormatter<'a> = NewOutOfRangeFormatter<'a, f64>;
-pub type IntOutOfRangeFormatter<'a> = NewOutOfRangeFormatter<'a, i64>;
-pub type StringOutOfRangeFormatter<'a> = NewOutOfRangeFormatter<'a, &'a [u8]>;
-pub type BunStringOutOfRangeFormatter<'a> = NewOutOfRangeFormatter<'a, bun_alloc::String>;
 
 #[derive(Copy, Clone)]
 pub struct OutOfRangeOptions<'a> {

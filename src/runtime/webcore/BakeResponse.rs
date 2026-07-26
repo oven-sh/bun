@@ -191,16 +191,13 @@ pub(crate) fn construct_render(
     // Get the path string
     let path_str = bun_core::OwnedString::new(path_arg.to_bun_string(global_this)?);
 
-    let path_utf8 = path_str.to_utf8();
-    // `defer path_utf8.deinit()` → handled by Drop on the UTF-8 slice guard
-
     // Create a Response with Render body
     let response = Box::new(Response::init(
         Init {
             status_code: 200,
             headers: {
                 let mut headers = HeadersRef::create_empty();
-                headers.put(HTTPHeaderName::Location, path_utf8.slice(), global_this)?;
+                headers.put(HTTPHeaderName::Location, &path_str, global_this)?;
                 Some(headers)
             },
             ..Default::default()

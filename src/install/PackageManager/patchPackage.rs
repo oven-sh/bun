@@ -47,7 +47,7 @@ pub fn do_patch_commit(
     manager: &mut PackageManager,
     pathbuf: &mut PathBuffer,
     log_level: LogLevel,
-) -> Result<Option<PatchCommitResult>, bun_core::Error> {
+) -> Result<Option<PatchCommitResult>, crate::Error> {
     let mut folder_path_buf = PathBuffer::uninit();
     let mut lockfile: Box<Lockfile> = Box::default();
     let log = manager.log_mut();
@@ -164,9 +164,8 @@ pub fn do_patch_commit(
 
                 initialize_store();
                 let log = manager.log_mut();
-                let bump = bun_alloc::Arena::new();
-                let json = match JSON::parse_package_json_utf8(&package_json_source, log, &bump) {
-                    Ok(j) => j,
+                let parsed = match JSON::ParsedJson::parse_package_json(&package_json_source, log) {
+                    Ok(p) => p,
                     Err(err) => {
                         let _ = log.print(std::ptr::from_mut(Output::error_writer()));
                         bun_core::pretty_errorln!(
@@ -177,6 +176,7 @@ pub fn do_patch_commit(
                         Global::crash();
                     }
                 };
+                let json = parsed.root;
 
                 let version: &[u8] = 'version: {
                     if let Some(v) = json.get(b"version") {
@@ -718,7 +718,7 @@ fn escape_patch_filename(name: &[u8]) -> Option<Box<[u8]>> {
 /// 2. Calculate cache dir for package
 /// 3. Overwrite the input package with the one from the cache (cuz it could be hardlinked)
 /// 4. Print to user
-pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), bun_core::Error> {
+pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
     let argument: &'static [u8] = manager.options.positionals[1];
 
     let arg_kind: PatchArgKind = PatchArgKind::from_arg(argument);
@@ -775,9 +775,8 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), bun_core::Error
 
                 initialize_store();
                 let log = manager.log_mut();
-                let bump = bun_alloc::Arena::new();
-                let json = match JSON::parse_package_json_utf8(&package_json_source, log, &bump) {
-                    Ok(j) => j,
+                let parsed = match JSON::ParsedJson::parse_package_json(&package_json_source, log) {
+                    Ok(p) => p,
                     Err(err) => {
                         let _ = log.print(std::ptr::from_mut(Output::error_writer()));
                         bun_core::pretty_errorln!(
@@ -788,6 +787,7 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), bun_core::Error
                         Global::crash();
                     }
                 };
+                let json = parsed.root;
 
                 let version: &[u8] = 'version: {
                     if let Some(v) = json.get(b"version") {
@@ -1134,7 +1134,7 @@ fn overwrite_package_in_node_modules_folder(
     cache_dir: Fd,
     cache_dir_subpath: &[u8],
     node_modules_folder_path: &[u8],
-) -> Result<(), bun_core::Error> {
+) -> Result<(), crate::Error> {
     let _ = Fd::cwd().delete_tree(node_modules_folder_path);
 
     // FileCopier's path fields are `.unit = .os` (u16 on Windows). `Path::from`

@@ -300,6 +300,83 @@ describe("websocket", () => {
   });
 });
 
+describe("http metadata endpoint", () => {
+  let metadataInspectee: Subprocess | undefined;
+
+  async function spawnInspectee(): Promise<URL> {
+    metadataInspectee = spawn({
+      cwd: import.meta.dir,
+      cmd: [bunExe(), "--inspect=127.0.0.1:0", "inspectee.js"],
+      env: bunEnv,
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+
+    let url: URL | undefined;
+    let stderr = "";
+    const decoder = new TextDecoder();
+    for await (const chunk of metadataInspectee.stderr as ReadableStream) {
+      stderr += decoder.decode(chunk);
+      for (const line of stderr.split("\n")) {
+        try {
+          url = new URL(line);
+        } catch {}
+        if (url?.protocol.includes("ws")) {
+          break;
+        }
+      }
+      if (stderr.includes("Listening:")) {
+        break;
+      }
+    }
+
+    if (!url) {
+      process.stderr.write(stderr);
+      throw new Error("Unable to find listening URL");
+    }
+    return url;
+  }
+
+  afterEach(() => {
+    metadataInspectee?.kill();
+  });
+
+  test("serves /json/version only for a Host of the bound hostname, localhost, or an IP literal", async () => {
+    const { port } = await spawnInspectee();
+    const endpoint = `http://127.0.0.1:${port}/json/version`;
+
+    const allowed = await fetch(endpoint);
+    expect(allowed.status).toBe(200);
+    expect(await allowed.json()).toEqual({
+      "Protocol-Version": "1.3",
+      "Browser": "Bun",
+      "User-Agent": expect.any(String),
+      "WebKit-Version": expect.any(String),
+      "Bun-Version": expect.any(String),
+      "Bun-Revision": expect.any(String),
+    });
+
+    const localhost = await fetch(endpoint, { headers: { "Host": `localhost:${port}` } });
+    expect(localhost.status).toBe(200);
+
+    const named = await fetch(endpoint, { headers: { "Host": `inspector.example:${port}` } });
+    expect(await named.text()).toBe("");
+    expect(named.status).toBe(400);
+  });
+
+  test("serves /json/version only to allowed web origins", async () => {
+    const { port } = await spawnInspectee();
+    const endpoint = `http://127.0.0.1:${port}/json/version`;
+
+    const loopback = await fetch(endpoint, { headers: { "Origin": "http://127.0.0.1:8080" } });
+    expect(loopback.status).toBe(200);
+
+    const web = await fetch(endpoint, { headers: { "Origin": "http://inspector.example" } });
+    expect(await web.text()).toBe("");
+    expect(web.status).toBe(403);
+  });
+});
+
 describe("unix domain socket without websocket", () => {
   let tempdir: string;
   let randomSocketPath: () => string;

@@ -488,6 +488,18 @@ extern "C" BunString Bun__ErrorCode__determineSpecificType(JSC::JSGlobalObject* 
     return Bun::toStringRef(builder.toString());
 }
 
+// Node's ERR_INVALID_ARG_VALUE renders the value with `util.inspect` ('w'),
+// not `determineSpecificType` ("type string ('w')"). Expose the formatter the
+// C++ INVALID_ARG_VALUE overloads use so Rust-side error paths match exactly.
+extern "C" BunString Bun__ErrorCode__inspectForErrorMessage(JSC::JSGlobalObject* globalObject, EncodedJSValue value)
+{
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(JSC::getVM(globalObject));
+    WTF::StringBuilder builder;
+    JSValueToStringSafe(globalObject, builder, JSValue::decode(value), true);
+    RETURN_IF_EXCEPTION(scope, Zig::BunStringEmpty);
+    return Bun::toStringRef(builder.toString());
+}
+
 // Port of Node's addNumericalSeparator: groups digits in threes from the right
 // ("18446744073709551616" -> "18_446_744_073_709_551_616").
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/errors.js#L883
@@ -1496,6 +1508,13 @@ JSC::EncodedJSValue CRYPTO_INCOMPATIBLE_KEY_OPTIONS(JSC::ThrowScope& throwScope,
     return {};
 }
 
+JSC::EncodedJSValue CRYPTO_INCOMPATIBLE_KEY_OPTIONS(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject)
+{
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_INCOMPATIBLE_KEY_OPTIONS, "The selected key encoding is incompatible with the key type"_s));
+    throwScope.release();
+    return {};
+}
+
 JSC::EncodedJSValue CRYPTO_INVALID_DIGEST(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, const WTF::StringView& digest)
 {
     WTF::StringBuilder builder;
@@ -1597,10 +1616,10 @@ JSC::EncodedJSValue INVALID_MIME_SYNTAX(JSC::ThrowScope& scope, JSC::JSGlobalObj
     WTF::StringBuilder builder;
     builder.append("The MIME syntax for a "_s);
     builder.append(part);
-    builder.append(" in "_s);
+    builder.append(" in \""_s);
     builder.append(input);
 
-    builder.append(" is invalid"_s);
+    builder.append("\" is invalid"_s);
     if (position != -1) {
         builder.append(" at "_s);
         builder.append(String::number(position));
@@ -2536,7 +2555,7 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
     case ErrorCode::ERR_SOCKET_DGRAM_NOT_CONNECTED:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_SOCKET_DGRAM_NOT_CONNECTED, "Not connected"_s));
     case ErrorCode::ERR_SOCKET_DGRAM_NOT_RUNNING:
-        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_SOCKET_DGRAM_NOT_RUNNING, "Socket is not running"_s));
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_SOCKET_DGRAM_NOT_RUNNING, "Not running"_s));
     case ErrorCode::ERR_INVALID_CURSOR_POS:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_INVALID_CURSOR_POS, "Cannot set cursor row without setting its column"_s));
     case ErrorCode::ERR_INVALID_HANDLE_TYPE:
@@ -2555,12 +2574,38 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_STREAM_UNSHIFT_AFTER_END_EVENT, "stream.unshift() after end event"_s));
     case ErrorCode::ERR_STREAM_PUSH_AFTER_EOF:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_STREAM_PUSH_AFTER_EOF, "stream.push() after EOF"_s));
+    case ErrorCode::ERR_TRAILING_JUNK_AFTER_STREAM_END:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_TRAILING_JUNK_AFTER_STREAM_END, "Trailing junk found after the end of the compressed stream"_s));
     case ErrorCode::ERR_STREAM_UNABLE_TO_PIPE:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_STREAM_UNABLE_TO_PIPE, "Cannot pipe to a closed or destroyed stream"_s));
     case ErrorCode::ERR_ILLEGAL_CONSTRUCTOR:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_ILLEGAL_CONSTRUCTOR, "Illegal constructor"_s));
     case ErrorCode::ERR_DIR_CLOSED:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_DIR_CLOSED, "Directory handle was closed"_s));
+    case ErrorCode::ERR_INSPECTOR_ALREADY_ACTIVATED: {
+        auto arg0 = callFrame->argument(1);
+        if (arg0.isString()) {
+            auto message = arg0.toWTFString(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_INSPECTOR_ALREADY_ACTIVATED, message));
+        }
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_INSPECTOR_ALREADY_ACTIVATED, "Inspector is already activated. Close it with inspector.close() before activating it again."_s));
+    }
+    case ErrorCode::ERR_INSPECTOR_NOT_ACTIVE:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_INSPECTOR_NOT_ACTIVE, "Inspector is not active"_s));
+    case ErrorCode::ERR_INSPECTOR_ALREADY_CONNECTED:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_INSPECTOR_ALREADY_CONNECTED, "The inspector session is already connected"_s));
+    case ErrorCode::ERR_INSPECTOR_NOT_CONNECTED:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_INSPECTOR_NOT_CONNECTED, "Session is not connected"_s));
+    case ErrorCode::ERR_INSPECTOR_NOT_WORKER:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_INSPECTOR_NOT_WORKER, "Current thread is not a worker"_s));
+    case Bun::ErrorCode::ERR_INSPECTOR_COMMAND: {
+        auto arg0 = callFrame->argument(1);
+        auto str0 = arg0.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto message = makeString("Inspector error "_s, str0);
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_INSPECTOR_COMMAND, message));
+    }
     case ErrorCode::ERR_SERVER_ALREADY_LISTEN:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_SERVER_ALREADY_LISTEN, "Listen method has been called more than once without closing."_s));
     case ErrorCode::ERR_SOCKET_CLOSED:

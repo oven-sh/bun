@@ -816,6 +816,12 @@ EncodedJSValue BunPlugin::OnResolve::run(JSC::JSGlobalObject* globalObject, BunS
     auto scope = DECLARE_THROW_SCOPE(vm);
     WTF::String pathString = path->toWTFString(BunString::ZeroCopy);
 
+    JSC::MarkedArgumentBuffer matchedCallbacks;
+    matchedCallbacks.ensureCapacity(filters.size());
+    if (matchedCallbacks.hasOverflowed()) [[unlikely]] {
+        JSC::throwOutOfMemoryError(globalObject, scope);
+        return {};
+    }
     for (size_t i = 0; i < filters.size(); i++) {
         if (!filters[i].get()->match(globalObject, pathString, 0)) {
             continue;
@@ -824,6 +830,15 @@ EncodedJSValue BunPlugin::OnResolve::run(JSC::JSGlobalObject* globalObject, BunS
         if (!function) [[unlikely]] {
             continue;
         }
+        matchedCallbacks.append(function);
+    }
+    if (matchedCallbacks.hasOverflowed()) [[unlikely]] {
+        JSC::throwOutOfMemoryError(globalObject, scope);
+        return {};
+    }
+
+    for (size_t i = 0; i < matchedCallbacks.size(); i++) {
+        auto* function = matchedCallbacks.at(i).getObject();
 
         JSC::MarkedArgumentBuffer arguments;
 

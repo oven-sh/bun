@@ -56,27 +56,6 @@ impl<T: Copy> Unaligned<T> {
         unsafe { core::ptr::addr_of_mut!(self.0).write_unaligned(value) }
     }
 
-    /// Reinterpret `&[Unaligned<T>]` as `&[T]` once the caller has proven
-    /// `ptr` is naturally aligned. Panics in debug if not.
-    /// Empty slices need no cast: their dangling pointer has align 1, not
-    /// `align_of::<T>()`, so they are returned as `&[]` directly.
-    #[inline]
-    pub fn slice_align_cast(slice: &[Unaligned<T>]) -> &[T] {
-        if slice.is_empty() {
-            return &[];
-        }
-        debug_assert!(
-            (slice.as_ptr() as usize).is_multiple_of(core::mem::align_of::<T>()),
-            "Unaligned::slice_align_cast: pointer is not {}-byte aligned",
-            core::mem::align_of::<T>(),
-        );
-        // SAFETY: same address, same length, same element size; alignment
-        // precondition asserted above. `Unaligned<T>` is `repr(C, packed)`
-        // around a single `T`, so layout is byte-identical.
-        unsafe { core::slice::from_raw_parts(slice.as_ptr().cast::<T>(), slice.len()) }
-    }
-
-    /// Mutable counterpart of [`slice_align_cast`].
     #[inline]
     pub fn slice_align_cast_mut(slice: &mut [Unaligned<T>]) -> &mut [T] {
         if slice.is_empty() {
@@ -87,7 +66,9 @@ impl<T: Copy> Unaligned<T> {
             "Unaligned::slice_align_cast_mut: pointer is not {}-byte aligned",
             core::mem::align_of::<T>(),
         );
-        // SAFETY: see `slice_align_cast`; `&mut` exclusivity is preserved.
+        // SAFETY: `#[repr(C, packed)]` around a single `T` gives identical size
+        // and field offset 0; the debug-asserted alignment upgrades it to `T`'s
+        // layout. `&mut` exclusivity is preserved.
         unsafe { core::slice::from_raw_parts_mut(slice.as_mut_ptr().cast::<T>(), slice.len()) }
     }
 }
@@ -306,10 +287,6 @@ impl ZBox {
     #[inline]
     pub fn as_bytes(&self) -> &[u8] {
         &self.0[..self.len()]
-    }
-    #[inline]
-    pub fn as_bytes_with_nul(&self) -> &[u8] {
-        &self.0
     }
     #[inline]
     pub fn as_ptr(&self) -> *const core::ffi::c_char {
@@ -642,9 +619,6 @@ pub struct Mutex<T>(std::sync::Mutex<T>);
 /// callers can name it in return types (e.g. `rare_data::ProxyEnvStorage::lock`).
 pub type MutexGuard<'a, T> = std::sync::MutexGuard<'a, T>;
 
-/// Alias for [`Mutex`].
-pub type Guarded<T> = Mutex<T>;
-
 impl<T> Mutex<T> {
     #[inline]
     pub const fn new(value: T) -> Self {
@@ -673,13 +647,6 @@ impl<T> Mutex<T> {
     pub fn get_mut(&mut self) -> &mut T {
         self.0
             .get_mut()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-    }
-
-    #[inline]
-    pub fn into_inner(self) -> T {
-        self.0
-            .into_inner()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 }
@@ -752,8 +719,6 @@ pub type OSPathChar = u8;
 pub type OSPathSlice<'a> = &'a [OSPathChar];
 #[cfg(windows)]
 pub type OSPathSliceZ = WStr;
-#[cfg(not(windows))]
-pub type OSPathSliceZ = ZStr;
 
 pub use bun_alloc::SEP;
 
@@ -871,8 +836,6 @@ impl core::ops::DerefMut for WPathBuffer {
 }
 #[cfg(windows)]
 pub type OSPathBuffer = WPathBuffer;
-#[cfg(not(windows))]
-pub type OSPathBuffer = PathBuffer;
 
 /// Directory portion of `path` (handles trailing-sep stripping and root).
 pub fn dirname(path: &[u8]) -> Option<&[u8]> {
@@ -1667,20 +1630,16 @@ pub mod S {
     pub const IFDIR: Mode = 0o040000;
     pub const IFCHR: Mode = 0o020000;
     pub const IFIFO: Mode = 0o010000;
-    pub const IFWHT: Mode = 0o160000; // BSD/Darwin whiteout
 
     pub const ISUID: Mode = 0o4000;
     pub const ISGID: Mode = 0o2000;
     pub const ISVTX: Mode = 0o1000;
-    pub const IRWXU: Mode = 0o0700;
     pub const IRUSR: Mode = 0o0400;
     pub const IWUSR: Mode = 0o0200;
     pub const IXUSR: Mode = 0o0100;
-    pub const IRWXG: Mode = 0o0070;
     pub const IRGRP: Mode = 0o0040;
     pub const IWGRP: Mode = 0o0020;
     pub const IXGRP: Mode = 0o0010;
-    pub const IRWXO: Mode = 0o0007;
     pub const IROTH: Mode = 0o0004;
     pub const IWOTH: Mode = 0o0002;
     pub const IXOTH: Mode = 0o0001;
@@ -1696,10 +1655,6 @@ pub mod S {
     #[inline]
     pub const fn ISCHR(m: Mode) -> bool {
         m & IFMT == IFCHR
-    }
-    #[inline]
-    pub const fn ISBLK(m: Mode) -> bool {
-        m & IFMT == IFBLK
     }
     #[inline]
     pub const fn ISFIFO(m: Mode) -> bool {
@@ -1754,19 +1709,19 @@ pub mod io {
     /// is sound (see output.rs `QuietWriterAdapter::new_interface`).
     #[repr(C)]
     pub struct Writer {
-        pub write_all: unsafe fn(*mut Writer, &[u8]) -> Result<(), crate::Error>,
-        pub flush: unsafe fn(*mut Writer) -> Result<(), crate::Error>,
+        pub write_all: unsafe fn(*mut Writer, &[u8]) -> crate::CrateResult<()>,
+        pub flush: unsafe fn(*mut Writer) -> crate::CrateResult<()>,
     }
     impl Writer {
         #[inline]
-        pub fn write_all(&mut self, bytes: &[u8]) -> Result<(), crate::Error> {
+        pub fn write_all(&mut self, bytes: &[u8]) -> crate::CrateResult<()> {
             // SAFETY: `Writer` is the `repr(C)` head of every concrete adapter
             // (see type doc); `self` was produced by upcasting `&mut Adapter`,
             // so the vtable fn receives the same pointer it was registered with.
             unsafe { (self.write_all)(std::ptr::from_mut(self), bytes) }
         }
         #[inline]
-        pub fn flush(&mut self) -> Result<(), crate::Error> {
+        pub fn flush(&mut self) -> crate::CrateResult<()> {
             // SAFETY: `Writer` is the `repr(C)` head of every concrete adapter;
             // `self` is the same pointer the adapter registered its vtable with,
             // so the callee's downcast back to the concrete type is sound.
@@ -1774,13 +1729,13 @@ pub mod io {
         }
         /// Alias for `print` so `write!(w, ...)` works.
         #[inline]
-        pub fn write_fmt(&mut self, args: core::fmt::Arguments<'_>) -> Result<(), crate::Error> {
+        pub fn write_fmt(&mut self, args: core::fmt::Arguments<'_>) -> crate::CrateResult<()> {
             self.print(args)
         }
         #[inline]
-        pub fn print(&mut self, args: core::fmt::Arguments<'_>) -> Result<(), crate::Error> {
+        pub fn print(&mut self, args: core::fmt::Arguments<'_>) -> crate::CrateResult<()> {
             use core::fmt::Write;
-            struct A<'a>(&'a mut Writer, Result<(), crate::Error>);
+            struct A<'a>(&'a mut Writer, crate::CrateResult<()>);
             impl core::fmt::Write for A<'_> {
                 fn write_str(&mut self, s: &str) -> core::fmt::Result {
                     self.1 = self.0.write_all(s.as_bytes());
@@ -1795,13 +1750,6 @@ pub mod io {
             let _ = a.write_fmt(args);
             a.1
         }
-    }
-    /// WASM-only StreamType (output.rs `#[cfg(wasm32)]`).
-    #[repr(C)]
-    pub struct FixedBufferStream {
-        pub buf: *mut u8,
-        pub len: usize,
-        pub pos: usize,
     }
 
     // ════════════════════════════════════════════════════════════════════════
@@ -1820,12 +1768,12 @@ pub mod io {
     /// helpers that would break object safety carry `where Self: Sized`.
     pub trait Write {
         /// Write the entire buffer.
-        fn write_all(&mut self, buf: &[u8]) -> Result<(), crate::Error>;
+        fn write_all(&mut self, buf: &[u8]) -> crate::CrateResult<()>;
 
         /// Flush any internal buffer to the underlying sink.
         /// Unbuffered sinks leave the default no-op.
         #[inline]
-        fn flush(&mut self) -> Result<(), crate::Error> {
+        fn flush(&mut self) -> crate::CrateResult<()> {
             Ok(())
         }
 
@@ -1841,18 +1789,18 @@ pub mod io {
 
         /// Write a single byte.
         #[inline]
-        fn write_byte(&mut self, byte: u8) -> Result<(), crate::Error> {
+        fn write_byte(&mut self, byte: u8) -> crate::CrateResult<()> {
             self.write_all(core::slice::from_ref(&byte))
         }
 
         /// Convenience for UTF-8 string slices.
         #[inline]
-        fn write_str(&mut self, s: &str) -> Result<(), crate::Error> {
+        fn write_str(&mut self, s: &str) -> crate::CrateResult<()> {
             self.write_all(s.as_bytes())
         }
 
         /// Write `n` copies of `byte`.
-        fn splat_byte_all(&mut self, byte: u8, n: usize) -> Result<(), crate::Error> {
+        fn splat_byte_all(&mut self, byte: u8, n: usize) -> crate::CrateResult<()> {
             let chunk = [byte; 256];
             let mut remain = n;
             while remain > 0 {
@@ -1864,10 +1812,10 @@ pub mod io {
         }
 
         /// Formatted write. Enables `write!(w, ...)`.
-        fn write_fmt(&mut self, args: fmt::Arguments<'_>) -> Result<(), crate::Error> {
+        fn write_fmt(&mut self, args: fmt::Arguments<'_>) -> crate::CrateResult<()> {
             struct Bridge<'a, W: ?Sized> {
                 sink: &'a mut W,
-                err: Option<crate::Error>,
+                err: Option<crate::CrateError>,
             }
             impl<W: Write + ?Sized> fmt::Write for Bridge<'_, W> {
                 #[inline]
@@ -1887,19 +1835,19 @@ pub mod io {
             };
             match fmt::write(&mut bridge, args) {
                 Ok(()) => Ok(()),
-                Err(_) => Err(bridge.err.unwrap_or_else(|| crate::err!("FmtError"))),
+                Err(_) => Err(bridge.err.unwrap_or(crate::CrateError::FmtError)),
             }
         }
 
         /// Alias for [`write_fmt`](Write::write_fmt).
         #[inline]
-        fn print(&mut self, args: fmt::Arguments<'_>) -> Result<(), crate::Error> {
+        fn print(&mut self, args: fmt::Arguments<'_>) -> crate::CrateResult<()> {
             self.write_fmt(args)
         }
 
         /// Write an integer in little-endian byte order.
         #[inline]
-        fn write_int_le<I: IntLe>(&mut self, val: I) -> Result<(), crate::Error>
+        fn write_int_le<I: IntLe>(&mut self, val: I) -> crate::CrateResult<()>
         where
             Self: Sized,
         {
@@ -1912,23 +1860,23 @@ pub mod io {
     /// Forward through `&mut W` so `&mut dyn Write` / `&mut impl Write` nest.
     impl<W: Write + ?Sized> Write for &mut W {
         #[inline]
-        fn write_all(&mut self, buf: &[u8]) -> Result<(), crate::Error> {
+        fn write_all(&mut self, buf: &[u8]) -> crate::CrateResult<()> {
             (**self).write_all(buf)
         }
         #[inline]
-        fn flush(&mut self) -> Result<(), crate::Error> {
+        fn flush(&mut self) -> crate::CrateResult<()> {
             (**self).flush()
         }
         #[inline]
-        fn write_byte(&mut self, byte: u8) -> Result<(), crate::Error> {
+        fn write_byte(&mut self, byte: u8) -> crate::CrateResult<()> {
             (**self).write_byte(byte)
         }
         #[inline]
-        fn splat_byte_all(&mut self, byte: u8, n: usize) -> Result<(), crate::Error> {
+        fn splat_byte_all(&mut self, byte: u8, n: usize) -> crate::CrateResult<()> {
             (**self).splat_byte_all(byte, n)
         }
         #[inline]
-        fn write_fmt(&mut self, args: fmt::Arguments<'_>) -> Result<(), crate::Error> {
+        fn write_fmt(&mut self, args: fmt::Arguments<'_>) -> crate::CrateResult<()> {
             (**self).write_fmt(args)
         }
         #[inline]
@@ -1939,11 +1887,11 @@ pub mod io {
 
     impl<W: Write + ?Sized> Write for Box<W> {
         #[inline]
-        fn write_all(&mut self, buf: &[u8]) -> Result<(), crate::Error> {
+        fn write_all(&mut self, buf: &[u8]) -> crate::CrateResult<()> {
             (**self).write_all(buf)
         }
         #[inline]
-        fn flush(&mut self) -> Result<(), crate::Error> {
+        fn flush(&mut self) -> crate::CrateResult<()> {
             (**self).flush()
         }
         #[inline]
@@ -1955,7 +1903,7 @@ pub mod io {
     /// In-memory growable sink.
     impl<A: core::alloc::Allocator> Write for Vec<u8, A> {
         #[inline]
-        fn write_all(&mut self, buf: &[u8]) -> Result<(), crate::Error> {
+        fn write_all(&mut self, buf: &[u8]) -> crate::CrateResult<()> {
             self.extend_from_slice(buf);
             Ok(())
         }
@@ -1967,7 +1915,7 @@ pub mod io {
 
     impl<'a> Write for bun_alloc::BabyVec<'a, u8> {
         #[inline]
-        fn write_all(&mut self, buf: &[u8]) -> Result<(), crate::Error> {
+        fn write_all(&mut self, buf: &[u8]) -> crate::CrateResult<()> {
             self.extend_from_slice(buf);
             Ok(())
         }
@@ -1981,13 +1929,13 @@ pub mod io {
     /// printers taking `W: io::Write` accept process stdout/stderr sinks.
     impl Write for Writer {
         #[inline]
-        fn write_all(&mut self, buf: &[u8]) -> Result<(), crate::Error> {
+        fn write_all(&mut self, buf: &[u8]) -> crate::CrateResult<()> {
             // SAFETY: `self` is the `repr(C)` adapter head; the vtable fn
             // receives the same pointer it was registered with (see type doc).
             unsafe { (self.write_all)(core::ptr::from_mut(self), buf) }
         }
         #[inline]
-        fn flush(&mut self) -> Result<(), crate::Error> {
+        fn flush(&mut self) -> crate::CrateResult<()> {
             // SAFETY: `self` is the `repr(C)` adapter head; the vtable fn
             // receives the same pointer it was registered with (see type doc).
             unsafe { (self.flush)(core::ptr::from_mut(self)) }
@@ -2318,6 +2266,10 @@ unsafe extern "C" {
     /// directly.
     #[cfg(unix)]
     safe fn clock_gettime(clk_id: libc::clockid_t, tp: &mut libc::timespec) -> core::ffi::c_int;
+    /// Bun C++ shim over `QueryPerformanceCounter` (c-bindings.cpp). Infallible
+    /// on Windows XP+; out-params are `&mut i64` so pointer validity is typed.
+    #[cfg(windows)]
+    safe fn clock_gettime_monotonic(sec: &mut i64, nsec: &mut i64);
 }
 impl Default for StackCheck {
     /// `cached_stack_end` defaults to `0`, so
@@ -2476,9 +2428,8 @@ impl Default for Ordinal {
 }
 
 // ── Once ──────────────────────────────────────────────────────────────────
-// One-shot initialization cell. Callers use two shapes:
-//   * `Once<T>` — fn supplied at `.call(f)` / `.get_or_init(f)` time
-//   * `Once<T, fn(A) -> T>` — fn supplied at construction (PackageManagerDirectories.rs)
+// One-shot initialization cell. Callers use `Once<T>` with the init fn
+// supplied at `.call(f)` / `.get_or_init(f)` time.
 //
 // Open-coded double-checked-init (AtomicU8 + UnsafeCell<MaybeUninit<T>>) rather
 // than `std::sync::OnceLock`. The previous `OnceLock` backing produced 157
@@ -2496,27 +2447,22 @@ const ONCE_UNINIT: u8 = 0;
 const ONCE_BUSY: u8 = 1;
 const ONCE_DONE: u8 = 2;
 
-pub struct Once<T, F = ()> {
+pub struct Once<T> {
     state: core::sync::atomic::AtomicU8,
     cell: core::cell::UnsafeCell<core::mem::MaybeUninit<T>>,
-    f: F,
 }
 
 // SAFETY: `T` is published behind a Release store / Acquire load pair; once
 // DONE the cell is immutable and only `&T` is handed out, so the bounds match
 // `std::sync::OnceLock` (`T: Send` because init may happen on a different
 // thread than the reader; `T: Sync` because `&T` crosses threads).
-unsafe impl<T: Send + Sync, F: Sync> Sync for Once<T, F> {}
-// SAFETY: `Once<T, F>` owns a `T` (in `UnsafeCell<MaybeUninit<T>>`) and an
-// `F` by value; sending the whole struct to another thread is sound exactly
-// when sending its owned fields is (`T: Send`, `F: Send`).
-unsafe impl<T: Send, F: Send> Send for Once<T, F> {}
-impl<T: core::panic::RefUnwindSafe, F: core::panic::RefUnwindSafe> core::panic::RefUnwindSafe
-    for Once<T, F>
-{
-}
+unsafe impl<T: Send + Sync> Sync for Once<T> {}
+// SAFETY: `Once<T>` owns a `T` (in `UnsafeCell<MaybeUninit<T>>`); sending the
+// whole struct to another thread is sound exactly when sending `T` is.
+unsafe impl<T: Send> Send for Once<T> {}
+impl<T: core::panic::RefUnwindSafe> core::panic::RefUnwindSafe for Once<T> {}
 
-/// Cold contended path shared by every `Once<T, F>` instantiation. Taking
+/// Cold contended path shared by every `Once<T>` instantiation. Taking
 /// `&AtomicU8` (not `&self`) keeps this **non-generic** so exactly one copy
 /// lands in `bun_core`'s CGU regardless of how many `T`s the crate uses.
 /// Returns `true` if the caller won the claim and must initialise + publish;
@@ -2537,7 +2483,21 @@ fn once_claim_slow(state: &core::sync::atomic::AtomicU8) -> bool {
     }
 }
 
-impl<T, F> Once<T, F> {
+impl<T> Once<T> {
+    pub const fn new() -> Self {
+        Self {
+            state: core::sync::atomic::AtomicU8::new(ONCE_UNINIT),
+            cell: core::cell::UnsafeCell::new(core::mem::MaybeUninit::uninit()),
+        }
+    }
+    /// Run `f` exactly once; subsequent calls return the cached payload.
+    #[inline(always)]
+    pub fn call(&self, f: impl FnOnce() -> T) -> T
+    where
+        T: Copy,
+    {
+        *self.get_or_init(f)
+    }
     /// Fast path: already initialised?
     #[inline(always)]
     pub fn get(&self) -> Option<&T> {
@@ -2621,7 +2581,7 @@ impl<T, F> Once<T, F> {
     }
 }
 
-impl<T, F> Drop for Once<T, F> {
+impl<T> Drop for Once<T> {
     #[inline]
     fn drop(&mut self) {
         if *self.state.get_mut() == ONCE_DONE {
@@ -2631,40 +2591,7 @@ impl<T, F> Drop for Once<T, F> {
     }
 }
 
-impl<T> Once<T, ()> {
-    pub const fn new() -> Self {
-        Self {
-            state: core::sync::atomic::AtomicU8::new(ONCE_UNINIT),
-            cell: core::cell::UnsafeCell::new(core::mem::MaybeUninit::uninit()),
-            f: (),
-        }
-    }
-    /// Run `f` exactly once; subsequent calls return the cached payload.
-    #[inline(always)]
-    pub fn call(&self, f: impl FnOnce() -> T) -> T
-    where
-        T: Copy,
-    {
-        *self.get_or_init(f)
-    }
-}
-impl<T, A> Once<T, fn(A) -> T> {
-    pub const fn with_fn(f: fn(A) -> T) -> Self {
-        Self {
-            state: core::sync::atomic::AtomicU8::new(ONCE_UNINIT),
-            cell: core::cell::UnsafeCell::new(core::mem::MaybeUninit::uninit()),
-            f,
-        }
-    }
-    /// Run the stored fn exactly once with `arg`; returns a borrow of the cached
-    /// payload. Bound to `&'static self` because every call site is a `static`.
-    #[inline(always)]
-    pub fn call(&'static self, arg: A) -> &'static T {
-        let f = self.f;
-        self.get_or_init(|| f(arg))
-    }
-}
-impl<T> Default for Once<T, ()> {
+impl<T> Default for Once<T> {
     #[inline]
     fn default() -> Self {
         Self::new()
@@ -2696,8 +2623,6 @@ pub enum Pollable {
     NotReady,
     Hup,
 }
-/// Alias for [`Pollable`].
-pub type PollFlag = Pollable;
 
 impl Pollable {
     /// Lowercase tag name for the `[sys]` debug log.
@@ -2818,14 +2743,14 @@ pub fn is_writable(fd: Fd) -> Pollable {
     }
 }
 
-// ── csprng ────────────────────────────────────────────────────────────────
-// bun_core sits below
-// boringssl_sys in the crate graph, so we go to the OS CSPRNG directly:
-// getrandom(2) on Linux, SecRandomCopyBytes/getentropy on Darwin,
-// RtlGenRandom on Windows. All are the same entropy source BoringSSL seeds
-// from. PERF: if a hot path needs the BoringSSL DRBG, install a
-// vtable hook from bun_runtime at startup.
-pub fn csprng(bytes: &mut [u8]) {
+// ── os_entropy ────────────────────────────────────────────────────────────
+// Raw OS entropy source: getrandom(2) on Linux, getentropy on Darwin/BSD,
+// RtlGenRandom on Windows. bun_core sits below boringssl_sys in the crate
+// graph so it cannot reach `RAND_bytes`; this is used only to seed
+// `fast_random()`'s thread-local PRNG once per thread. Every other caller
+// must use `bun_boringssl_sys::rand_bytes` (userspace DRBG, no syscall per
+// call).
+fn os_entropy(bytes: &mut [u8]) {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         let mut filled = 0usize;
@@ -2879,10 +2804,10 @@ pub fn csprng(bytes: &mut [u8]) {
 // ── self_exe_path ─────────────────────────────────────────────────────────
 // Memoized into a process-lifetime
 // static buffer; thread-safe via `Once`. Returns a `&'static ZStr`.
-pub fn self_exe_path() -> Result<&'static ZStr, crate::Error> {
-    static CELL: Once<Result<ZBox, crate::Error>> = Once::new();
+pub fn self_exe_path() -> crate::CrateResult<&'static ZStr> {
+    static CELL: Once<crate::CrateResult<ZBox>> = Once::new();
     let r = CELL.get_or_init(|| {
-        let path = std::env::current_exe().map_err(crate::Error::from)?;
+        let path = std::env::current_exe().map_err(|_| crate::CrateError::Unexpected)?;
         // Symlink resolution: Rust's
         // `current_exe()` already resolves on Linux (`readlink /proc/self/exe`),
         // but on Darwin it returns the raw `_NSGetExecutablePath` result and on
@@ -2984,15 +2909,6 @@ pub fn get_thread_count() -> u16 {
     })
 }
 
-// ── errno_to_zig_err ──────────────────────────────────────────────────────
-// The intern table maps in `Error::from_errno`
-// (errno → tag name → interned code).
-#[inline]
-pub fn errno_to_zig_err(errno: i32) -> crate::Error {
-    debug_assert!(errno != 0);
-    crate::Error::from_errno(errno)
-}
-
 // ── time ──────────────────────────────────────────────────────────────────
 // Time-unit constants plus `{nano,milli,}timestamp()`. Callers `as`-cast at the
 // use-site (`NS_PER_S as i128`, `MS_PER_S as f64`, …). Every value fits in
@@ -3042,6 +2958,12 @@ pub mod time {
     pub fn milli_timestamp() -> i64 {
         (nano_timestamp() / NS_PER_MS as i128) as i64
     }
+    /// Wall-clock milliseconds since the Unix epoch, or the fake-timers mocked
+    /// wall clock when active. See [`super::mock_time`].
+    #[inline]
+    pub fn milli_timestamp_allow_mocked_time() -> f64 {
+        super::mock_time::wall_ms().unwrap_or_else(|| milli_timestamp() as f64)
+    }
     /// Wall-clock seconds since the Unix epoch.
     #[inline]
     pub fn timestamp() -> i64 {
@@ -3055,7 +2977,7 @@ pub mod time {
     }
     impl Timer {
         #[inline]
-        pub fn start() -> Result<Self, crate::Error> {
+        pub fn start() -> crate::CrateResult<Self> {
             Ok(Self {
                 start: std::time::Instant::now(),
             })
@@ -3063,13 +2985,6 @@ pub mod time {
         #[inline]
         pub fn read(&self) -> u64 {
             self.start.elapsed().as_nanos() as u64
-        }
-        #[inline]
-        pub fn lap(&mut self) -> u64 {
-            let now = std::time::Instant::now();
-            let ns = now.duration_since(self.start).as_nanos() as u64;
-            self.start = now;
-            ns
         }
         #[inline]
         pub fn reset(&mut self) {
@@ -3279,16 +3194,6 @@ pub use bytemuck::NoUninit;
 #[inline]
 pub fn bytes_of<T: bytemuck::NoUninit>(v: &T) -> &[u8] {
     bytemuck::bytes_of(v)
-}
-
-/// Mutable counterpart of [`bytes_of`]: reinterpret `&mut T` as `&mut [u8]`.
-///
-/// Safe: the [`bytemuck::Pod`] bound guarantees `T` has no padding bytes and
-/// every bit pattern is a valid `T`, so writing arbitrary bytes through the
-/// returned slice cannot produce an invalid value.
-#[inline]
-pub fn bytes_of_mut<T: bytemuck::Pod>(v: &mut T) -> &mut [u8] {
-    bytemuck::bytes_of_mut(v)
 }
 
 // ─── Slice reinterpretation (canonical) ───────────────────────────────────────
@@ -3537,10 +3442,6 @@ impl<I: GenericIndexInt, M> GenericIndex<I, M> {
     pub fn to_optional(self) -> GenericIndexOptional<I, M> {
         GenericIndexOptional(self.0, core::marker::PhantomData)
     }
-    #[inline]
-    pub fn sort_fn_asc(_: (), a: &Self, b: &Self) -> bool {
-        a.0 < b.0
-    }
 }
 impl<I: GenericIndexInt, M> GenericIndexOptional<I, M> {
     #[inline]
@@ -3577,10 +3478,6 @@ impl<I: core::fmt::Debug, M> core::fmt::Debug for GenericIndexOptional<I, M> {
 }
 impl<I: GenericIndexInt, M> GenericIndexOptional<I, M> {
     pub const NONE: Self = Self(I::NULL_VALUE, core::marker::PhantomData);
-    #[inline]
-    pub fn some(i: GenericIndex<I, M>) -> Self {
-        i.to_optional()
-    }
     /// Alias for `unwrap()` matching the local-newtype API that pre-existed in
     /// `bun_bundler::output_file::IndexOptional`.
     #[inline]
@@ -3600,14 +3497,6 @@ impl<I: GenericIndexInt, M> GenericIndexOptional<I, M> {
             None
         } else {
             Some(GenericIndex(self.0, core::marker::PhantomData))
-        }
-    }
-    #[inline]
-    pub fn unwrap_get(self) -> Option<I> {
-        if self.0 == I::NULL_VALUE {
-            None
-        } else {
-            Some(self.0)
         }
     }
 }
@@ -3668,10 +3557,8 @@ impl_integer!(
 
 /// Primitive integers transcodable as native-endian raw bytes.
 ///
-/// Explicit trait
-/// bound shared by the peechy wire codec (`bun_analytics::SchemaInt`) and the
-/// MySQL protocol reader (`bun_sql::ReadableInt`), which re-export this under
-/// their local names.
+/// Explicit trait bound used by the MySQL protocol reader
+/// (`bun_sql::ReadableInt`), which re-exports this under its local name.
 pub trait NativeEndianInt: Copy + 'static {
     const SIZE: usize;
     /// Reinterpret `b[..SIZE]` as `Self` (native endian).
@@ -3764,7 +3651,7 @@ pub fn fast_random() -> u64 {
                 return n;
             }
             let mut buf = [0u8; 8];
-            csprng(&mut buf);
+            os_entropy(&mut buf);
             v = u64::from_ne_bytes(buf);
             SEED.store(v, O::Relaxed);
             v = SEED.load(O::Relaxed);
@@ -3785,19 +3672,13 @@ pub fn fast_random() -> u64 {
 }
 
 // ── hash ──────────────────────────────────────────────────────────────────
-// `bun.hash` (Wyhash) lives in deprecated.rs as RapidHash; this module adds
-// the xxhash64 entry point that ETag/bundler need.
+// `bun.hash` one-shot Wyhash / XxHash64 wrappers over `bun_hash`.
 pub mod hash {
     pub use bun_hash::XxHash64;
     /// One-shot seeded XXH64 over `bytes`.
     #[inline]
     pub fn xxhash64(seed: u64, bytes: &[u8]) -> u64 {
         bun_hash::XxHash64::hash(seed, bytes)
-    }
-    /// Wyhash one-shot (`bun.hash`).
-    #[inline]
-    pub fn wyhash(bytes: &[u8]) -> u64 {
-        crate::deprecated::RapidHash::hash(0, bytes)
     }
 }
 
@@ -3921,7 +3802,7 @@ pub fn dupe_z(bytes: &[u8]) -> *const core::ffi::c_char {
         core::ptr::copy_nonoverlapping(bytes.as_ptr(), p, bytes.len());
         *p.add(bytes.len()) = 0;
     }
-    p as *const core::ffi::c_char
+    p.cast_const().cast::<core::ffi::c_char>()
 }
 
 /// Port of `bun.freeSensitive(bun.default_allocator, slice)` for the C-string
@@ -4347,7 +4228,7 @@ pub fn intern_argv(v: Vec<&'static ZStr>) -> &'static [&'static ZStr] {
 // ── getcwd ────────────────────────────────────────────────────────────────
 /// Writes the current working directory into the caller's `PathBuffer` and
 /// returns the NUL-terminated slice on success.
-pub fn getcwd(buf: &mut PathBuffer) -> Result<&ZStr, crate::Error> {
+pub fn getcwd(buf: &mut PathBuffer) -> crate::CrateResult<&ZStr> {
     #[cfg(unix)]
     // SAFETY: `buf` provides `MAX_PATH_BYTES` writable bytes for `getcwd`; on
     // success the returned pointer aliases `buf` and is NUL-terminated, so
@@ -4355,7 +4236,7 @@ pub fn getcwd(buf: &mut PathBuffer) -> Result<&ZStr, crate::Error> {
     unsafe {
         let p = libc::getcwd(buf.0.as_mut_ptr().cast(), buf.0.len());
         if p.is_null() {
-            return Err(std::io::Error::last_os_error().into());
+            return Err(crate::CrateError::Unexpected);
         }
         let len = libc::strlen(p);
         Ok(ZStr::from_buf(&buf.0, len))
@@ -4371,10 +4252,10 @@ pub fn getcwd(buf: &mut PathBuffer) -> Result<&ZStr, crate::Error> {
         // SAFETY: `wbuf` has `PATH_MAX_WIDE` writable u16 units.
         let n = unsafe { GetCurrentDirectoryW(wbuf.0.len() as u32, wbuf.0.as_mut_ptr()) } as usize;
         if n == 0 {
-            return Err(std::io::Error::last_os_error().into());
+            return Err(crate::CrateError::Unexpected);
         }
         if n >= wbuf.0.len() {
-            return Err(crate::err!(NameTooLong));
+            return Err(crate::CrateError::NameTooLong);
         }
         // WTF-16 → WTF-8 into the caller's `PathBuffer`. Surrogate pairs are
         // combined; unpaired surrogates are encoded as 3-byte WTF-8.
@@ -4388,7 +4269,7 @@ pub fn getcwd(buf: &mut PathBuffer) -> Result<&ZStr, crate::Error> {
             let mut tmp = [0u8; 4];
             let nb = crate::strings::encode_wtf8_rune(&mut tmp, cp);
             if bi + nb >= out.len() {
-                return Err(crate::err!(NameTooLong));
+                return Err(crate::CrateError::NameTooLong);
             }
             out[bi..bi + nb].copy_from_slice(&tmp[..nb]);
             bi += nb;
@@ -4399,7 +4280,7 @@ pub fn getcwd(buf: &mut PathBuffer) -> Result<&ZStr, crate::Error> {
     #[cfg(not(any(unix, windows)))]
     {
         let _ = buf;
-        Err(crate::err!(Unexpected))
+        Err(crate::CrateError::Unexpected)
     }
 }
 
@@ -4533,29 +4414,6 @@ pub fn exit_thread() -> ! {
     #[cfg(not(any(unix, windows)))]
     loop {
         core::hint::spin_loop();
-    }
-}
-
-/// Release thread-local pooled
-/// buffers (PathBuffer pool, ObjectPool, …) before the thread terminates so
-/// the backing storage is returned to mimalloc rather than leaked with the
-/// TLS block.
-///
-/// LAYERING: the actual pool registries live in higher-tier crates
-/// (`bun_paths`, `bun_collections`). They register a destructor here at init
-/// via [`register_thread_exit_pool_destructor`]; this fn just walks the list.
-static THREAD_EXIT_POOL_DESTRUCTORS: Mutex<Vec<fn()>> = Mutex::new(Vec::new());
-
-pub fn register_thread_exit_pool_destructor(f: fn()) {
-    THREAD_EXIT_POOL_DESTRUCTORS.lock().push(f);
-}
-
-pub fn delete_all_pools_for_thread_exit() {
-    // Snapshot under the lock so a destructor can't deadlock by
-    // re-registering.
-    let snapshot: Vec<fn()> = THREAD_EXIT_POOL_DESTRUCTORS.lock().clone();
-    for f in snapshot {
-        f();
     }
 }
 
@@ -4804,6 +4662,12 @@ pub mod spawn_ffi {
         pub actions: ActionsList,
         pub pty_slave_fd: c_int,
         pub linux_pdeathsig: c_int,
+        /// `setuid(uid)` in the child before exec when `set_uid` is true.
+        pub uid: u32,
+        /// `setgid(gid)` in the child before exec when `set_gid` is true.
+        pub gid: u32,
+        pub set_uid: bool,
+        pub set_gid: bool,
     }
 
     impl Default for BunSpawnRequest {
@@ -4815,6 +4679,10 @@ pub mod spawn_ffi {
                 actions: ActionsList::default(),
                 pty_slave_fd: -1,
                 linux_pdeathsig: 0,
+                uid: 0,
+                gid: 0,
+                set_uid: false,
+                set_gid: false,
             }
         }
     }
@@ -4842,22 +4710,22 @@ enum StdinBehavior {
 
 /// Spawn argv, inherit stdout/stderr, **ignore stdin** (fd 0 ← /dev/null),
 /// wait.
-pub fn spawn_sync_inherit_no_stdin(argv: &[impl AsRef<[u8]>]) -> Result<SpawnStatus, crate::Error> {
+pub fn spawn_sync_inherit_no_stdin(argv: &[impl AsRef<[u8]>]) -> crate::CrateResult<SpawnStatus> {
     spawn_sync_inherit_impl(argv, StdinBehavior::Ignore)
 }
 
-pub fn spawn_sync_inherit(argv: &[impl AsRef<[u8]>]) -> Result<SpawnStatus, crate::Error> {
+pub fn spawn_sync_inherit(argv: &[impl AsRef<[u8]>]) -> crate::CrateResult<SpawnStatus> {
     spawn_sync_inherit_impl(argv, StdinBehavior::Inherit)
 }
 
 fn spawn_sync_inherit_impl(
     argv: &[impl AsRef<[u8]>],
     stdin: StdinBehavior,
-) -> Result<SpawnStatus, crate::Error> {
+) -> crate::CrateResult<SpawnStatus> {
     // Empty argv: fail like the Windows path below instead of panicking on
     // the `argv[0]` reads in the per-OS unix arms.
     if argv.is_empty() {
-        return Err(crate::err!("FileNotFound"));
+        return Err(crate::CrateError::FileNotFound);
     }
     #[cfg(unix)]
     // SAFETY: argv strings are owned `ZBox`es (NUL-terminated) kept alive in
@@ -4890,7 +4758,7 @@ fn spawn_sync_inherit_impl(
                 let path_env = getenv_z(ZStr::from_static(b"PATH\0")).unwrap_or(b"");
                 match which(&mut pathbuf, path_env, b".", arg0) {
                     Some(z) => z.as_ptr(),
-                    None => return Err(crate::Error::from_errno(libc::ENOENT)),
+                    None => return Err(crate::CrateError::FileNotFound),
                 }
             };
 
@@ -4932,7 +4800,7 @@ fn spawn_sync_inherit_impl(
                 environ,
             );
             if rc != 0 {
-                return Err(crate::Error::from_errno(rc as i32));
+                return Err(crate::CrateError::Unexpected);
             }
             pid as libc::pid_t
         };
@@ -4947,7 +4815,7 @@ fn spawn_sync_inherit_impl(
                 if stdin == StdinBehavior::Ignore {
                     let rc = libc::posix_spawn_file_actions_init(&raw mut actions);
                     if rc != 0 {
-                        return Err(crate::Error::from_errno(rc));
+                        return Err(crate::CrateError::Unexpected);
                     }
                     let rc = libc::posix_spawn_file_actions_addopen(
                         &raw mut actions,
@@ -4958,7 +4826,7 @@ fn spawn_sync_inherit_impl(
                     );
                     if rc != 0 {
                         libc::posix_spawn_file_actions_destroy(&raw mut actions);
-                        return Err(crate::Error::from_errno(rc));
+                        return Err(crate::CrateError::Unexpected);
                     }
                     &raw const actions
                 } else {
@@ -4977,7 +4845,7 @@ fn spawn_sync_inherit_impl(
                 libc::posix_spawn_file_actions_destroy(&raw mut actions);
             }
             if rc != 0 {
-                return Err(crate::Error::from_errno(rc));
+                return Err(crate::CrateError::Unexpected);
             }
             pid
         };
@@ -4989,8 +4857,8 @@ fn spawn_sync_inherit_impl(
             let _ = environ;
             let pid = libc::fork();
             if pid < 0 {
-                let e = std::io::Error::last_os_error().raw_os_error().unwrap_or(-1);
-                return Err(crate::Error::from_errno(e));
+                let _ = std::io::Error::last_os_error().raw_os_error().unwrap_or(-1);
+                return Err(crate::CrateError::Unexpected);
             }
             if pid == 0 {
                 // Child. execvp inherits stdio + environ, which is exactly the
@@ -5021,7 +4889,7 @@ fn spawn_sync_inherit_impl(
         )))]
         let pid: libc::pid_t = {
             let _ = (&ptrs, environ, stdin);
-            return Err(crate::err!(Unexpected));
+            return Err(crate::CrateError::Unexpected);
         };
 
         let mut status: i32 = 0;
@@ -5032,7 +4900,7 @@ fn spawn_sync_inherit_impl(
                 if e == libc::EINTR {
                     continue;
                 }
-                return Err(crate::Error::from_errno(e));
+                return Err(crate::CrateError::Unexpected);
             }
             break;
         }
@@ -5048,7 +4916,7 @@ fn spawn_sync_inherit_impl(
         // Route through `std::process::Command` (CreateProcessW, no event
         // loop) with inherited stdio — see spawn/lib.rs:307 for the
         // PORTING.md rationale on why off-loop spawns may bypass bun_spawn on
-        // Windows. Do NOT return `err!(Unexpected)` here: that bubbles up as
+        // Windows. Do NOT return `Unexpected` here: that bubbles up as
         // `error: An unknown error occurred (Unexpected)` and fails every
         // `bun init` invocation on Windows (test/cli/init/init.test.ts).
         use std::ffi::OsString;
@@ -5062,7 +4930,7 @@ fn spawn_sync_inherit_impl(
         }
 
         let mut iter = argv.iter();
-        let argv0 = iter.next().ok_or(crate::err!("FileNotFound"))?;
+        let argv0 = iter.next().ok_or(crate::CrateError::FileNotFound)?;
         let mut cmd = std::process::Command::new(to_os(argv0.as_ref()));
         for arg in iter {
             cmd.arg(to_os(arg.as_ref()));
@@ -5073,9 +4941,9 @@ fn spawn_sync_inherit_impl(
             cmd.stdin(std::process::Stdio::null());
         }
         let status = cmd.status().map_err(|e| match e.kind() {
-            std::io::ErrorKind::NotFound => crate::err!("FileNotFound"),
-            std::io::ErrorKind::PermissionDenied => crate::err!("AccessDenied"),
-            _ => crate::Error::from(e),
+            std::io::ErrorKind::NotFound => crate::CrateError::FileNotFound,
+            std::io::ErrorKind::PermissionDenied => crate::CrateError::AccessDenied,
+            _ => crate::CrateError::Unexpected,
         })?;
         let code = status.code().unwrap_or(-1);
         Ok(SpawnStatus { code })
@@ -5083,7 +4951,7 @@ fn spawn_sync_inherit_impl(
     #[cfg(not(any(unix, windows)))]
     {
         let _ = (argv, stdin);
-        Err(crate::err!(Unexpected))
+        Err(crate::CrateError::Unexpected)
     }
 }
 
@@ -5258,10 +5126,9 @@ impl Timespec {
         }
     }
 
-    /// `bun.timespec.now(.allow_mocked_time)` — monotonic-ish "rough tick".
-    /// Real impl routes through `getRoughTickCount` (jsc); tier-0 reads the
-    /// monotonic clock directly. Test-runner fake-timers write the mocked
-    /// nanosecond value via `mock_time::set` / `mock_time::clear`.
+    /// Monotonic clock (`CLOCK_MONOTONIC` / QPC). Boot-relative on every
+    /// platform; never compare against wall-clock epoch. Fake-timers override
+    /// via `mock_time::set` / `mock_time::clear`.
     #[inline]
     pub fn now(mode: TimespecMockMode) -> Timespec {
         if matches!(mode, TimespecMockMode::AllowMockedTime) {
@@ -5290,13 +5157,14 @@ impl Timespec {
                 nsec: ts.tv_nsec,
             }
         }
-        #[cfg(not(unix))]
+        #[cfg(windows)]
         {
-            let n = crate::time::nano_timestamp();
-            Timespec {
-                sec: (n / 1_000_000_000) as i64,
-                nsec: (n % 1_000_000_000) as i64,
-            }
+            // QPC via the c-bindings.cpp shim: the same monotonic clock libuv
+            // (uv_hrtime), uSockets' sweep and WTF::MonotonicTime::now use.
+            let mut sec: i64 = 0;
+            let mut nsec: i64 = 0;
+            clock_gettime_monotonic(&mut sec, &mut nsec);
+            Timespec { sec, nsec }
         }
     }
 
@@ -5322,17 +5190,18 @@ pub enum TimespecMockMode {
 /// the `Timespec::now_allow_mocked_time()` helper.
 pub mod timespec_mode {
     pub use super::TimespecMockMode::*;
-    pub type Mode = super::TimespecMockMode;
 }
 
 /// Mocked-time storage. The data lives at T0 so `Timespec::now` reads it
 /// directly; the test-runner (`useFakeTimers`) writes via `set`/`clear`
 /// from `bun_runtime::test_runner::timers::FakeTimers::CurrentTime`.
-/// Sentinel `i64::MIN` ⇒ not mocked.
+/// Sentinel `i64::MIN` / `NaN` ⇒ not mocked.
 pub mod mock_time {
-    use core::sync::atomic::{AtomicI64, Ordering};
+    use core::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 
     static MOCKED_TIME_NS: AtomicI64 = AtomicI64::new(i64::MIN);
+    // Mocked wall-clock `Date.now()` in ms, stored as f64 bits; NaN = unset.
+    static MOCKED_WALL_MS: AtomicU64 = AtomicU64::new(f64::NAN.to_bits());
 
     /// Set the mocked monotonic time (nanoseconds). Called by fake-timers.
     #[inline]
@@ -5351,6 +5220,24 @@ pub mod mock_time {
         let v = MOCKED_TIME_NS.load(Ordering::Relaxed);
         if v == i64::MIN { None } else { Some(v) }
     }
+    /// Set the mocked wall-clock time (`Date.now()` in ms). Called by
+    /// fake-timers alongside `set` so calendar-based consumers and the
+    /// monotonic timer heap move through the same mock.
+    #[inline]
+    pub fn set_wall_ms(ms: f64) {
+        MOCKED_WALL_MS.store(ms.to_bits(), Ordering::Relaxed);
+    }
+    /// Clear the mocked wall-clock time.
+    #[inline]
+    pub fn clear_wall() {
+        MOCKED_WALL_MS.store(f64::NAN.to_bits(), Ordering::Relaxed);
+    }
+    /// Current mocked wall-clock time in ms, or `None` if not mocked.
+    #[inline]
+    pub fn wall_ms() -> Option<f64> {
+        let v = f64::from_bits(MOCKED_WALL_MS.load(Ordering::Relaxed));
+        if v.is_nan() { None } else { Some(v) }
+    }
 }
 
 // ── f16 ───────────────────────────────────────────────────────────────────
@@ -5364,15 +5251,6 @@ pub mod mock_time {
 pub struct f16(pub u16);
 
 impl f16 {
-    #[inline]
-    pub const fn from_bits(bits: u16) -> Self {
-        Self(bits)
-    }
-    #[inline]
-    pub const fn to_bits(self) -> u16 {
-        self.0
-    }
-
     /// Widen to `f64` (exact).
     pub fn to_f64(self) -> f64 {
         let h = self.0 as u32;
@@ -5647,7 +5525,7 @@ pub mod form_data {
             // RFC 2045 §5.1: parameter attribute names are case-insensitive;
             // the `=` value is matched byte-exact (the boundary delimiter in
             // the body must match it verbatim).
-            let Some(eq) = crate::strings_impl::index_of_char(param, b'=') else {
+            let Some(eq) = crate::strings::index_of_char_usize(param, b'=') else {
                 continue;
             };
             if !param[..eq].eq_ignore_ascii_case(b"boundary") {
@@ -5657,7 +5535,7 @@ pub mod form_data {
             if begin.is_empty() {
                 return None;
             }
-            let end = crate::strings_impl::index_of_char(begin, b';').unwrap_or(begin.len());
+            let end = crate::strings::index_of_char_usize(begin, b';').unwrap_or(begin.len());
             if begin[0] == b'"' {
                 if end > 1 && begin[end - 1] == b'"' {
                     return Some(&begin[1..end - 1]);

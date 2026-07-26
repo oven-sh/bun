@@ -70,12 +70,6 @@ pub enum TimeoutError {
     Timeout,
 }
 
-impl From<TimeoutError> for bun_core::Error {
-    fn from(_: TimeoutError) -> Self {
-        bun_core::err!("Timeout")
-    }
-}
-
 impl Condition {
     /// Const-init an empty condition variable. Required for
     /// `static` items — this is the `parking_lot::Condvar::new()` parity that

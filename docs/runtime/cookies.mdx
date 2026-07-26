@@ -3,11 +3,11 @@ title: Cookies
 description: Use Bun's native APIs for working with HTTP cookies
 ---
 
-Bun provides native APIs for working with HTTP cookies through `Bun.Cookie` and `Bun.CookieMap`. These APIs offer fast methods for parsing, generating, and manipulating cookies in HTTP requests and responses.
+Bun provides two native APIs for working with HTTP cookies: `Bun.Cookie` and `Bun.CookieMap`. They parse, generate, and manipulate cookies in HTTP requests and responses.
 
 ## CookieMap class
 
-`Bun.CookieMap` provides a Map-like interface for working with collections of cookies. It implements the `Iterable` interface, allowing you to use it with `for...of` loops and other iteration methods.
+`Bun.CookieMap` is a Map-like collection of cookies. It implements `Iterable`, so it works with `for...of` loops and the other iteration methods.
 
 ```ts title="cookies.ts" icon="/icons/typescript.svg"
 // Empty cookie map
@@ -117,7 +117,7 @@ cookies.set(cookie);
 
 #### `delete(options: CookieStoreDeleteOptions): void`
 
-Removes a cookie from the map. When applied to a Response, this adds a cookie with an empty string value and an expiry date in the past. A cookie will only delete successfully on the browser if the domain and path is the same as it was when the cookie was created.
+Removes a cookie from the map. When applied to a Response, this adds a cookie with an empty string value and an expiry date in the past. The browser only deletes the cookie if the domain and path match the ones it was created with.
 
 ```ts title="delete-cookie.ts" icon="/icons/typescript.svg"
 // Delete by name using default domain and path.
@@ -141,9 +141,9 @@ const json = cookies.toJSON();
 
 #### `toSetCookieHeaders(): string[]`
 
-Returns an array of values for Set-Cookie headers that can be used to apply all cookie changes.
+Returns an array of values for Set-Cookie headers that apply all cookie changes.
 
-When using `Bun.serve()`, you don't need to call this method explicitly. Any changes made to the `req.cookies` map are automatically applied to the response headers. This method is primarily useful when working with other HTTP server implementations.
+Use this with HTTP servers other than `Bun.serve()`. In `Bun.serve()`, you don't need to call it: any changes made to the `req.cookies` map are automatically applied to the response headers.
 
 ```js title="node-server.js" icon="file-code"
 import { createServer } from "node:http";
@@ -264,7 +264,7 @@ cookie.name; // string - Cookie name
 cookie.value; // string - Cookie value
 cookie.domain; // string | null - Domain scope (null if not specified)
 cookie.path; // string - URL path scope (defaults to "/")
-cookie.expires; // number | undefined - Expiration timestamp (ms since epoch)
+cookie.expires; // Date | undefined - Expiration date
 cookie.secure; // boolean - Require HTTPS
 cookie.sameSite; // "strict" | "lax" | "none" - SameSite setting
 cookie.partitioned; // boolean - Whether the cookie is partitioned (CHIPS)
@@ -276,7 +276,7 @@ cookie.httpOnly; // boolean - Accessible only via HTTP (not JavaScript)
 
 #### `isExpired(): boolean`
 
-Checks if the cookie has expired.
+Checks if the cookie has expired. When both `maxAge` and `expires` are set, `maxAge` takes precedence, as required by [RFC 6265](https://datatracker.ietf.org/doc/html/rfc6265#section-5.3).
 
 ```ts title="is-expired.ts" icon="/icons/typescript.svg"
 // Expired cookie (Date in the past)
@@ -290,6 +290,10 @@ const validCookie = new Bun.Cookie("name", "value", {
   maxAge: 3600, // 1 hour in seconds
 });
 console.log(validCookie.isExpired()); // false
+
+// A non-positive maxAge expires the cookie immediately
+const deletedCookie = new Bun.Cookie("name", "value", { maxAge: 0 });
+console.log(deletedCookie.isExpired()); // true
 
 // Session cookie (no expiration)
 const sessionCookie = new Bun.Cookie("name", "value");
@@ -313,9 +317,9 @@ const cookie = new Bun.Cookie("session", "abc123", {
 });
 
 console.log(cookie.serialize());
-// => "session=abc123; Domain=example.com; Path=/admin; Expires=Sun, 19 Mar 2025 15:03:26 GMT; Secure; HttpOnly; SameSite=strict"
+// => "session=abc123; Domain=example.com; Path=/admin; Expires=Sun, 19 Mar 2025 15:03:26 GMT; Secure; HttpOnly; SameSite=Strict"
 console.log(cookie.toString());
-// => "session=abc123; Domain=example.com; Path=/admin; Expires=Sun, 19 Mar 2025 15:03:26 GMT; Secure; HttpOnly; SameSite=strict"
+// => "session=abc123; Domain=example.com; Path=/admin; Expires=Sun, 19 Mar 2025 15:03:26 GMT; Secure; HttpOnly; SameSite=Strict"
 ```
 
 #### `toJSON(): CookieInit`

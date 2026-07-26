@@ -3,32 +3,32 @@ title: Bytecode Caching
 description: Speed up JavaScript execution with bytecode caching in Bun's bundler
 ---
 
-Bytecode caching is a build-time optimization that dramatically improves application startup time by pre-compiling your JavaScript to bytecode. For example, when compiling TypeScript's `tsc` with bytecode enabled, startup time improves by **2x**.
+Bytecode caching is a build-time optimization that improves startup time by pre-compiling your JavaScript to bytecode. For example, when compiling TypeScript's `tsc` with bytecode enabled, startup time improves by **2x**.
 
 ## Usage
 
 ### Basic usage (CommonJS)
 
-Enable bytecode caching with the `--bytecode` flag. Without `--format`, this defaults to CommonJS:
+Enable bytecode caching with the `--bytecode` flag. Without `--format`, the output format defaults to CommonJS:
 
 ```bash terminal icon="terminal"
 bun build ./index.ts --target=bun --bytecode --outdir=./dist
 ```
 
-This generates two files:
+The build writes two files:
 
 - `dist/index.js` - Your bundled JavaScript (CommonJS)
-- `dist/index.jsc` - The bytecode cache file
+- `dist/index.js.jsc` - The bytecode cache file
 
 At runtime, Bun automatically detects and uses the `.jsc` file:
 
 ```bash terminal icon="terminal"
-bun ./dist/index.js  # Automatically uses index.jsc
+bun ./dist/index.js  # Automatically uses index.js.jsc
 ```
 
 ### With standalone executables
 
-When creating executables with `--compile`, bytecode is embedded into the binary. Both ESM and CommonJS formats are supported:
+When you create an executable with `--compile`, Bun embeds the bytecode in the binary. Both ESM and CommonJS work:
 
 ```bash terminal icon="terminal"
 # ESM (requires --compile)
@@ -38,17 +38,17 @@ bun build ./cli.ts --compile --bytecode --format=esm --outfile=mycli
 bun build ./cli.ts --compile --bytecode --outfile=mycli
 ```
 
-The resulting executable contains both the code and bytecode, giving you maximum performance in a single file.
+The resulting executable contains both the code and the bytecode.
 
 ### ESM bytecode
 
-ESM bytecode requires `--compile` because Bun embeds module metadata (import/export information) in the compiled binary. This metadata allows the JavaScript engine to skip parsing entirely at runtime.
+ESM bytecode requires `--compile` because Bun embeds module metadata (import/export information) in the compiled binary. With this metadata, the JavaScript engine skips parsing entirely at runtime.
 
-Without `--compile`, ESM bytecode would still require parsing the source to analyze module dependencies—defeating the purpose of bytecode caching.
+Without `--compile`, ESM bytecode would still require parsing the source to analyze module dependencies, which defeats the purpose of bytecode caching.
 
 ### Combining with other optimizations
 
-Bytecode works great with minification and source maps:
+Combine bytecode with minification and source maps:
 
 ```bash terminal icon="terminal"
 bun build --compile --bytecode --minify --sourcemap ./cli.ts --outfile=mycli
@@ -114,11 +114,13 @@ When you update Bun, you must regenerate bytecode:
 bun build --bytecode ./index.ts --outdir=./dist
 ```
 
-If bytecode doesn't match the current Bun version, it's automatically ignored and your code falls back to parsing the JavaScript source. Your app still runs — the performance optimization is skipped.
+If bytecode doesn't match the current Bun version, Bun ignores it and falls back to parsing the JavaScript source.
 
 **Best practice**: Generate bytecode as part of your CI/CD build process. Don't commit `.jsc` files to git. Regenerate them whenever you update Bun.
 
 ### Source code still required
+
+Bytecode doesn't replace your JavaScript. You must deploy both files:
 
 - The `.js` file (your bundled source code)
 - The `.jsc` file (the bytecode cache)
@@ -150,13 +152,12 @@ RUN bun install --frozen-lockfile
 COPY . .
 RUN bun build --bytecode --minify --sourcemap \
   --target=bun \
-  --outdir=./dist \
   --compile \
   ./src/server.ts --outfile=./dist/server
 
 FROM oven/bun:1 AS runner
 WORKDIR /app
-COPY --from=builder /dist/server /app/server
+COPY --from=builder /app/dist/server /app/server
 CMD ["./server"]
 ```
 
@@ -189,26 +190,26 @@ ls -lh dist/
 
 ```txt
 -rw-r--r--  1 user  staff   245K  index.js
--rw-r--r--  1 user  staff   1.1M  index.jsc
+-rw-r--r--  1 user  staff   1.1M  index.js.jsc
 ```
 
 The `.jsc` file should be 2-8x larger than the `.js` file.
 
-To log if bytecode is being used, set `BUN_JSC_verboseDiskCache=1` in your environment.
+To log whether the bytecode is used, set `BUN_JSC_verboseDiskCache=1` in your environment.
 
-On success, it will log something like:
-
-```txt
-[Disk cache] cache hit for sourceCode
-```
-
-If you see a cache miss, it will log something like:
+On a cache hit, Bun logs:
 
 ```txt
-[Disk cache] cache miss for sourceCode
+[Disk Cache] Cache hit for sourceCode
 ```
 
-It's normal for it it to log a cache miss multiple times since Bun doesn't currently bytecode cache JavaScript code used in builtin modules.
+On a cache miss:
+
+```txt
+[Disk Cache] Cache miss for sourceCode
+```
+
+Several cache-miss lines are normal: Bun doesn't bytecode-cache the JavaScript in its builtin modules.
 
 ### Common issues
 
@@ -218,7 +219,7 @@ It's normal for it it to log a cache miss multiple times since Bun doesn't curre
 
 - Using `--minify` to reduce code size before bytecode generation
 - Compressing `.jsc` files for network transfer (gzip/brotli)
-- Evaluating if the startup performance gain is worth the size increase
+- Evaluating whether the startup gain is worth the size increase
 
 ## What is bytecode?
 
@@ -230,13 +231,13 @@ When you run JavaScript, the JavaScript engine doesn't execute your source code 
 
 Bytecode is an intermediate representation - it's lower-level than JavaScript source code, but higher-level than machine code. Think of it as assembly language for a virtual machine. Each bytecode instruction represents a single operation like "load this variable," "add two numbers," or "call this function."
 
-This happens **every single time** you run your code. If you have a CLI tool that runs 100 times a day, your code gets parsed 100 times. If you have a serverless function with frequent cold starts, parsing happens on every cold start.
+All of this happens **every time** you run your code. A CLI tool that runs 100 times a day gets parsed 100 times; a serverless function gets parsed on every cold start.
 
 With bytecode caching, Bun moves steps 1 and 2 to the build step. At runtime, the engine loads the pre-compiled bytecode and jumps straight to execution.
 
 ### Why lazy parsing makes this even better
 
-Modern JavaScript engines use a clever optimization called **lazy parsing**. They don't parse all your code upfront - instead, functions are only parsed when they're first called:
+Modern JavaScript engines use an optimization called **lazy parsing**. They don't parse all your code upfront - instead, functions are only parsed when they're first called:
 
 ```js
 // Without bytecode caching:
@@ -251,13 +252,13 @@ function main() {
 }
 ```
 
-This means parsing overhead isn't just a startup cost - it happens throughout your application's lifetime as different code paths execute. With bytecode caching, **all functions are pre-compiled**, even the ones that are lazily parsed. The parsing work happens once at build time instead of being distributed throughout your application's execution.
+This means parsing overhead isn't just a startup cost - it happens throughout your application's lifetime as different code paths execute. With bytecode caching, **all functions are pre-compiled**, even the ones the engine would otherwise parse lazily.
 
 ## The bytecode format
 
 ### Inside a .jsc file
 
-A `.jsc` file contains a serialized bytecode structure. Understanding what's inside helps explain both the performance benefits and the file size tradeoff.
+A `.jsc` file contains a serialized bytecode structure.
 
 **Header section** (validated on every load):
 
@@ -268,18 +269,18 @@ A `.jsc` file contains a serialized bytecode structure. Understanding what's ins
 
 - **Source code hash**: A hash of the original JavaScript source code. Bun verifies this matches before using the bytecode.
 - **Source code length**: The exact length of the source, for additional validation.
-- **Compilation flags**: Critical compilation context like strict mode, whether it's a script vs module, eval context type, etc. The same source code compiled with different flags produces different bytecode.
+- **Compilation flags**: Compilation context such as strict mode, script vs. module, and eval context type. The same source compiled with different flags produces different bytecode.
 
 **Bytecode instructions**:
 
-- **Instruction stream**: The actual bytecode opcodes - the compiled representation of your JavaScript. This is a variable-length sequence of bytecode instructions.
-- **Metadata table**: Each opcode has associated metadata - things like profiling counters, type hints, and execution counts (even if not yet populated).
+- **Instruction stream**: The bytecode opcodes - the compiled representation of your JavaScript, stored as a variable-length sequence of instructions.
+- **Metadata table**: Each opcode has associated metadata such as profiling counters, type hints, and execution counts (even if not yet populated).
 - **Jump targets**: Pre-computed addresses for control flow (if/else, loops, switch statements).
 - **Switch tables**: Optimized lookup tables for switch statements.
 
 **Constants and identifiers**:
 
-- **Constant pool**: All literal values in your code - numbers, strings, booleans, null, undefined. These are stored as actual JavaScript values (JSValues) so they don't need to be parsed from source at runtime.
+- **Constant pool**: All literal values in your code - numbers, strings, booleans, null, undefined. These are stored as JavaScript values (JSValues) so they don't need to be parsed from source at runtime.
 - **Identifier table**: All variable and function names used in the code. Stored as deduplicated strings.
 - **Source code representation markers**: Flags indicating how constants should be represented (as integers, doubles, big ints, etc.).
 
@@ -298,17 +299,17 @@ A `.jsc` file contains a serialized bytecode structure. Understanding what's ins
 
 ### What bytecode does NOT contain
 
-Importantly, **bytecode does not embed your source code**. Instead:
+**Bytecode does not embed your source code**. Instead:
 
 - The JavaScript source is stored separately (in the `.js` file)
 - The bytecode only stores a hash and length of the source
 - At load time, Bun validates the bytecode matches the current source code
 
-This is why you need to deploy both the `.js` and `.jsc` files. The `.jsc` file is useless without its corresponding `.js` file.
+This is why you need to deploy both the `.js` and `.jsc` files: the `.jsc` file is useless without its corresponding `.js` file.
 
 ## The tradeoff: file size
 
-Bytecode files are significantly larger than source code - typically 2-8x larger.
+Bytecode files are typically 2-8x larger than the source code.
 
 ### Why is bytecode so much larger?
 
@@ -361,7 +362,7 @@ Jump targets, switch tables, and exception handler boundaries are all pre-comput
 ### Mitigation strategies
 
 **Compression**:
-Bytecode compresses extremely well with gzip/brotli (60-70% compression). The repetitive structure and metadata compress efficiently.
+Bytecode compresses well with gzip/brotli (60-70% compression). The repetitive structure and metadata compress efficiently.
 
 **Minification first**:
 Using `--minify` before bytecode generation helps:
@@ -390,7 +391,7 @@ The bytecode contains abstract instructions that work on any architecture. Archi
 Bytecode is **not stable across Bun versions**. Here's why:
 
 **Bytecode format changes**:
-JavaScriptCore's bytecode format evolves. New opcodes get added, old ones get removed or changed, metadata structures change. Each version of JavaScriptCore has a different bytecode format.
+JavaScriptCore's bytecode format changes from version to version. New opcodes get added, old ones get removed or changed, metadata structures change.
 
 **Version validation**:
 The cache version in the `.jsc` file header is a hash of the JavaScriptCore framework. When Bun loads bytecode:
@@ -400,14 +401,12 @@ The cache version in the `.jsc` file header is a hash of the JavaScriptCore fram
 3. If they don't match, the bytecode is **silently rejected**
 4. Bun falls back to parsing the `.js` source code
 
-Your application still runs — the performance optimization is skipped.
-
 **Graceful degradation**:
 This design means bytecode caching "fails open" - if anything goes wrong (version mismatch, corrupted file, missing file), your code still runs normally. You might see slower startup, but you won't see errors.
 
 ## Unlinked vs. linked bytecode
 
-JavaScriptCore makes a crucial distinction between "unlinked" and "linked" bytecode. This separation is what makes bytecode caching possible:
+JavaScriptCore distinguishes between "unlinked" and "linked" bytecode. This separation is what makes bytecode caching possible:
 
 ### Unlinked bytecode (what's cached)
 
@@ -436,12 +435,10 @@ When Bun runs bytecode, it "links" it - creating a runtime wrapper that adds:
 - **JIT compilation state**: References to baseline JIT or optimizing JIT (DFG/FTL) compiled versions of hot code.
 - **Runtime objects**: Pointers to actual JavaScript objects, prototypes, scopes, etc.
 
-This linked representation is created fresh every time you run your code. This allows:
+This linked representation is created fresh every time you run your code. This separation allows:
 
 1. **Caching the expensive work** (parsing and compilation to unlinked bytecode)
 2. **Still collecting runtime profiling data** to guide optimizations
 3. **Still applying JIT optimizations** based on actual execution patterns
 
-Bytecode caching moves expensive work (parsing and compiling to bytecode) from runtime to build time. For applications that start frequently, this can halve your startup time at the cost of larger files on disk.
-
-For production CLIs and serverless deployments, the combination of `--bytecode --minify --sourcemap` gives you the best performance while maintaining debuggability.
+For production CLIs and serverless deployments, the combination of `--bytecode --minify --sourcemap` gives you the best startup time while keeping errors mapped to your original source.

@@ -17,18 +17,18 @@ pub fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         b"input.jsonc",
         false,
         true,
-        |arena, log, source| {
-            let parse_result = match json::parse_ts_config::<true>(source, log, arena) {
+        |_arena, log, source| {
+            let parsed = match json::ParsedJson::parse_jsonc(source, log) {
                 Ok(v) => v,
                 Err(e) => {
-                    if e == bun_core::err!(StackOverflow) {
+                    if e == bun_parsers::Error::StackOverflow {
                         return Err(global.throw_stack_overflow());
                     }
                     return Err(global.throw_value(log.to_js(global, "Failed to parse JSONC")?));
                 }
             };
 
-            match parse_result.to_js(global) {
+            match parsed.root.to_js(global) {
                 Ok(v) => Ok(v),
                 Err(ToJSError::OutOfMemory) => Err(JsError::OutOfMemory),
                 Err(ToJSError::JSError) => Err(JsError::Thrown),

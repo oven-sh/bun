@@ -343,6 +343,59 @@ describe("crypto.KeyObjects", () => {
     }).toThrow("error:06000066:public key routines:OPENSSL_internal:DECODE_ERROR");
   });
 
+  test("createPrivateKey resolves the encoding options before reading the key bytes", () => {
+    const der = createPrivateKey(privatePem).export({ format: "der", type: "pkcs8" });
+    expect(createPrivateKey({ key: der, format: "der", type: "pkcs8" }).type).toBe("private");
+
+    const arrayBuffer = new ArrayBuffer(der.byteLength);
+    const view = new Uint8Array(arrayBuffer);
+    view.set(der);
+    let passphraseReads = 0;
+    let transferred;
+    expect(() =>
+      createPrivateKey({
+        key: view,
+        format: "der",
+        type: "pkcs8",
+        get passphrase() {
+          passphraseReads++;
+          transferred = arrayBuffer.transfer();
+          return undefined;
+        },
+      }),
+    ).toThrow();
+    expect(passphraseReads).toBe(1);
+    expect(view.byteLength).toBe(0);
+    expect(transferred.byteLength).toBe(der.byteLength);
+  });
+
+  test("createPublicKey resolves the encoding options before reading the key bytes", () => {
+    const der = createPublicKey(publicPem).export({ format: "der", type: "spki" });
+    const arrayBuffer = new ArrayBuffer(der.byteLength);
+    new Uint8Array(arrayBuffer).set(der);
+    expect(createPublicKey({ key: arrayBuffer, format: "der", type: "spki" }).type).toBe("public");
+
+    const detachable = new ArrayBuffer(der.byteLength);
+    new Uint8Array(detachable).set(der);
+    let passphraseReads = 0;
+    let transferred;
+    expect(() =>
+      createPublicKey({
+        key: detachable,
+        format: "der",
+        type: "spki",
+        get passphrase() {
+          passphraseReads++;
+          transferred = detachable.transfer();
+          return undefined;
+        },
+      }),
+    ).toThrow();
+    expect(passphraseReads).toBe(1);
+    expect(detachable.byteLength).toBe(0);
+    expect(transferred.byteLength).toBe(der.byteLength);
+  });
+
   [
     {
       private: readFile(path.join(import.meta.dir, "fixtures", "ed25519_private.pem"), "ascii"),

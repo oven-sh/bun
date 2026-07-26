@@ -16,6 +16,40 @@ use crate::versioned_url::VersionedURLType;
 
 pub type Resolution = ResolutionType<u64>;
 
+impl Resolution {
+    /// True when this resolution can satisfy `version`: npm ranges by
+    /// semver, git/github by exact repo equality. Any other kind pairing
+    /// (workspace, folder, tarball, dist-tag, …) never satisfies. This is
+    /// the comparison the resolver's deferred-peer phase uses to bind peer
+    /// edges against already-resolved packages.
+    pub fn satisfies_dependency_version(
+        &self,
+        version: &dependency::Version,
+        version_buf: &[u8],
+        resolution_buf: &[u8],
+    ) -> bool {
+        if self.tag == Tag::Npm && version.tag == dependency::VersionTag::Npm {
+            return version.npm().version.satisfies(
+                self.npm().version,
+                version_buf,
+                resolution_buf,
+            );
+        }
+
+        if self.tag == Tag::Git && version.tag == dependency::VersionTag::Git {
+            return self.git().eql(version.git(), resolution_buf, version_buf);
+        }
+
+        if self.tag == Tag::Github && version.tag == dependency::VersionTag::Github {
+            return self
+                .github()
+                .eql(version.github(), resolution_buf, version_buf);
+        }
+
+        false
+    }
+}
+
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct ResolutionType<SemverInt: VersionInt> {
@@ -116,10 +150,6 @@ impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
         // SAFETY: `git` and `github` occupy the same union slot type
         // (`Repository`); tag asserted to be one of the two.
         unsafe { &(*core::ptr::from_ref(&self.value)).git }
-    }
-
-    pub fn is_git(&self) -> bool {
-        self.tag.is_git()
     }
 
     pub fn can_enqueue_install_task(&self) -> bool {
@@ -972,8 +1002,6 @@ pub enum FromTextLockfileError {
 
 bun_core::oom_from_alloc!(FromTextLockfileError);
 
-bun_core::named_error_set!(FromTextLockfileError);
-
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
 pub enum FromPnpmLockfileError {
     #[error("out of memory")]
@@ -983,5 +1011,3 @@ pub enum FromPnpmLockfileError {
 }
 
 bun_core::oom_from_alloc!(FromPnpmLockfileError);
-
-bun_core::named_error_set!(FromPnpmLockfileError);

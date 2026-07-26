@@ -3,7 +3,7 @@ title: Test Reporters
 description:
 ---
 
-bun test supports different output formats through reporters. This document covers both built-in reporters and how to implement your own custom reporters.
+`bun test` supports different output formats through reporters, both built-in and custom.
 
 ---
 
@@ -11,7 +11,7 @@ bun test supports different output formats through reporters. This document cove
 
 ### Default Console Reporter
 
-By default, bun test outputs results to the console in a human-readable format:
+By default, `bun test` outputs results to the console in a human-readable format:
 
 ```sh terminal icon="terminal"
 test/package-json-lint.test.ts:
@@ -26,7 +26,7 @@ test/package-json-lint.test.ts:
 Ran 4 tests in 1.44ms
 ```
 
-When a terminal doesn't support colors, the output avoids non-ascii characters:
+When a terminal doesn't support colors, the output avoids non-ASCII characters:
 
 ```sh terminal icon="terminal"
 test/package-json-lint.test.ts:
@@ -43,7 +43,7 @@ Ran 4 tests across 1 files. [0.66ms]
 
 ### Dots Reporter
 
-The dots reporter shows `.` for passing tests and `F` for failures—useful for large test suites.
+The dots reporter shows `.` for passing tests and prints full error details for failures, useful for large test suites.
 
 ```sh terminal icon="terminal"
 bun test --dots
@@ -52,7 +52,7 @@ bun test --reporter=dots
 
 ### JUnit XML Reporter
 
-For CI/CD environments, Bun supports generating JUnit XML reports. JUnit XML is a widely-adopted format for test results that can be parsed by many CI/CD systems, including GitLab, Jenkins, and others.
+For CI/CD environments, Bun can generate JUnit XML reports, a widely-adopted test result format that many CI/CD systems can parse, including GitLab and Jenkins.
 
 #### Using the JUnit Reporter
 
@@ -62,11 +62,11 @@ To generate a JUnit XML report, use the `--reporter=junit` flag along with `--re
 bun test --reporter=junit --reporter-outfile=./junit.xml
 ```
 
-This continues to output to the console as usual while also writing the JUnit XML report to the specified path at the end of the test run.
+Console output is unchanged; Bun writes the JUnit XML report to the specified path at the end of the test run.
 
 #### Configuring via bunfig.toml
 
-You can also configure the JUnit reporter in your `bunfig.toml` file:
+You can also configure the JUnit reporter in `bunfig.toml`:
 
 ```toml title="bunfig.toml" icon="settings"
 [test.reporter]
@@ -75,9 +75,9 @@ junit = "path/to/junit.xml"  # Output path for JUnit XML report
 
 #### Environment Variables in JUnit Reports
 
-The JUnit reporter automatically includes environment information as `<properties>` in the XML output. This can be helpful for tracking test runs in CI environments.
+The JUnit reporter includes environment information as `<properties>` in the XML output, so you can tell which environment and commit a test run was for.
 
-Specifically, it includes the following environment variables when available:
+It includes the following environment variables when available:
 
 | Environment Variable                                                    | Property Name | Description            |
 | ----------------------------------------------------------------------- | ------------- | ---------------------- |
@@ -85,39 +85,35 @@ Specifically, it includes the following environment variables when available:
 | `GITHUB_SHA`, `CI_COMMIT_SHA`, `GIT_SHA`                                | `commit`      | Git commit identifiers |
 | System hostname                                                         | `hostname`    | Machine hostname       |
 
-This makes it easier to track which environment and commit a particular test run was for.
-
 #### Current Limitations
 
-The JUnit reporter currently has a few limitations that will be addressed in future updates:
+The JUnit reporter does not include:
 
-- `stdout` and `stderr` output from individual tests are not included in the report
-- Precise timestamp fields per test case are not included
+- `stdout` and `stderr` output from individual tests
+- Precise timestamp fields per test case
 
 ### GitHub Actions reporter
 
-Bun test automatically detects when it's running inside GitHub Actions and emits GitHub Actions annotations to the console directly. No special configuration is needed beyond installing Bun and running `bun test`.
+`bun test` detects when it's running inside GitHub Actions and emits GitHub Actions annotations to the console directly. No configuration is needed beyond installing Bun and running `bun test`.
 
-For a GitHub Actions workflow configuration example, see the [CI/CD integration](/pm/cli/install#ci%2Fcd) section of the CLI documentation.
+For an example GitHub Actions workflow, see [CI/CD integration](/pm/cli/install#ci%2Fcd).
 
 ---
 
 ## Custom Reporters
 
-Bun allows developers to implement custom test reporters by extending the WebKit Inspector Protocol with additional testing-specific domains.
+You can implement custom test reporters with Bun's testing-specific extensions to the WebKit Inspector Protocol, which report detailed information about test execution in real time.
 
 ### Inspector Protocol for Testing
 
-To support test reporting, Bun extends the standard WebKit Inspector Protocol with two custom domains:
+Bun extends the standard WebKit Inspector Protocol with two custom domains:
 
 1. **TestReporter**: Reports test discovery, execution start, and completion events
 2. **LifecycleReporter**: Reports errors and exceptions during test execution
 
-These extensions allow you to build custom reporting tools that can receive detailed information about test execution in real-time.
-
 ### Key Events
 
-Custom reporters can listen for these key events:
+Custom reporters can listen for these events:
 
 - `TestReporter.found`: Emitted when a test is discovered
 - `TestReporter.start`: Emitted when a test starts running

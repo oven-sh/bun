@@ -541,13 +541,13 @@ extern "C"
       uwsApp->setMaxHTTPHeaderSize(max_header_size);
     }
   }
-  void uws_app_set_flags(int ssl, uws_app_t *app, bool require_host_header, bool use_strict_method_validation) {
+  void uws_app_set_flags(int ssl, uws_app_t *app, bool require_host_header, bool use_strict_method_validation, bool use_insecure_http_parser, bool http_allow_half_open) {
     if (ssl) {
       uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;
-      uwsApp->setFlags(require_host_header, use_strict_method_validation);
+      uwsApp->setFlags(require_host_header, use_strict_method_validation, use_insecure_http_parser, http_allow_half_open);
     } else {
       uWS::App *uwsApp = (uWS::App *)app;
-      uwsApp->setFlags(require_host_header, use_strict_method_validation);
+      uwsApp->setFlags(require_host_header, use_strict_method_validation, use_insecure_http_parser, http_allow_half_open);
     }
   }
 
@@ -591,21 +591,21 @@ extern "C"
     uWS::App *uwsApp = (uWS::App *)app;
     return uwsApp->numSubscribers(stringViewFromC(topic, topic_length));
   }
-  bool uws_publish(int ssl, uws_app_t *app, const char *topic,
-                   size_t topic_length, const char *message,
-                   size_t message_length, uws_opcode_t opcode, bool compress)
+  uws_sendstatus_t uws_publish(int ssl, uws_app_t *app, const char *topic,
+                               size_t topic_length, const char *message,
+                               size_t message_length, uws_opcode_t opcode, bool compress)
   {
     if (ssl)
     {
       uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;
-      return uwsApp->publish(stringViewFromC(topic, topic_length),
-                             stringViewFromC(message, message_length),
-                             (uWS::OpCode)(unsigned char)opcode, compress);
+      return (uws_sendstatus_t)uwsApp->publish(stringViewFromC(topic, topic_length),
+                                               stringViewFromC(message, message_length),
+                                               (uWS::OpCode)(unsigned char)opcode, compress);
     }
     uWS::App *uwsApp = (uWS::App *)app;
-    return uwsApp->publish(stringViewFromC(topic, topic_length),
-                           stringViewFromC(message, message_length),
-                           (uWS::OpCode)(unsigned char)opcode, compress);
+    return (uws_sendstatus_t)uwsApp->publish(stringViewFromC(topic, topic_length),
+                                             stringViewFromC(message, message_length),
+                                             (uWS::OpCode)(unsigned char)opcode, compress);
   }
   void *uws_get_native_handle(int ssl, uws_app_t *app)
   {
@@ -1061,41 +1061,41 @@ extern "C"
     }
   }
 
-  bool uws_ws_publish(int ssl, uws_websocket_t *ws, const char *topic,
-                      size_t topic_length, const char *message,
-                      size_t message_length)
+  uws_sendstatus_t uws_ws_publish(int ssl, uws_websocket_t *ws, const char *topic,
+                                  size_t topic_length, const char *message,
+                                  size_t message_length)
   {
     if (ssl)
     {
       TLSWebSocket *uws =
           (TLSWebSocket *)ws;
-      return uws->publish(stringViewFromC(topic, topic_length),
-                          stringViewFromC(message, message_length));
+      return (uws_sendstatus_t)uws->publish(stringViewFromC(topic, topic_length),
+                                            stringViewFromC(message, message_length));
     }
     TCPWebSocket *uws =
         (TCPWebSocket *)ws;
-    return uws->publish(stringViewFromC(topic, topic_length),
-                        stringViewFromC(message, message_length));
+    return (uws_sendstatus_t)uws->publish(stringViewFromC(topic, topic_length),
+                                          stringViewFromC(message, message_length));
   }
 
-  bool uws_ws_publish_with_options(int ssl, uws_websocket_t *ws,
-                                   const char *topic, size_t topic_length,
-                                   const char *message, size_t message_length,
-                                   uws_opcode_t opcode, bool compress)
+  uws_sendstatus_t uws_ws_publish_with_options(int ssl, uws_websocket_t *ws,
+                                               const char *topic, size_t topic_length,
+                                               const char *message, size_t message_length,
+                                               uws_opcode_t opcode, bool compress)
   {
     if (ssl)
     {
       TLSWebSocket *uws =
           (TLSWebSocket *)ws;
-      return uws->publish(stringViewFromC(topic, topic_length),
-                          stringViewFromC(message, message_length),
-                          (uWS::OpCode)(unsigned char)opcode, compress);
+      return (uws_sendstatus_t)uws->publish(stringViewFromC(topic, topic_length),
+                                            stringViewFromC(message, message_length),
+                                            (uWS::OpCode)(unsigned char)opcode, compress);
     }
     TCPWebSocket *uws =
         (TCPWebSocket *)ws;
-    return uws->publish(stringViewFromC(topic, topic_length),
-                        stringViewFromC(message, message_length),
-                        (uWS::OpCode)(unsigned char)opcode, compress);
+    return (uws_sendstatus_t)uws->publish(stringViewFromC(topic, topic_length),
+                                          stringViewFromC(message, message_length),
+                                          (uWS::OpCode)(unsigned char)opcode, compress);
   }
 
   size_t uws_ws_get_buffered_amount(int ssl, uws_websocket_t *ws)
@@ -1225,6 +1225,21 @@ extern "C"
     }
   }
 
+  void uws_res_write_informational(int ssl, uws_res_r res, const char *data,
+                                   size_t length)
+  {
+    if (ssl)
+    {
+      uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
+      uwsRes->writeRawInformational(stringViewFromC(data, length));
+    }
+    else
+    {
+      uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
+      uwsRes->writeRawInformational(stringViewFromC(data, length));
+    }
+  }
+
   void uws_res_write_status(int ssl, uws_res_r res, const char *status,
                             size_t length)
   {
@@ -1247,6 +1262,16 @@ extern "C"
     } else {
       uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
       uwsRes->getHttpResponseData()->state |= uWS::HttpResponseData<false>::HTTP_WROTE_CONTENT_LENGTH_HEADER;
+    }
+  }
+
+  void uws_res_mark_wrote_date_header(int ssl, uws_res_r res) {
+    if (ssl) {
+      uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
+      uwsRes->getHttpResponseData()->state |= uWS::HttpResponseData<true>::HTTP_WROTE_DATE_HEADER;
+    } else {
+      uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
+      uwsRes->getHttpResponseData()->state |= uWS::HttpResponseData<false>::HTTP_WROTE_DATE_HEADER;
     }
   }
 
@@ -1400,6 +1425,35 @@ extern "C"
       }
     return uwsRes->write(stringViewFromC(data, *length), length);
   }
+  size_t uws_res_try_write_body(int ssl, uws_res_r res, const char *data, size_t length, bool is_first) nonnull_fn_decl;
+
+  size_t uws_res_try_write_body(int ssl, uws_res_r res, const char *data, size_t length, bool is_first)
+  {
+    if (ssl)
+    {
+      uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
+      return uwsRes->tryWriteBody(stringViewFromC(data, length), is_first);
+    }
+    uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
+    return uwsRes->tryWriteBody(stringViewFromC(data, length), is_first);
+  }
+
+  void uws_res_spill_body(int ssl, uws_res_r res, const char *data, size_t length) nonnull_fn_decl;
+
+  void uws_res_spill_body(int ssl, uws_res_r res, const char *data, size_t length)
+  {
+    if (ssl)
+    {
+      uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
+      uwsRes->spillBodyTail(stringViewFromC(data, length));
+    }
+    else
+    {
+      uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
+      uwsRes->spillBodyTail(stringViewFromC(data, length));
+    }
+  }
+
   uint64_t uws_res_get_write_offset(int ssl, uws_res_r res) nonnull_fn_decl;
   uint64_t uws_res_get_write_offset(int ssl, uws_res_r res)
   {
@@ -1798,7 +1852,10 @@ __attribute__((callback (corker, ctx)))
     }
   }
 
-  int uws_res_state(int ssl, uws_res_r res)
+  /* Returns the whole flags word: it no longer fits in a byte (HttpResponseData
+   * carries the framing and node:http bits above bit 7), and Rust's State
+   * mirrors it as a u32. */
+  uint32_t uws_res_state(int ssl, uws_res_r res)
   {
     if (ssl)
     {

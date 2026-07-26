@@ -548,7 +548,7 @@ impl Clone for Dependency {
 
 impl Dependency {
     /// Sorting order for dependencies is:
-    /// 1. [`peerDependencies`, `optionalDependencies`, `devDependencies`, `dependencies`]
+    /// 1. [`workspaces`, `devDependencies`, `optionalDependencies`, `dependencies`, `peerDependencies`]
     /// 2. name ASC
     /// "name" must be ASC so that later, when we rebuild the lockfile, we
     /// insert it back in reverse order without an extra sorting pass.
@@ -848,7 +848,6 @@ impl OperatingSystem {
 
     // NB: NODE not NPM — package.json `os` field uses process.platform values
     // ("win32").
-    pub const CURRENT_NAME: &'static str = bun_core::env::OS_NAME_NODE;
 
     #[inline]
     pub const fn none() -> Self {
@@ -893,7 +892,6 @@ impl Libc {
     pub const ALL_VALUE: u8 = Self::GLIBC | Self::MUSL;
 
     // TODO: runtime libc detection
-    pub const CURRENT: Self = Self(Self::GLIBC);
 
     #[inline]
     pub const fn none() -> Self {
@@ -904,16 +902,8 @@ impl Libc {
         Self::ALL
     }
     #[inline]
-    pub fn is_match(self, target: Self) -> bool {
-        (self.0 & target.0) != 0
-    }
-    #[inline]
     pub fn has(self, other: u8) -> bool {
         (self.0 & other) != 0
-    }
-    #[inline]
-    pub fn negatable(self) -> Negatable<Self> {
-        NegatableExt::negatable(self)
     }
 }
 
@@ -962,8 +952,6 @@ impl Architecture {
 
     #[cfg(target_arch = "aarch64")]
     pub const CURRENT_NAME: &'static str = "arm64";
-    #[cfg(target_arch = "x86_64")]
-    pub const CURRENT_NAME: &'static str = "x64";
 
     #[inline]
     pub const fn none() -> Self {
@@ -1206,14 +1194,6 @@ impl Default for Resolution {
     }
 }
 
-impl Resolution {
-    pub const ROOT: Self = Self {
-        tag: ResolutionTag::Root,
-        _padding: [0; 7],
-        value: ResolutionValue { root: () },
-    };
-}
-
 // ─── PreinstallState / Features / misc ────────────────────────────────────
 
 #[repr(u8)]
@@ -1267,20 +1247,12 @@ impl Features {
         Self::NPM
     }
     #[inline]
-    pub const fn folder() -> Self {
-        Self::FOLDER
-    }
-    #[inline]
     pub const fn workspace() -> Self {
         Self::WORKSPACE
     }
     #[inline]
     pub const fn link() -> Self {
         Self::LINK
-    }
-    #[inline]
-    pub const fn tarball() -> Self {
-        Self::TARBALL
     }
 
     pub fn behavior(self) -> Behavior {
@@ -1341,13 +1313,6 @@ impl Features {
         optional_dependencies: true,
         ..Self::base()
     };
-
-    pub const TARBALL: Self = Self::NPM;
-
-    pub const NPM_MANIFEST: Self = Self {
-        optional_dependencies: true,
-        ..Self::base()
-    };
 }
 
 #[derive(Default, Clone, Copy)]
@@ -1372,7 +1337,7 @@ pub struct WakeHandler {
     pub context: Option<NonNull<c_void>>,
     pub handler: Option<fn(*mut c_void, *mut c_void)>,
     pub on_dependency_error:
-        Option<unsafe fn(*mut c_void, &Dependency, DependencyID, bun_core::Error)>,
+        Option<unsafe fn(*mut c_void, &Dependency, DependencyID, &'static str)>,
 }
 
 impl WakeHandler {
@@ -1389,7 +1354,7 @@ impl WakeHandler {
     #[inline]
     pub fn get_on_dependency_error(
         &self,
-    ) -> unsafe fn(*mut c_void, &Dependency, DependencyID, bun_core::Error) {
+    ) -> unsafe fn(*mut c_void, &Dependency, DependencyID, &'static str) {
         // Same invariant as `get_handler`: set together with `context` by the
         // sole installer; callers gate on `context.is_some()`.
         self.on_dependency_error.unwrap()
@@ -1510,10 +1475,6 @@ pub trait AutoInstaller {
         &self,
         package_id: PackageID,
     ) -> core::result::Result<DependencyID, bun_core::Error>;
-    /// Project a `SemverString` into the lockfile's `string_bytes` buffer.
-    /// The returned slice borrows from either `self` (heap buffer) or `s`
-    /// (inline small-string), so both inputs share the bound `'a`.
-    fn lockfile_str<'a>(&'a self, s: &'a SemverString) -> &'a [u8];
 
     // ── Lockfile writes ───────────────────────────────────────────────────
     /// Port of `lockfile.appendPackage(Package.fromPackageJSON(...))` —

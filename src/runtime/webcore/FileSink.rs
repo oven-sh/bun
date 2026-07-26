@@ -418,17 +418,14 @@ impl FileSink {
 
             // if we are not done yet and has pending data we just wait so we do not runPending twice
             if status == WriteStatus::Pending && has_pending_data {
-                if (*this).pending.get().state == streams::PendingState::Pending {
-                    (*this).pending.with_mut(|p| p.consumed = amount as u64); // @truncate
-                }
                 return;
             }
 
             if (*this).pending.get().state == streams::PendingState::Pending {
-                (*this).pending.with_mut(|p| p.consumed = amount as u64); // @truncate
-
-                // when "done" is true, we will never receive more data.
+                // `consumed` was credited when the pending operation accepted its
+                // bytes; `amount` is only what this drain pushed to the fd.
                 let consumed = (*this).pending.get().consumed;
+                // when "done" is true, we will never receive more data.
                 if (*this).done.get() || status == WriteStatus::EndOfFile {
                     (*this)
                         .pending
@@ -464,6 +461,10 @@ impl FileSink {
     /// [`on_attached_process_exit`](Self::on_attached_process_exit)).
     pub unsafe fn on_error(this: *mut FileSink, err: sys::Error) {
         bun_core::scoped_log!(FileSink, "onError({:?})", err);
+        // The streaming writer follows every `onError` with `close()` →
+        // `onClose` (on both platforms), which fires `signal.close()` and
+        // releases the keep-alive ref. Releasing the ref here instead could
+        // drop the last reference and free `this` before that `close()` runs.
         // SAFETY: caller contract — `this` is live with write+dealloc provenance.
         unsafe {
             if (*this).pending.get().state == streams::PendingState::Pending {
@@ -473,27 +474,12 @@ impl FileSink {
                 if let Some(vm) = (*this).js_vm() {
                     if vm.is_inside_deferred_task_queue.get() {
                         (*this).run_pending_later();
-                        #[cfg(windows)]
-                        FileSink::clear_keep_alive_ref(this);
                         return;
                     }
                 }
 
                 FileSink::run_pending(this);
             }
-
-            // On POSIX, the streaming writer always calls `close()` → `onClose`
-            // after `onError`, so `onClose` releases the keep-alive ref. Releasing
-            // it here could drop the last ref and free `this` before the writer's
-            // subsequent `close()` touches its (embedded) fields.
-            //
-            // On Windows, the pipe error paths call `closeWithoutReporting()` which
-            // skips `onClose`, so release here. This is safe because those paths
-            // always hold another ref (the in-flight write's ref via `defer
-            // parent.deref()` in `onWriteComplete`, or the JS caller's ref when
-            // reached synchronously from `write()`) through `closeWithoutReporting`.
-            #[cfg(windows)]
-            FileSink::clear_keep_alive_ref(this);
         }
     }
 
@@ -770,10 +756,6 @@ impl FileSink {
         Some(unsafe { &mut *p.cast::<bun_jsc::VirtualMachineRef>() })
     }
 
-    pub fn connect(&self, signal: streams::Signal) {
-        self.signal.set(signal);
-    }
-
     pub fn start(&self, stream_start: &streams::Start) -> sys::Result<()> {
         match stream_start {
             streams::Start::FileSink(file)
@@ -847,7 +829,26 @@ impl FileSink {
             // SAFETY(JsCell): `IOWriter::flush` is pure I/O; the `on_write`
             // callback it may trigger goes via the stored `*mut FileSink` backref.
             match (*this).writer.with_mut(|w| w.flush()) {
-                WriteResult::Err(_) | WriteResult::Done(_) => {
+                WriteResult::Err(err) => {
+                    (*this).update_ref(false);
+                    // `flush()` returns a write error without routing through the
+                    // writer's `_on_error`, so the pending slot still holds the
+                    // `Owned(consumed)` result `to_result` seeded and
+                    // `run_pending_later()` alone would resolve it as if every
+                    // buffered byte had reached the reader. Latch the error and
+                    // move the sink to its terminal state (mirrors `end_from_js`).
+                    (*this).done.set(true);
+                    if (*this).pending.get().state == streams::PendingState::Pending {
+                        (*this)
+                            .pending
+                            .with_mut(|p| p.result = streams::Writable::Err(err));
+                    }
+                    (*this).writer.with_mut(|w| w.end());
+                    (*this).run_pending_later();
+                    (*this).auto_flusher.with_mut(|a| a.registered.set(false));
+                    return false;
+                }
+                WriteResult::Done(_) => {
                     (*this).update_ref(false);
                     (*this).run_pending_later();
                 }
@@ -890,21 +891,20 @@ impl FileSink {
         // SAFETY(JsCell): `IOWriter::flush` is pure I/O; no JS re-entry while
         // the `&mut IOWriter` is held.
         let rc = self.writer.with_mut(|w| w.flush());
-        match rc {
-            WriteResult::Done(written) => {
+        let flushed = match rc {
+            WriteResult::Done(written)
+            | WriteResult::Pending(written)
+            | WriteResult::Wrote(written) => {
                 self.written.set(self.written.get() + written as usize); // @truncate
-            }
-            WriteResult::Pending(written) => {
-                self.written.set(self.written.get() + written as usize); // @truncate
-            }
-            WriteResult::Wrote(written) => {
-                self.written.set(self.written.get() + written as usize); // @truncate
+                written as u64 // @truncate
             }
             WriteResult::Err(err) => {
                 return sys::Result::Err(err);
             }
-        }
-        match self.to_result(rc) {
+        };
+        // A flush takes no new chunk from the caller; a pending one reports the
+        // bytes it pushed out. It only reaches here when no write is pending.
+        match self.to_result(rc, flushed) {
             streams::Writable::Err(_) => unreachable!(),
             result => sys::Result::Ok(result.to_js(global_this)),
         }
@@ -913,6 +913,31 @@ impl FileSink {
     pub fn finalize(&mut self) {
         // `.classes.ts` finalize — see PORTING.md §JSC. Runs during lazy sweep;
         // must not touch live JS cells.
+
+        // Shutdown never unwinds the writer: the loop stops ticking, so the
+        // `onWrite`/`onClose`/EOF callbacks that balance these refs can no
+        // longer arrive, and a queued FlushPendingFileSinkTask never runs.
+        // Release them here (a piped stdout whose write once returned
+        // `.pending` otherwise strands its keep-alive ref forever and the sink
+        // leaks). Only under `is_shutting_down`: on a live VM those events
+        // still arrive and must keep the sink alive past the wrapper.
+        if let Some(vm) = self.js_vm() {
+            if vm.is_shutting_down() {
+                let this = std::ptr::from_mut::<Self>(self);
+                // SAFETY: `this` is the canonical allocation pointer (finalize
+                // receives the wrapper's `m_ctx`); the wrapper's +1 is still
+                // held until the trailing `deref` below, so neither release
+                // can free `this` mid-body. `clear_keep_alive_ref` is
+                // flag-gated, so a (theoretical) late `onClose` is a no-op.
+                unsafe { FileSink::clear_keep_alive_ref(this) };
+                if self.run_pending_later.has.get() {
+                    self.run_pending_later.has.set(false);
+                    // SAFETY: as above; balances the `ref_()` taken in
+                    // `run_pending_later()` for a task that will never run.
+                    unsafe { FileSink::deref(this) };
+                }
+            }
+        }
 
         // Per-wrapper accounting is on `ref_count` directly: each path that
         // hands `self` to C++ (`to_js` / `to_js_with_destructor`) takes a +1
@@ -980,9 +1005,11 @@ impl FileSink {
         if self.done.get() {
             return streams::Writable::Done;
         }
+        let buffered_before = self.writer.get().buffered_len();
         // SAFETY(JsCell): `IOWriter::write` buffers/writes to fd; does not call JS.
         let rc = self.writer.with_mut(|w| w.write(data.slice()));
-        self.to_result(rc)
+        let accepted = self.bytes_accepted(buffered_before, &rc);
+        self.to_result(rc, accepted)
     }
 
     #[inline]
@@ -994,18 +1021,22 @@ impl FileSink {
         if self.done.get() {
             return streams::Writable::Done;
         }
+        let buffered_before = self.writer.get().buffered_len();
         // SAFETY(JsCell): `IOWriter::write_latin1` buffers/writes; no JS.
         let rc = self.writer.with_mut(|w| w.write_latin1(data.slice()));
-        self.to_result(rc)
+        let accepted = self.bytes_accepted(buffered_before, &rc);
+        self.to_result(rc, accepted)
     }
 
     pub fn write_utf16(&self, data: &streams::Result) -> streams::Writable {
         if self.done.get() {
             return streams::Writable::Done;
         }
+        let buffered_before = self.writer.get().buffered_len();
         // SAFETY(JsCell): `IOWriter::write_utf16` buffers/writes; no JS.
         let rc = self.writer.with_mut(|w| w.write_utf16(data.slice16()));
-        self.to_result(rc)
+        let accepted = self.bytes_accepted(buffered_before, &rc);
+        self.to_result(rc, accepted)
     }
 
     pub fn end(&self, _err: Option<sys::Error>) -> sys::Result<()> {
@@ -1013,16 +1044,34 @@ impl FileSink {
             return sys::Result::Ok(());
         }
 
+        // A backpressured `write()` may have left its promise in `self.pending`;
+        // `writer.end()` only re-enters `on_close`, which never touches it, so
+        // every synchronous arm that tears the writer down here must settle it
+        // (mirrors `on_auto_flush`). `js_close` can't hand the promise back, so
+        // the outcome is delivered via `run_pending` and the call returns `Ok`.
+        let has_pending = self.pending.get().state == streams::PendingState::Pending;
+
         // SAFETY(JsCell): `IOWriter::flush` is pure I/O; any callback re-entry
         // goes via the stored `*mut FileSink` backref, not this borrow.
         match self.writer.with_mut(|w| w.flush()) {
-            WriteResult::Done(written) => {
+            WriteResult::Done(written) | WriteResult::Wrote(written) => {
                 self.written.set(self.written.get() + written as usize); // @truncate
                 self.writer.with_mut(|w| w.end());
+                if has_pending {
+                    // `to_result` already seeded `Owned(consumed)`; just deliver it.
+                    self.run_pending_later();
+                }
                 sys::Result::Ok(())
             }
             WriteResult::Err(e) => {
                 self.done.set(true);
+                if has_pending {
+                    self.pending
+                        .with_mut(|p| p.result = streams::Writable::Err(e));
+                    self.writer.with_mut(|w| w.end());
+                    self.run_pending_later();
+                    return sys::Result::Ok(());
+                }
                 self.writer.with_mut(|w| w.end());
                 sys::Result::Err(e)
             }
@@ -1033,11 +1082,6 @@ impl FileSink {
                     self.ref_();
                 }
                 self.done.set(true);
-                sys::Result::Ok(())
-            }
-            WriteResult::Wrote(written) => {
-                self.written.set(self.written.get() + written as usize); // @truncate
-                self.writer.with_mut(|w| w.end());
                 sys::Result::Ok(())
             }
         }
@@ -1095,14 +1139,54 @@ impl FileSink {
         // SAFETY(JsCell): `IOWriter::flush` is pure I/O; no JS while held.
         let flush_result = self.writer.with_mut(|w| w.flush());
 
+        // `writer.end()` only re-enters `on_close`, which never touches
+        // `self.pending`; every arm that tears the writer down here with a
+        // backpressured `write()` outstanding must hand that promise back and
+        // schedule `run_pending` to settle it.
+        let has_pending = self.pending.get().state == streams::PendingState::Pending;
+
         match flush_result {
             WriteResult::Done(written) => {
                 self.update_ref(false);
                 self.writer.with_mut(|w| w.end());
+                if has_pending {
+                    // `to_result` already seeded `Owned(consumed)`.
+                    // SAFETY: JsCell — `WritablePending::promise` allocates a
+                    // JSPromise (may GC) but invokes no FileSink host-fn.
+                    let promise = unsafe { self.pending.get_mut() }.promise(global_this);
+                    self.run_pending_later();
+                    // SAFETY: `WritablePending::promise()` never returns null.
+                    return sys::Result::Ok(unsafe { (*promise).to_js() });
+                }
                 sys::Result::Ok(JSValue::js_number(written as f64))
             }
             WriteResult::Err(err) => {
                 self.done.set(true);
+                if has_pending {
+                    // A backpressured write() left its promise outstanding.
+                    // Throwing here would report the failure to the caller and
+                    // then let the auto-flush/error path reject that promise a
+                    // second time — with nobody holding it when the caller
+                    // discarded write()'s return value, that second delivery
+                    // surfaces as an unhandledRejection. Deliver the error to
+                    // the pending promise instead and hand the caller the same
+                    // promise (exactly like the Pending arm), so the failure is
+                    // reported once, to whichever await is watching. The latch
+                    // and promise grab happen before `writer.end()`: its
+                    // teardown can re-enter `on_error`/`run_pending`
+                    // synchronously, and the slot must already hold the error
+                    // and this caller's promise when that runs.
+                    self.pending
+                        .with_mut(|p| p.result = streams::Writable::Err(err));
+                    // SAFETY: JsCell — `WritablePending::promise` allocates a
+                    // JSPromise (may GC) but does not invoke any FileSink
+                    // host-fn synchronously.
+                    let promise_result = unsafe { self.pending.get_mut() }.promise(global_this);
+                    self.writer.with_mut(|w| w.end());
+                    self.run_pending_later();
+                    // SAFETY: `WritablePending::promise()` never returns null.
+                    return sys::Result::Ok(unsafe { (*promise_result).to_js() });
+                }
                 self.writer.with_mut(|w| w.end());
                 sys::Result::Err(err)
             }
@@ -1114,8 +1198,14 @@ impl FileSink {
                     self.ref_();
                 }
                 self.done.set(true);
-                self.pending
-                    .with_mut(|p| p.result = streams::Writable::Owned(pending_written as u64));
+                self.pending.with_mut(|p| {
+                    // A write already pending on this slot owns `consumed`; seed it
+                    // only when `end()` is the call that opens the slot.
+                    if p.state != streams::PendingState::Pending {
+                        p.consumed += pending_written as u64; // @truncate
+                    }
+                    p.result = streams::Writable::Owned(p.consumed);
+                });
 
                 // SAFETY: JsCell — `WritablePending::promise` allocates a JSPromise
                 // (may GC) but does not invoke any FileSink host-fn synchronously.
@@ -1126,13 +1216,16 @@ impl FileSink {
             }
             WriteResult::Wrote(written) => {
                 self.writer.with_mut(|w| w.end());
+                if has_pending {
+                    // SAFETY: JsCell — see the `Done` arm above.
+                    let promise = unsafe { self.pending.get_mut() }.promise(global_this);
+                    self.run_pending_later();
+                    // SAFETY: `WritablePending::promise()` never returns null.
+                    return sys::Result::Ok(unsafe { (*promise).to_js() });
+                }
                 sys::Result::Ok(JSValue::js_number(written as f64))
             }
         }
-    }
-
-    pub fn sink(&mut self) -> crate::webcore::sink::Sink<'_> {
-        crate::webcore::sink::Sink::init(self)
     }
 
     pub fn update_ref(&self, value: bool) {
@@ -1153,7 +1246,6 @@ impl FileSink {
 pub type JSSink = crate::webcore::sink::JSSink<FileSink>;
 pub type SinkSignal = crate::webcore::sink::SinkSignal<FileSink>;
 
-crate::impl_sink_handler!(FileSink);
 crate::impl_js_sink_abi!(FileSink, "FileSink");
 
 // `JsSinkType` impl: routes the codegen `FileSink__*` thunks (via
@@ -1162,8 +1254,6 @@ crate::impl_js_sink_abi!(FileSink, "FileSink");
 impl crate::webcore::sink::JsSinkType for FileSink {
     const NAME: &'static str = "FileSink";
     const HAS_CONSTRUCT: bool = true;
-    const HAS_SIGNAL: bool = true;
-    const HAS_DONE: bool = true;
     const HAS_FLUSH_FROM_JS: bool = true;
     const HAS_PROTECT_JS_WRAPPER: bool = true;
     const HAS_UPDATE_REF: bool = true;
@@ -1241,7 +1331,22 @@ impl FileSink {
         }
     }
 
-    fn to_result(&self, write_result: WriteResult) -> streams::Writable {
+    /// Bytes the writer took off our hands in the `write_*` call that produced
+    /// `rc`: what reached the fd plus what it buffered for later. The writer
+    /// never takes part of a chunk, so for a `Pending` result this is the
+    /// chunk's own (encoded) byte count, not the partial `write(2)` return.
+    fn bytes_accepted(&self, buffered_before: usize, rc: &WriteResult) -> u64 {
+        let WriteResult::Pending(written) = rc else {
+            return 0;
+        };
+        let buffered_after = self.writer.get().buffered_len();
+        (buffered_after + written).saturating_sub(buffered_before) as u64 // @truncate
+    }
+
+    /// `accepted` is what the pending slot is credited with when `write_result`
+    /// is `Pending`: a write's full chunk, or the bytes a flush pushed out. It
+    /// is ignored for every other result.
+    fn to_result(&self, write_result: WriteResult, accepted: u64) -> streams::Writable {
         match write_result {
             WriteResult::Done(amt) => {
                 if amt > 0 {
@@ -1256,14 +1361,14 @@ impl FileSink {
                 streams::Writable::Temporary(amt as u64)
             }
             WriteResult::Err(err) => streams::Writable::Err(err),
-            WriteResult::Pending(pending_written) => {
+            WriteResult::Pending(_) => {
                 if !self.must_be_kept_alive_until_eof.get() {
                     self.must_be_kept_alive_until_eof.set(true);
                     self.ref_();
                 }
                 self.pending.with_mut(|p| {
-                    p.consumed += pending_written as u64; // @truncate
-                    p.result = streams::Writable::Owned(pending_written as u64);
+                    p.consumed += accepted;
+                    p.result = streams::Writable::Owned(p.consumed);
                 });
                 streams::Writable::Pending(self.pending.as_ptr())
             }

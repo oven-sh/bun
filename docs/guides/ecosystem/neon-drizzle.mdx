@@ -4,9 +4,9 @@ sidebarTitle: Neon Drizzle with Bun
 mode: center
 ---
 
-[Neon](https://neon.tech/) is a fully managed serverless Postgres, separating compute and storage to offer features like autoscaling, branching and bottomless storage. Neon can be used from Bun directly using the `@neondatabase/serverless` driver or through an ORM like `Drizzle`.
+[Neon](https://neon.tech/) is a fully managed serverless Postgres, separating compute and storage to offer features like autoscaling, branching and bottomless storage. You can use Neon from Bun directly with the `@neondatabase/serverless` driver or through an ORM like Drizzle.
 
-Drizzle ORM supports both a SQL-like "query builder" API and an ORM-like [Queries API](https://orm.drizzle.team/docs/rqb). Get started by creating a project directory, initializing the directory using `bun init`, and installing Drizzle and the [Neon serverless driver](https://github.com/neondatabase/serverless/).
+Drizzle ORM supports both a SQL-like "query builder" API and an ORM-like [Queries API](https://orm.drizzle.team/docs/rqb). Get started by creating a project directory, initializing it with `bun init`, and installing Drizzle and the [Neon serverless driver](https://github.com/neondatabase/serverless/).
 
 ```sh terminal icon="terminal"
 mkdir bun-drizzle-neon
@@ -26,7 +26,7 @@ DATABASE_URL=postgresql://usertitle:password@ep-adj-noun-guid.us-east-1.aws.neon
 
 ---
 
-We will connect to the Neon database using the Neon serverless driver, wrapped in a Drizzle database instance.
+In `db.ts`, connect to the Neon database with the Neon serverless driver, wrapped in a Drizzle database instance.
 
 ```ts db.ts icon="/icons/typescript.svg"
 import { neon } from "@neondatabase/serverless";
@@ -70,7 +70,7 @@ bun run index.ts
 
 ---
 
-We can define a schema for our database using Drizzle ORM primitives. Create a `schema.ts` file and add this code.
+Define a schema for the database with Drizzle ORM primitives. Create a `schema.ts` file and add this code.
 
 ```ts schema.ts icon="/icons/typescript.svg"
 import { pgTable, integer, serial, text, timestamp } from "drizzle-orm/pg-core";
@@ -85,7 +85,7 @@ export const authors = pgTable("authors", {
 
 ---
 
-We then use the `drizzle-kit` CLI to generate an initial SQL migration.
+Then use the `drizzle-kit` CLI to generate an initial SQL migration.
 
 ```sh
 bunx drizzle-kit generate --dialect postgresql --schema ./schema.ts --out ./drizzle
@@ -93,7 +93,7 @@ bunx drizzle-kit generate --dialect postgresql --schema ./schema.ts --out ./driz
 
 ---
 
-This creates a new `drizzle` directory containing a `.sql` migration file and `meta` directory.
+The command creates a `drizzle` directory containing a `.sql` migration file and a `meta` directory.
 
 ```txt File Tree icon="folder-tree"
 drizzle
@@ -105,7 +105,7 @@ drizzle
 
 ---
 
-We can execute these migrations with a `migrate.ts` script. This script creates a new connection to the Neon database and executes all unexecuted migrations in the `drizzle` directory.
+Execute these migrations with a `migrate.ts` script. The script opens a new connection to the Neon database and executes all unexecuted migrations in the `drizzle` directory.
 
 ```ts migrate.ts
 import { db } from "./db";
@@ -126,7 +126,7 @@ main();
 
 ---
 
-We can run this script with `bun` to execute the migration.
+Run the script with `bun`.
 
 ```sh terminal icon="terminal"
 bun run migrate.ts
@@ -138,7 +138,7 @@ Migration completed
 
 ---
 
-We can now add some data to our database. Create a `seed.ts` file with the following contents.
+Now add some data to the database. Create a `seed.ts` file with the following contents.
 
 ```ts seed.ts icon="/icons/typescript.svg"
 import { db } from "./db";
@@ -188,7 +188,7 @@ Seeding completed
 
 ---
 
-We now have a database with a schema and sample data. We can use Drizzle to query it. Replace the contents of `index.ts` with the following.
+The database now has a schema and sample data. Query it with Drizzle by replacing the contents of `index.ts` with the following.
 
 ```ts index.ts icon="/icons/typescript.svg"
 import * as schema from "./schema";
@@ -200,7 +200,7 @@ console.log(result);
 
 ---
 
-Then run the file. You should see the three authors we inserted.
+Then run the file. It prints the three authors you inserted.
 
 ```sh terminal icon="terminal"
 bun run index.ts
@@ -231,4 +231,4 @@ bun run index.ts
 
 This example used the Neon serverless driver's SQL-over-HTTP functionality. Neon's serverless driver also exposes `Client` and `Pool` constructors to enable sessions, interactive transactions, and node-postgres compatibility. Refer to [Neon's documentation](https://neon.tech/docs/serverless/serverless-driver) for a complete overview.
 
-Refer to the [Drizzle website](https://orm.drizzle.team/docs/overview) for more documentation on using the Drizzle ORM.
+Refer to the [Drizzle website](https://orm.drizzle.team/docs/overview) for complete documentation.

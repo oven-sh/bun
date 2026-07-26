@@ -11,12 +11,11 @@ bun test <patterns>
 </ParamField>
 
 <ParamField path="--rerun-each" type="number">
-  Re-run each test file <code>NUMBER</code> times, helps catch certain bugs
+  Re-run each test file <code>NUMBER</code> times to help catch certain bugs
 </ParamField>
 
 <ParamField path="--retry" type="number">
-  Default retry count for all tests. Failed tests will be retried up to <code>NUMBER</code> times. Overridden by
-  per-test <code>{`{ retry: N }`}</code>
+  Retry failed tests up to <code>NUMBER</code> times. Overridden by per-test <code>{`{ retry: N }`}</code>
 </ParamField>
 
 <ParamField path="--concurrent" type="boolean">
@@ -98,7 +97,7 @@ Run all test files with "foo" or "bar" in the file name:
 bun test foo bar
 ```
 
-Run all test files, only including tests whose names includes "baz":
+Run all test files, only including tests whose name includes "baz":
 
 ```bash terminal icon="terminal"
 bun test --test-name-pattern baz

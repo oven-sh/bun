@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { connect } from "node:net";
 import { networkInterfaces } from "node:os";
-import { WebSocketDebugAdapter } from "./adapter.js";
+import { getRandomId, WebSocketDebugAdapter } from "./adapter.js";
 import { TCPSocketSignal } from "./signal.js";
 import { SourceMap } from "./sourcemap.js";
 
@@ -65,6 +65,16 @@ test("only forwards inspector events from known protocol domains to the adapter"
     collection: { type: "full", startTime: 0, endTime: 1 },
   });
   expect(heapEvents).toEqual([{ collection: { type: "full", startTime: 0, endTime: 1 } }]);
+});
+
+test("getRandomId returns a distinct 32-character lowercase hex string on every call", () => {
+  const ids = new Set<string>();
+  for (let i = 0; i < 256; i++) {
+    const id = getRandomId();
+    expect(id).toMatch(/^[0-9a-f]{32}$/);
+    ids.add(id);
+  }
+  expect(ids.size).toBe(256);
 });
 
 test("TCPSocketSignal accepts connections only on the loopback interface", async () => {

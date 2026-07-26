@@ -29,6 +29,7 @@ const { URL, URLSearchParams } = globalThis;
 const [domainToASCII, domainToUnicode] = $cpp("NodeURL.cpp", "Bun::createNodeURLBinding");
 const { urlToHttpOptions } = require("internal/url");
 const { validateString } = require("internal/validators");
+const ObjectSetPrototypeOf = Object.setPrototypeOf;
 
 function Url() {
   this.protocol = null;
@@ -76,16 +77,19 @@ var protocolPattern = /^([a-z0-9.+-]+:)/i,
   hostnameMaxLen = 255,
   // protocols that can allow "unsafe" and "unwise" chars.
   unsafeProtocol = {
+    __proto__: null,
     javascript: true,
     "javascript:": true,
   },
   // protocols that never have a hostname.
   hostlessProtocol = {
+    __proto__: null,
     javascript: true,
     "javascript:": true,
   },
   // protocols that always contain a // bit.
   slashedProtocol = {
+    __proto__: null,
     http: true,
     https: true,
     ftp: true,
@@ -200,7 +204,7 @@ Url.prototype.parse = function parse(url: string, parseQueryString?: boolean, sl
       if (simplePath[2]) {
         this.search = simplePath[2];
         if (parseQueryString) {
-          this.query = new URLSearchParams(this.search.slice(1)).toJSON();
+          this.query = ObjectSetPrototypeOf(new URLSearchParams(this.search.slice(1)).toJSON(), null);
         } else {
           this.query = this.search.slice(1);
         }
@@ -229,13 +233,13 @@ Url.prototype.parse = function parse(url: string, parseQueryString?: boolean, sl
   let slashes;
   if (slashesDenoteHost || proto || rest.match(/^\/\/[^@/]+@[^@/]+/)) {
     slashes = rest.substring(0, 2) === "//";
-    if (slashes && !(proto && hostlessProtocol[proto])) {
+    if (slashes && !(proto && hostlessProtocol[lowerProto])) {
       rest = rest.substring(2);
       this.slashes = true;
     }
   }
 
-  if (!hostlessProtocol[proto] && (slashes || (proto && !slashedProtocol[proto]))) {
+  if (!hostlessProtocol[lowerProto] && (slashes || (lowerProto && !slashedProtocol[lowerProto]))) {
     /*
      * there's a hostname.
      * the first instance of /, ?, ;, or # ends the host.
@@ -399,13 +403,13 @@ Url.prototype.parse = function parse(url: string, parseQueryString?: boolean, sl
     this.query = rest.substring(qm + 1);
     if (parseQueryString) {
       const query = this.query;
-      this.query = new URLSearchParams(query).toJSON();
+      this.query = ObjectSetPrototypeOf(new URLSearchParams(query).toJSON(), null);
     }
     rest = rest.slice(0, qm);
   } else if (parseQueryString) {
     // no query string, but parseQueryString still requested
     this.search = null;
-    this.query = {};
+    this.query = Object.create(null);
   }
   if (rest) {
     this.pathname = rest;
@@ -938,6 +942,83 @@ const enum Char {
   ZERO_WIDTH_NOBREAK_SPACE = 65279, // \uFEFF
 }
 
+// Port of Node.js fileURLToPathBuffer
+// (https://github.com/nodejs/node/blob/v26.3.0/lib/internal/url.js#L1638).
+// Unlike fileURLToPath it never interprets percent-encodings as UTF-8: the
+// pathname's bytes are decoded literally into a Buffer, so paths holding
+// non-Unicode encodings (e.g. Shift-JIS) survive the round trip.
+function percentDecodeIntoBuffer(pathname: string): Buffer {
+  const input = Buffer.from(pathname, "utf8");
+  const length = input.length;
+  const output = Buffer.allocUnsafe(length);
+  let j = 0;
+  for (let i = 0; i < length; ++i) {
+    const byte = input[i];
+    if (byte !== Char.PERCENT) {
+      output[j++] = byte;
+      continue;
+    }
+    const hi = hexByteToNumber(input[i + 1]);
+    const lo = hexByteToNumber(input[i + 2]);
+    if (hi === -1 || lo === -1) {
+      // Invalid escapes pass through literally, as in the WHATWG percent-decode.
+      output[j++] = Char.PERCENT;
+      continue;
+    }
+    output[j++] = (hi << 4) | lo;
+    i += 2;
+  }
+  return output.subarray(0, j);
+}
+
+function hexByteToNumber(byte: number): number {
+  if (byte >= 0x30 && byte <= 0x39) return byte - 0x30; // 0-9
+  if (byte >= 0x41 && byte <= 0x46) return byte - 0x41 + 10; // A-F
+  if (byte >= 0x61 && byte <= 0x66) return byte - 0x61 + 10; // a-f
+  return -1;
+}
+
+// Node's isURL (lib/internal/url.js): a duck-type check rather than
+// `instanceof`, so cross-realm URLs and compatible foreign implementations
+// are accepted; `auth`/`path` must be absent to exclude legacy `url.parse`
+// objects, which carry both.
+function isURL(self: any): boolean {
+  return Boolean(self?.href && self.protocol && self.auth === undefined && self.path === undefined);
+}
+
+function fileURLToPathBuffer(path: unknown, options?: { windows?: boolean }): Buffer {
+  const windows = options?.windows;
+  if (typeof path === "string") {
+    path = new URL(path);
+  } else if (!isURL(path)) {
+    throw $ERR_INVALID_ARG_TYPE("path", ["string", "URL"], path);
+  }
+  const url = path as URL;
+  if (url.protocol !== "file:") {
+    throw $ERR_INVALID_URL_SCHEME("The URL must be of scheme file");
+  }
+  if (windows ?? process.platform === "win32") {
+    let pathname = url.pathname.replaceAll("/", "\\");
+    const decoded = percentDecodeIntoBuffer(pathname);
+    const hostname = url.hostname;
+    if (hostname !== "") {
+      // UNC path: \\hostname\...; the URL parser already percent-decoded the
+      // hostname, domainToUnicode only unwraps punycode IDNs.
+      return Buffer.concat([Buffer.from("\\\\", "ascii"), Buffer.from(domainToUnicode(hostname), "utf8"), decoded]);
+    }
+    const letter = decoded[1] | 0x20;
+    const sep = decoded[2];
+    if (letter < 0x61 || letter > 0x7a || sep !== Char.COLON) {
+      throw $ERR_INVALID_FILE_URL_PATH("File URL path must be absolute");
+    }
+    return decoded.subarray(1);
+  }
+  if (url.hostname !== "") {
+    throw $ERR_INVALID_FILE_URL_HOST(`File URL host must be "localhost" or empty on ${process.platform}`);
+  }
+  return percentDecodeIntoBuffer(url.pathname);
+}
+
 export default {
   parse: urlParse,
   resolve: urlResolve,
@@ -948,6 +1029,7 @@ export default {
   URL,
   pathToFileURL: Bun.pathToFileURL,
   fileURLToPath: Bun.fileURLToPath,
+  fileURLToPathBuffer,
   urlToHttpOptions,
   domainToASCII,
   domainToUnicode,

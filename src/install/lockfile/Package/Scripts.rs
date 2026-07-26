@@ -57,12 +57,6 @@ impl Scripts {
         ]
     }
 
-    /// Alias of [`hooks`].
-    #[inline]
-    pub fn iter_all(&self) -> [&SemverString; SCRIPT_NAMES_LEN] {
-        self.hooks()
-    }
-
     #[inline]
     pub fn hooks_mut(&mut self) -> [&mut SemverString; SCRIPT_NAMES_LEN] {
         [
@@ -146,7 +140,7 @@ impl Scripts {
                     first_script_index = i8::try_from(script_index).expect("int cast");
                 }
                 scripts[script_index as usize] =
-                    Some(Box::<[u8]>::from(self.preinstall.slice(lockfile_buf)));
+                    Some(Box::<[u8]>::from(self.postinstall.slice(lockfile_buf)));
                 counter += 1;
             }
             script_index += 1;
@@ -292,7 +286,7 @@ impl Scripts {
         folder_path: &mut bun_paths::AutoAbsPath,
         folder_name: &[u8],
         resolution: &Resolution,
-    ) -> Result<Option<List>, bun_core::Error> {
+    ) -> Result<Option<List>, crate::Error> {
         if self.has_any() {
             let add_node_gyp_rebuild_script =
                 if lockfile.has_trusted_dependency(folder_name, folder_name, resolution)
@@ -335,13 +329,9 @@ impl Scripts {
         string_builder: &mut LockfileStringBuilder<'_>,
         log: &mut bun_ast::Log,
         folder_path: &mut bun_paths::AutoAbsPath,
-    ) -> Result<(), bun_core::Error> {
-        // The JSON
-        // parser uses a bump arena. Scoped here since the AST is consumed
-        // immediately into the string builder. `json_buf` is hoisted so the
-        // source bytes outlive the parsed `Expr` (which may borrow them).
-        let bump = bun_alloc::Arena::new();
+    ) -> Result<(), crate::Error> {
         let json_buf;
+        let parsed;
         let json: Expr = {
             // `defer save.restore()` — `save()` returns an RAII guard that
             // restores the path length on Drop and derefs to the path.
@@ -352,7 +342,8 @@ impl Scripts {
             let json_src = bun_ast::Source::init_path_string(save.slice(), json_buf.as_slice());
 
             initialize_store();
-            bun_json::parse_package_json_utf8(&json_src, log, &bump)?
+            parsed = bun_json::ParsedJson::parse_package_json(&json_src, log)?;
+            parsed.root
         };
 
         Scripts::parse_count(string_builder, json);
@@ -369,7 +360,7 @@ impl Scripts {
         folder_path: &mut bun_paths::AutoAbsPath,
         folder_name: &[u8],
         resolution_tag: ResolutionTag,
-    ) -> Result<Option<List>, bun_core::Error> {
+    ) -> Result<Option<List>, crate::Error> {
         let mut tmp = RealLockfile::init_empty_value();
         // `defer tmp.deinit()` — `tmp` stays empty (only `string_builder` borrows it), so field
         // auto-drop suffices; Lockfile has no `impl Drop`.
@@ -471,9 +462,7 @@ impl List {
     }
 
     pub fn first(&self) -> &[u8] {
-        if cfg!(debug_assertions) {
-            debug_assert!(self.items[self.first_index as usize].is_some());
-        }
+        debug_assert!(self.items[self.first_index as usize].is_some());
         self.items[self.first_index as usize].as_ref().unwrap()
     }
 

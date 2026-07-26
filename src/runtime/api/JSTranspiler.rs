@@ -4,6 +4,7 @@ use bun_alloc::ArenaVecExt as _;
 use bun_options_types::TargetExt as _;
 use std::io::Write as _;
 
+use crate::Error;
 use crate::node::{Encoding, StringOrBuffer};
 use bun_alloc::{Arena, ArenaVec}; // bumpalo::Bump / bumpalo::collections::Vec re-exports
 use bun_ast::Expr;
@@ -12,7 +13,6 @@ use bun_ast::{ImportRecord, ImportRecordFlags};
 use bun_bundler::options::{self, PackagesOption, SourceMapOption};
 use bun_bundler::transpiler::{MacroJSCtx, ParseOptions, ParseResult};
 use bun_bundler::{self as Transpiler};
-use bun_core::Error;
 use bun_js_parser::lexer as JSLexer;
 use bun_js_parser::parser::Runtime;
 use bun_js_parser::parser::ScanPassResult;
@@ -76,7 +76,6 @@ pub struct Config {
     pub runtime: Runtime::Features,
     pub tree_shaking: bool,
     pub trim_unused_imports: Option<bool>,
-    pub inlining: bool,
 
     pub dead_code_elimination: bool,
     pub minify_whitespace: bool,
@@ -102,7 +101,6 @@ impl Default for Config {
             },
             tree_shaking: false,
             trim_unused_imports: None,
-            inlining: false,
             dead_code_elimination: true,
             minify_whitespace: false,
             minify_identifiers: false,
@@ -378,7 +376,6 @@ impl Config {
                     &mut self.log,
                     &source,
                     bun_resolver::tsconfig_json::JsonMode::Json,
-                    false,
                 ) else {
                     break 'macros;
                 };
@@ -648,8 +645,6 @@ impl Config {
     }
 }
 
-// Legacy alias for backwards compatibility during migration
-
 // Mimalloc gets unstable if we try to move this to a different thread
 // threadlocal var transform_buffer: bun.MutableString = undefined;
 // threadlocal var transform_buffer_loaded: bool = false;
@@ -802,7 +797,6 @@ impl<'a> TransformTask<'a> {
             experimental_decorators: self.tsconfig.is_some_and(|ts| ts.experimental_decorators),
             emit_decorator_metadata: self.tsconfig.is_some_and(|ts| ts.emit_decorator_metadata),
             macro_js_ctx: MacroJSCtx::ZERO,
-            file_hash: None,
             file_fd_ptr: None,
             inject_jest_globals: false,
             set_breakpoint_on_first_line: false,
@@ -816,7 +810,7 @@ impl<'a> TransformTask<'a> {
         };
 
         let Some(parse_result) = self.transpiler.parse(parse_options, None) else {
-            self.err = Some(bun_core::err!("ParseError"));
+            self.err = Some(crate::Error::ParseError);
             return;
         };
 
@@ -842,7 +836,7 @@ impl<'a> TransformTask<'a> {
         ) {
             Ok(n) => n,
             Err(err) => {
-                self.err = Some(err);
+                self.err = Some(err.into());
                 return;
             }
         };
@@ -866,7 +860,7 @@ impl<'a> TransformTask<'a> {
 
         if self.log.has_any() || self.err.is_some() {
             let error_value: JsResult<JSValue> = 'brk: {
-                if let Some(err) = self.err {
+                if let Some(err) = &self.err {
                     if !self.log.has_any() {
                         break 'brk bun_jsc::BuildMessage::create(
                             self.global,
@@ -969,7 +963,7 @@ impl JSTranspiler {
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<*mut JSTranspiler> {
-        let arguments = callframe.arguments_old::<3>();
+        let [config_arg] = callframe.arguments_as_array::<1>();
 
         // NOTE: a non-POD field cannot be left uninitialized in a live Box
         // (zeroed()/assume_init() on Transpiler is UB), so build `config` + `transpiler` on the
@@ -996,11 +990,6 @@ impl JSTranspiler {
         // covers config.log, config.tsconfig, arena. ref_count.clearWithoutDestructor is a
         // no-op when we never handed out refs. `bun.destroy(this)` → Box not yet created.
 
-        let config_arg = if arguments.len > 0 {
-            arguments.ptr[0]
-        } else {
-            JSValue::UNDEFINED
-        };
         config.from_js(global, config_arg, arena_ref)?;
 
         if global.has_exception() {
@@ -1295,7 +1284,6 @@ impl JSTranspiler {
                 .tsconfig
                 .as_deref()
                 .is_some_and(|ts| ts.emit_decorator_metadata),
-            file_hash: None,
             file_fd_ptr: None,
             inject_jest_globals: false,
             set_breakpoint_on_first_line: false,
@@ -1315,10 +1303,9 @@ impl JSTranspiler {
     #[bun_jsc::host_fn(method)]
     pub fn scan(&self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         jsc::mark_binding();
-        let arguments = callframe.arguments_old::<3>();
         // SAFETY: bun_vm() returns the live VM singleton on this thread.
         let vm = global.bun_vm();
-        let mut args = ArgumentsSlice::init(vm, arguments.slice());
+        let mut args = ArgumentsSlice::init(vm, callframe.arguments());
         // defer args.deinit() → Drop
         let Some(code_arg) = args.next() else {
             return Err(global.throw_invalid_argument_type("scan", "code", "string or Uint8Array"));
@@ -1402,10 +1389,9 @@ impl JSTranspiler {
     #[bun_jsc::host_fn(method)]
     pub fn transform(&self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         jsc::mark_binding();
-        let arguments = callframe.arguments_old::<3>();
         // SAFETY: bun_vm() returns the live VM singleton on this thread.
         let vm = global.bun_vm();
-        let mut args = ArgumentsSlice::init(vm, arguments.slice());
+        let mut args = ArgumentsSlice::init(vm, callframe.arguments());
         // defer args.arena.deinit() → Drop
         let Some(code_arg) = args.next() else {
             return Err(global.throw_invalid_argument_type(
@@ -1468,11 +1454,11 @@ impl JSTranspiler {
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
         jsc::mark_binding();
-        let arguments = callframe.arguments_old::<3>();
+        let arguments = callframe.arguments();
 
         // SAFETY: bun_vm() returns the live VM singleton on this thread.
         let vm = global.bun_vm();
-        let mut args = ArgumentsSlice::init(vm, arguments.slice());
+        let mut args = ArgumentsSlice::init(vm, arguments);
         // defer args.arena.deinit() → Drop
         let Some(code_arg) = args.next() else {
             return Err(global.throw_invalid_argument_type(
@@ -1492,8 +1478,8 @@ impl JSTranspiler {
         };
         // defer code_holder.deinit() → Drop
         let code = code_holder.slice();
-        arguments.ptr[0].ensure_still_alive();
-        let _keep0 = bun_jsc::EnsureStillAlive(arguments.ptr[0]);
+        arguments[0].ensure_still_alive();
+        let _keep0 = bun_jsc::EnsureStillAlive(arguments[0]);
 
         args.eat();
         let mut js_ctx_value: JSValue = JSValue::ZERO;
@@ -1681,10 +1667,9 @@ impl JSTranspiler {
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let arguments = callframe.arguments_old::<2>();
         // SAFETY: bun_vm() returns the live VM singleton on this thread.
         let vm = global.bun_vm();
-        let mut args = ArgumentsSlice::init(vm, arguments.slice());
+        let mut args = ArgumentsSlice::init(vm, callframe.arguments());
         // defer args.deinit() → Drop
 
         let Some(code_arg) = args.next() else {

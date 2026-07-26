@@ -1,0 +1,93 @@
+--- a/src/liblsquic/lsquic_full_conn_ietf.c
++++ b/src/liblsquic/lsquic_full_conn_ietf.c
+@@ -4669,4 +4669,11 @@
+      */
+-    packet_out = lsquic_send_ctl_new_packet_out(&conn->ifc_send_ctl, 0, PNS_APP,
++    enum packnum_space pns;  /* bun: highest PNS with keys (RFC 9000 s10.2.3) */
++    if (conn->ifc_conn.cn_flags & LSCONN_HANDSHAKE_DONE)
++        pns = PNS_APP;
++    else if (conn->ifc_flags & IFC_IGNORE_INIT)
++        pns = PNS_HSK;
++    else
++        pns = PNS_INIT;
++    packet_out = lsquic_send_ctl_new_packet_out(&conn->ifc_send_ctl, 0, pns,
+                                                                 CUR_NPATH(conn));
+     if (!packet_out)
+--- a/src/liblsquic/lsquic_mini_conn_ietf.h
++++ b/src/liblsquic/lsquic_mini_conn_ietf.h
+@@ -91,6 +91,10 @@
+     lsquic_time_t                   imc_largest_recvd[IMICO_N_PNS];
+     struct lsquic_rtt_stats         imc_rtt_stats;
+     enum trans_error_code           imc_error_code;
++    /* bun: the peer's CONNECTION_CLOSE code (62-bit; the enum above cannot
++     * hold it), valid when IMC_CLOSE_RECVD is set and IMC_PARSE_FAILED is
++     * not. */
++    uint64_t                        imc_close_code;
+     unsigned                        imc_bytes_in;
+     unsigned                        imc_bytes_out;
+     unsigned short                  imc_crypto_frames_sz;
+--- a/src/liblsquic/lsquic_mini_conn_ietf.c
++++ b/src/liblsquic/lsquic_mini_conn_ietf.c
+@@ -1346,6 +1346,9 @@
+     }
+     EV_LOG_CONNECTION_CLOSE_FRAME_IN(LSQUIC_LOG_CONN_ID, error_code,
+                             (int) reason_len, (const char *) p + reason_off);
++    /* bun: keep the peer's code so on_mini_conn_failed can report a peer
++     * close instead of inventing a handshake failure. */
++    conn->imc_close_code = error_code;
+     LSQ_INFO("Received CONNECTION_CLOSE frame (%s-level code: %"PRIu64"; "
+             "reason: %.*s)", app_error ? "application" : "transport",
+                 error_code, (int) reason_len, (const char *) p + reason_off);
+--- a/src/liblsquic/lsquic_engine.c
++++ b/src/liblsquic/lsquic_engine.c
+@@ -982,6 +982,12 @@
+             error_code = 0x100 + imc->imc_tls_alert;
+         else if (imc->imc_flags & IMC_BAD_TRANS_PARAMS)
+             error_code = TEC_TRANSPORT_PARAMETER_ERROR;
++        else if ((imc->imc_flags & (IMC_CLOSE_RECVD|IMC_PARSE_FAILED))
++                                                        == IMC_CLOSE_RECVD)
++            /* bun: the peer closed during the handshake.  QUIC codes fit in
++             * 62 bits, so bit 63 marks "peer's own CONNECTION_CLOSE" and the
++             * low bits carry its code. */
++            error_code = (1ULL << 63) | imc->imc_close_code;
+         else
+             error_code = TEC_NO_ERROR;
+         if (0 == lsquic_conn_get_sockaddr(conn, &local_sa, &peer_sa))
+--- a/src/liblsquic/lsquic_enc_sess_ietf.c
++++ b/src/liblsquic/lsquic_enc_sess_ietf.c
+@@ -2368,8 +2368,21 @@
+     }
+ 
+     enc_level = hety2el[packet_in->pi_header_type];
++    /* bun: an Initial in the version used before a compatible version switch
++     * (RFC 9368) -- e.g. the peer's CONNECTION_CLOSE sent before it processed
++     * our packets -- needs the keys iquic_esfi_switch_version saved; the
++     * current slot holds the new version's.  The wire version field picks the
++     * key set deterministically. */
++    struct hsk_crypto *vn_hsk;
++    if (enc_level == ENC_LEV_INIT && enc_sess->esi_vn_save
++            && packet_in->pi_version != enc_sess->esi_conn->cn_version)
++        vn_hsk = enc_sess->esi_vn_save;
++    else
++        vn_hsk = NULL;
+     if (enc_level == ENC_LEV_APP)
+         hp = &enc_sess->esi_hp;
++    else if (vn_hsk)
++        hp = &vn_hsk->hp;
+     else if (enc_sess->esi_hsk_crypto)
+         hp = &enc_sess->esi_hsk_crypto[ enc_level ].hp;
+     else
+@@ -2455,8 +2468,11 @@
+     else
+     {
+         key_phase = 0;
+-        assert(enc_sess->esi_hsk_crypto);
+-        pair = &enc_sess->esi_hsk_crypto[ enc_level ].pair;
++        assert(enc_sess->esi_hsk_crypto || vn_hsk);
++        if (vn_hsk)
++            pair = &vn_hsk->pair;
++        else
++            pair = &enc_sess->esi_hsk_crypto[ enc_level ].pair;
+         crypto_ctx = &pair->ykp_ctx[ 0 ];
+         if (UNLIKELY(0 == (crypto_ctx->yk_flags & YK_INITED)))
+         {

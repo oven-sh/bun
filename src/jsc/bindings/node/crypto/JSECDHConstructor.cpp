@@ -90,14 +90,14 @@ JSC_DEFINE_HOST_FUNCTION(jsECDHConvertKey, (JSC::JSGlobalObject * lexicalGlobalO
     auto* keyView = getArrayBufferOrView(lexicalGlobalObject, scope, keyValue, "key"_s, inEncValue);
     RETURN_IF_EXCEPTION(scope, {});
 
-    auto buffer = keyView->span();
-
     JSValue formatValue = callFrame->argument(4);
     point_conversion_form_t form = JSECDH::getFormat(lexicalGlobalObject, scope, formatValue);
     RETURN_IF_EXCEPTION(scope, {});
 
     auto curveName = curveValue.toWTFString(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(scope, {});
+
+    auto buffer = keyView->span();
 
     int nid = OBJ_sn2nid(curveName.utf8().data());
     if (nid == NID_undef)

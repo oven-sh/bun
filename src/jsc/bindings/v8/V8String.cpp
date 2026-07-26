@@ -87,21 +87,8 @@ MaybeLocal<String> String::NewFromOneByte(Isolate* isolate, const uint8_t* data,
 
 int String::Utf8Length(Isolate* isolate) const
 {
-    auto jsString = localToObjectPointer<JSString>();
-    if (jsString->length() == 0) {
-        return 0;
-    }
-
-    auto str = jsString->view(isolate->globalObject());
-    if (str->is8Bit()) {
-        const auto span = str->span8();
-        size_t len = simdutf::utf8_length_from_latin1(reinterpret_cast<const char*>(span.data()), span.size());
-        return static_cast<int>(std::min(len, static_cast<size_t>(std::numeric_limits<int>::max())));
-    } else {
-        const auto span = str->span16();
-        size_t len = simdutf::utf8_length_from_utf16(span.data(), span.size());
-        return static_cast<int>(std::min(len, static_cast<size_t>(std::numeric_limits<int>::max())));
-    }
+    size_t len = Utf8LengthV2(isolate);
+    return static_cast<int>(std::min(len, static_cast<size_t>(std::numeric_limits<int>::max())));
 }
 
 bool String::IsOneByte() const
@@ -302,23 +289,24 @@ size_t String::Utf8LengthV2(Isolate* isolate) const
     }
 
     const auto span = str->span16();
-    size_t len = simdutf::utf8_length_from_utf16(span.data(), span.size());
-    // simdutf counts every surrogate code unit as 2 bytes, so a valid pair
-    // totals 4 (matching its UTF-8 encoding) but an unpaired surrogate only
-    // counts 2. V8 replaces each unpaired surrogate with U+FFFD, which
-    // encodes as 3 bytes (the same size WriteUtf8V2's replacement behavior
-    // produces), so add one byte for each unpaired surrogate code unit.
-    // Valid UTF-16 (the overwhelmingly common case) needs no adjustment;
-    // check with SIMD before falling back to the scalar surrogate count.
+    // simdutf's answer is implementation-defined for invalid UTF-16, so only use it
+    // for valid input. Otherwise count exactly: V8 charges an unpaired surrogate 3
+    // bytes, the size both writers produce for it (U+FFFD or its WTF-8 encoding).
     if (simdutf::validate_utf16(span.data(), span.size())) {
-        return len;
+        return simdutf::utf8_length_from_utf16(span.data(), span.size());
     }
+    size_t len = 0;
     for (size_t i = 0; i < span.size(); i++) {
         const char16_t c = span[i];
-        if (U16_IS_LEAD(c) && i + 1 < span.size() && U16_IS_TRAIL(span[i + 1])) {
+        if (c <= 0x7f) {
+            len += 1;
+        } else if (c <= 0x7ff) {
+            len += 2;
+        } else if (U16_IS_LEAD(c) && i + 1 < span.size() && U16_IS_TRAIL(span[i + 1])) {
+            len += 4;
             i++;
-        } else if (U16_IS_SURROGATE(c)) {
-            len++;
+        } else {
+            len += 3;
         }
     }
     return len;

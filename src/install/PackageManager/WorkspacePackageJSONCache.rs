@@ -1,7 +1,7 @@
 // maybe rename to `PackageJSONCache` if we cache more than workspaces
 
+use crate::Error;
 use bun_collections::StringHashMap;
-use bun_core::Error;
 // `Expr` here is the JSON parser's AST node (`bun_ast::Expr`, re-
 // exported via `crate::bun_json`). It is intentionally NOT `bun_ast::Expr`
 // — that lives in a higher-tier crate and is a distinct type. Consumers of
@@ -73,40 +73,22 @@ impl MapEntry {
 
 pub type Map = StringHashMap<MapEntry>;
 
-// `bun_parsers::json` spells the JSON options
-// out as 8 const-generic bools. The only field this module varies at runtime
-// is `guess_indentation`, so dispatch on that one bool here and keep the rest
-// fixed (is_json/allow_comments/allow_trailing_commas
-// = true, others default false).
 fn parse_package_json(
     source: &Source,
     log: &mut Log,
     bump: &bun_alloc::Arena,
     guess_indentation: bool,
-) -> Result<json::JsonResult, bun_core::Error> {
-    if guess_indentation {
-        json::parse_package_json_utf8_with_opts::<
-            true,  // IS_JSON
-            true,  // ALLOW_COMMENTS
-            true,  // ALLOW_TRAILING_COMMAS
-            false, // IGNORE_LEADING_ESCAPE_SEQUENCES
-            false, // IGNORE_TRAILING_ESCAPE_SEQUENCES
-            false, // JSON_WARN_DUPLICATE_KEYS
-            false, // WAS_ORIGINALLY_MACRO
-            true,  // GUESS_INDENTATION
-        >(source, log, bump)
-    } else {
-        json::parse_package_json_utf8_with_opts::<
-            true,  // IS_JSON
-            true,  // ALLOW_COMMENTS
-            true,  // ALLOW_TRAILING_COMMAS
-            false, // IGNORE_LEADING_ESCAPE_SEQUENCES
-            false, // IGNORE_TRAILING_ESCAPE_SEQUENCES
-            false, // JSON_WARN_DUPLICATE_KEYS
-            false, // WAS_ORIGINALLY_MACRO
-            false, // GUESS_INDENTATION
-        >(source, log, bump)
-    }
+) -> Result<json::JsonResult, crate::Error> {
+    Ok(json::parse_package_json_utf8_with_opts(
+        json::JSONOptions {
+            json_warn_duplicate_keys: false,
+            guess_indentation,
+            ..json::PACKAGE_JSON_OPTS
+        },
+        source,
+        log,
+        bump,
+    )?)
 }
 
 #[derive(Clone, Copy)]
@@ -213,60 +195,6 @@ impl WorkspacePackageJSONCache {
             // `source.path` borrows this allocation; the `Box<[u8]>` heap
             // address is stable across the move into the map.
             _path_storage: key,
-            json_arena: json_bump,
-            stale_contents: Vec::new(),
-        };
-
-        let entry = bun_core::handle_oom(self.map.get_or_put(path));
-        debug_assert!(!entry.found_existing);
-        *entry.value_ptr = value;
-
-        GetResult::Entry(entry.value_ptr)
-    }
-
-    /// source path is used as the key, needs to be absolute
-    pub fn get_with_source(
-        &mut self,
-        log: &mut Log,
-        source: &Source,
-        opts: GetJSONOptions,
-    ) -> GetResult<'_> {
-        debug_assert!(is_absolute(source.path.text()));
-
-        #[cfg(windows)]
-        let mut buf = PathBuffer::uninit();
-        #[cfg(not(windows))]
-        let path: &[u8] = source.path.text();
-        #[cfg(windows)]
-        let path: &[u8] = {
-            let text = source.path.text();
-            buf[..text.len()].copy_from_slice(text);
-            bun_paths::dangerously_convert_path_to_posix_in_place::<u8>(&mut buf[..text.len()]);
-            &buf[..text.len()]
-        };
-
-        // reshaped for borrowck — see `get_with_path` above.
-        if self.map.contains_key(path) {
-            return GetResult::Entry(self.map.get_mut(path).unwrap());
-        }
-
-        if opts.init_reset_store {
-            initialize_store();
-        }
-
-        let json_bump = bun_alloc::Arena::new();
-        let parsed = match parse_package_json(source, log, &json_bump, opts.guess_indentation) {
-            Ok(p) => p,
-            Err(err) => {
-                return GetResult::ParseErr(err);
-            }
-        };
-
-        let value = MapEntry {
-            root: bun_core::handle_oom(parsed.root.deep_clone(&json_bump)),
-            source: source.clone(),
-            indentation: parsed.indentation,
-            _path_storage: bun_core::ZBox::default(),
             json_arena: json_bump,
             stale_contents: Vec::new(),
         };

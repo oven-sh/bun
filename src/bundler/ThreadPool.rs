@@ -17,7 +17,7 @@ use bun_core::{self, env_var, output as Output};
 use bun_sys::Fd;
 use bun_threading::{Mutex, thread_pool as ThreadPoolLib};
 
-use crate::cache::{Contents, Entry as CacheEntry, ExternalFreeFunction};
+use crate::cache::{Contents, Entry as CacheEntry};
 use crate::linker_context_mod::StmtList;
 // `crate::options::Target` is the lower-tier `bun_options_types`
 // enum (re-exported for downstream crates); `BundleOptions.target` is the
@@ -80,21 +80,6 @@ unsafe impl Send for ThreadPool {}
 // `workers_assignments` (through its `bun_threading::Guarded` lock), and the
 // raw-pointer targets (`ThreadPoolLib::ThreadPool`, `BundleV2`) are `Sync`.
 unsafe impl Sync for ThreadPool {}
-
-impl Default for ThreadPool {
-    /// Placeholder so `bundle_v2` can `arena().alloc(ThreadPool::default())`
-    /// before overwriting with [`ThreadPool::init`].
-    fn default() -> Self {
-        Self {
-            io_pool: None,
-            worker_pool: ptr::null_mut(),
-            worker_pool_is_owned: false,
-            workers_assignments: bun_threading::Guarded::new(ArrayHashMap::default()),
-            generation: POOL_GENERATION.fetch_add(1, Ordering::Relaxed),
-            v2: ptr::null(),
-        }
-    }
-}
 
 mod io_thread_pool {
     use super::*;
@@ -171,34 +156,6 @@ mod io_thread_pool {
     pub(super) fn release() {
         let old = REF_COUNT.fetch_sub(1, Ordering::Release);
         debug_assert!(old > 1, "IOThreadPool: too many calls to release()");
-    }
-
-    pub(super) fn shutdown() -> bool {
-        // Acquire instead of AcqRel is okay because we only need to ensure that other
-        // threads are done using the IO pool if we read 1 from the ref count.
-        //
-        // Relaxed is okay because this function is only guaranteed to succeed when we
-        // can ensure that no `ThreadPool`s exist.
-        if REF_COUNT
-            .compare_exchange(1, 0, Ordering::Acquire, Ordering::Relaxed)
-            .is_err()
-        {
-            // At least one `ThreadPool` still exists.
-            return false;
-        }
-
-        let _guard = MUTEX.lock_guard();
-
-        // Relaxed is okay because the only store that could happen at this point
-        // is guarded by the mutex.
-        if REF_COUNT.load(Ordering::Relaxed) != 0 {
-            return false;
-        }
-        // SAFETY: we hold MUTEX, REF_COUNT == 0, and we previously CAS'd from 1 ⇒ initialized.
-        unsafe {
-            (*THREAD_POOL.get()).assume_init_drop();
-        }
-        true
     }
 }
 
@@ -317,17 +274,6 @@ impl ThreadPool {
         return false;
     }
 
-    /// Shut down the IO pool, if and only if no `ThreadPool`s exist right now.
-    /// If a `ThreadPool` exists, this function is a no-op and returns false.
-    /// Blocks until the IO pool is shut down.
-    pub fn shutdown_io_pool() -> bool {
-        if Self::uses_io_pool() {
-            io_thread_pool::shutdown()
-        } else {
-            true
-        }
-    }
-
     fn schedule_with_options(&self, parse_task: *mut ParseTask, is_inside_thread_pool: bool) {
         // SAFETY: callers (`schedule`/`schedule_inside_thread_pool`) pass a
         // live, exclusively-owned ParseTask (heap- or arena-allocated raw
@@ -354,7 +300,6 @@ impl ThreadPool {
                     }
                 },
                 fd: Fd::INVALID,
-                external_free_function: ExternalFreeFunction::NONE,
             });
         }
 
@@ -564,7 +509,6 @@ pub struct WorkerData {
     // Kept raw because the pointee's arena
     // is the sibling field `Worker.heap`, which Rust cannot express as a borrow.
     pub log: *mut bun_ast::Log,
-    pub estimated_input_lines_of_code: usize,
     // lifetime erased to `'static` — the inner `&'a Arena` borrows
     // `Worker.heap`, which Rust can't express on a sibling field.
     //
@@ -735,7 +679,6 @@ impl Worker {
         self.stmt_list = Some(StmtList::init());
         let data = self.data.insert(WorkerData {
             log,
-            estimated_input_lines_of_code: 0,
             transpiler: Self::initialize_transpiler(log, ctx.transpiler(), arena_ref),
             other_transpiler: None,
         });

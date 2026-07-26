@@ -5,7 +5,6 @@ use bun_bundler::Transpiler;
 use bun_bundler::options::BundleOptions;
 #[cfg(not(windows))]
 use bun_core::ZStr;
-use bun_core::err;
 use bun_core::{StringOrTinyString, strings};
 use bun_output::{declare_scope, scoped_log};
 use bun_paths::resolve_path::{join_abs_string_buf, platform};
@@ -30,7 +29,6 @@ pub struct Scanner<'a> {
     pub test_files: Vec<Interned>,
     pub fs: *mut FileSystem,
     pub open_dir_buf: PathBuffer,
-    pub scan_dir_buf: PathBuffer,
     pub options: &'a BundleOptions<'a>,
     pub has_iterated: bool,
     pub search_count: usize,
@@ -57,9 +55,8 @@ pub enum ScanError {
     OutOfMemory,
 }
 bun_core::oom_from_alloc!(ScanError);
-bun_core::named_error_set!(ScanError);
-impl PartialEq<bun_core::Error> for ScanError {
-    fn eq(&self, other: &bun_core::Error) -> bool {
+impl PartialEq<crate::Error> for ScanError {
+    fn eq(&self, other: &crate::Error) -> bool {
         <&'static str>::from(self) == other.name()
     }
 }
@@ -92,7 +89,6 @@ impl<'a> Scanner<'a> {
             fs: transpiler.fs,
             test_files: results,
             open_dir_buf: PathBuffer::uninit(),
-            scan_dir_buf: PathBuffer::uninit(),
             has_iterated: false,
             search_count: 0,
         })
@@ -132,16 +128,9 @@ impl<'a> Scanner<'a> {
     }
 
     pub fn scan(&mut self, path_literal: &[u8]) -> Result<(), ScanError> {
-        let parts: [&[u8]; 2] = [self.fs().top_level_dir, path_literal];
-        // reshaped for borrowck — abs_buf's return keeps a &mut borrow
-        // of scan_dir_buf alive across the &mut self calls below. Capture only the
-        // length, then reconstruct a detached slice from the raw buffer pointer.
-        let path_len = self.fs().abs_buf(&parts, &mut self.scan_dir_buf).len();
-        // SAFETY: scan_dir_buf is not written again for the remainder of this
-        // function — read_dir_with_name/next() only touch open_dir_buf — so the
-        // bytes at [0, path_len) remain valid while `path` is live.
-        let path: &[u8] =
-            unsafe { core::slice::from_raw_parts(self.scan_dir_buf.0.as_ptr(), path_len) };
+        let mut scan_dir_buf = PathBuffer::uninit();
+        let parts: [&[u8]; 2] = [self.top_level_dir(), path_literal];
+        let path: &[u8] = Self::abs_buf_projected(self.top_level_dir(), &parts, &mut scan_dir_buf);
 
         let root = self
             .read_dir_with_name(path, None)
@@ -149,7 +138,7 @@ impl<'a> Scanner<'a> {
 
         if let EntriesOption::Err(root_err) = root {
             let e = root_err.original_err;
-            if e == err!("NotDir") || e == err!("ENOTDIR") {
+            if e == bun_resolver::Error::Sys(bun_errno::SystemErrno::ENOTDIR) {
                 if self.is_test_file(path) {
                     let stored = self
                         .fs()
@@ -159,7 +148,7 @@ impl<'a> Scanner<'a> {
                     let rel_path = Interned::from_static(stored);
                     self.test_files.push(rel_path);
                 }
-            } else if e == err!("ENOENT") {
+            } else if e == bun_resolver::Error::Sys(bun_errno::SystemErrno::ENOENT) {
                 return Err(ScanError::DoesNotExist);
             } else {
                 scoped_log!(
@@ -263,12 +252,14 @@ impl<'a> Scanner<'a> {
         &mut self,
         name: &[u8],
         handle: Option<bun_sys::Dir>,
-    ) -> Result<&'static mut EntriesOption, bun_core::Error> {
+    ) -> crate::Result<&'static mut EntriesOption> {
         let fs_ptr = self.fs;
         let iter = ScannerDirIter(std::ptr::from_mut::<Scanner<'a>>(self));
         let raw = handle.map(bun_sys::Dir::into_raw);
         // SAFETY: borrows only the `fs` field; re-entrant access is serialised by `RealFS.entries_mutex`.
-        unsafe { &mut (*fs_ptr).fs }.read_directory_with_iterator(name, raw, 0, true, iter)
+        unsafe { &mut (*fs_ptr).fs }
+            .read_directory_with_iterator(name, raw, 0, true, iter)
+            .map_err(Into::into)
     }
 
     pub fn could_be_test_file<const NEEDS_TEST_SUFFIX: bool>(&self, name: &[u8]) -> bool {
@@ -375,11 +366,7 @@ impl<'a> Scanner<'a> {
                     return;
                 }
 
-                if cfg!(debug_assertions) {
-                    debug_assert!(
-                        strings::index_of(name, bun_paths::NODE_MODULES_NEEDLE).is_none()
-                    );
-                }
+                debug_assert!(strings::index_of(name, bun_paths::NODE_MODULES_NEEDLE).is_none());
 
                 for exclude_name in self.exclusion_names {
                     if strings::eql(exclude_name, name) {

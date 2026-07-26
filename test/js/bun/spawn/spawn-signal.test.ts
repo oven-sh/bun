@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
 test("spawn AbortSignal works after spawning", async () => {
@@ -66,4 +66,51 @@ test("spawnSync AbortSignal works as timeout", async () => {
   expect(subprocess.success).toBeFalse();
   const end = performance.now();
   expect(end - start).toBeLessThan(100);
+});
+
+describe("Bun.spawn option validation", () => {
+  const spawners = [
+    ["Bun.spawn", (opts: any) => Bun.spawn(opts)],
+    ["Bun.spawnSync", (opts: any) => Bun.spawnSync(opts)],
+  ] as const;
+
+  describe.each(spawners)("%s", (_, spawn) => {
+    test("timeout: NaN throws ERR_OUT_OF_RANGE", () => {
+      expect(() =>
+        spawn({
+          cmd: [bunExe(), "-e", ""],
+          env: bunEnv,
+          timeout: NaN,
+        }),
+      ).toThrow(
+        expect.objectContaining({
+          code: "ERR_OUT_OF_RANGE",
+          message: expect.stringContaining('"timeout"'),
+        }),
+      );
+    });
+
+    test("killSignal: 0 throws ERR_UNKNOWN_SIGNAL", () => {
+      expect(() =>
+        spawn({
+          cmd: [bunExe(), "-e", ""],
+          env: bunEnv,
+          timeout: 100,
+          killSignal: 0,
+        }),
+      ).toThrow(expect.objectContaining({ code: "ERR_UNKNOWN_SIGNAL" }));
+    });
+  });
+
+  test("proc.kill(0) is still accepted", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", "setTimeout(() => {}, 100000)"],
+      env: bunEnv,
+      stdio: ["ignore", "ignore", "ignore"],
+    });
+    expect(() => proc.kill(0)).not.toThrow();
+    expect(proc.killed).toBe(false);
+    proc.kill(9);
+    await proc.exited;
+  });
 });

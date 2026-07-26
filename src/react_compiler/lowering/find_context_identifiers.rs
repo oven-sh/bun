@@ -383,6 +383,7 @@ impl<'a> ContextIdentifierVisitor<'a> {
     )]
     fn walk_expr(&mut self, e: &Expr) {
         match &e.data {
+            Data::EObjectJSON(_) | Data::EArrayJSON(_) => {}
             Data::EIdentifier(id) => self.check_captured_reference(id.ref_),
             Data::EImportIdentifier(id) => self.check_captured_reference(id.ref_),
 

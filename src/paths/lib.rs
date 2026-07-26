@@ -5,6 +5,10 @@
 // `PlatformT` sealed-trait workaround.
 #![feature(adt_const_params)]
 #![allow(incomplete_features)]
+
+pub mod error;
+pub use error::{Error, Result};
+
 // `bun.w_path_buffer_pool` — u16 sibling. Backed by the same generic
 // thread-local pool as the u8 one (path_buffer_pool.rs already handles both
 // via `PoolStorage`).
@@ -29,7 +33,7 @@ pub mod w_path_buffer_pool {
 // `bun_paths::strings::*`.
 // ──────────────────────────────────────────────────────────────────────────
 pub mod string_paths;
-/// `bun.strings.*` superset: `bun_core`'s scalar/SIMD string utils plus the
+/// `bun.strings.*` superset: the full `bun_core::strings` namespace plus the
 /// path-shape transcoders that live here. Downstream crates that previously
 /// wrote `bun_core::strings::paths::X` / `bun_core::strings::to_nt_path`
 /// import `bun_paths::strings` instead.
@@ -44,7 +48,7 @@ pub mod strings {
     pub use super::string_paths::from_w_path as from_wpath;
     pub use super::string_paths::to_w_path_normalized as to_wpath_normalized;
     pub use super::string_paths::{
-        basename, is_windows_absolute_path_missing_drive_letter, remove_leading_dot_slash,
+        is_windows_absolute_path_missing_drive_letter, remove_leading_dot_slash,
         starts_with_windows_drive_letter_t, without_trailing_slash,
     };
 }
@@ -57,12 +61,6 @@ pub use bun_alloc::SEP_STR;
 /// a path passes through a `node_modules` directory.
 pub const NODE_MODULES_NEEDLE: &[u8] =
     const_format::concatcp!(SEP_STR, "node_modules", SEP_STR).as_bytes();
-
-/// `node_modules<SEP>` — trailing-separator-only variant, used where the byte
-/// immediately before `node_modules` is not guaranteed to be a separator (start of
-/// a relative segment, or when the leading sep was already consumed).
-pub const NODE_MODULES_TRAILING: &[u8] =
-    const_format::concatcp!("node_modules", SEP_STR).as_bytes();
 
 pub(crate) const SEP_POSIX: u8 = b'/';
 pub const SEP_WINDOWS: u8 = b'\\';
@@ -338,16 +336,17 @@ pub mod resolve_path;
 pub use resolve_path::{Platform, PlatformT, platform};
 pub mod component_iterator;
 pub use component_iterator::{
-    Component, ComponentIterator, MakePathStep, PathFormat, component_iterator, make_path_with,
+    Component, ComponentIterator, MakePathStep, PathFormat, make_path_with,
 };
+pub mod classify;
+pub use classify::{RelPathFacts, classify_rel_t};
 // Crate-root re-exports for the path-mutation helpers so `#[cfg(windows)]`
 // install paths can call
 // `bun_paths::dangerously_convert_path_to_posix_in_place(..)` directly.
 pub use resolve_path::{
     dangerously_convert_path_to_posix_in_place, dangerously_convert_path_to_windows_in_place,
     dirname_w, is_drive_letter, is_drive_letter_t, is_sep_any, is_sep_any_t, is_sep_native,
-    is_sep_native_t, is_sep_posix, is_sep_posix_t, is_sep_win32, is_sep_win32_t,
-    join_abs_string_buf, join_abs_string_buf_z, join_string_buf_wz, path_to_posix_buf,
+    is_sep_native_t, join_abs_string_buf, join_abs_string_buf_z, path_to_posix_buf,
     relative_to_common_path_buf, slashes_to_posix_in_place, slashes_to_windows_in_place,
     windows_volume_name_len,
 };
@@ -432,7 +431,7 @@ pub use env_path::{EnvPath, EnvPathInput, PathComponentBuilder};
 // ──────────────────────────────────────────────────────────────────────────
 // Windows path-prefix constants — relocated from
 // `bun_sys::windows` so tier-1 callers
-// (`bun_core::immutable::paths`, this crate's `Path.rs`) can resolve them
+// (this crate's `string_paths.rs` and `Path.rs`) can resolve them
 // without depending upward on `bun_sys`.
 // ──────────────────────────────────────────────────────────────────────────
 pub mod windows {
@@ -506,8 +505,8 @@ pub fn is_package_path_not_absolute(non_absolute_path: &[u8]) -> bool {
 // `fs` — TYPE_ONLY subset of resolver fs.
 //
 // The full `FileSystem` (DirEntry cache, RealFS impl, FilenameStore/DirnameStore)
-// stays in `bun_resolver`; only the path-shaped types (`Path`, `PathName`,
-// `PathContentsPair`) and the `top_level_dir` singleton accessor move here so
+// stays in `bun_resolver`; only the path-shaped types (`Path`, `PathName`)
+// and the `top_level_dir` singleton accessor move here so
 // lower tiers (`bun_logger`, `bun_paths::resolve_path`, `bun_paths::Path`) can
 // resolve them without a `bun_resolver` edge.
 // ──────────────────────────────────────────────────────────────────────────
@@ -580,24 +579,13 @@ pub mod fs {
             }
         }
 
-        /// The top-level dir with any single trailing separator stripped
-        /// (the root `/` is left intact).
-        pub fn top_level_dir_without_trailing_slash(&self) -> &[u8] {
-            let d = self.top_level_dir();
-            if d.len() > 1 && d.last() == Some(&crate::SEP) {
-                &d[..d.len() - 1]
-            } else {
-                d
-            }
-        }
-
         /// Writes `.<hex(hash|nanos)>-<HEX(counter)>.<extname>\0` into `buf` and returns
         /// the NUL-terminated borrow. Static (no `&self`).
         pub fn tmpname<'b>(
             extname: &[u8],
             buf: &'b mut [u8],
             hash: u64,
-        ) -> Result<&'b mut ZStr, bun_core::Error> {
+        ) -> crate::Result<&'b mut ZStr> {
             let hex_value: u64 =
                 (u128::from(hash) | (bun_core::time::nano_timestamp() as u128)) as u64;
 
@@ -611,10 +599,10 @@ pub mod fs {
                 TMPNAME_ID_NUMBER.fetch_add(1, Ordering::Relaxed),
                 bun_core::fmt::s(extname),
             )
-            .map_err(|_| bun_core::err!("NoSpaceLeft"))?;
+            .map_err(|_| crate::Error::Sys(bun_errno::SystemErrno::ENOSPC))?;
             let written = len - cursor.len();
             if written >= len {
-                return Err(bun_core::err!("NoSpaceLeft"));
+                return Err(crate::Error::Sys(bun_errno::SystemErrno::ENOSPC));
             }
             buf[written] = 0;
             Ok(ZStr::from_buf_mut(buf, written))
@@ -682,12 +670,6 @@ pub mod fs {
             debug_assert!(!self.base.contains(&b'/'));
             // /bar/foo.js -> foo
             self.base
-        }
-
-        /// The dir component, or `"."` when it is empty.
-        #[inline]
-        pub fn dir_or_dot(&self) -> &'a [u8] {
-            if self.dir.is_empty() { b"." } else { self.dir }
         }
 
         /// Formats [`Self::non_unique_name_string_base`] as a valid JS
@@ -925,23 +907,6 @@ pub mod fs {
             }
         }
 
-        /// Same const-concat caveat as `init_with_namespace_virtual`:
-        /// callers pass the precomputed `concatcp!` result as `pretty`.
-        #[inline]
-        pub const fn init_for_kit_built_in(
-            namespace: &'static [u8],
-            pretty: &'static [u8],
-            text: &'static [u8],
-        ) -> Path<'static> {
-            Path {
-                pretty,
-                is_symlink: true,
-                text,
-                namespace,
-                is_disabled: false,
-            }
-        }
-
         /// Debug-only check that `pretty`
         /// contains no backslashes (Windows). No-op on POSIX.
         #[inline]
@@ -972,10 +937,6 @@ pub mod fs {
             self.text
         }
         #[inline]
-        pub fn pretty(&self) -> &'a [u8] {
-            self.pretty
-        }
-        #[inline]
         pub fn namespace(&self) -> &'a [u8] {
             self.namespace
         }
@@ -988,16 +949,6 @@ pub mod fs {
         #[inline]
         pub fn is_data_url(&self) -> bool {
             self.namespace == b"dataurl"
-        }
-
-        #[inline]
-        pub fn is_bun(&self) -> bool {
-            self.namespace == b"bun"
-        }
-
-        #[inline]
-        pub fn is_macro(&self) -> bool {
-            self.namespace == b"macro"
         }
 
         /// Directory of `text`, with trailing separator.
@@ -1017,13 +968,6 @@ pub mod fs {
         pub fn is_node_module(&self) -> bool {
             use bstr::ByteSlice;
             self.name().dir.rfind(crate::NODE_MODULES_NEEDLE).is_some()
-        }
-
-        /// True if the filename ends in `.jsx` or `.tsx`.
-        #[inline]
-        pub fn is_jsx_file(&self) -> bool {
-            let f = self.name().filename;
-            f.ends_with(b".jsx") || f.ends_with(b".tsx")
         }
 
         /// Key used to identify this path in the incremental graph: the real
@@ -1046,13 +990,4 @@ pub mod fs {
             self.is_symlink = true;
         }
     }
-
-    /// A resolved path together with the file contents loaded from it.
-    #[derive(Debug, Clone, Default)]
-    pub struct PathContentsPair<'a> {
-        pub path: Path<'a>,
-        pub contents: &'a [u8],
-    }
 }
-
-pub use self::fs::PathContentsPair;

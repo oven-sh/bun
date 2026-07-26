@@ -67,6 +67,8 @@ unsafe extern "C" {
         arg2: &mut u8,
     ) -> JSValue;
     safe fn WebCore__AbortSignal__new(arg0: &JSGlobalObject) -> *mut AbortSignal;
+    safe fn WebCore__AbortSignal__jsReason(arg0: &AbortSignal, arg1: &JSGlobalObject) -> JSValue;
+    safe fn Bun__wrapAbortError(global_object: &JSGlobalObject, cause: JSValue) -> JSValue;
 }
 
 /// Abort-callback monomorphization for `listen`. Implement on your context type.
@@ -140,6 +142,22 @@ impl AbortSignal {
             return None; // not aborted
         }
         Some(AbortReason::Js(js_reason))
+    }
+
+    /// Node.js APIs reject aborted operations with an `AbortError` (`Error`
+    /// subclass, `code === "ABORT_ERR"`) whose `cause` is `signal.reason`,
+    /// rather than the Web `DOMException` held in `signal.reason` itself.
+    /// Returns `None` if the signal is not aborted. JS thread only.
+    pub fn node_abort_error_if_aborted(&self, global: &JSGlobalObject) -> Option<JSValue> {
+        if !self.aborted() {
+            return None;
+        }
+        // `jsReason` returns the same (cached) object the JS `.reason` getter
+        // does, so `err.cause === signal.reason` holds, matching Node.
+        Some(Bun__wrapAbortError(
+            global,
+            WebCore__AbortSignal__jsReason(self, global),
+        ))
     }
 
     pub fn ref_(&self) -> *mut AbortSignal {

@@ -5,6 +5,7 @@ use bun_core::strings;
 
 use super::Expect;
 use super::get_signature;
+use super::throw;
 
 impl Expect {
     #[bun_jsc::host_fn(method)]
@@ -16,8 +17,7 @@ impl Expect {
         let (this, value, not) =
             self.matcher_prelude(global, frame.this(), "toContain", "<green>expected<r>")?;
 
-        let arguments_ = frame.arguments_old::<1>();
-        let arguments = arguments_.slice();
+        let arguments = frame.arguments();
 
         if arguments.len() < 1 {
             return Err(global.throw_invalid_arguments(format_args!("toContain() takes 1 argument")));
@@ -35,10 +35,12 @@ impl Expect {
             pass: *mut bool,
         }
 
+        // Jest's toContain uses `===` (Array.prototype.indexOf), not Object.is:
+        // `[-0]` contains `0`, `[NaN]` does not contain `NaN`.
         if value.js_type_loose().is_array_like() {
             let mut itr = value.array_iterator(global)?;
             while let Some(item) = itr.next()? {
-                if item.is_same_value(expected, global)? {
+                if item.is_strict_equal(expected, global)? {
                     pass = true;
                     break;
                 }
@@ -63,7 +65,7 @@ impl Expect {
                 pass: &raw mut pass,
             };
 
-            extern "C" fn same_value_iterator(
+            extern "C" fn strict_equal_iterator(
                 _: *mut VM,
                 _: &JSGlobalObject,
                 entry_: *mut c_void,
@@ -76,7 +78,7 @@ impl Expect {
                 // SAFETY: entry.global was set from `std::ptr::from_ref(global)` on the caller's
                 // stack frame, which outlives the synchronous for_each this callback runs inside.
                 let global = unsafe { &*entry.global };
-                let Ok(same) = item.is_same_value(entry.expected, global) else {
+                let Ok(same) = item.is_strict_equal(entry.expected, global) else {
                     return;
                 };
                 if same {
@@ -90,7 +92,7 @@ impl Expect {
             value.for_each(
                 global,
                 (&raw mut expected_entry).cast::<c_void>(),
-                same_value_iterator,
+                strict_equal_iterator,
             )?;
         } else {
             return Err(global.throw(format_args!(
@@ -112,33 +114,31 @@ impl Expect {
         let mut formatter2 = super::make_formatter(global);
         if not {
             let signature = get_signature("toContain", "<green>expected<r>", true);
-            return this.throw(
+            return throw!(
+                this,
                 global,
                 signature,
-                format_args!(
-                    concat!(
-                        "\n\n",
-                        "Expected to not contain: <green>{}<r>\nReceived: <red>{}<r>\n",
-                    ),
-                    expected.to_fmt(&mut formatter),
-                    value.to_fmt(&mut formatter2),
+                concat!(
+                    "\n\n",
+                    "Expected to not contain: <green>{}<r>\nReceived: <red>{}<r>\n",
                 ),
+                expected.to_fmt(&mut formatter),
+                value.to_fmt(&mut formatter2),
             );
         }
 
         let signature = get_signature("toContain", "<green>expected<r>", false);
-        this.throw(
+        throw!(
+            this,
             global,
             signature,
-            format_args!(
-                concat!(
-                    "\n\n",
-                    "Expected to contain: <green>{}<r>\n",
-                    "Received: <red>{}<r>\n",
-                ),
-                expected.to_fmt(&mut formatter),
-                value.to_fmt(&mut formatter2),
+            concat!(
+                "\n\n",
+                "Expected to contain: <green>{}<r>\n",
+                "Received: <red>{}<r>\n",
             ),
+            expected.to_fmt(&mut formatter),
+            value.to_fmt(&mut formatter2),
         )
     }
 }

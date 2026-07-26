@@ -4876,9 +4876,12 @@ describe("Query Normalization Fuzzing Tests", () => {
     await sql`CREATE TABLE weird_cols ("123" TEXT, "!" INTEGER, "@#$" REAL)`;
     await sql.unsafe(`SELECT "123", "!", "@#$" FROM weird_cols`);
 
-    const longName = "a".repeat(50_000_000);
+    const longName = Buffer.alloc(100_000, "a").toString();
 
     await sql.unsafe(`CREATE TABLE "${longName}" (col TEXT)`);
+    expect(
+      (await sql.unsafe(`SELECT name FROM sqlite_master WHERE type='table' AND length(name) = 100000`)).length,
+    ).toBe(1);
     await sql.unsafe(`SELECT * FROM "${longName}"`);
     await sql.unsafe(`DROP TABLE "${longName}"`);
   });

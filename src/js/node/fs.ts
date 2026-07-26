@@ -5,6 +5,7 @@ const types = require("node:util/types");
 const {
   validateFunction,
   validateInteger,
+  validateEncoding,
   getValidatedPath,
   throwIfNullBytesInFileName,
 } = require("internal/validators");
@@ -211,6 +212,8 @@ var access = function access(path, mode, callback) {
   open = function open(path, flags, mode, callback) {
     if (arguments.length < 3) {
       callback = flags;
+      // The shifted-out slot has to be cleared: flags default to "r".
+      flags = undefined;
     } else if ($isCallable(mode)) {
       callback = mode;
       mode = undefined;
@@ -276,7 +279,9 @@ var access = function access(path, mode, callback) {
       callback(null, bytesWritten, buffer);
     }
 
-    if ($isTypedArrayView(buffer)) {
+    // $isTypedArrayView excludes DataView, so a DataView would fall through
+    // to the string signature. Use Node's predicate, like writeSync below.
+    if (types.isArrayBufferView(buffer)) {
       callback ||= position || length || offsetOrOptions;
       ensureCallback(callback);
 
@@ -292,6 +297,10 @@ var access = function access(path, mode, callback) {
       return;
     }
 
+    if (typeof buffer !== "string") {
+      throw $ERR_INVALID_ARG_TYPE("buffer", ["string", "Buffer", "TypedArray", "DataView"], buffer);
+    }
+
     if (!$isCallable(position)) {
       if ($isCallable(offsetOrOptions)) {
         position = offsetOrOptions;
@@ -302,6 +311,8 @@ var access = function access(path, mode, callback) {
       length = "utf8";
     }
 
+    // Node validates the encoding (synchronously) before the callback.
+    validateEncoding(buffer, length);
     callback = position;
     ensureCallback(callback);
 
@@ -499,6 +510,8 @@ var access = function access(path, mode, callback) {
       if (typeof buffer !== "string") {
         throw $ERR_INVALID_ARG_TYPE("buffer", ["string", "Buffer", "TypedArray", "DataView"], buffer);
       }
+      // writeSync(fd, string[, position[, encoding]]): `length` is the encoding.
+      validateEncoding(buffer, length);
       return fs.writeSync(fd, buffer, offsetOrOptions, length);
     } catch (err) {
       // Node's fs binding reports sync write failures by assigning the error
@@ -526,6 +539,12 @@ var access = function access(path, mode, callback) {
   utimesSync = fs.utimesSync.bind(fs),
   lutimesSync = fs.lutimesSync.bind(fs),
   rmSync = function rmSync(path, options) {
+    if (typeof options === "object" && options !== null) {
+      // Node merges the caller's options over the defaults with a spread, which
+      // copies own enumerable keys only -- including ones holding `undefined`.
+      // Normalize here so the native parser sees exactly that set.
+      options = { ...options };
+    }
     if (!options?.recursive) {
       // node validates in JS and reports ERR_FS_EISDIR for directories
       let stats;
@@ -1178,6 +1197,18 @@ class Dir {
     this.#handle = -1;
   }
 
+  // Like node, disposing an already-closed Dir is a no-op rather than
+  // ERR_DIR_CLOSED so `using`/`await using` compose with an explicit close().
+  [Symbol.dispose]() {
+    if (this.#handle < 0) return;
+    this.closeSync();
+  }
+
+  async [Symbol.asyncDispose]() {
+    if (this.#handle < 0) return;
+    await this.close();
+  }
+
   get path() {
     if (!(#path in this)) throw $ERR_INVALID_THIS("Dir");
     return this.#path;
@@ -1354,6 +1385,16 @@ var exports = {
   },
   set FileReadStream(value) {
     Object.defineProperty(exports, "FileReadStream", {
+      value,
+      writable: true,
+      configurable: true,
+    });
+  },
+  get Utf8Stream() {
+    return (exports.Utf8Stream = require("internal/streams/fast-utf8-stream"));
+  },
+  set Utf8Stream(value) {
+    Object.defineProperty(exports, "Utf8Stream", {
       value,
       writable: true,
       configurable: true,

@@ -26,7 +26,7 @@ fn print_installed_workspace_section<
     installed: &Bitset,
     printed_new_install: &mut bool,
     id_map: Option<&mut [DependencyID]>,
-) -> Result<(), bun_core::Error>
+) -> Result<(), crate::Error>
 where
     W: Write,
 {
@@ -240,7 +240,7 @@ fn print_updated_package<W, const ENABLE_ANSI_COLORS: bool>(
     this: &Printer,
     update_info: &PackageUpdatePrintInfo<'_>,
     writer: &mut W,
-) -> Result<(), bun_core::Error>
+) -> Result<(), crate::Error>
 where
     W: Write,
 {
@@ -278,7 +278,7 @@ fn print_installed_package<W, const ENABLE_ANSI_COLORS: bool>(
     dependency: &Dependency,
     package_id: PackageID,
     writer: &mut W,
-) -> Result<(), bun_core::Error>
+) -> Result<(), crate::Error>
 where
     W: Write,
 {
@@ -341,7 +341,7 @@ pub fn print<W, const ENABLE_ANSI_COLORS: bool>(
     manager: &mut PackageManager,
     writer: &mut W,
     log_level: install::package_manager::Options::LogLevel,
-) -> Result<(), bun_core::Error>
+) -> Result<(), crate::Error>
 where
     W: Write,
 {

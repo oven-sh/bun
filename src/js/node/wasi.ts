@@ -1094,6 +1094,8 @@ var require_wasi = __commonJS({
           }),
           fd_fdstat_set_rights: wrap((fd, fsRightsBase, fsRightsInheriting) => {
             const stats = CHECK_FD(fd, BigInt(0));
+            fsRightsBase = BigInt.asUintN(64, fsRightsBase);
+            fsRightsInheriting = BigInt.asUintN(64, fsRightsInheriting);
             const nrb = stats.rights.base | fsRightsBase;
             if (nrb > stats.rights.base) {
               return constants_1.WASI_EPERM;
@@ -1496,8 +1498,8 @@ var require_wasi = __commonJS({
             (dirfd, _dirflags, pathPtr, pathLen, oflags, fsRightsBase, fsRightsInheriting, fsFlags, fdPtr) => {
               try {
                 const stats = CHECK_FD(dirfd, constants_1.WASI_RIGHT_PATH_OPEN);
-                fsRightsBase = BigInt(fsRightsBase);
-                fsRightsInheriting = BigInt(fsRightsInheriting);
+                fsRightsBase = BigInt.asUintN(64, BigInt(fsRightsBase));
+                fsRightsInheriting = BigInt.asUintN(64, BigInt(fsRightsInheriting));
                 const read =
                   (fsRightsBase & (constants_1.WASI_RIGHT_FD_READ | constants_1.WASI_RIGHT_FD_READDIR)) !== BigInt(0);
                 const write =
@@ -1647,7 +1649,7 @@ var require_wasi = __commonJS({
                 if (e instanceof types_1.WASIError) {
                   return e.errno;
                 }
-                console.error(e);
+                throw e;
               }
               return constants_1.WASI_ESUCCESS;
             },
@@ -1845,8 +1847,11 @@ var require_wasi = __commonJS({
           },
           random_get: (bufPtr, bufLen) => {
             this.refreshMemory();
-            crypto.getRandomValues(this.memory.buffer, bufPtr, bufLen);
-            return bufLen;
+            // getRandomValues takes one integer-typed view and ignores any further
+            // arguments, so a bare `buffer, bufPtr, bufLen` randomized all of linear
+            // memory rather than the requested window.
+            crypto.getRandomValues(new Uint8Array(this.memory.buffer, bufPtr, bufLen));
+            return constants_1.WASI_ESUCCESS;
           },
           sched_yield() {
             return constants_1.WASI_ESUCCESS;

@@ -10,15 +10,15 @@ declare module "bun" {
     | "ws:connect";
 
   /**
-   * The event names for the dev server
+   * Event names accepted by `import.meta.hot.on()` and `import.meta.hot.off()`
    */
   type HMREvent = `bun:${HMREventNames}` | (string & {});
 }
 
 interface ImportMeta {
   /**
-   * Hot module replacement APIs. This value is `undefined` in production and
-   * can be used in an `if` statement to check if HMR APIs are available
+   * Hot module replacement (HMR) APIs. In production this value is
+   * `undefined`, so you can guard HMR code with an `if` statement:
    *
    * ```ts
    * if (import.meta.hot) {
@@ -26,17 +26,17 @@ interface ImportMeta {
    * }
    * ```
    *
-   * However, this check is usually not needed as Bun will dead-code-eliminate
-   * calls to all of the HMR APIs in production builds.
+   * The check is usually unnecessary: Bun dead-code-eliminates calls to the
+   * HMR APIs in production builds.
    *
    * https://bun.com/docs/bundler/hmr
    */
   hot: {
     /**
-     * `import.meta.hot.data` maintains state between module instances during
-     * hot replacement, enabling data transfer from previous to new versions.
-     * When `import.meta.hot.data` is written to, Bun will mark this module as
-     * capable of self-accepting (equivalent of calling `accept()`).
+     * Persists state across module instances during hot replacement, so the
+     * previous version of a module can pass data to the next one. Writing to
+     * `import.meta.hot.data` marks the module as self-accepting (equivalent
+     * to calling `accept()`).
      *
      * @example
      * ```ts
@@ -44,18 +44,17 @@ interface ImportMeta {
      * root.render(<App />); // re-use an existing root
      * ```
      *
-     * In production, `data` is inlined to be `{}`. This is handy because Bun
-     * knows it can minify `{}.prop ??= value` into `value` in production.
+     * In production, `data` is inlined to `{}`, which lets Bun minify
+     * `{}.prop ??= value` to `value`.
      */
     data: any;
 
     /**
-     * Indicate that this module can be replaced simply by re-evaluating the
-     * file. After a hot update, importers of this module will be
-     * automatically patched.
+     * Indicate that this module can be replaced by re-evaluating the file.
+     * After a hot update, Bun patches importers of this module automatically.
      *
-     * When `import.meta.hot.accept` is not used, the page will reload when
-     * the file updates, and a console message shows which files were checked.
+     * When `import.meta.hot.accept` is not used, the page reloads when the
+     * file updates, and a console message shows which files were checked.
      *
      * @example
      * ```ts
@@ -69,14 +68,14 @@ interface ImportMeta {
     accept(): void;
 
     /**
-     * Indicate that this module can be replaced by evaluating the new module,
-     * and then calling the callback with the new module. In this mode, the
-     * importers do not get patched. This is to match Vite, which is unable
-     * to patch their import statements. Prefer using `import.meta.hot.accept()`
-     * without an argument as it usually makes your code easier to understand.
+     * Indicate that this module can be replaced by evaluating the new module
+     * and then calling the callback with it. In this mode, importers are not
+     * patched. This matches Vite, which cannot patch import statements.
+     * Prefer `import.meta.hot.accept()` without an argument; it usually makes
+     * your code easier to understand.
      *
-     * When `import.meta.hot.accept` is not used, the page will reload when
-     * the file updates, and a console message shows which files were checked.
+     * When `import.meta.hot.accept` is not used, the page reloads when the
+     * file updates, and a console message shows which files were checked.
      *
      * @example
      * ```ts
@@ -95,11 +94,11 @@ interface ImportMeta {
     accept(cb: (newModule: any | undefined) => void): void;
 
     /**
-     * Indicate that a dependency's module can be accepted. When the dependency
-     * is updated, the callback will be called with the new module.
+     * Indicate that a dependency's module can be accepted. When the
+     * dependency updates, Bun calls the callback with the new module.
      *
-     * When `import.meta.hot.accept` is not used, the page will reload when
-     * the file updates, and a console message shows which files were checked.
+     * When `import.meta.hot.accept` is not used, the page reloads when the
+     * file updates, and a console message shows which files were checked.
      *
      * @example
      * ```ts
@@ -114,23 +113,23 @@ interface ImportMeta {
     accept(specifier: string, callback: (newModule: any) => void): void;
 
     /**
-     * Indicate that a dependency's module can be accepted. This variant
-     * accepts an array of dependencies, where the callback will receive
-     * the one updated module, and `undefined` for the rest.
+     * Indicate that the modules of an array of dependencies can be accepted.
+     * The callback receives the one updated module and `undefined` for the
+     * rest.
      *
-     * When `import.meta.hot.accept` is not used, the page will reload when
-     * the file updates, and a console message shows which files were checked.
+     * When `import.meta.hot.accept` is not used, the page reloads when the
+     * file updates, and a console message shows which files were checked.
      */
     accept(specifiers: string[], callback: (newModules: (any | undefined)[]) => void): void;
 
     /**
-     * Attach an on-dispose callback. This is called:
+     * Attach a callback that Bun calls:
      * - Just before the module is replaced with another copy (before the next is loaded)
      * - After the module is detached (removing all imports to this module)
      *
-     * This callback is not called on route navigation or when the browser tab closes.
+     * The callback is not called on route navigation or when the browser tab closes.
      *
-     * Returning a promise will delay module replacement until the module is
+     * Returning a promise delays module replacement until the module is
      * disposed. All dispose callbacks are called in parallel.
      */
     dispose(cb: (data: any) => void | Promise<void>): void;
@@ -165,22 +164,24 @@ interface ImportMeta {
     /**
      * Listen for an event from the dev server
      *
-     * For compatibility with Vite, event names are also available via vite:* prefix instead of bun:*.
+     * For Vite compatibility, event names also accept the `vite:` prefix in
+     * place of `bun:`.
      *
      * https://bun.com/docs/bundler/hmr#import-meta-hot-on-and-off
-     * @param event The event to listen to
-     * @param callback The callback to call when the event is emitted
+     * @param event Event name, such as `"bun:beforeUpdate"`
+     * @param callback Called each time the event is emitted
      */
     on(event: Bun.HMREvent, callback: () => void): void;
 
     /**
      * Stop listening for an event from the dev server
      *
-     * For compatibility with Vite, event names are also available via vite:* prefix instead of bun:*.
+     * For Vite compatibility, event names also accept the `vite:` prefix in
+     * place of `bun:`.
      *
      * https://bun.com/docs/bundler/hmr#import-meta-hot-on-and-off
-     * @param event The event to stop listening to
-     * @param callback The callback to stop listening to
+     * @param event Event name passed to `on()`
+     * @param callback The callback passed to `on()`
      */
     off(event: Bun.HMREvent, callback: () => void): void;
   };

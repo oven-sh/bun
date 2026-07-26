@@ -169,8 +169,8 @@ fn slice_with_underlying_string_to_js_with_options(
         // `ZigStringSlice` encodes ownership in the variant:
         // `Owned`/`WTF` ⇒ allocated, `Static` ⇒ borrowed.
         if this.utf8.is_allocated() {
-            if let Some(utf16) =
-                strings::to_utf16_alloc(this.utf8.slice(), false, false).unwrap_or(None)
+            if let Some(utf16) = strings::to_utf16_alloc(this.utf8.slice(), false, false)
+                .map_err(|_| global_object.throw_out_of_memory())?
             {
                 // Drop the now-unused utf8 allocation.
                 this.utf8 = ZigStringSlice::default();

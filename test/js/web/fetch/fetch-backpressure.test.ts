@@ -201,7 +201,7 @@ const STALL_NO_CONSUMER =
 `;
 
 for (const kind of ["h1", "h1-chunked", "h1-gzip", "h1-tls", "h2", "h3"] as Kind[]) {
-  describe(`fetch() ${kind} receive backpressure`, () => {
+  describe.concurrent(`fetch() ${kind} receive backpressure`, () => {
     const skip = kind === "h3" && isWindows;
 
     const scripts =
@@ -300,21 +300,17 @@ describe.concurrent("fetch() receive backpressure — buffered consumers are not
 });
 
 describe.concurrent("fetch() receive backpressure — streaming consumer shapes", () => {
-  test("reader.cancel() resumes the socket so the abandoned body drains", async () => {
+  test("reader.cancel() mid-stream lets a subsequent request complete", async () => {
     await using server = await serve("h1");
     const r1 = await fetch(server.url, { keepalive: true });
     const reader = r1.body!.getReader();
     await reader.read();
-    await Bun.sleep(50);
     await reader.cancel();
-    // The cancelled body must drain before the connection is poolable;
-    // poll server.sent() instead of asserting a connection count.
-    while (server.sent() < TOTAL) await Bun.sleep(5);
+    // reader.cancel() aborts the in-flight request (#33227), closing the
+    // connection; the client must recover so a later request still completes.
+    // The abort-vs-drain behavior itself is asserted in regression/issue/33227.
     const buf = await (await fetch(server.url, { keepalive: true })).arrayBuffer();
-    expect({ byteLength: buf.byteLength, sent: server.sent() }).toEqual({
-      byteLength: TOTAL,
-      sent: 2 * TOTAL,
-    });
+    expect(buf.byteLength).toBe(TOTAL);
   });
 
   test("res.body.tee() both branches drain", async () => {

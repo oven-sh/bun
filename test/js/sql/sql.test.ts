@@ -761,7 +761,7 @@ if (isDockerEnabled()) {
         username: "bun_sql_test",
         host: "example.com",
         port: 5432,
-        connection_timeout: 4,
+        connection_timeout: 0.5,
         onconnect,
         onclose,
         max: 1,
@@ -775,7 +775,7 @@ if (isDockerEnabled()) {
       expect(error).toBeInstanceOf(SQL.SQLError);
       expect(error).toBeInstanceOf(SQL.PostgresError);
       expect(error.code).toBe(`ERR_POSTGRES_CONNECTION_TIMEOUT`);
-      expect(error.message).toContain("Connection timeout after 4s");
+      expect(error.message).toContain("Connection timeout after 500ms");
       expect(onconnect).not.toHaveBeenCalled();
       expect(onclose).toHaveBeenCalledTimes(1);
     });
@@ -785,13 +785,13 @@ if (isDockerEnabled()) {
       const onconnect = mock();
       await using sql = postgres({
         ...options,
-        idle_timeout: 1,
+        idle_timeout: 0.5,
         onconnect,
         onclose,
       });
       let error: any;
       try {
-        await sql`select pg_sleep(2)`;
+        await sql`select pg_sleep(1)`;
       } catch (e) {
         error = e;
       }
@@ -810,7 +810,7 @@ if (isDockerEnabled()) {
       const onconnect = mock();
       await using sql = postgres({
         ...options,
-        idle_timeout: 1,
+        idle_timeout: 0.5,
         onconnect,
         onclose,
       });
@@ -831,7 +831,7 @@ if (isDockerEnabled()) {
       const onconnect = mock();
       const sql = postgres({
         ...options,
-        max_lifetime: 1,
+        max_lifetime: 0.5,
         onconnect,
         onclose,
       });
@@ -1314,9 +1314,11 @@ if (isDockerEnabled()) {
     });
 
     test("Idle timeout retry works", async () => {
-      await using sql = postgres({ ...options, idleTimeout: 1 });
+      const closed = Promise.withResolvers();
+      await using sql = postgres({ ...options, idleTimeout: 0.25, onclose: () => closed.resolve() });
       await sql`select 1`;
-      await Bun.sleep(1100); // 1.1 seconds so it should retry
+      // wait for the idle timer to actually close the connection so the next query must reconnect
+      await closed.promise;
       await sql`select 1`;
       expect().pass();
     });
@@ -9291,8 +9293,8 @@ CREATE TABLE ${table_name} (
       `;
 
         const values = result[0].special_dates;
-        expect(values[0].toString()).toBe("Invalid Date");
-        expect(values[1].toString()).toBe("Invalid Date");
+        expect(values[0]).toBe(Infinity);
+        expect(values[1]).toBe(-Infinity);
         // Skip testing today/yesterday/tomorrow as they depend on current date
       });
 
@@ -9712,8 +9714,8 @@ CREATE TABLE ${table_name} (
         ]::timestamp[] as special_timestamps
       `;
 
-        expect(result[0].special_timestamps[0].toString()).toBe("Invalid Date");
-        expect(result[0].special_timestamps[1].toString()).toBe("Invalid Date");
+        expect(result[0].special_timestamps[0]).toBe(Infinity);
+        expect(result[0].special_timestamps[1]).toBe(-Infinity);
         expect(result[0].special_timestamps[2].toISOString()).toBe("1970-01-01T00:00:00.000Z");
       });
 
@@ -9915,8 +9917,8 @@ CREATE TABLE ${table_name} (
         ]::timestamptz[] as special_timestamps
       `;
 
-        expect(result[0].special_timestamps[0].toString()).toBe("Invalid Date");
-        expect(result[0].special_timestamps[1].toString()).toBe("Invalid Date");
+        expect(result[0].special_timestamps[0]).toBe(Infinity);
+        expect(result[0].special_timestamps[1]).toBe(-Infinity);
         expect(result[0].special_timestamps[2].toISOString()).toBe("1970-01-01T00:00:00.000Z");
       });
 

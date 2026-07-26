@@ -42,8 +42,6 @@ impl core::fmt::Display for PrettyStr {
     }
 }
 
-use bun_jsc::c_api::{JSObjectGetPropertyAtIndex, JSObjectGetProxyTarget};
-
 /// `Expect*.js.*GetCached` accessors — generate-classes.ts emits these
 /// per-type for `cache: true` props (jest.classes.ts).
 /// Rust has no inherent associated modules, so each
@@ -109,12 +107,7 @@ impl EventType {
 }
 
 #[derive(Default)]
-pub struct JestPrettyFormat {
-    pub counts: Counter,
-}
-
-pub type Type = *mut c_void;
-type Counter = HashMap<u64, u32>;
+pub struct JestPrettyFormat {}
 
 #[repr(u32)]
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -124,25 +117,6 @@ pub enum MessageLevel {
     Error = 2,
     Debug = 3,
     Info = 4,
-}
-
-#[repr(u32)]
-#[derive(Copy, Clone, PartialEq, Eq)]
-pub enum MessageType {
-    Log = 0,
-    Dir = 1,
-    DirXML = 2,
-    Table = 3,
-    Trace = 4,
-    StartGroup = 5,
-    StartGroupCollapsed = 6,
-    EndGroup = 7,
-    Clear = 8,
-    Assert = 9,
-    Timing = 10,
-    Profile = 11,
-    ProfileEnd = 12,
-    Image = 13,
 }
 
 #[derive(Copy, Clone, Default)]
@@ -293,8 +267,7 @@ pub mod visited {
     // `HashMap<JSValue, ()>` is a foreign type, so we cannot impl the foreign
     // `ObjectPoolType` trait on it directly (orphan rule). A `#[repr(transparent)]`
     // newtype with `Deref`/`DerefMut` keeps every call site (`.clear()`,
-    // `.get_or_put()`, `.remove()`, `mem::take`) unchanged. Same trick as
-    // `src/http/zlib.rs::PooledMutableString`.
+    // `.get_or_put()`, `.remove()`, `mem::take`) unchanged.
     #[repr(transparent)]
     #[derive(Default)]
     pub struct Map(pub HashMap<JSValue, ()>);
@@ -329,7 +302,7 @@ pub mod visited {
     // storage; without it `ObjectPool<Map, true, 16>` defaults to
     // `UnwiredStorage` which panics on first `get_node()`.
     bun_collections::object_pool!(pub Pool: Map, threadsafe, 16);
-    pub type PoolNode = <Pool as bun_collections::pool::ObjectPoolTrait>::Node;
+    pub type PoolNode = bun_collections::pool::Node<Map>;
 }
 
 pub struct Formatter<'a> {
@@ -337,7 +310,6 @@ pub struct Formatter<'a> {
     pub map: visited::Map,
     /// Lazily acquired from `visited::Pool`; released back in `Drop`.
     pub map_node: Option<core::ptr::NonNull<visited::PoolNode>>,
-    pub hide_native: bool,
     pub global_this: &'a JSGlobalObject,
     pub indent: u32,
     pub quote_strings: bool,
@@ -352,7 +324,6 @@ impl<'a> Formatter<'a> {
             remaining_values: &[],
             map: visited::Map::default(),
             map_node: None,
-            hide_native: false,
             global_this: global,
             indent: 0,
             quote_strings: false,
@@ -394,7 +365,7 @@ impl Drop for Formatter<'_> {
                 let data = node.as_mut().data.assume_init_mut();
                 *data = core::mem::take(&mut self.map);
                 data.clear();
-                visited::Pool::release(node.as_mut());
+                visited::Pool::release(node.as_ptr());
             }
         }
     }
@@ -416,12 +387,6 @@ impl<'a, 'b> ZigFormatter<'a, 'b> {
     pub fn new(formatter: &'a mut Formatter<'b>, global: &'b JSGlobalObject, value: JSValue) -> Self {
         Self { formatter: Cell::new(Some(formatter)), global, value }
     }
-}
-
-#[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
-pub enum WriteError {
-    #[error("UhOh")]
-    UhOh,
 }
 
 impl core::fmt::Display for ZigFormatter<'_, '_> {
@@ -576,12 +541,7 @@ impl Tag {
         }
 
         if js_type == JSType::GlobalProxy {
-            // SAFETY: `value` is a GlobalProxy cell (checked above); JSC C-API
-            // returns the wrapped target object (never null for a live proxy).
-            return Tag::get(
-                JSValue::c(unsafe { JSObjectGetProxyTarget(value.as_object_ref()) }),
-                global_this,
-            );
+            return Tag::get(value.get_proxy_target(), global_this);
         }
 
         // Is this a react element?
@@ -773,41 +733,17 @@ impl<'a> Formatter<'a> {
 pub struct WrappedWriter<'w, W: bun_io::Write> {
     pub ctx: &'w mut W,
     pub failed: bool,
-    pub estimated_line_length: Option<&'w mut usize>,
 }
 
 impl<'w, W: bun_io::Write> WrappedWriter<'w, W> {
     pub fn new(ctx: &'w mut W) -> Self {
-        Self { ctx, failed: false, estimated_line_length: None }
+        Self { ctx, failed: false }
     }
 
     pub fn print(&mut self, args: core::fmt::Arguments<'_>) {
         if self.ctx.write_fmt(args).is_err() {
             self.failed = true;
         }
-    }
-
-    pub fn write_latin1(&mut self, buf: &[u8]) {
-        let mut remain = buf;
-        while !remain.is_empty() {
-            if let Some(i) = strings::first_non_ascii(remain) {
-                if i > 0 {
-                    if self.write_all_raw(&remain[..i as usize]).is_err() {
-                        self.failed = true;
-                        return;
-                    }
-                }
-                let bytes = strings::latin1_to_codepoint_bytes_assume_not_ascii(remain[i as usize]);
-                if self.write_all_raw(&bytes).is_err() {
-                    self.failed = true;
-                }
-                remain = &remain[i as usize + 1..];
-            } else {
-                break;
-            }
-        }
-
-        let _ = self.write_all_raw(remain);
     }
 
     #[inline]
@@ -1528,8 +1464,6 @@ impl<'a> Formatter<'a> {
 
                         self.add_for_new_line(2);
 
-                        let r#ref = value.as_object_ref();
-
                         let prev_quote_strings = self.quote_strings;
                         self.quote_strings = true;
 
@@ -1538,17 +1472,7 @@ impl<'a> Formatter<'a> {
                         // a closure and restore unconditionally afterward.
                         let inner: JsResult<()> = (|| {
                             {
-                                // SAFETY: `r#ref` is a live JSObjectRef for `value`; index 0 is
-                                // bounds-checked by `len > 0` in the enclosing branch. The C-API
-                                // takes `*mut JSGlobalObject` by convention but never mutates it.
-                                let element = JSValue::c(unsafe {
-                                    JSObjectGetPropertyAtIndex(
-                                        std::ptr::from_ref::<JSGlobalObject>(self.global_this).cast_mut(),
-                                        r#ref,
-                                        0,
-                                        core::ptr::null_mut(),
-                                    )
-                                });
+                                let element = value.get_index(self.global_this, 0)?;
                                 let tag = Tag::get(element, self.global_this)?;
 
                                 was_good_time = was_good_time
@@ -1587,16 +1511,7 @@ impl<'a> Formatter<'a> {
                                 writer.write_all(b"\n");
                                 self.write_indent(writer.ctx).expect("unreachable");
 
-                                // SAFETY: `i < len`, `r#ref` is the live object ref. The C-API
-                                // takes `*mut JSGlobalObject` by convention but never mutates it.
-                                let element = JSValue::c(unsafe {
-                                    JSObjectGetPropertyAtIndex(
-                                        std::ptr::from_ref::<JSGlobalObject>(self.global_this).cast_mut(),
-                                        r#ref,
-                                        i,
-                                        core::ptr::null_mut(),
-                                    )
-                                });
+                                let element = value.get_index(self.global_this, i)?;
                                 let tag = Tag::get(element, self.global_this)?;
 
                                 self.format::<W, ENABLE_ANSI_COLORS>(
@@ -1655,7 +1570,7 @@ impl<'a> Formatter<'a> {
                             // TODO: make this better
                             if !self.global_this.has_exception() {
                                 return Err(self.global_this.throw_error(
-                                    bun_core::err!("FmtError"),
+                                    bun_core::Error::FmtError,
                                     "failed to print Response",
                                 ));
                             }
@@ -1673,7 +1588,7 @@ impl<'a> Formatter<'a> {
                             // TODO: make this better
                             if !self.global_this.has_exception() {
                                 return Err(self.global_this.throw_error(
-                                    bun_core::err!("FmtError"),
+                                    bun_core::Error::FmtError,
                                     "failed to print Request",
                                 ));
                             }
@@ -1686,14 +1601,14 @@ impl<'a> Formatter<'a> {
                         let build = unsafe { &*build };
                         let mut bridge = AsFmt::new(&mut *writer.ctx);
                         if build
-                            .write_format::<_, _, ENABLE_ANSI_COLORS>(self, &mut bridge)
+                            .write_format::<_, _, ENABLE_ANSI_COLORS>(value, self, &mut bridge)
                             .is_err()
                         {
                             self.failed = true;
                             // TODO: make this better
                             if !self.global_this.has_exception() {
                                 return Err(self.global_this.throw_error(
-                                    bun_core::err!("FmtError"),
+                                    bun_core::Error::FmtError,
                                     "failed to print BuildArtifact",
                                 ));
                             }
@@ -1711,7 +1626,7 @@ impl<'a> Formatter<'a> {
                             // TODO: make this better
                             if !self.global_this.has_exception() {
                                 return Err(self.global_this.throw_error(
-                                    bun_core::err!("FmtError"),
+                                    bun_core::Error::FmtError,
                                     "failed to print Blob",
                                 ));
                             }

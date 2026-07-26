@@ -143,3 +143,23 @@ for (const { input, output, description } of testCases) {
     }
   });
 }
+
+// https://github.com/oven-sh/bun/pull/33193 — a transform failure must reject the write
+// promise, not throw synchronously or leave the in-flight write unsettled (abort() hang).
+test("cancelling the readable inside the chunk's toString() rejects the write instead of throwing", async () => {
+  const stream = new TextEncoderStream();
+  const reader = stream.readable.getReader();
+  const writer = stream.writable.getWriter();
+  reader.read();
+  (await null, await null, await null); // open the synchronous-transform window (backpressure cleared, write runs the transform inline)
+
+  const writePromise = writer.write({
+    toString() {
+      reader.cancel();
+      return "x";
+    },
+  }); // must NOT throw synchronously
+  expect(writePromise).toBeInstanceOf(Promise);
+  await expect(writePromise).rejects.toBeInstanceOf(TypeError);
+  await writer.abort("bye"); // must settle
+});

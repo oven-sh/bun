@@ -1,5 +1,5 @@
 import { afterEach, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, makeTree, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isWindows, tempDirWithFiles } from "harness";
 import path from "node:path";
 import { symbols, test_skipped } from "../../src/jsc/bindings/libuv/generate_uv_posix_stubs_constants";
 import source from "./uv-stub-stuff/uv_impl.c";
@@ -47,14 +47,15 @@ describe.if(!isWindows)("uv stubs", () => {
     };
 
     tempdir = tempDirWithFiles("uv-tests", files);
-    await makeTree(tempdir, files);
     outdir = path.join(tempdir, "dist");
 
     process.chdir(tempdir);
 
     const libuvDir = path.join(__dirname, "../../src/jsc/bindings/libuv");
     await Bun.$`cp -R ${libuvDir} ${path.join(tempdir, "libuv")}`;
-    await Bun.$`${bunExe()} i && ${bunExe()} build:napi`.env(bunEnv).cwd(tempdir);
+    // --ignore-scripts skips the implicit `node-gyp rebuild` bun install runs for a
+    // root binding.gyp package; build:napi below is the single, explicit gyp build.
+    await Bun.$`${bunExe()} i --ignore-scripts && ${bunExe()} build:napi`.env(bunEnv).cwd(tempdir);
 
     nativeModule = require(path.join(tempdir, "./build/Release/uv_test.node"));
   });

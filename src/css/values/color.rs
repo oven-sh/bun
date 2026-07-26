@@ -954,7 +954,7 @@ bitflags::bitflags! {
 
 impl ColorFallbackKind {
     pub fn lowest(self) -> ColorFallbackKind {
-        ColorFallbackKind::from_bits_truncate(self.bits() & self.bits().wrapping_neg())
+        ColorFallbackKind::from_bits_truncate(self.bits().isolate_lowest_one())
     }
 
     pub fn highest(self) -> ColorFallbackKind {
@@ -1231,28 +1231,6 @@ pub fn parse_rgb_components(
     Ok((r, g, b, is_legacy_syntax))
 }
 
-pub fn parse_hslhwb_components<T>(
-    input: &mut css::Parser,
-    parser: &mut ComponentParser,
-    allows_legacy: bool,
-) -> CssResult<(f32, f32, f32, bool)> {
-    let _ = core::marker::PhantomData::<T>; // autofix
-    let h = parse_angle_or_number(input, parser)?;
-    let is_legacy_syntax = allows_legacy
-        && parser.from.is_none()
-        && !h.is_nan()
-        && input.try_parse(|i| i.expect_comma()).is_ok();
-    let a = parser.parse_percentage(input)?.clamp(0.0, 1.0);
-    if is_legacy_syntax {
-        input.expect_colon()?;
-    }
-    let b = parser.parse_percentage(input)?.clamp(0.0, 1.0);
-    if is_legacy_syntax && (a.is_nan() || b.is_nan()) {
-        return Err(input.new_custom_error(css::ParserError::invalid_value));
-    }
-    Ok((h, a, b, is_legacy_syntax))
-}
-
 pub(crate) fn map_gamut<T>(color: T) -> T
 where
     T: ColorGamut + Into<OKLCH> + From<OKLCH> + Into<OKLAB> + Copy,
@@ -1283,6 +1261,14 @@ where
             alpha: current.alpha,
         };
         return T::from(oklch);
+    }
+
+    // Per CSS Color 4, if clipping the origin is already within the JND, use
+    // the clip directly. Without this, colors sitting essentially on the gamut
+    // boundary (e.g. sRGB blue) get desaturated by the chroma search below.
+    let clipped = T::from(current).clip();
+    if delta_eok(clipped, current) < JND {
+        return clipped;
     }
 
     let mut min: f32 = 0.0;
@@ -1487,26 +1473,6 @@ pub fn parse_number_or_percentage(
 }
 
 impl LABColor {
-    pub fn new_lab(l: f32, a: f32, b: f32, alpha: f32) -> LABColor {
-        LABColor::Lab(LAB { l, a, b, alpha })
-    }
-
-    pub fn new_oklab(l: f32, a: f32, b: f32, alpha: f32) -> LABColor {
-        // Intentionally the `Lab` variant (sic) — kept for behavioral
-        // compatibility.
-        LABColor::Lab(LAB { l, a, b, alpha })
-    }
-
-    pub fn new_lch(l: f32, a: f32, b: f32, alpha: f32) -> LABColor {
-        // Intentionally the `Lab` variant (sic) — kept for behavioral compatibility.
-        LABColor::Lab(LAB { l, a, b, alpha })
-    }
-
-    pub fn new_oklch(l: f32, a: f32, b: f32, alpha: f32) -> LABColor {
-        // Intentionally the `Lab` variant (sic) — kept for behavioral compatibility.
-        LABColor::Lab(LAB { l, a, b, alpha })
-    }
-
     pub fn into_hsl(&self) -> HSL {
         HSL::from_lab_color(self)
     }
@@ -2451,6 +2417,13 @@ pub fn parse_color_mix(input: &mut css::Parser) -> CssResult<CssColor> {
     };
 
     // https://drafts.csswg.org/css-color-5/#color-mix-percent-norm
+    // The grammar is <percentage [0,100]>; values outside that range are invalid.
+    if first_percent.is_some_and(|p| !(0.0..=1.0).contains(&p))
+        || second_percent.is_some_and(|p| !(0.0..=1.0).contains(&p))
+    {
+        return Err(input.new_custom_error(css::ParserError::invalid_value));
+    }
+
     let (p1, p2): (f32, f32) = if first_percent.is_none() && second_percent.is_none() {
         (0.5, 0.5)
     } else {

@@ -506,6 +506,53 @@ describe("bundler", () => {
     run: { stdout: "bbb" },
   });
 
+  itBundled("barrel/NamespaceReExportCycleThroughStarTarget", {
+    files: {
+      "/entry.js": /* js */ `
+        import { keep } from 'looplib/w.js';
+        import { other } from 'looplib/g.js';
+        import { x, y, deepValue } from 'looplib';
+        console.log(typeof x + " " + y + " " + keep + " " + deepValue + " " + other);
+      `,
+      "/node_modules/looplib/package.json": JSON.stringify({
+        name: "looplib",
+        main: "./index.js",
+        sideEffects: false,
+      }),
+      "/node_modules/looplib/index.js": /* js */ `
+        export * from './t.js';
+      `,
+      "/node_modules/looplib/t.js": /* js */ `
+        export { x } from './w.js';
+        export * from './r.js';
+        export * from './g.js';
+      `,
+      "/node_modules/looplib/w.js": /* js */ `
+        import * as ns from './t.js';
+        export { ns as x };
+        export { keep } from './keep.js';
+      `,
+      "/node_modules/looplib/keep.js": /* js */ `
+        export const keep = "KEEP";
+      `,
+      "/node_modules/looplib/r.js": /* js */ `
+        export const y = "Y";
+      `,
+      "/node_modules/looplib/g.js": /* js */ `
+        export { deepValue } from './deep.js';
+        export { other } from './other.js';
+      `,
+      "/node_modules/looplib/deep.js": /* js */ `
+        export const deepValue = "DEEP";
+      `,
+      "/node_modules/looplib/other.js": /* js */ `
+        export const other = "OTHER";
+      `,
+    },
+    outdir: "/out",
+    run: { stdout: "object Y KEEP DEEP OTHER" },
+  });
+
   // --- Ported from Rolldown: self-re-export ---
   // barrel re-exports a symbol from itself
 

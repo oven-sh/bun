@@ -4,9 +4,9 @@ sidebarTitle: Contextual data
 mode: center
 ---
 
-When building a WebSocket server, it's typically necessary to store some identifying information or context associated with each connected client.
+A WebSocket server typically needs to store some identifying information or context for each connected client.
 
-With [Bun.serve()](/runtime/http/websockets#contextual-data), this "contextual data" is set when the connection is initially upgraded by passing a `data` parameter in the `server.upgrade()` call.
+With [Bun.serve()](/runtime/http/websockets#contextual-data), set this "contextual data" by passing a `data` parameter to `server.upgrade()` when upgrading the connection.
 
 ```ts server.ts icon="/icons/typescript.svg"
 Bun.serve({

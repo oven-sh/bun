@@ -17,19 +17,20 @@ declare module "bun:test" {
   export type Mock<T extends (...args: any[]) => any> = JestMock.Mock<T>;
 
   export const mock: {
+    /**
+     * Creates a mock function. The optional `Function` becomes the mock's implementation.
+     */
     <T extends (...args: any[]) => any>(Function?: T): Mock<T>;
 
     /**
      * Replace the module `id` with the return value of `factory`.
      *
-     * This is useful for mocking modules.
-     *
      * If the module is already loaded, exports are overwritten with the return
-     * value of `factory`. If the export didn't exist before, it will not be
-     * added to existing import statements. This is due to how ESM works.
+     * value of `factory`. If an export didn't exist before, it is not added to
+     * existing import statements. This is a consequence of how ESM works.
      *
      * @param id module ID to mock
-     * @param factory a function returning an object that will be used as the exports of the mocked module
+     * @param factory a function returning an object used as the exports of the mocked module
      *
      * @example
      * ```ts
@@ -64,9 +65,7 @@ declare module "bun:test" {
    * - `new Date()`
    * - `Intl.DateTimeFormat().format()`
    *
-   * In the future, we may add support for more functions, but we haven't done that yet.
-   *
-   * @param now The time to set the system time to. If not provided, the system time will be reset.
+   * @param now The time to set the system time to. If omitted, the system time is reset
    * @returns `this`
    * @since v0.6.13
    *
@@ -110,7 +109,7 @@ declare module "bun:test" {
     ): Mock<Extract<T[K], (...args: any[]) => any>>;
 
     /**
-     * Constructs the type of a mock function, e.g. the return type of `jest.fn()`.
+     * Constructs the type of a mock function, such as the return type of `jest.fn()`.
      */
     type Mock<T extends (...args: any[]) => any = (...args: any[]) => any> = JestMock.Mock<T>;
     /**
@@ -164,8 +163,7 @@ declare module "bun:test" {
   ): Mock<Extract<T[K], (...args: any[]) => any>>;
 
   /**
-   * Vitest-compatible mocking utilities
-   * Provides Vitest-style mocking API for easier migration from Vitest to Bun
+   * Vitest-compatible mocking utilities, for migrating tests from Vitest to Bun.
    */
   export const vi: {
     /**
@@ -210,6 +208,7 @@ declare module "bun:test" {
    * Describes a group of related tests.
    *
    * @example
+   * ```ts
    * function sum(a, b) {
    *   return a + b;
    * }
@@ -218,6 +217,7 @@ declare module "bun:test" {
    *     expect(sum(1, 1)).toBe(2);
    *   });
    * });
+   * ```
    *
    * @param label the label for the tests
    * @param fn the function that defines the tests
@@ -266,7 +266,7 @@ declare module "bun:test" {
     /**
      * Marks this group of tests as to be written or to be fixed, if `condition` is true.
      *
-     * @param condition if these tests should be skipped
+     * @param condition if these tests should be marked TODO
      */
     todoIf(condition: boolean): Describe<T>;
     /**
@@ -282,6 +282,7 @@ declare module "bun:test" {
    * Describes a group of related tests.
    *
    * @example
+   * ```ts
    * function sum(a, b) {
    *   return a + b;
    * }
@@ -290,6 +291,7 @@ declare module "bun:test" {
    *     expect(sum(1, 1)).toBe(2);
    *   });
    * });
+   * ```
    *
    * @param label the label for the tests
    * @param fn the function that defines the tests
@@ -309,16 +311,18 @@ declare module "bun:test" {
   /**
    * Runs a function, once, before all the tests.
    *
-   * This is useful for running set up tasks, like initializing
-   * a global variable or connecting to a database.
+   * Use this for setup, like initializing a global variable or
+   * connecting to a database.
    *
-   * If this function throws, tests will not run in this file.
+   * If the function throws, no tests in the file run.
    *
    * @example
+   * ```ts
    * let database;
    * beforeAll(async () => {
    *   database = await connect("localhost");
    * });
+   * ```
    *
    * @param fn the function to run
    */
@@ -329,10 +333,10 @@ declare module "bun:test" {
   /**
    * Runs a function before each test.
    *
-   * This is useful for running set up tasks, like initializing
-   * a global variable or connecting to a database.
+   * Use this for setup, like initializing a global variable or
+   * connecting to a database.
    *
-   * If this function throws, the test will not run.
+   * If the function throws, the test does not run.
    *
    * @param fn the function to run
    */
@@ -343,16 +347,18 @@ declare module "bun:test" {
   /**
    * Runs a function, once, after all the tests.
    *
-   * This is useful for running clean up tasks, like closing
-   * a socket or deleting temporary files.
+   * Use this for cleanup, like closing a socket or
+   * deleting temporary files.
    *
    * @example
+   * ```ts
    * let database;
    * afterAll(async () => {
    *   if (database) {
    *     await database.close();
    *   }
    * });
+   * ```
    *
    * @param fn the function to run
    */
@@ -363,8 +369,8 @@ declare module "bun:test" {
   /**
    * Runs a function after each test.
    *
-   * This is useful for running clean up tasks, like closing
-   * a socket or deleting temporary files.
+   * Use this for cleanup, like closing a socket or
+   * deleting temporary files.
    *
    * @param fn the function to run
    */
@@ -373,20 +379,19 @@ declare module "bun:test" {
     options?: HookOptions,
   ): void;
   /**
-   * Runs a function after a test finishes, including after all afterEach hooks.
+   * Runs a function after the test finishes, once all `afterEach` hooks have completed.
    *
-   * This is useful for cleanup tasks that need to run at the very end of a test,
-   * after all other hooks have completed.
-   *
-   * Can only be called inside a test, not in describe blocks.
+   * Can only be called inside a test, not in `describe` blocks.
    *
    * @example
+   * ```ts
    * test("my test", () => {
    *   onTestFinished(() => {
    *     // This runs after all afterEach hooks
    *     console.log("Test finished!");
    *   });
    * });
+   * ```
    *
    * @param fn the function to run
    */
@@ -395,17 +400,17 @@ declare module "bun:test" {
     options?: HookOptions,
   ): void;
   /**
-   * Sets the default timeout for all tests in the current file. If a test specifies a timeout, it will
-   * override this value. The default timeout is 5000ms (5 seconds).
+   * Sets the default timeout for all tests in the current file. A timeout set on an
+   * individual test overrides this value. The default timeout is 5000ms (5 seconds).
    *
-   * @param milliseconds the number of milliseconds for the default timeout
+   * @param milliseconds the default timeout in milliseconds
    */
   export function setDefaultTimeout(milliseconds: number): void;
   export interface TestOptions {
     /**
      * Sets the timeout for the test in milliseconds.
      *
-     * If the test does not complete within this time, the test will fail with:
+     * If the test does not complete within this time, it fails with:
      * ```ts
      * 'Timeout: test {name} timed out after 5000ms'
      * ```
@@ -446,6 +451,7 @@ declare module "bun:test" {
    * Runs a test.
    *
    * @example
+   * ```ts
    * test("can check if using Bun", () => {
    *   expect(Bun).toBeDefined();
    * });
@@ -458,6 +464,7 @@ declare module "bun:test" {
    * test("can set a timeout", async () => {
    *   await Bun.sleep(100);
    * }, 50); // or { timeout: 50 }
+   * ```
    *
    * @param label the label for the test
    * @param fn the test function
@@ -495,21 +502,18 @@ declare module "bun:test" {
     /**
      * Marks this test as to be written or to be fixed.
      *
-     * These tests will not be executed unless the `--todo` flag is passed. With the flag,
-     * if the test passes, the test will be marked as `fail` in the results; you will have to
-     * remove the `.todo` or check that your test
-     * is implemented correctly.
+     * These tests only run when the `--todo` flag is passed. With the flag,
+     * a `.todo` test that passes is marked as `fail` in the results: remove
+     * the `.todo` or check that the test is implemented correctly.
      */
     todo: Test<T>;
     /**
      * Marks this test as failing.
      *
-     * Use `test.failing` when you are writing a test and expecting it to fail.
-     * These tests will behave the other way normal tests do. If failing test
-     * will throw any errors then it will pass. If it does not throw it will
-     * fail.
+     * Use `test.failing` for a test you expect to fail. The result is inverted:
+     * the test passes if it throws, and fails if it does not.
      *
-     * `test.failing` is very similar to {@link test.todo} except that it always
+     * `test.failing` is similar to {@link test.todo} except that it always
      * runs, regardless of the `--todo` flag.
      */
     failing: Test<T>;
@@ -574,6 +578,7 @@ declare module "bun:test" {
    * Runs a test.
    *
    * @example
+   * ```ts
    * test("can check if using Bun", () => {
    *   expect(Bun).toBeDefined();
    * });
@@ -582,6 +587,7 @@ declare module "bun:test" {
    *   const response = await fetch("https://example.com/");
    *   expect(response.ok).toBe(true);
    * });
+   * ```
    *
    * @param label the label for the test
    * @param fn the test function
@@ -604,9 +610,11 @@ declare module "bun:test" {
    *
    * @link https://jestjs.io/docs/expect#reference
    * @example
+   * ```ts
    * expect(1 + 1).toBe(2);
    * expect([1,2,3]).toContain(2);
    * expect(null).toBeNull();
+   * ```
    *
    * @param actual The actual (received) value
    */
@@ -683,7 +691,7 @@ declare module "bun:test" {
     extend<M>(matchers: ExpectExtendMatchers<M>): void;
 
     /**
-     * Throw an error if this function is called.
+     * Throws an error if called.
      *
      * @param msg Optional message to display if the test fails
      * @returns never
@@ -716,7 +724,7 @@ declare module "bun:test" {
   }
 
   /**
-   * You can extend this interface with declaration merging, in order to add type support for custom matchers.
+   * Extend this interface with declaration merging to add type support for custom matchers.
    * @template T Type of the actual value
    *
    * @example
@@ -743,7 +751,7 @@ declare module "bun:test" {
   export interface Matchers<T = unknown> extends MatchersBuiltin<T> {}
 
   /**
-   * You can extend this interface with declaration merging, in order to add type support for custom asymmetric matchers.
+   * Extend this interface with declaration merging to add type support for custom asymmetric matchers.
    * @example
    * // my_modules.d.ts
    * interface MyCustomMatchers {
@@ -770,7 +778,7 @@ declare module "bun:test" {
   export interface AsymmetricMatchersBuiltin {
     /**
      * Matches anything that was created with the given constructor.
-     * You can use it inside `toEqual` or `toBeCalledWith` instead of a literal value.
+     * Use it inside `toEqual` or `toBeCalledWith` instead of a literal value.
      *
      * @example
      *
@@ -786,8 +794,8 @@ declare module "bun:test" {
      */
     any(constructor: ((...args: any[]) => any) | { new (...args: any[]): any }): AsymmetricMatcher;
     /**
-     * Matches anything but null or undefined. You can use it inside `toEqual` or `toBeCalledWith` instead
-     * of a literal value. For example, if you want to check that a mock function is called with a
+     * Matches anything but null or undefined. Use it inside `toEqual` or `toBeCalledWith` instead
+     * of a literal value. For example, to check that a mock function is called with a
      * non-null argument:
      *
      * @example
@@ -801,16 +809,15 @@ declare module "bun:test" {
     anything(): AsymmetricMatcher;
     /**
      * Matches any array made up entirely of elements in the provided array.
-     * You can use it inside `toEqual` or `toBeCalledWith` instead of a literal value.
+     * Use it inside `toEqual` or `toBeCalledWith` instead of a literal value.
      *
-     * Optionally, you can provide a type for the elements via a generic.
+     * Optionally, pass a type for the elements as a generic argument.
      */
     arrayContaining<E = any>(arr: readonly E[]): AsymmetricMatcher;
     /**
      * Matches any object that recursively matches the provided keys.
-     * This is often handy in conjunction with other asymmetric matchers.
      *
-     * Optionally, you can provide a type for the object via a generic.
+     * Optionally, pass a type for the object as a generic argument.
      * This ensures that the object contains the desired structure.
      */
     objectContaining(obj: object): AsymmetricMatcher;
@@ -819,12 +826,13 @@ declare module "bun:test" {
      */
     stringContaining(str: string | String): AsymmetricMatcher;
     /**
-     * Matches any string that contains the exact provided string
+     * Matches any received string that matches the expected string or regular expression
      */
     stringMatching(regex: string | String | RegExp): AsymmetricMatcher;
     /**
-     * Useful when comparing floating point numbers in object properties or array item.
-     * If you need to compare a number, use `.toBeCloseTo` instead.
+     * Matches a number close to the provided value.
+     * Use it when comparing floating point numbers in object properties or array items.
+     * To compare a number directly, use `.toBeCloseTo` instead.
      *
      * The optional `numDigits` argument limits the number of digits to check after the decimal point.
      * For the default value 2, the test criterion is `Math.abs(expected - received) < 0.005` (that is, `10 ** -2 / 2`).
@@ -834,7 +842,7 @@ declare module "bun:test" {
 
   interface AsymmetricMatchersBuiltinNegated {
     /**
-     * Create an asymmetric matcher that will fail on a promise resolved value that matches the chained matcher.
+     * Create an asymmetric matcher that fails when the promise's resolved value matches the chained matcher.
      *
      * @example
      * expect(Promise.resolve("value")).toEqual(expect.not.resolvesTo.stringContaining("value")); // will fail
@@ -844,7 +852,7 @@ declare module "bun:test" {
     resolvesTo: ExpectNot;
 
     /**
-     * Create an asymmetric matcher that will fail on a promise rejected value that matches the chained matcher.
+     * Create an asymmetric matcher that fails when the promise's rejected value matches the chained matcher.
      *
      * @example
      * expect(Promise.reject("value")).toEqual(expect.not.rejectsTo.stringContaining("value")); // will fail
@@ -859,7 +867,7 @@ declare module "bun:test" {
      * the expected array is not a subset of the received array. It is the
      * inverse of `expect.arrayContaining`.
      *
-     * Optionally, you can provide a type for the elements via a generic.
+     * Optionally, pass a type for the elements as a generic argument.
      */
     arrayContaining<E = any>(arr: readonly E[]): AsymmetricMatcher;
 
@@ -870,7 +878,7 @@ declare module "bun:test" {
      * it matches a received object which contains properties that are not
      * in the expected object. It is the inverse of `expect.objectContaining`.
      *
-     * Optionally, you can provide a type for the object via a generic.
+     * Optionally, pass a type for the object as a generic argument.
      * This ensures that the object contains the desired structure.
      */
     objectContaining(obj: object): AsymmetricMatcher;
@@ -891,7 +899,7 @@ declare module "bun:test" {
 
     /**
      * `expect.not.closeTo` matches a number not close to the provided value.
-     * Useful when comparing floating point numbers in object properties or array item.
+     * Use it when comparing floating point numbers in object properties or array items.
      * It is the inverse of `expect.closeTo`.
      */
     closeTo(num: number, numDigits?: number): AsymmetricMatcher;
@@ -900,7 +908,6 @@ declare module "bun:test" {
   export interface MatchersBuiltin<T = unknown> {
     /**
      * Negates the result of a subsequent assertion.
-     * If you know how to test something, `.not` lets you test its opposite.
      *
      * @example
      * expect(1).not.toBe(0);
@@ -997,10 +1004,10 @@ declare module "bun:test" {
     toBeEven(): void;
 
     /**
-     * Asserts that value is close to the expected by floating point precision.
+     * Asserts that a value is close to the expected value, within floating point precision.
      *
      * For example, the following fails because arithmetic on decimal (base 10)
-     * values often have rounding errors in limited precision binary (base 2) representation.
+     * values often has rounding errors in limited precision binary (base 2) representation.
      *
      * @example
      * expect(0.2 + 0.1).toBe(0.3); // fails
@@ -1056,7 +1063,7 @@ declare module "bun:test" {
     toStrictEqual<X = T>(expected: NoInfer<X>): void;
 
     /**
-     * Asserts that the value is deep equal to an element in the expected array.
+     * Asserts that the value is deeply equal to an element in the expected array.
      *
      * The value must be an array or iterable, which includes strings.
      *
@@ -1089,7 +1096,7 @@ declare module "bun:test" {
     /**
      * Asserts that an `object` contains a key.
      *
-     * The value must be an object
+     * The value must be an object.
      *
      * @example
      * expect({ a: 'foo', b: 'bar', c: 'baz' }).toContainKey('a');
@@ -1105,7 +1112,7 @@ declare module "bun:test" {
     /**
      * Asserts that an `object` contains all the provided keys.
      *
-     * The value must be an object
+     * The value must be an object.
      *
      * @example
      * expect({ a: 'hello', b: 'world' }).toContainAllKeys(['a','b']);
@@ -1121,9 +1128,8 @@ declare module "bun:test" {
 
     /**
      * Asserts that an `object` contains at least one of the provided keys.
-     * Asserts that an `object` contains all the provided keys.
      *
-     * The value must be an object
+     * The value must be an object.
      *
      * @example
      * expect({ a: 'hello', b: 'world' }).toContainAnyKeys(['a']);
@@ -1137,9 +1143,9 @@ declare module "bun:test" {
     toContainAnyKeys<X = T>(expected: Array<__internal.IfNeverThenElse<NoInfer<keyof X>, PropertyKey>>): void;
 
     /**
-     * Asserts that an `object` contain the provided value.
+     * Asserts that an `object` contains the provided value.
      *
-     * This method is deep and will look through child properties to find the
+     * This check is deep: it looks through child properties to find the
      * expected value.
      *
      * The input value must be an object.
@@ -1149,17 +1155,17 @@ declare module "bun:test" {
      * const deep = { message: shallow };
      * const deepArray = { message: [shallow] };
      * const o = { a: "foo", b: [1, "hello", true], c: "baz" };
-
+     *
      * expect(shallow).toContainValue("world");
      * expect({ foo: false }).toContainValue(false);
      * expect(deep).toContainValue({ hello: "world" });
      * expect(deepArray).toContainValue([{ hello: "world" }]);
-
+     *
      * expect(o).toContainValue("foo", "barr");
      * expect(o).toContainValue([1, "hello", true]);
      * expect(o).not.toContainValue("qux");
-
-     // NOT
+     *
+     * // NOT
      * expect(shallow).not.toContainValue("foo");
      * expect(deep).not.toContainValue({ foo: "bar" });
      * expect(deepArray).not.toContainValue([{ foo: "bar" }]);
@@ -1171,12 +1177,12 @@ declare module "bun:test" {
     toContainValue(expected: unknown): void;
 
     /**
-     * Asserts that an `object` contain the provided value.
+     * Asserts that an `object` contains the provided values.
      *
      * This is the same as {@link toContainValue}, but accepts an array of
      * values instead.
      *
-     * The value must be an object
+     * The value must be an object.
      *
      * @example
      * const o = { a: 'foo', b: 'bar', c: 'baz' };
@@ -1188,9 +1194,9 @@ declare module "bun:test" {
     toContainValues(expected: Array<unknown>): void;
 
     /**
-     * Asserts that an `object` contain all the provided values.
+     * Asserts that an `object` contains all the provided values.
      *
-     * The value must be an object
+     * The value must be an object.
      *
      * @example
      * const o = { a: 'foo', b: 'bar', c: 'baz' };
@@ -1202,9 +1208,9 @@ declare module "bun:test" {
     toContainAllValues(expected: Array<unknown>): void;
 
     /**
-     * Asserts that an `object` contain any provided value.
+     * Asserts that an `object` contains any of the provided values.
      *
-     * The value must be an object
+     * The value must be an object.
      *
      * @example
      * const o = { a: 'foo', b: 'bar', c: 'baz' };
@@ -1232,8 +1238,8 @@ declare module "bun:test" {
     /**
      * Asserts that a value contains and equals what is expected.
      *
-     * This matcher will perform a deep equality check for members
-     * of arrays, rather than checking for object identity.
+     * This matcher performs a deep equality check on array members,
+     * rather than checking for object identity.
      *
      * @example
      * expect([{ a: 1 }]).toContainEqual({ a: 1 });
@@ -1250,7 +1256,7 @@ declare module "bun:test" {
      *
      * @example
      * expect([]).toHaveLength(0);
-     * expect("hello").toHaveLength(4);
+     * expect("hello").toHaveLength(5);
      *
      * @param length the expected length
      */
@@ -1291,14 +1297,14 @@ declare module "bun:test" {
      *
      * @link https://developer.mozilla.org/en-US/docs/Glossary/Falsy
      * @example
-     * expect(true).toBeTruthy();
-     * expect(1).toBeTruthy();
-     * expect({}).toBeTruthy();
+     * expect(false).toBeFalsy();
+     * expect(0).toBeFalsy();
+     * expect("").toBeFalsy();
      */
     toBeFalsy(): void;
 
     /**
-     * Asserts that a value is defined. (e.g. is not `undefined`)
+     * Asserts that a value is defined (that is, not `undefined`).
      *
      * @example
      * expect(true).toBeDefined();
@@ -1307,7 +1313,7 @@ declare module "bun:test" {
     toBeDefined(): void;
 
     /**
-     * Asserts that the expected value is an instance of value
+     * Asserts that a value is an instance of the given class or constructor.
      *
      * @example
      * expect([]).toBeInstanceOf(Array);
@@ -1396,10 +1402,10 @@ declare module "bun:test" {
     /**
      * Asserts that a function throws an error.
      *
-     * - If expected is a `string` or `RegExp`, it will check the `message` property.
-     * - If expected is an `Error` object, it will check the `name` and `message` properties.
-     * - If expected is an `Error` constructor, it will check the class of the `Error`.
-     * - If expected is not provided, it will check if anything has thrown.
+     * - If expected is a `string` or `RegExp`, it checks the `message` property.
+     * - If expected is an `Error` object, it checks the `name` and `message` properties.
+     * - If expected is an `Error` constructor, it checks the class of the `Error`.
+     * - If expected is not provided, it checks that anything was thrown.
      *
      * @example
      * function fail() {
@@ -1417,10 +1423,10 @@ declare module "bun:test" {
     /**
      * Asserts that a function throws an error.
      *
-     * - If expected is a `string` or `RegExp`, it will check the `message` property.
-     * - If expected is an `Error` object, it will check the `name` and `message` properties.
-     * - If expected is an `Error` constructor, it will check the class of the `Error`.
-     * - If expected is not provided, it will check if anything has thrown.
+     * - If expected is a `string` or `RegExp`, it checks the `message` property.
+     * - If expected is an `Error` object, it checks the `name` and `message` properties.
+     * - If expected is an `Error` constructor, it checks the class of the `Error`.
+     * - If expected is not provided, it checks that anything was thrown.
      *
      * @example
      * function fail() {
@@ -1506,7 +1512,7 @@ declare module "bun:test" {
      * expect(fail).toThrowErrorMatchingSnapshot();
      * expect(fail).toThrowErrorMatchingSnapshot("This one should say Oops!");
      *
-     * @param value The latest automatically-updated snapshot value.
+     * @param hint Hint used to identify the snapshot in the snapshot file.
      */
     toThrowErrorMatchingSnapshot(hint?: string): void;
 
@@ -1565,7 +1571,7 @@ declare module "bun:test" {
     toBeNil(): void;
 
     /**
-     * Asserts that a value is a `array`.
+     * Asserts that a value is an `array`.
      *
      * @link https://jest-extended.jestcommunity.dev/docs/matchers/array/#tobearray
      * @example
@@ -1576,7 +1582,7 @@ declare module "bun:test" {
     toBeArray(): void;
 
     /**
-     * Asserts that a value is a `array` of a certain length.
+     * Asserts that a value is an `array` of a certain length.
      *
      * @link https://jest-extended.jestcommunity.dev/docs/matchers/array/#tobearrayofsize
      * @example
@@ -1769,15 +1775,15 @@ declare module "bun:test" {
     toInclude(expected: string): void;
 
     /**
-     * Asserts that a value includes a `string` {times} times.
+     * Asserts that a value includes a `string` the given number of times.
      * @param expected the expected substring
      * @param times the number of times the substring should occur
      */
     toIncludeRepeated(expected: string, times: number): void;
 
     /**
-     * Checks whether a value satisfies a custom condition.
-     * @param {Function} predicate - The custom condition to be satisfied. It should be a function that takes a value as an argument (in this case the value from expect) and returns a boolean.
+     * Asserts that a value satisfies a custom condition.
+     * @param predicate a function that receives the value passed to `expect` and returns a boolean
      * @example
      * expect(1).toSatisfy((val) => val > 0);
      * expect("foo").toSatisfy((val) => val === "foo");
@@ -1804,16 +1810,14 @@ declare module "bun:test" {
     /**
      * Ensures that a mock function has returned successfully at least once.
      *
-     * A promise that is unfulfilled will be considered a failure. If the
-     * function threw an error, it will be considered a failure.
+     * An unfulfilled promise counts as a failure, as does a thrown error.
      */
     toHaveReturned(): void;
 
     /**
-     * Ensures that a mock function has returned successfully at `times` times.
+     * Ensures that a mock function has returned successfully `times` times.
      *
-     * A promise that is unfulfilled will be considered a failure. If the
-     * function threw an error, it will be considered a failure.
+     * An unfulfilled promise counts as a failure, as does a thrown error.
      */
     toHaveReturnedTimes(times: number): void;
 
@@ -1843,7 +1847,7 @@ declare module "bun:test" {
     toHaveBeenCalled(): void;
 
     /**
-     * Ensures that a mock function is called an exact number of times.
+     * Ensures that a mock function is called.
      * @alias toHaveBeenCalled
      */
     toBeCalled(): void;
@@ -1854,7 +1858,7 @@ declare module "bun:test" {
     toHaveBeenCalledTimes(expected: number): void;
 
     /**
-     * Ensure that a mock function is called with specific arguments.
+     * Ensures that a mock function is called an exact number of times.
      * @alias toHaveBeenCalledTimes
      */
     toBeCalledTimes(expected: number): void;
@@ -1876,8 +1880,8 @@ declare module "bun:test" {
     toHaveBeenLastCalledWith(...expected: unknown[]): void;
 
     /**
-     * Ensure that a mock function is called with specific arguments for the nth call.
-     * @alias toHaveBeenCalledWith
+     * Ensure that a mock function is called with specific arguments for the last call.
+     * @alias toHaveBeenLastCalledWith
      */
     lastCalledWith(...expected: unknown[]): void;
 
@@ -1888,13 +1892,13 @@ declare module "bun:test" {
 
     /**
      * Ensure that a mock function is called with specific arguments for the nth call.
-     * @alias toHaveBeenCalledWith
+     * @alias toHaveBeenNthCalledWith
      */
     nthCalledWith(n: number, ...expected: unknown[]): void;
   }
 
   /**
-   * Object representing an asymmetric matcher obtained by an static call to expect like `expect.anything()`, `expect.stringContaining("...")`, etc.
+   * An asymmetric matcher returned by a static `expect` method such as `expect.anything()` or `expect.stringContaining("...")`.
    */
   // Defined as an alias of `any` so that it does not trigger any type mismatch
   export type AsymmetricMatcher = any;
@@ -1915,8 +1919,8 @@ declare module "bun:test" {
     Omit<AsymmetricMatchers, keyof AsymmetricMatchersBuiltin>;
 
   /**
-   * If the types has been defined through declaration merging, enforce it.
-   * Otherwise enforce the generic custom matcher signature.
+   * If a matcher's type has been defined through declaration merging, enforces it.
+   * Otherwise enforces the generic custom matcher signature.
    */
   export type ExpectExtendMatchers<M> = {
     [k in keyof M]: k extends keyof CustomMatchersDetected
@@ -2143,13 +2147,13 @@ declare module "bun:test" {
        */
       contexts: Array<ThisParameterType<T>>;
       /**
-       * List of the call order indexes of the mock. Jest is indexing the order of
-       * invocations of all mocks in a test file. The index is starting with `1`.
+       * List of the call order indexes of the mock. Invocation order is indexed
+       * across all mocks in a test file, starting at `1`.
        */
       invocationCallOrder: number[];
       /**
-       * List of the call arguments of the last call that was made to the mock.
-       * If the function was not called, it will return `undefined`.
+       * Call arguments of the last call made to the mock, or `undefined` if the
+       * mock has not been called.
        */
       lastCall?: Parameters<T>;
       /**
@@ -2301,11 +2305,11 @@ declare module "bun:test" {
 
     export interface Replaced<T = unknown> {
       /**
-       * Restore property to its original value known at the time of mocking.
+       * Restores the property to the value it had when it was mocked.
        */
       restore(): void;
       /**
-       * Change the value of the property.
+       * Changes the value of the property.
        */
       replaceValue(value: T): this;
     }

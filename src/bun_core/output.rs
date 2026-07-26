@@ -136,16 +136,16 @@ impl File {
     /// Write all bytes (best-effort; routes through QuietWriter so errors are
     /// swallowed). Progress.rs uses this.
     #[inline]
-    pub fn write_all(self, bytes: &[u8]) -> Result<(), crate::Error> {
+    pub fn write_all(self, bytes: &[u8]) -> crate::CrateResult<()> {
         let mut qw = self.quiet_writer();
         let _ = output_sink().quiet_writer_write_all(&mut qw, bytes);
         Ok(())
     }
     #[inline]
-    pub fn write(self, bytes: &[u8]) -> Result<usize, crate::Error> {
+    pub fn write(self, bytes: &[u8]) -> crate::CrateResult<usize> {
         self.write_all(bytes).map(|_| bytes.len())
     }
-    pub fn write_fmt(self, args: core::fmt::Arguments<'_>) -> Result<(), crate::Error> {
+    pub fn write_fmt(self, args: core::fmt::Arguments<'_>) -> crate::CrateResult<()> {
         struct Adapter(File);
         impl core::fmt::Write for Adapter {
             fn write_str(&mut self, s: &str) -> core::fmt::Result {
@@ -810,8 +810,9 @@ fn compute_color_depth() -> ColorDepth {
         return ColorDepth::None;
     }
 
+    // tmux supports 24-bit color since 2.2 (2016); Node also reports 16m here.
     if env_var::TMUX.get().is_some() {
-        return ColorDepth::C256;
+        return ColorDepth::C16m;
     }
 
     if env_var::CI.get().is_some() {
@@ -1274,21 +1275,6 @@ pub fn print_start_end_stdout(start: i128, end: i128) {
     print_elapsed_stdout(elapsed as f64);
 }
 
-/// Minimal timer abstraction so bun_core doesn't depend on bun_perf.
-/// bun_perf::SystemTimer impls this (move-in pass).
-pub trait ReadTimer {
-    fn read(&mut self) -> u64;
-}
-
-pub fn print_timer(timer: &mut impl ReadTimer) {
-    #[cfg(target_arch = "wasm32")]
-    {
-        return;
-    }
-    let elapsed = timer.read() / crate::time::NS_PER_MS;
-    print_elapsed(elapsed as f64);
-}
-
 // ──────────────────────────────────────────────────────────────────────────
 // Print routing
 //
@@ -1405,12 +1391,6 @@ pub fn print_to(dest: Destination, args: fmt::Arguments<'_>) {
     });
 }
 
-#[inline]
-pub fn print_errorable(args: fmt::Arguments<'_>) -> Result<(), crate::Error> {
-    print_to(Destination::Stdout, args);
-    Ok(())
-}
-
 /// Print to stdout
 /// This will appear in the terminal, including in production.
 /// Text automatically buffers
@@ -1439,16 +1419,6 @@ macro_rules! debug {
     };
 }
 
-/// NOTE: this fn form cannot inspect the template and therefore *always*
-/// appends `\n`. Callers must NOT pass a template that already ends in `\n`.
-/// Prefer the `debug!` macro.
-#[inline]
-pub(crate) fn _debug(args: fmt::Arguments<'_>) {
-    debug_assert!(SOURCE_SET.get());
-    print_to(Destination::Stdout, args);
-    write_bytes(Destination::Stdout, b"\n");
-}
-
 #[inline]
 pub fn print(args: fmt::Arguments<'_>) {
     print_to(Destination::Stdout, args);
@@ -1465,34 +1435,14 @@ pub fn println(args: fmt::Arguments<'_>) {
 // Scoped debug logging
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Debug-only logs which should not appear in release mode.
-///
-/// To enable a specific log at runtime, set the environment variable
-///   `BUN_DEBUG_${TAG}` to 1.
-///
-/// For example, to enable the "foo" log, set the environment variable
-///   BUN_DEBUG_foo=1
-/// To enable all logs, set the environment variable
-///   BUN_DEBUG_ALL=1
-pub type LogFunction = fn(fmt::Arguments<'_>);
-
+/// Default visibility of a [`ScopedLogger`]: whether it emits without
+/// `BUN_DEBUG_${TAG}=1` set.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum Visibility {
     /// Hide logs for this scope by default.
     Hidden,
     /// Show logs for this scope by default.
     Visible,
-}
-
-impl Visibility {
-    /// Show logs for this scope by default if and only if `condition` is true.
-    pub const fn visible_if(condition: bool) -> Visibility {
-        if condition {
-            Visibility::Visible
-        } else {
-            Visibility::Hidden
-        }
-    }
 }
 
 /// Runtime state for one scoped logger. One static instance per `declare_scope!`.
@@ -2428,10 +2378,6 @@ pub fn enable_ansi_colors_stdout() -> bool {
 pub fn enable_ansi_colors_stderr() -> bool {
     ENABLE_ANSI_COLORS_STDERR.load(Ordering::Relaxed)
 }
-#[inline]
-pub fn enable_ansi_colors() -> bool {
-    ENABLE_ANSI_COLORS_STDERR.load(Ordering::Relaxed)
-}
 
 // ── DebugTimer ────────────────────────────────────────────────────────────
 
@@ -2594,7 +2540,7 @@ impl ErrName for &[u8] {
         self
     }
 }
-impl ErrName for crate::Error {
+impl ErrName for crate::CrateError {
     fn name(&self) -> &[u8] {
         (*self).name().as_bytes()
     }
@@ -2763,7 +2709,7 @@ impl BufferedStdin {
     ///
     /// Matches std `BufferedReader.read` fill-to-completion semantics
     /// (loops on the underlying fd), not POSIX partial-read.
-    pub fn read(&mut self, dest: &mut [u8]) -> Result<usize, crate::Error> {
+    pub fn read(&mut self, dest: &mut [u8]) -> crate::CrateResult<usize> {
         let mut written: usize = 0;
         loop {
             let current = &self.buf[self.start..self.end];
@@ -2798,7 +2744,7 @@ impl BufferedStdin {
     }
 
     /// Read one byte — `Err` on I/O error *or* EOF (`EndOfStream`).
-    pub fn read_byte(&mut self) -> Result<u8, crate::Error> {
+    pub fn read_byte(&mut self) -> crate::CrateResult<u8> {
         if self.start < self.end {
             let b = self.buf[self.start];
             self.start += 1;
@@ -2806,7 +2752,7 @@ impl BufferedStdin {
         }
         let mut one = [0u8; 1];
         match self.read(&mut one)? {
-            0 => Err(crate::err!(EndOfStream)),
+            0 => Err(crate::CrateError::EndOfStream),
             _ => Ok(one[0]),
         }
     }
@@ -2819,11 +2765,11 @@ impl BufferedStdin {
         out: &mut Vec<u8>,
         delimiter: u8,
         max_size: usize,
-    ) -> Result<(), crate::Error> {
+    ) -> crate::CrateResult<()> {
         out.clear();
         loop {
             if out.len() >= max_size {
-                return Err(crate::err!(StreamTooLong));
+                return Err(crate::CrateError::StreamTooLong);
             }
             let b = self.read_byte()?;
             if b == delimiter {
@@ -2843,17 +2789,12 @@ pub struct StdinReader {
 impl StdinReader {
     /// Read one byte — `Err` on I/O error *or* EOF.
     #[inline]
-    pub fn take_byte(&mut self) -> Result<u8, crate::Error> {
+    pub fn take_byte(&mut self) -> crate::CrateResult<u8> {
         let mut one = [0u8; 1];
         match output_sink().read(self.fd, &mut one)? {
-            0 => Err(crate::err!(EndOfStream)),
+            0 => Err(crate::CrateError::EndOfStream),
             _ => Ok(one[0]),
         }
-    }
-    /// Alias for callers that spell it `read_byte`.
-    #[inline]
-    pub fn read_byte(&mut self) -> Result<u8, crate::Error> {
-        self.take_byte()
     }
 }
 
@@ -2891,7 +2832,7 @@ pub fn buffered_stdin_read_until_delimiter(
     out: &mut Vec<u8>,
     delimiter: u8,
     max_size: usize,
-) -> Result<(), crate::Error> {
+) -> crate::CrateResult<()> {
     // SAFETY: single-threaded static; only live `&mut` for this call's duration.
     unsafe { (*buffered_stdin()).read_until_delimiter_array_list(out, delimiter, max_size) }
 }

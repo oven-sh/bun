@@ -12,7 +12,7 @@ use bun_collections::ArrayHashMap;
 use bun_core::Output;
 use bun_jsc::{JSGlobalObject, JSValue, JsError, JsResult, ZigStringSlice};
 // peechy batch 2 landed: `bun_options_types::schema::api` now provides
-// {StringMap, LoaderMap, DotEnvBehavior, SourceMapMode, TransformOptions}.
+// {StringMap, DotEnvBehavior, SourceMapMode, TransformOptions}.
 // Alias as `bun_schema` so existing field paths resolve unchanged.
 use bun_core::{ZStr, strings};
 use bun_options_types::schema as bun_schema;
@@ -97,10 +97,10 @@ fn get_function(
 
 use bun_bundler_jsc::source_map_mode_jsc::source_map_mode_from_js;
 
-/// Convert a `bun_core::Error` into a thrown JS exception in a `JsResult`
+/// Convert a `crate::Error` into a thrown JS exception in a `JsResult`
 /// context.
 #[inline]
-fn throw_core_error(global: &JSGlobalObject, e: bun_core::Error, ctx: &'static str) -> JsError {
+fn throw_core_error(global: &JSGlobalObject, e: crate::Error, ctx: &'static str) -> JsError {
     global.throw_error(e, ctx)
 }
 
@@ -390,7 +390,6 @@ impl SplitBundlerOptions {
 }
 
 pub struct BuildConfigSubset {
-    pub loader: Option<bun_schema::api::LoaderMap>,
     pub ignore_dce_annotations: Option<bool>,
     pub conditions: ArrayHashMap<&'static [u8], ()>,
     pub drop: ArrayHashMap<&'static [u8], ()>,
@@ -456,7 +455,6 @@ impl Default for BuildConfigSubset {
         // Note: was `pub const DEFAULT` — `ArrayHashMap::new()` is not
         // `const fn`, so this lives behind `Default` instead.
         BuildConfigSubset {
-            loader: None,
             ignore_dce_annotations: None,
             conditions: ArrayHashMap::new(),
             drop: ArrayHashMap::new(),
@@ -507,7 +505,7 @@ impl Framework {
     /// Depends on externally provided React
     ///
     /// $ bun i react@experimental react-dom@experimental react-refresh@experimental react-server-dom-bun
-    pub fn react(arena: &Arena) -> Result<Framework, bun_core::Error> {
+    pub fn react(arena: &Arena) -> crate::Result<Framework> {
         // Cannot use .import because resolution must happen from the user's POV
         let built_in_values: &[BuiltInModule] = &[
             BuiltInModule::Code(
@@ -575,7 +573,7 @@ impl Framework {
         arena: &Arena,
         resolver: &mut bun_resolver::Resolver,
         file_system_router_types: Vec<FileSystemRouterType>,
-    ) -> Result<Framework, bun_core::Error> {
+    ) -> crate::Result<Framework> {
         let mut fw: Framework = Framework::none();
 
         if !file_system_router_types.is_empty() {
@@ -627,9 +625,7 @@ impl Framework {
         }
     }
 
-    pub const REACT_INSTALL_COMMAND: &'static str = "bun i react@experimental react-dom@experimental react-server-dom-bun react-refresh@experimental";
-
-    pub fn add_react_install_command_note(log: &mut bun_ast::Log) -> Result<(), bun_core::Error> {
+    pub fn add_react_install_command_note(log: &mut bun_ast::Log) -> crate::Result<()> {
         let clone_line_text = log.clone_line_text;
         log.add_msg(bun_ast::Msg {
             kind: bun_ast::Kind::Note,
@@ -661,7 +657,7 @@ impl Framework {
         server: &mut bun_resolver::Resolver,
         client: &mut bun_resolver::Resolver,
         arena: &Arena,
-    ) -> Result<Framework, bun_core::Error> {
+    ) -> crate::Result<Framework> {
         let mut clone = self.clone();
         let mut had_errors: bool = false;
 
@@ -706,7 +702,7 @@ impl Framework {
         }
 
         if had_errors {
-            return Err(bun_core::err!("ModuleNotFound"));
+            return Err(crate::Error::ModuleNotFound);
         }
 
         Ok(clone)
@@ -765,11 +761,13 @@ impl Framework {
                 bun_core::warn!(
                     "deprecation notice: 'react-server-components' will be renamed to 'react'"
                 );
-                return Ok(Framework::react(arena)?);
+                return Framework::react(arena)
+                    .map_err(|e| throw_core_error(global, e, "Framework::react"));
             }
 
             if str.eql_comptime("react") {
-                return Ok(Framework::react(arena)?);
+                return Framework::react(arena)
+                    .map_err(|e| throw_core_error(global, e, "Framework::react"));
             }
         }
 
@@ -1140,38 +1138,6 @@ impl Framework {
         )
     }
 
-    pub fn init_transpiler<'a>(
-        &mut self,
-        arena: &'a Arena,
-        log: &mut bun_ast::Log,
-        mode: Mode,
-        renderer: Graph,
-        out: &mut core::mem::MaybeUninit<bun_bundler::Transpiler<'a>>,
-        bundler_options: &BuildConfigSubset,
-    ) -> Result<(), bun_core::Error> {
-        let source_map: bun_bundler::options::SourceMapOption = match mode {
-            // Source maps must always be external, as DevServer special cases
-            // the linking and part of the generation of these. It also relies
-            // on source maps always being enabled.
-            Mode::Development => bun_bundler::options::SourceMapOption::External,
-            // TODO: follow user configuration
-            _ => bun_bundler::options::SourceMapOption::None,
-        };
-
-        self.init_transpiler_with_options(
-            arena,
-            log,
-            mode,
-            renderer,
-            out,
-            bundler_options,
-            source_map,
-            None,
-            None,
-            None,
-        )
-    }
-
     pub fn init_transpiler_with_options<'a>(
         &mut self,
         arena: &'a Arena,
@@ -1184,7 +1150,7 @@ impl Framework {
         minify_whitespace: Option<bool>,
         minify_syntax: Option<bool>,
         minify_identifiers: Option<bool>,
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::Result<()> {
         // `ASTMemoryAllocator::enter` returns an RAII `Scope` whose `Drop`
         // runs `exit()` at end-of-fn.
         let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(arena);
@@ -1481,7 +1447,7 @@ pub(crate) fn add_import_meta_defines(
     define: &mut bun_bundler::options::Define,
     mode: Mode,
     side: Side,
-) -> Result<(), bun_core::Error> {
+) -> crate::Result<()> {
     use bun_ast::E::EString;
 
     use bun_bundler::defines::DefineData;
@@ -1493,6 +1459,8 @@ pub(crate) fn add_import_meta_defines(
     // Note that it is not currently possible to have mixed
     // modes (production + hmr dev server)
     // TODO: BASE_URL
+    // NOTE: `HTMLBundle::on_plugins_resolved` (the `Bun.serve` path without the
+    // HMR dev server) mirrors this key list; add new keys in both places.
     define.insert(
         b"import.meta.env.DEV",
         DefineData::init_boolean(mode == Mode::Development),

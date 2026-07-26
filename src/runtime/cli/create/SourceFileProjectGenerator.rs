@@ -24,7 +24,7 @@ pub fn generate(
     _example: ExampleTag,
     entry_point: &[u8],
     result: &mut DependenciesScannerResult,
-) -> Result<(), bun_core::Error> {
+) -> Result<(), crate::Error> {
     let Some(react_component_export) = find_react_component_export(result.bundle_v2) else {
         Output::err_generic(
             "No component export found in <b>{}<r>",
@@ -176,7 +176,7 @@ fn string_with_replacements(
     Ok(input)
 }
 
-fn run_install(argv: &mut Vec<&[u8]>) -> Result<(), bun_core::Error> {
+fn run_install(argv: &mut Vec<&[u8]>) -> Result<(), crate::Error> {
     Output::command_out(Output::CommandArgv::List(argv.as_slice()));
     Output::flush();
 
@@ -238,7 +238,7 @@ pub fn generate_files(
     dev_dependencies: &[&[u8]],
     template: &Template,
     react_component_export: &[u8],
-) -> Result<(), bun_core::Error> {
+) -> Result<(), crate::Error> {
     let mut log = template.logger();
     let mut basename = path::basename(entry_point);
     let extension = path::extension(basename);

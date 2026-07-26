@@ -46,10 +46,10 @@
   AbortController                 AbortControllerConstructorCallback                   PropertyCallback
   AbortSignal                     AbortSignalConstructorCallback                       PropertyCallback
   BroadcastChannel                BroadcastChannelConstructorCallback                  PropertyCallback
-  ByteLengthQueuingStrategy       ByteLengthQueuingStrategyConstructorCallback         PropertyCallback
+  ByteLengthQueuingStrategy       ByteLengthQueuingStrategyConstructorCallback         DontEnum|PropertyCallback
   CloseEvent                      CloseEventConstructorCallback                        PropertyCallback
   CompressionStream               CompressionStreamConstructorCallback                 PropertyCallback
-  CountQueuingStrategy            CountQueuingStrategyConstructorCallback              PropertyCallback
+  CountQueuingStrategy            CountQueuingStrategyConstructorCallback              DontEnum|PropertyCallback
   CryptoKey                       CryptoKeyConstructorCallback                         PropertyCallback
   CustomEvent                     CustomEventConstructorCallback                       PropertyCallback
   DecompressionStream             DecompressionStreamConstructorCallback               PropertyCallback
@@ -71,25 +71,25 @@
   PerformanceResourceTiming       PerformanceResourceTimingConstructorCallback         PropertyCallback
   PerformanceServerTiming         PerformanceServerTimingConstructorCallback           PropertyCallback
   PerformanceTiming               PerformanceTimingConstructorCallback                 PropertyCallback
-  ReadableByteStreamController    ReadableByteStreamControllerConstructorCallback      PropertyCallback
-  ReadableStream                  ReadableStreamConstructorCallback                    PropertyCallback
-  ReadableStreamBYOBReader        ReadableStreamBYOBReaderConstructorCallback          PropertyCallback
-  ReadableStreamBYOBRequest       ReadableStreamBYOBRequestConstructorCallback         PropertyCallback
-  ReadableStreamDefaultController ReadableStreamDefaultControllerConstructorCallback   PropertyCallback
-  ReadableStreamDefaultReader     ReadableStreamDefaultReaderConstructorCallback       PropertyCallback
+  ReadableByteStreamController    ReadableByteStreamControllerConstructorCallback      DontEnum|PropertyCallback
+  ReadableStream                  ReadableStreamConstructorCallback                    DontEnum|PropertyCallback
+  ReadableStreamBYOBReader        ReadableStreamBYOBReaderConstructorCallback          DontEnum|PropertyCallback
+  ReadableStreamBYOBRequest       ReadableStreamBYOBRequestConstructorCallback         DontEnum|PropertyCallback
+  ReadableStreamDefaultController ReadableStreamDefaultControllerConstructorCallback   DontEnum|PropertyCallback
+  ReadableStreamDefaultReader     ReadableStreamDefaultReaderConstructorCallback       DontEnum|PropertyCallback
   SubtleCrypto                    SubtleCryptoConstructorCallback                      PropertyCallback
   TextDecoderStream               TextDecoderStreamConstructorCallback                 PropertyCallback
   TextEncoder                     TextEncoderConstructorCallback                       PropertyCallback
   TextEncoderStream               TextEncoderStreamConstructorCallback                 PropertyCallback
-  TransformStream                 TransformStreamConstructorCallback                   PropertyCallback
-  TransformStreamDefaultController TransformStreamDefaultControllerConstructorCallback PropertyCallback
+  TransformStream                 TransformStreamConstructorCallback                   DontEnum|PropertyCallback
+  TransformStreamDefaultController TransformStreamDefaultControllerConstructorCallback DontEnum|PropertyCallback
   URL                             DOMURLConstructorCallback                            DontEnum|PropertyCallback
   URLPattern                      URLPatternConstructorCallback                        PropertyCallback
   URLSearchParams                 URLSearchParamsConstructorCallback                   DontEnum|PropertyCallback
   WebSocket                       WebSocketConstructorCallback                         PropertyCallback
   Worker                          WorkerConstructorCallback                            PropertyCallback
-  WritableStream                  WritableStreamConstructorCallback                    PropertyCallback
-  WritableStreamDefaultController WritableStreamDefaultControllerConstructorCallback   PropertyCallback
-  WritableStreamDefaultWriter     WritableStreamDefaultWriterConstructorCallback       PropertyCallback
+  WritableStream                  WritableStreamConstructorCallback                    DontEnum|PropertyCallback
+  WritableStreamDefaultController WritableStreamDefaultControllerConstructorCallback   DontEnum|PropertyCallback
+  WritableStreamDefaultWriter     WritableStreamDefaultWriterConstructorCallback       DontEnum|PropertyCallback
 @end
 */

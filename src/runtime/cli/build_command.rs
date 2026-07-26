@@ -30,7 +30,7 @@ fn splat_byte_all(
     writer: &mut bun_core::io::Writer,
     byte: u8,
     count: usize,
-) -> Result<(), bun_core::Error> {
+) -> Result<(), crate::Error> {
     let buf = [byte; 64];
     let mut remaining = count;
     while remaining > 0 {
@@ -57,7 +57,7 @@ impl BuildCommand {
     pub(crate) fn exec(
         ctx: Context,
         fetcher: Option<&bundle_v2::DependenciesScanner>,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         Global::configure_allocator(Global::AllocatorConfiguration {
             long_running: true,
             ..Default::default()

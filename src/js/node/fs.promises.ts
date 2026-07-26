@@ -2,8 +2,14 @@
 const types = require("node:util/types");
 const EventEmitter = require("node:events");
 const fs = require("internal/fs/binding") as $ZigGeneratedClasses.NodeJSFS;
-const { glob } = require("internal/fs/glob");
-const { validateInteger, validateBoolean, validateObject, validateAbortSignal } = require("internal/validators");
+const { Glob } = require("internal/fs/glob");
+const {
+  validateInteger,
+  validateBoolean,
+  validateObject,
+  validateAbortSignal,
+  validateEncoding,
+} = require("internal/validators");
 
 const constants = $processBindingConstants.fs;
 
@@ -95,7 +101,7 @@ function watch(
     if (eventType !== "close" && eventType !== "error" && filename != null && ignoreMatcher?.(filename)) {
       return;
     }
-    queue.push({ eventType, filename });
+    queue.push({ __proto__: null, eventType, filename });
     if (nextEventResolve) {
       const resolve = nextEventResolve;
       nextEventResolve = null;
@@ -200,6 +206,26 @@ async function opendir(dir: string, options) {
   return promise;
 }
 
+// Node.js closes a FileHandle's fd in its native finalizer and raises
+// ERR_INVALID_STATE (DEP0137 end-of-life) when collected without close().
+// Mirror that with a FinalizationRegistry so dropped handles don't leak fds.
+let fileHandleRegistry: FinalizationRegistry<{ fd: number; path: string | undefined }> | undefined;
+function onFileHandleCollected(held: { fd: number; path: string | undefined }) {
+  try {
+    fs.closeSync(held.fd);
+  } catch {}
+  const suffix = held.path !== undefined ? ` (${held.path})` : "";
+  const err: NodeJS.ErrnoException = new Error(
+    "A FileHandle object was closed during garbage collection. This used to be allowed " +
+      "with a deprecation warning but is now considered an error. Please close FileHandle " +
+      `objects explicitly. File descriptor: ${held.fd}${suffix}`,
+  );
+  err.code = "ERR_INVALID_STATE";
+  process.nextTick(() => {
+    throw err;
+  });
+}
+
 const private_symbols = {
   kRef,
   kUnref,
@@ -213,6 +239,12 @@ const private_symbols = {
 const _readFile = fs.readFile.bind(fs);
 const _writeFile = fs.writeFile.bind(fs);
 const _appendFile = fs.appendFile.bind(fs);
+
+// Argument validation must run at the first .next(), not at call time: Node's
+// fs/promises glob is an async generator whose body constructs Glob lazily.
+async function* glob(pattern, options) {
+  yield* new Glob(pattern, options).glob();
+}
 
 const exports = {
   access: asyncWrap(fs.access, "access"),
@@ -240,7 +272,12 @@ const exports = {
   ftruncate: asyncWrap(fs.ftruncate, "ftruncate"),
   futimes: asyncWrap(fs.futimes, "futimes"),
   glob,
-  lchmod: asyncWrap(fs.lchmod, "lchmod"),
+  lchmod:
+    constants.O_SYMLINK !== undefined
+      ? asyncWrap(fs.lchmod, "lchmod")
+      : async function lchmod(_path, _mode) {
+          throw $ERR_METHOD_NOT_IMPLEMENTED("lchmod()");
+        },
   lchown: asyncWrap(fs.lchown, "lchown"),
   link: asyncWrap(fs.link, "link"),
   lstat: asyncWrap(fs.lstat, "lstat"),
@@ -258,7 +295,11 @@ const exports = {
   },
   statfs: asyncWrap(fs.statfs, "statfs"),
   open: async (path, flags = "r", mode = 0o666) => {
-    return new private_symbols.FileHandle(await fs.open(path, flags, mode), flags);
+    // Snapshot the path as a string before the fd is opened so a throwing
+    // Buffer/URL toString cannot leak the fd, and the registry never retains
+    // the caller's object.
+    const pathForDiag = typeof path === "string" ? path : path == null ? undefined : String(path);
+    return new private_symbols.FileHandle(await fs.open(path, flags, mode), flags, pathForDiag);
   },
   read: asyncWrap(fs.read, "read"),
   write: asyncWrap(fs.write, "write"),
@@ -291,6 +332,12 @@ const exports = {
   utimes: asyncWrap(fs.utimes, "utimes"),
   lutimes: asyncWrap(fs.lutimes, "lutimes"),
   rm: async function rm(path, options) {
+    if (typeof options === "object" && options !== null) {
+      // Node merges the caller's options over the defaults with a spread, which
+      // copies own enumerable keys only -- including ones holding `undefined`.
+      // Normalize here so the native parser sees exactly that set.
+      options = { ...options };
+    }
     if (!options?.recursive) {
       // node validates in JS and reports ERR_FS_EISDIR for directories
       // (same check as rmSync)
@@ -377,12 +424,15 @@ function asyncWrap(fn: any, name: string) {
   // These functions await the result so that errors propagate correctly with
   // async stack traces and so that the ref counting is correct.
   class FileHandle extends EventEmitter {
-    constructor(fd, flag) {
+    constructor(fd, flag, path?: string) {
       super();
       this[kFd] = fd ? fd : -1;
       this[kRefs] = 1;
       this[kClosePromise] = null;
       this[kFlag] = flag;
+      if (this[kFd] !== -1) {
+        (fileHandleRegistry ??= new FinalizationRegistry(onFileHandleCollected)).register(this, { fd, path }, this);
+      }
     }
 
     getAsyncId() {
@@ -472,7 +522,7 @@ function asyncWrap(fn: any, name: string) {
 
     async read(bufferOrParams, offset, length, position) {
       const fd = this[kFd];
-      throwEBADFIfNecessary("fsync", fd);
+      throwEBADFIfNecessary("read", fd);
 
       let buffer = bufferOrParams;
       if (!types.isArrayBufferView(buffer)) {
@@ -598,6 +648,13 @@ function asyncWrap(fn: any, name: string) {
         }
         if (typeof length !== "number") length = buffer.byteLength - offset;
         if (typeof position !== "number") position = null;
+      } else {
+        // filehandle.write(string[, position[, encoding]]): `length` is the
+        // encoding. Node rejects a non-string before it validates the encoding.
+        if (typeof buffer !== "string") {
+          throw $ERR_INVALID_ARG_TYPE("buffer", ["string", "Buffer", "TypedArray", "DataView"], buffer);
+        }
+        validateEncoding(buffer, length);
       }
       try {
         this[kRef]();
@@ -658,6 +715,8 @@ function asyncWrap(fn: any, name: string) {
         return this[kClosePromise];
       }
 
+      fileHandleRegistry?.unregister(this);
+
       if (--this[kRefs] === 0) {
         this[kFd] = -1;
         this[kClosePromise] = PromisePrototypeFinally.$call(close(fd), () => {
@@ -685,11 +744,102 @@ function asyncWrap(fn: any, name: string) {
       return this.close();
     }
 
-    readableWebStream(_options = kEmptyObject) {
+    // Port of Node.js FileHandle.prototype.readableWebStream
+    // (https://github.com/nodejs/node/blob/v26.3.0/lib/internal/fs/promises.js#L324).
+    // The handle is locked for the lifetime of the stream, is kept referenced
+    // until the stream ends or is cancelled, and closing the handle closes the
+    // stream even while a reader holds it.
+    readableWebStream(options = kEmptyObject) {
       const fd = this[kFd];
-      throwEBADFIfNecessary("readableWebStream", fd);
+      // Node reports a closed or closing handle as ERR_INVALID_STATE here
+      // rather than the EBADF the other FileHandle methods use.
+      if (fd === -1) throw $ERR_INVALID_STATE("The FileHandle is closed");
+      if (this[kClosePromise]) throw $ERR_INVALID_STATE("The FileHandle is closing");
+      if (this[kLocked]) throw $ERR_INVALID_STATE("The FileHandle is locked");
+      this[kLocked] = true;
 
-      return Bun.file(fd).stream();
+      validateObject(options, "options");
+      const { type = "bytes", autoClose = false } = options;
+      validateBoolean(autoClose, "options.autoClose");
+
+      if (type !== "bytes") {
+        process.emitWarning(
+          'A non-"bytes" options.type has no effect. A byte-oriented steam is always created.',
+          "ExperimentalWarning",
+        );
+      }
+
+      const handle = this;
+      let controllerRef;
+      let done = false;
+
+      async function ondone() {
+        if (done) return;
+        done = true;
+        // Release the listener with the stream it was cancelling, so a drained
+        // stream is not retained for the rest of the handle's life.
+        handle.removeListener("close", onFileHandleClose);
+        handle[kUnref]();
+        if (autoClose) await handle.close();
+      }
+
+      // Node cancels the stream from here with the internal readableStreamCancel,
+      // which is not reachable from JS. Closing the controller and then settling
+      // any outstanding BYOB request ends the stream the same way, including when
+      // a reader is attached and waiting on a read.
+      function onFileHandleClose() {
+        if (done) return;
+        try {
+          controllerRef?.close();
+        } catch {}
+        try {
+          controllerRef?.byobRequest?.respond(0);
+        } catch {}
+        ondone();
+      }
+
+      const readable = new ReadableStream({
+        type: "bytes",
+        autoAllocateChunkSize: 16384,
+
+        start(controller) {
+          controllerRef = controller;
+        },
+
+        async pull(controller) {
+          const request = controller.byobRequest;
+          // The handle can be closed while a pull is in flight, which settles the
+          // request and drops the fd out from under the read below.
+          if (request === null) return;
+          const view = request.view;
+
+          let bytesRead;
+          try {
+            ({ bytesRead } = await handle.read(view, view.byteOffset, view.byteLength));
+          } catch (err) {
+            if (done) return;
+            await ondone();
+            throw err;
+          }
+          if (done) return;
+
+          if (bytesRead === 0) {
+            controller.close();
+            await ondone();
+          }
+
+          controller.byobRequest.respond(bytesRead);
+        },
+
+        async cancel() {
+          await ondone();
+        },
+      });
+
+      this[kRef]();
+      this.once("close", onFileHandleClose);
+
+      return readable;
     }
 
     createReadStream(options = kEmptyObject) {
@@ -1344,6 +1494,7 @@ function asyncWrap(fn: any, name: string) {
       }
       const fd = this[kFd];
       this[kFd] = -1;
+      fileHandleRegistry?.unregister(this);
       (nodeFsForIter ??= require("node:fs")).closeSync(fd);
       this.emit("close");
     }
@@ -1356,6 +1507,7 @@ function asyncWrap(fn: any, name: string) {
       const fd = this[kFd];
       const flag = this[kFlag];
       this[kFd] = -1;
+      fileHandleRegistry?.unregister(this);
       return {
         data: { fd, flag },
         deserializeInfo: "internal/fs/promises:FileHandle",
@@ -1369,6 +1521,13 @@ function asyncWrap(fn: any, name: string) {
     [kDeserialize]({ fd, flag }) {
       this[kFd] = fd;
       this[kFlag] = flag;
+      if (fd !== -1) {
+        (fileHandleRegistry ??= new FinalizationRegistry(onFileHandleCollected)).register(
+          this,
+          { fd, path: undefined },
+          this,
+        );
+      }
     }
 
     [kRef]() {
@@ -1391,6 +1550,13 @@ function asyncWrap(fn: any, name: string) {
 }
 
 function throwEBADFIfNecessary(fn: string, fd) {
+  if (fd === undefined) {
+    // A FileHandle method invoked with a foreign receiver (fn.call({})); node's
+    // fsCall asserts on the missing internal slot before touching the fd.
+    throw $ERR_INTERNAL_ASSERTION(
+      "handle must be an instance of FileHandle" + require("internal/shared").kInternalAssertionSuffix,
+    );
+  }
   if (fd === -1) {
     const err: any = new Error("Bad file descriptor");
     err.code = "EBADF";
@@ -1409,7 +1575,7 @@ async function writeFileAsyncIteratorInner(fd, iterable, encoding, signal: Abort
   try {
     for await (let chunk of iterable) {
       if (signal?.aborted) {
-        throw signal.reason;
+        throw $makeAbortError(undefined, { cause: signal.reason });
       }
 
       if (mustRencode && typeof chunk === "string") {
@@ -1433,6 +1599,12 @@ async function writeFileAsyncIteratorInner(fd, iterable, encoding, signal: Abort
   return totalBytesWritten;
 }
 
+// The only flag spellings whose `open` truncates. `r+` & co. overwrite in place,
+// so resizing the file down to the bytes we wrote would destroy the rest of it.
+function flagTruncates(flag): boolean {
+  return flag === "w" || flag === "w+" || flag === "wx" || flag === "wx+" || flag === "xw" || flag === "xw+";
+}
+
 async function writeFileAsyncIterator(fdOrPath, iterable, optionsOrEncoding, flag, mode) {
   let encoding;
   let signal: AbortSignal | null = null;
@@ -1442,7 +1614,7 @@ async function writeFileAsyncIterator(fdOrPath, iterable, optionsOrEncoding, fla
     mode = optionsOrEncoding?.mode ?? (mode || 0o666);
     signal = optionsOrEncoding?.signal ?? null;
     if (signal?.aborted) {
-      throw signal.reason;
+      throw $makeAbortError(undefined, { cause: signal.reason });
     }
   } else if (typeof optionsOrEncoding === "string" || optionsOrEncoding == null) {
     encoding = optionsOrEncoding || "utf8";
@@ -1463,7 +1635,7 @@ async function writeFileAsyncIterator(fdOrPath, iterable, optionsOrEncoding, fla
 
   if (signal?.aborted) {
     if (mustClose) await fs.close(fdOrPath);
-    throw signal.reason;
+    throw $makeAbortError(undefined, { cause: signal.reason });
   }
 
   let totalBytesWritten = 0;
@@ -1478,7 +1650,7 @@ async function writeFileAsyncIterator(fdOrPath, iterable, optionsOrEncoding, fla
 
   // Handle cleanup outside of try-catch
   if (mustClose) {
-    if (typeof flag === "string" && !flag.includes("a")) {
+    if (flagTruncates(flag)) {
       try {
         await fs.ftruncate(fdOrPath, totalBytesWritten);
       } catch {}
@@ -1489,7 +1661,7 @@ async function writeFileAsyncIterator(fdOrPath, iterable, optionsOrEncoding, fla
 
   // Abort signal shadows other errors
   if (signal?.aborted) {
-    error = signal.reason;
+    error = $makeAbortError(undefined, { cause: signal.reason });
   }
 
   if (error) {

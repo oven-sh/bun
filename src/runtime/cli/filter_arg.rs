@@ -46,7 +46,7 @@ pub(crate) fn get_candidate_package_patterns<'a>(
     out_patterns: &mut Vec<Box<[u8]>>,
     workdir_: &[u8],
     root_buf: &'a mut PathBuffer,
-) -> Result<&'a [u8], bun_core::Error> {
+) -> Result<&'a [u8], crate::Error> {
     bun_ast::expr::data::Store::create();
     bun_ast::stmt::data::Store::create();
     let _store_guard = bun_ast::StoreResetGuard::new();
@@ -82,40 +82,30 @@ pub(crate) fn get_candidate_package_patterns<'a>(
             // `defer allocator.free(json_source.contents)` — deleted; `json_source` owns its
             // contents and drops at end of scope.
 
-            // `parse_package_json_utf8` takes a `&Bump` arena explicitly. Nodes go
-            // through the global Store, so this only buffers transient parser
-            // scratch — fresh per-iteration is fine.
-            let bump = bun_alloc::Arena::new();
-            let json = json::parse_package_json_utf8(&json_source, log, &bump)?;
+            let parsed = json::ParsedJson::parse_package_json(&json_source, log)?;
+            let json = parsed.root;
 
             let Some(prop) = json.as_property(b"workspaces") else {
                 break 'body;
             };
 
             let json_array = match prop.expr.data {
-                ExprData::EArray(arr) => arr,
-                ExprData::EObject(obj) => {
-                    // `StoreRef::get` (0-arg) shadows `E::Object::get` under autoderef; force
-                    // `Deref` to reach the keyed lookup.
-                    if let Some(packages) = (*obj).get(b"packages") {
-                        match packages.data {
-                            ExprData::EArray(arr) => arr,
-                            _ => break 'walk,
-                        }
-                    } else {
-                        break 'walk;
-                    }
-                }
+                ExprData::EArrayJSON(arr) => arr,
+                ExprData::EObjectJSON(obj) => match (*obj).get(b"packages") {
+                    Some(bun_ast::e::JsonValue::Array(arr)) => *arr,
+                    _ => break 'walk,
+                },
                 _ => break 'walk,
             };
 
-            for expr in json_array.slice() {
-                match expr.data {
-                    ExprData::EString(pattern_expr) => {
-                        let size = pattern_expr.data.len() + b"/package.json".len();
+            for item in json_array.get().items() {
+                match item {
+                    bun_ast::e::JsonValue::String(pattern_str) => {
+                        let pattern_bytes = pattern_str.slice();
+                        let size = pattern_bytes.len() + b"/package.json".len();
                         let mut pattern = vec![0u8; size].into_boxed_slice();
-                        pattern[0..pattern_expr.data.len()].copy_from_slice(&pattern_expr.data);
-                        pattern[pattern_expr.data.len()..size].copy_from_slice(b"/package.json");
+                        pattern[0..pattern_bytes.len()].copy_from_slice(pattern_bytes);
+                        pattern[pattern_bytes.len()..size].copy_from_slice(b"/package.json");
 
                         out_patterns.push(pattern);
                     }
@@ -188,7 +178,7 @@ impl FilterSet {
     pub(crate) fn init<F: AsRef<[u8]>>(
         filters: &[F],
         cwd_: &[u8],
-    ) -> Result<FilterSet, bun_core::Error> {
+    ) -> Result<FilterSet, crate::Error> {
         let cwd = cwd_;
 
         let mut buf = PathBuffer::uninit();
@@ -275,7 +265,7 @@ impl PackageFilterIterator {
     pub(crate) fn init(
         patterns: &[Box<[u8]>],
         root_dir: &[u8],
-    ) -> Result<PackageFilterIterator, bun_core::Error> {
+    ) -> Result<PackageFilterIterator, crate::Error> {
         Ok(PackageFilterIterator {
             // Caller keeps `patterns`/`root_dir` alive for the iterator's lifetime — `RawSlice` invariant.
             patterns: bun_ptr::RawSlice::new(patterns),
@@ -287,7 +277,7 @@ impl PackageFilterIterator {
         })
     }
 
-    fn walker_next(&mut self) -> Result<Option<glob::walk::MatchedPath>, bun_core::Error> {
+    fn walker_next(&mut self) -> Result<Option<glob::walk::MatchedPath>, crate::Error> {
         loop {
             // SAFETY: `valid == true` (caller invariant) so `iter` is initialized.
             let iter = unsafe { self.iter.assume_init_mut() };
@@ -303,7 +293,7 @@ impl PackageFilterIterator {
         }
     }
 
-    fn init_walker(&mut self) -> Result<(), bun_core::Error> {
+    fn init_walker(&mut self) -> Result<(), crate::Error> {
         // pattern_idx < patterns.len() checked by caller.
         let pattern: &[u8] = &self.patterns.slice()[self.pattern_idx];
         // bun_glob copies `pattern`/`cwd` internally.
@@ -329,7 +319,7 @@ impl PackageFilterIterator {
         self.iter
             .write(glob::walk::Iterator::new(unsafe { &mut *walker_ptr }));
         // SAFETY: just wrote `iter`.
-        let inited: Result<(), bun_core::Error> =
+        let inited: Result<(), crate::Error> =
             (|| Ok(unsafe { self.iter.assume_init_mut() }.init()??))();
         if let Err(err) = inited {
             // Tear down `iter` and the walker allocation so `walker` is null again
@@ -350,7 +340,7 @@ impl PackageFilterIterator {
         self.walker = core::ptr::null_mut();
     }
 
-    pub(crate) fn next(&mut self) -> Result<Option<glob::walk::MatchedPath>, bun_core::Error> {
+    pub(crate) fn next(&mut self) -> Result<Option<glob::walk::MatchedPath>, crate::Error> {
         loop {
             if !self.valid {
                 // Raw slice pointer `len()` reads only metadata — no deref/autoref needed.

@@ -208,7 +208,7 @@ impl PatchTask {
         &mut self,
         manager: &mut PackageManager,
         log_level: LogLevel,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         bun_output::scoped_log!(
             InstallPatch,
             "runFromThreadMainThread {}",
@@ -257,7 +257,7 @@ impl PatchTask {
         &mut self,
         manager: &mut PackageManager,
         log_level: LogLevel,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         // TODO only works for npm package
         // need to switch on version.tag and handle each case appropriately
         let Callback::CalcHash(calc_hash) = &mut self.callback else {
@@ -643,32 +643,30 @@ impl PatchTask {
                     // Not `self.manager()` — `&mut self.callback` is live.
                     // BACKREF — read-only lockfile access on the worker thread.
                     let manager = self.manager.get();
-                    log.add_error_fmt(
+                    bun_ast::add_error_pretty!(
+                        log,
                         None,
                         Loc::EMPTY,
-                        format_args!(
-                            "Couldn't find patch file: '{}'\n\nTo create a new patch file run:\n\n  <cyan>bun patch {}<r>",
-                            BStr::new(&calc_hash.patchfile_path),
-                            BStr::new(
-                                manager
-                                    .lockfile
-                                    .patched_dependencies
-                                    .get(&calc_hash.name_and_version_hash)
-                                    .unwrap()
-                                    .path
-                                    .slice(&manager.lockfile.buffers.string_bytes)
-                            ),
+                        "Couldn't find patch file: '{}'\n\nTo create a new patch file run:\n\n  <cyan>bun patch {}<r>",
+                        BStr::new(&calc_hash.patchfile_path),
+                        BStr::new(
+                            manager
+                                .lockfile
+                                .patched_dependencies
+                                .get(&calc_hash.name_and_version_hash)
+                                .unwrap()
+                                .path
+                                .slice(&manager.lockfile.buffers.string_bytes)
                         ),
                     );
                     return None;
                 }
-                log.add_warning_fmt(
+                bun_ast::add_warning_pretty!(
+                    log,
                     None,
                     Loc::EMPTY,
-                    format_args!(
-                        "patchfile <b>{}<r> is empty, please restore or delete it.",
-                        BStr::new(absolute_patchfile_path.as_bytes())
-                    ),
+                    "patchfile <b>{}<r> is empty, please restore or delete it.",
+                    BStr::new(absolute_patchfile_path.as_bytes()),
                 );
                 return None;
             }
@@ -676,13 +674,12 @@ impl PatchTask {
         };
         let size: u64 = u64::try_from(stat.st_size).expect("int cast");
         if size == 0 {
-            log.add_error_fmt(
+            bun_ast::add_error_pretty!(
+                log,
                 None,
                 Loc::EMPTY,
-                format_args!(
-                    "patchfile <b>{}<r> is empty, please restore or delete it.",
-                    BStr::new(absolute_patchfile_path.as_bytes())
-                ),
+                "patchfile <b>{}<r> is empty, please restore or delete it.",
+                BStr::new(absolute_patchfile_path.as_bytes()),
             );
             return None;
         }
@@ -729,19 +726,6 @@ impl PatchTask {
         }
 
         Some(hasher.final_())
-    }
-
-    pub fn notify(&mut self) {
-        // Push, then wake. No early returns.
-        let mgr = self.manager.as_ptr();
-        // SAFETY: `self.manager` is a long-lived BACKREF;
-        // only touches the lock-free queue and event-loop wake atomics.
-        unsafe {
-            (*mgr)
-                .patch_task_queue
-                .push(core::ptr::NonNull::from(&mut *self));
-            PackageManager::wake_raw(mgr);
-        }
     }
 
     pub fn schedule(&mut self, batch: &mut Batch) {

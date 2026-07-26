@@ -77,6 +77,51 @@ describe.each(adapters)("%s helper validation", (_adapter, makeSql) => {
   });
 });
 
+const distributedAdapters: [string, () => SQL][] = [
+  ["postgres", () => new SQL("postgres://bun_sql_test@127.0.0.1:1/bun_sql_test", { max: 1 })],
+  ["mysql", () => new SQL("mysql://bun_sql_test@127.0.0.1:1/bun_sql_test", { max: 1 })],
+];
+
+describe.each(distributedAdapters)("%s distributed transaction name validation", (_adapter, makeSql) => {
+  const invalidNames = [["tx'name"], 42, null, undefined, { toString: () => "tx" }];
+
+  test("commitDistributed requires the transaction name to be a string", async () => {
+    await using sql = makeSql();
+    for (const name of invalidNames) {
+      const err = await sql.commitDistributed(name as any).catch(e => e);
+      expect(err).toBeInstanceOf(Error);
+      expect(err.message).toBe("Distributed transaction name must be a string.");
+    }
+  });
+
+  test("rollbackDistributed requires the transaction name to be a string", async () => {
+    await using sql = makeSql();
+    for (const name of invalidNames) {
+      const err = await sql.rollbackDistributed(name as any).catch(e => e);
+      expect(err).toBeInstanceOf(Error);
+      expect(err.message).toBe("Distributed transaction name must be a string.");
+    }
+  });
+});
+
+describe("postgres dynamic identifier validation", () => {
+  test("identifiers containing a NUL byte are rejected", async () => {
+    await using sql = new SQL("postgres://bun_sql_test@127.0.0.1:1/bun_sql_test", { max: 1 });
+    const err = await (sql("col\0umn") as unknown as Promise<any>).catch(e => e);
+    expect(err).toBeInstanceOf(TypeError);
+    expect(err.code).toBe("ERR_INVALID_ARG_VALUE");
+    expect(err.message).toStartWith("The argument 'name' must not contain null bytes. Received ");
+  });
+
+  test("insert helper column names containing a NUL byte are rejected", async () => {
+    await using sql = new SQL("postgres://bun_sql_test@127.0.0.1:1/bun_sql_test", { max: 1 });
+    const err = await sql`INSERT INTO t ${sql([{ ["col\0umn"]: 1 }])}`.catch(e => e);
+    expect(err).toBeInstanceOf(TypeError);
+    expect(err.code).toBe("ERR_INVALID_ARG_VALUE");
+    expect(err.message).toStartWith("The argument 'name' must not contain null bytes. Received ");
+  });
+});
+
 // Behaviors that must keep working; these execute real queries, so they run
 // against sqlite only.
 describe("sqlite helper behavior preserved", () => {

@@ -19,23 +19,9 @@ use bun_sys::{self, Fd, FdExt, Mode, SystemError};
 use bun_sys_jsc::ErrorJsc as _;
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use core::ffi::c_int;
+#[cfg(windows)]
 use core::ffi::c_void;
 use core::marker::ConstParamTy;
-
-// Local conversion: `bun_sys::SystemError` -> `bun_jsc::SystemError`. Mapped
-// field-by-field because the two definitions order their fields differently.
-fn to_jsc_system_error(e: &SystemError) -> jsc::SystemError {
-    jsc::SystemError {
-        errno: e.errno,
-        code: e.code,
-        message: e.message,
-        path: e.path,
-        syscall: e.syscall,
-        hostname: e.hostname,
-        fd: e.fd,
-        dest: e.dest,
-    }
-}
 
 // ───────────────────────────────────────────────────────────────────────────
 // CopyFile (POSIX, blocking off-thread)
@@ -68,10 +54,6 @@ pub struct CopyFile<'a> {
     pub mkdirp_if_not_exists: bool,
     pub destination_mode: Option<Mode>,
 }
-
-pub type ResultType = Result<SizeType, bun_core::Error>;
-
-pub type Callback = fn(ctx: *mut c_void, len: ResultType);
 
 impl MkdirpTarget for CopyFile<'_> {
     fn mkdirp_if_not_exists(&self) -> bool {
@@ -135,14 +117,14 @@ impl<'a> CopyFile<'a> {
         ) && system_error.path.is_empty()
         {
             system_error.path =
-                bun_core::String::clone_utf8(self.source_file_store.pathlike.path().slice());
+                bun_core::String::clone_utf8(self.source_file_store.pathlike.path().slice()).into();
         }
 
         if system_error.message.is_empty() {
-            system_error.message = bun_core::String::static_("Failed to copy file");
+            system_error.message = bun_core::String::static_("Failed to copy file").into();
         }
 
-        let instance = to_jsc_system_error(&system_error)
+        let instance = jsc::SystemError::from(system_error)
             .to_error_instance_with_async_stack(self.global_this, promise);
         if let Some(store) = self.store.take() {
             drop(store); // deref()
@@ -218,7 +200,7 @@ impl<'a> CopyFile<'a> {
         }
     }
 
-    pub fn do_open_file<const WHICH: IOWhich>(&mut self) -> Result<(), bun_core::Error> {
+    pub fn do_open_file<const WHICH: IOWhich>(&mut self) -> Result<(), crate::Error> {
         let mut path_buf1 = PathBuffer::uninit();
         // open source file first
         // if it fails, we don't want the extra destination file hanging out
@@ -239,13 +221,13 @@ impl<'a> CopyFile<'a> {
                         bun_sys::Result::Ok(result_fd) => result_fd,
                         bun_sys::Result::Err(errno) => {
                             self.system_error = Some(errno.to_system_error());
-                            return Err(bun_core::errno_to_zig_err(errno.errno as i32));
+                            return Err(bun_errno::from_errno(errno.errno as i32).into());
                         }
                     }
                 }
                 bun_sys::Result::Err(errno) => {
                     self.system_error = Some(errno.to_system_error());
-                    return Err(bun_core::errno_to_zig_err(errno.errno as i32));
+                    return Err(bun_errno::from_errno(errno.errno as i32).into());
                 }
             };
         }
@@ -273,7 +255,7 @@ impl<'a> CopyFile<'a> {
                             bun_sys::Result::Ok(result_fd) => self.destination_fd = result_fd,
                             bun_sys::Result::Err(errno) => {
                                 self.system_error = Some(errno.to_system_error());
-                                return Err(bun_core::errno_to_zig_err(errno.errno as i32));
+                                return Err(bun_errno::from_errno(errno.errno as i32).into());
                             }
                         }
                     }
@@ -285,7 +267,7 @@ impl<'a> CopyFile<'a> {
                                     self.source_fd.close();
                                     self.source_fd = Fd::INVALID;
                                 }
-                                return Err(bun_core::errno_to_zig_err(errno.errno as i32));
+                                return Err(bun_errno::from_errno(errno.errno as i32).into());
                             }
                             Retry::No => {}
                         }
@@ -300,7 +282,7 @@ impl<'a> CopyFile<'a> {
                                 .with_path(self.destination_file_store.pathlike.path().slice())
                                 .to_system_error(),
                         );
-                        return Err(bun_core::errno_to_zig_err(errno.errno as i32));
+                        return Err(bun_errno::from_errno(errno.errno as i32).into());
                     }
                 }
                 break;
@@ -312,7 +294,7 @@ impl<'a> CopyFile<'a> {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub fn do_copy_file_range<const USE: TryWith, const CLEAR_APPEND_IF_INVALID: bool>(
         &mut self,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         use bun_sys::linux;
 
         self.read_off += self.offset;
@@ -353,7 +335,7 @@ impl<'a> CopyFile<'a> {
             ) {
                 bun_sys::Result::Err(err) => {
                     self.system_error = Some(err.to_system_error());
-                    return Err(bun_core::errno_to_zig_err(err.errno as i32));
+                    return Err(bun_errno::from_errno(err.errno as i32).into());
                 }
                 bun_sys::Result::Ok(()) => {
                     // SAFETY: dest_fd is a valid open fd; raw ftruncate(2).
@@ -428,7 +410,7 @@ impl<'a> CopyFile<'a> {
                     ) {
                         bun_sys::Result::Err(err) => {
                             self.system_error = Some(err.to_system_error());
-                            return Err(bun_core::errno_to_zig_err(err.errno as i32));
+                            return Err(bun_errno::from_errno(err.errno as i32).into());
                         }
                         bun_sys::Result::Ok(()) => {
                             // SAFETY: dest_fd is a valid open fd; raw ftruncate(2).
@@ -485,7 +467,7 @@ impl<'a> CopyFile<'a> {
                         ) {
                             bun_sys::Result::Err(err) => {
                                 self.system_error = Some(err.to_system_error());
-                                return Err(bun_core::errno_to_zig_err(err.errno as i32));
+                                return Err(bun_errno::from_errno(err.errno as i32).into());
                             }
                             bun_sys::Result::Ok(()) => {
                                 // SAFETY: dest_fd is a valid open fd; raw ftruncate(2).
@@ -509,7 +491,7 @@ impl<'a> CopyFile<'a> {
                         }
                         .to_system_error(),
                     );
-                    return Err(bun_core::errno_to_zig_err(bun_sys::E::EINVAL as i32));
+                    return Err(bun_errno::from_errno(bun_sys::E::EINVAL as i32).into());
                 }
                 errno => {
                     self.system_error = Some(
@@ -521,7 +503,7 @@ impl<'a> CopyFile<'a> {
                         }
                         .to_system_error(),
                     );
-                    return Err(bun_core::errno_to_zig_err(errno as i32));
+                    return Err(bun_errno::from_errno(errno as i32).into());
                 }
             }
 
@@ -536,7 +518,7 @@ impl<'a> CopyFile<'a> {
     }
 
     #[cfg(target_os = "macos")]
-    pub fn do_fcopy_file_with_read_write_loop_fallback(&mut self) -> Result<(), bun_core::Error> {
+    pub fn do_fcopy_file_with_read_write_loop_fallback(&mut self) -> Result<(), crate::Error> {
         match bun_sys::fcopyfile(
             self.source_fd,
             self.destination_fd,
@@ -567,14 +549,14 @@ impl<'a> CopyFile<'a> {
                         ) {
                             bun_sys::Result::Err(err) => {
                                 self.system_error = Some(err.to_system_error());
-                                return Err(bun_core::errno_to_zig_err(err.errno as i32));
+                                return Err(bun_errno::from_errno(err.errno as i32).into());
                             }
                             bun_sys::Result::Ok(()) => {}
                         }
                     }
                     _ => {
                         self.system_error = Some(errno.to_system_error());
-                        return Err(bun_core::errno_to_zig_err(errno.errno as i32));
+                        return Err(bun_errno::from_errno(errno.errno as i32).into());
                     }
                 }
             }
@@ -584,7 +566,7 @@ impl<'a> CopyFile<'a> {
     }
 
     #[cfg(target_os = "macos")]
-    pub fn do_clonefile(&mut self) -> Result<(), bun_core::Error> {
+    pub fn do_clonefile(&mut self) -> Result<(), crate::Error> {
         let mut source_buf = PathBuffer::uninit();
         let mut dest_buf = PathBuffer::uninit();
 
@@ -617,7 +599,7 @@ impl<'a> CopyFile<'a> {
                         Retry::No => {}
                     }
                     self.system_error = Some(errno.to_system_error());
-                    return Err(bun_core::errno_to_zig_err(errno.errno as i32));
+                    return Err(bun_errno::from_errno(errno.errno as i32).into());
                 }
                 bun_sys::Result::Ok(()) => {}
             }
@@ -1331,7 +1313,7 @@ impl<'a> CopyFileWindows<'a> {
                 if is_reading {
                     bun_sys::O::RDONLY
                 } else {
-                    bun_sys::O::WRONLY | bun_sys::O::CREAT
+                    bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC
                 },
                 0,
             ) {
@@ -1716,13 +1698,12 @@ impl<'a> CopyFileWindows<'a> {
         };
 
         self.event_loop.ref_concurrently();
-        node_fs::async_::AsyncMkdirp::new(node_fs::async_::AsyncMkdirp {
+        node_fs::async_::AsyncMkdirp::schedule(node_fs::async_::AsyncMkdirp {
             completion: on_mkdirp_complete_concurrent,
             completion_ctx: core::ptr::from_mut(self).cast::<()>(),
             path,
             ..Default::default()
-        })
-        .schedule();
+        });
     }
 
     fn on_mkdirp_complete(&mut self) {
@@ -1752,34 +1733,53 @@ extern "C" fn on_copy_file(req: *mut libuv::fs_t) {
 
     bun_sys::syslog!("uv_fs_copyfile() = {}", rc);
     if let Some(errno) = rc.err_enum_e() {
-        if this.mkdirp_if_not_exists && errno == bun_sys::E::ENOENT {
+        // ENOENT from uv_fs_copyfile can mean either the source file or the
+        // destination directory is missing. Disambiguate so a missing source
+        // rejects directly instead of entering the mkdirp+retry path. Only an
+        // ENOENT from the probe counts as "missing"; any other error leaves
+        // the mkdirp+retry path available.
+        let source_missing = errno == bun_sys::E::ENOENT
+            && match &this.source_file_store.data.as_file().pathlike {
+                PathOrFileDescriptor::Path(p) => {
+                    let mut buf = bun_paths::path_buffer_pool::get();
+                    matches!(
+                        bun_sys::access(p.slice_z(&mut buf), 0),
+                        bun_sys::Result::Err(e) if e.get_errno() == bun_sys::E::ENOENT
+                    )
+                }
+                PathOrFileDescriptor::Fd(_) => false,
+            };
+
+        if this.mkdirp_if_not_exists && errno == bun_sys::E::ENOENT && !source_missing {
             this.io_request.deinit();
             this.mkdirp();
             return;
-        } else {
-            let mut err = bun_sys::Error::from_code(
-                // #6336
-                if errno == bun_sys::E::EPERM {
-                    bun_sys::E::ENOENT
-                } else {
-                    errno
-                },
-                bun_sys::Tag::copyfile,
-            );
-            let destination = &this.destination_file_store.data.as_file();
-
-            // we don't really know which one it is
-            match &destination.pathlike {
-                PathOrFileDescriptor::Path(p) => {
-                    err = err.with_path(p.slice());
-                }
-                PathOrFileDescriptor::Fd(fd) => {
-                    err = err.with_fd(*fd);
-                }
-            }
-
-            this.throw(err);
         }
+
+        let mut err = bun_sys::Error::from_code(
+            // #6336
+            if errno == bun_sys::E::EPERM {
+                bun_sys::E::ENOENT
+            } else {
+                errno
+            },
+            bun_sys::Tag::copyfile,
+        );
+        let store = if source_missing {
+            &this.source_file_store
+        } else {
+            &this.destination_file_store
+        };
+        match &store.data.as_file().pathlike {
+            PathOrFileDescriptor::Path(p) => {
+                err = err.with_path(p.slice());
+            }
+            PathOrFileDescriptor::Fd(fd) => {
+                err = err.with_fd(*fd);
+            }
+        }
+
+        this.throw(err);
         return;
     }
 
@@ -1852,8 +1852,8 @@ pub enum IOWhich {
 fn unsupported_directory_error() -> SystemError {
     SystemError {
         errno: bun_sys::SystemErrno::EISDIR as i32,
-        message: bun_core::String::static_("That doesn't work on folders"),
-        syscall: bun_core::String::static_("fstat"),
+        message: bun_core::String::static_("That doesn't work on folders").into(),
+        syscall: bun_core::String::static_("fstat").into(),
         ..SystemError::default()
     }
 }
@@ -1862,8 +1862,8 @@ fn unsupported_directory_error() -> SystemError {
 fn unsupported_non_regular_file_error() -> SystemError {
     SystemError {
         errno: bun_sys::SystemErrno::ENOTSUP as i32,
-        message: bun_core::String::static_("Non-regular files aren't supported yet"),
-        syscall: bun_core::String::static_("fstat"),
+        message: bun_core::String::static_("Non-regular files aren't supported yet").into(),
+        syscall: bun_core::String::static_("fstat").into(),
         ..SystemError::default()
     }
 }
@@ -1872,4 +1872,3 @@ fn unsupported_non_regular_file_error() -> SystemError {
 
 pub type CopyFilePromiseTask<'a> =
     jsc::concurrent_promise_task::ConcurrentPromiseTask<'a, CopyFile<'a>>;
-pub type CopyFilePromiseTaskEventLoopTask = jsc::EventLoopTask;

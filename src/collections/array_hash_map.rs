@@ -106,37 +106,6 @@ impl CaseInsensitiveAsciiStringContext {
     pub fn hash_bytes(s: &[u8]) -> u32 {
         bun_wyhash::hash_ascii_lowercase(0, s) as u32 // @truncate
     }
-
-    /// Precompute the case-folded hash of `input` so repeated probes against
-    /// the same key skip the lowercasing pass.
-    #[inline]
-    pub fn pre(input: &[u8]) -> CaseInsensitiveAsciiPrehashed<'_> {
-        CaseInsensitiveAsciiPrehashed {
-            value: Self::hash_bytes(input),
-            input,
-        }
-    }
-}
-
-/// Caches the case-folded hash for `input` so repeated probes against the
-/// same key skip the lowercasing pass.
-pub struct CaseInsensitiveAsciiPrehashed<'a> {
-    pub value: u32,
-    pub input: &'a [u8],
-}
-
-impl<'a> CaseInsensitiveAsciiPrehashed<'a> {
-    #[inline]
-    pub fn hash(&self, s: &[u8]) -> u32 {
-        if core::ptr::eq(s.as_ptr(), self.input.as_ptr()) && s.len() == self.input.len() {
-            return self.value;
-        }
-        CaseInsensitiveAsciiStringContext::hash_bytes(s)
-    }
-    #[inline]
-    pub fn eql(&self, a: &[u8], b: &[u8]) -> bool {
-        bun_core::strings::eql_case_insensitive_ascii_check_length(a, b)
-    }
 }
 
 /// Lifts an `ArrayHashContext<[u8]>` to operate on `Box<[u8]>` keys by
@@ -204,20 +173,13 @@ pub struct Entry<'a, K, V> {
     pub value_ptr: &'a mut V,
 }
 
-/// Insertion-order iterator yielding `Entry`. Resettable via `reset()`.
+/// Insertion-order iterator yielding `Entry`.
 pub struct Iter<'a, K, V> {
     keys: *mut K,
     values: *mut V,
     len: usize,
     index: usize,
     _marker: PhantomData<&'a mut [(K, V)]>,
-}
-
-impl<'a, K, V> Iter<'a, K, V> {
-    #[inline]
-    pub fn reset(&mut self) {
-        self.index = 0;
-    }
 }
 
 impl<'a, K, V> Iterator for Iter<'a, K, V> {
@@ -602,18 +564,6 @@ impl<K, V, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
         self.drop_index();
     }
 
-    /// Same as `ensure_total_capacity` but takes an explicit `ctx` for the
-    /// stored key type. Capacity reservation is purely a Vec operation here,
-    /// so the context is accepted and ignored.
-    #[inline]
-    pub fn ensure_total_capacity_context<Ctx>(
-        &mut self,
-        n: usize,
-        _ctx: Ctx,
-    ) -> Result<(), AllocError> {
-        self.ensure_total_capacity(n)
-    }
-
     /// Insert/replace using an externally-supplied
     /// hash/eql context instead of the stored `C`. Used when `C = AutoContext`
     /// can't satisfy `K: Hash` (e.g. `bun_semver::String`, whose hash needs the
@@ -968,17 +918,6 @@ impl<K, V, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
         }
     }
 
-    /// Mutable access to the entry at `index` (key + value). Returns `None` if
-    /// `index >= len`. Mirrors `indexmap::IndexMap::get_index_mut`.
-    pub fn get_index_mut(&mut self, index: usize) -> Option<(&mut K, &mut V)> {
-        if index >= self.keys.len() {
-            return None;
-        }
-        // `keys` and `values` are distinct struct fields; borrowck permits one
-        // `&mut` into each simultaneously. Bound proven above.
-        Some((&mut self.keys[index], &mut self.values[index]))
-    }
-
     /// Remove the entry at `index` by swapping in the last
     /// entry. O(1); does not preserve insertion order. Returns the removed pair.
     pub fn swap_remove_at(&mut self, index: usize) -> (K, V) {
@@ -1008,16 +947,6 @@ impl<K, V, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
     {
         self.get_index_adapted(key, adapter)
             .map(|i| &self.values[i])
-    }
-
-    /// Mutable value lookup using an externally-supplied hash/eql adapter.
-    #[inline]
-    pub fn get_ptr_adapted<Q: ?Sized, Ad>(&mut self, key: &Q, adapter: &Ad) -> Option<&mut V>
-    where
-        Ad: ArrayHashAdapter<Q, K>,
-    {
-        let i = self.get_index_adapted(key, adapter)?;
-        Some(&mut self.values[i])
     }
 
     #[inline]
@@ -1211,9 +1140,6 @@ impl<'a, K, V, C, A: MapAllocator> OccupiedEntry<'a, K, V, C, A> {
     pub fn insert(&mut self, value: V) -> V {
         core::mem::replace(&mut self.map.values[self.idx], value)
     }
-    pub fn swap_remove(self) -> V {
-        self.map.swap_remove_at(self.idx).1
-    }
 }
 
 pub struct VacantEntry<'a, K, V, C, A: MapAllocator = Global> {
@@ -1251,12 +1177,6 @@ impl<'a, K, V, C, A: MapAllocator> MapEntry<'a, K, V, C, A> {
         V: Default,
     {
         self.or_insert_with(V::default)
-    }
-    pub fn and_modify<F: FnOnce(&mut V)>(mut self, f: F) -> Self {
-        if let MapEntry::Occupied(ref mut o) = self {
-            f(o.get_mut());
-        }
-        self
     }
 }
 
@@ -1323,22 +1243,6 @@ impl<K: Default, V: Default, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
         }
         let i = self.push_entry(K::default(), V::default(), h);
         Ok(self.gop_at(i, false))
-    }
-
-    /// Same as `get_or_put_adapted` but takes an explicit `ctx` for the
-    /// *stored* key type. The index does not need `ctx`, so it is accepted
-    /// and ignored.
-    #[inline]
-    pub fn get_or_put_context_adapted<Q: ?Sized, Ad>(
-        &mut self,
-        key: &Q,
-        adapter: &Ad,
-        _ctx: C,
-    ) -> Result<GetOrPutResult<'_, K, V>, AllocError>
-    where
-        Ad: ArrayHashAdapter<Q, K>,
-    {
-        self.get_or_put_adapted(key, adapter)
     }
 }
 
@@ -1491,17 +1395,6 @@ impl<V, C: ArrayHashContext<[u8]> + Default, A: MapAllocator> StringArrayHashMap
         let i = self.find(key)?;
         let (k, v) = self.inner.swap_remove_at(i);
         Some(KV { key: k, value: v })
-    }
-
-    pub fn re_index(&mut self) -> Result<(), AllocError> {
-        for (i, k) in self.inner.keys.iter().enumerate() {
-            self.inner.hashes[i] = self.ctx.hash(k);
-        }
-        self.inner.drop_index();
-        if self.inner.keys.len() > INDEX_THRESHOLD {
-            self.inner.rebuild_index();
-        }
-        Ok(())
     }
 }
 
@@ -1881,7 +1774,20 @@ impl<V, A: Allocator + HashbrownAllocator + Clone + Default> StringHashMap<V, A>
     }
 
     pub fn put(&mut self, key: &[u8], value: V) -> Result<(), AllocError> {
-        self.inner.insert(owned_key::<A>(key), value);
+        use hashbrown::hash_map::RawEntryMut;
+        let hash = self.hash_key(key);
+        match self
+            .inner
+            .raw_entry_mut()
+            .from_key_hashed_nocheck(hash, key)
+        {
+            RawEntryMut::Occupied(mut e) => {
+                e.insert(value);
+            }
+            RawEntryMut::Vacant(e) => {
+                e.insert_hashed_nocheck(hash, owned_key::<A>(key), value);
+            }
+        }
         Ok(())
     }
 
@@ -1972,45 +1878,11 @@ impl<V, A: Allocator + HashbrownAllocator + Clone + Default> StringHashMap<V, A>
         Ok(())
     }
 
-    /// Insert a pre-boxed key without re-allocating it. Uses `try_reserve` so
-    /// OOM surfaces as `Err` instead of aborting; callers can roll back side
-    /// effects on failure.
-    pub fn put_owned(&mut self, key: Box<[u8], A>, value: V) -> Result<(), AllocError> {
-        self.inner.try_reserve(1).map_err(|_| AllocError)?;
-        self.inner.insert(StringHashMapKey::owned(key), value);
-        Ok(())
-    }
-
     /// PERF: std::HashMap cannot skip the grow check, so this is
     /// just `put` without the `Result`.
     #[inline]
     pub fn put_assume_capacity(&mut self, key: &[u8], value: V) {
-        self.inner.insert(owned_key::<A>(key), value);
-    }
-
-    /// Asserts the key was not already present.
-    pub fn put_no_clobber(&mut self, key: &[u8], value: V) -> Result<(), AllocError> {
-        let prev = self.inner.insert(owned_key::<A>(key), value);
-        debug_assert!(prev.is_none(), "put_no_clobber: key already present");
-        Ok(())
-    }
-
-    /// Look up by `key` using `adapter` for hash/eql.
-    ///
-    /// The adapter's precomputed hash is ignored; the lookup falls back to the
-    /// normal `get(key)` path (correctness is preserved — `adapter.eql` is byte
-    /// equality for all current adapters). Callers that already hold a hash
-    /// computed with [`hash_key`] should use [`get_hashed`] instead to skip the
-    /// rehash.
-    #[inline]
-    pub fn get_adapted<C>(&self, key: &[u8], _adapter: &C) -> Option<&V> {
-        self.inner.get(key)
-    }
-
-    /// See [`get_adapted`] — same precomputed-hash caveat applies.
-    #[inline]
-    pub fn contains_adapted<C>(&self, key: &[u8], _adapter: &C) -> bool {
-        self.inner.contains_key(key)
+        let _ = self.put(key, value);
     }
 }
 
@@ -2021,46 +1893,52 @@ impl<V, A: Allocator + HashbrownAllocator + Clone + Default> StringHashMap<V, A>
 pub use crate::hash_map::GetOrPutResult as StringHashMapGetOrPut;
 
 impl<V: Default, A: Allocator + HashbrownAllocator + Clone + Default> StringHashMap<V, A> {
-    /// PERF: the previous shape (`contains_key` + `entry(Box::from(key))`)
-    /// hashed `key` twice and unconditionally heap-allocated the `Box` even on
-    /// hit. `Scope::members` calls this once per declared identifier during
-    /// parse, so on three.js that was ~thousands of redundant `Box`
-    /// allocations + double-hashes per file. Route through a single `entry()`
-    /// match; the `Box` is still allocated upfront (std `HashMap::entry`
-    /// requires the owned key) but on hit it is dropped without a second
-    /// probe. Full prehash reuse needs a `raw_entry`-style API; see
-    /// [`get_hashed`] / [`put_static_key_hashed`] for the existing single-hash
-    /// entry points.
+    /// Single hash + single probe via `raw_entry_mut`; the key `Box` is only
+    /// allocated on miss. Callers whose key bytes already outlive the map
+    /// should prefer [`get_or_put_borrowed`] which also skips the miss-path
+    /// box.
     pub fn get_or_put(&mut self, key: &[u8]) -> Result<StringHashMapGetOrPut<'_, V>, AllocError> {
-        Ok(self.get_or_put_context_adapted(key, ()))
+        use hashbrown::hash_map::RawEntryMut;
+        let hash = self.hash_key(key);
+        Ok(
+            match self
+                .inner
+                .raw_entry_mut()
+                .from_key_hashed_nocheck(hash, key)
+            {
+                RawEntryMut::Occupied(o) => StringHashMapGetOrPut {
+                    found_existing: true,
+                    value_ptr: o.into_mut(),
+                },
+                RawEntryMut::Vacant(v) => StringHashMapGetOrPut {
+                    found_existing: false,
+                    value_ptr: v
+                        .insert_hashed_nocheck(hash, owned_key::<A>(key), V::default())
+                        .1,
+                },
+            },
+        )
     }
 
     pub fn get_or_put_value(&mut self, key: &[u8], value: V) -> Result<&mut V, AllocError> {
-        Ok(self.inner.entry(owned_key::<A>(key)).or_insert(value))
-    }
-
-    /// See `get_adapted` for
-    /// why the adapter's precomputed hash is currently ignored.
-    pub fn get_or_put_context_adapted<C>(
-        &mut self,
-        key: &[u8],
-        _adapter: C,
-    ) -> StringHashMapGetOrPut<'_, V> {
-        use hashbrown::hash_map::Entry as HbEntry;
-        match self.inner.entry(owned_key::<A>(key)) {
-            HbEntry::Occupied(o) => StringHashMapGetOrPut {
-                found_existing: true,
-                value_ptr: o.into_mut(),
+        use hashbrown::hash_map::RawEntryMut;
+        let hash = self.hash_key(key);
+        Ok(
+            match self
+                .inner
+                .raw_entry_mut()
+                .from_key_hashed_nocheck(hash, key)
+            {
+                RawEntryMut::Occupied(e) => e.into_mut(),
+                RawEntryMut::Vacant(e) => {
+                    e.insert_hashed_nocheck(hash, owned_key::<A>(key), value).1
+                }
             },
-            HbEntry::Vacant(v) => StringHashMapGetOrPut {
-                found_existing: false,
-                value_ptr: v.insert(V::default()),
-            },
-        }
+        )
     }
 
     /// Zero-allocation `getOrPut` — the arena-lifetime twin of
-    /// [`get_or_put`]/[`get_or_put_context_adapted`]. Looks up `key` and on
+    /// [`get_or_put`]. Looks up `key` and on
     /// miss inserts `V::default()` keyed by the **borrowed slice itself** (no
     /// `box_key`). Single hash + single probe via `hashbrown`'s `entry_ref`;
     /// the `From<&'static [u8]>` impl above is what `VacantEntryRef::insert`
@@ -2093,79 +1971,24 @@ impl<V: Default, A: Allocator + HashbrownAllocator + Clone + Default> StringHash
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// StringHashMapContext + Prehashed adapters
+// StringHashMapContext + PrehashedCaseInsensitive
 // ──────────────────────────────────────────────────────────────────────────
 
-/// `bun.StringHashMapContext` — wyhash(seed=0) over byte slices, full 64-bit.
-/// This is the *unordered* map context (vs. `StringContext` above which
-/// truncates to u32 for `ArrayHashMap`).
-///
-/// Spelled as a module rather than a unit struct so callers can
-/// path-access the nested `Prehashed` / `PrehashedCaseInsensitive` types
-/// (`StringHashMapContext::Prehashed::…`) on stable Rust, which forbids
-/// inherent associated types.
+/// `bun.StringHashMapContext` — spelled as a module rather than a unit
+/// struct so callers can path-access the nested `PrehashedCaseInsensitive`
+/// type (`StringHashMapContext::PrehashedCaseInsensitive`) on stable Rust,
+/// which forbids inherent associated types.
 #[allow(non_snake_case)]
 pub mod StringHashMapContext {
-    #[inline]
-    pub fn eql(a: &[u8], b: &[u8]) -> bool {
-        a == b
-    }
-    /// Precompute the hash of `input` so repeated lookups across many maps
-    /// can skip rehashing. Returns a `Prehashed` adapter.
-    #[inline]
-    pub fn pre(input: &[u8]) -> super::string_hash_map::Prehashed<'_> {
-        super::string_hash_map::Prehashed {
-            value: bun_wyhash::hash(input),
-            input,
-        }
-    }
-
-    pub use super::string_hash_map::{Prehashed, PrehashedCaseInsensitive, hash};
+    pub use super::string_hash_map::PrehashedCaseInsensitive;
 }
 
 /// String-hash helpers, namespaced so call sites can write
-/// `bun_collections::string_hash_map::{hash, Prehashed, GetOrPutResult}`.
+/// `bun_collections::string_hash_map::{PrehashedCaseInsensitive, GetOrPutResult}`.
 pub mod string_hash_map {
-    /// wyhash(seed=0), full u64.
-    #[inline]
-    pub fn hash(s: &[u8]) -> u64 {
-        bun_wyhash::hash(s)
-    }
-
-    /// `bun.StringHashMapContext.Prehashed` — caches the hash of one borrowed
-    /// slice; `hash()` returns the cached value when asked about that exact
-    /// slice (pointer + len identity), otherwise rehashes.
-    #[derive(Clone, Copy)]
-    pub struct Prehashed<'a> {
-        pub value: u64,
-        pub input: &'a [u8],
-    }
-
-    impl<'a> Prehashed<'a> {
-        #[inline]
-        pub fn new(input: &'a [u8]) -> Self {
-            Self {
-                value: hash(input),
-                input,
-            }
-        }
-        #[inline]
-        pub fn hash(&self, s: &[u8]) -> u64 {
-            if core::ptr::eq(s.as_ptr(), self.input.as_ptr()) && s.len() == self.input.len() {
-                return self.value;
-            }
-            hash(s)
-        }
-        #[inline]
-        pub fn eql(&self, a: &[u8], b: &[u8]) -> bool {
-            a == b
-        }
-    }
-
     /// `bun.StringHashMapContext.PrehashedCaseInsensitive` — owns a lowercased
     /// copy of the input. Dropped via `Box`.
     pub struct PrehashedCaseInsensitive {
-        pub value: u64,
         pub input: Box<[u8]>,
     }
 
@@ -2173,21 +1996,7 @@ pub mod string_hash_map {
         pub fn init(input: &[u8]) -> Self {
             let mut out = vec![0u8; input.len()].into_boxed_slice();
             bun_core::strings::copy_lowercase(input, &mut out);
-            Self {
-                value: hash(&out),
-                input: out,
-            }
-        }
-        #[inline]
-        pub fn hash(&self, s: &[u8]) -> u64 {
-            if core::ptr::eq(s.as_ptr(), self.input.as_ptr()) && s.len() == self.input.len() {
-                return self.value;
-            }
-            hash(s)
-        }
-        #[inline]
-        pub fn eql(&self, a: &[u8], b: &[u8]) -> bool {
-            bun_core::strings::eql_case_insensitive_ascii_check_length(a, b)
+            Self { input: out }
         }
     }
 
@@ -2291,26 +2100,6 @@ impl StringHashMapUnownedKey {
     }
 }
 
-/// `bun.StringHashMapUnowned` namespace.
-pub mod string_hash_map_unowned {
-    pub use super::StringHashMapUnownedKey as Key;
-
-    /// Adapter feeding `Key.hash` straight through.
-    #[derive(Default, Clone, Copy)]
-    pub struct Adapter;
-
-    impl Adapter {
-        #[inline]
-        pub fn hash(self, key: &Key) -> u64 {
-            key.hash
-        }
-        #[inline]
-        pub fn eql(self, a: &Key, b: &Key) -> bool {
-            a.hash == b.hash && a.len == b.len
-        }
-    }
-}
-
 #[cfg(test)]
 mod index_tests {
     use super::*;
@@ -2351,5 +2140,72 @@ mod index_tests {
             assert_eq!(m.get(k.as_bytes()), Some(&i));
         }
         assert_eq!(m.get(b"missing"), None);
+    }
+
+    use core::alloc::Layout;
+    use core::ptr::NonNull;
+    use core::sync::atomic::{AtomicUsize, Ordering};
+
+    static COUNTING_ALLOCS: AtomicUsize = AtomicUsize::new(0);
+
+    #[derive(Clone, Copy, Default)]
+    struct CountingAlloc;
+
+    // SAFETY: thin forwarder to `std::alloc::Global`.
+    unsafe impl core::alloc::Allocator for CountingAlloc {
+        fn allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, core::alloc::AllocError> {
+            COUNTING_ALLOCS.fetch_add(1, Ordering::Relaxed);
+            std::alloc::Global.allocate(layout)
+        }
+        unsafe fn deallocate(&self, ptr: NonNull<u8>, layout: Layout) {
+            // SAFETY: forwarded; caller guarantees `ptr` came from `allocate`.
+            unsafe { std::alloc::Global.deallocate(ptr, layout) }
+        }
+    }
+
+    // SAFETY: delegates to the `core::alloc::Allocator` impl above.
+    unsafe impl allocator_api2::alloc::Allocator for CountingAlloc {
+        fn allocate(
+            &self,
+            layout: Layout,
+        ) -> Result<NonNull<[u8]>, allocator_api2::alloc::AllocError> {
+            core::alloc::Allocator::allocate(self, layout)
+                .map_err(|_| allocator_api2::alloc::AllocError)
+        }
+        unsafe fn deallocate(&self, ptr: NonNull<u8>, layout: Layout) {
+            // SAFETY: forwarded; caller guarantees `ptr` came from `allocate`.
+            unsafe { core::alloc::Allocator::deallocate(self, ptr, layout) }
+        }
+    }
+
+    #[test]
+    fn string_hash_map_no_alloc_on_hit() {
+        let mut m: StringHashMap<u32, CountingAlloc> = StringHashMap::new();
+        // Pre-size so the table itself does not reallocate during the test.
+        m.ensure_total_capacity(4).unwrap();
+        let base = COUNTING_ALLOCS.load(Ordering::Relaxed);
+
+        m.put(b"aa", 1).unwrap();
+        m.put(b"bb", 2).unwrap();
+        let after_miss = COUNTING_ALLOCS.load(Ordering::Relaxed);
+        assert_eq!(after_miss - base, 2, "one key Box per distinct key on miss");
+
+        // Hits via every safe owning entry point must not box the key again.
+        m.put(b"aa", 10).unwrap();
+        m.put_assume_capacity(b"bb", 20);
+        assert!(m.get_or_put(b"aa").unwrap().found_existing);
+        assert_eq!(*m.get_or_put_value(b"bb", 0).unwrap(), 20);
+        let after_hit = COUNTING_ALLOCS.load(Ordering::Relaxed);
+        assert_eq!(after_hit, after_miss, "hits must not allocate a key Box");
+
+        // A fresh key via get_or_put boxes exactly once.
+        let g = m.get_or_put(b"cc").unwrap();
+        assert!(!g.found_existing);
+        *g.value_ptr = 30;
+        assert_eq!(COUNTING_ALLOCS.load(Ordering::Relaxed), after_hit + 1);
+
+        assert_eq!(*m.get(b"aa".as_slice()).unwrap(), 10);
+        assert_eq!(*m.get(b"bb".as_slice()).unwrap(), 20);
+        assert_eq!(*m.get(b"cc".as_slice()).unwrap(), 30);
     }
 }

@@ -26,10 +26,13 @@
 
 #include "config.h"
 #include "SerializedScriptValue.h"
+#include "BunClientData.h"
 #include "BunString.h"
 // #include "BlobRegistry.h"
 // #include "ByteArrayPixelBuffer.h"
 #include "CryptoKeyAES.h"
+#include "CryptoKeyAKP.h"
+#include <openssl/err.h>
 #include "CryptoKeyEC.h"
 #include "CryptoKeyHMAC.h"
 #include "CryptoKeyOKP.h"
@@ -91,6 +94,7 @@
 #include <JavaScriptCore/JSWebAssemblyModule.h>
 #include <JavaScriptCore/NumberObject.h>
 #include <JavaScriptCore/ObjectConstructor.h>
+#include <JavaScriptCore/ObjectPrototype.h>
 #include <JavaScriptCore/PropertyNameArray.h>
 #include <JavaScriptCore/RegExp.h>
 #include <JavaScriptCore/RegExpObject.h>
@@ -473,7 +477,9 @@ static String agentClusterIDFromGlobalObject(JSGlobalObject& globalObject)
 
 #if ENABLE(WEB_CRYPTO)
 
-const uint32_t currentKeyFormatVersion = 1;
+// Version 2 added the AKP key class (ML-DSA/ML-KEM), the KEM usage tags, and
+// the ChaCha20-Poly1305/ML-* algorithm identifier tags.
+const uint32_t currentKeyFormatVersion = 2;
 
 enum class CryptoKeyClassSubtag {
     HMAC = 0,
@@ -482,8 +488,9 @@ enum class CryptoKeyClassSubtag {
     EC = 3,
     Raw = 4,
     OKP = 5,
+    AKP = 6,
 };
-const uint8_t cryptoKeyClassSubtagMaximumValue = 5;
+const uint8_t cryptoKeyClassSubtagMaximumValue = 6;
 
 enum class CryptoKeyAsymmetricTypeSubtag {
     Public = 0,
@@ -499,9 +506,13 @@ enum class CryptoKeyUsageTag {
     DeriveKey = 4,
     DeriveBits = 5,
     WrapKey = 6,
-    UnwrapKey = 7
+    UnwrapKey = 7,
+    EncapsulateKey = 8,
+    EncapsulateBits = 9,
+    DecapsulateKey = 10,
+    DecapsulateBits = 11
 };
-const uint8_t cryptoKeyUsageTagMaximumValue = 7;
+const uint8_t cryptoKeyUsageTagMaximumValue = 11;
 
 enum class CryptoAlgorithmIdentifierTag {
     RSAES_PKCS1_v1_5 = 0,
@@ -528,9 +539,15 @@ enum class CryptoAlgorithmIdentifierTag {
     SHA3_256 = 24,
     SHA3_384 = 25,
     SHA3_512 = 26,
+    CHACHA20_POLY1305 = 27,
+    ML_DSA_44 = 28,
+    ML_DSA_65 = 29,
+    ML_DSA_87 = 30,
+    ML_KEM_768 = 31,
+    ML_KEM_1024 = 32,
 };
 
-const uint8_t cryptoAlgorithmIdentifierTagMaximumValue = 26;
+const uint8_t cryptoAlgorithmIdentifierTagMaximumValue = 32;
 
 static unsigned countUsages(CryptoKeyUsageBitmap usages)
 {
@@ -1632,6 +1649,22 @@ private:
         VM& vm = m_lexicalGlobalObject->vm();
         auto scope = DECLARE_THROW_SCOPE(vm);
 
+        // markAsUncloneable: reject a marked object anywhere in the graph (nested terminals
+        // come through dumpIfTerminal directly); ArrayBuffers/views serialize natively. The
+        // marker is a DontEnum JSC private name (node parity), invisible to user JS.
+        // A port in the transfer list is moved rather than cloned, so the marker doesn't
+        // apply to it — node lets `postMessage(port, [port])` through for a marked port.
+        if (value.isObject()) {
+            JSObject* obj = asObject(value);
+            if (!obj->inherits<JSArrayBuffer>() && !obj->inherits<JSArrayBufferView>()
+                && !(obj->inherits<JSMessagePort>() && m_transferredMessagePorts.contains(obj))
+                && obj->structure()->hasNonEnumerableProperties()
+                && obj->getDirect(vm, builtinNames(vm).isUncloneablePrivateName())) {
+                code = SerializationReturnCode::DataCloneError;
+                return true;
+            }
+        }
+
         if (isArray(value))
             return false;
 
@@ -1735,45 +1768,61 @@ private:
                 auto errorTypeString = errorTypeValue.toWTFString(m_lexicalGlobalObject);
                 RETURN_IF_EXCEPTION(scope, false);
 
-                String message;
-                PropertyDescriptor messageDescriptor;
-                if (errorInstance->getOwnPropertyDescriptor(m_lexicalGlobalObject, vm.propertyNames->message, messageDescriptor) && messageDescriptor.isDataDescriptor()) {
-                    scope.assertNoException();
-                    message = messageDescriptor.value().toWTFString(m_lexicalGlobalObject);
+                // .message/.line/.column/.sourceURL: HTML spec + Node/WebKit read
+                // OWN data descriptors only (an inherited or accessor .message is
+                // NOT serialized). .stack: Node reads via [[Get]] to materialize
+                // V8's lazy accessor. Any getter/coercion/prepareStackTrace throw
+                // propagates out of postMessage/structuredClone (Node parity).
+                String message, sourceURL, stack;
+                unsigned line = 0, column = 0;
+                {
+                    // .message is ToString'd rather than gated on isString (node clones
+                    // `e.message = 42` as "42"). Reading it before .line also keeps a
+                    // Symbol message from reaching ErrorInstance's lazy materialization.
+                    JSC::PropertyDescriptor d;
+                    bool found = errorInstance->getOwnPropertyDescriptor(m_lexicalGlobalObject, vm.propertyNames->message, d);
+                    RETURN_IF_EXCEPTION(scope, false);
+                    if (found && d.isDataDescriptor() && d.value()) {
+                        message = d.value().toWTFString(m_lexicalGlobalObject);
+                        RETURN_IF_EXCEPTION(scope, false);
+                    }
                 }
+                // Trigger ErrorInstance's lazy materialization up front so a throwing
+                // prepareStackTrace propagates here instead of tripping the exception
+                // assertion inside JSObject::getOwnPropertyDescriptor.
+                errorInstance->materializeErrorInfoIfNeeded(vm);
                 RETURN_IF_EXCEPTION(scope, false);
-
-                unsigned line = 0;
-                PropertyDescriptor lineDescriptor;
-                if (errorInstance->getOwnPropertyDescriptor(m_lexicalGlobalObject, vm.propertyNames->line, lineDescriptor) && lineDescriptor.isDataDescriptor()) {
-                    scope.assertNoException();
-                    line = lineDescriptor.value().toNumber(m_lexicalGlobalObject);
+                {
+                    JSC::PropertyDescriptor d;
+                    bool found = errorInstance->getOwnPropertyDescriptor(m_lexicalGlobalObject, vm.propertyNames->line, d);
+                    RETURN_IF_EXCEPTION(scope, false);
+                    if (found && d.isDataDescriptor() && d.value().isNumber())
+                        line = d.value().toNumber(m_lexicalGlobalObject);
+                    RETURN_IF_EXCEPTION(scope, false);
                 }
-                RETURN_IF_EXCEPTION(scope, false);
-
-                unsigned column = 0;
-                PropertyDescriptor columnDescriptor;
-                if (errorInstance->getOwnPropertyDescriptor(m_lexicalGlobalObject, vm.propertyNames->column, columnDescriptor) && columnDescriptor.isDataDescriptor()) {
-                    scope.assertNoException();
-                    column = columnDescriptor.value().toNumber(m_lexicalGlobalObject);
+                {
+                    JSC::PropertyDescriptor d;
+                    bool found = errorInstance->getOwnPropertyDescriptor(m_lexicalGlobalObject, vm.propertyNames->column, d);
+                    RETURN_IF_EXCEPTION(scope, false);
+                    if (found && d.isDataDescriptor() && d.value().isNumber())
+                        column = d.value().toNumber(m_lexicalGlobalObject);
+                    RETURN_IF_EXCEPTION(scope, false);
                 }
-                RETURN_IF_EXCEPTION(scope, false);
-
-                String sourceURL;
-                PropertyDescriptor sourceURLDescriptor;
-                if (errorInstance->getOwnPropertyDescriptor(m_lexicalGlobalObject, vm.propertyNames->sourceURL, sourceURLDescriptor) && sourceURLDescriptor.isDataDescriptor()) {
-                    scope.assertNoException();
-                    sourceURL = sourceURLDescriptor.value().toWTFString(m_lexicalGlobalObject);
+                {
+                    JSC::PropertyDescriptor d;
+                    bool found = errorInstance->getOwnPropertyDescriptor(m_lexicalGlobalObject, vm.propertyNames->sourceURL, d);
+                    RETURN_IF_EXCEPTION(scope, false);
+                    if (found && d.isDataDescriptor() && d.value().isString())
+                        sourceURL = d.value().toWTFString(m_lexicalGlobalObject);
+                    RETURN_IF_EXCEPTION(scope, false);
                 }
-                RETURN_IF_EXCEPTION(scope, false);
-
-                String stack;
-                PropertyDescriptor stackDescriptor;
-                if (errorInstance->getOwnPropertyDescriptor(m_lexicalGlobalObject, vm.propertyNames->stack, stackDescriptor) && stackDescriptor.isDataDescriptor()) {
-                    scope.assertNoException();
-                    stack = stackDescriptor.value().toWTFString(m_lexicalGlobalObject);
+                {
+                    JSValue v = errorInstance->get(m_lexicalGlobalObject, vm.propertyNames->stack);
+                    RETURN_IF_EXCEPTION(scope, false);
+                    if (v.isString())
+                        stack = v.toWTFString(m_lexicalGlobalObject);
+                    RETURN_IF_EXCEPTION(scope, false);
                 }
-                RETURN_IF_EXCEPTION(scope, false);
 
                 write(ErrorInstanceTag);
                 write(errorNameToSerializableErrorType(errorTypeString));
@@ -1791,8 +1840,10 @@ private:
                     write(index->value);
                     return true;
                 }
-                // MessagePort object could not be found in transferred message ports
-                code = SerializationReturnCode::ValidationError;
+                // MessagePort present in the message but not listed in the
+                // transfer list: node throws a DataCloneError with this message.
+                WebCore::propagateException(*m_lexicalGlobalObject, scope, Exception { DataCloneError, "Object that needs transfer was found in message but not listed in transferList"_s });
+                code = SerializationReturnCode::ExistingExceptionError;
                 return true;
             }
             if (auto* arrayBuffer = toPossiblySharedArrayBuffer(vm, obj)) {
@@ -2511,6 +2562,24 @@ private:
         case CryptoAlgorithmIdentifier::X25519:
             write(CryptoAlgorithmIdentifierTag::X25519);
             break;
+        case CryptoAlgorithmIdentifier::ChaCha20_Poly1305:
+            write(CryptoAlgorithmIdentifierTag::CHACHA20_POLY1305);
+            break;
+        case CryptoAlgorithmIdentifier::ML_DSA_44:
+            write(CryptoAlgorithmIdentifierTag::ML_DSA_44);
+            break;
+        case CryptoAlgorithmIdentifier::ML_DSA_65:
+            write(CryptoAlgorithmIdentifierTag::ML_DSA_65);
+            break;
+        case CryptoAlgorithmIdentifier::ML_DSA_87:
+            write(CryptoAlgorithmIdentifierTag::ML_DSA_87);
+            break;
+        case CryptoAlgorithmIdentifier::ML_KEM_768:
+            write(CryptoAlgorithmIdentifierTag::ML_KEM_768);
+            break;
+        case CryptoAlgorithmIdentifier::ML_KEM_1024:
+            write(CryptoAlgorithmIdentifierTag::ML_KEM_1024);
+            break;
         case CryptoAlgorithmIdentifier::None: {
             RELEASE_ASSERT_NOT_REACHED();
             break;
@@ -2586,6 +2655,14 @@ private:
             write(CryptoKeyUsageTag::WrapKey);
         if (usages & CryptoKeyUsageUnwrapKey)
             write(CryptoKeyUsageTag::UnwrapKey);
+        if (usages & CryptoKeyUsageEncapsulateKey)
+            write(CryptoKeyUsageTag::EncapsulateKey);
+        if (usages & CryptoKeyUsageEncapsulateBits)
+            write(CryptoKeyUsageTag::EncapsulateBits);
+        if (usages & CryptoKeyUsageDecapsulateKey)
+            write(CryptoKeyUsageTag::DecapsulateKey);
+        if (usages & CryptoKeyUsageDecapsulateBits)
+            write(CryptoKeyUsageTag::DecapsulateBits);
 
         switch (key->keyClass()) {
         case CryptoKeyClass::HMAC:
@@ -2627,6 +2704,32 @@ private:
             write(key->algorithmIdentifier());
             write(downcast<CryptoKeyRaw>(*key).key());
             break;
+        case CryptoKeyClass::AKP: {
+            write(CryptoKeyClassSubtag::AKP);
+            write(key->algorithmIdentifier());
+            auto& akpKey = downcast<CryptoKeyAKP>(*key);
+            switch (key->type()) {
+            case CryptoKey::Type::Public: {
+                write(CryptoKeyAsymmetricTypeSubtag::Public);
+                auto result = akpKey.exportRawPublic();
+                ASSERT(!result.hasException());
+                write(result.releaseReturnValue());
+                break;
+            }
+            case CryptoKey::Type::Private: {
+                // PKCS#8 embeds the FIPS 203/204 seed when the key has one, so
+                // raw-seed exportability survives the round trip like in Node.
+                write(CryptoKeyAsymmetricTypeSubtag::Private);
+                auto result = akpKey.exportPkcs8();
+                ASSERT(!result.hasException());
+                write(result.releaseReturnValue());
+                break;
+            }
+            default:
+                ASSERT_NOT_REACHED();
+            }
+            break;
+        }
         case CryptoKeyClass::RSA: {
             write(CryptoKeyClassSubtag::RSA);
             write(key->algorithmIdentifier());
@@ -2774,7 +2877,9 @@ SerializationReturnCode CloneSerializer::serialize(JSValue in)
             // a DataCloneError.
             // NapiPrototype is allowed because napi_create_object should behave
             // like a plain object from JS's perspective (matches Node.js).
-            if (inObject->classInfo() != JSFinalObject::info() && inObject->classInfo() != Zig::NapiPrototype::info())
+            // ObjectPrototype is allowed because %Object.prototype% is an immutable
+            // prototype exotic object that the spec carves out of this rejection.
+            if (inObject->classInfo() != JSFinalObject::info() && inObject->classInfo() != Zig::NapiPrototype::info() && inObject->classInfo() != JSC::ObjectPrototype::info())
                 return SerializationReturnCode::DataCloneError;
             inputObjectStack.append(inObject);
             indexStack.append(0);
@@ -4039,6 +4144,24 @@ private:
         case CryptoAlgorithmIdentifierTag::X25519:
             result = CryptoAlgorithmIdentifier::X25519;
             break;
+        case CryptoAlgorithmIdentifierTag::CHACHA20_POLY1305:
+            result = CryptoAlgorithmIdentifier::ChaCha20_Poly1305;
+            break;
+        case CryptoAlgorithmIdentifierTag::ML_DSA_44:
+            result = CryptoAlgorithmIdentifier::ML_DSA_44;
+            break;
+        case CryptoAlgorithmIdentifierTag::ML_DSA_65:
+            result = CryptoAlgorithmIdentifier::ML_DSA_65;
+            break;
+        case CryptoAlgorithmIdentifierTag::ML_DSA_87:
+            result = CryptoAlgorithmIdentifier::ML_DSA_87;
+            break;
+        case CryptoAlgorithmIdentifierTag::ML_KEM_768:
+            result = CryptoAlgorithmIdentifier::ML_KEM_768;
+            break;
+        case CryptoAlgorithmIdentifierTag::ML_KEM_1024:
+            result = CryptoAlgorithmIdentifier::ML_KEM_1024;
+            break;
         }
         return true;
     }
@@ -4129,6 +4252,8 @@ private:
     {
         CryptoAlgorithmIdentifier algorithm;
         if (!read(algorithm))
+            return false;
+        if (!CryptoKeyRSA::isValidRSAAlgorithm(algorithm))
             return false;
 
         int32_t isRestrictedToHash;
@@ -4250,6 +4375,16 @@ private:
         CryptoKeyOKP::NamedCurve namedCurve;
         if (!read(namedCurve))
             return false;
+        switch (namedCurve) {
+        case CryptoKeyOKP::NamedCurve::Ed25519:
+            if (algorithm != CryptoAlgorithmIdentifier::Ed25519)
+                return false;
+            break;
+        case CryptoKeyOKP::NamedCurve::X25519:
+            if (algorithm != CryptoAlgorithmIdentifier::X25519)
+                return false;
+            break;
+        }
         Vector<uint8_t> keyData;
         if (!read(keyData))
             return false;
@@ -4258,16 +4393,46 @@ private:
         return true;
     }
 
-    bool readRawKey(CryptoKeyUsageBitmap usages, RefPtr<CryptoKey>& result)
+    bool readRawKey(bool extractable, CryptoKeyUsageBitmap usages, RefPtr<CryptoKey>& result)
     {
         CryptoAlgorithmIdentifier algorithm;
         if (!read(algorithm))
             return false;
+        if (!CryptoKeyRaw::isValidRawAlgorithm(algorithm))
+            return false;
         Vector<uint8_t> keyData;
         if (!read(keyData))
             return false;
-        result = CryptoKeyRaw::create(algorithm, WTF::move(keyData), usages);
+        result = CryptoKeyRaw::create(algorithm, WTF::move(keyData), usages, extractable);
         return true;
+    }
+
+    bool readAKPKey(bool extractable, CryptoKeyUsageBitmap usages, RefPtr<CryptoKey>& result)
+    {
+        CryptoAlgorithmIdentifier algorithm;
+        if (!read(algorithm))
+            return false;
+        if (!CryptoKeyAKP::isMlDsa(algorithm) && !CryptoKeyAKP::isMlKem(algorithm))
+            return false;
+        CryptoKeyAsymmetricTypeSubtag type;
+        if (!read(type))
+            return false;
+        Vector<uint8_t> keyData;
+        if (!read(keyData))
+            return false;
+        switch (type) {
+        case CryptoKeyAsymmetricTypeSubtag::Public:
+            result = CryptoKeyAKP::importRawPublic(algorithm, WTF::move(keyData), extractable, usages);
+            break;
+        case CryptoKeyAsymmetricTypeSubtag::Private:
+            result = CryptoKeyAKP::importPkcs8(algorithm, WTF::move(keyData), extractable, usages, nullptr);
+            break;
+        }
+        // A corrupt payload leaves the BoringSSL parse error in the queue;
+        // nothing here attaches it as a cause, so clear it.
+        if (!result)
+            ERR_clear_error();
+        return !!result;
     }
 
     bool readCryptoKey(JSValue& cryptoKey)
@@ -4314,6 +4479,18 @@ private:
             case CryptoKeyUsageTag::UnwrapKey:
                 usages |= CryptoKeyUsageUnwrapKey;
                 break;
+            case CryptoKeyUsageTag::EncapsulateKey:
+                usages |= CryptoKeyUsageEncapsulateKey;
+                break;
+            case CryptoKeyUsageTag::EncapsulateBits:
+                usages |= CryptoKeyUsageEncapsulateBits;
+                break;
+            case CryptoKeyUsageTag::DecapsulateKey:
+                usages |= CryptoKeyUsageDecapsulateKey;
+                break;
+            case CryptoKeyUsageTag::DecapsulateBits:
+                usages |= CryptoKeyUsageDecapsulateBits;
+                break;
             }
         }
 
@@ -4339,11 +4516,15 @@ private:
                 return false;
             break;
         case CryptoKeyClassSubtag::Raw:
-            if (!readRawKey(usages, result))
+            if (!readRawKey(extractable, usages, result))
                 return false;
             break;
         case CryptoKeyClassSubtag::OKP:
             if (!readOKPKey(extractable, usages, result))
+                return false;
+            break;
+        case CryptoKeyClassSubtag::AKP:
+            if (!readAKPKey(extractable, usages, result))
                 return false;
             break;
         }
@@ -4895,6 +5076,7 @@ private:
 
     JSValue readTerminal()
     {
+        const uint8_t* preTagPtr = m_ptr;
         SerializationTag tag = readTag();
         // if (!isTypeExposedToGlobalObject(*m_globalObject, tag))
         //     return JSValue();
@@ -5103,6 +5285,10 @@ private:
             }
             VM& vm = m_lexicalGlobalObject->vm();
             RegExp* regExp = RegExp::create(vm, pattern->string(), reFlags.value());
+            if (!regExp->isValid()) [[unlikely]] {
+                fail();
+                return JSValue();
+            }
             RegExpObject* obj = RegExpObject::create(vm, m_globalObject->regExpStructure(), regExp);
             addTerminalToObjectPool(obj);
             return obj;
@@ -5301,7 +5487,7 @@ private:
 #if ENABLE(WEB_CRYPTO)
         case CryptoKeyTag: {
             Vector<uint8_t> serializedKey;
-            if (!read(serializedKey)) {
+            if (!read(serializedKey) || serializedKey.isEmpty()) {
                 fail();
                 return JSValue();
             }
@@ -5376,7 +5562,7 @@ private:
             // ?
 
         default:
-            m_ptr--; // Push the tag back
+            m_ptr = preTagPtr; // Push the tag back
             return JSValue();
         }
     }
@@ -5384,9 +5570,10 @@ private:
     template<SerializationTag Tag>
     bool consumeCollectionDataTerminationIfPossible()
     {
+        const uint8_t* savedPtr = m_ptr;
         if (readTag() == Tag)
             return true;
-        m_ptr--;
+        m_ptr = savedPtr;
         return false;
     }
 
@@ -5460,6 +5647,8 @@ DeserializationResult CloneDeserializer::deserialize()
         switch (state) {
         arrayStartState:
         case ArrayStartState: {
+            if (outputObjectStack.size() > maximumFilterRecursion)
+                return std::make_pair(JSValue(), SerializationReturnCode::StackOverflowError);
             uint32_t length;
             if (!read(length)) {
                 goto error;
@@ -6327,6 +6516,9 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
 #endif
     HashSet<JSC::JSObject*> uniqueTransferables;
     for (auto& transferable : transferList) {
+        // markAsUntransferable marker: a DontEnum JSC private name (see markAsUncloneable).
+        if (transferable->getDirect(vm, builtinNames(vm).isUntransferablePrivateName()))
+            return Exception { DataCloneError, "Cannot transfer object marked as untransferable"_s };
         if (!uniqueTransferables.add(transferable.get()).isNewEntry) {
             if (toPossiblySharedArrayBuffer(vm, transferable.get())) {
                 return Exception { DataCloneError, "Transfer list contains duplicate ArrayBuffer"_s };
@@ -6340,16 +6532,21 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
         if (auto arrayBuffer = toPossiblySharedArrayBuffer(vm, transferable.get())) {
             if (arrayBuffer->isDetached() || arrayBuffer->isShared())
                 return Exception { DataCloneError };
-            if (arrayBuffer->isLocked()) {
-                auto scope = DECLARE_THROW_SCOPE(vm);
+            if (arrayBuffer->isWasmMemory()) {
                 throwVMTypeError(&lexicalGlobalObject, scope, errorMessageForTransfer(arrayBuffer));
                 RELEASE_AND_RETURN(scope, Exception { ExistingExceptionError });
             }
+            // No generic isDetachable() gate: Bun's native borrows call
+            // ArrayBuffer::pin(), which clears isDetachable() without setting
+            // the lock flag. A pinned buffer falls through so transferTo()
+            // takes its copyTo() fallback (see bindings.cpp
+            // JSC__JSValue__pinArrayBuffer). WebAssembly.Memory stays rejected
+            // above per the spec's [[ArrayBufferDetachKey]] requirement.
             arrayBuffers.append(WTF::move(arrayBuffer));
             continue;
         }
         if (auto port = JSMessagePort::toWrapped(vm, transferable.get())) {
-            if (port->isDetached())
+            if (port->isDetached() || port->isClosing())
                 return Exception { DataCloneError, "MessagePort in transfer list is already detached"_s };
             messagePorts.append(WTF::move(port));
             continue;

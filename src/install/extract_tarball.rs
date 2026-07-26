@@ -8,7 +8,7 @@ use bun_core::{StringOrTinyString, ZStr};
 use bun_paths::WPathBuffer;
 use bun_paths::strings;
 use bun_paths::{self as path, PathBuffer};
-use bun_semver::{self as Semver, Version};
+use bun_semver::Version;
 use bun_sys::{self as sys, Dir, Fd};
 
 use bun_install::install::{self as Install, DependencyID, ExtractData};
@@ -21,7 +21,7 @@ use bun_libarchive::{ArchiveAppender, ExtractOptions};
 use bun_resolver::fs::FileSystem;
 #[cfg(windows)]
 use bun_sys::FdDirExt;
-type Error = bun_core::Error;
+type Error = crate::Error;
 
 const MAX_DECOMPRESSED_TARBALL_SIZE: usize = 2 * 1024 * 1024 * 1024;
 
@@ -35,7 +35,8 @@ pub struct ExtractTarball {
     /// story as `cache_dir`).
     pub temp_dir: Fd,
     pub dependency_id: DependencyID,
-    pub skip_verify: bool,    // = false
+    pub skip_verify: bool, // = false
+    pub in_trusted_dependencies: bool,
     pub integrity: Integrity, // = Integrity::default()
     pub url: StringOrTinyString,
     /// BACKREF: PackageManager owns the task pool that owns this struct.
@@ -51,11 +52,11 @@ impl ExtractTarball {
                     None,
                     bun_ast::Loc::EMPTY,
                     format_args!(
-                        "Integrity check failed<r> for tarball: {}",
+                        "Integrity check failed for tarball: {}",
                         bun_fmt::s(self.name.slice()),
                     ),
                 );
-                return Err(bun_core::err!("IntegrityCheckFailed"));
+                return Err(crate::Error::IntegrityCheckFailed);
             }
         }
         let mut result = self.extract(log, bytes)?;
@@ -251,7 +252,7 @@ impl ExtractTarball {
                         bun_fmt::s(name),
                     ),
                 );
-                return Err(bun_core::err!("InstallFailed"));
+                return Err(crate::Error::InstallFailed);
             };
 
         let mut resolved: &'static [u8] = b"";
@@ -270,12 +271,12 @@ impl ExtractTarball {
                         bun_ast::Loc::EMPTY,
                         format_args!(
                             "{} when create temporary directory named \"{}\" (while extracting \"{}\")",
-                            err.name(),
+                            bun_fmt::s(err.name()),
                             bun_fmt::s(tmpname.as_bytes()),
                             bun_fmt::s(name),
                         ),
                     );
-                    return Err(bun_core::err!("InstallFailed"));
+                    return Err(crate::Error::InstallFailed);
                 }
             };
 
@@ -351,7 +352,7 @@ impl ExtractTarball {
                             bun_core::fmt::fmt_path_u8(tmpname.as_bytes(), Default::default()),
                         ),
                     );
-                    return Err(bun_core::err!("InstallFailed"));
+                    return Err(crate::Error::InstallFailed);
                 }
             }
 
@@ -497,7 +498,7 @@ impl ExtractTarball {
                                 bun_fmt::s(name),
                             ),
                         );
-                        return Err(bun_core::err!("InstallFailed"));
+                        return Err(crate::Error::InstallFailed);
                     }
                     directories::cached_npm_package_folder_name_print(
                         package_manager,
@@ -508,12 +509,26 @@ impl ExtractTarball {
                     )
                     .as_bytes()
                 }
-                ResolutionTag::Github => directories::cached_github_folder_name_print(
-                    &mut bufs.folder_name_buf,
-                    resolved,
-                    None,
-                )
-                .as_bytes(),
+                ResolutionTag::Github => {
+                    if !bun_install::repository::is_safe_resolved_tag(resolved) {
+                        log.add_error_fmt(
+                            None,
+                            bun_ast::Loc::EMPTY,
+                            format_args!(
+                                "Refusing to install \"{}\": tarball root directory \"{}\" is not a valid folder name",
+                                bun_fmt::s(name),
+                                bun_fmt::s(resolved),
+                            ),
+                        );
+                        return Err(crate::Error::InstallFailed);
+                    }
+                    directories::cached_github_folder_name_print(
+                        &mut bufs.folder_name_buf,
+                        resolved,
+                        None,
+                    )
+                    .as_bytes()
+                }
                 ResolutionTag::LocalTarball | ResolutionTag::RemoteTarball => {
                     directories::cached_tarball_folder_name_print(
                         &mut bufs.folder_name_buf,
@@ -559,7 +574,6 @@ impl ExtractTarball {
                         sys::WindowsOpenDirOptions {
                             can_rename_or_delete: true,
                             iterable: false,
-                            read_only: true,
                             ..Default::default()
                         },
                     ) {
@@ -577,7 +591,7 @@ impl ExtractTarball {
                                     bun_fmt::s(folder_name),
                                 ),
                             );
-                            return Err(bun_core::err!("InstallFailed"));
+                            return Err(crate::Error::InstallFailed);
                         }
                     };
 
@@ -652,7 +666,7 @@ impl ExtractTarball {
                                     bun_fmt::s(folder_name),
                                 ),
                             );
-                            return Err(bun_core::err!("InstallFailed"));
+                            return Err(crate::Error::InstallFailed);
                         }
                         bun_sys::Result::Ok(_) => {
                             let _ = sys::close(dir_to_move);
@@ -699,7 +713,7 @@ impl ExtractTarball {
                             bun_fmt::s(folder_name),
                         ),
                     );
-                    return Err(bun_core::err!("InstallFailed"));
+                    return Err(crate::Error::InstallFailed);
                 }
             }
 
@@ -707,7 +721,7 @@ impl ExtractTarball {
             // To get that directory, we open the directory again.
             let final_dir = match cache_dir
                 .open_at(folder_name)
-                .map_err(bun_core::Error::from)
+                .map_err(crate::Error::from)
             {
                 Ok(d) => d,
                 Err(err) => {
@@ -720,7 +734,7 @@ impl ExtractTarball {
                             err.name(),
                         ),
                     );
-                    return Err(bun_core::err!("InstallFailed"));
+                    return Err(crate::Error::InstallFailed);
                 }
             };
             let final_path = match sys::get_fd_path_z(final_dir.fd(), &mut bufs.final_path_buf) {
@@ -735,7 +749,7 @@ impl ExtractTarball {
                             bun_fmt::s(err.name()),
                         ),
                     );
-                    return Err(bun_core::err!("InstallFailed"));
+                    return Err(crate::Error::InstallFailed);
                 }
             };
 
@@ -750,15 +764,7 @@ impl ExtractTarball {
                 ResolutionTag::Github
                 | ResolutionTag::LocalTarball
                 | ResolutionTag::RemoteTarball => true,
-                _ => {
-                    package_manager.lockfile.trusted_dependencies.is_some()
-                        && package_manager
-                            .lockfile
-                            .trusted_dependencies
-                            .as_ref()
-                            .unwrap()
-                            .contains(&(Semver::semver_string::Builder::string_hash(name) as u32))
-                }
+                _ => self.in_trusted_dependencies,
             };
             if needs_json {
                 let read_result = sys::File::read_file_from(
@@ -773,7 +779,7 @@ impl ExtractTarball {
                     Ok(pair) => pair,
                     Err(err) => {
                         if self.resolution.tag == ResolutionTag::Github
-                            && err == bun_core::err!("ENOENT")
+                            && err.get_errno() == sys::E::ENOENT
                         {
                             // allow git dependencies without package.json
                             return Ok(ExtractData {
@@ -789,10 +795,10 @@ impl ExtractTarball {
                             format_args!(
                                 "\"package.json\" for \"{}\" failed to open: {}",
                                 bun_fmt::s(name),
-                                err.name(),
+                                bun_fmt::s(err.name()),
                             ),
                         );
-                        return Err(bun_core::err!("InstallFailed"));
+                        return Err(crate::Error::InstallFailed);
                     }
                 };
                 json_buf = buf;
@@ -807,10 +813,10 @@ impl ExtractTarball {
                             format_args!(
                                 "\"package.json\" for \"{}\" failed to resolve: {}",
                                 bun_fmt::s(name),
-                                err.name(),
+                                bun_fmt::s(err.name()),
                             ),
                         );
-                        return Err(bun_core::err!("InstallFailed"));
+                        return Err(crate::Error::InstallFailed);
                     }
                 };
                 let _ = json_file.close();

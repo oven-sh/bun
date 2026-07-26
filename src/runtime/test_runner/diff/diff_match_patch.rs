@@ -21,7 +21,6 @@
 // SOFTWARE.
 
 use core::any::TypeId;
-use core::fmt;
 
 use bun_alloc::AllocError;
 use bun_collections::StringHashMap;
@@ -30,40 +29,15 @@ use bun_collections::StringHashMap;
 pub struct Config {
     /// Number of milliseconds to map a diff before giving up (0 for infinity).
     pub diff_timeout: u64,
-    /// Cost of an empty edit operation in terms of edit characters.
-    pub diff_edit_cost: u16,
     /// Number of bytes in each string needed to trigger a line-based diff
     pub diff_check_lines_over: u64,
-
-    /// At what point is no match declared (0.0 = perfection, 1.0 = very loose).
-    pub match_threshold: f32,
-    /// How far to search for a match (0 = exact location, 1000+ = broad match).
-    /// A match this many characters away from the expected location will add
-    /// 1.0 to the score (0.0 is a perfect match).
-    pub match_distance: u32,
-    /// The number of bits in an int.
-    pub match_max_bits: u16,
-
-    /// When deleting a large block of text (over ~64 characters), how close
-    /// do the contents have to be to match the expected contents. (0.0 =
-    /// perfection, 1.0 = very loose).  Note that Match_Threshold controls
-    /// how closely the end points of a delete need to match.
-    pub patch_delete_threshold: f32,
-    /// Chunk size for context length.
-    pub patch_margin: u16,
 }
 
 impl Default for Config {
     fn default() -> Self {
         Self {
             diff_timeout: 1000,
-            diff_edit_cost: 4,
             diff_check_lines_over: 100,
-            match_threshold: 0.5,
-            match_distance: 1000,
-            match_max_bits: 32,
-            patch_delete_threshold: 0.5,
-            patch_margin: 4,
         }
     }
 }
@@ -86,17 +60,6 @@ pub enum Operation {
 pub(crate) struct Diff<Unit: DiffUnit> {
     pub operation: Operation,
     pub text: Box<[Unit]>,
-}
-
-impl fmt::Display for Diff<u8> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let op = match self.operation {
-            Operation::Equal => "=",
-            Operation::Insert => "+",
-            Operation::Delete => "-",
-        };
-        write!(f, "({}, \"{}\")", op, bstr::BStr::new(&self.text))
-    }
 }
 
 #[derive(Clone, Copy)]
@@ -1369,7 +1332,10 @@ fn diff_common_overlap<Unit: DiffUnit>(text1_in: &[Unit], text2_in: &[Unit]) -> 
 
 // ───────────────────────── helpers ─────────────────────────
 
-use bun_ptr::owned::alloc_dupe_slice as dupe;
+#[inline]
+fn dupe<T: Clone>(s: &[T]) -> Box<[T]> {
+    Box::<[T]>::from(s)
+}
 
 use bun_core::concat_boxed as concat;
 
@@ -1473,22 +1439,6 @@ mod tests {
             0usize,
             diff_common_overlap::<u8>(b"fi", "\u{fb01}".as_bytes())
         ); // Unicode
-    }
-
-    fn rebuildtexts(diffs: &DiffList<u8>) -> [Box<[u8]>; 2] {
-        let mut text: [Vec<u8>; 2] = [Vec::new(), Vec::new()];
-        for my_diff in diffs.iter() {
-            if my_diff.operation != Operation::Insert {
-                text[0].extend_from_slice(&my_diff.text);
-            }
-            if my_diff.operation != Operation::Delete {
-                text[1].extend_from_slice(&my_diff.text);
-            }
-        }
-        [
-            text[0].clone().into_boxed_slice(),
-            text[1].clone().into_boxed_slice(),
-        ]
     }
 
     #[test]

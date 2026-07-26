@@ -120,12 +120,18 @@ test("TextDecoder - x-user-defined encoding", () => {
   expect(result).toBe("A\uF780\uF781\uF7FF");
 });
 
-test("TextDecoder - replacement encoding", () => {
-  const decoder = new TextDecoder("replacement");
-  expect(decoder.encoding).toBe("replacement");
+test("TextDecoder - ISO-8859-5 encoding", () => {
+  const decoder = new TextDecoder("iso-8859-5");
+  expect(decoder.encoding).toBe("iso-8859-5");
 
-  // All input should result in replacement character
-  const bytes = new Uint8Array([0x41, 0x42, 0x43]);
+  // "Привет" in ISO-8859-5
+  const bytes = new Uint8Array([0xbf, 0xe0, 0xd8, 0xd2, 0xd5, 0xe2]);
   const result = decoder.decode(bytes);
-  expect(result).toBe("\uFFFD");
+  expect(result).toBe("Привет");
+});
+
+test("TextDecoder - replacement encoding is rejected", () => {
+  // https://encoding.spec.whatwg.org/#dom-textdecoder: the constructor must
+  // throw a RangeError for the `replacement` encoding and all of its labels.
+  expect(() => new TextDecoder("replacement")).toThrow(RangeError);
 });

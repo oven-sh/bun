@@ -2,20 +2,14 @@ use crate as css;
 use crate::CSSString;
 use crate::css_values::easing::EasingFunction;
 use crate::css_values::ident::{CustomIdent, DashedIdent, is_reserved_custom_ident};
-use crate::css_values::length::{LengthPercentage, LengthPercentageOrAuto};
 use crate::css_values::number::{CSSNumber, CSSNumberFns};
-use crate::css_values::size::Size2D;
 use crate::css_values::time::Time;
-use crate::{Parser, PrintErr, Printer, SmallList};
+use crate::generics::CssEql;
+use crate::{Parser, PrintErr, Printer};
 use bun_core::strings;
 
-/// A list of animations.
-pub type AnimationList = SmallList<Animation, 1>;
-
-/// A list of animation names.
-pub type AnimationNameList = SmallList<AnimationName, 1>;
-
 /// A value for the [animation](https://drafts.csswg.org/css-animations/#animation) shorthand property.
+#[derive(CssEql)]
 pub struct Animation {
     /// The animation name.
     pub name: AnimationName,
@@ -38,20 +32,24 @@ pub struct Animation {
 }
 
 impl Animation {
-    // PropertyFieldMap omitted: `PropertyIdTag::Animation*` variants are not yet
-    // generated (animation longhands are unparsed-only for now). Re-add the
-    // field→PropertyIdTag table once the variants land.
+    pub(crate) fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+        Animation {
+            name: self.name.deep_clone(bump),
+            duration: self.duration,
+            timing_function: self.timing_function.clone(),
+            iteration_count: self.iteration_count,
+            direction: self.direction,
+            play_state: self.play_state,
+            delay: self.delay,
+            fill_mode: self.fill_mode,
+            timeline: self.timeline.deep_clone(bump),
+        }
+    }
 
-    pub const VENDOR_PREFIX_MAP: &'static [(&'static str, bool)] = &[
-        ("name", true),
-        ("duration", true),
-        ("timing_function", true),
-        ("iteration_count", true),
-        ("direction", true),
-        ("play_state", true),
-        ("delay", true),
-        ("fill_mode", true),
-    ];
+    // PropertyFieldMap omitted: the animation *longhands* (animation-duration,
+    // animation-delay, …) are still unparsed-only, so shorthand→longhand
+    // expansion has nothing to map to yet. Re-add the field→PropertyIdTag table
+    // once those longhand variants land.
 
     pub fn parse(input: &mut Parser) -> css::Result<Self> {
         let mut name: Option<AnimationName> = None;
@@ -145,68 +143,100 @@ impl Animation {
             AnimationName::String(s) => Some(unsafe { crate::arena_str(*s) }),
         };
 
-        if let Some(name_str) = name_str {
-            if !self.duration.is_zero() || !self.delay.is_zero() {
-                self.duration.to_css(dest)?;
-                dest.write_char(b' ')?;
-            }
+        // Unlike lightningcss — which only emits the components when a name is
+        // present and relies on its declaration handler to never serialize a
+        // name-less shorthand — Bun prints the `Animation` struct directly, so
+        // the components must be emitted even when the name is `none`; otherwise
+        // `animation: 2s` would collapse to `none` and lose its duration. The
+        // keyword-disambiguation checks (a name spelled like a component keyword
+        // forces that component to be shown) only apply when there is a name.
+        let mut wrote_any = false;
+        macro_rules! space {
+            () => {
+                if wrote_any {
+                    dest.write_char(b' ')?;
+                }
+            };
+        }
 
-            if !self.timing_function.is_ease() || EasingFunction::is_ident(name_str) {
-                self.timing_function.to_css(dest)?;
-                dest.write_char(b' ')?;
-            }
+        if !self.duration.is_zero() || !self.delay.is_zero() {
+            space!();
+            self.duration.to_css(dest)?;
+            wrote_any = true;
+        }
 
-            if !self.delay.is_zero() {
-                self.delay.to_css(dest)?;
-                dest.write_char(b' ')?;
-            }
+        if !self.timing_function.is_ease() || name_str.is_some_and(EasingFunction::is_ident) {
+            space!();
+            self.timing_function.to_css(dest)?;
+            wrote_any = true;
+        }
 
-            if self.iteration_count != AnimationIterationCount::default()
-                || strings::eql_case_insensitive_ascii(name_str, b"infinite", true)
-            {
-                self.iteration_count.to_css(dest)?;
-                dest.write_char(b' ')?;
-            }
+        if !self.delay.is_zero() {
+            space!();
+            self.delay.to_css(dest)?;
+            wrote_any = true;
+        }
 
-            if self.direction != AnimationDirection::default()
-                || css::parse_utility::parse_string::<AnimationDirection>(
+        if self.iteration_count != AnimationIterationCount::default()
+            || name_str.is_some_and(|n| strings::eql_case_insensitive_ascii(n, b"infinite", true))
+        {
+            space!();
+            self.iteration_count.to_css(dest)?;
+            wrote_any = true;
+        }
+
+        if self.direction != AnimationDirection::default()
+            || name_str.is_some_and(|n| {
+                css::parse_utility::parse_string::<AnimationDirection>(
                     dest.arena,
-                    name_str,
+                    n,
                     AnimationDirection::parse,
                 )
                 .is_ok()
-            {
-                self.direction.to_css(dest)?;
-                dest.write_char(b' ')?;
-            }
+            })
+        {
+            space!();
+            self.direction.to_css(dest)?;
+            wrote_any = true;
+        }
 
-            if self.fill_mode != AnimationFillMode::default()
-                || (!strings::eql_case_insensitive_ascii(name_str, b"none", true)
+        if self.fill_mode != AnimationFillMode::default()
+            || name_str.is_some_and(|n| {
+                !strings::eql_case_insensitive_ascii(n, b"none", true)
                     && css::parse_utility::parse_string::<AnimationFillMode>(
                         dest.arena,
-                        name_str,
+                        n,
                         AnimationFillMode::parse,
                     )
-                    .is_ok())
-            {
-                self.fill_mode.to_css(dest)?;
-                dest.write_char(b' ')?;
-            }
+                    .is_ok()
+            })
+        {
+            space!();
+            self.fill_mode.to_css(dest)?;
+            wrote_any = true;
+        }
 
-            if self.play_state != AnimationPlayState::default()
-                || css::parse_utility::parse_string::<AnimationPlayState>(
+        if self.play_state != AnimationPlayState::default()
+            || name_str.is_some_and(|n| {
+                css::parse_utility::parse_string::<AnimationPlayState>(
                     dest.arena,
-                    name_str,
+                    n,
                     AnimationPlayState::parse,
                 )
                 .is_ok()
-            {
-                self.play_state.to_css(dest)?;
-                dest.write_char(b' ')?;
-            }
+            })
+        {
+            space!();
+            self.play_state.to_css(dest)?;
+            wrote_any = true;
         }
 
-        self.name.to_css(dest)?;
+        // A `none` name is redundant once other components were written, so only
+        // emit the name when it is a real name or nothing else was written.
+        if !matches!(self.name, AnimationName::None) || !wrote_any {
+            space!();
+            self.name.to_css(dest)?;
+        }
 
         if !matches!(self.name, AnimationName::None)
             && self.timeline != AnimationTimeline::default()
@@ -246,7 +276,7 @@ impl AnimationName {
             }
             (AnimationName::String(a), AnimationName::String(b)) => {
                 // SAFETY: arena-owned slices live for the parse session.
-                unsafe { bun_core::eql(&**a, &**b) }
+                unsafe { bun_core::strings::eql(&**a, &**b) }
             }
             _ => false,
         }
@@ -345,7 +375,7 @@ impl AnimationName {
 }
 
 /// A value for the [animation-iteration-count](https://drafts.csswg.org/css-animations/#animation-iteration-count) property.
-#[derive(PartialEq)]
+#[derive(Clone, Copy, PartialEq)]
 pub enum AnimationIterationCount {
     /// The animation will repeat the specified number of times.
     Number(CSSNumber),
@@ -365,9 +395,9 @@ impl AnimationIterationCount {
     }
 
     // Port of `css.DeriveToCss(@This()).toCss`.
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub fn to_css(self, dest: &mut Printer) -> Result<(), PrintErr> {
         match self {
-            AnimationIterationCount::Number(n) => CSSNumberFns::to_css(*n, dest),
+            AnimationIterationCount::Number(n) => CSSNumberFns::to_css(n, dest),
             AnimationIterationCount::Infinite => dest.write_str(b"infinite"),
         }
     }
@@ -391,9 +421,6 @@ pub enum AnimationDirection {
 }
 
 impl AnimationDirection {
-    pub fn deep_clone(self) -> Self {
-        self
-    }
     pub fn default() -> AnimationDirection {
         AnimationDirection::Normal
     }
@@ -409,9 +436,6 @@ pub enum AnimationPlayState {
 }
 
 impl AnimationPlayState {
-    pub fn deep_clone(self) -> Self {
-        self
-    }
     pub fn default() -> AnimationPlayState {
         AnimationPlayState::Running
     }
@@ -431,28 +455,8 @@ pub enum AnimationFillMode {
 }
 
 impl AnimationFillMode {
-    pub fn deep_clone(self) -> Self {
-        self
-    }
     pub fn default() -> AnimationFillMode {
         AnimationFillMode::None
-    }
-}
-
-/// A value for the [animation-composition](https://drafts.csswg.org/css-animations-2/#animation-composition) property.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, css::DefineEnumProperty)]
-pub enum AnimationComposition {
-    /// The result of compositing the effect value with the underlying value is simply the effect value.
-    Replace,
-    /// The effect value is added to the underlying value.
-    Add,
-    /// The effect value is accumulated onto the underlying value.
-    Accumulate,
-}
-
-impl AnimationComposition {
-    pub fn deep_clone(self) -> Self {
-        self
     }
 }
 
@@ -464,17 +468,9 @@ pub enum AnimationTimeline {
     None,
     /// A timeline referenced by name.
     DashedIdent(DashedIdent),
-    /// The scroll() function.
-    Scroll(ScrollTimeline),
-    /// The view() function.
-    View(ViewTimeline),
 }
 
 impl AnimationTimeline {
-    // Void variants (`auto`, `none`) are tried first via ident match;
-    // payloads follow in declaration order. We stop at `DashedIdent`; if
-    // scroll()/view() ever become live they need real function-syntax
-    // parsing, not a derived field-sequence fallback.
     pub fn parse(input: &mut Parser) -> css::Result<Self> {
         let state = input.state();
         if let Ok(ident) = input.expect_ident() {
@@ -496,12 +492,6 @@ impl AnimationTimeline {
             AnimationTimeline::Auto => dest.write_str(b"auto"),
             AnimationTimeline::None => dest.write_str(b"none"),
             AnimationTimeline::DashedIdent(d) => d.to_css(dest),
-            // These variants are currently unconstructible via `parse()`, and
-            // emitting bare space-separated fields here would be wrong CSS
-            // (spec syntax is `scroll(...)` / `view(...)`).
-            AnimationTimeline::Scroll(_) | AnimationTimeline::View(_) => {
-                unreachable!("ScrollTimeline / ViewTimeline have no toCss in spec (uninstantiated)")
-            }
         }
     }
 
@@ -509,8 +499,13 @@ impl AnimationTimeline {
         AnimationTimeline::Auto
     }
 
-    pub fn is_default(&self) -> bool {
-        matches!(self, AnimationTimeline::Auto)
+    pub fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
+        match self {
+            AnimationTimeline::Auto => AnimationTimeline::Auto,
+            AnimationTimeline::None => AnimationTimeline::None,
+            // `DashedIdent` is a `Copy` arena-slice pointer.
+            AnimationTimeline::DashedIdent(d) => AnimationTimeline::DashedIdent(*d),
+        }
     }
 }
 
@@ -523,122 +518,7 @@ impl PartialEq for AnimationTimeline {
             (AnimationTimeline::Auto, AnimationTimeline::Auto) => true,
             (AnimationTimeline::None, AnimationTimeline::None) => true,
             (AnimationTimeline::DashedIdent(a), AnimationTimeline::DashedIdent(b)) => a.eql(b),
-            (AnimationTimeline::Scroll(a), AnimationTimeline::Scroll(b)) => a == b,
-            (AnimationTimeline::View(a), AnimationTimeline::View(b)) => {
-                a.axis == b.axis && Size2D::eql(&a.inset, &b.inset)
-            }
             _ => false,
         }
     }
-}
-
-/// The [scroll()](https://drafts.csswg.org/scroll-animations-1/#scroll-notation) function.
-#[derive(PartialEq, Eq)]
-pub struct ScrollTimeline {
-    /// Specifies which element to use as the scroll container.
-    pub scroller: Scroller,
-    /// Specifies which axis of the scroll container to use as the progress for the timeline.
-    pub axis: ScrollAxis,
-}
-
-/// The [view()](https://drafts.csswg.org/scroll-animations-1/#view-notation) function.
-pub struct ViewTimeline {
-    /// Specifies which axis of the scroll container to use as the progress for the timeline.
-    pub axis: ScrollAxis,
-    /// Provides an adjustment of the view progress visibility range.
-    pub inset: Size2D<LengthPercentageOrAuto>,
-}
-
-/// A scroller, used in the `scroll()` function.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, css::DefineEnumProperty)]
-pub enum Scroller {
-    /// Specifies to use the document viewport as the scroll container.
-    Root,
-    /// Specifies to use the nearest ancestor scroll container.
-    Nearest,
-    /// Specifies to use the element's own principal box as the scroll container.
-    #[css("self")]
-    Self_,
-}
-
-impl Scroller {
-    pub fn deep_clone(self) -> Self {
-        self
-    }
-    pub fn default() -> Scroller {
-        Scroller::Nearest
-    }
-}
-
-/// A scroll axis, used in the `scroll()` function.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, css::DefineEnumProperty)]
-pub enum ScrollAxis {
-    /// Specifies to use the measure of progress along the block axis of the scroll container.
-    Block,
-    /// Specifies to use the measure of progress along the inline axis of the scroll container.
-    Inline,
-    /// Specifies to use the measure of progress along the horizontal axis of the scroll container.
-    X,
-    /// Specifies to use the measure of progress along the vertical axis of the scroll container.
-    Y,
-}
-
-impl ScrollAxis {
-    pub fn deep_clone(self) -> Self {
-        self
-    }
-    pub fn default() -> ScrollAxis {
-        ScrollAxis::Block
-    }
-}
-
-/// A value for the animation-range shorthand property.
-pub struct AnimationRange {
-    /// The start of the animation's attachment range.
-    pub start: AnimationRangeStart,
-    /// The end of the animation's attachment range.
-    pub end: AnimationRangeEnd,
-}
-
-/// A value for the [animation-range-start](https://drafts.csswg.org/scroll-animations/#animation-range-start) property.
-pub struct AnimationRangeStart {
-    pub v: AnimationAttachmentRange,
-}
-
-/// A value for the [animation-range-end](https://drafts.csswg.org/scroll-animations/#animation-range-start) property.
-pub struct AnimationRangeEnd {
-    pub v: AnimationAttachmentRange,
-}
-
-/// A value for the [animation-range-start](https://drafts.csswg.org/scroll-animations/#animation-range-start)
-/// or [animation-range-end](https://drafts.csswg.org/scroll-animations/#animation-range-end) property.
-pub enum AnimationAttachmentRange {
-    /// The start of the animation's attachment range is the start of its associated timeline.
-    Normal,
-    /// The animation attachment range starts at the specified point on the timeline measuring from the start of the timeline.
-    LengthPercentage(LengthPercentage),
-    /// The animation attachment range starts at the specified point on the timeline measuring from the start of the specified named timeline range.
-    TimelineRange {
-        /// The name of the timeline range.
-        name: TimelineRangeName,
-        /// The offset from the start of the named timeline range.
-        offset: LengthPercentage,
-    },
-}
-
-/// A [view progress timeline range](https://drafts.csswg.org/scroll-animations/#view-timelines-ranges)
-pub enum TimelineRangeName {
-    /// Represents the full range of the view progress timeline.
-    Cover,
-    /// Represents the range during which the principal box is either fully contained by,
-    /// or fully covers, its view progress visibility range within the scrollport.
-    Contain,
-    /// Represents the range during which the principal box is entering the view progress visibility range.
-    Entry,
-    /// Represents the range during which the principal box is exiting the view progress visibility range.
-    Exit,
-    /// Represents the range during which the principal box crosses the end border edge.
-    EntryCrossing,
-    /// Represents the range during which the principal box crosses the start border edge.
-    ExitCrossing,
 }

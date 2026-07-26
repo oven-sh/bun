@@ -194,8 +194,6 @@ enum class DOMConstructorID : uint16_t {
     ReadableStreamBYOBRequest,
     ReadableStreamDefaultController,
     ReadableStreamDefaultReader,
-    ReadableStreamSink,
-    ReadableStreamSource,
     TransformStream,
     TransformStreamDefaultController,
     CompressionStream,
@@ -203,7 +201,6 @@ enum class DOMConstructorID : uint16_t {
     WritableStream,
     WritableStreamDefaultController,
     WritableStreamDefaultWriter,
-    WritableStreamSink,
     WebLock,
     WebLockManager,
     AnalyserNode,
@@ -863,7 +860,7 @@ enum class DOMConstructorID : uint16_t {
     URLPattern,
 };
 
-static constexpr unsigned numberOfDOMConstructorsBase = 848;
+static constexpr unsigned numberOfDOMConstructorsBase = 845;
 
 static constexpr unsigned bunExtraConstructors = 4;
 

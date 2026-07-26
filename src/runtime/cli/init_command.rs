@@ -1,9 +1,10 @@
 //! `bun init`: scaffolds a new project in the current directory
 //! (package.json, tsconfig.json, entry file, README, .gitignore).
 
+use crate::Error;
 use bun_ast::StoreRef;
 use bun_collections::IntegerBitSet;
-use bun_core::{self as bun, Environment, Error, Global, Output, env_var, fmt as bun_fmt};
+use bun_core::{self as bun, Environment, Global, Output, env_var, fmt as bun_fmt};
 use bun_core::{MutableString, ZStr, strings};
 use bun_js_printer as js_printer;
 use bun_parsers::json;
@@ -166,7 +167,7 @@ impl InitCommand {
                     // ctrl+c, ctrl+d
                     reprint_menu = false;
                     finish!(reprint_menu, selected);
-                    return Err(bun_core::err!("EndOfStream"));
+                    return Err(crate::Error::EndOfStream);
                 }
                 b'1'..=b'9' => {
                     let choice = (byte - b'1') as usize;
@@ -200,13 +201,13 @@ impl InitCommand {
                         Err(_) => {
                             reprint_menu = false;
                             finish!(reprint_menu, selected);
-                            return Err(bun_core::err!("EndOfStream"));
+                            return Err(crate::Error::EndOfStream);
                         }
                     };
                     if next != b'[' {
                         reprint_menu = false;
                         finish!(reprint_menu, selected);
-                        return Err(bun_core::err!("EndOfStream"));
+                        return Err(crate::Error::EndOfStream);
                     }
 
                     // Read arrow key
@@ -215,7 +216,7 @@ impl InitCommand {
                         Err(_) => {
                             reprint_menu = false;
                             finish!(reprint_menu, selected);
-                            return Err(bun_core::err!("EndOfStream"));
+                            return Err(crate::Error::EndOfStream);
                         }
                     };
                     match arrow {
@@ -261,7 +262,7 @@ impl InitCommand {
 
         let selection = match Self::process_radio_button::<C>(label) {
             Ok(s) => s,
-            Err(e) if e == bun_core::err!("EndOfStream") => {
+            Err(crate::Error::EndOfStream) => {
                 Output::flush();
                 // Add an "x" cancelled
                 bun_core::prettyln!("\n<r><red>x<r> Cancelled");
@@ -361,12 +362,19 @@ impl InitCommand {
             }
         }
 
+        // The template picker reads single keystrokes from raw-mode stdin; on a
+        // pipe (CI, `spawn(...,{stdio:'pipe'})`, `foo | bun init`) that blocks
+        // forever. npm init falls back to defaults when stdin is not a TTY.
+        if !auto_yes && !Output::is_stdin_tty() {
+            auto_yes = true;
+        }
+
         if let Some(ifdir) = initialize_in_folder {
             if let Err(err) = bun_sys::Dir::cwd().make_path(ifdir) {
                 bun_core::pretty_errorln!(
                     "Failed to create directory {}: {}",
                     bstr::BStr::new(ifdir),
-                    err.name(),
+                    bstr::BStr::new(err.name()),
                 );
                 Global::exit(1);
             }
@@ -533,7 +541,7 @@ impl InitCommand {
                     let _ = bun_sys::close(d);
                 });
                 let mut it = bun_sys::iterate_dir(dir);
-                while let Some(file) = it.next().map_err(bun_core::Error::from)? {
+                while let Some(file) = it.next().map_err(crate::Error::from)? {
                     if file.kind != bun_sys::FileKind::File {
                         continue;
                     }
@@ -569,14 +577,14 @@ impl InitCommand {
                         fields.name = match Self::prompt("<r><cyan>package name<r> ", &fields.name)
                         {
                             Ok(v) => v,
-                            Err(e) if e == bun_core::err!("EndOfStream") => return Ok(()),
+                            Err(crate::Error::EndOfStream) => return Ok(()),
                             Err(e) => return Err(e),
                         };
                         fields.name = Self::normalize_package_name(&fields.name)?;
                         fields.entry_point =
                             match Self::prompt("<r><cyan>entry point<r> ", &fields.entry_point) {
                                 Ok(v) => v,
-                                Err(e) if e == bun_core::err!("EndOfStream") => return Ok(()),
+                                Err(crate::Error::EndOfStream) => return Ok(()),
                                 Err(e) => return Err(e),
                             };
                         fields.private = false;
@@ -769,7 +777,7 @@ impl InitCommand {
                 peer_dependencies.data.e_object_mut().unwrap().put_string(
                     &bump,
                     b"typescript",
-                    b"^5",
+                    b"^6",
                 )?;
                 object.put(&bump, b"peerDependencies", peer_dependencies)?;
             }
@@ -1367,23 +1375,11 @@ pub enum Template {
 pub struct TemplateFile {
     pub path: &'static [u8],
     pub contents: &'static [u8],
-    pub can_skip_if_exists: bool,
 }
 
 impl TemplateFile {
     const fn new(path: &'static [u8], contents: &'static [u8]) -> Self {
-        Self {
-            path,
-            contents,
-            can_skip_if_exists: false,
-        }
-    }
-    const fn new_skip(path: &'static [u8], contents: &'static [u8]) -> Self {
-        Self {
-            path,
-            contents,
-            can_skip_if_exists: true,
-        }
+        Self { path, contents }
     }
 }
 
@@ -1409,7 +1405,10 @@ impl Template {
         });
         // SAFETY: object is arena-allocated and live for the command duration.
         let object = unsafe { &mut *fields.object.unwrap().as_ptr() };
-        let mut scripts_json = object.get_or_put_object(key, bump)?;
+        let mut scripts_json = object.get_or_put_object(key, bump).map_err(|e| match e {
+            bun_ast::E::SetError::OutOfMemory => Error::Alloc(bun_alloc::AllocError),
+            bun_ast::E::SetError::Clobber => Error::Unexpected,
+        })?;
         let the_scripts = self.scripts();
         let mut i: usize = 0;
         while i < the_scripts.len() {
@@ -1682,7 +1681,7 @@ impl Template {
                 )
             };
             if let Err(err) = result {
-                if err == bun_core::err!("EEXIST") {
+                if matches!(err, crate::Error::Sys(bun_errno::SystemErrno::EEXIST)) {
                     bun_core::prettyln!(
                         " ○ <r><yellow>{}<r> (already exists, skipping)",
                         bstr::BStr::new(path),
@@ -1751,7 +1750,7 @@ static REACT_BLANK_FILES: &[TemplateFile] = &[
         include_bytes!("./init/react-app/bun-env.d.ts"),
     ),
     TemplateFile::new(b"README.md", Assets::README2_MD),
-    TemplateFile::new_skip(b".gitignore", Assets::GITIGNORE),
+    TemplateFile::new(b".gitignore", Assets::GITIGNORE),
     TemplateFile::new(
         b"src/index.ts",
         include_bytes!("./init/react-app/src/index.ts"),
@@ -1804,7 +1803,7 @@ static REACT_TAILWIND_FILES: &[TemplateFile] = &[
         include_bytes!("./init/react-tailwind/bun-env.d.ts"),
     ),
     TemplateFile::new(b"README.md", Assets::README2_MD),
-    TemplateFile::new_skip(b".gitignore", Assets::GITIGNORE),
+    TemplateFile::new(b".gitignore", Assets::GITIGNORE),
     TemplateFile::new(
         b"src/index.ts",
         include_bytes!("./init/react-tailwind/src/index.ts"),
@@ -1869,7 +1868,7 @@ static REACT_SHADCN_FILES: &[TemplateFile] = &[
         include_bytes!("./init/react-shadcn/bun-env.d.ts"),
     ),
     TemplateFile::new(b"README.md", Assets::README2_MD),
-    TemplateFile::new_skip(b".gitignore", Assets::GITIGNORE),
+    TemplateFile::new(b".gitignore", Assets::GITIGNORE),
     TemplateFile::new(
         b"src/index.ts",
         include_bytes!("./init/react-shadcn/src/index.ts"),

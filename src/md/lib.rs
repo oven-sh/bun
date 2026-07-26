@@ -11,6 +11,7 @@ pub mod html_renderer;
 pub mod inlines;
 pub mod line_analysis;
 pub mod links;
+pub mod output;
 pub mod parser;
 pub mod ref_defs;
 pub mod render_blocks;

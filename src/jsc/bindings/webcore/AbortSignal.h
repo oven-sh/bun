@@ -204,6 +204,7 @@ private:
     JSValueInWrappedObject m_reason;
     CommonAbortReason m_commonReason { CommonAbortReason::None };
     Vector<NativeCallbackTuple, 2> m_native_callbacks;
+    Vector<NativeCallbackTuple, 2>* m_nativeCallbacksBeingDispatched { nullptr };
     std::atomic<uint32_t> pendingActivityCount { 0 };
     uint32_t m_algorithmIdentifier { 0 };
     AbortSignalTimeout m_timeout { nullptr };

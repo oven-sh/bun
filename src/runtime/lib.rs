@@ -5,6 +5,9 @@
 #![deny(improper_ctypes, improper_ctypes_definitions)]
 #![feature(adt_const_params)]
 
+pub mod error;
+pub use error::{Error, Result};
+
 /// `crate::jsc` is now a thin re-export of the real `bun_jsc` crate. Draft
 /// modules that imported `crate::jsc::…` (instead of `bun_jsc::…`) continue to
 /// resolve unchanged.
@@ -48,7 +51,6 @@ pub mod timer;
 #[path = "../jsc/generated_classes_list.rs"]
 pub mod generated_classes_list;
 pub use generated_classes_list::Classes as GeneratedClassesList;
-pub mod ffi_imports;
 pub mod generated_classes; // include!()s ${BUN_CODEGEN_DIR}/generated_classes.rs
 pub mod generated_host_exports; // include!()s ${BUN_CODEGEN_DIR}/generated_host_exports.rs
 pub mod generated_js2native; // include!()s ${BUN_CODEGEN_DIR}/generated_js2native.rs

@@ -1,5 +1,7 @@
 /*
- * Socket syscall fault injection for the bsd_* wrapper layer.
+ * Fault injection for the bsd_* syscall wrappers, plus the one allocation
+ * whose failure path is otherwise unreachable on an overcommitting kernel
+ * (US_FAULT_SSL_LOOP_BUFFER).
  *
  * Compiled in only when LIBUS_SOCKET_FAULT_INJECTION is defined (controlled
  * by the `socketFaultInjection` Config field). When compiled out,
@@ -37,6 +39,15 @@ enum us_fault_syscall {
     US_FAULT_SOCKET,
     US_FAULT_CLOSE,
     US_FAULT_SHUTDOWN,
+    /* Not a syscall: the per-loop TLS plaintext buffer allocated once by
+     * us_internal_init_loop_ssl_data. Only US_FAULT_ERRNO applies — there is
+     * no byte count to clamp and no zero return to fake. */
+    US_FAULT_SSL_LOOP_BUFFER,
+    /* Not a syscall: poll registration in us_poll_start_rc (uv_poll_init_socket
+     * on Windows/libuv, EPOLL_CTL_ADD / kevent on epoll/kqueue). The fd is
+     * always fresh from the kernel here, so the failure path is unreachable
+     * without fault injection. Only US_FAULT_ERRNO applies. */
+    US_FAULT_POLL_START,
     US_FAULT_COUNT
 };
 

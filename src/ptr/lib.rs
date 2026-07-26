@@ -16,26 +16,12 @@
 //! types (`Box`, `Rc`, `Arc`, `Cow`) and `bun_collections` (`TaggedPtr`,
 //! `TaggedPtrUnion`). This crate hosts the intrusive/FFI-crossing variants.
 
-// Cow/CowSlice → std (PORTING.md says these ARE std::borrow::Cow)
-pub use std::borrow::Cow;
-pub type CowSlice<'a, T> = Cow<'a, [T]>;
-pub type CowSliceZ<'a> = Cow<'a, core::ffi::CStr>;
-pub type CowString<'a> = Cow<'a, [u8]>;
-
 // `bun.ptr.CowSlice(T)` / `CowSliceZ` — the lifetime-free struct port (owns or
-// borrows a raw slice with `init_owned`/`borrow_subslice`/`length`). Distinct
-// from the `std::borrow::Cow` aliases above; callers that need the struct-shaped
-// API (e.g. `pack_command::Pattern`) reach for `cow_slice::CowSlice<u8>`.
+// borrows a raw slice with `init_owned`/`borrow_subslice`/`length`). Callers
+// that need the struct-shaped API (e.g. `pack_command::Pattern`) reach for
+// `cow_slice::CowSlice<u8>`.
 #[path = "CowSlice.rs"]
 pub mod cow_slice;
-
-// owned/shared — OBSOLETE per PORTING.md §Pointers: callers
-// use std `Box`/`Rc`/`Arc` directly. Draft modules kept for diff-pass only.
-pub mod owned;
-pub mod shared;
-pub type Owned<T> = Box<T>;
-pub type OwnedIn<T> = Box<T>;
-pub type DynamicOwned<T> = Box<T>;
 
 // FFI-crossing externally-ref-counted pointer (e.g., WTFStringImpl). Canonical
 // impl moved down to `bun_core::external_shared` (cycle-break for the
@@ -49,9 +35,7 @@ pub mod raw_ref_count;
 pub mod weak_ptr;
 
 pub mod tagged_pointer;
-// Compat aliases — `tagged_pointer` exports short names; some downstream code
-// uses the long ones.
-pub use tagged_pointer::{TaggedPtr as TaggedPointer, TaggedPtrUnion as TaggedPointerUnion};
+pub use tagged_pointer::TaggedPtr;
 
 pub mod ref_count;
 pub use ref_count::{
@@ -61,13 +45,12 @@ pub use ref_count::{
 // Derive macros — same names as the traits (separate namespace). The derives
 // expand to `::bun_ptr::…` paths, so this crate is the canonical re-export
 // point: `#[derive(bun_ptr::CellRefCounted)]`.
-pub use bun_core_macros::{Anchored, CellRefCounted, RefCounted, ThreadSafeRefCounted};
+pub use bun_core_macros::{CellRefCounted, RefCounted, ThreadSafeRefCounted};
 
 pub mod parent_ref;
-pub use parent_ref::{Anchored, LiveMarker, ParentRef};
-// Compat aliases for callers that use the pointer-typedef names.
+pub use parent_ref::ParentRef;
+// Compat alias for callers that use the pointer-typedef name.
 pub type IntrusiveRc<T> = RefPtr<T>;
-pub type IntrusiveArc<T> = RefPtr<T>;
 
 pub use raw_ref_count::RawRefCount;
 pub use weak_ptr::WeakPtr;
@@ -413,19 +396,6 @@ impl Interned {
     #[inline]
     pub const fn from_static(s: &'static [u8]) -> Self {
         Interned(s)
-    }
-
-    /// Adopt a leaked allocation. Consumes the `Box` so the leak is explicit at
-    /// the call site (replaces ad-hoc `intern` helpers in the bundler/linker).
-    #[inline]
-    pub fn leak(b: Box<[u8]>) -> Self {
-        Interned(Box::leak(b))
-    }
-
-    /// `leak` for `Vec<u8>` — shrinks to fit and leaks.
-    #[inline]
-    pub fn leak_vec(v: Vec<u8>) -> Self {
-        Self::leak(v.into_boxed_slice())
     }
 
     /// Escape hatch for storage this module cannot see (mmap'd standalone

@@ -9,6 +9,9 @@
 #![warn(unused_must_use)]
 #![feature(adt_const_params)]
 
+pub mod error;
+pub use error::{Error, Result};
+
 use bun_collections::VecExt;
 
 use core::ptr::NonNull;
@@ -19,9 +22,8 @@ use bun_core::Output;
 use bun_core::strings;
 use bun_core::strings::CodepointIterator;
 use bun_options_types::bundle_enums as bundle_opts;
-use bun_sys::Fd;
 
-/// Local stand-in for `bun_core::Encoding` that derives `ConstParamTy` so it can
+/// Local stand-in for `bun_core::strings::Encoding` that derives `ConstParamTy` so it can
 /// be used as a const-generic parameter (`const ENCODING: Encoding`). The variant set is
 /// identical; convert at the boundary if a `strings::Encoding` is ever needed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, core::marker::ConstParamTy)]
@@ -50,11 +52,6 @@ use bun_ast::ImportRecordFlags;
 use bun_sourcemap as SourceMap;
 
 pub use bun_options_types::schema::api::CssInJsBehavior;
-
-/// The resolver crate is a sibling
-/// tier-4 crate; the canonical struct was MOVED DOWN to `bun_paths::fs::Path`
-/// so both the resolver and the printer can name it without a dep cycle.
-pub use bun_paths::fs::Path as FsPath;
 
 // ──────────────────────────────────────────────────────────────────────────
 // renamer — defined in `renamer.rs`. The five former leak sites
@@ -120,22 +117,6 @@ pub mod analyze_transpiled_module {
                 Self::ExportInfoStar => 1,
             }
         }
-        #[inline]
-        pub fn try_from_u8(v: u8) -> Option<Self> {
-            Some(match v {
-                0 => Self::DeclaredVariable,
-                1 => Self::LexicalVariable,
-                2 => Self::ImportInfoSingle,
-                3 => Self::ImportInfoSingleTypeScript,
-                4 => Self::ImportInfoNamespace,
-                5 => Self::ExportInfoIndirect,
-                6 => Self::ExportInfoLocal,
-                7 => Self::ExportInfoNamespace,
-                8 => Self::ExportInfoStar,
-                9 => Self::ImportInfoNamespaceDefer,
-                _ => return None,
-            })
-        }
     }
 
     /// Kept as plain bools for ergonomic field access
@@ -152,14 +133,6 @@ pub mod analyze_transpiled_module {
             (self.contains_import_meta as u8)
                 | ((self.is_typescript as u8) << 1)
                 | ((self.has_tla as u8) << 2)
-        }
-        #[inline]
-        pub fn from_byte(b: u8) -> Self {
-            Self {
-                contains_import_meta: b & 0b001 != 0,
-                is_typescript: b & 0b010 != 0,
-                has_tla: b & 0b100 != 0,
-            }
         }
     }
 
@@ -271,169 +244,6 @@ pub mod analyze_transpiled_module {
         }
     }
 
-    /// Heap byte buffer with guaranteed 4-byte alignment.
-    ///
-    /// `as_ref()` below reinterprets interior ranges as `&[u32]` / `&[StringID]` /
-    /// `&[FetchParameters]` via `bytemuck::cast_slice`. A plain `Box<[u8]>` only
-    /// guarantees `align(1)`, so forming an aligned `&[u32]` from it is UB. We
-    /// instead over-align the allocation by storing `Box<[u32]>` and viewing it as
-    /// bytes — no raw alloc/dealloc, and `Send`/`Sync` are auto-derived.
-    struct AlignedBytes {
-        /// 4-byte-aligned backing storage (length rounded up to a whole `u32`).
-        words: Box<[u32]>,
-        /// Logical byte length (`<= words.len() * 4`); trailing pad bytes are zero.
-        len: usize,
-    }
-    impl AlignedBytes {
-        fn copy_from(src: &[u8]) -> Self {
-            let mut words = vec![0u32; src.len().div_ceil(4)].into_boxed_slice();
-            bytemuck::cast_slice_mut::<u32, u8>(&mut words)[..src.len()].copy_from_slice(src);
-            Self {
-                words,
-                len: src.len(),
-            }
-        }
-    }
-    impl core::ops::Deref for AlignedBytes {
-        type Target = [u8];
-        #[inline]
-        fn deref(&self) -> &[u8] {
-            &bytemuck::cast_slice::<u32, u8>(&self.words)[..self.len]
-        }
-    }
-
-    /// Owns a duplicated byte buffer and exposes a `ModuleInfoDeserialized` view into it.
-    pub struct ModuleInfoDeserializedOwned {
-        backing: AlignedBytes,
-        // `RecordKind` is a `#[repr(u8)]` enum (not all bit patterns valid), so
-        // the validated discriminants are decoded once in `create()` and owned
-        // here instead of being reinterpreted from `backing` on every `as_ref()`.
-        record_kinds: Box<[RecordKind]>,
-        // Same story for `ModulePhase` — validated once.
-        requested_modules_phases: Box<[ModulePhase]>,
-        // Offsets/lengths into `backing` — reconstructed as slices in `as_ref()`.
-        buffer: (usize, usize),
-        requested_modules_keys: (usize, usize),
-        requested_modules_values: (usize, usize),
-        strings_lens: (usize, usize),
-        strings_buf: (usize, usize),
-        flags: Flags,
-    }
-    impl ModuleInfoDeserializedOwned {
-        pub fn create(source: &[u8]) -> Result<Box<Self>, BadModuleInfo> {
-            let duped = AlignedBytes::copy_from(source);
-            let mut off = 0usize;
-            macro_rules! eat {
-                ($len:expr) => {{
-                    let len = $len;
-                    if duped.len() < off + len {
-                        return Err(BadModuleInfo);
-                    }
-                    let r = (off, len);
-                    off += len;
-                    r
-                }};
-            }
-            macro_rules! eat_u32 {
-                () => {{
-                    let (o, _) = eat!(4);
-                    u32::from_le_bytes(
-                        duped[o..o + 4]
-                            .try_into()
-                            .expect("infallible: size matches"),
-                    ) as usize
-                }};
-            }
-
-            let record_kinds_len = eat_u32!();
-            let (rk_off, rk_len) = eat!(record_kinds_len * core::mem::size_of::<RecordKind>());
-            // Validate + decode every record-kind byte into an owned `Box<[RecordKind]>`.
-            // `RecordKind` is a `#[repr(u8)]` enum, so out-of-range bytes are invalid;
-            // `source` may come from an on-disk cache (`create_from_cached_record`), so it
-            // is untrusted. Decoding once here lets `as_ref()` hand out `&[RecordKind]`
-            // without an `unsafe` reinterpret.
-            let mut record_kinds = Vec::with_capacity(rk_len);
-            for &b in &duped[rk_off..rk_off + rk_len] {
-                match RecordKind::try_from_u8(b) {
-                    Some(k) => record_kinds.push(k),
-                    None => return Err(BadModuleInfo),
-                }
-            }
-            let record_kinds = record_kinds.into_boxed_slice();
-            let _ = eat!((4 - (record_kinds_len % 4)) % 4); // alignment padding
-
-            let buffer_len = eat_u32!();
-            let buffer = eat!(buffer_len * core::mem::size_of::<StringID>());
-
-            let requested_modules_len = eat_u32!();
-            let requested_modules_keys =
-                eat!(requested_modules_len * core::mem::size_of::<StringID>());
-            let requested_modules_values =
-                eat!(requested_modules_len * core::mem::size_of::<FetchParameters>());
-            let (ph_off, ph_len) = eat!(requested_modules_len);
-            let mut requested_modules_phases = Vec::with_capacity(ph_len);
-            for &b in &duped[ph_off..ph_off + ph_len] {
-                requested_modules_phases.push(match b {
-                    0 => ModulePhase::Evaluation,
-                    1 => ModulePhase::Defer,
-                    _ => return Err(BadModuleInfo),
-                });
-            }
-            let requested_modules_phases = requested_modules_phases.into_boxed_slice();
-            let _ = eat!((4 - (requested_modules_len % 4)) % 4); // alignment padding
-
-            let (flags_off, _) = eat!(1);
-            let flags = Flags::from_byte(duped[flags_off]);
-            let _ = eat!(3); // alignment padding
-
-            let strings_len = eat_u32!();
-            let strings_lens = eat!(strings_len * core::mem::size_of::<u32>());
-            let strings_buf = (off, duped.len() - off);
-
-            Ok(Box::new(Self {
-                backing: duped,
-                record_kinds,
-                requested_modules_phases,
-                buffer,
-                requested_modules_keys,
-                requested_modules_values,
-                strings_lens,
-                strings_buf,
-                flags,
-            }))
-        }
-        /// Wrapper around `create` for cache loads; returns `None` on corrupt data.
-        pub fn create_from_cached_record(source: &[u8]) -> Option<Box<Self>> {
-            Self::create(source).ok()
-        }
-        pub fn as_ref(&self) -> ModuleInfoDeserialized<'_> {
-            let bytes: &[u8] = &self.backing;
-            #[inline(always)]
-            fn sub<T: bytemuck::Pod>(bytes: &[u8], (off, len): (usize, usize)) -> &[T] {
-                // `create` derives every (off, len) from `count * size_of::<T>()`
-                // and pads to 4-byte boundaries; `AlignedBytes` guarantees a
-                // 4-aligned base — so `cast_slice`'s align/size checks pass.
-                bytemuck::cast_slice(&bytes[off..off + len])
-            }
-            ModuleInfoDeserialized {
-                record_kinds: &self.record_kinds,
-                buffer: sub::<StringID>(bytes, self.buffer),
-                requested_modules_keys: sub::<StringID>(bytes, self.requested_modules_keys),
-                requested_modules_values: sub::<FetchParameters>(
-                    bytes,
-                    self.requested_modules_values,
-                ),
-                requested_modules_phases: &self.requested_modules_phases,
-                strings_lens: sub::<u32>(bytes, self.strings_lens),
-                strings_buf: &bytes[self.strings_buf.0..self.strings_buf.0 + self.strings_buf.1],
-                flags: self.flags,
-            }
-        }
-    }
-
-    #[derive(Debug)]
-    pub struct BadModuleInfo;
-
     /// Insertion-ordered list of requested modules. Dedup key is
     /// `(specifier, phase)` to match JSC's `ModuleAnalyzer::appendRequestedModule`,
     /// which appends one entry per unique pair — so the same specifier can be
@@ -527,10 +337,6 @@ pub mod analyze_transpiled_module {
                 finalized: false,
             }
         }
-        pub fn destroy(self: Box<Self>) {
-            drop(self);
-        }
-
         pub fn as_deserialized(&self) -> ModuleInfoDeserialized<'_> {
             debug_assert!(self.finalized);
             ModuleInfoDeserialized {
@@ -906,40 +712,6 @@ macro_rules! ws {
 
 // PERF: `ascii_only`/`quote_char` are runtime args — collapses
 // the monomorphization fan-out; the inner branches are cheap and well-predicted.
-pub fn estimate_length_for_utf8(input: &[u8], ascii_only: bool, quote_char: u8) -> usize {
-    let mut remaining = input;
-    let mut len: usize = 2; // for quotes
-
-    while let Some(i) = strings::index_of_needs_escape_for_java_script_string(remaining, quote_char)
-    {
-        let i = i as usize;
-        len += i;
-        remaining = &remaining[i..];
-        let char_len = strings::wtf8_byte_sequence_length_with_invalid(remaining[0]);
-        let bytes: [u8; 4] = match char_len {
-            // 0 is not returned by `wtf8_byte_sequence_length_with_invalid`
-            1 => [remaining[0], 0, 0, 0],
-            2 => [remaining[0], remaining[1], 0, 0],
-            3 => [remaining[0], remaining[1], remaining[2], 0],
-            4 => [remaining[0], remaining[1], remaining[2], remaining[3]],
-            _ => unreachable!(),
-        };
-        let c = strings::decode_wtf8_rune_t::<i32>(bytes, char_len, 0);
-        if can_print_without_escape(c, ascii_only) {
-            len += char_len as usize;
-        } else if c <= 0xFFFF {
-            len += 6;
-        } else {
-            len += 12;
-        }
-        remaining = &remaining[char_len as usize..];
-    }
-    if remaining.as_ptr() == input.as_ptr() {
-        // The branch above already handled the loop body; falling out of the loop with no
-        // iterations means "no escapes anywhere".
-    }
-    len + remaining.len()
-}
 
 /// Thin const-generic facade kept for source-stable call sites (and external
 /// callers in other crates that pass literal const args). It forwards to the
@@ -958,7 +730,7 @@ pub fn write_pre_quoted_string<
 >(
     text_in: &[u8],
     writer: &mut W,
-) -> Result<(), bun_core::Error>
+) -> crate::Result<()>
 where
     W: Write + ?Sized,
 {
@@ -977,7 +749,7 @@ pub fn write_pre_quoted_string_inner<W, const ENCODING: Encoding>(
     quote_char: u8,
     ascii_only: bool,
     json: bool,
-) -> Result<(), bun_core::Error>
+) -> crate::Result<()>
 where
     W: Write + ?Sized,
 {
@@ -1168,7 +940,7 @@ pub fn quote_for_json(
     text: &[u8],
     bytes: &mut MutableString,
     ascii_only: bool,
-) -> Result<(), bun_core::Error> {
+) -> crate::Result<()> {
     // `ascii_only` is threaded at runtime so
     // the heavy escaper isn't monomorphized per ascii_only/quote-char combo.
     //
@@ -1189,7 +961,7 @@ pub fn quote_for_json(
 pub fn write_json_string<W: Write + ?Sized, const ENCODING: Encoding>(
     input: &[u8],
     writer: &mut W,
-) -> Result<(), bun_core::Error> {
+) -> crate::Result<()> {
     writer.write_all(b"\"")?;
     write_pre_quoted_string_inner::<_, ENCODING>(input, writer, b'"', false, true)?;
     writer.write_all(b"\"")?;
@@ -1202,7 +974,7 @@ pub fn write_json_string<W: Write + ?Sized, const ENCODING: Encoding>(
 // ───────────────────────────────────────────────────────────────────────────
 pub struct SourceMapHandler<'a> {
     pub ctx: NonNull<()>,
-    pub callback: fn(*mut (), SourceMap::Chunk, &bun_ast::Source) -> Result<(), bun_core::Error>,
+    pub callback: fn(*mut (), SourceMap::Chunk, &bun_ast::Source) -> crate::Result<()>,
     _marker: core::marker::PhantomData<&'a mut ()>,
 }
 
@@ -1214,7 +986,7 @@ pub trait OnSourceMapChunk {
         &mut self,
         chunk: SourceMap::Chunk,
         source: &bun_ast::Source,
-    ) -> Result<(), bun_core::Error>;
+    ) -> crate::Result<()>;
 }
 
 impl<'a> SourceMapHandler<'a> {
@@ -1222,7 +994,7 @@ impl<'a> SourceMapHandler<'a> {
         &self,
         chunk: SourceMap::Chunk,
         source: &bun_ast::Source,
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::Result<()> {
         (self.callback)(self.ctx.as_ptr(), chunk, source)
     }
 
@@ -1232,7 +1004,7 @@ impl<'a> SourceMapHandler<'a> {
             p: *mut (),
             chunk: SourceMap::Chunk,
             source: &bun_ast::Source,
-        ) -> Result<(), bun_core::Error> {
+        ) -> crate::Result<()> {
             // SAFETY: `p` was constructed from `&'a mut T` in `for_` below; the `'a` lifetime
             // on `SourceMapHandler` ties the handler's lifetime to the borrow, so `p` is a
             // valid, exclusive `*mut T` for as long as the handler exists.
@@ -1255,7 +1027,6 @@ use js_ast::{CommonJSNamedExports, TsEnumsMap};
 
 pub struct Options<'a> {
     pub bundling: bool,
-    pub transform_imports: bool,
     pub to_commonjs_ref: Ref,
     pub to_esm_ref: Ref,
     pub require_ref: Option<Ref>,
@@ -1263,11 +1034,8 @@ pub struct Options<'a> {
     pub hmr_ref: Ref,
     pub indent: Indentation,
     pub runtime_imports: runtime::Imports,
-    pub module_hash: u32,
-    pub source_path: Option<FsPath<'a>>,
     // allocator dropped — global mimalloc (this is an AST crate but Options.allocator is the global default)
     pub source_map_handler: Option<SourceMapHandler<'a>>,
-    pub source_map_builder: Option<&'a mut SourceMap::chunk::Builder>,
     pub css_import_behavior: CssInJsBehavior,
     pub target: bun_ast::Target,
 
@@ -1338,7 +1106,6 @@ impl<'a> Default for Options<'a> {
     fn default() -> Self {
         Self {
             bundling: false,
-            transform_imports: true,
             to_commonjs_ref: Ref::NONE,
             to_esm_ref: Ref::NONE,
             require_ref: None,
@@ -1346,10 +1113,7 @@ impl<'a> Default for Options<'a> {
             hmr_ref: Ref::NONE,
             indent: Indentation::default(),
             runtime_imports: runtime::Imports::default(),
-            module_hash: 0,
-            source_path: None,
             source_map_handler: None,
-            source_map_builder: None,
             css_import_behavior: CssInJsBehavior::Facade,
             target: bun_ast::Target::Browser,
             runtime_transpiler_cache: None,
@@ -1471,7 +1235,7 @@ fn is_identifier_or_numeric_constant_or_property_access(expr: &js_ast::Expr) -> 
 
 pub enum PrintResult {
     Result(PrintResultSuccess),
-    Err(bun_core::Error),
+    Err(crate::Error),
 }
 
 pub struct PrintResultSuccess {
@@ -1628,13 +1392,9 @@ pub mod __gated_printer {
         pub call_target: Option<ExprData>,
         pub writer: W,
 
-        pub has_printed_bundled_import_statement: bool,
-
         pub renamer: rename::Renamer<'a, 'a>,
         pub prev_stmt_tag: StmtTag,
         pub source_map_builder: SourceMap::chunk::Builder,
-
-        pub symbol_counter: u32,
 
         pub temporary_bindings: Vec<B::Property>,
 
@@ -1785,11 +1545,9 @@ pub mod __gated_printer {
             }
 
             // Special-case "#foo in bar"
-            if matches!(e.left.data, ExprData::EPrivateIdentifier(_)) && e.op == Op::Code::BinIn {
-                let private = match &e.left.data {
-                    ExprData::EPrivateIdentifier(p) => p,
-                    _ => unreachable!(),
-                };
+            if let ExprData::EPrivateIdentifier(private) = &e.left.data
+                && e.op == Op::Code::BinIn
+            {
                 let name = self.name_for_symbol(private.ref_);
                 self.add_source_mapping_for_name(e.left.loc, name, private.ref_);
                 self.print_identifier(name);
@@ -1848,41 +1606,14 @@ pub mod __gated_printer {
             }
         }
 
-        pub fn write_all(&mut self, bytes: &[u8]) -> Result<(), bun_core::Error> {
-            self.print(bytes);
-            Ok(())
-        }
-
-        pub fn write_byte_n_times(&mut self, byte: u8, n: usize) -> Result<(), bun_core::Error> {
-            let bytes = [byte; 256];
-            let mut remaining = n;
-            while remaining > 0 {
-                let to_write = remaining.min(bytes.len());
-                self.write_all(&bytes[..to_write])?;
-                remaining -= to_write;
-            }
-            Ok(())
-        }
-
-        pub fn write_bytes_n_times(
-            &mut self,
-            bytes: &[u8],
-            n: usize,
-        ) -> Result<(), bun_core::Error> {
-            for _ in 0..n {
-                self.write_all(bytes)?;
-            }
-            Ok(())
-        }
-
-        fn fmt(&mut self, args: core::fmt::Arguments<'_>) -> Result<(), bun_core::Error> {
+        fn fmt(&mut self, args: core::fmt::Arguments<'_>) -> crate::Result<()> {
             // Rust can't pre-count `fmt::Arguments` without formatting,
             // so stream each formatted chunk straight into the writer's
             // reserved space instead — same zero-heap property without
             // formatting twice.
             struct FmtAdapter<'w, W: WriterTrait> {
                 writer: &'w mut W,
-                err: Option<bun_core::Error>,
+                err: Option<crate::Error>,
             }
             impl<W: WriterTrait> core::fmt::Write for FmtAdapter<'_, W> {
                 fn write_str(&mut self, s: &str) -> core::fmt::Result {
@@ -1900,13 +1631,9 @@ pub mod __gated_printer {
                 err: None,
             };
             if core::fmt::write(&mut adapter, args).is_err() {
-                return Err(adapter.err.unwrap_or_else(|| bun_core::err!("WriteFailed")));
+                return Err(adapter.err.unwrap_or(crate::Error::WriteFailed));
             }
             Ok(())
-        }
-
-        pub fn print_buffer(&mut self, str: &[u8]) {
-            self.writer.print_slice(str);
         }
 
         /// Polymorphic print: bytes or single char.
@@ -2223,26 +1950,6 @@ pub mod __gated_printer {
             self.needs_semicolon = false;
         }
 
-        pub fn print_two_blocks_in_one(
-            &mut self,
-            loc: bun_ast::Loc,
-            stmts: &[Stmt],
-            prepend: &[Stmt],
-        ) {
-            self.add_source_mapping(loc);
-            self.print(b"{");
-            self.print_newline();
-
-            self.indent();
-            self.print_block_body(prepend, TopLevel::init(IsTopLevel::No));
-            self.print_block_body(stmts, TopLevel::init(IsTopLevel::No));
-            self.unindent();
-            self.needs_semicolon = false;
-
-            self.print_indent();
-            self.print(b"}");
-        }
-
         pub fn print_decls(
             &mut self,
             keyword: &'static [u8],
@@ -2281,11 +1988,7 @@ pub mod __gated_printer {
                     let first_decl = &decls[0];
                     let second_decl = &decls[1];
 
-                    if !matches!(first_decl.binding.data, BindingData::BIdentifier(_)) {
-                        break 'brk;
-                    }
-                    if second_decl.value.is_none()
-                        || !matches!(second_decl.value.as_ref().unwrap().data, ExprData::EDot(_))
+                    if !matches!(first_decl.binding.data, BindingData::BIdentifier(_))
                         || !matches!(second_decl.binding.data, BindingData::BIdentifier(_))
                     {
                         break 'brk;
@@ -2297,32 +2000,24 @@ pub mod __gated_printer {
                     let ExprData::EDot(target_e_dot) = &target_value.data else {
                         break 'brk;
                     };
-                    let target_ref = if matches!(target_e_dot.target.data, ExprData::EIdentifier(_))
-                        && target_e_dot.optional_chain.is_none()
-                    {
-                        match &target_e_dot.target.data {
-                            ExprData::EIdentifier(id) => id.ref_,
-                            _ => unreachable!(),
-                        }
-                    } else {
+                    let ExprData::EIdentifier(target_id) = &target_e_dot.target.data else {
                         break 'brk;
                     };
-
-                    let second_e_dot = match &second_decl.value.as_ref().unwrap().data {
-                        ExprData::EDot(d) => d,
-                        _ => unreachable!(),
-                    };
-                    if !matches!(second_e_dot.target.data, ExprData::EIdentifier(_))
-                        || second_e_dot.optional_chain.is_some()
-                    {
+                    if target_e_dot.optional_chain.is_some() {
                         break 'brk;
                     }
+                    let target_ref = target_id.ref_;
 
-                    let second_ref = match &second_e_dot.target.data {
-                        ExprData::EIdentifier(id) => id.ref_,
-                        _ => unreachable!(),
+                    let Some(second_value) = &second_decl.value else {
+                        break 'brk;
                     };
-                    if !second_ref.eql(target_ref) {
+                    let ExprData::EDot(second_e_dot) = &second_value.data else {
+                        break 'brk;
+                    };
+                    let ExprData::EIdentifier(second_id) = &second_e_dot.target.data else {
+                        break 'brk;
+                    };
+                    if second_e_dot.optional_chain.is_some() || !second_id.ref_.eql(target_ref) {
                         break 'brk;
                     }
 
@@ -2353,28 +2048,19 @@ pub mod __gated_printer {
                         while !decls.is_empty() {
                             let decl = &decls[0];
 
-                            if decl.value.is_none()
-                                || !matches!(decl.value.as_ref().unwrap().data, ExprData::EDot(_))
-                                || !matches!(decl.binding.data, BindingData::BIdentifier(_))
-                            {
+                            if !matches!(decl.binding.data, BindingData::BIdentifier(_)) {
                                 break;
                             }
-
-                            let e_dot = match &decl.value.as_ref().unwrap().data {
-                                ExprData::EDot(d) => *d,
-                                _ => unreachable!(),
-                            };
-                            if !matches!(e_dot.target.data, ExprData::EIdentifier(_))
-                                || e_dot.optional_chain.is_some()
-                            {
+                            let Some(value) = &decl.value else {
                                 break;
-                            }
-
-                            let ref_ = match &e_dot.target.data {
-                                ExprData::EIdentifier(id) => id.ref_,
-                                _ => unreachable!(),
                             };
-                            if !ref_.eql(target_ref) {
+                            let ExprData::EDot(e_dot) = &value.data else {
+                                break;
+                            };
+                            let ExprData::EIdentifier(id) = &e_dot.target.data else {
+                                break;
+                            };
+                            if e_dot.optional_chain.is_some() || !id.ref_.eql(target_ref) {
                                 break;
                             }
 
@@ -3185,9 +2871,9 @@ pub mod __gated_printer {
             }
         }
 
-        pub fn check_stack_overflow(&self) -> Result<(), bun_core::Error> {
+        pub fn check_stack_overflow(&self) -> crate::Result<()> {
             if self.stack_overflowed {
-                return Err(bun_core::err!("StackOverflow"));
+                return Err(crate::Error::StackOverflow);
             }
             Ok(())
         }
@@ -3979,6 +3665,23 @@ pub mod __gated_printer {
                         self.print(b")");
                     }
                 }
+                ExprData::EObjectJSON(e) => {
+                    let e = e.get();
+                    let n = self.writer.written();
+                    let wrap = !IS_JSON && (self.stmt_start == n || self.arrow_expr_start == n);
+                    if wrap {
+                        self.print(b"(");
+                    }
+                    self.add_source_mapping(expr.loc);
+                    self.print_object_json(e);
+                    if wrap {
+                        self.print(b")");
+                    }
+                }
+                ExprData::EArrayJSON(e) => {
+                    self.add_source_mapping(expr.loc);
+                    self.print_array_json(e.get());
+                }
                 ExprData::EBoolean(e) | ExprData::EBranchBoolean(e) => {
                     self.add_source_mapping(expr.loc);
                     if self.options.minify_syntax {
@@ -4630,6 +4333,99 @@ pub mod __gated_printer {
                     && (self.options.minify_syntax || !self.options.has_run_symbol_renamer))
         }
 
+        /// `E::ObjectJSON` (JSON-only): always printed in JSON shape.
+        pub fn print_object_json(&mut self, e: &E::ObjectJSON) {
+            if !self.stack_check.is_safe_to_recurse() {
+                self.stack_overflowed = true;
+                return;
+            }
+            self.print(b"{");
+            let props = e.properties();
+            if !props.is_empty() {
+                if !e.is_single_line {
+                    self.indent();
+                }
+                for (i, prop) in props.iter().enumerate() {
+                    if i > 0 {
+                        self.print(b",");
+                    }
+                    if e.is_single_line {
+                        if i > 0 || !IS_JSON {
+                            self.print_space();
+                        }
+                    } else {
+                        self.print_newline();
+                        self.print_indent();
+                    }
+                    let key = E::String::init(prop.key.slice());
+                    self.print_string_literal_e_string(&key, false);
+                    self.print(b":");
+                    self.print_space();
+                    self.print_json_value(&prop.value);
+                }
+                if e.is_single_line {
+                    if !IS_JSON {
+                        self.print_space();
+                    }
+                } else {
+                    self.unindent();
+                    self.print_newline();
+                    self.print_indent();
+                }
+            }
+            self.print(b"}");
+        }
+
+        /// `E::ArrayJSON` (JSON-only).
+        pub fn print_array_json(&mut self, e: &E::ArrayJSON) {
+            if !self.stack_check.is_safe_to_recurse() {
+                self.stack_overflowed = true;
+                return;
+            }
+            self.print(b"[");
+            let items = e.items();
+            if !items.is_empty() {
+                if !e.is_single_line {
+                    self.indent();
+                }
+                for (i, item) in items.iter().enumerate() {
+                    if i > 0 {
+                        self.print(b",");
+                    }
+                    if e.is_single_line {
+                        if i > 0 {
+                            self.print_space();
+                        }
+                    } else {
+                        self.print_newline();
+                        self.print_indent();
+                    }
+                    self.print_json_value(item);
+                }
+                if !e.is_single_line {
+                    self.unindent();
+                    self.print_newline();
+                    self.print_indent();
+                }
+            }
+            self.print(b"]");
+        }
+
+        fn print_json_value(&mut self, value: &E::JsonValue) {
+            match value {
+                E::JsonValue::Null => self.print(b"null"),
+                E::JsonValue::Boolean(true) => self.print(b"true"),
+                E::JsonValue::Boolean(false) => self.print(b"false"),
+                E::JsonValue::Number(n) => self.print_number(n.value(), Level::Lowest),
+                E::JsonValue::String(s) => {
+                    let s = E::String::init(s.slice());
+                    self.print_string_literal_e_string(&s, false);
+                }
+                E::JsonValue::Object(o) => self.print_object_json(o.get()),
+                E::JsonValue::Array(a) => self.print_array_json(a.get()),
+            }
+        }
+
         pub fn print_property(&mut self, item_in: &G::Property) {
             // `G::Property` isn't `Copy`, so take a borrow and shallow-copy the
             // mutable bits we may rewrite (key + flags).
@@ -5176,7 +4972,7 @@ pub mod __gated_printer {
             }
         }
 
-        pub fn print_stmt(&mut self, stmt: Stmt, tlmtlo: TopLevel) -> Result<(), bun_core::Error> {
+        pub fn print_stmt(&mut self, stmt: Stmt, tlmtlo: TopLevel) -> crate::Result<()> {
             if !self.stack_check.is_safe_to_recurse() {
                 self.stack_overflowed = true;
                 return Ok(());
@@ -6772,7 +6568,7 @@ pub mod __gated_printer {
             }
         }
 
-        pub fn print_identifier_utf16(&mut self, name: &[u16]) -> Result<(), bun_core::Error> {
+        pub fn print_identifier_utf16(&mut self, name: &[u16]) -> crate::Result<()> {
             let n = name.len();
             let mut i: usize = 0;
 
@@ -6920,11 +6716,9 @@ pub mod __gated_printer {
                 prev_reg_exp_end: -1,
                 call_target: None,
                 writer,
-                has_printed_bundled_import_statement: false,
                 renamer,
                 prev_stmt_tag: StmtTag::SEmpty,
                 source_map_builder,
-                symbol_counter: 0,
                 temporary_bindings: Vec::new(),
                 binary_expression_stack: Vec::new(),
                 stack_check: bun_core::StackCheck::init(),
@@ -7172,28 +6966,20 @@ impl HasDefaultValue for js_ast::ArrayBinding {
 // Writer (NewWriter)
 // ───────────────────────────────────────────────────────────────────────────
 
-pub struct WriteResult {
-    pub off: u32,
-    pub len: usize,
-    pub end_off: u32,
-}
-
 /// Backend operations a `Writer` context provides.
 pub trait WriterContext {
-    fn write_byte(&mut self, char: u8) -> Result<usize, bun_core::Error>;
-    fn write_all(&mut self, buf: &[u8]) -> Result<usize, bun_core::Error>;
+    fn write_byte(&mut self, char: u8) -> crate::Result<usize>;
+    fn write_all(&mut self, buf: &[u8]) -> crate::Result<usize>;
     fn get_last_byte(&self) -> u8;
     fn get_last_last_byte(&self) -> u8;
-    fn reserve_next(&mut self, count: u64) -> Result<*mut u8, bun_core::Error>;
+    fn reserve_next(&mut self, count: u64) -> crate::Result<*mut u8>;
     fn advance_by(&mut self, count: u64);
     fn slice(&self) -> &[u8];
-    fn get_mutable_buffer(&mut self) -> &mut MutableString;
     fn take_buffer(&mut self) -> MutableString;
-    fn get_written(&self) -> &[u8];
-    fn flush(&mut self) -> Result<(), bun_core::Error> {
+    fn flush(&mut self) -> crate::Result<()> {
         Ok(())
     }
-    fn done(&mut self) -> Result<(), bun_core::Error> {
+    fn done(&mut self) -> crate::Result<()> {
         Ok(())
     }
 }
@@ -7205,12 +6991,12 @@ pub trait WriterTrait {
     fn prev_prev_char(&self) -> u8;
     fn print_byte(&mut self, b: u8);
     fn print_slice(&mut self, s: &[u8]);
-    fn reserve(&mut self, count: u64) -> Result<*mut u8, bun_core::Error>;
+    fn reserve(&mut self, count: u64) -> crate::Result<*mut u8>;
     fn advance(&mut self, count: u64);
     /// Reserve `bytes.len()`, memcpy `bytes` into the reserved region, then advance.
     /// Centralizes the open-coded `reserve + copy_nonoverlapping + advance` triplet
     #[inline]
-    fn write_reserved(&mut self, bytes: &[u8]) -> Result<(), bun_core::Error> {
+    fn write_reserved(&mut self, bytes: &[u8]) -> crate::Result<()> {
         let ptr = self.reserve(bytes.len() as u64)?;
         // SAFETY: `reserve(n)` returns a writable region of >= n bytes owned by the
         // writer's internal buffer, which is disjoint from caller-provided `bytes`.
@@ -7219,8 +7005,8 @@ pub trait WriterTrait {
         Ok(())
     }
     fn slice(&self) -> &[u8];
-    fn get_error(&self) -> Result<(), bun_core::Error>;
-    fn done(&mut self) -> Result<(), bun_core::Error>;
+    fn get_error(&self) -> crate::Result<()>;
+    fn done(&mut self) -> crate::Result<()>;
     fn std_writer(&mut self) -> StdWriterAdapter<'_, Self>
     where
         Self: Sized,
@@ -7234,7 +7020,7 @@ pub trait WriterTrait {
 
 pub struct StdWriterAdapter<'a, W: ?Sized>(&'a mut W);
 impl<'a, W: WriterTrait + ?Sized> Write for StdWriterAdapter<'a, W> {
-    fn write_all(&mut self, bytes: &[u8]) -> Result<(), bun_core::Error> {
+    fn write_all(&mut self, bytes: &[u8]) -> bun_io::Result<()> {
         self.0.print_slice(bytes);
         Ok(())
     }
@@ -7243,11 +7029,8 @@ impl<'a, W: WriterTrait + ?Sized> Write for StdWriterAdapter<'a, W> {
 pub struct Writer<C: WriterContext> {
     pub ctx: C,
     pub written: i32,
-    // Used by the printer
-    pub prev_char: u8,
-    pub prev_prev_char: u8,
-    pub err: Option<bun_core::Error>,
-    pub orig_err: Option<bun_core::Error>,
+    pub err: Option<crate::Error>,
+    pub orig_err: Option<crate::Error>,
 }
 
 impl<C: WriterContext> Writer<C> {
@@ -7255,21 +7038,11 @@ impl<C: WriterContext> Writer<C> {
         Self {
             ctx,
             written: -1,
-            prev_char: 0,
-            prev_prev_char: 0,
             err: None,
             orig_err: None,
         }
     }
 
-    pub fn std_writer_write(&mut self, bytes: &[u8]) -> Result<usize, core::convert::Infallible> {
-        self.print_slice(bytes);
-        Ok(bytes.len())
-    }
-
-    pub fn get_mutable_buffer(&mut self) -> &mut MutableString {
-        self.ctx.get_mutable_buffer()
-    }
     pub fn take_buffer(&mut self) -> MutableString {
         self.ctx.take_buffer()
     }
@@ -7277,7 +7050,7 @@ impl<C: WriterContext> Writer<C> {
         self.ctx.slice()
     }
 
-    pub fn get_error(&self) -> Result<(), bun_core::Error> {
+    pub fn get_error(&self) -> crate::Result<()> {
         if let Some(e) = self.orig_err {
             return Err(e);
         }
@@ -7296,7 +7069,7 @@ impl<C: WriterContext> Writer<C> {
         self.ctx.get_last_last_byte()
     }
 
-    pub fn reserve(&mut self, count: u64) -> Result<*mut u8, bun_core::Error> {
+    pub fn reserve(&mut self, count: u64) -> crate::Result<*mut u8> {
         self.ctx.reserve_next(count)
     }
 
@@ -7309,25 +7082,18 @@ impl<C: WriterContext> Writer<C> {
         self.written = self.written.wrapping_add(count as i32);
     }
 
-    pub fn write_all(&mut self, bytes: &[u8]) -> Result<usize, bun_core::Error> {
-        let written = self.written.max(0);
-        self.print_slice(bytes);
-        debug_assert!(self.written >= 0);
-        Ok((self.written as usize).wrapping_sub(written as usize))
-    }
-
     #[inline]
     pub fn print_byte(&mut self, b: u8) {
         match self.ctx.write_byte(b) {
             Ok(n) => {
                 self.written = self.written.wrapping_add(n as i32);
                 if n == 0 {
-                    self.err = Some(bun_core::err!("WriteFailed"));
+                    self.err = Some(crate::Error::WriteFailed);
                 }
             }
             Err(err) => {
                 self.orig_err = Some(err);
-                self.err = Some(bun_core::err!("WriteFailed"));
+                self.err = Some(crate::Error::WriteFailed);
             }
         }
     }
@@ -7339,23 +7105,23 @@ impl<C: WriterContext> Writer<C> {
                 self.written = self.written.wrapping_add(n as i32);
                 if n < s.len() {
                     self.err = Some(if n == 0 {
-                        bun_core::err!("WriteFailed")
+                        crate::Error::WriteFailed
                     } else {
-                        bun_core::err!("PartialWrite")
+                        crate::Error::PartialWrite
                     });
                 }
             }
             Err(err) => {
                 self.orig_err = Some(err);
-                self.err = Some(bun_core::err!("WriteFailed"));
+                self.err = Some(crate::Error::WriteFailed);
             }
         }
     }
 
-    pub fn flush(&mut self) -> Result<(), bun_core::Error> {
+    pub fn flush(&mut self) -> crate::Result<()> {
         self.ctx.flush()
     }
-    pub fn done(&mut self) -> Result<(), bun_core::Error> {
+    pub fn done(&mut self) -> crate::Result<()> {
         self.ctx.done()
     }
 }
@@ -7382,7 +7148,7 @@ impl<C: WriterContext> WriterTrait for Writer<C> {
         self.print_slice(s)
     }
     #[inline]
-    fn reserve(&mut self, count: u64) -> Result<*mut u8, bun_core::Error> {
+    fn reserve(&mut self, count: u64) -> crate::Result<*mut u8> {
         self.reserve(count)
     }
     #[inline]
@@ -7394,11 +7160,11 @@ impl<C: WriterContext> WriterTrait for Writer<C> {
         self.slice()
     }
     #[inline]
-    fn get_error(&self) -> Result<(), bun_core::Error> {
+    fn get_error(&self) -> crate::Result<()> {
         self.get_error()
     }
     #[inline]
-    fn done(&mut self) -> Result<(), bun_core::Error> {
+    fn done(&mut self) -> crate::Result<()> {
         self.done()
     }
     #[inline]
@@ -7430,7 +7196,7 @@ impl<W: WriterTrait> WriterTrait for &mut W {
         (**self).print_slice(s)
     }
     #[inline]
-    fn reserve(&mut self, count: u64) -> Result<*mut u8, bun_core::Error> {
+    fn reserve(&mut self, count: u64) -> crate::Result<*mut u8> {
         (**self).reserve(count)
     }
     #[inline]
@@ -7442,11 +7208,11 @@ impl<W: WriterTrait> WriterTrait for &mut W {
         (**self).slice()
     }
     #[inline]
-    fn get_error(&self) -> Result<(), bun_core::Error> {
+    fn get_error(&self) -> crate::Result<()> {
         (**self).get_error()
     }
     #[inline]
-    fn done(&mut self) -> Result<(), bun_core::Error> {
+    fn done(&mut self) -> crate::Result<()> {
         (**self).done()
     }
     #[inline]
@@ -7458,21 +7224,6 @@ impl<W: WriterTrait> WriterTrait for &mut W {
 // ───────────────────────────────────────────────────────────────────────────
 // DirectWriter / BufferWriter
 // ───────────────────────────────────────────────────────────────────────────
-
-pub struct DirectWriter {
-    pub handle: Fd,
-}
-
-impl DirectWriter {
-    pub fn write(&mut self, buf: &[u8]) -> Result<usize, bun_core::Error> {
-        bun_sys::write(self.handle, buf)
-            .map_err(|e| bun_core::Error::from_errno(i32::from(e.errno)))
-    }
-    pub fn write_all(&mut self, buf: &[u8]) -> Result<(), bun_core::Error> {
-        let _ = self.write(buf)?;
-        Ok(())
-    }
-}
 
 pub struct BufferWriter {
     pub buffer: MutableString,
@@ -7487,10 +7238,6 @@ pub struct BufferWriter {
 }
 
 impl BufferWriter {
-    pub fn get_mutable_buffer(&mut self) -> &mut MutableString {
-        &mut self.buffer
-    }
-
     pub fn take_buffer(&mut self) -> MutableString {
         core::mem::replace(&mut self.buffer, MutableString::init_empty())
     }
@@ -7527,27 +7274,14 @@ impl BufferWriter {
         }
     }
 
-    pub fn print(&mut self, args: core::fmt::Arguments<'_>) -> Result<(), bun_core::Error> {
-        Write::write_fmt(&mut self.buffer.list, format_args!("{}", args))
-    }
-
-    pub fn write_byte_n_times(&mut self, byte: u8, n: usize) -> Result<(), bun_core::Error> {
-        self.buffer.append_char_n_times(byte, n)?;
-        Ok(())
-    }
-    // alias
-    pub fn splat_byte_all(&mut self, byte: u8, n: usize) -> Result<(), bun_core::Error> {
-        self.write_byte_n_times(byte, n)
-    }
-
     #[inline]
-    pub fn write_byte(&mut self, byte: u8) -> Result<usize, bun_core::Error> {
+    pub fn write_byte(&mut self, byte: u8) -> crate::Result<usize> {
         self.buffer.append_char(byte)?;
         Ok(1)
     }
 
     #[inline]
-    pub fn write_all(&mut self, bytes: &[u8]) -> Result<usize, bun_core::Error> {
+    pub fn write_all(&mut self, bytes: &[u8]) -> crate::Result<usize> {
         self.buffer.append(bytes)?;
         Ok(bytes.len())
     }
@@ -7573,7 +7307,7 @@ impl BufferWriter {
         if len >= 2 { list[len - 2] } else { 0 }
     }
 
-    pub fn reserve_next(&mut self, count: u64) -> Result<*mut u8, bun_core::Error> {
+    pub fn reserve_next(&mut self, count: u64) -> crate::Result<*mut u8> {
         let n = usize::try_from(count).expect("int cast");
         // SAFETY: caller treats as write-only; advance_by() commits via commit_spare.
         Ok(unsafe { bun_core::vec::reserve_spare_bytes(&mut self.buffer.list, n) }.as_mut_ptr())
@@ -7598,7 +7332,7 @@ impl BufferWriter {
         written
     }
 
-    pub fn done(&mut self) -> Result<(), bun_core::Error> {
+    pub fn done(&mut self) -> crate::Result<()> {
         if self.append_newline {
             self.append_newline = false;
             self.buffer.append_char(b'\n')?;
@@ -7618,18 +7352,18 @@ impl BufferWriter {
         Ok(())
     }
 
-    pub fn flush(&mut self) -> Result<(), bun_core::Error> {
+    pub fn flush(&mut self) -> crate::Result<()> {
         Ok(())
     }
 }
 
 impl WriterContext for BufferWriter {
     #[inline]
-    fn write_byte(&mut self, c: u8) -> Result<usize, bun_core::Error> {
+    fn write_byte(&mut self, c: u8) -> crate::Result<usize> {
         self.write_byte(c)
     }
     #[inline]
-    fn write_all(&mut self, buf: &[u8]) -> Result<usize, bun_core::Error> {
+    fn write_all(&mut self, buf: &[u8]) -> crate::Result<usize> {
         self.write_all(buf)
     }
     #[inline]
@@ -7641,7 +7375,7 @@ impl WriterContext for BufferWriter {
         self.get_last_last_byte()
     }
     #[inline]
-    fn reserve_next(&mut self, count: u64) -> Result<*mut u8, bun_core::Error> {
+    fn reserve_next(&mut self, count: u64) -> crate::Result<*mut u8> {
         self.reserve_next(count)
     }
     #[inline]
@@ -7653,23 +7387,15 @@ impl WriterContext for BufferWriter {
         self.slice()
     }
     #[inline]
-    fn get_mutable_buffer(&mut self) -> &mut MutableString {
-        self.get_mutable_buffer()
-    }
-    #[inline]
     fn take_buffer(&mut self) -> MutableString {
         self.take_buffer()
     }
     #[inline]
-    fn get_written(&self) -> &[u8] {
-        self.get_written()
-    }
-    #[inline]
-    fn flush(&mut self) -> Result<(), bun_core::Error> {
+    fn flush(&mut self) -> crate::Result<()> {
         self.flush()
     }
     #[inline]
-    fn done(&mut self) -> Result<(), bun_core::Error> {
+    fn done(&mut self) -> crate::Result<()> {
         self.done()
     }
 }
@@ -7800,7 +7526,7 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
     symbols: js_ast::symbol::Map,
     source: &'a bun_ast::Source,
     opts: Options<'a>,
-) -> Result<usize, bun_core::Error> {
+) -> crate::Result<usize> {
     let _restore =
         bun_crash_handler::scoped_action(bun_crash_handler::Action::Print(source.path.text));
 
@@ -7812,14 +7538,13 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
     // hoisted out of the `minify_identifiers` arm so the
     // `&'r mut MinifyRenamer` borrow stored in `renamer` outlives the branch.
     let mut minify_renamer;
-    let renamer: rename::Renamer<'_, '_>;
     // `Scope` isn't `Copy` here and the only
     // consumer (`compute_reserved_names_for_scope`) walks `members`/`generated`/
     // `children` — never `parent` — so we re-point at the in-place
     // `tree.module_scope` instead (lives for `'a`).
     let module_scope = &tree.module_scope;
     let stable_source_indices = [source.index.0];
-    if opts.minify_identifiers {
+    let renamer: rename::Renamer<'_, '_> = if opts.minify_identifiers {
         let mut reserved_names = rename::compute_initial_reserved_names(opts.module_type)?;
         for child in module_scope.children.slice() {
             // `StoreRef<Scope>` has safe `DerefMut`; copy the handle to a mut
@@ -7897,11 +7622,11 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
         let minifier = tree.char_freq.as_ref().unwrap().compile();
         minify_renamer.assign_names_by_frequency(&minifier)?;
 
-        renamer = rename::Renamer::MinifyRenamer(&mut *minify_renamer);
+        rename::Renamer::MinifyRenamer(&mut *minify_renamer)
     } else {
         no_op_renamer = rename::NoOpRenamer::init(symbols, source);
-        renamer = no_op_renamer.to_renamer();
-    }
+        no_op_renamer.to_renamer()
+    };
 
     // defer: if minify_identifiers { renamer.deinit() } — Drop handles.
 
@@ -7986,7 +7711,7 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
             .as_mut()
             .unwrap()
             .finalize()
-            .map_err(|()| bun_core::Error::OUT_OF_MEMORY)?;
+            .map_err(|()| crate::Error::Alloc(bun_alloc::AllocError))?;
     }
 
     let mut source_maps_chunk: Option<SourceMap::Chunk> = if GENERATE_SOURCE_MAP {
@@ -8013,7 +7738,8 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
                 .as_ref()
                 .unwrap()
                 .as_deserialized()
-                .serialize(&mut srlz_res)?;
+                .serialize(&mut srlz_res)
+                .map_err(|_| crate::Error::WriteFailed)?;
         }
         // SAFETY: caller guarantees the cache outlives the print call.
         unsafe { &mut *cache.as_ptr() }.put(
@@ -8042,7 +7768,7 @@ pub fn print_json<W: WriterTrait>(
     expr: js_ast::Expr,
     source: &bun_ast::Source,
     opts: PrintJsonOptions<'_>,
-) -> Result<usize, bun_core::Error> {
+) -> crate::Result<usize> {
     // NewPrinter(ascii_only=false, Writer, rewrite_esm_to_cjs=false, is_bun_platform=false, is_json=true, generate_source_map=false)
     type PrinterType<'a, W> = Printer<'a, W, false, false, false, true, false>;
     let writer = _writer;
@@ -8261,7 +7987,7 @@ pub fn print_common_js<
     symbols: js_ast::symbol::Map,
     source: &'a bun_ast::Source,
     opts: Options<'a>,
-) -> Result<usize, bun_core::Error> {
+) -> crate::Result<usize> {
     let _restore =
         bun_crash_handler::scoped_action(bun_crash_handler::Action::Print(source.path.text));
 

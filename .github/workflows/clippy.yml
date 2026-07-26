@@ -28,7 +28,7 @@ env:
   # Pin the toolchain explicitly so rustup ignores rust-toolchain.toml's
   # `targets` list (11 cross triples ≈ 450 MB of prebuilt std we don't need
   # to lint the host). Keep in sync with `channel` in rust-toolchain.toml.
-  RUSTUP_TOOLCHAIN: nightly-2026-05-06
+  RUSTUP_TOOLCHAIN: nightly-2026-07-20
 
 jobs:
   clippy:
@@ -68,7 +68,7 @@ jobs:
         # bun_runtime/bun_jsc/bun_core `include!()` files under
         # build/debug/codegen/; clippy can't lint those crates without them.
         # `clone-lolhtml` fetches the vendored Rust path-dep
-        # (`src/lolhtml_sys/Cargo.toml` points at `vendor/lolhtml/c-api`).
+        # (the root `Cargo.toml` path-deps `lol_html` at `vendor/lolhtml`).
         run: |
           bun install --frozen-lockfile
           bun scripts/build.ts --configure-only

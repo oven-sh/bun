@@ -45,9 +45,12 @@ pub struct ServerConfig {
     /// If HMR is not enabled, then this field is ignored.
     pub enable_chrome_devtools_automatic_workspace_folders: bool,
 
-    pub on_error: Option<Strong>,
-    pub on_request: Option<Strong>,
-    pub on_node_http_request: Option<Strong>,
+    /// Raw shadow of the wrapper's `onError`/`onRequest`/`onNodeHTTPRequest`
+    /// WriteBarrier slots. The wrapper JSCell is the GC root; these are
+    /// `JSValue::ZERO` when unset and copied for hot-path dispatch reads.
+    pub on_error: JSValue,
+    pub on_request: JSValue,
+    pub on_node_http_request: JSValue,
 
     pub websocket: Option<WebSocketServerContext>,
 
@@ -58,7 +61,6 @@ pub struct ServerConfig {
     pub http3: bool,
     pub http1: bool,
 
-    pub is_node_http: bool,
     pub had_routes_object: bool,
 
     pub static_routes: Vec<StaticRouteEntry>,
@@ -81,9 +83,9 @@ impl Default for ServerConfig {
             development: DevelopmentOption::Development,
             broadcast_console_log_from_browser_to_server_for_bake: false,
             enable_chrome_devtools_automatic_workspace_folders: true,
-            on_error: None,
-            on_request: None,
-            on_node_http_request: None,
+            on_error: JSValue::ZERO,
+            on_request: JSValue::ZERO,
+            on_node_http_request: JSValue::ZERO,
             websocket: None,
             reuse_port: false,
             id: Box::default(),
@@ -91,7 +93,6 @@ impl Default for ServerConfig {
             ipv6_only: false,
             http3: false,
             http1: true,
-            is_node_http: false,
             had_routes_object: false,
             static_routes: Vec::new(),
             negative_routes: Vec::new(),
@@ -141,14 +142,6 @@ impl DevelopmentOption {
 impl ServerConfig {
     pub fn is_development(&self) -> bool {
         self.development.is_development()
-    }
-
-    /// Parsed view over [`Self::base_uri`].
-    // PERF: re-parses on each call. The only out-of-module reader takes
-    // `href` (== `base_uri`) directly; in-module reads happen once in `from_js`.
-    #[inline]
-    pub fn base_url(&self) -> URL<'_> {
-        URL::parse(&self.base_uri)
     }
 
     pub fn memory_cost(&self) -> usize {
@@ -208,7 +201,7 @@ impl Drop for StaticRouteEntry {
 }
 
 impl ServerConfig {
-    fn normalize_static_routes_list(&mut self) -> Result<(), bun_core::Error> {
+    fn normalize_static_routes_list(&mut self) -> Result<(), crate::Error> {
         fn hash(route: &StaticRouteEntry) -> u64 {
             let mut hasher = Wyhash::init(0);
             match &route.method {
@@ -254,7 +247,7 @@ impl ServerConfig {
         Ok(())
     }
 
-    pub fn clone_for_reloading_static_routes(&mut self) -> Result<ServerConfig, bun_core::Error> {
+    pub fn clone_for_reloading_static_routes(&mut self) -> Result<ServerConfig, crate::Error> {
         // The sole caller is
         // `self.config = self.config.clone_for_reloading_static_routes()?;`.
         // Move every owning field into `that` and leave the Copy scalars in
@@ -274,9 +267,9 @@ impl ServerConfig {
                 .broadcast_console_log_from_browser_to_server_for_bake,
             enable_chrome_devtools_automatic_workspace_folders: self
                 .enable_chrome_devtools_automatic_workspace_folders,
-            on_error: self.on_error.take(),
-            on_request: self.on_request.take(),
-            on_node_http_request: self.on_node_http_request.take(),
+            on_error: self.on_error,
+            on_request: self.on_request,
+            on_node_http_request: self.on_node_http_request,
             websocket: self.websocket.take(),
             reuse_port: self.reuse_port,
             id: core::mem::take(&mut self.id),
@@ -284,7 +277,6 @@ impl ServerConfig {
             ipv6_only: self.ipv6_only,
             http3: self.http3,
             http1: self.http1,
-            is_node_http: self.is_node_http,
             had_routes_object: self.had_routes_object,
             static_routes: core::mem::take(&mut self.static_routes),
             negative_routes: core::mem::take(&mut self.negative_routes),
@@ -302,7 +294,7 @@ impl ServerConfig {
         path: &[u8],
         route: AnyRoute,
         method: MethodOptional,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         self.static_routes.push(StaticRouteEntry {
             path: Box::<[u8]>::from(path),
             route,
@@ -329,6 +321,7 @@ pub(crate) fn apply_static_route<const SSL: bool, T>(
     entry: *mut T,
     path: &[u8],
     method: http_method::Optional,
+    path_has_user_head_route: bool,
 ) where
     T: StaticRouteLike<SSL>,
 {
@@ -380,7 +373,12 @@ pub(crate) fn apply_static_route<const SSL: bool, T>(
     }
 
     let user_data = entry.cast::<core::ffi::c_void>();
-    app.head(path, Some(head::<SSL, T>), user_data);
+    // Only answer HEAD from an entry that serves GET (HEAD must mirror GET,
+    // RFC 9110 section 9.3.2) or HEAD itself, and never displace an explicit HEAD
+    // handler route: uWS keeps the last registration for the same method and path.
+    if !path_has_user_head_route && serves_head(&method) {
+        app.head(path, Some(head::<SSL, T>), user_data);
+    }
     match method {
         http_method::Optional::Any => {
             app.any(path, Some(handler::<SSL, T>), user_data);
@@ -390,6 +388,16 @@ pub(crate) fn apply_static_route<const SSL: bool, T>(
             while let Some(method_) = iter.next() {
                 app.method(method_, path, Some(handler::<SSL, T>), user_data);
             }
+        }
+    }
+}
+
+/// Whether a static route registered for `method` should also answer HEAD.
+fn serves_head(method: &http_method::Optional) -> bool {
+    match method {
+        http_method::Optional::Any => true,
+        http_method::Optional::Method(set) => {
+            set.contains(Method::GET) || set.contains(Method::HEAD)
         }
     }
 }
@@ -408,6 +416,7 @@ pub(crate) fn apply_static_route_h3<T>(
     entry: *mut T,
     path: &[u8],
     method: http_method::Optional,
+    path_has_user_head_route: bool,
 ) where
     T: StaticRouteLike<false>,
 {
@@ -443,7 +452,9 @@ pub(crate) fn apply_static_route_h3<T>(
         };
     }
 
-    app.head(path, entry, head::<T>);
+    if !path_has_user_head_route && serves_head(&method) {
+        app.head(path, entry, head::<T>);
+    }
     match method {
         http_method::Optional::Any => app.any(path, entry, handler::<T>),
         http_method::Optional::Method(m) => {
@@ -477,12 +488,6 @@ pub(crate) trait StaticRouteLike<const SSL: bool>: 'static {
         resp: bun_uws_sys::AnyResponse,
     );
 }
-
-// NOTE (layering): the original `RequestUnion`/`ResponseUnion` placeholders
-// were duplicates of `bun_uws_sys::AnyRequest`/`AnyResponse`. Re-export the
-// real types so any straggler reference resolves to the canonical opaque.
-pub use bun_uws_sys::AnyRequest as RequestUnion;
-pub use bun_uws_sys::AnyResponse as ResponseUnion;
 
 impl<const SSL: bool> StaticRouteLike<SSL> for super::StaticRoute {
     unsafe fn set_server(this: *mut Self, server: AnyServer) {
@@ -727,7 +732,7 @@ impl ServerConfig {
 
                 for port_env in PORT_ENV {
                     if let Some(port) = env.get(port_env) {
-                        if let Ok(_port) = bun_core::immutable::parse_int::<u16>(port, 10) {
+                        if let Ok(_port) = bun_core::strings::parse_int::<u16>(port, 10) {
                             break 'brk _port;
                         }
                     }
@@ -909,6 +914,10 @@ impl ServerConfig {
                         Method::TRACE,
                     ];
                     let mut found = false;
+                    // HEAD must behave like GET without a body (RFC 9110 section 9.3.2),
+                    // so a route object with a GET handler and no HEAD entry also answers HEAD.
+                    let mut derived_head_route: Option<UserRouteBuilder> = None;
+                    let mut has_head_route = false;
                     for method in METHODS {
                         let method_name = bun_core::String::static_(method.as_str());
                         if let Some(function) = value.get_own(global, &method_name)? {
@@ -918,16 +927,27 @@ impl ServerConfig {
                             found = true;
 
                             if function.is_callable() {
+                                let callback = function.with_async_context_if_needed(global);
                                 args.user_routes_to_build.push(UserRouteBuilder {
                                     route: RouteDeclaration {
                                         path: ZBox::from_bytes(&*path),
                                         method: RouteMethod::Specific(method),
                                     },
-                                    callback: Strong::create(
-                                        function.with_async_context_if_needed(global),
-                                        global,
-                                    ),
+                                    callback: Strong::create(callback, global),
                                 });
+                                match method {
+                                    Method::GET => {
+                                        derived_head_route = Some(UserRouteBuilder {
+                                            route: RouteDeclaration {
+                                                path: ZBox::from_bytes(&*path),
+                                                method: RouteMethod::Specific(Method::HEAD),
+                                            },
+                                            callback: Strong::create(callback, global),
+                                        });
+                                    }
+                                    Method::HEAD => has_head_route = true,
+                                    _ => {}
+                                }
                             } else if let Some(html_route) =
                                 AnyRoute::from_js(global, &path, function, &mut *init_ctx)?
                             {
@@ -939,7 +959,16 @@ impl ServerConfig {
                                     route: html_route,
                                     method: http_method::Optional::Method(method_set),
                                 });
+                                if method == Method::HEAD {
+                                    has_head_route = true;
+                                }
                             }
+                        }
+                    }
+
+                    if let Some(builder) = derived_head_route {
+                        if !has_head_route {
+                            args.user_routes_to_build.push(builder);
                         }
                     }
 
@@ -1120,12 +1149,29 @@ impl ServerConfig {
         }
 
         if let Some(port_) = arg.get_truthy(global, "port")? {
-            let p = u16::try_from(
-                (port_.coerce::<i32>(global)?)
-                    .max(0)
-                    .min(i32::from(u16::MAX)),
-            )
-            .unwrap();
+            let number = port_.to_number(global)?;
+            if !number.is_finite() || number.fract() != 0.0 {
+                return Err(global.throw_range_error(
+                    number,
+                    bun_fmt::OutOfRangeOptions {
+                        field_name: b"options.port",
+                        msg: b"an integer",
+                        ..Default::default()
+                    },
+                ));
+            }
+            if !(0.0..=65535.0).contains(&number) {
+                return Err(global.throw_range_error(
+                    number,
+                    bun_fmt::OutOfRangeOptions {
+                        min: 0,
+                        max: 65535,
+                        field_name: b"options.port",
+                        ..Default::default()
+                    },
+                ));
+            }
+            let p = number as u16;
             if let Address::Tcp { port: tp, .. } = &mut args.address {
                 *tp = p;
             }
@@ -1270,8 +1316,10 @@ impl ServerConfig {
                     global.throw_invalid_arguments(format_args!("Expected error to be a function"))
                 );
             }
-            let on_error_snapshot = on_error.with_async_context_if_needed(global);
-            args.on_error = Some(Strong::create(on_error_snapshot, global));
+            // Raw value — async-context wrapping is deferred to the slot-write
+            // site (`serve_with!` / `on_reload_from_zig`) so the wrapped fn is
+            // rooted by the wrapper's WriteBarrier slot the moment it exists.
+            args.on_error = on_error;
         }
         if global.has_exception() {
             return Err(JsError::Thrown);
@@ -1283,8 +1331,7 @@ impl ServerConfig {
                     "Expected onNodeHTTPRequest to be a function",
                 )));
             }
-            let on_request = on_request_.with_async_context_if_needed(global);
-            args.on_node_http_request = Some(Strong::create(on_request, global));
+            args.on_node_http_request = on_request_;
         }
 
         if let Some(on_request_) = arg.get_truthy(global, "fetch")? {
@@ -1292,10 +1339,9 @@ impl ServerConfig {
                 return Err(global
                     .throw_invalid_arguments(format_args!("Expected fetch() to be a function")));
             }
-            let on_request = on_request_.with_async_context_if_needed(global);
-            args.on_request = Some(Strong::create(on_request, global));
+            args.on_request = on_request_;
         } else if args.bake.is_none()
-            && args.on_node_http_request.is_none()
+            && args.on_node_http_request.is_empty()
             && ((args.static_routes.len() + args.user_routes_to_build.len()) == 0
                 && !opts.has_user_routes)
             && opts.is_fetch_required

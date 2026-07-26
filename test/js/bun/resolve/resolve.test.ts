@@ -309,7 +309,7 @@ it("import override to bun", async () => {
   expect(await import("#bun")).toBeDefined();
 });
 
-it.todo("import override to bun:test", async () => {
+it("import override to bun:test", async () => {
   // @ts-expect-error
   expect(await import("#bun_test")).toBeDefined();
 });
@@ -587,6 +587,170 @@ describe("wildcard exports with @ in matched subpath", () => {
       join(root, "node_modules/@my/pkg/dist/sub/index.js"),
     );
   });
+});
+
+describe("package.json exports target percent-encoding", () => {
+  // ESModule.finalize short-circuits when the resolved path contains no '%'.
+  // These cases exercise both that branch and the decode branch to keep them in lockstep.
+  const resolveError = (spec: string, root: string) => {
+    try {
+      return { resolved: Bun.resolveSync(spec, root) };
+    } catch (e: any) {
+      return { name: e.name, code: e.code };
+    }
+  };
+
+  it.concurrent("resolves a plain target and rejects a directory target", () => {
+    using dir = tempDir("resolver-exports-finalize-plain", {
+      "package.json": JSON.stringify({ name: "host" }),
+      "node_modules/test-pkg/package.json": JSON.stringify({
+        name: "test-pkg",
+        version: "1.0.0",
+        exports: { "./ok": "./lib/ok.js", "./dir": "./lib/" },
+      }),
+      "node_modules/test-pkg/lib/ok.js": "module.exports = 1;",
+      "node_modules/test-pkg/lib/index.js": "module.exports = 2;",
+    });
+    const root = String(dir);
+
+    expect(Bun.resolveSync("test-pkg/ok", root)).toBe(join(root, "node_modules/test-pkg/lib/ok.js"));
+    // lib/index.js exists; rejection must come from the directory-target check, not a missing file.
+    expect(resolveError("test-pkg/dir", root)).toEqual({ name: "ResolveMessage", code: "ERR_MODULE_NOT_FOUND" });
+  });
+
+  it.concurrent("decodes a percent-encoded target and rejects encoded path separators", () => {
+    using dir = tempDir("resolver-exports-finalize-percent", {
+      "package.json": JSON.stringify({ name: "host" }),
+      "node_modules/test-pkg/package.json": JSON.stringify({
+        name: "test-pkg",
+        version: "1.0.0",
+        exports: {
+          "./space": "./lib/with%20space.js",
+          "./sep-2f": "./lib%2ffile.js",
+          "./sep-2F": "./lib%2Ffile.js",
+          "./sep-5c": "./lib%5cfile.js",
+          "./sep-5C": "./lib%5Cfile.js",
+          "./bad": "./lib/%%.js",
+        },
+      }),
+      "node_modules/test-pkg/lib/with space.js": "module.exports = 1;",
+      // lib/file.js exists; rejection must come from the encoded-separator check, not a missing file.
+      "node_modules/test-pkg/lib/file.js": "module.exports = 2;",
+    });
+    const root = String(dir);
+
+    expect(Bun.resolveSync("test-pkg/space", root)).toBe(join(root, "node_modules/test-pkg/lib/with space.js"));
+    for (const sub of ["sep-2f", "sep-2F", "sep-5c", "sep-5C", "bad"]) {
+      expect(resolveError(`test-pkg/${sub}`, root)).toEqual({ name: "ResolveMessage", code: "ERR_MODULE_NOT_FOUND" });
+    }
+  });
+});
+
+describe("package.json exports targets longer than the maximum path length", () => {
+  it.concurrent("reports a resolution error for an oversized string exports target", async () => {
+    using dir = tempDir("resolver-exports-long-target", {
+      "package.json": JSON.stringify({ name: "host" }),
+      "node_modules/test-pkg/package.json": JSON.stringify({
+        name: "test-pkg",
+        version: "1.0.0",
+        exports: "./" + Buffer.alloc(8192, "a").toString(),
+      }),
+      "index.js": `try {\n  require.resolve("test-pkg");\n  console.log("resolved");\n} catch {\n  console.log("caught");\n}\n`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stdout, exitCode }).toEqual({ stdout: "caught\n", exitCode: 0 });
+  });
+
+  it.concurrent(
+    "reports a resolution error when a wildcard exports target expands past the maximum path length",
+    async () => {
+      using dir = tempDir("resolver-exports-long-wildcard-target", {
+        "package.json": JSON.stringify({ name: "host" }),
+        "node_modules/test-pkg/package.json": JSON.stringify({
+          name: "test-pkg",
+          version: "1.0.0",
+          exports: { "./*": "./" + Buffer.alloc(8192, "a").toString() + "/*" },
+        }),
+        "index.js": `try {\n  require.resolve("test-pkg/sub");\n  console.log("resolved");\n} catch {\n  console.log("caught");\n}\n`,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "index.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect({ stdout, exitCode }).toEqual({ stdout: "caught\n", exitCode: 0 });
+    },
+  );
+
+  // These two targets pass the coarse pre-expansion length check (the package URL,
+  // target and subpath together are far below the maximum path length) and only
+  // exceed it once every "*" is replaced with the matched subpath.
+  it.concurrent(
+    "reports a resolution error when repeated wildcard substitution expands an exports target past the maximum path length",
+    async () => {
+      using dir = tempDir("resolver-exports-multi-wildcard-target", {
+        "package.json": JSON.stringify({ name: "host" }),
+        "node_modules/test-pkg/package.json": JSON.stringify({
+          name: "test-pkg",
+          version: "1.0.0",
+          exports: { "./*": "./" + "*/".repeat(100) + "x" },
+        }),
+        "index.js": `const sub = Buffer.alloc(300, "s").toString();\ntry {\n  require.resolve("test-pkg/" + sub);\n  console.log("resolved");\n} catch (e) {\n  console.log("caught", e.code);\n}\n`,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "index.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect({ stdout, exitCode }).toEqual({ stdout: "caught MODULE_NOT_FOUND\n", exitCode: 0 });
+    },
+  );
+
+  it.concurrent(
+    "reports a resolution error when repeated wildcard substitution expands an imports target past the maximum path length",
+    async () => {
+      using dir = tempDir("resolver-imports-multi-wildcard-target", {
+        "package.json": JSON.stringify({ name: "host" }),
+        "node_modules/imports-pkg/package.json": JSON.stringify({
+          name: "imports-pkg",
+          version: "1.0.0",
+          imports: { "#deep/*": "./" + "*/".repeat(100) + "x" },
+        }),
+        "node_modules/imports-pkg/inner.js": `const sub = Buffer.alloc(300, "s").toString();\ntry {\n  require.resolve("#deep/" + sub);\n  console.log("resolved");\n} catch (e) {\n  console.log("caught", e.code);\n}\n`,
+        "index.js": `require("imports-pkg/inner.js");\n`,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "index.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect({ stdout, exitCode }).toEqual({ stdout: "caught MODULE_NOT_FOUND\n", exitCode: 0 });
+    },
+  );
 });
 
 // A package.json `imports` entry whose value is a bare package specifier

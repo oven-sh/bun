@@ -1,0 +1,18 @@
+# Regenerates test/expected-durations.json from recent Buildkite runs and
+# uploads it as a build artifact. Attach a weekly schedule to this pipeline in
+# the Buildkite UI (it is not wired into ci.mjs so it never runs on PRs).
+#
+# The runner uses the checked-in copy for sharding; refresh that copy by
+# downloading this artifact and committing it when the shard balance drifts.
+steps:
+  - label: ":stopwatch: update-test-durations"
+    if: build.source == "schedule" || build.source == "ui"
+    agents:
+      queue: build-linux
+    command: |
+      node scripts/update-test-durations.mjs --builds 5
+      buildkite-agent artifact upload test/expected-durations.json
+    env:
+      # The script reads BUILDKITE_API_TOKEN; the agent environment hook
+      # already exports a read-scoped token under this name.
+      BUILDKITE_API_TOKEN: "$BUILDKITE_API_TOKEN"

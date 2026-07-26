@@ -3506,6 +3506,7 @@ describe("server.close() drains connections, not requests", () => {
     } finally {
       sock.destroy();
       server.closeAllConnections();
+      server.close();
     }
   });
 
@@ -3554,6 +3555,7 @@ describe("server.close() drains connections, not requests", () => {
     } finally {
       sock.destroy();
       server.closeAllConnections();
+      server.close();
     }
   });
 
@@ -3592,6 +3594,7 @@ describe("server.close() drains connections, not requests", () => {
     } finally {
       sock.destroy();
       server.closeAllConnections();
+      server.close();
     }
   });
 
@@ -3617,6 +3620,7 @@ describe("server.close() drains connections, not requests", () => {
     } finally {
       sock.destroy();
       server.closeAllConnections();
+      server.close();
     }
   });
 
@@ -3671,6 +3675,7 @@ describe("server.close() drains connections, not requests", () => {
     } finally {
       sock.destroy();
       server.closeAllConnections();
+      server.close();
     }
   });
 

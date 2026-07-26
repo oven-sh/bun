@@ -60,6 +60,10 @@ pub struct MultiPartUploadOptions {
     pub part_size: u64,
     /// default is 3, max 255
     pub retry: u8,
+    /// Per-request idle timeout override for the underlying HTTP socket, in
+    /// seconds. `None` uses the global default (5 min, `BUN_CONFIG_HTTP_IDLE_TIMEOUT`);
+    /// `Some(0)` disables the idle timer entirely.
+    pub idle_timeout_seconds: Option<core::ffi::c_uint>,
 }
 
 impl MultiPartUploadOptions {
@@ -78,6 +82,7 @@ impl Default for MultiPartUploadOptions {
             queue_size: 5,
             part_size: Self::DEFAULT_PART_SIZE as u64,
             retry: 3,
+            idle_timeout_seconds: None,
         }
     }
 }

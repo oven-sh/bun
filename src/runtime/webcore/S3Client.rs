@@ -220,6 +220,33 @@ where
         formatter.print_comma::<W, ENABLE_ANSI_COLORS>(writer)?;
         writer.write_str("\n")?;
 
+        if let Some(secs) = options.idle_timeout_seconds {
+            formatter.write_indent(writer)?;
+            writer.write_str(pfmt!("<r>timeout<d>:<r> ", ENABLE_ANSI_COLORS))?;
+            // Render in the option's JS-facing unit (`number | false`, ms).
+            if secs == 0 {
+                formatter
+                    .print_as::<W, ENABLE_ANSI_COLORS>(
+                        FormatTag::Boolean,
+                        writer,
+                        JSValue::FALSE,
+                        JSType::BooleanObject,
+                    )
+                    .map_err(|_| core::fmt::Error)?;
+            } else {
+                formatter
+                    .print_as::<W, ENABLE_ANSI_COLORS>(
+                        FormatTag::Double,
+                        writer,
+                        JSValue::js_number(secs as f64 * 1000.0),
+                        JSType::NumberObject,
+                    )
+                    .map_err(|_| core::fmt::Error)?;
+            }
+            formatter.print_comma::<W, ENABLE_ANSI_COLORS>(writer)?;
+            writer.write_str("\n")?;
+        }
+
         formatter.write_indent(writer)?;
         writer.write_str(pfmt!("<r>retry<d>:<r> ", ENABLE_ANSI_COLORS))?;
         formatter

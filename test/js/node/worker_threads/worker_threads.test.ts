@@ -1775,6 +1775,39 @@ describe("resourceLimits", () => {
     return w.terminate();
   });
 
+  test("maxOldGenerationSizeMb is floored at 2 like Node; the other keys are stored raw", () => {
+    // Node's parseResourceLimits: MathMax(obj.maxOldGenerationSizeMb, 2), for that key only.
+    const cases = [
+      { in: 0, out: 2 },
+      { in: -5, out: 2 },
+      { in: 0.5, out: 2 },
+      { in: 1, out: 2 },
+      { in: 1.99, out: 2 },
+      { in: 2, out: 2 },
+      { in: 3, out: 3 },
+    ];
+    const seen = cases.map(({ in: v }) => {
+      const w = new Worker("process.exit(0)", { eval: true, resourceLimits: { maxOldGenerationSizeMb: v } });
+      const { maxOldGenerationSizeMb } = w.resourceLimits;
+      w.terminate();
+      return { in: v, out: maxOldGenerationSizeMb };
+    });
+    expect(seen).toEqual(cases);
+
+    // The other three keys are stored unclamped in Node.
+    const w = new Worker("process.exit(0)", {
+      eval: true,
+      resourceLimits: { maxYoungGenerationSizeMb: 0, codeRangeSizeMb: -5, stackSizeMb: 0.5 },
+    });
+    expect(w.resourceLimits).toEqual({
+      maxYoungGenerationSizeMb: 0,
+      maxOldGenerationSizeMb: -1,
+      codeRangeSizeMb: -5,
+      stackSizeMb: 0.5,
+    });
+    return w.terminate();
+  });
+
   test("worker.resourceLimits defaults when option is omitted", () => {
     const w = new Worker(`process.exit(0)`, { eval: true });
     expect(w.resourceLimits).toEqual({

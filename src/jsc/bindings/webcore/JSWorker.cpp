@@ -327,17 +327,19 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::
             auto* limitsObject = asObject(resourceLimitsValue);
             WorkerResourceLimits limits;
             // Only `typeof 'number'` is accepted (Node). This is the ONLY parse; enforcement and both getters read back its result.
-            auto readLimit = [&](ASCIILiteral key, double& out) -> bool {
+            auto readLimit = [&](ASCIILiteral key, double& out, double floor) -> bool {
                 JSValue v = limitsObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, key));
                 if (throwScope.exception()) return false;
                 if (v && v.isNumber())
-                    out = v.asNumber();
+                    out = std::isnan(floor) ? v.asNumber() : std::max(v.asNumber(), floor);
                 return true;
             };
-            if (!readLimit("maxYoungGenerationSizeMb"_s, limits.maxYoungGenerationSizeMb)) return {};
-            if (!readLimit("maxOldGenerationSizeMb"_s, limits.maxOldGenerationSizeMb)) return {};
-            if (!readLimit("codeRangeSizeMb"_s, limits.codeRangeSizeMb)) return {};
-            if (!readLimit("stackSizeMb"_s, limits.stackSizeMb)) return {};
+            constexpr double noFloor = std::numeric_limits<double>::quiet_NaN();
+            if (!readLimit("maxYoungGenerationSizeMb"_s, limits.maxYoungGenerationSizeMb, noFloor)) return {};
+            // Node: MathMax(obj.maxOldGenerationSizeMb, 2) for this key only.
+            if (!readLimit("maxOldGenerationSizeMb"_s, limits.maxOldGenerationSizeMb, 2.0)) return {};
+            if (!readLimit("codeRangeSizeMb"_s, limits.codeRangeSizeMb, noFloor)) return {};
+            if (!readLimit("stackSizeMb"_s, limits.stackSizeMb, noFloor)) return {};
             options.resourceLimits = limits;
         }
 

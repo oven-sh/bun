@@ -280,14 +280,7 @@ Object.assign(Hash.prototype, {
     callback();
   },
   _flush: function (callback) {
-    let digest;
-    try {
-      digest = this[kHandle].digest(null, false);
-    } catch (err) {
-      callback(err);
-      return;
-    }
-    this.push(digest);
+    this.push(this[kHandle].digest(null, false));
     callback();
   },
   update: function (data, encoding) {

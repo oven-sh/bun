@@ -90,21 +90,3 @@ describe.each([
     expect(code).toBe("ERR_CRYPTO_HASH_FINALIZED");
   });
 });
-
-test("Hash end() without input after digest() errors from _flush", async () => {
-  const h = createHash("sha256");
-  h.update("x");
-  h.digest("hex");
-
-  const errorEvent = once(h, "error");
-  let threw: unknown = null;
-  try {
-    h.end();
-  } catch (err) {
-    threw = err;
-  }
-
-  expect(threw).toBeNull();
-  const [emitted] = await errorEvent;
-  expect((emitted as NodeJS.ErrnoException).code).toBe("ERR_CRYPTO_HASH_FINALIZED");
-});

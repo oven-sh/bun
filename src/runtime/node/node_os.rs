@@ -1500,8 +1500,12 @@ mod _impl {
                 };
                 Err(global.throw_value(err.to_error_instance_with_info_object(global)))
             }
+            bun_sys::E::SUCCESS => Ok(()),
             _ => {
-                // no other error codes can be emitted
+                // POSIX setpriority(2) only documents ESRCH/EACCES/EPERM (EINVAL
+                // cannot occur with PRIO_PROCESS). On Windows, uv_os_setpriority
+                // in practice only returns UV_ESRCH or UV_EPERM for OpenProcess
+                // and SetPriorityClass failures.
                 Ok(())
             }
         }

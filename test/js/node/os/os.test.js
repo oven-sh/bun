@@ -301,8 +301,6 @@ it("setPriority throws ESRCH for a nonexistent pid", () => {
   // 0x7ffffffe is well above any plausible pid on every platform. On Windows
   // libuv's uv__get_handle maps the resulting ERROR_INVALID_PARAMETER from
   // OpenProcess to UV_ESRCH, matching the POSIX ESRCH from setpriority(2).
-  // Previously on Windows the libuv return code was fed to get_errno() (which
-  // re-reads GetLastError() -> EINVAL) and the error was swallowed.
   let err;
   try {
     os.setPriority(0x7ffffffe, 0);

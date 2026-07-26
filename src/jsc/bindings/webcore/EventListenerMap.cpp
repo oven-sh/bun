@@ -101,13 +101,8 @@ static inline size_t findListener(const EventListenerVector& listeners, EventLis
     return notFound;
 }
 
-// Packs the identity the spec's duplicate check compares on
-// (JSEventListener::operator== tests m_jsFunction and m_isAttribute; the map
-// additionally tests useCapture) into a single word usable as a hash key. JSC
-// heap cells are 16-byte aligned, so the low two bits are free. Returns 0 for
-// listeners that cannot be keyed (non-JS listener, or a JSEventListener whose
-// weak jsFunction has been cleared), in which case callers fall back to the
-// linear scan.
+// Packs what JSEventListener::operator== + findListener compare on into one
+// word; JSC cells are 16-byte aligned so the two flag bits fit. 0 = unkeyable.
 static inline uintptr_t callbackKey(const EventListener& listener, bool useCapture)
 {
     auto* jsListener = dynamicDowncast<JSEventListener>(listener);
@@ -157,10 +152,6 @@ RegisteredEventListener* EventListenerMap::add(const AtomString& eventType, Ref<
         auto& listeners = entry->listeners;
         uintptr_t key = callbackKey(listener.get(), options.capture);
 
-        // A key absent from the index proves the listener is not a duplicate
-        // (the index is maintained as a superset of keys present in the
-        // vector). A hit, a keyless listener, or no index yet falls through
-        // to the linear scan the spec describes.
         bool mayBeDuplicate = !key || !entry->callbackIndex || entry->callbackIndex->contains(key);
         if (mayBeDuplicate && findListener(listeners, listener, options.capture) != notFound)
             return nullptr; // Duplicate listener.
@@ -203,14 +194,19 @@ bool EventListenerMap::remove(const AtomString& eventType, EventListener& listen
     for (unsigned i = 0; i < m_entries.size(); ++i) {
         auto& entry = m_entries[i];
         if (entry.type == eventType) {
+            // `listener` may be owned solely by the vector (setAttributeEventListener
+            // and the AbortSignal removal path hold no extra ref), so sample the key
+            // before removeListenerFromVector can drop the last reference.
+            uintptr_t key = callbackKey(listener, useCapture);
+            if (key && entry.callbackIndex && !entry.callbackIndex->contains(key))
+                return false;
+
             bool wasRemoved = removeListenerFromVector(entry.listeners, listener, useCapture);
             if (entry.listeners.isEmpty()) {
                 m_entries.removeAt(i);
             } else if (wasRemoved && entry.callbackIndex) {
-                if (auto key = callbackKey(listener, useCapture))
+                if (key)
                     entry.callbackIndex->remove(key);
-                // Drop an index that has drifted too far from the vector so
-                // repeated remove/add churn doesn't accumulate stale keys.
                 if (entry.callbackIndex->size() > entry.listeners.size() * 2 + callbackIndexThreshold)
                     entry.callbackIndex = nullptr;
             }

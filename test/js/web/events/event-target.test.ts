@@ -1,50 +1,41 @@
-import { describe, expect, test } from "bun:test";
+import { describe, test, expect } from "bun:test";
+import { bunEnv, bunExe, isASAN } from "harness";
 
 describe("EventTarget addEventListener", () => {
-  test("registering N distinct listeners for one type scales linearly", () => {
+  test("registering N distinct listeners for one type scales linearly", async () => {
     // addEventListener() must check for a duplicate (same callback + capture)
     // before appending. A naive linear scan makes N adds O(N^2). Bun keeps a
     // lazy hash index alongside the listener vector so N adds stay O(N).
     //
-    // The assertion compares against an O(N) baseline (one listener on each of
-    // N fresh targets) so the threshold is independent of hardware and build
-    // mode; only the ratio matters.
-    function measure(fn: () => void): number {
-      const t0 = performance.now();
-      fn();
-      return performance.now() - t0;
-    }
-
-    // Baseline exercises the same binding/allocation path but hits the
-    // duplicate early-return on every call after the first, so it is O(N) in
-    // every implementation. Best-of-N on each side filters out GC pauses;
-    // they only ever add time.
-    const n = 4000;
-    const duplicate = () => {};
-    let bestBaseline = Infinity;
-    let bestBulk = Infinity;
-    for (let run = 0; run < 3; run++) {
-      const base = new EventTarget();
-      bestBaseline = Math.min(
-        bestBaseline,
-        measure(() => {
-          for (let i = 0; i < n; i++) base.addEventListener("x", duplicate);
-        }),
-      );
-
-      const target = new EventTarget();
-      bestBulk = Math.min(
-        bestBulk,
-        measure(() => {
-          for (let i = 0; i < n; i++) target.addEventListener("x", () => {});
-        }),
-      );
-    }
-
-    // Without the index the ratio at this N sits above 10x on every build
-    // configuration; with it both paths do the same per-call work and the
-    // ratio stays near 1.
-    expect(bestBulk / bestBaseline).toBeLessThan(5);
+    // The subprocess registers N listeners with a 2 s wall-clock budget and
+    // reports how far it got. N is sized per build so an O(N) path finishes
+    // in well under a second while an O(N^2) path needs tens of seconds.
+    const n = isASAN ? 15000 : 200000;
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const n = ${n};
+          const fns = Array.from({ length: n }, () => () => {});
+          const target = new EventTarget();
+          const deadline = performance.now() + 2000;
+          let i = 0;
+          for (; i < n; i++) {
+            target.addEventListener("x", fns[i]);
+            if ((i & 1023) === 0 && performance.now() > deadline) break;
+          }
+          console.log(JSON.stringify({ n, registered: i }));
+        `,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    const { registered } = JSON.parse(stdout);
+    expect(registered).toBe(n);
   });
 
   test("duplicate detection past the index threshold", () => {
@@ -189,6 +180,76 @@ describe("EventTarget addEventListener", () => {
 
     ac.abort();
     expect({ a, b }).toEqual({ a: 1, b: 1 });
+  });
+
+  test("clearing an attribute listener past threshold removes it", () => {
+    const ac = new AbortController();
+    const sig = ac.signal;
+    for (let i = 0; i < 40; i++) sig.addEventListener("abort", () => {});
+
+    let calls = 0;
+    const fn = () => calls++;
+    sig.onabort = fn;
+    sig.onabort = null;
+    sig.addEventListener("abort", fn);
+    sig.addEventListener("abort", fn);
+
+    ac.abort();
+    expect(calls).toBe(1);
+  });
+
+  test("signal-controlled listener removal past threshold", () => {
+    const inner = new AbortController();
+    const target = new EventTarget();
+    for (let i = 0; i < 40; i++) target.addEventListener("x", () => {});
+
+    let calls = 0;
+    const fn = () => calls++;
+    target.addEventListener("x", fn, { signal: inner.signal });
+
+    inner.abort();
+    target.dispatchEvent(new Event("x"));
+    expect(calls).toBe(0);
+
+    target.addEventListener("x", fn);
+    target.addEventListener("x", fn);
+    target.dispatchEvent(new Event("x"));
+    expect(calls).toBe(1);
+  });
+
+  // setAttributeEventListener(null) and the AbortSignal removal algorithm pass
+  // the stored listener into removeEventListener without taking an extra Ref,
+  // so the listener map's remove() must not touch it after dropping the
+  // vector's owning pointer. bmalloc hides this from ASAN by default; Malloc=1
+  // routes allocation through the system allocator so the use-after-free is
+  // visible.
+  test.skipIf(!isASAN)("remove() does not touch a listener the vector solely owned", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const sig = new AbortController().signal;
+          for (let i = 0; i < 40; i++) sig.addEventListener("abort", () => {});
+          sig.onabort = () => {};
+          sig.onabort = null;
+
+          const inner = new AbortController();
+          const target = new EventTarget();
+          for (let i = 0; i < 40; i++) target.addEventListener("x", () => {});
+          target.addEventListener("x", () => {}, { signal: inner.signal });
+          inner.abort();
+
+          console.log("ok");
+        `,
+      ],
+      env: { ...bunEnv, Malloc: "1" },
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("ok\n");
+    expect(exitCode).toBe(0);
   });
 
   test("remove/add churn keeps duplicate detection correct", () => {

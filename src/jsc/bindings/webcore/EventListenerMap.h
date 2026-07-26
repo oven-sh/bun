@@ -76,10 +76,8 @@ private:
     struct Entry {
         AtomString type;
         EventListenerVector listeners;
-        // Lazy superset of packed (jsFunction | useCapture | isAttribute) keys
-        // present in `listeners`. Absence proves no duplicate; presence falls
-        // back to a linear scan. Only allocated once `listeners` grows past
-        // callbackIndexThreshold.
+        // Lazy superset of (jsFunction | useCapture | isAttribute) keys in
+        // `listeners`: a miss proves no duplicate, a hit falls back to a scan.
         std::unique_ptr<HashSet<uintptr_t>> callbackIndex;
     };
 

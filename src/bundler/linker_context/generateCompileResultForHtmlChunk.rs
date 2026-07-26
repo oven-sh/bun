@@ -106,6 +106,22 @@ fn set_attribute(element: &mut Element<'_, '_>, name: &[u8], value: &[u8]) {
     }
 }
 
+fn set_attribute_with_suffix(
+    element: &mut Element<'_, '_>,
+    name: &[u8],
+    value: &[u8],
+    suffix: &[u8],
+) {
+    if suffix.is_empty() {
+        set_attribute(element, name, value);
+    } else {
+        let mut buf = Vec::with_capacity(value.len() + suffix.len());
+        buf.extend_from_slice(value);
+        buf.extend_from_slice(suffix);
+        set_attribute(element, name, &buf);
+    }
+}
+
 impl<'a> HTMLProcessorHandler for HTMLLoader<'a> {
     fn on_write_html(&mut self, bytes: &[u8]) {
         self.output.extend_from_slice(bytes);
@@ -121,9 +137,9 @@ impl<'a> HTMLProcessorHandler for HTMLLoader<'a> {
     fn on_tag(
         &mut self,
         element: &mut Element<'_, '_>,
-        _path: &[u8],
+        path: &[u8],
         url_attribute: &[u8],
-        _kind: ImportKind,
+        kind: ImportKind,
     ) {
         if self.current_import_record_index as usize >= self.import_records.len() {
             bun_core::Output::panic(format_args!(
@@ -151,6 +167,19 @@ impl<'a> HTMLProcessorHandler for HTMLLoader<'a> {
             Loader::File
         };
 
+        // The resolver strips a `?query`/`#fragment` to find the file on disk
+        // (e.g. `sprite.svg#home`, `clip.mp4#t=10,20`); carry it across to the
+        // rewritten reference so the fragment still addresses the SVG symbol /
+        // media range. Matches CSS's `url()` handling (see `css::Printer`).
+        let suffix: &[u8] = if kind == ImportKind::Url {
+            match strings::index_of_any(path, b"?#") {
+                Some(i) => &path[i..],
+                None => b"",
+            }
+        } else {
+            b""
+        };
+
         if import_record
             .flags
             .contains(ImportRecordFlags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS)
@@ -164,14 +193,19 @@ impl<'a> HTMLProcessorHandler for HTMLLoader<'a> {
 
         if self.linker.dev_server.is_some() {
             if !unique_key_for_additional_files.is_empty() {
-                set_attribute(element, url_attribute, unique_key_for_additional_files);
+                set_attribute_with_suffix(
+                    element,
+                    url_attribute,
+                    unique_key_for_additional_files,
+                    suffix,
+                );
             } else if import_record.path.is_disabled
                 || loader.is_javascript_like()
                 || loader.is_css()
             {
                 element.remove();
             } else {
-                set_attribute(element, url_attribute, import_record.path.pretty);
+                set_attribute_with_suffix(element, url_attribute, import_record.path.pretty, suffix);
             }
             return;
         }
@@ -195,14 +229,25 @@ impl<'a> HTMLProcessorHandler for HTMLLoader<'a> {
             let url_for_css =
                 parse_graph.ast.items_url_for_css()[import_record.source_index.get() as usize];
             if !url_for_css.is_empty() {
-                set_attribute(element, url_attribute, url_for_css);
+                // A `?query` appended to a data: URI lands in the base64 body
+                // and breaks decoding; keep only the `#fragment`.
+                let fragment: &[u8] = match strings::index_of_char(suffix, b'#') {
+                    Some(i) => &suffix[i as usize..],
+                    None => b"",
+                };
+                set_attribute_with_suffix(element, url_attribute, url_for_css, fragment);
                 return;
             }
         }
 
         if !unique_key_for_additional_files.is_empty() {
             // Replace the external href/src with the unique key so that we later will rewrite it to the final URL or pathname
-            set_attribute(element, url_attribute, unique_key_for_additional_files);
+            set_attribute_with_suffix(
+                element,
+                url_attribute,
+                unique_key_for_additional_files,
+                suffix,
+            );
             return;
         }
     }

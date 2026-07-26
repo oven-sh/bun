@@ -364,7 +364,10 @@ it("allowHalfOpen: end() fires once when the handler's write is partially accept
   await Promise.all([serverClosed.promise, clientClosed.promise]);
 
   expect({ endCount, received }).toEqual({ endCount: 1, received: PAYLOAD.length });
-  expect(drainCount).toBeGreaterThanOrEqual(1);
+  // setSocketOptions is a POSIX-only no-op on Windows, where loopback
+  // auto-tuning can accept 256 KiB in one send(). The assertion above already
+  // proves the fix there (endCount == 1 with the whole payload delivered).
+  if (!isWindows) expect(drainCount).toBeGreaterThanOrEqual(1);
 });
 
 it("should not leak memory", async () => {

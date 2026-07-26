@@ -212,7 +212,7 @@ impl OutputFile {
             input_loader: options.input_loader,
             src_path: fs::Path::init(input_path),
             owned_src_path_text,
-            dest_path: options.output_path.clone(),
+            dest_path: options.output_path,
             source_index: options.source_index,
             size,
             size_without_sourcemap: options.display_size as usize,

@@ -2417,7 +2417,6 @@ impl<'a> Transpiler<'a> {
         };
         js_printer::print_ast::<_, false, ENABLE_SOURCE_MAP>(
             writer,
-            // Per-call scratch arena (rope flattening) — same as the Cjs arm.
             print_arena,
             ast,
             symbols,
@@ -2514,7 +2513,6 @@ impl<'a> Transpiler<'a> {
         };
         js_printer::print_ast::<_, IS_BUN, ENABLE_SOURCE_MAP>(
             writer,
-            // Per-call scratch arena (rope flattening) — same as the Cjs arm.
             print_arena,
             ast,
             symbols,

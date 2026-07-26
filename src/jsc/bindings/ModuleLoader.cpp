@@ -919,10 +919,8 @@ template JSValue fetchCommonJSModuleNonBuiltin<false>(
 
 extern "C" bool isBunTest;
 
-// JSON/TOML/text-like modules are pure data: the ESM default export and the
-// CommonJS `module.exports` are the same parsed value. Share that value with
-// require.cache so `import default from "./x.json"` and `require("./x.json")`
-// observe one object (Node.js guarantees this identity for JSON).
+// Node.js returns one object for `import default` and `require()` of a JSON
+// file; without this, a later require() would hand back the ESM namespace.
 static JSC::JSValue reconcileDataModuleWithRequireCache(
     Zig::GlobalObject* globalObject,
     JSC::JSString* specifierJS,

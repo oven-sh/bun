@@ -43,7 +43,6 @@
 #include <JavaScriptCore/RemoteInspectorServer.h>
 #endif
 
-#include "JSBuffer.h"
 #include "JSDOMConvertBase.h"
 #include "ZigSourceProvider.h"
 #include "mimalloc.h"

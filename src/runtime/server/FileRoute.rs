@@ -275,8 +275,8 @@ impl FileRoute {
 
     fn write_status_code(&self, status: u16, resp: AnyResponse) {
         match resp {
-            AnyResponse::SSL(r) => write_status::<true>(r, status),
-            AnyResponse::TCP(r) => write_status::<false>(r, status),
+            AnyResponse::SSL(r) => write_status::<true>(r, status, &[]),
+            AnyResponse::TCP(r) => write_status::<false>(r, status, &[]),
             AnyResponse::H3(r) => {
                 let mut b = bun_core::fmt::ItoaBuf::new();
                 let s = bun_core::fmt::itoa(&mut b, status);

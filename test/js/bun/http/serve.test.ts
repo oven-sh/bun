@@ -1418,6 +1418,97 @@ it("does not write body bytes for null body statuses", async () => {
   }
 });
 
+describe("status line reason phrase", () => {
+  async function rawStatusLine(port: number, path: string): Promise<string> {
+    const received: Buffer[] = [];
+    const { resolve, reject, promise } = Promise.withResolvers<void>();
+    await using connection = await Bun.connect({
+      hostname: "127.0.0.1",
+      port,
+      socket: {
+        data(_s, data) {
+          received.push(data);
+        },
+        end() {
+          resolve();
+        },
+        error(_s, error) {
+          reject(error);
+        },
+        close() {
+          resolve();
+        },
+      },
+    });
+    connection.write(`GET ${path} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n`);
+    connection.flush();
+    await promise;
+    return Buffer.concat(received).toString("latin1").split("\r\n")[0];
+  }
+
+  it("writes the Response statusText and never the HM placeholder", async () => {
+    using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      routes: {
+        "/static-known": new Response("x", { status: 201, statusText: "Static Custom" }),
+        "/static-unknown": new Response("x", { status: 599, statusText: "Edge Cache Error" }),
+        "/static-unknown-bare": new Response("x", { status: 520 }),
+      },
+      fetch(req) {
+        switch (new URL(req.url).pathname) {
+          case "/known-bare":
+            return new Response("x", { status: 201 });
+          case "/unknown-bare":
+            return new Response("x", { status: 599 });
+          case "/unknown-custom":
+            return new Response("x", { status: 520, statusText: "Edge" });
+          case "/known-custom":
+            return new Response("x", { status: 404, statusText: "Nope" });
+          case "/injection":
+            return new Response("x", { status: 200, statusText: "OK\r\nX-Injected: 1" });
+          case "/injection-unknown":
+            return new Response("x", { status: 599, statusText: "x\r\ny" });
+          default:
+            return new Response("404", { status: 404 });
+        }
+      },
+    });
+
+    const cases: Record<string, string> = {
+      "/known-bare": "HTTP/1.1 201 Created",
+      "/unknown-bare": "HTTP/1.1 599 ",
+      "/unknown-custom": "HTTP/1.1 520 Edge",
+      "/known-custom": "HTTP/1.1 404 Nope",
+      // A statusText containing CR/LF is discarded (response splitting defence)
+      // and falls through to the default phrase.
+      "/injection": "HTTP/1.1 200 OK",
+      "/injection-unknown": "HTTP/1.1 599 ",
+      "/static-known": "HTTP/1.1 201 Static Custom",
+      "/static-unknown": "HTTP/1.1 599 Edge Cache Error",
+      "/static-unknown-bare": "HTTP/1.1 520 ",
+    };
+    const got: Record<string, string> = {};
+    for (const path of Object.keys(cases)) {
+      got[path] = await rawStatusLine(server.port, path);
+    }
+    expect(got).toEqual(cases);
+  });
+
+  it("fetch() sees the custom reason phrase", async () => {
+    using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch() {
+        return new Response("x", { status: 499, statusText: "Client Closed Request" });
+      },
+    });
+    const res = await fetch(server.url);
+    expect(res.status).toBe(499);
+    expect(res.statusText).toBe("Client Closed Request");
+  });
+});
+
 // Response.error() is a WHATWG network error: its status is 0, which has no
 // representation in an HTTP status line. It must never be written to the socket.
 describe("Response.error()", () => {

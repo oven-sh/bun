@@ -111,7 +111,11 @@ pub use server_body::{
 };
 
 // ─── write_status ────────────────────────────────────────────────────────────
-pub fn write_status<const SSL: bool>(resp: *mut uws_sys::NewAppResponse<SSL>, status: u16) {
+pub fn write_status<const SSL: bool>(
+    resp: *mut uws_sys::NewAppResponse<SSL>,
+    status: u16,
+    status_text: &[u8],
+) {
     // The route handlers (`StaticRoute`/`FileRoute`) call here from completion
     // paths where the request may already be aborted/detached, so no-op on null.
     if resp.is_null() {
@@ -120,16 +124,8 @@ pub fn write_status<const SSL: bool>(resp: *mut uws_sys::NewAppResponse<SSL>, st
     // S008: `Response<SSL>` is a ZST opaque — safe `*mut → &mut` deref
     // (non-null checked above).
     let resp = bun_opaque::opaque_deref_mut(resp);
-    if let Some(text) = HTTPStatusText::get(status) {
-        resp.write_status(text);
-    } else {
-        use std::io::Write as _;
-        let mut buf = [0u8; 48];
-        let mut cursor = &mut buf[..];
-        write!(cursor, "{} HM", status).expect("unreachable");
-        let written = 48 - cursor.len();
-        resp.write_status(&buf[..written]);
-    }
+    let mut buf = [0u8; HTTPStatusText::STATUS_LINE_BUF];
+    resp.write_status(HTTPStatusText::format(&mut buf, status, status_text));
 }
 
 // ─── AnyRoute ────────────────────────────────────────────────────────────────

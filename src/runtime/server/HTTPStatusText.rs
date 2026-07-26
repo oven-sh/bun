@@ -11,6 +11,41 @@ pub const fn is_sendable(code: u16) -> bool {
     matches!(code, 100..=999)
 }
 
+/// RFC 9112 §4: `reason-phrase = 1*( HTAB / SP / VCHAR / obs-text )` where
+/// `VCHAR` is `0x21..=0x7E` and `obs-text` is `0x80..=0xFF`. Returns `true`
+/// for the empty slice (no phrase, still a legal status line).
+pub fn is_valid_reason_phrase(s: &[u8]) -> bool {
+    s.iter()
+        .all(|&c| c == b'\t' || (0x20..=0x7E).contains(&c) || c >= 0x80)
+}
+
+pub const STATUS_LINE_BUF: usize = 256;
+
+/// Build the `"<code> <reason>"` string uWS's `writeStatus` expects.
+///
+/// A non-empty `status_text` that passes [`is_valid_reason_phrase`] is used as
+/// the reason (truncated to fit `buf`). Otherwise this falls back to [`get`],
+/// then to an empty reason phrase (`"<code> "`), so the placeholder `HM` never
+/// reaches the wire.
+pub fn format<'a>(buf: &'a mut [u8; STATUS_LINE_BUF], code: u16, status_text: &[u8]) -> &'a [u8] {
+    let mut itoa = bun_core::fmt::ItoaBuf::new();
+    let c = bun_core::fmt::itoa(&mut itoa, code);
+    if !status_text.is_empty() && is_valid_reason_phrase(status_text) {
+        let msg = &status_text[..status_text.len().min(buf.len() - c.len() - 1)];
+        let n = c.len() + 1 + msg.len();
+        buf[..c.len()].copy_from_slice(c);
+        buf[c.len()] = b' ';
+        buf[c.len() + 1..n].copy_from_slice(msg);
+        return &buf[..n];
+    }
+    if let Some(canned) = get(code) {
+        return canned;
+    }
+    buf[..c.len()].copy_from_slice(c);
+    buf[c.len()] = b' ';
+    &buf[..c.len() + 1]
+}
+
 pub fn get(code: u16) -> Option<&'static [u8]> {
     match code {
         100 => Some(b"100 Continue"),

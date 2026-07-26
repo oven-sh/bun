@@ -1384,8 +1384,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             if let Some(upgrade_) = headers_ref.fast_get(HTTPHeaderName::Upgrade) {
                 let upgrade = upgrade_.to_slice();
                 // `defer upgrade.deinit()` → Drop.
-                let slice = upgrade.slice();
-                if slice != b"h2" && slice != b"h2c" {
+                if !http::upgrade_header_offers_h2(upgrade.slice()) {
                     upgraded_connection = true;
                 }
             }

@@ -669,11 +669,6 @@ pub fn decode_header_block(session: &mut ClientSession, stream: &mut Stream) {
     }
     if status >= 100 && status < 200 {
         stream.decoded_bytes.truncate(start_len);
-        // Only `100 Continue` is the go-ahead for a withheld body; 102/103
-        // are informational and do not satisfy `Expect: 100-continue`.
-        if status == 100 {
-            stream.awaiting_continue = false;
-        }
         // RFC 9113 §8.1: a 1xx HEADERS that ends the stream is malformed.
         if stream.remote_closed() {
             stream.fatal_error = Some(crate::Error::HTTP2ProtocolError);
@@ -683,20 +678,6 @@ pub fn decode_header_block(session: &mut ClientSession, stream: &mut Stream) {
 
     stream.status_code = status;
     stream.headers_ready = true;
-    if stream.awaiting_continue {
-        // Final status without a preceding 100: server has decided without
-        // seeing the body. Half-close our side with an empty DATA so the
-        // response can finish normally; Content-Length was already stripped
-        // on this path so 0 bytes is not a §8.1.1 mismatch.
-        stream.awaiting_continue = false;
-        session.write_frame(
-            wire::FrameType::HTTP_FRAME_DATA,
-            wire::DataFrameFlags::END_STREAM as u8,
-            stream.id,
-            &[],
-        );
-        stream.sent_end_stream();
-    }
     let bytes = stream.decoded_bytes.as_ptr();
     stream.decoded_headers.reserve_exact(
         bounds

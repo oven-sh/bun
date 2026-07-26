@@ -571,6 +571,17 @@ pub fn hash_header_name(name: &[u8]) -> u64 {
     bun_wyhash::hash_ascii_lowercase(0, name)
 }
 
+/// Shared by `build_request` and the JS-thread `upgraded_connection` check so header and body framing agree.
+pub fn upgrade_header_offers_h2(value: &[u8]) -> bool {
+    let mut it = HeaderValueIterator::init(value);
+    while let Some(token) = it.next() {
+        if bun_core::strings::eql_any_case_insensitive_ascii(token, &[b"h2", b"h2c"]) {
+            return true;
+        }
+    }
+    false
+}
+
 // ───────────────────────────── HTTPClient struct ─────────────────────────────
 // The heavy `impl HTTPClient` (socket dispatch / state machine) remains
 // gated below until the missing
@@ -954,6 +965,8 @@ const CONTENT_LENGTH_HEADER_NAME: &[u8] = b"Content-Length";
 const CHUNKED_ENCODED_HEADER: picohttp::Header =
     picohttp::Header::new(b"Transfer-Encoding", b"chunked");
 const CONNECTION_HEADER: picohttp::Header = picohttp::Header::new(b"Connection", b"keep-alive");
+const CONNECTION_UPGRADE_HEADER: picohttp::Header =
+    picohttp::Header::new(b"Connection", b"Upgrade");
 const ACCEPT_HEADER: picohttp::Header = picohttp::Header::new(b"Accept", b"*/*");
 
 const ACCEPT_ENCODING_NO_COMPRESSION: &[u8] = b"identity";
@@ -2334,9 +2347,7 @@ impl<'a> HTTPClient<'a> {
         let mut override_accept_encoding = false;
         let mut override_accept_header = false;
         let mut override_host_header = false;
-        let mut override_connection_header = false;
         let mut override_user_agent = false;
-        let mut add_transfer_encoding = true;
         let mut original_content_length: Option<&[u8]> = None;
 
         // Reserve slots for default headers that may be appended after user headers
@@ -2355,8 +2366,7 @@ impl<'a> HTTPClient<'a> {
             // leaving the header entirely absent from the request.
             let will_append = header_count < MAX_USER_HEADERS;
 
-            // Skip host and connection header
-            // we manage those
+            // Hop-by-hop / framing headers are owned by this client; node:http never reaches this function.
             match hash {
                 h if h == hash_header_const(b"Content-Length") => {
                     // Content-Length is always consumed (never written to the buffer).
@@ -2364,21 +2374,20 @@ impl<'a> HTTPClient<'a> {
                     continue;
                 }
                 h if h == hash_header_const(b"Connection") => {
-                    if will_append {
-                        override_connection_header = true;
-                        let connection_value = self.header_str(header_values[i]);
-                        if bun_core::strings::eql_case_insensitive_ascii_check_length(
-                            connection_value,
-                            b"close",
-                        ) {
-                            self.flags.disable_keepalive = true;
-                        } else if bun_core::strings::eql_case_insensitive_ascii_check_length(
-                            connection_value,
-                            b"keep-alive",
-                        ) {
-                            self.flags.disable_keepalive = false;
-                        }
+                    let connection_value = self.header_str(header_values[i]);
+                    if bun_core::strings::eql_case_insensitive_ascii_check_length(
+                        connection_value,
+                        b"close",
+                    ) {
+                        self.flags.disable_keepalive = true;
+                    } else if bun_core::strings::eql_case_insensitive_ascii_check_length(
+                        connection_value,
+                        b"keep-alive",
+                    ) {
+                        self.flags.disable_keepalive = false;
                     }
+                    // Intent honoured above; the verbatim value never reaches the wire.
+                    continue;
                 }
                 h if h == hash_header_const(b"if-modified-since") => {
                     if self.flags.force_last_modified && self.if_modified_since.is_empty() {
@@ -2410,24 +2419,18 @@ impl<'a> HTTPClient<'a> {
                     }
                 }
                 h if h == hash_header_const(b"Upgrade") => {
-                    if will_append {
-                        let value = self.header_str(header_values[i]);
-                        if !bun_core::strings::eql_any_case_insensitive_ascii(
-                            value,
-                            &[b"h2", b"h2c"],
-                        ) {
-                            self.flags.upgrade_state = HTTPUpgradeState::Pending;
-                        }
-                    }
-                }
-                h if h == hash_header_const(CHUNKED_ENCODED_HEADER.name()) => {
-                    if !self.flags.is_streaming_request_body {
+                    if upgrade_header_offers_h2(self.header_str(header_values[i])) {
                         continue;
                     }
-                    // We don't want to override chunked encoding header if it was set by the user
-                    if will_append {
-                        add_transfer_encoding = false;
-                    }
+                    // Set regardless of `will_append`: body framing on the JS thread keys on the same header, uncapped.
+                    self.flags.upgrade_state = HTTPUpgradeState::Pending;
+                }
+                h if h == hash_header_const(CHUNKED_ENCODED_HEADER.name())
+                    || h == hash_header_const(b"Keep-Alive")
+                    || h == hash_header_const(b"Expect")
+                    || h == hash_header_const(b"HTTP2-Settings") =>
+                {
+                    continue;
                 }
                 _ => {}
             }
@@ -2443,7 +2446,11 @@ impl<'a> HTTPClient<'a> {
             header_count += 1;
         }
 
-        if !override_connection_header && !self.flags.disable_keepalive {
+        if self.flags.upgrade_state == HTTPUpgradeState::Pending {
+            // Emit `Connection: Upgrade` ourselves so no caller tokens ride along.
+            request_headers_buf[header_count] = CONNECTION_UPGRADE_HEADER;
+            header_count += 1;
+        } else if !self.flags.disable_keepalive {
             request_headers_buf[header_count] = CONNECTION_HEADER;
             header_count += 1;
         }
@@ -2471,21 +2478,7 @@ impl<'a> HTTPClient<'a> {
 
         if body_len > 0 || self.method.has_request_body() {
             if self.flags.is_streaming_request_body {
-                if let Some(content_length) = original_content_length {
-                    if add_transfer_encoding {
-                        // User explicitly set Content-Length and did not set Transfer-Encoding;
-                        // preserve Content-Length instead of using chunked encoding.
-                        // This matches Node.js behavior where an explicit Content-Length is always honored.
-                        request_headers_buf[header_count] =
-                            picohttp::Header::new(CONTENT_LENGTH_HEADER_NAME, content_length);
-                        header_count += 1;
-                    }
-                    // If !add_transfer_encoding, the user explicitly set Transfer-Encoding,
-                    // which was already added to request_headers_buf. We respect that and
-                    // do not add Content-Length (they are mutually exclusive per HTTP/1.1).
-                } else if add_transfer_encoding
-                    && self.flags.upgrade_state == HTTPUpgradeState::None
-                {
+                if self.flags.upgrade_state == HTTPUpgradeState::None {
                     request_headers_buf[header_count] = CHUNKED_ENCODED_HEADER;
                     header_count += 1;
                 }

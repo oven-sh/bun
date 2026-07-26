@@ -613,18 +613,19 @@ test.each([
   });
 });
 
-// The same empty-chunk hazard on the other framing path: with an explicit
-// Content-Length the body is sent raw, so an empty enqueue buffers nothing,
-// but it still reported backpressure -- pausing the request body stream to
-// wait for a drain event that can never arrive. The upload hung forever.
-test("an empty request body chunk does not stall a stream body sent with an explicit Content-Length", async () => {
+// fetch() owns framing for stream bodies: a caller-supplied Content-Length
+// is dropped and the body is always chunked, so there is no longer a
+// separate "raw" framing path to stall on an empty chunk (the chunked path
+// above covers it). Keep a test asserting the header is dropped so a future
+// refactor does not reintroduce the raw path.
+test("a stream body with an explicit Content-Length is sent chunked (the header is dropped)", async () => {
   let recorded = Buffer.alloc(0);
   await using server = net
     .createServer(sock => {
       sock.on("error", () => {});
       sock.on("data", d => {
         recorded = Buffer.concat([recorded, d]);
-        if (recorded.toString("latin1").endsWith("AAAABBBB")) {
+        if (recorded.toString("latin1").includes("0\r\n\r\n")) {
           sock.end("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok");
         }
       });
@@ -647,7 +648,9 @@ test("an empty request body chunk does not stall a stream body sent with an expl
   });
   expect(await res.text()).toBe("ok");
   const raw = recorded.toString("latin1");
-  expect(raw.slice(raw.indexOf("\r\n\r\n") + 4)).toBe("AAAABBBB");
+  const headers = raw.slice(0, raw.indexOf("\r\n\r\n"));
+  expect(/^content-length:/im.test(headers)).toBe(false);
+  expect(/^transfer-encoding: chunked$/im.test(headers)).toBe(true);
 });
 
 // RFC 9112 section 5.2: an obs-fold continuation line in a response must be

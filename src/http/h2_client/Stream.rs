@@ -53,9 +53,6 @@ pub struct Stream {
     /// delivery. Subsequent HEADERS are trailers and decoded-then-dropped.
     pub headers_ready: bool,
     pub headers_end_stream: bool,
-    /// Expect: 100-continue is in effect: hold the request body until a 1xx
-    /// or final status arrives.
-    pub awaiting_continue: bool,
     pub fatal_error: Option<Error>,
     /// DATA bytes consumed since the last WINDOW_UPDATE for this stream.
     pub unacked_bytes: u32,
@@ -144,7 +141,6 @@ impl Stream {
             rst_done: false,
             headers_ready: false,
             headers_end_stream: false,
-            awaiting_continue: false,
             fatal_error: None,
             unacked_bytes: 0,
             data_bytes_received: 0,

@@ -57,10 +57,6 @@ enum RequestHeader {
     Host,
     /// Forwarded only if value is exactly "trailers".
     Te,
-    /// Dropped under Expect: 100-continue (body may be abandoned).
-    ContentLength,
-    /// Triggers awaiting_continue when value is "100-continue".
-    Expect,
     /// Forwarded with HPACK never-index so they don't enter the dynamic table.
     Sensitive,
 }
@@ -76,8 +72,6 @@ fn classify_request_header(name: &[u8]) -> Option<RequestHeader> {
         b"upgrade" => RequestHeader::Drop,
         b"host" => RequestHeader::Host,
         b"te" => RequestHeader::Te,
-        b"content-length" => RequestHeader::ContentLength,
-        b"expect" => RequestHeader::Expect,
         b"authorization" => RequestHeader::Sensitive,
         b"cookie" => RequestHeader::Sensitive,
         b"set-cookie" => RequestHeader::Sensitive,
@@ -104,7 +98,6 @@ pub fn write_request(
     }
 
     let mut authority: &[u8] = client.url.host;
-    let mut has_expect_continue = false;
     let mut lower_buf = [0u8; 256];
     for h in request.headers {
         // Pre-lowercase for the case-insensitive lookup.
@@ -113,16 +106,8 @@ pub fn write_request(
         } else {
             continue; // long names can't match any of the short keys above
         };
-        let Some(kind) = classify_request_header(lname) else {
-            continue;
-        };
-        match kind {
-            RequestHeader::Host => authority = h.value(),
-            RequestHeader::Expect => {
-                has_expect_continue =
-                    strings::eql_case_insensitive_asciii_check_length(h.value(), b"100-continue");
-            }
-            _ => {}
+        if matches!(classify_request_header(lname), Some(RequestHeader::Host)) {
+            authority = h.value();
         }
     }
 
@@ -166,13 +151,7 @@ pub fn write_request(
                         continue;
                     }
                 }
-                RequestHeader::ContentLength => {
-                    if has_expect_continue {
-                        continue;
-                    }
-                }
                 RequestHeader::Sensitive => never_index = true,
-                RequestHeader::Expect => {}
             }
         }
         encode_header(session, &mut encoded, name, h.value(), never_index)?;
@@ -188,10 +167,6 @@ pub fn write_request(
         client.state.original_request_body,
         HTTPRequestBody::Stream(_)
     );
-
-    if has_expect_continue && (has_inline_body || is_streaming) {
-        stream.awaiting_continue = true;
-    }
 
     write_header_block(
         session,
@@ -306,7 +281,7 @@ pub fn write_data_windowed(
 /// Push as much of `stream`'s request body as the send windows allow.
 /// Buffers into `write_buffer`; caller flushes.
 pub(crate) fn drain_send_body(session: &mut ClientSession, stream: &mut Stream, cap: usize) {
-    if stream.local_closed() || stream.awaiting_continue || stream.fatal_error.is_some() {
+    if stream.local_closed() || stream.fatal_error.is_some() {
         return;
     }
     let Some(client_ptr) = stream.client else {

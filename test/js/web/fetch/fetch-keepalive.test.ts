@@ -25,6 +25,8 @@ test("keepalive", async () => {
   }
 
   {
+    // fetch() owns the Connection header; an arbitrary caller value is
+    // dropped and the `keepalive: false` option alone drives the wire.
     const res = await fetch(`http://localhost:${server.port}`, {
       keepalive: false,
       headers: {
@@ -32,7 +34,7 @@ test("keepalive", async () => {
       },
     });
     const headers = await res.json();
-    expect(headers.connection).toBe("HELLO!");
+    expect(headers.connection).toBeUndefined();
   }
 });
 

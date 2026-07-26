@@ -2165,14 +2165,9 @@ impl FetchTasklet {
         Ok(())
     }
 
-    /// Whether the request body should skip chunked transfer encoding framing.
-    /// True for upgraded connections (e.g. WebSocket) or when the user explicitly
-    /// set Content-Length without setting Transfer-Encoding.
+    /// fetch() owns framing (user CL/TE is dropped in `build_request`).
     fn skip_chunked_framing(&self) -> bool {
-        self.upgraded_connection
-            || self.result.is_http2
-            || (self.request_headers.get(b"content-length").is_some()
-                && self.request_headers.get(b"transfer-encoding").is_none())
+        self.upgraded_connection || self.result.is_http2
     }
 
     pub(crate) fn write_request_data(&mut self, data: &[u8]) -> ResumableSinkBackpressure {

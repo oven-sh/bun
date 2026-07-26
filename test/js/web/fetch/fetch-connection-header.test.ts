@@ -37,36 +37,21 @@ describe("fetch Connection header", () => {
     });
   };
 
+  // fetch() owns the Connection header: a caller-supplied value is never
+  // forwarded verbatim (it could name arbitrary headers for an RFC 9110
+  // §7.6.1 hop to strip). `close` still disables keep-alive on the client
+  // side; anything else falls back to the default `keep-alive`.
   test.each([
-    ["close", "close"],
+    ["close", undefined],
     ["keep-alive", "keep-alive"],
-    ["upgrade", "upgrade"],
-    ["Upgrade", "Upgrade"], // Test case preservation
-  ])("should respect Connection: %s header", async (inputValue, expectedValue) => {
+    ["upgrade", "keep-alive"],
+    ["Upgrade", "keep-alive"],
+    ["x-forwarded-for", "keep-alive"],
+  ] as const)("Connection: %s is not forwarded verbatim", async (inputValue, expected) => {
     const headers = await captureHeadersFromRequest({
       headers: { Connection: inputValue },
     });
-
-    expect(headers.connection).toBe(expectedValue);
-  });
-
-  test.each([
-    ["connection", "close"],
-    ["Connection", "close"],
-    ["CONNECTION", "close"],
-  ])("should respect case-insensitive header name: %s", async (headerName, expectedValue) => {
-    const headers = await captureHeadersFromRequest({
-      headers: { [headerName]: expectedValue },
-    });
-
-    expect(headers.connection).toBe(expectedValue);
-  });
-
-  it("should respect Connection header in Request object", async () => {
-    const headers = await captureHeadersFromRequest({
-      headers: { Connection: "close" },
-    });
-    expect(headers.connection).toBe("close");
+    expect(headers.connection).toBe(expected);
   });
 
   it("should default to keep-alive when no Connection header provided", async () => {
@@ -74,7 +59,7 @@ describe("fetch Connection header", () => {
     expect(headers.connection).toBe("keep-alive");
   });
 
-  it("should handle multiple headers including Connection", async () => {
+  it("drops Connection while preserving other user headers", async () => {
     const headers = await captureHeadersFromRequest({
       headers: {
         "accept": "application/json",
@@ -86,7 +71,7 @@ describe("fetch Connection header", () => {
       },
     });
 
-    expect(headers.connection).toBe("close");
+    expect(headers.connection).toBeUndefined();
     expect(headers.accept).toBe("application/json");
     expect(headers["x-test-header"]).toBe("test-value");
   });

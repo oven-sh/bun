@@ -5777,10 +5777,8 @@ impl<'a> Resolver<'a> {
         path: &[u8],
         extension_order: options::ExtOrder,
     ) -> Option<LoadResult> {
-        // A path this long cannot name a real file, and the extension probing
-        // below writes `path` into a fixed `PathBuffer`. Absolute import
-        // specifiers reach here with a short (existing) dirname and an
-        // arbitrarily long basename; bail before that write can overflow.
+        // Extension probing below writes `path` into a fixed `PathBuffer`; an
+        // absolute specifier can carry an arbitrarily long basename here.
         if path.len() >= MAX_PATH_BYTES {
             return None;
         }

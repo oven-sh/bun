@@ -4166,8 +4166,14 @@ where
                 return;
             }
             (*flags).set_request_body_paused(false);
-            if (*this).resp.is_none() || (*flags).aborted() || (*this).resp_may_be_freed() {
+            if (*this).resp.is_none() || (*flags).aborted() {
                 return;
+            }
+            // Inline `resp_may_be_freed()` via raw ptr (borrow = ptr; see above).
+            if let Some(sink) = (*this).sink {
+                if (*sink.as_ptr()).sink.ended_response {
+                    return;
+                }
             }
             if let Some(resp) = (*this).resp {
                 resp.resume_();

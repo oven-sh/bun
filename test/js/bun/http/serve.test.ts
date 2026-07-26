@@ -3451,6 +3451,8 @@ describe("request body backpressure", () => {
       gate.resolve();
       const bytes = await serverDone.promise;
       expect(bytes).toBe(TOTAL);
+      const written = await Bun.file(out).bytes();
+      expect([written.length, written[0], written.at(-1)]).toEqual([TOTAL, 3, 3]);
     } finally {
       sock.destroy();
     }

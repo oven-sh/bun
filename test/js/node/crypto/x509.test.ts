@@ -153,6 +153,8 @@ describe("new X509Certificate() from DER", () => {
     expect(der.length).toBeLessThan(100 * 1024);
     expect(new X509Certificate(der).subject).toBe("CN=big.test");
 
-    expect(() => new X509Certificate(Buffer.from([0x30, 0x03, 0x02, 0x01, 0x00]))).toThrow();
+    expect(() => new X509Certificate(Buffer.from([0x30, 0x03, 0x02, 0x01, 0x00]))).toThrow(
+      expect.objectContaining({ code: "ERR_CRYPTO_INVALID_STATE" }),
+    );
   });
 });

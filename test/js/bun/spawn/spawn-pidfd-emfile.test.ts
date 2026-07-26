@@ -103,12 +103,14 @@ test.skipIf(!isLinux)("Bun.spawn falls back to the waiter thread when pidfd_open
 test.skipIf(!isLinux)("Bun.spawn with inherited stdio at fd exhaustion does not panic", async () => {
   const fixture = `
     const fs = require("node:fs");
+    const { which } = require("bun");
+    const sleep = which("sleep");
     const held = [];
     try { for (;;) held.push(fs.openSync("/dev/null", "r")); } catch {}
     let proc = null, thrown = null;
     try {
       proc = Bun.spawn({
-        cmd: ["sleep", "0.1"],
+        cmd: [sleep, "0.1"],
         stdin: "inherit", stdout: "inherit", stderr: "inherit",
       });
     } catch (e) { thrown = { code: e?.code, syscall: e?.syscall }; }

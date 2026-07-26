@@ -2916,8 +2916,14 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             route_list_value = unsafe { (*this).set_routes() };
         }
 
-        // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
-        bun_opaque::opaque_deref_mut(app).filter(Self::on_connection_filter, this.cast::<c_void>());
+        // node:http's `server.close()` does not wait for connections; each
+        // upgraded/tunnelled socket is owned by its JS wrapper, so counting
+        // them here would keep the server ref'd after Node has handed them off.
+        if this_ref.config.on_node_http_request.is_empty() {
+            // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
+            bun_opaque::opaque_deref_mut(app)
+                .filter(Self::on_connection_filter, this.cast::<c_void>());
+        }
 
         if !this_ref.config.on_node_http_request.is_empty() {
             // SAFETY: `this` is the live boxed server from `init()`; no other

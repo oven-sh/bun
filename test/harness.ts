@@ -2132,7 +2132,7 @@ export function exampleSite(protocol: "https" | "http" = "https") {
       return server.stop();
     },
     async [Symbol.asyncDispose]() {
-      await server.stop();
+      await server.stop(true);
     },
   };
 }

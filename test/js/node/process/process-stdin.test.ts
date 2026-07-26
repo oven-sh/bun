@@ -438,7 +438,7 @@ test.concurrent("process.stdin.pause() from inside a 'data' handler applies kern
       const { spawn } = require("node:child_process");
       const child = spawn(process.execPath, ["-e",
         'process.stdin.once("data", () => { process.stdin.pause(); console.log("PAUSED"); });' +
-        'setTimeout(() => {}, 1e9);'
+        'setTimeout(() => process.exit(1), 30_000);'
       ], { stdio: ["pipe", "pipe", "inherit"] });
       const line = Buffer.alloc(1000, 120);
       const total = 10000;

@@ -43,6 +43,7 @@
 #include <JavaScriptCore/RemoteInspectorServer.h>
 #endif
 
+#include "JSBuffer.h"
 #include "JSDOMConvertBase.h"
 #include "ZigSourceProvider.h"
 #include "mimalloc.h"
@@ -839,15 +840,14 @@ JSC_DEFINE_HOST_FUNCTION(functionSerialize,
     }
 
     auto serializedValue = serialized.releaseReturnValue();
-    auto arrayBuffer = serializedValue->toArrayBuffer();
 
     if (asNodeBuffer) {
-        size_t byteLength = arrayBuffer->byteLength();
-        auto* subclassStructure = globalObject->JSBufferSubclassStructure();
-        JSC::JSUint8Array* uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, WTF::move(arrayBuffer), 0, byteLength);
+        JSC::JSUint8Array* uint8Array = Bun::createBuffer(lexicalGlobalObject, serializedValue->wireBytes());
         RETURN_IF_EXCEPTION(throwScope, {});
         return JSValue::encode(uint8Array);
     }
+
+    auto arrayBuffer = serializedValue->toArrayBuffer();
 
     if (arrayBuffer->isShared()) {
         return JSValue::encode(JSArrayBuffer::create(vm, globalObject->arrayBufferStructureWithSharingMode<ArrayBufferSharingMode::Shared>(), WTF::move(arrayBuffer)));

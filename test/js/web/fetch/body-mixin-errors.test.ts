@@ -72,10 +72,7 @@ describe("body-mixin-errors", () => {
       const res = await fetch(url);
       // Force the download to run to its (truncated) end before we ever call
       // a reader: arrayBuffer() on a clone drains the underlying connection.
-      await res
-        .clone()
-        .arrayBuffer()
-        .catch(() => {});
+      await expect(res.clone().arrayBuffer()).rejects.toThrow(TypeError);
 
       expect(res.bodyUsed).toBe(false);
 

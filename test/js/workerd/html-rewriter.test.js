@@ -154,15 +154,17 @@ describe("HTMLRewriter", () => {
     function settle(promise) {
       return promise.then(
         value => ({ rejected: false, value }),
-        error => ({ rejected: true, message: String(error?.message) }),
+        error => ({ rejected: true, name: error?.name, message: String(error?.message) }),
       );
     }
     const rejectedWithConnectionError = {
       rejected: true,
+      name: "TypeError",
       message: expect.stringMatching(connectionError),
     };
     const rejectedWithBodyAlreadyUsed = {
       rejected: true,
+      name: "TypeError",
       message: "Body already used",
     };
 
@@ -210,7 +212,9 @@ describe("HTMLRewriter", () => {
         // `.body` must surface the consumed state, not close cleanly as an
         // empty "successful" document. The pending-reader-before-failure case
         // is covered by the test below.
-        expect(() => transformed.body.getReader()).toThrow();
+        expect(() => transformed.body.getReader()).toThrow(
+          expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_STATE" }),
+        );
       });
     });
 

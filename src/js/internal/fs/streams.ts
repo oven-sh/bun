@@ -228,12 +228,10 @@ function streamConstruct(this: FSStream, callback: (e?: any) => void) {
   }
   const fastPath = this[kWriteStreamFastPath];
   if (this.open !== streamNoop) {
-    // if (fastPath) {
-    //   // disable fast path in this case
-    //   $assert(this[kWriteStreamFastPath] === true, "fastPath is not true");
-    //   this[kWriteStreamFastPath] = undefined;
-    // }
-
+    if (fastPath === true) {
+      this[kWriteStreamFastPath] = undefined;
+      this._writev = undefined;
+    }
     // Backwards compat for monkey patching open().
     const orgEmit: any = this.emit;
     this.emit = function (...args) {
@@ -250,20 +248,7 @@ function streamConstruct(this: FSStream, callback: (e?: any) => void) {
     } as any;
     this.open();
   } else {
-    if (fastPath) {
-      // // there is a chance that this fd is not actually correct but it will be a number
-      // if (fastPath !== true) {
-      //   // @ts-expect-error undocumented. to make this public please make it a
-      //   // getter. couldn't figure that out sorry
-      //   this.fd = fastPath._getFd();
-      // } else {
-      //   if (fs.open !== open || fs.write !== write || fs.fsync !== fsync || fs.close !== close) {
-      //     this[kWriteStreamFastPath] = undefined;
-      //     break fast;
-      //   }
-      //   // @ts-expect-error
-      //   this.fd = (this[kWriteStreamFastPath] = Bun.file(this.path).writer())._getFd();
-      // }
+    if (fastPath && fastPath !== true) {
       callback();
       this.emit("open", this.fd);
       this.emit("ready");
@@ -275,6 +260,14 @@ function streamConstruct(this: FSStream, callback: (e?: any) => void) {
         callback(err);
       } else {
         this.fd = fd;
+        if (fastPath === true) {
+          try {
+            this[kWriteStreamFastPath] = Bun.file(fd).writer();
+          } catch {
+            this[kWriteStreamFastPath] = undefined;
+            this._writev = undefined;
+          }
+        }
         callback();
         this.emit("open", this.fd);
         this.emit("ready");
@@ -359,14 +352,27 @@ Object.defineProperty(readStreamPrototype, "pending", {
 });
 
 function close(stream, err, cb) {
-  const fastPath: FileSink | true = stream[kWriteStreamFastPath];
-  if (fastPath && fastPath !== true) {
-    stream.fd = null;
-    const maybePromise = fastPath.end(err);
-    thenIfPromise(maybePromise, () => {
-      cb(err);
-    });
-    return;
+  const fastPath: FileSink | true | undefined = stream[kWriteStreamFastPath];
+  if (fastPath) {
+    stream[kWriteStreamFastPath] = undefined;
+    if (fastPath !== true) {
+      const maybePromise = fastPath.end(err);
+      if (stream.path == null || stream.fd == null) {
+        stream.fd = null;
+        thenIfPromise(maybePromise, () => cb(err));
+        return;
+      }
+      // The fd came from fs.open(this.path, ...); the sink's end() drains its
+      // buffer but does not close a caller-supplied fd, so fall through to the
+      // normal fsync/close path once the drain settles.
+      if ($isPromise(maybePromise)) {
+        maybePromise.then(
+          () => close(stream, err, cb),
+          sinkErr => close(stream, err || sinkErr, cb),
+        );
+        return;
+      }
+    }
   }
 
   if (!stream.fd) {
@@ -448,6 +454,17 @@ function WriteStream(this: FSStream, path: string | null, options?: any): void {
     // It's enough to override either, in which case only one will be used.
     if (!write) this._write = null;
     if (!writev) this._writev = null;
+  } else if (!fastPath && fd == null && start === undefined) {
+    // For the common createWriteStream(path) case, back the stream with a
+    // FileSink so small writes land in its in-process buffer instead of being
+    // dispatched to the thread pool one chunk at a time. The sink is created
+    // from the fd after fs.open so flags/mode are honoured. Positional writes
+    // (`start`) and caller-supplied fds keep the fs.write path.
+    this[kWriteStreamFastPath] = true;
+    // FileSink accepts UTF-8 strings directly; skip the Buffer.from round-trip
+    // that decodeStrings forces on every write. Other encodings are decoded in
+    // _write below.
+    options.decodeStrings = false;
   } else {
     this._writev = undefined;
     $assert(this[kFs].write, "assuming user does not delete fs.write!");
@@ -575,20 +592,31 @@ function _write(data, encoding, cb) {
   const fileSink = this[kWriteStreamFastPath];
 
   if (fileSink && fileSink !== true) {
-    const maybePromise = fileSink.write(data);
-    if ($isPromise(maybePromise)) {
-      maybePromise
-        .then(() => {
-          this.emit("drain"); // Emit drain event
-          cb(null);
-        })
-        .catch(cb);
-      return false; // Indicate backpressure
+    let byteLength;
+    if (typeof data === "string") {
+      if (encoding !== "utf8" && encoding !== "utf-8") data = Buffer.from(data, encoding);
+      byteLength = Buffer.byteLength(data);
+    } else {
+      byteLength = data.length;
+    }
+    let rc;
+    try {
+      rc = fileSink.write(data);
+    } catch (e) {
+      cb(e);
+      return;
+    }
+    this.bytesWritten += byteLength;
+    if ($isPromise(rc)) {
+      rc.then(
+        () => cb(null),
+        err => cb(err),
+      );
     } else {
       cb(null);
-      return true; // No backpressure
     }
   } else {
+    if (typeof data === "string") data = Buffer.from(data, encoding);
     this[kIsPerformingIO] = true;
     writeAll.$call(this, data, data.length, this.pos, er => {
       this[kIsPerformingIO] = false;
@@ -701,29 +729,36 @@ function writeFast(this: FSStream, data: any, encoding: any, cb: any) {
 
 writeStreamPrototype._writev = function (data, cb) {
   const len = data.length;
+  const fileSink = this[kWriteStreamFastPath];
+  const allBuffers = data.allBuffers;
   const chunks = new Array(len);
   let size = 0;
 
   for (let i = 0; i < len; i++) {
-    const chunk = data[i].chunk;
+    let chunk = data[i].chunk;
+    if (allBuffers === false && typeof chunk === "string") {
+      chunk = Buffer.from(chunk, data[i].encoding);
+    }
     chunks[i] = chunk;
     size += chunk.length;
   }
 
-  const fileSink = this[kWriteStreamFastPath];
   if (fileSink && fileSink !== true) {
-    const maybePromise = fileSink.write(Buffer.concat(chunks));
-    if ($isPromise(maybePromise)) {
-      maybePromise
-        .then(() => {
-          this.emit("drain");
-          cb(null);
-        })
-        .catch(cb);
-      return false;
+    let rc;
+    try {
+      rc = fileSink.write(len === 1 ? chunks[0] : Buffer.concat(chunks, size));
+    } catch (e) {
+      cb(e);
+      return;
+    }
+    this.bytesWritten += size;
+    if ($isPromise(rc)) {
+      rc.then(
+        () => cb(null),
+        err => cb(err),
+      );
     } else {
       cb(null);
-      return true;
     }
   } else {
     this[kIsPerformingIO] = true;
@@ -742,15 +777,25 @@ writeStreamPrototype._writev = function (data, cb) {
   }
 };
 
-writeStreamPrototype._destroy = function (err, cb) {
-  const sink = this[kWriteStreamFastPath];
-  if (sink && sink !== true) {
-    const end = sink.end(err);
-    if ($isPromise(end)) {
-      end.then(() => cb(err), cb);
+writeStreamPrototype._final = function (cb) {
+  const fileSink = this[kWriteStreamFastPath];
+  if (fileSink && fileSink !== true) {
+    let rc;
+    try {
+      rc = fileSink.flush();
+    } catch (e) {
+      cb(e);
+      return;
+    }
+    if ($isPromise(rc)) {
+      rc.then(() => cb(), cb);
       return;
     }
   }
+  cb();
+};
+
+writeStreamPrototype._destroy = function (err, cb) {
   // Usually for async IO it is safe to close a file descriptor
   // even when there are pending operations. However, due to platform
   // differences file IO is implemented using synchronous operations

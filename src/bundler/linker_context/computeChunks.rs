@@ -171,10 +171,9 @@ pub fn compute_chunks(this: &mut LinkerContext, unique_key: u64) -> crate::Resul
                     u32::try_from(css_chunk_entry.index).expect("int cast"),
                 ));
                 if css_chunk_entry.found_existing {
-                    entry_bits.for_each(
-                        &mut css_chunk_entry.value_ptr.entry_bits,
-                        |dst, i| dst.set(i),
-                    );
+                    entry_bits.for_each(&mut css_chunk_entry.value_ptr.entry_bits, |dst, i| {
+                        dst.set(i)
+                    });
                 }
             }
             if !css_chunk_entry.found_existing {

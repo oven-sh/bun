@@ -600,11 +600,9 @@ it("Bun.file(fd).writer() write/end under GC pressure does not crash", async () 
 });
 
 // On POSIX the streaming writer buffers incoming writes until they reach
-// `highWaterMark`, then drains them in one write(2). Previously the option was
-// parsed but never reached the writer, so the threshold was always the page
-// size (4096 / 16384) regardless of what the caller asked for. We spawn a
-// child so the AutoFlusher microtask cannot run between writes and stat() the
-// file while the loop is still synchronous.
+// `highWaterMark`, then drains them in one write(2). Spawn a child so the
+// AutoFlusher microtask cannot run between the synchronous writes and the
+// stat() that measures how much reached disk.
 describe.skipIf(isWindows)("FileSink highWaterMark controls the buffer threshold", () => {
   async function probe(hwm: number | undefined, chunk: number, count: number) {
     const dir = tmpdirSync();
@@ -655,6 +653,11 @@ describe.skipIf(isWindows)("FileSink highWaterMark controls the buffer threshold
 
   it.concurrent("default highWaterMark is unchanged", async () => {
     const r = await probe(undefined, 10, 100);
+    expect(r).toEqual({ onDisk: 0, total: 1000 });
+  });
+
+  it.concurrent("highWaterMark: 0 uses the default threshold", async () => {
+    const r = await probe(0, 10, 100);
     expect(r).toEqual({ onDisk: 0, total: 1000 });
   });
 });

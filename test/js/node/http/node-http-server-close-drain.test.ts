@@ -102,3 +102,105 @@ test("server.close(cb) fires once an idle keep-alive connection is reaped", asyn
     server.closeAllConnections();
   }
 });
+
+// The graceful-drain-with-deadline pattern: close(), then force via
+// closeAllConnections() once the caller has waited long enough. The force
+// step must work even though close() already dropped the native handle.
+test("closeAllConnections() after close() force-drains the withheld callback", async () => {
+  const inHandler = Promise.withResolvers<void>();
+  let releaseResponse!: () => void;
+  const server = createServer((req, res) => {
+    inHandler.resolve();
+    releaseResponse = () => res.end("ok");
+  });
+  server.keepAliveTimeout = 60000;
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const { port } = server.address() as AddressInfo;
+
+  const socket = connect(port, "127.0.0.1");
+  try {
+    await once(socket, "connect");
+    let body = "";
+    socket.on("data", chunk => (body += chunk));
+    socket.on("error", () => {});
+    socket.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n");
+    await inHandler.promise;
+
+    const closed = Promise.withResolvers<void>();
+    let closeCbFired = false;
+    server.close(() => {
+      closeCbFired = true;
+      closed.resolve();
+    });
+    releaseResponse();
+    while (!body.includes("ok")) await once(socket, "data");
+    for (let i = 0; i < 4; i++) await new Promise<void>(r => setImmediate(r));
+    expect(closeCbFired).toBe(false);
+
+    server.closeAllConnections();
+    await closed.promise;
+    expect(closeCbFired).toBe(true);
+  } finally {
+    socket.destroy();
+    server.closeAllConnections();
+  }
+});
+
+// Re-listening after close() while a keep-alive connection from the previous
+// cycle is still open must not fire 'close' on the new (listening) server
+// when that old connection finally ends.
+test("no 'close' is emitted on a re-listened server when an earlier connection ends", async () => {
+  const inHandler = Promise.withResolvers<void>();
+  let releaseResponse!: () => void;
+  let requests = 0;
+  const server = createServer((req, res) => {
+    if (++requests === 1) {
+      inHandler.resolve();
+      releaseResponse = () => res.end("ok");
+    } else {
+      res.end("ok");
+    }
+  });
+  server.keepAliveTimeout = 60000;
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const port1 = (server.address() as AddressInfo).port;
+
+  const socket = connect(port1, "127.0.0.1");
+  try {
+    await once(socket, "connect");
+    let body = "";
+    socket.on("data", chunk => (body += chunk));
+    socket.on("error", () => {});
+    socket.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n");
+    await inHandler.promise;
+
+    server.close();
+    releaseResponse();
+    while (!body.includes("ok")) await once(socket, "data");
+    for (let i = 0; i < 4; i++) await new Promise<void>(r => setImmediate(r));
+
+    // Re-listen while the old connection is still open.
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+
+    let closeEmitted = 0;
+    server.on("close", () => closeEmitted++);
+
+    // Old connection ends. No 'close' must fire on the listening server.
+    socket.destroy();
+    for (let i = 0; i < 4; i++) await new Promise<void>(r => setImmediate(r));
+    expect(closeEmitted).toBe(0);
+    expect(server.listening).toBe(true);
+
+    // Closing the new server then emits 'close' exactly once.
+    const closed = Promise.withResolvers<void>();
+    server.close(() => closed.resolve());
+    await closed.promise;
+    expect(closeEmitted).toBe(1);
+  } finally {
+    socket.destroy();
+    server.closeAllConnections();
+  }
+});

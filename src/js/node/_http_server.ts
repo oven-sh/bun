@@ -122,6 +122,7 @@ let cluster;
 
 function emitCloseServer(self: Server) {
   // The native all-closed promise tracks pending requests, not open connections.
+  if (self[serverSymbol]) return;
   const connections = self[kTrackedConnections];
   if (connections && connections.size > 0) {
     self[kPendingDrainClose] = true;
@@ -482,14 +483,18 @@ Server.prototype.unref = function () {
 
 Server.prototype.closeAllConnections = function () {
   const server = this[serverSymbol];
-  if (!server) {
+  if (server) {
+    this[serverSymbol] = undefined;
+    clearInterval(this[kConnectionsCheckingInterval]);
+    this.listening = false;
+    server.stop(true);
     return;
   }
-  this[serverSymbol] = undefined;
-  clearInterval(this[kConnectionsCheckingInterval]);
-  this.listening = false;
-
-  server.stop(true);
+  // close() already dropped the native handle; destroy what is still tracked.
+  const tracked = this[kTrackedConnections];
+  if (tracked && tracked.size > 0) {
+    for (const socket of [...tracked]) socket.destroy();
+  }
 };
 
 Server.prototype.getConnections = function (callback) {
@@ -504,7 +509,16 @@ Server.prototype.getConnections = function (callback) {
 
 Server.prototype.closeIdleConnections = function () {
   const server = this[serverSymbol];
-  server?.closeIdleConnections();
+  if (server) {
+    server.closeIdleConnections();
+    return;
+  }
+  const tracked = this[kTrackedConnections];
+  if (tracked && tracked.size > 0) {
+    for (const socket of [...tracked]) {
+      if (!socket._httpMessage) socket.destroy();
+    }
+  }
 };
 
 Server.prototype.close = function (optionalCallback?) {
@@ -1157,6 +1171,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
       // },
     });
 
+    this[kPendingDrainClose] = false;
     getBunServerAllClosedPromise(this[serverSymbol]).$then(emitCloseNTServer.bind(this));
     isHTTPS = this[serverSymbol].protocol === "https";
     applyServerCustomOptions(this);

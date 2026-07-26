@@ -2044,6 +2044,12 @@ const NodeHTTPServerSocket = class Socket extends NetSocket {
   }
 } as unknown as typeof import("node:net").Socket;
 
+// Node.js's matchHeader: undefined = no TE line reaches the wire (empty array), else chunkExpression on the value.
+function teValueSelectsChunked(teValue) {
+  if ($isArray(teValue) && teValue.length === 0) return undefined;
+  return chunkExpression.test($isArray(teValue) ? teValue.join(", ") : String(teValue));
+}
+
 // Node validates the `Trailer` header inside _storeHeader, after the body framing has
 // been decided, so `this.chunkedEncoding` is already set. Bun frames the body in uWS
 // and never sets `response.chunkedEncoding`, so reproduce Node's decision here.
@@ -2054,10 +2060,8 @@ function willBeChunked(response) {
   const outHeaders = response[kOutHeaders];
   const te = outHeaders !== null ? outHeaders["transfer-encoding"] : undefined;
   if (te !== undefined) {
-    const teValue = te[1];
-    if (!($isArray(teValue) && teValue.length === 0)) {
-      return chunkExpression.test($isArray(teValue) ? teValue.join(", ") : String(teValue));
-    }
+    const c = teValueSelectsChunked(te[1]);
+    if (c !== undefined) return c;
   }
   if (outHeaders !== null && outHeaders["content-length"] !== undefined) return false;
   if (response._hasBody === false) return false;
@@ -2320,7 +2324,6 @@ function renderNativeHeaders(res) {
     const storedTransferEncoding = headersMap === null ? undefined : headersMap["transfer-encoding"];
     const storedContentLength = headersMap === null ? undefined : headersMap["content-length"];
     let defectiveNoBodyResponse = false;
-    // undefined: no TE header line; true/false: chunkExpression result
     let userTEChunked;
     if (storedTransferEncoding !== undefined) {
       const statusCode = res[kSnapshotStatusCode] ?? res.statusCode;
@@ -2328,11 +2331,7 @@ function renderNativeHeaders(res) {
         defectiveNoBodyResponse = true;
         res[kMustCloseConnection] = true;
       }
-      const teValue = storedTransferEncoding[1];
-      if (!($isArray(teValue) && teValue.length === 0)) {
-        // Node.js's matchHeader: chunkExpression on the value picks the framing.
-        userTEChunked = chunkExpression.test($isArray(teValue) ? teValue.join(", ") : String(teValue));
-      }
+      userTEChunked = teValueSelectsChunked(storedTransferEncoding[1]);
     }
 
     // Like Node.js's _storeHeader: with no framing headers on the wire, removing

@@ -260,7 +260,11 @@ describe.concurrent("absolute specifier with long basename (load_as_file buffer)
           ? `await import(p)`
           : `Bun.resolveSync(p, process.cwd())`;
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", `const p = ${specExpr}; try { ${body} } catch (e) { console.log("ERR", e.code ?? e.name) }`],
+      cmd: [
+        bunExe(),
+        "-e",
+        `const p = ${specExpr}; try { ${body} } catch (e) { console.log("ERR", e.code ?? e.name) }`,
+      ],
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",

@@ -374,6 +374,13 @@ public:
         auto* socketData = responseData->socketData;
         HttpContextData<SSL> *httpContextData = httpContext->getSocketContextData();
 
+        /* The socket is about to leave the HTTP socket group for the WebSocket
+         * one; onClose (and its filter -1) will never fire for it. Emit the -1
+         * here so a filter counting open HTTP connections stays balanced. */
+        for (auto &f : httpContextData->filterHandlers) {
+            f((HttpResponse<SSL> *) this, -1);
+        }
+
         /* Destroy HttpResponseData (the IsNodeHttp=true type on node:http
          * compat contexts; upgrade() is not on a templated handler path, so it
          * selects at runtime like socketExtSize()). */

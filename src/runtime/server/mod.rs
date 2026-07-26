@@ -259,10 +259,10 @@ pub struct NewServer<const SSL: bool, const DEBUG: bool> {
     pub active_websocket_count: core::cell::Cell<u32>,
     /// Live HTTP connection count (sockets currently in the uWS HTTP socket
     /// group). Fed by the uWS filter hook: +1 at accept (or TLS handshake
-    /// completion) and -1 at close; a WebSocket upgrade adopts the socket out
-    /// of that group without firing -1, so [`note_websocket_opened`] transfers
-    /// the count instead. Lets [`deinit_if_we_can`] gate on idle keep-alive
-    /// connections the way it already does on `active_websocket_count`.
+    /// completion) and -1 on close or WebSocket upgrade (both remove the
+    /// socket from the HTTP group). Lets [`deinit_if_we_can`] gate on idle
+    /// keep-alive connections the way it already does on
+    /// `active_websocket_count`.
     pub open_http_connections: core::cell::Cell<u32>,
     /// Set across [`NewServer::deinit_if_we_can`] and the synchronous
     /// `app.close()` drain in `stop_listening`; lets a nested call (reached
@@ -1493,11 +1493,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     pub(crate) fn note_websocket_opened(&self) {
         self.active_websocket_count
             .set(self.active_websocket_count.get().saturating_add(1));
-        // `upgrade()` adopts the socket out of the HTTP socket group without
-        // firing the filter's -1; transfer the count so an upgraded socket is
-        // tracked by exactly one term of the idle gate.
-        self.open_http_connections
-            .set(self.open_http_connections.get().saturating_sub(1));
     }
 
     /// Returns true when this close drained the last live websocket.

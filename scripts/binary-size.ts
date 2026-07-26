@@ -148,7 +148,8 @@ async function sizesFromBuild(n: number, want: string[]): Promise<{ sizes: Sizes
   const sizes: Sizes = {};
   for (const triplet of want) {
     const v = agent(["meta-data", "get", `binary-size:${triplet}`, "--build", id], { quiet: true });
-    if (v) sizes[triplet] = parseInt(v, 10);
+    const bytes = v ? parseInt(v, 10) : NaN;
+    if (Number.isFinite(bytes)) sizes[triplet] = bytes;
   }
   return Object.keys(sizes).length > 0 ? { sizes } : undefined;
 }

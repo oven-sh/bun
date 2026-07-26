@@ -112,7 +112,7 @@ pub struct BakeExtra {
 pub type Index = bun_core::GenericIndex<u32, OutputFile>;
 pub type IndexOptional = bun_core::GenericIndexOptional<u32, OutputFile>;
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct FileOperation {
     // Owned copy so the field has a single, obvious lifetime.
     pub pathname: Box<[u8]>,

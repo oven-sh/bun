@@ -100,12 +100,10 @@ extern "C" bool ReadableStream__tee(JSC::EncodedJSValue possibleReadableStream, 
 
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    // The fetch spec's "clone a body" step calls ReadableStreamTee with cloneForBranch2 = true,
-    // which StructuredClone-copies every chunk into branch2. Node (undici), Chrome, and Firefox
-    // all share the chunk reference between branches instead; copying turns an N-deep
-    // Response.clone() chain into O(N * body bytes) of retained memory. Follow Node here. See
-    // whatwg/streams#1156.
-    auto branches = readableStreamTee(globalObject, stream, /* cloneForBranch2 */ false);
+    // Body clone tees with cloneForBranch2 = false (share chunk refs) like Node/Chrome/Firefox;
+    // the spec's per-chunk StructuredClone makes an N-deep clone chain retain N copies of the body
+    // (whatwg/streams#1156).
+    auto branches = readableStreamTee(globalObject, stream);
     RETURN_IF_EXCEPTION(scope, false);
 
     *possibleReadableStream1 = JSValue::encode(branches.first);

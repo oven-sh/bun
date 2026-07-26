@@ -1200,8 +1200,8 @@ static EncodedJSValue defaultTeeReaderClosedRejected(JSGlobalObject* globalObjec
     return JSValue::encode(jsUndefined());
 }
 
-// ReadableStreamDefaultTee(stream, cloneForBranch2)
-std::pair<JSReadableStream*, JSReadableStream*> readableStreamDefaultTee(JSGlobalObject* globalObject, JSReadableStream* stream, bool cloneForBranch2)
+// ReadableStreamDefaultTee(stream, cloneForBranch2 = false)
+std::pair<JSReadableStream*, JSReadableStream*> readableStreamDefaultTee(JSGlobalObject* globalObject, JSReadableStream* stream)
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1211,11 +1211,6 @@ std::pair<JSReadableStream*, JSReadableStream*> readableStreamDefaultTee(JSGloba
 
     auto* reader = acquireReadableStreamDefaultReader(globalObject, stream);
     RETURN_IF_EXCEPTION(scope, failure);
-
-    // Both callers (ReadableStream.prototype.tee() and Request/Response body clone) pass false;
-    // the per-chunk StructuredClone path and its state bit were removed. The parameter is kept to
-    // mirror the spec's ReadableStreamDefaultTee(stream, cloneForBranch2) signature.
-    ASSERT_UNUSED(cloneForBranch2, !cloneForBranch2);
 
     auto* teeState = WebCore::JSStreamTeeState::create(vm, runtime->teeStateStructure(domGlobalObject));
     teeState->m_stream.set(vm, teeState, stream);
@@ -1499,8 +1494,8 @@ std::pair<JSReadableStream*, JSReadableStream*> readableByteStreamTee(JSGlobalOb
     return { branch1, branch2 };
 }
 
-// ReadableStreamTee(stream, cloneForBranch2)
-std::pair<JSReadableStream*, JSReadableStream*> readableStreamTee(JSGlobalObject* globalObject, JSReadableStream* stream, bool cloneForBranch2)
+// ReadableStreamTee(stream, cloneForBranch2 = false)
+std::pair<JSReadableStream*, JSReadableStream*> readableStreamTee(JSGlobalObject* globalObject, JSReadableStream* stream)
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1509,7 +1504,7 @@ std::pair<JSReadableStream*, JSReadableStream*> readableStreamTee(JSGlobalObject
     RETURN_IF_EXCEPTION(scope, failure);
     if (stream->m_controllerKind == ControllerKind::Byte)
         RELEASE_AND_RETURN(scope, readableByteStreamTee(globalObject, stream));
-    RELEASE_AND_RETURN(scope, readableStreamDefaultTee(globalObject, stream, cloneForBranch2));
+    RELEASE_AND_RETURN(scope, readableStreamDefaultTee(globalObject, stream));
 }
 
 // ReadableStreamPipeTo(source, dest, preventClose, preventAbort, preventCancel[, signal]).

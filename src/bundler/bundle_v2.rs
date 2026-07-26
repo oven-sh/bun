@@ -6368,7 +6368,10 @@ pub mod bv2_impl {
                         && !resolved_loader.should_copy_for_bundling()
                         && !resolved_loader.is_javascript_like()
                         && !resolved_loader.is_css()
-                        && resolved_loader != Loader::Html
+                        && (resolved_loader != Loader::Html
+                            || import_record
+                                .flags
+                                .contains(bun_ast::ImportRecordFlags::WAS_HTML_RESOURCE_HINT))
                     {
                         break 'brk Loader::File;
                     }

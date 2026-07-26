@@ -70,8 +70,8 @@ bitflags::bitflags! {
         /// calling the "__reExport()" helper function
         const CALLS_RUNTIME_RE_EXPORT_FN = 1 << 6;
 
-        /// Came from an HTML `<link rel=prefetch|modulepreload|preload as=script>`.
-        /// Fetch-only: emit as a raw asset, tolerate unresolved hrefs.
+        /// Came from an HTML `<link rel=prefetch|modulepreload|preload>` hint.
+        /// Unresolved hrefs pass through untouched.
         const WAS_HTML_RESOURCE_HINT = 1 << 7;
 
         /// If true, this was originally written as a bare "import 'file'" statement

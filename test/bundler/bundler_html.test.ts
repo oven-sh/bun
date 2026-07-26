@@ -1084,6 +1084,43 @@ body {
     },
   });
 
+  // A resource hint targeting a local .html file must be emitted as a raw asset,
+  // not parsed as a nested HTML entry (which would pull its scripts into the
+  // entry chunk).
+  itBundled("html/link-hint-local-html", {
+    outdir: "out/",
+    files: {
+      "/index.html": `
+<!DOCTYPE html>
+<html>
+  <head>
+    <link rel="prefetch" href="./page2.html">
+    <link rel="preload" as="document" href="./frame.html">
+  </head>
+  <body><h1>Index</h1></body>
+</html>`,
+      "/page2.html": `<!doctype html><script src="./page2-script.js"></script><h1>Page 2</h1>`,
+      "/frame.html": `<!doctype html><h1>Frame</h1>`,
+      "/page2-script.js": `console.log("PAGE2_SCRIPT");`,
+    },
+    entryPoints: ["/index.html"],
+    onAfterBundle(api) {
+      const html = api.readFile("out/index.html");
+      expect(html).not.toContain('href="./page2.html"');
+      expect(html).not.toContain('href="./frame.html"');
+      expect(html).toMatch(/<link rel="prefetch" href="[^"]*page2-[a-z0-9]+\.html">/);
+      expect(html).toMatch(/<link rel="preload" as="document" href="[^"]*frame-[a-z0-9]+\.html">/);
+
+      // page2.html's <script> must not leak into index.html's entry chunk.
+      const js = html.match(/src="(?:\.\/|\/)?(index-[a-z0-9]+\.js)"/);
+      if (js) expect(api.readFile("out/" + js[1])).not.toContain("PAGE2_SCRIPT");
+
+      const page2 = html.match(/href="(?:\.\/|\/)?(page2-[a-z0-9]+\.html)"/);
+      expect(page2).not.toBeNull();
+      api.expectFile("out/" + page2![1]).toContain("<h1>Page 2</h1>");
+    },
+  });
+
   // Resource-hint hrefs that do not resolve to a local file (navigation routes,
   // API endpoints, external URLs) pass through untouched instead of failing the
   // build.

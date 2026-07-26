@@ -86,6 +86,7 @@ const OutgoingMessagePrototype = OutgoingMessage.prototype;
 const { kIncomingMessage } = require("node:_http_common");
 const kConnectionsCheckingInterval = Symbol("http.server.connectionsCheckingInterval");
 const kTrackedConnections = Symbol("http.server.trackedConnections");
+const kPendingDrainClose = Symbol("http.server.pendingDrainClose");
 const kHttpAllowHalfOpen = Symbol("http.server.httpAllowHalfOpen");
 
 // node.http trace events ('http.server.request' b/e). The agent module is
@@ -120,6 +121,16 @@ const DateNow = Date.now;
 let cluster;
 
 function emitCloseServer(self: Server) {
+  // Like Node.js's net.Server#_emitCloseIfDrained: 'close' waits for every
+  // accepted connection to end. The native all-closed promise resolves on
+  // pending_requests == 0, so a keep-alive connection that was serving a
+  // request when close() ran is still open when that promise resolves.
+  const connections = self[kTrackedConnections];
+  if (connections && connections.size > 0) {
+    self[kPendingDrainClose] = true;
+    return;
+  }
+  self[kPendingDrainClose] = false;
   callCloseCallback(self);
   self.emit("close");
 }
@@ -309,6 +320,7 @@ function Server(options, callback): void {
   defineHttpAllowHalfOpen(this);
   this[kInternalSocketData] = undefined;
   this[kTrackedConnections] = new Set();
+  this[kPendingDrainClose] = false;
   this[tlsSymbol] = null;
   this.noDelay = true;
   if (typeof options === "function") {
@@ -1667,7 +1679,14 @@ const NodeHTTPServerSocket = class Socket extends NetSocket {
     // released parser (free() invoked, kOnTimeout nulled).
     releaseServerParserShim(this);
     this[kHandle] = null;
-    this.server?.[kTrackedConnections]?.delete(this);
+    const server = this.server;
+    const tracked = server?.[kTrackedConnections];
+    if (tracked) {
+      tracked.delete(this);
+      if (tracked.size === 0 && server[kPendingDrainClose]) {
+        process.nextTick(emitCloseServer, server);
+      }
+    }
     const timer = this[kSocketTimeoutTimer];
     if (timer) {
       clearTimeout(timer);

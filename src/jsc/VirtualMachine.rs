@@ -4893,7 +4893,7 @@ impl VirtualMachine {
                 if errors
                     .for_each(global_ref, (&raw mut ctx).cast(), agg_iter)
                     .is_err()
-                    && !formatter.failed
+                    && !(formatter.failed && formatter.can_throw_stack_overflow)
                 {
                     self.global().clear_exception();
                 }

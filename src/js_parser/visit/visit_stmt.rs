@@ -7,6 +7,7 @@ use crate::parser::{
     statement_cares_about_scope,
 };
 use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
+use bun_ast::OpCode as Op;
 use bun_ast::flags;
 use bun_ast::stmt::Data as StmtData;
 use bun_ast::{self as js_ast, B, Binding, E, Expr, G, S, Stmt};
@@ -1789,35 +1790,178 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
             }
 
-            // TODO: more if statement syntax minification
-            let can_remove_test = p.expr_can_be_removed_if_unused(&data.test_);
-            match data.yes.data {
-                StmtData::SExpr(yes_expr) => {
-                    if yes_expr.value.is_missing() {
-                        if let Some(no) = data.no {
-                            if no.is_missing_expr() && can_remove_test {
-                                return Ok(());
-                            }
-                        } else if can_remove_test {
-                            return Ok(());
-                        }
-                    }
-                }
-                StmtData::SEmpty(_) => {
-                    if let Some(no) = data.no {
-                        if no.is_missing_expr() && can_remove_test {
-                            return Ok(());
-                        }
-                    } else if can_remove_test {
-                        return Ok(());
-                    }
-                }
-                _ => {}
+            if let Some(mangled) = p.mangle_if(stmt.loc, data) {
+                stmts.push(mangled);
+                return Ok(());
             }
         }
 
         stmts.push(*stmt);
         Ok(())
+    }
+
+    fn is_empty_stmt(stmt: &Stmt) -> bool {
+        match stmt.data {
+            StmtData::SEmpty(_) => true,
+            StmtData::SExpr(e) => e.value.is_missing(),
+            _ => false,
+        }
+    }
+
+    /// esbuild-style if-statement mangling. Runs after both branches have been
+    /// visited and simplified. Returns a replacement statement when the whole
+    /// `if` can be expressed more compactly.
+    fn mangle_if(&mut self, loc: bun_ast::Loc, data: &mut S::If) -> Option<Stmt> {
+        let p = self;
+
+        // "yes" is missing: convert "if (a) ;" appropriately
+        if Self::is_empty_stmt(&data.yes) {
+            match data.no {
+                // "if (a) {} else b;" => "if (!a) b;" then fall through
+                Some(no) if !Self::is_empty_stmt(&no) => {
+                    data.test_ = data.test_.not(p.arena);
+                    data.yes = no;
+                    data.no = None;
+                }
+                _ => {
+                    // "if (a) ;" => "a;" (only the side effects of the test)
+                    return Some(match SideEffects::simplify_unused_expr(p, data.test_) {
+                        Some(test_) => p.s(
+                            S::SExpr {
+                                value: test_,
+                                ..Default::default()
+                            },
+                            loc,
+                        ),
+                        None => Stmt {
+                            data: Stmt::empty().data,
+                            loc,
+                        },
+                    });
+                }
+            }
+        } else if matches!(data.no, Some(no) if Self::is_empty_stmt(&no)) {
+            // "if (a) b(); else ;" => "if (a) b();"
+            data.no = None;
+        }
+
+        // "if (!a) b; else c;" => "if (a) c; else b;"
+        if let Some(no) = data.no {
+            if let js_ast::ExprData::EUnary(un) = data.test_.data {
+                if un.op == Op::UnNot {
+                    data.test_ = un.value;
+                    let old_yes = data.yes;
+                    data.yes = no;
+                    data.no = Some(old_yes);
+                }
+            }
+        }
+
+        if let Some(no) = data.no {
+            // Both branches present
+            if let (StmtData::SExpr(yes), StmtData::SExpr(no_e)) = (data.yes.data, no.data) {
+                // "if (a) b(); else c();" => "a ? b() : c();"
+                let value = p.mangle_if_expr(loc, data.test_, yes.value, no_e.value);
+                return Some(p.s(
+                    S::SExpr {
+                        value,
+                        ..Default::default()
+                    },
+                    loc,
+                ));
+            }
+
+            if let (StmtData::SReturn(yes), StmtData::SReturn(no_r)) = (data.yes.data, no.data) {
+                // "if (a) return b; else return c;" => "return a ? b : c;"
+                if yes.value.is_none() && no_r.value.is_none() {
+                    return Some(match SideEffects::simplify_unused_expr(p, data.test_) {
+                        Some(test_) => p.s(
+                            S::Return {
+                                value: Some(
+                                    test_.join_with_comma(Expr::init(E::Undefined {}, loc)),
+                                ),
+                            },
+                            loc,
+                        ),
+                        None => p.s(S::Return { value: None }, loc),
+                    });
+                }
+                let undef = |loc| Expr::init(E::Undefined {}, loc);
+                let yv = yes.value.unwrap_or_else(|| undef(data.yes.loc));
+                let nv = no_r.value.unwrap_or_else(|| undef(no.loc));
+                let value = p.mangle_if_expr(loc, data.test_, yv, nv);
+                return Some(p.s(S::Return { value: Some(value) }, loc));
+            }
+
+            if let (StmtData::SThrow(yes), StmtData::SThrow(no_t)) = (data.yes.data, no.data) {
+                // "if (a) throw b; else throw c;" => "throw a ? b : c;"
+                let value = p.mangle_if_expr(loc, data.test_, yes.value, no_t.value);
+                return Some(p.s(S::Throw { value }, loc));
+            }
+        } else {
+            // Only "yes" branch present
+            if let StmtData::SExpr(yes) = data.yes.data {
+                let value = if let js_ast::ExprData::EUnary(un) = data.test_.data {
+                    if un.op == Op::UnNot {
+                        // "if (!a) b();" => "a || b();"
+                        Expr::init(
+                            E::Binary {
+                                op: Op::BinLogicalOr,
+                                left: un.value,
+                                right: yes.value,
+                            },
+                            loc,
+                        )
+                    } else {
+                        // "if (a) b();" => "a && b();"
+                        Expr::init(
+                            E::Binary {
+                                op: Op::BinLogicalAnd,
+                                left: data.test_,
+                                right: yes.value,
+                            },
+                            loc,
+                        )
+                    }
+                } else {
+                    Expr::init(
+                        E::Binary {
+                            op: Op::BinLogicalAnd,
+                            left: data.test_,
+                            right: yes.value,
+                        },
+                        loc,
+                    )
+                };
+                return Some(p.s(
+                    S::SExpr {
+                        value,
+                        ..Default::default()
+                    },
+                    loc,
+                ));
+            }
+        }
+
+        None
+    }
+
+    /// "a ? b : c" with trivial simplifications applied.
+    fn mangle_if_expr(
+        &mut self,
+        loc: bun_ast::Loc,
+        mut test_: Expr,
+        mut yes: Expr,
+        mut no: Expr,
+    ) -> Expr {
+        // "!a ? b : c" => "a ? c : b"
+        if let js_ast::ExprData::EUnary(un) = test_.data {
+            if un.op == Op::UnNot {
+                test_ = un.value;
+                core::mem::swap(&mut yes, &mut no);
+            }
+        }
+        Expr::init(E::If { test_, yes, no }, loc)
     }
 
     fn s_for(

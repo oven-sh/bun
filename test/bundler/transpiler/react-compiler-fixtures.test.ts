@@ -239,6 +239,14 @@ const MINIFY_SYNTAX_DIVERGENCE: Record<string, { compiledFunctions: number; buil
       buildError: true,
       reason: "constant folding rewrites the useMemo deps array entry `x` to the literal `0`",
     },
+    // minify.syntax rewrites `if (ref.current == null) { ... }` into
+    // `ref.current == null && (...)`, and `@validateRefAccessDuringRender`
+    // only whitelists the lazy-init pattern as an `if` statement.
+    "allow-ref-lazy-initialization-with-logical": {
+      compiledFunctions: 0,
+      buildError: true,
+      reason: "if-to-logical rewrite hides the ref lazy-init pattern from @validateRefAccessDuringRender",
+    },
   });
 
 type Fixture = {

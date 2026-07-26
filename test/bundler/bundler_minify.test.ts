@@ -819,6 +819,84 @@ describe("bundler", () => {
     },
   });
 
+  itBundled("minify/IfStatementMangling", {
+    files: {
+      "/entry.js": /* js */ `
+        export function both(a){if(a)b();else c();}
+        export function yes(a){if(a)b();}
+        export function notYes(a){if(!a)b();}
+        export function notBoth(a){if(!a)b();else c();}
+        export function retBoth(a){if(a)return 1;else return 2;}
+        export function retMixed(a){if(a)return;else return 1;}
+        export function throwBoth(a){if(a)throw 1;else throw 2;}
+        export function blocks(a){if(a){x();y();}else{z();w();}}
+        export function emptyYes(a){if(a){}else b();}
+        export function emptyBoth(a){if(a()){}else{}}
+        export function keepVar(a){if(a){var q=1;f(q)}}
+        export function keepBreak(a){L:for(;;){if(a)break L;g();}}
+      `,
+    },
+    minifySyntax: true,
+    minifyWhitespace: true,
+    minifyIdentifiers: false,
+    onAfterBundle(api) {
+      const file = api.readFile("out.js");
+      expect(file).toContain("function both(a){a?b():c()}");
+      expect(file).toContain("function yes(a){a&&b()}");
+      expect(file).toContain("function notYes(a){a||b()}");
+      expect(file).toContain("function notBoth(a){a?c():b()}");
+      expect(file).toContain("function retBoth(a){return a?1:2}");
+      expect(file).toContain("function retMixed(a){return a?void 0:1}");
+      expect(file).toContain("function throwBoth(a){throw a?1:2}");
+      expect(file).toContain("function blocks(a){a?(x(),y()):(z(),w())}");
+      expect(file).toContain("function emptyYes(a){a||b()}");
+      expect(file).toContain("function emptyBoth(a){a()}");
+      expect(file).toContain("function keepVar(a){if(a){var q=1;f(q)}}");
+      expect(file).toContain("function keepBreak(a){L:for(;;){if(a)break L;g()}}");
+    },
+  });
+  itBundled("minify/IfStatementManglingSemantics", {
+    files: {
+      "/entry.js": /* js */ `
+        const out = [];
+        function both(a){if(a)out.push("y"+a);else out.push("n"+a);}
+        function yes(a){if(a)out.push("Y"+a);}
+        function notYes(a){if(!a)out.push("N"+a);}
+        function notBoth(a){if(!a)out.push("b"+a);else out.push("c"+a);}
+        function retBoth(a){if(a)return "r1";else return "r2";}
+        function throwBoth(a){try{if(a)throw "t1";else throw "t2";}catch(e){return e;}}
+        function emptyYes(a){if(a){}else out.push("E"+a);}
+        function emptyBoth(a){let n=0;if((n++,a)){}else{};out.push("eb"+n);}
+
+        for (const v of [0, 1]) {
+          both(v); yes(v); notYes(v); notBoth(v);
+          out.push(retBoth(v)); out.push(throwBoth(v));
+          emptyYes(v); emptyBoth(v);
+        }
+        console.log(out.join(","));
+      `,
+    },
+    minifySyntax: true,
+    minifyWhitespace: true,
+    run: {
+      stdout: "n0,N0,b0,r2,t2,E0,eb1,y1,Y1,c1,r1,t1,eb1",
+    },
+  });
+  itBundled("minify/IfStatementManglingOffWithoutMinifySyntax", {
+    files: {
+      "/entry.js": /* js */ `
+        export function both(a){if(a)b();else c();}
+      `,
+    },
+    minifySyntax: false,
+    minifyWhitespace: true,
+    onAfterBundle(api) {
+      const file = api.readFile("out.js");
+      expect(file).toContain("if(a)b();else c()");
+      expect(file).not.toContain("?");
+    },
+  });
+
   itBundled("minify/ErrorConstructorOptimization", {
     files: {
       "/entry.js": /* js */ `

@@ -229,8 +229,17 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
     // observe it so the exception-check validator is satisfied before the TOP
     // scope inside checkForTermination.
     std::ignore = scope.exception();
-    if (!checkForTermination(vm, globalObject, scope, this, watchdog ? &*watchdog : nullptr))
+    if (checkForTermination(vm, globalObject, scope, this, watchdog ? &*watchdog : nullptr)) {
+        // A foreign termination leaves the uncatchable TerminationException
+        // pending. Do not record that singleton as this module's evaluation
+        // error: re-throwing it later from the Status::Errored branch is
+        // uncatchable and trips VM::setException's isTerminationException
+        // assert when no termination request is armed.
+        if (vm.hasPendingTerminationException())
+            return {};
+    } else {
         setSigintReceived(false);
+    }
 
     VM_RETURN_IF_EXCEPTION(scope, {});
 

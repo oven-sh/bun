@@ -1430,4 +1430,32 @@ describe.concurrent("node:vm nested evaluation propagates an enclosing terminati
       `),
     ).toEqual({ stdout: "outer:ERR_SCRIPT_EXECUTION_TIMEOUT\nalive", stderr: "", exitCode: 0, signalCode: null });
   });
+
+  test("outer timeout fires inside a SourceTextModule evaluation: re-evaluate stays catchable", async () => {
+    // The inner module's post-evaluation check propagates the foreign
+    // termination but must not record the VM's TerminationException singleton
+    // as the module's evaluation error: re-throwing that singleton from the
+    // errored-module branch is uncatchable (and asserts under debug JSC).
+    expect(
+      await run(`
+        const vm = require("node:vm");
+        (async () => {
+          const ctx = vm.createContext({ t0: Date.now(), Date });
+          const mod = new vm.SourceTextModule("while (Date.now() - t0 < 10000);", { context: ctx });
+          await mod.link(() => {});
+          try { vm.runInNewContext("m.evaluate()", { m: mod }, { timeout: 70 }); }
+          catch (e) { console.log("outer:" + (e && e.code)); }
+          console.log("status=" + mod.status);
+          try { await mod.evaluate(); console.log("re-eval:resolved"); }
+          catch { console.log("re-eval:rejected"); }
+          console.log("alive");
+        })();
+      `),
+    ).toEqual({
+      stdout: "outer:ERR_SCRIPT_EXECUTION_TIMEOUT\nstatus=errored\nre-eval:rejected\nalive",
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
 });

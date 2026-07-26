@@ -7491,14 +7491,8 @@ pub mod bv2_impl {
         if path.is_file() || is_node {
             let mut buf2 = bun_paths::path_buffer_pool::get();
             let mut spill: Vec<u8>;
-            // `relative_platform_buf` normalizes `path.text` into a fixed
-            // `MAX_PATH_BYTES - 1` thread-local, and the relative result can
-            // grow past `path.text.len()` by the `../` prefix derived from
-            // `top_level_dir`. An `onResolve` plugin can return a path of any
-            // length, so both the normalize scratch and the output buffer can
-            // overflow. Fall back to `path.text` when it cannot be normalized,
-            // and spill the output buffer to the heap when the pooled one is
-            // too small; the file open will surface `ENAMETOOLONG`.
+            // `relative_platform_buf` writes into fixed `MAX_PATH_BYTES` scratch
+            // buffers; an `onResolve` plugin can return a path of any length.
             let rel: &[u8] = if path.text.len() >= bun_paths::MAX_PATH_BYTES {
                 path.text
             } else {

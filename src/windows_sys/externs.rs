@@ -1379,6 +1379,7 @@ impl Win32Error {
     pub const MOD_NOT_FOUND: Win32Error = Win32Error(126);
     pub const DIR_NOT_EMPTY: Win32Error = Win32Error(145);
     pub const SIGNAL_REFUSED: Win32Error = Win32Error(156);
+    pub const NOT_LOCKED: Win32Error = Win32Error(158);
     pub const BAD_PATHNAME: Win32Error = Win32Error(161);
     pub const ALREADY_EXISTS: Win32Error = Win32Error(183);
     pub const ENVVAR_NOT_FOUND: Win32Error = Win32Error(203);

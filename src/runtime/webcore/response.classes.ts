@@ -195,6 +195,8 @@ export default [
       unlink: { fn: "doUnlink", length: 0 },
       delete: { fn: "doUnlink", length: 0 },
       write: { fn: "doWrite", length: 2 },
+      lock: { fn: "doLock", length: 1 },
+      unlock: { fn: "doUnlock", length: 0 },
       size: {
         getter: "getSize",
       },

@@ -100,6 +100,7 @@ use crate::shell::io_writer::Poll as ShellBufferedWriterPoll;
 use crate::shell::states::r#async::Async as ShellAsync;
 
 use crate::webcore::blob::copy_file::CopyFilePromiseTask;
+use crate::webcore::blob::file_lock::{FileLockIOTask, FileLockTask};
 use crate::webcore::blob::read_file::ReadFileTask;
 use crate::webcore::blob::write_file::WriteFileTask;
 use crate::webcore::fetch::fetch_tasklet::FetchTasklet;
@@ -326,6 +327,8 @@ pub fn run_task(
 
         // ── blob copy/read/write promise tasks ───────────────────────────
         task_tag::CopyFilePromiseTask => run_then_destroy!(CopyFilePromiseTask<'_>),
+        task_tag::FileLockTask => run_then_destroy!(FileLockTask<'_>),
+        task_tag::FileLockIOTask => run_then_destroy!(FileLockIOTask<'_>),
         task_tag::ReadFileTask => run_then_destroy!(work ReadFileTask),
         task_tag::WriteFileTask => run_then_destroy!(work WriteFileTask),
 
@@ -584,7 +587,7 @@ fn run_task_cold(task: Task) {
 /// Compile-time guard that the arm count above tracks
 /// `bun_event_loop::task_tag::COUNT`. Bump when adding a variant.
 const _: () = assert!(
-    task_tag::COUNT == 97,
+    task_tag::COUNT == 99,
     "dispatch::run_task arm count out of sync with bun_event_loop::task_tag",
 );
 

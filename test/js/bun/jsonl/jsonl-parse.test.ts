@@ -2529,8 +2529,10 @@ describe("Bun.JSONL", () => {
         };
         const [asciiBytes, mixedBytes] = await Promise.all([run(false), run(true)]);
         const deltaMB = (mixedBytes - asciiBytes) / (1024 * 1024);
-        // Without segmentation the delta is roughly 2x the buffer (the UTF-16
-        // copy). With segmentation the two runs are within noise.
+        // Without segmentation every 200-byte ASCII value ends up as a 16-bit
+        // JSString (LiteralParser<char16_t> source), which alone is ~bufMB of
+        // residual over the 8-bit baseline; observed unfixed delta is ~2x bufMB
+        // on linux-x64. With segmentation the two runs match within noise.
         expect(deltaMB).toBeLessThan(bufMB);
       },
       30_000,

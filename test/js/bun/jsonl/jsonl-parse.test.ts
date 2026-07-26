@@ -2348,16 +2348,7 @@ describe("Bun.JSONL", () => {
       });
 
       test("several complete values, then a straddling value, then more", () => {
-        const lines = [
-          '{"a":1}',
-          '{"b":2}',
-          '{"c":3}',
-          "{",
-          '  "\u65e5": 4',
-          "}",
-          '{"d":5}',
-          '{"\u{1f389}":6}',
-        ];
+        const lines = ['{"a":1}', '{"b":2}', '{"c":3}', "{", '  "\u65e5": 4', "}", '{"d":5}', '{"\u{1f389}":6}'];
         const r = checkSame(lines.join("\n") + "\n");
         expect(r.values.length).toBe(6);
         expect(r.done).toBe(true);

@@ -3,71 +3,37 @@ import { isASAN } from "harness";
 
 const ASAN_MULTIPLIER = isASAN ? 1 / 10 : 1;
 
+const init = { body: "ahoyhoy", method: "POST" };
+const initWithHeaders = { body: "ahoyhoy", method: "POST", headers: { "test-header": "value" } };
+// new Request(request) consumes the input request's body, so the Request-input
+// variants chain: each iteration's result feeds back as the next iteration's
+// input. The seed is rebuilt per test so the two tests per variant don't share
+// a consumed input.
 const constructorArgs = [
-  [
-    new Request("http://foo/", {
-      body: "ahoyhoy",
-      method: "POST",
-    }),
-  ],
-  [
-    "http://foo/",
-    {
-      body: "ahoyhoy",
-      method: "POST",
-    },
-  ],
-  [
-    new URL("http://foo/"),
-    {
-      body: "ahoyhoy",
-      method: "POST",
-    },
-  ],
-  [
-    new Request("http://foo/", {
-      body: "ahoyhoy",
-      method: "POST",
-      headers: {
-        "test-header": "value",
-      },
-    }),
-  ],
-  [
-    "http://foo/",
-    {
-      body: "ahoyhoy",
-      method: "POST",
-      headers: {
-        "test-header": "value",
-      },
-    },
-  ],
-  [
-    new URL("http://foo/"),
-    {
-      body: "ahoyhoy",
-      method: "POST",
-      headers: {
-        "test-header": "value",
-      },
-    },
-  ],
+  { chain: true, seed: () => [new Request("http://foo/", init)] },
+  { chain: false, seed: () => ["http://foo/", init] },
+  { chain: false, seed: () => [new URL("http://foo/"), init] },
+  { chain: true, seed: () => [new Request("http://foo/", initWithHeaders)] },
+  { chain: false, seed: () => ["http://foo/", initWithHeaders] },
+  { chain: false, seed: () => [new URL("http://foo/"), initWithHeaders] },
 ];
 for (let i = 0; i < constructorArgs.length; i++) {
-  const args = constructorArgs[i];
+  const { chain, seed } = constructorArgs[i];
   test("new Request(test #" + i + ")", () => {
+    let args = seed();
     Bun.gc(true);
 
     for (let i = 0; i < 1000 * ASAN_MULTIPLIER; i++) {
-      new Request(...args);
+      const r = new Request(...args);
+      if (chain) args[0] = r;
     }
 
     Bun.gc(true);
     const baseline = (process.memoryUsage.rss() / 1024 / 1024) | 0;
     for (let i = 0; i < 2000 * ASAN_MULTIPLIER; i++) {
       for (let j = 0; j < 500; j++) {
-        new Request(...args);
+        const r = new Request(...args);
+        if (chain) args[0] = r;
       }
       Bun.gc();
     }
@@ -84,11 +50,13 @@ for (let i = 0; i < constructorArgs.length; i++) {
   });
 
   test("request.clone(test #" + i + ")", () => {
+    let args = seed();
     Bun.gc(true);
 
     for (let i = 0; i < 1000 * ASAN_MULTIPLIER; i++) {
       const request = new Request(...args);
       request.clone();
+      if (chain) args[0] = request;
     }
 
     Bun.gc(true);
@@ -97,6 +65,7 @@ for (let i = 0; i < constructorArgs.length; i++) {
       for (let j = 0; j < 500 * ASAN_MULTIPLIER; j++) {
         const request = new Request(...args);
         request.clone();
+        if (chain) args[0] = request;
       }
       Bun.gc();
     }

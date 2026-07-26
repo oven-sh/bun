@@ -220,6 +220,18 @@ impl Request {
         unsafe { &mut (*self.body.as_ptr()).value }
     }
 
+    /// Request ctor step 40 ("create a proxy for inputBody"): the input becomes
+    /// unusable. Clears the cached `body`/`stream` JS slots so a subsequent
+    /// `.body` access reaches `get_body`'s `Value::Used` path instead of the
+    /// orphaned tee branch that `clone_body_value_via_cached_stream` left there.
+    fn mark_body_consumed(&self, global_this: &JSGlobalObject) {
+        *self.get_body_value() = BodyValue::Used;
+        if let Some(js_ref) = <Self as crate::webcore::body::BodyOwnerJs>::js_ref(self) {
+            js_gen::body_set_cached(js_ref, global_this, JSValue::ZERO);
+            js_gen::stream_set_cached(js_ref, global_this, JSValue::ZERO);
+        }
+    }
+
     /// R-2: short-hand for `unsafe { self.headers.get_mut() }`. The
     /// single-JS-thread invariant (see `JsCell` docs) means no other
     /// `&mut Option<HeadersRef>` is live for the duration of the borrow.
@@ -1145,7 +1157,7 @@ impl Request {
                             Err(e) => bail!(Err(e)),
                         }
                         if input_has_body {
-                            *request.get_body_value() = BodyValue::Used;
+                            request.mark_body_consumed(global_this);
                         }
                         success = true;
                         cleanup(&mut req, body_seed_ptr, success);
@@ -1197,7 +1209,7 @@ impl Request {
                                 match request.clone_body_value_via_cached_stream(global_this) {
                                     Ok(v) => {
                                         *req.body_value_mut() = v;
-                                        *request.get_body_value() = BodyValue::Used;
+                                        request.mark_body_consumed(global_this);
                                     }
                                     Err(e) => bail!(Err(e)),
                                 }
@@ -1266,7 +1278,10 @@ impl Request {
 
             if !fields.contains(Fields::Body) {
                 match value.fast_get(global_this, bun_jsc::BuiltinName::Body) {
-                    Ok(Some(body_)) => {
+                    // Spec step 36: init.body is only extracted when it exists and is
+                    // non-null; `{body: null}` behaves like `{}` and falls through to
+                    // the input Request's body.
+                    Ok(Some(body_)) if !body_.is_null() => {
                         fields.insert(Fields::Body);
                         // fetch spec Request(init): `keepalive: true` with a ReadableStream
                         // body throws before body extraction (Node's message is "keepalive").
@@ -1288,7 +1303,7 @@ impl Request {
                             Err(e) => bail!(Err(e)),
                         }
                     }
-                    Ok(None) => {}
+                    Ok(_) => {}
                     Err(e) => bail!(Err(e)),
                 }
 

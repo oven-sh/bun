@@ -1143,24 +1143,29 @@ describe("new Request(request) consumes the input request's body", () => {
     }
   }
 
-  describe.each(["no init", "init without body", "empty init"])("(%s)", variant => {
+  const inits: Record<string, RequestInit> = {
+    "no init": undefined as any,
+    "empty init": {},
+    "init without body": { headers: { "x-foo": "bar" } },
+    "init body: null": { body: null },
+  };
+
+  describe.each(Object.keys(inits))("(%s)", variant => {
     for (const [label, makeBody] of Object.entries(bodies)) {
       test(label, async () => {
         const input = new Request("http://example.com/", { method: "POST", body: makeBody(), duplex: "half" });
-        const copy =
-          variant === "no init"
-            ? new Request(input)
-            : variant === "empty init"
-              ? new Request(input, {})
-              : new Request(input, { headers: { "x-foo": "bar" } });
+        const init = inits[variant];
+        const copy = init === undefined ? new Request(input) : new Request(input, init);
 
         expect({
           inputBodyUsed: input.bodyUsed,
+          inputBodyLocked: input.body!.locked,
           copyBodyUsed: copy.bodyUsed,
           copyText: await settle(copy),
           inputText: await settle(input),
         }).toEqual({
           inputBodyUsed: true,
+          inputBodyLocked: true,
           copyBodyUsed: false,
           copyText: { resolved: "payload-0123456789" },
           inputText: { rejected: "TypeError" },
@@ -1174,6 +1179,23 @@ describe("new Request(request) consumes the input request's body", () => {
     await input.text();
     expect(() => new Request(input)).toThrow(TypeError);
     expect(() => new Request(input, { headers: {} })).toThrow(TypeError);
+    expect(() => new Request(input, { body: null })).toThrow(TypeError);
+  });
+
+  test("input.body is not a readable tee branch after the constructor", async () => {
+    const input = new Request("http://example.com/", {
+      method: "POST",
+      body: new ReadableStream({
+        start(c) {
+          c.enqueue(new TextEncoder().encode("payload"));
+          c.close();
+        },
+      }),
+      duplex: "half",
+    });
+    new Request(input);
+    expect(input.body!.locked).toBe(true);
+    expect(() => input.body!.getReader()).toThrow(TypeError);
   });
 
   test("does not consume the input body when init provides its own body", async () => {

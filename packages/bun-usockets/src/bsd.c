@@ -1504,17 +1504,30 @@ static void bsd_apply_udp_recv_options(LIBUS_SOCKET_DESCRIPTOR fd, int family, i
      * socket (the HTTP/3 fetch client) it also makes a queued ICMP fail the
      * next send to a different, live peer. */
     if (options & LIBUS_UDP_LINUX_RECVERR) {
+        bsd_udp_socket_set_recverr(fd, 1);
+    }
+#endif
+    (void) options;
+    (void) family;
+}
+
+/* Arm or disarm IP_RECVERR/IPV6_RECVERR. Disabling also purges the kernel's
+ * error queue (sk_err is NOT cleared; callers that need that read SO_ERROR). */
+void bsd_udp_socket_set_recverr(LIBUS_SOCKET_DESCRIPTOR fd, int enabled) {
+#if defined(__linux__)
 #ifdef IP_RECVERR
-        setsockopt(fd, IPPROTO_IP, IP_RECVERR, &enabled, sizeof(enabled));
+    setsockopt(fd, IPPROTO_IP, IP_RECVERR, &enabled, sizeof(enabled));
 #endif
 #ifdef IPV6_RECVERR
-        if (family == AF_INET6) {
-            setsockopt(fd, IPPROTO_IPV6, IPV6_RECVERR, &enabled, sizeof(enabled));
-        }
-#endif
+    int domain = AF_INET;
+    socklen_t domain_len = sizeof(domain);
+    if (getsockopt(fd, SOL_SOCKET, SO_DOMAIN, &domain, &domain_len) == 0 && domain == AF_INET6) {
+        setsockopt(fd, IPPROTO_IPV6, IPV6_RECVERR, &enabled, sizeof(enabled));
     }
+#endif
 #else
-    (void) options;
+    (void) fd;
+    (void) enabled;
 #endif
 }
 

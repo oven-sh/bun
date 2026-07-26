@@ -2,7 +2,7 @@ import { describe, expect, jest, test } from "bun:test";
 import { createSocket } from "dgram";
 import { Worker } from "node:worker_threads";
 
-import { bunEnv, bunExe, disableAggressiveGCScope, isWindows } from "harness";
+import { bunEnv, bunExe, disableAggressiveGCScope, isLinux, isWindows } from "harness";
 import path from "path";
 import { nodeDataCases } from "./testdata";
 
@@ -822,6 +822,57 @@ async function getDeadPort() {
   await new Promise<void>(resolve => target.close(resolve));
   return deadPort;
 }
+
+// An unconnected echo server (reply from the 'message' handler, no 'error'
+// listener) is the documented shape. Node never enables IP_RECVERR, so ICMP
+// port-unreachable from a vanished client is dropped by the kernel. With the
+// flag forced on, the same ICMP poisoned sk_err and surfaced through the
+// plain recv path (no errqueue flag), bypassing the unconnected filter and
+// killing the process.
+test.skipIf(!isLinux)("unconnected echo server without 'error' listener survives ICMP from a vanished client", async () => {
+  // The reply must go out from inside the 'message' handler so it happens
+  // inside loop.c's recvmmsg do-while; on loopback the ICMP lands before the
+  // next iteration and poisons sk_err, which surfaces as a recv-path error
+  // without the errqueue flag and so bypasses the errqueue-only filter.
+  const src = `
+    const dgram = require("node:dgram");
+    const server = dgram.createSocket("udp4");
+    const client = dgram.createSocket("udp4");
+    const probe = dgram.createSocket("udp4");
+    let deadPort, handled = 0;
+    server.on("message", msg => {
+      handled++;
+      server.send(msg, deadPort, "127.0.0.1");
+    });
+    server.bind(0, "127.0.0.1", () => {
+      probe.bind(0, "127.0.0.1", () => {
+        deadPort = probe.address().port;
+        probe.close(() => {
+          const pump = () => {
+            if (handled < 5) {
+              client.send("q", server.address().port, "127.0.0.1");
+              return setTimeout(pump, 10);
+            }
+            console.log(JSON.stringify({ handled: handled >= 5 }));
+            process.exit(0);
+          };
+          pump();
+        });
+      });
+    });
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: bunEnv,
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  // Node delivers no error at all for ICMP on an unconnected socket.
+  expect(JSON.parse(stdout.trim())).toEqual({ handled: true });
+  expect(exitCode).toBe(0);
+});
 
 // A connected socket's ICMP error must be *emitted*, not treated as fatal.
 // On the BSDs there is no error queue, so the kernel only delivers it via the

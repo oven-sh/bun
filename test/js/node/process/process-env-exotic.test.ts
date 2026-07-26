@@ -7,11 +7,21 @@
 // On Windows, Bun's process.env is a Proxy (case-insensitive keys,
 // SetEnvironmentVariableW write-through) whose set/delete already go through
 // the coercing path; the tests here cover the POSIX exotic-object contract.
-import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isPosix, isWindows, tempDir } from "harness";
+import { afterEach, describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isPosix, isWindows, libcPathForDlopen, tempDir } from "harness";
 import path from "path";
 
+const cc = Bun.which("clang") || Bun.which("gcc") || Bun.which("cc");
+
 describe("process.env node semantics", () => {
+  // Writes now reach real setenv(), so a failed assertion would leak the var
+  // into environ; clean up unconditionally.
+  afterEach(() => {
+    for (const k of Object.keys(process.env)) {
+      if (k.startsWith("ENVFIX_")) delete process.env[k];
+    }
+  });
+
   test("assigned values are coerced to strings", () => {
     process.env.ENVFIX_NUM = 3000 as unknown as string;
     expect(process.env.ENVFIX_NUM).toBe("3000");
@@ -26,11 +36,6 @@ describe("process.env node semantics", () => {
 
     process.env.ENVFIX_OBJ = { toString: () => "from-toString" } as unknown as string;
     expect(process.env.ENVFIX_OBJ).toBe("from-toString");
-
-    delete process.env.ENVFIX_NUM;
-    delete process.env.ENVFIX_UNDEF;
-    delete process.env.ENVFIX_BOOL;
-    delete process.env.ENVFIX_OBJ;
   });
 
   test("symbol value throws TypeError on assignment", () => {
@@ -60,14 +65,12 @@ describe("process.env node semantics", () => {
   test.skipIf(isWindows)("NUL in value truncates at NUL", () => {
     process.env.ENVFIX_NUL = "ab\x00cd";
     expect(process.env.ENVFIX_NUL).toBe("ab");
-    delete process.env.ENVFIX_NUL;
   });
 
   test.skipIf(isWindows)("NUL in key truncates at NUL", () => {
     process.env["ENVFIX_K\x00TAIL"] = "v";
     expect(process.env.ENVFIX_K).toBe("v");
     expect(process.env["ENVFIX_K\x00TAIL"]).toBe("v");
-    delete process.env.ENVFIX_K;
   });
 
   test("Object.freeze / seal / preventExtensions throw TypeError", () => {
@@ -101,7 +104,18 @@ describe("process.env node semantics", () => {
       enumerable: true,
     });
     expect(process.env.ENVFIX_DEF).toBe("42");
-    delete process.env.ENVFIX_DEF;
+  });
+
+  test("defineProperty with a Symbol value throws TypeError", () => {
+    expect(() => {
+      Object.defineProperty(process.env, "ENVFIX_SYMDEF", {
+        value: Symbol("x"),
+        writable: true,
+        configurable: true,
+        enumerable: true,
+      });
+    }).toThrow(TypeError);
+    expect("ENVFIX_SYMDEF" in process.env).toBe(false);
   });
 
   test("delete removes the key", () => {
@@ -123,7 +137,6 @@ describe("process.env node semantics", () => {
     expect(stderr).toBe("");
     expect(stdout).toBe("string:3000");
     expect(exitCode).toBe(0);
-    delete process.env.ENVFIX_SPAWN;
   });
 });
 
@@ -136,7 +149,7 @@ describe.skipIf(!isPosix)("process.env setenv sync + typed-cache invalidation", 
   // `environ`.
   const getenvProbe = `
     const { dlopen, CString } = require("bun:ffi");
-    const { symbols: { getenv } } = dlopen("libc" + (process.platform === "darwin" ? ".dylib" : ".so.6"), {
+    const { symbols: { getenv } } = dlopen(${JSON.stringify(isPosix ? libcPathForDlopen() : "")}, {
       getenv: { args: ["cstring"], returns: "ptr" },
     });
     const read = name => {
@@ -213,10 +226,8 @@ describe.skipIf(!isPosix)("process.env setenv sync + typed-cache invalidation", 
 // Duplicate KEY= entries in environ and entries with no '=' require a custom
 // execve() launcher to inject them, since Bun.spawn's env object can't express
 // either.
-describe.skipIf(!isPosix)("environ load: first-wins duplicates, drop no-'=' entries", () => {
+describe.skipIf(!isPosix || !cc)("environ load: first-wins duplicates, drop no-'=' entries", () => {
   async function compile(dir: string, src: string, out: string) {
-    const cc = Bun.which("clang") || Bun.which("gcc") || Bun.which("cc");
-    expect(cc).toBeTruthy();
     await using compile = Bun.spawn({
       cmd: [cc!, "-O0", "-o", path.join(dir, out), path.join(dir, src)],
       env: bunEnv,

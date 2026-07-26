@@ -558,6 +558,9 @@ export function windowsEnv(
           "'process.env' only accepts a configurable, writable, and enumerable data descriptor",
         );
       }
+      if (typeof attributes.value === "symbol") {
+        throw new TypeError("Cannot convert a Symbol value to a string");
+      }
       const value = String(attributes.value);
       if (k === "" || k.indexOf("=") !== -1) {
         return true;

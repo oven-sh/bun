@@ -185,7 +185,9 @@ void AbortSignal::runAbortSteps()
 
     // 1. For each algorithm of signal's abort algorithms: run algorithm.
     //    2. Empty signal's abort algorithms. (std::exchange empties)
-    for (auto& algorithm : std::exchange(m_algorithms, {}))
+    auto algorithms = std::exchange(m_algorithms, {});
+    m_registeredAlgorithmCount.fetch_sub(algorithms.size(), std::memory_order_release);
+    for (auto& algorithm : algorithms)
         algorithm.second(reason);
 
     Vector<std::pair<uint32_t, Ref<AbortAlgorithm>>> abortAlgorithms;
@@ -193,6 +195,7 @@ void AbortSignal::runAbortSteps()
         Locker locker { m_abortAlgorithmsLock };
         abortAlgorithms = std::exchange(m_abortAlgorithms, {});
     }
+    m_registeredAlgorithmCount.fetch_sub(abortAlgorithms.size(), std::memory_order_release);
     for (auto& pair : abortAlgorithms)
         pair.second->handleEvent(reason);
 
@@ -328,28 +331,34 @@ uint32_t AbortSignal::addAbortAlgorithmToSignal(AbortSignal& signal, Ref<AbortAl
     auto identifier = ++signal.m_algorithmIdentifier;
     Locker locker { signal.m_abortAlgorithmsLock };
     signal.m_abortAlgorithms.append(std::make_pair(identifier, WTF::move(algorithm)));
+    signal.m_registeredAlgorithmCount.fetch_add(1, std::memory_order_release);
     return identifier;
 }
 
 void AbortSignal::removeAbortAlgorithmFromSignal(AbortSignal& signal, uint32_t algorithmIdentifier)
 {
     Locker locker { signal.m_abortAlgorithmsLock };
-    signal.m_abortAlgorithms.removeFirstMatching([algorithmIdentifier](auto& pair) {
+    bool removed = signal.m_abortAlgorithms.removeFirstMatching([algorithmIdentifier](auto& pair) {
         return pair.first == algorithmIdentifier;
     });
+    if (removed)
+        signal.m_registeredAlgorithmCount.fetch_sub(1, std::memory_order_release);
 }
 
 uint32_t AbortSignal::addAlgorithm(Algorithm&& algorithm)
 {
     m_algorithms.append(std::make_pair(++m_algorithmIdentifier, WTF::move(algorithm)));
+    m_registeredAlgorithmCount.fetch_add(1, std::memory_order_release);
     return m_algorithmIdentifier;
 }
 
 void AbortSignal::removeAlgorithm(uint32_t algorithmIdentifier)
 {
-    m_algorithms.removeFirstMatching([algorithmIdentifier](auto& pair) {
+    bool removed = m_algorithms.removeFirstMatching([algorithmIdentifier](auto& pair) {
         return pair.first == algorithmIdentifier;
     });
+    if (removed)
+        m_registeredAlgorithmCount.fetch_sub(1, std::memory_order_release);
 }
 
 void AbortSignal::throwIfAborted(JSC::JSGlobalObject& lexicalGlobalObject)

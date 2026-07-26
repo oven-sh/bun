@@ -104,6 +104,8 @@ public:
 
     bool hasActiveTimeoutTimer() const { return m_timeout != nullptr; }
     bool hasAbortEventListener() const { return m_flags & static_cast<uint8_t>(AbortSignalFlags::HasAbortEventListener); }
+    // Read from GC marker threads (JSAbortSignalOwner::isReachableFromOpaqueRoots).
+    bool hasRegisteredAlgorithms() const { return m_registeredAlgorithmCount.load(std::memory_order_acquire) > 0; }
     bool isFiringEventListeners() const { return m_flags & static_cast<uint8_t>(AbortSignalFlags::IsFiringEventListeners); }
 
     using RefCounted::deref;
@@ -206,6 +208,9 @@ private:
     Vector<NativeCallbackTuple, 2> m_native_callbacks;
     Vector<NativeCallbackTuple, 2>* m_nativeCallbacksBeingDispatched { nullptr };
     std::atomic<uint32_t> pendingActivityCount { 0 };
+    // Sum of m_algorithms.size() + m_abortAlgorithms.size(). A separate atomic so the GC marker
+    // thread can probe "has any abort algorithm" without touching the unlocked m_algorithms vector.
+    std::atomic<uint32_t> m_registeredAlgorithmCount { 0 };
     uint32_t m_algorithmIdentifier { 0 };
     AbortSignalTimeout m_timeout { nullptr };
     uint8_t m_flags { 0 };

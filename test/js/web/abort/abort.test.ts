@@ -117,6 +117,155 @@ describe("AbortSignal", () => {
     });
   });
 
+  // DOM spec, AbortSignal GC: a non-aborted signal with a live source (armed timeout, or a
+  // dependent any()'s source) must not be collected while "its abort algorithms is non-empty".
+  // pipeTo({signal}) and addEventListener(_, _, {signal}) register an abort algorithm without
+  // adding an 'abort' event listener, so the wrapper was previously collected early: pipeTo's
+  // JSAbortAlgorithm weak callback got nulled (pipe hangs), and an any() composite fell out of
+  // its source's weak dependent set (listener leaks). Subprocess so Bun.gc(true) is deterministic.
+  describe("an inline signal with a registered abort algorithm survives GC until abort", () => {
+    const fixture = `
+      const sl = ms => new Promise(r => setTimeout(r, ms));
+      const collected = new Set();
+      const fr = new FinalizationRegistry(t => collected.add(t));
+      const stalled = () => new ReadableStream({ pull() { return new Promise(() => {}); } });
+      const race = (p, ms) => {
+        let t;
+        const ceiling = new Promise(r => { t = setTimeout(() => r("PENDING"), ms); });
+        return Promise.race([p.then(() => "resolved", e => "rejected:" + e?.name), ceiling]).finally(() => clearTimeout(t));
+      };
+      const pump = async ms => {
+        const end = performance.now() + ms;
+        do { Bun.gc(true); await sl(10); } while (performance.now() < end);
+      };
+      process.exitCode = 1;
+    `;
+    test.concurrent("pipeTo({signal: AbortSignal.timeout()})", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          fixture +
+            `
+          let p;
+          (() => {
+            const s = AbortSignal.timeout(200);
+            fr.register(s, "a");
+            p = stalled().pipeTo(new WritableStream({}), { signal: s });
+          })();
+          await pump(100);
+          const beforeDeadline = collected.has("a");
+          const outcome = await race(p, 2000);
+          await pump(100);
+          console.log(JSON.stringify({ outcome, beforeDeadline, afterAbort: collected.has("a") }));
+          process.exitCode = 0;
+        `,
+        ],
+        env: bunEnv,
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stderr, result: JSON.parse(stdout.trim() || '""') }).toEqual({
+        stderr: "",
+        result: { outcome: "rejected:TimeoutError", beforeDeadline: false, afterAbort: true },
+      });
+      expect(exitCode).toBe(0);
+    });
+    test.concurrent("pipeTo({signal: AbortSignal.any([timeout()])})", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          fixture +
+            `
+          let p;
+          (() => {
+            const s = AbortSignal.any([AbortSignal.timeout(200)]);
+            fr.register(s, "e");
+            p = stalled().pipeTo(new WritableStream({}), { signal: s });
+          })();
+          await pump(100);
+          const beforeDeadline = collected.has("e");
+          const outcome = await race(p, 2000);
+          await pump(100);
+          console.log(JSON.stringify({ outcome, beforeDeadline, afterAbort: collected.has("e") }));
+          process.exitCode = 0;
+        `,
+        ],
+        env: bunEnv,
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stderr, result: JSON.parse(stdout.trim() || '""') }).toEqual({
+        stderr: "",
+        result: { outcome: "rejected:TimeoutError", beforeDeadline: false, afterAbort: true },
+      });
+      expect(exitCode).toBe(0);
+    });
+    test.concurrent("addEventListener(_, _, {signal: AbortSignal.any([timeout()])})", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          fixture +
+            `
+          const et = new EventTarget();
+          let n = 0;
+          (() => {
+            const s = AbortSignal.any([AbortSignal.timeout(200)]);
+            fr.register(s, "c");
+            et.addEventListener("x", () => n++, { signal: s });
+          })();
+          await pump(100);
+          const beforeDeadline = collected.has("c");
+          await pump(300);
+          et.dispatchEvent(new Event("x"));
+          console.log(JSON.stringify({ fired: n, beforeDeadline, afterAbort: collected.has("c") }));
+          process.exitCode = 0;
+        `,
+        ],
+        env: bunEnv,
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stderr, result: JSON.parse(stdout.trim() || '""') }).toEqual({
+        stderr: "",
+        result: { fired: 0, beforeDeadline: false, afterAbort: true },
+      });
+      expect(exitCode).toBe(0);
+    });
+    // Release path: once the pipe-op finalizes and removes its algorithm, nothing pins the wrapper.
+    test.concurrent("wrapper is collectable once the pipe completes and removes its algorithm", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          fixture +
+            `
+          let p;
+          (() => {
+            const s = AbortSignal.timeout(60_000);
+            fr.register(s, "r");
+            p = new ReadableStream({ start(c) { c.close(); } }).pipeTo(new WritableStream({}), { signal: s });
+          })();
+          await p;
+          await pump(200);
+          console.log(JSON.stringify({ afterFinalize: collected.has("r") }));
+          process.exitCode = 0;
+        `,
+        ],
+        env: bunEnv,
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stderr, result: JSON.parse(stdout.trim() || '""') }).toEqual({
+        stderr: "",
+        result: { afterFinalize: true },
+      });
+      expect(exitCode).toBe(0);
+    });
+  });
+
   // https://wpt.fyi/results/dom/abort/timeout.any.html "AbortSignal timeouts fire in order"
   test("AbortSignal.timeout with equal deadlines fire in creation order", async () => {
     const src = `

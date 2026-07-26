@@ -46,10 +46,15 @@ bool JSAbortSignalOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> ha
             return true;
         }
 
-        if (abortSignal.hasAbortEventListener()) {
+        // DOM spec, AbortSignal garbage collection: a non-aborted signal must not be collected while
+        // it has a relevant event-loop task (timeout) or live source signals AND it "has registered
+        // event listeners for its abort event or its abort algorithms is non-empty". pipeTo's abort
+        // algorithm and addEventListener's {signal} option register algorithms without adding an
+        // 'abort' event listener, so gate on either.
+        if (abortSignal.hasAbortEventListener() || abortSignal.hasRegisteredAlgorithms()) {
             if (abortSignal.hasActiveTimeoutTimer()) {
                 if (reason) [[unlikely]]
-                    *reason = "Has Timeout And Abort Event Listener"_s;
+                    *reason = "Has Timeout And Abort Observer"_s;
                 return true;
             }
             if (abortSignal.isDependent()) {
@@ -57,7 +62,7 @@ bool JSAbortSignalOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> ha
                 // sourceSignals().isEmptyIgnoringNullReferences() prunes dead entries.
                 if (abortSignal.hasAliveSourceSignals()) {
                     if (reason) [[unlikely]]
-                        *reason = "Has Source Signals And Abort Event Listener"_s;
+                        *reason = "Has Source Signals And Abort Observer"_s;
                     return true;
                 }
             }

@@ -476,6 +476,8 @@ impl BlobExt for Blob {
 
             if read_file::ReadFile::try_coalesce_fd_read(
                 &store,
+                self.offset.get(),
+                self.size.get(),
                 handler.cast::<c_void>(),
                 read_file::completion_thunk::<Handler<'_, F>>,
             ) {
@@ -707,6 +709,8 @@ impl BlobExt for Blob {
             let store = self.store().expect("infallible: store present").clone();
             if read_file::ReadFile::try_coalesce_fd_read(
                 &store,
+                self.offset.get(),
+                self.size.get(),
                 ctx.cast::<c_void>(),
                 NewInternalReadFileHandler::<C, F>::run,
             ) {

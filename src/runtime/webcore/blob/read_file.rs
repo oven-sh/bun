@@ -411,6 +411,8 @@ impl ReadFile {
     #[cfg(not(windows))]
     pub fn try_coalesce_fd_read(
         store: &StoreRef,
+        offset: SizeType,
+        max_length: SizeType,
         ctx: *mut c_void,
         callback: ReadFileOnReadFileCallback,
     ) -> bool {
@@ -423,11 +425,24 @@ impl ReadFile {
         if existing.is_null() {
             return false;
         }
-        // SAFETY: `existing` was stored on the JS thread before scheduling and
-        // is cleared on the JS thread in `then()` before the `ReadFile` is
-        // dropped; we are on the JS thread, so the pointee is live.
-        let existing = unsafe { &*(existing.cast::<ReadFile>()) };
-        existing.extra_completions.lock().push((callback, ctx));
+        let existing = existing.cast::<ReadFile>();
+        // SAFETY: `existing` was published on the JS thread before scheduling
+        // and is cleared on the JS thread in `then()` before the `ReadFile` is
+        // dropped; we are on the JS thread, so the pointee is live. The work
+        // pool holds `&mut ReadFile` concurrently, so project fields through
+        // the raw pointer without materialising `&ReadFile`. `offset` and
+        // `max_length` are set at creation and never written afterward.
+        let (existing_offset, existing_max_length, extras) = unsafe {
+            (
+                *core::ptr::addr_of!((*existing).offset),
+                *core::ptr::addr_of!((*existing).max_length),
+                &*core::ptr::addr_of!((*existing).extra_completions),
+            )
+        };
+        if offset != existing_offset || max_length != existing_max_length {
+            return false;
+        }
+        extras.lock().push((callback, ctx));
         true
     }
 
@@ -435,9 +450,12 @@ impl ReadFile {
     #[cfg(not(windows))]
     pub fn mark_in_flight(store: &StoreRef, reader: *mut ReadFile) {
         if matches!(&store.data, Data::File(f) if f.pathlike.is_fd()) {
-            store
-                .in_flight_blob_reader
-                .store(reader.cast(), core::sync::atomic::Ordering::Release);
+            let _ = store.in_flight_blob_reader.compare_exchange(
+                core::ptr::null_mut(),
+                reader.cast(),
+                core::sync::atomic::Ordering::Release,
+                core::sync::atomic::Ordering::Relaxed,
+            );
         }
     }
 

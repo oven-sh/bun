@@ -126,4 +126,26 @@ describe.skipIf(isWindows)("concurrent Bun.stdin blob reads on a pipe", () => {
     expect(JSON.parse(stdout)).toEqual({ a: SIZE, b: 0 });
     expect(exitCode).toBe(0);
   });
+
+  test.concurrent("a concurrent sliced read does not truncate an unsliced one to its window", async () => {
+    const payload = crypto.randomBytes(SIZE);
+    const { stdout, stderr, exitCode } = await run(
+      `
+        const rs = await Promise.allSettled([Bun.stdin.slice(0, 3).bytes(), Bun.stdin.arrayBuffer()]);
+        const out = rs.map(r => r.status === "fulfilled"
+          ? { status: r.status, byteLength: r.value.byteLength }
+          : { status: r.status, code: r.reason?.code });
+        process.stdout.write(JSON.stringify(out));
+      `,
+      payload,
+    );
+    expect(stderr).toBe("");
+    const result = JSON.parse(stdout);
+    expect(result[0]).toEqual({ status: "fulfilled", byteLength: 3 });
+    // The unsliced read must not be coalesced onto the 3-byte reader. Its
+    // exact length depends on how the two readers interleave on the fd, but
+    // it must not be the sliced window.
+    expect(result[1]).not.toEqual({ status: "fulfilled", byteLength: 3 });
+    expect(exitCode).toBe(0);
+  });
 });

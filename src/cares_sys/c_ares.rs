@@ -1264,10 +1264,8 @@ pub trait ReplyHandler<R: AresReply>: Sized {
     fn on_reply(&mut self, status: Option<Error>, timeouts: i32, results: *mut R);
 }
 
-/// `ares_callback_dnsrec` thunk for [`Channel::resolve`]: re-serializes the
-/// reply and forwards to `T::raw_callback`, matching Node's `QueryWrap::Callback`.
-/// An `ares_dns_write` failure does not override `status`; the parse thunk
-/// classifies the resulting empty buffer.
+/// `ares_callback_dnsrec` thunk for [`Channel::resolve`] that re-serializes
+/// the reply and forwards to `T::raw_callback`.
 unsafe extern "C" fn dnsrec_to_buf_callback<T: ResolveHandler>(
     ctx: *mut c_void,
     status: c_int,
@@ -1277,6 +1275,8 @@ unsafe extern "C" fn dnsrec_to_buf_callback<T: ResolveHandler>(
     let mut abuf: *mut u8 = ptr::null_mut();
     let mut alen: usize = 0;
     if !dnsrec.is_null() {
+        // Matches Node's QueryWrap::Callback: a write failure is left to the
+        // parse thunk to classify instead of overriding `status`.
         // SAFETY: c-ares FFI; `dnsrec` is the live record owned by the caller for
         // the duration of this callback; out-params are valid stack pointers.
         let _ = unsafe { ares_dns_write(dnsrec, &raw mut abuf, &raw mut alen) };

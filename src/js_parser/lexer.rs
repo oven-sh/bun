@@ -636,24 +636,10 @@ lexer_impl_header! {
                                                 iter = prev;
                                             }
                                         }
-                                        // `\018` etc.: Annex B parses this as the
-                                        // two-digit octal `\01` followed by a literal
-                                        // `8`. Rewind so the outer loop re-reads the
-                                        // non-octal digit.
-                                        0x38 | 0x39 => {
-                                            iter = prev;
-                                        }
                                         _ => {
                                             iter = prev;
                                         }
                                     }
-                                }
-                                // `\08` / `\09`: LegacyOctalEscapeSequence
-                                // `0 [lookahead ∈ {8,9}]` — value is the single
-                                // octal digit, the 8/9 is a literal that the
-                                // outer loop must re-read.
-                                0x38 | 0x39 => {
-                                    iter = prev;
                                 }
                                 _ => {
                                     iter = prev;
@@ -2321,10 +2307,7 @@ lexer_impl_header! {
         }
     }
 
-    /// Handles the legacy `<!--` HTML single-line open comment (Annex B
-    /// SingleLineHTMLOpenComment): emits a warning and consumes the rest of the
-    /// line. Entered with `self.code_point` on the `!` of `<!--` and
-    /// `self.current` past it.
+    /// Annex B `<!--` single-line comment. Entered with `self.code_point` on `!`.
     #[cold]
     #[inline(never)]
     fn scan_legacy_html_open_comment(&mut self) {

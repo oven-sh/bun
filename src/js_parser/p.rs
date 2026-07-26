@@ -5296,9 +5296,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     // the full union. The only caller (`visit_expr_in_out`) already holds `&mut Expr`.
     pub fn is_valid_assignment_target(&self, expr: &Expr) -> bool {
         match &expr.data {
-            // Any identifier is a valid assignment target syntactically. Assigning to
-            // eval/arguments is a *strict-mode* early error (ECMA-262 13.15.1), handled
-            // via mark_strict_mode_feature at the call site so sloppy code still runs.
+            // eval/arguments is a strict-mode error, reported by the EIdentifier visitor.
             js_ast::ExprData::EIdentifier(_) => true,
             js_ast::ExprData::EDot(e) => e.optional_chain.is_none(),
             js_ast::ExprData::EIndex(e) => e.optional_chain.is_none(),

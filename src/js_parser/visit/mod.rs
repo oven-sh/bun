@@ -117,10 +117,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             &VisitArgsOpts {
                 has_rest_arg: func.flags.contains(flags::Function::HasRestArg),
                 body: body_stmts,
-                // Plain function declarations/expressions allow duplicate parameter names
-                // in sloppy mode with a simple parameter list (ECMA-262 15.1.1). Methods,
-                // getters, and setters set IsUniqueFormalParameters at parse time; arrows
-                // pass `true` at their own visit site.
                 is_unique_formal_parameters: func
                     .flags
                     .contains(flags::Function::IsUniqueFormalParameters),

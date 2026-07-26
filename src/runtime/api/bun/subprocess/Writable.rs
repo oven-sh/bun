@@ -166,7 +166,6 @@ impl<'a> Writable<'a> {
         // act, so this must be the final access.
         process.on_stdin_destroyed();
     }
-    pub fn on_ready(&mut self, _: Option<BlobSizeType>, _: Option<BlobSizeType>) {}
 
     pub(crate) fn init(
         stdio: &mut Stdio,

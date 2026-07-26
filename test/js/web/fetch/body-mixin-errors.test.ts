@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
-import net from "node:net";
 import { once } from "node:events";
+import net from "node:net";
 
 describe("body-mixin-errors", () => {
   it.concurrent.each([
@@ -67,32 +67,29 @@ describe("body-mixin-errors", () => {
     });
   });
 
-  it.concurrent(
-    "fetch: body that failed before any reader call is still consumed by the first read",
-    async () => {
-      await withTruncatedBodyServer(async url => {
-        const res = await fetch(url);
-        // Force the download to run to its (truncated) end before we ever call
-        // a reader: arrayBuffer() on a clone drains the underlying connection.
-        await res
-          .clone()
-          .arrayBuffer()
-          .catch(() => {});
+  it.concurrent("fetch: body that failed before any reader call is still consumed by the first read", async () => {
+    await withTruncatedBodyServer(async url => {
+      const res = await fetch(url);
+      // Force the download to run to its (truncated) end before we ever call
+      // a reader: arrayBuffer() on a clone drains the underlying connection.
+      await res
+        .clone()
+        .arrayBuffer()
+        .catch(() => {});
 
-        expect(res.bodyUsed).toBe(false);
+      expect(res.bodyUsed).toBe(false);
 
-        let firstErr: unknown;
-        await res.text().catch(e => (firstErr = e));
-        expect(firstErr).toBeInstanceOf(TypeError);
+      let firstErr: unknown;
+      await res.text().catch(e => (firstErr = e));
+      expect(firstErr).toBeInstanceOf(TypeError);
 
-        expect(res.bodyUsed).toBe(true);
+      expect(res.bodyUsed).toBe(true);
 
-        let secondErr: unknown;
-        await res.text().catch(e => (secondErr = e));
-        expectBodyAlreadyUsed(secondErr);
-      });
-    },
-  );
+      let secondErr: unknown;
+      await res.text().catch(e => (secondErr = e));
+      expectBodyAlreadyUsed(secondErr);
+    });
+  });
 
   it.concurrent.each(["arrayBuffer", "bytes", "blob", "json"] as const)(
     "fetch: truncated body %s() marks body used",

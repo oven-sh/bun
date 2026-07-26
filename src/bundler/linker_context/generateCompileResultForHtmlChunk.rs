@@ -257,7 +257,7 @@ impl<'a> HTMLLoader<'a> {
             {
                 return RewrittenUrl::Remove;
             }
-            return RewrittenUrl::Value(import_record.path.pretty.to_vec());
+            return with_suffix(import_record.path.pretty, suffix);
         }
 
         if import_record.source_index.is_invalid() {

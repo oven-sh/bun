@@ -40,9 +40,7 @@ using NetscapeSPKIPointer = DeleteFnPtr<NETSCAPE_SPKI, NETSCAPE_SPKI_free>;
 
 static constexpr int kX509NameFlagsRFC2253WithinUtf8JSON = XN_FLAG_RFC2253 & ~ASN1_STRFLGS_ESC_MSB & ~ASN1_STRFLGS_ESC_CTRL;
 
-// OpenSSL's PEM reader tolerates a UTF-8 BOM before the -----BEGIN header
-// but BoringSSL's does not, so strip a single leading EF BB BF before handing
-// PEM bytes to BoringSSL to match Node.js.
+// BoringSSL's PEM reader rejects a leading UTF-8 BOM; OpenSSL (Node.js) does not.
 static inline Buffer<const unsigned char> SkipPEMUTF8BOM(
     const Buffer<const unsigned char>& buffer)
 {

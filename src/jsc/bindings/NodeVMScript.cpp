@@ -309,7 +309,7 @@ void NodeVMScript::destroy(JSCell* cell)
 
 thread_local NodeVMWatchdogScope* NodeVMWatchdogScope::s_innermost { nullptr };
 
-bool checkForTermination(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, SigintReceiver* receiver, NodeVMWatchdogScope* watchdog)
+bool checkForTermination(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSGlobalObject* evaluationGlobalObject, JSC::ThrowScope& scope, SigintReceiver* receiver, NodeVMWatchdogScope* watchdog)
 {
     if (!vm.hasTerminationRequest())
         return false;
@@ -323,7 +323,8 @@ bool checkForTermination(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Th
         return true;
     }
 
-    vm.drainMicrotasksForGlobalObject(globalObject);
+    // clearForGlobalObject(nullptr) is a no-op.
+    vm.drainMicrotasksForGlobalObject(evaluationGlobalObject);
     if (vm.hasPendingTerminationException())
         DECLARE_TOP_EXCEPTION_SCOPE(vm).clearException();
     vm.clearHasTerminationRequest();
@@ -388,7 +389,7 @@ static JSC::EncodedJSValue runInContext(NodeVMGlobalObject* globalObject, NodeVM
     if (watchdog)
         watchdog->disarm();
 
-    if (checkForTermination(vm, globalObject, scope, script, watchdog ? &*watchdog : nullptr)) {
+    if (checkForTermination(vm, globalObject, globalObject, scope, script, watchdog ? &*watchdog : nullptr)) {
         return {};
     }
 
@@ -452,7 +453,7 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInThisContext, (JSGlobalObject * globalObject,
     if (watchdog)
         watchdog->disarm();
 
-    if (checkForTermination(vm, globalObject, scope, script, watchdog ? &*watchdog : nullptr)) {
+    if (checkForTermination(vm, globalObject, nullptr, scope, script, watchdog ? &*watchdog : nullptr)) {
         return {};
     }
 

@@ -98,7 +98,7 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
                 watchdog->disarm();
             // Satisfy the exception-check validator before checkForTermination's TOP scope.
             std::ignore = scope.exception();
-            if (checkForTermination(vm, nodeVmGlobalObject, scope, this, watchdog ? &*watchdog : nullptr))
+            if (checkForTermination(vm, globalObject, nodeVmGlobalObject, scope, this, watchdog ? &*watchdog : nullptr))
                 return {};
             RETURN_IF_EXCEPTION(scope, {});
         }
@@ -223,7 +223,7 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
 
     // Satisfy the exception-check validator before checkForTermination's TOP scope.
     std::ignore = scope.exception();
-    if (checkForTermination(vm, globalObject, scope, this, watchdog ? &*watchdog : nullptr)) {
+    if (checkForTermination(vm, globalObject, nodeVmGlobalObject, scope, this, watchdog ? &*watchdog : nullptr)) {
         // Never store the TerminationException singleton as m_evaluationException;
         // re-throwing it later is uncatchable and asserts in VM::setException.
         if (vm.hasPendingTerminationException())

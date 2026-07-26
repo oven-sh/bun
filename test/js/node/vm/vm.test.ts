@@ -1446,6 +1446,35 @@ describe.concurrent("node:vm nested evaluation propagates an enclosing terminati
     ).toEqual({ stdout: "outer:ERR_SCRIPT_EXECUTION_TIMEOUT\nalive", stderr: "", exitCode: 0, signalCode: null });
   });
 
+  test("a context-less SourceTextModule's own timeout does not discard the caller's pending microtasks", async () => {
+    // vm.drainMicrotasksForGlobalObject discards (not runs) queued microtasks
+    // for the given global. For a module with no {context}, passing the
+    // caller's global there would drop the unrelated `await` continuations
+    // that were already queued before the spinning evaluate() grabbed the
+    // thread, so they never resume.
+    const { stdout, stderr, exitCode, signalCode } = await run(`
+      const vm = require("node:vm");
+      (async () => {
+        const m = new vm.SourceTextModule("globalThis.__hit = true;");
+        await m.link(() => {});
+        await m.evaluate();
+        console.log("sibling:done hit=" + globalThis.__hit);
+      })();
+      (async () => {
+        const m = new vm.SourceTextModule("while (true) {}");
+        await m.link(() => {});
+        try { await m.evaluate({ timeout: 200 }); console.log("timed:UNEXPECTED"); }
+        catch (e) { console.log("timed:" + (e && e.code)); }
+      })();
+    `);
+    expect({ lines: stdout.split("\n").sort(), stderr, exitCode, signalCode }).toEqual({
+      lines: ["sibling:done hit=true", "timed:ERR_SCRIPT_EXECUTION_TIMEOUT"],
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+
   test("outer timeout fires inside a SourceTextModule evaluation: re-evaluate stays catchable", async () => {
     // The inner module's post-evaluation check propagates the foreign
     // termination but must not record the VM's TerminationException singleton

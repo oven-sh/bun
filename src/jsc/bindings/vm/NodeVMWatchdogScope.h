@@ -70,6 +70,10 @@ private:
     bool m_disarmed { false };
 };
 
-bool checkForTermination(JSC::VM&, JSC::JSGlobalObject*, JSC::ThrowScope&, SigintReceiver*, NodeVMWatchdogScope*);
+// `globalObject` is the realm the ERR_SCRIPT_EXECUTION_* error is created in.
+// `evaluationGlobalObject` is the vm context whose still-queued microtasks are
+// discarded on an owned termination; pass null when the evaluation ran in the
+// caller's own global so unrelated caller microtasks are not dropped.
+bool checkForTermination(JSC::VM&, JSC::JSGlobalObject* globalObject, JSC::JSGlobalObject* evaluationGlobalObject, JSC::ThrowScope&, SigintReceiver*, NodeVMWatchdogScope*);
 
 } // namespace Bun

@@ -10,9 +10,9 @@ use crate::Error;
 use crate::webcore::Lifetime;
 #[cfg(not(windows))]
 use crate::webcore::blob::ClosingState;
-use crate::webcore::blob::store::{Bytes as ByteStore, Data, File as FileStore};
 #[cfg(not(windows))]
 use crate::webcore::blob::Store;
+use crate::webcore::blob::store::{Bytes as ByteStore, Data, File as FileStore};
 use crate::webcore::blob::{Blob, FileCloser, FileOpener, MAX_SIZE, SizeType, StoreRef};
 use crate::webcore::node_types::PathOrFileDescriptor;
 #[cfg(windows)]
@@ -435,8 +435,8 @@ impl ReadFile {
         if !matches!(&store.data, Data::File(f) if f.pathlike.is_fd()) {
             return false;
         }
-        let existing = IN_FLIGHT_FD_READERS
-            .with(|m| m.borrow().get(&store.as_ptr().cast_const()).copied());
+        let existing =
+            IN_FLIGHT_FD_READERS.with(|m| m.borrow().get(&store.as_ptr().cast_const()).copied());
         let Some(existing) = existing else {
             return false;
         };

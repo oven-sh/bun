@@ -887,11 +887,9 @@ test("only test", () => {
     },
   );
 
-  test.concurrent(
-    "does not stall on an unref'd near-term interval with a ref'd far-future timer",
-    async () => {
-      const { stderr, exitCode, signalCode } = await runFixture({
-        "unref-near.test.js": `
+  test.concurrent("does not stall on an unref'd near-term interval with a ref'd far-future timer", async () => {
+    const { stderr, exitCode, signalCode } = await runFixture({
+      "unref-near.test.js": `
 import { test, expect } from "bun:test";
 test("only test", () => {
   setInterval(() => {}, 5).unref();
@@ -899,14 +897,13 @@ test("only test", () => {
   expect(1).toBe(1);
 });
 `,
-      });
+    });
 
-      expect(stderr).toContain("1 pass");
-      expect(stderr).toContain("0 fail");
-      expect(signalCode).toBeNull();
-      expect(exitCode).toBe(0);
-    },
-  );
+    expect(stderr).toContain("1 pass");
+    expect(stderr).toContain("0 fail");
+    expect(signalCode).toBeNull();
+    expect(exitCode).toBe(0);
+  });
 
   test.concurrent("does not busy-spin on a self-rescheduling setImmediate", async () => {
     const { stderr, exitCode, signalCode } = await runFixture({

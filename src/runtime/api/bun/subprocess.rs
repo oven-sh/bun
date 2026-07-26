@@ -989,11 +989,7 @@ impl Subprocess<'_> {
                 #[cfg(windows)]
                 term.unref_after_inline_child_exit();
             } else {
-                // Pre-created terminal: the user manages slave_fd so we don't
-                // close or unref, but still drain buffered output so the
-                // child's final write reaches the data callback before
-                // `proc.exited` resolves (matching inline behaviour and the
-                // stdout/stderr pipe drain below).
+                // Pre-created terminal: drain only (user manages slave_fd).
                 #[cfg(unix)]
                 term.drain_reader();
             }

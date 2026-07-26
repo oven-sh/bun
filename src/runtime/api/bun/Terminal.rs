@@ -693,11 +693,9 @@ impl Terminal {
         }
     }
 
-    /// Pump any buffered PTY output into the data callback without touching
-    /// slave_fd or ref state. Called from `Subprocess::on_process_exit` for
-    /// pre-created terminals so the child's final write reaches the data
-    /// callback before `proc.exited` resolves; inline terminals go through
-    /// `drain_and_close_slave_fd` instead.
+    /// Pump buffered PTY output into the data callback without touching
+    /// slave_fd or ref state. `Subprocess::on_process_exit` calls this for
+    /// pre-created terminals; inline ones use `drain_and_close_slave_fd`.
     #[cfg(unix)]
     pub(crate) fn drain_reader(&self) {
         let flags = self.flags.get();
@@ -707,13 +705,9 @@ impl Terminal {
         {
             return;
         }
-        // The data callback re-enters user JS and may deref; hold a +1 so
-        // `self` stays live across the call.
         self.ref_();
         let guard = scopeguard::guard((), |()| self.deref_());
-        // SAFETY: single JS thread; re-entrant user JS (the data callback may
-        // call `terminal.close()`) is handled via the raw-pointer dispatch
-        // convention used by `__bun_run_file_poll` for BUFFERED_READER.
+        // SAFETY: single JS thread; see `drain_and_close_slave_fd`.
         unsafe { (*self.reader.as_ptr()).read() };
         drop(guard);
     }

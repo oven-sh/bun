@@ -930,15 +930,9 @@ static JSC::JSValue reconcileDataModuleWithRequireCache(
     JSValue entry = globalObject->requireMap()->get(globalObject, specifierJS);
     RETURN_IF_EXCEPTION(scope, {});
     if (auto* mod = dynamicDowncast<Bun::JSCommonJSModule>(entry)) {
-        if (mod->hasEvaluated) {
-            JSValue existing = mod->exportsObject();
-            RETURN_IF_EXCEPTION(scope, {});
-            if (existing)
-                return existing;
-        }
-        mod->setExportsObject(value);
-        mod->hasEvaluated = true;
-        return value;
+        JSValue existing = mod->exportsObject();
+        RETURN_IF_EXCEPTION(scope, {});
+        return existing ? existing : value;
     }
     if (!entry.isUndefined())
         return value; // user-installed require.cache entry; don't clobber it

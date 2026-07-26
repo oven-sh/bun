@@ -157,6 +157,35 @@ test.concurrent("require() of a .json alone (no prior import) still returns the 
   expect(exitCode).toBe(0);
 });
 
+test.concurrent(
+  "a require.extensions['.json'] override is not clobbered by a later ESM import of the same file",
+  async () => {
+    const { stdout, stderr, exitCode } = await run(
+      {
+        "cfg.json": `{"a":1}`,
+        "index.cjs": `
+          const fs = require("fs");
+          require.extensions[".json"] = (m, f) => { m.exports = { overridden: true }; };
+          const r1 = require("./cfg.json");
+          (async () => {
+            await import("./cfg.json", { with: { type: "json" } });
+            const r2 = require("./cfg.json");
+            console.log("r1:", JSON.stringify(r1));
+            console.log("r1 === r2:", r1 === r2);
+          })();
+        `,
+      },
+      "index.cjs",
+    );
+    expect(stderr).toBe("");
+    expect(stdout).toMatchInlineSnapshot(`
+      "r1: {"overridden":true}
+      r1 === r2: true"
+    `);
+    expect(exitCode).toBe(0);
+  },
+);
+
 test.concurrent("a plain-object require.cache entry for a .json is not clobbered by a later ESM import", async () => {
   const { stdout, stderr, exitCode } = await run(
     {

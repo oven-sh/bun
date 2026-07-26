@@ -296,3 +296,31 @@ it("getPriority system error object", () => {
     expect(err.syscall).toBe("uv_os_getpriority");
   }
 });
+
+it("setPriority throws ESRCH for a nonexistent pid", () => {
+  // 0x7ffffffe is well above any plausible pid on every platform. On Windows
+  // libuv's uv__get_handle maps the resulting ERROR_INVALID_PARAMETER from
+  // OpenProcess to UV_ESRCH, matching the POSIX ESRCH from setpriority(2).
+  // Previously on Windows the libuv return code was fed to get_errno() (which
+  // re-reads GetLastError() -> EINVAL) and the error was swallowed.
+  let err;
+  try {
+    os.setPriority(0x7ffffffe, 0);
+  } catch (e) {
+    err = e;
+  }
+  expect(err).toBeDefined();
+  expect({
+    name: err.name,
+    code: err.code,
+    infoCode: err.info?.code,
+    infoErrno: err.info?.errno,
+    infoMessage: err.info?.message,
+  }).toEqual({
+    name: "SystemError",
+    code: "ERR_SYSTEM_ERROR",
+    infoCode: "ESRCH",
+    infoErrno: isWindows ? -4040 : -3,
+    infoMessage: "no such process",
+  });
+});

@@ -1125,11 +1125,15 @@ impl Request {
                     // SAFETY: as_direct returns a live *mut Request payload (m_ctx)
                     let request = unsafe { &*request };
                     if values_to_try.len() == 1 {
+                        if let Err(e) = request.throw_if_body_unusable(global_this) {
+                            bail!(Err(e));
+                        }
                         match Request::clone_into(
                             request,
                             &mut req,
                             global_this,
                             fields.contains(Fields::Url),
+                            true,
                         ) {
                             Ok(()) => {}
                             Err(e) => bail!(Err(e)),
@@ -1176,9 +1180,12 @@ impl Request {
 
                     if !fields.contains(Fields::Body) {
                         match request.body_value() {
-                            BodyValue::Null | BodyValue::Empty | BodyValue::Used => {}
+                            BodyValue::Null | BodyValue::Empty => {}
                             _ => {
-                                match request.clone_body_value_via_cached_stream(global_this) {
+                                if let Err(e) = request.throw_if_body_unusable(global_this) {
+                                    bail!(Err(e));
+                                }
+                                match request.transfer_body_value(global_this) {
                                     Ok(v) => {
                                         *req.body_value_mut() = v;
                                     }
@@ -1544,10 +1551,15 @@ impl Request {
         req: &mut Request,
         global_this: &JSGlobalObject,
         preserve_url: bool,
+        transfer_body: bool,
     ) -> JsResult<()> {
         // allocator param dropped (global mimalloc)
         let _ = self.ensure_url();
-        let body_ = self.clone_body_value_via_cached_stream(global_this)?;
+        let body_ = if transfer_body {
+            self.transfer_body_value(global_this)?
+        } else {
+            self.clone_body_value_via_cached_stream(global_this)?
+        };
         // BodyValue's Drop frees `body_` on the `?` error path
         let body = body::hive_alloc(body_);
         // Last fallible call. The url computation is sunk below it
@@ -1627,7 +1639,7 @@ impl Request {
             internal_event_callback: JsCell::new(InternalJSEventCallback::default()),
         });
         // Box<Request> drops on the error path automatically
-        self.clone_into(&mut req, global_this, false)?;
+        self.clone_into(&mut req, global_this, false, false)?;
         Ok(req)
     }
 

@@ -3,12 +3,17 @@ import { isASAN } from "harness";
 
 const ASAN_MULTIPLIER = isASAN ? 1 / 10 : 1;
 
+// The Request-input cases carry the body in the init object so the shared
+// source Request stays reusable: `new Request(req)` transfers the input body,
+// and a consumed input would throw on the second iteration.
 const constructorArgs = [
   [
     new Request("http://foo/", {
-      body: "ahoyhoy",
       method: "POST",
     }),
+    {
+      body: "ahoyhoy",
+    },
   ],
   [
     "http://foo/",
@@ -26,12 +31,14 @@ const constructorArgs = [
   ],
   [
     new Request("http://foo/", {
-      body: "ahoyhoy",
       method: "POST",
       headers: {
         "test-header": "value",
       },
     }),
+    {
+      body: "ahoyhoy",
+    },
   ],
   [
     "http://foo/",

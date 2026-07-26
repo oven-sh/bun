@@ -1706,6 +1706,34 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         Ok(cloned)
     }
 
+    /// Fetch §Request ctor step 45: move this body into the returned value and
+    /// leave this owner `Used`, clearing its JS-side `body`/`stream` cache so
+    /// `.body`/`.bodyUsed` reflect the transfer. A stream already migrated to
+    /// the JS cache is re-seated into the returned `Locked.readable`.
+    /// Null/Empty bodies pass through unchanged.
+    fn transfer_body_value(&self, global_this: &JSGlobalObject) -> JsResult<Value> {
+        if matches!(self.get_body_value(), Value::Null | Value::Empty) {
+            return Ok(Value::Null);
+        }
+        let cached_stream = match self.js_ref().and_then(Self::stream_get_cached) {
+            Some(stream) => ReadableStream::from_js(stream, global_this)?,
+            None => None,
+        };
+        let mut body = core::mem::replace(self.get_body_value(), Value::Used);
+        if let Value::Locked(locked) = &mut body {
+            if !locked.readable.has() {
+                if let Some(rs) = cached_stream {
+                    locked.readable = webcore::readable_stream::Strong::init(rs, global_this);
+                }
+            }
+        }
+        if let Some(js_ref) = self.js_ref() {
+            Self::stream_set_cached(js_ref, global_this, JSValue::ZERO);
+            Self::body_set_cached(js_ref, global_this, JSValue::ZERO);
+        }
+        Ok(body)
+    }
+
     fn get_text(&self, global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let value = self.get_body_value();
         if matches!(value, Value::Used) {

@@ -28,6 +28,6 @@ test("can clone a request", async () => {
   const clone = new Request(request);
   expect(clone.method).toBe("PUT");
   expect(clone.headers.get("content-type")).toBe("text/bun;charset=utf-8");
-  expect(await request.text()).toBe("bun");
+  expect(request.bodyUsed).toBe(true);
   expect(await clone.text()).toBe("bun");
 });

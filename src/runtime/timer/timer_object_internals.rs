@@ -36,14 +36,9 @@ pub struct TimerObjectInternals {
     pub flags: Cell<Flags>,
     /// `bun test --isolate` generation this timer was created in.
     pub generation: u32,
-    /// `true` while this timer is scheduled (in the heap / immediate queue, or
-    /// an interval between fires). Read from the GC thread by
-    /// [`Self::has_pending_activity`] to keep the JS wrapper alive; written
-    /// only on the JS thread. Replaces what used to be a per-timer
-    /// `JSC::Strong` in `this_value`: the Strong list is a linked list walked
-    /// as roots on every collection (eden included), so N armed timers cost
-    /// O(N) per GC. The `hasPendingActivity` Weak path is generational and
-    /// parallelised.
+    /// `true` while scheduled. Read from the GC thread by
+    /// [`Self::has_pending_activity`] to keep the JS wrapper alive without a
+    /// per-timer `JSC::Strong`; written only on the JS thread.
     armed: AtomicBool,
 }
 
@@ -58,21 +53,16 @@ impl TimerObjectInternals {
         self.flags.set(fl);
     }
 
-    /// `Timeout__hasPendingActivity` / `Immediate__hasPendingActivity` body.
-    /// Called on the GC thread concurrently with the mutator during weak
-    /// processing; touches only the atomic. Returning `true` marks the JS
-    /// wrapper (and via `visitChildren` its cached callback/arguments) as
-    /// reachable.
+    /// Called on the GC thread concurrently with the mutator; touches only the
+    /// atomic. Returning `true` keeps the JS wrapper reachable.
     #[inline]
     pub fn has_pending_activity(&self) -> bool {
         self.armed.load(Ordering::Acquire)
     }
 
-    /// JS-thread side of [`Self::has_pending_activity`]. Also keeps
-    /// `this_value` in sync: upgrade to the known wrapper when arming so
-    /// `fire()` can retrieve it, drop to weak when disarming so a stale raw
-    /// `JSValue` is never read after the wrapper is collected. `this_value`
-    /// itself is never a `Strong`; the `JsRef` stays in `Weak`/`Finalized`.
+    /// JS-thread counterpart of [`Self::has_pending_activity`]. `this_value`
+    /// is kept in sync as a weak `JSValue` so `fire()` can retrieve the
+    /// wrapper; it is never upgraded to a `Strong`.
     #[inline]
     fn arm(&self, wrapper: JSValue) {
         self.this_value.with_mut(|r| r.set_weak(wrapper));
@@ -583,10 +573,8 @@ impl TimerObjectInternals {
         let mut time_before_call = Timespec::EPOCH;
 
         if kind != KindBig::SetInterval {
-            // One-shot: release the GC pin before running the callback.
             // `this_object` is on the stack, so conservative scan keeps the
-            // wrapper alive for the duration of `Self::run` even if a GC runs
-            // inside the callback.
+            // wrapper alive across `Self::run` below.
             s.disarm();
         } else {
             time_before_call = Timespec::ms_from_now(

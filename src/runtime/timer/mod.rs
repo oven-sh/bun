@@ -228,9 +228,7 @@ macro_rules! impl_timer_object {
                 this.internals.has_ref()
             }
 
-            /// `.classes.ts` `hasPendingActivity: true` — called on the GC
-            /// thread concurrently with the mutator during weak processing.
-            /// Must only touch atomic fields.
+            /// Called on the GC thread; must only touch atomic fields.
             #[inline]
             pub fn has_pending_activity(&self) -> bool {
                 self.internals.has_pending_activity()

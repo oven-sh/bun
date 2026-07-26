@@ -136,13 +136,9 @@ export default [
     finalize: true,
     sharedThis: true,
     configurable: false,
-    // Armed timers must keep their JS wrapper (and its cached callback/arguments)
-    // alive without allocating a per-timer JSC::Strong handle: the HandleSet
-    // strong list is walked on every collection including eden, so N armed
-    // timers cost O(N) per GC. JSC::Weak visitation is generational (eden only
-    // scans m_newActiveWeakSets), so the wrapper keeps itself alive via
-    // hasPendingActivity while scheduled and the per-GC cost stays bounded by
-    // the young generation.
+    // Keeps the wrapper alive while scheduled without a per-timer Strong
+    // handle (the HandleSet strong list is walked on every collection; Weak
+    // visitation is generational and parallel).
     hasPendingActivity: true,
     klass: {},
     JSType: "0b11101110",

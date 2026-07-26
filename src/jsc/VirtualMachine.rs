@@ -4880,7 +4880,7 @@ impl VirtualMachine {
             }
             // `getDirect`: empty / GetterSetter when `.errors` is deleted or an accessor.
             let errors = value.get_errors_property(global_ref);
-            if errors.is_object() {
+            if !formatter.failed && !global_ref.has_exception() && errors.is_object() {
                 let mut ctx = AggCtx {
                     formatter: std::ptr::from_mut(formatter),
                     writer: std::ptr::from_mut(writer),
@@ -4893,6 +4893,7 @@ impl VirtualMachine {
                 if errors
                     .for_each(global_ref, (&raw mut ctx).cast(), agg_iter)
                     .is_err()
+                    && !formatter.failed
                 {
                     self.global().clear_exception();
                 }

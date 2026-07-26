@@ -1,6 +1,5 @@
 import { spawnSync } from "bun";
 import { timerInternals } from "bun:internal-for-testing";
-import { heapStats } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, isLinux, isWindows, tempDirWithFiles } from "harness";
 import path from "node:path";

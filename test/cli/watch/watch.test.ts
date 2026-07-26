@@ -330,3 +330,35 @@ it("NODE_COMPILE_CACHE persists across a --watch reload", async () => {
   const entries = readdirSync(cacheDir, { recursive: true, withFileTypes: true });
   expect(entries.filter(e => e.isFile()).length).toBeGreaterThan(0);
 }, 30000);
+
+// NODE_CHANNEL_FD survives in environ across execve; the fd it names must
+// survive too, so the reloaded image re-attaches to a live socket instead
+// of a closed one and the parent keeps receiving 'message' events.
+it.skipIf(isWindows)("IPC to the parent survives a --watch reload", async () => {
+  using dir = tempDir("watch-ipc-reload", {
+    "app.js": `process.send?.("iter first"); setInterval(() => {}, 1000);`,
+  });
+
+  const messages: string[] = [];
+  watchee = spawn({
+    cmd: [bunExe(), "--watch", "app.js"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+    ipc(message) {
+      messages.push(String(message));
+    },
+  });
+
+  const deadline = Date.now() + 20000;
+  while (!messages.includes("iter first") && Date.now() < deadline) await Bun.sleep(10);
+  expect(messages).toContain("iter first");
+
+  await Bun.write(join(String(dir), "app.js"), `process.send?.("iter second");`);
+  while (!messages.includes("iter second") && Date.now() < deadline) await Bun.sleep(10);
+  expect(messages).toContain("iter second");
+
+  watchee.kill("SIGKILL");
+  await watchee.exited;
+}, 30000);

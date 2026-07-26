@@ -304,6 +304,17 @@ extern "C" void on_before_reload_process_linux()
     // If this fails, it's ultimately okay, we're just trying our best to avoid leaking file descriptors.
     bun_close_range(3, ~0U, CLOSE_RANGE_CLOEXEC);
 
+    // Preserve the IPC channel to the parent across the execve. NODE_CHANNEL_FD
+    // survives in environ, and the reloaded image re-attaches to that fd; with
+    // it CLOEXEC'd the reloaded process opens IPC on a closed fd and the
+    // parent stops receiving 'message' events after the first reload.
+    if (const char* s = getenv("NODE_CHANNEL_FD")) {
+        char* end = nullptr;
+        long fd = strtol(s, &end, 10);
+        if (end != s && *end == '\0' && fd >= 3 && fd <= INT_MAX)
+            unset_cloexec(static_cast<int>(fd));
+    }
+
     // Reset signal dispositions to default before unblocking the mask. With
     // bun's handlers still installed, a SIGTERM arriving between here and
     // execve is consumed (queued for JS dispatch) and then lost when execve

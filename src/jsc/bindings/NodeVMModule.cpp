@@ -213,10 +213,8 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
         drainAfterEvaluate();
     }
 
-    // Evaluation (or the afterEvaluate drain) may leave an exception pending
-    // — a regular one is rethrown by VM_RETURN_IF_EXCEPTION below, a
-    // termination one is attributed here. Observe it so the exception-check
-    // validator is satisfied.
+    // Observe any pending exception so the validator is satisfied, then
+    // attribute a termination and let VM_RETURN_IF_EXCEPTION rethrow.
     std::ignore = scope.exception();
     checkForTermination(vm, globalObject, scope, this, timeoutScope);
     setSigintReceived(false);

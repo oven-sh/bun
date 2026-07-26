@@ -320,8 +320,7 @@ NodeVMTimeoutScope::NodeVMTimeoutScope(JSC::VM& vm, std::optional<int64_t> timeo
 
     JSC::JSLockHolder locker(vm);
     JSC::Watchdog& dog = vm.ensureWatchdog();
-    // The Watchdog may have been created just now, after the enclosing
-    // VMEntryScope already ran its on-entry services, so arm it explicitly.
+    // ensureWatchdog may have just created it, past VMEntryScope's on-entry.
     dog.enteredVM();
 
     double effective = static_cast<double>(*timeoutMs);
@@ -338,15 +337,11 @@ NodeVMTimeoutScope::~NodeVMTimeoutScope()
         return;
     auto*& active = WebCore::clientData(*m_vm)->nodeVMTimeoutScope;
     active = m_prev;
+    // No enclosing scope: leave the Watchdog armed so the already-dispatched
+    // timer's trap service keeps hasTimeLimit() true (startTimer asserts it);
+    // the callback observes active==nullptr and vetoes.
     if (!m_prev)
         return;
-    // Re-arm the enclosing scope's limit (and keep our callback installed so a
-    // late fire still lands in shouldTerminateCallback with the right slot).
-    // With no enclosing scope we deliberately leave the Watchdog armed: the
-    // deadline timer has already been dispatched and cannot be recalled, and
-    // restoring noTimeLimit would make the next trap service hit
-    // Watchdog::startTimer's hasTimeLimit() assert. The callback sees a null
-    // active slot and vetoes, clearing the limit then.
     JSC::JSLockHolder locker(*m_vm);
     m_vm->watchdog()->setTimeLimit(WTF::Seconds::fromMilliseconds(m_prev->m_effectiveTimeoutMs), shouldTerminateCallback, &active, nullptr);
 }
@@ -358,9 +353,7 @@ bool NodeVMTimeoutScope::shouldTerminateCallback(JSC::JSGlobalObject* globalObje
         active->m_fired = true;
         return true;
     }
-    // Stale fire: the evaluation that armed this deadline has already
-    // returned. We are past shouldTerminate's CPU-deadline re-arm, so it is
-    // now safe to clear the limit; veto the termination.
+    // Stale fire (the armer has returned): clear the limit and veto.
     globalObject->vm().watchdog()->setTimeLimit(JSC::Watchdog::noTimeLimit);
     return false;
 }
@@ -372,17 +365,13 @@ bool checkForTermination(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Th
 
     bool sigint = receiver && receiver->getSigintReceived();
     if (!sigint && !timeoutScope.didFire()) {
-        // Neither this evaluation's watchdog nor its SIGINT watcher raised
-        // the termination, so it belongs to an enclosing evaluation or to
-        // worker.terminate(). Propagate it.
+        // Foreign termination (enclosing eval / worker.terminate()): propagate.
         scope.throwException(globalObject, vm.ensureTerminationException());
         return true;
     }
 
-    // Drop microtasks the aborted evaluation scheduled on its own context.
-    // runInThisContext and context-less modules share the caller's queue,
-    // where we cannot tell the script's jobs from unrelated ones, so those
-    // are left in place.
+    // Drop microtasks the aborted evaluation queued on its own context; for
+    // runInThisContext / context-less modules they share the caller's queue.
     if (auto* vmGlobal = dynamicDowncast<NodeVMGlobalObject>(globalObject))
         vm.drainMicrotasksForGlobalObject(vmGlobal);
     if (vm.hasPendingTerminationException())

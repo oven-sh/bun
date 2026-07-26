@@ -131,11 +131,7 @@ public:
     void* bunVM;
     Bun::JSCTaskScheduler deferredWorkTimer;
 
-    // Innermost active node:vm `timeout` scope (a stack-allocated RAII guard
-    // around the evaluation). The Watchdog's ShouldTerminateCallback reads
-    // this slot: a fire with no active scope is a stale deadline from an
-    // evaluation that already returned and is vetoed instead of terminating
-    // whatever JS happens to be running.
+    // Innermost active node:vm `timeout` scope; see NodeVMTimeoutScope.
     Bun::NodeVMTimeoutScope* nodeVMTimeoutScope { nullptr };
 
     // Backing storage for Bun::IsolatedModuleCache (see IsolatedModuleCache.h).

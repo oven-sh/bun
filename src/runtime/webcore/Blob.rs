@@ -5249,19 +5249,32 @@ pub fn write_file_internal(
                         if let Some(readable) =
                             get_stream(global_this).or_else(|| locked.readable.get(global_this))
                         {
-                            let bytes_promise =
-                                global_this.readable_stream_to_bytes(readable.value);
+                            let bytes_promise = bun_jsc::from_js_host_call(global_this, || {
+                                global_this.readable_stream_to_bytes(readable.value)
+                            });
                             // SAFETY: re-borrow after `readable_stream_to_bytes`.
                             *(unsafe { &mut *body_value }) = BodyValue::Used;
-                            bytes_promise.then(
-                                global_this,
-                                task,
-                                write_file_mod::write_file_locked_on_stream_resolved_shim,
-                                write_file_mod::write_file_locked_on_stream_rejected_shim,
-                            );
-                            // SAFETY: `task` heap-allocated above; consumed by
-                            // the `then` reactions.
-                            return Ok(ControlFlow::Break(unsafe { (*task).promise.value() }));
+                            // SAFETY: `task` heap-allocated above; sole owner.
+                            let promise = unsafe { (*task).promise.value() };
+                            match bytes_promise {
+                                Ok(p) if p.as_any_promise().is_some() => p.then(
+                                    global_this,
+                                    task,
+                                    write_file_mod::write_file_locked_on_stream_resolved_shim,
+                                    write_file_mod::write_file_locked_on_stream_rejected_shim,
+                                ),
+                                other => {
+                                    // SAFETY: `task` heap-allocated above; sole owner.
+                                    let task = unsafe { bun_core::heap::take(task) };
+                                    task.file_blob.detach();
+                                    let err = match other {
+                                        Err(err) => global_this.take_exception(err),
+                                        Ok(v) => v,
+                                    };
+                                    task.promise.get().reject(global_this, Ok(err))?;
+                                }
+                            }
+                            return Ok(ControlFlow::Break(promise));
                         }
                         locked.task = Some(task.cast::<c_void>());
                         locked.on_receive_value = Some(WriteFileWaitFromLockedValueTask::then_wrap);

@@ -43,7 +43,8 @@ bun_core::declare_scope!(cache, visible);
 /// path reinstates the bug for any previously-cached TLA module (#30887).
 /// Version 23: `jsx.runtime`/`jsx.development` participate in the features hash,
 /// and tsconfig `"jsx": "react-jsx"` now emits the production runtime (#4227).
-const EXPECTED_VERSION: u32 = 23;
+/// Version 24: Strict-mode early errors for legacy octal / for-in var init / if-label fn.
+const EXPECTED_VERSION: u32 = 24;
 
 /// Source files smaller than this are not written to / read from the on-disk
 /// transpiler cache. Originally 50 KiB, which excluded almost every file in a

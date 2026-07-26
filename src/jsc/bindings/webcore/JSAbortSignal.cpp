@@ -406,7 +406,13 @@ void JSAbortSignalOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* contex
 {
     auto* jsAbortSignal = static_cast<JSAbortSignal*>(handle.slot()->asCell());
     auto& world = *static_cast<DOMWrapperWorld*>(context);
-    uncacheWrapper(world, jsAbortSignal->protectedWrapped().ptr(), jsAbortSignal);
+    Ref signal = jsAbortSignal->protectedWrapped();
+    uncacheWrapper(world, signal.ptr(), jsAbortSignal);
+    // The wrapper is gone, so JS can no longer observe the abort. If nothing
+    // native is observing either, cancel the pending timer now rather than
+    // letting it (and the C++ AbortSignal kept alive by timeout()'s extra ref)
+    // survive until the deadline and fire as a no-op.
+    signal->releaseTimerIfUnobserved();
 }
 
 #if ENABLE(BINDING_INTEGRITY)

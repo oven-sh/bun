@@ -294,28 +294,38 @@ void AbortSignal::eventListenersDidChange()
 {
     bool hasListeners = hasEventListeners(eventNames().abortEvent) or !m_native_callbacks.isEmpty();
     setHasAbortEventListener(hasListeners);
+    releaseTimerIfUnobserved();
+}
 
-    // When a timeout signal loses all observers (no JS listeners, no native
-    // callbacks, no algorithms, no dependent signals), there is nothing left
-    // to notify when the timer fires.  Cancel the timer and release the extra
-    // ref that timeout() took to keep the signal alive, so the C++ object can
-    // be destroyed normally.
-    if (!hasListeners && m_timeout && !aborted()
-        && m_algorithms.isEmpty() && !hasPendingActivity()
-        && m_dependentSignals.isEmptyIgnoringNullReferences()) {
-        bool shouldDeref = false;
-        {
-            Locker locker { m_abortAlgorithmsLock };
-            if (m_abortAlgorithms.isEmpty()) {
-                cancelTimer();
-                shouldDeref = true;
-            }
+// When a timeout signal has no remaining observers (no JS listeners, no
+// native callbacks, no algorithms, no dependent signals, no pending
+// activity), the timer can only fire as a no-op. Cancel it now and release
+// the extra ref that timeout() took so the C++ object can be destroyed
+// promptly instead of surviving until the deadline. Called from
+// eventListenersDidChange() (last listener removed) and from
+// JSAbortSignalOwner::finalize() (JS wrapper collected); the latter mirrors
+// Node's SafeFinalizationRegistry(clearTimeout) for AbortSignal.timeout().
+// Must be called on the owning JS thread: cancelTimer() routes through
+// AbortSignal__Timeout__deinit which touches the per-VM timer heap.
+void AbortSignal::releaseTimerIfUnobserved()
+{
+    if (!m_timeout || aborted())
+        return;
+    if (hasAbortEventListener() || !m_algorithms.isEmpty() || hasPendingActivity()
+        || !m_dependentSignals.isEmptyIgnoringNullReferences())
+        return;
+    bool shouldDeref = false;
+    {
+        Locker locker { m_abortAlgorithmsLock };
+        if (m_abortAlgorithms.isEmpty()) {
+            cancelTimer();
+            shouldDeref = true;
         }
-        // Release the extra ref after the lock is released, since deref()
-        // may destroy `this` (and m_abortAlgorithmsLock with it).
-        if (shouldDeref)
-            deref(); // balances the ref() in AbortSignal::timeout()
     }
+    // Release the extra ref after the lock is released, since deref()
+    // may destroy `this` (and m_abortAlgorithmsLock with it).
+    if (shouldDeref)
+        deref(); // balances the ref() in AbortSignal::timeout()
 }
 
 uint32_t AbortSignal::addAbortAlgorithmToSignal(AbortSignal& signal, Ref<AbortAlgorithm>&& algorithm)

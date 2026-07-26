@@ -1,6 +1,6 @@
 use core::ffi::c_void;
 use core::ptr::NonNull;
-use core::sync::atomic::Ordering;
+use core::sync::atomic::{AtomicI64, Ordering};
 
 use crate::{
     CommonAbortReason, CommonAbortReasonExt as _, JSGlobalObject, JSValue,
@@ -307,6 +307,17 @@ pub struct Timeout {
 
 bun_event_loop::impl_timer_owner!(Timeout; from_timer_ptr => event_loop_timer);
 
+/// Live boxed `Timeout` instances (`init` increments, `deinit` decrements).
+/// Surfaced via `bun:internal-for-testing` so leak tests can observe native
+/// timer lifetime directly, since `heapStats()` only sees JS wrappers and RSS
+/// does not move under ASAN quarantine.
+static LIVE_COUNT: AtomicI64 = AtomicI64::new(0);
+
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn AbortSignal__Timeout__liveCount() -> i64 {
+    LIVE_COUNT.load(Ordering::Relaxed)
+}
+
 impl Timeout {
     fn init(vm: *mut VirtualMachine, signal_: *mut AbortSignal, milliseconds: u64) -> *mut Timeout {
         let deadline = bun_core::Timespec::now_allow_mocked_time()
@@ -327,6 +338,7 @@ impl Timeout {
             flags: TimerFlags::default(),
             generation: VirtualMachine::get().test_isolation_generation,
         }));
+        LIVE_COUNT.fetch_add(1, Ordering::Relaxed);
 
         #[cfg(debug_assertions)]
         // `AbortSignal` is an `opaque_ffi!` ZST handle; `opaque_ref` is the
@@ -407,6 +419,7 @@ impl Timeout {
             Self::cancel(&mut *this, vm);
             drop(bun_core::heap::take(this));
         }
+        LIVE_COUNT.fetch_sub(1, Ordering::Relaxed);
     }
 }
 

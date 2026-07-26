@@ -38,6 +38,13 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_arrayBufferViewHasBuffer, (JSC::JSGlobalObje
     return JSValue::encode(jsBoolean(view->hasArrayBuffer()));
 }
 
+extern "C" int64_t AbortSignal__Timeout__liveCount();
+
+JSC_DEFINE_HOST_FUNCTION(jsFunction_abortSignalTimeoutLiveCount, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    return JSValue::encode(jsNumber(static_cast<double>(AbortSignal__Timeout__liveCount())));
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsFunction_hasReifiedStatic, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto object = callFrame->argument(0).getObject();

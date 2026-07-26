@@ -191,9 +191,7 @@ describe("bunshell", () => {
 
     test("rejects NUL bytes and lone surrogates like interpolation does", () => {
       const nul = "a" + String.fromCharCode(0) + "b";
-      expect(() => $.escape(nul)).toThrow(
-        expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }),
-      );
+      expect(() => $.escape(nul)).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }));
       expect(() => $.escape("\uD800")).toThrow("Shell script string contains invalid UTF-16");
       expect(() => $.escape("x\uDC00y")).toThrow("Shell script string contains invalid UTF-16");
     });

@@ -252,8 +252,9 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
     if (vm.hasTerminationRequest() || vm.hasPendingTerminationException()) {
         if (isForeignTermination(vm, getSigintReceived(), timeout != 0)) {
             status(Status::Errored);
-            m_evaluationException.set(vm, this, JSC::Exception::create(vm, jsNull()));
-            scope.throwException(globalObject, vm.ensureTerminationException());
+            JSC::Exception* termination = vm.ensureTerminationException();
+            m_evaluationException.set(vm, this, termination);
+            scope.throwException(globalObject, termination);
             return {};
         }
         vm.drainMicrotasksForGlobalObject(nodeVmGlobalObject);

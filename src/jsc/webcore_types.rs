@@ -788,6 +788,17 @@ pub mod store {
         pub len: SizeType,
     }
 
+    impl RopeSegment {
+        /// Flattened, clamped `&[u8]` window this segment names. JS thread only.
+        pub fn view(&self) -> &[u8] {
+            self.store.flatten_if_rope();
+            let view = self.store.shared_view();
+            let off = (self.offset as usize).min(view.len());
+            let end = off + (self.len as usize).min(view.len() - off);
+            &view[off..end]
+        }
+    }
+
     impl Rope {
         #[inline]
         pub fn len(&self) -> SizeType {
@@ -829,11 +840,7 @@ pub mod store {
         pub fn join(&self) -> Vec<u8> {
             let mut out = Vec::<u8>::with_capacity(self.len as usize);
             for seg in &self.segments {
-                seg.store.flatten_if_rope();
-                let view = seg.store.shared_view();
-                let off = (seg.offset as usize).min(view.len());
-                let end = off + (seg.len as usize).min(view.len() - off);
-                out.extend_from_slice(&view[off..end]);
+                out.extend_from_slice(seg.view());
             }
             out
         }

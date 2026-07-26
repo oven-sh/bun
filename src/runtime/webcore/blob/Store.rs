@@ -219,11 +219,7 @@ impl StoreExt for Store {
             Data::Rope(rope) => {
                 writer.write_int_le::<u32>(rope.len() as u32)?;
                 for seg in &rope.segments {
-                    seg.store.flatten_if_rope();
-                    let view = seg.store.shared_view();
-                    let off = (seg.offset as usize).min(view.len());
-                    let end = off + (seg.len as usize).min(view.len() - off);
-                    writer.write_all(&view[off..end])?;
+                    writer.write_all(seg.view())?;
                 }
 
                 writer.write_int_le::<u32>(rope.stored_name.len() as u32)?;

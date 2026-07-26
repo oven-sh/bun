@@ -3,44 +3,40 @@ import { isASAN } from "harness";
 
 const ASAN_MULTIPLIER = isASAN ? 1 / 10 : 1;
 
-// The Request-input cases carry the body in the init object so the shared
-// source Request stays reusable: `new Request(req)` transfers the input body,
-// and a consumed input would throw on the second iteration.
+// `new Request(req)` transfers (consumes) the input body, so the single-arg
+// Request-input cases build a fresh source per iteration to keep exercising
+// construct_into's clone_into arm.
 const constructorArgs = [
-  [
+  () => [
     new Request("http://foo/", {
+      body: "ahoyhoy",
       method: "POST",
     }),
-    {
-      body: "ahoyhoy",
-    },
   ],
-  [
+  () => [
     "http://foo/",
     {
       body: "ahoyhoy",
       method: "POST",
     },
   ],
-  [
+  () => [
     new URL("http://foo/"),
     {
       body: "ahoyhoy",
       method: "POST",
     },
   ],
-  [
+  () => [
     new Request("http://foo/", {
+      body: "ahoyhoy",
       method: "POST",
       headers: {
         "test-header": "value",
       },
     }),
-    {
-      body: "ahoyhoy",
-    },
   ],
-  [
+  () => [
     "http://foo/",
     {
       body: "ahoyhoy",
@@ -50,7 +46,7 @@ const constructorArgs = [
       },
     },
   ],
-  [
+  () => [
     new URL("http://foo/"),
     {
       body: "ahoyhoy",
@@ -67,14 +63,14 @@ for (let i = 0; i < constructorArgs.length; i++) {
     Bun.gc(true);
 
     for (let i = 0; i < 1000 * ASAN_MULTIPLIER; i++) {
-      new Request(...args);
+      new Request(...args());
     }
 
     Bun.gc(true);
     const baseline = (process.memoryUsage.rss() / 1024 / 1024) | 0;
     for (let i = 0; i < 2000 * ASAN_MULTIPLIER; i++) {
       for (let j = 0; j < 500; j++) {
-        new Request(...args);
+        new Request(...args());
       }
       Bun.gc();
     }
@@ -94,7 +90,7 @@ for (let i = 0; i < constructorArgs.length; i++) {
     Bun.gc(true);
 
     for (let i = 0; i < 1000 * ASAN_MULTIPLIER; i++) {
-      const request = new Request(...args);
+      const request = new Request(...args());
       request.clone();
     }
 
@@ -102,7 +98,7 @@ for (let i = 0; i < constructorArgs.length; i++) {
     const baseline = (process.memoryUsage.rss() / 1024 / 1024) | 0;
     for (let i = 0; i < 2000 * ASAN_MULTIPLIER; i++) {
       for (let j = 0; j < 500 * ASAN_MULTIPLIER; j++) {
-        const request = new Request(...args);
+        const request = new Request(...args());
         request.clone();
       }
       Bun.gc();

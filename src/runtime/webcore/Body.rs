@@ -1713,6 +1713,28 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         if matches!(self.get_body_value(), Value::Null | Value::Empty) {
             return Ok(Value::Null);
         }
+        // A Bun.serve request body shares its hive slot with the RequestContext
+        // (`task` points at it). Moving the Locked out would leave the context
+        // delivering into `Used`. Materialize the source stream in place via
+        // `to_readable_stream` (fires `on_readable_stream_available` so the
+        // context switches to streaming delivery) and hand out a detached
+        // PendingValue that only holds the stream.
+        if matches!(self.get_body_value(), Value::Locked(l) if l.task.is_some()) {
+            let stream_value = self.get_body_value().to_readable_stream(global_this)?;
+            let readable = ReadableStream::from_js(stream_value, global_this)?;
+            *self.get_body_value() = Value::Used;
+            if let Some(js_ref) = self.js_ref() {
+                Self::stream_set_cached(js_ref, global_this, JSValue::ZERO);
+                Self::body_set_cached(js_ref, global_this, JSValue::ZERO);
+            }
+            return Ok(match readable {
+                Some(rs) => Value::Locked(PendingValue {
+                    readable: webcore::readable_stream::Strong::init(rs, global_this),
+                    ..PendingValue::new(global_this)
+                }),
+                None => Value::Null,
+            });
+        }
         let cached_stream = match self.js_ref().and_then(Self::stream_get_cached) {
             Some(stream) => ReadableStream::from_js(stream, global_this)?,
             None => None,

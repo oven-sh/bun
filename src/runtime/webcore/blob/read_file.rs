@@ -804,6 +804,7 @@ impl ReadFile {
             // held as a safe `&mut [u8]` across the `&mut self` call.
             let mut buffer = core::mem::take(&mut self.buffer);
             while self.state.load(Ordering::Relaxed) == ClosingState::Running as u8 {
+                self.read_off = buffer.len() as SizeType;
                 let (use_stack, buf) = Self::remaining_buffer(
                     &mut buffer,
                     &mut stack_buffer,
@@ -843,6 +844,7 @@ impl ReadFile {
                     //   be Blob.max_size which is an impossibly large
                     //   amount to read.
                     if !self.read_eof && buffer.len() >= self.max_length as usize {
+                        buffer.truncate(self.max_length as usize);
                         break;
                     }
 

@@ -450,10 +450,8 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub module_scope_directive_loc: bun_ast::Loc,
     pub is_control_flow_dead: bool,
 
-    /// Legacy octal numeric literals (e.g. `010`) are only known to the lexer.
-    /// We record their ranges during the parse pass so the visit pass can emit
-    /// a strict-mode error once the scope's strict-mode kind is fully resolved
-    /// (which for ESM only happens after the whole file has been parsed).
+    /// Ranges of legacy octal numeric literals (`010`), recorded during parse
+    /// and checked for strict-mode errors during visit.
     pub legacy_octal_literals: Vec<bun_ast::Range>,
 
     /// True while `visit_single_stmt` is visiting a non-block body. `if`,

@@ -4593,7 +4593,7 @@ test("merging the same large anchor many times completes quickly", () => {
   expect(elapsed).toBeLessThan(isDebug || isASAN ? 15_000 : 4_000);
 }, 30_000);
 
-test("limits how many properties merge keys can materialize from a small document", () => {
+test("merge keys across many mappings are bounded only by the alias-expansion budget", () => {
   // A normal merge-key document still resolves.
   const small = YAML.parse("base: &base\n  x: 1\n  y: 2\nchild:\n  <<: *base\n  z: 3\n") as {
     base: Record<string, number>;
@@ -4601,25 +4601,87 @@ test("limits how many properties merge keys can materialize from a small documen
   };
   expect(small.child).toEqual({ x: 1, y: 2, z: 3 });
 
-  // One anchor with `keyCount` properties merged into `mergeCount` separate
-  // mappings would materialize keyCount * mergeCount (~1.2 million) property
-  // entries from a ~30 KB document. The parser caps the total number of
-  // properties materialized through merge keys and reports an error instead
-  // of allocating memory proportional to the product.
-  const keyCount = 2048;
-  const mergeCount = 600;
+  // One 64-key anchor merged into 16,500 separate mappings materializes just
+  // over a million properties from a ~380 KB document. Every `*base` reference
+  // is already charged against the alias-expansion budget (16M nodes), so the
+  // parser must accept this document rather than imposing a separate
+  // per-stream cap on merged properties.
+  const keyCount = 64;
+  const mergeCount = 16_500;
 
-  const lines: string[] = ["a: &a"];
+  const lines: string[] = ["base: &base"];
   for (let i = 0; i < keyCount; i++) {
     lines.push(`  k${i}: ${i}`);
   }
+  lines.push("out:");
   for (let i = 0; i < mergeCount; i++) {
-    lines.push(`m${i}:`);
-    lines.push("  <<: *a");
+    lines.push(`  m${i}:`);
+    lines.push("    <<: *base");
   }
   const input = lines.join("\n");
 
-  expect(() => YAML.parse(input)).toThrow();
+  const parsed = YAML.parse(input) as {
+    base: Record<string, number>;
+    out: Record<string, Record<string, number>>;
+  };
+
+  expect(Object.keys(parsed.base)).toHaveLength(keyCount);
+  expect(Object.keys(parsed.out)).toHaveLength(mergeCount);
+  expect(parsed.out.m0).toEqual(parsed.base);
+  expect(parsed.out[`m${mergeCount - 1}`]).toEqual(parsed.base);
+  expect(parsed.out.m0[`k${keyCount - 1}`]).toBe(keyCount - 1);
+}, 120_000);
+
+test("bounds merge-key materialization through nested inline wrappers", () => {
+  // `{<<: {<<: ... {<<: *big}}}` resolves `*big` once but re-materializes
+  // every property at each nesting level, so depth * keyCount properties
+  // are allocated from an input that is linear in depth + keyCount. Each
+  // copy must be charged against the alias-expansion budget.
+  function wrap(keyCount: number, depth: number) {
+    const keys: string[] = [];
+    for (let i = 0; i < keyCount; i++) keys.push(`k${i}: ${i}`);
+    let out = "out: ";
+    for (let i = 0; i < depth; i++) out += "{<<: ";
+    out += "*big";
+    for (let i = 0; i < depth; i++) out += "}";
+    return [`big: &big {${keys.join(", ")}}`, out];
+  }
+
+  // A reasonable nesting depth still parses and produces the merged result.
+  const ok = YAML.parse(wrap(100, 50).join("\n") + "\n") as {
+    big: Record<string, number>;
+    out: Record<string, number>;
+  };
+  expect(Object.keys(ok.out)).toHaveLength(100);
+  expect(ok.out).toEqual(ok.big);
+
+  // Pre-consume the alias-expansion budget down to a small remainder, then
+  // show that nested-merge copies are charged against the same budget: 200
+  // inline wrappers around a 100-key anchor push it over the limit and are
+  // rejected rather than silently materializing depth * keyCount properties.
+  //
+  // Each `*d` reference walks 837,931 nodes and each `*c` walks 27,931, so
+  // building a..d plus `pad: [*d x 18, *c x 29]` charges ~16,759,547 of the
+  // 16,777,216 budget (MAX_ALIAS_EXPANSION), leaving ~17,669 for the nested
+  // merges.
+  const width = 30;
+  const fan = (ref: string) => `[${new Array(width).fill(ref).join(", ")}]`;
+  const bomb = [
+    `a: &a ${fan("0")}`,
+    `b: &b ${fan("*a")}`,
+    `c: &c ${fan("*b")}`,
+    `d: &d ${fan("*c")}`,
+    `pad: [${new Array(18).fill("*d").concat(new Array(29).fill("*c")).join(", ")}]`,
+  ];
+  // Precondition: the bomb on its own must stay under the budget; if it did
+  // not, the final assertion could pass because `pad:` threw, not because
+  // nested merges are charged. Appending an unresolved alias throws
+  // "Unresolved alias" only if the parser got past `pad:` without exhausting
+  // the budget (and avoids materializing the bomb to JS on success).
+  expect(() => YAML.parse(bomb.join("\n") + "\nprobe: *nope\n")).toThrow(/Unresolved alias/);
+
+  const payload = bomb.concat(wrap(100, 200)).join("\n") + "\n";
+  expect(() => YAML.parse(payload)).toThrow(/[Ee]xcessive aliasing/);
 }, 30_000);
 
 test("bounds alias expansion for parsed and imported YAML documents", async () => {

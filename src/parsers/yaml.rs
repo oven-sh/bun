@@ -2252,7 +2252,6 @@ pub struct Parser<'i, Enc: Encoding> {
 
     pub stack_check: StackCheck,
 
-    pub merge_props_budget: usize,
     pub alias_expansion_budget: usize,
 }
 
@@ -2288,7 +2287,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             tag_handles: StringHashMap::default(),
             whitespace_buf: Vec::new(),
             stack_check: StackCheck::init(),
-            merge_props_budget: MappingProps::MAX_MERGED_PROPERTIES,
             alias_expansion_budget: Self::MAX_ALIAS_EXPANSION,
         }
     }
@@ -2679,7 +2677,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         Expr::init(E::Null {}, self.token.start.loc())
                     };
                     let mut props = MappingProps::init();
-                    props.append_maybe_merge(key, value, &mut self.merge_props_budget)?;
+                    props.append_maybe_merge(key, value, &mut self.alias_expansion_budget)?;
                     Expr::init(
                         E::Object {
                             properties: props.move_list(),
@@ -2812,7 +2810,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         current_mapping_indent: Some(self.token.indent),
                         ..Default::default()
                     })?;
-                    props.append_maybe_merge(key, value, &mut self.merge_props_budget)?;
+                    props.append_maybe_merge(key, value, &mut self.alias_expansion_budget)?;
                 }
 
                 // [140] ns-s-flow-map-entries: after an entry, only `,` or `}`.
@@ -3002,7 +3000,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     _ => Expr::init(E::Null {}, mapping_value_start.loc()),
                 };
 
-                props.append_maybe_merge(first_key, value, &mut self.merge_props_budget)?;
+                props.append_maybe_merge(first_key, value, &mut self.alias_expansion_budget)?;
             }
 
             if self.context.get() == Context::FlowIn {
@@ -3134,7 +3132,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         }
                     };
 
-                    props.append_maybe_merge(key, value, &mut self.merge_props_budget)?;
+                    props.append_maybe_merge(key, value, &mut self.alias_expansion_budget)?;
                 }
 
                 Ok(Expr::init(
@@ -3168,8 +3166,6 @@ pub struct MappingProps {
 }
 
 impl MappingProps {
-    pub const MAX_MERGED_PROPERTIES: usize = 1024 * 1024;
-
     pub fn init() -> Self {
         Self {
             list: bun_alloc::AstAlloc::vec(),
@@ -3190,8 +3186,18 @@ impl MappingProps {
         &mut self,
         merge_props: &[G::Property],
         budget: &mut usize,
-    ) -> Result<(), AllocError> {
-        self.list.reserve(merge_props.len().min(*budget));
+    ) -> Result<(), ParseError> {
+        // The `merge_props` slice may have been produced by an inner `<<:`
+        // that already expanded an alias, so a chain of inline wrappers
+        // (`{<<: {<<: ... {<<: *big}}}`) re-materializes the same properties
+        // at every level without any further alias resolution. Charge each
+        // copy against the alias-expansion budget so nested merges are
+        // bounded the same way direct `*alias` references are.
+        *budget = budget
+            .checked_sub(merge_props.len())
+            .ok_or(ParseError::ExcessiveAliasing)?;
+
+        self.list.reserve(merge_props.len());
 
         while self.merge_indexed < self.list.len() {
             let idx = self.merge_indexed;
@@ -3215,7 +3221,6 @@ impl MappingProps {
                     }
                 }
             }
-            *budget = budget.checked_sub(1).ok_or(AllocError)?;
             // `G::Property` is not `Clone`; reconstruct from its `Copy` fields.
             self.list.push(G::Property {
                 key: merge_prop.key,
@@ -3239,7 +3244,7 @@ impl MappingProps {
         key: Expr,
         value: Expr,
         budget: &mut usize,
-    ) -> Result<(), AllocError> {
+    ) -> Result<(), ParseError> {
         let is_merge_key = match &key.data {
             ast::ExprData::EString(key_str) => key_str.eql_comptime(b"<<"),
             _ => false,

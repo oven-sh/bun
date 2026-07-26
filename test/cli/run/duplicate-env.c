@@ -16,6 +16,8 @@ int main(int argc, char **argv) {
     "BUN_DUP_KEY=/second",
     "NODE_TLS_REJECT_UNAUTHORIZED=1",
     "NODE_TLS_REJECT_UNAUTHORIZED=0",
+    "NODE_ENV=from_first",
+    "NODE_ENV=from_second",
     "PATH=/usr/bin:/bin:/usr/local/bin",
     "BUN_DEBUG_QUIET_LOGS=1",
     "NO_COLOR=1",

@@ -171,7 +171,7 @@ const canary: Baseline | undefined = await (async () => {
     ).catch(() => undefined);
     if (cmp?.merge_base_commit?.sha) walkFrom = cmp.merge_base_commit.sha;
   }
-  const commits = await githubJson<{ sha: string }[]>(`commits?sha=${walkFrom}&per_page=30`);
+  const commits = await githubJson<{ sha: string }[]>(`commits?sha=${encodeURIComponent(walkFrom)}&per_page=30`);
   const want = new Set(Object.keys(sizes));
   const acc: Sizes = {};
   const from: Record<string, number> = {};

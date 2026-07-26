@@ -121,10 +121,7 @@ const DateNow = Date.now;
 let cluster;
 
 function emitCloseServer(self: Server) {
-  // Like Node.js's net.Server#_emitCloseIfDrained: 'close' waits for every
-  // accepted connection to end. The native all-closed promise resolves on
-  // pending_requests == 0, so a keep-alive connection that was serving a
-  // request when close() ran is still open when that promise resolves.
+  // The native all-closed promise tracks pending requests, not open connections.
   const connections = self[kTrackedConnections];
   if (connections && connections.size > 0) {
     self[kPendingDrainClose] = true;

@@ -142,8 +142,6 @@ pub struct S3HttpSimpleTask {
     pub body: Box<[u8]>,
     pub poll_ref: KeepAlive,
     pub method: Method,
-    /// Remaining retry attempts. Decremented on each failed response before
-    /// rescheduling; when it reaches 0 the failure is reported to `callback`.
     pub retry: u8,
 }
 
@@ -248,15 +246,10 @@ impl S3HttpSimpleTask {
         bun_core::heap::into_raw(Box::new(init))
     }
 
-    /// Initialise `self.http` from the already-populated `sign_result` / `headers` / `body` /
-    /// `proxy_url` / `method` fields and hand it to the HTTP thread. Used for both the first
-    /// dispatch and for retries, so those fields must already be set and `self.http` must either
-    /// be uninitialised (first dispatch) or have been cleared by the caller (retry).
-    ///
     /// # Safety
-    /// `task_ptr` must be a live heap pointer produced by `S3HttpSimpleTask::new` with exclusive
-    /// access on this thread; the pointer is stored in the HTTP callback and must remain valid
-    /// until `on_response` reclaims it.
+    /// `task_ptr` must be a live heap pointer produced by `S3HttpSimpleTask::new` with its
+    /// `sign_result` / `headers` / `body` / `proxy_url` / `method` fields populated; it must
+    /// remain valid until `on_response` reclaims it.
     pub(crate) unsafe fn schedule_http(task_ptr: *mut Self) {
         // SAFETY: caller contract.
         let task = unsafe { &mut *task_ptr };
@@ -414,8 +407,7 @@ impl S3HttpSimpleTask {
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn on_response(this: *mut Self) -> JsTerminatedResult<()> {
         {
-            // SAFETY: `this` was produced by `S3HttpSimpleTask::new` and is exclusively owned by
-            // the JS thread here (the HTTP thread handed it back via `enqueue_task_concurrent`).
+            // SAFETY: `this` was produced by `S3HttpSimpleTask::new`; JS-thread-owned here.
             let task = unsafe { &mut *this };
             if task.retry > 0 && task.is_retryable_failure() {
                 task.retry -= 1;
@@ -424,10 +416,9 @@ impl S3HttpSimpleTask {
                     "on_response retry (remaining {})",
                     task.retry
                 );
-                // Release the previous AsyncHTTP's owned header copies (same cleanup as `Drop`)
-                // before the no-drop `MaybeUninit::write` in `schedule_http` overwrites it.
                 {
                     // SAFETY: `http` is always initialised before the task pointer escapes.
+                    // Release its owned header copies before `schedule_http` overwrites it.
                     let http = unsafe { task.http.assume_init_mut() };
                     http.clear_data();
                     http.request_headers = Default::default();

@@ -180,14 +180,13 @@ describe("proxy kills upstream", () => {
         outcome = errcode(e);
       }
       // At "upstream-connected", the upstream's close happens before the
-      // tunnel is up; the proxy relays the 502 envelope it writes on
-      // upstream error, which the client surfaces as a 502 response.
-      // After the tunnel is up the close is relayed and the inner TLS
-      // fails. Either is acceptable; a hang is not.
+      // tunnel is up; the proxy's 502 CONNECT reply is surfaced as
+      // ProxyConnectFailed. After the tunnel is up the close is relayed
+      // and the inner TLS fails. Either is acceptable; a hang is not.
       expect(outcome).not.toBe("TimeoutError");
       expect(outcome).not.toBe("AbortError");
       expect(outcome).toMatch(
-        /^resolved:502$|ECONNRESET|ConnectionClosed|ECONNREFUSED|ConnectionRefused|SocketError|EPIPE|ERR_TLS/,
+        /ProxyConnectFailed|ECONNRESET|ConnectionClosed|ECONNREFUSED|ConnectionRefused|SocketError|EPIPE|ERR_TLS/,
       );
     });
   }

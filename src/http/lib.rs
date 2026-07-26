@@ -4774,11 +4774,10 @@ impl<'a> HTTPClient<'a> {
                     // Content-Length in a successful response to CONNECT —
                     // the connection becomes an opaque tunnel and is never
                     // pooled, so the framing-desync concern below does not
-                    // apply.
-                    if self.flags.proxy_tunneling
-                        && self.proxy_tunnel.is_none()
-                        && response.status_code == 200
-                    {
+                    // apply. A non-2xx CONNECT reply is rejected outright
+                    // below (ProxyConnectFailed), so no framing is needed for
+                    // that case either.
+                    if self.flags.proxy_tunneling && self.proxy_tunnel.is_none() {
                         continue;
                     }
                     // byte-level parse — header.value() is network bytes, not &str
@@ -4838,10 +4837,7 @@ impl<'a> HTTPClient<'a> {
                     // RFC 9110 section 9.3.6: as with Content-Length above, a
                     // client MUST ignore Transfer-Encoding in a successful
                     // response to CONNECT.
-                    if self.flags.proxy_tunneling
-                        && self.proxy_tunnel.is_none()
-                        && response.status_code == 200
-                    {
+                    if self.flags.proxy_tunneling && self.proxy_tunnel.is_none() {
                         continue;
                     }
                     // RFC 9112 §7: transfer-coding names are case-insensitive.
@@ -4958,22 +4954,21 @@ impl<'a> HTTPClient<'a> {
             }
         }
 
-        // RFC 9110 §9.3.6: a non-200 response to CONNECT means the tunnel was
-        // not established. Surface the proxy's response to the caller, but
-        // never follow a Location header from it — a malicious proxy could
-        // otherwise redirect the request (body and custom headers included)
-        // to an attacker-chosen plaintext origin.
-        let mut is_proxy_connect_failure = false;
+        // RFC 9110 §9.3.6: any 2xx response to CONNECT means the tunnel is
+        // established and the bytes after the header section are from the
+        // origin. A non-2xx response means the tunnel was not established;
+        // the proxy's status/headers/body arrived over the plaintext
+        // client→proxy hop, so they MUST NOT be returned as an https-origin
+        // Response — reject the fetch instead (curl / Node undici / browsers
+        // all do this; see CVE-2009-2062). The socket is closed by the
+        // caller's close_and_fail on Err.
         if self.flags.proxy_tunneling && self.proxy_tunnel.is_none() {
-            if response.status_code == 200 {
+            if response.status_code >= 200 && response.status_code < 300 {
                 // signal to continue the proxing
                 return Ok(ShouldContinue::ContinueStreaming);
             }
 
-            // proxy denied connection so return proxy result (407, 403 etc)
-            self.flags.proxy_tunneling = false;
-            self.flags.disable_keepalive = true;
-            is_proxy_connect_failure = true;
+            return Err(crate::Error::ProxyConnectFailed(response.status_code));
         }
 
         let status_code = response.status_code;
@@ -4986,8 +4981,7 @@ impl<'a> HTTPClient<'a> {
         // if is no redirect or if is redirect == "manual" just proceed
         let is_redirect = status_code >= 300 && status_code <= 399;
         if is_redirect {
-            if !is_proxy_connect_failure
-                && self.redirect_type == FetchRedirect::Follow
+            if self.redirect_type == FetchRedirect::Follow
                 && !location.is_empty()
                 && self.remaining_redirect_count > 0
             {
@@ -5246,7 +5240,7 @@ impl<'a> HTTPClient<'a> {
                     }
                     _ => {}
                 }
-            } else if !is_proxy_connect_failure && self.redirect_type == FetchRedirect::Error {
+            } else if self.redirect_type == FetchRedirect::Error {
                 // error out if redirect is not allowed
                 return Err(crate::Error::UnexpectedRedirect);
             }

@@ -3768,8 +3768,9 @@ describe("createWriteStream", () => {
     const fifo = join(String(dir), "pipe");
     mkfifo(fifo);
     // Hold the FIFO open for reading so the child's O_WRONLY open does not
-    // block, and never drain it so its write(2) would block if it ran on the
-    // child's JS thread.
+    // block, and do not drain it until the child has proved its event loop is
+    // responsive: a writeSync on the JS thread would block inside ws.write()
+    // and the "alive" line would never be reached.
     const readFd = fs.openSync(fifo, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
     try {
       await using proc = Bun.spawn({
@@ -3780,19 +3781,52 @@ describe("createWriteStream", () => {
            const { once } = require("node:events");
            const ws = fs.createWriteStream(process.argv[1], { flags: "w" });
            await once(ws, "ready");
+           await new Promise(r => setImmediate(r));
            ws.write(Buffer.alloc(256 * 1024, 0x78));
-           await new Promise(r => setTimeout(r, 50));
            console.log("alive");
-           process.exit(0);`,
+           await new Promise((resolve, reject) => ws.end(err => (err ? reject(err) : resolve())));
+           console.log("drained");`,
           fifo,
         ],
         env: bunEnv,
         stdout: "pipe",
         stderr: "pipe",
       });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const reader = proc.stdout.getReader();
+      const decoder = new TextDecoder();
+      let out = "";
+      while (!out.includes("alive\n")) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        out += decoder.decode(value, { stream: true });
+      }
+      expect(out).toContain("alive\n");
+      // Drain the FIFO so the child's pending thread-pool write completes and
+      // it can exit cleanly.
+      let total = 0;
+      const buf = Buffer.alloc(64 * 1024);
+      while (total < 256 * 1024) {
+        let n;
+        try {
+          n = fs.readSync(readFd, buf, 0, buf.length, null);
+        } catch (e: any) {
+          if (e.code !== "EAGAIN") throw e;
+          n = 0;
+        }
+        if (n === 0) {
+          await Bun.sleep(1);
+          continue;
+        }
+        total += n;
+      }
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        out += decoder.decode(value, { stream: true });
+      }
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
       expect(stderr).toBe("");
-      expect(stdout.trim()).toBe("alive");
+      expect(out.trim().split("\n")).toEqual(["alive", "drained"]);
       expect(exitCode).toBe(0);
     } finally {
       fs.closeSync(readFd);

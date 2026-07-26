@@ -1818,6 +1818,9 @@ impl<'a> Resolver<'a> {
                 };
                 let mut len = abs.len();
                 if ends_with_dir {
+                    if len >= buf.len() {
+                        return ResultUnion::NotFound;
+                    }
                     buf[len] = platform.separator();
                     len += 1;
                 }

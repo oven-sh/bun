@@ -780,8 +780,12 @@ describe("Bun.build", () => {
         // extension-probe append would overflow, plus one well past it.
         const max = process.platform === "darwin" ? 1024 : process.platform === "win32" ? 32767 * 3 + 1 : 4096;
         const lens = [...Array.from({ length: 16 }, (_, i) => max - 8 + i), max + 1000];
+        const pad = n => Buffer.alloc(Math.max(1, n - import.meta.dir.length), "a");
         const tags = lens
-          .map(n => \`<script src="/\${Buffer.alloc(Math.max(1, n - import.meta.dir.length - 4), "a")}.js"></script>\`)
+          .flatMap(n => [
+            \`<script src="/\${pad(n - 4)}.js"></script>\`,
+            \`<script src="/foo..\${pad(n - 7)}/"></script>\`,
+          ])
           .join("");
         writeFileSync("./index.html", \`<html><body>\${tags}</body></html>\`);
         const r = await Bun.build({ entrypoints: ["./index.html"], throw: false });

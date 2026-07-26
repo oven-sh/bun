@@ -2608,8 +2608,9 @@ where
         if self.app.is_none() || self.deinit_running.get() {
             return Ok(JSValue::UNDEFINED);
         }
-        // Each close reaches `on_connection_filter(-1)` synchronously; hold the
-        // guard so it cannot re-derive `&mut self` while this frame owns it.
+        // On a Bun.serve server each close reaches `on_connection_filter(-1)`
+        // synchronously; hold the guard so it cannot re-derive `&mut self`
+        // while this frame owns it.
         self.deinit_running.set(true);
         self.app_mut().close_idle_connections();
         self.deinit_running.set(false);

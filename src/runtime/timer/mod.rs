@@ -343,22 +343,27 @@ impl TimerHeap {
     }
 
     /// `true` iff any `TimeoutObject` (user `setTimeout`/`setInterval`) node
-    /// is due at or before `deadline`. O(n) walk; the heap is small.
+    /// is due at or before `deadline`. O(n) worklist walk.
     pub(crate) fn any_js_timer_due_by(&self, deadline: &Timespec) -> bool {
-        unsafe fn walk(node: *mut EventLoopTimer, deadline: &Timespec) -> bool {
-            if node.is_null() {
-                return false;
-            }
-            // SAFETY: reachable heap nodes are live (intrusive invariant).
+        let mut stack: Vec<*mut EventLoopTimer> = Vec::new();
+        if !self.0.root.is_null() {
+            stack.push(self.0.root);
+        }
+        while let Some(node) = stack.pop() {
+            // SAFETY: every pushed pointer is a non-null reachable heap node;
+            // nodes stay live for the heap's lifetime (intrusive invariant).
             let t = unsafe { &*node };
             if t.tag == EventLoopTimerTag::TimeoutObject && !t.next.greater(deadline) {
                 return true;
             }
-            // SAFETY: `child`/`next` are valid-or-null heap links.
-            unsafe { walk(t.heap.child, deadline) || walk(t.heap.next, deadline) }
+            if !t.heap.next.is_null() {
+                stack.push(t.heap.next);
+            }
+            if !t.heap.child.is_null() {
+                stack.push(t.heap.child);
+            }
         }
-        // SAFETY: `self.0.root` is valid-or-null; all reachable nodes are live.
-        unsafe { walk(self.0.root, deadline) }
+        false
     }
 }
 

@@ -388,8 +388,7 @@ impl PendingValue {
                         Action::GetBlob => global_this.readable_stream_to_blob(readable.value),
                         Action::GetFormData(form_data) => 'brk: {
                             let encoding_js = match form_data.take() {
-                                // MIME check failed: drain then reject. `false` survives
-                                // the reaction-context plumbing (null/undefined do not).
+                                // `false` survives the reaction-context plumbing; null/undefined do not.
                                 None => JSValue::FALSE,
                                 Some(fd) => match &fd.encoding {
                                     bun_core::form_data::Encoding::Multipart(multipart) => {

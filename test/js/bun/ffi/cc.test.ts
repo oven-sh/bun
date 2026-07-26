@@ -1,4 +1,4 @@
-import { cc, CString, JSCallback, ptr, type FFIFunction, type Library } from "bun:ffi";
+import { cc, CString, FFIType, JSCallback, ptr, type FFIFunction, type Library } from "bun:ffi";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { promises as fs } from "fs";
 import { bunEnv, bunExe, isASAN, isWindows, normalizeBunSnapshot, tempDir, tempDirWithFiles } from "harness";
@@ -91,6 +91,147 @@ describe.skipIf(isASAN)("given an add(a, b) function", () => {
     }).toThrow(/"subtract" is missing/);
   });
 }); // </given add(a, b) function>
+
+// Regression test: the compiler accepts `"size_t"` as a type, but it was
+// missing from the JS `FFIType` map, so once `FFIBuilder` became reachable for
+// `cc` a `"size_t"` arg/return threw `Unsupported type size_t`.
+describe.skipIf(isASAN || isFFIUnavailable)("given an inc(size_t) function", () => {
+  let dir: string;
+  let res: Library<{ inc: { args: ["size_t"]; returns: "size_t" } }>;
+
+  beforeAll(() => {
+    dir = tempDirWithFiles("bun-ffi-cc-size_t", {
+      "inc.c": /* c */ `
+        #include <stddef.h>
+        size_t inc(size_t n) {
+          return n + 1;
+        }
+      `,
+    });
+    res = cc({
+      source: path.join(dir, "inc.c"),
+      symbols: {
+        inc: {
+          args: ["size_t"],
+          returns: "size_t",
+        },
+      },
+    });
+  });
+
+  afterAll(async () => {
+    res.close();
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+
+  it("accepts `size_t` as an argument and return type", () => {
+    // `size_t` maps to `uint64_t`, so it round-trips as a bigint.
+    expect(res.symbols.inc(41n)).toBe(42n);
+  });
+}); // </given an inc(size_t) function>
+
+// Regression test: `cc` read symbol definitions from `options[key]` instead of
+// `options.symbols[key]`, so the `cstring` return wrapper was never applied and
+// the function returned a raw pointer number instead of a `CString`.
+describe.skipIf(isASAN || isFFIUnavailable)("given a hello() function returning a cstring", () => {
+  let dir: string;
+  let res: Library<{ hello: { args: []; returns: "cstring" } }>;
+
+  beforeAll(() => {
+    dir = tempDirWithFiles("bun-ffi-cc-cstring", {
+      "hello.c": /* c */ `
+        const char* hello() {
+          return "Hello, World!";
+        }
+      `,
+    });
+    res = cc({
+      source: path.join(dir, "hello.c"),
+      symbols: {
+        hello: {
+          returns: "cstring",
+          args: [],
+        },
+      },
+    });
+  });
+
+  afterAll(async () => {
+    res.close();
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+
+  it("returns a CString, not a raw pointer number", () => {
+    const result = res.symbols.hello();
+    expect(typeof result).not.toBe("number");
+    expect(result).toBeInstanceOf(CString);
+    expect(String(result)).toBe("Hello, World!");
+  });
+}); // </given a hello() function returning a cstring>
+
+// Regression test: once the `cstring` fix made `FFIBuilder` reachable for `cc`,
+// `napi_value` arguments were coerced with the default `val|0` wrapper (turning
+// them into `0` / throwing on BigInt) instead of being passed through as-is.
+// `napi_value` is an opaque pointer, so an identity function needs no Node-API
+// headers and links nothing — it just round-trips the raw JSValue.
+describe.skipIf(isASAN || isFFIUnavailable)("given an identity(napi_value) function", () => {
+  let dir: string;
+  let res: Library<{ identity: { args: ["napi_value"]; returns: "napi_value" } }>;
+
+  beforeAll(() => {
+    dir = tempDirWithFiles("bun-ffi-cc-napi-arg", {
+      "identity.c": /* c */ `
+        typedef struct napi_value__* napi_value;
+        napi_value identity(napi_value value) {
+          return value;
+        }
+      `,
+    });
+    res = cc({
+      source: path.join(dir, "identity.c"),
+      symbols: {
+        identity: {
+          args: ["napi_value"],
+          returns: "napi_value",
+        },
+      },
+    });
+  });
+
+  afterAll(async () => {
+    res.close();
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+
+  it("returns the same JS value it was passed", () => {
+    // Without the fix, the argument is coerced (e.g. to the number 0), so the
+    // round-tripped value would not be identical to the input.
+    for (const value of [{ a: 1 }, "hello", 12345, [1, 2, 3], true]) {
+      expect(Object.is(res.symbols.identity(value), value)).toBe(true);
+    }
+  });
+
+  it("works when the type is given as the numeric FFIType enum", () => {
+    // `FFIType.napi_value` is 19; the reverse lookup `FFIType[19]` must resolve
+    // so `FFIBuilder` picks the right wrapper instead of throwing/coercing.
+    // Reuses the identical source compiled in `beforeAll` (cleaned up by `afterAll`).
+    const numericRes = cc({
+      source: path.join(dir, "identity.c"),
+      symbols: {
+        identity: {
+          args: [FFIType.napi_value],
+          returns: FFIType.napi_value,
+        },
+      },
+    });
+    try {
+      const value = { b: 2 };
+      expect(Object.is(numericRes.symbols.identity(value), value)).toBe(true);
+    } finally {
+      numericRes.close();
+    }
+  });
+}); // </given an identity(napi_value) function>
 
 describe("given a source file with syntax errors", () => {
   const source = /* c */ `

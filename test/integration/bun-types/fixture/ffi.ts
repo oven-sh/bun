@@ -25,6 +25,11 @@ const lib = dlopen(
       args: [FFIType.function],
       returns: FFIType.function,
     },
+    size_type: {
+      // "size_t" is accepted as a string alias of uint64_t
+      args: ["size_t"],
+      returns: "size_t",
+    },
     allArgs: {
       args: [
         FFIType.char, // string
@@ -70,6 +75,9 @@ tsd.expectType<number>(lib.symbols.add(1, 2));
 tsd.expectType<Pointer | null>(lib.symbols.ptr_type(ptr));
 
 tsd.expectType<Pointer | null>(lib.symbols.fn_type(new JSCallback(() => {}, {})));
+
+// "size_t" resolves to uint64_t: accepts number|bigint, returns bigint
+tsd.expectType<bigint>(lib.symbols.size_type(1n));
 
 function _arg(
   ...params: [

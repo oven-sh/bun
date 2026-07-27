@@ -620,10 +620,9 @@ test("coverage report generation is not quadratic in function count", () => {
   const covered = run(true);
 
   // Report generation is a single linear pass over the module's mappings, so
-  // the covered run should cost at most a small multiple of the plain run.
-  // Before the fix the ratio here was >4x in debug and ~12x in release. The
-  // 100ms floor keeps scheduler jitter on the very fast release-build plain
-  // run from shrinking the budget below the noise floor.
+  // the covered run should cost at most a small multiple of the plain run. The
+  // floor keeps scheduler jitter on very fast release-build plain runs from
+  // shrinking the budget below the noise floor.
   const budget = Math.max(plain, 100) * 3;
   expect({ plain, covered, budget }).toSatisfy(t => t.covered < t.budget);
 });

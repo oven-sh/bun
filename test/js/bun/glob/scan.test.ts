@@ -683,11 +683,18 @@ describe("lazy iteration", () => {
 
   test("scan: breaking early releases the directory fd", async () => {
     // The async close() path is gated on has_pending_activity == 0, which the
-    // sync variant never touches; exercise it separately.
-    using dir = tempDir("glob-lazy-fd-async", { "a/b.txt": "", "a/c.txt": "" });
+    // sync variant never touches. More than ASYNC_CHUNK files under `a/` means
+    // the first chunk returns with the walker still inside `a`, so `break`
+    // actually has a live dirfd to release.
+    const files: Record<string, string> = {};
+    for (let i = 0; i < 100; i++) files[`a/f${i}.txt`] = "";
+    using dir = tempDir("glob-lazy-fd-async", files);
     const before = getFDCount();
+    const held: unknown[] = [];
     for (let i = 0; i < 64; i++) {
-      for await (const entry of new Glob("**/*.txt").scan({ cwd: String(dir) })) {
+      const it = new Glob("**/*.txt").scan({ cwd: String(dir) });
+      held.push(it);
+      for await (const entry of it) {
         expect(entry).toStartWith("a" + path.sep);
         break;
       }
@@ -698,6 +705,7 @@ describe("lazy iteration", () => {
     } else {
       expect(getFDCount() - before).toBeLessThan(8);
     }
+    held.length = 0;
   });
 
   test("scanSync: never-iterated result holds no fd", () => {

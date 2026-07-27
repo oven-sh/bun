@@ -393,14 +393,11 @@ test.skipIf(isWindows)(
   30_000,
 );
 
-// Post-cancel invariant: after cancelling a from_pipe FileReader, the Strong
-// pin (the io-ref taken by `from_pipe`) must be released so the wrapper is
-// collectable. This scenario reaches FileReader::on_cancel with
-// waiting_for_on_reader_done = true; on current main the release happens via
-// close() → on_reader_done. It guards against any future change that makes
-// on_cancel return with the io-ref still held (which would be a silent
-// NewSource<FileReader> leak in release and a `done && waiting` debug_assert
-// at finalize_detach in assertion builds).
+// Post-cancel invariant: after cancelling a from_pipe FileReader that never
+// received data, the io-ref taken by `from_pipe` must be released so the
+// wrapper is collectable. A stranded ref is a silent NewSource<FileReader>
+// leak in release and a `done && waiting` debug_assert at finalize_detach in
+// assertion builds.
 test.skipIf(isWindows)(
   "cancelling a subprocess stdout FileReader before any data releases the io-ref",
   async () => {

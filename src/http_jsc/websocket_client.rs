@@ -63,6 +63,19 @@ const MAX_CLOSE_REASON: usize = MAX_CONTROL_PAYLOAD - 2;
 /// Outgoing control frame prefix: 2-byte header + 4-byte masking key.
 const CONTROL_HEADER_SIZE: usize = 6;
 
+/// Closing-handshake drain timeout, normalised for uSockets' timer wheel.
+/// 0 disables. Armed whenever a Close frame is queued behind an undrained
+/// `send_buffer`; on expiry the socket is torn down with close(1006) instead
+/// of waiting forever for a non-reading peer.
+#[inline]
+fn close_drain_timeout_seconds() -> core::ffi::c_uint {
+    bun_http::normalize_idle_timeout_seconds(
+        bun_core::env_var::BUN_CONFIG_WS_CLOSE_TIMEOUT
+            .get()
+            .unwrap_or(30),
+    )
+}
+
 #[derive(bun_ptr::CellRefCounted)]
 #[ref_count(destroy = Self::deinit)]
 pub struct WebSocket<const SSL: bool> {
@@ -880,6 +893,7 @@ impl<const SSL: bool> WebSocket<SSL> {
 
         if cursor.body_remain == 0 {
             self.close_received.set(true);
+            self.notify_closing_handshake_started();
             self.send_close();
             return Step::Terminated;
         }
@@ -889,6 +903,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         };
 
         self.close_received.set(true);
+        self.notify_closing_handshake_started();
         if payload_len >= 2 {
             let received_code = u16::from_be_bytes([payload[0], payload[1]]);
             let (echo_code, dispatch_code) = received_close_codes(received_code);
@@ -1207,6 +1222,11 @@ impl<const SSL: bool> WebSocket<SSL> {
                 // handle_writable drains the buffer or the socket dies.
                 self.close_dispatch_pending
                     .replace(Some((dispatch_code, reason)));
+                // Bound the drain: a non-reading peer would otherwise park us
+                // here forever with no close event. `handle_timeout` tears the
+                // socket down with close(1006) if this fires before the drain.
+                // No-op in tunnel mode (tcp is detached).
+                self.tcp.get().set_timeout(close_drain_timeout_seconds());
             }
         }
     }
@@ -1226,9 +1246,21 @@ impl<const SSL: bool> WebSocket<SSL> {
 
     fn finish_pending_close(&self) {
         if let Some((code, mut reason)) = self.close_dispatch_pending.take() {
+            self.tcp.get().set_timeout(0);
             self.shutdown_after_close_frame();
             self.clear_data();
             self.dispatch_close(code, &mut reason);
+        }
+    }
+
+    /// Tell C++ the closing handshake has begun (server Close received) so
+    /// `readyState` is CLOSING and `send()` becomes a spec no-op before the
+    /// echo Close has drained. The eventual `dispatch_close` /
+    /// `dispatch_abrupt_close` still runs `didStartClosingHandshake()` again,
+    /// which is idempotent.
+    fn notify_closing_handshake_started(&self) {
+        if let Some(out) = self.outgoing_websocket.get() {
+            CppWebSocket::opaque_ref(out.as_ptr()).did_start_closing_handshake();
         }
     }
 
@@ -1272,6 +1304,15 @@ impl<const SSL: bool> WebSocket<SSL> {
     }
 
     pub fn handle_timeout(&self, _socket: Socket<SSL>) {
+        // Close-drain timeout: the echo Close (or user-initiated Close) sat
+        // behind an undrained send buffer past `close_drain_timeout_seconds()`.
+        // Report an abnormal closure (1006, wasClean=false) rather than the
+        // pending code/reason, since the close frame never reached the peer.
+        if let Some((_, reason)) = self.close_dispatch_pending.take() {
+            reason.deref();
+            self.terminate(ErrorCode::Ended);
+            return;
+        }
         self.terminate(ErrorCode::Timeout);
     }
 
@@ -1786,6 +1827,18 @@ impl<const SSL: bool> WebSocket<SSL> {
         // This is under-estimated a little, as we don't include usockets context.
         cost
     }
+
+    /// Bytes queued for transmission but not yet handed to the OS socket
+    /// (`send_buffer.readable_length()`). Surfaced as `WebSocket.bufferedAmount`.
+    // `extern "C"` entrypoint; `this` is non-null by C++ contract (see SAFETY comment below).
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
+    pub extern "C" fn buffered_amount(this: *const Self) -> usize {
+        // SAFETY: called from C++ with a valid pointer
+        let this = unsafe { &*this };
+        this.send_buffer
+            .try_borrow()
+            .map_or(0, |b| b.readable_length())
+    }
 }
 
 /// Transcode a close reason to UTF-8 into `buf`; `None` when it exceeds `MAX_CLOSE_REASON`.
@@ -1818,6 +1871,7 @@ fn encode_close_reason(reason: &ZigString, buf: &mut [u8; MAX_CONTROL_PAYLOAD]) 
 macro_rules! export_websocket_client {
     (
         $ssl:expr,
+        buffered_amount = $buffered_amount:ident,
         cancel = $cancel:ident,
         close = $close:ident,
         finalize = $finalize:ident,
@@ -1828,6 +1882,10 @@ macro_rules! export_websocket_client {
         write_blob = $write_blob:ident,
         write_string = $write_string:ident $(,)?
     ) => {
+        #[unsafe(no_mangle)]
+        pub extern "C" fn $buffered_amount(this: *const WebSocket<$ssl>) -> usize {
+            WebSocket::<$ssl>::buffered_amount(this)
+        }
         #[unsafe(no_mangle)]
         pub extern "C" fn $cancel(this: *mut WebSocket<$ssl>) {
             WebSocket::<$ssl>::cancel(this)
@@ -1908,6 +1966,7 @@ macro_rules! export_websocket_client {
 
 export_websocket_client!(
     false,
+    buffered_amount = Bun__WebSocketClient__bufferedAmount,
     cancel = Bun__WebSocketClient__cancel,
     close = Bun__WebSocketClient__close,
     finalize = Bun__WebSocketClient__finalize,
@@ -1920,6 +1979,7 @@ export_websocket_client!(
 );
 export_websocket_client!(
     true,
+    buffered_amount = Bun__WebSocketClientTLS__bufferedAmount,
     cancel = Bun__WebSocketClientTLS__cancel,
     close = Bun__WebSocketClientTLS__close,
     finalize = Bun__WebSocketClientTLS__finalize,

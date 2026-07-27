@@ -343,8 +343,16 @@ export function runSetupFunction(
     return this.promises;
   };
 
+  // Expose a snapshot of the caller's config, not the live object: every
+  // option has already been consumed by the time setup() runs, so writes here
+  // must not feed back into the build or into the caller's object.
+  const configSnapshot: BuildConfigExt = { ...config };
+  if ($isJSArray(config.plugins)) configSnapshot.plugins = [...config.plugins];
+  if ($isJSArray(config.entrypoints)) configSnapshot.entrypoints = [...config.entrypoints!];
+  if ($isJSArray(config.entryPoints)) configSnapshot.entryPoints = [...config.entryPoints!];
+
   var setupResult = setup({
-    config: config,
+    config: configSnapshot,
     onDispose: notImplementedIssueFn(2771, "On-dispose callbacks"),
     onEnd,
     onLoad,
@@ -360,15 +368,15 @@ export function runSetupFunction(
     },
     // esbuild's options argument is different, we provide some interop
     initialOptions: {
-      ...config,
+      ...configSnapshot,
       bundle: true,
-      entryPoints: config.entrypoints ?? config.entryPoints ?? [],
-      minify: typeof config.minify === "boolean" ? config.minify : false,
-      minifyIdentifiers: config.minify === true || (config.minify as MinifyObj)?.identifiers,
-      minifyWhitespace: config.minify === true || (config.minify as MinifyObj)?.whitespace,
-      minifySyntax: config.minify === true || (config.minify as MinifyObj)?.syntax,
-      outbase: config.root,
-      platform: config.target === "bun" ? "node" : config.target,
+      entryPoints: configSnapshot.entrypoints ?? configSnapshot.entryPoints ?? [],
+      minify: typeof configSnapshot.minify === "boolean" ? configSnapshot.minify : false,
+      minifyIdentifiers: configSnapshot.minify === true || (configSnapshot.minify as MinifyObj)?.identifiers,
+      minifyWhitespace: configSnapshot.minify === true || (configSnapshot.minify as MinifyObj)?.whitespace,
+      minifySyntax: configSnapshot.minify === true || (configSnapshot.minify as MinifyObj)?.syntax,
+      outbase: configSnapshot.root,
+      platform: configSnapshot.target === "bun" ? "node" : configSnapshot.target,
     },
     esbuild: {},
   } as PluginBuilderExt);

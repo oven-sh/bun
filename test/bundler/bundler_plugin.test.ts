@@ -1,4 +1,5 @@
 import { describe, expect } from "bun:test";
+import { existsSync } from "node:fs";
 import path, { dirname, join, resolve } from "node:path";
 import { itBundled } from "./expectBundled";
 
@@ -807,7 +808,45 @@ describe("bundler", () => {
       },
       entryPoints: ["./index.ts"],
       plugins(build) {
-        expect(build.config).toBe(getConfigRef());
+        const callerConfig = getConfigRef();
+        // build.config is a snapshot, not the caller's live object
+        expect(build.config).not.toBe(callerConfig);
+        expect(build.config.entrypoints).toEqual(callerConfig.entrypoints);
+        expect(build.config.outdir).toBe(callerConfig.outdir);
+        expect(build.config.plugins).toEqual(callerConfig.plugins);
+      },
+    };
+  });
+  itBundled("plugin/ConfigMutationIsNoop", ({ root, getConfigRef }) => {
+    let callerConfig: any;
+    return {
+      files: {
+        "index.ts": `console.log("CALLERS-ENTRY", MUT_DEFINE);`,
+        "evil.ts": `console.log("PLUGIN-CHOSE-ME");`,
+      },
+      entryPoints: ["./index.ts"],
+      backend: "api",
+      define: { MUT_DEFINE: '"caller"' },
+      plugins(build) {
+        callerConfig = getConfigRef();
+        // None of these should affect the build: config is read before setup() runs.
+        build.config.entrypoints = [join(root, "evil.ts")];
+        build.config.outdir = join(root, "evil-out");
+        build.config.minify = true;
+        build.config.define = { MUT_DEFINE: '"plugin"' };
+        (build.config as any).target = "node";
+      },
+      run: {
+        stdout: "CALLERS-ENTRY caller",
+      },
+      onAfterBundle(api) {
+        const out = api.readFile("out.js");
+        expect(out).toContain("CALLERS-ENTRY");
+        expect(out).not.toContain("PLUGIN-CHOSE-ME");
+        expect(existsSync(join(api.root, "evil-out"))).toBe(false);
+        // The caller's own object was not mutated either.
+        expect(callerConfig.outdir).not.toBe(join(root, "evil-out"));
+        expect(callerConfig.define).toEqual({ MUT_DEFINE: '"caller"' });
       },
     };
   });

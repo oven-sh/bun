@@ -151,7 +151,7 @@ const result = await Bun.build({
 
 Here, Bun waits for both `onStart()` callbacks to complete: the first sleeps for 10 seconds and the second writes the bundle time to a file.
 
-`onStart()` callbacks (like every other lifecycle callback) cannot modify the `build.config` object. To mutate `build.config`, do so directly in the `setup()` function.
+`build.config` is a read-only snapshot of the options passed to `Bun.build`. The bundler reads every option before `setup()` runs, so writing to `build.config` (in `setup()` or any lifecycle callback) has no effect on the build.
 
 ### `onResolve`
 

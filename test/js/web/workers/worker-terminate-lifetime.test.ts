@@ -181,10 +181,15 @@ test.skipIf(!isASAN)(
 // shutdown's close_all_socket_groups() deliberately skips listen sockets on
 // the assumption the owner closes them in finalize (Bun.listen's Listener
 // does), so a Bun.serve() server in a terminated worker leaked its listen fd
-// and the port stayed bound for the life of the process.
-test(
-  "terminating a worker running Bun.serve() releases the listening port",
-  async () => {
+// and the port stayed bound for the life of the process. All three exit modes
+// below converge on WebWorker::shutdown() -> lastChanceToFinalize().
+test.each([
+  ["parent terminate()", "", true],
+  ["worker process.exit()", " setImmediate(() => process.exit(0));", false],
+  ["worker unref() + drain", " s.unref();", false],
+])(
+  "Bun.serve() in a worker releases the listening port on %s",
+  async (_name, tail, parentTerminates) => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -192,13 +197,13 @@ test(
         `
         const serveWorker =
           "const s = Bun.serve({ port: 0, fetch: () => new Response('ok') });" +
-          "postMessage(s.port);";
+          "postMessage(s.port);" + ${JSON.stringify(tail)};
 
         async function cycle() {
           const w = new Worker("data:text/javascript," + encodeURIComponent(serveWorker));
           const port = await new Promise(r => w.addEventListener("message", e => r(e.data), { once: true }));
           const closed = new Promise(r => w.addEventListener("close", r, { once: true }));
-          w.terminate();
+          ${parentTerminates ? "w.terminate();" : ""}
           await closed;
           // Worker has fully exited; its listen socket must be gone. Rebind
           // fails with EADDRINUSE if the old listener is still alive.
@@ -219,8 +224,17 @@ test(
         const ports = [];
         for (let i = 0; i < 5; i++) ports.push(await cycle());
 
-        Bun.gc(true);
-        console.log(JSON.stringify({ ports: ports.length, fdDelta: fdCount() - before }));
+        // The 'close' event fires from WebWorker__dispatchExit (shutdown step
+        // 4); the detached worker thread then still runs step 5 (vm.destroy +
+        // on_thread_exit) which closes the per-worker epoll/eventfd. Poll the
+        // fd count with a bounded deadline so the last cycle's worker has
+        // reached that point instead of relying on gc() as an implicit sleep.
+        let fdDelta = fdCount() - before;
+        for (let i = 0; fdDelta > 1 && i < 100; i++) {
+          await Bun.sleep(10);
+          fdDelta = fdCount() - before;
+        }
+        console.log(JSON.stringify({ ports: ports.length, fdDelta }));
       `,
       ],
       env: bunEnv,
@@ -234,7 +248,7 @@ test(
     // Every cycle rebound its port: EADDRINUSE would have thrown before here.
     expect(ports).toBe(5);
     if (isLinux) {
-      // Unfixed: one listen fd per cycle (>= 5). Allow 1 for incidental fds.
+      // Unfixed: one listen fd per cycle (>= 5).
       expect(fdDelta).toBeLessThanOrEqual(1);
     }
     expect(exitCode).toBe(0);

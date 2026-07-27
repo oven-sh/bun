@@ -2760,12 +2760,24 @@ where
         // worker and the port stays bound. `deinit_if_we_can` then sees
         // `has_listener() == false` and can proceed to `schedule_deinit`.
         if let Some(listener) = this.listener.take() {
+            if let server_config::Address::Unix(path) = &this.config.address {
+                let bytes = path.as_bytes();
+                if !bytes.is_empty() && bytes[0] != 0 {
+                    let _ = bun_sys::unlink(path.as_zstr());
+                }
+            }
             bun_opaque::opaque_deref_mut(listener).close();
         }
+        // `h3_listener` is deliberately NOT closed here:
+        // `us_quic_listen_socket_close` walks every live QUIC conn with
+        // `lsquic_conn_abort` + `us_quic_process`, which synchronously fires
+        // `on_stream_close` → `RequestContext::on_abort` (JS abort listeners,
+        // `signal_fire`, `drain_microtasks`), and `close_all_socket_groups`
+        // never drained QUIC conns. Re-entering JS inside
+        // `lastChanceToFinalize()` is unsound; leaving the H3 UDP fd for a
+        // terminated worker is the pre-existing state for that path.
         if Self::HAS_H3 {
-            if let Some(h3l) = this.h3_listener.take() {
-                bun_opaque::opaque_deref_mut(h3l).close();
-            }
+            this.h3_listener = None;
         }
         this.deinit_if_we_can();
     }

@@ -152,7 +152,12 @@ describe("String.prototype.localeCompare with a string locale", () => {
   test("matches new Intl.Collator(locale).compare", () => {
     for (const loc of ["en", "sv", "de", "ja", "fr", "de-u-co-phonebk"]) {
       const cmp = new Intl.Collator(loc).compare;
-      for (const [a, b] of [["ä", "z"], ["ä", "ae"], ["a", "A"], ["abc", "abd"]] as const) {
+      for (const [a, b] of [
+        ["ä", "z"],
+        ["ä", "ae"],
+        ["a", "A"],
+        ["abc", "abd"],
+      ] as const) {
         expect(a.localeCompare(b, loc)).toBe(cmp(a, b));
       }
     }

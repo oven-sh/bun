@@ -3908,8 +3908,9 @@ unsafe fn normalize_specifier_for_loader<'a>(
     if let Some(i) = bun_core::strings::index_of_char_usize(slice, b'?') {
         let i = i as usize;
         let stripped = &slice[..i];
-        // `?` starts a query only when the stripped prefix is itself a file.
-        if !bun_paths::is_absolute(stripped) || bun_sys::exists_as_file(stripped) {
+        // `?` starts a query only when the stripped prefix is itself a file;
+        // `?` is not a valid NTFS filename character, so always split on Windows.
+        if cfg!(windows) || !bun_paths::is_absolute(stripped) || bun_sys::exists_as_file(stripped) {
             query = &slice[i..];
             slice = stripped;
         }

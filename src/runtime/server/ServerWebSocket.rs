@@ -530,8 +530,6 @@ impl ServerWebSocket {
         self.flags.get().closed()
     }
 
-    /// Route a handler's returned promise (if any) to `websocket.error` on
-    /// rejection; left untouched when no `error` handler is configured.
     fn handle_handler_promise(
         &self,
         result: JSValue,

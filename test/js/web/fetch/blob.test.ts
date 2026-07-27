@@ -198,6 +198,15 @@ test("new File(new Uint8Array()) is supported", async () => {
   expect(blob.name).toBe("file.txt");
 });
 
+test("a File constructed with an empty name keeps it", () => {
+  // A plain Blob with an explicitly empty `name` has none (`response.blob()`
+  // relies on that to hide a shared File store's name); a File's empty `name`
+  // is a real filename.
+  using dir = tempDir("file-empty-name", { "a.txt": "x" });
+  const file = new File([Bun.file(path.join(String(dir), "a.txt"))], "");
+  expect({ name: file.name, isFile: file instanceof File }).toEqual({ name: "", isFile: true });
+});
+
 test("new File('123', '123') is NOT supported", async () => {
   expect(() => new File("123", "123")).toThrow();
 });

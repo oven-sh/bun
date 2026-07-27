@@ -8,6 +8,7 @@ namespace WebCore {
 
 extern "C" void* Blob__dupeFromJS(JSC::EncodedJSValue impl);
 extern "C" void* Blob__dupe(void* impl);
+extern "C" void Blob__setType(void* impl, const unsigned char* ptr, size_t len);
 extern "C" void* Blob__getDataPtr(JSC::EncodedJSValue blob);
 extern "C" size_t Blob__getSize(JSC::EncodedJSValue blob);
 extern "C" void* Blob__fromBytes(JSC::JSGlobalObject* globalThis, const void* ptr, size_t len);

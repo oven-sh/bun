@@ -193,6 +193,10 @@ impl BodyMixin for Request {
     ) -> bun_jsc::JsResult<Option<Box<bun_core::form_data::AsyncFormData>>> {
         Request::get_form_data_encoding(self)
     }
+    #[inline]
+    fn get_content_type(&self) -> bun_jsc::JsResult<Option<bun_core::ZigStringSlice>> {
+        Request::get_content_type(self)
+    }
 }
 
 // ─── header accessors & simple getters ──────────────────────────────────────

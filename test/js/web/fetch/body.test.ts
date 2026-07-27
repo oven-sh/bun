@@ -1,6 +1,7 @@
 import { file, spawn, version } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, exampleSite } from "harness";
+import { bunEnv, bunExe, exampleSite, tempDir } from "harness";
+import { join } from "node:path";
 
 const exampleServer = exampleSite("http");
 
@@ -769,5 +770,347 @@ describe("constructing a body from an unusable ReadableStream", () => {
     rs.getReader();
     expect(() => new Response(rs)).toThrow(TypeError);
     expect(() => new Request("http://example.com/", { method: "POST", body: rs, duplex: "half" })).toThrow(TypeError);
+  });
+});
+
+// https://fetch.spec.whatwg.org/#dom-body-blob: `blob()` resolves to a plain
+// `Blob` (never a `File`) whose `type` is "extract a MIME type" of the header
+// list, serialized per mimesniff and normalized like any Blob `type`.
+for (const { body: bodyType, fn } of bodyTypes) {
+  describe(`${bodyType.name}.prototype.blob()`, () => {
+    // Every (header, type) pair below was verified against Node.js v26.
+    const headerToBlobType: [header: string, type: string][] = [
+      ["text/plain", "text/plain"],
+      ["TEXT/PLAIN", "text/plain"],
+      ["  text/html  ", "text/html"],
+      ["text/plain; charset=utf-8", "text/plain;charset=utf-8"],
+      ["text/plain ; charset =utf-8", "text/plain"],
+      ["TEXT/Plain ; Charset=UTF-8", "text/plain;charset=utf-8"],
+      ["My/Type; A=B", "my/type;a=b"],
+      ["Image/JPEG ; a= b ", 'image/jpeg;a=" b"'],
+      ["text/html\t;\tcharset=utf-8", "text/html;charset=utf-8"],
+      ['text/plain;foo="bar"', "text/plain;foo=bar"],
+      ['text/plain;foo="ba r"', 'text/plain;foo="ba r"'],
+      ['text/plain;foo="ba\\"r"', 'text/plain;foo="ba\\"r"'],
+      ['text/plain;foo="unterminated', "text/plain;foo=unterminated"],
+      ['text/plain;foo="a"junk;b=c', "text/plain;foo=a;b=c"],
+      ["text/plain;foo=bar;foo=baz", "text/plain;foo=bar"],
+      ["text/plain;FOO=bar;foo=baz", "text/plain;foo=bar"],
+      ["text/plain;=x", "text/plain"],
+      ["text/plain;a=", "text/plain"],
+      ["text/plain;a", "text/plain"],
+      ["text/plain;;a=b", "text/plain;a=b"],
+      ["text/plain; a = b", "text/plain"],
+      ["text/plain;a=b c", 'text/plain;a="b c"'],
+      ['text/plain;x=""', 'text/plain;x=""'],
+      ['text/plain;x="a,b"', 'text/plain;x="a,b"'],
+      ["text/plain;x=a,b", "text/plain;x=a"],
+      ["text/plain;a b=c", "text/plain"],
+      ['text/plain;a=b"c', 'text/plain;a="b\\"c"'],
+      ["text/plain;a@=c", "text/plain"],
+      ["", ""],
+      ["invalid", ""],
+      ["/", ""],
+      ["/plain", ""],
+      ["text/", ""],
+      ["text /plain", ""],
+      ["text/ plain", ""],
+      ["te xt/plain", ""],
+      ["text//plain", ""],
+      ["*/*", ""],
+      ["*/plain", "*/plain"],
+      ["text/*", "text/*"],
+      ["*/*;q=1", ""],
+      ["text/html, text/plain", "text/plain"],
+      ["text/plain, text/html", "text/html"],
+      ["text/html, */*", "text/html"],
+      ["*/*, text/html", "text/html"],
+      ["bogus, text/html", "text/html"],
+      ["text/html, bogus", "text/html"],
+      ["text/html,", "text/html"],
+      [",text/html", "text/html"],
+      [",", ""],
+      ["text/html;charset=x, text/html", "text/html;charset=x"],
+      ["text/html;charset=x, text/html;a=b", "text/html;a=b;charset=x"],
+      ["text/html;charset=x, text/plain", "text/plain"],
+      ["text/html;charset=x, text/html;charset=y", "text/html;charset=y"],
+      // The carried charset is only updated when the essence changes (fetch
+      // "extract a MIME type" step 6.4.2), so the last value inherits x, not y.
+      ["text/html;charset=x, text/html;charset=y, text/html", "text/html;charset=x"],
+      ['text/a;x="y,z", text/b', "text/b"],
+      ['text/a;x="y,z', 'text/a;x="y,z"'],
+      ["text/a;x=y,z/w", "z/w"],
+      ["APPLICATION/Json", "application/json"],
+      ["application/json; Charset=UTF-8", "application/json;charset=utf-8"],
+      ["multipart/form-data; boundary=----x", "multipart/form-data;boundary=----x"],
+      ['multipart/form-data; boundary="--aaa"', "multipart/form-data;boundary=--aaa"],
+      // A tab inside a quoted parameter value survives the MIME serialization
+      // but is outside U+0020-U+007E, so the Blob constructor drops the type.
+      ['text/plain;a="\t"', ""],
+      ['text/plain;a="x\ty"', ""],
+      // Undici's HTTP-token regex is missing U+0060 (`), which the MIME
+      // Sniffing standard includes; Bun follows the spec, so Node disagrees on
+      // these two (it drops the parameter / quotes the value).
+      ["a/b;!#$%&'*+-.^_`|~=ok", "a/b;!#$%&'*+-.^_`|~=ok"],
+      ["a/b;k=!#$%&'*+-.^_`|~", "a/b;k=!#$%&'*+-.^_`|~"],
+    ];
+    test.each(headerToBlobType)("Content-Type %j gives type %j", async (header, expected) => {
+      const blob = await fn(new Uint8Array([0x78]), { "content-type": header }).blob();
+      expect(blob.type).toBe(expected);
+    });
+
+    test("returns a plain Blob, never the body's File", async () => {
+      const source = new File(["hello"], "source.bin", { type: "My/Type; A=B" });
+      const blob = await fn(source).blob();
+      expect({
+        type: blob.type,
+        isFile: blob instanceof File,
+        name: blob.name,
+        text: await blob.text(),
+      }).toEqual({ type: "my/type;a=b", isFile: false, name: undefined, text: "hello" });
+      // The caller's File keeps its identity.
+      expect({ type: source.type, isFile: source instanceof File, name: source.name }).toEqual({
+        type: "my/type; a=b",
+        isFile: true,
+        name: "source.bin",
+      });
+    });
+
+    test("an explicit Content-Type header wins over the body Blob's type", async () => {
+      const blob = await fn(new Blob(["x"], { type: "a/a" }), { "content-type": "b/b" }).blob();
+      expect(blob.type).toBe("b/b");
+      // It wins even when it extracts to nothing: the body Blob's type must
+      // not leak through, whether Bun stores it interned (text/plain) or not.
+      expect((await fn(new Blob(["x"], { type: "text/plain" }), { "content-type": "*/*" }).blob()).type).toBe("");
+      expect((await fn(new Blob(["x"], { type: "a/a" }), { "content-type": "*/*" }).blob()).type).toBe("");
+    });
+
+    test("does not mutate the body source Blob's type", async () => {
+      const source = new Blob(["x"]);
+      const blob = await fn(source, { "content-type": "application/x-override" }).blob();
+      expect({ blobType: blob.type, sourceType: source.type }).toEqual({
+        blobType: "application/x-override",
+        sourceType: "",
+      });
+    });
+
+    test("a string body implies text/plain;charset=UTF-8", async () => {
+      expect((await fn("hello").blob()).type).toBe("text/plain;charset=utf-8");
+    });
+
+    test("a BufferSource body with no Content-Type gives an empty type", async () => {
+      expect((await fn(new Uint8Array([1])).blob()).type).toBe("");
+    });
+
+    test("a ReadableStream body derives its type from the Content-Type header", async () => {
+      const stream = () =>
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode("hi"));
+            controller.close();
+          },
+        });
+      const withHeader = await fn(stream(), { "content-type": "TEXT/Plain ; Charset=UTF-8" }).blob();
+      expect({ type: withHeader.type, text: await withHeader.text() }).toEqual({
+        type: "text/plain;charset=utf-8",
+        text: "hi",
+      });
+      // A bare well-known essence must come through exactly as in the header:
+      // the Blob constructor's interned MIME table would canonicalize
+      // "application/json" to "application/json;charset=utf-8".
+      expect((await fn(stream(), { "content-type": "application/json" }).blob()).type).toBe("application/json");
+      const withoutHeader = await fn(stream()).blob();
+      expect({ type: withoutHeader.type, text: await withoutHeader.text() }).toEqual({ type: "", text: "hi" });
+    });
+
+    test("a Bun.file body keeps its extension-derived type", async () => {
+      using dir = tempDir("body-blob-type", { "a.json": "{}" });
+      const source = file(join(String(dir), "a.json"));
+      expect((await fn(source).blob()).type).toBe(source.type);
+    });
+
+    // Reading `.body` materializes the body as a ReadableStream, but the type
+    // comes from the header list, which is fixed at construction.
+    test("accessing .body first does not change the type", async () => {
+      const typed = fn(new Blob(["x"], { type: "a/a" }));
+      typed.body;
+      const emptyTyped = fn(new Blob([], { type: "a/a" }));
+      emptyTyped.body;
+      const untyped = fn(new Blob(["x"]));
+      untyped.body;
+      const string = fn("hello");
+      string.body;
+      string.body;
+      const header = fn(new Blob(["x"], { type: "a/a" }), { "content-type": "B/B ; c=d" });
+      header.body;
+      const params = fn(new URLSearchParams("a=b"));
+      params.body;
+      const headersThenBody = fn(new Blob(["x"], { type: "a/a" }));
+      headersThenBody.headers;
+      headersThenBody.body;
+      expect({
+        typed: (await typed.blob()).type,
+        emptyTyped: (await emptyTyped.blob()).type,
+        untyped: (await untyped.blob()).type,
+        string: (await string.blob()).type,
+        header: (await header.blob()).type,
+        params: (await params.blob()).type,
+        headersThenBody: (await headersThenBody.blob()).type,
+      }).toEqual({
+        typed: "a/a",
+        emptyTyped: "a/a",
+        untyped: "",
+        string: "text/plain;charset=utf-8",
+        header: "b/b;c=d",
+        params: "application/x-www-form-urlencoded;charset=utf-8",
+        headersThenBody: "a/a",
+      });
+    });
+
+    test("accessing .body first keeps a FormData body's multipart type", async () => {
+      const form = new FormData();
+      form.set("a", "b");
+      const request = fn(form);
+      request.body;
+      const { type } = await request.blob();
+      expect(type).toStartWith("multipart/form-data;boundary=");
+      expect(type).not.toInclude(" ");
+    });
+
+    test("clone() after accessing .body keeps the type", async () => {
+      const blobBody = fn(new Blob(["x"], { type: "a/a" }));
+      blobBody.body;
+      const blobClone = blobBody.clone();
+      const stringBody = fn("hello");
+      stringBody.body;
+      const stringClone = stringBody.clone();
+      expect({
+        blob: [(await blobBody.blob()).type, (await blobClone.blob()).type],
+        string: [(await stringBody.blob()).type, (await stringClone.blob()).type],
+      }).toEqual({
+        blob: ["a/a", "a/a"],
+        string: ["text/plain;charset=utf-8", "text/plain;charset=utf-8"],
+      });
+    });
+
+    // A non-ASCII string body materializes as internal bytes before cloning;
+    // both sides must still report the string default.
+    test("clone() of a string body keeps its implied type", async () => {
+      const ascii = fn("hello");
+      const asciiClone = ascii.clone();
+      const nonAscii = fn("héllo");
+      const nonAsciiClone = nonAscii.clone();
+      expect({
+        ascii: [(await ascii.blob()).type, (await asciiClone.blob()).type],
+        nonAscii: [(await nonAscii.blob()).type, (await nonAsciiClone.blob()).type],
+      }).toEqual({
+        ascii: ["text/plain;charset=utf-8", "text/plain;charset=utf-8"],
+        nonAscii: ["text/plain;charset=utf-8", "text/plain;charset=utf-8"],
+      });
+    });
+
+    test("a body built from another body's stream", async () => {
+      const typedStream = () => fn(new Blob(["x"], { type: "a/a" })).body!;
+      expect({
+        // Bun adopts an undisturbed blob-backed stream as the blob itself,
+        // type included; per "extract a body" a stream has none (Node: "").
+        adopted: (await fn(typedStream()).blob()).type,
+        withHeader: (await fn(typedStream(), { "content-type": "x/y" }).blob()).type,
+        fromString: (await fn(fn("hello").body!).blob()).type,
+      }).toEqual({
+        adopted: "a/a",
+        withHeader: "x/y",
+        fromString: "",
+      });
+    });
+  });
+}
+
+describe("blob() type over the network", () => {
+  test("fetch() normalizes the response Content-Type", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      fetch: () => new Response("x", { headers: { "content-type": "TEXT/Plain ; Charset=UTF-8" } }),
+    });
+    const blob = await fetch(server.url).then(r => r.blob());
+    expect({ type: blob.type, isFile: blob instanceof File }).toEqual({
+      type: "text/plain;charset=utf-8",
+      isFile: false,
+    });
+  });
+
+  test("Bun.serve request blob() normalizes the request Content-Type", async () => {
+    const { promise, resolve, reject } = Promise.withResolvers<{ type: string; isFile: boolean }>();
+    await using server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        try {
+          const blob = await req.blob();
+          resolve({ type: blob.type, isFile: blob instanceof File });
+        } catch (e) {
+          reject(e);
+        }
+        return new Response("ok");
+      },
+    });
+    const res = await fetch(server.url, {
+      method: "POST",
+      body: new Uint8Array(3).fill(0x41),
+      headers: { "content-type": "Image/JPEG ; A=B" },
+    });
+    await res.text();
+    expect(await promise).toEqual({ type: "image/jpeg;a=b", isFile: false });
+  });
+
+  test("a data: URL with no mediatype keeps Bun's text/plain default", async () => {
+    // The data URL processor defaults an empty mediatype to text/plain; the
+    // response has no Content-Type header, so blob() reads the body's type.
+    const blob = await fetch("data:,Hello%2C%20World!").then(r => r.blob());
+    expect({ type: blob.type, text: await blob.text() }).toEqual({
+      type: "text/plain;charset=utf-8",
+      text: "Hello, World!",
+    });
+  });
+});
+
+describe("Bun.readableStreamToBlob", () => {
+  const stream = () =>
+    new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode("hi"));
+        controller.close();
+      },
+    });
+  test("without a contentType", async () => {
+    const blob = await Bun.readableStreamToBlob(stream());
+    expect({ type: blob.type, text: await blob.text() }).toEqual({ type: "", text: "hi" });
+  });
+  test("with a contentType", async () => {
+    const blob = await Bun.readableStreamToBlob(stream(), "x/y");
+    expect({ type: blob.type, text: await blob.text() }).toEqual({ type: "x/y", text: "hi" });
+  });
+  test("a contentType the Blob constructor would canonicalize is stored verbatim", async () => {
+    const blob = await Bun.readableStreamToBlob(stream(), "application/json");
+    expect({ type: blob.type, text: await blob.text() }).toEqual({ type: "application/json", text: "hi" });
+  });
+  test("the contentType is validated and lowercased like a Blob type", async () => {
+    expect((await Bun.readableStreamToBlob(stream(), "TEXT/Plain")).type).toBe("text/plain");
+    // Characters outside U+0020-U+007E drop the type, as in the Blob
+    // constructor; it must never reach an outgoing Content-Type header.
+    expect((await Bun.readableStreamToBlob(stream(), "a/b\rx: y")).type).toBe("");
+  });
+  test("a blob-backed stream's own type never shadows the contentType", async () => {
+    // The buffered fast path resolves with a blob that already carries the
+    // source Blob's type; the contentType argument still decides the result.
+    const typed = () => new Blob(["hi"], { type: "a/a" }).stream();
+    expect((await Bun.readableStreamToBlob(typed())).type).toBe("a/a");
+    expect((await Bun.readableStreamToBlob(typed(), "B/B")).type).toBe("b/b");
+    expect((await Bun.readableStreamToBlob(typed(), "a/b\rx: y")).type).toBe("");
+  });
+  test("a non-string contentType throws before the stream is touched", () => {
+    const untouched = stream();
+    // @ts-expect-error intentionally the wrong type
+    expect(() => Bun.readableStreamToBlob(untouched, 123)).toThrowWithCode(TypeError, "ERR_INVALID_ARG_TYPE");
+    expect(untouched.locked).toBe(false);
   });
 });

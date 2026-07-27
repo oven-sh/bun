@@ -139,7 +139,7 @@ impl NapiEnv {
     pub fn as_array_buffer(&self, value: JSValue) -> Option<jsc::ArrayBuffer> {
         let mut out = jsc::ArrayBuffer::default();
         // SAFETY: env is non-null; `out` is a live exclusive borrow.
-        if unsafe { napi_internal_as_array_buffer(self.as_mut_ptr(), value, &mut out) } {
+        if unsafe { napi_internal_as_array_buffer(self.as_mut_ptr(), value, &raw mut out) } {
             out.value = value;
             Some(out)
         } else {

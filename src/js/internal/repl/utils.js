@@ -801,7 +801,7 @@ function getREPLResourceName() {
 const globalBuiltins = new SafeSet(vm.runInNewContext("Object.getOwnPropertyNames(globalThis)"));
 
 // node-shims' getBuiltinLibs() also excludes Bun-specific entries (`bun*`,
-// `undici`, `ws`) so completion doesn't offer e.g. `node:undici`.
+// `ws`) so completion doesn't offer e.g. `node:ws`.
 let _builtinLibs = getBuiltinLibs().slice();
 
 // Note: the `getReplBuiltinLibs` and `setReplBuiltinLibs` are functions used to provide getters and

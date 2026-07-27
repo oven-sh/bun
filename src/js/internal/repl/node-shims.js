@@ -189,11 +189,11 @@ let builtinLibs;
 
 function getBuiltinLibs() {
   if (!builtinLibs) {
-    // Bun's builtinModules also lists `bun`, `bun:*`, `undici`, `ws`; none
-    // resolve under `node:`, so exclude them so completion and the REPL
-    // global scope match Node's.
+    // Bun's builtinModules also lists `bun`, `bun:*`, `ws`; none resolve
+    // under `node:`, so exclude them so completion and the REPL global
+    // scope match Node's.
     builtinLibs = Module.builtinModules.filter(
-      id => !id.startsWith("_") && !id.startsWith("node:") && !id.startsWith("bun") && id !== "undici" && id !== "ws",
+      id => !id.startsWith("_") && !id.startsWith("node:") && !id.startsWith("bun") && id !== "ws",
     );
   }
   return builtinLibs;

@@ -316,6 +316,53 @@ test(".env escaped dollar sign", () => {
   expect(stdout).toBe("foo $FOO");
 });
 
+test(".env leaves $ literal when not followed by an identifier", () => {
+  // Expansion should only fire on `$IDENT` (letter/underscore start) or `${...}`.
+  // A `$` followed by a digit, another `$`, `(`, `-`, or end-of-value stays literal.
+  const dir = tempDirWithFiles("dotenv-literal-dollar", {
+    ".env": [
+      "P1=price$5.00",
+      "P2=a$(b)c",
+      "P3=cost$-1",
+      "P4=$1abc",
+      "P5=end$",
+      "P6=pa$$",
+      "P7=\\$5.00",
+      "SET=hit",
+      "P8=$SET$5",
+      "P9=${SET}$5",
+    ].join("\n"),
+    "index.ts":
+      "console.log(JSON.stringify({P1:process.env.P1,P2:process.env.P2,P3:process.env.P3,P4:process.env.P4,P5:process.env.P5,P6:process.env.P6,P7:process.env.P7,P8:process.env.P8,P9:process.env.P9}));",
+  });
+  const { stdout } = bunRun(`${dir}/index.ts`);
+  expect(JSON.parse(stdout)).toEqual({
+    P1: "price$5.00",
+    P2: "a$(b)c",
+    P3: "cost$-1",
+    P4: "$1abc",
+    P5: "end$",
+    P6: "pa$$",
+    P7: "$5.00",
+    P8: "hit$5",
+    P9: "hit$5",
+  });
+});
+
+test(".env and util.parseEnv accept non-ASCII keys", () => {
+  const key = "\u00fc\u00f1\u00ed"; // üñí
+  const dir = tempDirWithFiles("dotenv-utf8-key", {
+    ".env": `${key}=uval\nAFTER=ok\n`,
+    "index.ts": `console.log(JSON.stringify({uni: process.env[${JSON.stringify(key)}], after: process.env.AFTER}));`,
+  });
+  const { stdout } = bunRun(`${dir}/index.ts`);
+  expect(JSON.parse(stdout)).toEqual({ uni: "uval", after: "ok" });
+
+  // util.parseEnv goes through the same key scanner with expansion disabled;
+  // Node keeps the key so Bun must too.
+  expect(parseEnv(`${key}=uval\nAFTER=ok\n`)).toEqual({ [key]: "uval", AFTER: "ok" });
+});
+
 test(".env doesnt crash with 159 bytes", () => {
   const dir = tempDirWithFiles("dotenv-159", {
     ".env":

@@ -211,21 +211,25 @@ impl Default for FFI {
 
 impl FFI {
     pub fn finalize(self: Box<Self>) {
-        // INTENTIONAL no-op when not closed. Compiled trampolines / dlopen'd
-        // symbols may still be reachable from JS after the wrapper is GC'd
-        // (e.g. `const { fn } = dlopen(...).symbols`); teardown is owned by
-        // `close()`. Dropping the Box would run `Function::drop` →
-        // `tcc_delete()`, freeing the executable pages those JSFunctions still
-        // jump into.
-        //
-        // When `close()` HAS run, the functions map is empty and the dylib /
-        // shared TCC state are already gone, so the Box only owns the (empty)
-        // hashmap's retained-capacity buffer. Drop it instead of leaking.
-        if self.closed.get() {
-            drop(self);
-        } else {
-            let _ = bun_core::heap::release(self);
+        // Compiled trampolines / dlopen'd symbols may still be reachable from
+        // JS after the wrapper is GC'd (e.g. `const { fn } = dlopen(...).symbols`),
+        // so when `close()` was never called we must not run `Function::drop`'s
+        // `tcc_delete()` on the executable pages those JSFunctions jump into.
+        // Detach the per-function TCC state so `Drop` skips it, then drop the
+        // Box normally so the symbol-map keys / `base_name` / `arg_types` /
+        // column Vecs are freed instead of leaking. `shared_state` and `dylib`
+        // are raw handles with no `Drop`, so they stay valid until process exit.
+        if !self.closed.get() {
+            self.functions.with_mut(|f| {
+                for function in f.values_mut() {
+                    function.state = None;
+                    if let Step::Compiled(compiled) = &mut function.step {
+                        compiled.ffi_callback_function_wrapper = None;
+                    }
+                }
+            });
         }
+        drop(self);
     }
 }
 

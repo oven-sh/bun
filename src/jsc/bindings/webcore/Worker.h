@@ -162,8 +162,8 @@ public:
 
     void enqueueToParent(MessageWithMessagePorts&&);
     void drainToWorker(ScriptExecutionContext&);
-    // Post a drainToWorker task if the inbox is non-empty and none is in
-    // flight. Called on the worker thread when parentPort gains a listener.
+    // Post a drainToWorker task if the inbox is non-empty. Called on the
+    // worker thread when parentPort gains a listener.
     void scheduleDrainToWorker();
 
 private:

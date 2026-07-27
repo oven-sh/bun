@@ -1520,6 +1520,11 @@ fn on_unhandled_rejection(
 
     let mut array: Vec<u8> = Vec::new();
 
+    // uncaught_exception's non-test path set exit_code=1 already; the Promise-
+    // rejection and isBunTest paths did not. Set it before worker_ref's shared
+    // borrow so process.on('exit') below sees code=1 and can override it.
+    vm.exit_handler.exit_code = 1;
+
     // `worker_ref()` is the safe BACKREF accessor — `vm.worker` points at the
     // heap `WebWorker` owned by C++ that outlives `vm`. `&WebWorker` (not
     // `&mut`) — see worker-thread `&self` note.

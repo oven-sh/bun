@@ -344,13 +344,9 @@ function isURL(value) {
 
 const SymbolToPrimitive = Symbol.toPrimitive;
 
-// In Node.js this set is computed at bootstrap, before any Node/Web globals
-// (Buffer, URL, Request, ...) are installed on globalThis. Bun already has
-// those globals installed when this module loads, so we freeze the exact names
-// Node v26 observes at bootstrap. A live `globalThis` scrape here would also
-// over-include SharedArrayBuffer, WebAssembly, Float16Array, DisposableStack,
-// AsyncDisposableStack and SuppressedError, which are absent from Node's
-// bootstrap global and observably change `%s` and showHidden output.
+// Node.js computes this from `globalThis` at bootstrap, before any host globals
+// (Buffer, URL, ...) are installed. Bun's globalThis already has them when this
+// module loads, so hardcode the names Node observes instead of scraping.
 // prettier-ignore
 const builtInObjects = new SafeSet([
   "AggregateError", "Array", "ArrayBuffer", "Atomics", "BigInt", "BigInt64Array",

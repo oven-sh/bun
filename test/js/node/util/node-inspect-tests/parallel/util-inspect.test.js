@@ -236,14 +236,10 @@ test("inspect from a different context", () => {
   );*/
 });
 
-// The surrogate-pair loop below runs ~10k util.inspect calls, which exceeds the
-// default timeout on debug+ASAN builds; prettier-ignore keeps the 3rd test() arg
-// from forcing a whole-body reindent.
 // prettier-ignore
 test("no assertion failures 2", () => {
-  // Float16Array is intentionally absent: it is not in Node's bootstrap-time
-  // `builtInObjects`, so showHidden inspects its prototype getters and the
-  // output diverges from the other typed arrays in Node as well.
+  // Float16Array is omitted: Node's `builtInObjects` lacks it, so showHidden
+  // output diverges from the other typed arrays there too.
   [
     Float32Array,
     Float64Array,

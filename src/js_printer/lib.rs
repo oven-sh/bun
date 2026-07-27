@@ -1532,6 +1532,14 @@ pub mod __gated_printer {
                         ExprData::EAwait(_) | ExprData::EUndefined(_) | ExprData::ENumber(_) => {
                             v.left_level = Level::Call;
                         }
+                        // EDot/EIndex may be rewritten to a (possibly negative) number by
+                        // cross-module enum inlining at print time; the bump is a no-op
+                        // for a member expression that stays a member expression.
+                        ExprData::EDot(_) | ExprData::EIndex(_) => {
+                            if self.options.ts_enums.is_some() {
+                                v.left_level = Level::Call;
+                            }
+                        }
                         ExprData::EBoolean(_) | ExprData::EBranchBoolean(_) => {
                             // When minifying, booleans are printed as "!0 and "!1"
                             if self.options.minify_syntax {
@@ -6305,18 +6313,7 @@ pub mod __gated_printer {
             level: Level,
         ) {
             match inlined {
-                js_ast::InlinedEnumValueDecoded::Number(num) => {
-                    // The EDot/EIndex this replaces is a valid UpdateExpression on the
-                    // left of `**`; a negative number is not. Bump the level so
-                    // print_number parenthesizes when needed, matching what
-                    // binary_check_and_prepare does for a direct ENumber left operand.
-                    let level = if level == Level::Exponentiation {
-                        Level::Call
-                    } else {
-                        level
-                    };
-                    self.print_number(num, level)
-                }
+                js_ast::InlinedEnumValueDecoded::Number(num) => self.print_number(num, level),
                 // TODO: extract printString
                 js_ast::InlinedEnumValueDecoded::String(str) => self.print_expr(
                     // Arena-owned `*const EString` (encoded non-null at NaN-box time);

@@ -1,3 +1,5 @@
+import { bunEnv, bunExe } from "harness";
+
 test("Jest auto imports", () => {
   expect(true).toBe(true);
   expect(typeof describe).toBe("function");
@@ -10,15 +12,23 @@ test("Jest auto imports", () => {
   expect(typeof afterEach).toBe("function");
 });
 
-test("Jest's globals aren't available in every file", async () => {
-  const jestGlobals = await import("./jest-doesnt-auto-import.js");
-
-  expect(typeof jestGlobals.describe).toBe("undefined");
-  expect(typeof jestGlobals.it).toBe("undefined");
-  expect(typeof jestGlobals.test).toBe("undefined");
-  expect(typeof jestGlobals.expect).toBe("undefined");
-  expect(typeof jestGlobals.beforeAll).toBe("undefined");
-  expect(typeof jestGlobals.beforeEach).toBe("undefined");
-  expect(typeof jestGlobals.afterAll).toBe("undefined");
-  expect(typeof jestGlobals.afterEach).toBe("undefined");
+// Injection is a `bun test`-mode parser transform (#17734 made it apply to every
+// file loaded by the test runner, not just the entrypoint). The only remaining
+// scoping guarantee is that ordinary `bun <file>` / `bun -e` runs do NOT see it.
+test("Jest globals are not injected outside of `bun test`", async () => {
+  const names = ["describe", "it", "test", "expect", "beforeAll", "beforeEach", "afterAll", "afterEach"];
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `process.stdout.write(JSON.stringify({${names.map(n => `${n}: typeof ${n}`).join(", ")}}))`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual(Object.fromEntries(names.map(n => [n, "undefined"])));
+  expect(exitCode).toBe(0);
 });

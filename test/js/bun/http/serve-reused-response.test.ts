@@ -61,13 +61,75 @@ describe("returning a Response with an already-used body", () => {
     },
   );
 
-  it("returning a Response whose body was consumed before returning calls the error handler", async () => {
+  const consumedBodies = {
+    string: () => new Response("consumed before returning"),
+    "Response.json": () => Response.json({ key: "consumed before returning" }),
+    Blob: () => new Response(new Blob(["consumed before returning"])),
+    "ReadableStream (start)": () =>
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode("consumed before returning"));
+            controller.close();
+          },
+        }),
+      ),
+    "ReadableStream (pull)": () => {
+      let i = 0;
+      return new Response(
+        new ReadableStream({
+          pull(controller) {
+            if (i++ === 0) controller.enqueue(new TextEncoder().encode("consumed before returning"));
+            else controller.close();
+          },
+        }),
+      );
+    },
+  };
+
+  it.each(Object.keys(consumedBodies) as (keyof typeof consumedBodies)[])(
+    "returning a Response whose %s body was consumed before returning calls the error handler",
+    async kind => {
+      const errors: unknown[] = [];
+      await using server = serve({
+        port: 0,
+        async fetch() {
+          const response = consumedBodies[kind]();
+          await response.text();
+          expect(response.bodyUsed).toBe(true);
+          return response;
+        },
+        error(err: any) {
+          errors.push({ code: err.code, name: err.constructor.name, message: err.message });
+          return new Response("handled", { status: 500 });
+        },
+      });
+
+      const response = await fetch(server.url);
+      expect(await response.text()).toBe("handled");
+      expect(response.status).toBe(500);
+      expect(errors).toEqual([alreadyUsedError]);
+    },
+  );
+
+  it("returning a Response whose ReadableStream body was partially read calls the error handler", async () => {
     const errors: unknown[] = [];
     await using server = serve({
       port: 0,
       async fetch() {
-        const response = new Response("consumed before returning");
-        await response.text();
+        const response = new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode("AAAA"));
+              controller.enqueue(new TextEncoder().encode("BBBB"));
+              controller.close();
+            },
+          }),
+        );
+        const reader = response.body!.getReader();
+        await reader.read();
+        reader.releaseLock();
+        expect(response.bodyUsed).toBe(true);
         return response;
       },
       error(err: any) {
@@ -77,6 +139,7 @@ describe("returning a Response with an already-used body", () => {
     });
 
     const response = await fetch(server.url);
+    // Must not silently serve only the unread remainder ("BBBB").
     expect(await response.text()).toBe("handled");
     expect(response.status).toBe(500);
     expect(errors).toEqual([alreadyUsedError]);

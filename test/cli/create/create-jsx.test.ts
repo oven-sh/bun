@@ -45,7 +45,17 @@ async function getServerUrl(process: Subprocess<any, "pipe", any>, all = { text:
   return serverUrl;
 }
 
-async function checkBuildOutput(dir: string) {
+async function runBuildAndCheck(dir: string, env: Record<string, string | undefined>) {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", "build"],
+    cwd: dir,
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: expect.any(String), stderr: expect.any(String), exitCode: 0 });
+
   const distDir = path.join(dir, "dist");
   const files = (await readdir(distDir)).sort();
   const js = files.find(f => f.endsWith(".js"));
@@ -180,21 +190,7 @@ for (const development of [true, false]) {
         const { stdout: createOut } = await scaffold(dir, "./index.jsx", env);
         expect(createOut).toContain("React project configured");
         expect(createOut).toContain("bun run build");
-
-        await using proc = Bun.spawn({
-          cmd: [bunExe(), "run", "build"],
-          cwd: dir,
-          env,
-          stdout: "pipe",
-          stderr: "pipe",
-        });
-        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-        expect({ stdout, stderr, exitCode }).toEqual({
-          stdout: expect.any(String),
-          stderr: expect.any(String),
-          exitCode: 0,
-        });
-        await checkBuildOutput(dir);
+        await runBuildAndCheck(dir, env);
       });
     });
 
@@ -204,21 +200,7 @@ for (const development of [true, false]) {
         const { stdout: createOut } = await scaffold(dir, "./index.tsx", env);
         expect(createOut).toContain("React + Tailwind project configured");
         expect(createOut).toContain("bun run build");
-
-        await using proc = Bun.spawn({
-          cmd: [bunExe(), "run", "build"],
-          cwd: dir,
-          env,
-          stdout: "pipe",
-          stderr: "pipe",
-        });
-        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-        expect({ stdout, stderr, exitCode }).toEqual({
-          stdout: expect.any(String),
-          stderr: expect.any(String),
-          exitCode: 0,
-        });
-        await checkBuildOutput(dir);
+        await runBuildAndCheck(dir, env);
       });
     });
 
@@ -228,21 +210,7 @@ for (const development of [true, false]) {
         const { stdout: createOut } = await scaffold(dir, "./index.tsx", env);
         expect(createOut).toContain("React + shadcn/ui + Tailwind project configured");
         expect(createOut).toContain("bun run build");
-
-        await using proc = Bun.spawn({
-          cmd: [bunExe(), "run", "build"],
-          cwd: dir,
-          env,
-          stdout: "pipe",
-          stderr: "pipe",
-        });
-        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-        expect({ stdout, stderr, exitCode }).toEqual({
-          stdout: expect.any(String),
-          stderr: expect.any(String),
-          exitCode: 0,
-        });
-        await checkBuildOutput(dir);
+        await runBuildAndCheck(dir, env);
       });
     });
   });

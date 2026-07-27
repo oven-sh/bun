@@ -237,10 +237,10 @@ impl<'a> InternalState<'a> {
     /// True when a socket close during `in_progress` completes the body rather
     /// than failing it: only a close-delimited response (no Content-Length, no
     /// Transfer-Encoding, RFC 9112 section 6.3 rule 7). A chunked body is
-    /// self-delimiting; `phr_decode_chunked` returns >= 0 and sets
-    /// `received_last_chunk` only after the trailer section's terminating CRLF
-    /// (RFC 9112 section 7.1), so FIN while still in the trailer-scan states is
-    /// a truncated message.
+    /// self-delimiting; `received_last_chunk` is set by the chunked-body
+    /// handlers once `phr_decode_chunked` returns >= 0, which requires the
+    /// trailer section's terminating CRLF (RFC 9112 section 7.1), so FIN while
+    /// still in the trailer-scan states is a truncated message.
     pub fn is_body_complete_on_close(&self) -> bool {
         if self.is_chunked_encoding() {
             return self.flags.received_last_chunk;

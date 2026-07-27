@@ -1442,8 +1442,7 @@ fn contains_newline_or_cr(value: &[u8]) -> bool {
     strings::index_of_any(value, b"\r\n").is_some()
 }
 
-/// AWS SigV4 CanonicalHeaders "Trimall": trim outer whitespace and collapse
-/// interior runs to a single space. Borrows when no rewrite is needed.
+/// SigV4 CanonicalHeaders "Trimall": trim outer whitespace, collapse interior runs to one space.
 fn sigv4_trimall(value: &[u8]) -> std::borrow::Cow<'_, [u8]> {
     #[inline]
     fn is_ws(b: u8) -> bool {

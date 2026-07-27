@@ -93,9 +93,8 @@ pub enum Error {
     HTTP3ContentLengthMismatch,
     #[error("FailedToOpenSocket")]
     FailedToOpenSocket,
-    /// Loading the client TLS certificate/key into the SSL_CTX failed. Carries
-    /// the packed BoringSSL error code so the consumer can produce Node's
-    /// `ERR_OSSL_*` shape.
+    /// Client cert/key failed to load into the SSL_CTX; payload is the packed
+    /// BoringSSL error that becomes `ERR_OSSL_*` at the JS boundary.
     #[error("ClientTLSSetup")]
     ClientTLSSetup(u32),
     #[error("InvalidCRL")]
@@ -259,6 +258,15 @@ pub enum CertError {
     NAME_CONSTRAINTS_WITHOUT_SANS,
     #[error("UNKNOWN_CERTIFICATE_VERIFICATION_ERROR")]
     UNKNOWN_CERTIFICATE_VERIFICATION_ERROR,
+}
+
+/// Pop + drain this thread's BoringSSL error queue. Call immediately after a
+/// failed `create_ssl_context` on the same thread (the queue is thread-local).
+pub fn take_boringssl_error() -> Option<core::num::NonZeroU32> {
+    let packed = bun_boringssl_sys::ERR_get_error();
+    let packed = core::num::NonZeroU32::new(packed)?;
+    bun_boringssl_sys::ERR_clear_error();
+    Some(packed)
 }
 
 impl Error {

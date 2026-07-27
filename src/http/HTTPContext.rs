@@ -494,19 +494,9 @@ impl<const SSL: bool> HTTPContext<SSL> {
                     uws::create_bun_socket_error_t::none
                     | uws::create_bun_socket_error_t::invalid_ciphers
                     | uws::create_bun_socket_error_t::invalid_ecdh_curve => {
-                        // us_ssl_ctx_build_raw returns NULL with *err left at
-                        // .none for client cert/key/passphrase failures; the
-                        // real cause is only on this thread's BoringSSL error
-                        // queue. Capture it here (same thread as the failed
-                        // SSL_CTX_* calls) so the JS thread can surface
-                        // ERR_OSSL_* instead of a generic FailedToOpenSocket.
-                        let packed = bun_boringssl_sys::ERR_get_error();
-                        if packed != 0 {
-                            bun_boringssl_sys::ERR_clear_error();
-                            InitError::ClientTLSSetup(packed)
-                        } else {
-                            InitError::FailedToOpenSocket
-                        }
+                        crate::error::take_boringssl_error()
+                            .map(|p| InitError::ClientTLSSetup(p.get()))
+                            .unwrap_or(InitError::FailedToOpenSocket)
                     }
                 });
             }

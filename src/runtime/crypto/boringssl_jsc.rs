@@ -52,10 +52,7 @@ fn static_cstr<'a>(ptr: *const core::ffi::c_char) -> Option<&'a [u8]> {
     if bytes.is_empty() { None } else { Some(bytes) }
 }
 
-/// Compose Node's `ERR_OSSL_<LIB>_<REASON>` code (or `ERR_SSL_<REASON>` for the
-/// SSL library) from a packed BoringSSL error's library number and reason
-/// string. Shared by [`err_code_and_message`] and [`err_to_js`] so the two
-/// paths cannot drift.
+/// Node's `ERR_OSSL_<LIB>_<REASON>` (or `ERR_SSL_<REASON>`) code string.
 fn build_err_ossl_code(err_code: u32, reason: &[u8]) -> Vec<u8> {
     let lib = lib_short_name((err_code >> 24) & 0xff);
     // Don't generate codes like "ERR_OSSL_SSL_".
@@ -68,11 +65,8 @@ fn build_err_ossl_code(err_code: u32, reason: &[u8]) -> Vec<u8> {
     code
 }
 
-/// Format a packed BoringSSL error into `(code, message)` strings without
-/// touching JSC. `code` is Node's `ERR_OSSL_<LIB>_<REASON>` (or `ERR_SSL_*` for
-/// the SSL library); `message` is the raw `ERR_error_string_n` output. Both
-/// lookups are pure table reads keyed on the `u32`, so the thread that calls
-/// this need not be the thread that produced the error.
+/// JSC-free `(code, message)` formatter for a packed BoringSSL error. Pure
+/// table lookups on the `u32`, so callable from any thread.
 pub fn err_code_and_message(err_code: u32) -> (Vec<u8>, Vec<u8>) {
     let mut outbuf = [0u8; 128 + 1];
     // SAFETY: outbuf is a valid writable buffer of outbuf.len() bytes.
@@ -93,9 +87,6 @@ pub fn err_code_and_message(err_code: u32) -> (Vec<u8>, Vec<u8>) {
 }
 
 pub fn err_to_js(global: &JSGlobalObject, err_code: u32) -> JSValue {
-    // The message is the raw ERR_error_string output
-    // ("error:0b000074:X.509 certificate routines:OPENSSL_internal:..."),
-    // exactly what Node built against BoringSSL produces - no prefix.
     let (code, error_message) = err_code_and_message(err_code);
     if error_message.is_empty() {
         return global
@@ -106,9 +97,7 @@ pub fn err_to_js(global: &JSGlobalObject, err_code: u32) -> JSValue {
             .to_js();
     }
 
-    // A plain Error carrying Node's library/function/reason/code decomposition
-    // of the OpenSSL error, the way ThrowCryptoError builds it: the code is
-    // ERR_OSSL_<LIB>_<REASON> (or ERR_SSL_<REASON> for the SSL library).
+    // Node's ThrowCryptoError shape: .message/.library/.function/.reason/.code.
     let err = BunString::clone_utf8(&error_message).to_error_instance(global);
 
     if let Some(library) = static_cstr(boring::ERR_lib_error_string(err_code)) {

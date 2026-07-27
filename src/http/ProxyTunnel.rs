@@ -627,18 +627,9 @@ impl ProxyTunnel {
                 if e == InitError::OutOfMemory {
                     bun_core::out_of_memory();
                 }
-
-                // invalid TLS Options: create_ssl_context leaves the detail
-                // on this thread's BoringSSL error queue (same thread as the
-                // failed SSL_CTX_* calls). Surface it the way the direct
-                // (non-proxy) path does instead of a generic ConnectionRefused.
-                let packed = bun_boringssl_sys::ERR_get_error();
-                let fail = if packed != 0 {
-                    bun_boringssl_sys::ERR_clear_error();
-                    crate::Error::ClientTLSSetup(packed)
-                } else {
-                    crate::Error::ConnectionRefused
-                };
+                let fail = crate::error::take_boringssl_error()
+                    .map(|p| crate::Error::ClientTLSSetup(p.get()))
+                    .unwrap_or(crate::Error::ConnectionRefused);
                 proxy_tunnel_ref.detach_and_deref();
                 this.close_and_fail::<IS_SSL>(fail, socket);
                 return;

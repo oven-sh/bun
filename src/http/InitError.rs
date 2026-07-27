@@ -10,9 +10,8 @@ pub enum InitError {
     InvalidCA,
     #[error("InvalidCRL")]
     InvalidCRL,
-    /// SSL_CTX construction failed while loading client cert/key material.
-    /// Carries the packed BoringSSL error (from `ERR_get_error()`), captured on
-    /// the thread that built the context so the JS thread can format it later.
+    /// Client cert/key failed to load into the SSL_CTX; payload is the packed
+    /// BoringSSL error from [`crate::error::take_boringssl_error`].
     #[error("ClientTLSSetup")]
     ClientTLSSetup(u32),
 }

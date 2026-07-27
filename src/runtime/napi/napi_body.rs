@@ -121,10 +121,8 @@ impl NapiEnv {
         unsafe { NapiEnv__hasPendingException(self.as_mut_ptr()) }
     }
 
-    /// Checks only the JSC VM exception slot (`vm.m_exception`), ignoring an
-    /// exception stashed on the env by `napi_throw*`. This is the gate
-    /// `NAPI_PREAMBLE_NO_PENDING_CHECK` enforces for value constructors and
-    /// accessors that Node.js allows while a stashed exception is pending.
+    /// Checks only the JSC VM exception slot, not the env's stashed
+    /// `napi_throw*` exception. See `NAPI_PREAMBLE_NO_PENDING_CHECK`.
     pub fn has_vm_exception(&self) -> bool {
         // SAFETY: env is non-null; C++ side is read-only here.
         unsafe { NapiEnv__hasVMException(self.as_mut_ptr()) }
@@ -445,11 +443,9 @@ macro_rules! preamble {
     }};
 }
 
-/// Like `preamble!` but only guards against a VM-level exception, not an
-/// exception stashed on the env by `napi_throw*` (mirrors
-/// `NAPI_PREAMBLE_NO_PENDING_CHECK`). Use this for value constructors and
-/// accessors that Node.js allows with a stashed exception pending but whose
-/// bodies reach JSC helpers that assert the VM has no exception.
+/// Like `preamble!` but only guards against a VM-level exception (mirrors
+/// `NAPI_PREAMBLE_NO_PENDING_CHECK`). For entry points whose bodies reach JSC
+/// helpers that assert the VM has no exception.
 macro_rules! preamble_no_pending_check {
     ($env:expr) => {{
         let env = get_env!($env);

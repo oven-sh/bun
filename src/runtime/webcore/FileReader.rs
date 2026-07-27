@@ -537,9 +537,8 @@ impl FileReader {
         if !self.reader().is_done() {
             self.reader().close();
         }
-        // `close()` has no-op paths that never dispatch `on_reader_done`
-        // (`PollOrFd::close_impl` with an already-invalid fd); release the
-        // io-ref here so `finalize_detach` never sees `done && waiting`.
+        // `done = true` means no more io, so the io-ref is this function's to
+        // release; `close()` is not contract-bound to dispatch `on_reader_done`.
         if self.waiting_for_on_reader_done.get() {
             self.waiting_for_on_reader_done.set(false);
             let parent = self.parent();

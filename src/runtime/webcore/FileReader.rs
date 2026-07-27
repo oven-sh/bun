@@ -537,6 +537,20 @@ impl FileReader {
         if !self.reader().is_done() {
             self.reader().close();
         }
+        // `close()` normally reaches `on_reader_done` (which clears
+        // `waiting_for_on_reader_done` and releases the io-ref), but
+        // `PollOrFd::close_impl` skips the callback when the handle's fd is
+        // already invalid, and `close_handle` is a no-op when `CLOSE_HANDLE`
+        // is unset. In either case the io-ref taken in `on_start`/`from_pipe`
+        // is stranded and `finalize_detach` would observe `done && waiting`.
+        // Release it here; idempotent with `on_reader_done`'s own clear.
+        if self.waiting_for_on_reader_done.get() {
+            self.waiting_for_on_reader_done.set(false);
+            let parent = self.parent();
+            // SAFETY: see `parent()`. `waiting` implies `increment_count` ran,
+            // so `ref_count >= 2` and this cannot free the box.
+            let _ = unsafe { Source::decrement_count(parent) };
+        }
     }
 
     // NOTE: not `impl Drop` — FileReader is embedded as `Source.context` and this is

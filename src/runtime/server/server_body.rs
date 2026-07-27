@@ -2751,6 +2751,22 @@ where
         // hold a ref), so hand ownership back to the raw teardown path.
         let this = bun_core::heap::release(self);
         this.js_value.finalize();
+        // A still-listening server can only reach `finalize` from
+        // `lastChanceToFinalize()` during VM teardown: the Strong `js_value`
+        // root above kept the wrapper alive through every ordinary GC while
+        // `listener` was set. `WebWorker::shutdown`'s `close_all_socket_groups`
+        // skips listen sockets on the assumption the owner closes them here
+        // (as `Listener::finalize` does); without this the fd outlives the
+        // worker and the port stays bound. `deinit_if_we_can` then sees
+        // `has_listener() == false` and can proceed to `schedule_deinit`.
+        if let Some(listener) = this.listener.take() {
+            bun_opaque::opaque_deref_mut(listener).close();
+        }
+        if Self::HAS_H3 {
+            if let Some(h3l) = this.h3_listener.take() {
+                bun_opaque::opaque_deref_mut(h3l).close();
+            }
+        }
         this.deinit_if_we_can();
     }
 

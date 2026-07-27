@@ -536,9 +536,6 @@ impl Terminal {
             }
         }
 
-        // Start reading data
-        terminal.reader.with_mut(|r| r.read());
-
         // Get or create the JS wrapper
         let this_value = existing_js_value.unwrap_or_else(|| js::to_js(parent_ptr, global_object));
 
@@ -560,6 +557,29 @@ impl Terminal {
         if let Some(cb) = options.drain_callback {
             js::gc::set(js::GcValue::Drain, this_value, global_object, cb);
         }
+
+        // Start reading data LAST — after the JS wrapper exists and the
+        // callbacks are registered.
+        //
+        // `read()` can complete synchronously: a PTY whose slave end is
+        // already closed (or a read that errors) drives
+        // on_reader_done/on_reader_error -> on_reader_finished right here,
+        // inline. That path sets READER_DONE, which is a one-shot: every
+        // later call, including the one from the user's own `close()`, hits
+        // the `if READER_DONE { return }` guard at the top and returns
+        // without dispatching.
+        //
+        // With `read()` above the wrapper/callback setup, that inline
+        // completion consumed the single exit notification while
+        // `this_value` was still `JsRef::empty()` and no Exit callback was
+        // registered yet, so it silently dropped at `try_get` /
+        // `gc::get(Exit)` and the user's `exit` callback then never fired at
+        // all. Observed intermittently (~50% under
+        // BUN_JSC_randomIntegrityAuditRate=1.0 after ~30 prior terminals);
+        // instrumentation showed the final terminal entering close_internal
+        // with READER_DONE already true and zero dispatches for the whole
+        // run. See OHOS_TEST_TODO.md T03.
+        terminal.reader.with_mut(|r| r.read());
 
         Ok(CreateResult {
             // SAFETY: `parent_ptr` is the heap-allocated allocation above with

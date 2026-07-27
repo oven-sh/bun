@@ -644,8 +644,24 @@ impl FileSink {
             sys::Result::Ok(fd) => fd,
         };
 
-        let owns_fd = !matches!(&options.input_path, PathOrFileDescriptor::Fd(_));
+        let borrowed = matches!(&options.input_path, PathOrFileDescriptor::Fd(_));
+        #[allow(unused_mut)]
+        let mut owns_fd = !borrowed;
         self.fd.set(fd);
+        // A pollable caller-supplied fd needs its own epoll registration per
+        // sink; adopt it only when non-pollable (regular file), otherwise dup.
+        #[cfg(unix)]
+        let fd = if borrowed && self.pollable.get() {
+            match bun_sys::dup_with_flags(fd, 0) {
+                sys::Result::Err(err) => return sys::Result::Err(err),
+                sys::Result::Ok(dup) => {
+                    owns_fd = true;
+                    dup
+                }
+            }
+        } else {
+            fd
+        };
         #[cfg(unix)]
         self.writer.with_mut(|w| w.close_fd = owns_fd);
 

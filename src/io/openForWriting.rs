@@ -34,7 +34,7 @@ impl OpenForWritingInput for crate::PathOrFileDescriptor<'_> {
                 *is_nonblocking = true;
                 bun_sys::openat_a(dir, path, input_flags, mode)
             }
-            Fd(fd_) => bun_sys::dup_with_flags(*fd_, 0),
+            Fd(_) => unreachable!("borrowed_fd() short-circuits Fd in open_for_writing_impl"),
         }
     }
     fn borrowed_fd(&self) -> Option<Fd> {

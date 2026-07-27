@@ -661,7 +661,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         && identifier_opts.assign_target() != js_ast::AssignTarget::None
                         && !identifier_opts.is_delete_target()
                         && data.name == b"exports"
-                        && matches!(data.target.data, js_ast::ExprData::EIdentifier(inner) if inner.ref_.eql(p.module_ref))
+                        && matches!(
+                            data.target.data,
+                            js_ast::ExprData::EIdentifier(inner)
+                                if inner.ref_.eql(p.module_ref)
+                                    || p.symbols.as_slice()[inner.ref_.inner_index() as usize]
+                                        .original_name
+                                        .slice()
+                                        == b"module"
+                        )
                     {
                         p.record_runtime_commonjs_export_name(name, name_loc);
                     }
@@ -747,12 +755,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     p.has_commonjs_export_names = true;
                                 }
                             }
-                        } else if p.options.features.commonjs_at_runtime
-                            && !p.is_control_flow_dead
-                            && identifier_opts.assign_target() != js_ast::AssignTarget::None
-                            && !identifier_opts.is_delete_target()
-                        {
-                            p.record_runtime_commonjs_export_name(name, name_loc);
                         }
                     }
                     E::Special::HotEnabled | E::Special::HotDisabled => {

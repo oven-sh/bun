@@ -1727,7 +1727,7 @@ bool evaluateDeferredCommonJSModuleForESM(
         }
         if (hasESModuleMarker) {
             PropertySlot defaultSlot(exportsObject, PropertySlot::InternalMethodType::Get);
-            bool hasDefault = exportsObject->getPropertySlot(globalObject, vm.propertyNames->defaultKeyword, defaultSlot);
+            bool hasDefault = exportsObject->methodTable()->getOwnPropertySlot(exportsObject, globalObject, vm.propertyNames->defaultKeyword, defaultSlot);
             RETURN_IF_EXCEPTION(scope, true);
             if (hasDefault) {
                 defaultValue = defaultSlot.getValue(globalObject, vm.propertyNames->defaultKeyword);

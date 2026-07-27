@@ -2014,10 +2014,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         .slice()
                                         == b"exports"
                             }
-                            Data::ESpecial(E::Special::ModuleExports) => true,
                             Data::EDot(d) => {
                                 d.name == b"exports"
-                                    && matches!(d.target.data, Data::EIdentifier(inner) if inner.ref_.eql(module_ref))
+                                    && matches!(
+                                        d.target.data,
+                                        Data::EIdentifier(inner)
+                                            if inner.ref_.eql(module_ref)
+                                                || symbols[inner.ref_.inner_index() as usize]
+                                                    .original_name
+                                                    .slice()
+                                                    == b"module"
+                                    )
                             }
                             _ => false,
                         }

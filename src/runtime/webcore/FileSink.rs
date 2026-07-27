@@ -648,8 +648,7 @@ impl FileSink {
         #[allow(unused_mut)]
         let mut owns_fd = !borrowed;
         self.fd.set(fd);
-        // A pollable caller-supplied fd needs its own epoll registration per
-        // sink; adopt it only when non-pollable (regular file), otherwise dup.
+        // Pollable fds need a per-sink epoll entry; dup those, adopt the rest.
         #[cfg(unix)]
         let fd = if borrowed && self.pollable.get() {
             match bun_sys::dup_with_flags(fd, 0) {

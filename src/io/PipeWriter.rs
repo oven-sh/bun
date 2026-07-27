@@ -1003,7 +1003,9 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
             } else {
                 self.get_file_type()
             };
-            let blocking_pipe = matches!(file_type, FileType::Pipe);
+            if matches!(file_type, FileType::Pipe) {
+                return self.writev_buffered(bufs, total);
+            }
 
             let mut iov: Vec<libc::iovec> = Vec::with_capacity(bufs.len());
             for b in bufs {
@@ -1046,14 +1048,6 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
                 if offset == total {
                     self.parent_on_write(offset, WriteStatus::Drained);
                     return WriteResult::Wrote(offset);
-                }
-                if blocking_pipe {
-                    if self.buffer_tail(bufs, offset, total - offset).is_err() {
-                        return WriteResult::Err(sys::Error::oom());
-                    }
-                    self.parent_on_write(offset, WriteStatus::Pending);
-                    Self::register_poll(self);
-                    return WriteResult::Pending(offset);
                 }
                 let mut consumed = wrote;
                 while start < iov.len() && consumed >= iov[start].iov_len {

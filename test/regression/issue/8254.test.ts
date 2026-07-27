@@ -3,7 +3,6 @@
 
 import { expect, test } from "bun:test";
 import { tempDir } from "harness";
-import { rmSync } from "node:fs";
 import { join } from "path";
 
 test("Bun.write() should write past 2GB boundary without corruption", async () => {
@@ -20,9 +19,9 @@ test("Bun.write() should write past 2GB boundary without corruption", async () =
 
   // Two distinct fill values are enough to detect a skipped or duplicated
   // chunk at the boundary, and every byte we assert on is non-zero so a
-  // truncated or zero-filled tail (the original #8254 symptom) cannot pass
-  // by accident. Backing the 2049-part Blob with two shared 1MB buffers
-  // instead of 256 drops per-run setup from 256MB of filled pages to 2MB.
+  // zero-filled tail (the original #8254 symptom) cannot pass by accident.
+  // Backing the 2049-part Blob with two shared 1MB buffers instead of 256
+  // drops per-run setup from 256MB of filled pages to 2MB.
   const a = new Uint8Array(CHUNK_SIZE).fill(0xaa);
   const b = new Uint8Array(CHUNK_SIZE).fill(0xbb);
   const chunks: Uint8Array<ArrayBuffer>[] = [];
@@ -41,7 +40,8 @@ test("Bun.write() should write past 2GB boundary without corruption", async () =
 
   // One read spanning the 2GB boundary: last two bytes of chunk 2047 (0xbb)
   // and first two bytes of chunk 2048 (0xaa). Under the original bug the
-  // file ended at Linux's MAX_RW_COUNT and this slice came back short.
+  // preallocated tail past MAX_RW_COUNT stayed zero, so this read back as
+  // [0, 0, 0, 0].
   const around = new Uint8Array(await file.slice(TWO_GB - 2, TWO_GB + 2).arrayBuffer());
   expect([...around]).toEqual([0xbb, 0xbb, 0xaa, 0xaa]);
 
@@ -49,8 +49,4 @@ test("Bun.write() should write past 2GB boundary without corruption", async () =
   const head = new Uint8Array(await file.slice(0, 1).arrayBuffer());
   const tail = new Uint8Array(await file.slice(TOTAL - 1, TOTAL).arrayBuffer());
   expect({ head: [...head], tail: [...tail] }).toEqual({ head: [0xaa], tail: [0xaa] });
-
-  // Drop the 2GB file before `tempDir`'s dispose runs so the recursive
-  // rmSync only has an empty directory to remove.
-  rmSync(path, { force: true });
 });

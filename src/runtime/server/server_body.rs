@@ -2751,14 +2751,11 @@ where
         // hold a ref), so hand ownership back to the raw teardown path.
         let this = bun_core::heap::release(self);
         this.js_value.finalize();
-        // A still-listening server can only reach `finalize` from
-        // `lastChanceToFinalize()` during VM teardown: the Strong `js_value`
-        // root above kept the wrapper alive through every ordinary GC while
-        // `listener` was set. `WebWorker::shutdown`'s `close_all_socket_groups`
-        // skips listen sockets on the assumption the owner closes them here
-        // (as `Listener::finalize` does); without this the fd outlives the
-        // worker and the port stays bound. `deinit_if_we_can` then sees
-        // `has_listener() == false` and can proceed to `schedule_deinit`.
+        // `listener` set here ⇒ VM teardown (`lastChanceToFinalize`): the
+        // Strong `js_value` root kept the wrapper alive through every ordinary
+        // GC. `close_all_socket_groups` skipped listen sockets for us to close
+        // (matching `Listener::finalize`); not doing so leaks the fd/port past
+        // worker exit.
         if let Some(listener) = this.listener.take() {
             if let server_config::Address::Unix(path) = &this.config.address {
                 let bytes = path.as_bytes();
@@ -2768,14 +2765,10 @@ where
             }
             bun_opaque::opaque_deref_mut(listener).close();
         }
-        // `h3_listener` is deliberately NOT closed here:
-        // `us_quic_listen_socket_close` walks every live QUIC conn with
-        // `lsquic_conn_abort` + `us_quic_process`, which synchronously fires
-        // `on_stream_close` → `RequestContext::on_abort` (JS abort listeners,
-        // `signal_fire`, `drain_microtasks`), and `close_all_socket_groups`
-        // never drained QUIC conns. Re-entering JS inside
-        // `lastChanceToFinalize()` is unsound; leaving the H3 UDP fd for a
-        // terminated worker is the pre-existing state for that path.
+        // Not `h3_listener.close()`: `us_quic_listen_socket_close` runs
+        // `lsquic_conn_abort` + `us_quic_process` → JS `on_abort` for any live
+        // QUIC conn (which `close_all_socket_groups` never drained), and JS is
+        // unsound inside `lastChanceToFinalize`.
         if Self::HAS_H3 {
             this.h3_listener = None;
         }

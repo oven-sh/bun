@@ -6665,6 +6665,9 @@ pub mod bv2_impl {
             // so borrowck sees it as disjoint from `self.graph.input_files` above.
             let path_to_source_index_map = &mut self.graph.build_graphs[ctx.target];
             for (i, record) in import_records.as_mut_slice().iter_mut().enumerate() {
+                if record.path.is_disabled {
+                    continue;
+                }
                 if let Some(source_index) = path_to_source_index_map.get_path(&record.path) {
                     if save_import_record_source_index
                         || input_file_loaders[source_index as usize].is_css()

@@ -1130,14 +1130,19 @@ body {
       "/index.html": `
 <!DOCTYPE html>
 <html>
-  <head><link rel="prefetch" href="./page2.html"></head>
+  <head>
+    <link rel="prefetch" href="./page2.html">
+    <link rel="prefetch" href="/page3.html">
+  </head>
   <body><script src="./index-script.js"></script></body>
 </html>`,
       "/page2.html": `<!doctype html><script src="./page2-script.js"></script><h1>Page 2</h1>`,
+      "/page3.html": `<!doctype html><script src="./page3-script.js"></script><h1>Page 3</h1>`,
       "/index-script.js": `console.log("INDEX_SCRIPT");`,
       "/page2-script.js": `console.log("PAGE2_SCRIPT");`,
+      "/page3-script.js": `console.log("PAGE3_SCRIPT");`,
     },
-    entryPoints: ["/index.html", "/page2.html"],
+    entryPoints: ["/index.html", "/page2.html", "/page3.html"],
     onAfterBundle(api) {
       const html = api.readFile("out/index.html");
       const js = html.match(/src="(?:\.\/|\/)?(index-[a-z0-9]+\.js)"/);
@@ -1145,9 +1150,11 @@ body {
       const jsContent = api.readFile("out/" + js![1]);
       expect(jsContent).toContain("INDEX_SCRIPT");
       expect(jsContent).not.toContain("PAGE2_SCRIPT");
-      // page2.html is emitted under its own entry-point name, so the original
-      // href is already a valid output path.
+      expect(jsContent).not.toContain("PAGE3_SCRIPT");
+      // page2.html/page3.html are emitted under their own entry-point names,
+      // so the original hrefs are already valid output paths.
       expect(html).toContain('<link rel="prefetch" href="./page2.html">');
+      expect(html).toContain('<link rel="prefetch" href="/page3.html">');
     },
   });
 

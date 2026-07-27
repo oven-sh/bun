@@ -536,7 +536,11 @@ describe.each([
     const proxy = await createAuthCapturingProxy();
     try {
       await using proc = Bun.spawn({
-        cmd: [bunExe(), "-e", `process.exitCode = (await fetch(${JSON.stringify(String(httpServer.url))})).status === 200 ? 0 : 1;`],
+        cmd: [
+          bunExe(),
+          "-e",
+          `process.exitCode = (await fetch(${JSON.stringify(String(httpServer.url))})).status === 200 ? 0 : 1;`,
+        ],
         env: {
           ...bunEnv,
           NO_PROXY: "",

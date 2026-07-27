@@ -3,6 +3,7 @@
 // installed copy (https://github.com/oven-sh/bun/issues/36098).
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import Module from "node:module";
 import { join } from "node:path";
 // test/node_modules has the real undici installed.
 import { MockAgent } from "undici";
@@ -31,6 +32,12 @@ describe.concurrent("undici prefer-installed resolution", () => {
     expect(paths!.length).toBeGreaterThan(0);
     // Real builtins still report no search paths.
     expect(require.resolve.paths("node:fs")).toBeNull();
+  });
+
+  test("undici is not reported as a builtin module", () => {
+    expect(Module.isBuiltin("undici")).toBe(false);
+    expect(Module.builtinModules).not.toContain("undici");
+    expect(Module.isBuiltin("node:fs")).toBe(true);
   });
 
   test("subpath imports mapping to undici prefer the installed package", async () => {

@@ -13,6 +13,7 @@ use crate::postgres::PostgresSQLConnection;
 use crate::postgres::PostgresSQLQuery;
 use crate::postgres::PostgresSQLStatement;
 use crate::postgres::Signature;
+use crate::postgres::types::tag_jsc;
 use crate::shared::QueryBindingIterator;
 
 bun_core::declare_scope!(Postgres, visible);
@@ -159,8 +160,21 @@ pub fn write_bind<Context: WriterContext>(
         // for mistakes on our end, such as stripping the timezone
         // differently than what Postgres does when given a timestamp with
         // timezone.
+        //
+        // If the server described this parameter as a non-json type (text,
+        // varchar, unknown oid 0, ...) but the value is a plain object or
+        // array, JSON.stringify it instead of coercing via ToString, which
+        // would produce "[object Object]". This matches postgres.js and
+        // node-pg. Only applied when the described type uses text format so
+        // the format-code loop above stays consistent.
         let effective_tag = if tag.is_binary_format_supported() && value.is_string() {
             types::Tag::text
+        } else if !matches!(tag, types::Tag::json | types::Tag::jsonb)
+            && !tag.is_binary_format_supported()
+            && value.is_object()
+            && tag_jsc::from_js(global, value).map_err(js_error_to_postgres)? == types::Tag::json
+        {
+            types::Tag::json
         } else {
             tag
         };

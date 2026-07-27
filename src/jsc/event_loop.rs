@@ -1306,7 +1306,7 @@ bun_event_loop::link_impl_JsEventLoop! {
                 .vm_ref()
                 .as_mut()
                 .rare_data()
-                .file_polls_
+                .file_polls
                 .get_or_insert_with(|| Box::new(Async::file_poll::Store::init()))
                 .as_mut(),
         ),
@@ -1319,7 +1319,7 @@ bun_event_loop::link_impl_JsEventLoop! {
                     .vm_ref()
                     .as_mut()
                     .rare_data()
-                    .file_polls_
+                    .file_polls
                     .get_or_insert_with(|| Box::new(Async::file_poll::Store::init()))
                     .as_mut(),
             );

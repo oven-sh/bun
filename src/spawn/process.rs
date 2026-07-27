@@ -1453,7 +1453,7 @@ pub struct WindowsSpawnResult {
     // ref-counted via `bun_ptr::ThreadSafeRefCount` and recovered via
     // `uv_process_t.data` in the libuv callbacks; allocation is `heap::alloc`
     // and destruction is `heap::take` (see `ThreadSafeRefCounted::destructor`).
-    pub process_: Option<*mut Process>,
+    pub process: Option<*mut Process>,
     pub stdin: WindowsStdioResult,
     pub stdout: WindowsStdioResult,
     pub stderr: WindowsStdioResult,
@@ -1466,7 +1466,7 @@ pub struct WindowsSpawnResult {
 impl Default for WindowsSpawnResult {
     fn default() -> Self {
         Self {
-            process_: None,
+            process: None,
             stdin: WindowsStdioResult::Unavailable,
             stdout: WindowsStdioResult::Unavailable,
             stderr: WindowsStdioResult::Unavailable,
@@ -1537,7 +1537,7 @@ impl Drop for WindowsSpawnResult {
 #[cfg(windows)]
 impl WindowsSpawnResult {
     pub fn to_process(&mut self, _event_loop: impl Sized, sync_: bool) -> *mut Process {
-        let process = self.process_.take().unwrap();
+        let process = self.process.take().unwrap();
         // SAFETY: caller has unique ownership at this point (just spawned)
         unsafe {
             (*process).sync = sync_;
@@ -1546,7 +1546,7 @@ impl WindowsSpawnResult {
     }
 
     pub fn close(&mut self) {
-        if let Some(proc) = self.process_.take() {
+        if let Some(proc) = self.process.take() {
             // SAFETY: proc is a live intrusive-refcounted Process
             unsafe {
                 (*proc).close();
@@ -2176,7 +2176,7 @@ mod spawn_process_body {
         // temporary default — E0509. Spell the defaults out instead.
         let mut result = WindowsSpawnResult {
             // Intrusive raw pointer; refcount lives inside `Process` (see field comment).
-            process_: Some(process),
+            process: Some(process),
             stdin: WindowsStdioResult::Unavailable,
             stdout: WindowsStdioResult::Unavailable,
             stderr: WindowsStdioResult::Unavailable,

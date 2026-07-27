@@ -1842,7 +1842,7 @@ bun_io::link_impl_EventLoopCtx! {
         platform_event_loop_ptr() => vm_from_owner(this.cast()).uws_loop(),
         file_polls_ptr() => {
             let rare = vm_from_owner(this.cast()).rare_data();
-            &raw mut **rare.file_polls_.get_or_insert_with(|| Box::new(bun_io::Store::init()))
+            &raw mut **rare.file_polls.get_or_insert_with(|| Box::new(bun_io::Store::init()))
         },
         // CROSS-THREAD: reached via `KeepAlive::unref_on_next_tick_concurrently`.
         // Do NOT route through `vm_from_owner()` — that mints `&mut VM`, which
@@ -2703,7 +2703,7 @@ impl<'a> bun_js_printer::OnSourceMapChunk for SourceMapHandlerGetter<'a> {
         // SAFETY: `printer` is the raw `*mut BufferPrinter` passed in by the
         // caller (jsc_hooks.rs), with the SAME provenance as the `writer` arg
         // to `print_with_source_map`. By the time `on_source_map_chunk` runs
-        // (js_printer/lib.rs `print_ast` / `print_common_js` tail), the writer
+        // (js_printer/lib.rs `print_ast` tail), the writer
         // has emitted its last byte; we reborrow from the raw pointer here
         // rather than from a stashed `&'a mut` so no Unique tag is held across
         // the writer's lifetime. The caller MUST rederive its own

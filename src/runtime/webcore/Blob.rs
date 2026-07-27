@@ -821,7 +821,7 @@ impl BlobExt for Blob {
         let mut buffer_stream =
             bun_io::FixedBufferStream::new(unsafe { bun_core::ffi::slice(*cursor, total_length) });
 
-        let result = match _on_structured_clone_deserialize(global_this, &mut buffer_stream) {
+        let result = match on_structured_clone_deserialize(global_this, &mut buffer_stream) {
             Ok(v) => v,
             Err(e) if e.name() == "OutOfMemory" => {
                 return Err(global_this.throw_out_of_memory());
@@ -4118,7 +4118,7 @@ fn read_slice<B: AsRef<[u8]>>(
     Ok(slice)
 }
 
-fn _on_structured_clone_deserialize<B: AsRef<[u8]>>(
+fn on_structured_clone_deserialize<B: AsRef<[u8]>>(
     global_this: &JSGlobalObject,
     reader: &mut bun_io::FixedBufferStream<B>,
 ) -> crate::Result<JSValue> {
@@ -5565,8 +5565,8 @@ bun_jsc::jsc_host_abi! {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> Option<NonNull<Blob>> {
-        match jsdom_file_construct_(global_this, callframe) {
-            Ok(b) => Some(NonNull::new(b).expect("jsdom_file_construct_ returns Blob::new (heap::alloc)")),
+        match jsdom_file_construct(global_this, callframe) {
+            Ok(b) => Some(NonNull::new(b).expect("jsdom_file_construct returns Blob::new (heap::alloc)")),
             Err(jsc::JsError::Thrown) => None,
             Err(jsc::JsError::OutOfMemory) => {
                 let _ = global_this.throw_out_of_memory();
@@ -5577,7 +5577,7 @@ bun_jsc::jsc_host_abi! {
     }
 }
 
-pub fn jsdom_file_construct_(
+pub fn jsdom_file_construct(
     global_this: &JSGlobalObject,
     callframe: &CallFrame,
 ) -> JsResult<*mut Blob> {

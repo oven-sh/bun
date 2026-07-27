@@ -566,6 +566,12 @@ describe("zlib.zstd", () => {
     expect(roundtrip.toString()).toEqual(inputString);
   });
 
+  it("zstdDecompressSync decodes concatenated frames", () => {
+    const f1 = zlib.zstdCompressSync(Buffer.from("first\n"));
+    const f2 = zlib.zstdCompressSync(Buffer.from("second\n"));
+    expect(zlib.zstdDecompressSync(Buffer.concat([f1, f2])).toString()).toBe("first\nsecond\n");
+  });
+
   it("can compress streaming", async () => {
     const encoder = zlib.createZstdCompress();
     for (const chunk of window(inputString, 55)) {

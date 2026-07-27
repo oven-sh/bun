@@ -314,7 +314,7 @@ impl<'a> Task<'a> {
                         manifest.name.slice(),
                         loaded_manifest,
                         // SAFETY: see `manager` decl — short-lived `&mut` at call
-                        // boundary only (callee touches `cache_directory_` /
+                        // boundary only (callee touches `cache_directory` /
                         // `temporary_directory` lazily).
                         unsafe { &mut *manager },
                         is_extended_manifest,

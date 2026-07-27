@@ -84,10 +84,10 @@ impl PercentEncoding {
 
     /// Replaces percent encoded entities within `path` without throwing an error if other URL unsafe characters are present
     pub(crate) fn decode_unstrict(path: &[u8]) -> Result<Option<Vec<u8>>, EncodeError> {
-        Self::_decode(path, false)
+        Self::decode(path, false)
     }
 
-    fn _decode(path: &[u8], strict: bool) -> Result<Option<Vec<u8>>, EncodeError> {
+    fn decode(path: &[u8], strict: bool) -> Result<Option<Vec<u8>>, EncodeError> {
         let mut ret: Option<Vec<u8>> = None;
         // errdefer: `ret` is a Vec — drops automatically on `?` error path
         let mut ret_index: usize = 0;

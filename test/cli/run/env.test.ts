@@ -1068,3 +1068,31 @@ test.skipIf(!isASAN || isWindows)(".env with a huge lying st_size does not abort
   // 1099511627792 bytes failed", SIGABRT) without ever reaching app.js.
   expect({ stdout, exitCode }).toEqual({ stdout: "reached user code\n", exitCode: 0 });
 });
+
+// A `.env` that is a symlink loop (`.env -> .env`) fails openat(2) with ELOOP.
+// Previously the unhandled errno propagated up to `fail_with_build_error`, which
+// printed an empty log and called exit(1): every bun command in that cwd died
+// with rc=1 and not one byte of output. Default .env loads are optimistic; an
+// unreadable .env must warn and continue, matching EACCES/EBUSY.
+test("a .env that is a symlink loop (ELOOP) warns and continues instead of exiting silently", async () => {
+  const dir = tempDirWithFiles("dotenv-eloop", {
+    "index.ts": `console.log("ran");`,
+  });
+  fs.symlinkSync(".env", path.join(dir, ".env"), "file");
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "index.ts"],
+    env: bunEnv,
+    cwd: dir,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  // The diagnostic must name both the errno and the file so the user can act
+  // on it. Unfixed: stderr was empty and exitCode was 1.
+  expect(stderr).toContain("ELOOP");
+  expect(stderr).toContain(".env");
+  expect(stdout).toBe("ran\n");
+  expect(exitCode).toBe(0);
+});

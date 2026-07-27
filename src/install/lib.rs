@@ -409,6 +409,18 @@ impl RunCommand {
     #[cfg(not(windows))]
     const SHELLS_TO_SEARCH: &'static [&'static [u8]] = &[b"bash", b"sh", b"zsh"];
 
+    /// Basename of the fake-node shim directory (`bun-node-<sha>`, or `-debug`).
+    /// The single source of truth for this name; `BUN_NODE_DIR`,
+    /// `create_fake_temporary_node_executable`, and `bun_node_file_utf8` all
+    /// derive from it so reader and writer cannot drift.
+    pub const BUN_NODE_DIR_NAME: &'static str = if bun_core::env::IS_DEBUG {
+        "bun-node-debug"
+    } else if bun_core::env::GIT_SHA_SHORT.is_empty() {
+        "bun-node"
+    } else {
+        const_format::concatcp!("bun-node-", bun_core::env::GIT_SHA_SHORT)
+    };
+
     /// `/tmp/bun-node-<sha>` (or debug variant). Windows builds compute the path
     /// at runtime via GetTempPathW, so this constant is POSIX-only.
     ///
@@ -417,8 +429,6 @@ impl RunCommand {
     /// therefore re-points a stale link on EEXIST instead of trusting it.
     #[cfg(not(windows))]
     pub const BUN_NODE_DIR: &'static str = {
-        // `const_format::concatcp!` cannot host
-        // `if` expressions inline, so split into helper consts.
         use const_format::concatcp;
         const TMP: &str = if cfg!(target_os = "macos") {
             "/private/tmp"
@@ -427,14 +437,7 @@ impl RunCommand {
         } else {
             "/tmp"
         };
-        const SUFFIX: &str = if bun_core::env::IS_DEBUG {
-            "/bun-node-debug"
-        } else if bun_core::env::GIT_SHA_SHORT.is_empty() {
-            "/bun-node"
-        } else {
-            concatcp!("/bun-node-", bun_core::env::GIT_SHA_SHORT)
-        };
-        concatcp!(TMP, SUFFIX)
+        concatcp!(TMP, "/", RunCommand::BUN_NODE_DIR_NAME)
     };
 
     fn find_shell_impl<'a>(
@@ -683,13 +686,7 @@ impl RunCommand {
             // The dir name is ASCII-only, so widen the const `&str` byte-by-
             // byte into a small stack buffer at runtime (Rust macros require a
             // single string *literal* token, which `concatcp!` doesn't yield).
-            let dir_name_str: &str = if bun_core::env::IS_DEBUG {
-                "bun-node-debug"
-            } else if bun_core::env::GIT_SHA_SHORT.is_empty() {
-                "bun-node"
-            } else {
-                const_format::concatcp!("bun-node-", bun_core::env::GIT_SHA_SHORT)
-            };
+            let dir_name_str: &str = Self::BUN_NODE_DIR_NAME;
             let mut dir_name_buf = [0u16; 64];
             for (i, b) in dir_name_str.bytes().enumerate() {
                 debug_assert!(b < 0x80, "dir_name is ASCII-only");

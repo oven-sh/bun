@@ -1839,16 +1839,8 @@ impl RunCommand {
                 &temp_path_buffer[..len as usize],
             );
 
-            const FILE_NAME: &str = const_format::concatcp!(
-                if Environment::IS_DEBUG {
-                    "bun-node-debug"
-                } else if Environment::GIT_SHA_SHORT.len() > 0 {
-                    const_format::concatcp!("bun-node-", Environment::GIT_SHA_SHORT)
-                } else {
-                    "bun-node"
-                },
-                "\\node.exe"
-            );
+            const FILE_NAME: &str =
+                const_format::concatcp!(bun_install::RunCommand::BUN_NODE_DIR_NAME, "\\node.exe");
             let conv_len = converted.len();
             let total = conv_len + FILE_NAME.len();
             target_path_buffer[conv_len..total].copy_from_slice(FILE_NAME.as_bytes());

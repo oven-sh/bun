@@ -34,6 +34,7 @@ async function backpressuredCloseSetup(): Promise<{ ws: WebSocket; serverSocket:
     serverSocket = sock;
     let head = "";
     let done = false;
+    sock.on("error", handshook.reject);
     sock.on("data", chunk => {
       if (done) return;
       head += chunk.toString("latin1");
@@ -64,7 +65,14 @@ async function backpressuredCloseSetup(): Promise<{ ws: WebSocket; serverSocket:
   const port = (server.address() as AddressInfo).port;
 
   const ws = new WebSocket(`ws://127.0.0.1:${port}`);
-  await once(ws, "open");
+  cleanup.push(() => ws.terminate());
+  {
+    const opened = Promise.withResolvers<void>();
+    ws.onopen = () => opened.resolve();
+    ws.onclose = e => opened.reject(new Error(`open failed: ${e.code} ${e.reason}`));
+    await opened.promise;
+    ws.onopen = ws.onclose = null;
+  }
   await handshook.promise;
   cleanup.push(() => serverSocket.destroy());
 

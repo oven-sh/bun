@@ -1866,6 +1866,7 @@ for (let withOverridenBufferWrite of [false, true]) {
           ["Int8Array", new Int8Array([1, 2, 3, 4])],
           ["Int16Array", new Int16Array([1, 2])],
           ["Int32Array", new Int32Array([1])],
+          ["Float16Array", new Float16Array([1, 2])],
           ["Float32Array", new Float32Array([1])],
           ["Float64Array", new Float64Array(1)],
           ["BigInt64Array", new BigInt64Array(1)],

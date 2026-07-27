@@ -4948,7 +4948,7 @@ unsafe fn _resolve<'a>(
     let mut query_string: &[u8] = b"";
     let mut normalized_specifier = normalize_specifier_for_resolution(specifier, &mut query_string);
     // POSIX filenames may contain a literal `?`.
-    let mut retry_with_literal_question_mark = !query_string.is_empty();
+    let mut retry_with_literal_question_mark = !cfg!(windows) && !query_string.is_empty();
     // `Fs.PathName.init(source).dirWithTrailingSlash()` slices
     // `source` in place, so the `'a` lifetime is preserved.
     let top_level_dir: &'a [u8] = Fs::FileSystem::get().top_level_dir;

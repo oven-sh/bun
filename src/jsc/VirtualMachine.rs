@@ -4053,7 +4053,7 @@ impl VirtualMachine {
         let mut normalized_specifier =
             normalize_specifier_for_resolution(specifier, &mut query_string);
         // POSIX filenames may contain a literal `?`.
-        let mut retry_with_literal_question_mark = !query_string.is_empty();
+        let mut retry_with_literal_question_mark = !cfg!(windows) && !query_string.is_empty();
         let top_level_dir = self.top_level_dir();
         let source_to_use: &[u8] = if !is_special_source {
             if is_a_file_path {

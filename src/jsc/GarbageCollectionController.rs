@@ -73,8 +73,10 @@ impl GarbageCollectionController {
             .clamp(1, i32::MAX as u64) as i32;
 
         if let Some(runs) = env_var::BUN_GC_RUNS_UNTIL_SKIP_RELEASE_ACCESS::get() {
-            crate::virtual_machine::Bun__defaultRemainingRunsUntilSkipReleaseAccess
-                .store(runs.min(c_int::MAX as u64) as c_int, core::sync::atomic::Ordering::Relaxed);
+            crate::virtual_machine::Bun__defaultRemainingRunsUntilSkipReleaseAccess.store(
+                runs.min(c_int::MAX as u64) as c_int,
+                core::sync::atomic::Ordering::Relaxed,
+            );
         }
 
         self.disabled = env_var::BUN_GC_TIMER_DISABLE::get().unwrap_or(false);

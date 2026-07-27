@@ -205,23 +205,29 @@ describe.concurrent("fetch-tls", () => {
   // read the freed AsyncHTTP clone and called through a null callback pointer.
   // The fixture drives that exact traffic shape and exits non-zero on any
   // unexpected outcome; every failure must surface as a catchable error.
-  it("rejects a trusted cert with a mismatched hostname cleanly under abort/timeout/keepalive churn", async () => {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), join(import.meta.dir, "fetch.tls.cert-mismatch-churn.fixture.ts")],
-      env: { ...bunEnv, BUN_CONFIG_HTTP_IDLE_TIMEOUT: "1" },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    // Check stderr for sanitizer reports first (and unconditionally): a
-    // recovered ASAN report can leave exit code 0, and on an abort this
-    // surfaces the actual report instead of a bare exit-code mismatch.
-    // Don't assert emptiness: debug builds emit benign startup noise.
-    expect(stderr).not.toMatch(/AddressSanitizer|ERROR: (Leak|Thread)Sanitizer/);
-    // Fixture reports unexpected outcomes on stdout.
-    expect(stdout).toStartWith("OK ");
-    expect(exitCode).toBe(0);
-  });
+  it(
+    "rejects a trusted cert with a mismatched hostname cleanly under abort/timeout/keepalive churn",
+    async () => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), join(import.meta.dir, "fetch.tls.cert-mismatch-churn.fixture.ts")],
+        env: { ...bunEnv, BUN_CONFIG_HTTP_IDLE_TIMEOUT: "1" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      // Check stderr for sanitizer reports first (and unconditionally): a
+      // recovered ASAN report can leave exit code 0, and on an abort this
+      // surfaces the actual report instead of a bare exit-code mismatch.
+      // Don't assert emptiness: debug builds emit benign startup noise.
+      expect(stderr).not.toMatch(/AddressSanitizer|ERROR: (Leak|Thread)Sanitizer/);
+      // Fixture reports unexpected outcomes on stdout.
+      expect(stdout).toStartWith("OK ");
+      expect(exitCode).toBe(0);
+    },
+    // The fixture is a debug+ASAN subprocess driving hundreds of TLS
+    // handshakes; on main it already ran at ~4.2-5.0s against the 5s default.
+    isASAN ? 20000 : 10000,
+  );
 
   // When checkServerIdentity is provided, the HTTP thread sends an intermediate
   // progress update carrying the server certificate before response headers

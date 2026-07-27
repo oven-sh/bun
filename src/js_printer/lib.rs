@@ -1518,11 +1518,7 @@ pub mod __gated_printer {
                 // "**" can't contain certain unary expressions
                 Op::Code::BinPow => {
                     // An inlined enum prints its wrapped value, so look through it.
-                    let mut left = &e.left.data;
-                    if let ExprData::EInlinedEnum(inlined) = left {
-                        left = &inlined.value.data;
-                    }
-                    match left {
+                    match e.left.unwrap_inlined().data {
                         ExprData::EUnary(left) => {
                             if Op::Code::unary_assign_target(left.op) == js_ast::AssignTarget::None
                             {
@@ -1532,10 +1528,8 @@ pub mod __gated_printer {
                         ExprData::EAwait(_) | ExprData::EUndefined(_) | ExprData::ENumber(_) => {
                             v.left_level = Level::Call;
                         }
-                        // EDot/EIndex may be rewritten to a (possibly negative) number by
-                        // cross-module enum inlining at print time; the bump is a no-op
-                        // for a member expression that stays a member expression.
                         ExprData::EDot(_) | ExprData::EIndex(_) => {
+                            // Cross-module enum inlining may replace these with a number
                             if self.options.ts_enums.is_some() {
                                 v.left_level = Level::Call;
                             }

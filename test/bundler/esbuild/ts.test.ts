@@ -2243,17 +2243,21 @@ describe("bundler", () => {
         // A negative inlined value on the left of ** must be parenthesized:
         // "-5 ** 2" is a SyntaxError.
         console.log(E.Neg ** 2, E['Neg'] ** 2, E.Pos ** 2, 2 ** E.Neg)
+        // The operand of a prefix unary needs no extra parentheses.
+        console.log(-E.Neg, ~E.Neg, 2 ** E.Pos)
       `,
       "/enums.ts": /* ts */ `
         export enum E { Neg = -5, Pos = 5 }
       `,
     },
     minifySyntax: false,
-    run: { stdout: "25 25 25 0.03125" },
+    run: { stdout: "25 25 25 0.03125\n5 4 32" },
     onAfterBundle(api) {
       const out = api.readFile("/out.js");
-      expect(out).toContain("(-5)");
-      expect(out).not.toMatch(/[^(]-5 \/\* Neg \*\/ \*\*/);
+      expect(out).toContain("(-5) /* Neg */ ** 2");
+      expect(out).toContain("- -5 /* Neg */");
+      expect(out).not.toContain("-(-5)");
+      expect(out).not.toContain("(5)");
     },
   });
   itBundled("ts/EnumCrossModuleInliningExponentiationLHSMinify", {

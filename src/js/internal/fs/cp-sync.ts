@@ -17,6 +17,7 @@ const {
   utimesSync,
 } = require("node:fs");
 const { dirname, isAbsolute, join, parse, resolve, sep } = require("node:path");
+const { Buffer } = require("node:buffer");
 
 const { EEXIST, EISDIR, EINVAL, ENOTDIR } = $processBindingConstants.os.errno;
 
@@ -146,20 +147,43 @@ function areIdentical(srcStat, destStat) {
   return destStat.ino && destStat.dev && destStat.ino === srcStat.ino && destStat.dev === srcStat.dev;
 }
 
+// On POSIX the walkers below build child paths as Buffers so that entry names
+// that are not valid UTF-8 survive the round-trip back into syscalls. node:path
+// only operates on strings, so path-shape checks (isSrcSubdir, dirname in
+// onLink) decode via latin1: a 1:1 byte<->char mapping that keeps component
+// comparisons exact without re-encoding. Windows names are native UTF-16,
+// so strings are already lossless there.
+const SEP_BUF = Buffer.from(sep);
+const kReaddirBufferOpts =
+  process.platform === "win32" ? { withFileTypes: true } : { withFileTypes: true, encoding: "buffer" };
+
+function toBuffer(p) {
+  return Buffer.isBuffer(p) ? p : Buffer.from(String(p));
+}
+
+function joinDirEntry(dir, name) {
+  if (Buffer.isBuffer(name)) return Buffer.concat([toBuffer(dir), SEP_BUF, name]);
+  return join(dir, name);
+}
+
+function pathToString(p) {
+  return Buffer.isBuffer(p) ? p.toString("latin1") : p;
+}
+
 const normalizePathToArray = path =>
   ArrayPrototypeFilter.$call(StringPrototypeSplit.$call(resolve(path), sep), Boolean);
 
 // Return true if dest is a subdir of src, otherwise false.
 // It only checks the path strings.
 function isSrcSubdir(src, dest) {
-  const srcArr = normalizePathToArray(src);
-  const destArr = normalizePathToArray(dest);
+  const srcArr = normalizePathToArray(pathToString(src));
+  const destArr = normalizePathToArray(pathToString(dest));
   return ArrayPrototypeEvery.$call(srcArr, (cur, i) => destArr[i] === cur);
 }
 
 function checkPathsSync(src, dest, opts) {
   if (opts.filter) {
-    const shouldCopy = opts.filter(src, dest);
+    const shouldCopy = opts.filter(pathToString(src), pathToString(dest));
     if ($isPromise(shouldCopy)) {
       throw $ERR_INVALID_RETURN_VALUE("boolean", "filter", shouldCopy);
     }
@@ -260,14 +284,14 @@ function treeContainsOnlyFilesAndDirsSync(root) {
     const dir = stack.pop();
     let entries;
     try {
-      entries = readdirSync(dir, { withFileTypes: true });
+      entries = readdirSync(dir, kReaddirBufferOpts);
     } catch {
       return false;
     }
     for (let i = 0; i < entries.length; i++) {
       const entry = entries[i];
       if (entry.isDirectory()) {
-        stack.push(join(dir, entry.name));
+        stack.push(joinDirEntry(dir, entry.name));
       } else if (!entry.isFile()) {
         return false;
       }
@@ -442,10 +466,10 @@ function mkDirAndCopy(srcMode, src, dest, opts) {
 }
 
 function copyDir(src, dest, opts) {
-  for (const dirent of readdirSync(src, { withFileTypes: true })) {
+  for (const dirent of readdirSync(src, kReaddirBufferOpts)) {
     const { name } = dirent;
-    const srcItem = join(src, name);
-    const destItem = join(dest, name);
+    const srcItem = joinDirEntry(src, name);
+    const destItem = joinDirEntry(dest, name);
     const { destStat, skipped } = checkPathsSync(srcItem, destItem, opts);
     if (!skipped) getStats(destStat, srcItem, destItem, opts);
   }
@@ -454,7 +478,7 @@ function copyDir(src, dest, opts) {
 function onLink(destStat, src, dest, opts) {
   let resolvedSrc = readlinkSync(src);
   if (!opts.verbatimSymlinks && !isAbsolute(resolvedSrc)) {
-    resolvedSrc = resolve(dirname(src), resolvedSrc);
+    resolvedSrc = resolve(dirname(pathToString(src)), resolvedSrc);
   }
   if (!destStat) {
     return symlinkSync(resolvedSrc, dest);
@@ -472,7 +496,7 @@ function onLink(destStat, src, dest, opts) {
     throw err;
   }
   if (!isAbsolute(resolvedDest)) {
-    resolvedDest = resolve(dirname(dest), resolvedDest);
+    resolvedDest = resolve(dirname(pathToString(dest)), resolvedDest);
   }
   let srcIsDir = false;
   try {
@@ -511,6 +535,9 @@ export default {
   cpSyncFn,
   validateCpOptions,
   tryNativeFastPathSync,
+  joinDirEntry,
+  pathToString,
+  kReaddirBufferOpts,
   errno: { EEXIST, EISDIR, EINVAL, ENOTDIR },
   fsCpDirToNonDirError,
   fsCpEExistError,

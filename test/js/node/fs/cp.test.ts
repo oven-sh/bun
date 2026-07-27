@@ -312,6 +312,69 @@ for (const [name, copy] of impls) {
       expect(e.code).toBe("ERR_FS_CP_FIFO_PIPE");
     });
 
+    // POSIX filenames are arbitrary byte strings (only NUL and '/' are
+    // reserved). Prior to the fix the JS walker decoded entry names as UTF-8
+    // (lossy) and re-encoded them for the next syscall, so the child lstat
+    // landed on a U+FFFD path and failed ENOENT.
+    test.skipIf(isWindows)("recursive - entries with non-UTF-8 names are copied byte-exact", async () => {
+      using root = tempDir("cp-nonutf8", {});
+      const src = join(String(root), "src");
+      fs.mkdirSync(src);
+      const srcBuf = Buffer.from(src + "/");
+      // caf<0xe9> (Latin-1), d<0xe4>r/ (Latin-1 subdir), foo<0xff><0xfe>bar (raw bytes)
+      fs.writeFileSync(Buffer.concat([srcBuf, Buffer.from([0x63, 0x61, 0x66, 0xe9])]), "cafe");
+      fs.writeFileSync(join(src, "ok.txt"), "ok");
+      const sub = Buffer.concat([srcBuf, Buffer.from([0x64, 0xe4, 0x72])]);
+      fs.mkdirSync(sub);
+      fs.writeFileSync(Buffer.concat([sub, Buffer.from("/inner.txt")]), "inner");
+      fs.writeFileSync(Buffer.concat([sub, Buffer.from([0x2f, 0x66, 0x6f, 0x6f, 0xff, 0xfe, 0x62, 0x61, 0x72])]), "w");
+
+      const tree = (d: string) => {
+        const out: Record<string, string> = {};
+        const walk = (cur: Buffer) => {
+          for (const name of fs.readdirSync(cur, { encoding: "buffer" })) {
+            const full = Buffer.concat([cur, Buffer.from("/"), name]);
+            if (fs.lstatSync(full).isDirectory()) walk(full);
+            else out[full.subarray(Buffer.byteLength(d) + 1).toString("hex")] = fs.readFileSync(full, "utf8");
+          }
+        };
+        walk(Buffer.from(d));
+        return out;
+      };
+
+      for (const opts of [{ recursive: true }, { recursive: true, filter: () => true }] as const) {
+        const dest = join(String(root), opts.filter ? "dest-filter" : "dest");
+        await copy(src, dest, opts);
+        expect(tree(dest)).toEqual(tree(src));
+      }
+    });
+
+    test.skipIf(isWindows)("recursive - merge into existing dest with non-UTF-8 entry names", async () => {
+      using root = tempDir("cp-nonutf8-merge", {});
+      const src = join(String(root), "src");
+      const dest = join(String(root), "dest");
+      fs.mkdirSync(src);
+      fs.mkdirSync(dest);
+      const name = Buffer.from([0x63, 0x61, 0x66, 0xe9]);
+      fs.writeFileSync(Buffer.concat([Buffer.from(src + "/"), name]), "hello");
+      fs.writeFileSync(join(dest, "keep.txt"), "keep");
+
+      await copy(src, dest, { recursive: true });
+
+      expect({
+        copied: fs.readFileSync(Buffer.concat([Buffer.from(dest + "/"), name]), "utf8"),
+        kept: fs.readFileSync(join(dest, "keep.txt"), "utf8"),
+        entries: fs
+          .readdirSync(dest, { encoding: "buffer" })
+          .map(b => b.toString("hex"))
+          .sort(),
+      }).toEqual({
+        copied: "hello",
+        kept: "keep",
+        entries: [name.toString("hex"), Buffer.from("keep.txt").toString("hex")].sort(),
+      });
+    });
+
     test("filter - works", async () => {
       const basename = tempDirWithFiles("cp", {
         "from/a.txt": "a",

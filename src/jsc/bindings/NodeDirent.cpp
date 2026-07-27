@@ -12,6 +12,7 @@
 #include "JavaScriptCore/ObjectInitializationScope.h"
 
 #include "JavaScriptCore/ObjectConstructor.h"
+#include "JSBuffer.h"
 #include <JavaScriptCore/InternalFunction.h>
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/Identifier.h>
@@ -362,6 +363,42 @@ extern "C" JSC::EncodedJSValue Bun__Dirent__toJS(Zig::GlobalObject* globalObject
 
     auto nameString = name->transferToWTFString();
     auto nameValue = jsString(vm, WTF::move(nameString));
+    auto typeValue = jsNumber(type);
+    object->putDirectOffset(vm, 0, nameValue);
+    object->putDirectOffset(vm, 1, pathValue);
+    object->putDirectOffset(vm, 2, typeValue);
+    object->putDirectOffset(vm, 3, pathValue);
+
+    return JSValue::encode(object);
+}
+
+// readdir({ withFileTypes: true, encoding: 'buffer' }): the entry name is a
+// Node Buffer holding the raw directory-entry bytes, while path/parentPath
+// remain strings (matching Node.js).
+extern "C" JSC::EncodedJSValue Bun__Dirent__toJSWithBufferName(Zig::GlobalObject* globalObject, int type, const uint8_t* nameBytes, size_t nameLen, BunString* path, JSString** previousPath)
+{
+    auto& vm = globalObject->vm();
+
+    auto* structure = globalObject->m_JSDirentClassStructure.get(globalObject);
+    auto* object = JSC::JSFinalObject::create(vm, structure);
+    JSString* pathValue = nullptr;
+    if (path && path->tag == BunStringTag::WTFStringImpl && previousPath && *previousPath) {
+        auto* prevImpl = (*previousPath)->tryGetValueImpl();
+        if (prevImpl && (prevImpl == path->impl.wtf || WTF::equal(prevImpl, path->impl.wtf))) {
+            pathValue = *previousPath;
+            auto pathString = path->transferToWTFString();
+        }
+    }
+
+    if (!pathValue) {
+        auto pathString = path->transferToWTFString();
+        pathValue = jsString(vm, WTF::move(pathString));
+        if (previousPath) {
+            *previousPath = pathValue;
+        }
+    }
+
+    auto* nameValue = WebCore::createBuffer(globalObject, nameBytes, nameLen);
     auto typeValue = jsNumber(type);
     object->putDirectOffset(vm, 0, nameValue);
     object->putDirectOffset(vm, 1, pathValue);

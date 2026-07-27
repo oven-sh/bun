@@ -357,17 +357,80 @@ it("isBinary", async () => {
 it("onmessage", done => {
   const wss = new WebSocketServer({ port: 0 });
   wss.on("connection", ws => {
-    ws.onmessage = e => {
-      expect(e.data).toEqual(Buffer.from("hello"));
+    const handler = e => {
+      expect(e.data).toBe("hello");
+      expect(ws.onmessage).toBe(handler);
       done();
       wss.close();
     };
+    ws.onmessage = handler;
   });
 
   const ws = new WebSocket("ws://localhost:" + wss.address().port);
   ws.onopen = () => {
     ws.send("hello");
   };
+});
+
+// https://github.com/oven-sh/bun/issues/36060
+it("addEventListener('message') converts text frames to strings", async () => {
+  const wss = new WebSocketServer({ port: 0 });
+  const events: any[] = [];
+  const { promise, resolve, reject } = Promise.withResolvers<void>();
+  wss.on("connection", ws => {
+    ws.addEventListener("message", event => {
+      events.push(event);
+      if (events.length === 2) resolve();
+    });
+    ws.on("error", reject);
+  });
+
+  const ws = new WebSocket("ws://localhost:" + wss.address().port);
+  ws.on("open", () => {
+    ws.send("hello");
+    ws.send(Buffer.from([1, 2, 3]));
+  });
+
+  await promise;
+  expect(events[0].type).toBe("message");
+  expect(events[0].data).toBe("hello");
+  expect(events[1].type).toBe("message");
+  expect(Buffer.isBuffer(events[1].data)).toBeTrue();
+  expect(events[1].data).toEqual(Buffer.from([1, 2, 3]));
+  wss.close();
+  ws.close();
+});
+
+it("addEventListener supports { once: true } and removeEventListener", async () => {
+  const wss = new WebSocketServer({ port: 0 });
+  let onceCount = 0;
+  let removedCount = 0;
+  const seen: string[] = [];
+  const { promise, resolve, reject } = Promise.withResolvers<void>();
+  wss.on("connection", ws => {
+    ws.addEventListener("message", () => onceCount++, { once: true });
+    const removed = () => removedCount++;
+    ws.addEventListener("message", removed);
+    ws.removeEventListener("message", removed);
+    ws.addEventListener("message", event => {
+      seen.push(event.data);
+      if (seen.length === 2) resolve();
+    });
+    ws.on("error", reject);
+  });
+
+  const ws = new WebSocket("ws://localhost:" + wss.address().port);
+  ws.on("open", () => {
+    ws.send("first");
+    ws.send("second");
+  });
+
+  await promise;
+  expect(seen).toEqual(["first", "second"]);
+  expect(onceCount).toBe(1);
+  expect(removedCount).toBe(0);
+  wss.close();
+  ws.close();
 });
 
 // https://github.com/oven-sh/bun/issues/7896
@@ -398,7 +461,7 @@ it("close event", async () => {
   const wss = new WebSocketServer({ port: 0 });
   wss.on("connection", ws => {
     ws.onmessage = e => {
-      expect(e.data).toEqual(Buffer.from("hello"));
+      expect(e.data).toBe("hello");
       setTimeout(() => ws.close(), 10);
     };
   });

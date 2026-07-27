@@ -786,6 +786,27 @@ const RUNNING = 0;
 const CLOSING = 1;
 const CLOSED = 2;
 
+// Text frames are converted per binaryType before being emitted, so recover
+// the string the same way `ws`'s event-target shim does (`data.toString()`).
+function textEventData(data) {
+  if (typeof data === "string") return data;
+  if (Buffer.isBuffer(data)) return data.toString();
+  if (data instanceof ArrayBuffer) return Buffer.from(data).toString();
+  return data; // Blob has no synchronous string conversion
+}
+
+function createMessageEventWrapper(target, listener) {
+  const wrapper = (data, isBinary) => {
+    listener.$call(target, {
+      type: "message",
+      data: isBinary ? data : textEventData(data),
+      target,
+    });
+  };
+  wrapper.listener = listener;
+  return wrapper;
+}
+
 class BunWebSocketMocked extends EventEmitter {
   #ws;
   #state;
@@ -1078,7 +1099,7 @@ class BunWebSocketMocked extends EventEmitter {
     if (this.#onmessage) {
       this.removeListener("message", this.#onmessage);
     }
-    const l = data => cb({ data });
+    const l = createMessageEventWrapper(this, cb);
     this.on("message", l);
     this.#onmessage = l;
   }
@@ -1100,26 +1121,29 @@ class BunWebSocketMocked extends EventEmitter {
   }
 
   get onmessage() {
-    return this.#onmessage;
+    return this.#onmessage?.listener;
   }
 
   get onopen() {
     return this.#onopen;
   }
 
-  // TODO: implement this more proper
-  addEventListener(type, listener, _options) {
-    if (type === "message") {
-      const l = data => listener({ data });
-      l.listener = listener;
+  addEventListener(type, listener, options) {
+    const l = type === "message" ? createMessageEventWrapper(this, listener) : listener;
+    if (options?.once) {
+      this.once(type, l);
+    } else {
       this.on(type, l);
-      return;
     }
-    this.on(type, listener);
   }
 
   removeEventListener(type, listener) {
-    this.off(type, listener);
+    for (const l of this.listeners(type)) {
+      if (l === listener || l.listener === listener) {
+        this.removeListener(type, l);
+        break;
+      }
+    }
   }
 }
 

@@ -231,22 +231,30 @@ describe("CompressionStream and DecompressionStream", () => {
       expect(out).toBe("first frame\nsecond frame\n");
     });
 
-    test("decompresses a multi-frame zstd stream split across writes", async () => {
+    // Skippable frame: magic 0x184D2A50..5F, 4-byte LE size, then size bytes.
+    const skippable = Buffer.concat([
+      Buffer.from([0x55, 0x2a, 0x4d, 0x18]), // magic (variant 5)
+      Buffer.from([0x03, 0x00, 0x00, 0x00]), // size = 3
+      Buffer.from([0xaa, 0xbb, 0xcc]),
+    ]);
+
+    test.each([
+      ["zstd frame", zlib.zstdCompressSync(Buffer.from("second frame\n")), "first frame\nsecond frame\n"],
+      ["skippable frame", Buffer.concat([skippable, zlib.zstdCompressSync(Buffer.from("second frame\n"))]), "first frame\nsecond frame\n"],
+    ] as const)("decompresses a multi-frame zstd stream split across writes (next = %s)", async (_, next, expected) => {
       const f1 = zlib.zstdCompressSync(Buffer.from("first frame\n"));
-      const f2 = zlib.zstdCompressSync(Buffer.from("second frame\n"));
-      const cat = Buffer.concat([f1, f2]);
+      const cat = Buffer.concat([f1, next]);
 
-      const ds = new DecompressionStream("zstd");
-      const writer = ds.writable.getWriter();
-      // Split in the middle of the second frame's header so the boundary is
-      // not a frame boundary.
-      const split = f1.length + 2;
-      writer.write(cat.subarray(0, split));
-      writer.write(cat.subarray(split));
-      writer.close();
-
-      const out = await new Response(ds.readable).text();
-      expect(out).toBe("first frame\nsecond frame\n");
+      for (const offset of [1, 2, 3]) {
+        const ds = new DecompressionStream("zstd");
+        const writer = ds.writable.getWriter();
+        const read = new Response(ds.readable).text();
+        const split = f1.length + offset;
+        await writer.write(cat.subarray(0, split));
+        await writer.write(cat.subarray(split));
+        await writer.close();
+        expect(await read).toBe(expected);
+      }
     });
 
     test("decompresses many concatenated zstd frames larger than one output chunk", async () => {
@@ -264,12 +272,6 @@ describe("CompressionStream and DecompressionStream", () => {
     });
 
     test("decompresses a zstd stream with a leading skippable frame", async () => {
-      // Skippable frame: magic 0x184D2A50..5F, 4-byte LE size, then size bytes.
-      const skippable = Buffer.concat([
-        Buffer.from([0x55, 0x2a, 0x4d, 0x18]), // magic (variant 5)
-        Buffer.from([0x03, 0x00, 0x00, 0x00]), // size = 3
-        Buffer.from([0xaa, 0xbb, 0xcc]),
-      ]);
       const frame = zlib.zstdCompressSync(Buffer.from("payload"));
       const cat = Buffer.concat([skippable, frame, skippable]);
 

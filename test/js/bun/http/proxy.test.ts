@@ -523,7 +523,7 @@ test("proxy with long password (> 4096 chars) works correctly after redirect", a
 // base64("user"). curl does this; bun previously dropped the colon, which
 // strict proxies reject.
 //
-// Exercised via HTTP_PROXY in a subprocess (rather than the `{proxy}` option)
+// Exercised via http_proxy in a subprocess (rather than the `{proxy}` option)
 // so the raw env string reaches bun_url::URL::parse without WHATWG
 // normalization first dropping the `:` and tripping the userinfo heuristic.
 describe.each([
@@ -531,6 +531,10 @@ describe.each([
   { userinfo: "squidadmin:hunter2", decoded: "squidadmin:hunter2" },
 ])("proxy Basic auth keeps the colon for userinfo $userinfo", ({ userinfo, decoded }) => {
   const expected = `Basic ${Buffer.from(decoded).toString("base64")}`;
+  // bunEnv snapshots process.env before beforeAll clears these, and lowercase
+  // is resolved before uppercase, so override every variant explicitly.
+  const noProxyEnv = { ...bunEnv };
+  for (const k of PROXY_ENV_KEYS) noProxyEnv[k] = "";
 
   test.concurrent("http target (absolute-form)", async () => {
     const proxy = await createAuthCapturingProxy();
@@ -541,12 +545,7 @@ describe.each([
           "-e",
           `process.exitCode = (await fetch(${JSON.stringify(String(httpServer.url))})).status === 200 ? 0 : 1;`,
         ],
-        env: {
-          ...bunEnv,
-          NO_PROXY: "",
-          no_proxy: "",
-          HTTP_PROXY: `http://${userinfo}@127.0.0.1:${proxy.port}`,
-        },
+        env: { ...noProxyEnv, http_proxy: `http://${userinfo}@127.0.0.1:${proxy.port}` },
         stderr: "pipe",
       });
       const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
@@ -579,12 +578,7 @@ describe.each([
     try {
       await using proc = Bun.spawn({
         cmd: [bunExe(), "-e", `console.log((await fetch("https://example.invalid/")).status);`],
-        env: {
-          ...bunEnv,
-          NO_PROXY: "",
-          no_proxy: "",
-          HTTPS_PROXY: `http://${userinfo}@127.0.0.1:${port}`,
-        },
+        env: { ...noProxyEnv, https_proxy: `http://${userinfo}@127.0.0.1:${port}` },
         stdout: "pipe",
         stderr: "pipe",
       });

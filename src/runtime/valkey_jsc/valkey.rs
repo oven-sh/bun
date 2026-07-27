@@ -1013,13 +1013,9 @@ impl ValkeyClient {
                 Ok(())
             }
             _ => {
-                // HELLO only ever answers with a Map (success) or an Error
-                // (auth failure / unknown command). Any other frame arriving
-                // before the handshake completes is unsolicited noise from the
-                // peer (e.g. a proxy greeting line), not the HELLO reply.
-                // Drop it and keep waiting so the real HELLO reply is paired
-                // with HELLO instead of shifting every subsequent command's
-                // reply by one for the lifetime of the connection.
+                // HELLO only replies Map or Error. Anything else is unsolicited
+                // (e.g. a proxy greeting); drop it so the real HELLO reply is
+                // paired with HELLO instead of shifting later replies by one.
                 debug!("Dropping unsolicited non-HELLO frame before handshake completes");
                 Ok(())
             }

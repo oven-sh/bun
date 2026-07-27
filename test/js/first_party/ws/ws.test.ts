@@ -387,6 +387,7 @@ it("addEventListener('message') converts text frames to strings", async () => {
 
   const ws = new WebSocket("ws://localhost:" + wss.address().port);
   try {
+    ws.on("error", reject);
     ws.on("open", () => {
       ws.send("hello");
       ws.send(Buffer.from([1, 2, 3]));
@@ -398,6 +399,43 @@ it("addEventListener('message') converts text frames to strings", async () => {
     expect(events[1].type).toBe("message");
     expect(Buffer.isBuffer(events[1].data)).toBeTrue();
     expect(events[1].data).toEqual(Buffer.from([1, 2, 3]));
+  } finally {
+    wss.close();
+    ws.close();
+  }
+});
+
+it("text frames stay Buffer/string when binaryType is 'blob'", async () => {
+  const wss = new WebSocketServer({ port: 0 });
+  const emitted: [unknown, boolean][] = [];
+  const eventData: unknown[] = [];
+  const { promise, resolve, reject } = Promise.withResolvers<void>();
+  wss.on("connection", ws => {
+    ws.binaryType = "blob";
+    ws.on("message", (data, isBinary) => emitted.push([data, isBinary]));
+    ws.addEventListener("message", event => {
+      eventData.push(event.data);
+      if (eventData.length === 2) resolve();
+    });
+    ws.on("error", reject);
+  });
+
+  const ws = new WebSocket("ws://localhost:" + wss.address().port);
+  try {
+    ws.on("error", reject);
+    ws.on("open", () => {
+      ws.send("hello");
+      ws.send(Buffer.from([1, 2, 3]));
+    });
+
+    await promise;
+    // binaryType only affects binary frames, like npm ws
+    expect(Buffer.isBuffer(emitted[0][0])).toBeTrue();
+    expect(emitted[0][1]).toBeFalse();
+    expect(eventData[0]).toBe("hello");
+    expect(emitted[1][0]).toBeInstanceOf(Blob);
+    expect(emitted[1][1]).toBeTrue();
+    expect(eventData[1]).toBeInstanceOf(Blob);
   } finally {
     wss.close();
     ws.close();
@@ -431,6 +469,7 @@ it("addEventListener supports { once: true } and removeEventListener", async () 
 
   const ws = new WebSocket("ws://localhost:" + wss.address().port);
   try {
+    ws.on("error", reject);
     ws.on("open", () => {
       ws.send("first");
       ws.send("second");

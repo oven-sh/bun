@@ -786,14 +786,6 @@ const RUNNING = 0;
 const CLOSING = 1;
 const CLOSED = 2;
 
-// Recovers the text of a frame already converted per binaryType, like npm ws's `data.toString()`.
-function textEventData(data) {
-  if (typeof data === "string") return data;
-  if (Buffer.isBuffer(data)) return data.toString();
-  if (data instanceof ArrayBuffer) return Buffer.from(data).toString();
-  return data; // Blob has no synchronous string conversion
-}
-
 // Same tags as npm ws's event-target shim; removeEventListener skips `onmessage`-assigned wrappers.
 const kForOnEventAttribute = Symbol("kForOnEventAttribute");
 const kListener = Symbol("kListener");
@@ -802,7 +794,7 @@ function createMessageEventWrapper(target, listener, forOnEventAttribute = false
   const wrapper = (data, isBinary) => {
     listener.$call(target, {
       type: "message",
-      data: isBinary ? data : textEventData(data),
+      data: isBinary ? data : data.toString(),
       target,
     });
   };
@@ -872,14 +864,8 @@ class BunWebSocketMocked extends EventEmitter {
 
     let isBinary = false;
     if (typeof message === "string") {
-      if (this.#binaryType === "arraybuffer") {
-        message = encoder.encode(message).buffer;
-      } else if (this.#binaryType === "blob") {
-        message = new Blob([message], { type: "text/plain" });
-      } else {
-        // nodebuffer
-        message = Buffer.from(message);
-      }
+      // npm ws emits text frames as Buffer regardless of binaryType
+      message = Buffer.from(message);
     } else {
       //Buffer
       isBinary = true;

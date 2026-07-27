@@ -2823,10 +2823,6 @@ pub mod args {
                 // each element and pin its backing store until completion.
                 arguments.will_be_async,
             )?;
-            // Node: lib/fs.js does `if (typeof position !== 'number') position
-            // = null`, and native GetOffset() returns -1 (non-positional)
-            // unless the value is a safe JS integer. Either selects the
-            // current file offset.
             let position: Option<u64> = arguments
                 .next_eat()
                 .and_then(i52::offset_from_js)
@@ -3845,9 +3841,7 @@ pub mod args {
                         if !(current.is_number() || current.is_big_int()) {
                             break 'parse;
                         }
-                        // Numbers go through Node's GetOffset rule; BigInt is a
-                        // Bun extension kept for the buffer overload (see the
-                        // "writeSync works with bigint" test).
+                        // BigInt is a Bun extension kept for this overload.
                         let position = i52::offset_from_js(current)
                             .or_else(|| current.is_big_int().then(|| current.to_int64()));
                         if let Some(position @ 0..) = position {
@@ -10210,10 +10204,8 @@ impl NodeFSFunctionEnum {
 struct i52;
 impl i52 {
     const MIN: i64 = -(1i64 << 51);
-    /// Node's `GetOffset` (src/node_file.cc): the `position` argument to
-    /// `write`/`writev`/`readv` selects positional I/O only when it is a safe
-    /// JS integer. NaN, ±Infinity, a fractional value, a non-number, or a
-    /// value outside `Number.MAX_SAFE_INTEGER` all mean "current file offset".
+    /// Node's `GetOffset`: only a safe JS integer selects positional I/O;
+    /// anything else (NaN, ±Inf, fractional, non-number) means "current offset".
     #[inline]
     fn offset_from_js(v: JSValue) -> Option<i64> {
         let n = v.get_number()?;

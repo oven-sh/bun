@@ -4554,11 +4554,14 @@ pub mod __gated_printer {
             // "{ __proto__: x }" sets the prototype, while "{ __proto__ }" and
             // "{ ['__proto__']: x }" define an own data property (Annex B.3.1).
             // The shorthand and colon forms are therefore not interchangeable
-            // for this one key name.
+            // for this one key name. A property carrying an `initializer` is a
+            // destructuring target, where both forms just read the property and
+            // are equivalent, so the gate does not apply.
             let is_proto_setter_key = !IS_JSON
                 && !item.flags.contains(js_ast::flags::Property::IsComputed)
                 && item.kind == G::PropertyKind::Normal
                 && !item.flags.contains(js_ast::flags::Property::IsMethod)
+                && item.initializer.is_none()
                 && matches!(&key.data, ExprData::EString(s) if s.eql_comptime(b"__proto__"));
 
             if is_proto_setter_key && item.flags.contains(js_ast::flags::Property::WasShorthand) {
@@ -4635,37 +4638,35 @@ pub mod __gated_printer {
                         }
 
                         // Use a shorthand property if the names are the same
-                        if let Some(val) = &item.value {
-                            match &val.data {
-                                ExprData::EIdentifier(e) => {
-                                    if key_str.slice8() == self.name_for_symbol(e.ref_) {
-                                        if let Some(initial) = &item.initializer {
-                                            self.print_initializer(*initial);
-                                        }
-                                        if allow_shorthand {
-                                            return;
-                                        }
-                                    }
-                                }
-                                ExprData::EImportIdentifier(e) => 'inner: {
-                                    let ref_ = self.symbols().follow(e.ref_);
-                                    if self.options.input_files_for_dev_server.is_some() {
-                                        break 'inner;
-                                    }
-                                    if let Some(symbol) = self.symbols().get_const(ref_) {
-                                        if symbol.namespace_alias.is_none()
-                                            && key_str.slice8() == self.name_for_symbol(e.ref_)
-                                        {
+                        if allow_shorthand {
+                            if let Some(val) = &item.value {
+                                match &val.data {
+                                    ExprData::EIdentifier(e) => {
+                                        if key_str.slice8() == self.name_for_symbol(e.ref_) {
                                             if let Some(initial) = &item.initializer {
                                                 self.print_initializer(*initial);
                                             }
-                                            if allow_shorthand {
+                                            return;
+                                        }
+                                    }
+                                    ExprData::EImportIdentifier(e) => 'inner: {
+                                        let ref_ = self.symbols().follow(e.ref_);
+                                        if self.options.input_files_for_dev_server.is_some() {
+                                            break 'inner;
+                                        }
+                                        if let Some(symbol) = self.symbols().get_const(ref_) {
+                                            if symbol.namespace_alias.is_none()
+                                                && key_str.slice8() == self.name_for_symbol(e.ref_)
+                                            {
+                                                if let Some(initial) = &item.initializer {
+                                                    self.print_initializer(*initial);
+                                                }
                                                 return;
                                             }
                                         }
                                     }
+                                    _ => {}
                                 }
-                                _ => {}
                             }
                         }
                     } else if !IS_JSON && self.can_print_identifier_utf16(key_str.slice16()) {

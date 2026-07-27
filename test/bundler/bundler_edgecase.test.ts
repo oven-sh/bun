@@ -1471,6 +1471,29 @@ describe("bundler", () => {
     minifyIdentifiers: true,
     run: { stdout: '[true,true,"P"]' },
   });
+  // In a destructuring target both `{ __proto__ }` and `{ __proto__: __proto__ }`
+  // just read the property; the shorthand gate must not apply there and must not
+  // double-print the default-value initializer.
+  for (const [label, opts] of [
+    ["", {}],
+    ["Minify", { minifySyntax: true, minifyWhitespace: true, minifyIdentifiers: true }],
+  ] as const) {
+    itBundled(`edgecase/ProtoLonghandDestructuringWithDefault${label}`, {
+      files: {
+        "/entry.ts": /* js */ `
+          let __proto__;
+          ({ __proto__: __proto__ = { m: 1 } } = Object.create(null));
+          console.log(JSON.stringify(__proto__));
+          ({ __proto__: __proto__ = { m: 2 } } = {});
+          console.log(__proto__ === Object.prototype);
+          ({ __proto__: __proto__ } = { a: 1 });
+          console.log(__proto__ === Object.prototype);
+        `,
+      },
+      ...opts,
+      run: { stdout: '{"m":1}\ntrue\ntrue' },
+    });
+  }
   test.concurrent("edgecase/ProtoKeyVsShorthandAtRuntime", async () => {
     await using proc = Bun.spawn({
       cmd: [

@@ -222,6 +222,7 @@ describe("FileSink", () => {
 });
 
 import fs from "node:fs";
+import net from "node:net";
 import path from "node:path";
 import util from "node:util";
 
@@ -525,6 +526,40 @@ if (isWindows) {
         syscall: "open",
       }),
     );
+  });
+
+  it("Bun.file(fd).writer() on a named pipe dups so end() releases the sink", async () => {
+    const pipePath = `\\\\.\\pipe\\bun-filesink-${process.pid}-${Date.now()}`;
+    let received = "";
+    const server = net.createServer(c => c.on("data", d => (received += d)));
+    const { promise: listening, resolve: onListen } = Promise.withResolvers<void>();
+    server.listen(pipePath, onListen);
+    await listening;
+
+    const fd = fs.openSync(pipePath, "w");
+    try {
+      const baseline = fileSinkInternals.liveCount();
+      const sink = Bun.file(fd).writer();
+      const rc = sink.write(Buffer.from("hello"));
+      if (rc instanceof Promise) await rc;
+      await sink.end();
+
+      // end() must not close the caller's fd: fstat still works.
+      expect(() => fs.fstatSync(fd)).not.toThrow();
+
+      for (let i = 0; i < 50; i++) {
+        Bun.gc(true);
+        if (fileSinkInternals.liveCount() <= baseline) break;
+        await Bun.sleep(10);
+      }
+      expect(fileSinkInternals.liveCount()).toBeLessThanOrEqual(baseline);
+    } finally {
+      try {
+        fs.closeSync(fd);
+      } catch {}
+      await new Promise<void>(r => server.close(() => r()));
+    }
+    expect(received).toBe("hello");
   });
 }
 

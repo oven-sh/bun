@@ -657,6 +657,26 @@ impl FileSink {
         } else {
             fd
         };
+        // uv_pipe_open / uv_tty_init adopt the handle and uv_close will
+        // CloseHandle it; dup a borrowed pipe/tty so close() can run and
+        // the caller keeps their fd.
+        #[cfg(windows)]
+        let fd = if borrowed
+            && !self.force_sync.get()
+            && matches!(
+                uv::uv_guess_handle(fd.uv()),
+                uv::HandleType::NamedPipe | uv::HandleType::Tty
+            ) {
+            use bun_sys::FdExt as _;
+            let dup = bun_sys::dup(fd)?.make_lib_uv_owned_for_syscall(
+                bun_sys::Tag::dup,
+                bun_sys::ErrorCase::CloseOnFail,
+            )?;
+            owns_fd = true;
+            dup
+        } else {
+            fd
+        };
         #[cfg(windows)]
         {
             if self.force_sync.get() {

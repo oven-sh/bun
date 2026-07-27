@@ -2648,7 +2648,6 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
         if !self.has_pending_data() {
             if !self.owns_fd && !matches!(self.source, Some(Source::File(_) | Source::SyncFile(_)))
             {
-                // uv_pipe_open adopted the caller's handle; uv_close on Drop.
                 return;
             }
             self.close();

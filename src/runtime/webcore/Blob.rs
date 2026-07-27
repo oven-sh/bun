@@ -1816,6 +1816,7 @@ impl BlobExt for Blob {
         #[cfg(windows)]
         {
             use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
+            use bun_sys::FdExt as _;
 
             let pathlike = &store.data.as_file().pathlike;
             // SAFETY: bun_vm() never returns null for a Bun-owned global.
@@ -1857,6 +1858,32 @@ impl BlobExt for Blob {
                 )
             };
 
+            let borrowed = matches!(pathlike, PathOrFileDescriptor::Fd(_));
+            // uv_pipe_open / uv_tty_init adopt the handle and uv_close will
+            // CloseHandle it; dup a borrowed pipe/tty so close() can run and
+            // the caller keeps their fd.
+            let (writer_fd, owns_fd) = if borrowed
+                && !is_stdout_or_stderr
+                && matches!(
+                    bun_sys::windows::libuv::uv_guess_handle(fd.uv()),
+                    bun_sys::windows::libuv::HandleType::NamedPipe
+                        | bun_sys::windows::libuv::HandleType::Tty
+                ) {
+                match bun_sys::dup(fd).and_then(|d| {
+                    d.make_lib_uv_owned_for_syscall(
+                        bun_sys::Tag::dup,
+                        bun_sys::ErrorCase::CloseOnFail,
+                    )
+                }) {
+                    bun_sys::Result::Ok(dup) => (dup, true),
+                    bun_sys::Result::Err(err) => {
+                        return Err(global_this.throw_value(err.to_js(global_this)));
+                    }
+                }
+            } else {
+                (fd, !borrowed)
+            };
+
             let sink = webcore::FileSink::init(
                 fd,
                 jsc::EventLoopHandle::init(
@@ -1869,18 +1896,19 @@ impl BlobExt for Blob {
             );
             // SAFETY: `init` returns a freshly-allocated +1 *mut FileSink; sole owner here.
             let sink_mut = unsafe { &mut *sink };
-            sink_mut
-                .writer
-                .with_mut(|w| w.owns_fd = !matches!(pathlike, PathOrFileDescriptor::Fd(_)));
+            sink_mut.writer.with_mut(|w| w.owns_fd = owns_fd);
 
             let start_result = sink_mut.writer.with_mut(|w| {
                 if is_stdout_or_stderr {
-                    w.start_sync(fd, false)
+                    w.start_sync(writer_fd, false)
                 } else {
-                    w.start(fd, true)
+                    w.start(writer_fd, true)
                 }
             });
             if let bun_sys::Result::Err(err) = start_result {
+                if owns_fd {
+                    writer_fd.close();
+                }
                 // SAFETY: release the +1 ref from `init`.
                 unsafe { webcore::FileSink::deref(sink) };
                 return Err(global_this.throw_value(err.to_js(global_this)));

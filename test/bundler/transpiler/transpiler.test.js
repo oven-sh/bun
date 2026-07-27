@@ -2297,7 +2297,12 @@ console.log(<div {...obj} key="after" />);`),
           [{ kind: "import-statement", path: "preact/jsx-runtime" }],
         ],
         ["autoImportJSX: false", { ...dev, autoImportJSX: false }, "export default <div/>;", []],
-        ["classic runtime", { loader: "tsx", tsconfig: { compilerOptions: { jsx: "react" } } }, "export default <div/>;", []],
+        [
+          "classic runtime",
+          { loader: "tsx", tsconfig: { compilerOptions: { jsx: "react" } } },
+          "export default <div/>;",
+          [],
+        ],
         ["no JSX", dev, "export const x = 1;", []],
       ])("%s", (_, opts, src, expected) => {
         const t = new Bun.Transpiler(opts);

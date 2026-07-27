@@ -1058,12 +1058,9 @@ pub struct Options<'a> {
     pub inline_require_and_import_errors: bool,
     pub has_run_symbol_renamer: bool,
 
-    /// When the file being printed declares a local binding named `undefined` /
-    /// `NaN` / `Infinity`, the printer must not emit that bare identifier for a
-    /// value it synthesized (e.g. a folded `void 0` / `0/0` / `1e999`), because
-    /// the emitted identifier would resolve to the user's binding. Computed once
-    /// per file in [`compute_shadowed_globals`]; when set, [`print_undefined`]
-    /// / [`print_number`] fall back to `void 0` / `0 / 0` / `1 / 0`.
+    /// Set by [`compute_shadowed_globals`] when the file declares a local of
+    /// this name; [`print_undefined`] / [`print_number`] then fall back to
+    /// `void 0` / `0/0` / `1/0` so a synthesized value can't resolve to it.
     pub shadows_undefined: bool,
     pub shadows_nan: bool,
     pub shadows_infinity: bool,
@@ -1243,11 +1240,8 @@ fn is_identifier_or_numeric_constant_or_property_access(expr: &js_ast::Expr) -> 
     }
 }
 
-/// Walks one file's symbol table for local bindings named `undefined` / `NaN`
-/// / `Infinity`. Any non-`Unbound` occurrence means the printer cannot safely
-/// emit that identifier for a synthesized value anywhere in the file (the
-/// printer has no per-expression scope), so the flag is module-wide. See
-/// [`Options::shadows_undefined`].
+/// Sets [`Options::shadows_undefined`] / `_nan` / `_infinity` when any
+/// non-`Unbound` symbol in the file has that `original_name`.
 pub fn compute_shadowed_globals<'s>(
     opts: &mut Options<'_>,
     symbols: impl Iterator<Item = &'s js_ast::symbol::Symbol>,

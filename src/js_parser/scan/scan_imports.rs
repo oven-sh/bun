@@ -811,10 +811,7 @@ impl<'a> ImportScanner<'a> {
         Ok(scanner)
     }
 
-    // A smaller version of `scan` above that only repeats the TypeScript
-    // import-equals elimination. The full `scan` is not idempotent (it records
-    // exports, pushes import records, etc.), so the multi-pass fixed-point loop
-    // in `to_ast` uses this instead for every iteration after the first.
+    // Idempotent subset of `scan` for the multi-pass loop in `to_ast`.
     pub(crate) fn scan_for_unused_ts_import_equals<
         'p,
         const TYPESCRIPT: bool,

@@ -7965,9 +7965,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // Potentially remove some statements, then filter out parts to remove any
                 // with no statements
                 for idx in parts_begin..parts.len() {
-                    // A shallow bitwise copy; the duplicate is non-owning (paired with
-                    // `ptr::write`/`forget` below to avoid double-drop of arena-backed
-                    // Vec fields).
                     // SAFETY: idx < parts.len(); Part fields are arena/bump-backed
                     // (Borrowed-origin BabyLists, raw stmt slices), so the bitwise copy is
                     // a valid non-owning duplicate.
@@ -8090,24 +8087,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 unsafe { parts.set_len(parts_end) };
             }
 
-            // We need to iterate multiple times if an import-equals statement was
-            // removed and there are more import-equals statements that may be removed.
-            // In the example below, a/b/c should be kept but x/y/z should be removed
-            // (and removal requires multiple passes):
-            //
-            //   import a = foo.a
-            //   import b = a.b
-            //   import c = b.c
-            //
-            //   import x = foo.x
-            //   import y = x.y
-            //   import z = y.z
-            //
-            //   export let bar = c
-            //
-            // This is a smaller version of the general import/export scanning loop above.
-            // The full `ImportScanner::scan` is not idempotent, so subsequent passes use
-            // a dedicated scan that only repeats the import-equals elimination.
+            // Removing one import-equals can make another unused, so iterate to a
+            // fixed point. `ImportScanner::scan` is not idempotent, so subsequent
+            // passes use a dedicated scan that only repeats the import-equals check.
             while kept_import_equals && removed_import_equals {
                 kept_import_equals = false;
                 removed_import_equals = false;

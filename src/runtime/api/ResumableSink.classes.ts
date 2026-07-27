@@ -19,7 +19,20 @@ function generate(name) {
         fn: "jsWrite",
         length: 1,
       },
+      flush: {
+        fn: "jsFlush",
+        length: 1,
+        passThis: true,
+      },
       end: {
+        fn: "jsEnd",
+        length: 1,
+      },
+      close: {
+        fn: "jsClose",
+        length: 0,
+      },
+      error: {
         fn: "jsEnd",
         length: 1,
       },
@@ -29,7 +42,7 @@ function generate(name) {
         passThis: true,
       },
     },
-    values: ["ondrain", "oncancel", "stream"],
+    values: ["ondrain", "oncancel", "stream", "flushPromise"],
   });
 }
 export default [generate("ResumableFetchSink"), generate("ResumableS3UploadSink")];

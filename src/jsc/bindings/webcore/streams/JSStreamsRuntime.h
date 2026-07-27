@@ -172,7 +172,8 @@ class JSDirectStreamController;
     V(onResumableSinkChunk)                                 \
     V(onResumableSinkClose)                                 \
     V(onResumableSinkReadRejected)                          \
-    V(onResumableSinkEndMicrotask)
+    V(onResumableSinkEndMicrotask)                          \
+    V(onResumableSinkDirectPullRejected)
 
 // owner: JSDirectStreamController.cpp. context = the JSDirectStreamController.
 #define FOR_EACH_WEB_STREAMS_REACTION_HANDLER_DIRECT_CONTROLLER(V) \
@@ -248,13 +249,16 @@ class JSDirectStreamController;
 //   boundReadStreamIntoSinkOnClose(op, stream, reason): readStreamIntoSink's JSSink onClose.
 //   boundResumableSinkDrain(op) / boundResumableSinkCancel(op, unused, reason): stored on
 //     the native ResumableSink via setHandlers.
+//   boundResumableSinkDirectCancel(underlyingSource, unused, reason): the direct-path
+//     oncancel for a DirectPending stream handed to a ResumableSink.
 #define FOR_EACH_WEB_STREAMS_BOUND_HANDLER_TARGET_BUN_SOURCE(V) \
     V(boundOnNativeSourceClose)                                 \
     V(boundOnNativeSourceDrain)                                 \
     V(boundReadDirectStreamOnClose)                             \
     V(boundReadStreamIntoSinkOnClose)                           \
     V(boundResumableSinkDrain)                                  \
-    V(boundResumableSinkCancel)
+    V(boundResumableSinkCancel)                                 \
+    V(boundResumableSinkDirectCancel)
 
 // owner: JSDirectStreamController.cpp — the FIVE detachable own methods of the direct
 // controller: `end` and `close` are two bound cells over the ONE boundDirectClose target.

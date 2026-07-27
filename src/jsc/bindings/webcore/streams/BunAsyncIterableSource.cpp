@@ -10,7 +10,6 @@
 #include "JSDOMBinding.h"
 #include "JSDOMGlobalObject.h"
 #include "JSDOMWrapperCache.h"
-#include "JSDirectStreamController.h"
 #include "JSReadableStream.h"
 #include "JSStreamsRuntime.h"
 #include "WebCoreJSClientData.h"
@@ -106,19 +105,6 @@ static void settlePullPromiseResolved(JSGlobalObject* globalObject, JSAsyncItera
 {
     auto& vm = getVM(globalObject);
     op->m_done = true;
-    op->m_running = false;
-    if (auto* pullPromise = op->m_pullPromise.get()) {
-        op->m_pullPromise.clear();
-        pullPromise->fulfill(vm, jsUndefined());
-    }
-}
-
-// Fulfills the current pull promise WITHOUT ending the operation: the direct controller's
-// pull-fulfilled reaction flushes buffered writes to the reader and re-pulls while demand
-// remains, so the next pull() re-enters driveAsyncIterator with a fresh promise.
-static void yieldPullPromise(JSGlobalObject* globalObject, JSAsyncIteratorSourceOperation* op)
-{
-    auto& vm = getVM(globalObject);
     op->m_running = false;
     if (auto* pullPromise = op->m_pullPromise.get()) {
         op->m_pullPromise.clear();
@@ -284,8 +270,9 @@ static NextStep asyncIterHandleNextResult(JSGlobalObject* globalObject, JSAsyncI
         JSValue wrote = invokeOptionalMethod(globalObject, controller, WebCore::builtinNames(vm).writePublicName(), writeArgs);
         if (scope.exception()) [[unlikely]]
             goto abrupt;
-        if (wrote && wrote.isNumber() && wrote.asNumber() < 0) {
-            // The HTTP sink reports backpressure with a negative return: wait for the drain.
+        if ((wrote && wrote.isNumber() && wrote.asNumber() < 0) || wrote.isFalse()) {
+            // Backpressure: a JSSink returns a negative number, a ResumableSink returns false.
+            // Either way `flush(true)` returns the drain promise.
             MarkedArgumentBuffer flushArgs;
             flushArgs.append(jsBoolean(true));
             JSValue flushed = invokeOptionalMethod(globalObject, controller, builtinNames(vm).flushPublicName(), flushArgs);
@@ -302,15 +289,6 @@ static NextStep asyncIterHandleNextResult(JSGlobalObject* globalObject, JSAsyncI
         }
         if (auto* wrotePromise = asPromise(wrote))
             markPromiseAsHandled(vm, wrotePromise);
-        // A JSDirectStreamController buffers writes in an ArrayBufferSink with no
-        // backpressure signal: its pull-fulfilled reaction is what flushes to the reader and
-        // re-pulls. An iterator whose next() fulfills synchronously would otherwise spin the
-        // pump forever, growing the sink unbounded and starving the event loop (a
-        // node:stream Readable whose _read pushes synchronously is the common case).
-        if (op->m_yieldPerWrite && !op->m_iteratorDone) {
-            yieldPullPromise(globalObject, op);
-            return NextStep::Suspended;
-        }
     }
 
     if (op->m_iteratorDone) {
@@ -489,14 +467,8 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_boundAsyncIterableSourcePull, (JSGl
     auto* op = uncheckedDowncast<JSAsyncIteratorSourceOperation>(callFrame->uncheckedArgument(0));
     if (op->m_done || op->m_cancelled)
         return JSValue::encode(jsUndefined());
-    if (JSObject* controller = callFrame->argument(1).getObject()) {
+    if (JSObject* controller = callFrame->argument(1).getObject())
         op->m_controller.set(vm, op, controller);
-        // Only the ArrayBuffer-sink direct controller delivers mid-stream (onFlush produces
-        // bytes and re-pulls). Text/Array accumulate until end(); JSSinks signal backpressure
-        // via wrote < 0; the one-shot sink calls pull exactly once.
-        auto* direct = dynamicDowncast<JSDirectStreamController>(controller);
-        op->m_yieldPerWrite = direct && direct->m_sinkKind == DirectSinkKind::ArrayBuffer;
-    }
     if (op->m_running) {
         if (auto* pullPromise = op->m_pullPromise.get())
             return JSValue::encode(pullPromise);

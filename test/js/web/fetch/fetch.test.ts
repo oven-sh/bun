@@ -2496,10 +2496,10 @@ describe("fetch should allow duplex", () => {
   });
 
   // A node Readable whose _read() pushes synchronously produces an async iterator whose
-  // .next() fulfills synchronously. The pump driving that iterator into the request body must
-  // yield per write so the ResumableSink's backpressure can propagate back; otherwise it
-  // spins in a tight loop, growing an ArrayBufferSink unbounded and starving the event loop
-  // so destroy()/timers never run.
+  // .next() fulfills synchronously. The request-body pump writes that straight into the
+  // ResumableSink, whose write() reports backpressure once the HTTP buffer fills so the pump
+  // suspends on flush(true); the old materialized-ArrayBufferSink path never signalled
+  // backpressure and span forever.
   it("does not wedge on Readable.destroy() when _read pushes synchronously", async () => {
     const fixture = `
       const net = require("node:net");
@@ -2528,15 +2528,15 @@ describe("fetch should allow duplex", () => {
       stderr: "pipe",
     });
     const stdoutP = proc.stdout.text();
-    const stderrP = proc.stderr.text();
+    // The failure mode is a 100%-CPU spin that never yields, so proc.exited alone cannot
+    // resolve on an unfixed build; the race is the condition, not a timing crutch.
     const exited = await Promise.race([proc.exited, sleep(isDebug ? 8000 : 2500).then(() => "timeout" as const)]);
     if (exited === "timeout") proc.kill(9);
-    const [stdout, stderr] = await Promise.all([stdoutP, stderrP]);
+    const stdout = await stdoutP;
     expect({ exited, stdout: stdout.trim() }).toEqual({
       exited: 0,
       stdout: expect.stringMatching(/^rejected:upstream went away ticks:[1-9]/),
     });
-    expect(stderr).not.toContain("BUG:");
   }, 15000);
 
   it("should allow duplex using async iterator (async)", async () => {

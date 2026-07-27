@@ -713,7 +713,6 @@ describe("bundler", () => {
     },
   });
   itBundled("ts/ImportEqualsEliminationTest", {
-    todo: true,
     files: {
       "/entry.ts": /* ts */ `
         import a = foo.a

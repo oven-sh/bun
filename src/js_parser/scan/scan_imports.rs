@@ -810,4 +810,56 @@ impl<'a> ImportScanner<'a> {
 
         Ok(scanner)
     }
+
+    // A smaller version of `scan` above that only repeats the TypeScript
+    // import-equals elimination. The full `scan` is not idempotent (it records
+    // exports, pushes import records, etc.), so the multi-pass fixed-point loop
+    // in `to_ast` uses this instead for every iteration after the first.
+    pub(crate) fn scan_for_unused_ts_import_equals<'p, const TYPESCRIPT: bool, const SCAN_ONLY: bool>(
+        p: &mut P<'p, TYPESCRIPT, SCAN_ONLY>,
+        stmts: &'a mut [Stmt],
+    ) -> ImportScanner<'a> {
+        let mut scanner = ImportScanner::default();
+        let mut stmts_end: usize = 0;
+
+        for i in 0..stmts.len() {
+            let stmt = stmts[i];
+            if let js_ast::StmtData::SLocal(st) = stmt.data {
+                if st.was_ts_import_equals && !st.is_export && st.decls.len_u32() > 0 {
+                    let decl = &st.decls.slice()[0];
+
+                    let mut value: Option<Expr> = decl.value;
+                    if decl.value.is_some() {
+                        while let js_ast::ExprData::EDot(dot) = value.unwrap().data {
+                            value = Some(dot.target);
+                        }
+                    }
+
+                    if let Some(val) = value {
+                        if let js_ast::ExprData::EIdentifier(id) = val.data {
+                            if let js_ast::b::B::BIdentifier(b_id) = decl.binding.data {
+                                let b_id_ref = b_id.r#ref;
+                                if p.symbols[b_id_ref.inner_index() as usize].use_count_estimate == 0
+                                {
+                                    p.ignore_usage(id.ref_);
+                                    scanner.removed_import_equals = true;
+                                    continue;
+                                } else {
+                                    scanner.kept_import_equals = true;
+                                }
+                            } else {
+                                scanner.kept_import_equals = true;
+                            }
+                        }
+                    }
+                }
+            }
+
+            stmts[stmts_end] = stmt;
+            stmts_end += 1;
+        }
+
+        scanner.stmts = &mut stmts[0..stmts_end];
+        scanner
+    }
 }

@@ -2065,6 +2065,112 @@ describe("writeSync", () => {
   });
 });
 
+// Node's native GetOffset (src/node_file.cc) returns -1 ("current file offset")
+// unless IsSafeJsInt(value) holds. A NaN/±Infinity/fractional/out-of-range
+// position must not become offset 0: that is what caused createWriteStream's
+// short-write retry loop (pos = undefined + n -> NaN) to overwrite the head of
+// the file on a partial write.
+describe.each([NaN, Infinity, -Infinity, 1.5, Number.MAX_SAFE_INTEGER + 1] as const)(
+  "fs.write with position=%p uses the current file offset",
+  position => {
+    it("writeSync(fd, buffer, offset, length, position)", () => {
+      using dir = tempDir("fs-write-pos-buf", {});
+      const p = join(String(dir), "out.txt");
+      const fd = openSync(p, "w");
+      try {
+        writeSync(fd, "AAAAAAAAAA");
+        writeSync(fd, Buffer.from("XX"), 0, 2, position);
+      } finally {
+        closeSync(fd);
+      }
+      expect(readFileSync(p, "utf8")).toBe("AAAAAAAAAAXX");
+    });
+
+    it("writeSync(fd, string, position)", () => {
+      using dir = tempDir("fs-write-pos-str", {});
+      const p = join(String(dir), "out.txt");
+      const fd = openSync(p, "w");
+      try {
+        writeSync(fd, "AAAAAAAAAA");
+        writeSync(fd, "YY", position);
+      } finally {
+        closeSync(fd);
+      }
+      expect(readFileSync(p, "utf8")).toBe("AAAAAAAAAAYY");
+    });
+
+    it("fs.write(fd, buffer, offset, length, position, cb)", async () => {
+      using dir = tempDir("fs-write-pos-cb", {});
+      const p = join(String(dir), "out.txt");
+      const fd = openSync(p, "w");
+      try {
+        writeSync(fd, "AAAAAAAAAA");
+        const { promise, resolve, reject } = Promise.withResolvers<number>();
+        fs.write(fd, Buffer.from("ZZ"), 0, 2, position, (err, n) => (err ? reject(err) : resolve(n)));
+        expect(await promise).toBe(2);
+      } finally {
+        closeSync(fd);
+      }
+      expect(readFileSync(p, "utf8")).toBe("AAAAAAAAAAZZ");
+    });
+
+    it("writevSync(fd, buffers, position)", () => {
+      using dir = tempDir("fs-writev-pos", {});
+      const p = join(String(dir), "out.txt");
+      const fd = openSync(p, "w");
+      try {
+        writeSync(fd, "AAAAAAAAAA");
+        expect(writevSync(fd, [Buffer.from("V"), Buffer.from("V")], position as any)).toBe(2);
+      } finally {
+        closeSync(fd);
+      }
+      expect(readFileSync(p, "utf8")).toBe("AAAAAAAAAAVV");
+    });
+
+    it("readvSync(fd, buffers, position)", () => {
+      using dir = tempDir("fs-readv-pos", { "in.txt": "ABCDEFGHIJ" });
+      const fd = openSync(join(String(dir), "in.txt"), "r");
+      try {
+        readSync(fd, Buffer.alloc(3), 0, 3, null);
+        const b = Buffer.alloc(3);
+        expect(readvSync(fd, [b], position as any)).toBe(3);
+        expect(b.toString()).toBe("DEF");
+      } finally {
+        closeSync(fd);
+      }
+    });
+  },
+);
+
+describe("fs.readv/writev with a non-number position uses the current file offset", () => {
+  it.each([null, undefined, "3", {}, true] as const)("writevSync position=%p", position => {
+    using dir = tempDir("fs-writev-nonnum", {});
+    const p = join(String(dir), "out.txt");
+    const fd = openSync(p, "w");
+    try {
+      writeSync(fd, "AAAAAAAAAA");
+      expect(writevSync(fd, [Buffer.from("XY")], position as any)).toBe(2);
+    } finally {
+      closeSync(fd);
+    }
+    expect(readFileSync(p, "utf8")).toBe("AAAAAAAAAAXY");
+  });
+
+  it("writevSync with a non-negative integer position is still positional", () => {
+    using dir = tempDir("fs-writev-int", {});
+    const p = join(String(dir), "out.txt");
+    writeFileSync(p, "0123456789");
+    const fd = openSync(p, "r+");
+    try {
+      readSync(fd, Buffer.alloc(4), 0, 4, null);
+      expect(writevSync(fd, [Buffer.from("XY")], 8)).toBe(2);
+    } finally {
+      closeSync(fd);
+    }
+    expect(readFileSync(p, "utf8")).toBe("01234567XY");
+  });
+});
+
 describe("readFileSync", () => {
   it("works", () => {
     gc();
@@ -3626,6 +3732,94 @@ describe("createWriteStream", () => {
     await done2;
 
     expect(readFileSync(streamPath, "utf8")).toBe("first line\nsecond line\n");
+  });
+
+  // A short write from the kernel (ENOSPC, RLIMIT_FSIZE, EDQUOT) makes
+  // writeAll retry with pos = undefined + n -> NaN. fs.write used to coerce a
+  // NaN position to 0, so the retried tail was pwritten at the HEAD of the
+  // file and the loop reported success. Reproduced here with a custom fs.write
+  // that returns a short count.
+  it("short write does not overwrite the head of the file", async () => {
+    using dir = tempDir("cws-short-write", {});
+    const p = join(String(dir), "out.bin");
+    const data = Buffer.concat([
+      Buffer.alloc(4, "A"),
+      Buffer.alloc(4, "B"),
+      Buffer.alloc(4, "C"),
+      Buffer.alloc(4, "D"),
+    ]);
+
+    const writes: Array<{ length: number; position: unknown }> = [];
+    const stream = createWriteStream(p, {
+      fs: {
+        open: fs.open,
+        close: fs.close,
+        fsync: fs.fsync,
+        // writev intentionally omitted so only the writeAll path is exercised.
+        write(fd: number, buffer: Buffer, offset: number, length: number, position: unknown, cb: any) {
+          writes.push({ length, position });
+          // First call: accept 4 bytes out of 16; subsequent calls accept all.
+          const take = writes.length === 1 ? 4 : length;
+          return fs.write(fd, buffer, offset, take, position as any, cb);
+        },
+      } as any,
+    });
+    const events: string[] = [];
+    const { promise, resolve } = Promise.withResolvers<void>();
+    stream.on("error", e => (events.push("error:" + (e as NodeJS.ErrnoException).code), resolve()));
+    stream.on("finish", () => events.push("finish"));
+    stream.on("close", resolve);
+    stream.write(data);
+    stream.end();
+    await promise;
+
+    expect({
+      events,
+      bytesWritten: stream.bytesWritten,
+      contents: readFileSync(p, "utf8"),
+      writes,
+    }).toEqual({
+      events: ["finish"],
+      bytesWritten: 16,
+      contents: "AAAABBBBCCCCDDDD",
+      // The retry must keep position undefined (current offset), not NaN.
+      writes: [
+        { length: 16, position: undefined },
+        { length: 12, position: undefined },
+      ],
+    });
+  });
+
+  it.skipIf(!isLinux)("surfaces EFBIG when RLIMIT_FSIZE truncates a write", async () => {
+    using dir = tempDir("cws-efbig", {});
+    const out = join(String(dir), "out.bin");
+    const script = `
+      const fs = require("node:fs");
+      const MB = 1 << 20;
+      const big = Buffer.concat([..."ABCD"].map(c => Buffer.alloc(MB, c)));
+      const s = fs.createWriteStream(${JSON.stringify(out)});
+      const ev = [];
+      s.on("error", e => ev.push("error:" + e.code));
+      s.on("finish", () => ev.push("finish"));
+      s.on("close", () => {
+        const b = fs.readFileSync(${JSON.stringify(out)});
+        console.log(JSON.stringify({ ev, bytesWritten: s.bytesWritten, size: b.length, head: b.subarray(0, 8).toString() }));
+      });
+      s.write(big);
+      s.end();
+    `;
+    await using proc = Bun.spawn({
+      cmd: ["sh", "-c", `ulimit -f 2048; exec "${bunExe()}" -e '${script.replace(/'/g, "'\\''")}'`],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, out: JSON.parse(stdout.trim()), exitCode }).toEqual({
+      stderr: "",
+      out: { ev: ["error:EFBIG"], bytesWritten: 1048576, size: 1048576, head: "AAAAAAAA" },
+      exitCode: 0,
+    });
   });
 
   it("should emit open and call close callback", done => {
@@ -5603,15 +5797,22 @@ it("fs.writev keeps buffers attached while the write is in flight", async () => 
     buf.buffer.transfer();
     expect(buf.buffer.detached).toBe(true);
 
-    // A rejected call must not leave the buffers held either.
-    const other = new Uint8Array(new ArrayBuffer(8));
-    expect(() => fs.writev(fd, [other], "not a position" as any, () => {})).toThrow();
+    // A non-number position is treated as "current offset" (Node.js behavior);
+    // the buffer is still pinned for the duration of the async write.
+    const other = new Uint8Array(new ArrayBuffer(8)).fill(0x44);
+    const second = Promise.withResolvers<number>();
+    fs.writev(fd, [other], "not a position" as any, (err, n) => (err ? second.reject(err) : second.resolve(n)));
+    other.buffer.transfer();
+    expect(other.buffer.detached).toBe(false);
+    expect(await second.promise).toBe(8);
     other.buffer.transfer();
     expect(other.buffer.detached).toBe(true);
   } finally {
     closeSync(fd);
   }
-  expect(readFileSync(file, "latin1")).toBe("CCCCCCCC");
+  // The first writev was positional (pwritev at 0) so the file offset is still
+  // 0 when the second, non-positional writev runs.
+  expect(readFileSync(file, "latin1")).toBe("DDDDDDDD");
 });
 
 it("fs.write keeps the source buffer attached while the write is in flight", async () => {

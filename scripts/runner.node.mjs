@@ -526,8 +526,8 @@ async function runTests() {
   if (
     isCI &&
     !isWindows &&
-    spawnSync("docker", ["compose", "version"], { stdio: "ignore" }).status === 0 &&
-    (isLinux || spawnSync("docker", ["version"], { stdio: "ignore" }).status === 0)
+    spawnSync("docker", ["compose", "version"], { stdio: "ignore", timeout: 5_000 }).status === 0 &&
+    (isLinux || spawnSync("docker", ["version"], { stdio: "ignore", timeout: 5_000 }).status === 0)
   ) {
     const coordinatorSocket = join(tmpdir(), `bun-docker-${process.pid}.sock`);
     const coordinator = spawn(execPath, [join(cwd, "test", "docker", "coordinator.ts"), ...tests], {

@@ -1865,6 +1865,20 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
             return true;
         }
         self.auto_flusher.registered.set(false);
+
+        if self.requested_end {
+            if let Some(res) = self.any_res() {
+                res.clear_on_writable();
+                // Release any request-body pause while `res` is live (see `end_already_responded_stream`).
+                res.resume_();
+            }
+            // `send_readable` drained the parked `try_end`/`end`, so uWS has
+            // `markDone()`d the response and dropped its `onAborted`.
+            self.ended_response = true;
+            self.signal.close(None);
+            let _ = self.flush_promise();
+            self.finalize();
+        }
         false
     }
 

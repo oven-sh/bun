@@ -3941,10 +3941,7 @@ extern "C" fn server_set_on_client_error_shim(
     server: JSValue,
     callback: JSValue,
 ) -> JSValue {
-    host_fn::to_js_host_fn_result(
-        global,
-        server_set_on_client_error(global, server, callback),
-    )
+    host_fn::to_js_host_fn_result(global, server_set_on_client_error(global, server, callback))
 }
 
 #[unsafe(export_name = "Server__setOnConnection")]

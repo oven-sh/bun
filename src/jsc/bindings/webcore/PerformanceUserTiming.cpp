@@ -33,43 +33,29 @@
 #include "MessagePort.h"
 #include "PerformanceMarkOptions.h"
 #include "PerformanceMeasureOptions.h"
-#include "PerformanceTiming.h"
 #include "SerializedScriptValue.h"
 // #include "WorkerOrWorkletGlobalScope.h"
 #include <JavaScriptCore/JSCJSValueInlines.h>
 #include <wtf/SortedArrayMap.h>
+#include <wtf/text/StringConcatenateNumbers.h>
 
 namespace WebCore {
 
-using NavigationTimingFunction = unsigned long long (PerformanceTiming::*)() const;
-
-static constexpr SortedArrayMap restrictedMarkFunctions { std::to_array<std::pair<ComparableASCIILiteral, NavigationTimingFunction>>({
-    { "connectEnd"_s, &PerformanceTiming::connectEnd },
-    { "connectStart"_s, &PerformanceTiming::connectStart },
-    { "domComplete"_s, &PerformanceTiming::domComplete },
-    { "domContentLoadedEventEnd"_s, &PerformanceTiming::domContentLoadedEventEnd },
-    { "domContentLoadedEventStart"_s, &PerformanceTiming::domContentLoadedEventStart },
-    { "domInteractive"_s, &PerformanceTiming::domInteractive },
-    { "domLoading"_s, &PerformanceTiming::domLoading },
-    { "domainLookupEnd"_s, &PerformanceTiming::domainLookupEnd },
-    { "domainLookupStart"_s, &PerformanceTiming::domainLookupStart },
-    { "fetchStart"_s, &PerformanceTiming::fetchStart },
-    { "loadEventEnd"_s, &PerformanceTiming::loadEventEnd },
-    { "loadEventStart"_s, &PerformanceTiming::loadEventStart },
-    { "navigationStart"_s, &PerformanceTiming::navigationStart },
-    { "redirectEnd"_s, &PerformanceTiming::redirectEnd },
-    { "redirectStart"_s, &PerformanceTiming::redirectStart },
-    { "requestStart"_s, &PerformanceTiming::requestStart },
-    { "responseEnd"_s, &PerformanceTiming::responseEnd },
-    { "responseStart"_s, &PerformanceTiming::responseStart },
-    { "secureConnectionStart"_s, &PerformanceTiming::secureConnectionStart },
-    { "unloadEventEnd"_s, &PerformanceTiming::unloadEventEnd },
-    { "unloadEventStart"_s, &PerformanceTiming::unloadEventStart },
+// Node reserves the nodeTiming milestone attribute names (lib/internal/perf/usertiming.js
+// nodeTimingReadOnlyAttributes) for performance.mark() / new PerformanceMark(). The browser
+// PerformanceTiming attribute set does not apply in a server runtime.
+static constexpr SortedArraySet restrictedMarkNames { std::to_array<ComparableASCIILiteral>({
+    "bootstrapComplete"_s,
+    "environment"_s,
+    "loopExit"_s,
+    "loopStart"_s,
+    "nodeStart"_s,
+    "v8Start"_s,
 }) };
 
 bool PerformanceUserTiming::isRestrictedMarkName(const String& markName)
 {
-    return restrictedMarkFunctions.contains(markName);
+    return restrictedMarkNames.contains(markName);
 }
 
 PerformanceUserTiming::PerformanceUserTiming(Performance& performance)
@@ -149,36 +135,17 @@ ExceptionOr<double> PerformanceUserTiming::convertMarkToTimestamp(const std::var
 
 ExceptionOr<double> PerformanceUserTiming::convertMarkToTimestamp(const String& mark) const
 {
-    // if (!isMainThread()) {
-    //     if (restrictedMarkFunctions.contains(mark))
-    //         return Exception { TypeError };
-    // } else {
-    //     if (auto function = restrictedMarkFunctions.tryGet(mark)) {
-    //         if (*function == &PerformanceTiming::navigationStart)
-    //             return 0.0;
-
-    //         // PerformanceTiming should always be non-null for the Document ScriptExecutionContext.
-    //         ASSERT(m_performance.timing());
-    //         auto timing = m_performance.timing();
-    //         auto startTime = timing->navigationStart();
-    //         auto endTime = ((*timing).*(*function))();
-    //         if (!endTime)
-    //             return Exception { InvalidAccessError };
-    //         return endTime - startTime;
-    //     }
-    // }
-
     auto iterator = m_marksMap.find(mark);
     if (iterator != m_marksMap.end())
         return iterator->value.last()->startTime();
 
-    return Exception { SyntaxError, makeString("No mark named '"_s, mark, "' exists"_s) };
+    return Exception { InvalidPerformanceMarkError, makeString("The \""_s, mark, "\" performance mark has not been set"_s) };
 }
 
 ExceptionOr<double> PerformanceUserTiming::convertMarkToTimestamp(double mark) const
 {
     if (mark < 0)
-        return Exception { TypeError };
+        return Exception { PerformanceInvalidTimestampError, makeString(mark, " is not a valid timestamp"_s) };
     return mark;
 }
 
@@ -291,9 +258,9 @@ ExceptionOr<Ref<PerformanceMeasure>> PerformanceUserTiming::measure(JSC::JSGloba
                 [&](const PerformanceMeasureOptions& measureOptions) -> ExceptionOr<Ref<PerformanceMeasure>> {
                     if (hasStartOrEnd(measureOptions)) {
                         if (!endMark.isNull())
-                            return Exception { TypeError };
+                            return Exception { PerformanceMeasureInvalidOptionsError, "endMark must not be specified"_s };
                         if (measureOptions.start && measureOptions.duration && measureOptions.end)
-                            return Exception { TypeError };
+                            return Exception { PerformanceMeasureInvalidOptionsError, "Must not have options.start, options.end, and options.duration specified"_s };
                         return measure(globalObject, measureName, measureOptions);
                     }
 

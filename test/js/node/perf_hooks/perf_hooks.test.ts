@@ -1,7 +1,7 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import net from "net";
-import perf, { PerformanceObserver } from "perf_hooks";
+import perf, { PerformanceMark, PerformanceObserver } from "perf_hooks";
 
 test("stubs", () => {
   expect(perf.performance.nodeTiming).toBeObject();
@@ -22,6 +22,108 @@ test("doesn't throw", () => {
   expect(() => performance.now()).not.toThrow();
   expect(() => performance.timeOrigin).not.toThrow();
   expect(() => performance.markResourceTiming()).not.toThrow();
+});
+
+// performance.mark / performance.measure argument-validation contract, verified
+// against Node v26.3.0 (lib/internal/perf/usertiming.js).
+describe("User Timing argument validation", () => {
+  function caught(fn: () => unknown) {
+    try {
+      fn();
+    } catch (e: any) {
+      return { name: e.name, code: e.code, constructor: e.constructor.name, message: e.message };
+    }
+    throw new Error("did not throw");
+  }
+
+  test("performance.mark rejects nodeTiming milestone names with ERR_INVALID_ARG_VALUE", () => {
+    for (const name of ["nodeStart", "v8Start", "environment", "loopStart", "loopExit", "bootstrapComplete"]) {
+      expect(caught(() => performance.mark(name))).toEqual({
+        name: "TypeError",
+        code: "ERR_INVALID_ARG_VALUE",
+        constructor: "TypeError",
+        message: `The argument 'name' is invalid. Received '${name}'`,
+      });
+    }
+    // Not reserved in Node v26 despite being nodeTiming properties.
+    expect(() => performance.mark("idleTime")).not.toThrow();
+    expect(() => performance.mark("uvMetricsInfo")).not.toThrow();
+    expect(performance.getEntriesByName("nodeStart", "mark").length).toBe(0);
+    performance.clearMarks();
+  });
+
+  test("new PerformanceMark rejects nodeTiming milestone names with ERR_INVALID_ARG_VALUE", () => {
+    expect(caught(() => new PerformanceMark("nodeStart"))).toEqual({
+      name: "TypeError",
+      code: "ERR_INVALID_ARG_VALUE",
+      constructor: "TypeError",
+      message: "The argument 'name' is invalid. Received 'nodeStart'",
+    });
+  });
+
+  test("performance.mark startTime must be a number (ERR_INVALID_ARG_TYPE)", () => {
+    expect(caught(() => performance.mark("x", { startTime: "7" }))).toEqual({
+      name: "TypeError",
+      code: "ERR_INVALID_ARG_TYPE",
+      constructor: "TypeError",
+      message: `The "startTime" argument must be of type number. Received type string ('7')`,
+    });
+    expect(caught(() => new PerformanceMark("x", { startTime: "7" }))).toMatchObject({ code: "ERR_INVALID_ARG_TYPE" });
+  });
+
+  test("performance.mark negative startTime throws ERR_PERFORMANCE_INVALID_TIMESTAMP", () => {
+    for (const fn of [() => performance.mark("x", { startTime: -1 }), () => new PerformanceMark("x", { startTime: -1 })]) {
+      expect(caught(fn)).toEqual({
+        name: "TypeError",
+        code: "ERR_PERFORMANCE_INVALID_TIMESTAMP",
+        constructor: "TypeError",
+        message: "-1 is not a valid timestamp",
+      });
+    }
+  });
+
+  test("performance.measure start+end+duration throws ERR_PERFORMANCE_MEASURE_INVALID_OPTIONS", () => {
+    expect(caught(() => performance.measure("m", { start: 1, end: 2, duration: 1 }))).toEqual({
+      name: "TypeError",
+      code: "ERR_PERFORMANCE_MEASURE_INVALID_OPTIONS",
+      constructor: "TypeError",
+      message: "Must not have options.start, options.end, and options.duration specified",
+    });
+  });
+
+  test("performance.measure options with trailing endMark throws ERR_PERFORMANCE_MEASURE_INVALID_OPTIONS", () => {
+    expect(caught(() => performance.measure("m", { start: 1, end: 2 }, "endMark"))).toEqual({
+      name: "TypeError",
+      code: "ERR_PERFORMANCE_MEASURE_INVALID_OPTIONS",
+      constructor: "TypeError",
+      message: "endMark must not be specified",
+    });
+  });
+
+  test("performance.measure negative start/end/duration throws ERR_PERFORMANCE_INVALID_TIMESTAMP", () => {
+    for (const opts of [{ start: -1 }, { end: -1 }, { start: 1, duration: -1 }]) {
+      expect(caught(() => performance.measure("m", opts))).toEqual({
+        name: "TypeError",
+        code: "ERR_PERFORMANCE_INVALID_TIMESTAMP",
+        constructor: "TypeError",
+        message: "-1 is not a valid timestamp",
+      });
+    }
+  });
+
+  test("performance.measure with unknown mark throws a DOMException SyntaxError", () => {
+    for (const fn of [
+      () => performance.measure("m", "unknownMark"),
+      () => performance.measure("m", { start: "unknownMark" }),
+    ]) {
+      expect(caught(fn)).toEqual({
+        name: "SyntaxError",
+        code: 12,
+        constructor: "DOMException",
+        message: 'The "unknownMark" performance mark has not been set',
+      });
+    }
+  });
 });
 
 // Node coerces the name via `${name}` for mark/clearMarks/clearMeasures, so a

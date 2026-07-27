@@ -4804,7 +4804,7 @@ unsafe fn resolve_embedded_node_file_hook(
 
 // ════════════════════════════════════════════════════════════════════════════
 // LoaderHooks::resolve — `VirtualMachine.resolveMaybeNeedsTrailingSlash`
-// + `resolve`.
+// + `_resolve`.
 //
 // This is the resolution path behind `Bun__resolveSync`,
 // `Zig__GlobalObject__resolve`, `import.meta.resolve`, and
@@ -4847,7 +4847,7 @@ fn normalize_source(source: &[u8]) -> &[u8] {
     source.strip_prefix(b"file://".as_slice()).unwrap_or(source)
 }
 
-/// `VirtualMachine.resolve`.
+/// `VirtualMachine._resolve`.
 ///
 /// Writes the resolved path/query into `*ret_path` / `*ret_query`. A full
 /// `Resolver::Result` would be unused by the

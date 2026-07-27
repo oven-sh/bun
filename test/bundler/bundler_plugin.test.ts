@@ -1633,6 +1633,14 @@ describe("plugin hook registration after setup", () => {
     });
   }
 
+  function expectLateHookError(result: Awaited<ReturnType<typeof Bun.build>>, method: string) {
+    const logs = result.logs.map(l => l.message);
+    expect({ success: result.success, logs }).toEqual({
+      success: false,
+      logs: expect.arrayContaining([expect.stringMatching(new RegExp(`^${method}\\(\\).*${lateHookMessage.source}`))]),
+    });
+  }
+
   test("onLoad inside a running onLoad callback throws", async () => {
     using dir = tempDir("plugin-late-onload", files);
     const result = await buildWith(
@@ -1645,9 +1653,7 @@ describe("plugin hook registration after setup", () => {
       },
       { throws: false },
     );
-    expect(result.success).toBe(false);
-    const messages = result.logs.map(l => l.message);
-    expect(messages.find(m => lateHookMessage.test(m))).toMatch(/onLoad\(\)/);
+    expectLateHookError(result, "onLoad");
   });
 
   test("onResolve inside a running onResolve callback throws", async () => {
@@ -1662,9 +1668,7 @@ describe("plugin hook registration after setup", () => {
       },
       { throws: false },
     );
-    expect(result.success).toBe(false);
-    const messages = result.logs.map(l => l.message);
-    expect(messages.find(m => lateHookMessage.test(m))).toMatch(/onResolve\(\)/);
+    expectLateHookError(result, "onResolve");
   });
 
   test("onLoad inside a running onResolve callback throws", async () => {
@@ -1679,9 +1683,7 @@ describe("plugin hook registration after setup", () => {
       },
       { throws: false },
     );
-    expect(result.success).toBe(false);
-    const messages = result.logs.map(l => l.message);
-    expect(messages.find(m => lateHookMessage.test(m))).toMatch(/onLoad\(\)/);
+    expectLateHookError(result, "onLoad");
   });
 
   test("onEnd inside a running onEnd callback throws", async () => {
@@ -1723,9 +1725,7 @@ describe("plugin hook registration after setup", () => {
       },
       { throws: false },
     );
-    expect(result.success).toBe(false);
-    const messages = result.logs.map(l => l.message);
-    expect(messages.find(m => lateHookMessage.test(m))).toMatch(/onStart\(\)/);
+    expectLateHookError(result, "onStart");
   });
 
   for (const method of ["onLoad", "onResolve", "onStart", "onEnd", "onBeforeParse"] as const) {

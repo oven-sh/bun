@@ -480,7 +480,6 @@ impl<'a> Parser<'a> {
             }
         }
 
-        // Symbol use counts are unavailable, so "any JSX parsed?" is the proxy.
         if let Some(span) = p.lexer.jsx_pragma.jsx_runtime()
             && let Some(pair) = options::JSX::RUNTIME_MAP.get(span.text.slice())
         {
@@ -489,6 +488,7 @@ impl<'a> Parser<'a> {
                 p.options.jsx.development = dev;
             }
         }
+        // Symbol use counts are unavailable, so "any JSX parsed?" is the proxy.
         if p.options.jsx.parse
             && p.needs_jsx_import
             && p.options.features.auto_import_jsx

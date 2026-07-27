@@ -10,10 +10,10 @@ import { bunEnv, bunExe, tempDir } from "harness";
 // On release builds (no JSC asserts) the worker simply exits; this test checks
 // the parent process survives and the worker closes on every build flavor.
 //
-// Every lol-html handler bridge (element / comment / text on `.on(...)`, and
-// doctype / comment / text / end on `.onDocument(...)`) funnels into the same
-// `handler_callback`; cover each to make a regression in any one of them show
-// up here rather than only in the element case.
+// All lol-html handler bridges funnel into the same `handler_callback`; cover
+// the ones that fire more than once per document (element / comment / text on
+// `.on(...)` and comment / text on `.onDocument(...)`). `doctype` and `end`
+// fire once, so there is no "next" dispatch for the bug to reach.
 
 type Cell = [name: string, doc: string, register: string];
 
@@ -91,8 +91,10 @@ describe.concurrent("terminate() while HTMLRewriter is parked in an async handle
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    if (exitCode !== 0) console.error(stderr);
     expect(stdout).toBe("survived\n");
+    if (exitCode !== 0) {
+      expect(stderr).toBe("");
+    }
     expect(exitCode).toBe(0);
   });
 });

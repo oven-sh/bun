@@ -196,8 +196,6 @@ pub(super) fn send_status_to_js(
     }
 }
 
-/// File-/S3-backed blobs throw: these send paths return a synchronous byte
-/// count, so there is no way to do the I/O here.
 #[inline]
 pub(super) fn blob_payload<'a>(
     global_this: &JSGlobalObject,

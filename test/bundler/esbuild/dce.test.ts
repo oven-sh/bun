@@ -918,6 +918,8 @@ describe("bundler", () => {
       `,
     },
     outdir: "/out",
+    dce: true,
+    dceKeepMarkerCount: false,
     run: {
       stdout: "root setup kept\nnested setup kept\ndone",
     },

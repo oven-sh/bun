@@ -16,13 +16,15 @@ describe("assigning to an imported binding", () => {
     ["for-of target", `for (x of [9]) {}`],
     ["default import", `d = 5`],
     ["namespace import", `ns = 5`],
+    ["computed namespace property", `ns[k] = 5`],
   ])("is a run-time TypeError: %s", async (_name, write) => {
     using dir = tempDir("assign-to-import", {
       "m.mjs": mod,
       "entry.mjs": `
         import d, { x } from "./m.mjs";
         import * as ns from "./m.mjs";
-        void d; void ns;
+        const k = "x";
+        void d; void ns; void k;
         function never() { ${write} }
         void never;
         try { ${write} } catch (e) { console.log("threw:" + e.constructor.name) }
@@ -40,7 +42,7 @@ describe("assigning to an imported binding", () => {
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(stderr).not.toContain("Cannot assign to import");
+    expect(stderr).not.toContain("Cannot assign to");
     expect(stdout).toBe("threw:TypeError\nran:1\n");
     expect(exitCode).toBe(0);
   });

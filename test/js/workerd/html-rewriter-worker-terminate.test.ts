@@ -97,4 +97,57 @@ describe.concurrent("terminate() while HTMLRewriter is parked in an async handle
     }
     expect(exitCode).toBe(0);
   });
+
+  // A file-backed body buffers asynchronously (`is_async == true` in
+  // `run_output_sink`), covering the error-unwind arm that rejects the body
+  // promise instead of going through `create_lolhtml_error`.
+  test("element (Bun.file body)", async () => {
+    using dir = tempDir("html-rewriter-worker-terminate-file", {
+      "doc.html": Buffer.alloc(800, "<p>a</p>").toString(),
+      "worker.mjs": `
+        postMessage("start");
+        await new HTMLRewriter()
+          .on("p", {
+            async element(el) {
+              el.setAttribute("x", "1");
+              postMessage("in-handler");
+              await new Promise(() => {});
+            },
+          })
+          .transform(new Response(Bun.file(new URL("./doc.html", import.meta.url))))
+          .text();
+        postMessage("done");
+      `,
+      "main.mjs": `
+        const w = new Worker(new URL("./worker.mjs", import.meta.url).href);
+        const { promise: inHandler, resolve: gotHandler, reject: rejectHandler } = Promise.withResolvers();
+        const { promise: closed, resolve: gotClose } = Promise.withResolvers();
+        w.addEventListener("error", e => rejectHandler(e.message ?? e), { once: true });
+        w.addEventListener("close", () => gotClose(), { once: true });
+        w.onmessage = ev => {
+          if (ev.data === "in-handler") gotHandler();
+        };
+        await inHandler;
+        w.terminate();
+        await closed;
+        console.log("survived");
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout).toBe("survived\n");
+    if (exitCode !== 0) {
+      expect(stderr).toBe("");
+    }
+    expect(exitCode).toBe(0);
+  });
 });

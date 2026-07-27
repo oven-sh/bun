@@ -890,11 +890,13 @@ impl BufferOutputSink {
             // Poisoned: never call `end()` after a failed `write()`. The
             // field stays non-null so `Drop` frees the rewriter.
             if is_async {
-                // SAFETY: response kept alive by response_value Strong.
-                let _ = unsafe { (*response).get_body_value() }.to_error_instance(
-                    webcore::body::ValueError::Message(lol_err_string(&e)),
-                    &global,
-                );
+                if !global.has_exception() {
+                    // SAFETY: response kept alive by response_value Strong.
+                    let _ = unsafe { (*response).get_body_value() }.to_error_instance(
+                        webcore::body::ValueError::Message(lol_err_string(&e)),
+                        &global,
+                    );
+                }
                 // TODO: properly propagate exception upwards
                 return None;
             } else {
@@ -909,11 +911,13 @@ impl BufferOutputSink {
         // SAFETY: `rewriter` was heap-allocated by init(); sole owner now.
         if let Err(e) = unsafe { bun_core::heap::take(rewriter) }.end() {
             if is_async {
-                // SAFETY: response kept alive by response_value Strong.
-                let _ = unsafe { (*response).get_body_value() }.to_error_instance(
-                    webcore::body::ValueError::Message(lol_err_string(&e)),
-                    &global,
-                );
+                if !global.has_exception() {
+                    // SAFETY: response kept alive by response_value Strong.
+                    let _ = unsafe { (*response).get_body_value() }.to_error_instance(
+                        webcore::body::ValueError::Message(lol_err_string(&e)),
+                        &global,
+                    );
+                }
                 // TODO: properly propagate exception upwards
                 return None;
             } else {

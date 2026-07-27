@@ -171,6 +171,74 @@ describe("otp", async () => {
     expect(err).toContain(" - Received invalid OTP");
   });
 
+  test("non-http auth url is shown without launching a browser and login completes via done url polling", async () => {
+    const { packageDir, packageJson } = await registry.createTestDir();
+    const token = await registry.generateUser("otp-classic-fallback", "otp");
+
+    let doneHits = 0;
+    using mockRegistry = Bun.serve({
+      port: 0,
+      fetch(req: Request) {
+        if (req.method === "PUT") {
+          if (req.headers.get("npm-otp") === token) {
+            return new Response("OK", { status: 200 });
+          }
+          return new Response(
+            JSON.stringify({
+              authUrl: "customapp://login",
+              doneUrl: `http://localhost:${mockRegistry.port}/done`,
+            }),
+            { status: 401, headers: { "www-authenticate": "OTP" } },
+          );
+        }
+        if (req.url.endsWith("done")) {
+          doneHits++;
+          return new Response(JSON.stringify({ token }), { status: 200 });
+        }
+        return new Response("unexpected url", { status: 500 });
+      },
+    });
+
+    const bunfig = `
+      [install]
+      cache = false
+      registry = { url = "http://localhost:${mockRegistry.port}", token = "${token}" }`;
+
+    await Promise.all([
+      rm(join(registry.packagesPath, "otp-pkg-5"), { recursive: true, force: true }),
+      write(join(packageDir, "bunfig.toml"), bunfig),
+      write(
+        packageJson,
+        JSON.stringify({
+          name: "otp-pkg-5",
+          version: "5.5.5",
+          dependencies: {
+            "otp-pkg-5": "5.5.5",
+          },
+        }),
+      ),
+    ]);
+
+    await using proc = spawn({
+      cmd: [bunExe(), "publish"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+      env,
+    });
+
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(out).toContain("Authenticate your account at:");
+    expect(out).toContain("customapp://login");
+    expect(out).not.toContain("open in browser");
+    expect(out).not.toContain("Enter OTP: ");
+    expect(doneHits).toBeGreaterThan(0);
+    expect(out).toContain(" + otp-pkg-5@5.5.5");
+    expect(exitCode).toBe(0);
+  });
+
   for (const shouldIgnoreNotice of [false, true]) {
     test(`npm-notice with login url${shouldIgnoreNotice ? " (ignored)" : ""}`, async () => {
       const { packageDir, packageJson } = await registry.createTestDir();

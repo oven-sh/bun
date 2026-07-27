@@ -2361,34 +2361,96 @@ impl CompilerRT {
             return;
         };
 
-        let Ok(bun_cc) = tmpdir.make_open_path(b"bun-cc", bun_sys::OpenDirOptions::default())
-        else {
+        #[cfg(unix)]
+        let uid = bun_sys::c::getuid();
+        #[cfg(windows)]
+        let uid = bun_sys::windows::user_unique_id();
+        let mut dir_name = Vec::new();
+        if write!(&mut dir_name, "bun-cc-{uid}").is_err() {
             return;
+        }
+
+        let dir_flags = bun_sys::O::RDONLY | bun_sys::O::CLOEXEC | bun_sys::O::NOFOLLOW;
+        let bun_cc = match tmpdir.open_at_with(&dir_name, dir_flags) {
+            Ok(dir) => Some(dir),
+            Err(err) if err.get_errno() == bun_sys::E::ENOENT => {
+                let name_z = ZBox::from_bytes(&dir_name);
+                match bun_sys::mkdirat(tmpdir.fd(), name_z.as_zstr(), 0o700) {
+                    Ok(()) => {}
+                    Err(err) if err.get_errno() == bun_sys::E::EEXIST => {}
+                    Err(_) => return,
+                }
+                tmpdir.open_at_with(&dir_name, dir_flags).ok()
+            }
+            Err(_) => None,
         };
+        if let Some(path) = bun_cc.and_then(|dir| Self::populate_compiler_rt_dir(&dir, uid)) {
+            let _ = COMPILER_RT_DIR.set(path);
+            return;
+        }
+
+        for _ in 0..8 {
+            let mut name_buf = PathBuffer::uninit();
+            let Ok(name) =
+                Fs::FileSystem::tmpname(b"bun-cc", &mut name_buf.0, bun_core::fast_random())
+            else {
+                return;
+            };
+            match bun_sys::mkdirat(tmpdir.fd(), name, 0o700) {
+                Ok(()) => {}
+                Err(err) if err.get_errno() == bun_sys::E::EEXIST => continue,
+                Err(_) => return,
+            }
+            let Ok(dir) = tmpdir.open_at_with(name.as_bytes(), dir_flags) else {
+                return;
+            };
+            if let Some(path) = Self::populate_compiler_rt_dir(&dir, uid) {
+                let _ = COMPILER_RT_DIR.set(path);
+            }
+            return;
+        }
+    }
+
+    fn populate_compiler_rt_dir(bun_cc: &bun_sys::Dir, uid: u32) -> Option<ZBox> {
+        #[cfg(unix)]
+        {
+            let st = bun_sys::fstat(bun_cc.fd()).ok()?;
+            if st.st_uid != uid || (st.st_mode & (libc::S_IWGRP | libc::S_IWOTH)) != 0 {
+                return None;
+            }
+        }
+        #[cfg(windows)]
+        let _ = uid;
 
         for (name, source) in CompilerRtSources::SOURCES {
-            let name_z = ZBox::from_bytes(name.as_bytes());
-            let _ = bun_sys::File::write_file(bun_cc.fd(), name_z.as_zstr(), source);
+            let file = bun_cc
+                .open_file(
+                    name.as_bytes(),
+                    bun_sys::O::WRONLY
+                        | bun_sys::O::CREAT
+                        | bun_sys::O::TRUNC
+                        | bun_sys::O::CLOEXEC
+                        | bun_sys::O::NOFOLLOW,
+                    0o644,
+                )
+                .ok()?;
+            file.write_all(source).ok()?;
         }
 
         let mut path_buf = PathBuffer::uninit();
-        let Ok(path) = bun_sys::get_fd_path(bun_cc.fd(), &mut path_buf) else {
-            return;
-        };
+        let path = bun_sys::get_fd_path(bun_cc.fd(), &mut path_buf).ok()?;
         // `ZBox::from_bytes` panics on OOM.
-        let _ = COMPILER_RT_DIR.set(ZBox::from_bytes(&*path));
-
-        let Ok(node_dir) = bun_cc.make_open_path(b"node", bun_sys::OpenDirOptions::default())
-        else {
-            return;
-        };
-        for (name, source) in CompilerRtSources::NODE_HEADERS {
-            let name_z = ZBox::from_bytes(name.as_bytes());
-            let _ = bun_sys::File::write_file(node_dir.fd(), name_z.as_zstr(), source);
+        if let Ok(node_dir) = bun_cc.make_open_path(b"node", bun_sys::OpenDirOptions::default()) {
+            for (name, source) in CompilerRtSources::NODE_HEADERS {
+                let name_z = ZBox::from_bytes(name.as_bytes());
+                let _ = bun_sys::File::write_file(node_dir.fd(), name_z.as_zstr(), source);
+            }
+            let mut node_path_buf = PathBuffer::uninit();
+            if let Ok(node_path) = bun_sys::get_fd_path(node_dir.fd(), &mut node_path_buf) {
+                let _ = COMPILER_RT_NODE_DIR.set(ZBox::from_bytes(&*node_path));
+            }
         }
-        if let Ok(node_path) = bun_sys::get_fd_path(node_dir.fd(), &mut path_buf) {
-            let _ = COMPILER_RT_NODE_DIR.set(ZBox::from_bytes(&*node_path));
-        }
+        Some(ZBox::from_bytes(&*path))
     }
 
     pub(crate) fn dir() -> Option<&'static ZStr> {

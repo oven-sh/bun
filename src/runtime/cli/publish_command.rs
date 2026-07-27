@@ -1172,6 +1172,10 @@ impl PublishCommand {
                     // SAFETY: `buf[len] == 0`; arena-backed `'static`.
                     ZStr::from_buf(&buf[..], len)
                 };
+                let auth_url_is_web = {
+                    let auth_url = URL::parse(auth_url_str.as_bytes());
+                    auth_url.is_http() || auth_url.is_https()
+                };
 
                 // important to clone because it belongs to `response_buf`, and `response_buf` will be
                 // reused with the following requests
@@ -1180,9 +1184,13 @@ impl PublishCommand {
                 };
                 let done_url = URL::parse(crate::cli::cli_dupe(done_url_str));
 
-                bun_core::prettyln!(
-                    "\nAuthenticate your account at (press <b>ENTER<r> to open in browser):\n",
-                );
+                if auth_url_is_web {
+                    bun_core::prettyln!(
+                        "\nAuthenticate your account at (press <b>ENTER<r> to open in browser):\n",
+                    );
+                } else {
+                    bun_core::prettyln!("\nAuthenticate your account at:\n");
+                }
 
                 const PADDING: usize = 1;
 
@@ -1242,18 +1250,20 @@ impl PublishCommand {
                 Output::print(format_args!("{}\n", bottom_right));
                 Output::flush();
 
-                // on another thread because pressing enter is not required
-                match std::thread::Builder::new()
-                    .spawn(move || Self::press_enter_to_open_in_browser(auth_url_str))
-                {
-                    Ok(_t) => { /* JoinHandle dropped → detached */ }
-                    Err(_e) => {
-                        Output::err(
-                            "ThreadSpawn",
-                            "failed to spawn thread for opening auth url",
-                            (),
-                        );
-                        Global::crash();
+                if auth_url_is_web {
+                    // on another thread because pressing enter is not required
+                    match std::thread::Builder::new()
+                        .spawn(move || Self::press_enter_to_open_in_browser(auth_url_str))
+                    {
+                        Ok(_t) => { /* JoinHandle dropped → detached */ }
+                        Err(_e) => {
+                            Output::err(
+                                "ThreadSpawn",
+                                "failed to spawn thread for opening auth url",
+                                (),
+                            );
+                            Global::crash();
+                        }
                     }
                 }
 

@@ -424,3 +424,16 @@ test("verify rejects encoded argon2 hashes with cost parameters above the suppor
   expect(() => password.verifySync("correct horse", hugeParallelism)).toThrow("WeakParameters");
   await expect(password.verify("correct horse", hugeParallelism)).rejects.toThrow("WeakParameters");
 });
+
+test("verifySync reads the password buffer only after every argument has been coerced", () => {
+  const hashed = password.hashSync("correct horse", { algorithm: "argon2id", memoryCost: 8, timeCost: 1 });
+  const passwordBytes = new TextEncoder().encode("correct horse");
+  const hashObject = new String(hashed);
+  hashObject.toString = () => {
+    structuredClone(passwordBytes.buffer, { transfer: [passwordBytes.buffer] });
+    Bun.gc(true);
+    return hashed;
+  };
+  expect(password.verifySync(passwordBytes, hashObject as any)).toBeFalse();
+  expect(passwordBytes.byteLength).toBe(0);
+});

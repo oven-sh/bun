@@ -1039,7 +1039,9 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
 
     while (true) {
       const nonReservedConnections = Array.from(this.readyConnections).filter(
-        c => !(c.flags & PooledConnectionFlags.preReserved) && c.queryCount < maxDistribution,
+        c =>
+          !(c.flags & (PooledConnectionFlags.preReserved | PooledConnectionFlags.reserved)) &&
+          c.queryCount < maxDistribution,
       );
       if (nonReservedConnections.length === 0) {
         return;
@@ -1112,6 +1114,7 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
         connection.flags |= PooledConnectionFlags.reserved;
         connection.queryCount++;
         this.totalQueries++;
+        this.readyConnections.delete(connection);
         // we have a connection waiting for a reserved connection lets prioritize it
         pendingReserved(connection.storedError, connection);
         return;

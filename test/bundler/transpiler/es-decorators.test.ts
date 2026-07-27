@@ -683,7 +683,10 @@ describe("ES Decorators", () => {
     // It must not flip a TypeScript file to the legacy decorator calling convention on its own.
     describe.each([
       ["emitDecoratorMetadata alone", { emitDecoratorMetadata: true }],
-      ["experimentalDecorators:false + emitDecoratorMetadata:true", { experimentalDecorators: false, emitDecoratorMetadata: true }],
+      [
+        "experimentalDecorators:false + emitDecoratorMetadata:true",
+        { experimentalDecorators: false, emitDecoratorMetadata: true },
+      ],
     ])("%s", (_label, compilerOptions) => {
       test("bun run uses standard decorators", async () => {
         using dir = tempDir("es-dec-ts-meta-only", {

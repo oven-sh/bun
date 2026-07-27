@@ -220,6 +220,9 @@ fn drive_batch(
 ) -> Result<bool, WalkTaskErr> {
     if !*inited {
         *inited = true;
+        if iter.walker.pattern_components.is_empty() {
+            return Ok(false);
+        }
         match iter.init() {
             Ok(Ok(())) => {}
             Ok(Err(err)) => return Err(WalkTaskErr::Syscall(err)),

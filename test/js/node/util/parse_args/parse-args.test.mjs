@@ -1118,7 +1118,8 @@ describe("parseArgs extra tests", () => {
         Bun.gc();
       }
       expect(Object.keys(result.values)).toHaveLength(93);
-    });
+      // 1000 iterations with Bun.gc() each take >10s under a debug build.
+    }, 60_000);
   });
 
   test("undefined or null options", () => {

@@ -148,11 +148,8 @@ function areIdentical(srcStat, destStat) {
 }
 
 let sepBuf;
-// Join a directory path (string or Buffer) with an entry name Buffer from
-// readdir. POSIX filenames are arbitrary bytes; when a name is not valid UTF-8
-// the joined path must stay a Buffer so subsequent syscalls see the real
-// bytes instead of U+FFFD. UTF-8-clean trees keep flowing as strings so
-// options.filter and error messages are unchanged for the common case.
+// Stay a string while every path component is valid UTF-8 (so options.filter
+// keeps seeing strings); fall through to Buffer the moment a name is not.
 function joinEntry(dir, name) {
   if (typeof dir === "string") {
     if (isUtf8(name)) return join(dir, name.toString());
@@ -161,21 +158,13 @@ function joinEntry(dir, name) {
   return Buffer.concat([dir, (sepBuf ??= Buffer.from(sep)), name]);
 }
 
-// node:path only accepts strings. When the cp walker has descended through a
-// non-UTF-8 name the path is a Buffer; bridge it losslessly through latin1
-// (1:1 byte <-> code unit) so resolve/dirname/split keep working on the exact
-// byte sequence.
+// latin1 is the 1:1 byte<->code-unit bridge for feeding Buffer paths to node:path.
 function pathAsString(p) {
   return typeof p === "string" ? p : Buffer.prototype.toString.$call(p, "latin1");
 }
 
-// Resolve a relative symlink target against the link's directory without
-// losing bytes. When both the link path and the target are UTF-8-clean this is
-// path.resolve() (normalized, matches node). Otherwise the result is the raw
-// byte concatenation dir/target: unnormalized, but symlink(2) accepts it and
-// the kernel resolves `..` at access time. path.resolve() is avoided for
-// Buffer paths because it would mix in process.cwd() as a decoded string and
-// re-encoding that via latin1 corrupts any multi-byte cwd component.
+// path.resolve() would mix in process.cwd() as a decoded string, so once
+// either side is raw bytes just concatenate; symlink(2) resolves `..` itself.
 function resolveLinkTarget(src, target) {
   if (typeof src === "string" && isUtf8(target)) {
     return resolve(dirname(src), target.toString());

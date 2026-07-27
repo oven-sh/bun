@@ -1756,3 +1756,69 @@ test("the SHARE_ENV founding thread's process.env stays live after the swap", as
   expect(stdout.trim()).toBe("yes,unset");
   expect(exitCode).toBe(0);
 });
+
+// Node's parentPort is a real MessagePort: messages the parent posts buffer until the
+// port is started (first 'message' listener or explicit start()), so a listener registered
+// after entry eval still observes everything posted earlier. #15408 / #21101.
+describe("parentPort buffers until the first 'message' listener", () => {
+  test.concurrent("listener registered after entry eval receives every message posted before it", async () => {
+    const w = new Worker(
+      `const { parentPort } = require("node:worker_threads");
+       const got = [];
+       // Defer past entry eval + the post-eval drain turn so the inbox has been
+       // flushed (before this fix) by the time the listener is added.
+       setTimeout(() => {
+         parentPort.on("message", m => got.push(m));
+         setImmediate(() => setImmediate(() => parentPort.postMessage(got)));
+       }, 100);`,
+      { eval: true },
+    );
+    try {
+      for (let i = 0; i < 100; i++) w.postMessage("m" + i);
+      const got = await new Promise<any[]>(r => w.once("message", r));
+      expect(got).toEqual(Array.from({ length: 100 }, (_, i) => "m" + i));
+    } finally {
+      await w.terminate();
+    }
+  });
+
+  test.concurrent("delivers to a listener registered before an unsettled top-level await", async () => {
+    // #15408: a listener added before a top-level `await` that never settles must still
+    // receive messages while the await is pending. In node the entry-module port is
+    // started on the first listener; in bun the inbox previously gated on State::Running
+    // (set only after entry eval completes), so the message was never delivered.
+    const w = new Worker(
+      `const { parentPort } = require("node:worker_threads");
+       parentPort.on("message", m => parentPort.postMessage("got:" + m));
+       await 0;
+       while (true) await new Promise(r => setImmediate(r));`,
+      { eval: true },
+    );
+    try {
+      w.postMessage("x");
+      const reply = await new Promise(r => w.once("message", r));
+      expect(reply).toBe("got:x");
+    } finally {
+      await w.terminate();
+    }
+  });
+
+  test.concurrent("synchronous listener at entry still receives every message (regression guard)", async () => {
+    const w = new Worker(
+      `const { parentPort } = require("node:worker_threads");
+       const got = [];
+       parentPort.on("message", m => {
+         got.push(m);
+         if (got.length === 20) parentPort.postMessage(got);
+       });`,
+      { eval: true },
+    );
+    try {
+      for (let i = 0; i < 20; i++) w.postMessage(i);
+      const got = await new Promise<any[]>(r => w.once("message", r));
+      expect(got).toEqual(Array.from({ length: 20 }, (_, i) => i));
+    } finally {
+      await w.terminate();
+    }
+  });
+});

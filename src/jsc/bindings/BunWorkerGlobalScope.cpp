@@ -1,7 +1,11 @@
 #include "config.h"
 
 #include "BunWorkerGlobalScope.h"
+#include "ZigGlobalObject.h"
+#include "webcore/Worker.h"
 #include <wtf/TZoneMallocInlines.h>
+
+extern "C" WebCore::Worker* WebWorker__getParentWorker(void* bunVM);
 
 namespace WebCore {
 
@@ -14,7 +18,13 @@ void WorkerGlobalScope::onDidChangeListenerImpl(EventTarget& self, const AtomStr
         switch (kind) {
         case Add:
             if (global.m_messageEventCount == 0) {
-                global.scriptExecutionContext()->refEventLoop();
+                auto* ctx = global.scriptExecutionContext();
+                ctx->refEventLoop();
+                // First 'message' listener starts the parent→worker inbox so
+                // messages the parent posted before this add are delivered
+                // instead of dispatched into the void (node parentPort).
+                if (auto* worker = WebWorker__getParentWorker(bunVM(ctx->jsGlobalObject())))
+                    worker->startWorkerInbox();
             }
             global.m_messageEventCount++;
             break;

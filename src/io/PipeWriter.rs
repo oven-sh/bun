@@ -949,6 +949,26 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
         rc
     }
 
+    pub fn writev(&mut self, bufs: &[&[u8]]) -> WriteResult {
+        if self.is_done || self.closed_without_reporting {
+            return WriteResult::Done(0);
+        }
+        let mut total: usize = 0;
+        for b in bufs {
+            total += b.len();
+        }
+        if total == 0 {
+            return WriteResult::Wrote(0);
+        }
+        if self.outgoing.ensure_unused_capacity(total).is_err() {
+            return WriteResult::Err(sys::Error::oom());
+        }
+        for b in bufs {
+            self.outgoing.write_assume_capacity(b);
+        }
+        self.maybe_write_newly_buffered_data(total)
+    }
+
     pub fn flush(&mut self) -> WriteResult {
         if self.closed_without_reporting || self.is_done {
             return WriteResult::Done(0);
@@ -2447,6 +2467,62 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
         self.write_internal_u8(buffer, WriteKind::Bytes)
     }
 
+    pub fn writev(&mut self, bufs: &[&[u8]]) -> WriteResult {
+        if self.is_done {
+            return WriteResult::Done(0);
+        }
+        let mut total: usize = 0;
+        for b in bufs {
+            total += b.len();
+        }
+        if total == 0 {
+            return WriteResult::Wrote(0);
+        }
+        let had_buffered_data = self.outgoing.is_not_empty();
+        if self.outgoing.ensure_unused_capacity(total).is_err() {
+            return WriteResult::Err(sys::Error::oom());
+        }
+        for b in bufs {
+            self.outgoing.write_assume_capacity(b);
+        }
+
+        if matches!(self.source, Some(Source::SyncFile(_))) {
+            let result = (|| {
+                let remain = self.outgoing.slice();
+                let initial_len = remain.len();
+                let mut remain = remain;
+                let fd = Fd::from_uv(match &self.source {
+                    Some(Source::SyncFile(f)) => f.file,
+                    _ => unreachable!(),
+                });
+                while remain.len() > 0 {
+                    match sys::write(fd, remain) {
+                        sys::Result::Err(err) => return WriteResult::Err(err),
+                        sys::Result::Ok(wrote) => {
+                            remain = &remain[wrote..];
+                            if wrote == 0 {
+                                break;
+                            }
+                        }
+                    }
+                }
+                let wrote = initial_len - remain.len();
+                if wrote == 0 {
+                    return WriteResult::Done(wrote);
+                }
+                WriteResult::Wrote(wrote)
+            })();
+            self.outgoing.reset();
+            return result;
+        }
+
+        if had_buffered_data {
+            return WriteResult::Pending(0);
+        }
+        self.process_send();
+        self.last_write_result.clone()
+    }
+
     pub fn flush(&mut self) -> WriteResult {
         if self.is_done {
             return WriteResult::Done(0);
@@ -2468,9 +2544,6 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
         self.is_done = true;
 
         if !self.has_pending_data() {
-            if !self.owns_fd {
-                return;
-            }
             self.close();
         }
     }

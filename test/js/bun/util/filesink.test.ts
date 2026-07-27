@@ -165,6 +165,27 @@ describe("FileSink", () => {
       });
     });
   }
+
+  it("writev writes each chunk in order", async () => {
+    const path = join(tmpdirSync(), "writev.txt");
+    const sink = Bun.file(path).writer();
+    const rc = sink.writev([
+      Buffer.from("one "),
+      new Uint8Array([0x74, 0x77, 0x6f, 0x20]),
+      new TextEncoder().encode("three"),
+    ]);
+    expect(typeof rc === "number" || rc instanceof Promise).toBe(true);
+    await sink.end();
+    expect(await Bun.file(path).text()).toBe("one two three");
+  });
+
+  it("writev rejects non-ArrayBufferView entries", () => {
+    const path = join(tmpdirSync(), "writev-bad.txt");
+    const sink = Bun.file(path).writer();
+    expect(() => sink.writev(["string" as any])).toThrow();
+    expect(() => (sink as any).writev("not an array")).toThrow();
+    sink.end();
+  });
 });
 
 import fs from "node:fs";

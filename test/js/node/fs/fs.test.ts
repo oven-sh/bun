@@ -3769,8 +3769,9 @@ describe("createWriteStream", () => {
     const onUnhandled = () => unhandled++;
     process.on("unhandledRejection", onUnhandled);
     try {
+      const errorPromise = once(ws, "error");
       ws.write(Buffer.alloc(8192));
-      const [err] = (await once(ws, "error")) as [NodeJS.ErrnoException];
+      const [err] = (await errorPromise) as [NodeJS.ErrnoException];
       expect({ code: err.code, bytesWritten: ws.bytesWritten, unhandled }).toEqual({
         code: "ENOSPC",
         bytesWritten: 0,

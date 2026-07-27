@@ -1042,6 +1042,16 @@ impl FileSink {
         self.write(data)
     }
 
+    pub fn writev_bytes(&self, bufs: &[&[u8]]) -> streams::Writable {
+        if self.done.get() {
+            return streams::Writable::Done;
+        }
+        let buffered_before = self.writer.get().buffered_len();
+        let rc = self.writer.with_mut(|w| w.writev(bufs));
+        let accepted = self.bytes_accepted(buffered_before, &rc);
+        self.to_result(rc, accepted)
+    }
+
     pub fn write_latin1(&self, data: &streams::Result) -> streams::Writable {
         if self.done.get() {
             return streams::Writable::Done;
@@ -1298,6 +1308,9 @@ impl crate::webcore::sink::JsSinkType for FileSink {
     }
     fn write_bytes(&mut self, data: &streams::Result) -> streams::result::Writable {
         Self::write(self, data)
+    }
+    fn writev_bytes(&mut self, bufs: &[&[u8]]) -> streams::result::Writable {
+        Self::writev_bytes(self, bufs)
     }
     fn write_utf16(&mut self, data: &streams::Result) -> streams::result::Writable {
         Self::write_utf16(self, data)

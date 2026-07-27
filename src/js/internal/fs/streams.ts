@@ -385,7 +385,9 @@ function close(stream, err, cb) {
     let rc;
     try {
       rc = sink.end(err);
-    } catch {}
+    } catch (sinkErr) {
+      return close(stream, err || sinkErr, cb);
+    }
     if ($isPromise(rc)) {
       rc.then(
         () => close(stream, err, cb),
@@ -621,8 +623,8 @@ function fileSinkWrite(data, encoding, cb) {
 }
 
 function fileSinkWritev(data, cb) {
+  if (this.destroyed) return cb($ERR_STREAM_DESTROYED("write"));
   const len = data.length;
-  if (len === 1) return fileSinkWrite.$call(this, data[0].chunk, undefined, cb);
   let size = 0;
   const chunks = new Array(len);
   for (let i = 0; i < len; i++) {
@@ -630,7 +632,24 @@ function fileSinkWritev(data, cb) {
     chunks[i] = chunk;
     size += chunk.length;
   }
-  return fileSinkWrite.$call(this, Buffer.concat(chunks, size), undefined, cb);
+  const sink = this[kFileSink];
+  let rc;
+  try {
+    rc = sink.writev(chunks);
+    if (!$isPromise(rc)) rc = sink.flush();
+  } catch (e) {
+    return cb(e);
+  }
+  if ($isPromise(rc)) {
+    this[kIsPerformingIO] = true;
+    rc.then(
+      () => afterFileSinkWriteSettled(this, cb, null, size),
+      err => afterFileSinkWriteSettled(this, cb, err, 0),
+    );
+  } else {
+    this.bytesWritten += size;
+    process.nextTick(afterFileSinkWrite, this, cb);
+  }
 }
 
 function afterFileSinkWriteSettled(stream, cb, err, bytes) {

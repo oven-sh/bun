@@ -1,6 +1,7 @@
 #include "root.h"
 
 #include "ZigGlobalObject.h"
+#include "sqlite/AsyncSQLiteDatabase.h"
 #include "helpers.h"
 #include "JavaScriptCore/ArgList.h"
 #include "JavaScriptCore/JSCellButterfly.h"
@@ -639,6 +640,7 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__createForTestIsolation(Zig::G
     // Move the old context to a fresh identifier first to free the slot.
     auto* oldContext = oldGlobal->scriptExecutionContext();
     const auto inheritedId = oldContext->identifier();
+    Bun::abandonAsyncSQLiteRequestsForGlobal(oldGlobal);
     oldContext->removeFromContextsMap();
     oldContext->regenerateIdentifier();
 

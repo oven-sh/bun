@@ -86,4 +86,9 @@ Structure* createJSSQLStatementStructure(JSGlobalObject* globalObject);
 
 JSValue createJSSQLStatementConstructor(Zig::GlobalObject* globalObject);
 
+// Builds a bun:sqlite `SQLiteError` from already-snapshotted diagnostics (not
+// read live off a sqlite3*). Shared with the async path, which copies the error
+// fields on its worker before the connection's error state can be overwritten.
+JSValue createSQLiteErrorFromCode(JSC::JSGlobalObject* globalObject, int extendedCode, int byteOffset, const WTF::String& message);
+
 } // namespace WebCore

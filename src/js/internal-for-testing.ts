@@ -14,6 +14,61 @@ export const highlightJavaScriptRedacted = (code: string) => fmtBinding(code, "h
 export const escapePowershell = (code: string) => fmtBinding(code, "escape-powershell");
 
 export const canonicalizeIP = $newCppFunction("NodeTLS.cpp", "Bun__canonicalizeIP", 1);
+export const asyncSQLiteTaskForTesting = $newCppFunction(
+  "AsyncSQLiteDatabase.cpp",
+  "jsFunction_asyncSQLiteTaskForTesting",
+  2,
+);
+export const asyncSQLiteTaskStatsForTesting = $newCppFunction(
+  "AsyncSQLiteDatabase.cpp",
+  "jsFunction_asyncSQLiteTaskStatsForTesting",
+  0,
+);
+export const asyncSQLiteConnectionOpenForTesting = $newCppFunction(
+  "AsyncSQLiteDatabase.cpp",
+  "jsFunction_asyncSQLiteConnectionOpenForTesting",
+  4,
+);
+export const asyncSQLiteConnectionExecForTesting = $newCppFunction(
+  "AsyncSQLiteDatabase.cpp",
+  "jsFunction_asyncSQLiteConnectionExecForTesting",
+  2,
+);
+export const asyncSQLiteConnectionQueryForTesting = $newCppFunction(
+  "AsyncSQLiteDatabase.cpp",
+  "jsFunction_asyncSQLiteConnectionQueryForTesting",
+  4,
+);
+export const asyncSQLiteConnectionRunForTesting = $newCppFunction(
+  "AsyncSQLiteDatabase.cpp",
+  "jsFunction_asyncSQLiteConnectionRunForTesting",
+  3,
+);
+export const asyncSQLiteConnectionGetForTesting = $newCppFunction(
+  "AsyncSQLiteDatabase.cpp",
+  "jsFunction_asyncSQLiteConnectionGetForTesting",
+  3,
+);
+export const asyncSQLiteConnectionAllForTesting = $newCppFunction(
+  "AsyncSQLiteDatabase.cpp",
+  "jsFunction_asyncSQLiteConnectionAllForTesting",
+  3,
+);
+export const asyncSQLiteConnectionValuesForTesting = $newCppFunction(
+  "AsyncSQLiteDatabase.cpp",
+  "jsFunction_asyncSQLiteConnectionValuesForTesting",
+  3,
+);
+export const asyncSQLiteConnectionCloseForTesting = $newCppFunction(
+  "AsyncSQLiteDatabase.cpp",
+  "jsFunction_asyncSQLiteConnectionCloseForTesting",
+  1,
+);
+export const asyncSQLiteConnectionStatsForTesting = $newCppFunction(
+  "AsyncSQLiteDatabase.cpp",
+  "jsFunction_asyncSQLiteConnectionStatsForTesting",
+  0,
+);
 
 // Runtime-dispatched SIMD xxHash3 kernel (src/jsc/bindings/xxhash3.cpp), driven
 // directly so tests can exercise the Highway path independent of Bun.hash.

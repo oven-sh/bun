@@ -24,6 +24,7 @@ public:
     std::unique_ptr<IsoSubspace> m_subspaceForNapiPrototype;
     std::unique_ptr<IsoSubspace> m_subspaceForJSSQLStatement;
     std::unique_ptr<IsoSubspace> m_subspaceForJSSQLStatementConstructor;
+    std::unique_ptr<IsoSubspace> m_subspaceForAsyncSQLitePendingRegistry;
     std::unique_ptr<IsoSubspace> m_subspaceForNodeSqliteDatabaseSync;
     std::unique_ptr<IsoSubspace> m_subspaceForNodeSqliteStatementSync;
     std::unique_ptr<IsoSubspace> m_subspaceForNodeSqliteStatementSyncIterator;

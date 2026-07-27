@@ -796,7 +796,7 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
 
         // ── wait ────────────────────────────────────────────────────────
         // HMR `pending_internal_promise` swap loop; non-watcher path uses
-        // `wait_for_promise` directly.
+        // `wait_for_module_promise`.
         {
             // SAFETY: per fn contract.
             if unsafe { &*vm }.is_watcher_enabled() {
@@ -838,8 +838,16 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
         }
 
         // SAFETY: `promise` is a live (still-protected) JSC heap cell.
-        if unsafe { &*promise }.status() == PromiseStatus::Rejected {
-            return Ok(promise);
+        match unsafe { &*promise }.status() {
+            PromiseStatus::Rejected => return Ok(promise),
+            PromiseStatus::Pending => {
+                // wait_for_module_promise returned with nothing left to settle
+                // the preload's TLA. Return the pending promise so the caller's
+                // `!p.is_null()` early-return keeps it in
+                // `pending_internal_promise` for the run_command warn/exit-13.
+                return Ok(promise);
+            }
+            PromiseStatus::Fulfilled => {}
         }
         // `_protected` drops here → unprotect.
     }

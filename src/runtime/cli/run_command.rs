@@ -1571,16 +1571,6 @@ impl Run {
                 vm.auto_tick_active();
             }
 
-            // Entry module's evaluation promise still pending after the loop
-            // drained (and no unhandled rejection caused the drain): unsettled
-            // top-level await. Node warns and exits 13.
-            if vm.unhandled_error_counter == 0 && vm.entry_module_promise_is_pending() {
-                vm.report_unsettled_top_level_await();
-                if vm.exit_handler.exit_code == 0 {
-                    vm.exit_handler.exit_code = 13;
-                }
-            }
-
             if ctx.runtime_options.eval.eval_and_print {
                 let to_print: JSValue = 'brk: {
                     let result = vm
@@ -1629,6 +1619,31 @@ impl Run {
             }
 
             vm.on_before_exit();
+
+            // A beforeExit handler can resolve the entry's await; the reaction
+            // is a microtask is_event_loop_alive() doesn't count. Drain it and
+            // re-run the loop if the resumed body schedules more work.
+            while vm.unhandled_error_counter == 0 && vm.entry_module_promise_is_pending() {
+                vm.tick();
+                if !vm.is_event_loop_alive() {
+                    break;
+                }
+                while vm.is_event_loop_alive() {
+                    vm.tick();
+                    vm.auto_tick_active();
+                }
+                vm.on_before_exit();
+            }
+
+            // Entry module's evaluation promise still pending after the loop
+            // and beforeExit re-drained, with no unhandled rejection: unsettled
+            // top-level await. Node warns and exits 13.
+            if vm.unhandled_error_counter == 0 && vm.entry_module_promise_is_pending() {
+                vm.report_unsettled_top_level_await();
+                if vm.exit_handler.exit_code == 0 {
+                    vm.exit_handler.exit_code = 13;
+                }
+            }
         }
 
         if log_has_msgs(vm) {

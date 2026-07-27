@@ -28,9 +28,9 @@ test.concurrent("never-settling top-level await exits 13 with a warning", async 
     "a.mjs": `await new Promise(() => {});\n`,
   });
   const { stderr, exitCode, signalCode } = await run([bunExe(), "a.mjs"], String(dir));
-  expect({ signalCode, exitCode }).toEqual({ signalCode: null, exitCode: 13 });
   expect(stderr).toContain("Detected unsettled top-level await at");
   expect(stderr).toContain("a.mjs");
+  expect({ signalCode, exitCode }).toEqual({ signalCode: null, exitCode: 13 });
 });
 
 test.concurrent("never-settling top-level await in a dependency exits 13", async () => {
@@ -39,8 +39,9 @@ test.concurrent("never-settling top-level await in a dependency exits 13", async
     "dep.mjs": `export const ready = new Promise(() => {});\n`,
   });
   const { stderr, exitCode, signalCode } = await run([bunExe(), "entry.mjs"], String(dir));
-  expect({ signalCode, exitCode }).toEqual({ signalCode: null, exitCode: 13 });
   expect(stderr).toContain("Detected unsettled top-level await");
+  expect(stderr).toContain("entry.mjs");
+  expect({ signalCode, exitCode }).toEqual({ signalCode: null, exitCode: 13 });
 });
 
 test.concurrent("top-level await resolved by a ref'd timer exits 0", async () => {
@@ -68,8 +69,8 @@ test.concurrent("unsettled top-level await preserves a user-set process.exitCode
     "a.mjs": `process.exitCode = 7;\nawait new Promise(() => {});\n`,
   });
   const { stderr, exitCode, signalCode } = await run([bunExe(), "a.mjs"], String(dir));
-  expect({ signalCode, exitCode }).toEqual({ signalCode: null, exitCode: 7 });
   expect(stderr).toContain("Detected unsettled top-level await");
+  expect({ signalCode, exitCode }).toEqual({ signalCode: null, exitCode: 7 });
 });
 
 test.concurrent("beforeExit fires with 0 before the unsettled-TLA warning", async () => {
@@ -77,15 +78,15 @@ test.concurrent("beforeExit fires with 0 before the unsettled-TLA warning", asyn
     "a.mjs": `process.on("beforeExit", c => console.error("beforeExit", c));\n` + `await new Promise(() => {});\n`,
   });
   const { stderr, exitCode, signalCode } = await run([bunExe(), "a.mjs"], String(dir));
-  expect({ signalCode, exitCode }).toEqual({ signalCode: null, exitCode: 13 });
   const before = stderr.indexOf("beforeExit 0");
   const warn = stderr.indexOf("Detected unsettled top-level await");
   expect(before).toBeGreaterThanOrEqual(0);
   expect(warn).toBeGreaterThan(before);
+  expect({ signalCode, exitCode }).toEqual({ signalCode: null, exitCode: 13 });
 });
 
 test.concurrent("bun -e with a never-settling top-level await exits 13", async () => {
   const { stderr, exitCode, signalCode } = await run([bunExe(), "-e", "await new Promise(() => {})"]);
-  expect({ signalCode, exitCode }).toEqual({ signalCode: null, exitCode: 13 });
   expect(stderr).toContain("Detected unsettled top-level await");
+  expect({ signalCode, exitCode }).toEqual({ signalCode: null, exitCode: 13 });
 });

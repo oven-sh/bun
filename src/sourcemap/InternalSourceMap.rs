@@ -628,10 +628,9 @@ impl InternalSourceMap {
     }
 }
 
-/// Stateful forward cursor. `move_to` is cheapest when successive targets are
-/// monotonically non-decreasing and close together; a target in a later window
-/// (or any backward jump) reseeks via the sync index, so every call is bounded
-/// by one `locate_window` bsearch plus at most `SYNC_INTERVAL` delta decodes.
+/// Stateful forward cursor. `move_to` is cheapest for nearby non-decreasing
+/// targets; a backward jump or a jump past the next sync entry reseeks, so each
+/// call is bounded by one `locate_window` plus at most `SYNC_INTERVAL` deltas.
 ///
 /// Invariant: when `has_state`, `reader` is positioned such that calling
 /// `advance_one()` produces the mapping immediately after `peek orelse state`.
@@ -660,10 +659,6 @@ impl Cursor {
         let target_line = line.zero_based();
         let target_col = column.zero_based();
 
-        // Reseek on a backward jump, and also on a forward jump that lands in a
-        // later window. Without the second check a caller feeding targets in
-        // random order (e.g. hash-map iteration) would walk every intervening
-        // mapping one at a time, which is O(mappings) per call.
         let must_reseek =
             !self.has_state || !self.state.less_or_equal(target_line, target_col) || {
                 let next = self.sync_idx as usize + 1;

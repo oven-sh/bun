@@ -151,12 +151,13 @@ describe.concurrent("undici prefer-installed resolution", () => {
 
   test("bun build --target=bun defers undici to runtime resolution", async () => {
     using dir = tempDir("undici-build", {
-      "package.json": `{ "name": "app", "dependencies": { "undici": "*" } }`,
+      "package.json": `{ "name": "app", "dependencies": { "undici": "*" }, "imports": { "#undici": "undici" } }`,
       "node_modules/undici/package.json": `{ "name": "undici", "version": "99.0.0", "main": "index.js" }`,
       "node_modules/undici/index.js": `module.exports = { marker: "installed" };`,
       "entry.mjs": `
         import { marker } from "undici";
-        console.log(marker);
+        import viaImports from "#undici";
+        console.log(marker, viaImports.marker);
       `,
     });
 
@@ -170,10 +171,11 @@ describe.concurrent("undici prefer-installed resolution", () => {
     expect(buildStderr).toBe("");
     expect(buildExitCode).toBe(0);
 
-    // The bundle keeps the bare specifier external instead of inlining the
-    // builtin shim.
+    // The bundle keeps the specifiers external instead of inlining either the
+    // builtin shim or the installed package.
     const bundled = await Bun.file(join(String(dir), "out.mjs")).text();
     expect(bundled).toContain('"undici"');
+    expect(bundled).not.toContain("installed");
 
     await using proc = Bun.spawn({
       cmd: [bunExe(), "out.mjs"],
@@ -183,7 +185,7 @@ describe.concurrent("undici prefer-installed resolution", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
-    expect(stdout).toBe("installed\n");
+    expect(stdout).toBe("installed installed\n");
     expect(exitCode).toBe(0);
   });
 });

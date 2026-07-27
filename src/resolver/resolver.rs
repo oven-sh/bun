@@ -4875,8 +4875,11 @@ impl<'a> Resolver<'a> {
                     HardcodedAliasCfg::default(),
                 ) {
                     // `prefer_installed`: an installed copy wins; the builtin
-                    // is the fallback (never auto-installed).
-                    if alias.prefer_installed {
+                    // is the fallback (never auto-installed). When bundling
+                    // (`mark_builtins_as_external`) stay external instead, so
+                    // the output defers to runtime resolution like a direct
+                    // import of the bare specifier.
+                    if alias.prefer_installed && !self.opts.mark_builtins_as_external {
                         let status = self.load_node_modules(
                             &esm_resolution.path,
                             kind,

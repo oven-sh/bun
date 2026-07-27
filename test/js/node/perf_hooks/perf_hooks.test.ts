@@ -72,7 +72,10 @@ describe("User Timing argument validation", () => {
   });
 
   test("performance.mark negative startTime throws ERR_PERFORMANCE_INVALID_TIMESTAMP", () => {
-    for (const fn of [() => performance.mark("x", { startTime: -1 }), () => new PerformanceMark("x", { startTime: -1 })]) {
+    for (const fn of [
+      () => performance.mark("x", { startTime: -1 }),
+      () => new PerformanceMark("x", { startTime: -1 }),
+    ]) {
       expect(caught(fn)).toEqual({
         name: "TypeError",
         code: "ERR_PERFORMANCE_INVALID_TIMESTAMP",

@@ -95,9 +95,7 @@ fn ssl_config_intern_for_http(config: SSLConfig) -> http::ssl_config::SharedPtr 
     http::ssl_config::global_registry::intern(config)
 }
 
-/// Build the client `SSL_CTX` now so bad cert/key rejects with `ERR_OSSL_*`
-/// like `node:tls`; the HTTP thread's lazy build can only report
-/// `FailedToOpenSocket` because the BoringSSL error queue is thread-local.
+/// Probe the client `SSL_CTX` so bad cert/key rejects with `ERR_OSSL_*` instead of the HTTP thread's generic `FailedToOpenSocket`.
 fn validate_client_tls_identity(global: &JSGlobalObject, config: &SSLConfig) -> JsResult<()> {
     let has_client_identity = config.cert.is_some()
         || config.key.is_some()
@@ -117,9 +115,11 @@ fn validate_client_tls_identity(global: &JSGlobalObject, config: &SSLConfig) -> 
             unsafe { bun_boringssl_sys::SSL_CTX_free(ctx) };
             Ok(())
         }
-        None => Err(global.throw_value(
-            crate::socket::uws_jsc::create_bun_socket_error_to_js(err, global),
-        )),
+        None => Err(
+            global.throw_value(crate::socket::uws_jsc::create_bun_socket_error_to_js(
+                err, global,
+            )),
+        ),
     }
 }
 

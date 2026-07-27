@@ -856,7 +856,9 @@ impl Loader {
         match read_env_file_contents(&file) {
             ReadEnvFile::Empty => {}
             ReadEnvFile::ReadErr(err) => {
-                if !self.quiet {
+                // EISDIR is the expected "directory named .env" case; everything
+                // else (EIO, ESTALE, ENOMEM, …) is always surfaced.
+                if err.get_errno() != bun_sys::E::EISDIR {
                     bun_core::pretty_errorln!(
                         "<r><red>{}<r> error loading {} file",
                         bstr::BStr::new(err.name()),
@@ -903,7 +905,7 @@ impl Loader {
         match read_env_file_contents(&file) {
             ReadEnvFile::Empty => {}
             ReadEnvFile::ReadErr(err) => {
-                if !self.quiet {
+                if err.get_errno() != bun_sys::E::EISDIR {
                     bun_core::pretty_errorln!(
                         "<r><red>{}<r> error loading {} file",
                         bstr::BStr::new(err.name()),
@@ -928,7 +930,7 @@ impl Loader {
 /// `load_env_file_dynamic`; callers handle open and slot bookkeeping.
 enum ReadEnvFile {
     Empty,
-    /// Caller prints (unless `quiet`) and skips. Never fatal.
+    /// Caller prints (unless EISDIR) and skips. Never fatal.
     ReadErr(bun_sys::Error),
     Bytes(Vec<u8>),
 }

@@ -1728,7 +1728,7 @@ pub fn diff_post_process(
 pub fn git_diff_preprocess_paths(old_folder_: &[u8], new_folder_: &[u8]) -> [Vec<u8>; 2] {
     #[cfg(windows)]
     let old_folder: Vec<u8> = {
-        // backslash in the path fucks everything up
+        // Normalize Windows separators before passing paths to `git diff`.
         let mut cpy = old_folder_.to_vec();
         paths::slashes_to_posix_in_place(&mut cpy[..]);
         cpy

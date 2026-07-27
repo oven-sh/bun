@@ -3324,8 +3324,7 @@ extern "C" void napi_internal_check_gc(napi_env env)
 
 extern "C" JSC::EncodedJSValue Bun__JSValue__getArrayBufferViewBuffer(JSC::EncodedJSValue, JSC::JSGlobalObject*);
 
-// Node.js does not gate these accessors behind NAPI_PREAMBLE. Stash any
-// pending exception around ASSERT_NO_PENDING_EXCEPTION in the callee.
+// Stash any pending exception around the callee's ASSERT_NO_PENDING_EXCEPTION (Node.js CHECK_ENV accessors).
 extern "C" bool napi_internal_as_array_buffer(napi_env env, JSC::EncodedJSValue value, Bun__ArrayBuffer* out)
 {
     JSC::SuspendExceptionScope suspend(env->vm());

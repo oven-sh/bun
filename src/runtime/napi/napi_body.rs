@@ -132,8 +132,7 @@ impl NapiEnv {
         unsafe { napi_internal_check_gc(self.as_mut_ptr()) };
     }
 
-    /// `JSValue::as_array_buffer` that tolerates a VM-pending exception
-    /// (Node.js does not gate these accessors behind `NAPI_PREAMBLE`).
+    /// `JSValue::as_array_buffer` that tolerates a VM-pending exception (Node.js CHECK_ENV accessor).
     pub fn as_array_buffer(&self, value: JSValue) -> Option<jsc::ArrayBuffer> {
         let mut out = jsc::ArrayBuffer::default();
         // SAFETY: env is non-null; `out` is a live exclusive borrow.

@@ -344,12 +344,22 @@ function isURL(value) {
 
 const SymbolToPrimitive = Symbol.toPrimitive;
 
-const builtInObjects = new SafeSet(
-  ArrayPrototypeFilter(
-    ObjectGetOwnPropertyNames(globalThis),
-    e => RegExpPrototypeExec(/^[A-Z][a-zA-Z0-9]+$/, e) !== null,
-  ),
-);
+// Node computes this at bootstrap before any host globals (Buffer, URL, Request, ...)
+// are installed, so its set contains only ECMAScript language intrinsics. Bun already
+// has every host global on globalThis when this module loads, so the dynamic scrape
+// would wrongly include them and `%s` would inspect instead of String()-ing them.
+// prettier-ignore
+const builtInObjects = new SafeSet([
+  "AggregateError", "Array", "ArrayBuffer", "AsyncDisposableStack", "Atomics",
+  "BigInt", "BigInt64Array", "BigUint64Array", "Boolean", "DataView", "Date",
+  "DisposableStack", "Error", "EvalError", "FinalizationRegistry", "Float16Array",
+  "Float32Array", "Float64Array", "Function", "Int16Array", "Int32Array",
+  "Int8Array", "Intl", "Iterator", "JSON", "Map", "Math", "Number", "Object",
+  "Promise", "Proxy", "RangeError", "ReferenceError", "Reflect", "RegExp", "Set",
+  "SharedArrayBuffer", "String", "SuppressedError", "Symbol", "SyntaxError",
+  "TypeError", "URIError", "Uint16Array", "Uint32Array", "Uint8Array",
+  "Uint8ClampedArray", "WeakMap", "WeakRef", "WeakSet",
+]);
 
 // https://tc39.es/ecma262/#sec-IsHTMLDDA-internal-slot
 const isUndetectableObject = v => typeof v === "undefined" && v !== undefined;
@@ -2779,6 +2789,26 @@ function formatBigIntNoColor(bigint, options) {
   return formatBigInt(stylizeNoColor, bigint, options?.numericSeparator ?? inspectDefaultOptions.numericSeparator);
 }
 
+// Node's `%s` rule, shared by util.format, Console instances, and the native global
+// console (via Bun__callFormatPercentS) so all three agree on one value.
+function formatPercentS(inspectOptions, arg) {
+  if (typeof arg === "number") {
+    return formatNumberNoColor(arg, inspectOptions);
+  }
+  if (typeof arg === "bigint") {
+    return formatBigIntNoColor(arg, inspectOptions);
+  }
+  if (typeof arg !== "object" || arg === null || !hasBuiltInToString(arg)) {
+    return String(arg);
+  }
+  return inspect(arg, {
+    ...inspectOptions,
+    compact: 3,
+    colors: false,
+    depth: 0,
+  });
+}
+
 function formatWithOptionsInternal(inspectOptions, args) {
   const first = args[0];
   let a = 0;
@@ -2798,25 +2828,9 @@ function formatWithOptionsInternal(inspectOptions, args) {
         const nextChar = StringPrototypeCharCodeAt(first, ++i);
         if (a + 1 !== args.length) {
           switch (nextChar) {
-            case 115: {
-              // 's'
-              const tempArg = args[++a];
-              if (typeof tempArg === "number") {
-                tempStr = formatNumberNoColor(tempArg, inspectOptions);
-              } else if (typeof tempArg === "bigint") {
-                tempStr = formatBigIntNoColor(tempArg, inspectOptions);
-              } else if (typeof tempArg !== "object" || tempArg === null || !hasBuiltInToString(tempArg)) {
-                tempStr = String(tempArg);
-              } else {
-                tempStr = inspect(tempArg, {
-                  ...inspectOptions,
-                  compact: 3,
-                  colors: false,
-                  depth: 0,
-                });
-              }
+            case 115: // 's'
+              tempStr = formatPercentS(inspectOptions, args[++a]);
               break;
-            }
             case 106: // 'j'
               tempStr = tryStringify(args[++a]);
               break;
@@ -2995,6 +3009,7 @@ export default {
   inspect,
   format,
   formatWithOptions,
+  formatPercentS,
   getStringWidth,
   stripVTControlCharacters,
   //! non-standard properties, should these be kept? (not currently exposed)

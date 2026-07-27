@@ -2526,12 +2526,7 @@ pub mod formatter {
                         const MIN_BEFORE_E_NOTATION: f64 = 0.000001;
                         match token {
                             PercentTag::S => {
-                                self.print_as::<ENABLE_ANSI_COLORS>(
-                                    Tag::String,
-                                    writer_,
-                                    next_value,
-                                    next_value.js_type(),
-                                )?;
+                                self.print_percent_s(writer_, next_value)?;
                                 writer = WrappedWriter {
                                     ctx: writer_,
                                     failed: false,
@@ -3318,6 +3313,11 @@ pub mod formatter {
             max_depth: u32,
             colors: bool,
         ) -> JSValue;
+
+        /// C++ helper (`UtilInspect.cpp`) — calls the single `formatPercentS`
+        /// routine from `internal/util/inspect.js` so the native console `%s`
+        /// uses the exact same decision tree as `util.format` and `Console`.
+        safe fn Bun__callFormatPercentS(global: &JSGlobalObject, arg: JSValue) -> JSValue;
     }
 
     // ───────────────────────────────────────────────────────────────────────
@@ -3886,6 +3886,32 @@ pub mod formatter {
                 ));
             }
             if writer.failed {
+                self.failed = true;
+            }
+            Ok(())
+        }
+
+        /// Node's `util.format` `%s` semantics. Strings pass straight through;
+        /// everything else is delegated to the shared JS `formatPercentS`
+        /// routine so the global console, `Console` instances, and
+        /// `util.format` cannot disagree.
+        #[inline(never)]
+        fn print_percent_s(
+            &mut self,
+            writer_: &mut dyn bun_io::Write,
+            value: JSValue,
+        ) -> JsResult<()> {
+            let result = if value.is_string_literal() {
+                value
+            } else {
+                crate::from_js_host_call(self.global_this, || {
+                    Bun__callFormatPercentS(self.global_this, value)
+                })?
+            };
+            if writer_
+                .write_fmt(format_args!("{}", result.fmt_string(self.global_this)))
+                .is_err()
+            {
                 self.failed = true;
             }
             Ok(())

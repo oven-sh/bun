@@ -95,14 +95,9 @@ fn ssl_config_intern_for_http(config: SSLConfig) -> http::ssl_config::SharedPtr 
     http::ssl_config::global_registry::intern(config)
 }
 
-/// Build the client `SSL_CTX` on the JS thread so bad cert/key material rejects
-/// with the BoringSSL reason (`ERR_OSSL_*`), matching `node:tls`
-/// `createSecureContext`. The HTTP thread builds this context lazily and can
-/// only surface `FailedToOpenSocket` for these failures: uSockets leaves `*err`
-/// at `.none` for cert/key, and the detail is on the thread-local error queue.
-///
-/// Skipped when no client identity is supplied so ca-only / serverName-only
-/// requests incur no extra build.
+/// Build the client `SSL_CTX` now so bad cert/key rejects with `ERR_OSSL_*`
+/// like `node:tls`; the HTTP thread's lazy build can only report
+/// `FailedToOpenSocket` because the BoringSSL error queue is thread-local.
 fn validate_client_tls_identity(global: &JSGlobalObject, config: &SSLConfig) -> JsResult<()> {
     let has_client_identity = config.cert.is_some()
         || config.key.is_some()

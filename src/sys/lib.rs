@@ -9765,7 +9765,11 @@ mod normalize_path_windows_tests {
         // Enough `..` to cross the volume-root floor: local volumes are not
         // share-rooted, so the walk refuses instead of clamping silently.
         let over = format!("{}x", "..\\".repeat(depth + 1));
-        assert_eq!(normalize_err(dir.fd, &over).get_errno(), E::EINVAL, "{over}");
+        assert_eq!(
+            normalize_err(dir.fd, &over).get_errno(),
+            E::EINVAL,
+            "{over}"
+        );
         // Same without a trailing component.
         let over_only = "..\\".repeat(depth + 1);
         assert_eq!(normalize_err(dir.fd, &over_only).get_errno(), E::EINVAL);
@@ -9783,7 +9787,11 @@ mod normalize_path_windows_tests {
         // within-tree rel, and in the floor walk for the climbing one.
         assert_eq!(normalize(dir.fd, "a/../b"), format!("{base}\\b"));
         let over = format!("{}x", "../".repeat(floor_depth(dir.fd) + 1));
-        assert_eq!(normalize_err(dir.fd, &over).get_errno(), E::EINVAL, "{over}");
+        assert_eq!(
+            normalize_err(dir.fd, &over).get_errno(),
+            E::EINVAL,
+            "{over}"
+        );
     }
 
     #[test]
@@ -9867,7 +9875,10 @@ mod normalize_path_windows_tests {
         let child = Dir::from_fd(open_dir_handle(&tree.0.join("child")));
         assert_eq!(normalize(child.fd, "..\\:\\x"), format!("{base}\\:\\x"));
         // All the way to the clamp floor: `\:\x` directly after the device.
-        let floored = normalize(dir.fd, &format!("{}:\\x", "..\\".repeat(floor_depth(dir.fd))));
+        let floored = normalize(
+            dir.fd,
+            &format!("{}:\\x", "..\\".repeat(floor_depth(dir.fd))),
+        );
         assert!(floored.ends_with("\\:\\x"), "{floored}");
         assert!(
             base.starts_with(floored.strip_suffix(":\\x").unwrap()),

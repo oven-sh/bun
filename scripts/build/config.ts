@@ -439,8 +439,9 @@ export interface Toolchain {
   rustHostTriple: string | undefined;
   strip: string;
   /**
-   * llvm-strip. On Linux hosts GNU strip is the default (`strip` above) but
-   * can't read Mach-O, so darwin cross-compiles swap this in as `cfg.strip`.
+   * llvm-strip. Preferred as `cfg.strip` on Linux (GNU strip's -R drops
+   * PT_GNU_RELRO) and for darwin cross-compiles (GNU strip can't read
+   * Mach-O). Optional: GNU strip remains the fallback.
    */
   llvmStrip: string | undefined;
   dsymutil: string | undefined;
@@ -1227,16 +1228,21 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     rustLld: toolchain.rustLld,
     rustLlvmVersion: toolchain.rustLlvmVersion,
     rustSysroot: toolchain.rustSysroot,
-    // Cross strips: linux-gnu uses <triple>-strip (GNU, handles -R .eh_frame
-    // fully; host strip rejects foreign-arch ELF); other cross targets use
-    // llvm-strip.
+    // Linux strips with llvm-strip whenever it's available. GNU strip's
+    // `-R <section>` (stripFlags on release-gnu) rewrites program headers
+    // from the section table and drops PT_GNU_RELRO in the process, silently
+    // undoing `-z relro -z now` on the shipped binary. llvm-strip keeps
+    // PT_GNU_RELRO; it leaves the removed sections' file extent as a zero
+    // gap in LOAD[0] instead of compacting it (~+0.8 MB on-disk, no RSS
+    // cost since nothing reads that range). Non-linux targets already use
+    // llvm-strip. GNU strip stays the last-resort fallback.
     strip:
       ld64StripSwap?.strip ??
-      (crossTarget !== undefined
-        ? linux && abi === "gnu" && existsSync(`/usr/bin/${crossTarget}-strip`)
-          ? `/usr/bin/${crossTarget}-strip`
-          : (toolchain.llvmStrip ?? toolchain.strip)
-        : toolchain.strip),
+      (linux
+        ? (toolchain.llvmStrip ?? toolchain.strip)
+        : crossTarget !== undefined
+          ? (toolchain.llvmStrip ?? toolchain.strip)
+          : toolchain.strip),
     dsymutil: toolchain.dsymutil,
     bun: toolchain.bun,
     jsRuntime: toolchain.jsRuntime,

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isArm64, isLinux, isMacOS, isMusl, isPosix, isWindows, tempDir } from "harness";
-import { chmodSync } from "node:fs";
+import { chmodSync, realpathSync } from "node:fs";
 import { join } from "path";
 
 describe("Bun.build compile", () => {
@@ -441,8 +441,17 @@ if (isLinux) {
       // #29963: the writable PT_LOAD must have been grown to cover .bun,
       // rather than a new late PT_LOAD being appended.
       expect(writableLoadCoversBun).toBe(true);
-      // A stock bun has 3 PT_LOAD segments; the fix must not add a 4th.
-      expect(loadCount).toBe(3);
+      // The compiled binary must have the same PT_LOAD count as the bun
+      // binary it was produced from (3 without `-z relro`, 4 with).
+      const srcHeader = new Uint8Array(await Bun.file(realpathSync(bunExe())).slice(0, 4096).arrayBuffer());
+      const srcView = new DataView(srcHeader.buffer);
+      const srcPhoff = Number(srcView.getBigUint64(32, true));
+      const srcPhnum = srcView.getUint16(56, true);
+      let srcLoadCount = 0;
+      for (let i = 0; i < srcPhnum; i++) {
+        if (srcView.getUint32(srcPhoff + i * phentsize, true) === PT_LOAD) srcLoadCount++;
+      }
+      expect(loadCount).toBe(srcLoadCount);
       // JSC bytecode cache requires 128-byte-aligned deserialization input.
       // StandaloneModuleGraph writes bytecode at payload offset 120 assuming
       // the `[u64 size]` header sits at a 128-byte-aligned vaddr (so bytecode

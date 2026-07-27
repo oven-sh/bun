@@ -435,11 +435,33 @@ export const globalFlags: Flag[] = [
     desc: "Assume no symbol interposition (enables more inlining across TUs)",
   },
 
-  // ─── Hardening (assertions builds) ───
+  // ─── Hardening ───
+  // Tranche 1: mitigations that work unchanged under the existing -no-pie
+  // link. PIE/ASLR is intentionally NOT here: flipping it moves JSC/WTF
+  // const-pointer tables from .rodata into .data.rel.ro (see
+  // deps/webkit.ts for the ~550 KB RW-vtable trade) and forces every
+  // direct dep to rebuild -fPIC. That is a separate change with its own
+  // size/RSS/rebuild cost to measure.
   {
     flag: "-fno-delete-null-pointer-checks",
     when: c => c.assertions,
     desc: "Don't optimize out null checks (hardening)",
+  },
+  {
+    flag: "-fstack-protector-strong",
+    when: c => c.unix,
+    desc: "Stack canaries on functions with local arrays / address-taken locals (C/C++ only; Rust side needs -Zstack-protector separately)",
+  },
+  {
+    // -U first: distro toolchains (and glibc's own features.h under -O) may
+    // predefine it, and redefining at a different level is a hard error.
+    // Level 3 adds _FORTIFY_SOURCE dynamic __builtin_dynamic_object_size
+    // checks (glibc ≥ 2.34); older glibc transparently falls back to 2.
+    // Release-only because it requires -O1+; !asan because ASAN already
+    // interposes the same libc entry points and the two fight.
+    flag: ["-U_FORTIFY_SOURCE", "-D_FORTIFY_SOURCE=3"],
+    when: c => c.linux && c.release && !c.asan,
+    desc: "glibc fortified libc wrappers (compile-time + runtime bounds on memcpy/sprintf/...)",
   },
 
   // ─── Diagnostics ───
@@ -1234,8 +1256,12 @@ export const linkerFlags: Flag[] = [
     flag: [
       "-Wl,--as-needed",
       "-Wl,-z,stack-size=12800000",
-      "-Wl,-z,lazy",
-      "-Wl,-z,norelro",
+      // Full RELRO. We link ~428 PLT slots; eager-binding them at startup
+      // is unmeasurable against a JSC VM init, and it lets ld.so remap
+      // .got/.got.plt/.data.rel.ro read-only so a write-what-where can't
+      // retarget a libc call. Replaces the historical -z lazy / -z norelro.
+      "-Wl,-z,relro",
+      "-Wl,-z,now",
       // (no --pack-dyn-relocs=relr: DT_RELR needs glibc ≥ 2.36 to load,
       // and we wrap symbols for portability down to 2.17. With -no-pie
       // there are <500 R_*_RELATIVE entries anyway — not worth the compat
@@ -1254,7 +1280,7 @@ export const linkerFlags: Flag[] = [
       "-Wl,--build-id=sha1",
     ],
     when: c => c.linux,
-    desc: "Linux linker tuning: lazy binding, large stack, fast gdb loading",
+    desc: "Linux linker tuning: full RELRO, large stack, fast gdb loading",
   },
   {
     flag: "-Wl,--gc-sections",
@@ -1485,17 +1511,19 @@ export const stripFlags: Flag[] = [
     // musl: no eh_frame handling differences, but CMake gates on NOT musl so we do too.
     //
     // Gated on release to match -Wl,--no-eh-frame-hdr in linkerFlags above
-    // (both fire on `c.linux && c.abi === "gnu" && c.release`). GNU strip
-    // does not rewrite the program header table, so the PT_GNU_EH_FRAME
-    // phdr must already be absent at link time — which the matching
-    // --no-eh-frame-hdr above guarantees. Nothing unwinds at runtime
-    // (`panic = "abort"`, `-fno-exceptions`); release backtraces use frame
-    // pointers. Saves ~962 KB of R-segment (.eh_frame 806 KB +
-    // .eh_frame_hdr 142 KB + .gcc_except_table 13 KB) that otherwise gets
-    // dragged into RSS via 64 KB fault-around on adjacent .rodata reads.
+    // (both fire on `c.linux && c.abi === "gnu" && c.release`). Nothing
+    // unwinds at runtime (`panic = "abort"`, `-fno-exceptions`); release
+    // backtraces use frame pointers.
+    //
+    // Runs under llvm-strip (see config.ts `strip:`), which zeroes these
+    // sections in place rather than compacting LOAD[0], so the on-disk win
+    // is smaller than GNU strip's (~0.8 MB of zero gap left behind). We
+    // accept that because GNU strip's -R rewrites the program-header table
+    // from sections and drops PT_GNU_RELRO, undoing full RELRO on the
+    // shipped binary. The zero gap is never faulted at runtime.
     flag: ["-R", ".eh_frame", "-R", ".eh_frame_hdr", "-R", ".gcc_except_table"],
     when: c => c.linux && c.abi === "gnu" && c.release,
-    desc: "Remove unwind sections (GNU strip required — llvm-strip leaves [LOAD #2 [R]])",
+    desc: "Remove unwind sections (llvm-strip; GNU strip's -R drops PT_GNU_RELRO)",
   },
 ];
 

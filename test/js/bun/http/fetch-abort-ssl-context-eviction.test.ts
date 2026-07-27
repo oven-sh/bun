@@ -20,8 +20,11 @@ import { bunEnv, bunExe, isASAN } from "harness";
 // (~30% per run before the fix), so loop a few times.
 test("aborting fetches whose custom SSL context was evicted does not crash", async () => {
   // The fixture relies on connects to TEST-NET-1 staying in-flight; strip any
-  // ambient HTTP(S) proxy so those connects aren't intercepted.
-  const env: Record<string, string | undefined> = { ...bunEnv };
+  // ambient HTTP(S) proxy so those connects aren't intercepted. Raise the
+  // per-process request cap so all 65+200 requests plus both barriers start in
+  // one FIFO drain pass (default cap is 256; 65+200+1 would defer the second
+  // barrier behind async .invalid DNS failures).
+  const env: Record<string, string | undefined> = { ...bunEnv, BUN_CONFIG_MAX_HTTP_REQUESTS: "512" };
   for (const k of ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "ALL_PROXY", "all_proxy"]) delete env[k];
 
   const runs = isASAN ? 1 : 5;

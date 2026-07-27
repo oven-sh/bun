@@ -1017,11 +1017,12 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
             }
 
             let mut offset: usize = 0;
+            let mut start: usize = 0;
             loop {
                 let rc = if matches!(file_type, FileType::File) && !self.force_sync {
-                    sys::writev_nonblocking(fd, &iov)
+                    sys::writev_nonblocking(fd, &iov[start..])
                 } else {
-                    sys::writev(fd, &iov)
+                    sys::writev(fd, &iov[start..])
                 };
                 let wrote = match rc {
                     sys::Result::Err(err) => {
@@ -1055,13 +1056,14 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
                     return WriteResult::Pending(offset);
                 }
                 let mut consumed = wrote;
-                while !iov.is_empty() && consumed >= iov[0].iov_len {
-                    consumed -= iov[0].iov_len;
-                    iov.remove(0);
+                while start < iov.len() && consumed >= iov[start].iov_len {
+                    consumed -= iov[start].iov_len;
+                    start += 1;
                 }
-                if !iov.is_empty() {
-                    iov[0].iov_base = unsafe { (iov[0].iov_base as *mut u8).add(consumed) }.cast();
-                    iov[0].iov_len -= consumed;
+                if start < iov.len() && consumed > 0 {
+                    iov[start].iov_base =
+                        unsafe { (iov[start].iov_base as *mut u8).add(consumed) }.cast();
+                    iov[start].iov_len -= consumed;
                 }
             }
         }
@@ -2644,8 +2646,7 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
         if !self.has_pending_data() {
             if !self.owns_fd && !matches!(self.source, Some(Source::File(_) | Source::SyncFile(_)))
             {
-                // uv_close would close the caller's pipe/tty handle.
-                self.on_close_source();
+                // uv_pipe_open adopted the caller's handle; uv_close on Drop.
                 return;
             }
             self.close();

@@ -182,8 +182,8 @@ describe("FileSink", () => {
   it("writev rejects non-ArrayBufferView entries", () => {
     const path = join(tmpdirSync(), "writev-bad.txt");
     const sink = Bun.file(path).writer();
-    expect(() => sink.writev(["string" as any])).toThrow();
-    expect(() => (sink as any).writev("not an array")).toThrow();
+    expect(() => sink.writev(["string" as any])).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
+    expect(() => (sink as any).writev("not an array")).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
     sink.end();
   });
 

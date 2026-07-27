@@ -333,6 +333,7 @@ pub trait JsSinkType: Sized {
     fn writev_bytes(&mut self, bufs: &[&[u8]]) -> streams::result::Writable {
         use streams::result::Writable;
         let mut total: u64 = 0;
+        let mut backpressure = false;
         for b in bufs {
             if b.is_empty() {
                 continue;
@@ -340,6 +341,10 @@ pub trait JsSinkType: Sized {
             let data = bun_ptr::RawSlice::new(b);
             match self.write_bytes(&streams::Result::Temporary(data)) {
                 Writable::Owned(n) | Writable::Temporary(n) => total += n,
+                Writable::Backpressure(n) => {
+                    total += n;
+                    backpressure = true;
+                }
                 Writable::OwnedAndDone(n) | Writable::TemporaryAndDone(n) => {
                     return Writable::OwnedAndDone(total + n);
                 }
@@ -347,7 +352,11 @@ pub trait JsSinkType: Sized {
                 other => return other,
             }
         }
-        Writable::Owned(total)
+        if backpressure {
+            Writable::Backpressure(total)
+        } else {
+            Writable::Owned(total)
+        }
     }
     fn end(&mut self, err: Option<SysError>) -> sys::Result<()>;
     fn end_from_js(&mut self, global: &JSGlobalObject) -> sys::Result<JSValue>;

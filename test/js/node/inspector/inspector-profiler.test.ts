@@ -777,14 +777,18 @@ describe("Profiler.takePreciseCoverage with many top-level functions", () => {
   // Under a debug+ASAN build the linear per-item cost of JSON serialisation
   // and buildScriptCoverageList dominates at these sizes, so the ratio sits
   // near 4 with or without the quadratic term; only release builds see it.
-  test.skipIf(isDebug || isASAN)("scales sub-quadratically in top-level function count", async () => {
-    const small = await runManyFunctionsCoverage(4_000);
-    const large = await runManyFunctionsCoverage(16_000);
-    // A 4x increase in functions grows a quadratic term 16x. The selection
-    // sort in getExecutedRanges() made the release-build ratio here ~12;
-    // with an O(n log n) sort the remaining work is linear and the ratio
-    // sits near 4. A 20 ms floor guards against a near-zero small run.
-    const ratio = large.elapsed / Math.max(small.elapsed, 20);
-    expect({ small: small.elapsed, large: large.elapsed, ratio }).toSatisfy(r => r.ratio < 8);
-  }, 30_000);
+  test.skipIf(isDebug || isASAN)(
+    "scales sub-quadratically in top-level function count",
+    async () => {
+      const small = await runManyFunctionsCoverage(4_000);
+      const large = await runManyFunctionsCoverage(16_000);
+      // A 4x increase in functions grows a quadratic term 16x. The selection
+      // sort in getExecutedRanges() made the release-build ratio here ~12;
+      // with an O(n log n) sort the remaining work is linear and the ratio
+      // sits near 4. A 20 ms floor guards against a near-zero small run.
+      const ratio = large.elapsed / Math.max(small.elapsed, 20);
+      expect({ small: small.elapsed, large: large.elapsed, ratio }).toSatisfy(r => r.ratio < 8);
+    },
+    30_000,
+  );
 });

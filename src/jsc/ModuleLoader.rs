@@ -510,7 +510,9 @@ pub(crate) unsafe extern "C" fn Bun__resolveEmbeddedNodeFile(
 pub(crate) unsafe extern "C" fn ModuleLoader__isBuiltin(data: *const u8, len: usize) -> bool {
     // SAFETY: C++ guarantees `data[..len]` is a valid UTF-8 specifier slice.
     let str = unsafe { bun_core::ffi::slice(data, len) };
-    bun_aliases_get(str).is_some() || exposed_internal_tag(str).is_some()
+    // `prefer_installed` aliases resolve like normal packages (the builtin is
+    // only a fallback), so `require.resolve.paths` must report search paths.
+    bun_aliases_get(str).is_some_and(|a| !a.prefer_installed) || exposed_internal_tag(str).is_some()
 }
 
 // The pure byte-string

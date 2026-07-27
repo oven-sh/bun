@@ -4874,6 +4874,21 @@ impl<'a> Resolver<'a> {
                     self.opts.target,
                     HardcodedAliasCfg::default(),
                 ) {
+                    // `prefer_installed`: an installed copy wins; the builtin
+                    // is the fallback (never auto-installed).
+                    if alias.prefer_installed {
+                        let status = self.load_node_modules(
+                            &esm_resolution.path,
+                            kind,
+                            dir_info,
+                            GlobalCache::disable,
+                            true,
+                            out,
+                        );
+                        if status.is_success() {
+                            return status;
+                        }
+                    }
                     *out = MatchResult {
                         path_pair: PathPair {
                             primary: Fs::Path::init(alias.path.as_bytes()),

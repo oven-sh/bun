@@ -4969,7 +4969,9 @@ unsafe fn resolve<'a>(
     };
 
     let result: bun_resolver::Result = 'resolved: {
-        // Probe node_modules with auto-install disabled; miss = builtin.
+        // Probe node_modules with auto-install disabled. Any miss, including
+        // resolver errors, intentionally falls back to the builtin: bare
+        // `undici` never touched the resolver before.
         if let Some(alias) = hardcoded_alias {
             // SAFETY: `vm.transpiler.resolver` is the unique per-VM resolver;
             // this is the only `&mut` borrow live for this call.

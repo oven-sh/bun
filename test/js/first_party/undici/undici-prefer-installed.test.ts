@@ -25,6 +25,58 @@ describe.concurrent("undici prefer-installed resolution", () => {
     expect(require.resolve("next/dist/compiled/undici")).toBe("undici");
   });
 
+  test("require.resolve.paths treats undici as a regular package", () => {
+    const paths = require.resolve.paths("undici");
+    expect(Array.isArray(paths)).toBe(true);
+    expect(paths!.length).toBeGreaterThan(0);
+    // Real builtins still report no search paths.
+    expect(require.resolve.paths("node:fs")).toBeNull();
+  });
+
+  test("subpath imports mapping to undici prefer the installed package", async () => {
+    using dir = tempDir("undici-subpath", {
+      "package.json": `{ "name": "app", "imports": { "#undici": "undici" } }`,
+      "node_modules/undici/package.json": `{ "name": "undici", "version": "99.0.0", "main": "index.js" }`,
+      "node_modules/undici/index.js": `module.exports = { marker: "installed" };`,
+      "main.mjs": `
+        import u from "#undici";
+        console.log(u.marker);
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("installed\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test("subpath imports mapping to undici fall back to the shim", async () => {
+    using dir = tempDir("undici-subpath-builtin", {
+      "package.json": `{ "name": "app", "imports": { "#undici": "undici" } }`,
+      "main.mjs": `
+        import u from "#undici";
+        console.log(typeof u.request, typeof u.MockAgent);
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("function function\n");
+    expect(exitCode).toBe(0);
+  });
+
   test("require and import pick up a locally installed undici", async () => {
     using dir = tempDir("undici-installed", {
       "package.json": `{ "name": "app", "dependencies": { "undici": "*" } }`,

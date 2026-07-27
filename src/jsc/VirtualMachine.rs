@@ -4076,7 +4076,9 @@ impl VirtualMachine {
         };
 
         let result: bun_resolver::Result = 'resolved: {
-            // Probe node_modules with auto-install disabled; miss = builtin.
+            // Probe node_modules with auto-install disabled. Any miss,
+            // including resolver errors, intentionally falls back to the
+            // builtin: bare `undici` never touched the resolver before.
             if let Some(alias) = hardcoded_alias {
                 let import_kind = if is_esm {
                     bun_ast::ImportKind::Stmt

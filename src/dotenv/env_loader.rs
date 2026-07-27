@@ -162,14 +162,13 @@ impl Loader {
         self.map.iterator()
     }
 
-    /// Truthiness predicate behind [`Self::has`]; stricter than `is_emptyish` (also rejects `"0"`/`"false"`, do not collapse).
-    #[inline]
-    pub fn is_truthy(value: &[u8]) -> bool {
-        !Self::is_emptyish(value) && value != b"0" && value != b"false"
-    }
-
     pub fn has(&self, input: &[u8]) -> bool {
-        self.get(input).is_some_and(Self::is_truthy)
+        let Some(value) = self.get(input) else {
+            return false;
+        };
+        // NOTE: intentionally stricter than `is_emptyish` — also rejects
+        // "0"/"false"; do not collapse the extra terms.
+        !Self::is_emptyish(value) && value != b"0" && value != b"false"
     }
 
     /// `BUN_ENV` with fallback to `NODE_ENV` — Bun's env precedence for

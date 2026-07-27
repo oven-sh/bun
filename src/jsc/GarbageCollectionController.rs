@@ -69,8 +69,9 @@ impl GarbageCollectionController {
         actual.internal_loop_data.jsc_vm = vm.jsc_vm.cast();
 
         self.gc_timer_interval = env_var::BUN_GC_TIMER_INTERVAL::get()
+            .filter(|&v| v > 0)
             .unwrap_or(1000)
-            .clamp(1, i32::MAX as u64) as i32;
+            .min(i32::MAX as u64) as i32;
 
         if let Some(runs) = env_var::BUN_GC_RUNS_UNTIL_SKIP_RELEASE_ACCESS::get() {
             crate::virtual_machine::Bun__defaultRemainingRunsUntilSkipReleaseAccess.store(

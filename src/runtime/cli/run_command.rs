@@ -376,7 +376,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 
         // TODO: remember to free this when we add --filter or --concurrent
         // in the meantime we don't need to free it.
-        let envp = env.map.create_null_delimited_env_map()?;
+        let envp = env.create_null_delimited_env_map()?;
 
         let spawn_result = match sync::spawn(&sync::Options {
             argv,
@@ -532,8 +532,17 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         env: Option<*mut DotEnv::Loader>,
         log_errors: bool,
         store_root_fd: bool,
+        forward_dotenv: bool,
     ) -> crate::Result<bun_resolver::DirInfoRef> {
-        Self::configure_env_for_run_impl(ctx, this_transpiler, env, log_errors, store_root_fd, true)
+        Self::configure_env_for_run_impl(
+            ctx,
+            this_transpiler,
+            env,
+            log_errors,
+            store_root_fd,
+            true,
+            forward_dotenv,
+        )
     }
 
     /// Like [`Self::configure_env_for_run`] but does **not** construct the
@@ -554,6 +563,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             log_errors,
             store_root_fd,
             false,
+            true,
         )
     }
 
@@ -579,6 +589,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         log_errors: bool,
         store_root_fd: bool,
         with_linker: bool,
+        forward_dotenv: bool,
     ) -> crate::Result<bun_resolver::DirInfoRef> {
         let args = ctx.args.clone();
         let env_is_none = env.is_none();
@@ -660,9 +671,53 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 }
             }
 
-            // Always skip default .env files for package.json script runner
-            // (the script's own bun instance loads .env)
-            let _ = this_transpiler.run_env_loader(true);
+            if forward_dotenv {
+                // Load the default .env files and lift the non-conditional
+                // entries into `script_forward` for the subprocess (#9877);
+                // NODE_ENV-dependent entries are dropped so a script re-derives
+                // them under its own NODE_ENV (#9635). The map returns to the
+                // process-env prefix so the `bun run <file>` slow path (which
+                // boots a VM on this singleton) matches the fast path.
+                let process_env_count = env_loader.map.map.count();
+                let disable_default = this_transpiler.options.env.disable_default_env_files;
+                // Explicit --env-file (if any); skip auto-discovery here.
+                let _ = this_transpiler.run_env_loader(true);
+                // Auto-discover only when the script's spawn cwd is the
+                // invocation cwd; otherwise the forwarded values were read from
+                // the wrong directory and would shadow the child's own `.env`.
+                let default_files_loaded = if !disable_default
+                    && this_transpiler.options.env.files.is_empty()
+                    && root_dir_info.enclosing_package_json.is_none_or(|pj| {
+                        strings::without_trailing_slash(pj.source.path.name().dir)
+                            == strings::without_trailing_slash(top_level_dir)
+                    }) {
+                    if let Some(entries) =
+                        root_dir_info.get_entries(this_transpiler.resolver.generation)
+                    {
+                        // SAFETY: BSSMap-owned; single-threaded dispatch.
+                        let dir: &bun_resolver::fs::DirEntry = unsafe { &*entries };
+                        // Every NODE_ENV-dependent file is loaded before .env
+                        // so .env's expansion sees their keys as conditional.
+                        let _ = this_transpiler
+                            .env_mut()
+                            .load_default_files_for_script_runner(dir);
+                        true
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                };
+                this_transpiler
+                    .env_mut()
+                    .take_script_dotenv(process_env_count, default_files_loaded);
+            } else {
+                // `--filter` / multi-run spawn each script in a different
+                // package cwd; forwarding the invocation-cwd `.env` would
+                // shadow per-package `.env` in a nested bun. Skip the default
+                // files (pre-#9877 behavior for these callers).
+                let _ = this_transpiler.run_env_loader(true);
+            }
         }
 
         // Re-derive after `run_env_loader` — that call creates its own
@@ -2143,7 +2198,7 @@ impl RunCommand {
 
         // TODO: remember to free this when we add --filter or --concurrent
         // in the meantime we don't need to free it.
-        let envp = env.map.create_null_delimited_env_map()?;
+        let envp = env.create_null_delimited_env_map()?;
 
         let spawn_result = match sync::spawn(&sync::Options {
             argv,
@@ -4068,7 +4123,7 @@ impl BunXFastPath {
         // contract is that *this* `passthrough` wins.
         ctx.passthrough = passthrough.to_vec();
 
-        let env_block = env.map.write_windows_env_block();
+        let env_block = env.write_windows_env_block();
 
         let run_ctx = bun_install::windows_shim::bun_shim_impl::FromBunRunContext {
             handle,

@@ -830,7 +830,7 @@ for (const shell of ["system", "bun"]) {
     : "echo ENV_FILE_NAME=$ENV_FILE_NAME, NODE_ENV=$NODE_ENV";
 
   describe(`script runner with ${shell} shell`, () => {
-    test("does not pass variables from .env files into scripts", () => {
+    test(".env file values do not override process env", () => {
       const tmp = tempDirWithFiles("script-runner-env", {
         "package.json": '{"scripts":{"show-env":"' + show_env_script + '"}}',
 
@@ -842,6 +842,173 @@ for (const shell of ["system", "bun"]) {
 
       expect(bunRunAsScript(tmp, "show-env", { ...env }, ["--shell=" + shell]).stdout).toBe(
         "ENV_FILE_NAME=N/A, NODE_ENV=" + (isWindowsCMD ? "%NODE_ENV%" : ""),
+      );
+    });
+
+    // https://github.com/oven-sh/bun/issues/9877: running a package.json script
+    // whose body spawns a non-bun tool (vite, node, cypress, psql, ...) should
+    // see values from `.env`. Values from NODE_ENV-dependent files are withheld
+    // so a script that assigns its own NODE_ENV can re-derive them (the e2e
+    // tests below cover that).
+    const show_dotenv_script = isWindowsCMD
+      ? "echo A=%BUNTEST_DOTENV_A%, B=%BUNTEST_DOTENV_B%, C=%BUNTEST_DOTENV_C%, D=%BUNTEST_DOTENV_D%"
+      : "echo A=$BUNTEST_DOTENV_A, B=$BUNTEST_DOTENV_B, C=$BUNTEST_DOTENV_C, D=$BUNTEST_DOTENV_D";
+
+    test("passes .env values into scripts", () => {
+      const tmp = tempDirWithFiles("script-runner-dotenv", {
+        "package.json": '{"scripts":{"show-env":"' + show_dotenv_script + '"}}',
+        ".env": "BUNTEST_DOTENV_A=from-env\nBUNTEST_DOTENV_B=from-env",
+      });
+      const unset = isWindowsCMD ? ["%BUNTEST_DOTENV_C%", "%BUNTEST_DOTENV_D%"] : ["", ""];
+      expect(bunRunAsScript(tmp, "show-env", {}, ["--shell=" + shell]).stdout).toBe(
+        `A=from-env, B=from-env, C=${unset[0]}, D=${unset[1]}`,
+      );
+    });
+
+    test("withholds NODE_ENV-dependent file values from scripts", () => {
+      // .env.local is skipped under NODE_ENV=test, so forwarding it would
+      // shadow a .env.test value in a 'bun test' child; treat it the same as
+      // the .env.{NODE_ENV}[.local] files.
+      const tmp = tempDirWithFiles("script-runner-dotenv", {
+        "package.json": '{"scripts":{"show-env":"' + show_dotenv_script + '"}}',
+        ".env": "BUNTEST_DOTENV_A=from-env",
+        ".env.local": "BUNTEST_DOTENV_B=from-local",
+        ".env.development": "BUNTEST_DOTENV_C=from-dev",
+        ".env.development.local": "BUNTEST_DOTENV_D=from-dev-local",
+      });
+      const unset = isWindowsCMD ? ["%BUNTEST_DOTENV_B%", "%BUNTEST_DOTENV_C%", "%BUNTEST_DOTENV_D%"] : ["", "", ""];
+      expect(bunRunAsScript(tmp, "show-env", {}, ["--shell=" + shell]).stdout).toBe(
+        `A=from-env, B=${unset[0]}, C=${unset[1]}, D=${unset[2]}`,
+      );
+    });
+
+    test("withholds .env values that expand a NODE_ENV-dependent key", () => {
+      // An `.env` entry that references a key supplied by a NODE_ENV-dependent
+      // file is itself NODE_ENV-dependent and must not be forwarded, or a
+      // script like "NODE_ENV=production bun ..." would inherit the
+      // development expansion. An entry that expands a process-env key stays
+      // forwarded even when a NODE_ENV-dependent file also defines that key
+      // (process env wins under every NODE_ENV).
+      const tmp = tempDirWithFiles("script-runner-dotenv", {
+        "package.json": '{"scripts":{"show-env":"' + show_dotenv_script + '"}}',
+        ".env": "BUNTEST_DOTENV_A=$BUNTEST_DOTENV_C\nBUNTEST_DOTENV_B=b-$BUNTEST_DOTENV_PROC",
+        ".env.development": "BUNTEST_DOTENV_C=from-dev",
+        ".env.production": "BUNTEST_DOTENV_PROC=from-prod",
+      });
+      const unset = isWindowsCMD ? ["%BUNTEST_DOTENV_A%", "%BUNTEST_DOTENV_C%", "%BUNTEST_DOTENV_D%"] : ["", "", ""];
+      expect(bunRunAsScript(tmp, "show-env", { BUNTEST_DOTENV_PROC: "proc" }, ["--shell=" + shell]).stdout).toBe(
+        `A=${unset[0]}, B=b-proc, C=${unset[1]}, D=${unset[2]}`,
+      );
+    });
+
+    test("forwards --env-file values that expand an unresolved key", () => {
+      // --env-file loads no default files, so an unresolved $VAR cannot be
+      // NODE_ENV-dependent here; the (possibly defaulted) expansion must be
+      // forwarded, as must NODE_ENV itself (B).
+      const tmp = tempDirWithFiles("script-runner-dotenv", {
+        "package.json": '{"scripts":{"show-env":"' + show_dotenv_script + '"}}',
+        "custom.env":
+          "BUNTEST_DOTENV_A=${BUNTEST_DOTENV_UNSET:-fallback}\nNODE_ENV=from-envfile\nBUNTEST_DOTENV_B=$NODE_ENV",
+      });
+      const unset = isWindowsCMD ? ["%BUNTEST_DOTENV_C%", "%BUNTEST_DOTENV_D%"] : ["", ""];
+      expect(bunRunAsScript(tmp, "show-env", {}, ["--env-file=custom.env", "--shell=" + shell]).stdout).toBe(
+        `A=fallback, B=from-envfile, C=${unset[0]}, D=${unset[1]}`,
+      );
+    });
+
+    for (const withDevFile of [true, false]) {
+      test.skipIf(isWindowsCMD)(
+        `e2e: .env expansion re-derives under the script's NODE_ENV${withDevFile ? "" : " (key absent under this NODE_ENV)"}`,
+        () => {
+          const tmp = tempDirWithFiles("script-runner-dotenv", {
+            "package.json": `{"scripts":{"start":"NODE_ENV=production '${bunExe().replaceAll("\\", "\\\\")}' run index.ts"}}`,
+            "index.ts": "console.log('DATABASE_URL=' + process.env.DATABASE_URL);",
+            ".env": "DATABASE_URL=postgres://$DB_HOST/app",
+            ...(withDevFile ? { ".env.development": "DB_HOST=localhost" } : {}),
+            ".env.production": "DB_HOST=prod.internal",
+          });
+          expect(bunRunAsScript(tmp, "start", {}, ["--shell=" + shell]).stdout).toBe(
+            "DATABASE_URL=postgres://prod.internal/app",
+          );
+        },
+      );
+    }
+
+    test.skipIf(isWindowsCMD)("e2e: .env.local does not shadow .env.test in a 'bun test' child", () => {
+      const tmp = tempDirWithFiles("script-runner-dotenv", {
+        "package.json": `{"scripts":{"test":"'${bunExe().replaceAll("\\", "\\\\")}' test db.test.ts"}}`,
+        "db.test.ts":
+          "import {test,expect} from 'bun:test'; test('db', () => expect(process.env.DATABASE_URL).toBe('test-db'));",
+        ".env.local": "DATABASE_URL=dev-db",
+        ".env.test": "DATABASE_URL=test-db",
+      });
+      const { stdout, stderr } = bunRunAsScript(tmp, "test", {}, ["--shell=" + shell]);
+      expect(stderr + stdout).toContain("1 pass");
+    });
+
+    test.skipIf(isWindowsCMD)("e2e: .env value shadowed only by .env.{other_NODE_ENV} is not pinned", () => {
+      const tmp = tempDirWithFiles("script-runner-dotenv", {
+        "package.json": `{"scripts":{"start":"NODE_ENV=production '${bunExe().replaceAll("\\", "\\\\")}' run index.ts"}}`,
+        "index.ts": "console.log('API_URL=' + process.env.API_URL);",
+        ".env": "API_URL=http://localhost:3000",
+        ".env.production": "API_URL=https://api.example.com",
+      });
+      expect(bunRunAsScript(tmp, "start", {}, ["--shell=" + shell]).stdout).toBe("API_URL=https://api.example.com");
+    });
+
+    test.skipIf(isWindowsCMD)(
+      "e2e: .env expansion of a same-file key shadowed only by .env.{other_NODE_ENV} is not pinned",
+      () => {
+        const tmp = tempDirWithFiles("script-runner-dotenv", {
+          "package.json": `{"scripts":{"start":"NODE_ENV=production '${bunExe().replaceAll("\\", "\\\\")}' run index.ts"}}`,
+          "index.ts": "console.log('API_URL=' + process.env.API_URL);",
+          ".env": "HOST=localhost\nAPI_URL=http://$HOST/api",
+          ".env.production": "HOST=api.example.com",
+        });
+        expect(bunRunAsScript(tmp, "start", {}, ["--shell=" + shell]).stdout).toBe(
+          "API_URL=http://api.example.com/api",
+        );
+      },
+    );
+
+    test.skipIf(isWindowsCMD)("e2e: .env value expanding $NODE_ENV is not pinned", () => {
+      const tmp = tempDirWithFiles("script-runner-dotenv", {
+        "package.json": `{"scripts":{"start":"NODE_ENV=production '${bunExe().replaceAll("\\", "\\\\")}' run index.ts"}}`,
+        "index.ts": "console.log('CONFIG=' + process.env.CONFIG);",
+        ".env": "CONFIG=config.$NODE_ENV.json",
+      });
+      expect(bunRunAsScript(tmp, "start", {}, ["--shell=" + shell]).stdout).toBe("CONFIG=config.production.json");
+    });
+
+    test.skipIf(isWindowsCMD)("e2e: subdirectory .env does not shadow package-root .env in a nested bun", () => {
+      const tmp = tempDirWithFiles("script-runner-dotenv", {
+        "package.json": `{"scripts":{"start":"'${bunExe().replaceAll("\\", "\\\\")}' index.ts"}}`,
+        "index.ts": "console.log('X=' + process.env.X);",
+        ".env": "X=root",
+        "src/.env": "X=cwd",
+        "src/placeholder": "",
+      });
+      const r = Bun.spawnSync([bunExe(), "--shell=" + shell, "run", "start"], {
+        cwd: path.join(tmp, "src"),
+        env: { ...bunEnv, NODE_ENV: undefined },
+      });
+      expect({ stdout: r.stdout.toString("utf8").trim(), exitCode: r.exitCode }).toEqual({
+        stdout: "X=root",
+        exitCode: 0,
+      });
+    });
+
+    test("--no-env-file disables .env loading for scripts", () => {
+      const tmp = tempDirWithFiles("script-runner-dotenv", {
+        "package.json": '{"scripts":{"show-env":"' + show_dotenv_script + '"}}',
+        ".env": "BUNTEST_DOTENV_A=from-env",
+        ".env.local": "BUNTEST_DOTENV_B=from-local",
+      });
+      const unset = isWindowsCMD
+        ? ["%BUNTEST_DOTENV_A%", "%BUNTEST_DOTENV_B%", "%BUNTEST_DOTENV_C%", "%BUNTEST_DOTENV_D%"]
+        : ["", "", "", ""];
+      expect(bunRunAsScript(tmp, "show-env", {}, ["--no-env-file", "--shell=" + shell]).stdout).toBe(
+        `A=${unset[0]}, B=${unset[1]}, C=${unset[2]}, D=${unset[3]}`,
       );
     });
 
@@ -900,6 +1067,48 @@ for (const shell of ["system", "bun"]) {
     }
   });
 }
+
+// `bun run <bare>` that resolves to a file shares the dot_env singleton with
+// the dispatch transpiler; forwarding `.env` values to scripts must not leave
+// that singleton in a state where the VM's suffix decision diverges from the
+// `bun run ./<file>` fast path. A package.json script that re-invokes bun
+// must agree with both too.
+test("bun run <bare-file> and bun run ./<file> agree when .env sets NODE_ENV", () => {
+  const tmp = tempDirWithFiles("script-runner-nodeenv", {
+    "package.json": `{"scripts":{"start":"'${bunExe().replaceAll("\\", "\\\\")}' index.ts"}}`,
+    "index.ts": "console.log('API=' + process.env.API + ', NODE_ENV=' + process.env.NODE_ENV);",
+    ".env": "NODE_ENV=production",
+    ".env.development": "API=dev",
+    ".env.production": "API=prod",
+  });
+  const run = (target: string) => {
+    const r = Bun.spawnSync([bunExe(), "run", target], {
+      cwd: tmp,
+      env: { ...bunEnv, NODE_ENV: undefined },
+    });
+    return { stdout: r.stdout.toString("utf8").trim(), exitCode: r.exitCode };
+  };
+  const fast = run("./index.ts");
+  expect(fast).toEqual({ stdout: "API=dev, NODE_ENV=production", exitCode: 0 });
+  expect(run("index")).toEqual(fast);
+  expect(run("start")).toEqual(fast);
+});
+
+test("bun --env-file run <bare-file> sees the --env-file values (slow path)", () => {
+  const tmp = tempDirWithFiles("script-runner-envfile-slow", {
+    "package.json": "{}",
+    "index.ts": "console.log('X=' + process.env.BUNTEST_ENVFILE_X);",
+    "custom.env": "BUNTEST_ENVFILE_X=from-custom",
+  });
+  const r = Bun.spawnSync([bunExe(), "--env-file=custom.env", "run", "index"], {
+    cwd: tmp,
+    env: { ...bunEnv, NODE_ENV: undefined },
+  });
+  expect({ stdout: r.stdout.toString("utf8").trim(), exitCode: r.exitCode }).toEqual({
+    stdout: "X=from-custom",
+    exitCode: 0,
+  });
+});
 
 const todoOnPosix = process.platform !== "win32" ? test.todo : test;
 todoOnPosix("setting process.env coerces the value to a string", () => {

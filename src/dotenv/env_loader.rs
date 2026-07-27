@@ -88,6 +88,15 @@ impl DotEnvBehavior {
     }
 }
 
+#[inline]
+fn is_suffix_key(k: &[u8]) -> bool {
+    #[cfg(windows)]
+    return strings::eql_case_insensitive_ascii_check_length(k, b"NODE_ENV")
+        || strings::eql_case_insensitive_ascii_check_length(k, b"BUN_ENV");
+    #[cfg(not(windows))]
+    return k == b"NODE_ENV" || k == b"BUN_ENV";
+}
+
 /// Mirrors the value fields of `bun_s3_signing::S3Credentials` (T5). Defined locally so
 /// this T2 crate names no `bun_s3_signing` types — see PORTING.md §Dispatch (cold-path,
 /// upward dep). The high-tier caller constructs the real refcounted `S3Credentials` from
@@ -118,6 +127,10 @@ pub struct Loader {
 
     /// only populated with files specified explicitly (e.g. --env-file arg)
     pub custom_files_loaded: StringArrayHashMap<bun_ast::Source>,
+
+    /// Non-conditional dotenv entries [`Self::take_script_dotenv`] lifted out
+    /// of `map` for the `bun run <script>` subprocess env; empty elsewhere.
+    pub script_forward: Vec<(Box<[u8]>, Box<[u8]>)>,
 
     pub quiet: bool,
 
@@ -449,6 +462,7 @@ impl Loader {
                 *cxx_gop.key_ptr = Box::<[u8]>::from(&**cxx_gop.key_ptr);
                 *cxx_gop.value_ptr = HashTableValue {
                     value: ccache_path.clone(),
+                    conditional: false,
                 };
             }
             let c_gop = self
@@ -456,7 +470,10 @@ impl Loader {
                 .get_or_put_without_value(b"CMAKE_C_COMPILER_LAUNCHER")?;
             if !c_gop.found_existing {
                 *c_gop.key_ptr = Box::<[u8]>::from(&**c_gop.key_ptr);
-                *c_gop.value_ptr = HashTableValue { value: ccache_path };
+                *c_gop.value_ptr = HashTableValue {
+                    value: ccache_path,
+                    conditional: false,
+                };
             }
         }
         Ok(())
@@ -569,6 +586,7 @@ impl Loader {
             env_test_local: None,
             env: None,
             custom_files_loaded: StringArrayHashMap::default(),
+            script_forward: Vec::new(),
             quiet: false,
             did_load_process: false,
             reject_unauthorized: Cell::new(None),
@@ -611,7 +629,11 @@ impl Loader {
         // `Source.contents: &'static [u8]` lifetime constraint (callers like
         // `node:util.parseEnv` pass JS-owned non-'static buffers).
         let mut value_buffer: Vec<u8> = Vec::new();
-        Parser::parse_bytes::<OVERWRITE, false, EXPAND>(str, &mut self.map, &mut value_buffer)
+        Parser::parse_bytes::<OVERWRITE, false, EXPAND, false, false>(
+            str,
+            &mut self.map,
+            &mut value_buffer,
+        )
     }
 
     pub fn load<D: DirEntryProbe + ?Sized>(
@@ -629,17 +651,8 @@ impl Loader {
 
         if !env_files.is_empty() {
             self.load_explicit_files(env_files, &mut value_buffer)?;
-        } else {
-            // Do not automatically load .env files in `bun run <script>`
-            // Instead, it is the responsibility of the script's instance of `bun` to load .env,
-            // so that if the script runner is NODE_ENV=development, but the script is
-            // "NODE_ENV=production bun ...", there should be no development env loaded.
-            //
-            // See https://github.com/oven-sh/bun/issues/9635#issuecomment-2021350123
-            // for more details on how this edge case works.
-            if !skip_default_env {
-                self.load_default_files(suffix, dir, &mut value_buffer)?;
-            }
+        } else if !skip_default_env {
+            self.load_default_files(suffix, dir, &mut value_buffer)?;
         }
 
         if !self.quiet {
@@ -687,52 +700,131 @@ impl Loader {
         // directory entry is taken generically — `bun_resolver::fs::DirEntry`
         // impls `DirEntryProbe`.
         match suffix {
-            DotEnvFileSuffix::Development => {
-                self.try_load_default(dir, dir_handle, b".env.development.local", value_buffer)?
-            }
-            DotEnvFileSuffix::Production => {
-                self.try_load_default(dir, dir_handle, b".env.production.local", value_buffer)?
-            }
+            DotEnvFileSuffix::Development => self.try_load_default::<_, true>(
+                dir,
+                dir_handle,
+                b".env.development.local",
+                value_buffer,
+            )?,
+            DotEnvFileSuffix::Production => self.try_load_default::<_, true>(
+                dir,
+                dir_handle,
+                b".env.production.local",
+                value_buffer,
+            )?,
             DotEnvFileSuffix::Test => {
-                self.try_load_default(dir, dir_handle, b".env.test.local", value_buffer)?
+                self.try_load_default::<_, true>(dir, dir_handle, b".env.test.local", value_buffer)?
             }
         }
 
+        // `.env.local` is gated on `suffix != Test`, so its presence in the
+        // child's load set depends on NODE_ENV — treat it as conditional.
         if suffix != DotEnvFileSuffix::Test {
-            self.try_load_default(dir, dir_handle, b".env.local", value_buffer)?;
+            self.try_load_default::<_, true>(dir, dir_handle, b".env.local", value_buffer)?;
         }
 
         match suffix {
-            DotEnvFileSuffix::Development => {
-                self.try_load_default(dir, dir_handle, b".env.development", value_buffer)?
-            }
+            DotEnvFileSuffix::Development => self.try_load_default::<_, true>(
+                dir,
+                dir_handle,
+                b".env.development",
+                value_buffer,
+            )?,
             DotEnvFileSuffix::Production => {
-                self.try_load_default(dir, dir_handle, b".env.production", value_buffer)?
+                self.try_load_default::<_, true>(dir, dir_handle, b".env.production", value_buffer)?
             }
             DotEnvFileSuffix::Test => {
-                self.try_load_default(dir, dir_handle, b".env.test", value_buffer)?
+                self.try_load_default::<_, true>(dir, dir_handle, b".env.test", value_buffer)?
             }
         }
 
-        self.try_load_default(dir, dir_handle, b".env", value_buffer)
+        self.try_load_default::<_, false>(dir, dir_handle, b".env", value_buffer)
+    }
+
+    /// Load every NODE_ENV-dependent default file as conditional, then `.env`
+    /// as non-conditional. `.env` expanding `$VAR` against a key that any
+    /// NODE_ENV-dependent file defines is thereby tainted before
+    /// [`Self::take_script_dotenv`] runs. See #9877 / #9635.
+    pub fn load_default_files_for_script_runner<D: DirEntryProbe + ?Sized>(
+        &mut self,
+        dir: &D,
+    ) -> crate::Result<()> {
+        let dir_handle = bun_sys::Fd::cwd();
+        let mut value_buffer: Vec<u8> = Vec::new();
+        for name in [
+            b".env.development.local".as_slice(),
+            b".env.production.local".as_slice(),
+            b".env.test.local".as_slice(),
+            b".env.local".as_slice(),
+            b".env.development".as_slice(),
+            b".env.production".as_slice(),
+            b".env.test".as_slice(),
+        ] {
+            self.try_load_default::<_, true>(dir, dir_handle, name, &mut value_buffer)?;
+        }
+        self.try_load_default::<_, false>(dir, dir_handle, b".env", &mut value_buffer)
     }
 
     /// Probe `dir` for a known `.env*` filename and, if present, load it into
     /// its dedicated slot and bump the analytics counter. Shared body for the
     /// eight call sites in `load_default_files`.
     #[inline]
-    fn try_load_default<D: DirEntryProbe + ?Sized>(
+    fn try_load_default<D: DirEntryProbe + ?Sized, const CONDITIONAL: bool>(
         &mut self,
         dir: &D,
         dir_handle: bun_sys::Fd,
         name: &'static [u8],
         value_buffer: &mut Vec<u8>,
     ) -> crate::Result<()> {
-        if dir.has_comptime_query(name) {
-            self.load_env_file::<false>(dir_handle, name, value_buffer)?;
+        if dir.has_comptime_query(name) && self.default_file_slot(name).is_none() {
+            self.load_env_file::<false, CONDITIONAL>(dir_handle, name, value_buffer)?;
             analytics::Features::dotenv_inc();
         }
         Ok(())
+    }
+
+    /// Move non-conditional dotenv entries (indices `process_env_count..`)
+    /// into `script_forward`, truncate `map` to the process-env prefix, and
+    /// clear every default-file slot. See #9877 / #9635.
+    pub fn take_script_dotenv(&mut self, process_env_count: usize, filter_suffix_keys: bool) {
+        self.script_forward.clear();
+        {
+            let keys = self.map.map.keys();
+            let values = self.map.map.values();
+            for i in process_env_count..keys.len() {
+                if !values[i].conditional && !(filter_suffix_keys && is_suffix_key(&keys[i])) {
+                    self.script_forward
+                        .push((keys[i].clone(), values[i].value.clone()));
+                }
+            }
+        }
+        let mut i = 0usize;
+        self.map.map.retain(|_, _| {
+            let keep = i < process_env_count;
+            i += 1;
+            keep
+        });
+        self.env = None;
+        self.env_local = None;
+        self.env_development = None;
+        self.env_production = None;
+        self.env_test = None;
+        self.env_development_local = None;
+        self.env_production_local = None;
+        self.env_test_local = None;
+        self.custom_files_loaded.clear_retaining_capacity();
+    }
+
+    /// `Map::create_null_delimited_env_map` plus [`Self::script_forward`].
+    pub fn create_null_delimited_env_map(&mut self) -> Result<NullDelimitedEnvMap, AllocError> {
+        self.map
+            .create_null_delimited_env_map_with_extra(&self.script_forward)
+    }
+
+    /// `Map::write_windows_env_block` plus [`Self::script_forward`].
+    pub fn write_windows_env_block(&mut self) -> Vec<u16> {
+        self.map
+            .write_windows_env_block_with_extra(&self.script_forward)
     }
 
     pub fn print_loaded(&self, start: i128) {
@@ -816,7 +908,7 @@ impl Loader {
         }
     }
 
-    pub fn load_env_file<const OVERRIDE: bool>(
+    pub fn load_env_file<const OVERRIDE: bool, const CONDITIONAL: bool>(
         &mut self,
         dir: bun_sys::Fd,
         base: &'static [u8],
@@ -870,7 +962,11 @@ impl Loader {
                 }
             }
             ReadEnvFile::Bytes(buf) => {
-                Parser::parse_bytes::<OVERRIDE, false, true>(&buf, &mut self.map, value_buffer)?;
+                Parser::parse_bytes::<OVERRIDE, false, true, CONDITIONAL, true>(
+                    &buf,
+                    &mut self.map,
+                    value_buffer,
+                )?;
             }
         }
 
@@ -917,7 +1013,11 @@ impl Loader {
                 }
             }
             ReadEnvFile::Bytes(buf) => {
-                Parser::parse_bytes::<OVERRIDE, false, true>(&buf, &mut self.map, value_buffer)?;
+                Parser::parse_bytes::<OVERRIDE, false, true, false, false>(
+                    &buf,
+                    &mut self.map,
+                    value_buffer,
+                )?;
             }
         }
 
@@ -1133,7 +1233,13 @@ impl<'a> Parser<'a> {
         Ok(strings::trim(&self.src[start..end], WHITESPACE_CHARS))
     }
 
-    fn expand_value(&mut self, map: &Map, value: &[u8]) -> Result<Option<&[u8]>, AllocError> {
+    fn expand_value(
+        &mut self,
+        map: &Map,
+        value: &[u8],
+        taint_unresolved: bool,
+        touched_conditional: &mut bool,
+    ) -> Result<Option<&[u8]>, AllocError> {
         if value.len() < 2 {
             return Ok(None);
         }
@@ -1165,7 +1271,24 @@ impl<'a> Parser<'a> {
                             _ => break,
                         }
                     }
-                    let lookup_value = map.get(&value[key_start..end]);
+                    let referenced_key = &value[key_start..end];
+                    if taint_unresolved && is_suffix_key(referenced_key) {
+                        *touched_conditional = true;
+                    }
+                    let lookup_value = match map.map.get(referenced_key) {
+                        Some(entry) => {
+                            if entry.conditional {
+                                *touched_conditional = true;
+                            }
+                            Some(&*entry.value)
+                        }
+                        None => {
+                            if taint_unresolved && key_start < end {
+                                *touched_conditional = true;
+                            }
+                            None
+                        }
+                    };
                     let default_value: &[u8] = if value[end..].starts_with(b":-") {
                         end += b":-".len();
                         let value_start = end;
@@ -1207,7 +1330,13 @@ impl<'a> Parser<'a> {
         Ok(Some(self.value_buffer.as_slice()))
     }
 
-    fn _parse<const OVERRIDE: bool, const IS_PROCESS: bool, const EXPAND: bool>(
+    fn _parse<
+        const OVERRIDE: bool,
+        const IS_PROCESS: bool,
+        const EXPAND: bool,
+        const CONDITIONAL: bool,
+        const DEFAULT_FILE: bool,
+    >(
         &mut self,
         map: &mut Map,
     ) -> Result<(), AllocError> {
@@ -1231,7 +1360,10 @@ impl<'a> Parser<'a> {
                 }
                 // else: previous value freed by Drop on assignment below
             }
-            *entry.value_ptr = HashTableValue { value: value_owned };
+            *entry.value_ptr = HashTableValue {
+                value: value_owned,
+                conditional: CONDITIONAL,
+            };
         }
         if !IS_PROCESS && EXPAND {
             // borrowck — index-based iteration: clone the value bytes, run
@@ -1242,10 +1374,15 @@ impl<'a> Parser<'a> {
             let mut idx = count;
             while idx < total {
                 let current: Box<[u8]> = Box::from(&*map.map.values()[idx].value);
-                if let Some(expanded) = self.expand_value(map, &current)? {
-                    map.map.values_mut()[idx] = HashTableValue {
-                        value: Box::from(expanded),
-                    };
+                let mut touched_conditional = false;
+                if let Some(expanded) =
+                    self.expand_value(map, &current, DEFAULT_FILE, &mut touched_conditional)?
+                {
+                    let slot = &mut map.map.values_mut()[idx];
+                    slot.value = Box::from(expanded);
+                    if touched_conditional {
+                        slot.conditional = true;
+                    }
                 }
                 idx += 1;
             }
@@ -1258,7 +1395,13 @@ impl<'a> Parser<'a> {
     /// Same as [`parse`] but takes the source bytes directly. Exists so
     /// `load_env_file*` can parse a transient `Vec<u8>` without constructing a
     /// `bun_ast::Source` (whose `contents` field is currently `&'static [u8]`).
-    pub(crate) fn parse_bytes<const OVERRIDE: bool, const IS_PROCESS: bool, const EXPAND: bool>(
+    pub(crate) fn parse_bytes<
+        const OVERRIDE: bool,
+        const IS_PROCESS: bool,
+        const EXPAND: bool,
+        const CONDITIONAL: bool,
+        const DEFAULT_FILE: bool,
+    >(
         src: &[u8],
         map: &mut Map,
         value_buffer: &mut Vec<u8>,
@@ -1272,7 +1415,7 @@ impl<'a> Parser<'a> {
             src: strings::without_utf8_bom(src),
             value_buffer,
         };
-        parser._parse::<OVERRIDE, IS_PROCESS, EXPAND>(map)
+        parser._parse::<OVERRIDE, IS_PROCESS, EXPAND, CONDITIONAL, DEFAULT_FILE>(map)
     }
 }
 
@@ -1281,6 +1424,9 @@ pub struct HashTableValue {
     // `Box<[u8]>` is owned-by-default, trading some copies for uniform
     // ownership.
     pub value: Box<[u8]>,
+    /// Set for values whose presence depends on NODE_ENV; gates what
+    /// [`Loader::take_script_dotenv`] forwards.
+    pub conditional: bool,
 }
 
 // On Windows, environment variables are case-insensitive. So we use a case-insensitive hash map.
@@ -1306,23 +1452,39 @@ impl Map {
     /// Builds a NULL-terminated `K=V\0` envp array. Returns an owning struct so
     /// dropping it frees the joined buffers (PORTING.md §Forbidden: no Box::leak).
     pub fn create_null_delimited_env_map(&mut self) -> Result<NullDelimitedEnvMap, AllocError> {
-        let envp_count = self.map.count();
+        self.create_null_delimited_env_map_with_extra(&[])
+    }
+
+    /// [`Self::create_null_delimited_env_map`] plus an `extra` tail appended
+    /// after the map's own entries; keys already in `self` are skipped.
+    pub fn create_null_delimited_env_map_with_extra(
+        &mut self,
+        extra: &[(Box<[u8]>, Box<[u8]>)],
+    ) -> Result<NullDelimitedEnvMap, AllocError> {
+        let envp_count = self.map.count() + extra.len();
         let mut storage: Vec<Box<[u8]>> = Vec::with_capacity(envp_count);
         let mut envp_buf: Vec<*const c_char> = Vec::with_capacity(envp_count + 1);
+        let mut push = |key: &[u8], value: &[u8]| {
+            let klen = key.len();
+            let vlen = value.len();
+            let mut env_buf = vec![0u8; klen + vlen + 2].into_boxed_slice();
+            env_buf[..klen].copy_from_slice(key);
+            env_buf[klen] = b'=';
+            env_buf[klen + 1..klen + 1 + vlen].copy_from_slice(value);
+            // env_buf[klen + 1 + vlen] = 0; (already zero-initialized)
+            envp_buf.push(env_buf.as_ptr().cast::<c_char>());
+            storage.push(env_buf);
+        };
         {
             let mut it = self.map.iterator();
             while let Some(pair) = it.next() {
-                let klen = pair.key_ptr.len();
-                let vlen = pair.value_ptr.value.len();
-                let mut env_buf = vec![0u8; klen + vlen + 2].into_boxed_slice();
-                env_buf[..klen].copy_from_slice(pair.key_ptr);
-                env_buf[klen] = b'=';
-                env_buf[klen + 1..klen + 1 + vlen].copy_from_slice(&pair.value_ptr.value);
-                // env_buf[klen + 1 + vlen] = 0; (already zero-initialized)
-                envp_buf.push(env_buf.as_ptr().cast::<c_char>());
-                storage.push(env_buf);
+                push(pair.key_ptr, &pair.value_ptr.value);
             }
-            debug_assert!(envp_buf.len() == envp_count);
+        }
+        for (k, v) in extra {
+            if !self.map.contains(k) {
+                push(k, v);
+            }
         }
         envp_buf.push(core::ptr::null()); // sentinel
         Ok(NullDelimitedEnvMap {
@@ -1357,6 +1519,15 @@ impl Map {
     /// Unicode block has no documented size limit, so this sizes the buffer to
     /// the actual contents instead of failing when the environment is large.
     pub fn write_windows_env_block(&mut self) -> Vec<u16> {
+        self.write_windows_env_block_with_extra(&[])
+    }
+
+    /// [`Self::write_windows_env_block`] plus an `extra` tail appended after
+    /// the map's own entries; keys already in `self` are skipped.
+    pub fn write_windows_env_block_with_extra(
+        &mut self,
+        extra: &[(Box<[u8]>, Box<[u8]>)],
+    ) -> Vec<u16> {
         // UTF-16 output is at most one code unit per UTF-8 input byte (ASCII
         // is 1:1; multi-byte sequences shrink; surrogate pairs are 2 units
         // from 4 bytes), so the UTF-8 byte length is a safe upper bound.
@@ -1367,22 +1538,29 @@ impl Map {
                 capacity += pair.key_ptr.len() + 1 + pair.value_ptr.value.len() + 1;
             }
         }
+        for (k, v) in extra {
+            capacity += k.len() + 1 + v.len() + 1;
+        }
 
         let mut result = vec![0u16; capacity];
         let mut i: usize = 0;
+        let mut push = |result: &mut [u16], key: &[u8], value: &[u8]| {
+            i += strings::convert_utf8_to_utf16_in_buffer(&mut result[i..], key).len();
+            result[i] = b'=' as u16;
+            i += 1;
+            i += strings::convert_utf8_to_utf16_in_buffer(&mut result[i..], value).len();
+            result[i] = 0;
+            i += 1;
+        };
         {
             let mut it = self.map.iterator();
             while let Some(pair) = it.next() {
-                i += strings::convert_utf8_to_utf16_in_buffer(&mut result[i..], pair.key_ptr).len();
-                result[i] = b'=' as u16;
-                i += 1;
-                i += strings::convert_utf8_to_utf16_in_buffer(
-                    &mut result[i..],
-                    &pair.value_ptr.value,
-                )
-                .len();
-                result[i] = 0;
-                i += 1;
+                push(&mut result, pair.key_ptr, &pair.value_ptr.value);
+            }
+        }
+        for (k, v) in extra {
+            if !self.map.contains(k) {
+                push(&mut result, k, v);
             }
         }
         // Terminator: four trailing NUL u16s (already zero-initialized above).
@@ -1411,6 +1589,7 @@ impl Map {
             key,
             HashTableValue {
                 value: Box::from(value),
+                conditional: false,
             },
         )
     }
@@ -1428,6 +1607,7 @@ impl Map {
             key,
             HashTableValue {
                 value: Box::from(value),
+                conditional: false,
             },
         );
     }
@@ -1437,6 +1617,7 @@ impl Map {
         let gop = self.map.get_or_put(key)?;
         *gop.value_ptr = HashTableValue {
             value: Box::from(value),
+            conditional: false,
         };
         if !gop.found_existing {
             *gop.key_ptr = Box::from(key);
@@ -1471,6 +1652,7 @@ impl Map {
             key,
             HashTableValue {
                 value: Box::from(value),
+                conditional: false,
             },
         )?;
         Ok(())

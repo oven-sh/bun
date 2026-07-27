@@ -634,6 +634,30 @@ it("Readable.fromWeb over native stream: breaking out of for-await emits 'error'
   });
 });
 
+it("Readable.fromWeb over native stream: read(n) beyond buffered returns null until more arrives", async () => {
+  const total = 300000;
+  const r = Readable.fromWeb(new Response(new Uint8Array(total)).body);
+  await new Promise(resolve => r.once("readable", resolve));
+  const buffered = r.readableLength;
+  // The native adapter delivers the body in chunks; first 'readable' doesn't carry everything.
+  expect(buffered).toBeGreaterThan(0);
+  expect(buffered).toBeLessThan(total);
+  expect(r.readableEnded).toBe(false);
+  // n > buffered while not ended: Node's fromWeb returns null and schedules more
+  // reading. The native _read previously pushed synchronously, so the request was
+  // satisfied in the same frame.
+  const over = r.read(buffered + 5000);
+  expect({ over, stillBuffered: r.readableLength }).toEqual({ over: null, stillBuffered: buffered });
+  // Drain the rest and confirm no bytes were lost.
+  let seen = 0;
+  r.on("readable", () => {
+    let c;
+    while ((c = r.read()) !== null) seen += c.length;
+  });
+  await new Promise(resolve => r.once("end", resolve));
+  expect(seen).toBe(total);
+});
+
 it("Readable.toWeb(Readable.fromWeb(rs)).cancel(reason) propagates to the web source", async () => {
   let cancelReason;
   const web = new ReadableStream({

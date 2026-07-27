@@ -154,8 +154,8 @@ function read(this: NativeReadable, maxToRead: number) {
   $debug(
     `[${this.debugId}] pull ${chunk?.byteLength} bytes, result: ${$isPromise(result) ? "<pending>" : $isTypedArrayView(result) ? `<${result.byteLength} bytes>` : result}, closeState: ${this[kCloseState][0]}`,
   );
+  this[kPendingRead] = true;
   if ($isPromise(result)) {
-    this[kPendingRead] = true;
     return result.then(
       result => {
         $debug(
@@ -165,11 +165,15 @@ function read(this: NativeReadable, maxToRead: number) {
         this[kRemainingChunk] = handleResult(this, result, chunk, this[kCloseState][0]);
       },
       reason => {
+        this[kPendingRead] = false;
         errorOrDestroy(this, reason);
       },
     );
   } else {
-    this[kRemainingChunk] = handleResult(this, result, chunk, this[kCloseState][0]);
+    process.nextTick(() => {
+      this[kPendingRead] = false;
+      this[kRemainingChunk] = handleResult(this, result, chunk, this[kCloseState][0]);
+    });
   }
 }
 

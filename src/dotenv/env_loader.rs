@@ -856,8 +856,7 @@ impl Loader {
         match read_env_file_contents(&file) {
             ReadEnvFile::Empty => {}
             ReadEnvFile::ReadErr(err) => {
-                // EISDIR is the expected "directory named .env" case; everything
-                // else (EIO, ESTALE, ENOMEM, …) is always surfaced.
+                // EISDIR = "directory named .env"; every other read errno is surfaced.
                 if err.get_errno() != bun_sys::E::EISDIR {
                     bun_core::pretty_errorln!(
                         "<r><red>{}<r> error loading {} file",

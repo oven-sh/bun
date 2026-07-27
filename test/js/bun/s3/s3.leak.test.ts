@@ -35,6 +35,7 @@ describe.skipIf(!s3Options.accessKeyId)("s3", () => {
           stderr: "pipe",
           stdout: "pipe",
           stdin: "ignore",
+          timeout: 25_000,
         });
         const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
         expect(stderr).toBe("");

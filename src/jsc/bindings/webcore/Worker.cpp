@@ -378,9 +378,13 @@ void Worker::drainToWorker(ScriptExecutionContext& context)
 
 void Worker::scheduleDrainToWorker()
 {
+    // Not gated on drainScheduled: enqueueToWorker (parent thread) can leave it
+    // transiently true with no task posted (postTaskTo failed, clear not yet
+    // run), and this path (worker thread, 0→1 listener) is rare enough that a
+    // redundant drain is cheaper than a lost wakeup.
     {
         Locker locker { m_toWorker.lock };
-        if (m_toWorker.queue.isEmpty() || m_toWorker.drainScheduled.load(std::memory_order_relaxed))
+        if (m_toWorker.queue.isEmpty())
             return;
         m_toWorker.drainScheduled.store(true, std::memory_order_relaxed);
     }

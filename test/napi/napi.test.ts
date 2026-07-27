@@ -390,14 +390,13 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
 
     it("napi_detach_arraybuffer does not run finalize_cb synchronously", async () => {
       const result = await checkSameOutput("test_detach_external_arraybuffer_finalizer", []);
-      expect(result.split(/\r?\n/)).toEqual([
-        "detach status=0 finalize_count during detach=0",
-        "is_detached=true",
-        "second detach status=0 finalize_count after second detach=0",
-        "GC did run",
-        "GC did run",
-        "finalize_count while reachable=0",
-      ]);
+      // `run_gc` writes "GC did run" via console.log while the addon writes via
+      // printf; on Windows the CRT buffers printf so relative ordering is not
+      // stable. Assert on the addon's lines only.
+      expect(result).toContain("detach status=0 finalize_count during detach=0");
+      expect(result).toContain("is_detached=true");
+      expect(result).toContain("second detach status=0 finalize_count after second detach=0");
+      expect(result).toContain("finalize_count while reachable=0");
     });
   });
 

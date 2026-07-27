@@ -445,8 +445,14 @@ pub fn normalize_specifier<'a>(
 
     if let Some(i) = strings::index_of_char(slice, b'?') {
         let i = i as usize;
-        query = &slice[i..];
-        slice = &slice[..i];
+        let stripped = &slice[..i];
+        // A resolved module key's path component is a file on disk. If the
+        // stripped prefix is not, the `?` is part of the filesystem path
+        // (POSIX allows it in filenames), not a query separator.
+        if !bun_paths::is_absolute(stripped) || bun_sys::exists_as_file(stripped) {
+            query = &slice[i..];
+            slice = stripped;
+        }
     }
 
     (slice, specifier, query)

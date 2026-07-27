@@ -3907,8 +3907,14 @@ unsafe fn normalize_specifier_for_loader<'a>(
     let mut query: &[u8] = b"";
     if let Some(i) = bun_core::strings::index_of_char_usize(slice, b'?') {
         let i = i as usize;
-        query = &slice[i..];
-        slice = &slice[..i];
+        let stripped = &slice[..i];
+        // A resolved module key's path component is a file on disk. If the
+        // stripped prefix is not, the `?` is part of the filesystem path
+        // (POSIX allows it in filenames), not a query separator.
+        if !bun_paths::is_absolute(stripped) || bun_sys::exists_as_file(stripped) {
+            query = &slice[i..];
+            slice = stripped;
+        }
     }
     (slice, specifier, query)
 }
@@ -4941,7 +4947,10 @@ unsafe fn _resolve<'a>(
     // ── Filesystem resolver ──────────────────────────────────────────────
     let is_special_source = source == MAIN_FILE_NAME || bun_js_parser::Macro::is_macro_path(source);
     let mut query_string: &[u8] = b"";
-    let normalized_specifier = normalize_specifier_for_resolution(specifier, &mut query_string);
+    let mut normalized_specifier = normalize_specifier_for_resolution(specifier, &mut query_string);
+    // POSIX filenames may contain a literal `?`; if the stripped specifier
+    // does not resolve, retry once with the `?` treated as part of the path.
+    let mut retry_with_literal_question_mark = !query_string.is_empty();
     // `Fs.PathName.init(source).dirWithTrailingSlash()` slices
     // `source` in place, so the `'a` lifetime is preserved.
     let top_level_dir: &'a [u8] = Fs::FileSystem::get().top_level_dir;
@@ -4967,7 +4976,7 @@ unsafe fn _resolve<'a>(
     // This cache-bust is disabled when the filesystem is not being used to
     // resolve.
     let mut retry_on_not_found = bun_paths::is_absolute(source_to_use);
-    let result: bun_resolver::Result = loop {
+    let result: bun_resolver::Result = 'resolve: loop {
         // SAFETY: `vm.transpiler.resolver` is the unique per-VM resolver; this
         // is the only `&mut` borrow live for this call (the JS thread is
         // single-entry here).
@@ -4982,49 +4991,60 @@ unsafe fn _resolve<'a>(
             ResolveResultUnion::Success(r) => break r,
             ResolveResultUnion::Failure(e) => return Err(e.into()),
             ResolveResultUnion::Pending(_) | ResolveResultUnion::NotFound => {
-                if !retry_on_not_found {
-                    return Err(crate::Error::ModuleNotFound);
-                }
-                retry_on_not_found = false;
+                'not_found: {
+                    if !retry_on_not_found {
+                        break 'not_found;
+                    }
+                    retry_on_not_found = false;
 
-                // Bust the dir cache for the candidate
-                // parent directory and retry once.
-                let mut buf = bun_paths::path_buffer_pool::get();
-                let buster_name: &[u8] = 'name: {
-                    if bun_paths::is_absolute(normalized_specifier) {
-                        if let Some(dir) = bun_core::dirname(normalized_specifier) {
-                            if dir.len() > buf.len() {
-                                return Err(crate::Error::ModuleNotFound);
+                    // Bust the dir cache for the candidate
+                    // parent directory and retry once.
+                    let mut buf = bun_paths::path_buffer_pool::get();
+                    let buster_name: &[u8] = 'name: {
+                        if bun_paths::is_absolute(normalized_specifier) {
+                            if let Some(dir) = bun_core::dirname(normalized_specifier) {
+                                if dir.len() > buf.len() {
+                                    break 'not_found;
+                                }
+                                // Normalized without trailing slash.
+                                break 'name bun_paths::string_paths::normalize_slashes_only(
+                                    &mut buf[..],
+                                    dir,
+                                    bun_paths::SEP,
+                                );
                             }
-                            // Normalized without trailing slash.
-                            break 'name bun_paths::string_paths::normalize_slashes_only(
-                                &mut buf[..],
-                                dir,
-                                bun_paths::SEP,
-                            );
                         }
+
+                        // If the specifier is too long to join, it can't name a
+                        // real directory — skip the cache bust and fail.
+                        if source_to_use.len() + normalized_specifier.len() + 4 >= buf.len() {
+                            break 'not_found;
+                        }
+
+                        let parts: [&[u8]; 3] = [source_to_use, normalized_specifier, b".."];
+                        break 'name bun_paths::resolve_path::join_abs_string_buf_z::<
+                            bun_paths::platform::Auto,
+                        >(top_level_dir, &mut buf[..], &parts)
+                        .as_bytes();
+                    };
+
+                    // Only re-query if we previously had something cached.
+                    // SAFETY: see above.
+                    if unsafe {
+                        (*vm).transpiler.resolver.bust_dir_cache(
+                            bun_paths::string_paths::without_trailing_slash_windows_path(
+                                buster_name,
+                            ),
+                        )
+                    } {
+                        continue 'resolve;
                     }
-
-                    // If the specifier is too long to join, it can't name a
-                    // real directory — skip the cache bust and fail.
-                    if source_to_use.len() + normalized_specifier.len() + 4 >= buf.len() {
-                        return Err(crate::Error::ModuleNotFound);
-                    }
-
-                    let parts: [&[u8]; 3] = [source_to_use, normalized_specifier, b".."];
-                    break 'name bun_paths::resolve_path::join_abs_string_buf_z::<
-                        bun_paths::platform::Auto,
-                    >(top_level_dir, &mut buf[..], &parts)
-                    .as_bytes();
-                };
-
-                // Only re-query if we previously had something cached.
-                // SAFETY: see above.
-                if unsafe {
-                    (*vm).transpiler.resolver.bust_dir_cache(
-                        bun_paths::string_paths::without_trailing_slash_windows_path(buster_name),
-                    )
-                } {
+                }
+                if retry_with_literal_question_mark {
+                    retry_with_literal_question_mark = false;
+                    normalized_specifier = specifier;
+                    query_string = b"";
+                    retry_on_not_found = bun_paths::is_absolute(source_to_use);
                     continue;
                 }
                 return Err(crate::Error::ModuleNotFound);

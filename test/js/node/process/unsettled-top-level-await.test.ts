@@ -74,8 +74,7 @@ test.concurrent("unsettled top-level await preserves a user-set process.exitCode
 
 test.concurrent("beforeExit fires with 0 before the unsettled-TLA warning", async () => {
   using dir = tempDir("tla-beforeexit", {
-    "a.mjs":
-      `process.on("beforeExit", c => console.error("beforeExit", c));\n` + `await new Promise(() => {});\n`,
+    "a.mjs": `process.on("beforeExit", c => console.error("beforeExit", c));\n` + `await new Promise(() => {});\n`,
   });
   const { stderr, exitCode, signalCode } = await run([bunExe(), "a.mjs"], String(dir));
   expect({ signalCode, exitCode }).toEqual({ signalCode: null, exitCode: 13 });

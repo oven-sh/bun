@@ -127,6 +127,14 @@ describe("attribute combinations every browser rejects", () => {
         return Bun.Cookie.parse(map.toSetCookieHeaders()[0]);
       },
     ],
+    [
+      "CookieMap.set(options)",
+      (n: string, o: Bun.CookieInit) => {
+        const map = new Bun.CookieMap();
+        map.set({ name: n, value: "v", ...o });
+        return Bun.Cookie.parse(map.toSetCookieHeaders()[0]);
+      },
+    ],
   ] as const;
 
   describe.each(setEntryPoints)("%s", (_, make) => {
@@ -294,6 +302,25 @@ describe("attribute combinations every browser rejects", () => {
       c.domain = "example.com";
       c.path = "/admin";
       expect(c.toString()).toBe("a=v; Domain=example.com; Path=/admin; SameSite=Lax");
+    });
+
+    test("a setter only rejects violations involving the field being changed", () => {
+      // A parsed __Host- cookie can be wrong on several axes at once. Each setter guards only its
+      // own field, so the cookie can be repaired one field at a time instead of deadlocking.
+      const c = Bun.Cookie.parse("__Host-s=v; Domain=example.com; Path=/admin");
+      expect(c.secure).toBe(false);
+      expect(c.domain).toBe("example.com");
+      expect(c.path).toBe("/admin");
+
+      c.secure = true;
+      c.domain = "";
+      c.path = "/";
+      expect(c.toString()).toBe("__Host-s=v; Path=/; Secure; SameSite=Lax");
+
+      // Each assignment that would itself introduce a violation is still rejected.
+      expectTypeError(() => (c.secure = false), hostSecureError);
+      expectTypeError(() => (c.domain = "example.com"), hostDomainError);
+      expectTypeError(() => (c.path = "/admin"), hostPathError);
     });
   });
 

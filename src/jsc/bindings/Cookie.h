@@ -75,8 +75,8 @@ public:
         if (!isValidCookieDomain(domain)) {
             return Exception { TypeError, "Invalid cookie domain: contains invalid characters"_s };
         }
-        if (auto validation = validateAttributes(m_name, domain, m_path, m_secure, m_sameSite, m_partitioned); validation.hasException()) {
-            return validation.releaseException();
+        if (!domain.isEmpty() && hasHostPrefix(m_name)) {
+            return Exception { TypeError, hostPrefixDomainMessage };
         }
         m_domain = domain;
         return {};
@@ -88,8 +88,8 @@ public:
         if (!isValidCookiePath(path)) {
             return Exception { TypeError, "Invalid cookie path: contains invalid characters"_s };
         }
-        if (auto validation = validateAttributes(m_name, m_domain, path, m_secure, m_sameSite, m_partitioned); validation.hasException()) {
-            return validation.releaseException();
+        if (path != "/"_s && hasHostPrefix(m_name)) {
+            return Exception { TypeError, hostPrefixPathMessage };
         }
         m_path = path;
         return {};
@@ -102,8 +102,10 @@ public:
     bool secure() const { return m_secure; }
     ExceptionOr<void> setSecure(bool secure)
     {
-        if (auto validation = validateAttributes(m_name, m_domain, m_path, secure, m_sameSite, m_partitioned); validation.hasException()) {
-            return validation.releaseException();
+        if (!secure) {
+            if (auto validation = validateSecureRequired(m_name, m_sameSite, m_partitioned); validation.hasException()) {
+                return validation.releaseException();
+            }
         }
         m_secure = secure;
         return {};
@@ -112,8 +114,8 @@ public:
     CookieSameSite sameSite() const { return m_sameSite; }
     ExceptionOr<void> setSameSite(CookieSameSite sameSite)
     {
-        if (auto validation = validateAttributes(m_name, m_domain, m_path, m_secure, sameSite, m_partitioned); validation.hasException()) {
-            return validation.releaseException();
+        if (sameSite == CookieSameSite::None && !m_secure) {
+            return Exception { TypeError, sameSiteNoneSecureMessage };
         }
         m_sameSite = sameSite;
         return {};
@@ -128,8 +130,8 @@ public:
     bool partitioned() const { return m_partitioned; }
     ExceptionOr<void> setPartitioned(bool partitioned)
     {
-        if (auto validation = validateAttributes(m_name, m_domain, m_path, m_secure, m_sameSite, partitioned); validation.hasException()) {
-            return validation.releaseException();
+        if (partitioned && !m_secure) {
+            return Exception { TypeError, partitionedSecureMessage };
         }
         m_partitioned = partitioned;
         return {};
@@ -152,7 +154,16 @@ public:
 
     static ExceptionOr<void> validateAttributes(const String& name, const String& domain, const String& path, bool secure, CookieSameSite sameSite, bool partitioned);
 
+    static constexpr auto sameSiteNoneSecureMessage = "Invalid cookie: \"sameSite: none\" requires secure: true"_s;
+    static constexpr auto partitionedSecureMessage = "Invalid cookie: \"partitioned: true\" requires secure: true"_s;
+    static constexpr auto hostPrefixSecureMessage = "Invalid cookie: \"__Host-\" name prefix requires secure: true"_s;
+    static constexpr auto securePrefixSecureMessage = "Invalid cookie: \"__Secure-\" name prefix requires secure: true"_s;
+    static constexpr auto hostPrefixDomainMessage = "Invalid cookie: \"__Host-\" name prefix does not allow a domain"_s;
+    static constexpr auto hostPrefixPathMessage = "Invalid cookie: \"__Host-\" name prefix requires path: \"/\""_s;
+
 private:
+    static ExceptionOr<void> validateSecureRequired(const String& name, CookieSameSite sameSite, bool partitioned);
+
     Cookie(const String& name, const String& value,
         const String& domain, const String& path,
         int64_t expires, bool secure, CookieSameSite sameSite,

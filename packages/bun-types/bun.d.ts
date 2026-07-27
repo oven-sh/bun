@@ -9672,12 +9672,14 @@ declare module "bun" {
     value: string;
 
     /**
-     * The cookie's `Domain` attribute, or `undefined` if not set
+     * The cookie's `Domain` attribute, or `undefined` if not set. Assigning a
+     * non-empty value throws a `TypeError` if `name` starts with `__Host-`.
      */
     domain?: string;
 
     /**
-     * The cookie's `Path` attribute. Defaults to `/`.
+     * The cookie's `Path` attribute. Defaults to `"/"`. Assigning any value
+     * other than `"/"` throws a `TypeError` if `name` starts with `__Host-`.
      */
     path: string;
 
@@ -9688,7 +9690,8 @@ declare module "bun" {
 
     /**
      * Whether the cookie has the `Secure` attribute. Setting this to `false`
-     * throws a `TypeError` if `sameSite` is `"none"` or `partitioned` is `true`.
+     * throws a `TypeError` if `sameSite` is `"none"`, `partitioned` is `true`,
+     * or `name` starts with `__Secure-` or `__Host-`.
      */
     secure: boolean;
 

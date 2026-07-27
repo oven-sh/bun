@@ -349,9 +349,7 @@ impl WriteFile {
             }
             bun_sys::Result::Err(err) => {
                 if err.get_errno() == io::RETRY {
-                    // write(2) on a regular file never returns EAGAIN, so reaching
-                    // this arm means the fd is pollable regardless of what the
-                    // open-time classification guessed.
+                    // Regular-file write(2) never EAGAINs, so the fd is pollable.
                     self.could_block = true;
                     self.wait_for_writable();
                 } else {
@@ -457,9 +455,7 @@ impl WriteFile {
                             }
                         }
                         PathOrFileDescriptor::Path(_) => {
-                            // We just opened the path with O_NONBLOCK. For a FIFO/socket/
-                            // character device that open succeeds and every write can
-                            // EAGAIN, so classify from fstat instead of assuming regular.
+                            // Opened O_NONBLOCK; the path may be a FIFO/socket/chardev.
                             if let bun_sys::Result::Ok(st) = sys::fstat(fd) {
                                 break 'brk !bun_sys::is_regular_file(st.st_mode as bun_sys::Mode);
                             }

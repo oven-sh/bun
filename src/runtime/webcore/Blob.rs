@@ -4694,12 +4694,10 @@ pub fn write_file_with_source_destination(
     };
     let source_type = source_store.data.tag();
 
-    // Only the fast path in `write_file_internal` supplies a pre-opened fd, and
-    // it only runs for string/ArrayBuffer (→ Bytes) sources into a path-backed
-    // File destination, so the fd is consumed on the File+Bytes arm below.
     debug_assert!(
         dest_opened_fd == Fd::INVALID
-            || (destination_type == store::DataTag::File && source_type == store::DataTag::Bytes)
+            || (destination_type == store::DataTag::File && source_type == store::DataTag::Bytes),
+        "fast path only pre-opens for Bytes->File; other arms would leak the fd",
     );
 
     if destination_type == store::DataTag::File && source_type == store::DataTag::Bytes {
@@ -5142,8 +5140,7 @@ pub fn write_file_internal(
         }
     }
 
-    // If the fast path handed us an open fd and anything below throws before
-    // `WriteFile` adopts it, close it instead of leaking.
+    // Close the fast path's fd if anything below throws before `WriteFile` adopts it.
     let dest_opened_fd = scopeguard::guard(dest_opened_fd, |fd| {
         if fd != Fd::INVALID {
             let _ = bun_sys::close(fd);
@@ -5442,10 +5439,8 @@ fn write_string_to_file_fast<const NEEDS_OPEN: bool>(
         }
     };
 
-    // A FIFO/socket/chardev opened O_NONBLOCK will EAGAIN once the pipe buffer
-    // fills. Closing after a partial write delivers EOF to the reader and the
-    // async fallback's reopen then fails ENXIO, so hand the open fd to the
-    // async `WriteFile` (which owns the POLLOUT drain) instead of writing here.
+    // Hand a FIFO/socket/chardev fd to the async WriteFile: closing here after a
+    // partial write would EOF the reader and make the async reopen fail ENXIO.
     if NEEDS_OPEN && !str.is_empty() {
         if let bun_sys::Result::Ok(st) = bun_sys::fstat(fd) {
             if !bun_sys::is_regular_file(st.st_mode as bun_sys::Mode) {
@@ -5545,8 +5540,7 @@ fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
         }
     };
 
-    // See `write_string_to_file_fast`: hand a non-regular destination's open
-    // fd to the async `WriteFile` instead of risking a torn partial write.
+    // See `write_string_to_file_fast`: hand a non-regular fd to the async WriteFile.
     if NEEDS_OPEN && !bytes.is_empty() {
         if let bun_sys::Result::Ok(st) = bun_sys::fstat(fd) {
             if !bun_sys::is_regular_file(st.st_mode as bun_sys::Mode) {

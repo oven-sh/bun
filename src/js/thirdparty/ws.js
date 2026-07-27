@@ -1130,11 +1130,9 @@ class BunWebSocketMocked extends EventEmitter {
   }
 
   removeEventListener(type, listener) {
-    // Non-functions never match a registration, or l[kListener] === undefined would.
+    // a non-function would match any untagged listener via l[kListener] === undefined
     if (!$isCallable(listener)) return;
-    // listeners() unwraps once() wrappers but not message wrappers (kListener, not .listener).
-    // Message listeners are always wrapped, so matching only kListener there keeps
-    // plain .on("message") subscriptions invisible to removeEventListener, like npm ws.
+    // message listeners match only their kListener tag, so plain .on() subscriptions stay untouched like npm ws
     for (const l of this.listeners(type)) {
       if (l[kForOnEventAttribute]) continue;
       if (type === "message" ? l[kListener] === listener : l === listener) {

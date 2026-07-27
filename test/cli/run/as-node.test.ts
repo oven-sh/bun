@@ -117,6 +117,14 @@ describe("fake node cli", () => {
       expect(fakeNodeRun(temp, ["index.js", "--version"]).stdout).toBe(JSON.stringify(["--version"]));
       expect(fakeNodeRun(temp, ["index.js", "-v"]).stdout).toBe(JSON.stringify(["-v"]));
     });
+
+    test("node -- index.js --version passes the flag through to the script", () => {
+      const temp = tempDirWithFiles("fake-node", {
+        "index.js": "console.log(JSON.stringify(process.argv.slice(2)))",
+      });
+      expect(fakeNodeRun(temp, ["--", "index.js", "--version"]).stdout).toBe(JSON.stringify(["--version"]));
+      expect(fakeNodeRun(temp, ["--", "index.js", "-v"]).stdout).toBe(JSON.stringify(["-v"]));
+    });
   });
 
   test("process args work", () => {

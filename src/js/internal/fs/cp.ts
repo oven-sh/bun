@@ -344,7 +344,7 @@ async function onLink(destStat, src, dest, opts) {
   }
   let resolvedDest;
   try {
-    resolvedDest = await readlink(dest);
+    resolvedDest = await readlink(dest, { encoding: "buffer" });
   } catch (err: any) {
     // Dest exists and is a regular file or directory,
     // Windows may throw UNKNOWN error. If dest already exists,
@@ -354,8 +354,8 @@ async function onLink(destStat, src, dest, opts) {
     }
     throw err;
   }
-  if (!isAbsolute(resolvedDest)) {
-    resolvedDest = resolve(dirname(pathAsString(dest)), resolvedDest);
+  if (!isAbsolute(pathAsString(resolvedDest))) {
+    resolvedDest = resolveLinkTarget(dest, resolvedDest);
   }
   // stat(src) follows the link; a dangling src symlink throws ENOENT here,
   // same as before (both gated checks below only apply to directories).

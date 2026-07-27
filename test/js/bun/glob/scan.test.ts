@@ -533,6 +533,82 @@ test.skipIf(process.platform == "win32")("error broken symlinks", async () => {
   expect(err).toBeDefined();
 });
 
+describe("scan/scanSync iterate the filesystem lazily", () => {
+  const norm = (a: string[]) => a.map(p => p.replaceAll("\\", "/")).sort();
+
+  test("scanSync does not read the directory until iterated", () => {
+    using dir = tempDir("glob-scan-lazy-sync", {
+      "a/x.txt": "a",
+    });
+    const cwd = String(dir);
+    const it = new Glob("**/*.txt").scanSync({ cwd });
+    // Walk has not started yet: files created before the first next() are seen.
+    fs.mkdirSync(path.join(cwd, "b"));
+    fs.writeFileSync(path.join(cwd, "b", "x.txt"), "b");
+    expect(norm([...it])).toEqual(["a/x.txt", "b/x.txt"]);
+  });
+
+  test("scan does not start the walk until the iterator is consumed", async () => {
+    using dir = tempDir("glob-scan-lazy-async", {
+      "a/x.txt": "a",
+    });
+    const cwd = String(dir);
+    const it = new Glob("**/*.txt").scan({ cwd });
+    // Drain one full glob walk through the work pool so that any walk
+    // scheduled eagerly by `scan()` above has also completed.
+    expect(norm(await Array.fromAsync(new Glob("**/*.txt").scan({ cwd })))).toEqual(["a/x.txt"]);
+    expect(norm(await Array.fromAsync(new Glob("**/*.txt").scan({ cwd })))).toEqual(["a/x.txt"]);
+    fs.mkdirSync(path.join(cwd, "b"));
+    fs.writeFileSync(path.join(cwd, "b", "x.txt"), "b");
+    expect(norm(await Array.fromAsync(it))).toEqual(["a/x.txt", "b/x.txt"]);
+  });
+
+  test("early break stops the walk and releases directory handles", () => {
+    const files: Record<string, string> = {};
+    for (let i = 0; i < 20; i++) for (let j = 0; j < 10; j++) files[`d${i}/f${j}.txt`] = "x";
+    using dir = tempDir("glob-scan-lazy-break", files);
+    const cwd = String(dir);
+
+    for (let k = 0; k < 64; k++) {
+      const it = new Glob("**/*.txt").scanSync({ cwd });
+      expect(it.next().value).toBeString();
+      it.return?.(undefined);
+    }
+    // Full scan after repeated early breaks still finds everything.
+    expect([...new Glob("**/*.txt").scanSync({ cwd })]).toHaveLength(200);
+  });
+
+  test("scan releases directory handles on early break", async () => {
+    const files: Record<string, string> = {};
+    for (let i = 0; i < 20; i++) for (let j = 0; j < 10; j++) files[`d${i}/f${j}.txt`] = "x";
+    using dir = tempDir("glob-scan-lazy-break-async", files);
+    const cwd = String(dir);
+
+    for (let k = 0; k < 64; k++) {
+      const it = new Glob("**/*.txt").scan({ cwd });
+      expect((await it.next()).value).toBeString();
+      await it.return?.(undefined);
+    }
+    expect(await Array.fromAsync(new Glob("**/*.txt").scan({ cwd }))).toHaveLength(200);
+  });
+
+  test("partial iteration yields a bounded prefix of a large tree", () => {
+    const files: Record<string, string> = {};
+    for (let i = 0; i < 20; i++) for (let j = 0; j < 20; j++) files[`d${i}/f${j}.txt`] = "x";
+    using dir = tempDir("glob-scan-lazy-partial", files);
+    const cwd = String(dir);
+
+    const it = new Glob("**/*.txt").scanSync({ cwd });
+    const taken: string[] = [];
+    for (const p of it) {
+      taken.push(p);
+      if (taken.length === 50) break;
+    }
+    expect(taken).toHaveLength(50);
+    expect([...new Glob("**/*.txt").scanSync({ cwd })]).toHaveLength(400);
+  });
+});
+
 test("error non-existent cwd", async () => {
   const glob = new Glob("**/*");
   let err: Error | undefined = undefined;

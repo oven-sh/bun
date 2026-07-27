@@ -349,8 +349,11 @@ impl<A: Accessor> Directory<A> {
 // Iterator
 // ─────────────────────────────────────────────────────────────────────────────
 
-pub struct Iterator<'a, A: Accessor, const SENTINEL: bool> {
-    pub walker: &'a mut GlobWalker<A, SENTINEL>,
+pub struct Iterator<W, A: Accessor, const SENTINEL: bool>
+where
+    W: core::ops::DerefMut<Target = GlobWalker<A, SENTINEL>>,
+{
+    pub walker: W,
     pub iter_state: IterState<A>,
     pub cwd_fd: A::Handle,
     /// This is to make sure in debug/tests that we are closing file descriptors
@@ -363,13 +366,21 @@ pub struct Iterator<'a, A: Accessor, const SENTINEL: bool> {
     pub nt_filter_buf: [u16; 256],
 }
 
+/// Iterator that borrows the walker. Kept for callers that drive the walk
+/// and still want to read `walker.matched_paths` afterwards.
+pub type IteratorRef<'a, A, const SENTINEL: bool> =
+    Iterator<&'a mut GlobWalker<A, SENTINEL>, A, SENTINEL>;
+
 #[inline]
 fn count_fds<A: Accessor>() -> bool {
     A::COUNT_FDS && cfg!(debug_assertions)
 }
 
-impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
-    pub fn new(walker: &'a mut GlobWalker<A, SENTINEL>) -> Self {
+impl<W, A: Accessor, const SENTINEL: bool> Iterator<W, A, SENTINEL>
+where
+    W: core::ops::DerefMut<Target = GlobWalker<A, SENTINEL>>,
+{
+    pub fn new(walker: W) -> Self {
         Self {
             walker,
             iter_state: IterState::GetNext,
@@ -448,7 +459,11 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                         Ok(fd) => fd,
                     };
                     let _ = A::close(fd);
-                    self.iter_state = IterState::Matched(path);
+                    self.iter_state = if self.walker.only_files {
+                        IterState::GetNext
+                    } else {
+                        IterState::Matched(path)
+                    };
                     return Ok(Ok(()));
                 }
 
@@ -1213,7 +1228,10 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
     }
 }
 
-impl<'a, A: Accessor, const SENTINEL: bool> Drop for Iterator<'a, A, SENTINEL> {
+impl<W, A: Accessor, const SENTINEL: bool> Drop for Iterator<W, A, SENTINEL>
+where
+    W: core::ops::DerefMut<Target = GlobWalker<A, SENTINEL>>,
+{
     fn drop(&mut self) {
         self.close_cwd_fd();
         if let IterState::Directory(dir) = &self.iter_state {

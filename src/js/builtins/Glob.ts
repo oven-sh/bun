@@ -1,21 +1,42 @@
+interface GlobScanHandle {
+  $pull(): Promise<string[] | null>;
+  $resolveSync(): string[] | null;
+  $close(): void;
+}
+
 interface Glob {
-  $pull(opts);
-  $resolveSync(opts);
+  $pull(opts): GlobScanHandle | undefined;
+  $resolveSync(opts): GlobScanHandle | undefined;
 }
 
 export function scan(this: Glob, opts) {
-  const valuesPromise = this.$pull(opts);
+  const handle = this.$pull(opts);
   async function* iter() {
-    const values = (await valuesPromise) || [];
-    yield* values;
+    if (!handle) return;
+    try {
+      let batch: string[] | null;
+      while ((batch = await handle.$pull())) {
+        yield* batch;
+      }
+    } finally {
+      handle.$close();
+    }
   }
   return iter();
 }
 
 export function scanSync(this: Glob, opts) {
-  const arr = this.$resolveSync(opts) || [];
+  const handle = this.$resolveSync(opts);
   function* iter() {
-    yield* arr;
+    if (!handle) return;
+    try {
+      let batch: string[] | null;
+      while ((batch = handle.$resolveSync())) {
+        yield* batch;
+      }
+    } finally {
+      handle.$close();
+    }
   }
   return iter();
 }

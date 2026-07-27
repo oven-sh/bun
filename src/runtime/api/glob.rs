@@ -2,23 +2,25 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 
 use bun_alloc::Arena;
 use bun_core::String as BunString;
+use bun_glob::BunGlobIterator as GlobIterator;
 use bun_glob::BunGlobWalker as GlobWalker;
 use bun_jsc::bun_string_jsc;
 use bun_jsc::concurrent_promise_task::{ConcurrentPromiseTask, ConcurrentPromiseTaskContext};
 use bun_jsc::{
-    ArgumentsSlice, CallFrame, JSGlobalObject, JSPromise, JSValue, JsResult, JsTerminated,
+    ArgumentsSlice, CallFrame, JSGlobalObject, JSPromise, JSValue, JsCell, JsResult, JsTerminated,
     StringJsc as _, SysErrorJsc as _,
 };
 use bun_paths::resolve_path::join_string_buf;
 use bun_paths::{self as resolve_path, MAX_PATH_BYTES, PathBuffer, platform};
 use bun_sys as syscall;
 
+const BATCH_SIZE: usize = 256;
+
 // Codegen hooks (JSGlob): toJS / fromJS / fromJSDirect are provided by the
 // generated C++ wrapper. See PORTING.md §JSC ".classes.ts-backed types".
 #[bun_jsc::JsClass]
 pub struct Glob {
     pattern: Box<[u8]>,
-    has_pending_activity: AtomicUsize,
 }
 
 struct ScanOpts {
@@ -192,14 +194,6 @@ impl ScanOpts {
     }
 }
 
-pub(crate) struct WalkTask<'a> {
-    // `Box<GlobWalker>` drop runs `GlobWalker::Drop` then frees the box.
-    walker: Box<GlobWalker>,
-    err: Option<WalkTaskErr>,
-    global: &'a JSGlobalObject,
-    has_pending_activity: &'a AtomicUsize,
-}
-
 pub(crate) enum WalkTaskErr {
     Syscall(syscall::Error),
     Unknown(crate::Error),
@@ -216,78 +210,179 @@ impl WalkTaskErr {
     }
 }
 
-pub(crate) type AsyncGlobWalkTask<'a> = ConcurrentPromiseTask<'a, WalkTask<'a>>;
+/// Drive `iter` for up to [`BATCH_SIZE`] matches, initializing it on the
+/// first call. Returns `Ok(false)` once the iterator is exhausted so the
+/// caller can drop it and short-circuit the next batch call.
+fn drive_batch(
+    iter: &mut GlobIterator,
+    inited: &mut bool,
+    batch: &mut Vec<Box<[u8]>>,
+) -> Result<bool, WalkTaskErr> {
+    if !*inited {
+        *inited = true;
+        match iter.init() {
+            Ok(Ok(())) => {}
+            Ok(Err(err)) => return Err(WalkTaskErr::Syscall(err)),
+            Err(err) => return Err(WalkTaskErr::Unknown(err.into())),
+        }
+    }
+    while batch.len() < BATCH_SIZE {
+        match iter.next() {
+            Ok(Ok(Some(path))) => batch.push(path),
+            Ok(Ok(None)) => return Ok(false),
+            Ok(Err(err)) => return Err(WalkTaskErr::Syscall(err)),
+            Err(err) => return Err(WalkTaskErr::Unknown(err.into())),
+        }
+    }
+    Ok(true)
+}
 
-impl<'a> WalkTask<'a> {
-    pub(crate) fn create(
-        global_this: &'a JSGlobalObject,
-        glob_walker: Box<GlobWalker>,
-        has_pending_activity: &'a AtomicUsize,
-    ) -> Box<AsyncGlobWalkTask<'a>> {
-        let walk_task = Box::new(WalkTask {
-            walker: glob_walker,
-            global: global_this,
-            err: None,
-            has_pending_activity,
+fn batch_to_js(batch: &[Box<[u8]>], global_this: &JSGlobalObject) -> JsResult<JSValue> {
+    if batch.is_empty() {
+        return Ok(JSValue::NULL);
+    }
+    JSValue::create_array_from_iter(global_this, batch.iter(), |path| {
+        bun_string_jsc::create_utf8_for_js(global_this, path)
+    })
+}
+
+/// Incremental scan state behind `Glob.scan`/`scanSync`. Owns the walker via
+/// an owning `Iterator<Box<GlobWalker>, ..>`; dropping the iterator closes any
+/// open directory fds and drains the work stack.
+#[bun_jsc::JsClass(no_construct, no_constructor)]
+pub struct GlobScanHandle {
+    iter: JsCell<Option<Box<GlobIterator>>>,
+    inited: JsCell<bool>,
+    has_pending_activity: AtomicUsize,
+}
+
+impl GlobScanHandle {
+    fn open(walker: Box<GlobWalker>, global_this: &JSGlobalObject) -> JSValue {
+        let handle = Box::new(GlobScanHandle {
+            iter: JsCell::new(Some(Box::new(GlobIterator::new(walker)))),
+            inited: JsCell::new(false),
+            has_pending_activity: AtomicUsize::new(0),
         });
-        AsyncGlobWalkTask::create_on_js_thread(global_this, walk_task)
+        GlobScanHandle::to_js_boxed(handle, global_this)
+    }
+
+    pub fn has_pending_activity(&self) -> bool {
+        self.has_pending_activity.load(Ordering::SeqCst) > 0
+    }
+
+    #[bun_jsc::host_fn(method)]
+    pub fn __batch(
+        &self,
+        global_this: &JSGlobalObject,
+        _callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        let Some(iter) = self.iter.replace(None) else {
+            return Ok(JSValue::NULL);
+        };
+
+        self.has_pending_activity.fetch_add(1, Ordering::SeqCst);
+        let ctx = Box::new(WalkTask {
+            iter: Some(iter),
+            inited: self.inited.replace(true),
+            batch: Vec::new(),
+            err: None,
+            global: global_this,
+            handle: core::ptr::from_ref(self).cast_mut(),
+        });
+        let mut task = AsyncGlobWalkTask::create_on_js_thread(global_this, ctx);
+        let promise = task.promise.value();
+        task.schedule();
+        // WalkTask<'_> borrows `global_this` and holds a raw pointer to `self`.
+        // Both referents outlive the task: `GlobScanHandle` is GC-rooted via
+        // `hasPendingActivity()`, and `JSGlobalObject` lives until VM teardown.
+        let _ = bun_core::heap::into_raw(task);
+        Ok(promise)
+    }
+
+    #[bun_jsc::host_fn(method)]
+    pub fn __batch_sync(
+        &self,
+        global_this: &JSGlobalObject,
+        _callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        let Some(mut iter) = self.iter.replace(None) else {
+            return Ok(JSValue::NULL);
+        };
+
+        let mut batch: Vec<Box<[u8]>> = Vec::new();
+        let mut inited = self.inited.replace(true);
+        match drive_batch(&mut iter, &mut inited, &mut batch) {
+            Ok(more) => {
+                if more {
+                    self.iter.set(Some(iter));
+                }
+                batch_to_js(&batch, global_this)
+            }
+            Err(err) => Err(global_this.throw_value(err.to_js(global_this)?)),
+        }
+    }
+
+    #[bun_jsc::host_fn(method)]
+    pub fn __close(
+        &self,
+        _global_this: &JSGlobalObject,
+        _callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        self.iter.set(None);
+        Ok(JSValue::UNDEFINED)
     }
 }
 
+pub(crate) struct WalkTask<'a> {
+    iter: Option<Box<GlobIterator>>,
+    inited: bool,
+    batch: Vec<Box<[u8]>>,
+    err: Option<WalkTaskErr>,
+    global: &'a JSGlobalObject,
+    /// The GC-owned handle this batch was taken from. The handle is kept alive
+    /// while the task is in flight via `has_pending_activity`.
+    handle: *mut GlobScanHandle,
+}
+
+pub(crate) type AsyncGlobWalkTask<'a> = ConcurrentPromiseTask<'a, WalkTask<'a>>;
+
 impl<'a> ConcurrentPromiseTaskContext for WalkTask<'a> {
     const TASK_TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::AsyncGlobWalkTask;
+
     fn run(&mut self) {
-        let guard = scopeguard::guard(self.has_pending_activity, |hpa| {
-            decr_pending_activity_flag(hpa);
-        });
-        let result = match self.walker.walk() {
-            Ok(r) => r,
+        let iter = self.iter.as_deref_mut().expect("iter taken before run");
+        match drive_batch(iter, &mut self.inited, &mut self.batch) {
+            Ok(more) => {
+                if !more {
+                    self.iter = None;
+                }
+            }
             Err(err) => {
-                self.err = Some(WalkTaskErr::Unknown(err.into()));
-                drop(guard);
-                return;
+                self.iter = None;
+                self.err = Some(err);
             }
-        };
-        match result {
-            bun_sys::Result::Err(err) => {
-                self.err = Some(WalkTaskErr::Syscall(err));
-            }
-            bun_sys::Result::Ok(()) => {}
         }
-        drop(guard);
     }
 
     fn then(&mut self, promise: &mut JSPromise) -> Result<(), JsTerminated> {
-        // Ownership of `Box<WalkTask>` is held by `ConcurrentPromiseTask.ctx`; the wrapper is
-        // freed via `ConcurrentPromiseTask::destroy` on the `.manual_deinit` path
-        // after `run_from_js` returns, which drops `ctx` (and thus `walker`).
+        // SAFETY: `handle` points at the live `m_ctx` payload of a JS wrapper
+        // kept reachable by `has_pending_activity > 0` for the duration of
+        // this task; `then` runs on the JS thread so no concurrent access.
+        let handle = unsafe { &*self.handle };
+        handle.iter.set(self.iter.take());
+        handle.has_pending_activity.fetch_sub(1, Ordering::SeqCst);
 
         if let Some(err) = &self.err {
             promise.reject_with_async_stack(self.global, err.to_js(self.global))?;
             return Ok(());
         }
 
-        let js_strings = match glob_walk_result_to_js(&mut self.walker, self.global) {
+        let js = match batch_to_js(&self.batch, self.global) {
             Ok(v) => v,
-            // `reject()` pulls the pending exception off the VM.
             Err(e) => return promise.reject(self.global, Err(e)),
         };
-        promise.resolve(self.global, js_strings)
+        promise.resolve(self.global, js)
     }
-}
-
-fn glob_walk_result_to_js(
-    glob_walk: &mut GlobWalker,
-    global_this: &JSGlobalObject,
-) -> JsResult<JSValue> {
-    let keys = glob_walk.matched_paths.keys();
-    if keys.is_empty() {
-        return JSValue::create_empty_array(global_this, 0);
-    }
-
-    JSValue::create_array_from_iter(global_this, keys.iter(), |key| {
-        bun_string_jsc::create_utf8_for_js(global_this, key)
-    })
 }
 
 impl Glob {
@@ -378,46 +473,26 @@ impl Glob {
             .into_vec()
             .into_boxed_slice();
 
-        Ok(Box::new(Glob {
-            pattern: pat_str,
-            has_pending_activity: AtomicUsize::new(0),
-        }))
+        Ok(Box::new(Glob { pattern: pat_str }))
     }
-
-    /// Called on the GC thread concurrently with the mutator. Reads only the
-    /// atomic counter; never allocates, locks, or touches JS. The codegen shim
-    /// (`Glob__hasPendingActivity`) handles the `callconv(.c)` ABI and passes
-    /// `&*this`.
-    pub fn has_pending_activity(&self) -> bool {
-        self.has_pending_activity.load(Ordering::SeqCst) > 0
-    }
-}
-
-fn incr_pending_activity_flag(has_pending_activity: &AtomicUsize) {
-    let _ = has_pending_activity.fetch_add(1, Ordering::SeqCst);
-}
-
-fn decr_pending_activity_flag(has_pending_activity: &AtomicUsize) {
-    let _ = has_pending_activity.fetch_sub(1, Ordering::SeqCst);
 }
 
 impl Glob {
     // R-2 (host-fn re-entrancy): all JS-exposed methods take `&self`. `Glob`'s
-    // fields are read-only after construction (`pattern`) or already atomic
-    // (`has_pending_activity`), so no `Cell`/`JsCell` wrapping is needed — the
-    // `&mut self` receivers were vestigial. The codegen shim still emits
-    // `this: &mut Glob`; `&mut T` auto-derefs to `&T`.
-    #[bun_jsc::host_fn(method)]
-    pub fn __scan(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    // only field (`pattern`) is read-only after construction, so no
+    // `Cell`/`JsCell` wrapping is needed.
+    fn open_scan_handle(
+        &self,
+        global_this: &JSGlobalObject,
+        callframe: &CallFrame,
+        fn_name: &'static str,
+    ) -> JsResult<JSValue> {
         // SAFETY: bun_vm() returns a non-null *mut to the live VirtualMachine for this global.
         let mut arguments = ArgumentsSlice::init(global_this.bun_vm(), callframe.arguments());
-        // `arguments` drops at scope exit.
 
         let mut arena = Arena::new();
-        // GlobWalker::init/init_with_cwd own their allocations (Box); the
-        // arena here is vestigial.
         let glob_walker =
-            match self.make_glob_walker(global_this, &mut arguments, "scan", &mut arena) {
+            match self.make_glob_walker(global_this, &mut arguments, fn_name, &mut arena) {
                 Err(err) => {
                     drop(arena);
                     return Err(err);
@@ -429,18 +504,12 @@ impl Glob {
                 Ok(Some(gw)) => gw,
             };
 
-        incr_pending_activity_flag(&self.has_pending_activity);
-        let mut task = WalkTask::create(global_this, glob_walker, &self.has_pending_activity);
-        let promise = task.promise.value();
-        task.schedule();
-        // Ownership passes to the work pool / event loop; freed via
-        // `ConcurrentPromiseTask::destroy` on the `.manual_deinit` path.
-        // WalkTask<'_> borrows `&self.has_pending_activity`
-        // and `global_this`. Both referents outlive the task: `Glob` is GC-rooted
-        // via `hasPendingActivity()`, and `JSGlobalObject` lives until VM teardown.
-        // `into_raw` erases the stack-tied `'_` once the heap allocation escapes.
-        let _ = bun_core::heap::into_raw(task);
-        Ok(promise)
+        Ok(GlobScanHandle::open(glob_walker, global_this))
+    }
+
+    #[bun_jsc::host_fn(method)]
+    pub fn __scan(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+        self.open_scan_handle(global_this, callframe, "scan")
     }
 
     #[bun_jsc::host_fn(method)]
@@ -449,32 +518,7 @@ impl Glob {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        // SAFETY: bun_vm() returns a non-null *mut to the live VirtualMachine for this global.
-        let mut arguments = ArgumentsSlice::init(global_this.bun_vm(), callframe.arguments());
-
-        let mut arena = Arena::new();
-        let mut glob_walker =
-            match self.make_glob_walker(global_this, &mut arguments, "scanSync", &mut arena) {
-                Err(err) => {
-                    drop(arena);
-                    return Err(err);
-                }
-                Ok(None) => {
-                    drop(arena);
-                    return Ok(JSValue::UNDEFINED);
-                }
-                Ok(Some(gw)) => gw,
-            };
-        // Box<GlobWalker> drops at scope exit.
-
-        match glob_walker.walk().map_err(crate::Error::from)? {
-            bun_sys::Result::Err(err) => {
-                return Err(global_this.throw_value(err.to_js(global_this)));
-            }
-            bun_sys::Result::Ok(()) => {}
-        }
-
-        glob_walk_result_to_js(&mut glob_walker, global_this)
+        self.open_scan_handle(global_this, callframe, "scanSync")
     }
 
     #[bun_jsc::host_fn(method)]

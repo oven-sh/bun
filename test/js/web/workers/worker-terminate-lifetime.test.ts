@@ -230,7 +230,7 @@ test.each([
         // fd count with a bounded deadline so the last cycle's worker has
         // reached that point instead of relying on gc() as an implicit sleep.
         let fdDelta = fdCount() - before;
-        for (let i = 0; fdDelta > 1 && i < 100; i++) {
+        for (let i = 0; fdDelta > 1 && i < ${slow ? 500 : 100}; i++) {
           await Bun.sleep(10);
           fdDelta = fdCount() - before;
         }

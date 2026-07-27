@@ -3618,11 +3618,18 @@ impl<'a> HTTPClient<'a> {
             buffer.list.as_slice()
         };
 
-        // Persist the unparsed tail for the next `on_data` and re-arm the
-        // receive timeout. When `needs_move`, `to_read` is a suffix of
-        // `incoming_data` and is copied into the (currently empty) accumulation
-        // buffer; otherwise `to_read` is a suffix of `buffer`, so the consumed
-        // prefix is drained and `buffer` is moved back into state.
+        // Persist the unparsed tail for the next `on_data`. When `needs_move`,
+        // `to_read` is a suffix of `incoming_data` and is copied into the
+        // (currently empty) accumulation buffer; otherwise `to_read` is a
+        // suffix of `buffer`, so the consumed prefix is drained and `buffer`
+        // is moved back into state.
+        //
+        // Deliberately does NOT re-arm the socket timer: the timer armed at
+        // request-write time stays monotonic for the whole response-header
+        // phase, so it acts as an absolute headers deadline (undici's
+        // `headersTimeout`). Re-arming here let a server that drips one
+        // header line per <idle-timeout> pin the request forever. The timer
+        // is re-armed below once headers are complete, for the body phase.
         macro_rules! short_read {
             () => {{
                 bun_core::scoped_log!(fetch, "handleShortRead");
@@ -3638,7 +3645,6 @@ impl<'a> HTTPClient<'a> {
                         .drain_front(buffer.list.len().saturating_sub(keep));
                     self.state.response_message_buffer = buffer;
                 }
-                self.set_timeout(&socket);
                 return;
             }};
         }
@@ -3726,6 +3732,12 @@ impl<'a> HTTPClient<'a> {
                 return;
             }
         };
+
+        // Headers are complete: re-arm the idle timer for the body phase.
+        // `short_read!()` above deliberately leaves the timer untouched so the
+        // header phase has an absolute deadline; this is the boundary where
+        // the body-idle semantics begin.
+        self.set_timeout(&socket);
 
         if (self.state.content_encoding_i as usize) < response.headers.list.len()
             && !self.state.flags.did_set_content_encoding

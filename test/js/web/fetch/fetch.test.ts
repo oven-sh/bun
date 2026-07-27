@@ -3068,3 +3068,95 @@ it("an explicit numeric `timeout` extends the socket idle deadline past the defa
   expect(out.withDefault).toStartWith("ERR:");
   expect(exitCode).toBe(0);
 }, 60_000);
+
+// The response-header phase is an absolute deadline, not an idle timer: a
+// server that drips one header line per second must still time out. Before the
+// fix, every partial-header read re-armed the idle timer, so a drip faster
+// than the idle window pinned the request (and its socket/request-cap slot)
+// forever; undici rejects the same drip with HeadersTimeoutError.
+it("a dripping response header does not reset the idle timer", async () => {
+  // The child runs with BUN_CONFIG_HTTP_IDLE_TIMEOUT=5 (2 ticks of uSockets'
+  // 4s sweep; 1-4s map to a single tick and would fire on the next sweep
+  // regardless of re-arming, which would mask the bug) and talks to a raw TCP
+  // server.
+  //   /drip: writes the status line then one header line every second, never
+  //          finishing the header block. Each drip is well under the 5s idle
+  //          window, so an idle timer would never fire. The header-phase
+  //          deadline must fire anyway (within ~8s).
+  //   /body: writes complete headers immediately, then one body byte every
+  //          second for 12s. Body bytes must still re-arm the idle timer, so
+  //          this resolves with the full payload even though it runs longer
+  //          than the header deadline.
+  const script = /* js */ `
+    const net = require("node:net");
+    const DRIP_MS = 1000;
+    const BODY_CHUNKS = 12;
+    const WATCHDOG_MS = 20_000;
+    const srv = net.createServer(s => {
+      s.on("error", () => {});
+      s.once("data", d => {
+        if (d.includes("GET /drip")) {
+          s.write("HTTP/1.1 200 OK\\r\\n");
+          let n = 0;
+          const iv = setInterval(
+            () => (s.destroyed ? clearInterval(iv) : s.write("X-Drip-" + n++ + ": v\\r\\n")),
+            DRIP_MS,
+          );
+        } else {
+          s.write("HTTP/1.1 200 OK\\r\\nConnection: close\\r\\n\\r\\n");
+          let n = 0;
+          const iv = setInterval(() => {
+            if (s.destroyed) return clearInterval(iv);
+            s.write("x");
+            if (++n === BODY_CHUNKS) { clearInterval(iv); s.end(); }
+          }, DRIP_MS);
+        }
+      });
+    });
+    await new Promise(r => srv.listen(0, "127.0.0.1", r));
+    const base = "http://127.0.0.1:" + srv.address().port;
+    const t0 = Date.now();
+    const pending = tag => new Promise(r => setTimeout(r, WATCHDOG_MS, { [tag]: "pending" }));
+    const [drip, body] = await Promise.all([
+      Promise.race([
+        fetch(base + "/drip").then(
+          () => ({ drip: "resolved" }),
+          e => ({ drip: String(e?.name ?? e?.code ?? e), ms: Date.now() - t0 }),
+        ),
+        pending("drip"),
+      ]),
+      Promise.race([
+        fetch(base + "/body").then(r => r.text()).then(
+          t => ({ body: "ok", len: t.length }),
+          e => ({ body: "ERR:" + (e?.name ?? e?.code ?? e) }),
+        ),
+        pending("body"),
+      ]),
+    ]);
+    console.log(JSON.stringify({ ...drip, ...body }));
+    process.exit(0);
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: { ...bunEnv, BUN_CONFIG_HTTP_IDLE_TIMEOUT: "5" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const out = JSON.parse(stdout.trim().split("\n").pop()!) as {
+    drip: string;
+    ms?: number;
+    body: string;
+    len?: number;
+  };
+  // /body dripped for ~12s at 1s/byte with a 5s idle window and still
+  // resolved: body bytes still re-arm the idle timer.
+  expect({ body: out.body, len: out.len }).toEqual({ body: "ok", len: 12 });
+  // /drip must have rejected with a timeout inside the watchdog window.
+  // Before the fix this stayed "pending": every dripped header line re-armed
+  // the 5s idle timer, and 1s < 5s keeps it ahead of the sweep forever.
+  expect(out.drip).toMatch(/Timeout/i);
+  expect(out.ms).toBeLessThan(20_000);
+  expect(exitCode).toBe(0);
+}, 60_000);

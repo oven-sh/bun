@@ -1205,13 +1205,7 @@ impl<const SSL: bool> WebSocket<SSL> {
                 // in send_buffer. clear_data() would discard it (and the
                 // proxy_tunnel needed to flush it), so defer teardown until
                 // handle_writable drains the buffer or the socket dies.
-                //
-                // The readyState transition is not deferred: per RFC 6455
-                // §7.1.3 the closing handshake starts when a Close frame is
-                // sent or received, so flip JS to CLOSING now (a no-op for a
-                // user-initiated close where C++ already did so) before
-                // parking the dispatch. Without this a peer that sends Close
-                // and stops reading leaves the client OPEN indefinitely.
+                // readyState still flips to CLOSING now (RFC 6455 §7.1.3).
                 if let Some(out) = self.outgoing_websocket.get() {
                     CppWebSocket::opaque_ref(out.as_ptr()).did_start_closing_handshake();
                 }

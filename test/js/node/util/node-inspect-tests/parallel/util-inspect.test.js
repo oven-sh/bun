@@ -20,7 +20,7 @@
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 import assert from "assert";
-import { isDebug, isWindows } from "harness";
+import { isWindows } from "harness";
 import util, { inspect } from "util";
 import vm from "vm";
 import { MessageChannel } from "worker_threads";
@@ -236,10 +236,7 @@ test("inspect from a different context", () => {
   );*/
 });
 
-// prettier-ignore
 test("no assertion failures 2", () => {
-  // Float16Array is omitted: Node's `builtInObjects` lacks it, so showHidden
-  // output diverges from the other typed arrays there too.
   [
     Float32Array,
     Float64Array,
@@ -269,6 +266,15 @@ test("no assertion failures 2", () => {
     );
     assert.strictEqual(util.inspect(array, false), `${constructor.name}(${length}) [ 65, 97 ]`);
   });
+
+  // Float16Array is absent from Node's bootstrap-time `builtInObjects`, so
+  // showHidden walks into its prototype and the output diverges from the
+  // other typed arrays. Lock that in so it is not silently re-added.
+  assert.match(
+    util.inspect(new Float16Array(2), { showHidden: true }),
+    /\[Symbol\(Symbol\.toStringTag\)\]: \[Getter\]/,
+  );
+  assert.strictEqual(util.inspect(new Float16Array([65, 97]), false), "Float16Array(2) [ 65, 97 ]");
 
   // Now check that declaring a TypedArray in a different context works the same.
   [
@@ -774,39 +780,6 @@ test("no assertion failures 2", () => {
       "{ '\\\\': 1, '\\\\\\\\': 2, '\\\\\\\\\\\\': 3, " + "'\\\\\\\\\\\\\\\\': 4, '\\n': 5, '\\r': 6 }",
     );
     assert.strictEqual(util.inspect(y), "[ 'a', 'b', 'c', '\\\\\\\\': 'd', " + "'\\n': 'e', '\\r': 'f' ]");
-  }
-
-  // Escape unpaired surrogate pairs.
-  {
-    const edgeChar = String.fromCharCode(0xd799);
-
-    for (let charCode = 0xd800; charCode < 0xdfff; charCode++) {
-      const surrogate = String.fromCharCode(charCode);
-
-      assert.strictEqual(util.inspect(surrogate), `'\\u${charCode.toString(16)}'`);
-      assert.strictEqual(
-        util.inspect(`${"a".repeat(200)}${surrogate}`),
-        `'${"a".repeat(200)}\\u${charCode.toString(16)}'`,
-      );
-      assert.strictEqual(
-        util.inspect(`${surrogate}${"a".repeat(200)}`),
-        `'\\u${charCode.toString(16)}${"a".repeat(200)}'`,
-      );
-      if (charCode < 0xdc00) {
-        const highSurrogate = surrogate;
-        const lowSurrogate = String.fromCharCode(charCode + 1024);
-        assert(!util.inspect(`${edgeChar}${highSurrogate}${lowSurrogate}${edgeChar}`).includes("\\u"));
-        assert.strictEqual(
-          (util.inspect(`${highSurrogate}${highSurrogate}${lowSurrogate}`).match(/\\u/g) ?? []).length,
-          1,
-        );
-      } else {
-        assert.strictEqual(
-          util.inspect(`${edgeChar}${surrogate}${edgeChar}`),
-          `'${edgeChar}\\u${charCode.toString(16)}${edgeChar}'`,
-        );
-      }
-    }
   }
 
   // Test util.inspect.styles and util.inspect.colors.
@@ -1812,7 +1785,39 @@ test("no assertion failures 2", () => {
     })("a");
     assert.strictEqual(util.inspect(args), "[Arguments] { '0': 'a' }");
   }
-}, isDebug ? 30_000 : undefined);
+});
+
+test("escape unpaired surrogate pairs", () => {
+  const edgeChar = String.fromCharCode(0xd799);
+
+  for (let charCode = 0xd800; charCode < 0xdfff; charCode++) {
+    const surrogate = String.fromCharCode(charCode);
+
+    assert.strictEqual(util.inspect(surrogate), `'\\u${charCode.toString(16)}'`);
+    assert.strictEqual(
+      util.inspect(`${"a".repeat(200)}${surrogate}`),
+      `'${"a".repeat(200)}\\u${charCode.toString(16)}'`,
+    );
+    assert.strictEqual(
+      util.inspect(`${surrogate}${"a".repeat(200)}`),
+      `'\\u${charCode.toString(16)}${"a".repeat(200)}'`,
+    );
+    if (charCode < 0xdc00) {
+      const highSurrogate = surrogate;
+      const lowSurrogate = String.fromCharCode(charCode + 1024);
+      assert(!util.inspect(`${edgeChar}${highSurrogate}${lowSurrogate}${edgeChar}`).includes("\\u"));
+      assert.strictEqual(
+        (util.inspect(`${highSurrogate}${highSurrogate}${lowSurrogate}`).match(/\\u/g) ?? []).length,
+        1,
+      );
+    } else {
+      assert.strictEqual(
+        util.inspect(`${edgeChar}${surrogate}${edgeChar}`),
+        `'${edgeChar}\\u${charCode.toString(16)}${edgeChar}'`,
+      );
+    }
+  }
+}, 30_000);
 
 test("util.inspect stack overflow handling", () => {
   // Test that a long linked list can be inspected without throwing an error.

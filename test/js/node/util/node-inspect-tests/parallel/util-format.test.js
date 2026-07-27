@@ -245,10 +245,11 @@ test("no assertion failures", () => {
   assert.strictEqual(util.format("%s", new URL("http://a/b")), "http://a/b");
   assert.strictEqual(util.format("%s", new URLSearchParams("a=1&b=2")), "a=1&b=2");
   {
+    // Subclass path: toString is inherited through an extra prototype hop.
+    class MyURL extends URL {}
+    assert.strictEqual(util.format("%s", new MyURL("http://a/b")), "http://a/b");
     class MyBuffer extends Buffer {}
-    const sub = new MyBuffer(2);
-    sub[0] = 0x68;
-    sub[1] = 0x69;
+    const sub = Object.setPrototypeOf(Buffer.from([0x68, 0x69]), MyBuffer.prototype);
     assert.strictEqual(util.format("%s", sub), "hi");
   }
   // Uint8Array inherits toString from %TypedArray%.prototype, not Buffer.

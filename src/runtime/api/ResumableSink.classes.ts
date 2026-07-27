@@ -35,7 +35,7 @@ function generate(name) {
         passThis: true,
       },
       error: {
-        fn: "jsEnd",
+        fn: "jsError",
         length: 1,
         passThis: true,
       },

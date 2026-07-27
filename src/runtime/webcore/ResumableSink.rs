@@ -377,29 +377,30 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
         Ok(promise_value)
     }
 
-    /// `error(e)` on the controller surface: abort the upload with `e`.
+    /// `error(e)` on the controller surface: abort the upload with `e` (or `undefined`).
     #[bun_jsc::host_fn(method)]
-    pub fn js_end(
+    pub fn js_error(
         this: &mut Self,
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
         this_value: JSValue,
     ) -> JsResult<JSValue> {
         bun_jsc::mark_binding!();
-        let args = callframe.arguments();
-        // ignore any call if detached
         if this.is_detached() {
             return Ok(JSValue::UNDEFINED);
         }
-        let err = if args.len() > 0 { Some(args[0]) } else { None };
+        let err = callframe
+            .arguments()
+            .first()
+            .copied()
+            .unwrap_or(JSValue::UNDEFINED);
         if let Some(promise) = Self::take_flush_promise(this_value, global_this) {
-            let _ = promise.reject_as_handled(global_this, err.unwrap_or(JSValue::UNDEFINED));
+            let _ = promise.reject_as_handled(global_this, err);
         }
         this.detach_js();
-        scoped_log!(ResumableSink, "jsEnd {}", args.len());
+        scoped_log!(ResumableSink, "jsError");
         this.status = Status::Done;
-
-        Self::on_end(this.context, err);
+        Self::on_end(this.context, Some(err));
         Ok(JSValue::UNDEFINED)
     }
 

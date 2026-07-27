@@ -2530,14 +2530,14 @@ describe("fetch should allow duplex", () => {
     const stdoutP = proc.stdout.text();
     // The failure mode is a 100%-CPU spin that never yields, so proc.exited alone cannot
     // resolve on an unfixed build; the race is the condition, not a timing crutch.
-    const exited = await Promise.race([proc.exited, sleep(isDebug ? 8000 : 2500).then(() => "timeout" as const)]);
+    const exited = await Promise.race([proc.exited, sleep(isDebug ? 4000 : 2000).then(() => "timeout" as const)]);
     if (exited === "timeout") proc.kill(9);
     const stdout = await stdoutP;
     expect({ exited, stdout: stdout.trim() }).toEqual({
       exited: 0,
       stdout: expect.stringMatching(/^rejected:upstream went away ticks:[1-9]/),
     });
-  }, 15000);
+  });
 
   it("should allow duplex using async iterator (async)", async () => {
     using server = Bun.serve({

@@ -237,6 +237,11 @@ impl FileResponseStream {
         let _guard = unsafe { bun_ptr::ScopedRef::new(this) };
 
         if self.state.contains(State::RESPONSE_DONE) {
+            // `false` now stops the reader (no re-arm on POSIX; `stop_reading`
+            // on Windows), so `on_reader_done` will not fire to release the
+            // in-flight read ref. Adopt it here; `_guard` above keeps the
+            // allocation live until return.
+            let _ = self.take_read_ref();
             return false;
         }
 

@@ -794,14 +794,19 @@ impl FileReader {
         }
 
         // No JS read is waiting; stop at the highwater mark. onPull restarts.
+        //
+        // `started` gates the backstop: a `from_pipe()` reader for non-lazy
+        // `Bun.spawn` is already reading when it arrives here, and throttling
+        // before any consumer has attached deadlocks a child that alternates
+        // stdout/stderr writes while the caller only awaits one of them.
         // SAFETY: see `reader_buffer` decl.
         let reader_buffer_len = unsafe { (*reader_buffer).len() };
-        let ret = self.flowing.get()
-            && !matches!(
-                self.read_inside_on_pull.get(),
-                ReadDuringJSOnPullResult::Temporary(_)
-            )
-            && self.buffered.get().len() + reader_buffer_len < self.highwater_mark;
+        let ret = !matches!(
+            self.read_inside_on_pull.get(),
+            ReadDuringJSOnPullResult::Temporary(_)
+        ) && (!self.started.get()
+            || (self.flowing.get()
+                && self.buffered.get().len() + reader_buffer_len < self.highwater_mark));
         close_if_needed!();
         ret
     }

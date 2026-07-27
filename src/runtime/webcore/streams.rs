@@ -1405,7 +1405,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
                 if let Some(res) = self.any_res() {
                     res.clear_on_writable();
                     // Release any request-body pause while `res` is live (see `end_already_responded_stream`).
-                    res.resume_();
+                    res.resume();
                 }
                 // `send_readable` drained the parked `try_end`, so uWS has
                 // `markDone()`d the response and dropped its `onAborted`.
@@ -1782,7 +1782,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
 
         if let Some(res) = self.any_res() {
             // Release any request-body pause while `res` is live (see `end_already_responded_stream`).
-            res.resume_();
+            res.resume();
         }
         // Both branches above fully ended the response through uWS, which
         // `markDone()`s it and drops its `onAborted`.
@@ -1870,7 +1870,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
             if let Some(res) = self.any_res() {
                 res.clear_on_writable();
                 // Release any request-body pause while `res` is live (see `end_already_responded_stream`).
-                res.resume_();
+                res.resume();
             }
             // `send_readable` drained the parked `try_end`/`end`, so uWS has
             // `markDone()`d the response and dropped its `onAborted`.

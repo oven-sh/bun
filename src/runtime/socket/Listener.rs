@@ -1558,13 +1558,8 @@ fn connect_finish<const IS_SSL: bool>(
                 bun_sys::SystemErrno::ENOENT as c_int
             }
         } else {
-            // A synchronous TCP connect failure is either socket() itself
-            // failing (EMFILE/ENFILE/ENOBUFS/ENOMEM: local resource
-            // exhaustion) or the local bind() for localAddress/localPort
-            // failing (EADDRINUSE: port busy, EADDRNOTAVAIL: address not
-            // local, EACCES: privileged port, EINVAL: address family
-            // mismatch); everything else stays ECONNREFUSED. Mirrors
-            // handle_connect_error's whitelist.
+            // socket()/bind() errnos keep their identity; anything else is
+            // reported as ECONNREFUSED. Mirrors handle_connect_error.
             let os_errno = bun_sys::last_errno();
             if os_errno == bun_sys::SystemErrno::EADDRINUSE as c_int
                 || os_errno == bun_sys::SystemErrno::EADDRNOTAVAIL as c_int

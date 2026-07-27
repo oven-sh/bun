@@ -1117,12 +1117,8 @@ impl<const SSL: bool> NewSocket<SSL> {
             )
         } else {
             debug_assert!(errno >= 0);
-            // Unix-path connect errors keep their real code (a non-socket file
-            // is ENOTSOCK, a permission-denied path is EACCES, a missing one is
-            // ENOENT, an inexpressible path is EINVAL). Local resource
-            // exhaustion (EMFILE/ENFILE/ENOBUFS/ENOMEM: socket() itself
-            // failed) also keeps its real code so callers can tell a local fd
-            // limit from a refused peer; everything else stays ECONNREFUSED.
+            // Unix-path errnos and local resource exhaustion keep their
+            // identity; anything else is reported as ECONNREFUSED.
             let errno_: c_int = if errno == sys::SystemErrno::ENOENT as c_int
                 || errno == sys::SystemErrno::ENOTSOCK as c_int
                 || errno == sys::SystemErrno::EACCES as c_int

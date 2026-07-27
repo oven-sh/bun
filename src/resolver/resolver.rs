@@ -4404,9 +4404,7 @@ impl<'a> Resolver<'a> {
                                 );
                                 break 'open_dir FD::INVALID;
                             }
-                            // fd/memory exhaustion says nothing about whether the
-                            // directory exists; caching it as not-found would lie about
-                            // the filesystem until the next cache bust.
+                            // fd/memory exhaustion is transient; don't cache as not-found.
                             if matches!(
                                 err,
                                 crate::Error::Sys(bun_errno::SystemErrno::EMFILE)

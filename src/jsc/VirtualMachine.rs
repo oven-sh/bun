@@ -4335,11 +4335,8 @@ impl VirtualMachine {
         );
         if let Err(err_) = resolve_result {
             let err = err_;
-            // fd/memory exhaustion during resolution is not "module not
-            // found": surface it as the system error Node would, so `.code`
-            // names the errno instead of ERR_MODULE_NOT_FOUND. Other Sys
-            // errors keep flowing to the ResolveMessage path, which may
-            // already carry better context from the resolver's log.
+            // fd/memory exhaustion surfaces as a SystemError (so `.code` is
+            // the errno); other Sys errors keep the ResolveMessage path.
             let sys_errno = match &err {
                 crate::CrateError::Resolver(bun_resolver::Error::Sys(e))
                 | crate::CrateError::Sys(e)

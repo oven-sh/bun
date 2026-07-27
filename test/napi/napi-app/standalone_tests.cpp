@@ -2892,6 +2892,89 @@ static napi_value test_pending_exception_gate(const Napi::CallbackInfo &info) {
   return ok(env);
 }
 
+// napi_is_arraybuffer / napi_get_{arraybuffer,typedarray,dataview,buffer}_info
+// are CHECK_ENV in Node.js: they must return napi_ok with a VM exception
+// already pending and leave it untouched. Route the exception onto the VM
+// with napi_throw(E) then napi_call_function (returns 10, promotes E into the
+// VM), then call each accessor. Debug/ASAN builds previously aborted in
+// JSC__JSValue__asArrayBuffer's ASSERT_NO_PENDING_EXCEPTION.
+static napi_value test_arraybuffer_info_with_vm_exception(
+    const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+
+  napi_value global, isNaN, ab, ta, dv, buf, bufctor;
+  void *ab_data;
+  NODE_API_CALL(env, napi_get_global(env, &global));
+  NODE_API_CALL(env, napi_get_named_property(env, global, "isNaN", &isNaN));
+  NODE_API_CALL(env, napi_create_arraybuffer(env, 64, &ab_data, &ab));
+  NODE_API_CALL(env, napi_create_typedarray(env, napi_uint8_array, 16, ab, 8,
+                                            &ta));
+  NODE_API_CALL(env, napi_create_dataview(env, 16, ab, 8, &dv));
+  NODE_API_CALL(env,
+                napi_get_named_property(env, global, "Buffer", &bufctor));
+  NODE_API_CALL(env, napi_get_named_property(env, bufctor, "alloc", &bufctor));
+  napi_value sixteen;
+  NODE_API_CALL(env, napi_create_int32(env, 16, &sixteen));
+  NODE_API_CALL(env, napi_call_function(env, global, bufctor, 1, &sixteen,
+                                        &buf));
+
+  // Arm: E1 pending on the VM.
+  napi_value msg, err, r;
+  NODE_API_CALL(env, napi_create_string_utf8(env, "E1", 2, &msg));
+  NODE_API_CALL(env, napi_create_error(env, nullptr, msg, &err));
+  NODE_API_CALL(env, napi_throw(env, err));
+  napi_status st = napi_call_function(env, global, isNaN, 0, nullptr, &r);
+  printf("napi_call_function: status=%d\n", (int)st);
+
+  bool is_ab = false;
+  st = napi_is_arraybuffer(env, ab, &is_ab);
+  printf("napi_is_arraybuffer: status=%d result=%s\n", (int)st,
+         is_ab ? "true" : "false");
+
+  void *data = nullptr;
+  size_t len = 0;
+  st = napi_get_arraybuffer_info(env, ab, &data, &len);
+  printf("napi_get_arraybuffer_info: status=%d len=%zu same_data=%s\n",
+         (int)st, len, data == ab_data ? "true" : "false");
+
+  napi_typedarray_type ty;
+  size_t ta_len = 0, ta_off = 0;
+  void *ta_data = nullptr;
+  napi_value ta_ab = nullptr;
+  st = napi_get_typedarray_info(env, ta, &ty, &ta_len, &ta_data, &ta_ab,
+                                &ta_off);
+  printf(
+      "napi_get_typedarray_info: status=%d type=%d len=%zu off=%zu ab=%s\n",
+      (int)st, (int)ty, ta_len, ta_off, ta_ab ? "set" : "null");
+
+  size_t dv_len = 0, dv_off = 0;
+  void *dv_data = nullptr;
+  napi_value dv_ab = nullptr;
+  st = napi_get_dataview_info(env, dv, &dv_len, &dv_data, &dv_ab, &dv_off);
+  printf("napi_get_dataview_info: status=%d len=%zu off=%zu ab=%s\n", (int)st,
+         dv_len, dv_off, dv_ab ? "set" : "null");
+
+  void *buf_data = nullptr;
+  size_t buf_len = 0;
+  st = napi_get_buffer_info(env, buf, &buf_data, &buf_len);
+  printf("napi_get_buffer_info: status=%d len=%zu\n", (int)st, buf_len);
+
+  bool pending = false;
+  napi_is_exception_pending(env, &pending);
+  printf("pending_after=%s\n", pending ? "true" : "false");
+
+  napi_value exc, exc_msg;
+  NODE_API_CALL(env, napi_get_and_clear_last_exception(env, &exc));
+  if (napi_coerce_to_string(env, exc, &exc_msg) == napi_ok) {
+    char sbuf[64];
+    size_t n;
+    napi_get_value_string_utf8(env, exc_msg, sbuf, sizeof(sbuf), &n);
+    printf("exception=%s\n", sbuf);
+  }
+
+  return ok(env);
+}
+
 // Regression test: PROPERTY_NAME_FROM_UTF8 must copy string data.
 // Previously it used StringImpl::createWithoutCopying for ASCII strings,
 // which could leave dangling pointers in JSC's atom string table.
@@ -3562,6 +3645,7 @@ void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports,
                     test_external_buffer_with_pending_exception);
   REGISTER_FUNCTION(env, exports, test_pending_exception_gate);
+  REGISTER_FUNCTION(env, exports, test_arraybuffer_info_with_vm_exception);
   REGISTER_FUNCTION(env, exports, test_napi_get_named_property_copied_string);
   REGISTER_FUNCTION(env, exports, test_issue_25933);
   REGISTER_FUNCTION(env, exports, test_napi_make_callback_status);

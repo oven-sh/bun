@@ -41,6 +41,7 @@
 #include <JavaScriptCore/Exception.h>
 #include <JavaScriptCore/ExceptionHelpers.h>
 #include <JavaScriptCore/ExceptionScope.h>
+#include <JavaScriptCore/FrameTracers.h>
 #include <JavaScriptCore/FunctionConstructor.h>
 #include <JavaScriptCore/Heap.h>
 #include <JavaScriptCore/Identifier.h>
@@ -3319,6 +3320,26 @@ extern "C" void napi_internal_remove_finalizer(napi_env env, napi_finalize callb
 extern "C" void napi_internal_check_gc(napi_env env)
 {
     env->checkGC();
+}
+
+extern "C" JSC::EncodedJSValue Bun__JSValue__getArrayBufferViewBuffer(JSC::EncodedJSValue, JSC::JSGlobalObject*);
+
+// napi_is_arraybuffer / napi_get_{arraybuffer,typedarray,dataview,buffer}_info
+// are CHECK_ENV (not NAPI_PREAMBLE) in Node.js, so they must succeed with a
+// VM exception already pending. JSC__JSValue__asArrayBuffer opens with
+// ASSERT_NO_PENDING_EXCEPTION; SuspendExceptionScope stashes vm.m_exception
+// for the read and restores it, so the assertion holds and the addon's
+// exception survives.
+extern "C" bool napi_internal_as_array_buffer(napi_env env, JSC::EncodedJSValue value, Bun__ArrayBuffer* out)
+{
+    JSC::SuspendExceptionScope suspend(env->vm());
+    return JSC__JSValue__asArrayBuffer(value, env->globalObject(), out);
+}
+
+extern "C" JSC::EncodedJSValue napi_internal_get_array_buffer_view_buffer(napi_env env, JSC::EncodedJSValue value)
+{
+    JSC::SuspendExceptionScope suspend(env->vm());
+    return Bun__JSValue__getArrayBufferViewBuffer(value, env->globalObject());
 }
 
 extern "C" bool NapiEnv__hasPendingException(napi_env env)

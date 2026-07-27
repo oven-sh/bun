@@ -2667,13 +2667,47 @@ mod posix_impl {
 
     // ── link/perm/time/access group ──
     pub fn link(src: &ZStr, dest: &ZStr) -> Maybe<()> {
-        check_p!(
-            // SAFETY: both `ZStr`s are valid NUL-terminated C strings.
-            unsafe { libc::link(src.as_ptr(), dest.as_ptr()) },
-            Tag::link,
-            src
-        );
-        Ok(())
+        // OHOS: the kernel refuses the bare `linkat` syscall with EACCES, and
+        // ohos-compat-shim works around that by interposing the *libc symbol*
+        // `linkat`. musl implements `link(a, b)` as a direct
+        // `syscall(SYS_linkat, AT_FDCWD, a, AT_FDCWD, b, 0)`, so it never
+        // reaches that symbol and never gets the workaround — hardlinks fail
+        // with EACCES no matter how the shim is configured (verified: setting
+        // OHOS_COMPAT_SHIM_ENABLE changes nothing, because the interposer is
+        // simply never called). Routing through `linkat` fixes it: measured
+        // on-device, the libc `linkat` symbol succeeds where both `link()` and
+        // the raw syscall return EACCES, and stripping the shim from
+        // LD_PRELOAD makes `linkat` fail too — confirming the symbol
+        // interposition is what makes hardlinks work here at all.
+        #[cfg(target_env = "ohos")]
+        {
+            check_p!(
+                // SAFETY: both `ZStr`s are valid NUL-terminated C strings;
+                // AT_FDCWD makes both paths resolve exactly as `link` would.
+                unsafe {
+                    libc::linkat(
+                        libc::AT_FDCWD,
+                        src.as_ptr(),
+                        libc::AT_FDCWD,
+                        dest.as_ptr(),
+                        0,
+                    )
+                },
+                Tag::link,
+                src
+            );
+            return Ok(());
+        }
+        #[cfg(not(target_env = "ohos"))]
+        {
+            check_p!(
+                // SAFETY: both `ZStr`s are valid NUL-terminated C strings.
+                unsafe { libc::link(src.as_ptr(), dest.as_ptr()) },
+                Tag::link,
+                src
+            );
+            Ok(())
+        }
     }
     pub fn linkat(src_dir: impl AsFd, src: &ZStr, dest_dir: impl AsFd, dest: &ZStr) -> Maybe<()> {
         let src_dir = src_dir.as_fd();

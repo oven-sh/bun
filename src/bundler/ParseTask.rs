@@ -2448,8 +2448,7 @@ pub mod parse_worker {
         opts.features.minify_identifiers = topts.minify_identifiers;
         opts.features.minify_keep_names = topts.keep_names;
         opts.features.minify_whitespace = topts.minify_whitespace;
-        // Match tsc: emitDecoratorMetadata is a no-op unless experimentalDecorators is
-        // also set. It must not by itself select the legacy decorator lowering.
+        // tsc: emitDecoratorMetadata is inert without experimentalDecorators (TS5052).
         opts.features.emit_decorator_metadata =
             task.emit_decorator_metadata && task.experimental_decorators;
         opts.features.standard_decorators =

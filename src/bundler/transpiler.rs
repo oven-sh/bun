@@ -1559,8 +1559,7 @@ impl<'a> Transpiler<'a> {
                     repl_mode: self.options.repl_mode,
                 };
 
-                // Match tsc: emitDecoratorMetadata is a no-op unless experimentalDecorators is
-                // also set. It must not by itself select the legacy decorator lowering.
+                // tsc: emitDecoratorMetadata is inert without experimentalDecorators (TS5052).
                 opts.features.emit_decorator_metadata =
                     this_parse.emit_decorator_metadata && this_parse.experimental_decorators;
                 opts.features.standard_decorators =

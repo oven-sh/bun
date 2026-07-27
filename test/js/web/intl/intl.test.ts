@@ -186,6 +186,8 @@ describe("String.prototype.localeCompare with a string locale", () => {
   test("does not leak into calls that pass options", () => {
     // Seed the cache first so an options call that wrongly reads it would be caught below.
     expect("a".localeCompare("A", "en")).not.toBe(0);
+    // options=null must throw at ToObject(null); a warm cache must not swallow that.
+    expect(() => "a".localeCompare("b", "en", null as any)).toThrow(TypeError);
     expect("a".localeCompare("A", "en", { sensitivity: "base" })).toBe(0);
     // And the cached collator must not have been overwritten by the options call.
     expect("a".localeCompare("A", "en")).not.toBe(0);

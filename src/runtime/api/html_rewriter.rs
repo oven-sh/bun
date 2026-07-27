@@ -1220,11 +1220,8 @@ where
     // the pending exception through it, and clear it explicitly.
     bun_jsc::top_scope!(scope, global);
 
-    // A prior handler's `wait_for_promise` may have been interrupted by a
-    // worker `terminate()`, leaving the TerminationException pending. Stop the
-    // rewriter instead of calling into JS (executeCallImpl asserts
-    // `!exception()` on assert builds). Checked before allocating `wrapper` so
-    // no +1 is stranded on this path.
+    // Stop the rewriter instead of entering JS with a TerminationException left
+    // pending by a prior handler's interrupted `wait_for_promise`.
     if scope.has_exception() {
         return true;
     }
@@ -1306,10 +1303,8 @@ where
 
         if let Some(promise) = result.as_any_promise() {
             vm().wait_for_promise(promise);
-            // `wait_for_promise` spins the event loop; a worker `terminate()`
-            // arriving during the wait breaks it with the promise still Pending
-            // and the TerminationException set. Stop the rewriter so lol-html
-            // does not dispatch the next handler into JS with it pending.
+            // A worker `terminate()` during the wait leaves the promise Pending
+            // with a TerminationException set; stop the rewriter here.
             if scope.has_exception() {
                 return true;
             }

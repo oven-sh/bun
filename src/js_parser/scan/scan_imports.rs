@@ -815,7 +815,11 @@ impl<'a> ImportScanner<'a> {
     // import-equals elimination. The full `scan` is not idempotent (it records
     // exports, pushes import records, etc.), so the multi-pass fixed-point loop
     // in `to_ast` uses this instead for every iteration after the first.
-    pub(crate) fn scan_for_unused_ts_import_equals<'p, const TYPESCRIPT: bool, const SCAN_ONLY: bool>(
+    pub(crate) fn scan_for_unused_ts_import_equals<
+        'p,
+        const TYPESCRIPT: bool,
+        const SCAN_ONLY: bool,
+    >(
         p: &mut P<'p, TYPESCRIPT, SCAN_ONLY>,
         stmts: &'a mut [Stmt],
     ) -> ImportScanner<'a> {
@@ -839,7 +843,8 @@ impl<'a> ImportScanner<'a> {
                         if let js_ast::ExprData::EIdentifier(id) = val.data {
                             if let js_ast::b::B::BIdentifier(b_id) = decl.binding.data {
                                 let b_id_ref = b_id.r#ref;
-                                if p.symbols[b_id_ref.inner_index() as usize].use_count_estimate == 0
+                                if p.symbols[b_id_ref.inner_index() as usize].use_count_estimate
+                                    == 0
                                 {
                                     p.ignore_usage(id.ref_);
                                     scanner.removed_import_equals = true;

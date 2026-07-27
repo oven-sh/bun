@@ -218,6 +218,7 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub has_top_level_return: bool,
     pub latest_return_had_semicolon: bool,
     pub has_import_meta: bool,
+    pub const_values_declared: js_ast::ConstValuesDeclared,
     pub has_es_module_syntax: bool,
     pub top_level_await_keyword: bun_ast::Range,
     pub fn_or_arrow_data_parse: FnOrArrowDataParse,
@@ -4543,6 +4544,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // Allocate a new symbol
         let mut ref_ = self.new_symbol(kind, name);
 
+        match name {
+            b"undefined" => self
+                .const_values_declared
+                .insert(js_ast::ConstValuesDeclared::UNDEFINED),
+            b"NaN" => self
+                .const_values_declared
+                .insert(js_ast::ConstValuesDeclared::NAN),
+            b"Infinity" => self
+                .const_values_declared
+                .insert(js_ast::ConstValuesDeclared::INFINITY),
+            _ => {}
+        }
+
         // Single-probe `getOrPut`. The previous two-probe shape
         // (`members.get` then `members.put_borrowed`) existed only because the
         // merge decision read `self.current_scope()` while the entry borrow was
@@ -8426,6 +8440,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             commonjs_named_exports: core::mem::take(&mut self.commonjs_named_exports),
             has_commonjs_export_names: self.has_commonjs_export_names,
             has_import_meta: self.has_import_meta,
+            const_values_declared: self.const_values_declared,
 
             hashbang: hashbang.into(),
             // TODO: cross-module constant inlining
@@ -8723,6 +8738,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             has_top_level_return: false,
             latest_return_had_semicolon: false,
             has_import_meta: false,
+            const_values_declared: js_ast::ConstValuesDeclared::empty(),
             has_es_module_syntax: false,
             top_level_await_keyword: bun_ast::Range::NONE,
             fn_or_arrow_data_parse,

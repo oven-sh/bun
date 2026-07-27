@@ -541,7 +541,7 @@ describe("Bun.Transpiler", () => {
       // "f('s', x < 0, x >= 0 ? a : b)" into "f('s', x = b)".
       const exp = ts.expectPrinted_;
 
-      exp('f("s", x < 0, x >= 0 ? "p:" + x : undefined);', 'f("s", x < 0, x >= 0 ? "p:" + x : void 0);\n');
+      exp('f("s", x < 0, x >= 0 ? "p:" + x : undefined);', 'f("s", x < 0, x >= 0 ? "p:" + x : undefined);\n');
       exp("f(x < y, x >= z);", "f(x < y, x >= z);\n");
       exp("const a = (x < 0, x >= 0 ? y : z);", "const a = (x < 0, x >= 0 ? y : z);\n");
       exp("f<x>=g<y>;", "f < x >= g;\n");
@@ -1572,7 +1572,7 @@ export default class {
         "const car = { start() { }, move(d) { }, stop() { } } satisfies Movable & Record<string, unknown>;",
         "const car = { start() {}, move(d) {}, stop() {} };\n",
       );
-      ts.expectPrinted_("var v = undefined satisfies 1;", "var v = void 0;\n");
+      ts.expectPrinted_("var v = undefined satisfies 1;", "var v = undefined;\n");
       ts.expectPrinted_("const a = { x: 10 } satisfies Partial<Point2d>;", "const a = { x: 10 };\n");
       ts.expectPrinted_(
         'const p = { a: 0, b: "hello", x: 8 } satisfies Partial<Record<Keys, unknown>>;',
@@ -2091,54 +2091,54 @@ export default <>hi</>
     expect(bun.transformSync("console.log(<div key={() => {}} points={() => {}}></div>);")).toBe(
       `console.log(jsxDEV_7x81h0kn("div", {
   points: () => {}
-}, () => {}, false, void 0, this));
+}, () => {}, false, undefined, this));
 `,
     );
 
     expect(bun.transformSync("console.log(<div points={() => {}} key={() => {}}></div>);")).toBe(
       `console.log(jsxDEV_7x81h0kn("div", {
   points: () => {}
-}, () => {}, false, void 0, this));
+}, () => {}, false, undefined, this));
 `,
     );
 
     expect(bun.transformSync("console.log(<div key={() => {}} key={() => {}}></div>);")).toBe(
-      'console.log(jsxDEV_7x81h0kn("div", {\n  key: () => {}\n}, () => {}, false, void 0, this));\n',
+      'console.log(jsxDEV_7x81h0kn("div", {\n  key: () => {}\n}, () => {}, false, undefined, this));\n',
     );
 
     expect(bun.transformSync("console.log(<div key={() => {}}></div>, () => {});")).toBe(
-      'console.log(jsxDEV_7x81h0kn("div", {}, () => {}, false, void 0, this), () => {});\n',
+      'console.log(jsxDEV_7x81h0kn("div", {}, () => {}, false, undefined, this), () => {});\n',
     );
 
     expect(bun.transformSync("console.log(<div key={() => {}} a={() => {}} key={() => {}}></div>, () => {});")).toBe(
-      'console.log(jsxDEV_7x81h0kn("div", {\n  key: () => {},\n  a: () => {}\n}, () => {}, false, void 0, this), () => {});\n',
+      'console.log(jsxDEV_7x81h0kn("div", {\n  key: () => {},\n  a: () => {}\n}, () => {}, false, undefined, this), () => {});\n',
     );
 
     expect(bun.transformSync("console.log(<div key={() => {}} key={() => {}} a={() => {}}></div>, () => {});")).toBe(
-      'console.log(jsxDEV_7x81h0kn("div", {\n  key: () => {},\n  a: () => {}\n}, () => {}, false, void 0, this), () => {});\n',
+      'console.log(jsxDEV_7x81h0kn("div", {\n  key: () => {},\n  a: () => {}\n}, () => {}, false, undefined, this), () => {});\n',
     );
 
     expect(bun.transformSync("console.log(<div points={() => {}} key={() => {}}></div>);")).toBe(
       `console.log(jsxDEV_7x81h0kn("div", {
   points: () => {}
-}, () => {}, false, void 0, this));
+}, () => {}, false, undefined, this));
 `,
     );
 
     expect(bun.transformSync("console.log(<div key={() => {}}></div>);")).toBe(
-      `console.log(jsxDEV_7x81h0kn("div", {}, () => {}, false, void 0, this));
+      `console.log(jsxDEV_7x81h0kn("div", {}, () => {}, false, undefined, this));
 `,
     );
 
     expect(bun.transformSync("console.log(<div></div>);")).toBe(
-      `console.log(jsxDEV_7x81h0kn("div", {}, void 0, false, void 0, this));
+      `console.log(jsxDEV_7x81h0kn("div", {}, undefined, false, undefined, this));
 `,
     );
 
     // key after spread props
     // https://github.com/oven-sh/bun/issues/7328
     expect(bun.transformSync(`console.log(<div {...obj} key="after" />, <div key="before" {...obj} />);`)).toBe(
-      `console.log(createElement_mvmpqhxp(\"div\", {\n  ...obj,\n  key: \"after\"\n}), jsxDEV_7x81h0kn(\"div\", {\n  ...obj\n}, \"before\", false, void 0, this));
+      `console.log(createElement_mvmpqhxp(\"div\", {\n  ...obj,\n  key: \"after\"\n}), jsxDEV_7x81h0kn(\"div\", {\n  ...obj\n}, \"before\", false, undefined, this));
 `,
     );
     expect(bun.transformSync(`console.log(<div {...obj} key="after" {...obj2} />);`)).toBe(
@@ -2215,8 +2215,8 @@ console.log(<div {...obj} key="after" />);`),
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     expect(stdout).toBe(
-      'console.log(jsxDEV_7x81h0kn("div", {}, "duplicate", false, void 0, this));\n' +
-        'console.log(jsxDEV_7x81h0kn("div", {\n  className: "x"\n}, "duplicate", false, void 0, this));\n',
+      'console.log(jsxDEV_7x81h0kn("div", {}, "duplicate", false, undefined, this));\n' +
+        'console.log(jsxDEV_7x81h0kn("div", {\n  className: "x"\n}, "duplicate", false, undefined, this));\n',
     );
     expect(exitCode).toBe(0);
   });
@@ -2244,44 +2244,44 @@ console.log(<div {...obj} key="after" />);`),
     expect(bun.transformSync("export var foo = <div foo />")).toBe(
       `export var foo = jsxDEV_7x81h0kn("div", {
   foo: true
-}, void 0, false, void 0, this);
+}, undefined, false, undefined, this);
 `,
     );
     expect(bun.transformSync("export var foo = <div foo={foo} />")).toBe(
       `export var foo = jsxDEV_7x81h0kn("div", {
   foo
-}, void 0, false, void 0, this);
+}, undefined, false, undefined, this);
 `,
     );
     expect(bun.transformSync("export var foo = <div {...foo} />")).toBe(
       `export var foo = jsxDEV_7x81h0kn("div", {
   ...foo
-}, void 0, false, void 0, this);
+}, undefined, false, undefined, this);
 `,
     );
 
     expect(bun.transformSync("export var hi = <div {foo} />")).toBe(
       `export var hi = jsxDEV_7x81h0kn("div", {
   foo
-}, void 0, false, void 0, this);
+}, undefined, false, undefined, this);
 `,
     );
     expect(bun.transformSync("export var hi = <div {foo.bar.baz} />")).toBe(
       `export var hi = jsxDEV_7x81h0kn("div", {
   baz: foo.bar.baz
-}, void 0, false, void 0, this);
+}, undefined, false, undefined, this);
 `,
     );
     expect(bun.transformSync("export var hi = <div {foo?.bar?.baz} />")).toBe(
       `export var hi = jsxDEV_7x81h0kn("div", {
   baz: foo?.bar?.baz
-}, void 0, false, void 0, this);
+}, undefined, false, undefined, this);
 `,
     );
     expect(bun.transformSync("export var hi = <div {foo['baz'].bar?.baz} />")).toBe(
       `export var hi = jsxDEV_7x81h0kn("div", {
   baz: foo["baz"].bar?.baz
-}, void 0, false, void 0, this);
+}, undefined, false, undefined, this);
 `,
     );
 
@@ -2289,20 +2289,20 @@ console.log(<div {...obj} key="after" />);`),
     expect(bun.transformSync("export var hi = <div {foo[() => true].hi} />")).toBe(
       `export var hi = jsxDEV_7x81h0kn("div", {
   hi: foo[() => true].hi
-}, void 0, false, void 0, this);
+}, undefined, false, undefined, this);
 `,
     );
     expect(bun.transformSync("export var hi = <Foo {process.env.NODE_ENV} />")).toBe(
       `export var hi = jsxDEV_7x81h0kn(Foo, {
       NODE_ENV: "development"
-    }, void 0, false, void 0, this);
+    }, undefined, false, undefined, this);
     `,
     );
 
     expect(bun.transformSync("export var hi = <div {foo['baz'].bar?.baz} />")).toBe(
       `export var hi = jsxDEV_7x81h0kn("div", {
   baz: foo["baz"].bar?.baz
-}, void 0, false, void 0, this);
+}, undefined, false, undefined, this);
 `,
     );
     try {
@@ -2315,15 +2315,15 @@ console.log(<div {...obj} key="after" />);`),
     expect(bun.transformSync("export var hi = <div {Foo}><Foo></Foo></div>")).toBe(
       `export var hi = jsxDEV_7x81h0kn("div", {
   Foo,
-  children: jsxDEV_7x81h0kn(Foo, {}, void 0, false, void 0, this)
-}, void 0, false, void 0, this);
+  children: jsxDEV_7x81h0kn(Foo, {}, undefined, false, undefined, this)
+}, undefined, false, undefined, this);
 `,
     );
     expect(bun.transformSync("export var hi = <div {Foo}><Foo></Foo></div>")).toBe(
       `export var hi = jsxDEV_7x81h0kn("div", {
   Foo,
-  children: jsxDEV_7x81h0kn(Foo, {}, void 0, false, void 0, this)
-}, void 0, false, void 0, this);
+  children: jsxDEV_7x81h0kn(Foo, {}, undefined, false, undefined, this)
+}, undefined, false, undefined, this);
 `,
     );
 
@@ -2333,7 +2333,7 @@ console.log(<div {...obj} key="after" />);`),
     123,
     "}"
   ]
-}, void 0, true, void 0, this);
+}, undefined, true, undefined, this);
       `.trim(),
     );
   });
@@ -2351,14 +2351,14 @@ console.log(<div {...obj} key="after" />);`),
     ...a,
     "b"
   ]
-}, void 0, true, void 0, this);
+}, undefined, true, undefined, this);
 `,
     );
 
     expect(bun.transformSync("export var foo = <div>{...a}</div>")).toBe(
       `export var foo = jsxDEV_7x81h0kn("div", {
   children: [...a]
-}, void 0, true, void 0, this);
+}, undefined, true, undefined, this);
 `,
     );
   });
@@ -2558,7 +2558,7 @@ console.log(<div {...obj} key="after" />);`),
       expectPrinted("(void x) ** 2", "(void x) ** 2");
       expectPrinted("(delete x) ** 2", "(delete x) ** 2");
       expectPrinted("(typeof x) ** 2", "(typeof x) ** 2");
-      expectPrinted("undefined ** 2", "(void 0) ** 2");
+      expectPrinted("undefined ** 2", "undefined ** 2");
 
       expectParseError("-x ** 2", "Unexpected **");
       expectParseError("+x ** 2", "Unexpected **");
@@ -3155,7 +3155,7 @@ console.log(resolve.length)
         expect(parsed("!0", true, false)).toBe("");
         expect(parsed('if (!1) "dead";', true, false)).toBe("if (false)");
         expect(parsed("if (!1) var x = 2;", true, false)).toBe("if (false)\n  var x");
-        expect(parsed("if (undefined) { let y = Math.random(); }", true, false)).toBe("if (void 0) {}");
+        expect(parsed("if (undefined) { let y = Math.random(); }", true, false)).toBe("if (undefined) {}");
       });
       it("should not DCE with deadCodeElimination: false", () => {
         expect(parsed("123", true, false, transpilerNoDCE)).toBe("123");
@@ -3165,7 +3165,7 @@ console.log(resolve.length)
         expect(parsed('if (!1) "dead";', true, false, transpilerNoDCE)).toBe('if (!1)\n  "dead"');
         expect(parsed("if (!1) var x = 2;", true, false, transpilerNoDCE)).toBe("if (!1)\n  var x = 2");
         expect(parsed("if (undefined) { let y = Math.random(); }", true, false, transpilerNoDCE)).toBe(
-          "if (void 0) {\n  let y = Math.random();\n}",
+          "if (undefined) {\n  let y = Math.random();\n}",
         );
       });
     });
@@ -4123,8 +4123,8 @@ console.log(foo, array);
       expectPrinted("(-0).toString()", "(-0).toString()");
       expectPrinted("-0 === 0", "!0");
 
-      expectPrinted("NaN", "-(0 / 0)");
-      expectPrinted("NaN.toString()", "(-(0 / 0)).toString()");
+      expectPrinted("NaN", "NaN");
+      expectPrinted("NaN.toString()", "NaN.toString()");
       expectPrinted("NaN === NaN", "!1");
 
       expectPrinted("Infinity", "1 / 0");
@@ -5161,35 +5161,42 @@ it("transform() result is unaffected by detaching the input ArrayBuffer while th
   expect(exitCode).toBe(0);
 });
 
-// A numeric literal property name like `1e999` overflows to the number Infinity, which the
-// printer emits as "1/0" / "1 / 0". That is not valid syntax in property-name position, so such
-// keys must be printed as computed properties instead.
+// A numeric literal property name like `1e999` overflows to the number Infinity. When the
+// printer would emit that as "1/0" (minify-syntax, or a local `Infinity` binding in the file),
+// it is not valid syntax in property-name position and must become a computed property instead.
 describe("numeric property keys that overflow to Infinity", () => {
   const minifier = new Bun.Transpiler({ loader: "ts", minifyWhitespace: true });
   const plain = new Bun.Transpiler({ loader: "ts" });
 
-  it("are printed as computed properties when minifying whitespace", () => {
-    expect(minifier.transformSync("x = { 1e999: 1 };")).toBe("x={[1/0]:1};");
-    expect(minifier.transformSync("x = { 1e999() {} };")).toBe("x={[1/0](){}};");
-    expect(minifier.transformSync("x = { get 1e999() {} };")).toBe("x={get[1/0](){}};");
-    expect(minifier.transformSync("x = { set 1e999(v) {} };")).toBe("x={set[1/0](v){}};");
-    expect(minifier.transformSync("x = class { 1e999() {} };")).toBe("x=class{[1/0](){}};");
-    expect(minifier.transformSync("x = class { static 1e999() {} };")).toBe("x=class{static[1/0](){}};");
-    expect(minifier.transformSync("x = class { 1e999 = 1 };")).toBe("x=class{[1/0]=1};");
-    expect(minifier.transformSync("x = class { static 1e999 = 1 };")).toBe("x=class{static[1/0]=1};");
-    expect(minifier.transformSync("const { 1e999: y } = x;")).toBe("const{[1/0]:y}=x;");
-    expect(minifier.transformSync("({ 1e999: x.y } = z);")).toBe("({[1/0]:x.y}=z);");
+  it("are printed as the bare Infinity name when minifying whitespace", () => {
+    expect(minifier.transformSync("x = { 1e999: 1 };")).toBe("x={Infinity:1};");
+    expect(minifier.transformSync("x = { 1e999() {} };")).toBe("x={Infinity(){}};");
+    expect(minifier.transformSync("x = { get 1e999() {} };")).toBe("x={get Infinity(){}};");
+    expect(minifier.transformSync("x = { set 1e999(v) {} };")).toBe("x={set Infinity(v){}};");
+    expect(minifier.transformSync("x = class { 1e999() {} };")).toBe("x=class{Infinity(){}};");
+    expect(minifier.transformSync("x = class { static 1e999() {} };")).toBe("x=class{static Infinity(){}};");
+    expect(minifier.transformSync("x = class { 1e999 = 1 };")).toBe("x=class{Infinity=1};");
+    expect(minifier.transformSync("x = class { static 1e999 = 1 };")).toBe("x=class{static Infinity=1};");
+    expect(minifier.transformSync("const { 1e999: y } = x;")).toBe("const{Infinity:y}=x;");
+    expect(minifier.transformSync("({ 1e999: x.y } = z);")).toBe("({Infinity:x.y}=z);");
   });
 
-  it("are printed as computed properties without minification", () => {
-    expect(plain.transformSync("x = { 1e999: 1 };")).toBe("x = { [1 / 0]: 1 };\n");
-    expect(plain.transformSync("x = class { 1e999() {} };")).toBe("x = class {\n  [1 / 0]() {}\n};\n");
-    expect(plain.transformSync("const { 1e999: y } = x;")).toBe("const { [1 / 0]: y } = x;\n");
+  it("are printed as the bare Infinity name without minification", () => {
+    expect(plain.transformSync("x = { 1e999: 1 };")).toBe("x = { Infinity: 1 };\n");
+    expect(plain.transformSync("x = class { 1e999() {} };")).toBe("x = class {\n  Infinity() {}\n};\n");
+    expect(plain.transformSync("const { 1e999: y } = x;")).toBe("const { Infinity: y } = x;\n");
+  });
+
+  it("are printed as computed [1/0] when the file declares a local Infinity", () => {
+    const prefix = "var Infinity=0;";
+    expect(minifier.transformSync(`${prefix}x = { 1e999: 1 };`)).toBe(`${prefix}x={[1/0]:1};`);
+    expect(minifier.transformSync(`${prefix}x = class { 1e999() {} };`)).toBe(`${prefix}x=class{[1/0](){}};`);
+    expect(minifier.transformSync(`${prefix}const { 1e999: y } = x;`)).toBe(`${prefix}const{[1/0]:y}=x;`);
   });
 
   it("handles a method name with hundreds of digits", () => {
     const digits = Buffer.alloc(325, "9").toString();
-    expect(minifier.transformSync(`(class { ${digits}() {} });`)).toBe("(class{[1/0](){}});");
+    expect(minifier.transformSync(`(class { ${digits}() {} });`)).toBe("(class{Infinity(){}});");
   });
 
   it("still refers to the same property at runtime", () => {

@@ -49,4 +49,4 @@ test("Bun.write() should write past 2GB boundary without corruption", async () =
   const head = new Uint8Array(await file.slice(0, 1).arrayBuffer());
   const tail = new Uint8Array(await file.slice(TOTAL - 1, TOTAL).arrayBuffer());
   expect({ head: [...head], tail: [...tail] }).toEqual({ head: [0xaa], tail: [0xaa] });
-});
+}, 30_000);

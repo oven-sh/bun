@@ -80,8 +80,8 @@ impl Default for ResolvedSource {
 
 /// NUL-join the transpiler's static CommonJS export names for
 /// `createCommonJSModule`. Empty => no names detected, keep the eager
-/// synthetic path so dynamic export shapes (UMD, `module.exports = fn`,
-/// `__exportStar`) stay enumerable.
+/// synthetic path so UMD-via-alias shapes (lodash's `freeModule.exports = _`,
+/// which the ref-only `module.exports` deopt cannot see) stay enumerable.
 pub fn join_commonjs_export_names(
     is_commonjs_module: bool,
     ast: &bun_ast::ast_result::Ast,

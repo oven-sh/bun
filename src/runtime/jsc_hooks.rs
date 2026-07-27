@@ -1487,6 +1487,7 @@ pub(crate) static __BUN_RUNTIME_HOOKS: RuntimeHooks = RuntimeHooks {
     retroactively_report_discovered_tests,
     cancel_all_timers,
     close_dns_for_terminate,
+    stop_servers_for_terminate,
 };
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -1633,6 +1634,32 @@ fn close_dns_for_terminate() {
     // of the `OnceCell` only (the resolver's own state is interior-mutable).
     if let Some(gd) = unsafe { &(*state).global_dns_data }.get() {
         gd.resolver.close_channel_for_terminate();
+    }
+}
+
+/// `RuntimeHooks::stop_servers_for_terminate` — `stop(true)` every
+/// `Bun.serve` server this VM started so its listen socket closes before
+/// `close_all_socket_groups` (which skips listeners) and the worker loop are
+/// torn down. Walks [`IsolationHandle::Server`] entries only; watchers stay
+/// for their own finalizers.
+fn stop_servers_for_terminate() {
+    let state = runtime_state();
+    if state.is_null() {
+        return;
+    }
+    // SAFETY: live boxed per-thread `RuntimeState`; single JS thread.
+    let handles = unsafe { &mut (*state).isolation_handles };
+    // `stop(true)` → `stop_listening` removes the entry from `handles`, so
+    // snapshot first and iterate the snapshot.
+    let servers: Vec<crate::server::AnyServer> = handles
+        .iter()
+        .filter_map(|(h, ())| match h {
+            IsolationHandle::Server(s) => Some(*s),
+            _ => None,
+        })
+        .collect();
+    for mut s in servers {
+        s.stop(true);
     }
 }
 

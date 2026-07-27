@@ -1820,6 +1820,15 @@ pub struct RuntimeHooks {
     /// never lazily created. Called from `WebWorker::shutdown` / `global_exit`
     /// right after `close_all_socket_groups`.
     pub close_dns_for_terminate: fn(),
+    /// `server.stop(true)` every `Bun.serve` server registered on this VM's
+    /// thread. `close_all_socket_groups` deliberately skips listen sockets
+    /// (the owning `NewServer` holds a raw `*mut us_listen_socket_t` that
+    /// would dangle), so a listener whose owner's `stop()` never runs survives
+    /// the worker and its port stays bound. The per-VM server registry lives
+    /// in `bun_runtime::RuntimeState` (b2-cycle). Called from
+    /// `WebWorker::shutdown` immediately before `close_all_socket_groups`,
+    /// while JSC is still live so `stop(true)`'s on_close callbacks can run.
+    pub stop_servers_for_terminate: fn(),
 }
 
 /// Canonical `EventLoopCtx` vtable for a `*mut VirtualMachine` owner — the JS

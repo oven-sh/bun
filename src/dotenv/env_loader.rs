@@ -826,15 +826,9 @@ impl Loader {
             return Ok(());
         }
 
-        // Default .env files are loaded optimistically: an open failure is never
-        // fatal. Propagating the error here reaches callers that print `vm.log`
-        // (which this path never writes to) and then `exit(1)`, i.e. a silent
-        // hard failure for every bun command in that cwd.
-        //
-        // ENOENT/EISDIR are expected and stay silent. EACCES/EBUSY respect
-        // `self.quiet` (some environments deliberately make .env unreadable).
-        // Anything else (ELOOP, ENAMETOOLONG, …) is a broken setup the user
-        // should fix and is printed regardless of `quiet`.
+        // Default .env loads are optimistic: an open failure is never fatal.
+        // ENOENT/EISDIR stay silent; EACCES/EBUSY respect `quiet`; anything
+        // else (ELOOP, …) is always printed so the user can fix it.
         let file =
             match bun_sys::File::openat(dir, base, bun_sys::O::RDONLY | bun_sys::O::CLOEXEC, 0) {
                 Ok(file) => file,
@@ -930,17 +924,12 @@ impl Loader {
     }
 }
 
-/// Shared post-open tail of `load_env_file` / `load_env_file_dynamic`:
-/// `File::read_to_end` (fstat-presized). The two callers differ in their open
-/// path, open-error handling, and the memo slot they write — those stay in
-/// the callers. Only the shared read tail is factored here.
+/// Shared post-open `File::read_to_end` tail for `load_env_file` and
+/// `load_env_file_dynamic`; callers handle open and slot bookkeeping.
 enum ReadEnvFile {
-    /// Zero-length — caller marks the slot and returns.
     Empty,
-    /// Read errno — caller prints (unless `quiet`), marks the slot, and
-    /// returns. Never fatal: `.env` loads are optimistic.
+    /// Caller prints (unless `quiet`) and skips. Never fatal.
     ReadErr(bun_sys::Error),
-    /// File contents; `buf.len()` is the amount read.
     Bytes(Vec<u8>),
 }
 

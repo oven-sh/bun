@@ -1045,8 +1045,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             b.configure_defines()
         };
         if let Err(err) = defines_result {
-            // `fail_with_build_error` only dumps `vm.log`; not every error on this
-            // path writes to it, so name the error explicitly.
+            // `fail_with_build_error` only dumps `vm.log`, which this path may not have written to.
             Output::err(err, "Failed to load environment variables and defines", ());
             crate::run_main::fail_with_build_error(vm);
         }
@@ -1206,8 +1205,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             b.configure_defines()
         };
         if let Err(err) = defines_result {
-            // `fail_with_build_error` only dumps `vm.log`; not every error on this
-            // path writes to it, so name the error explicitly.
+            // `fail_with_build_error` only dumps `vm.log`, which this path may not have written to.
             Output::err(err, "Failed to load environment variables and defines", ());
             crate::run_main::fail_with_build_error(vm);
         }

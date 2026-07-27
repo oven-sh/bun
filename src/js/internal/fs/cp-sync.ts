@@ -162,10 +162,10 @@ function pathAsString(p) {
   return typeof p === "string" ? p : Buffer.prototype.toString.$call(p, "latin1");
 }
 
-// Produce an absolute target so the copied link resolves from /, not from dest's directory.
+// Produce an absolute Buffer target so the copied link resolves from /, not from dest's directory.
 function resolveLinkTarget(src, target) {
   if (typeof src === "string" && isUtf8(target)) {
-    return resolve(dirname(src), target.toString());
+    return Buffer.from(resolve(dirname(src), target.toString()));
   }
   sepBuf ??= Buffer.from(sep);
   let dir;

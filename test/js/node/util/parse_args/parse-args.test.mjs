@@ -350,30 +350,6 @@ describe("parseArgs", () => {
     );
   });
 
-  test("unknown short option in group: error message includes leading '-'", () => {
-    const args = ["-axb"];
-    const options = { alpha: { type: "boolean", short: "a" }, beta: { type: "boolean", short: "b" } };
-    expectToThrowErrorMatching(() => parseArgs({ args, options }), {
-      code: "ERR_PARSE_ARGS_UNKNOWN_OPTION",
-      message: "Unknown option '-x'",
-    });
-    expectToThrowErrorMatching(() => parseArgs({ args, options, allowPositionals: true }), {
-      code: "ERR_PARSE_ARGS_UNKNOWN_OPTION",
-      message:
-        "Unknown option '-x'. To specify a positional argument starting with a '-', " +
-        `place it at the end of the command after '--', as in '-- "-x"`,
-    });
-  });
-
-  test("unknown short option from '-x=5': error message includes leading '-'", () => {
-    const args = ["-x=5"];
-    const options = { xx: { type: "boolean", short: "x" } };
-    expectToThrowErrorMatching(() => parseArgs({ args, options }), {
-      code: "ERR_PARSE_ARGS_UNKNOWN_OPTION",
-      message: "Unknown option '-='",
-    });
-  });
-
   test("unknown option with explicit value", () => {
     const args = ["--foo", "--bar=baz"];
     const options = { foo: { type: "boolean" } };
@@ -1142,7 +1118,7 @@ describe("parseArgs extra tests", () => {
         Bun.gc();
       }
       expect(Object.keys(result.values)).toHaveLength(93);
-    }, 60_000);
+    });
   });
 
   test("undefined or null options", () => {

@@ -510,6 +510,10 @@ impl BunTestRoot {
         debug_assert!(self.active_file.is_none());
         self.file_generation = self.file_generation.wrapping_add(1);
 
+        // Each file re-prints its `path:` header, so describe headers must be
+        // re-announced too.
+        reporter.printed_scope_path.clear();
+
         // Derive the stored backref from the TestRunner's *stable* storage
         // (the global `Jest::RUNNER` NonNull) rather than `self as *mut _`.
         // A pointer coerced from `&mut self` carries provenance bounded by this

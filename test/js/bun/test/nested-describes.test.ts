@@ -2,11 +2,17 @@ import { describe, expect, test } from "bun:test";
 
 /*
 In this test we want the tests to print out the following on a success.
-Each success / fail should show the path of describe and test scopes
+Each success / fail is nested under its describe scopes.
 
-✓ outer most describe > mid describe 1 > inner most describe 1 > first
-✓ outer most describe > mid describe 1 > inner most describe 2 > second
-✓ outer most describe > mid describe 2 > inner most describe 3 > first
+outer most describe
+  mid describe 1
+    inner most describe 1
+      ✓ first
+    inner most describe 2
+      ✓ second
+  mid describe 2
+    inner most describe 3
+      ✓ third
 
 @TODO add testing for this, would require to read the test console output
 */

@@ -26,8 +26,10 @@ test.concurrent("concurrent order", async () => {
     (pass) test 4
     (pass) test 5
     (pass) test 6
-    (pass) describe group 7 > test 7
-    (pass) describe group 8 > test 8
+    describe group 7
+      (pass) test 7
+    describe group 8
+      (pass) test 8
 
      8 pass
      0 fail

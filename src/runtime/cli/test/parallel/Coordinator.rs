@@ -50,6 +50,9 @@ pub struct Coordinator<'a> {
     /// from concurrent workers interleave; whenever the source file changes the
     /// header is re-emitted so every line has visible context. None at start.
     pub last_header_idx: Option<u32>,
+    /// Describe-scope path whose headers have already been printed under the
+    /// current `last_header_idx`. Cleared whenever the file header is re-emitted.
+    pub printed_scope_path: Vec<u8>,
     pub frame: Frame,
     pub parallel_limit: u32,
     pub scale_up_after_ms: i64,
@@ -307,6 +310,7 @@ impl<'a> Coordinator<'a> {
             return;
         }
         self.last_header_idx = Some(file_idx);
+        self.printed_scope_path.clear();
         let _ = write!(
             Output::error_writer(),
             "\n{}:\n",
@@ -344,6 +348,7 @@ impl<'a> Coordinator<'a> {
             }
             frame::Kind::TestDone => {
                 let idx = rd.u32_();
+                let scope_path = rd.str();
                 let formatted = rd.str();
                 if w.inflight != Some(idx) {
                     return;
@@ -358,6 +363,11 @@ impl<'a> Coordinator<'a> {
                 if !is_dot {
                     self.break_dots();
                     self.ensure_header(idx);
+                    CommandLineReporter::emit_scope_headers(
+                        &mut self.printed_scope_path,
+                        scope_path,
+                        Output::error_writer(),
+                    );
                 }
                 let _ = Output::error_writer().write_all(formatted);
                 self.last_printed_dot = is_dot;

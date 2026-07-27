@@ -36,11 +36,13 @@ test("describe/test", async () => {
 
     error: uh oh
     uh oh
-    (fail) actual tests > more functions called after delayed done
-    (pass) actual tests > another test
-    (pass) concurrent describe 1 > item 1
-    (pass) concurrent describe 1 > item 2
-    (pass) concurrent describe 1 > snapshot in concurrent group
+    actual tests
+      (fail) more functions called after delayed done
+      (pass) another test
+    concurrent describe 1
+      (pass) item 1
+      (pass) item 2
+      (pass) snapshot in concurrent group
     (pass) LINE 66
     (skip) LINE 67
     (fail) LINE 68
@@ -72,12 +74,15 @@ test("describe/test", async () => {
     (pass) another test
     (pass) misattributed error
     (pass) passes because it catches the misattributed error
-    (pass) hooks > test1
-    (pass) hooks > test2
-    (pass) done parameter > instant done
-    (pass) done parameter > delayed done
-    (pass) done parameter > done combined with promise > done combined with promise, promise resolves first
-    (pass) done parameter > done combined with promise > done combined with promise, done resolves first
+    hooks
+      (pass) test1
+      (pass) test2
+    done parameter
+      (pass) instant done
+      (pass) delayed done
+      done combined with promise
+        (pass) done combined with promise, promise resolves first
+        (pass) done combined with promise, done resolves first
     224 |   });
     225 |   describe("done combined with promise", () => {
     226 |     let completion = 0;
@@ -87,22 +92,24 @@ test("describe/test", async () => {
                                            ^
     error: completion is not 2
         at <anonymous> (file:NN:NN)
-    (fail) done parameter > done combined with promise > fails when completion is not incremented
+        (fail) fails when completion is not incremented
     error: test error
     test error
     error: promise error
     promise error
-    (fail) done parameter > done combined with promise error conditions > both error and done resolves first
+      done combined with promise error conditions
+        (fail) both error and done resolves first
     error: done error
     done error
-    (fail) done parameter > done combined with promise error conditions > done errors only
+        (fail) done errors only
     error: promise error
     promise error
-    (fail) done parameter > done combined with promise error conditions > promise errors only
-    (pass) done parameter > second call of done callback ignores triggers error
+        (fail) promise errors only
+      (pass) second call of done callback ignores triggers error
     (pass) microtasks and rejections are drained after the test callback is executed
-    (pass) after inside test > the test 1
-    (pass) after inside test > the test 2
+    after inside test
+      (pass) the test 1
+      (pass) the test 2
     (pass) beforeEach inside test fails
 
     2 tests skipped:

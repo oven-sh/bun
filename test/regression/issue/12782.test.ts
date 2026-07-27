@@ -34,8 +34,10 @@ test("12782", async () => {
     (fail) (unnamed)
 
     test/regression/issue/12782.bar.fixture.ts:
-    (pass) bar > should not run
-    (pass) bar > inner describe > should not run
+    bar
+      (pass) should not run
+      inner describe
+        (pass) should not run
 
      2 pass
      1 fail

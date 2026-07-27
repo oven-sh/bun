@@ -41,6 +41,22 @@ test/package-json-lint.test.ts:
 Ran 4 tests across 1 files. [0.66ms]
 ```
 
+Tests inside a `describe` block are nested beneath their scope, which is printed once:
+
+```sh terminal icon="terminal"
+test/math.test.ts:
+math
+  arithmetic
+    ✓ add [0.12ms]
+    ✓ subtract [0.04ms]
+  ✓ is a module [0.03ms]
+✓ top-level test [0.02ms]
+
+ 4 pass
+ 0 fail
+Ran 4 tests across 1 files. [0.31ms]
+```
+
 ### Dots Reporter
 
 The dots reporter shows `.` for passing tests and prints full error details for failures, useful for large test suites.

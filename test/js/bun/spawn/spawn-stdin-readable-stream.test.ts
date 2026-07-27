@@ -365,7 +365,7 @@ describe("spawn stdin ReadableStream", () => {
           const child = Bun.spawn({
             cmd: [process.execPath, "-e", "setTimeout(() => {}, 1e9)"],
             stdin: (${useIterator} ? iterate : readable)(() => {
-              if (++produced === 1) queueMicrotask(() => child.kill());
+              if (++produced === 1) setImmediate(() => child.kill());
             }),
             stdout: "ignore",
             stderr: "ignore",
@@ -412,7 +412,7 @@ describe("spawn stdin ReadableStream", () => {
         const chunk = Buffer.alloc(256 * 1024, "x");
         let produced = 0;
         function producedOne() {
-          if (++produced === 1) queueMicrotask(() => child.kill());
+          if (++produced === 1) setImmediate(() => child.kill());
         }
         async function* iterate() {
           while (true) {

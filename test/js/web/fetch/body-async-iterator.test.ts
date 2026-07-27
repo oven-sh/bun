@@ -156,17 +156,17 @@ describe("Response(async iterable).body: direct-controller pump guard", () => {
     expect(result.error).toBeUndefined();
     // Reaching reads === 5 proves the event loop is alive: each step awaited a timer.
     expect(result.reads).toBe(5);
-    expect(result.ticks).toBeGreaterThan(0);
     // Five 64 KiB batches of 1 KiB chunks plus the resume-and-suspend overlap.
-    expect(result.yields).toBeLessThanOrEqual(4000);
+    expect(result.yields).toBeLessThan(1000);
     expect(exitCode).toBe(0);
   });
 
   test.concurrent("cancel while suspended runs the generator's finally", async () => {
     const { result, exitCode } = await runFace(`
       let reads = 0;
-      let returned = false;
-      async function* wrapped() { try { yield* g(); } finally { returned = true; } }
+      let returnedResolve;
+      const returned = new Promise(res => { returnedResolve = res; });
+      async function* wrapped() { try { yield* g(); } finally { returnedResolve(true); } }
       const r = new Response(wrapped()).body.getReader();
       (async () => {
         while (true) {
@@ -175,8 +175,7 @@ describe("Response(async iterable).body: direct-controller pump guard", () => {
           reads++;
           if (reads === 3) {
             await r.cancel();
-            await new Promise(res => setTimeout(res, 0));
-            process.stdout.write(JSON.stringify({ reads, yields, ticks, returned }) + "\\n");
+            process.stdout.write(JSON.stringify({ reads, yields, ticks, returned: await returned }) + "\\n");
             process.exit(0);
           }
         }

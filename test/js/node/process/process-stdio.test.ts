@@ -1,7 +1,7 @@
 import { spawn, spawnSync } from "bun";
-import { cc, ptr } from "bun:ffi";
+import { dlopen, ptr } from "bun:ffi";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, isMacOS, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isLinux, isMacOS, libcPathForDlopen, tempDirWithFiles } from "harness";
 import { closeSync, readSync } from "node:fs";
 import path from "path";
 import { isatty } from "tty";
@@ -172,10 +172,8 @@ describe.concurrent("process-stdio", () => {
     const dir = tempDirWithFiles("stdio-nonblock", {
       "fdutil.c": `
 #include <fcntl.h>
-#include <unistd.h>
 int fd_is_nonblock(int fd) { int fl = fcntl(fd, F_GETFL); return fl >= 0 && (fl & O_NONBLOCK) != 0; }
 int fd_set_nonblock(int fd) { int fl = fcntl(fd, F_GETFL); return fl < 0 ? fl : fcntl(fd, F_SETFL, fl | O_NONBLOCK); }
-int fd_pipe(int* fds) { return pipe(fds); }
 `,
     });
     const fdutil = path.join(dir, "fdutil.c");
@@ -252,12 +250,12 @@ w.on("online", () => {
       // read end only this test drains: the child fills it to EAGAIN, signals
       // the byte count on stderr, then console.log()s the markers into the
       // still-full pipe; the parent starts draining only after the signal.
-      const { fd_pipe } = cc({
-        source: fdutil,
-        symbols: { fd_pipe: { args: ["ptr"], returns: "int" } },
+      // pipe(2) is not variadic, so a dlopen binding is ABI-correct everywhere.
+      const { pipe } = dlopen(libcPathForDlopen(), {
+        pipe: { args: ["ptr"], returns: "int" },
       }).symbols;
       const fds = new Int32Array(2);
-      expect(fd_pipe(ptr(fds))).toBe(0);
+      expect(pipe(ptr(fds))).toBe(0);
       const [r, w] = fds;
       let wClosed = false;
       try {

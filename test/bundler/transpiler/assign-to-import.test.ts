@@ -42,7 +42,7 @@ describe("assigning to an imported binding", () => {
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(stderr).not.toContain("Cannot assign to");
+    expect(stderr).toBe("");
     expect(stdout).toBe("threw:TypeError\nran:1\n");
     expect(exitCode).toBe(0);
   });
@@ -69,15 +69,22 @@ describe("assigning to an imported binding", () => {
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(stderr).not.toContain("Cannot assign to import");
+    expect(stderr).toBe("");
     expect(stdout).toBe("ran:1\n");
     expect(exitCode).toBe(0);
   });
 
-  test.concurrent("bun build still rejects it", async () => {
+  test.concurrent.each([
+    ["direct binding", `import { x } from "./m.mjs"; x = 5;\n`, 'Cannot assign to import "x"'],
+    [
+      "computed namespace property",
+      `import * as ns from "./m.mjs"; const k = "x"; ns[k] = 5;\n`,
+      'Cannot assign to property on import "ns"',
+    ],
+  ])("bun build still rejects it: %s", async (_name, entry, diagnostic) => {
     using dir = tempDir("assign-to-import-build", {
       "m.mjs": mod,
-      "entry.mjs": `import { x } from "./m.mjs"; x = 5;\n`,
+      "entry.mjs": entry,
     });
 
     await using proc = Bun.spawn({
@@ -90,7 +97,7 @@ describe("assigning to an imported binding", () => {
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(stderr).toContain('Cannot assign to import "x"');
+    expect(stderr).toContain(diagnostic);
     expect(stdout).toBe("");
     expect(exitCode).toBe(1);
   });

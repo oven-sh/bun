@@ -17,6 +17,7 @@ const {
   utimesSync,
 } = require("node:fs");
 const { dirname, isAbsolute, join, parse, resolve, sep } = require("node:path");
+const { isUtf8 } = require("node:buffer");
 
 const { EEXIST, EISDIR, EINVAL, ENOTDIR } = $processBindingConstants.os.errno;
 
@@ -146,8 +147,30 @@ function areIdentical(srcStat, destStat) {
   return destStat.ino && destStat.dev && destStat.ino === srcStat.ino && destStat.dev === srcStat.dev;
 }
 
+let sepBuf;
+// Join a directory path (string or Buffer) with an entry name Buffer from
+// readdir. POSIX filenames are arbitrary bytes; when a name is not valid UTF-8
+// the joined path must stay a Buffer so subsequent syscalls see the real
+// bytes instead of U+FFFD. UTF-8-clean trees keep flowing as strings so
+// options.filter and error messages are unchanged for the common case.
+function joinEntry(dir, name) {
+  if (typeof dir === "string") {
+    if (isUtf8(name)) return join(dir, name.toString());
+    dir = Buffer.from(dir);
+  }
+  return Buffer.concat([dir, (sepBuf ??= Buffer.from(sep)), name]);
+}
+
+// node:path only accepts strings. When the cp walker has descended through a
+// non-UTF-8 name the path is a Buffer; bridge it losslessly through latin1
+// (1:1 byte <-> code unit) so resolve/dirname/split keep working on the exact
+// byte sequence.
+function pathAsString(p) {
+  return typeof p === "string" ? p : Buffer.prototype.toString.$call(p, "latin1");
+}
+
 const normalizePathToArray = path =>
-  ArrayPrototypeFilter.$call(StringPrototypeSplit.$call(resolve(path), sep), Boolean);
+  ArrayPrototypeFilter.$call(StringPrototypeSplit.$call(resolve(pathAsString(path)), sep), Boolean);
 
 // Return true if dest is a subdir of src, otherwise false.
 // It only checks the path strings.
@@ -442,19 +465,20 @@ function mkDirAndCopy(srcMode, src, dest, opts) {
 }
 
 function copyDir(src, dest, opts) {
-  for (const dirent of readdirSync(src, { withFileTypes: true })) {
-    const { name } = dirent;
-    const srcItem = join(src, name);
-    const destItem = join(dest, name);
+  for (const name of readdirSync(src, { encoding: "buffer" })) {
+    const srcItem = joinEntry(src, name);
+    const destItem = joinEntry(dest, name);
     const { destStat, skipped } = checkPathsSync(srcItem, destItem, opts);
     if (!skipped) getStats(destStat, srcItem, destItem, opts);
   }
 }
 
 function onLink(destStat, src, dest, opts) {
-  let resolvedSrc = readlinkSync(src);
-  if (!opts.verbatimSymlinks && !isAbsolute(resolvedSrc)) {
-    resolvedSrc = resolve(dirname(src), resolvedSrc);
+  const srcIsBuf = typeof src !== "string";
+  let resolvedSrc = srcIsBuf ? readlinkSync(src, { encoding: "buffer" }) : readlinkSync(src);
+  if (!opts.verbatimSymlinks && !isAbsolute(pathAsString(resolvedSrc))) {
+    const resolved = resolve(dirname(pathAsString(src)), pathAsString(resolvedSrc));
+    resolvedSrc = srcIsBuf ? Buffer.from(resolved, "latin1") : resolved;
   }
   if (!destStat) {
     return symlinkSync(resolvedSrc, dest);
@@ -472,7 +496,7 @@ function onLink(destStat, src, dest, opts) {
     throw err;
   }
   if (!isAbsolute(resolvedDest)) {
-    resolvedDest = resolve(dirname(dest), resolvedDest);
+    resolvedDest = resolve(dirname(pathAsString(dest)), resolvedDest);
   }
   let srcIsDir = false;
   try {
@@ -523,4 +547,6 @@ export default {
   fsEisdirError,
   areIdentical,
   isSrcSubdir,
+  joinEntry,
+  pathAsString,
 };

@@ -530,13 +530,8 @@ impl ServerWebSocket {
         self.flags.get().closed()
     }
 
-    /// Route a handler's returned promise (if any) to the `error` callback on
-    /// rejection. All `WebSocketHandler` callbacks are typed
-    /// `void | Promise<void>`; without this, a rejected promise surfaces as a
-    /// process-level `unhandledRejection` and never reaches `websocket.error`.
-    ///
-    /// A no-op when no `error` handler is configured, so that case keeps the
-    /// existing behavior (the rejection surfaces as `unhandledRejection`).
+    /// Route a handler's returned promise (if any) to `websocket.error` on
+    /// rejection; left untouched when no `error` handler is configured.
     fn handle_handler_promise(
         &self,
         result: JSValue,
@@ -1577,8 +1572,7 @@ pub(crate) fn ws_handler_promise_reject(
         let _ = VirtualMachine::get_mut().uncaught_exception(global_object, err, true);
         return JSValue::UNDEFINED;
     };
-    // After `on_close` the handler backref may dangle (the server wrapper,
-    // sole GC root for the handler slots, was dropped from `m_server`).
+    // `on_close` drops `m_server`, after which the handler backref may dangle.
     if this.is_closed() {
         let _ = VirtualMachine::get_mut().uncaught_exception(global_object, err, true);
         return JSValue::UNDEFINED;

@@ -261,6 +261,43 @@ describe("transpiler cache", () => {
     expect(run(["--feature=OTHER", "--feature=SUPER_SECRET"])).toBe("enabled");
     expect(newCacheCount()).toBe(0); // cache hit, order doesn't matter
   });
+
+  test("bun run entry does not poison bun test's jest-global injection", () => {
+    const filler = Buffer.alloc(50 * 1024, "/").toString();
+    writeFileSync(
+      join(temp_dir, "helper.js"),
+      `export const jestType = typeof jest;
+export const describeType = typeof describe;
+//${filler}`,
+    );
+    writeFileSync(
+      join(temp_dir, "runner.js"),
+      `import { jestType, describeType } from "./helper.js";
+console.log(jestType, describeType);`,
+    );
+    writeFileSync(
+      join(temp_dir, "check.test.js"),
+      `import { jestType, describeType } from "./helper.js";
+test("helper sees injected globals under bun test", () => {
+  expect({ jestType, describeType }).toEqual({ jestType: "object", describeType: "function" });
+});`,
+    );
+
+    const a = bunRun(join(temp_dir, "runner.js"), env);
+    expect(a.stdout).toBe("undefined undefined");
+    expect(existsSync(cache_dir)).toBeTrue();
+    expect(newCacheCount()).toBeGreaterThanOrEqual(1);
+
+    const t = Bun.spawnSync({
+      cmd: [bunExe(), "test", "check.test.js"],
+      cwd: temp_dir,
+      env,
+    });
+    const out = t.stderr.toString() + t.stdout.toString();
+    expect(out).toContain("1 pass");
+    expect(out).toContain("0 fail");
+    expect(t.exitCode).toBe(0);
+  });
 });
 
 test("rejects cached module records containing out-of-range string indices", () => {

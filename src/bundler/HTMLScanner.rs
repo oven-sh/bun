@@ -169,80 +169,58 @@ impl<'a> HTMLProcessorHandler for HTMLScanner<'a> {
 
 pub(crate) struct HTMLProcessor<T, const VISIT_DOCUMENT_TAGS: bool>(PhantomData<T>);
 
-/// Yields `(url, descriptor)` per `srcset` candidate; scan and rewrite both
-/// use this so their per-candidate import-record counts stay 1:1.
-pub(crate) struct SrcSetIter<'a> {
-    rest: &'a [u8],
-}
+/// `(url, descriptor)` per `srcset` candidate; scan and rewrite both use this so their record counts stay 1:1.
+pub(crate) struct SrcSetIter<'a>(&'a [u8]);
 
 impl<'a> SrcSetIter<'a> {
     pub(crate) fn new(value: &'a [u8]) -> Self {
-        Self { rest: value }
-    }
-
-    #[inline]
-    fn is_ascii_ws(b: u8) -> bool {
-        matches!(b, b' ' | b'\t' | b'\n' | b'\r' | 0x0C)
+        Self(value)
     }
 }
 
 impl<'a> Iterator for SrcSetIter<'a> {
-    /// `(url, descriptor)`; `descriptor` is `b""` when absent.
     type Item = (&'a [u8], &'a [u8]);
-
     fn next(&mut self) -> Option<Self::Item> {
-        // Skip leading whitespace and commas.
-        let mut i = 0;
-        while i < self.rest.len() && (Self::is_ascii_ws(self.rest[i]) || self.rest[i] == b',') {
-            i += 1;
+        let ws = u8::is_ascii_whitespace;
+        let s = &mut self.0;
+        while s.first().is_some_and(|b| ws(b) || *b == b',') {
+            *s = &s[1..];
         }
-        self.rest = &self.rest[i..];
-        if self.rest.is_empty() {
+        if s.is_empty() {
             return None;
         }
-        // URL runs until whitespace.
-        let mut url_end = 0;
-        while url_end < self.rest.len() && !Self::is_ascii_ws(self.rest[url_end]) {
-            url_end += 1;
-        }
-        // Per spec, trailing commas terminate the candidate (they are not part of the URL).
-        let mut url_trim = url_end;
-        while url_trim > 0 && self.rest[url_trim - 1] == b',' {
-            url_trim -= 1;
-        }
-        let url = &self.rest[..url_trim];
-        // If the URL itself ended in a comma there is no descriptor.
+        let url_end = s.iter().position(ws).unwrap_or(s.len());
+        let url_trim = s[..url_end]
+            .iter()
+            .rposition(|&b| b != b',')
+            .map_or(0, |i| i + 1);
+        let url = &s[..url_trim];
         if url_trim < url_end {
-            self.rest = &self.rest[url_end..];
+            *s = &s[url_end..];
             return Some((url, b""));
         }
-        // Descriptor runs until the next top-level comma (a comma inside `(...)` is part of the descriptor).
-        let mut desc_start = url_end;
-        while desc_start < self.rest.len() && Self::is_ascii_ws(self.rest[desc_start]) {
-            desc_start += 1;
+        let mut i = url_end;
+        while s.get(i).is_some_and(ws) {
+            i += 1;
         }
-        let mut desc_end = desc_start;
+        let desc_start = i;
         let mut depth: u32 = 0;
-        while desc_end < self.rest.len() {
-            match self.rest[desc_end] {
+        while let Some(&b) = s.get(i) {
+            match b {
                 b',' if depth == 0 => break,
                 b'(' => depth += 1,
                 b')' => depth = depth.saturating_sub(1),
                 _ => {}
             }
-            desc_end += 1;
+            i += 1;
         }
-        let mut desc_trim = desc_end;
-        while desc_trim > desc_start && Self::is_ascii_ws(self.rest[desc_trim - 1]) {
-            desc_trim -= 1;
-        }
-        let descriptor = &self.rest[desc_start..desc_trim];
-        self.rest = if desc_end < self.rest.len() {
-            &self.rest[desc_end + 1..]
-        } else {
-            &self.rest[desc_end..]
-        };
-        Some((url, descriptor))
+        let desc = &s[desc_start
+            ..s[desc_start..i]
+                .iter()
+                .rposition(|b| !ws(b))
+                .map_or(desc_start, |j| desc_start + j + 1)];
+        *s = s.get(i + 1..).unwrap_or(b"");
+        Some((url, desc))
     }
 }
 

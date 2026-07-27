@@ -4170,67 +4170,21 @@ pub mod bv2_impl {
                 }
 
                 // Distinct-content asset collisions on one output path are a hard error; identical content is benign.
-                {
-                    let mut seen: bun_collections::StringHashMap<(u64, usize)> =
-                        bun_collections::StringHashMap::default();
-                    let mut duplicates: bun_collections::StringArrayHashMap<Vec<usize>> =
-                        bun_collections::StringArrayHashMap::default();
-                    for (i, out) in additional_output_files.iter().enumerate() {
-                        let gop = seen.get_or_put(&out.dest_path)?;
-                        if !gop.found_existing {
-                            *gop.value_ptr = (out.hash, i);
-                            continue;
-                        }
-                        let (prev_hash, prev_i) = *gop.value_ptr;
-                        if prev_hash == out.hash {
-                            continue;
-                        }
-                        let dup = duplicates.get_or_put(&out.dest_path)?;
-                        if !dup.found_existing {
-                            dup.value_ptr.push(prev_i);
-                        }
-                        dup.value_ptr.push(i);
-                    }
-                    if duplicates.count() > 0 {
-                        let mut msg: Vec<u8> = Vec::new();
-                        let _ = writeln!(&mut msg, "Multiple files share the same output path");
-                        for (path, indices) in duplicates.keys().iter().zip(duplicates.values()) {
-                            let _ = writeln!(&mut msg, "  {}:", bstr::BStr::new(path));
-                            for &j in indices {
-                                let pretty: &[u8] = additional_output_files[j]
-                                    .source_index
-                                    .get()
-                                    .map(|i| sources[i.get() as usize].path.pretty)
-                                    .unwrap_or(additional_output_files[j].src_path.text);
-                                let _ = writeln!(
-                                    &mut msg,
-                                    "    from input {}",
-                                    bstr::BStr::new(pretty)
-                                );
-                            }
-                        }
-                        self.transpiler
-                            .log_mut()
-                            .add_error(None, bun_ast::Loc::EMPTY, msg);
-                        let template = &self.transpiler.options.asset_naming;
-                        if !template.is_empty() {
-                            let mut note: Vec<u8> = Vec::new();
-                            let _ = write!(
-                                &mut note,
-                                "asset naming is '{}', consider adding '[hash]' to make filenames unique",
-                                bstr::BStr::new(template),
-                            );
-                            self.transpiler.log_mut().add_msg(bun_ast::Msg {
-                                kind: bun_ast::Kind::Note,
-                                data: bun_ast::Data {
-                                    text: std::borrow::Cow::Owned(note),
-                                    ..Default::default()
-                                },
-                                ..Default::default()
-                            });
-                        }
+                let mut seen: bun_collections::StringHashMap<u64> = Default::default();
+                for out in &additional_output_files {
+                    let gop = seen.get_or_put(&out.dest_path)?;
+                    if gop.found_existing && *gop.value_ptr != out.hash {
+                        self.transpiler.log_mut().add_error_fmt(
+                            None,
+                            bun_ast::Loc::EMPTY,
+                            format_args!(
+                                "Multiple files share the same output path: {}\nConsider adding \"[hash]\" to --asset-naming",
+                                bstr::BStr::new(&out.dest_path),
+                            ),
+                        );
                         return Err(Error::DuplicateOutputPath);
                     }
+                    *gop.value_ptr = out.hash;
                 }
 
                 self.graph.additional_output_files = additional_output_files;

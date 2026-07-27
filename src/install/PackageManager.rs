@@ -1050,6 +1050,7 @@ fn configure_env_for_scripts_run(
             value: Box::<[u8]>::from(strings::without_trailing_slash(
                 FileSystem::instance().top_level_dir(),
             )),
+            conditional: false,
         };
     }
 

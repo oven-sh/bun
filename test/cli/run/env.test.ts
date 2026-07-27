@@ -222,6 +222,221 @@ describe("dotenv priority", () => {
     const { stdout: stdout_test } = bunTest(`${dir}/index.test.ts`, {});
     expect(stdout_test).toBe(`bun test ${Bun.version_with_sha}\n` + ".env.test");
   });
+
+  // https://github.com/oven-sh/bun/issues/6338
+  test("auto-loaded .env values are not enumerable on process.env", () => {
+    const dir = tempDirWithFiles("dotenv-enum", {
+      ".env": "AUTO_FROM_FILE=from-file\nBOTH=from-file\n",
+      "index.ts": `
+        const d = Object.getOwnPropertyDescriptor(process.env, "AUTO_FROM_FILE");
+        console.log(JSON.stringify({
+          read: process.env.AUTO_FROM_FILE,
+          inOp: "AUTO_FROM_FILE" in process.env,
+          hasOwn: Object.hasOwn(process.env, "AUTO_FROM_FILE"),
+          enumerable: d?.enumerable,
+          keys: Object.keys(process.env).includes("AUTO_FROM_FILE"),
+          spread: "AUTO_FROM_FILE" in { ...process.env },
+          both: Object.getOwnPropertyDescriptor(process.env, "BOTH")?.enumerable,
+        }));
+      `,
+    });
+    const { stdout } = bunRun(`${dir}/index.ts`, { BOTH: "from-process" });
+    expect(JSON.parse(stdout)).toEqual({
+      read: "from-file",
+      inOp: true,
+      hasOwn: true,
+      enumerable: false,
+      keys: false,
+      spread: false,
+      // BOTH came from the OS env, so it stays enumerable even though .env also defines it.
+      both: true,
+    });
+  });
+
+  // https://github.com/oven-sh/bun/issues/6338
+  test("auto-loaded .env values do not shadow mode-specific dotenv loaders", () => {
+    // Mirrors Vite's loadEnv(): parse .env.{mode} then let enumerable
+    // process.env keys override. Under Node process.env has no .env entries,
+    // so .env.production wins; Bun must behave the same.
+    const dir = tempDirWithFiles("dotenv-loadEnv", {
+      ".env": "PUBLICPATH=/\n",
+      ".env.production": "PUBLICPATH=/app\n",
+      "index.ts": `
+        import fs from "fs";
+        import path from "path";
+        const parsed: Record<string, string> = {};
+        for (const f of [".env", ".env.production"]) {
+          for (const line of fs.readFileSync(path.join(process.cwd(), f), "utf8").split("\\n")) {
+            const m = line.match(/^([^=]+)=(.*)$/);
+            if (m) parsed[m[1]] = m[2];
+          }
+        }
+        const processEnv = { ...process.env };
+        for (const key of Object.keys(parsed)) {
+          if (processEnv[key] !== undefined) parsed[key] = processEnv[key]!;
+        }
+        for (const key in process.env) {
+          if (key in parsed) parsed[key] = process.env[key]!;
+        }
+        console.log(parsed.PUBLICPATH);
+      `,
+    });
+    const { stdout } = bunRun(`${dir}/index.ts`);
+    expect(stdout).toBe("/app");
+  });
+
+  test("writing to an auto-loaded .env key makes it enumerable", () => {
+    const dir = tempDirWithFiles("dotenv-write", {
+      ".env": "AUTO_FROM_FILE=from-file\n",
+      "index.ts": `
+        console.log(Object.keys(process.env).includes("AUTO_FROM_FILE"));
+        process.env.AUTO_FROM_FILE = "from-js";
+        console.log(Object.keys(process.env).includes("AUTO_FROM_FILE"));
+        console.log(process.env.AUTO_FROM_FILE);
+      `,
+    });
+    const { stdout } = bunRun(`${dir}/index.ts`);
+    expect(stdout).toBe("false\ntrue\nfrom-js");
+  });
+
+  test("--env-file values stay enumerable on process.env", () => {
+    const dir = tempDirWithFiles("dotenv-explicit", {
+      ".env.custom": "EXPLICIT_FROM_FILE=1\n",
+      "index.ts": `console.log(Object.keys(process.env).includes("EXPLICIT_FROM_FILE"));`,
+    });
+    const result = Bun.spawnSync([bunExe(), "--env-file", ".env.custom", "index.ts"], {
+      cwd: dir,
+      env: { ...bunEnv, NODE_ENV: undefined },
+    });
+    expect(result.stdout.toString("utf8").trim()).toBe("true");
+  });
+
+  // Worker/subprocess-spawning tests below are slow under debug+ASAN.
+  const spawnTimeout = (isDebug || isASAN ? 6 : 1) * 5000;
+
+  test(
+    "auto-loaded .env values survive founding a SHARE_ENV worker tree",
+    () => {
+      const dir = tempDirWithFiles("dotenv-share-env", {
+        ".env": "AUTO_FROM_FILE=secret\n",
+        "worker.js": `process.exit(0);`,
+        "index.ts": `
+        const { Worker, SHARE_ENV } = require("worker_threads");
+        console.log(process.env.AUTO_FROM_FILE);
+        const w = new Worker("./worker.js", { env: SHARE_ENV });
+        w.on("exit", () => {
+          console.log(process.env.AUTO_FROM_FILE);
+          process.exit(0);
+        });
+      `,
+      });
+      const { stdout } = bunRun(`${dir}/index.ts`);
+      expect(stdout).toBe("secret\nsecret");
+    },
+    spawnTimeout,
+  );
+
+  test(
+    "auto-loaded .env values survive child_process default env inheritance",
+    () => {
+      const dir = tempDirWithFiles("dotenv-cp", {
+        ".env": "AUTO_FROM_FILE=secret\n",
+        "sub/child.js": `
+        // enumerable=true iff the value arrived via the OS env block; false if
+        // the child re-auto-loaded it from a .env file in cwd.
+        const d = Object.getOwnPropertyDescriptor(process.env, "AUTO_FROM_FILE");
+        console.log(process.env.AUTO_FROM_FILE, d?.enumerable, process.env.USER_MUTATION);
+      `,
+        "index.ts": `
+        process.env.USER_MUTATION = "from-js";
+        const { execFileSync } = require("child_process");
+        const out = execFileSync(process.execPath, ["child.js"], { cwd: "sub", encoding: "utf8" });
+        console.log(out.trim());
+      `,
+      });
+      const { stdout } = bunRun(`${dir}/index.ts`);
+      expect(stdout).toBe("secret true from-js");
+    },
+    spawnTimeout,
+  );
+
+  test("auto-loaded .env values survive Bun.$ default env inheritance", () => {
+    const dir = tempDirWithFiles("dotenv-shell", {
+      ".env": "AUTO_FROM_FILE=secret\n",
+      "index.ts": `
+        process.env.USER_MUTATION = "from-js";
+        const echo = await Bun.$\`echo \${{raw: "$AUTO_FROM_FILE $USER_MUTATION"}}\`.text();
+        console.log(echo.trim());
+        const reset = await Bun.$\`echo \${{raw: "$AUTO_FROM_FILE"}}\`.env(undefined).text();
+        console.log(reset.trim());
+      `,
+    });
+    const { stdout } = bunRun(`${dir}/index.ts`);
+    expect(stdout).toBe("secret from-js\nsecret");
+  });
+
+  test(
+    "auto-loaded .env values survive cluster.fork default env inheritance",
+    () => {
+      const dir = tempDirWithFiles("dotenv-cluster", {
+        ".env": "AUTO_FROM_FILE=secret\n",
+        "sub/.keep": "",
+        "index.ts": `
+        const cluster = require("cluster");
+        if (cluster.isPrimary) {
+          cluster.setupPrimary({ cwd: "sub", exec: __filename });
+          cluster.fork().on("exit", () => process.exit(0));
+        } else {
+          const d = Object.getOwnPropertyDescriptor(process.env, "AUTO_FROM_FILE");
+          console.log(process.env.AUTO_FROM_FILE, d?.enumerable);
+          process.exit(0);
+        }
+      `,
+      });
+      const { stdout } = bunRun(`${dir}/index.ts`);
+      expect(stdout).toBe("secret true");
+    },
+    spawnTimeout,
+  );
+
+  test(
+    "auto-loaded .env values survive the default worker env snapshot",
+    () => {
+      const dir = tempDirWithFiles("dotenv-worker-snap", {
+        ".env": "AUTO_FROM_FILE=secret\n",
+        "worker.js": `require("worker_threads").parentPort.postMessage(process.env.AUTO_FROM_FILE);`,
+        "index.ts": `
+        const { Worker } = require("worker_threads");
+        void process.env.PATH;
+        const w = new Worker("./worker.js", {});
+        w.on("message", (m) => { console.log(process.env.AUTO_FROM_FILE, m); process.exit(0); });
+      `,
+      });
+      const { stdout } = bunRun(`${dir}/index.ts`);
+      expect(stdout).toBe("secret secret");
+    },
+    spawnTimeout,
+  );
+
+  test("auto-loaded special-cased env keys are not enumerable", () => {
+    const dir = tempDirWithFiles("dotenv-special", {
+      ".env": "HTTP_PROXY=http://p:1\nTZ=UTC\n123=num\n",
+      "index.ts": `
+        const keys = Object.keys(process.env);
+        console.log(JSON.stringify({
+          proxy: { read: process.env.HTTP_PROXY, listed: keys.includes("HTTP_PROXY") },
+          tz: { read: process.env.TZ, listed: keys.includes("TZ") },
+          num: { read: process.env[123], listed: keys.includes("123") },
+        }));
+      `,
+    });
+    const { stdout } = bunRun(`${dir}/index.ts`, { HTTP_PROXY: undefined, TZ: undefined });
+    expect(JSON.parse(stdout)).toEqual({
+      proxy: { read: "http://p:1", listed: false },
+      tz: { read: "UTC", listed: false },
+      num: { read: "num", listed: false },
+    });
+  });
 });
 
 test(".env colon assign", () => {
@@ -633,11 +848,21 @@ describe("--env-file", () => {
 
   test("when arg missing, fallback to default dotenv behavior", () => {
     // if --env-file missing, it should fallback to the default builtin behavior (.env, .env.production, etc.)
-    expect(bunRun([]).stdout).toBe("BUNTEST_DOTENV=1");
+    // auto-loaded .env values are non-enumerable (see #6338), so check via direct access rather than Object.entries.
+    const result = Bun.spawnSync([bunExe(), "-e", "console.log(process.env.BUNTEST_DOTENV)"], {
+      cwd: dir,
+      env: { ...bunEnv, NODE_ENV: undefined },
+    });
+    expect(result.stdout.toString("utf8").trim()).toBe("1");
   });
 
   test("empty string disables default dotenv behavior", () => {
-    expect(bunRun(["--env-file=''"]).stdout).toBe("");
+    // auto-loaded .env values are non-enumerable (see #6338), so check via direct access rather than Object.entries.
+    const result = Bun.spawnSync([bunExe(), "--env-file=''", "-e", "console.log(process.env.BUNTEST_DOTENV)"], {
+      cwd: dir,
+      env: { ...bunEnv, NODE_ENV: undefined },
+    });
+    expect(result.stdout.toString("utf8").trim()).toBe("undefined");
   });
 
   test("should correctly ignore invalid values and parse the rest", () => {
@@ -646,8 +871,12 @@ describe("--env-file", () => {
   });
 
   test("should ignore a file that doesn't exist", () => {
-    const res = bunRun(["--env-file=.env.nonexisting"]);
-    expect(res.stdout).toBe("");
+    // auto-loaded .env values are non-enumerable (see #6338), so check via direct access rather than Object.entries.
+    const result = Bun.spawnSync(
+      [bunExe(), "--env-file=.env.nonexisting", "-e", "console.log(process.env.BUNTEST_DOTENV)"],
+      { cwd: dir, env: { ...bunEnv, NODE_ENV: undefined } },
+    );
+    expect(result.stdout.toString("utf8").trim()).toBe("undefined");
   });
 });
 

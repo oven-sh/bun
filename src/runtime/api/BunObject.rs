@@ -2152,6 +2152,25 @@ pub mod environment_variables {
         item.len()
     }
 
+    /// Whether the env entry at index `i` came only from an auto-discovered
+    /// `.env*` file. `createEnvironmentVariablesMap` marks such keys `DontEnum`
+    /// so `process.env` enumeration matches Node's (OS-only) view.
+    ///
+    /// # Safety
+    /// Same contract as `Bun__getEnvKey`: `i` must be less than the count
+    /// returned by `Bun__getEnvCount` for the same `globalObject`, with no map
+    /// mutation in between.
+    #[unsafe(no_mangle)]
+    pub(crate) unsafe extern "C" fn Bun__isEnvKeyConditional(
+        global_object: &JSGlobalObject,
+        i: usize,
+    ) -> bool {
+        let bun_vm = global_object.bun_vm().as_mut();
+        let values = bun_vm.env_loader().map.map.values();
+        debug_assert!(i < values.len());
+        values[i].conditional
+    }
+
     #[unsafe(no_mangle)]
     pub(crate) extern "C" fn Bun__getEnvValue(
         global_object: &JSGlobalObject,

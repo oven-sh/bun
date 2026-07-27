@@ -28,6 +28,7 @@ using namespace JSC;
 
 extern "C" size_t Bun__getEnvCount(JSGlobalObject* globalObject, void** list_ptr);
 extern "C" size_t Bun__getEnvKey(void* list, size_t index, unsigned char** out);
+extern "C" bool Bun__isEnvKeyConditional(JSGlobalObject* globalObject, size_t index);
 
 extern "C" bool Bun__getEnvValue(JSGlobalObject* globalObject, const ZigString* name, ZigString* value);
 extern "C" bool Bun__getEnvValueBunString(JSGlobalObject* globalObject, const BunString* name, BunString* value);
@@ -59,6 +60,32 @@ JSC_DEFINE_CUSTOM_GETTER(jsGetterEnvironmentVariable, (JSGlobalObject * globalOb
     JSValue result = jsString(vm, Zig::toStringCopy(value));
     thisObject->putDirect(vm, propertyName, result, 0);
     return JSValue::encode(result);
+}
+
+// Non-caching variant for keys auto-loaded from `.env*` files. Installed as a
+// CustomAccessor with DontEnum so enumerating process.env matches Node's
+// OS-only view; the accessor stays in place until user code writes to the key
+// (jsSetterEnvironmentVariable promotes to an enumerable data property).
+JSC_DEFINE_CUSTOM_GETTER(jsGetterConditionalEnvironmentVariable, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, PropertyName propertyName))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto* thisObject = dynamicDowncast<JSObject>(JSValue::decode(thisValue));
+    if (!thisObject) [[unlikely]]
+        return JSValue::encode(jsUndefined());
+
+    ZigString name = toZigString(propertyName.publicName());
+    ZigString value = { nullptr, 0 };
+
+    if (name.len == 0) [[unlikely]]
+        return JSValue::encode(jsUndefined());
+
+    if (!Bun__getEnvValue(globalObject, &name, &value)) {
+        return JSValue::encode(jsUndefined());
+    }
+
+    return JSValue::encode(jsString(vm, Zig::toStringCopy(value)));
 }
 
 JSC_DEFINE_CUSTOM_SETTER(jsSetterEnvironmentVariable, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue value, PropertyName propertyName))
@@ -694,8 +721,11 @@ RefPtr<SharedEnvStore> ensureSharedEnvStoreForWorker(Zig::GlobalObject* globalOb
         RETURN_IF_EXCEPTION(scope, nullptr);
     }
 
+    // Include DontEnum so auto-loaded .env values (conditional CustomAccessors)
+    // and the always-present TZ/TLS/proxy accessors are seeded; values that read
+    // as undefined or callable are filtered below.
     JSC::PropertyNameArrayBuilder keys(vm, JSC::PropertyNameMode::Strings, JSC::PrivateSymbolMode::Exclude);
-    envObject->methodTable()->getOwnPropertyNames(envObject, globalObject, keys, JSC::DontEnumPropertiesMode::Exclude);
+    envObject->methodTable()->getOwnPropertyNames(envObject, globalObject, keys, JSC::DontEnumPropertiesMode::Include);
     RETURN_IF_EXCEPTION(scope, nullptr);
 
     // Seed unconditionally: this thread's env is the new tree's initial contents.
@@ -703,6 +733,9 @@ RefPtr<SharedEnvStore> ensureSharedEnvStoreForWorker(Zig::GlobalObject* globalOb
     for (const auto& key : keys) {
         JSValue value = envObject->get(globalObject, key);
         RETURN_IF_EXCEPTION(scope, nullptr);
+        // DontEnum accessors for unset special vars (TZ, TLS, proxy) read undefined.
+        if (value.isUndefined())
+            continue;
         // Windows' process.env Proxy owns an enumerable `toJSON`; it is not an env var.
         if (value.isCallable())
             continue;
@@ -759,7 +792,7 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
     }
 
 #if OS(WINDOWS)
-    JSArray* keyArray = constructEmptyArray(globalObject, nullptr, count);
+    JSArray* keyArray = constructEmptyArray(globalObject, nullptr, 0);
     RETURN_IF_EXCEPTION(scope, {});
 #endif
 
@@ -795,30 +828,40 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
     };
 
     auto* cached_getter_setter = JSC::CustomGetterSetter::create(vm, jsGetterEnvironmentVariable, nullptr);
+    auto* conditional_getter_setter = JSC::CustomGetterSetter::create(vm, jsGetterConditionalEnvironmentVariable, jsSetterEnvironmentVariable);
     auto* proxy_getter_setter = JSC::CustomGetterSetter::create(vm, jsGetterProxyEnvironmentVariable, jsSetterProxyEnvironmentVariable);
 
     for (size_t i = 0; i < count; i++) {
         unsigned char* chars;
         size_t len = Bun__getEnvKey(list, i, &chars);
+        bool conditional = Bun__isEnvKeyConditional(globalObject, i);
         // We can't really trust that the OS gives us valid UTF-8
         auto name = String::fromUTF8ReplacingInvalidSequences(std::span { chars, len });
 #if OS(WINDOWS)
-        keyArray->putByIndexInline(globalObject, (unsigned)i, jsString(vm, name), false);
+        // keyArray backs the Windows Proxy's ownKeys() trap. Include conditional
+        // keys so Object.getOwnPropertyNames sees them; Object.keys / for..in /
+        // spread still filter them out via the getOwnPropertyDescriptor trap,
+        // which reflects internalEnv's DontEnum accessor.
+        keyArray->push(globalObject, jsString(vm, name));
+        RETURN_IF_EXCEPTION(scope, {});
 #endif
+        // The has* flags gate whether the post-loop CustomAccessor is installed
+        // enumerable; a .env-only value (conditional) stays DontEnum by leaving
+        // the flag false.
         if (name == TZ) {
-            hasTZ = true;
+            if (!conditional) hasTZ = true;
             continue;
         }
         if (name == NODE_TLS_REJECT_UNAUTHORIZED) {
-            hasNodeTLSRejectUnauthorized = true;
+            if (!conditional) hasNodeTLSRejectUnauthorized = true;
             continue;
         }
         if (name == BUN_CONFIG_VERBOSE_FETCH) {
-            hasBunConfigVerboseFetch = true;
+            if (!conditional) hasBunConfigVerboseFetch = true;
             continue;
         }
         if (auto idx = isProxyVar(name)) {
-            hasProxyVar[*idx] = true;
+            if (!conditional) hasProxyVar[*idx] = true;
             continue;
         }
         ASSERT(len > 0);
@@ -838,7 +881,8 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
                 if (Bun__getEnvValue(globalObject, &nameStr, &valueString)) {
                     JSValue value = jsString(vm, Zig::toStringCopy(valueString));
                     RETURN_IF_EXCEPTION(scope, {});
-                    object->putDirectIndex(globalObject, *index, value, 0, PutDirectIndexLikePutDirect);
+                    unsigned indexAttrs = conditional ? static_cast<unsigned>(JSC::PropertyAttribute::DontEnum) : 0;
+                    object->putDirectIndex(globalObject, *index, value, indexAttrs, PutDirectIndexLikePutDirect);
                     RETURN_IF_EXCEPTION(scope, {});
                 }
                 continue;
@@ -849,7 +893,18 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
         // time) and then sets it onto the object, subsequent calls to the
         // getter will not go through the getter and instead will just do the
         // property lookup.
-        object->putDirectCustomAccessor(vm, identifier, cached_getter_setter, JSC::PropertyAttribute::CustomValue | 0);
+        //
+        // Keys that exist only because Bun auto-discovered a `.env*` file are
+        // added `DontEnum` so `Object.keys`/`for..in`/`{ ...process.env }` match
+        // Node's OS-only view. Direct reads still work; `jsSetterEnvironmentVariable`
+        // promotes to an enumerable data property on first write.
+        if (conditional) {
+            object->putDirectCustomAccessor(vm, identifier, conditional_getter_setter,
+                JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DontEnum | 0);
+        } else {
+            object->putDirectCustomAccessor(vm, identifier, cached_getter_setter,
+                JSC::PropertyAttribute::CustomValue | 0);
+        }
     }
 
     unsigned int TZAttrs = JSC::PropertyAttribute::CustomAccessor | 0;

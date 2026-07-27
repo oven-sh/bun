@@ -453,24 +453,21 @@ export function windowsEnv(
   //
   // it throws "Cannot convert a Symbol value to a string"
 
-  (internalEnv as any)[Bun.inspect.custom] = () => {
+  const enumerableView = () => {
     let o = {};
     for (let k of envMapList) {
-      o[k] = internalEnv[k.toUpperCase()];
+      const up = k.toUpperCase();
+      if ($Object.getOwnPropertyDescriptor(internalEnv, up)?.enumerable) {
+        o[k] = internalEnv[up];
+      }
     }
     return o;
   };
-
-  (internalEnv as any).toJSON = () => {
-    // Mirror enumeration: original-case key names, case-insensitive values.
-    // Spreading internalEnv directly would leak the canonical UPPERCASE
-    // storage keys into JSON.stringify(process.env) and IPC env echoes.
-    let o = {};
-    for (let k of envMapList) {
-      o[k] = internalEnv[k.toUpperCase()];
-    }
-    return o;
-  };
+  (internalEnv as any)[Bun.inspect.custom] = enumerableView;
+  // Mirror enumeration: original-case key names, case-insensitive values.
+  // Spreading internalEnv directly would leak the canonical UPPERCASE
+  // storage keys into JSON.stringify(process.env) and IPC env echoes.
+  (internalEnv as any).toJSON = enumerableView;
 
   return new Proxy(internalEnv, {
     get(_, p) {
@@ -505,8 +502,10 @@ export function windowsEnv(
       }
       if (internalEnv[k] !== value) {
         editWindowsEnvVar(k, value);
-        internalEnv[k] = value;
       }
+      // Unconditional so a same-value write to a DontEnum auto-loaded .env key
+      // still promotes it to an enumerable data property via the custom setter.
+      internalEnv[k] = value;
       return true;
     },
     has(_, p) {
@@ -530,7 +529,10 @@ export function windowsEnv(
     defineProperty(_, p, attributes) {
       const k = String(p).toUpperCase();
       $assert(typeof p === "string"); // proxy is only string and symbol. the symbol would have thrown by now
-      if (!(k in internalEnv) && !envMapList.includes(p)) {
+      // Gate on envMapList membership, not `k in internalEnv`: the
+      // always-present TZ/proxy accessors are own properties of internalEnv
+      // while correctly absent from envMapList.
+      if (!envMapList.includes(p) && !envMapList.some(x => x.toUpperCase() === k)) {
         envMapList.push(p);
       }
       editWindowsEnvVar(k, internalEnv[k]);

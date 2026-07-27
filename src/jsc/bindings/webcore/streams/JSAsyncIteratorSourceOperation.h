@@ -46,8 +46,7 @@ public:
     // {done:true, value} still writes the value first; this remembers the done across a
     // backpressure suspension on that final write.
     bool m_iteratorDone : 1 { false };
-    // Bytes written by the sync drive since the last suspension; bounds the sync loop for
-    // sinks that never signal backpressure themselves (the ArrayBuffer direct controller).
+    // Bytes written since the last suspension; bounds the ArrayBuffer-sink pump.
     uint64_t m_syncDriveBytes { 0 };
 
 private:

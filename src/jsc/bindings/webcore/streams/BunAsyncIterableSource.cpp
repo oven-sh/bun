@@ -93,9 +93,7 @@ static void driveAsyncIterator(JSGlobalObject*, JSAsyncIteratorSourceOperation*)
 static void asyncIterReturnIteratorAndSettle(JSGlobalObject*, JSAsyncIteratorSourceOperation*);
 static void asyncIterFinishWithError(JSGlobalObject*, JSAsyncIteratorSourceOperation*, JSValue error);
 
-// The sync drive loop is bounded to this many written bytes before it yields back to the
-// pulling consumer; without the bound a synchronously-fulfilling iterator never lets the
-// reader observe a chunk and runs the process to OOM.
+// Written bytes after which the pump yields to the pulling consumer (ArrayBuffer direct sink).
 static constexpr uint64_t asyncIterSyncDriveYieldThreshold = 64 * 1024;
 
 // invokeOptionalMethod returns the EMPTY value when the method is not callable; the empty
@@ -107,9 +105,7 @@ static JSPromise* asPromise(JSValue value)
     return dynamicDowncast<JSPromise>(value);
 }
 
-// Sync-drive backpressure yield: the pull promise resolves (so the direct controller delivers
-// the buffered batch to the waiting reader) and m_running clears so the next pull() call
-// re-enters driveAsyncIterator. m_done is NOT set.
+// Backpressure yield: resolve the pull promise without setting m_done so the next pull() resumes.
 static void asyncIterYieldForBackpressure(JSGlobalObject* globalObject, JSAsyncIteratorSourceOperation* op)
 {
     auto& vm = getVM(globalObject);

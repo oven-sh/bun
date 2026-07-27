@@ -690,13 +690,15 @@ values;`;
     contents: BunFile | string;
     loader: Loader;
     // Substring that must appear in the bundled entry output if the plugin ran
-    // (i.e. "foo" in the source was rewritten to "qoo"). Left undefined for
-    // loaders that don't route through onBeforeParse.
+    // (i.e. "foo" in the source was rewritten to "qoo"). onBeforeParse does fire
+    // for the file loader too, but a PNG's first NUL byte stops the plugin's
+    // strstr before it can find "foo", so there is no rewrite to observe; that
+    // case instead asserts the asset survived the round-trip.
     expectTransformed?: string;
   };
   const additional_files: AdditionalFile[] = [
     {
-      name: "loader.png",
+      name: "probe_asset.png",
       contents: Bun.file(path.join(import.meta.dir, "../integration/sharp/bun.png")),
       loader: "file",
     },
@@ -771,8 +773,11 @@ values;`;
         expect(text).toContain(expectTransformed);
         expect(text).not.toContain("foo");
       } else {
-        // The entry references the asset by name; verify it made it into the bundle.
-        expect(text).toContain(name.split(".")[0]);
+        // file loader: plugin ran but found no "foo" in the PNG bytes, so the
+        // bundler must still emit the asset and reference it from the entry.
+        const asset = result.outputs.find(o => o.kind === "asset" && o.path.endsWith("." + ext));
+        expect(asset).toBeDefined();
+        expect(text).toContain(path.basename(asset!.path));
       }
     });
   }

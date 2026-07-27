@@ -208,11 +208,13 @@ test(
 
         async function cycle(body, terminate) {
           const w = new Worker(mk(body));
-          const port = await new Promise(r =>
-            w.addEventListener("message", e => r(e.data), { once: true }),
-          );
+          const port = await new Promise((resolve, reject) => {
+            w.addEventListener("message", e => resolve(e.data), { once: true });
+            w.addEventListener("error", e => reject(e.error ?? e.message), { once: true });
+          });
           const closed = new Promise(r => w.addEventListener("close", r, { once: true }));
           if (terminate) w.terminate();
+          else w.postMessage(0);
           await closed;
           return probe(port);
         }
@@ -229,7 +231,7 @@ test(
         const out = {};
         out.terminate = await cycle(serve + "postMessage(s.port);", true);
         out.processExit = await cycle(
-          serve + "postMessage(s.port); setTimeout(() => process.exit(0), 20);",
+          serve + "postMessage(s.port); self.onmessage = () => process.exit(0);",
           false,
         );
         out.unrefNatural = await cycle(serve + "s.unref(); postMessage(s.port);", false);
@@ -258,8 +260,9 @@ test(
       unrefNatural: "ECONNREFUSED",
     });
     if (isLinux) {
-      // Unfixed: one listen fd per cycle (>= 5). Allow 1 for incidental fds.
-      expect(out.fdDelta).toBeLessThanOrEqual(1);
+      // Unfixed: one listen fd per cycle (>= 5). Allow a couple of incidental
+      // fds (net.connect client sockets, worker message channels).
+      expect(out.fdDelta).toBeLessThanOrEqual(2);
     }
     expect(exitCode).toBe(0);
   },

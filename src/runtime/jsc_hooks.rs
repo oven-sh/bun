@@ -1644,17 +1644,23 @@ fn stop_servers_for_terminate() {
     if state.is_null() {
         return;
     }
-    // `stop(true)` → `stop_listening` removes the entry, so snapshot first.
-    // SAFETY: live boxed per-thread `RuntimeState`; single JS thread.
-    let servers: Vec<crate::server::AnyServer> = unsafe { &(*state).isolation_handles }
-        .iter()
-        .filter_map(|(h, ())| match h {
-            IsolationHandle::Server(s) => Some(*s),
-            _ => None,
-        })
-        .collect();
-    for mut s in servers {
-        s.stop(true);
+    // `stop(true)`'s on_close JS can register a new server; re-scan until
+    // none remain. `stop_listening` removes the entry, so snapshot per pass.
+    for _ in 0..128 {
+        // SAFETY: live boxed per-thread `RuntimeState`; single JS thread.
+        let servers: Vec<crate::server::AnyServer> = unsafe { &(*state).isolation_handles }
+            .iter()
+            .filter_map(|(h, ())| match h {
+                IsolationHandle::Server(s) => Some(*s),
+                _ => None,
+            })
+            .collect();
+        if servers.is_empty() {
+            return;
+        }
+        for mut s in servers {
+            s.stop(true);
+        }
     }
 }
 

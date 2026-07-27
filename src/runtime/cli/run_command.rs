@@ -1496,9 +1496,7 @@ impl Run {
         let _entry_promise_protected;
         match vm.load_entry_point(entry) {
             Ok(promise) => {
-                // `pending_internal_promise` is a raw, unvisited pointer on this
-                // path; root it so the post-`on_before_exit` status read below
-                // survives the intervening GC and user JS.
+                // Root it (the stored raw ptr is not GC-visited on this path).
                 _entry_promise_protected = JSValue::from_cell(promise).protected();
                 // SAFETY: `promise` is a live GC cell returned by the module loader.
                 let promise = unsafe { &mut *promise };

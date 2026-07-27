@@ -2495,6 +2495,53 @@ describe("fetch should allow duplex", () => {
     expect(await response.text()).toBe("Hello World!");
   });
 
+  // A node Readable whose _read() pushes synchronously produces an async iterator whose
+  // .next() fulfills synchronously. The pump driving that iterator into the request body must
+  // yield per write so the ResumableSink's backpressure can propagate back; otherwise it
+  // spins in a tight loop, growing an ArrayBufferSink unbounded and starving the event loop
+  // so destroy()/timers never run.
+  it("does not wedge on Readable.destroy() when _read pushes synchronously", async () => {
+    const fixture = `
+      const net = require("node:net");
+      const { Readable } = require("node:stream");
+      const srv = net.createServer(s => s.on("data", () => {}));
+      await new Promise(r => srv.listen(0, "127.0.0.1", r));
+      const chunk = Buffer.alloc(16 * 1024, 0x47);
+      const rd = new Readable({ read() { this.push(chunk); } });
+      setTimeout(() => rd.destroy(new Error("upstream went away")), 50);
+      let ticks = 0;
+      const iv = setInterval(() => { ticks++ }, 25);
+      try {
+        await fetch("http://127.0.0.1:" + srv.address().port + "/", { method: "POST", body: rd, duplex: "half" });
+        console.log("BUG: fetch resolved");
+      } catch (e) {
+        console.log("rejected:" + String(e?.message || e) + " ticks:" + ticks);
+      }
+      clearInterval(iv);
+      srv.close();
+      process.exit(0);
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const stdoutP = proc.stdout.text();
+    const stderrP = proc.stderr.text();
+    const exited = await Promise.race([
+      proc.exited,
+      sleep(isDebug ? 8000 : 2500).then(() => "timeout" as const),
+    ]);
+    if (exited === "timeout") proc.kill(9);
+    const [stdout, stderr] = await Promise.all([stdoutP, stderrP]);
+    expect({ exited, stdout: stdout.trim() }).toEqual({
+      exited: 0,
+      stdout: expect.stringMatching(/^rejected:upstream went away ticks:[1-9]/),
+    });
+    expect(stderr).not.toContain("BUG:");
+  }, 15000);
+
   it("should allow duplex using async iterator (async)", async () => {
     using server = Bun.serve({
       port: 0,

@@ -46,6 +46,10 @@ public:
     // {done:true, value} still writes the value first; this remembers the done across a
     // backpressure suspension on that final write.
     bool m_iteratorDone : 1 { false };
+    // Set when m_controller is an ArrayBuffer-kind JSDirectStreamController: the pump yields
+    // the pull promise after each write so the controller's pull-fulfilled reaction can flush
+    // to the reader (that sink kind has no backpressure signal of its own).
+    bool m_yieldPerWrite : 1 { false };
 
 private:
     JSAsyncIteratorSourceOperation(JSC::VM&, JSC::Structure*);

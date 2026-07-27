@@ -2282,7 +2282,13 @@ describe("error identity and branding (Node.js parity)", () => {
       ["new SQLTagStore()", () => new TagStoreCtor()],
     ] as const) {
       const e = thrown(fn);
-      expect({ name, ctor: e.constructor.name, code: e.code, message: e.message, isTypeError: e instanceof TypeError }).toEqual({
+      expect({
+        name,
+        ctor: e.constructor.name,
+        code: e.code,
+        message: e.message,
+        isTypeError: e instanceof TypeError,
+      }).toEqual({
         name,
         ctor: "Error",
         code: "ERR_ILLEGAL_CONSTRUCTOR",

@@ -4032,7 +4032,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             self.ts_use_counts.push(0);
         }
 
-        if kind != js_ast::symbol::Kind::Unbound {
+        if !matches!(
+            kind,
+            js_ast::symbol::Kind::Unbound | js_ast::symbol::Kind::Label
+        ) {
             match identifier {
                 b"undefined" => self
                     .const_values_declared

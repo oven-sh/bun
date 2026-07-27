@@ -791,7 +791,6 @@ describe("ServerWebSocket", () => {
       done();
     },
   }));
-  // https://github.com/oven-sh/bun/issues/5271
   describe("Blob", () => {
     async function openOne() {
       const opened = Promise.withResolvers<ServerWebSocket<unknown>>();

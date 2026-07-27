@@ -128,7 +128,11 @@ const errors: ErrorCodeMapping = [
   ["ERR_HTTP2_TOO_MANY_INVALID_FRAMES", Error],
   ["ERR_HTTP2_UNSUPPORTED_PROTOCOL", Error],
   ["ERR_HTTP2_INVALID_SETTING_VALUE", TypeError, "TypeError", RangeError],
-  ["ERR_ILLEGAL_CONSTRUCTOR", TypeError],
+  // Node.js JS-side callers (lib/internal/errors.js) construct a TypeError,
+  // but node_errors.h's THROW_ERR_ILLEGAL_CONSTRUCTOR (used by native
+  // modules such as node:sqlite) constructs a plain Error, so both variants
+  // are needed.
+  ["ERR_ILLEGAL_CONSTRUCTOR", TypeError, undefined, Error],
   ["ERR_INCOMPATIBLE_OPTION_PAIR", TypeError],
   ["ERR_INVALID_ADDRESS", Error],
   ["ERR_INVALID_ADDRESS_FAMILY", RangeError],

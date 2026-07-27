@@ -311,8 +311,7 @@ static NextStep asyncIterHandleNextResult(JSGlobalObject* globalObject, JSAsyncI
                 flushPromise->performPromiseThenWithContext(vm, globalObject, runtime->onAsyncIterableSourceFlushFulfilled(), runtime->onAsyncIterableSourceErrored(), jsUndefined(), op);
                 return NextStep::Suspended;
             }
-            // write() is user-reachable (Array sink returns raw `.byteLength`, and the own
-            // `write` property is writable), so clamp before the double→uint64_t cast.
+            // write() is user-reachable, so clamp the double before casting.
             if (std::isfinite(wroteNumber) && wroteNumber > 0)
                 op->m_syncDriveBytes += static_cast<uint64_t>(std::min(wroteNumber, static_cast<double>(asyncIterSyncDriveYieldThreshold)));
             if (op->m_syncDriveBytes >= asyncIterSyncDriveYieldThreshold && !op->m_iteratorDone && asyncIterControllerIsYieldable(controller))

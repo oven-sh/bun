@@ -329,6 +329,7 @@ describe("Bun.JSONL", () => {
         expect(Bun.JSONL.parse(JSON.stringify({ s: bigStr }) + "\n")).toStrictEqual([{ s: bigStr }]);
       });
 
+      // simdutf scanning 4 GB exceeds the default budget under debug/ASAN; release covers these.
       test.skipIf(isASAN || isDebug)("4 GB Uint8Array of null bytes", () => {
         const buf = new Uint8Array(4 * 1024 * 1024 * 1024);
         expect(() => Bun.JSONL.parse(buf)).toThrow();
@@ -1205,17 +1206,17 @@ describe("Bun.JSONL", () => {
           new Uint8Array([...encode('{"s":"'), ...invalid, ...encode('"}\n{"b":2}\n')]);
 
         test.each([
-          ["0xFF 0xFF", [0xff, 0xff]],
-          ["single 0xFF", [0xff]],
-          ["lone continuation 0x80", [0x80]],
-          ["truncated 2-byte lead", [0xc2]],
-          ["truncated 3-byte lead", [0xe0, 0xa0]],
-          ["truncated 4-byte lead", [0xf0, 0x9f, 0x98]],
-          ["overlong C0 80", [0xc0, 0x80]],
-        ])("read never exceeds byteLength (%s)", (_, invalid) => {
+          ["0xFF 0xFF", [0xff, 0xff], "\uFFFD\uFFFD"],
+          ["single 0xFF", [0xff], "\uFFFD"],
+          ["lone continuation 0x80", [0x80], "\uFFFD"],
+          ["truncated 2-byte lead", [0xc2], "\uFFFD"],
+          ["truncated 3-byte lead", [0xe0, 0xa0], "\uFFFD"],
+          ["truncated 4-byte lead", [0xf0, 0x9f, 0x98], "\uFFFD"],
+          ["overlong C0 80", [0xc0, 0x80], "\uFFFD\uFFFD"],
+        ])("read never exceeds byteLength (%s)", (_, invalid, decoded) => {
           const buf = withInvalid(invalid);
           const r = Bun.JSONL.parseChunk(buf);
-          expect(r.values).toEqual([{ s: expect.any(String) }, { b: 2 }]);
+          expect(r.values).toEqual([{ s: decoded }, { b: 2 }]);
           expect(r.read).toBeLessThanOrEqual(buf.byteLength);
           expect(r.read).toBe(buf.byteLength - 1);
         });

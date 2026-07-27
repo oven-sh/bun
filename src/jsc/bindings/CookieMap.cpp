@@ -198,9 +198,7 @@ ExceptionOr<void> CookieMap::remove(const CookieStoreDeleteOptions& options)
     String name = options.name;
     String domain = options.domain;
     String path = options.path;
-    // The expiring cookie must satisfy the prefix rules or the browser ignores it and the
-    // original cookie stays. A __Host- cookie could only have been accepted with no Domain
-    // and Path=/, so the tombstone is normalized to the only shape the browser can have stored.
+    // Normalize a __Host- tombstone to the only shape a browser can have stored (RFC 6265bis 4.1.3.2).
     bool hasHostPrefix = Cookie::hasHostPrefix(name);
     bool secure = hasHostPrefix || Cookie::hasSecurePrefix(name);
     if (hasHostPrefix) {

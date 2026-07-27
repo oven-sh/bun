@@ -220,6 +220,11 @@ describe("attribute combinations every browser rejects", () => {
     map.set("s", "old");
     expectTypeError(() => map.set("s", "new", { sameSite: "none" }), sameSiteNoneError);
     expect(map.get("s")).toBe("old");
+
+    // set(Cookie) path: validation must run before the old entry is removed.
+    expectTypeError(() => map.set(Bun.Cookie.parse("s=new; SameSite=None")), sameSiteNoneError);
+    expect(map.get("s")).toBe("old");
+    expect(map.toSetCookieHeaders()).toEqual(["s=old; Path=/; SameSite=Lax"]);
   });
 
   describe("property setters on an existing Cookie", () => {

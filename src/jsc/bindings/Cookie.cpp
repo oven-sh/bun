@@ -61,20 +61,16 @@ bool Cookie::hasSecurePrefix(const String& name)
     return name.startsWithIgnoringASCIICase("__Secure-"_s);
 }
 
-// RFC 6265bis attribute combinations that every browser rejects. Checked on the "set a cookie"
-// path (CookieInit construction, CookieMap::set, and the prototype setters); parse() reports
-// what was on the wire and does not run this.
+// RFC 6265bis 4.1.3 / 5.6.20 and CHIPS: attribute combinations every browser rejects. Not run by parse().
 ExceptionOr<void> Cookie::validateAttributes(const String& name, const String& domain, const String& path, bool secure, CookieSameSite sameSite, bool partitioned)
 {
     if (!secure) {
-        // RFC 6265bis 5.6.20 step 17 and CHIPS: browsers drop the cookie without Secure.
         if (sameSite == CookieSameSite::None) {
             return Exception { TypeError, "Invalid cookie: \"sameSite: none\" requires secure: true"_s };
         }
         if (partitioned) {
             return Exception { TypeError, "Invalid cookie: \"partitioned: true\" requires secure: true"_s };
         }
-        // RFC 6265bis 4.1.3: the name prefixes are matched case-insensitively.
         if (hasHostPrefix(name)) {
             return Exception { TypeError, "Invalid cookie: \"__Host-\" name prefix requires secure: true"_s };
         }

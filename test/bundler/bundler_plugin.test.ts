@@ -1,4 +1,5 @@
-import { describe, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
+import { tempDir } from "harness";
 import path, { dirname, join, resolve } from "node:path";
 import { itBundled } from "./expectBundled";
 
@@ -1607,5 +1608,215 @@ describe("bundler", () => {
         expect(asyncCompleted).toBe(true);
       },
     };
+  });
+});
+
+describe("plugin hook registration after setup", () => {
+  const lateHookMessage = /must be called within a plugin's setup\(\) function/;
+
+  const files = {
+    "entry.ts": `import x from "./first.ts"; console.log(x)`,
+    "first.ts": `import z from "./second.ts"; export default "F" + z`,
+    "second.ts": `export default "-DISK"`,
+  };
+
+  async function buildWith(
+    dir: string,
+    setup: (b: import("bun").PluginBuilder) => void | Promise<void>,
+    opts: { throws?: boolean } = {},
+  ) {
+    const { throws = true } = opts;
+    return await Bun.build({
+      entrypoints: [path.join(dir, "entry.ts")],
+      throw: throws,
+      plugins: [{ name: "late", setup }],
+    });
+  }
+
+  test("onLoad inside a running onLoad callback throws", async () => {
+    using dir = tempDir("plugin-late-onload", files);
+    const result = await buildWith(
+      String(dir),
+      b => {
+        b.onLoad({ filter: /first\.ts$/ }, () => {
+          // Previously this was accepted and silently dropped; now it must throw.
+          b.onLoad({ filter: /second\.ts$/ }, () => ({ contents: `export default "-PLUGIN"`, loader: "ts" }));
+          return { contents: `import z from "./second.ts"; export default "F"+z`, loader: "ts" };
+        });
+      },
+      { throws: false },
+    );
+    expect(result.success).toBe(false);
+    const messages = result.logs.map(l => l.message);
+    expect(messages.find(m => lateHookMessage.test(m))).toMatch(/onLoad\(\)/);
+  });
+
+  test("onResolve inside a running onResolve callback throws", async () => {
+    using dir = tempDir("plugin-late-onresolve", files);
+    const result = await buildWith(
+      String(dir),
+      b => {
+        b.onResolve({ filter: /first\.ts$/ }, args => {
+          b.onResolve({ filter: /second\.ts$/ }, () => undefined);
+          return { path: path.join(String(dir), "first.ts") };
+        });
+      },
+      { throws: false },
+    );
+    expect(result.success).toBe(false);
+    const messages = result.logs.map(l => l.message);
+    expect(messages.find(m => lateHookMessage.test(m))).toMatch(/onResolve\(\)/);
+  });
+
+  test("onLoad inside a running onResolve callback throws", async () => {
+    using dir = tempDir("plugin-late-mix", files);
+    const result = await buildWith(
+      String(dir),
+      b => {
+        b.onResolve({ filter: /first\.ts$/ }, args => {
+          b.onLoad({ filter: /second\.ts$/ }, () => ({ contents: `export default "-PLUGIN"`, loader: "ts" }));
+          return { path: path.join(String(dir), "first.ts") };
+        });
+      },
+      { throws: false },
+    );
+    expect(result.success).toBe(false);
+    const messages = result.logs.map(l => l.message);
+    expect(messages.find(m => lateHookMessage.test(m))).toMatch(/onLoad\(\)/);
+  });
+
+  test("onEnd inside a running onEnd callback throws", async () => {
+    using dir = tempDir("plugin-late-onend", { "entry.ts": `export default 1` });
+    const order: string[] = [];
+    let thrown: unknown;
+    try {
+      await Bun.build({
+        entrypoints: [path.join(String(dir), "entry.ts")],
+        plugins: [
+          {
+            name: "late",
+            setup(b) {
+              b.onEnd(() => {
+                order.push("first");
+                b.onEnd(() => order.push("nested"));
+              });
+            },
+          },
+        ],
+      });
+    } catch (e) {
+      thrown = e;
+    }
+    expect(order).toEqual(["first"]);
+    expect(String(thrown)).toMatch(lateHookMessage);
+    expect(String(thrown)).toMatch(/onEnd\(\)/);
+  });
+
+  test("onStart inside a running onLoad callback throws", async () => {
+    using dir = tempDir("plugin-late-onstart", files);
+    const result = await buildWith(
+      String(dir),
+      b => {
+        b.onLoad({ filter: /first\.ts$/ }, () => {
+          b.onStart(() => {});
+          return { contents: `export default 1`, loader: "ts" };
+        });
+      },
+      { throws: false },
+    );
+    expect(result.success).toBe(false);
+    const messages = result.logs.map(l => l.message);
+    expect(messages.find(m => lateHookMessage.test(m))).toMatch(/onStart\(\)/);
+  });
+
+  for (const method of ["onLoad", "onResolve", "onStart", "onEnd", "onBeforeParse"] as const) {
+    test(`stale builder: ${method} throws after the build has finished`, async () => {
+      using dir = tempDir("plugin-stale", { "entry.ts": `export default 1` });
+      let stale!: import("bun").PluginBuilder;
+      const result = await Bun.build({
+        entrypoints: [path.join(String(dir), "entry.ts")],
+        plugins: [
+          {
+            name: "capture",
+            setup(b) {
+              stale = b;
+            },
+          },
+        ],
+      });
+      expect(result.success).toBe(true);
+      expect(() => {
+        if (method === "onStart" || method === "onEnd") {
+          (stale[method] as any)(() => {});
+        } else if (method === "onBeforeParse") {
+          stale.onBeforeParse({ filter: /x/ }, { napiModule: {} as any, symbol: "x" });
+        } else {
+          (stale[method] as any)({ filter: /x/ }, () => {});
+        }
+      }).toThrow(TypeError);
+      expect(() => {
+        if (method === "onStart" || method === "onEnd") {
+          (stale[method] as any)(() => {});
+        } else if (method === "onBeforeParse") {
+          stale.onBeforeParse({ filter: /x/ }, { napiModule: {} as any, symbol: "x" });
+        } else {
+          (stale[method] as any)({ filter: /x/ }, () => {});
+        }
+      }).toThrow(lateHookMessage);
+    });
+  }
+
+  test("one build's builder throws when used in another build's setup", async () => {
+    using dir = tempDir("plugin-cross-build", { "entry.ts": `export default 1` });
+    let first!: import("bun").PluginBuilder;
+    await Bun.build({
+      entrypoints: [path.join(String(dir), "entry.ts")],
+      plugins: [
+        {
+          name: "a",
+          setup(b) {
+            first = b;
+          },
+        },
+      ],
+    });
+    let thrown: unknown;
+    await Bun.build({
+      entrypoints: [path.join(String(dir), "entry.ts")],
+      plugins: [
+        {
+          name: "b",
+          setup(_b) {
+            try {
+              first.onLoad({ filter: /x/ }, () => ({ contents: "", loader: "ts" }));
+            } catch (e) {
+              thrown = e;
+            }
+          },
+        },
+      ],
+    });
+    expect(thrown).toBeInstanceOf(TypeError);
+    expect((thrown as Error).message).toMatch(lateHookMessage);
+  });
+
+  test("registration during setup (including onStart) is still valid", async () => {
+    using dir = tempDir("plugin-valid-reg", files);
+    let hits = 0;
+    const result = await buildWith(String(dir), b => {
+      b.onLoad({ filter: /first\.ts$/ }, () => ({
+        contents: `import z from "./second.ts"; export default "F"+z`,
+        loader: "ts",
+      }));
+      b.onStart(() => {
+        b.onLoad({ filter: /second\.ts$/ }, () => {
+          hits++;
+          return { contents: `export default "-PLUGIN"`, loader: "ts" };
+        });
+      });
+    });
+    expect(result.success).toBe(true);
+    expect(hits).toBe(1);
+    expect(await result.outputs[0].text()).toContain("-PLUGIN");
   });
 });

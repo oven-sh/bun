@@ -105,8 +105,8 @@ async function fetchAndInjectHTML(url: string) {
     stderr: "inherit",
   });
 
-  await subprocess.exited;
-  return await subprocess.stdout.text();
+  const [html] = await Promise.all([subprocess.stdout.text(), subprocess.exited]);
+  return html;
 }
 
 const fixtureDir = path.join(__dirname, "react-spa-no-tailwind");
@@ -130,8 +130,8 @@ function shadcnDir() {
 }
 
 // Run `bun create <entry>` until the project is scaffolded and the dev server
-// prints its URL, then tear it down. Returns the captured stdout and URL so the
-// caller can assert on the scaffold log.
+// prints its URL, then tear it down. Returns the captured stdout so the caller
+// can assert on the scaffold log.
 async function scaffold(dir: string, entry: string, env: Record<string, string | undefined>) {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "create", entry],
@@ -141,52 +141,33 @@ async function scaffold(dir: string, entry: string, env: Record<string, string |
     stderr: "pipe",
     stdin: "ignore",
   });
+  // Drain stderr concurrently so a noisy install cannot fill the pipe buffer
+  // and stall the child while we wait on stdout for the dev-server URL.
+  const stderrPromise = proc.stderr.text();
   const all = { text: "" };
   const serverUrl = await getServerUrl(proc, all);
   proc.kill();
-  await proc.exited;
-  return { stdout: all.text, serverUrl };
+  const [, stderr] = await Promise.all([proc.exited, stderrPromise]);
+  return { stdout: all.text, stderr, serverUrl };
 }
 
+function envFor(development: boolean) {
+  return {
+    ...bunEnv,
+    BUN_PORT: "0",
+    NODE_ENV: development ? undefined : "production",
+  };
+}
+
+// The "build" tests are registered first and all marked concurrent so they form
+// a single concurrent group; a serial test between them would force bun:test to
+// drain the group and run the builds one after another. The "dev server" tests
+// (todo in CI, snapshot-based so they must stay serial) are registered after.
 for (const development of [true, false]) {
   describe(`development: ${development}`, () => {
-    const normalizeHTML = normalizeHTMLFn(development);
-    const env = {
-      ...bunEnv,
-      BUN_PORT: "0",
-      NODE_ENV: development ? undefined : "production",
-    };
+    const env = envFor(development);
 
     describe("react spa (no tailwind)", () => {
-      test.concurrent.todoIf(isCI || isWindows)("dev server", async () => {
-        const dir = await reactSpaNoTailwindDir();
-        await using process = Bun.spawn({
-          cmd: [bunExe(), "create", "./index.jsx"],
-          cwd: dir,
-          env,
-          stdout: "pipe",
-          stderr: "pipe",
-          stdin: "ignore",
-        });
-        const all = { text: "" };
-        const serverUrl = await getServerUrl(process, all);
-        const content = await fetchAndInjectHTML(serverUrl);
-        expect(normalizeHTML(content)).toMatchSnapshot();
-        expect(
-          all.text
-            .replaceAll(Bun.version, "*.*.*")
-            .replaceAll(Bun.version_with_sha, "*.*.*")
-            .replace(/v\d+\.\d+\.\d+(?:\s*\([a-f0-9]+\))?(?:-(debug|canary.*))?/g, "v*.*.*") // Handle version with git hash
-            .replace(/\[\d+\.?\d*m?s\]/g, "[*ms]")
-            .replace(/@\d+\.\d+\.\d+/g, "@*.*.*")
-            .replace(/\d+\.\d+\s*ms/g, "*.** ms")
-            .replace(/^\s+/gm, "") // Remove leading spaces
-            .replace(/installed react(-dom)?@\d+\.\d+\.\d+/g, "installed react$1@*.*.*") // Handle react versions
-            .trim()
-            .replaceAll(serverUrl, "http://[SERVER_URL]"),
-        ).toMatchSnapshot();
-      });
-
       test.concurrent.todoIf(isWindows)("build", async () => {
         const dir = await reactSpaNoTailwindDir();
         const { stdout: createOut } = await scaffold(dir, "./index.jsx", env);
@@ -211,34 +192,6 @@ for (const development of [true, false]) {
     });
 
     describe("react spa (tailwind)", () => {
-      test.concurrent.todoIf(isCI || isWindows)("dev server", async () => {
-        const dir = reactSpaTailwindDir();
-        await using process = Bun.spawn({
-          cmd: [bunExe(), "create", "./index.tsx"],
-          cwd: dir,
-          env,
-          stdout: "pipe",
-          stderr: "pipe",
-          stdin: "ignore",
-        });
-        const all = { text: "" };
-        const serverUrl = await getServerUrl(process, all);
-        const content = await fetchAndInjectHTML(serverUrl);
-        expect(normalizeHTML(content)).toMatchSnapshot();
-        expect(
-          all.text
-            .replaceAll(Bun.version_with_sha, "*.*.*")
-            .replace(/Bun (v\d+\.\d+\.\d+)/, "Bun *.*.*")
-            .replace(/\[\d+\.?\d*m?s\]/g, "[*ms]")
-            .replace(/@\d+\.\d+\.\d+/g, "@*.*.*")
-            .replace(/\d+\.\d+\s*ms/g, "*.** ms")
-            .replace(/^\s+/gm, "")
-            .replace(/installed (react(-dom)?|tailwindcss)@\d+\.\d+\.\d+/g, "installed $1@*.*.*")
-            .trim()
-            .replaceAll(serverUrl, "http://[SERVER_URL]"),
-        ).toMatchSnapshot();
-      });
-
       test.concurrent.todoIf(isWindows)("build", async () => {
         const dir = reactSpaTailwindDir();
         const { stdout: createOut } = await scaffold(dir, "./index.tsx", env);
@@ -263,42 +216,6 @@ for (const development of [true, false]) {
     });
 
     describe("shadcn/ui", () => {
-      test.concurrent.todoIf(isCI || isWindows)("dev server", async () => {
-        const dir = shadcnDir();
-        await using process = Bun.spawn({
-          cmd: [bunExe(), "create", "./index.tsx"],
-          cwd: dir,
-          env,
-          stdout: "pipe",
-          stderr: "pipe",
-          stdin: "ignore",
-        });
-        const all = { text: "" };
-        const serverUrl = await getServerUrl(process, all);
-        const content = await fetchAndInjectHTML(serverUrl);
-
-        // Check for components.json
-        const componentsJson = await Bun.file(path.join(dir, "components.json")).exists();
-        expect(componentsJson).toBe(true);
-
-        expect(
-          all.text
-            .replaceAll(Bun.version_with_sha, "*.*.*")
-            .replaceAll(Bun.version, "*.*.*")
-            .replace(/\[\d+\.?\d*m?s\]/g, "[*ms]")
-            .replace(/@\d+\.\d+\.\d+/g, "@*.*.*")
-            .replace(/\d+\.\d+\s*ms/g, "*.** ms")
-            .replace(/^\s+/gm, "")
-            .replace(
-              /installed (react(-dom)?|@radix-ui\/.*|tailwindcss|class-variance-authority|clsx|lucide-react|tailwind-merge)@\d+\.\d+\.\d+/g,
-              "installed $1@*.*.*",
-            )
-            .trim()
-            .replaceAll(serverUrl, "http://[SERVER_URL]"),
-        ).toMatchSnapshot();
-        expect(normalizeHTML(content)).toMatchSnapshot();
-      });
-
       test.concurrent.todoIf(isCI || isWindows)("build", async () => {
         const dir = shadcnDir();
         await scaffold(dir, "./index.tsx", env);
@@ -347,12 +264,120 @@ export default function Component() {
     stdin: "ignore",
   });
 
-  const [stdout] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   const installLine = stdout.split("\n").find(line => line.includes("--only-missing install"));
   expect(installLine).toBeDefined();
   expect(installLine).toContain(" install -- ");
+  // The registry is unreachable, so the spawned install must fail.
+  expect(exitCode).not.toBe(0);
 });
+
+for (const development of [true, false]) {
+  describe(`development: ${development}`, () => {
+    const normalizeHTML = normalizeHTMLFn(development);
+    const env = envFor(development);
+
+    describe("react spa (no tailwind)", () => {
+      test.todoIf(isCI || isWindows)("dev server", async () => {
+        const dir = await reactSpaNoTailwindDir();
+        await using process = Bun.spawn({
+          cmd: [bunExe(), "create", "./index.jsx"],
+          cwd: dir,
+          env,
+          stdout: "pipe",
+          stderr: "inherit",
+          stdin: "ignore",
+        });
+        const all = { text: "" };
+        const serverUrl = await getServerUrl(process, all);
+        const content = await fetchAndInjectHTML(serverUrl);
+        expect(normalizeHTML(content)).toMatchSnapshot();
+        expect(
+          all.text
+            .replaceAll(Bun.version, "*.*.*")
+            .replaceAll(Bun.version_with_sha, "*.*.*")
+            .replace(/v\d+\.\d+\.\d+(?:\s*\([a-f0-9]+\))?(?:-(debug|canary.*))?/g, "v*.*.*") // Handle version with git hash
+            .replace(/\[\d+\.?\d*m?s\]/g, "[*ms]")
+            .replace(/@\d+\.\d+\.\d+/g, "@*.*.*")
+            .replace(/\d+\.\d+\s*ms/g, "*.** ms")
+            .replace(/^\s+/gm, "") // Remove leading spaces
+            .replace(/installed react(-dom)?@\d+\.\d+\.\d+/g, "installed react$1@*.*.*") // Handle react versions
+            .trim()
+            .replaceAll(serverUrl, "http://[SERVER_URL]"),
+        ).toMatchSnapshot();
+      });
+    });
+
+    describe("react spa (tailwind)", () => {
+      test.todoIf(isCI || isWindows)("dev server", async () => {
+        const dir = reactSpaTailwindDir();
+        await using process = Bun.spawn({
+          cmd: [bunExe(), "create", "./index.tsx"],
+          cwd: dir,
+          env,
+          stdout: "pipe",
+          stderr: "inherit",
+          stdin: "ignore",
+        });
+        const all = { text: "" };
+        const serverUrl = await getServerUrl(process, all);
+        const content = await fetchAndInjectHTML(serverUrl);
+        expect(normalizeHTML(content)).toMatchSnapshot();
+        expect(
+          all.text
+            .replaceAll(Bun.version_with_sha, "*.*.*")
+            .replace(/Bun (v\d+\.\d+\.\d+)/, "Bun *.*.*")
+            .replace(/\[\d+\.?\d*m?s\]/g, "[*ms]")
+            .replace(/@\d+\.\d+\.\d+/g, "@*.*.*")
+            .replace(/\d+\.\d+\s*ms/g, "*.** ms")
+            .replace(/^\s+/gm, "")
+            .replace(/installed (react(-dom)?|tailwindcss)@\d+\.\d+\.\d+/g, "installed $1@*.*.*")
+            .trim()
+            .replaceAll(serverUrl, "http://[SERVER_URL]"),
+        ).toMatchSnapshot();
+      });
+    });
+
+    describe("shadcn/ui", () => {
+      test.todoIf(isCI || isWindows)("dev server", async () => {
+        const dir = shadcnDir();
+        await using process = Bun.spawn({
+          cmd: [bunExe(), "create", "./index.tsx"],
+          cwd: dir,
+          env,
+          stdout: "pipe",
+          stderr: "inherit",
+          stdin: "ignore",
+        });
+        const all = { text: "" };
+        const serverUrl = await getServerUrl(process, all);
+        const content = await fetchAndInjectHTML(serverUrl);
+
+        // Check for components.json
+        const componentsJson = await Bun.file(path.join(dir, "components.json")).exists();
+        expect(componentsJson).toBe(true);
+
+        expect(
+          all.text
+            .replaceAll(Bun.version_with_sha, "*.*.*")
+            .replaceAll(Bun.version, "*.*.*")
+            .replace(/\[\d+\.?\d*m?s\]/g, "[*ms]")
+            .replace(/@\d+\.\d+\.\d+/g, "@*.*.*")
+            .replace(/\d+\.\d+\s*ms/g, "*.** ms")
+            .replace(/^\s+/gm, "")
+            .replace(
+              /installed (react(-dom)?|@radix-ui\/.*|tailwindcss|class-variance-authority|clsx|lucide-react|tailwind-merge)@\d+\.\d+\.\d+/g,
+              "installed $1@*.*.*",
+            )
+            .trim()
+            .replaceAll(serverUrl, "http://[SERVER_URL]"),
+        ).toMatchSnapshot();
+        expect(normalizeHTML(content)).toMatchSnapshot();
+      });
+    });
+  });
+}
 
 function normalizeHTMLFn(development: boolean = true) {
   return (html: string) =>

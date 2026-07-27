@@ -1619,6 +1619,23 @@ impl Run {
             }
 
             vm.on_before_exit();
+
+            // Unsettled top-level await: the loop (and beforeExit) drained but
+            // the entry module's evaluation promise is still pending. Node
+            // prints a warning and exits 13 unless the user set an exit code.
+            if let Some(p) = vm.pending_internal_promise {
+                // SAFETY: `p` is a live JSC heap cell tracked by the VM.
+                if unsafe { &*p }.status() == PromiseStatus::Pending {
+                    pretty_errorln!(
+                        "<r><yellow>Warning<r><d>:<r> Detected unsettled top-level await at {}",
+                        bstr::BStr::new(vm.main()),
+                    );
+                    Output::flush();
+                    if vm.exit_handler.exit_code == 0 {
+                        vm.exit_handler.exit_code = 13;
+                    }
+                }
+            }
         }
 
         if log_has_msgs(vm) {

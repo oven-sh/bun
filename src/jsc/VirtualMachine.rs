@@ -2445,7 +2445,21 @@ impl VirtualMachine {
                 return Ok(promise);
             }
             self.event_loop_mut().perform_gc();
-            self.wait_for_promise(jsc::AnyPromise::Internal(promise));
+            // Drain-aware wait (same shape as the worker path's
+            // `wait_for_promise_with_termination`): return with the promise
+            // still Pending once nothing in the loop can settle it, so the
+            // caller can report an unsettled top-level await (warn + exit 13)
+            // instead of spinning a no-op `tick_without_idle()` forever.
+            while crate::JSPromise::status_ptr(promise) == crate::js_promise::Status::Pending {
+                self.event_loop_mut().tick();
+                if crate::JSPromise::status_ptr(promise) != crate::js_promise::Status::Pending {
+                    break;
+                }
+                if !self.is_event_loop_alive() {
+                    break;
+                }
+                self.auto_tick();
+            }
         }
 
         Ok(self.pending_internal_promise.unwrap_or(promise))

@@ -14,6 +14,7 @@ use crate::server::jsc::{
     JSType, JSValue, JsError, JsRef, JsResult, ZigStringSlice,
 };
 use crate::server::web_socket_server_context::HandlerFlags;
+use crate::webcore::Blob;
 
 bun_output::declare_scope!(WebSocketServer, visible);
 
@@ -193,6 +194,27 @@ pub(super) fn send_status_to_js(
             JSValue::js_number(0.0)
         }
     }
+}
+
+/// If `value` is a `Blob`, returns its in-memory bytes as `Ok(Some(slice))`.
+/// File-/S3-backed blobs throw (the send/publish APIs are synchronous and
+/// return a byte count, so async I/O cannot happen here). Non-blobs return
+/// `Ok(None)` so callers fall through to their next type check.
+#[inline]
+pub(super) fn blob_payload<'a>(
+    global_this: &JSGlobalObject,
+    fn_name: &'static str,
+    value: JSValue,
+) -> JsResult<Option<&'a [u8]>> {
+    let Some(blob) = value.as_class_ref::<Blob>() else {
+        return Ok(None);
+    };
+    if blob.needs_to_read_file() || blob.is_s3() {
+        return Err(global_this.throw(format_args!(
+            "{fn_name} cannot send a file-backed Blob synchronously; await blob.bytes() first"
+        )));
+    }
+    Ok(Some(blob.shared_view()))
 }
 
 impl ServerWebSocket {
@@ -854,6 +876,20 @@ impl ServerWebSocket {
             ));
         }
 
+        if let Some(slice) = blob_payload(global_this, "publish", message_value)? {
+            let ret = self.do_publish(
+                ssl,
+                app,
+                publish_to_self,
+                topic_slice.slice(),
+                slice,
+                Opcode::Binary,
+                compress,
+            );
+            message_value.ensure_still_alive();
+            return Ok(ret);
+        }
+
         {
             let js_string = message_value.to_js_string(global_this)?;
             let view = js_string.view(global_this);
@@ -969,19 +1005,33 @@ impl ServerWebSocket {
             );
         }
 
-        let Some(array_buffer) = message_value.as_array_buffer(global_this) else {
-            return Err(global_this.throw(format_args!("publishBinary expects an ArrayBufferView")));
-        };
+        if let Some(array_buffer) = message_value.as_array_buffer(global_this) {
+            return Ok(self.do_publish(
+                ssl,
+                app,
+                publish_to_self,
+                topic_slice.slice(),
+                array_buffer.slice(),
+                Opcode::Binary,
+                compress,
+            ));
+        }
 
-        Ok(self.do_publish(
-            ssl,
-            app,
-            publish_to_self,
-            topic_slice.slice(),
-            array_buffer.slice(),
-            Opcode::Binary,
-            compress,
-        ))
+        if let Some(slice) = blob_payload(global_this, "publishBinary", message_value)? {
+            let ret = self.do_publish(
+                ssl,
+                app,
+                publish_to_self,
+                topic_slice.slice(),
+                slice,
+                Opcode::Binary,
+                compress,
+            );
+            message_value.ensure_still_alive();
+            return Ok(ret);
+        }
+
+        Err(global_this.throw(format_args!("publishBinary expects a Blob or BufferSource")))
     }
 
     // `passThis: true` in server.classes.ts — wrapper is emitted by
@@ -1062,6 +1112,17 @@ impl ServerWebSocket {
                 "send",
                 "bytes",
             ));
+        }
+
+        if let Some(slice) = blob_payload(global_this, "send", message_value)? {
+            let ret = send_status_to_js(
+                self.websocket().send(slice, Opcode::Binary, compress, true),
+                slice.len(),
+                "send",
+                "bytes",
+            );
+            message_value.ensure_still_alive();
+            return Ok(ret);
         }
 
         {
@@ -1150,17 +1211,28 @@ impl ServerWebSocket {
             callframe.arguments_count() as usize,
         )?;
 
-        let Some(buffer) = message_value.as_array_buffer(global_this) else {
-            return Err(global_this.throw(format_args!("sendBinary requires an ArrayBufferView")));
-        };
+        if let Some(buffer) = message_value.as_array_buffer(global_this) {
+            let slice = buffer.slice();
+            return Ok(send_status_to_js(
+                self.websocket().send(slice, Opcode::Binary, compress, true),
+                slice.len(),
+                "sendBinary",
+                "bytes",
+            ));
+        }
 
-        let slice = buffer.slice();
-        Ok(send_status_to_js(
-            self.websocket().send(slice, Opcode::Binary, compress, true),
-            slice.len(),
-            "sendBinary",
-            "bytes",
-        ))
+        if let Some(slice) = blob_payload(global_this, "sendBinary", message_value)? {
+            let ret = send_status_to_js(
+                self.websocket().send(slice, Opcode::Binary, compress, true),
+                slice.len(),
+                "sendBinary",
+                "bytes",
+            );
+            message_value.ensure_still_alive();
+            return Ok(ret);
+        }
+
+        Err(global_this.throw(format_args!("sendBinary requires a Blob or BufferSource")))
     }
 
     #[bun_jsc::host_fn(method)]
@@ -1199,6 +1271,18 @@ impl ServerWebSocket {
                         name,
                         "bytes",
                     ));
+                } else if let Some(buffer) = blob_payload(global_this, name, value)? {
+                    if buffer.len() > MAX_CONTROL_FRAME_PAYLOAD {
+                        return Err(throw_control_frame_too_large(global_this, buffer.len()));
+                    }
+                    let ret = send_status_to_js(
+                        self.websocket().send(buffer, opcode, false, true),
+                        buffer.len(),
+                        name,
+                        "bytes",
+                    );
+                    value.ensure_still_alive();
+                    return Ok(ret);
                 } else if value.is_string() {
                     // SAFETY: to_js_string returns a non-null *mut JSString on the Ok path.
                     let string_value = value.to_js_string(global_this)?.to_slice(global_this);

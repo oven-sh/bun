@@ -3904,7 +3904,7 @@ pub mod formatter {
             };
             let str = OwnedString::new(BunString::from_js(result, self.global_this)?);
             self.add_for_new_line(str.length());
-            if writer_.write_fmt(format_args!("{}", &*str)).is_err() {
+            if writer_.write_fmt(format_args!("{}", *str)).is_err() {
                 self.failed = true;
             }
             Ok(())

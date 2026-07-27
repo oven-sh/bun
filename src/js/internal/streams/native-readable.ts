@@ -233,13 +233,13 @@ function adjustHighWaterMark(stream: NativeReadable) {
   stream[kHasResized] = true;
 }
 
-function destroy(this: NativeReadable, error: any, cb: () => void) {
+function destroy(this: NativeReadable, error: any, cb: (err?: any) => void) {
   const ptr = this.$bunNativePtr;
   if (ptr) {
     ptr.cancel(error);
   }
   if (cb) {
-    process.nextTick(cb);
+    process.nextTick(cb, error);
   }
 }
 

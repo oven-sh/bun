@@ -315,7 +315,7 @@ test.concurrent("RedisClient survives GC across many short-lived instances", asy
 // unterminated line is treated as a partial reply; when the server closes
 // mid-line the pending command is rejected as connection-closed.
 test.concurrent("rejects a RESP simple-string reply whose line terminator never arrives", async () => {
-  // Minimal mock Redis server: replies +OK to the HELLO handshake, then
+  // Minimal mock Redis server: RESP3 map to the HELLO handshake, then
   // answers the next command with `payload`.
   function listen(payload: Buffer, endAfterPayload: boolean): Promise<{ server: net.Server; port: number }> {
     return new Promise((resolve, reject) => {

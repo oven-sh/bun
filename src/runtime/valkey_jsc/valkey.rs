@@ -975,7 +975,7 @@ impl ValkeyClient {
         debug!("Processing HELLO response");
 
         match value {
-            RESPValue::Error(err) => {
+            RESPValue::Error(err) | RESPValue::BlobError(err) => {
                 self.fail(err, RedisError::AuthenticationFailed)?;
                 Ok(())
             }

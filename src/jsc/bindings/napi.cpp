@@ -3324,12 +3324,8 @@ extern "C" void napi_internal_check_gc(napi_env env)
 
 extern "C" JSC::EncodedJSValue Bun__JSValue__getArrayBufferViewBuffer(JSC::EncodedJSValue, JSC::JSGlobalObject*);
 
-// napi_is_arraybuffer / napi_get_{arraybuffer,typedarray,dataview,buffer}_info
-// are CHECK_ENV (not NAPI_PREAMBLE) in Node.js, so they must succeed with a
-// VM exception already pending. JSC__JSValue__asArrayBuffer opens with
-// ASSERT_NO_PENDING_EXCEPTION; SuspendExceptionScope stashes vm.m_exception
-// for the read and restores it, so the assertion holds and the addon's
-// exception survives.
+// Node.js does not gate these accessors behind NAPI_PREAMBLE. Stash any
+// pending exception around ASSERT_NO_PENDING_EXCEPTION in the callee.
 extern "C" bool napi_internal_as_array_buffer(napi_env env, JSC::EncodedJSValue value, Bun__ArrayBuffer* out)
 {
     JSC::SuspendExceptionScope suspend(env->vm());

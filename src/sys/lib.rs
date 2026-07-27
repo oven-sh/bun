@@ -9411,6 +9411,9 @@ fn fd_write_all_quiet(fd: Fd, mut bytes: &[u8]) -> bool {
         match write(fd, bytes) {
             Ok(0) => return false, // short write → give up
             Ok(n) => bytes = &bytes[n..],
+            // Darwin's write$NOCANCEL is single-shot (no EINTR retry in `write()`).
+            #[cfg(unix)]
+            Err(e) if e.get_errno() == E::EINTR => continue,
             #[cfg(unix)]
             Err(e) if e.is_retry() => {
                 let mut pfd = [posix::PollFd {

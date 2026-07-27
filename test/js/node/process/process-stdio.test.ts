@@ -1,7 +1,7 @@
 import { spawn, spawnSync } from "bun";
-import { dlopen, FFIType, ptr } from "bun:ffi";
+import { cc, ptr } from "bun:ffi";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isPosix, libcPathForDlopen } from "harness";
+import { bunEnv, bunExe, isLinux, isMacOS, tempDirWithFiles } from "harness";
 import { closeSync, readSync } from "node:fs";
 import path from "path";
 import { isatty } from "tty";
@@ -165,18 +165,30 @@ describe.concurrent("process-stdio", () => {
   // sharing the description (worker threads, a parent shell, libuv) can flip it
   // on the process-wide fd 1/2. Bun must (a) not flip it from the worker stdio
   // path and (b) not drop output when something else has.
-  describe.skipIf(!isPosix)("stdout/stderr vs O_NONBLOCK on a pipe", () => {
-    // F_GETFL/F_SETFL are 3/4 on Linux and Darwin; O_NONBLOCK differs (2048 vs 4).
-    // describe.skipIf still evaluates this body on Windows, so guard the libc
-    // lookup (which throws there); the skipped tests never read the value.
-    const libc = isPosix ? libcPathForDlopen() : "";
-    const fcntlPrelude = `
-const { dlopen, FFIType } = require("bun:ffi");
-const { O_NONBLOCK } = require("node:constants");
-const { fcntl } = dlopen(${JSON.stringify(libc)}, {
-  fcntl: { args: [FFIType.int, FFIType.int, FFIType.int], returns: FFIType.int },
+  describe.skipIf(!(isLinux || isMacOS))("stdout/stderr vs O_NONBLOCK on a pipe", () => {
+    // fcntl is variadic; Apple's arm64 ABI puts variadic args on the stack, so a
+    // fixed-arg dlopen binding gets F_SETFL wrong there. Compile non-variadic
+    // wrappers instead (fdutil.c is shared with the spawned children).
+    const dir = tempDirWithFiles("stdio-nonblock", {
+      "fdutil.c": `
+#include <fcntl.h>
+#include <unistd.h>
+int fd_is_nonblock(int fd) { int fl = fcntl(fd, F_GETFL); return fl >= 0 && (fl & O_NONBLOCK) != 0; }
+int fd_set_nonblock(int fd) { int fl = fcntl(fd, F_GETFL); return fl < 0 ? fl : fcntl(fd, F_SETFL, fl | O_NONBLOCK); }
+int fd_pipe(int* fds) { return pipe(fds); }
+`,
+    });
+    const fdutil = path.join(dir, "fdutil.c");
+    const prelude = `
+const { cc } = require("bun:ffi");
+const { fd_is_nonblock, fd_set_nonblock } = cc({
+  source: ${JSON.stringify(fdutil)},
+  symbols: {
+    fd_is_nonblock: { args: ["int"], returns: "int" },
+    fd_set_nonblock: { args: ["int"], returns: "int" },
+  },
 }).symbols;
-const nonblock = fd => (fcntl(fd, 3, 0) & O_NONBLOCK) !== 0;
+const nonblock = fd => fd_is_nonblock(fd) !== 0;
 `;
 
     test("reading process.stdout / process.stderr leaves fd 1/2 blocking", async () => {
@@ -184,7 +196,7 @@ const nonblock = fd => (fcntl(fd, 3, 0) & O_NONBLOCK) !== 0;
         cmd: [
           bunExe(),
           "-e",
-          fcntlPrelude +
+          prelude +
             `
 const before = [nonblock(1), nonblock(2)];
 void process.stdout;
@@ -210,7 +222,7 @@ process.stderr.write(JSON.stringify({ before, after }));
         cmd: [
           bunExe(),
           "-e",
-          fcntlPrelude +
+          prelude +
             `
 const { Worker } = require("node:worker_threads");
 const before = [nonblock(1), nonblock(2)];
@@ -240,21 +252,23 @@ w.on("online", () => {
       // read end only this test drains: the child fills it to EAGAIN, signals
       // the byte count on stderr, then console.log()s the markers into the
       // still-full pipe; the parent starts draining only after the signal.
-      const { pipe } = dlopen(libc, {
-        pipe: { args: [FFIType.ptr], returns: FFIType.int },
+      const { fd_pipe } = cc({
+        source: fdutil,
+        symbols: { fd_pipe: { args: ["ptr"], returns: "int" } },
       }).symbols;
       const fds = new Int32Array(2);
-      expect(pipe(ptr(fds))).toBe(0);
+      expect(fd_pipe(ptr(fds))).toBe(0);
       const [r, w] = fds;
+      let wClosed = false;
       try {
         await using proc = spawn({
           cmd: [
             bunExe(),
             "-e",
-            fcntlPrelude +
+            prelude +
               `
 const fs = require("node:fs");
-fcntl(1, 4, fcntl(1, 3, 0) | O_NONBLOCK);
+fd_set_nonblock(1);
 const fill = Buffer.alloc(4096, 120);
 let filled = 0;
 for (let i = 0; i < 1000; i++) {
@@ -268,9 +282,17 @@ for (let i = 0; i < 10; i++) console.log("marker " + i);
           stdio: ["ignore", w, "pipe"],
         });
         closeSync(w);
+        wClosed = true;
         const reader = proc.stderr.getReader();
-        const first = await reader.read();
-        const filled = Number(Buffer.from(first.value).toString().trim());
+        let header = "";
+        while (!header.includes("\n")) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          header += Buffer.from(value).toString();
+        }
+        const nl = header.indexOf("\n");
+        const filled = Number(header.slice(0, nl >= 0 ? nl : header.length));
+        let stderrRest = nl >= 0 ? header.slice(nl + 1) : "";
         expect(filled).toBeGreaterThan(0);
         const buf = Buffer.alloc(65536);
         let total = Buffer.alloc(0);
@@ -279,7 +301,6 @@ for (let i = 0; i < 10; i++) console.log("marker " + i);
           if (n === 0) break;
           total = Buffer.concat([total, buf.subarray(0, n)]);
         }
-        let stderrRest = "";
         for (;;) {
           const { value, done } = await reader.read();
           if (done) break;
@@ -297,6 +318,11 @@ for (let i = 0; i < 10; i++) console.log("marker " + i);
         });
         expect(exitCode).toBe(0);
       } finally {
+        if (!wClosed) {
+          try {
+            closeSync(w);
+          } catch {}
+        }
         try {
           closeSync(r);
         } catch {}

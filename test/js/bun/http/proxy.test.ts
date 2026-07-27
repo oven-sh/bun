@@ -518,6 +518,84 @@ test("proxy with long password (> 4096 chars) works correctly after redirect", a
   }
 });
 
+// RFC 7617: the Basic credential is always `user-id ":" password`, so a proxy
+// URL with an empty password (`user:@host`) or an empty username (`:pass@host`)
+// must still send the colon. bun previously dropped the colon for empty
+// password and sent no header at all for empty username.
+//
+// Exercised via http_proxy in a subprocess (rather than the `{proxy}` option)
+// so the raw env string reaches bun_url::URL::parse without WHATWG
+// normalization first dropping the `:` and tripping the userinfo heuristic.
+describe.each([
+  { userinfo: "squidadmin:", decoded: "squidadmin:" },
+  { userinfo: ":hunter2", decoded: ":hunter2" },
+  { userinfo: "squidadmin:hunter2", decoded: "squidadmin:hunter2" },
+])("proxy Basic auth keeps the colon for userinfo $userinfo", ({ userinfo, decoded }) => {
+  const expected = `Basic ${Buffer.from(decoded).toString("base64")}`;
+  // Delete (not blank) every case variant: on Windows the child env is
+  // case-insensitive, so an `HTTP_PROXY: ""` alongside `http_proxy: <url>`
+  // collapses to "" and the proxy is bypassed.
+  const noProxyEnv = { ...bunEnv };
+  for (const k of PROXY_ENV_KEYS) delete noProxyEnv[k];
+
+  test.concurrent("http target (absolute-form)", async () => {
+    const proxy = await createAuthCapturingProxy();
+    try {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `process.exitCode = (await fetch(${JSON.stringify(String(httpServer.url))})).status === 200 ? 0 : 1;`,
+        ],
+        env: { ...noProxyEnv, http_proxy: `http://${userinfo}@127.0.0.1:${proxy.port}` },
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(proxy.capturedAuths).toEqual([expected]);
+      expect(exitCode).toBe(0);
+    } finally {
+      await proxy.close();
+    }
+  });
+
+  test.concurrent("https target (CONNECT)", async () => {
+    const capturedAuths: string[] = [];
+    const server = net.createServer(socket => {
+      socket.once("data", data => {
+        const request = data.toString();
+        for (const line of request.split("\r\n")) {
+          if (line.toLowerCase().startsWith("proxy-authorization:")) {
+            capturedAuths.push(line.substring("proxy-authorization:".length).trim());
+          }
+        }
+        // Reject the tunnel so we don't need a real TLS origin.
+        socket.end("HTTP/1.1 407 Proxy Authentication Required\r\nContent-Length: 0\r\n\r\n");
+      });
+      socket.on("error", () => {});
+    });
+    server.listen(0);
+    await once(server, "listening");
+    const port = (server.address() as net.AddressInfo).port;
+    try {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", `console.log((await fetch("https://example.invalid/")).status);`],
+        env: { ...noProxyEnv, https_proxy: `http://${userinfo}@127.0.0.1:${port}` },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout.trim()).toBe("407");
+      expect(capturedAuths).toEqual([expected]);
+      expect(exitCode).toBe(0);
+    } finally {
+      server.close();
+      await once(server, "close");
+    }
+  });
+});
+
 // Regression test for https://github.com/oven-sh/bun/issues/31780
 //
 // The Proxy-Authorization: Basic <...> credential must be encoded with the

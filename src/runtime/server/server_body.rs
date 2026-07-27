@@ -136,6 +136,7 @@ pub(super) trait RequestCtxOps: RequestCtx {
         global_this: &JSGlobalObject,
         readable: WebCore::ReadableStream,
     );
+    fn on_request_body_stream_drained_callback(this: Option<*mut c_void>);
 }
 
 impl<ThisServer, const SSL: bool, const DBG: bool, const H3: bool> RequestCtxOps
@@ -274,6 +275,10 @@ where
         readable: WebCore::ReadableStream,
     ) {
         Self::on_request_body_readable_stream_available(this, global_this, readable)
+    }
+    #[inline]
+    fn on_request_body_stream_drained_callback(this: Option<*mut c_void>) {
+        Self::on_request_body_stream_drained_callback(this)
     }
 }
 
@@ -1659,6 +1664,27 @@ where
                 "publish",
                 "bytes",
             ));
+        }
+
+        if let Some(slice) =
+            super::server_web_socket::blob_payload(global, "publish", message_value)?
+        {
+            let status = AnyWebSocket::publish_with_options(
+                SSL,
+                app,
+                topic_slice.slice(),
+                slice,
+                uws_sys::Opcode::Binary,
+                compress,
+            );
+            let result = super::server_web_socket::send_status_to_js(
+                status,
+                slice.len(),
+                "publish",
+                "bytes",
+            );
+            message_value.ensure_still_alive();
+            return Ok(result);
         }
 
         {
@@ -3187,6 +3213,7 @@ where
                         on_readable_stream_available: Some(
                             Ctx::on_request_body_readable_stream_available,
                         ),
+                        on_stream_drained: Some(Ctx::on_request_body_stream_drained_callback),
                         ..Default::default()
                     });
                 }

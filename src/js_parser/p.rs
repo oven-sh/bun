@@ -1498,8 +1498,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
-        // Create an error for assigning to an import namespace
-        if (opts.assign_target() != js_ast::AssignTarget::None || opts.is_delete_target())
+        // Run-time TypeError per spec; only hard-error when bundling (scope hoisting would hide it).
+        if self.options.bundle
+            && (opts.assign_target() != js_ast::AssignTarget::None || opts.is_delete_target())
             && self.symbols[ref_.inner_index() as usize].kind == js_ast::symbol::Kind::Import
         {
             let r = js_lexer::range_of_identifier(self.source, loc);

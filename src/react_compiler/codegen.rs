@@ -68,15 +68,6 @@ pub struct CodegenFunction {
     pub outlined: Vec<OutlinedFunction>,
 }
 
-impl CodegenFunction {
-    pub fn into_fn_body(self) -> G::FnBody {
-        G::FnBody {
-            loc: convert_loc(self.loc),
-            stmts: leak_stmts(self.body),
-        }
-    }
-}
-
 impl std::fmt::Debug for CodegenFunction {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("CodegenFunction")

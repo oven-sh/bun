@@ -22,12 +22,12 @@ it("handles trailing headers split across packets", async () => {
         }, 10);
       });
     })
-    .listen(0, "localhost", () => {
+    .listen(0, "127.0.0.1", () => {
       resolve(server.address());
     });
 
   const address = await promise;
-  const res = await fetch(`http://localhost:${address.port}`);
+  const res = await fetch(`http://127.0.0.1:${address.port}`);
   expect(res.status).toBe(200);
   expect(await res.text()).toBe("Hello, world");
 });
@@ -48,12 +48,12 @@ it("handles trailing headers in a single packet", async () => {
         socket.end();
       });
     })
-    .listen(0, "localhost", () => {
+    .listen(0, "127.0.0.1", () => {
       resolve(server.address());
     });
 
   const address = await promise;
-  const res = await fetch(`http://localhost:${address.port}`);
+  const res = await fetch(`http://127.0.0.1:${address.port}`);
   expect(res.status).toBe(200);
   expect(await res.text()).toBe("Hello");
 });
@@ -73,12 +73,12 @@ it("handles trailing headers with empty body", async () => {
         socket.end();
       });
     })
-    .listen(0, "localhost", () => {
+    .listen(0, "127.0.0.1", () => {
       resolve(server.address());
     });
 
   const address = await promise;
-  const res = await fetch(`http://localhost:${address.port}`);
+  const res = await fetch(`http://127.0.0.1:${address.port}`);
   expect(res.status).toBe(200);
   expect(await res.text()).toBe("");
 });
@@ -101,12 +101,12 @@ it("handles multiple trailing headers", async () => {
         socket.end();
       });
     })
-    .listen(0, "localhost", () => {
+    .listen(0, "127.0.0.1", () => {
       resolve(server.address());
     });
 
   const address = await promise;
-  const res = await fetch(`http://localhost:${address.port}`);
+  const res = await fetch(`http://127.0.0.1:${address.port}`);
   expect(res.status).toBe(200);
   expect(await res.text()).toBe("Hello");
 });
@@ -130,12 +130,12 @@ it("handles trailing headers with very long delay", async () => {
         }, 100);
       });
     })
-    .listen(0, "localhost", () => {
+    .listen(0, "127.0.0.1", () => {
       resolve(server.address());
     });
 
   const address = await promise;
-  const res = await fetch(`http://localhost:${address.port}`);
+  const res = await fetch(`http://127.0.0.1:${address.port}`);
   expect(res.status).toBe(200);
   expect(await res.text()).toBe("Hello");
 });
@@ -170,12 +170,12 @@ it("handles trailing headers with byte-by-byte transmission", async () => {
         setTimeout(writeNextByte, 10);
       });
     })
-    .listen(0, "localhost", () => {
+    .listen(0, "127.0.0.1", () => {
       resolve(server.address());
     });
 
   const address = await promise;
-  const res = await fetch(`http://localhost:${address.port}`);
+  const res = await fetch(`http://127.0.0.1:${address.port}`);
   expect(res.status).toBe(200);
   expect(await res.text()).toBe("Hello");
 });
@@ -198,13 +198,13 @@ it("rejects when the trailer section is missing its final CRLF", async () => {
         socket.end();
       });
     })
-    .listen(0, "localhost", () => {
+    .listen(0, "127.0.0.1", () => {
       resolve(server.address());
     });
 
   const address = await promise;
   try {
-    await fetch(`http://localhost:${address.port}`).then(res => res.text());
+    await fetch(`http://127.0.0.1:${address.port}`).then(res => res.text());
     expect.unreachable();
   } catch (e) {
     expect(e?.code).toBe("ECONNRESET");
@@ -228,12 +228,12 @@ it("handles trailing headers with extremely large values", async () => {
         socket.end();
       });
     })
-    .listen(0, "localhost", () => {
+    .listen(0, "127.0.0.1", () => {
       resolve(server.address());
     });
 
   const address = await promise;
-  const res = await fetch(`http://localhost:${address.port}`);
+  const res = await fetch(`http://127.0.0.1:${address.port}`);
   expect(res.status).toBe(200);
   expect(await res.text()).toBe("Hello");
 });
@@ -254,13 +254,13 @@ it("rejects when the connection closes inside the trailer section", async () => 
         socket.end(); // Close connection abruptly
       });
     })
-    .listen(0, "localhost", () => {
+    .listen(0, "127.0.0.1", () => {
       resolve(server.address());
     });
 
   const address = await promise;
   try {
-    await fetch(`http://localhost:${address.port}`).then(res => res.text());
+    await fetch(`http://127.0.0.1:${address.port}`).then(res => res.text());
     expect.unreachable();
   } catch (e) {
     expect(e?.code).toBe("ECONNRESET");
@@ -277,13 +277,13 @@ it("rejects when the connection closes after 0\\r\\n with no terminating CRLF", 
         socket.end();
       });
     })
-    .listen(0, "localhost", () => {
+    .listen(0, "127.0.0.1", () => {
       resolve(server.address());
     });
 
   const address = await promise;
   try {
-    await fetch(`http://localhost:${address.port}`).then(res => res.text());
+    await fetch(`http://127.0.0.1:${address.port}`).then(res => res.text());
     expect.unreachable();
   } catch (e) {
     expect(e?.code).toBe("ECONNRESET");
@@ -300,13 +300,13 @@ it("rejects when the connection closes mid-trailer-line", async () => {
         socket.end();
       });
     })
-    .listen(0, "localhost", () => {
+    .listen(0, "127.0.0.1", () => {
       resolve(server.address());
     });
 
   const address = await promise;
   try {
-    await fetch(`http://localhost:${address.port}`).then(res => res.text());
+    await fetch(`http://127.0.0.1:${address.port}`).then(res => res.text());
     expect.unreachable();
   } catch (e) {
     expect(e?.code).toBe("ECONNRESET");
@@ -331,12 +331,12 @@ it("handles trailing headers with multiple header lines", async () => {
         socket.end();
       });
     })
-    .listen(0, "localhost", () => {
+    .listen(0, "127.0.0.1", () => {
       resolve(server.address());
     });
 
   const address = await promise;
-  const res = await fetch(`http://localhost:${address.port}`);
+  const res = await fetch(`http://127.0.0.1:${address.port}`);
   expect(res.status).toBe(200);
   expect(await res.text()).toBe("Hello");
 });
@@ -357,12 +357,12 @@ it("handles trailing headers with empty values", async () => {
         socket.end();
       });
     })
-    .listen(0, "localhost", () => {
+    .listen(0, "127.0.0.1", () => {
       resolve(server.address());
     });
 
   const address = await promise;
-  const res = await fetch(`http://localhost:${address.port}`);
+  const res = await fetch(`http://127.0.0.1:${address.port}`);
   expect(res.status).toBe(200);
   expect(await res.text()).toBe("Hello");
 });
@@ -387,12 +387,12 @@ it("handles delayed trailing headers", async () => {
         }, 100);
       });
     })
-    .listen(0, "localhost", () => {
+    .listen(0, "127.0.0.1", () => {
       resolve(server.address());
     });
 
   const address = await promise;
-  const res = await fetch(`http://localhost:${address.port}`);
+  const res = await fetch(`http://127.0.0.1:${address.port}`);
   expect(res.status).toBe(200);
   expect(await res.text()).toBe("Hello");
 });
@@ -420,12 +420,12 @@ it("handles trailing headers after the final chunk only", async () => {
         socket.end();
       });
     })
-    .listen(0, "localhost", () => {
+    .listen(0, "127.0.0.1", () => {
       resolve(server.address());
     });
 
   const address = await promise;
-  const res = await fetch(`http://localhost:${address.port}`);
+  const res = await fetch(`http://127.0.0.1:${address.port}`);
   expect(res.status).toBe(200);
   expect(await res.text()).toBe("HelloWorld");
 });
@@ -447,12 +447,12 @@ it("handles chunked extensions with empty extension", async () => {
         socket.end();
       });
     })
-    .listen(0, "localhost", () => {
+    .listen(0, "127.0.0.1", () => {
       resolve(server.address());
     });
 
   const address = await promise;
-  const res = await fetch(`http://localhost:${address.port}`);
+  const res = await fetch(`http://127.0.0.1:${address.port}`);
   expect(res.status).toBe(200);
   expect(await res.text()).toBe("Hello");
 });
@@ -474,12 +474,12 @@ it("handles chunked extensions with simple key", async () => {
         socket.end();
       });
     })
-    .listen(0, "localhost", () => {
+    .listen(0, "127.0.0.1", () => {
       resolve(server.address());
     });
 
   const address = await promise;
-  const res = await fetch(`http://localhost:${address.port}`);
+  const res = await fetch(`http://127.0.0.1:${address.port}`);
   expect(res.status).toBe(200);
   expect(await res.text()).toBe("Hello");
 });
@@ -501,12 +501,12 @@ it("handles chunked extensions with key-value pair", async () => {
         socket.end();
       });
     })
-    .listen(0, "localhost", () => {
+    .listen(0, "127.0.0.1", () => {
       resolve(server.address());
     });
 
   const address = await promise;
-  const res = await fetch(`http://localhost:${address.port}`);
+  const res = await fetch(`http://127.0.0.1:${address.port}`);
   expect(res.status).toBe(200);
   expect(await res.text()).toBe("Hello");
 });
@@ -528,12 +528,12 @@ it("handles chunked extensions with quoted value", async () => {
         socket.end();
       });
     })
-    .listen(0, "localhost", () => {
+    .listen(0, "127.0.0.1", () => {
       resolve(server.address());
     });
 
   const address = await promise;
-  const res = await fetch(`http://localhost:${address.port}`);
+  const res = await fetch(`http://127.0.0.1:${address.port}`);
   expect(res.status).toBe(200);
   expect(await res.text()).toBe("Hello");
 });
@@ -560,12 +560,12 @@ it("handles chunked extensions on multiple chunks", async () => {
         socket.end();
       });
     })
-    .listen(0, "localhost", () => {
+    .listen(0, "127.0.0.1", () => {
       resolve(server.address());
     });
 
   const address = await promise;
-  const res = await fetch(`http://localhost:${address.port}`);
+  const res = await fetch(`http://127.0.0.1:${address.port}`);
   expect(res.status).toBe(200);
   expect(await res.text()).toBe("HelloWorld");
 });
@@ -591,12 +591,12 @@ it("handles chunked extensions with trailing headers", async () => {
         socket.end();
       });
     })
-    .listen(0, "localhost", () => {
+    .listen(0, "127.0.0.1", () => {
       resolve(server.address());
     });
 
   const address = await promise;
-  const res = await fetch(`http://localhost:${address.port}`);
+  const res = await fetch(`http://127.0.0.1:${address.port}`);
   expect(res.status).toBe(200);
   expect(await res.text()).toBe("HelloWorld");
 });
@@ -618,12 +618,12 @@ it("handles chunked extensions with special characters", async () => {
         socket.end();
       });
     })
-    .listen(0, "localhost", () => {
+    .listen(0, "127.0.0.1", () => {
       resolve(server.address());
     });
 
   const address = await promise;
-  const res = await fetch(`http://localhost:${address.port}`);
+  const res = await fetch(`http://127.0.0.1:${address.port}`);
   expect(res.status).toBe(200);
   expect(await res.text()).toBe("Hello");
 });
@@ -646,13 +646,13 @@ it("proper error if missing zero-length chunk", async () => {
         socket.end();
       });
     })
-    .listen(0, "localhost", () => {
+    .listen(0, "127.0.0.1", () => {
       resolve(server.address());
     });
 
   try {
     const address = await promise;
-    const response = await fetch(`http://localhost:${address.port}`);
+    const response = await fetch(`http://127.0.0.1:${address.port}`);
     expect(response.status).toBe(200);
     await response.text();
     expect.unreachable();
@@ -681,13 +681,13 @@ it("proper error if missing data in middle of chunk extension", async () => {
         socket.end();
       });
     })
-    .listen(0, "localhost", () => {
+    .listen(0, "127.0.0.1", () => {
       resolve(server.address());
     });
 
   try {
     const address = await promise;
-    await fetch(`http://localhost:${address.port}`).then(res => res.text());
+    await fetch(`http://127.0.0.1:${address.port}`).then(res => res.text());
     expect.unreachable();
   } catch (e) {
     expect(e?.code).toBe("ECONNRESET");
@@ -715,13 +715,13 @@ it("proper error if missing CRLF after chunk data", async () => {
         socket.end();
       });
     })
-    .listen(0, "localhost", () => {
+    .listen(0, "127.0.0.1", () => {
       resolve(server.address());
     });
 
   try {
     const address = await promise;
-    await fetch(`http://localhost:${address.port}`).then(res => res.text());
+    await fetch(`http://127.0.0.1:${address.port}`).then(res => res.text());
     expect.unreachable();
   } catch (e) {
     expect(e?.code).toBe("InvalidHTTPResponse");

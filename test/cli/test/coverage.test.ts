@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, normalizeBunSnapshot, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, normalizeBunSnapshot, tempDirWithFiles } from "harness";
 import { readFileSync } from "node:fs";
 import path from "path";
 
@@ -616,13 +616,15 @@ test("coverage report generation is not quadratic in function count", () => {
     return elapsed;
   };
 
-  const plain = run(false);
   const covered = run(true);
 
   // Report generation is a single linear pass over the module's mappings, so
-  // the covered run should cost at most a small multiple of the plain run. The
-  // floor keeps scheduler jitter on very fast release-build plain runs from
-  // shrinking the budget below the noise floor.
+  // the covered run should cost at most a small multiple of the plain run. A
+  // debug+ASAN plain run at this N already takes over a second, so there the
+  // covered run is budgeted against the default test timeout instead (the
+  // unfixed covered run is several times over it).
+  if (isDebug || isASAN) return;
+  const plain = run(false);
   const budget = Math.max(plain, 100) * 3;
   expect({ plain, covered, budget }).toSatisfy(t => t.covered < t.budget);
 });

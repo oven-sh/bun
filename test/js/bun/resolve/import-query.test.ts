@@ -235,6 +235,16 @@ test("Bun.resolveSync with non-ASCII specifier and query string", async () => {
   expect(exitCode).toBe(0);
 });
 
+test("require of a non-.node file with a query string that ends in .node is not routed to dlopen", async () => {
+  using dir = tempDir("query-endswith-node", {
+    "config.js": `module.exports = { ok: 1 };\n`,
+    "entry.cjs": `console.log(require("./config.js?from=addon.node").ok);\n`,
+  });
+  await using proc = Bun.spawn({ cmd: [bunExe(), "entry.cjs"], env: bunEnv, cwd: String(dir), stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "1\n", stderr: "", exitCode: 0 });
+});
+
 // `?` is not a valid filename character on Windows/NTFS.
 describe.skipIf(isWindows).concurrent("filename containing a literal ?", () => {
   async function run(cmd: string[], cwd: string) {

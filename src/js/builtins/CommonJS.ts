@@ -60,9 +60,10 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string, o
     }
   }
 
-  // An id ending in ".node" has no query suffix; any `?` is part of the path.
+  // A resolved id may carry a `?query` suffix (part of the module cache key);
+  // match the native-addon extension against the path portion only.
   const queryIndex = id.indexOf("?");
-  if (id.endsWith(".node") || (queryIndex !== -1 && id.endsWith(".node", queryIndex))) {
+  if (queryIndex === -1 ? id.endsWith(".node") : id.endsWith(".node", queryIndex)) {
     return $internalRequire(id, this);
   }
 
@@ -160,8 +161,10 @@ export function requireResolve(
 $visibility = "Private";
 export function internalRequire(id: string, parent: JSCommonJSModule) {
   $assert($requireMap.$get(id) === undefined, "Module " + JSON.stringify(id) + " should not be in the map");
-  // Strip a `?query` suffix for dlopen; an id ending in `.node` has none.
-  const filename = id.endsWith(".node") ? id : id.substring(0, id.indexOf("?"));
+  // `id` keys the module cache and may carry a `?query` suffix;
+  // `process.dlopen` needs the on-disk path.
+  const queryIndex = id.indexOf("?");
+  const filename = queryIndex === -1 ? id : id.substring(0, queryIndex);
   $assert(filename.endsWith(".node"));
 
   const module = $createCommonJSModule(id, {}, true, parent);

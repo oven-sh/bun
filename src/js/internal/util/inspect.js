@@ -344,7 +344,6 @@ function isURL(value) {
 
 const SymbolToPrimitive = Symbol.toPrimitive;
 
-// ECMA-262 intrinsics only; Bun's globalThis already has Buffer/URL/etc. when this loads.
 // prettier-ignore
 const builtInObjects = new SafeSet([
   "AggregateError", "Array", "ArrayBuffer", "AsyncDisposableStack", "Atomics",

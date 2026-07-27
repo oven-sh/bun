@@ -71,6 +71,7 @@ unsafe extern "C" {
     fn NapiEnv__globalObject(env: *mut NapiEnv) -> *mut JSGlobalObject;
     fn NapiEnv__getAndClearPendingException(env: *mut NapiEnv, out: *mut JSValue) -> bool;
     fn NapiEnv__hasPendingException(env: *mut NapiEnv) -> bool;
+    fn NapiEnv__hasVMException(env: *mut NapiEnv) -> bool;
     fn NapiEnv__deref(env: *mut NapiEnv);
     fn NapiEnv__ref(env: *mut NapiEnv);
     fn napi_set_last_error(env: napi_env, status: NapiStatus) -> napi_status;
@@ -118,6 +119,15 @@ impl NapiEnv {
     pub fn has_pending_exception(&self) -> bool {
         // SAFETY: env is non-null; C++ side is read-only here.
         unsafe { NapiEnv__hasPendingException(self.as_mut_ptr()) }
+    }
+
+    /// Checks only the JSC VM exception slot (`vm.m_exception`), ignoring an
+    /// exception stashed on the env by `napi_throw*`. This is the gate
+    /// `NAPI_PREAMBLE_NO_PENDING_CHECK` enforces for value constructors and
+    /// accessors that Node.js allows while a stashed exception is pending.
+    pub fn has_vm_exception(&self) -> bool {
+        // SAFETY: env is non-null; C++ side is read-only here.
+        unsafe { NapiEnv__hasVMException(self.as_mut_ptr()) }
     }
 
     /// Assert that we're not currently performing garbage collection
@@ -435,6 +445,21 @@ macro_rules! preamble {
     }};
 }
 
+/// Like `preamble!` but only guards against a VM-level exception, not an
+/// exception stashed on the env by `napi_throw*` (mirrors
+/// `NAPI_PREAMBLE_NO_PENDING_CHECK`). Use this for value constructors and
+/// accessors that Node.js allows with a stashed exception pending but whose
+/// bodies reach JSC helpers that assert the VM has no exception.
+macro_rules! preamble_no_pending_check {
+    ($env:expr) => {{
+        let env = get_env!($env);
+        if env.has_vm_exception() {
+            return env.pending_exception();
+        }
+        env
+    }};
+}
+
 macro_rules! get_out {
     ($env:expr, $ptr:expr) => {
         // SAFETY: caller passes raw out pointer; we treat non-null as &mut borrow.
@@ -623,7 +648,7 @@ pub(super) extern "C" fn napi_create_string_latin1(
     length: usize,
     result_: *mut napi_value,
 ) -> napi_status {
-    let env = get_env!(env_);
+    let env = preamble_no_pending_check!(env_);
     let result = get_out!(env, result_);
 
     let slice: &[u8] = 'brk: {
@@ -679,7 +704,7 @@ pub(super) extern "C" fn napi_create_string_utf8(
     length: usize,
     result_: *mut napi_value,
 ) -> napi_status {
-    let env = get_env!(env_);
+    let env = preamble_no_pending_check!(env_);
     let result = get_out!(env, result_);
 
     let slice: &[u8] = 'brk: {
@@ -720,7 +745,7 @@ pub(super) extern "C" fn napi_create_string_utf16(
     length: usize,
     result_: *mut napi_value,
 ) -> napi_status {
-    let env = get_env!(env_);
+    let env = preamble_no_pending_check!(env_);
     let result = get_out!(env, result_);
 
     let slice: &[u16] = 'brk: {
@@ -1347,7 +1372,7 @@ pub(super) extern "C" fn napi_is_arraybuffer(
     result_: *mut bool,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_is_arraybuffer");
-    let env = get_env!(env_);
+    let env = preamble_no_pending_check!(env_);
     env.check_gc();
     let result = get_out!(env, result_);
     let value = value_.get();
@@ -1392,7 +1417,7 @@ pub(super) extern "C" fn napi_get_arraybuffer_info(
     byte_length: *mut usize,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_get_arraybuffer_info");
-    let env = get_env!(env_);
+    let env = preamble_no_pending_check!(env_);
     env.check_gc();
     let arraybuffer = arraybuffer_.get();
     let Some(array_buffer) = arraybuffer.as_array_buffer(env.to_js()) else {
@@ -1426,7 +1451,7 @@ pub(super) extern "C" fn napi_get_typedarray_info(
     maybe_byte_offset: *mut usize,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_get_typedarray_info");
-    let env = get_env!(env_);
+    let env = preamble_no_pending_check!(env_);
     env.check_gc();
     let typedarray = typedarray_.get();
     if typedarray.is_empty_or_undefined_or_null() {
@@ -1502,7 +1527,7 @@ pub(super) extern "C" fn napi_get_dataview_info(
     maybe_byte_offset: *mut usize,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_get_dataview_info");
-    let env = get_env!(env_);
+    let env = preamble_no_pending_check!(env_);
     env.check_gc();
     let dataview = dataview_.get();
     if dataview.is_empty() {
@@ -2066,7 +2091,7 @@ pub(super) extern "C" fn napi_get_buffer_info(
     length: *mut usize,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_get_buffer_info");
-    let env = get_env!(env_);
+    let env = preamble_no_pending_check!(env_);
     let value = value_.get();
     let Some(array_buf) = value.as_array_buffer(env.to_js()) else {
         return NapiEnv::set_last_error(Some(env), NapiStatus::invalid_arg);

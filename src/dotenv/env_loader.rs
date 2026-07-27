@@ -1152,20 +1152,13 @@ impl<'a> Parser<'a> {
                     pos -= 1;
                     last = pos;
                 } else if next == b'{' || matches!(next, b'a'..=b'z' | b'A'..=b'Z' | b'_') {
-                    // Expansion fires only on `${...}` or `$IDENT` (identifier
-                    // start = letter or underscore). Any other `$` (e.g. `$5`,
-                    // `$$`, `$(`, `$-`) is left literal, matching dotenv-expand
-                    // and shell non-identifier rules.
                     let braced = next == b'{';
                     let mut end = if braced { pos + 2 } else { pos + 1 };
                     let key_start = end;
                     while end < value.len() {
                         match value[end] {
                             b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_' => end += 1,
-                            // Braces delimit the name explicitly, so `${...}`
-                            // may reference a non-ASCII key (which `parse_key`
-                            // accepts). Bare `$IDENT` stays ASCII-only so
-                            // `$FOO` followed by UTF-8 text does not swallow it.
+                            // `${...}` may name a non-ASCII key; bare `$IDENT` stays ASCII.
                             0x80..=0xFF if braced => end += 1,
                             _ => break,
                         }

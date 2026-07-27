@@ -3650,6 +3650,31 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
     }
 }
 
+// Attribute-less dynamic import() whose specifier ends in `.json`: supply
+// Type::JSON so JSC's (specifier, Type) module-map key matches the
+// `with { type: "json" }` form and the printer's static-side normalization.
+// Must inspect the as-written specifier, not the resolved path, so a specifier
+// that resolves to a `.json` file but doesn't literally end in one stays
+// consistent with the printer (which never resolves).
+static ALWAYS_INLINE bool specifierImpliesJsonType(StringView specifier)
+{
+    size_t q = specifier.find('?');
+    if (q != notFound) {
+        // `?raw` selects the text loader; a synthesized `type: "json"` would override it.
+        if (specifier.substring(q) == "?raw"_s)
+            return false;
+        specifier = specifier.left(q);
+    }
+    if (!specifier.endsWith(".json"_s))
+        return false;
+    size_t slash = specifier.reverseFind('/');
+    size_t backslash = specifier.reverseFind('\\');
+    size_t sep = slash == notFound ? backslash : (backslash == notFound ? slash : std::max(slash, backslash));
+    StringView filename = sep == notFound ? specifier : specifier.substring(sep + 1);
+    // `loader_for_path` routes these to jsonc; a synthesized `type: "json"` would force strict JSON.
+    return filename != "package.json"_s && !filename.startsWith("tsconfig."_s) && !filename.startsWith("jsconfig."_s);
+}
+
 JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalObject,
     JSModuleLoader*,
     JSString* moduleNameValue,
@@ -3675,6 +3700,9 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
 
     auto moduleName = moduleNameValue->value(globalObject);
     RETURN_IF_EXCEPTION(scope, nullptr);
+
+    if (!parameters && specifierImpliesJsonType(moduleName))
+        parameters = JSC::ScriptFetchParameters::create(JSC::ScriptFetchParameters::Type::JSON);
 
     auto sourceURL = sourceOrigin.url();
     String sourceOriginStringHolder;

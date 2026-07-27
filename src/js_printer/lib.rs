@@ -5244,18 +5244,22 @@ pub mod __gated_printer {
                         self.print_whitespacer(ws!(b"from "));
                     }
 
-                    let irp = &self.import_record(s.import_record_index as usize).path.text;
-                    self.print_import_record_path(
-                        self.import_record(s.import_record_index as usize),
-                    );
+                    let record = self.import_record(s.import_record_index as usize);
+                    let irp = &record.path.text;
+                    let implies_json = Self::record_implies_json_type(record);
+                    self.print_import_record_path(record);
+                    if IS_BUN_PLATFORM && implies_json {
+                        self.print_whitespacer(ws!(b" with { type: \"json\" }"));
+                    }
                     self.print_semicolon_after_statement();
 
                     if Self::MAY_HAVE_MODULE_INFO {
                         if let Some(mi) = self.module_info() {
                             let irp_id = mi.str(irp);
+                            use analyze_transpiled_module::FetchParameters as FP;
                             mi.request_module(
                                 irp_id,
-                                analyze_transpiled_module::FetchParameters::None,
+                                if implies_json { FP::Json } else { FP::None },
                             );
                             if let Some(alias) = &s.alias {
                                 let alias_id = mi.str(alias.original_name.slice());
@@ -5481,7 +5485,11 @@ pub mod __gated_printer {
 
                     self.print_whitespacer(ws!(b"} from "));
                     let irp = &import_record.path.text;
+                    let implies_json = Self::record_implies_json_type(import_record);
                     self.print_import_record_path(import_record);
+                    if IS_BUN_PLATFORM && implies_json {
+                        self.print_whitespacer(ws!(b" with { type: \"json\" }"));
+                    }
                     self.print_semicolon_after_statement();
 
                     if Self::MAY_HAVE_MODULE_INFO && self.module_info.is_some() {
@@ -5490,7 +5498,8 @@ pub mod __gated_printer {
                         let irp_id = {
                             let mi = self.module_info().expect("infallible: module_info enabled");
                             let id = mi.str(irp);
-                            mi.request_module(id, analyze_transpiled_module::FetchParameters::None);
+                            use analyze_transpiled_module::FetchParameters as FP;
+                            mi.request_module(id, if implies_json { FP::Json } else { FP::None });
                             id
                         };
                         for item in slice_of(s.items).iter() {
@@ -5999,6 +6008,8 @@ pub mod __gated_printer {
                                     self.print_whitespacer(ws!(b" with { type: \"md\" }"))
                                 }
                             }
+                        } else if Self::record_implies_json_type(record) {
+                            self.print_whitespacer(ws!(b" with { type: \"json\" }"));
                         }
                     }
                     self.print_semicolon_after_statement();
@@ -6039,6 +6050,8 @@ pub mod __gated_printer {
                                         Loader::Json5 => FP::host_defined(mi.str(b"json5")),
                                         Loader::Md => FP::host_defined(mi.str(b"md")),
                                     }
+                                } else if Self::record_implies_json_type(record) {
+                                    FP::Json
                                 } else {
                                     FP::None
                                 }
@@ -6177,6 +6190,31 @@ pub mod __gated_printer {
         #[inline]
         pub fn print_module_export_symbol(&mut self) {
             self.print(b"module.exports");
+        }
+
+        /// No `with { type }` on a `.json` specifier: emit one so JSC's
+        /// `(specifier, ScriptFetchParameters::Type)` module-map key matches
+        /// the attributed form. Must agree with `specifierImpliesJsonType` in
+        /// `ZigGlobalObject.cpp` (both inspect the as-written specifier).
+        fn record_implies_json_type(record: &ImportRecord) -> bool {
+            if record.loader.is_some() {
+                return false;
+            }
+            let text = record.path.text;
+            let end = text.iter().position(|&c| c == b'?').unwrap_or(text.len());
+            // `?raw` selects the text loader; a synthesized attribute would override it.
+            if &text[end..] == b"?raw" {
+                return false;
+            }
+            let path = &text[..end];
+            if !strings::has_suffix_comptime(path, b".json") {
+                return false;
+            }
+            // `loader_for_path` routes these to jsonc; a synthesized attribute would force strict JSON.
+            let filename = bun_paths::basename(path);
+            !(filename == b"package.json"
+                || strings::has_prefix_comptime(filename, b"tsconfig.")
+                || strings::has_prefix_comptime(filename, b"jsconfig."))
         }
 
         pub fn print_import_record_path(&mut self, import_record: &ImportRecord) {

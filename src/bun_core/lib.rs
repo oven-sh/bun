@@ -723,7 +723,7 @@ macro_rules! from_field_ptr {
 /// bun_core::impl_field_parent! { Assets => DevServer.assets; pub fn owner; fn owner_mut; }
 ///
 /// // (2) ref-only                   (&self -> &P)
-/// bun_core::impl_field_parent! { SubscriptionCtx => JSValkeyClient._subscription_ctx; fn parent; }
+/// bun_core::impl_field_parent! { ValkeyClient => JSValkeyClient.client; fn parent; }
 ///
 /// // (3) mut-only                   (&mut self -> *mut P)
 /// bun_core::impl_field_parent! { DirectoryWatchStore => DevServer.directory_watchers; fn mut owner; }
@@ -745,6 +745,10 @@ macro_rules! from_field_ptr {
 /// `$Parent.$field` for its entire lifetime. If `$Child` can exist
 /// standalone, the generated accessors are unsound; keep a hand-rolled
 /// `pub unsafe fn` instead.
+///
+/// The `&self` forms carry `&$Child`'s provenance (`noalias readonly` when
+/// `$Child: Freeze`), so treat the returned `&$Parent` as read-only; store a
+/// `BackRef<$Parent>` on the child if it must write.
 #[macro_export]
 macro_rules! impl_field_parent {
     // ref + raw-mut pair

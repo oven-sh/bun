@@ -665,8 +665,9 @@ pub struct NewSource<C: SourceContext> {
     /// `Finalized` so [`Self::on_js_close`] reads `None` instead of a
     /// dead-but-unswept cell.
     pub this_jsvalue: jsc::JsRef,
-    /// R-2: written by `&self` context methods (`ByteStream::to_any_blob`,
-    /// `ByteBlobLoader::to_any_blob`) via `parent_const()`, so interior-mutable.
+    /// R-2: written by context methods (`ByteStream::to_any_blob`,
+    /// `ByteBlobLoader::to_any_blob`) via `impl_field_parent!` recovery, so
+    /// interior-mutable.
     pub is_closed: Cell<bool>,
 }
 

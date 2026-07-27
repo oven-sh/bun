@@ -278,7 +278,17 @@ impl<T: RefCounted> RefCount<T> {
             dump_stack_hook(None, return_address());
         }
         count.assert_single_threaded();
-        count.raw_count.set(count.raw_count.get() + 1);
+        let next = count.raw_count.get() + 1;
+        count.raw_count.set(next);
+        // Volatile re-read catches an O2+ dead-store when `self_` was derived
+        // from a readonly-provenance `&T` (container_of on a Freeze child).
+        #[cfg(debug_assertions)]
+        debug_assert_eq!(
+            // SAFETY: `count` is live per the caller contract.
+            unsafe { core::ptr::read_volatile(count.raw_count.as_ptr()) },
+            next,
+            "RefCount::ref_ store elided (pointer derived from readonly provenance?)",
+        );
     }
 
     /// # Safety

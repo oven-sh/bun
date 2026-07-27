@@ -166,7 +166,10 @@ impl ByteBlobLoader {
             blob.content_type.set(ct);
         }
 
-        self.parent_const().is_closed.set(true);
+        // SAFETY: `impl_field_parent!` contract; `is_closed` is disjoint from
+        // `context`. Reached via the `&mut self` accessor (not `parent_const`)
+        // so the store is not routed through a Freeze-`&self` readonly pointer.
+        unsafe { (*self.parent()).is_closed.set(true) };
         Some(blob::Any::Blob(blob))
     }
 

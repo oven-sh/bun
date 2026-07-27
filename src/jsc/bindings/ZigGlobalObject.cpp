@@ -59,7 +59,6 @@
 #include "JavaScriptCore/StackFrame.h"
 #include "JavaScriptCore/StackVisitor.h"
 #include "JavaScriptCore/VM.h"
-#include <JavaScriptCore/IntlCache.h>
 #include "AddEventListenerOptions.h"
 #include "AsyncContextFrame.h"
 #include "BunClientData.h"
@@ -3356,8 +3355,7 @@ extern "C" bool JSGlobalObject__setTimeZone(JSC::JSGlobalObject* globalObject, c
 
     if (WTF::setTimeZoneOverride(Zig::toString(*timeZone))) {
         WTF::timeZoneDidChange();
-        vm.dateCache.clearForTimeZoneChange();
-        vm.intlCache().clearForTimeZoneChange();
+        vm.clearForTimeZoneChange();
         return true;
     }
 

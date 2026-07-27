@@ -446,11 +446,8 @@ function makePortWritable(port) {
 
 function setupWorkerStdio(stdio) {
   const { stdin, stdout, stderr } = stdio;
-  // Plain assignment, not Object.defineProperty: process.stdout/stderr/stdin
-  // are static PropertyCallback slots, and JSC's defineOwnProperty reifies the
-  // lazy value first (running the fd-backed constructor on the shared fd 1/2)
-  // before replacing it. put() replaces the slot without reifying and yields
-  // the same {writable,enumerable,configurable}=true descriptor.
+  // Plain assignment: defineProperty would reify the lazy fd-backed stdio
+  // (JSC reifies a static PropertyCallback before defining over it).
   if (stdout) {
     process.stdout = makePortWritable(stdout);
   }

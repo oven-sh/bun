@@ -673,8 +673,7 @@ impl FileSink {
                 return sys::Result::Err(err);
             }
             sys::Result::Ok(()) => {
-                // Record the dup'd/opened fd so `get_fd()` and the process.stdout
-                // force-sync hook (which clears O_NONBLOCK on it) see a real fd.
+                // `get_fd()` and the stdio force-sync O_NONBLOCK undo read this.
                 self.fd.set(fd);
                 // Only keep the event loop ref'd while there's a pending write in progress.
                 // If there's no pending write, no need to keep the event loop ref'd.

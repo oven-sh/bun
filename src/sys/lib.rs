@@ -9405,10 +9405,7 @@ fn qw_set_fd(qw: &mut bun_core::output::QuietWriter, fd: Fd) {
 
 /// Best-effort write-all loop. Returns `false` on I/O error / zero-write so
 /// `ScopedLogger::log` can disable the scope; "quiet" callers discard the bool.
-/// EAGAIN is not an error: the open file description backing a stdio fd can be
-/// flipped to O_NONBLOCK by any co-process or thread sharing it (workers,
-/// parent shells, libuv), so block on writability and retry instead of
-/// discarding the unwritten tail.
+/// EAGAIN polls: anything sharing the open file description can flip O_NONBLOCK.
 fn fd_write_all_quiet(fd: Fd, mut bytes: &[u8]) -> bool {
     while !bytes.is_empty() {
         match write(fd, bytes) {

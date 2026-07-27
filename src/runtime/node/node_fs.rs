@@ -5655,8 +5655,36 @@ impl NodeFS {
                 Ok(result) => Ok(result),
             };
         }
+        // OHOS: go through `linkat` rather than `link`. The kernel refuses the
+        // bare linkat syscall with EACCES, and ohos-compat-shim works around
+        // that by interposing the libc *symbol* `linkat` (falling back to a
+        // byte copy). musl implements `link(a, b)` as a direct
+        // `syscall(SYS_linkat, AT_FDCWD, a, AT_FDCWD, b, 0)`, so it never
+        // reaches that symbol and never gets the workaround. Measured
+        // on-device: the libc `linkat` symbol succeeds where both `link()` and
+        // the raw syscall return EACCES, and stripping the shim from
+        // LD_PRELOAD makes `linkat` fail too. AT_FDCWD makes both paths
+        // resolve exactly as `link` would.
+        // SAFETY: `from`/`to` are NUL-terminated by `slice_z`.
+        #[cfg(all(not(windows), target_env = "ohos"))]
+        return Maybe::<ret::Link>::errno_sys_pd(
+            unsafe {
+                libc::linkat(
+                    libc::AT_FDCWD,
+                    from.as_ptr().cast(),
+                    libc::AT_FDCWD,
+                    to.as_ptr().cast(),
+                    0,
+                )
+            },
+            sys::Tag::link,
+            args.old_path.slice(),
+            args.new_path.slice(),
+        )
+        .unwrap_or(Ok(()));
+
         // SAFETY: `from`/`to` are NUL-terminated by `slice_z`; `link(2)` is the libc FFI.
-        #[cfg(not(windows))]
+        #[cfg(all(not(windows), not(target_env = "ohos")))]
         Maybe::<ret::Link>::errno_sys_pd(
             unsafe { libc::link(from.as_ptr().cast(), to.as_ptr().cast()) },
             sys::Tag::link,

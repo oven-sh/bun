@@ -1837,12 +1837,16 @@ describe("parentPort buffers until the first 'message' listener", () => {
        });`,
         { eval: true },
       );
-      // 'error' and 'exit' arrive back-to-back; register both listeners before awaiting.
-      const errP = new Promise<unknown>(r => w.once("error", r));
-      const exitP = new Promise<number>(r => w.once("exit", r));
-      w.postMessage("go");
-      expect(String(await errP)).toMatch(/ok/);
-      expect(await exitP).toBe(98);
+      try {
+        // 'error' and 'exit' arrive back-to-back; register both listeners before awaiting.
+        const errP = new Promise<unknown>(r => w.once("error", r));
+        const exitP = new Promise<number>(r => w.once("exit", r));
+        w.postMessage("go");
+        expect(String(await errP)).toMatch(/ok/);
+        expect(await exitP).toBe(98);
+      } finally {
+        await w.terminate();
+      }
     },
   );
 });

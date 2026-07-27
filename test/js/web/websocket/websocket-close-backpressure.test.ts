@@ -77,10 +77,11 @@ test("readyState becomes CLOSING when a Close frame arrives while the send queue
     }
     expect(ws.readyState).toBe(WebSocket.CLOSING);
 
-    // send() after CLOSING must not reach the native queue.
+    // send() after CLOSING bumps bufferedAmount instead of reaching the native
+    // queue (which would leave it unchanged).
     const before = ws.bufferedAmount;
     ws.send(chunk);
-    expect(ws.bufferedAmount).toBeGreaterThanOrEqual(before);
+    expect(ws.bufferedAmount).toBeGreaterThan(before);
 
     // Tearing down the TCP connection lets the deferred close event fire.
     const closed = once(ws, "close");

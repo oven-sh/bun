@@ -79,10 +79,6 @@ impl CppWebSocket {
         event_loop.exit();
     }
 
-    pub(crate) fn did_start_closing_handshake(&self) {
-        WebSocket__didStartClosingHandshake(self);
-    }
-
     pub(crate) fn did_close(&self, code: u16, reason: &mut BunString) {
         // SAFETY: VirtualMachine::get() returns the live current-thread VM;
         // event_loop() yields its raw event-loop pointer (live for VM lifetime).
@@ -195,6 +191,11 @@ impl CppWebSocket {
         bun_jsc::mark_binding!();
         // SAFETY: self is a valid C++ WebCore::WebSocket; protocol outlives the call.
         unsafe { WebSocket__setProtocol(self, protocol) };
+    }
+
+    pub(crate) fn did_start_closing_handshake(&self) {
+        bun_jsc::mark_binding!();
+        WebSocket__didStartClosingHandshake(self);
     }
 }
 

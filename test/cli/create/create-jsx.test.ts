@@ -145,7 +145,14 @@ async function scaffold(dir: string, entry: string, env: Record<string, string |
   // and stall the child while we wait on stdout for the dev-server URL.
   const stderrPromise = proc.stderr.text();
   const all = { text: "" };
-  const serverUrl = await getServerUrl(proc, all);
+  let serverUrl: string;
+  try {
+    serverUrl = await getServerUrl(proc, all);
+  } catch (e) {
+    proc.kill();
+    const stderr = await stderrPromise.catch(() => "");
+    throw new Error(`${(e as Error).message}\nstderr:\n${stderr}`);
+  }
   proc.kill();
   const [, stderr] = await Promise.all([proc.exited, stderrPromise]);
   return { stdout: all.text, stderr, serverUrl };

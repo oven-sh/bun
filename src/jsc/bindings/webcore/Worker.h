@@ -162,9 +162,8 @@ public:
 
     void enqueueToParent(MessageWithMessagePorts&&);
     void drainToWorker(ScriptExecutionContext&);
-    // Post a drainToWorker task if the inbox is non-empty and no drain is in
-    // flight. Called on the worker thread when the globalEventScope's
-    // 'message' listener count goes 0→1 (Node-kind workers only).
+    // Post a drainToWorker task if the inbox is non-empty and none is in
+    // flight. Called on the worker thread when parentPort gains a listener.
     void scheduleDrainToWorker();
 
 private:
@@ -214,10 +213,8 @@ private:
 
 JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject);
 
-// If this context belongs to a node:worker_threads worker, schedule a drain of
-// its parent→worker inbox. Called from WorkerGlobalScope's listener-change hook
-// so messages queued while parentPort had no 'message' listener are delivered
-// once one is attached.
+// Called from WorkerGlobalScope's listener-change hook: schedules a
+// parent→worker inbox drain if this context belongs to a Node worker.
 void scheduleParentPortDrainIfNode(ScriptExecutionContext*);
 
 JSC_DECLARE_HOST_FUNCTION(jsFunctionPostMessage);

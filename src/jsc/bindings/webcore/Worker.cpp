@@ -238,14 +238,10 @@ void Worker::enqueueToWorker(MessageWithMessagePorts&& message)
         auto state = m_state.load();
         if (state >= State::Closing || m_toWorker.drainScheduled.load(std::memory_order_relaxed))
             return;
-        // Web Workers: messages dispatch only after script execution (HTML
-        // "run a worker" step 26), so buffer until fireEarlyMessages().
-        // Node workers: parentPort starts draining once it has a listener,
-        // independent of entry-eval completion (an awaited import / top-level
-        // await may keep the entry promise pending indefinitely), so try to
-        // schedule now — drainToWorker bails if no listener is attached yet,
-        // and postTaskTo returns false if the worker context isn't
-        // registered yet.
+        // Web Workers buffer until fireEarlyMessages() (HTML "run a worker"
+        // step 26). Node workers drain as soon as parentPort has a listener,
+        // so a worker blocked in top-level await can still receive messages;
+        // drainToWorker is the listener gate, postTaskTo the context gate.
         if (state == State::Pending && m_options.kind != WorkerOptions::Kind::Node)
             return;
         m_toWorker.drainScheduled.store(true, std::memory_order_relaxed);
@@ -291,11 +287,8 @@ void Worker::enqueueToParent(MessageWithMessagePorts&& message)
 // sender. A sustained producer (e.g. a tight postMessage loop) would otherwise
 // make every per-message pop a contended acquire.
 //
-// shouldContinue() is checked before each dispatch; returning false prepends
-// the undelivered tail back to the inbox and clears drainScheduled so a later
-// trigger (scheduleDrainToWorker) can re-run the drain. drainToWorker uses this
-// for Node workers to suspend dispatch while parentPort has zero 'message'
-// listeners.
+// shouldContinue() returning false prepends the undelivered tail back to the
+// inbox and clears drainScheduled so a later trigger can re-run the drain.
 template<typename Dispatch, typename ShouldContinue>
 static inline bool drainInbox(Worker::MessageInbox& inbox, Zig::GlobalObject* globalObject, ScriptExecutionContext& context, Dispatch&& dispatch, ShouldContinue&& shouldContinue)
 {
@@ -364,11 +357,8 @@ void Worker::drainToWorker(ScriptExecutionContext& context)
         return;
     }
     auto& scope = globalObject->globalEventScope;
-    // Node's parentPort is a MessagePort that stays stopped until it has a
-    // 'message' listener: messages queue until one is added, and re-queue if
-    // the last listener is removed mid-drain (parentPort.once). Web Worker
-    // semantics (the implicit port is auto-started after script execution)
-    // are unchanged.
+    // Node parentPort queues while it has no 'message' listener and re-queues
+    // if once() leaves zero mid-drain; Web Workers dispatch regardless.
     const bool gateOnListeners = m_options.kind == WorkerOptions::Kind::Node;
     if (gateOnListeners && !scope->hasActiveEventListeners(eventNames().messageEvent)) {
         Locker locker { m_toWorker.lock };

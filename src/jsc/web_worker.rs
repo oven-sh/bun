@@ -1092,13 +1092,9 @@ impl WebWorker {
         let promise = match vm.as_mut().load_entry_point_for_web_worker(path) {
             Ok(p) => p,
             Err(_) => {
-                // process.exit() may have run during load; don't clobber its
-                // code. Likewise, an uncaught exception from a task processed
-                // inside wait_for_promise_with_termination (a timer, or a Node
-                // worker's parentPort message handler) has already been
-                // through on_unhandled_rejection, which set exit_code=1 and
-                // ran the worker's process.on('exit') handlers — those may
-                // have changed it, so don't clobber that either.
+                // Don't clobber a code set during load: process.exit(), or an
+                // uncaught exception in a task (timer / parentPort handler)
+                // that already ran on_unhandled_rejection + process.on('exit').
                 if !self.exit_called.load(Ordering::Relaxed) && vm.unhandled_error_counter == 0 {
                     vm.as_mut().exit_handler.exit_code = 1;
                 }

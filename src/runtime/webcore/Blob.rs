@@ -4465,6 +4465,7 @@ fn write_file_with_empty_source_to_destination(
     ctx: &JSGlobalObject,
     destination_blob: &mut Blob,
     options: &WriteFileOptions,
+    source_content_type: Option<&[u8]>,
 ) -> JsResult<JSValue> {
     // SAFETY: null-checked by caller
     let destination_store = destination_blob
@@ -4638,7 +4639,7 @@ fn write_file_with_empty_source_to_destination(
                 &aws_options.credentials,
                 s3.path(),
                 b"",
-                destination_blob.content_type_or_mime_type(),
+                resolve_s3_upload_content_type(destination_blob, source_content_type),
                 // SAFETY: `*const [u8]` borrows from sibling `_*_slice` fields
                 // on `aws_options`, which outlives this call.
                 aws_options.content_disposition.as_deref(),
@@ -4707,7 +4708,12 @@ pub fn write_file_with_source_destination(
     );
 
     let Some(source_store) = source_blob.store.get().clone() else {
-        return write_file_with_empty_source_to_destination(ctx, destination_blob, options);
+        return write_file_with_empty_source_to_destination(
+            ctx,
+            destination_blob,
+            options,
+            source_blob.content_type_or_mime_type(),
+        );
     };
     let source_type = source_store.data.tag();
 
@@ -5185,7 +5191,17 @@ pub fn write_file_internal(
                     | BodyValue::Used
                     | BodyValue::Empty
                     | BodyValue::Blob(_)
-                    | BodyValue::Null => Ok(ControlFlow::Continue(body_value_ref.use_())),
+                    | BodyValue::Null => {
+                        let b = body_value_ref.use_();
+                        if let Some(ct) = source_content_type {
+                            if !ct.is_empty() {
+                                b.content_type_was_set.set(true);
+                                b.content_type
+                                    .set(BlobContentType::Owned(std::sync::Arc::from(ct)));
+                            }
+                        }
+                        Ok(ControlFlow::Continue(b))
+                    }
                     BodyValue::Error(err_ref) => {
                         let err_js = err_ref.to_js(global_this);
                         destination_blob.detach();
@@ -5289,7 +5305,7 @@ pub fn write_file_internal(
         // in `JSValue`); `get_body_value` / `get_body_readable_stream` both
         // take `&self` (interior mutability for the body cell).
         if let Some(response) = data.as_class_ref::<Response>() {
-            let content_type: Option<Box<[u8]>> = response
+            let content_type = response
                 .get_content_type()?
                 .map(|s| Box::<[u8]>::from(s.slice()));
             let bv = std::ptr::from_mut(response.get_body_value());
@@ -5299,21 +5315,12 @@ pub fn write_file_internal(
                 content_type.as_deref(),
             )? {
                 core::ops::ControlFlow::Break(v) => return Ok(v),
-                core::ops::ControlFlow::Continue(b) => {
-                    if let Some(ct) = content_type {
-                        if !ct.is_empty() && b.content_type_slice().is_empty() {
-                            b.content_type_was_set.set(true);
-                            b.content_type
-                                .set(BlobContentType::Owned(std::sync::Arc::from(ct)));
-                        }
-                    }
-                    break 'brk b;
-                }
+                core::ops::ControlFlow::Continue(b) => break 'brk b,
             }
         }
 
         if let Some(request) = data.as_class_ref::<Request>() {
-            let content_type: Option<Box<[u8]>> = request
+            let content_type = request
                 .get_content_type()?
                 .map(|s| Box::<[u8]>::from(s.slice()));
             let bv = std::ptr::from_mut(request.get_body_value());
@@ -5323,16 +5330,7 @@ pub fn write_file_internal(
                 content_type.as_deref(),
             )? {
                 core::ops::ControlFlow::Break(v) => return Ok(v),
-                core::ops::ControlFlow::Continue(b) => {
-                    if let Some(ct) = content_type {
-                        if !ct.is_empty() && b.content_type_slice().is_empty() {
-                            b.content_type_was_set.set(true);
-                            b.content_type
-                                .set(BlobContentType::Owned(std::sync::Arc::from(ct)));
-                        }
-                    }
-                    break 'brk b;
-                }
+                core::ops::ControlFlow::Continue(b) => break 'brk b,
             }
         }
 

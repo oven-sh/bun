@@ -54,6 +54,8 @@ const results = {
   blob_type_extless_key: await put(() => client.write("noext", new Blob(['{"a":1}'], { type: "application/json" }))),
   blob_type_overrides_key_ext: await put(() => client.write("page.txt", new Blob(["<p>hi</p>"], { type: "text/html" }))),
   response_header: await put(() => client.write("noext-resp", new Response("a,b", { headers: { "content-type": "text/csv" } }))),
+  response_header_over_blob_type: await put(() => client.write("noext-resp", new Response(new Blob(["<p>"], { type: "text/html" }), { headers: { "content-type": "text/csv" } }))),
+  response_null_body_header: await put(() => client.write("noext-resp", new Response(null, { headers: { "content-type": "text/csv" } }))),
   request_header: await put(() => client.write("noext-req", new Request("http://x/", { method: "POST", body: "a,b", headers: { "content-type": "text/csv" } }))),
   explicit_type_option: await put(() => client.write("uploads/8f3a1c", png, { type: "text/plain" })),
   key_ext_fallback_bytes: await put(() => client.write("photo.png", new Uint8Array([1, 2, 3]))),
@@ -85,13 +87,15 @@ test("s3 upload Content-Type is taken from the body (Blob.type / Bun.file / Resp
   expect(stderr).toBe("");
   const results = JSON.parse(stdout) as Record<string, string | null>;
 
-  // Without the fix these six send application/octet-stream (or text/plain for
+  // Without the fix these send application/octet-stream (or text/plain for
   // page.txt), dropping the body's own type.
   expect(results.bunfile_extless_key).toBe("image/png");
   expect(results.bun_write_bunfile).toBe("image/png");
   expect(results.blob_type_extless_key).toStartWith("application/json");
   expect(results.blob_type_overrides_key_ext).toStartWith("text/html");
   expect(results.response_header).toBe("text/csv");
+  expect(results.response_header_over_blob_type).toBe("text/csv");
+  expect(results.response_null_body_header).toBe("text/csv");
   expect(results.request_header).toBe("text/csv");
 
   // Controls: these must keep working exactly as before.

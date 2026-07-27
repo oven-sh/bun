@@ -686,3 +686,81 @@ describe("node:inspector/promises", () => {
     expect(inspectorPromises.waitForDebugger).toBe(inspector.waitForDebugger);
   });
 });
+
+// JSC's BasicBlockLocation::getExecutedRanges() computes the executed
+// sub-ranges of a basic block by splitting it around one gap per enclosed
+// function body. It used to do that with a selection sort (repeated min-scan
+// plus Vector::removeAt), so a module with N top-level functions made
+// Profiler.takePreciseCoverage cost O(N^2). The function-gap list interleaves
+// declarations and expressions (decls are inserted first, then exprs), so the
+// fixture below also exercises the sort on unsorted input.
+const manyFunctionsCoverageFixture = `
+import { Session } from "node:inspector/promises";
+import vm from "node:vm";
+
+const N = Number(process.argv[2]);
+let src = "";
+for (let i = 0; i < N; i++) {
+  if (i % 3 === 1) src += \`var fn\${i} = function(a){ if(a>\${i}) return a*\${i}; return -a; };\\n\`;
+  else src += \`function fn\${i}(a){ if(a>\${i}) return a*\${i}; return -a; }\\n\`;
+}
+src += "({ fn0, fn1, fn2 });\\n";
+
+const session = new Session();
+session.connect();
+await session.post("Profiler.enable");
+await session.post("Profiler.startPreciseCoverage", { callCount: true, detailed: true });
+
+const url = "file:///many-functions.js";
+const exported = vm.runInThisContext(src, { filename: url });
+exported.fn0(0);
+exported.fn1(0);
+exported.fn2(5);
+
+const t0 = performance.now();
+const coverage = await session.post("Profiler.takePreciseCoverage");
+const elapsed = performance.now() - t0;
+
+await session.post("Profiler.stopPreciseCoverage");
+session.disconnect();
+
+const entry = coverage.result.find(s => s.url === url);
+const counts = entry.functions.slice(0, 6).map(f => f.ranges[0].count);
+process.stdout.write(JSON.stringify({ elapsed, functions: entry.functions.length, counts }));
+`;
+
+async function runManyFunctionsCoverage(n: number) {
+  using dir = tempDir("inspector-many-fns", { "run.mjs": manyFunctionsCoverageFixture });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run.mjs", String(n)],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+  return JSON.parse(stdout) as { elapsed: number; functions: number; counts: number[] };
+}
+
+describe("Profiler.takePreciseCoverage with many top-level functions", () => {
+  test("reports every function when declarations and expressions are interleaved", async () => {
+    const out = await runManyFunctionsCoverage(120);
+    // One whole-script entry, the vm.runInThisContext wrapper, then one per function.
+    expect(out.functions).toBe(122);
+    // fn0/fn1/fn2 each ran once; fn3 never ran.
+    expect(out.counts).toEqual([1, 1, 1, 1, 1, 0]);
+  });
+
+  test("scales sub-quadratically in top-level function count", async () => {
+    const small = await runManyFunctionsCoverage(4_000);
+    const large = await runManyFunctionsCoverage(16_000);
+    // A 4x increase in functions grows a quadratic term 16x. The selection
+    // sort in getExecutedRanges() made the release-build ratio here ~12;
+    // with an O(n log n) sort the remaining work is linear and the ratio
+    // sits near 4. A 20 ms floor guards against a near-zero small run.
+    const ratio = large.elapsed / Math.max(small.elapsed, 20);
+    expect({ small: small.elapsed, large: large.elapsed, ratio }).toSatisfy(r => r.ratio < 8);
+  }, 90_000);
+});

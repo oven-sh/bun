@@ -4032,6 +4032,21 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             self.ts_use_counts.push(0);
         }
 
+        if kind != js_ast::symbol::Kind::Unbound {
+            match identifier {
+                b"undefined" => self
+                    .const_values_declared
+                    .insert(js_ast::ConstValuesDeclared::UNDEFINED),
+                b"NaN" => self
+                    .const_values_declared
+                    .insert(js_ast::ConstValuesDeclared::NAN),
+                b"Infinity" => self
+                    .const_values_declared
+                    .insert(js_ast::ConstValuesDeclared::INFINITY),
+                _ => {}
+            }
+        }
+
         Ref::new(
             inner_index,
             self.source.index.0 as js_ast::base::RefInt,
@@ -4543,19 +4558,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // Allocate a new symbol
         let mut ref_ = self.new_symbol(kind, name);
-
-        match name {
-            b"undefined" => self
-                .const_values_declared
-                .insert(js_ast::ConstValuesDeclared::UNDEFINED),
-            b"NaN" => self
-                .const_values_declared
-                .insert(js_ast::ConstValuesDeclared::NAN),
-            b"Infinity" => self
-                .const_values_declared
-                .insert(js_ast::ConstValuesDeclared::INFINITY),
-            _ => {}
-        }
 
         // Single-probe `getOrPut`. The previous two-probe shape
         // (`members.get` then `members.put_borrowed`) existed only because the

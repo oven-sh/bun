@@ -314,6 +314,42 @@ describe("shadowed global-constant identifiers", () => {
     expect(exitCode).toBe(0);
   });
 
+  test.concurrent("1e400 does not capture a named class-expression binding", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const c = class Infinity { static v = 1e400; };
+         console.log(c.v === globalThis.Infinity ? "OK" : "CAPTURED");`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("OK\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("folded 0/0 does not capture a named function-expression binding", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const f = function NaN() { return globalThis.Number.isNaN(0 / 0); };
+         console.log(f());`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("true\n");
+    expect(exitCode).toBe(0);
+  });
+
   test.concurrent("void 0 does not capture a local undefined", async () => {
     await using proc = Bun.spawn({
       cmd: [

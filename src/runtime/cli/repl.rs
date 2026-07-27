@@ -1875,6 +1875,7 @@ impl<'a> Repl<'a> {
             &source,
             bun_js_printer::Options {
                 mangled_props: None,
+                const_values_declared: ast.const_values_declared,
                 ..Default::default()
             },
         )

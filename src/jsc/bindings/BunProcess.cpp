@@ -92,7 +92,14 @@ typedef int mode_t;
 #include "JSNextTickQueue.h"
 #include "ProcessBindingUV.h"
 #include "ProcessBindingNatives.h"
+#include <unicode/utypes.h>
+#if __has_include(<unicode/ucal.h>)
 #include <unicode/ucal.h>
+#else
+// Apple's macOS SDK ships only a subset of ICU headers (no ucal.h), but
+// libicucore exports the symbol.
+U_CAPI const char* U_EXPORT2 ucal_getTZDataVersion(UErrorCode* status);
+#endif
 
 #if OS(LINUX)
 #include <features.h>

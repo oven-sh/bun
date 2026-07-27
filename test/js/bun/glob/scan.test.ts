@@ -24,7 +24,7 @@ import { Glob, GlobScanOptions } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { execSync } from "child_process";
 import fg from "fast-glob";
-import { bunEnv, bunExe, isWindows, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
+import { bunEnv, bunExe, getFDCount, isWindows, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
 import * as fs from "node:fs";
 import * as path from "path";
 import { createTempDirectoryWithBrokenSymlinks, prepareEntries, tempFixturesDir } from "./util";
@@ -663,15 +663,38 @@ describe("lazy iteration", () => {
 
   test("scanSync: breaking early releases the directory fd", () => {
     using dir = tempDir("glob-lazy-fd", { "a/b.txt": "", "a/c.txt": "" });
-    // `a` is open between the two yields; `break` must close it eagerly
-    // rather than waiting for GC so the directory can be removed immediately
-    // on Windows.
-    for (const entry of new Glob("**/*.txt").scanSync({ cwd: String(dir) })) {
-      expect(entry).toStartWith("a" + path.sep);
-      break;
+    const before = getFDCount();
+    for (let i = 0; i < 64; i++) {
+      for (const entry of new Glob("**/*.txt").scanSync({ cwd: String(dir) })) {
+        expect(entry).toStartWith("a" + path.sep);
+        break;
+      }
     }
-    fs.rmSync(path.join(String(dir), "a"), { recursive: true });
-    expect(fs.existsSync(path.join(String(dir), "a"))).toBeFalse();
+    // If `break` leaves the walker's dirfd open, each of the 64 iterations
+    // above adds one (no GC between them). On POSIX an open dirfd doesn't
+    // block `rmSync`, so count fds instead.
+    if (isWindows) {
+      fs.rmSync(path.join(String(dir), "a"), { recursive: true });
+      expect(fs.existsSync(path.join(String(dir), "a"))).toBeFalse();
+    } else {
+      expect(getFDCount() - before).toBeLessThan(8);
+    }
+  });
+
+  test("scanSync: never-iterated result holds no fd", () => {
+    using dir = tempDir("glob-lazy-fd-noiter", { "a/b.txt": "" });
+    const before = getFDCount();
+    const held: unknown[] = [];
+    for (let i = 0; i < 64; i++) {
+      held.push(new Glob("**/*.txt").scanSync({ cwd: String(dir) }));
+    }
+    if (isWindows) {
+      fs.rmSync(path.join(String(dir), "a"), { recursive: true });
+      expect(fs.existsSync(path.join(String(dir), "a"))).toBeFalse();
+    } else {
+      expect(getFDCount() - before).toBeLessThan(8);
+    }
+    held.length = 0;
   });
 });
 

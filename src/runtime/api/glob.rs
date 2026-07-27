@@ -327,29 +327,6 @@ impl GlobScanIterator {
         self.has_pending_activity.load(Ordering::SeqCst) > 0
     }
 
-    /// Eager `iter.init()` so a bad `cwd` still throws at the `scanSync()` call site.
-    fn init_sync(&self, global_this: &JSGlobalObject) -> JsResult<()> {
-        self.state.with_mut(|state| {
-            if state.walker.is_null() || state.did_init {
-                return Ok(());
-            }
-            state.did_init = true;
-            // SAFETY: `walker` non-null implies `iter` is initialized.
-            let iter = unsafe { state.iter.assume_init_mut() };
-            match iter.init() {
-                Err(err) => {
-                    state.teardown();
-                    Err(crate::Error::from(err).into())
-                }
-                Ok(bun_sys::Result::Err(err)) => {
-                    state.teardown();
-                    Err(global_this.throw_value(err.to_js(global_this)))
-                }
-                Ok(bun_sys::Result::Ok(())) => Ok(()),
-            }
-        })
-    }
-
     #[bun_jsc::host_fn(method)]
     pub fn next_sync(
         &self,
@@ -612,10 +589,7 @@ impl Glob {
     ) -> JsResult<JSValue> {
         match self.make_scanner(global_this, callframe, "scanSync")? {
             None => Ok(JSValue::UNDEFINED),
-            Some(scanner) => {
-                scanner.init_sync(global_this)?;
-                Ok(GlobScanIterator::to_js_boxed(scanner, global_this))
-            }
+            Some(scanner) => Ok(GlobScanIterator::to_js_boxed(scanner, global_this)),
         }
     }
 

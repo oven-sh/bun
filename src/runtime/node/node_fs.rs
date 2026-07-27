@@ -10204,8 +10204,7 @@ impl NodeFSFunctionEnum {
 struct i52;
 impl i52 {
     const MIN: i64 = -(1i64 << 51);
-    /// Node's `GetOffset`: only a safe JS integer selects positional I/O;
-    /// anything else (NaN, ±Inf, fractional, non-number) means "current offset".
+    /// Node's `GetOffset`: only a safe JS integer selects positional I/O.
     #[inline]
     fn offset_from_js(v: JSValue) -> Option<i64> {
         let n = v.get_number()?;

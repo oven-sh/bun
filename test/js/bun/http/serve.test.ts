@@ -3497,6 +3497,54 @@ describe("request body backpressure", () => {
       }
     });
   }
+
+  it("releases a paused request body when the handler responds without reading it", async () => {
+    // The handler never touches req.body, so the pre-stream pause engages and is
+    // released by detach_response()'s resume once the response is sent. Without
+    // that resume the socket stays paused and the client never sees the response.
+    const TOTAL = 32 * 1024 * 1024;
+    const gate = Promise.withResolvers<void>();
+    const serverDone = Promise.withResolvers<void>();
+
+    using server = serve({
+      port: 0,
+      idleTimeout: 0,
+      maxRequestBodySize: TOTAL + 1,
+      error(e) {
+        serverDone.reject(e);
+      },
+      async fetch() {
+        await gate.promise;
+        serverDone.resolve();
+        return new Response("ignored");
+      },
+    });
+
+    const { sock, sentBeforeGate } = await pumpUploadUntilPlateau(server.port, TOTAL, 2);
+    try {
+      expect(sentBeforeGate).toBeGreaterThan(0);
+      expect(sentBeforeGate).toBeLessThan(TOTAL);
+
+      const response = new Promise<string>((resolve, reject) => {
+        let buf = "";
+        sock.removeAllListeners("data");
+        sock.on("data", d => {
+          buf += d.toString("latin1");
+          if (buf.includes("\r\n\r\n")) resolve(buf);
+        });
+        sock.once("error", reject);
+        sock.once("close", () => resolve(buf));
+      });
+
+      gate.resolve();
+      await serverDone.promise;
+      const resp = await response;
+      expect(resp).toStartWith("HTTP/1.1 200 ");
+      expect(resp).toContain("ignored");
+    } finally {
+      sock.destroy();
+    }
+  });
 });
 
 // https://github.com/oven-sh/bun/issues/32469

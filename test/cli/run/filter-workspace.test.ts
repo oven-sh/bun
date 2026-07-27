@@ -668,8 +668,7 @@ describe("bun", () => {
   // env loader the next package must still get the shim dir on its PATH so
   // bare `node` in its script resolves.
   test("every package gets the node shim on PATH when no real node exists (#6000)", async () => {
-    const probe = (pkg: string) =>
-      `node -e "console.log(JSON.stringify({ pkg: '${pkg}', NODE: process.env.NODE }))"`;
+    const probe = (pkg: string) => `node -e "console.log(JSON.stringify({ pkg: '${pkg}', NODE: process.env.NODE }))"`;
     const dir = tempDirWithFiles("filter-shim-path", {
       packages: {
         a: { "package.json": JSON.stringify({ name: "a", scripts: { go: probe("a") } }) },

@@ -387,6 +387,18 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       expect(result).toContain("PASS: caller retains ownership on failure with pending exception");
       expect(result).not.toContain("FAIL");
     });
+
+    it("napi_detach_arraybuffer does not run finalize_cb synchronously", async () => {
+      const result = await checkSameOutput("test_detach_external_arraybuffer_finalizer", []);
+      expect(result.split(/\r?\n/)).toEqual([
+        "detach status=0 finalize_count during detach=0",
+        "is_detached=true",
+        "second detach status=0 finalize_count after second detach=0",
+        "GC did run",
+        "GC did run",
+        "finalize_count while reachable=0",
+      ]);
+    });
   });
 
   describe("pending-exception gate", () => {

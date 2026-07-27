@@ -2596,6 +2596,56 @@ test_external_arraybuffer_finalizer(const Napi::CallbackInfo &info) {
   return ok(env);
 }
 
+// Regression test: napi_detach_arraybuffer on an external ArrayBuffer must
+// not run the finalize_cb synchronously inside the detach call. In Node/V8
+// the BackingStore stays owned by the ArrayBuffer object across Detach(),
+// so the deleter (finalize_cb) only runs when the ArrayBuffer is collected.
+static int detach_finalize_count = 0;
+static char detach_backing[256];
+
+static napi_value
+test_detach_external_arraybuffer_finalizer(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+
+  detach_finalize_count = 0;
+
+  napi_value arraybuffer;
+  NODE_API_CALL(env, napi_create_external_arraybuffer(
+                         env, detach_backing, sizeof detach_backing,
+                         +[](napi_env, void *, void *) {
+                           detach_finalize_count++;
+                         },
+                         nullptr, &arraybuffer));
+
+  napi_status detach_status = napi_detach_arraybuffer(env, arraybuffer);
+
+  // The finalizer must not have run inside napi_detach_arraybuffer.
+  printf("detach status=%d finalize_count during detach=%d\n",
+         (int)detach_status, detach_finalize_count);
+
+  bool is_detached = false;
+  NODE_API_CALL(env,
+                napi_is_detached_arraybuffer(env, arraybuffer, &is_detached));
+  printf("is_detached=%s\n", is_detached ? "true" : "false");
+
+  // A second detach on the same (now-detached) buffer is a no-op and must
+  // also not fire the finalizer.
+  napi_status detach2 = napi_detach_arraybuffer(env, arraybuffer);
+  printf("second detach status=%d finalize_count after second detach=%d\n",
+         (int)detach2, detach_finalize_count);
+
+  // Hold the ArrayBuffer across a few GC cycles: the finalizer must not fire
+  // while the object is still reachable.
+  napi_ref ab_ref;
+  NODE_API_CALL(env, napi_create_reference(env, arraybuffer, 1, &ab_ref));
+  run_gc(info);
+  run_gc(info);
+  printf("finalize_count while reachable=%d\n", detach_finalize_count);
+
+  NODE_API_CALL(env, napi_delete_reference(env, ab_ref));
+  return ok(env);
+}
+
 // Regression test: napi_create_external_arraybuffer while a napi exception
 // is pending (via napi_throw_error). Whatever status is returned, the
 // function must not adopt external_data and then leave the destructor
@@ -3557,6 +3607,8 @@ void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, napi_get_typeof);
   REGISTER_FUNCTION(env, exports, test_external_buffer_data_lifetime);
   REGISTER_FUNCTION(env, exports, test_external_arraybuffer_finalizer);
+  REGISTER_FUNCTION(env, exports,
+                    test_detach_external_arraybuffer_finalizer);
   REGISTER_FUNCTION(env, exports,
                     test_external_arraybuffer_with_pending_exception);
   REGISTER_FUNCTION(env, exports,

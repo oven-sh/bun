@@ -32,7 +32,8 @@ public:
 
     DECLARE_INFO;
     // visitChildrenImpl MUST visit: m_stream, m_underlyingSource, m_pull, m_pendingRead,
-    // m_deferCloseReason, m_arrayBufferSink, m_array, m_closingPromise, m_finalChunk, and
+    // m_deferCloseReason, m_arrayBufferSink, m_array, m_closingPromise, m_finalChunk,
+    // m_drainPromise, and
     // the barrier container m_textAccumulator.pieces (via
     // m_textAccumulator.visit(locker, visitor) inside ONE `Locker { cellLock() }` scope
     // taken by THIS visitChildrenImpl — cellLock() is non-recursive; see StreamQueue.h).
@@ -83,6 +84,14 @@ public:
 
     // ArrayBuffer sink: a real Bun.ArrayBufferSink cell (ArrayBuffer kind only).
     JSC::WriteBarrier<JSC::JSObject> m_arrayBufferSink;
+    // ArrayBuffer-sink pump guard: bytes write()'d since the last flushDirectSink delivery,
+    // the byte threshold at which write() signals backpressure (the strategy highWaterMark
+    // when numeric, else 64 KiB), and the promise flush(true) returns while over that
+    // threshold with no waiting consumer. Resolved by didDrain on delivery/close, rejected
+    // by handleError. Text/Array sinks never increment m_undeliveredBytes so never guard.
+    uint64_t m_undeliveredBytes { 0 };
+    uint64_t m_highWaterMark { 65536 };
+    JSC::WriteBarrier<JSC::JSPromise> m_drainPromise;
 
     // Text sink: the ONE shared createTextStream accumulator value type
     // (BunStandaloneTextSink.h), also owned by the standalone JSBunStandaloneTextSink — one
@@ -112,6 +121,8 @@ public:
     void onFlush(JSC::JSGlobalObject*);
     // handleDirectStreamError.
     void handleError(JSC::JSGlobalObject*, JSC::JSValue error);
+    // Resolve m_drainPromise and reset m_undeliveredBytes; called on every delivery and close.
+    void didDrain(JSC::JSGlobalObject*);
 
 private:
     JSDirectStreamController(JSC::VM&, JSC::Structure*, Bun::WebStreams::DirectSinkKind);

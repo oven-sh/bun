@@ -321,12 +321,13 @@ describe("spawn stdin ReadableStream", () => {
     expect(exitCode).toBe(0);
   });
 
-  // The ReadableStream -> stdin FileSink pump intentionally does not await the
-  // Promise FileSink.write() returns for writes it cannot complete synchronously
-  // (a full pipe on POSIX, every pipe write on Windows). When the child dies
-  // while one is in flight, the sink rejects that Promise with EPIPE; the pump
-  // must mark it handled or it surfaces as an unhandled rejection in the parent.
-  // Run in a child process so a stray rejection lands on its counter.
+  // A 256 KiB write to a child that never reads stdin cannot complete
+  // synchronously (a full pipe on POSIX, every pipe write on Windows), so
+  // FileSink.write() returns its pending Promise. The async-iterable pump
+  // suspends on that Promise; the spec-ReadableStream pump marks it handled and
+  // keeps reading. When the child dies while that write is in flight, neither
+  // path may surface an unhandled EPIPE rejection in the parent. Run in a child
+  // process so a stray rejection lands on its counter.
   async function expectNoUnhandledRejectionWhenChildDies(useIterator: boolean) {
     await using proc = Bun.spawn({
       cmd: [
@@ -356,15 +357,15 @@ describe("spawn stdin ReadableStream", () => {
         }
 
         // The child never reads its stdin, so a 256 KiB write can never finish
-        // and the sink always holds an in-flight write. Once a few chunks have
-        // been handed to the sink, kill the child. How far the pump gets before
-        // the parent notices the death varies, so run several rounds.
+        // and the sink always holds an in-flight write. Kill the child once the
+        // first chunk has been handed off; how far the pump gets before the
+        // parent notices the death varies, so run several rounds.
         function round() {
           let produced = 0;
           const child = Bun.spawn({
             cmd: [process.execPath, "-e", "setTimeout(() => {}, 1e9)"],
             stdin: (${useIterator} ? iterate : readable)(() => {
-              if (++produced === 4) child.kill();
+              if (++produced === 1) queueMicrotask(() => child.kill());
             }),
             stdout: "ignore",
             stderr: "ignore",
@@ -411,7 +412,7 @@ describe("spawn stdin ReadableStream", () => {
         const chunk = Buffer.alloc(256 * 1024, "x");
         let produced = 0;
         function producedOne() {
-          if (++produced === 4) child.kill();
+          if (++produced === 1) queueMicrotask(() => child.kill());
         }
         async function* iterate() {
           while (true) {

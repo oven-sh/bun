@@ -748,6 +748,9 @@ impl PosixBufferedReader {
                                         ReadState::Progress
                                     },
                                 );
+                                if parent.is_done() {
+                                    return;
+                                }
                                 // Closing for `over_budget` outranks the
                                 // consumer asking us to stop: it must still
                                 // happen, or nothing ever caps the pipe.

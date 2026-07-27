@@ -5870,6 +5870,28 @@ pub mod bv2_impl {
                     continue;
                 }
 
+                if import_record.tag == bun_ast::ImportRecordTag::NativeBindings {
+                    import_record.tag = bun_ast::ImportRecordTag::None;
+                    let abs = if ctx.target.is_server_side() {
+                        self.transpiler
+                            .resolver
+                            .resolve_node_gyp_bindings(source_dir, import_record.path.text)
+                    } else {
+                        // Browser: `Loader::Napi` hard-errors, so skip the probe and fall through to external.
+                        None
+                    };
+                    if let Some(abs) = abs {
+                        import_record.path = bun_paths::fs::Path::init(abs);
+                    } else {
+                        // No built addon on disk: leave `require("<name>.node")` external for runtime.
+                        import_record.source_index = Index::INVALID;
+                        import_record
+                            .flags
+                            .insert(bun_ast::ImportRecordFlags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS);
+                        continue;
+                    }
+                }
+
                 if ctx.target.is_bun() {
                     if let Some(replacement) = bun_resolve_builtins::HardcodedModule::Alias::get(
                         import_record.path.text,

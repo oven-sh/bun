@@ -106,6 +106,8 @@ pub enum Tag {
     Bun,
     /// A builtin module, such as `node:fs` or `bun:sqlite`
     Builtin,
+    /// `require('bindings')(<name>)` rewritten to `require(<name>.node)`; bundler resolves it under the importer's package root.
+    NativeBindings,
     /// An import to the internal runtime
     Runtime,
     /// A 'macro:' import namespace or 'with { type: "macro" }'

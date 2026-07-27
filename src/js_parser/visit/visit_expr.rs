@@ -2008,6 +2008,40 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
+        // `require('bindings')('<name>')` -> `require('<name>.node')` so the napi loader copies the addon (oven-sh/bun#8895).
+        if p.options.bundle && e_.args.len_u32() == 1 {
+            if let Data::ERequireString(req) = e_.target.data {
+                let idx = req.import_record_index as usize;
+                if p.import_records.items()[idx].path.text == b"bindings" {
+                    if let Data::EString(mut str_) = e_.args.slice()[0].data {
+                        let name = str_.slice(p.arena);
+                        if !name.is_empty() {
+                            // Always store `<name>.node` so the record never collides with a bare builtin alias (e.g. `zlib`).
+                            const EXT: &[u8] = b".node";
+                            let name: &[u8] = if strings::has_suffix_comptime(name, EXT) {
+                                name
+                            } else {
+                                let mut buf = bun_alloc::ArenaVec::with_capacity_in(
+                                    name.len() + EXT.len(),
+                                    p.arena,
+                                );
+                                buf.extend_from_slice(name);
+                                buf.extend_from_slice(EXT);
+                                buf.into_bump_slice()
+                            };
+                            let record = &mut p.import_records.items_mut()[idx];
+                            // SAFETY: `name` is arena-owned via `p.arena`; see `add_import_record_by_range_and_path`.
+                            record.path =
+                                unsafe { crate::parser::fs::Path::init(name).into_static() };
+                            record.tag = bun_ast::ImportRecordTag::NativeBindings;
+                            *e = e_.target;
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+
         if matches!(e_.target.data, Data::ERequireCallTarget) {
             e_.can_be_unwrapped_if_unused = E::CallUnwrap::Never;
 

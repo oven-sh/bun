@@ -369,6 +369,7 @@ pub struct Bufs {
     pub path_in_global_disk_cache: PathBuffer,
     pub abs_to_rel: PathBuffer,
     pub import_path_for_standalone_module_graph: PathBuffer,
+    pub native_bindings_candidate: PathBuffer,
 
     #[cfg(windows)]
     pub win32_normalized_dir_info_cache: [u8; MAX_PATH_BYTES * 2],
@@ -1545,6 +1546,54 @@ impl<'a> Resolver<'a> {
             }
         }
         self.resolve(source_dir, import_path, kind)
+    }
+
+    /// Find `<name>.node` under the importer's package root, probing the same node-gyp output dirs the npm `bindings` package does.
+    pub fn resolve_node_gyp_bindings(
+        &mut self,
+        source_dir: &[u8],
+        binding_name: &[u8],
+    ) -> Option<&'static [u8]> {
+        // `try` table from npm `bindings` 1.5.0, minus runtime-templated entries, reordered Release-before-Debug.
+        const BINDINGS_SEARCH: &[&[&[u8]]] = &[
+            &[b"build"],
+            &[b"build", b"Release"],
+            &[b"build", b"Debug"],
+            &[b"out", b"Release"],
+            &[b"Release"],
+            &[b"out", b"Debug"],
+            &[b"Debug"],
+            &[b"build", b"default"],
+            &[b"addon-build", b"release", b"install-root"],
+            &[b"addon-build", b"debug", b"install-root"],
+            &[b"addon-build", b"default", b"install-root"],
+        ];
+
+        let mut dir_info = self.dir_info_cached(source_dir).ok().flatten()?;
+        // `enclosing_package_json` skips nameless package.json; `bindings.getRoot()` does not.
+        let module_root = loop {
+            if let Some(pkg) = dir_info.package_json() {
+                break pkg.source.path.source_dir();
+            }
+            dir_info = dir_info.get_parent()?;
+        };
+
+        let mut parts: [&[u8]; 5] = [module_root, b"", b"", b"", binding_name];
+        for sub in BINDINGS_SEARCH {
+            for (i, slot) in parts[1..4].iter_mut().enumerate() {
+                *slot = sub.get(i).copied().unwrap_or(b"");
+            }
+            let Some(candidate) = self
+                .fs_ref()
+                .abs_buf_checked(&parts, bufs!(native_bindings_candidate))
+            else {
+                continue;
+            };
+            if let Some(found) = self.load_as_file(candidate, options::ExtOrder::DefaultDefault) {
+                return Some(found.path);
+            }
+        }
+        None
     }
 
     pub fn finalize_result(

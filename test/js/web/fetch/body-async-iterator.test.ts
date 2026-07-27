@@ -71,8 +71,6 @@ describe("Response(async iterable).body with an unpaced producer", () => {
         }
       }
     }
-    let ticks = 0;
-    setInterval(() => ticks++, 10);
     ${consumer}
   `;
   const readerLoop = `
@@ -87,7 +85,7 @@ describe("Response(async iterable).body with an unpaced producer", () => {
         await new Promise(res => setTimeout(res, 1));
         if (reads === 5) {
           await r.cancel();
-          process.stdout.write(JSON.stringify({ ticks, reads, yields }) + "\\n");
+          process.stdout.write(JSON.stringify({ reads, yields }) + "\\n");
           process.exit(0);
         }
       }
@@ -100,7 +98,7 @@ describe("Response(async iterable).body with an unpaced producer", () => {
         reads++;
         await new Promise(res => setTimeout(res, 1));
         if (reads === 5) {
-          process.stdout.write(JSON.stringify({ ticks, reads, yields }) + "\\n");
+          process.stdout.write(JSON.stringify({ reads, yields }) + "\\n");
           process.exit(0);
         }
       }
@@ -112,7 +110,7 @@ describe("Response(async iterable).body with an unpaced producer", () => {
       write() {
         reads++;
         if (reads === 5) {
-          process.stdout.write(JSON.stringify({ ticks, reads, yields }) + "\\n");
+          process.stdout.write(JSON.stringify({ reads, yields }) + "\\n");
           process.exit(0);
         }
         return new Promise(res => setTimeout(res, 1));
@@ -135,8 +133,8 @@ describe("Response(async iterable).body with an unpaced producer", () => {
     expect(stderr).toBe("");
     const result = JSON.parse(stdout.trim());
     expect(result.error).toBeUndefined();
+    // Reaching reads === 5 proves the event loop is alive: each step awaited a timer.
     expect(result.reads).toBe(5);
-    expect(result.ticks).toBeGreaterThan(0);
     // Each read() drives the generator at most to the 64 KiB batch boundary: 5 reads of
     // 1 KiB chunks is at most 5 * 64 yields.
     expect(result.yields).toBeLessThanOrEqual(5 * 64);

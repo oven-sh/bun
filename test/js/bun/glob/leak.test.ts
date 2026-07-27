@@ -1,14 +1,14 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isMacOS, tempDir } from "harness";
 
 // Each scan()/scanSync() allocates a Box<GlobWalker> whose dominant owned
 // allocation is a PathBuffer (4 KB on Linux, 1 KB on macOS, ~96 KB on
 // Windows). When #29379 regresses, 10k iterations leak ~75-90 MB under a
 // Linux ASAN build (quarantine disabled) and 30k leak ~40 MB on macOS
 // release, versus a ~15 MB / ~7 MB noise floor with the fix in place.
-// ASAN and debug builds are Linux-only in CI, so the lower iteration count
-// there keeps the wall time reasonable while still clearing the threshold.
-const iterations = isASAN || isDebug ? 10_000 : 30_000;
+// macOS keeps 30k even under debug/ASAN: at 1 KB per iteration a 10k run
+// would only leak ~13-26 MB and slip under the 30 MB bound locally.
+const iterations = (isASAN || isDebug) && !isMacOS ? 10_000 : 30_000;
 const warmup = 500;
 const thresholdMB = 30;
 

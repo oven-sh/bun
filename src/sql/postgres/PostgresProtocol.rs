@@ -58,6 +58,7 @@ pub use crate::postgres::protocol::password_message::PasswordMessage;
 pub use crate::postgres::protocol::portal_or_prepared_statement::PortalOrPreparedStatement;
 pub use crate::postgres::protocol::ready_for_query::ReadyForQuery;
 pub use crate::postgres::protocol::row_description::RowDescription;
+pub use crate::postgres::protocol::transaction_status_indicator::TransactionStatusIndicator;
 pub use crate::postgres::protocol::sasl_initial_response::SASLInitialResponse;
 pub use crate::postgres::protocol::sasl_response::SASLResponse;
 pub use crate::postgres::protocol::stack_reader::StackReader;

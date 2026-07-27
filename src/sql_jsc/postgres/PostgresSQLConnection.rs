@@ -160,6 +160,12 @@ pub struct PostgresSQLConnection {
     pub connection_timeout_ms: u32,
 
     pub flags: Cell<ConnectionFlags>,
+    /// Transaction-status byte from the most recent `ReadyForQuery` message
+    /// (`'I'` idle, `'T'` in a transaction block, `'E'` in a failed
+    /// transaction block). Exposed to JS via the `inTransaction` getter so the
+    /// pool can roll a leaked transaction back before handing the connection
+    /// out again.
+    pub transaction_status: Cell<protocol::TransactionStatusIndicator>,
 
     /// Before being connected, this is a connection timeout timer.
     /// After being connected, this is an idle timeout timer.
@@ -1227,6 +1233,7 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
             } else {
                 ConnectionFlags::empty()
             }),
+            transaction_status: Cell::new(protocol::TransactionStatusIndicator::I),
             timer: JsCell::new(EventLoopTimer::init_paused(
                 EventLoopTimerTag::PostgresSQLConnectionTimeout,
             )),
@@ -2527,7 +2534,8 @@ impl PostgresSQLConnection {
                 // parameter_status dropped at scope end
             }
             MessageType::ReadyForQuery => {
-                let _ready_for_query = protocol::ReadyForQuery::decode_internal(reader.reborrow())?;
+                let ready_for_query = protocol::ReadyForQuery::decode_internal(reader.reborrow())?;
+                self.transaction_status.set(ready_for_query.status);
 
                 self.set_status(Status::Connected);
                 self.update_flags(|f| {
@@ -3083,6 +3091,10 @@ impl PostgresSQLConnection {
 
     pub fn get_connected(this: &Self, _: &JSGlobalObject) -> JSValue {
         JSValue::from(this.status.get() == Status::Connected)
+    }
+
+    pub fn get_in_transaction(this: &Self, _: &JSGlobalObject) -> JSValue {
+        JSValue::from(this.transaction_status.get() != protocol::TransactionStatusIndicator::I)
     }
 
     pub fn consume_on_connect_callback(&self, global_object: &JSGlobalObject) -> Option<JSValue> {

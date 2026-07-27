@@ -622,6 +622,10 @@ impl JSMySQLConnection {
         JSValue::from(this.connection.get().status == my_sql_connection::Status::Connected)
     }
 
+    pub fn get_in_transaction(this: &Self, _: &JSGlobalObject) -> JSValue {
+        JSValue::from(this.connection.get().in_transaction())
+    }
+
     pub fn do_flush(this: &Self, _: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
         this.register_auto_flusher();
         Ok(JSValue::UNDEFINED)

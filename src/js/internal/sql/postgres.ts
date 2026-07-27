@@ -357,6 +357,10 @@ class PooledPostgresConnection extends BasePooledConnection<$ZigGeneratedClasses
     );
   }
 
+  needsReset(): boolean {
+    return this.connection?.inTransaction === true;
+  }
+
   protected wrapError(error: any): Error {
     return wrapPostgresError(error);
   }
@@ -445,6 +449,10 @@ class PostgresAdapter
   array(values: any[], typeNameOrID?: number | ArrayType): SQLArrayParameter {
     const arrayType = getArrayType(typeNameOrID);
     return new SQLArrayParameter(serializeArray(values, arrayType), arrayType);
+  }
+
+  resetQuery(): string {
+    return "ROLLBACK";
   }
 
   getTransactionCommands(options?: string): import("./shared").TransactionCommands {

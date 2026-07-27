@@ -446,6 +446,8 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
         "napi_get_typedarray_info",
         "napi_get_dataview_info",
         "napi_get_buffer_info",
+        "napi_create_array",
+        "napi_create_array_with_length",
       ]) {
         expect(result).toContain(`${fn}: survived`);
       }

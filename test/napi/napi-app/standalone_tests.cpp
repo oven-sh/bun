@@ -2952,6 +2952,10 @@ static napi_value test_vm_pending_exception_no_abort(
   printf("napi_get_dataview_info: survived\n");
   napi_get_buffer_info(env, buffer, &ptr_out, &len_out);
   printf("napi_get_buffer_info: survived\n");
+  napi_create_array(env, &out);
+  printf("napi_create_array: survived\n");
+  napi_create_array_with_length(env, 4, &out);
+  printf("napi_create_array_with_length: survived\n");
 
   // The original exception must still be pending and catchable.
   bool pending = false;

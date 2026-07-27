@@ -1496,31 +1496,6 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         err.with_path(&self.path_buf[0..copy_len])
     }
 
-    pub fn walk(&mut self) -> Result<Maybe<()>, Error> {
-        if self.pattern_components.is_empty() {
-            return Ok(Ok(()));
-        }
-
-        let mut iter = Iterator::new(self);
-        if let Err(err) = iter.init()? {
-            return Ok(Err(err));
-        }
-
-        loop {
-            let path = match iter.next()? {
-                Err(err) => return Ok(Err(err)),
-                Ok(matched_path) => matched_path,
-            };
-            let Some(path) = path else { break };
-            log!("walker: matched path: {}", bstr::BStr::new(&path));
-            // The paths are already put into self.matched_paths, which we use for the output,
-            // so we don't need to do anything here
-            let _ = path;
-        }
-
-        Ok(Ok(()))
-    }
-
     // Note: associated fn taking `pattern_components` so callers can
     // split-borrow it from `&mut self.path_buf` (Rust
     // forbids `&mut self` + `&mut self.path_buf`). Error path builds SysError

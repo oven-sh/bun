@@ -432,7 +432,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // boxed arena slot: allocate first, then fill via DerefMut on StoreRef.
         let ternary = p.new_expr(
             E::If {
-                test_: prev,
+                test: prev,
                 yes: Expr::EMPTY,
                 no: Expr::EMPTY,
             },

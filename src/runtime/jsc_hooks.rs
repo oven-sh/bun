@@ -4815,7 +4815,7 @@ unsafe fn resolve_embedded_node_file_hook(
 // ════════════════════════════════════════════════════════════════════════════
 
 /// Path-separator-adjusted literal suffixes. Only the two
-/// `_resolve` callers need them (the `[eval]` / `[stdin]` suffix checks), so
+/// `resolve` callers need them (the `[eval]` / `[stdin]` suffix checks), so
 /// inline the per-platform constants.
 #[cfg(windows)]
 const EVAL_SUFFIX: &[u8] = b"\\[eval]";
@@ -4860,7 +4860,7 @@ fn normalize_source(source: &[u8]) -> &[u8] {
 /// `vm` is the live per-thread VM. `specifier` / `source` borrow the caller's
 /// `to_utf8()` buffers and must outlive the returned slices (which the caller
 /// immediately `cloneUTF8`s).
-unsafe fn _resolve<'a>(
+unsafe fn resolve<'a>(
     vm: *mut VirtualMachine,
     specifier: &'a [u8],
     source: &'a [u8],
@@ -5198,7 +5198,7 @@ unsafe fn resolve_hook(
         // SAFETY: `vm` is the live per-thread VM; restoring the log pointers
         // swapped just above so early-return paths don't leave a dangling
         // stack pointer. The PM may have been lazily created inside
-        // `_resolve` with `pm.log = resolver.log` (our stack `log`), so
+        // `resolve` with `pm.log = resolver.log` (our stack `log`), so
         // restore it even if it was `None` at swap time.
         unsafe {
             (*vm).log = Some(old_log);
@@ -5215,7 +5215,7 @@ unsafe fn resolve_hook(
     // SAFETY: `vm` is the live per-thread VM; the slices borrow
     // `specifier_utf8`/`source_utf8` which outlive this call.
     if let Err(err) = unsafe {
-        _resolve(
+        resolve(
             vm,
             specifier_utf8.slice(),
             normalize_source(source_utf8.slice()),

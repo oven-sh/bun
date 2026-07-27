@@ -47,24 +47,6 @@ impl LoggerSourceLocation {
             identifier_name: None,
         }
     }
-
-    /// Create from a diagnostics SourceLocation without index or filename.
-    pub fn from_loc_simple(loc: &SourceLocation) -> Self {
-        Self {
-            start: LoggerPosition {
-                line: loc.start.line,
-                column: loc.start.column,
-                index: None,
-            },
-            end: LoggerPosition {
-                line: loc.end.line,
-                column: loc.end.column,
-                index: None,
-            },
-            filename: None,
-            identifier_name: None,
-        }
-    }
 }
 
 /// A variable rename from lowering, serialized for the JS shim.

@@ -1387,8 +1387,6 @@ async function main() {
       "authorized-user": { type: "string", multiple: true },
       "authorized-org": { type: "string", multiple: true },
       "no-bootstrap": { type: "boolean" },
-      "buildkite-token": { type: "string" },
-      "tailscale-authkey": { type: "string" },
       "docker": { type: "boolean" },
     },
   });
@@ -1409,8 +1407,6 @@ async function main() {
     // This tag controls the IAM role required to be able to write to the shared S3 build cache.
     // Don't want accidental polution from non-CI runs.
     "Service": args["ci"] ? "buildkite-agent" : undefined,
-    "buildkite:token": args["buildkite-token"],
-    "tailscale:authkey": args["tailscale-authkey"],
     ...Object.fromEntries(args["tag"]?.map(tag => tag.split("=")) ?? []),
   };
 

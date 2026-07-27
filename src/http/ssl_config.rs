@@ -692,5 +692,3 @@ pub mod global_registry {
         drop(weak);
     }
 }
-
-pub use global_registry as GlobalRegistry;

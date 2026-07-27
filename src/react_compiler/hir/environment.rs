@@ -349,10 +349,6 @@ impl Environment {
         self.errors.has_any_errors()
     }
 
-    pub fn error_count(&self) -> usize {
-        self.errors.details.len()
-    }
-
     /// Check if any recorded errors have Invariant category.
     /// In TS, Invariant errors throw immediately from recordError(),
     /// which aborts the current operation.
@@ -370,16 +366,6 @@ impl Environment {
         // of the pipeline, not errors thrown by a pass.
         errors.is_thrown = false;
         errors
-    }
-
-    /// Take errors added after position `since_count`, leaving earlier errors in place.
-    /// Used to detect new errors added by a specific pass.
-    pub fn take_errors_since(&mut self, since_count: usize) -> CompilerError {
-        let mut taken = CompilerError::new();
-        if self.errors.details.len() > since_count {
-            taken.details = self.errors.details.split_off(since_count);
-        }
-        taken
     }
 
     /// Take only the Invariant errors, leaving non-Invariant errors in place.
@@ -406,46 +392,6 @@ impl Environment {
         }
         self.errors = remaining;
         invariant
-    }
-
-    /// Check if any recorded errors have Todo category.
-    /// In TS, Todo errors throw immediately via CompilerError.throwTodo().
-    pub fn has_todo_errors(&self) -> bool {
-        self.errors.details.iter().any(|d| match d {
-            crate::diagnostics::CompilerErrorOrDiagnostic::Diagnostic(d) => {
-                d.category == crate::diagnostics::ErrorCategory::Todo
-            }
-            crate::diagnostics::CompilerErrorOrDiagnostic::ErrorDetail(d) => {
-                d.category == crate::diagnostics::ErrorCategory::Todo
-            }
-        })
-    }
-
-    /// Take errors that would have been thrown in TS (Invariant and Todo),
-    /// leaving other accumulated errors in place.
-    pub fn take_thrown_errors(&mut self) -> CompilerError {
-        let mut thrown = CompilerError::new();
-        let mut remaining = CompilerError::new();
-        let old = std::mem::take(&mut self.errors);
-        for detail in old.details {
-            let is_thrown = match &detail {
-                crate::diagnostics::CompilerErrorOrDiagnostic::Diagnostic(d) => {
-                    d.category == crate::diagnostics::ErrorCategory::Invariant
-                        || d.category == crate::diagnostics::ErrorCategory::Todo
-                }
-                crate::diagnostics::CompilerErrorOrDiagnostic::ErrorDetail(d) => {
-                    d.category == crate::diagnostics::ErrorCategory::Invariant
-                        || d.category == crate::diagnostics::ErrorCategory::Todo
-                }
-            };
-            if is_thrown {
-                thrown.details.push(detail);
-            } else {
-                remaining.details.push(detail);
-            }
-        }
-        self.errors = remaining;
-        thrown
     }
 
     /// Check if a binding has been hoisted (via DeclareContext) already.
@@ -1066,19 +1012,6 @@ pub fn is_hook_name(name: &[u8]) -> bool {
     }
     let fourth_char = name[3];
     fourth_char.is_ascii_uppercase() || fourth_char.is_ascii_digit()
-}
-
-/// Returns true if the name follows React naming conventions (component or hook).
-/// Components start with an uppercase letter; hooks match `use[A-Z0-9]`.
-pub fn is_react_like_name(name: &[u8]) -> bool {
-    if name.is_empty() {
-        return false;
-    }
-    let first_char = name[0];
-    if first_char.is_ascii_uppercase() {
-        return true;
-    }
-    is_hook_name(name)
 }
 
 #[cfg(test)]

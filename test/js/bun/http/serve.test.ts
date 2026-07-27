@@ -3268,6 +3268,285 @@ it("resumes a backpressured Response(ReadableStream) once the client drains and 
   }
 });
 
+describe("request body backpressure", () => {
+  // Raw-socket PUT client: connect, send the request head, then pump `total`
+  // bytes of `fill`, pausing on `drain`. Resolves once the client's `sent`
+  // counter has plateaued for 12×25 ms (backpressure engaged) or it finished
+  // the whole body (the bug).
+  async function pumpUploadUntilPlateau(port: number, total: number, fill: number) {
+    const block = Buffer.alloc(256 * 1024, fill);
+    const sock = net.connect(port, "127.0.0.1");
+    await new Promise<void>((resolve, reject) => {
+      sock.once("connect", () => resolve());
+      sock.once("error", reject);
+    });
+    sock.on("error", () => {});
+    sock.on("data", () => {});
+    sock.write(`PUT /up HTTP/1.1\r\nHost: x\r\nContent-Length: ${total}\r\nConnection: close\r\n\r\n`);
+
+    let sent = 0;
+    let drainWaiters = 0;
+    const writeMore = () => {
+      while (sent < total) {
+        const n = Math.min(block.length, total - sent);
+        const ok = sock.write(n === block.length ? block : block.subarray(0, n));
+        sent += n;
+        if (!ok) {
+          drainWaiters++;
+          sock.once("drain", writeMore);
+          return;
+        }
+      }
+    };
+    writeMore();
+
+    let last = -1;
+    let stable = 0;
+    while (sent < total && stable < 12) {
+      await Bun.sleep(25);
+      if (sent === last) stable++;
+      else {
+        stable = 0;
+        last = sent;
+      }
+    }
+    return { sock, sentBeforeGate: sent, drainWaiters };
+  }
+
+  it("applies backpressure to a streamed request body when the handler reads slowly", async () => {
+    // The server reads one chunk then stalls on a gate. Without backpressure the
+    // client can push the whole body into the ByteStream's internal buffer in
+    // that window (one ~TOTAL-sized mega-chunk once the gate opens). With it the
+    // socket is paused once ~1 MiB is buffered, so the client's write loop parks
+    // on `drain` well short of TOTAL and every delivered chunk stays bounded.
+    const TOTAL = 32 * 1024 * 1024;
+    const gate = Promise.withResolvers<void>();
+    let serverBytes = 0;
+    let maxChunk = 0;
+    let contentOk = true;
+    const serverDone = Promise.withResolvers<void>();
+
+    using server = serve({
+      port: 0,
+      idleTimeout: 0,
+      maxRequestBodySize: TOTAL + 1,
+      error(e) {
+        serverDone.reject(e);
+      },
+      async fetch(req) {
+        const reader = req.body!.getReader();
+        const first = await reader.read();
+        if (first.value) {
+          serverBytes += first.value.length;
+          maxChunk = Math.max(maxChunk, first.value.length);
+          if (first.value[0] !== 7 || first.value.at(-1) !== 7) contentOk = false;
+        }
+        await gate.promise;
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          serverBytes += value.length;
+          maxChunk = Math.max(maxChunk, value.length);
+          if (value[0] !== 7 || value.at(-1) !== 7) contentOk = false;
+        }
+        serverDone.resolve();
+        return new Response("ok");
+      },
+    });
+
+    const { sock, sentBeforeGate, drainWaiters } = await pumpUploadUntilPlateau(server.port, TOTAL, 7);
+    try {
+      gate.resolve();
+      await serverDone.promise;
+
+      // With backpressure the client stalls after ~HWM + kernel socket buffers.
+      // Without it, the client finishes the whole body before the gate opens.
+      expect(sentBeforeGate).toBeGreaterThan(0);
+      expect(sentBeforeGate).toBeLessThan(TOTAL);
+      expect(drainWaiters).toBeGreaterThan(0);
+      // The ByteStream buffer is capped at ~1 MiB, so the largest chunk the
+      // handler ever sees is that plus at most one recv buffer. Without
+      // backpressure the second read would deliver ~TOTAL bytes in one chunk.
+      expect(maxChunk).toBeLessThan(4 * 1024 * 1024);
+      expect(serverBytes).toBe(TOTAL);
+      expect(contentOk).toBe(true);
+    } finally {
+      sock.destroy();
+    }
+  });
+
+  it("applies backpressure to a request body that the handler has not touched yet", async () => {
+    // Same shape as above but the handler does not touch req.body until after the
+    // client has plateaued, covering the pre-stream request_body_buf path.
+    const TOTAL = 32 * 1024 * 1024;
+    const gate = Promise.withResolvers<void>();
+    let serverBytes = 0;
+    let maxChunk = 0;
+    let contentOk = true;
+    const serverDone = Promise.withResolvers<void>();
+
+    using server = serve({
+      port: 0,
+      idleTimeout: 0,
+      maxRequestBodySize: TOTAL + 1,
+      error(e) {
+        serverDone.reject(e);
+      },
+      async fetch(req) {
+        await gate.promise;
+        for await (const c of req.body!) {
+          serverBytes += c.length;
+          maxChunk = Math.max(maxChunk, c.length);
+          if (c[0] !== 9 || c.at(-1) !== 9) contentOk = false;
+        }
+        serverDone.resolve();
+        return new Response("ok");
+      },
+    });
+
+    const { sock, sentBeforeGate } = await pumpUploadUntilPlateau(server.port, TOTAL, 9);
+    try {
+      gate.resolve();
+      await serverDone.promise;
+
+      expect(sentBeforeGate).toBeGreaterThan(0);
+      expect(sentBeforeGate).toBeLessThan(TOTAL);
+      expect(maxChunk).toBeLessThan(4 * 1024 * 1024);
+      expect(serverBytes).toBe(TOTAL);
+      expect(contentOk).toBe(true);
+    } finally {
+      sock.destroy();
+    }
+  });
+
+  it("resumes a paused request body when the handler calls Bun.write(file, req)", async () => {
+    // Bun.write on a Locked body installs on_receive_value without creating a
+    // ByteStream; the pre-stream pause must release via on_start_buffering.
+    const TOTAL = 32 * 1024 * 1024;
+    const gate = Promise.withResolvers<void>();
+    const serverDone = Promise.withResolvers<number>();
+
+    using dir = tempDir("serve-request-body-bunwrite", {});
+    const out = join(String(dir), "body");
+
+    using server = serve({
+      port: 0,
+      idleTimeout: 0,
+      maxRequestBodySize: TOTAL + 1,
+      error(e) {
+        serverDone.reject(e);
+      },
+      async fetch(req) {
+        await gate.promise;
+        const n = await Bun.write(out, req);
+        serverDone.resolve(n);
+        return new Response("ok");
+      },
+    });
+
+    const { sock, sentBeforeGate } = await pumpUploadUntilPlateau(server.port, TOTAL, 3);
+    try {
+      expect(sentBeforeGate).toBeLessThan(TOTAL);
+
+      gate.resolve();
+      const bytes = await serverDone.promise;
+      expect(bytes).toBe(TOTAL);
+      const written = await Bun.file(out).bytes();
+      expect([written.length, written[0], written.at(-1)]).toEqual([TOTAL, 3, 3]);
+    } finally {
+      sock.destroy();
+    }
+  });
+
+  for (const touchBodyFirst of [false, true]) {
+    it(`resumes a paused request body when the handler calls .arrayBuffer()${touchBodyFirst ? " after touching req.body" : ""}`, async () => {
+      // .arrayBuffer() wants the whole body, so the pre-stream pause must
+      // release once it is called instead of leaving the socket wedged. The
+      // second variant materializes `req.body` first so `.arrayBuffer()` goes
+      // through the ByteStream buffer_action fastpath instead of
+      // on_start_buffering.
+      const TOTAL = 32 * 1024 * 1024;
+      const gate = Promise.withResolvers<void>();
+      const serverDone = Promise.withResolvers<number>();
+
+      using server = serve({
+        port: 0,
+        idleTimeout: 0,
+        maxRequestBodySize: TOTAL + 1,
+        error(e) {
+          serverDone.reject(e);
+        },
+        async fetch(req) {
+          if (touchBodyFirst) void req.body;
+          await gate.promise;
+          const buf = await req.arrayBuffer();
+          serverDone.resolve(buf.byteLength);
+          return new Response("ok");
+        },
+      });
+
+      const { sock, sentBeforeGate } = await pumpUploadUntilPlateau(server.port, TOTAL, 5);
+      try {
+        expect(sentBeforeGate).toBeLessThan(TOTAL);
+
+        gate.resolve();
+        const bytes = await serverDone.promise;
+        expect(bytes).toBe(TOTAL);
+      } finally {
+        sock.destroy();
+      }
+    });
+  }
+
+  it("releases a paused request body when the handler responds without reading it", async () => {
+    // The handler never touches req.body, so the pre-stream pause engages and is
+    // released by detach_response()'s resume once the response is sent. Without
+    // that resume the socket stays paused and the client never sees the response.
+    const TOTAL = 32 * 1024 * 1024;
+    const gate = Promise.withResolvers<void>();
+    const serverDone = Promise.withResolvers<void>();
+
+    using server = serve({
+      port: 0,
+      idleTimeout: 0,
+      maxRequestBodySize: TOTAL + 1,
+      error(e) {
+        serverDone.reject(e);
+      },
+      async fetch() {
+        await gate.promise;
+        serverDone.resolve();
+        return new Response("ignored");
+      },
+    });
+
+    const { sock, sentBeforeGate } = await pumpUploadUntilPlateau(server.port, TOTAL, 2);
+    try {
+      expect(sentBeforeGate).toBeGreaterThan(0);
+      expect(sentBeforeGate).toBeLessThan(TOTAL);
+
+      const response = new Promise<string>((resolve, reject) => {
+        let buf = "";
+        sock.removeAllListeners("data");
+        sock.on("data", d => {
+          buf += d.toString("latin1");
+          if (buf.includes("\r\n\r\n")) resolve(buf);
+        });
+        sock.once("error", reject);
+        sock.once("close", () => resolve(buf));
+      });
+
+      gate.resolve();
+      await serverDone.promise;
+      const resp = await response;
+      expect(resp).toStartWith("HTTP/1.1 200 ");
+      expect(resp).toContain("ignored");
+    } finally {
+      sock.destroy();
+    }
+  });
+});
+
 // https://github.com/oven-sh/bun/issues/32469
 it("type: direct stream awaiting flush(true) under backpressure does not re-enter pull", async () => {
   const CHUNK = Buffer.alloc(256 * 1024, 67);

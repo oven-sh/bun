@@ -85,7 +85,6 @@ public:
     // Statically detected export names for the ESM-imports-CJS wrapper.
     // `m_hasStaticExportNames` gates the deferred-evaluation path.
     Vector<JSC::Identifier, 4> m_staticExportNames;
-    Vector<WTF::String, 1> m_reexportSpecifiers;
     bool m_hasStaticExportNames { false };
 
     static size_t estimatedSize(JSC::JSCell* cell, JSC::VM& vm);

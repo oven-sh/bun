@@ -79,10 +79,9 @@ impl Default for ResolvedSource {
 }
 
 /// NUL-join the transpiler's static CommonJS export names for
-/// `createCommonJSModule`. Names are followed by a `\x01` and then NUL-joined
-/// re-export specifiers (`__exportStar`, the Babel `Object.keys(X).forEach`
-/// loop). Empty => no names detected, keep the eager synthetic path so
-/// dynamic export shapes (UMD, `module.exports = fn`) stay enumerable.
+/// `createCommonJSModule`. Empty => no names detected, keep the eager
+/// synthetic path so dynamic export shapes (UMD, `module.exports = fn`,
+/// `__exportStar`) stay enumerable.
 pub fn join_commonjs_export_names(
     is_commonjs_module: bool,
     ast: &bun_ast::ast_result::Ast,
@@ -91,28 +90,16 @@ pub fn join_commonjs_export_names(
         return Vec::new();
     }
     let keys = ast.commonjs_named_exports.keys();
-    let specs = &ast.commonjs_reexport_specifiers;
-    if keys.is_empty() && specs.is_empty() {
+    if keys.is_empty() {
         return Vec::new();
     }
-    let cap: usize = keys.iter().map(|k| k.as_ref().len() + 1).sum::<usize>()
-        + specs.iter().map(|s| s.len() + 1).sum::<usize>()
-        + 1;
+    let cap: usize = keys.iter().map(|k| k.as_ref().len() + 1).sum();
     let mut joined: Vec<u8> = Vec::with_capacity(cap);
     for (i, key) in keys.iter().enumerate() {
         if i > 0 {
             joined.push(0);
         }
         joined.extend_from_slice(key.as_ref());
-    }
-    if !specs.is_empty() {
-        joined.push(1);
-        for (i, spec) in specs.iter().enumerate() {
-            if i > 0 {
-                joined.push(0);
-            }
-            joined.extend_from_slice(spec);
-        }
     }
     joined
 }

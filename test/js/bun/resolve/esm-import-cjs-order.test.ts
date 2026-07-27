@@ -174,30 +174,22 @@ describe("ESM importing CommonJS: evaluation order", () => {
     expect(exitCode).toBe(0);
   });
 
-  test.concurrent("tslib __exportStar re-export is followed across files", async () => {
+  test.concurrent("__exportStar re-exports keep the runtime export set", async () => {
     using dir = tempDir("esm-cjs-order-exportstar", {
       "entry.mjs": `
-        import "./setup.mjs";
         import { inner, own } from "./pkg.cjs";
-        console.log(JSON.stringify({ inner, own, order: globalThis.__ORDER__ }));
+        console.log(JSON.stringify({ inner, own }));
       `,
-      "setup.mjs": pad + `globalThis.__ORDER__ = ["setup"]; globalThis.__V__ = 7;`,
       "pkg.cjs": `
         var tslib = { __exportStar(m, e) { for (var k in m) if (k !== "default") Object.defineProperty(e, k, { enumerable: true, get: () => m[k] }); } };
-        globalThis.__ORDER__.push("pkg");
         tslib.__exportStar(require("./inner.cjs"), exports);
         exports.own = "own";
       `,
-      "inner.cjs": `
-        globalThis.__ORDER__.push("inner");
-        exports.inner = globalThis.__V__;
-      `,
+      "inner.cjs": `exports.inner = 7;`,
     });
     const { stdout, stderr, exitCode } = await run(String(dir), "entry.mjs");
     expect(stderr).toBe("");
-    // `export * from "./inner"` makes inner a module dependency of pkg's wrapper,
-    // so inner evaluates before pkg's body (deps-first). setup still runs first.
-    expect(JSON.parse(stdout)).toEqual({ inner: 7, own: "own", order: ["setup", "inner", "pkg"] });
+    expect(JSON.parse(stdout)).toEqual({ inner: 7, own: "own" });
     expect(exitCode).toBe(0);
   });
 

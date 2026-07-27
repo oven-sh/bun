@@ -20,7 +20,7 @@
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 import assert from "assert";
-import { isWindows } from "harness";
+import { isWindows, isDebug } from "harness";
 import util, { inspect } from "util";
 import vm from "vm";
 import { MessageChannel } from "worker_threads";
@@ -236,9 +236,15 @@ test("inspect from a different context", () => {
   );*/
 });
 
+// The surrogate-pair loop below runs ~10k util.inspect calls, which exceeds the
+// default timeout on debug+ASAN builds; prettier-ignore keeps the 3rd test() arg
+// from forcing a whole-body reindent.
+// prettier-ignore
 test("no assertion failures 2", () => {
+  // Float16Array is intentionally absent: it is not in Node's bootstrap-time
+  // `builtInObjects`, so showHidden inspects its prototype getters and the
+  // output diverges from the other typed arrays in Node as well.
   [
-    Float16Array,
     Float32Array,
     Float64Array,
     Int16Array,
@@ -270,7 +276,6 @@ test("no assertion failures 2", () => {
 
   // Now check that declaring a TypedArray in a different context works the same.
   [
-    Float16Array,
     Float32Array,
     Float64Array,
     Int16Array,
@@ -1811,7 +1816,7 @@ test("no assertion failures 2", () => {
     })("a");
     assert.strictEqual(util.inspect(args), "[Arguments] { '0': 'a' }");
   }
-});
+}, isDebug ? 30_000 : undefined);
 
 test("util.inspect stack overflow handling", () => {
   // Test that a long linked list can be inspected without throwing an error.

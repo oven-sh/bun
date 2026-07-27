@@ -344,19 +344,21 @@ function isURL(value) {
 
 const SymbolToPrimitive = Symbol.toPrimitive;
 
-// In Node.js this set is computed at bootstrap before any Node/Web globals (Buffer,
-// URL, Request, ...) are installed on globalThis, so it only contains ECMAScript
-// language built-ins. Bun installs those globals before this module loads, so we
-// hardcode the language-level names to match Node's observable `%s` behavior.
+// In Node.js this set is computed at bootstrap, before any Node/Web globals
+// (Buffer, URL, Request, ...) are installed on globalThis. Bun already has
+// those globals installed when this module loads, so we freeze the exact names
+// Node v26 observes at bootstrap. A live `globalThis` scrape here would also
+// over-include SharedArrayBuffer, WebAssembly, Float16Array, DisposableStack,
+// AsyncDisposableStack and SuppressedError, which are absent from Node's
+// bootstrap global and observably change `%s` and showHidden output.
 // prettier-ignore
 const builtInObjects = new SafeSet([
-  "AggregateError", "Array", "ArrayBuffer", "AsyncDisposableStack", "Atomics",
-  "BigInt", "BigInt64Array", "BigUint64Array", "Boolean", "DataView", "Date",
-  "DisposableStack", "Error", "EvalError", "FinalizationRegistry", "Float16Array",
-  "Float32Array", "Float64Array", "Function", "Infinity", "Int16Array", "Int32Array",
-  "Int8Array", "Intl", "Iterator", "JSON", "Map", "Math", "NaN", "Number", "Object",
-  "Promise", "Proxy", "RangeError", "ReferenceError", "Reflect", "RegExp", "Set",
-  "SharedArrayBuffer", "String", "SuppressedError", "Symbol", "SyntaxError",
+  "AggregateError", "Array", "ArrayBuffer", "Atomics", "BigInt", "BigInt64Array",
+  "BigUint64Array", "Boolean", "DataView", "Date", "Error", "EvalError",
+  "FinalizationRegistry", "Float32Array", "Float64Array", "Function", "Infinity",
+  "Int16Array", "Int32Array", "Int8Array", "Intl", "Iterator", "JSON", "Map",
+  "Math", "NaN", "Number", "Object", "Promise", "Proxy", "RangeError",
+  "ReferenceError", "Reflect", "RegExp", "Set", "String", "Symbol", "SyntaxError",
   "TypeError", "URIError", "Uint16Array", "Uint32Array", "Uint8Array",
   "Uint8ClampedArray", "WeakMap", "WeakRef", "WeakSet",
 ]);

@@ -1058,9 +1058,7 @@ pub struct Options<'a> {
     pub inline_require_and_import_errors: bool,
     pub has_run_symbol_renamer: bool,
 
-    /// Set by [`compute_shadowed_globals`] when the file declares a local of
-    /// this name; [`print_undefined`] / [`print_number`] then fall back to
-    /// `void 0` / `0/0` / `1/0` so a synthesized value can't resolve to it.
+    /// Per [`compute_shadowed_globals`]; when set, print `void 0`/`0/0`/`1/0` instead of the identifier.
     pub shadows_undefined: bool,
     pub shadows_nan: bool,
     pub shadows_infinity: bool,
@@ -1240,8 +1238,7 @@ fn is_identifier_or_numeric_constant_or_property_access(expr: &js_ast::Expr) -> 
     }
 }
 
-/// Sets [`Options::shadows_undefined`] / `_nan` / `_infinity` when any
-/// non-`Unbound` symbol in the file has that `original_name`.
+/// Sets [`Options::shadows_undefined`]/`_nan`/`_infinity` from one file's symbol table.
 pub fn compute_shadowed_globals<'s>(
     opts: &mut Options<'_>,
     symbols: impl Iterator<Item = &'s js_ast::symbol::Symbol>,

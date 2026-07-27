@@ -15,123 +15,82 @@ import { bunEnv, bunExe, tempDir } from "harness";
 // `.on(...)` and comment / text on `.onDocument(...)`). `doctype` and `end`
 // fire once, so there is no "next" dispatch for the bug to reach.
 
-type Cell = [name: string, doc: string, register: string];
+type Cell = { name: string; body: string; register: string; extraFiles?: Record<string, string> };
 
 const neverSettling = `await new Promise(() => {});`;
 const timerAwait = `await new Promise(r => setTimeout(r, 1e6));`;
+const stringBody = `"<p>a</p>".repeat(100)`;
 
 const cells: Cell[] = [
-  [
-    "element (never-settling)",
-    `"<p>a</p>".repeat(100)`,
-    `.on("p", { async element(el) { el.setAttribute("x", "1"); postMessage("in-handler"); ${neverSettling} } })`,
-  ],
-  [
-    "element (timer await)",
-    `"<p>a</p>".repeat(100)`,
-    `.on("p", { async element(el) { el.setAttribute("x", "1"); postMessage("in-handler"); ${timerAwait} } })`,
-  ],
-  [
-    "text",
-    `"<p>a</p>".repeat(100)`,
-    `.on("p", { async text(t) { if (t.text) { postMessage("in-handler"); ${neverSettling} } } })`,
-  ],
-  [
-    "comments",
-    `"<p><!--c-->a</p>".repeat(100)`,
-    `.on("p", { async comments(c) { postMessage("in-handler"); ${neverSettling} } })`,
-  ],
-  [
-    "onDocument comments",
-    `"<!--c-->".repeat(100)`,
-    `.onDocument({ async comments(c) { postMessage("in-handler"); ${neverSettling} } })`,
-  ],
-  [
-    "onDocument text",
-    `"<p>a</p>".repeat(100)`,
-    `.onDocument({ async text(t) { if (t.text) { postMessage("in-handler"); ${neverSettling} } } })`,
-  ],
-];
-
-describe.concurrent("terminate() while HTMLRewriter is parked in an async handler", () => {
-  test.each(cells)("%s", async (_name, doc, register) => {
-    using dir = tempDir("html-rewriter-worker-terminate", {
-      "worker.mjs": `
-        postMessage("start");
-        const doc = ${doc};
-        await new HTMLRewriter()
-          ${register}
-          .transform(new Response(doc))
-          .text();
-        postMessage("done");
-      `,
-      "main.mjs": `
-        const w = new Worker(new URL("./worker.mjs", import.meta.url).href);
-        const { promise: inHandler, resolve: gotHandler, reject: rejectHandler } = Promise.withResolvers();
-        const { promise: closed, resolve: gotClose } = Promise.withResolvers();
-        w.addEventListener("error", e => rejectHandler(e.message ?? e), { once: true });
-        w.addEventListener("close", () => gotClose(), { once: true });
-        w.onmessage = ev => {
-          if (ev.data === "in-handler") gotHandler();
-        };
-        await inHandler;
-        w.terminate();
-        await closed;
-        console.log("survived");
-      `,
-    });
-
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "main.mjs"],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-    expect(stdout).toBe("survived\n");
-    if (exitCode !== 0) {
-      expect(stderr).toBe("");
-    }
-    expect(exitCode).toBe(0);
-  });
-
+  {
+    name: "element (never-settling)",
+    body: stringBody,
+    register: `.on("p", { async element(el) { el.setAttribute("x", "1"); postMessage("in-handler"); ${neverSettling} } })`,
+  },
+  {
+    name: "element (timer await)",
+    body: stringBody,
+    register: `.on("p", { async element(el) { el.setAttribute("x", "1"); postMessage("in-handler"); ${timerAwait} } })`,
+  },
+  {
+    name: "text",
+    body: stringBody,
+    register: `.on("p", { async text(t) { if (t.text) { postMessage("in-handler"); ${neverSettling} } } })`,
+  },
+  {
+    name: "comments",
+    body: `"<p><!--c-->a</p>".repeat(100)`,
+    register: `.on("p", { async comments(c) { postMessage("in-handler"); ${neverSettling} } })`,
+  },
+  {
+    name: "onDocument comments",
+    body: `"<!--c-->".repeat(100)`,
+    register: `.onDocument({ async comments(c) { postMessage("in-handler"); ${neverSettling} } })`,
+  },
+  {
+    name: "onDocument text",
+    body: stringBody,
+    register: `.onDocument({ async text(t) { if (t.text) { postMessage("in-handler"); ${neverSettling} } } })`,
+  },
   // A file-backed body buffers asynchronously (`is_async == true` in
   // `run_output_sink`), covering the error-unwind arm that rejects the body
   // promise instead of going through `create_lolhtml_error`.
-  test("element (Bun.file body)", async () => {
-    using dir = tempDir("html-rewriter-worker-terminate-file", {
-      "doc.html": Buffer.alloc(800, "<p>a</p>").toString(),
+  {
+    name: "element (Bun.file body)",
+    body: `Bun.file(new URL("./doc.html", import.meta.url))`,
+    register: `.on("p", { async element(el) { el.setAttribute("x", "1"); postMessage("in-handler"); ${neverSettling} } })`,
+    extraFiles: { "doc.html": Buffer.alloc(800, "<p>a</p>").toString() },
+  },
+];
+
+const mainMjs = `
+  const w = new Worker(new URL("./worker.mjs", import.meta.url).href);
+  const { promise: inHandler, resolve: gotHandler, reject: rejectHandler } = Promise.withResolvers();
+  const { promise: closed, resolve: gotClose } = Promise.withResolvers();
+  w.addEventListener("error", e => rejectHandler(e.message ?? e), { once: true });
+  w.addEventListener("close", () => gotClose(), { once: true });
+  w.onmessage = ev => {
+    if (ev.data === "in-handler") gotHandler();
+  };
+  await inHandler;
+  w.terminate();
+  await closed;
+  console.log("survived");
+`;
+
+describe.concurrent("terminate() while HTMLRewriter is parked in an async handler", () => {
+  test.each(cells)("$name", async ({ body, register, extraFiles }) => {
+    using dir = tempDir("html-rewriter-worker-terminate", {
+      ...extraFiles,
       "worker.mjs": `
         postMessage("start");
         await new HTMLRewriter()
-          .on("p", {
-            async element(el) {
-              el.setAttribute("x", "1");
-              postMessage("in-handler");
-              await new Promise(() => {});
-            },
-          })
-          .transform(new Response(Bun.file(new URL("./doc.html", import.meta.url))))
+          ${register}
+          .transform(new Response(${body}))
           .text();
         postMessage("done");
       `,
-      "main.mjs": `
-        const w = new Worker(new URL("./worker.mjs", import.meta.url).href);
-        const { promise: inHandler, resolve: gotHandler, reject: rejectHandler } = Promise.withResolvers();
-        const { promise: closed, resolve: gotClose } = Promise.withResolvers();
-        w.addEventListener("error", e => rejectHandler(e.message ?? e), { once: true });
-        w.addEventListener("close", () => gotClose(), { once: true });
-        w.onmessage = ev => {
-          if (ev.data === "in-handler") gotHandler();
-        };
-        await inHandler;
-        w.terminate();
-        await closed;
-        console.log("survived");
-      `,
+      "main.mjs": mainMjs,
     });
 
     await using proc = Bun.spawn({

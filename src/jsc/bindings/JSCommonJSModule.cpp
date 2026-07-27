@@ -1438,6 +1438,9 @@ void JSCommonJSModule::evaluateWithPotentiallyOverriddenCompile(
     JSValue keyJSString,
     ResolvedSource& source)
 {
+    source.commonjs_export_names.deref();
+    source.commonjs_export_names = Zig::BunStringEmpty;
+
     if (JSValue compileFunction = this->m_overriddenCompile.get()) {
         auto& vm = globalObject->vm();
         auto scope = DECLARE_THROW_SCOPE(vm);

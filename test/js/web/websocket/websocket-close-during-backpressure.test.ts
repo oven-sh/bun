@@ -68,6 +68,7 @@ test.concurrent(
   "WebSocket client: bufferedAmount tracks the outbound queue",
   async () => {
     let serverSock: net.Socket | undefined;
+    let ws: WebSocket | undefined;
     const server = await new Promise<net.Server>(resolve => {
       const s = net.createServer(sock => {
         serverSock = sock;
@@ -99,10 +100,10 @@ test.concurrent(
     });
     try {
       const { port } = server.address() as net.AddressInfo;
-      const ws = new WebSocket(`ws://127.0.0.1:${port}`);
+      ws = new WebSocket(`ws://127.0.0.1:${port}`);
       await new Promise<void>((resolve, reject) => {
-        ws.onopen = () => resolve();
-        ws.onerror = () => reject(new Error("connect failed"));
+        ws!.onopen = () => resolve();
+        ws!.onerror = () => reject(new Error("connect failed"));
       });
 
       expect(ws.bufferedAmount).toBe(0);
@@ -122,9 +123,8 @@ test.concurrent(
         await new Promise(r => setTimeout(r, 5));
       }
       expect(ws.bufferedAmount).toBe(0);
-
-      ws.close();
     } finally {
+      ws?.close();
       serverSock?.destroy();
       await new Promise(r => server.close(r));
     }

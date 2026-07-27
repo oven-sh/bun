@@ -59,7 +59,7 @@ const server = net.createServer(sock => {
       upgraded.resolve();
     }, 10);
   });
-  sock.on("error", () => {});
+  sock.on("error", e => upgraded.reject(e));
 });
 
 await new Promise<void>(r => server.listen(0, "127.0.0.1", () => r()));

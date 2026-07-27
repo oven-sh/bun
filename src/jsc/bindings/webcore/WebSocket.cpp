@@ -1706,9 +1706,14 @@ void WebSocket::didFailWithErrorCode(Bun::WebSocketErrorCode code)
         return;
 
     this->m_upgradeClient = nullptr;
+    // Snapshot the live send queue so bufferedAmount is non-decreasing across
+    // the close event (WHATWG: "the number does not reset to zero once the
+    // connection closes").
     if (this->m_connectedWebSocketKind == ConnectedWebSocketKind::ClientSSL) {
+        m_bufferedAmount = static_cast<unsigned>(std::min<size_t>(Bun__WebSocketClientTLS__bufferedAmount(m_connectedWebSocket.clientSSL), std::numeric_limits<unsigned>::max()));
         this->m_connectedWebSocket.clientSSL = nullptr;
     } else if (this->m_connectedWebSocketKind == ConnectedWebSocketKind::Client) {
+        m_bufferedAmount = static_cast<unsigned>(std::min<size_t>(Bun__WebSocketClient__bufferedAmount(m_connectedWebSocket.client), std::numeric_limits<unsigned>::max()));
         this->m_connectedWebSocket.client = nullptr;
     }
     this->m_connectedWebSocketKind = ConnectedWebSocketKind::None;

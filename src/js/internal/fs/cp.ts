@@ -14,6 +14,7 @@ const {
   isSrcSubdir,
   joinEntry,
   pathAsString,
+  resolveLinkTarget,
 } = require("internal/fs/cp-sync");
 
 const { chmod, copyFile, lstat, mkdir, readdir, readlink, stat, symlink, unlink, utimes } = require("node:fs/promises");
@@ -334,11 +335,9 @@ async function copyDir(src, dest, opts) {
 }
 
 async function onLink(destStat, src, dest, opts) {
-  const srcIsBuf = typeof src !== "string";
-  let resolvedSrc = srcIsBuf ? await readlink(src, { encoding: "buffer" }) : await readlink(src);
+  let resolvedSrc = await readlink(src, { encoding: "buffer" });
   if (!opts.verbatimSymlinks && !isAbsolute(pathAsString(resolvedSrc))) {
-    const resolved = resolve(dirname(pathAsString(src)), pathAsString(resolvedSrc));
-    resolvedSrc = srcIsBuf ? Buffer.from(resolved, "latin1") : resolved;
+    resolvedSrc = resolveLinkTarget(src, resolvedSrc);
   }
   if (!destStat) {
     return symlink(resolvedSrc, dest);

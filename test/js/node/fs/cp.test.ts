@@ -515,6 +515,27 @@ for (const [name, copy] of impls) {
       const dstLink = Buffer.concat([Buffer.from(dst + "/link"), Buffer.from([0xe9])]);
       expect(fs.readFileSync(dstLink, "utf8")).toBe("hello");
     });
+
+    test.skipIf(!isLinux)("recursive - symlink whose target is non-UTF-8 is copied byte-exact", async () => {
+      const basename = tempDirWithFiles("cp", {
+        "from/placeholder": "",
+      });
+      const src = basename + "/from";
+      const dst = basename + "/to";
+      const target = Buffer.concat([Buffer.from("caf"), Buffer.from([0xe9])]);
+      fs.writeFileSync(Buffer.concat([Buffer.from(src + "/"), target]), "hello");
+      // Link name is plain ASCII; only the target carries non-UTF-8 bytes.
+      fs.symlinkSync(target, src + "/link");
+      fs.unlinkSync(src + "/placeholder");
+
+      await copy(src, dst, { recursive: true });
+
+      const copied = fs.readlinkSync(dst + "/link", { encoding: "buffer" });
+      // The written target is resolved against the source tree, so it is
+      // <src>/caf\xe9; what matters is that the trailing bytes are exact.
+      expect(copied.subarray(copied.length - 4).toString("hex")).toBe("636166e9");
+      expect(fs.readFileSync(dst + "/link", "utf8")).toBe("hello");
+    });
   });
 }
 

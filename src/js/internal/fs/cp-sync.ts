@@ -169,6 +169,21 @@ function pathAsString(p) {
   return typeof p === "string" ? p : Buffer.prototype.toString.$call(p, "latin1");
 }
 
+// Resolve a relative symlink target against the link's directory without
+// losing bytes. When both the link path and the target are UTF-8-clean this is
+// path.resolve() (normalized, matches node). Otherwise the result is the raw
+// byte concatenation dir/target: unnormalized, but symlink(2) accepts it and
+// the kernel resolves `..` at access time. path.resolve() is avoided for
+// Buffer paths because it would mix in process.cwd() as a decoded string and
+// re-encoding that via latin1 corrupts any multi-byte cwd component.
+function resolveLinkTarget(src, target) {
+  if (typeof src === "string" && isUtf8(target)) {
+    return resolve(dirname(src), target.toString());
+  }
+  const dir = typeof src === "string" ? Buffer.from(dirname(src)) : Buffer.from(dirname(pathAsString(src)), "latin1");
+  return Buffer.concat([dir, (sepBuf ??= Buffer.from(sep)), target]);
+}
+
 const normalizePathToArray = path =>
   ArrayPrototypeFilter.$call(StringPrototypeSplit.$call(resolve(pathAsString(path)), sep), Boolean);
 
@@ -474,11 +489,9 @@ function copyDir(src, dest, opts) {
 }
 
 function onLink(destStat, src, dest, opts) {
-  const srcIsBuf = typeof src !== "string";
-  let resolvedSrc = srcIsBuf ? readlinkSync(src, { encoding: "buffer" }) : readlinkSync(src);
+  let resolvedSrc = readlinkSync(src, { encoding: "buffer" });
   if (!opts.verbatimSymlinks && !isAbsolute(pathAsString(resolvedSrc))) {
-    const resolved = resolve(dirname(pathAsString(src)), pathAsString(resolvedSrc));
-    resolvedSrc = srcIsBuf ? Buffer.from(resolved, "latin1") : resolved;
+    resolvedSrc = resolveLinkTarget(src, resolvedSrc);
   }
   if (!destStat) {
     return symlinkSync(resolvedSrc, dest);
@@ -549,4 +562,5 @@ export default {
   isSrcSubdir,
   joinEntry,
   pathAsString,
+  resolveLinkTarget,
 };

@@ -1,5 +1,8 @@
 import { describe } from "bun:test";
+import { isMacOS, isWindows } from "harness";
 import { itBundled } from "../expectBundled";
+
+const isCaseInsensitiveFS = isMacOS || isWindows;
 
 // Tests ported from:
 // https://github.com/evanw/esbuild
@@ -1769,6 +1772,10 @@ describe("bundler", () => {
   });
 
   itBundled("extra/CaseSensitiveImport", {
+    // Bun's resolver matches Node on case-sensitive filesystems: a specifier
+    // whose case differs from the on-disk name does not resolve. On macOS and
+    // Windows the filesystem itself folds case so the imports succeed.
+    todo: isCaseInsensitiveFS,
     files: {
       "in.js": `
         import x from "./File1.js"
@@ -1778,10 +1785,12 @@ describe("bundler", () => {
       "file1.js": `export default 123`,
       "File2.js": `export default 234`,
     },
-    run: true,
+    bundleErrors: {
+      "/in.js": [`Could not resolve: "./File1.js"`, `Could not resolve: "./file2.js"`],
+    },
   });
   itBundled("extra/CaseSensitiveImport2", {
-    todo: true,
+    todo: isCaseInsensitiveFS,
     files: {
       "in.js": `
         import x from "./File1.js"
@@ -1817,6 +1826,7 @@ describe("bundler", () => {
   });
   // Warn when importing something inside node_modules
   itBundled("extra/CaseSensitiveImport4", {
+    todo: isCaseInsensitiveFS,
     files: {
       "in.js": `
         import x from "pkg/File1.js"
@@ -1826,6 +1836,8 @@ describe("bundler", () => {
       "node_modules/pkg/file1.js": `export default 123`,
       "node_modules/pkg/File2.js": `export default 234`,
     },
-    run: true,
+    bundleErrors: {
+      "/in.js": [`Could not resolve: "pkg/File1.js"`, `Could not resolve: "pkg/file2.js"`],
+    },
   });
 });

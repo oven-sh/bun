@@ -18,11 +18,7 @@ test("Jest auto imports", () => {
 test("Jest globals are not injected outside of `bun test`", async () => {
   const names = ["describe", "it", "test", "expect", "beforeAll", "beforeEach", "afterAll", "afterEach"];
   await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `process.stdout.write(JSON.stringify({${names.map(n => `${n}: typeof ${n}`).join(", ")}}))`,
-    ],
+    cmd: [bunExe(), "-e", `process.stdout.write(JSON.stringify({${names.map(n => `${n}: typeof ${n}`).join(", ")}}))`],
     env: bunEnv,
     stdout: "pipe",
     stderr: "pipe",

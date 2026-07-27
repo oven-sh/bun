@@ -1876,8 +1876,6 @@ pub mod __gated_printer {
 
         #[inline]
         pub fn print_undefined(&mut self, loc: bun_ast::Loc, level: Level) {
-            // Only emit the bare identifier when the renamer has reserved the name
-            // "undefined"; otherwise a user binding of the same name would capture it.
             if !self.options.minify_syntax && self.options.has_run_symbol_renamer {
                 self.print_space_before_identifier();
                 self.add_source_mapping(loc);
@@ -6454,12 +6452,6 @@ pub mod __gated_printer {
         pub fn print_number(&mut self, value: f64, level: Level) {
             let abs_value = value.abs();
             if value.is_nan() {
-                // Only emit the bare identifier when the renamer has reserved the name
-                // "NaN"; otherwise a user binding of the same name would capture it.
-                // The fallback is -(0/0) rather than 0/0 because JSC evaluates 0/0
-                // to a negative-sign NaN, which changes the bit pattern observed via
-                // DataView/Buffer; -(0/0) yields the canonical positive NaN in both
-                // JSC and V8.
                 if IS_JSON || self.options.has_run_symbol_renamer {
                     self.print_space_before_identifier();
                     self.print(b"NaN");
@@ -6470,6 +6462,7 @@ pub mod __gated_printer {
                     } else {
                         self.print_space_before_operator(Op::Code::UnNeg);
                     }
+                    // -(0/0), not 0/0: JSC's 0/0 has the sign bit set (observable via DataView).
                     if self.options.minify_whitespace {
                         self.print(b"-(0/0)");
                     } else {

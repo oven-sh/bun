@@ -1048,9 +1048,7 @@ pub fn compute_initial_reserved_names(
 
     let mut names = StringHashMap::<u32>::default();
 
-    // Identifiers the printer may emit as raw text with no backing Ref. Reserving
-    // them renames any user binding of the same name out of the way (modulo
-    // must_not_be_renamed scopes, i.e. direct eval / with).
+    // Identifiers the printer may emit as raw text with no backing Ref.
     const EXTRAS: [&[u8]; 5] = [b"Promise", b"Require", b"Infinity", b"NaN", b"undefined"];
 
     const CJS_NAMES: [&[u8]; 2] = [b"exports", b"module"];

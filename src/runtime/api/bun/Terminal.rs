@@ -123,6 +123,15 @@ pub struct Terminal {
     /// Duplicated master fd for writing (POSIX) / overlapped write pipe end (Windows)
     write_fd: Cell<Fd>,
 
+    /// Exit notification that fired before the JS wrapper / callbacks existed.
+    /// `on_reader_finished` is one-shot (guarded by `READER_DONE`), and both
+    /// `writer.start()` and `reader.start()` can drive it synchronously during
+    /// `init_terminal` — long before `this_value` is set or the `exit` callback
+    /// is registered. Without this the single notification is silently dropped
+    /// and the user's `exit` callback never fires at all. Recorded here and
+    /// replayed at the end of `init_terminal`. See OHOS_TEST_TODO.md T03.
+    deferred_exit: Cell<Option<i32>>,
+
     /// The slave side of the PTY (used by child processes). Unused on Windows.
     slave_fd: Cell<Fd>,
 
@@ -441,6 +450,7 @@ impl Terminal {
             read_fd: Cell::new(pty_result.read_fd),
             write_fd: Cell::new(pty_result.write_fd),
             slave_fd: Cell::new(pty_result.slave),
+            deferred_exit: Cell::new(None),
             #[cfg(windows)]
             hpcon: Cell::new(Some(pty_result.hpcon)),
             cols: Cell::new(if cfg!(windows) {
@@ -580,6 +590,21 @@ impl Terminal {
         // with READER_DONE already true and zero dispatches for the whole
         // run. See OHOS_TEST_TODO.md T03.
         terminal.reader.with_mut(|r| r.read());
+
+        // Replay an exit notification that fired during startup, before the
+        // wrapper and callbacks above existed. `writer.start()`,
+        // `reader.start()` and `read()` can all drive `on_reader_finished`
+        // synchronously; that path is one-shot, so without this replay the
+        // user's `exit` callback would never fire at all.
+        if let Some(code) = terminal.deferred_exit.take() {
+            t03_debug::log(&format!(
+                "T@{:x} init: replaying deferred exit_code={}",
+                parent_ptr as usize,
+                code,
+            ));
+            terminal.this_value.with_mut(|v| v.downgrade());
+            terminal.call_exit_callback(code, None);
+        }
 
         Ok(CreateResult {
             // SAFETY: `parent_ptr` is the heap-allocated allocation above with
@@ -1837,8 +1862,22 @@ impl Terminal {
         // EOF from master - downgrade to weak ref to allow GC
         // Skip JS interactions if already finalized (happens when close() is called during finalize)
         if !self.flags.get().contains(Flags::FINALIZED) {
-            self.this_value.with_mut(|v| v.downgrade());
-            self.call_exit_callback(exit_code, None);
+            if self.this_value.get().is_empty() {
+                // Fired from inside `init_terminal`, before the JS wrapper
+                // exists. Dispatching now would drop the notification (there
+                // is nothing to call), and `READER_DONE` is already set above
+                // so nothing will ever retry. Stash it; `init_terminal`
+                // replays it once the callbacks are registered.
+                self.deferred_exit.set(Some(exit_code));
+                t03_debug::log(&format!(
+                    "T@{:x}   -> DEFERRED exit_code={} (wrapper not ready yet)",
+                    std::ptr::from_ref(self) as usize,
+                    exit_code,
+                ));
+            } else {
+                self.this_value.with_mut(|v| v.downgrade());
+                self.call_exit_callback(exit_code, None);
+            }
         }
         self.deref_();
     }

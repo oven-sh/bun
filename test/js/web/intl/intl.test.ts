@@ -177,6 +177,9 @@ describe("String.prototype.localeCompare with a string locale", () => {
   test("invalid locale still throws; cache is not poisoned", () => {
     expect("ä".localeCompare("z", "en")).toBeLessThan(0);
     expect(() => "a".localeCompare("b", "bad locale!!")).toThrow(RangeError);
+    // A repeat with the same invalid string must still throw: guards against the cache key being
+    // written before initializeCollator throws, which would leave a stale collator under this key.
+    expect(() => "a".localeCompare("b", "bad locale!!")).toThrow(RangeError);
     expect("ä".localeCompare("z", "en")).toBeLessThan(0);
   });
 

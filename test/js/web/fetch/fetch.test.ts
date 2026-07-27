@@ -2529,10 +2529,7 @@ describe("fetch should allow duplex", () => {
     });
     const stdoutP = proc.stdout.text();
     const stderrP = proc.stderr.text();
-    const exited = await Promise.race([
-      proc.exited,
-      sleep(isDebug ? 8000 : 2500).then(() => "timeout" as const),
-    ]);
+    const exited = await Promise.race([proc.exited, sleep(isDebug ? 8000 : 2500).then(() => "timeout" as const)]);
     if (exited === "timeout") proc.kill(9);
     const [stdout, stderr] = await Promise.all([stdoutP, stderrP]);
     expect({ exited, stdout: stdout.trim() }).toEqual({

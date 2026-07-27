@@ -592,7 +592,10 @@ describe.skipIf(!isWindows).each([
     let stderr = "";
     cp.stdout!.on("data", d => (stdout += d));
     cp.stderr!.on("data", d => (stderr += d));
-    const code = await new Promise<number>(resolve => cp.on("close", c => resolve(c ?? -1)));
+    const code = await new Promise<number>((resolve, reject) => {
+      cp.on("error", reject);
+      cp.on("close", c => resolve(c ?? -1));
+    });
 
     expect(stderr).toBe("");
     const { leaked, fdOpen, iterations } = JSON.parse(stdout);

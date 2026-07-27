@@ -537,7 +537,7 @@ impl ChannelOwner for WorkerCommands {
     fn on_channel_frame(&mut self, kind: frame::Kind, rd: &mut frame::Reader<'_>) {
         match kind {
             frame::Kind::Run => {
-                self.pending_idx = Some(rd.u32_());
+                self.pending_idx = Some(rd.u32());
                 self.pending_path.clear();
                 self.pending_path.extend_from_slice(rd.str());
             }
@@ -592,7 +592,7 @@ impl<'a> WorkerLoop<'a> {
 
             self.reporter.worker_ipc_file_idx = Some(idx);
             wf.begin(frame::Kind::FileStart);
-            wf.u32_(idx);
+            wf.u32(idx);
             self.cmds.send(wf.finish());
 
             let before = *self.reporter.summary();
@@ -632,7 +632,7 @@ impl<'a> WorkerLoop<'a> {
                 after.files - before.files,
                 self.reporter.jest.unhandled_errors_between_tests - before_unhandled,
             ] {
-                wf.u32_(v);
+                wf.u32(v);
             }
             self.cmds.send(wf.finish());
         }
@@ -818,9 +818,9 @@ pub fn worker_emit_test_done(file_idx: u32, scope_path: &[u8], status: u8, forma
     // SAFETY: single-threaded worker; WORKER_FRAME is a process-global scratch buffer.
     let wf = unsafe { &mut *WORKER_FRAME.get() };
     wf.begin(frame::Kind::TestDone);
-    wf.u32_(file_idx);
+    wf.u32(file_idx);
     wf.str(scope_path);
-    wf.u32_(status as u32);
+    wf.u32(status as u32);
     wf.str(formatted_line);
     cmds.send(wf.finish());
 }
@@ -839,7 +839,7 @@ pub fn worker_emit_failure_diagnostic(file_idx: u32, entry: &[u8]) {
     // SAFETY: single-threaded worker; WORKER_FRAME is a process-global scratch buffer.
     let wf = unsafe { &mut *WORKER_FRAME.get() };
     wf.begin(frame::Kind::FailureDiagnostic);
-    wf.u32_(file_idx);
+    wf.u32(file_idx);
     wf.str(entry);
     cmds.send(wf.finish());
 }

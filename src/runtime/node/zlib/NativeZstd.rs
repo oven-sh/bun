@@ -491,6 +491,29 @@ mod _impl {
             self.flush = flush;
         }
 
+        const ZSTD_MAGICNUMBER: [u8; 4] = 0xFD2FB528u32.to_le_bytes();
+        const ZSTD_MAGIC_SKIPPABLE: [u8; 4] = 0x184D2A50u32.to_le_bytes();
+
+        /// True when the unconsumed input begins a zstd/skippable frame magic (or a prefix of one).
+        fn next_input_is_frame(&self) -> bool {
+            let n = (self.input.size - self.input.pos).min(4);
+            if n == 0 {
+                return false;
+            }
+            let mut head = [0u8; 4];
+            // SAFETY: input.src[pos..pos+n] lies within the slice installed by set_buffers.
+            unsafe {
+                ptr::copy_nonoverlapping(
+                    self.input.src.cast::<u8>().add(self.input.pos),
+                    head.as_mut_ptr(),
+                    n,
+                );
+            }
+            head[..n] == Self::ZSTD_MAGICNUMBER[..n]
+                || (head[0] & 0xF0 == Self::ZSTD_MAGIC_SKIPPABLE[0]
+                    && head[1..n] == Self::ZSTD_MAGIC_SKIPPABLE[1..n])
+        }
+
         pub fn do_work(&mut self) {
             // A handle driven before `init()` has no CCtx/DCtx; zstd
             // dereferences the context pointer unconditionally.
@@ -508,14 +531,31 @@ mod _impl {
                         self.flush as c_uint,
                     )
                 },
-                // SAFETY: state is a valid DCtx.
-                NodeMode::ZSTD_DECOMPRESS => unsafe {
-                    c::ZSTD_decompressStream(
-                        self.state_ptr().cast(),
-                        &raw mut self.output,
-                        &raw mut self.input,
-                    )
-                },
+                NodeMode::ZSTD_DECOMPRESS => {
+                    // SAFETY: state is a valid DCtx.
+                    let mut ret = unsafe {
+                        c::ZSTD_decompressStream(
+                            self.state_ptr().cast(),
+                            &raw mut self.output,
+                            &raw mut self.input,
+                        )
+                    };
+                    // ret == 0 is frame-complete; mirrors NativeZlib::do_work_inflate's GUNZIP loop.
+                    while ret == 0
+                        && self.output.pos < self.output.size
+                        && self.next_input_is_frame()
+                    {
+                        // SAFETY: state is a valid DCtx; input/output point to caller-kept-alive buffers.
+                        ret = unsafe {
+                            c::ZSTD_decompressStream(
+                                self.state_ptr().cast(),
+                                &raw mut self.output,
+                                &raw mut self.input,
+                            )
+                        };
+                    }
+                    ret
+                }
                 _ => unreachable!(),
             } as u64;
         }

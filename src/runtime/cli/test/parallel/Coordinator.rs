@@ -389,12 +389,12 @@ impl<'a> Coordinator<'a> {
         match kind {
             frame::Kind::Ready => self.assign_work_or_retry(w),
             frame::Kind::FileStart => {
-                let _ = rd.u32_();
+                let _ = rd.u32();
             }
             frame::Kind::TestDone => {
-                let idx = rd.u32_();
+                let idx = rd.u32();
                 let scope_path = rd.str();
-                let status = rd.u32_() as u8;
+                let status = rd.u32() as u8;
                 let formatted = rd.str();
                 if w.inflight != Some(idx) {
                     return;
@@ -422,7 +422,7 @@ impl<'a> Coordinator<'a> {
             frame::Kind::FileDone => {
                 let mut nums = [0u32; 9];
                 for n in nums.iter_mut() {
-                    *n = rd.u32_();
+                    *n = rd.u32();
                 }
                 let [
                     idx,
@@ -488,7 +488,7 @@ impl<'a> Coordinator<'a> {
                     .extend_from_slice(rd.str());
             }
             frame::Kind::FailureDiagnostic => {
-                let idx = rd.u32_();
+                let idx = rd.u32();
                 let entry = rd.str();
                 if w.inflight != Some(idx) {
                     return;

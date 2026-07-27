@@ -15,8 +15,6 @@ use super::protocol_jsc::{resp_value_to_js, valkey_error_to_js};
 use super::valkey_command_body as command;
 use super::valkey_command_body::{Args, Command};
 
-pub use super::valkey_context as ValkeyContext;
-
 /// Codegen target name. `valkey.classes.ts` declares `name: "RedisClient"`, so
 /// `generate-classes.ts` resolves the native backing struct to
 /// `crate::valkey_jsc::valkey::RedisClient` and emits ~200

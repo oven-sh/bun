@@ -287,9 +287,9 @@ pub struct NewBuilder<T: SourceMapFormatCtx> {
     pub source_map: SourceMapFormat<T>,
     /// `ManuallyDrop` because in the bundler `printWithWriter` path this is a
     /// shallow bitwise copy of `LinkerGraph.files[i].line_offset_table` and
-    /// must not be dropped here. The runtime/transpiler `printAst`/`printCommonJS`
-    /// paths now defer table construction (see `lazy_line_offset_tables`), so
-    /// this is left `EMPTY` there.
+    /// must not be dropped here. The runtime/transpiler `printAst` path defers
+    /// table construction (see `lazy_line_offset_tables`), so this is left
+    /// `EMPTY` there.
     pub line_offset_tables: core::mem::ManuallyDrop<line_offset_table::List<bun_alloc::AstAlloc>>,
 
     /// Lazily-generated, *owned* line-offset table for the runtime/transpiler
@@ -390,8 +390,8 @@ impl<T: SourceMapFormatCtx + Default> Default for NewBuilder<T> {
 /// `MultiArrayList::Drop` is **slab-only** — it frees the SoA buffer but never
 /// runs column destructors (a bitwise `clone` can alias two lists onto the same
 /// column heap pointers; see its docs). The bundler's eager
-/// `print_ast`/`print_common_js` paths now use `List<AstAlloc>` (bulk-freed
-/// with the per-worker AST heap) and leave `Builder.line_offset_tables` empty,
+/// `print_ast` path now uses `List<AstAlloc>` (bulk-freed
+/// with the per-worker AST heap) and leaves `Builder.line_offset_tables` empty,
 /// so they no longer need a guard. The lazily-built table here is `List<Global>`
 /// and still needs the per-row drain, so wrap it in a type that does it
 /// automatically. (A `Drop` impl on `NewBuilder` itself would forbid the

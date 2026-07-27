@@ -389,6 +389,11 @@ impl PosixBufferedReader {
     /// embedding `self` (the shell `PipeReader` does exactly that), so the
     /// caller must not touch `self` again after a `false` return.
     pub fn register_poll(&mut self) -> bool {
+        // pause() may land from inside on_read_chunk's JS re-entry while the
+        // loop's own re-arm is still ahead on the stack.
+        if self.flags.contains(PosixFlags::IS_PAUSED) {
+            return true;
+        }
         // Hoist vtable-derived scalars and
         // normalize self.handle to Poll before taking the single &mut borrow,
         // so no raw-pointer escape is needed.
@@ -457,7 +462,9 @@ impl PosixBufferedReader {
     }
 
     pub fn watch(&mut self) {
-        if self.flags.contains(PosixFlags::POLLABLE) {
+        if self.flags.contains(PosixFlags::POLLABLE)
+            && !matches!(&self.handle, PollOrFd::Poll(poll) if poll.is_watching())
+        {
             self.register_poll();
         }
     }
@@ -503,6 +510,9 @@ impl PosixBufferedReader {
     }
 
     pub fn on_poll(parent: &mut PosixBufferedReader, size_hint: isize, received_hup: bool) {
+        if parent.flags.contains(PosixFlags::IS_PAUSED) {
+            return;
+        }
         let fd = parent.get_fd();
         bun_sys::syslog!("onPoll({}) = {}", fd, size_hint);
 
@@ -662,14 +672,18 @@ impl PosixBufferedReader {
 
                         if streaming {
                             // Stream this chunk and register for next cycle
-                            let _ = parent.vtable.on_read_chunk(
+                            if !parent.vtable.on_read_chunk(
                                 &stack_buffer[..bytes_read],
                                 if received_hup && bytes_read < stack_buffer.len() {
                                     ReadState::Eof
                                 } else {
                                     ReadState::Progress
                                 },
-                            );
+                            ) && !received_hup
+                                && !over_budget
+                            {
+                                return;
+                            }
                         } else {
                             parent
                                 ._buffer
@@ -1261,7 +1275,7 @@ impl WindowsBufferedReader {
         MaxBuf::on_read_bytes(maxbuf, bytes_read as u64)
     }
 
-    fn _on_read_chunk(&mut self, buf: &[u8], has_more: ReadState) -> bool {
+    fn on_read_chunk(&mut self, buf: &[u8], has_more: ReadState) -> bool {
         if has_more == ReadState::Eof {
             self.flags.insert(WindowsFlags::RECEIVED_EOF);
         }
@@ -1888,7 +1902,7 @@ impl WindowsBufferedReader {
 
         let over_budget = self.charge_max_buffer(amount_result);
 
-        let should_continue = self._on_read_chunk(slice, has_more);
+        let should_continue = self.on_read_chunk(slice, has_more);
 
         // Streaming parents (shell IOReader, subprocess) cannot re-derive
         // `&mut Self` from inside the vtable callback to restart the pipe

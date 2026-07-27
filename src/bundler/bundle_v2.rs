@@ -1635,6 +1635,7 @@ pub mod bv2_impl {
         pub reachable: Vec<Index>,
         pub visited: DynamicBitSet,
         pub all_import_records: &'a mut [import_record::List<'a>],
+        pub all_glob_imports: &'a [bun_ast::ast_result::GlobImportList],
         pub all_loaders: &'a [Loader],
         pub all_urls_for_css: &'a [&'a [u8]],
         pub redirects: &'a [u32],
@@ -1817,6 +1818,17 @@ pub mod bv2_impl {
                         }
                     }
 
+                    for glob in self.all_glob_imports[source_index.get() as usize].iter() {
+                        for entry in glob.entries.iter() {
+                            if entry.source_index.is_valid() {
+                                self.stack.push(ReachFrame::Enter {
+                                    source_index: entry.source_index,
+                                    was_dynamic_import: false,
+                                });
+                            }
+                        }
+                    }
+
                     // Redirects replace the source file with another file
                     if let Some(redirect_id) =
                         get_redirect_id(self.redirects[source_index.get() as usize])
@@ -1903,8 +1915,9 @@ pub mod bv2_impl {
             // `split_mut()` on the local can coexist with the shared borrows
             // below. The slab does not resize for the duration of this function.
             let mut ast_slice = self.graph.ast.slice();
-            let all_import_records: &mut [import_record::List<'_>] =
-                ast_slice.split_mut().import_records;
+            let ast_cols = ast_slice.split_mut();
+            let all_import_records: &mut [import_record::List<'_>] = ast_cols.import_records;
+            let all_glob_imports: &[bun_ast::ast_result::GlobImportList] = ast_cols.glob_imports;
             let all_urls_for_css = self.graph.ast.items_url_for_css();
 
             let mut visitor = ReachableFileVisitor {
@@ -1912,6 +1925,7 @@ pub mod bv2_impl {
                 visited: DynamicBitSet::init_empty(self.graph.input_files.len())?,
                 redirects: self.graph.ast.items_redirect_import_record_index(),
                 all_import_records,
+                all_glob_imports,
                 all_loaders: self.graph.input_files.items_loader(),
                 all_urls_for_css,
                 dynamic_import_entry_points: &mut self.dynamic_import_entry_points,
@@ -4782,12 +4796,12 @@ pub mod bv2_impl {
             // backed. The slab-only `MultiArrayList::drop` strands nothing on the
             // global heap; `mi_heap_destroy` on the AST arenas reclaims all of it.
             //
-            // Only `css` still needs an explicit pass: `BundlerStyleSheet` is the
-            // CSS crate's tree-of-`Vec`s/`Box`es and is not `AstAlloc`-parameterised
-            // (that refactor would touch every `CssRuleList`/selector/declaration
-            // type). The arena-allocated stylesheet never has `Drop` run by the
-            // slab. For JS-only bundles every `css` slot is `None`, so this loop
-            // is N×branch with no work; only CSS entries pay a real drop. The
+            // `css` and `glob_imports` still need explicit passes: `BundlerStyleSheet`
+            // is the CSS crate's tree-of-`Vec`s/`Box`es and is not `AstAlloc`-
+            // parameterised (that refactor would touch every `CssRuleList`/
+            // selector/declaration type), and `GlobImport.entries` is a global-
+            // heap `Vec` filled on the bundle thread. For JS-only bundles with
+            // no glob requires both loops are N×branch with no work. The
             // macro takes only one side (`linker.graph.ast` is a bitwise SoA
             // `memcpy` of `graph.ast`), and `CssChunk::asts` `forget()`s its
             // aliases, so this is the unique drop.
@@ -4799,6 +4813,11 @@ pub mod bv2_impl {
                             if let Some(css_ref) = v.take() {
                                 // SAFETY: live arena pointer; dropped exactly once.
                                 unsafe { core::ptr::drop_in_place(css_ref.as_ptr()) };
+                            }
+                        }
+                        for list in ast.items_glob_imports_mut() {
+                            for g in list.iter_mut() {
+                                drop(core::mem::take(&mut g.entries));
                             }
                         }
                     }};
@@ -5705,6 +5724,10 @@ pub mod bv2_impl {
                 target,
             });
 
+            if resolve_result.last_error.is_none() && !result.ast.glob_imports.is_empty() {
+                this.expand_glob_imports(result, &mut resolve_result.resolve_queue);
+            }
+
             if let Some(err) = resolve_result.last_error {
                 bun_core::scoped_log!(Bundle, "failed with error: {}", err.name());
                 resolve_result.resolve_queue.clear();
@@ -5753,6 +5776,175 @@ pub mod bv2_impl {
             }
 
             resolve_result.resolve_queue
+        }
+
+        fn expand_glob_imports(
+            &mut self,
+            result: &mut parse_task::Success,
+            resolve_queue: &mut ResolveQueue,
+        ) {
+            // SAFETY: `graph.heap` outlives the bundle pass; keys are only read
+            // by the printer within the same pass. Detach so callers below can
+            // reborrow `&mut self`.
+            let arena: &'static bun_alloc::Arena =
+                unsafe { bun_ptr::detach_lifetime_ref(self.arena()) };
+            let source_dir = result.source.path.source_dir();
+            let target = result.ast.target;
+            let generation = self.transpiler.resolver.generation;
+
+            for glob in result.ast.glob_imports.iter_mut() {
+                let parent = &result.ast.import_records[glob.import_record_index as usize];
+                let shape = parent.path.text;
+                let Some(first_wild) = shape.iter().position(|&b| b == 0) else {
+                    continue;
+                };
+                let prefix = &shape[..first_wild];
+                let suffix = if first_wild + 1 == shape.len() {
+                    &b""[..]
+                } else if !shape[first_wild + 1..].contains(&0)
+                    && !shape[first_wild + 1..].contains(&b'/')
+                {
+                    &shape[first_wild + 1..]
+                } else {
+                    continue;
+                };
+                let Some(last_slash) = prefix.iter().rposition(|&b| b == b'/') else {
+                    continue;
+                };
+                let dir_prefix = &prefix[..=last_slash];
+                let file_prefix = &prefix[last_slash + 1..];
+
+                let abs = bun_paths::resolve_path::join_abs::<bun_paths::platform::Auto>(
+                    source_dir, dir_prefix,
+                );
+
+                let kind = parent.kind;
+                let mut seen_stems: Vec<&'static [u8]> = Vec::new();
+
+                let mut names: Vec<Vec<u8>> = self
+                    .transpiler
+                    .resolver
+                    .read_dir_info_ignore_error(abs)
+                    .and_then(|di| di.get_entries_ref(generation))
+                    .map(|dir_entries| {
+                        dir_entries
+                            .data
+                            .iter()
+                            .map(|(_, v)| {
+                                // SAFETY: EntryStore slot; process-lifetime, read-only.
+                                let entry = unsafe { &**v };
+                                entry.base().to_vec()
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                names.sort_unstable();
+
+                for base in names {
+                    if !file_prefix.is_empty() && !base.starts_with(file_prefix) {
+                        continue;
+                    }
+                    if !suffix.is_empty() {
+                        if !base.ends_with(suffix) || base.len() <= file_prefix.len() + suffix.len()
+                        {
+                            continue;
+                        }
+                    }
+                    let Some(ext_dot) = base.iter().rposition(|&b| b == b'.') else {
+                        continue;
+                    };
+                    let ext = &base[ext_dot..];
+                    let loader = self.transpiler.options.loader(ext);
+                    if !loader.is_javascript_like() && loader != Loader::Json {
+                        continue;
+                    }
+
+                    let mut rel = Vec::with_capacity(dir_prefix.len() + base.len());
+                    rel.extend_from_slice(dir_prefix);
+                    rel.extend_from_slice(&base);
+
+                    let Some(source_index) =
+                        self.resolve_glob_child(source_dir, &rel, kind, target, resolve_queue)
+                    else {
+                        continue;
+                    };
+
+                    let key: &'static [u8] = arena.alloc_slice_copy(&rel);
+                    glob.entries
+                        .push(bun_ast::ast_result::GlobImportEntry { key, source_index });
+                    if suffix.is_empty() {
+                        let stem = &rel[..rel.len() - ext.len()];
+                        if !seen_stems.iter().any(|s| **s == *stem) {
+                            let stem: &'static [u8] = arena.alloc_slice_copy(stem);
+                            seen_stems.push(stem);
+                            let stem_idx = self
+                                .resolve_glob_child(source_dir, stem, kind, target, resolve_queue)
+                                .unwrap_or(source_index);
+                            glob.entries.push(bun_ast::ast_result::GlobImportEntry {
+                                key: stem,
+                                source_index: stem_idx,
+                            });
+                        }
+                    }
+                }
+
+                if glob.entries.is_empty() {
+                    let range = result.ast.import_records[glob.import_record_index as usize].range;
+                    result.log.add_range_warning_fmt(
+                        Some(&result.source),
+                        range,
+                        format_args!(
+                            "require() pattern matched no bundleable files in \"{}\"",
+                            bstr::BStr::new(dir_prefix)
+                        ),
+                    );
+                }
+            }
+        }
+
+        fn resolve_glob_child(
+            &mut self,
+            source_dir: &[u8],
+            rel: &[u8],
+            kind: ImportKind,
+            target: options::Target,
+            resolve_queue: &mut ResolveQueue,
+        ) -> Option<Index> {
+            let mut resolve_result = self
+                .transpiler
+                .resolver
+                .resolve_with_framework(source_dir, rel, kind)
+                .ok()?;
+            if resolve_result.flags.is_external() {
+                return None;
+            }
+            let path = resolve_result.path()?;
+            if path.is_disabled {
+                return None;
+            }
+            if let Some(id) = self.path_to_source_index_map(target).get(path.text) {
+                return Some(Index::init(id));
+            }
+            let resolve_entry = resolve_queue.get_or_put(path.text).expect("oom");
+            if resolve_entry.found_existing {
+                return Some(Index::INVALID);
+            }
+            let path = &mut resolve_result.path_pair.primary;
+            *path = self
+                .path_with_pretty_initialized(path, target)
+                .expect("oom");
+            let resolve_task_val = ParseTask::init(&resolve_result, bun_ast::Index::INVALID, self);
+            let resolve_task: &mut ParseTask = self.arena_create(resolve_task_val);
+            resolve_task.known_target = target;
+            resolve_task.jsx = resolve_result.jsx.clone();
+            resolve_task.jsx.development = match self.transpiler.options.force_node_env {
+                options::ForceNodeEnv::Development => true,
+                options::ForceNodeEnv::Production => false,
+                options::ForceNodeEnv::Unspecified => self.transpiler.options.jsx.development,
+            };
+            resolve_task.tree_shaking = self.transpiler.options.tree_shaking;
+            *resolve_entry.value_ptr = resolve_task;
+            Some(Index::INVALID)
         }
     }
 
@@ -5828,6 +6020,8 @@ pub mod bv2_impl {
                 import_record.flags.contains(bun_ast::ImportRecordFlags::IS_UNUSED)
                 // Don't resolve the runtime
                 || import_record.flags.contains(bun_ast::ImportRecordFlags::IS_INTERNAL)
+                // Glob parents are resolved via expand_glob_imports
+                || import_record.flags.contains(bun_ast::ImportRecordFlags::GLOB_PATTERN)
                 // Don't resolve pre-resolved imports
                 || import_record.source_index.is_valid()
                 {
@@ -6950,6 +7144,38 @@ pub mod bv2_impl {
                         result.ast.target,
                         result_source_index as IndexInt,
                     );
+
+                    if !result.ast.glob_imports.is_empty() {
+                        let target = result.ast.target;
+                        let source_dir = this.graph.input_files.items_source()[result_source_index]
+                            .path
+                            .source_dir()
+                            .to_vec();
+                        for glob in result.ast.glob_imports.iter_mut() {
+                            for entry in glob.entries.iter_mut() {
+                                if entry.source_index.is_valid() {
+                                    continue;
+                                }
+                                let Ok(mut resolved) =
+                                    this.transpiler.resolver.resolve_with_framework(
+                                        &source_dir,
+                                        entry.key,
+                                        ImportKind::Require,
+                                    )
+                                else {
+                                    continue;
+                                };
+                                let Some(path) = resolved.path() else {
+                                    continue;
+                                };
+                                if let Some(id) =
+                                    this.path_to_source_index_map(target).get(path.text)
+                                {
+                                    entry.source_index = Index::init(id);
+                                }
+                            }
+                        }
+                    }
 
                     let result_heap = *result.ast.import_records.allocator();
                     let mut import_records = core::mem::replace(

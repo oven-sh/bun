@@ -109,6 +109,12 @@ var __moduleCache;
 // When you do know the module is CJS
 export var __commonJS = (cb, mod) => () => (mod || cb((mod = { exports: {} }).exports, mod), mod.exports);
 
+// require("./dir/" + x) with the directory scanned at bundle time.
+export var __glob = map => path => {
+  if (__hasOwnProp.call(map, path)) return map[path]();
+  throw Object.assign(new Error(`Cannot find module '${path}'`), { code: "MODULE_NOT_FOUND" });
+};
+
 export var __name = (target, name) => {
   Object.defineProperty(target, "name", {
     value: name,

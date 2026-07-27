@@ -283,7 +283,11 @@ pub fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> crate::Result<Bo
             let import_records = &import_records_list[source_index as usize];
             let mut first_import = true;
             for record in import_records.as_slice() {
-                if record.kind == ImportKind::Internal {
+                if record.kind == ImportKind::Internal
+                    || record
+                        .flags
+                        .contains(bun_ast::ImportRecordFlags::GLOB_PATTERN)
+                {
                     continue;
                 }
 

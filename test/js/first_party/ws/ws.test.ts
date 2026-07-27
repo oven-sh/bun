@@ -455,11 +455,15 @@ it("addEventListener supports { once: true } and removeEventListener", async () 
     ws.addEventListener("message", removed);
     ws.removeEventListener("message", removed);
     // removeEventListener must skip on-event-attribute handlers, even when the
-    // same function was also registered via addEventListener.
+    // same function was also registered via addEventListener. The onmessage
+    // wrapper sits first in the listener list, so a non-skipping implementation
+    // removes it instead; reassigning onmessage afterwards then leaks the
+    // addEventListener wrapper and shared keeps firing.
     const shared = () => sharedCount++;
-    ws.addEventListener("message", shared);
     ws.onmessage = shared;
+    ws.addEventListener("message", shared);
     ws.removeEventListener("message", shared);
+    ws.onmessage = () => {};
     ws.addEventListener("message", event => {
       seen.push(event.data);
       if (seen.length === 2) resolve();
@@ -479,8 +483,9 @@ it("addEventListener supports { once: true } and removeEventListener", async () 
     expect(seen).toEqual(["first", "second"]);
     expect(onceCount).toBe(1);
     expect(removedCount).toBe(0);
-    // only the onmessage registration remains: once per message
-    expect(sharedCount).toBe(2);
+    // removeEventListener took the addEventListener registration and the
+    // onmessage reassignment replaced the rest, so shared never fires
+    expect(sharedCount).toBe(0);
   } finally {
     wss.close();
     ws.close();

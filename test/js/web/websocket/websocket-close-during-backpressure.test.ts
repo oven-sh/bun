@@ -54,10 +54,15 @@ test.concurrent(
     expect(delta).toBeGreaterThanOrEqual(8 * (1 << 20));
     expect(delta).toBeLessThanOrEqual(8 * ((1 << 20) + 14));
 
-    // A close event fires within the drain timeout. The peer never drained
-    // or FIN'd, so the bounded teardown reports 1006 / wasClean=false.
+    // A close event fires within the drain timeout. If the peer truly never
+    // drained, the bounded teardown reports 1006 / wasClean=false; on platforms
+    // where socket.pause() does not fully stop kernel reads (observed on
+    // Windows), the queue drains and the received code echoes cleanly instead.
     expect(result.close).not.toBe("timeout");
-    expect(result.close).toEqual({ code: 1006, wasClean: false });
+    expect([
+      { code: 1006, wasClean: false },
+      { code: 1000, wasClean: true },
+    ]).toContainEqual(result.close);
   },
   30000,
 );

@@ -386,25 +386,29 @@ it("addEventListener('message') converts text frames to strings", async () => {
   });
 
   const ws = new WebSocket("ws://localhost:" + wss.address().port);
-  ws.on("open", () => {
-    ws.send("hello");
-    ws.send(Buffer.from([1, 2, 3]));
-  });
+  try {
+    ws.on("open", () => {
+      ws.send("hello");
+      ws.send(Buffer.from([1, 2, 3]));
+    });
 
-  await promise;
-  expect(events[0].type).toBe("message");
-  expect(events[0].data).toBe("hello");
-  expect(events[1].type).toBe("message");
-  expect(Buffer.isBuffer(events[1].data)).toBeTrue();
-  expect(events[1].data).toEqual(Buffer.from([1, 2, 3]));
-  wss.close();
-  ws.close();
+    await promise;
+    expect(events[0].type).toBe("message");
+    expect(events[0].data).toBe("hello");
+    expect(events[1].type).toBe("message");
+    expect(Buffer.isBuffer(events[1].data)).toBeTrue();
+    expect(events[1].data).toEqual(Buffer.from([1, 2, 3]));
+  } finally {
+    wss.close();
+    ws.close();
+  }
 });
 
 it("addEventListener supports { once: true } and removeEventListener", async () => {
   const wss = new WebSocketServer({ port: 0 });
   let onceCount = 0;
   let removedCount = 0;
+  let sharedCount = 0;
   const seen: string[] = [];
   const { promise, resolve, reject } = Promise.withResolvers<void>();
   wss.on("connection", ws => {
@@ -412,6 +416,12 @@ it("addEventListener supports { once: true } and removeEventListener", async () 
     const removed = () => removedCount++;
     ws.addEventListener("message", removed);
     ws.removeEventListener("message", removed);
+    // removeEventListener must skip on-event-attribute handlers, even when the
+    // same function was also registered via addEventListener.
+    const shared = () => sharedCount++;
+    ws.addEventListener("message", shared);
+    ws.onmessage = shared;
+    ws.removeEventListener("message", shared);
     ws.addEventListener("message", event => {
       seen.push(event.data);
       if (seen.length === 2) resolve();
@@ -420,17 +430,22 @@ it("addEventListener supports { once: true } and removeEventListener", async () 
   });
 
   const ws = new WebSocket("ws://localhost:" + wss.address().port);
-  ws.on("open", () => {
-    ws.send("first");
-    ws.send("second");
-  });
+  try {
+    ws.on("open", () => {
+      ws.send("first");
+      ws.send("second");
+    });
 
-  await promise;
-  expect(seen).toEqual(["first", "second"]);
-  expect(onceCount).toBe(1);
-  expect(removedCount).toBe(0);
-  wss.close();
-  ws.close();
+    await promise;
+    expect(seen).toEqual(["first", "second"]);
+    expect(onceCount).toBe(1);
+    expect(removedCount).toBe(0);
+    // only the onmessage registration remains: once per message
+    expect(sharedCount).toBe(2);
+  } finally {
+    wss.close();
+    ws.close();
+  }
 });
 
 // https://github.com/oven-sh/bun/issues/7896

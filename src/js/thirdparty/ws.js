@@ -795,7 +795,12 @@ function textEventData(data) {
   return data; // Blob has no synchronous string conversion
 }
 
-function createMessageEventWrapper(target, listener) {
+// Mirrors npm ws's event-target shim: on-event-attribute wrappers are tagged
+// so removeEventListener never removes a handler assigned via `onmessage`.
+const kForOnEventAttribute = Symbol("kForOnEventAttribute");
+const kListener = Symbol("kListener");
+
+function createMessageEventWrapper(target, listener, forOnEventAttribute = false) {
   const wrapper = (data, isBinary) => {
     listener.$call(target, {
       type: "message",
@@ -803,7 +808,8 @@ function createMessageEventWrapper(target, listener) {
       target,
     });
   };
-  wrapper.listener = listener;
+  wrapper[kForOnEventAttribute] = forOnEventAttribute;
+  wrapper[kListener] = listener;
   return wrapper;
 }
 
@@ -1099,7 +1105,7 @@ class BunWebSocketMocked extends EventEmitter {
     if (this.#onmessage) {
       this.removeListener("message", this.#onmessage);
     }
-    const l = createMessageEventWrapper(this, cb);
+    const l = createMessageEventWrapper(this, cb, true);
     this.on("message", l);
     this.#onmessage = l;
   }
@@ -1121,7 +1127,7 @@ class BunWebSocketMocked extends EventEmitter {
   }
 
   get onmessage() {
-    return this.#onmessage?.listener;
+    return this.#onmessage?.[kListener];
   }
 
   get onopen() {
@@ -1138,8 +1144,11 @@ class BunWebSocketMocked extends EventEmitter {
   }
 
   removeEventListener(type, listener) {
+    // listeners() unwraps once() wrappers, leaving the registered listener or
+    // message wrapper (message wrappers have no .listener, only kListener).
     for (const l of this.listeners(type)) {
-      if (l === listener || l.listener === listener) {
+      if (l[kForOnEventAttribute]) continue;
+      if (l === listener || l[kListener] === listener) {
         this.removeListener(type, l);
         break;
       }

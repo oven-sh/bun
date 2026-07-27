@@ -1073,10 +1073,12 @@ test.skipIf(!isASAN || isWindows)(".env with a huge lying st_size does not abort
 // Previously the unhandled errno propagated up to `fail_with_build_error`, which
 // printed an empty log and called exit(1): every bun command in that cwd died
 // with rc=1 and not one byte of output. Default .env loads are optimistic; an
-// unreadable .env must warn and continue, matching EACCES/EBUSY.
+// unreadable .env must warn and continue (other .env.* files still load),
+// matching EACCES/EBUSY.
 test("a .env that is a symlink loop (ELOOP) warns and continues instead of exiting silently", async () => {
   const dir = tempDirWithFiles("dotenv-eloop", {
-    "index.ts": `console.log("ran");`,
+    ".env.local": "FROMLOCAL=okl\n",
+    "index.ts": `console.log("ran:" + process.env.FROMLOCAL);`,
   });
   fs.symlinkSync(".env", path.join(dir, ".env"), "file");
 
@@ -1090,9 +1092,9 @@ test("a .env that is a symlink loop (ELOOP) warns and continues instead of exiti
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   // The diagnostic must name both the errno and the file so the user can act
-  // on it. Unfixed: stderr was empty and exitCode was 1.
+  // on it. Unfixed: stderr was empty, stdout was empty, and exitCode was 1.
   expect(stderr).toContain("ELOOP");
   expect(stderr).toContain(".env");
-  expect(stdout).toBe("ran\n");
+  expect(stdout).toBe("ran:okl\n");
   expect(exitCode).toBe(0);
 });

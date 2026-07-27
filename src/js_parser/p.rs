@@ -292,6 +292,13 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
 
     /// Used by commonjs_at_runtime
     pub has_commonjs_export_names: bool,
+    /// Specifiers this CommonJS module re-exports from (`__exportStar(require("x"), exports)`,
+    /// Babel's `Object.keys(_x).forEach(...)` loop). Emitted as `export * from "x"` in the
+    /// ESM wrapper so JSC follows cross-file.
+    pub commonjs_reexport_specifiers: Vec<Box<[u8]>>,
+    /// `var X = require("spec")` bindings, for matching the Babel
+    /// `Object.keys(X).forEach(...)` re-export loop.
+    pub commonjs_require_bindings: Vec<(bun_ast::Ref, Box<[u8]>)>,
 
     pub stack_check: bun_core::StackCheck,
 
@@ -5242,6 +5249,59 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             .expect("unreachable");
     }
 
+    pub fn record_runtime_commonjs_reexport(&mut self, specifier: &[u8]) {
+        if specifier.is_empty() || specifier.contains(&0) {
+            return;
+        }
+        if self
+            .commonjs_reexport_specifiers
+            .iter()
+            .any(|s| &**s == specifier)
+        {
+            return;
+        }
+        self.commonjs_reexport_specifiers
+            .push(Box::<[u8]>::from(specifier));
+    }
+
+    /// Extract the specifier from `require("x")` / `_interopRequireWildcard(require("x"))`
+    /// shapes (cjs-module-lexer REQUIRE grammar). Returns the literal bytes when the
+    /// argument is a single utf-8 string literal.
+    pub fn require_specifier(&self, ex: &bun_ast::Expr) -> Option<Box<[u8]>> {
+        use bun_ast::ExprData;
+        let call = match &ex.data {
+            ExprData::ECall(c) => c,
+            ExprData::ERequireString(r) => {
+                let rec = self.import_records.items().get(r.import_record_index as usize)?;
+                return Some(Box::<[u8]>::from(rec.path.text));
+            }
+            ExprData::ERequireResolveString(_) => return None,
+            _ => return None,
+        };
+        // `require("x")` may have been rewritten to ERequireCallTarget; also accept a
+        // call whose single argument is itself a require-like expression (Babel's
+        // `_interopRequireWildcard(require("x"))`).
+        if matches!(call.target.data, ExprData::ERequireCallTarget)
+            || matches!(call.target.data, ExprData::EIdentifier(id) if id.ref_.eql(self.require_ref))
+        {
+            let args = call.args.slice();
+            if args.len() == 1 {
+                if let ExprData::EString(s) = &args[0].data {
+                    if !s.is_utf16 {
+                        return Some(Box::<[u8]>::from(&*s.data));
+                    }
+                }
+            }
+            return None;
+        }
+        // Peel a wrapping call: `_interopRequireWildcard(require("x"))`
+        let args = call.args.slice();
+        if args.len() == 1 {
+            return self.require_specifier(&args[0]);
+        }
+        None
+    }
+
     pub fn maybe_keep_expr_symbol_name(
         &mut self,
         expr: Expr,
@@ -8450,6 +8510,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             top_level_await_keyword: self.top_level_await_keyword,
             commonjs_named_exports: core::mem::take(&mut self.commonjs_named_exports),
             has_commonjs_export_names: self.has_commonjs_export_names,
+            commonjs_reexport_specifiers: core::mem::take(&mut self.commonjs_reexport_specifiers),
             has_import_meta: self.has_import_meta,
 
             hashbang: hashbang.into(),
@@ -8788,6 +8849,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             commonjs_replacement_stmts: js_ast::StmtNodeList::EMPTY,
             parse_pass_symbol_uses: None,
             has_commonjs_export_names: false,
+            commonjs_reexport_specifiers: Vec::new(),
+            commonjs_require_bindings: Vec::new(),
             should_fold_typescript_constant_expressions: false,
             emitted_namespace_vars: RefMap::default(),
             is_exported_inside_namespace: Default::default(),

@@ -86,6 +86,8 @@ pub struct Ast<'a> {
     /// This is a list of named exports that may exist in a CommonJS module
     /// We use this with `commonjs_at_runtime` to re-export CommonJS
     pub has_commonjs_export_names: bool,
+    /// See `P::commonjs_reexport_specifiers`.
+    pub commonjs_reexport_specifiers: Vec<Box<[u8]>>,
     pub has_import_meta: bool,
     pub import_meta_ref: Ref,
 }
@@ -127,6 +129,7 @@ impl<'a> Ast<'a> {
             target: Target::Browser,
             ts_enums: Default::default(),
             has_commonjs_export_names: false,
+            commonjs_reexport_specifiers: Vec::new(),
             has_import_meta: false,
             import_meta_ref: Ref::NONE,
         }

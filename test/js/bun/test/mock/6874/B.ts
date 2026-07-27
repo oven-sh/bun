@@ -1,2 +1,2 @@
-import lodash from "lodash";
-export const b = () => lodash.trim("  unmocked  ");
+import { trim } from "lodash";
+export const b = () => trim("  XXX  ");

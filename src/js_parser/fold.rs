@@ -376,9 +376,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             && identifier_opts.assign_target() != js_ast::AssignTarget::None
                             && !identifier_opts.is_delete_target()
                         {
-                            // `module.exports = { a, b, ... }` (cjs-module-lexer MODULE_EXPORTS_ASSIGN).
-                            // Any other reassignment (`module.exports = require(..)` etc.) makes
-                            // the static export set unknown; fall back to fetch-time evaluation.
                             let mut handled = false;
                             if identifier_opts.assign_target() == js_ast::AssignTarget::Replace {
                                 if let js_ast::ExprData::EBinary(bin) = p.stmt_expr_value {
@@ -394,6 +391,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                                     )
                                         )
                                     {
+                                        // `module.exports = { a, b, ... }` (cjs-module-lexer MODULE_EXPORTS_ASSIGN)
                                         if let js_ast::ExprData::EObject(obj) = &bin.right.data {
                                             handled = true;
                                             for prop in obj.properties.slice() {
@@ -408,7 +406,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                                         .flags
                                                         .contains(Flags::Property::IsMethod)
                                                 {
-                                                    handled = false;
                                                     continue;
                                                 }
                                                 if let Some(key) = prop.key {
@@ -429,6 +426,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 }
                             }
                             if !handled {
+                                // `module.exports = <non-object>` (a require() prod/dev shim,
+                                // a function/class, a constructed instance). The export set
+                                // depends on the runtime value; keep the eager synthetic path.
                                 p.commonjs_module_exports_assigned_deoptimized = true;
                             }
                         }

@@ -174,6 +174,55 @@ describe("ESM importing CommonJS: evaluation order", () => {
     expect(exitCode).toBe(0);
   });
 
+  test.concurrent("tslib __exportStar re-export is followed across files", async () => {
+    using dir = tempDir("esm-cjs-order-exportstar", {
+      "entry.mjs": `
+        import "./setup.mjs";
+        import { inner, own } from "./pkg.cjs";
+        console.log(JSON.stringify({ inner, own, order: globalThis.__ORDER__ }));
+      `,
+      "setup.mjs": pad + `globalThis.__ORDER__ = ["setup"]; globalThis.__V__ = 7;`,
+      "pkg.cjs": `
+        var tslib = { __exportStar(m, e) { for (var k in m) if (k !== "default") Object.defineProperty(e, k, { enumerable: true, get: () => m[k] }); } };
+        globalThis.__ORDER__.push("pkg");
+        tslib.__exportStar(require("./inner.cjs"), exports);
+        exports.own = "own";
+      `,
+      "inner.cjs": `
+        globalThis.__ORDER__.push("inner");
+        exports.inner = globalThis.__V__;
+      `,
+    });
+    const { stdout, stderr, exitCode } = await run(String(dir), "entry.mjs");
+    expect(stderr).toBe("");
+    // `export * from "./inner"` makes inner a module dependency of pkg's wrapper,
+    // so inner evaluates before pkg's body (deps-first). setup still runs first.
+    expect(JSON.parse(stdout)).toEqual({ inner: 7, own: "own", order: ["setup", "inner", "pkg"] });
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("module.exports = require(x) keeps the runtime export set (prod/dev shims)", async () => {
+    using dir = tempDir("esm-cjs-order-shim", {
+      "entry.mjs": `
+        import { tag } from "./shim.cjs";
+        console.log(tag);
+      `,
+      "shim.cjs": `
+        if (process.env.NODE_ENV === "production") {
+          module.exports = require("./a.cjs");
+        } else {
+          module.exports = require("./b.cjs");
+        }
+      `,
+      "a.cjs": `exports.tag = "a";`,
+      "b.cjs": `exports.tag = "b";`,
+    });
+    const { stdout, stderr, exitCode } = await run(String(dir), "entry.mjs");
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("b");
+    expect(exitCode).toBe(0);
+  });
+
   test.concurrent("an error thrown by the CJS body rejects the importing promise", async () => {
     using dir = tempDir("esm-cjs-order-throws", {
       "entry.mjs": `

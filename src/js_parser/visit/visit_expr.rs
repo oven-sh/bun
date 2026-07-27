@@ -2016,11 +2016,67 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                             == b"Object"
                             )
                 );
+                let is_unbound_object = |ex: &Expr| -> bool {
+                    matches!(
+                        &ex.data,
+                        Data::EIdentifier(id)
+                            if p.symbols.as_slice()[id.ref_.inner_index() as usize].kind
+                                == bun_ast::symbol::Kind::Unbound
+                                && p.symbols.as_slice()[id.ref_.inner_index() as usize]
+                                    .original_name
+                                    .slice()
+                                    == b"Object"
+                    )
+                };
                 let args = e_.args.slice();
                 if is_object_define_property && args.len() >= 2 && is_exports_expr(&args[0]) {
                     if let Data::EString(name_str) = &args[1].data {
                         if !name_str.is_utf16 {
                             p.record_runtime_commonjs_export_name(&name_str.data, args[1].loc);
+                        }
+                    }
+                } else if args.len() == 2 && is_exports_expr(&args[1]) {
+                    // `<tslib>.__exportStar(require("x"), exports)` / `__exportStar(require("x"), exports)`
+                    let target_name: &[u8] = match &e_.target.data {
+                        Data::EDot(d) => &d.name,
+                        Data::EIdentifier(id) => p.symbols.as_slice()
+                            [id.ref_.inner_index() as usize]
+                            .original_name
+                            .slice(),
+                        _ => b"",
+                    };
+                    if matches!(target_name, b"__exportStar" | b"__export" | b"_exportStar") {
+                        if let Some(spec) = p.require_specifier(&args[0]) {
+                            p.record_runtime_commonjs_reexport(&spec);
+                        }
+                    }
+                } else if let Data::EDot(dot) = &e_.target.data {
+                    if dot.name == b"forEach" && args.len() == 1 {
+                        // Babel: `Object.keys(<x>).forEach(function (key) { ... defineProperty(exports, key, ...) })`
+                        // where `<x>` is either a direct `require("spec")` or a local that was
+                        // assigned from one (`var _x = require("spec")`).
+                        if let Data::ECall(inner) = &dot.target.data {
+                            if matches!(
+                                &inner.target.data,
+                                Data::EDot(d) if d.name == b"keys" && is_unbound_object(&d.target)
+                            ) {
+                                let inner_args = inner.args.slice();
+                                if inner_args.len() == 1 {
+                                    let spec = p.require_specifier(&inner_args[0]).or_else(|| {
+                                        if let Data::EIdentifier(id) = &inner_args[0].data {
+                                            p.commonjs_require_bindings
+                                                .iter()
+                                                .find(|(r, _)| r.eql(id.ref_))
+                                                .map(|(_, s)| s.clone())
+                                        } else {
+                                            None
+                                        }
+                                    });
+                                    if let Some(spec) = spec {
+                                        p.record_runtime_commonjs_reexport(&spec);
+                                    }
+                                }
+                            }
                         }
                     }
                 }

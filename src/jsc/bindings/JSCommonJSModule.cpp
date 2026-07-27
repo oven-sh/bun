@@ -1487,21 +1487,31 @@ static void assignStaticExportNames(JSC::VM& vm, JSCommonJSModule* moduleObject,
         return;
 
     moduleObject->m_staticExportNames.clear();
+    moduleObject->m_reexportSpecifiers.clear();
     moduleObject->m_hasStaticExportNames = true;
 
     unsigned start = 0;
+    bool inSpecifiers = false;
     for (unsigned i = 0, length = joined.length(); i <= length; ++i) {
-        if (i == length || joined[i] == '\0') {
+        char16_t c = i < length ? joined[i] : 0;
+        if (c == '\0' || c == '\x01') {
             if (i > start) {
-                auto name = Identifier::fromString(vm, StringView(joined).substring(start, i - start).toString());
-                if (name == vm.propertyNames->defaultKeyword)
-                    ;
-                else if (name == vm.propertyNames->__esModule && !moduleObject->ignoreESModuleAnnotation)
-                    ;
-                else
-                    moduleObject->m_staticExportNames.append(name);
+                auto piece = StringView(joined).substring(start, i - start).toString();
+                if (inSpecifiers) {
+                    moduleObject->m_reexportSpecifiers.append(piece);
+                } else {
+                    auto name = Identifier::fromString(vm, piece);
+                    if (name == vm.propertyNames->defaultKeyword)
+                        ;
+                    else if (name == vm.propertyNames->__esModule && !moduleObject->ignoreESModuleAnnotation)
+                        ;
+                    else
+                        moduleObject->m_staticExportNames.append(name);
+                }
             }
             start = i + 1;
+            if (c == '\x01')
+                inSpecifiers = true;
         }
     }
 }
@@ -1652,6 +1662,11 @@ static JSC::SourceCode commonJSModuleSyntheticSourceCode(const SourceOrigin& sou
         src.appendQuotedJSONString(moduleObject->m_staticExportNames[i].string());
     }
     src.append("};"_s);
+    for (auto& spec : moduleObject->m_reexportSpecifiers) {
+        src.append("export*from"_s);
+        src.appendQuotedJSONString(spec);
+        src.append(';');
+    }
 
     return JSC::SourceCode(JSC::StringSourceProvider::create(
         src.toString(), sourceOrigin, String(sourceURL), SourceTaintedOrigin::Untainted,

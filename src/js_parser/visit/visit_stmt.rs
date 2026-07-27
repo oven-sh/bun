@@ -1145,6 +1145,23 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
         data.decls.truncate(new_len);
 
+        // Track `var X = require("spec")` for cjs-module-lexer re-export detection
+        // (`Object.keys(X).forEach(...)`).
+        if p.options.features.commonjs_at_runtime
+            && !p.options.features.unwrap_commonjs_to_esm
+            && !p.is_control_flow_dead
+        {
+            for d in data.decls.slice() {
+                if let js_ast::binding::Data::BIdentifier(id) = &d.binding.data {
+                    if let Some(value) = &d.value {
+                        if let Some(spec) = p.require_specifier(value) {
+                            p.commonjs_require_bindings.push((id.r#ref, spec));
+                        }
+                    }
+                }
+            }
+        }
+
         // Handle being exported inside a namespace
         if data.is_export && p.enclosing_namespace_arg_ref.is_some() {
             for d in data.decls.slice() {

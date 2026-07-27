@@ -1,7 +1,7 @@
 import { describe, expect, it, mock } from "bun:test";
 import { a } from "./A.ts";
 
-mock.module(require.resolve("lodash"), () => ({ default: { trim: () => "mocked" } }));
+mock.module(require.resolve("lodash"), () => ({ trim: () => "mocked" }));
 
 describe("A", () => {
   it("should be mocked", () => {

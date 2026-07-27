@@ -3331,7 +3331,7 @@ extern "C" void napi_internal_check_gc(napi_env env)
 // debug/asan builds. SuspendExceptionScope stashes vm.m_exception for the
 // allocation and restores it on return, so the caller's exception is untouched
 // and the allocation runs under a clean scope.
-template <typename CharT, typename Maker>
+template<typename CharT, typename Maker>
 static JSC::EncodedJSValue napiCreateStringWithSuspendedException(napi_env env, const CharT* ptr, size_t length, Maker make)
 {
     auto& vm = env->vm();

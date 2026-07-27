@@ -750,9 +750,8 @@ pub(super) extern "C" fn napi_create_string_utf16(
     }
 
     // SAFETY: env is non-null (checked above); slice ptr/len from a live &[u16].
-    let js = unsafe {
-        napi_internal_create_string_utf16(env.as_mut_ptr(), slice.as_ptr(), slice.len())
-    };
+    let js =
+        unsafe { napi_internal_create_string_utf16(env.as_mut_ptr(), slice.as_ptr(), slice.len()) };
     if js == JSValue::ZERO {
         return NapiEnv::set_last_error(Some(env), NapiStatus::generic_failure);
     }

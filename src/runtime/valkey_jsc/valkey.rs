@@ -979,22 +979,6 @@ impl ValkeyClient {
                 self.fail(err, RedisError::AuthenticationFailed)?;
                 Ok(())
             }
-            RESPValue::SimpleString(str_) => {
-                if str_.as_ref() == b"OK" {
-                    self.status = Status::Connected;
-                    self.flags.is_authenticated = true;
-                    self.flags.is_reconnecting = false;
-                    self.retry_attempts = 0;
-                    self.on_valkey_connect(value)?;
-                    return Ok(());
-                }
-                self.fail(
-                    b"Authentication failed (unexpected response)",
-                    RedisError::AuthenticationFailed,
-                )?;
-
-                Ok(())
-            }
             RESPValue::Map(map) => {
                 // This is the HELLO response map
                 debug!("Got HELLO response map with {} entries", map.len());
@@ -1029,10 +1013,14 @@ impl ValkeyClient {
                 Ok(())
             }
             _ => {
-                self.fail(
-                    b"Authentication failed with unexpected response",
-                    RedisError::AuthenticationFailed,
-                )?;
+                // HELLO only ever answers with a Map (success) or an Error
+                // (auth failure / unknown command). Any other frame arriving
+                // before the handshake completes is unsolicited noise from the
+                // peer (e.g. a proxy greeting line), not the HELLO reply.
+                // Drop it and keep waiting so the real HELLO reply is paired
+                // with HELLO instead of shifting every subsequent command's
+                // reply by one for the lifetime of the connection.
+                debug!("Dropping unsolicited non-HELLO frame before handshake completes");
                 Ok(())
             }
         }

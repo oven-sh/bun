@@ -174,7 +174,7 @@ describe("Valkey incremental reply scanning", () => {
     return { count, offset };
   }
 
-  /** Minimal mock server: +OK for the HELLO handshake, then one callback per later command. */
+  /** Minimal mock server: RESP3 map for the HELLO handshake, then one callback per later command. */
   function createMockValkeyServer(
     onCommand: (commandIndex: number, socket: net.Socket) => void,
   ): Promise<{ server: net.Server; port: number; sockets: net.Socket[] }> {
@@ -222,7 +222,7 @@ describe("Valkey incremental reply scanning", () => {
     const { server, port, sockets } = await createMockValkeyServer((commandIndex, socket) => {
       if (commandIndex === 0) {
         // HELLO handshake.
-        socket.write("+OK\r\n");
+        socket.write("%1\r\n+proto\r\n:3\r\n");
         return;
       }
       // Command 1: bulk string ($<len>) — resuming the scan only needs a length
@@ -265,4 +265,91 @@ describe("Valkey incremental reply scanning", () => {
       server.close();
     }
   }, 90_000);
+});
+
+describe("Valkey HELLO handshake", () => {
+  const CRLF = "\r\n";
+  // Minimal RESP3 HELLO reply: a Map with proto=3.
+  const HELLO_MAP = `%1${CRLF}+proto${CRLF}:3${CRLF}`;
+
+  type PerSocket = { buf: string };
+
+  /**
+   * Mock server that writes `preamble` as soon as the socket opens (before it
+   * has read any bytes from the client), then answers HELLO with a RESP3 map
+   * and GET/PING with fixed values.
+   */
+  function serverWithPreamble(preamble: string): TCPSocketListener<PerSocket> {
+    return Bun.listen<PerSocket>({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        open(s) {
+          s.data = { buf: "" };
+          if (preamble) s.write(preamble);
+        },
+        data(s, chunk) {
+          s.data.buf += chunk.toString("latin1");
+          let m: RegExpMatchArray | null;
+          while ((m = s.data.buf.match(/^\*\d+\r\n(?:\$\d+\r\n[^\r]*\r\n)+/))) {
+            s.data.buf = s.data.buf.slice(m[0].length);
+            const args = [...m[0].matchAll(/\$\d+\r\n([^\r]*)\r\n/g)].map(x => x[1]);
+            const name = args[0].toUpperCase();
+            if (name === "HELLO") {
+              s.write(HELLO_MAP);
+            } else if (name === "GET") {
+              const body = `v${args[1].slice(1)}`;
+              s.write(`$${body.length}${CRLF}${body}${CRLF}`);
+            } else {
+              s.write(`+PONG${CRLF}`);
+            }
+          }
+        },
+        error() {},
+        close() {},
+      },
+    });
+  }
+
+  // An unsolicited frame that reaches the client before the HELLO reply must
+  // not be consumed as the HELLO reply. Previously the handshake accepted any
+  // leading frame (including a bare `+OK`), so the real HELLO map was then
+  // delivered as the reply to the first user command and every subsequent
+  // reply on the connection was shifted by one.
+  test.each([
+    ["simple string +OK", `+OK${CRLF}`],
+    ["integer", `:1${CRLF}`],
+    ["two frames", `+OK${CRLF}:1${CRLF}`],
+  ])("drops an unsolicited %s frame arriving before the HELLO reply", async (_label, preamble) => {
+    const server = serverWithPreamble(preamble);
+    const client = new RedisClient(`redis://127.0.0.1:${server.port}`, { autoReconnect: false });
+    client.onconnect = client.onclose = () => {};
+    try {
+      const hello = await client.connect();
+      expect(hello).toEqual({ proto: 3 });
+      expect(await client.get("k1")).toBe("v1");
+      expect(await client.get("k2")).toBe("v2");
+      expect(await client.send("PING", [])).toBe("PONG");
+    } finally {
+      client.close();
+      server.stop(true);
+    }
+  });
+
+  // Control: the same server without a stray preamble must behave identically.
+  test("pairs replies correctly when the server emits no pre-HELLO frame", async () => {
+    const server = serverWithPreamble("");
+    const client = new RedisClient(`redis://127.0.0.1:${server.port}`, { autoReconnect: false });
+    client.onconnect = client.onclose = () => {};
+    try {
+      const hello = await client.connect();
+      expect(hello).toEqual({ proto: 3 });
+      expect(await client.get("k1")).toBe("v1");
+      expect(await client.get("k2")).toBe("v2");
+      expect(await client.send("PING", [])).toBe("PONG");
+    } finally {
+      client.close();
+      server.stop(true);
+    }
+  });
 });

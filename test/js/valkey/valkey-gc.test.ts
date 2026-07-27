@@ -322,7 +322,7 @@ test.concurrent("rejects a RESP simple-string reply whose line terminator never 
       const server = net.createServer(socket => {
         socket.on("data", (data: Buffer) => {
           if (data.includes("HELLO")) {
-            socket.write("+OK\r\n");
+            socket.write("%1\r\n+proto\r\n:3\r\n");
           }
           if (data.includes("PING")) {
             socket.write(payload, () => {
@@ -402,8 +402,8 @@ test.concurrent("getBuffer replies survive GC with adopted backing stores intact
       return Buffer.concat([Buffer.from("$" + payload.length + "\\r\\n"), payload, CRLF]);
     }
 
-    // Mock server: +OK to the HELLO handshake, then shift one queued reply
-    // per GET frame (frames may coalesce when commands are auto-pipelined).
+    // Mock server: RESP3 map to the HELLO handshake, then shift one queued
+    // reply per GET frame (frames may coalesce when commands are auto-pipelined).
     let pending = "";
     let saidHello = false;
     const server = net.createServer(socket => {
@@ -411,7 +411,7 @@ test.concurrent("getBuffer replies survive GC with adopted backing stores intact
         if (!saidHello) {
           if (data.includes("HELLO")) {
             saidHello = true;
-            socket.write("+OK\\r\\n");
+            socket.write("%1\\r\\n+proto\\r\\n:3\\r\\n");
           }
           return;
         }

@@ -34,10 +34,10 @@ function consumeRespArray(buf: Buffer): number {
   return off;
 }
 
-// Minimal Redis-ish server. It replies +OK to the first command (HELLO) so the
-// client's authentication handshake succeeds, then +PONG to everything else.
-// Buffers and frames RESP arrays so commands split across packets (or batched
-// into one) are each answered exactly once.
+// Minimal Redis-ish server. It replies with a RESP3 map to the first command
+// (HELLO) so the client's authentication handshake succeeds, then +PONG to
+// everything else. Buffers and frames RESP arrays so commands split across
+// packets (or batched into one) are each answered exactly once.
 function fakeServer(serverOpts: tls.TlsOptions): tls.Server {
   const server = tls.createServer(serverOpts, socket => {
     let buf = Buffer.alloc(0);
@@ -47,7 +47,7 @@ function fakeServer(serverOpts: tls.TlsOptions): tls.Server {
       let consumed: number;
       while ((consumed = consumeRespArray(buf)) > 0) {
         buf = buf.subarray(consumed);
-        socket.write(seen++ === 0 ? "+OK\r\n" : "+PONG\r\n");
+        socket.write(seen++ === 0 ? "%1\r\n+proto\r\n:3\r\n" : "+PONG\r\n");
       }
     });
     socket.on("error", () => {});

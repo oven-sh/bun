@@ -39,10 +39,10 @@ function countRespCommands(data: Buffer): number {
 
 /**
  * Creates a minimal mock Redis server that parses incoming RESP command
- * frames. The first command (HELLO handshake) gets +OK; each subsequent
- * command receives the next crafted payload (the last one is repeated when
- * there are more commands than payloads). Handles the case where multiple
- * commands arrive in a single TCP chunk.
+ * frames. The first command (HELLO handshake) gets a RESP3 map; each
+ * subsequent command receives the next crafted payload (the last one is
+ * repeated when there are more commands than payloads). Handles the case
+ * where multiple commands arrive in a single TCP chunk.
  */
 function createMockRedisServer(payload: Buffer | Buffer[]): Promise<{ server: net.Server; port: number }> {
   const payloads = Array.isArray(payload) ? payload : [payload];
@@ -54,8 +54,8 @@ function createMockRedisServer(payload: Buffer | Buffer[]): Promise<{ server: ne
         const numCmds = countRespCommands(data);
         for (let i = 0; i < numCmds; i++) {
           if (commandsSeen === 0) {
-            // Respond to HELLO handshake with a simple OK
-            socket.write("+OK\r\n");
+            // Respond to HELLO handshake with a minimal RESP3 map
+            socket.write("%1\r\n+proto\r\n:3\r\n");
           } else {
             // Each subsequent command gets the next crafted payload
             socket.write(payloads[Math.min(commandsSeen - 1, payloads.length - 1)]);
@@ -107,7 +107,7 @@ describe("Valkey: RESP Nesting Depth Handling", () => {
       });
 
       try {
-        // The HELLO handshake should succeed (mock returns +OK).
+        // The HELLO handshake should succeed (mock returns a RESP3 map).
         // The next command triggers the deeply nested response.
         await client.send("PING", []);
         expect.unreachable();
@@ -190,7 +190,7 @@ describe("Valkey: RESP Nesting Depth Handling", () => {
             const n = countRespCommands(data);
             for (let i = 0; i < n; i++) {
               if (cmdsSeen === 0) {
-                socket.write("+OK\\r\\n");
+                socket.write("%1\\r\\n+proto\\r\\n:3\\r\\n");
               } else {
                 socket.write(payload);
               }

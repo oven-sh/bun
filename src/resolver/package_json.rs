@@ -703,10 +703,14 @@ impl PackageJSON {
                 let mut has_globs = false;
                 let mut has_exact = false;
 
-                // First pass: check if we have glob patterns and exact patterns
+                // First pass: check if we have glob patterns and exact patterns.
+                // Per webpack's documented semantics for this field, patterns
+                // without a '/' match against the basename at any depth (as if
+                // prefixed with "**/"), so they are always glob patterns.
                 for item in items {
                     if let Some(name) = item.as_str() {
-                        if strings::contains_char(name, b'*')
+                        if !strings::contains_char(name, b'/')
+                            || strings::contains_char(name, b'*')
                             || strings::contains_char(name, b'?')
                             || strings::contains_char(name, b'[')
                             || strings::contains_char(name, b'{')
@@ -733,13 +737,19 @@ impl PackageJSON {
                                 continue;
                             }
 
+                            let slashless = !strings::contains_char(name, b'/');
+
                             // Store the pattern relative to the package directory
-                            let joined: [&[u8]; 2] =
-                                [json_source.path.name().dir_with_trailing_slash(), name];
+                            let joined: [&[u8]; 3] = [
+                                json_source.path.name().dir_with_trailing_slash(),
+                                if slashless { b"**/" } else { b"" },
+                                name,
+                            ];
 
                             let pattern = r_fs.join(&joined);
 
-                            if strings::contains_char(name, b'*')
+                            if slashless
+                                || strings::contains_char(name, b'*')
                                 || strings::contains_char(name, b'?')
                                 || strings::contains_char(name, b'[')
                                 || strings::contains_char(name, b'{')
@@ -768,8 +778,15 @@ impl PackageJSON {
                             }
 
                             // Store the pattern relative to the package directory
-                            let joined: [&[u8]; 2] =
-                                [json_source.path.name().dir_with_trailing_slash(), name];
+                            let joined: [&[u8]; 3] = [
+                                json_source.path.name().dir_with_trailing_slash(),
+                                if strings::contains_char(name, b'/') {
+                                    b""
+                                } else {
+                                    b"**/"
+                                },
+                                name,
+                            ];
 
                             let pattern = r_fs.join(&joined);
                             // Normalize pattern to use forward slashes for cross-platform compatibility

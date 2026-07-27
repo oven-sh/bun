@@ -180,7 +180,9 @@ it("handles trailing headers with byte-by-byte transmission", async () => {
   expect(await res.text()).toBe("Hello");
 });
 
-it("handles trailing headers with malformed format (missing final CRLF)", async () => {
+it("rejects when the trailer section is missing its final CRLF", async () => {
+  // RFC 9112 section 7.1: chunked-body = *chunk last-chunk trailer-section CRLF.
+  // EOF before the terminating CRLF is a truncated message; node (undici) rejects this.
   const { promise, resolve } = Promise.withResolvers();
   await using server = net
     .createServer(socket => {
@@ -201,9 +203,12 @@ it("handles trailing headers with malformed format (missing final CRLF)", async 
     });
 
   const address = await promise;
-  const res = await fetch(`http://localhost:${address.port}`);
-  expect(res.status).toBe(200);
-  expect(await res.text()).toBe("Hello");
+  try {
+    await fetch(`http://localhost:${address.port}`).then(res => res.text());
+    expect.unreachable();
+  } catch (e) {
+    expect(e?.code).toBe("ECONNRESET");
+  }
 });
 
 it("handles trailing headers with extremely large values", async () => {
@@ -233,7 +238,7 @@ it("handles trailing headers with extremely large values", async () => {
   expect(await res.text()).toBe("Hello");
 });
 
-it("handles connection close during trailing headers", async () => {
+it("rejects when the connection closes inside the trailer section", async () => {
   const { promise, resolve } = Promise.withResolvers();
   await using server = net
     .createServer(socket => {
@@ -254,9 +259,58 @@ it("handles connection close during trailing headers", async () => {
     });
 
   const address = await promise;
-  const res = await fetch(`http://localhost:${address.port}`);
-  expect(res.status).toBe(200);
-  expect(await res.text()).toBe("Hello");
+  try {
+    await fetch(`http://localhost:${address.port}`).then(res => res.text());
+    expect.unreachable();
+  } catch (e) {
+    expect(e?.code).toBe("ECONNRESET");
+  }
+});
+
+it("rejects when the connection closes after 0\\r\\n with no terminating CRLF", async () => {
+  const { promise, resolve } = Promise.withResolvers();
+  await using server = net
+    .createServer(socket => {
+      socket.on("error", () => {}); // raw test server: tolerate client aborts (ECONNRESET)
+      socket.once("data", () => {
+        socket.write("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n4\r\ntrun\r\n0\r\n");
+        socket.end();
+      });
+    })
+    .listen(0, "localhost", () => {
+      resolve(server.address());
+    });
+
+  const address = await promise;
+  try {
+    await fetch(`http://localhost:${address.port}`).then(res => res.text());
+    expect.unreachable();
+  } catch (e) {
+    expect(e?.code).toBe("ECONNRESET");
+  }
+});
+
+it("rejects when the connection closes mid-trailer-line", async () => {
+  const { promise, resolve } = Promise.withResolvers();
+  await using server = net
+    .createServer(socket => {
+      socket.on("error", () => {}); // raw test server: tolerate client aborts (ECONNRESET)
+      socket.once("data", () => {
+        socket.write("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nHello\r\n0\r\nX-Trail: par");
+        socket.end();
+      });
+    })
+    .listen(0, "localhost", () => {
+      resolve(server.address());
+    });
+
+  const address = await promise;
+  try {
+    await fetch(`http://localhost:${address.port}`).then(res => res.text());
+    expect.unreachable();
+  } catch (e) {
+    expect(e?.code).toBe("ECONNRESET");
+  }
 });
 
 it("handles trailing headers with multiple header lines", async () => {

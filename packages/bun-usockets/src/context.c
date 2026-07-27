@@ -664,6 +664,14 @@ struct us_socket_t *us_socket_group_connect_unix(struct us_socket_group_t *group
     return connect_socket;
 }
 
+static int is_fd_or_memory_exhaustion(int err) {
+#ifdef _WIN32
+    return err == WSAEMFILE || err == WSAENOBUFS;
+#else
+    return err == EMFILE || err == ENFILE || err == ENOBUFS || err == ENOMEM;
+#endif
+}
+
 int start_connections(struct us_connecting_socket_t *c, int count) {
     int opened = 0;
     struct us_socket_group_t *group = c->group;
@@ -674,8 +682,9 @@ int start_connections(struct us_connecting_socket_t *c, int count) {
         /* The deferred-DNS path does not carry a local binding. */
         LIBUS_SOCKET_DESCRIPTOR connect_socket_fd = bsd_create_connect_socket(&addr, NULL, c->options);
         if (connect_socket_fd == LIBUS_SOCKET_ERROR) {
-            if (c->error == 0) {
-                c->error = LIBUS_ERR;
+            int err = LIBUS_ERR;
+            if (c->error == 0 && is_fd_or_memory_exhaustion(err)) {
+                c->error = err;
             }
             continue;
         }
@@ -687,7 +696,7 @@ int start_connections(struct us_connecting_socket_t *c, int count) {
             int saved_errno = LIBUS_ERR;
             bsd_close_socket(connect_socket_fd);
             us_poll_free(poll, loop);
-            if (c->error == 0) {
+            if (c->error == 0 && is_fd_or_memory_exhaustion(saved_errno)) {
                 c->error = saved_errno;
             }
             continue;

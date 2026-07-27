@@ -390,6 +390,8 @@ extern "C" JSC::JSPromise* Bun__transpileFile(
     bool isCommonJSRequire,
     BunLoaderType forceLoaderType);
 
+extern "C" bool ZigGlobalObject__hasOverriddenFsReadFileSync(Zig::GlobalObject* globalObject);
+
 extern "C" bool Bun__fetchBuiltinModule(
     void* bunVM,
     JSC::JSGlobalObject* global,

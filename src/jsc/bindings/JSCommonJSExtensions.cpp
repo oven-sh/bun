@@ -201,6 +201,55 @@ bool JSCommonJSExtensions::deleteProperty(JSC::JSCell* cell, JSC::JSGlobalObject
     return deleted;
 }
 
+// Node's CJS loader reads module source through the public
+// `fs.readFileSync` property, so monkey-patching it is a de-facto hook into
+// require(). `transpile_file` calls this once it has established that no
+// custom `Module._extensions` handler will claim the file, so the override
+// runs exactly once per require, from inside what is conceptually
+// `Module._extensions['.js']`, matching Node. Returns false when the
+// watchpoint is still valid (node:fs not loaded yet, or the export has not
+// been touched).
+extern "C" bool ZigGlobalObject__callOverriddenFsReadFileSync(Zig::GlobalObject* globalObject, const BunString* filename, BunString* outSource)
+{
+    if (globalObject->trackedExport(Bun::TrackedExport::FsReadFileSync).isStillOriginal()) [[likely]]
+        return false;
+
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSC::JSValue current = Bun::currentValueOfTrackedExport(globalObject, Bun::TrackedExport::FsReadFileSync);
+    RETURN_IF_EXCEPTION(scope, true);
+    if (!current || !current.isCallable()) {
+        throwTypeError(globalObject, scope, "fs.readFileSync is not a function"_s);
+        return true;
+    }
+
+    JSC::CallData callData = JSC::getCallData(current);
+    JSC::MarkedArgumentBuffer args;
+    args.append(jsString(vm, filename->toWTFString(BunString::ZeroCopy)));
+    args.append(jsString(vm, String("utf8"_s)));
+    JSC::JSValue fsExports = globalObject->internalModuleRegistry()->internalField(Bun::InternalModuleRegistry::Field::NodeFS).get();
+    JSC::JSValue result = JSC::profiledCall(globalObject, JSC::ProfilingReason::API, current, callData, fsExports.isObject() ? fsExports : jsUndefined(), args);
+    RETURN_IF_EXCEPTION(scope, true);
+    if (result.isString()) {
+        *outSource = Bun::toStringRef(result.toWTFString(globalObject));
+        RETURN_IF_EXCEPTION(scope, true);
+        return true;
+    }
+    if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(result)) {
+        auto span = view->span();
+        *outSource = Bun::toStringRef(WTF::String::fromUTF8ReplacingInvalidSequences(span));
+        return true;
+    }
+    throwTypeError(globalObject, scope, makeString("Overridden fs.readFileSync did not return a string or Buffer for '"_s, filename->toWTFString(BunString::ZeroCopy), "'"_s));
+    return true;
+}
+
+extern "C" bool ZigGlobalObject__hasOverriddenFsReadFileSync(Zig::GlobalObject* globalObject)
+{
+    return !globalObject->trackedExport(Bun::TrackedExport::FsReadFileSync).isStillOriginal();
+}
+
 extern "C" uint32_t JSCommonJSExtensions__appendFunction(Zig::GlobalObject* globalObject, JSC::JSValue value)
 {
     JSCommonJSExtensions* extensions = globalObject->lazyRequireExtensionsObject();
@@ -236,7 +285,9 @@ extern "C" uint32_t JSCommonJSExtensions__swapRemove(Zig::GlobalObject* globalOb
 
 // This implements `Module._extensions['.js']`, which
 // - Loads source code from a file
-//     - [not supported] Calls `fs.readFileSync`, which is usually not overridden.
+//     - Calls `fs.readFileSync`. When it has been overridden, the override is
+//       invoked from `fetchCommonJSModuleNonBuiltin` and its result is handed
+//       to the transpiler as the virtual source.
 // - Evaluates the module
 //     - Calls `module._compile(code, filename)`, which is often overridden.
 // - Returns `undefined`

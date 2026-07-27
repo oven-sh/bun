@@ -69,6 +69,7 @@ struct node_module;
 #include <node_api.h>
 #include "BakeAdditionsToGlobalObject.h"
 #include "WriteBarrierList.h"
+#include "ModuleExportWatchpoint.h"
 
 namespace Bun {
 class JSCommonJSExtensions;
@@ -775,6 +776,15 @@ public:
     bool hasOverriddenModuleWrapper = false;
     // De-optimization once `require("module").runMain` is written to
     bool hasOverriddenModuleRunMain = false;
+
+    // One-word "has the user replaced this built-in module export?" checks.
+    // Installed automatically by InternalModuleRegistry when the owning
+    // module first evaluates; see ModuleExportWatchpoint.h for the table.
+    Bun::ModuleExportWatchpoint m_trackedExportWatchpoints[static_cast<size_t>(Bun::TrackedExport::Count)];
+    ALWAYS_INLINE Bun::ModuleExportWatchpoint& trackedExport(Bun::TrackedExport slot)
+    {
+        return m_trackedExportWatchpoints[static_cast<size_t>(slot)];
+    }
 
     // node:crypto deprecation warnings are emitted at most once per realm, like Node, whose
     // flags live in per-realm module state (lib/internal/crypto/keys.js). They must not be

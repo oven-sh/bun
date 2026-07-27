@@ -774,7 +774,7 @@ JSValue fetchCommonJSModule(
             if (cached->sourceType() == JSC::SourceProviderSourceType::Program) {
                 // The wrapper override only affects CJS evaluation; if it's
                 // active, fall through and re-transpile so the override can run.
-                if (!globalObject->hasOverriddenModuleWrapper) {
+                if (!globalObject->hasOverriddenModuleWrapper && !ZigGlobalObject__hasOverriddenFsReadFileSync(globalObject)) {
                     target->evaluate(globalObject, Ref(*cached), cached->m_resolvedSource.tag == ResolvedSourceTagPackageJSONTypeModule);
                     RETURN_IF_EXCEPTION(scope, {});
                     RELEASE_AND_RETURN(scope, target);
@@ -811,6 +811,7 @@ JSValue fetchCommonJSModuleNonBuiltin(
     JSC::ThrowScope& scope)
 {
     Bun__transpileFile(bunVM, globalObject, specifier, referrer, typeAttribute, res, false, !isExtension, forceLoaderType);
+    RETURN_IF_EXCEPTION(scope, {});
     if (res->success && res->result.value.isCommonJSModule) {
         if constexpr (isExtension) {
             target->evaluateWithPotentiallyOverriddenCompile(globalObject, specifierWtfString, specifierValue, res->result.value);
@@ -870,7 +871,7 @@ JSValue fetchCommonJSModuleNonBuiltin(
     }
 
     auto&& provider = Zig::SourceProvider::create(globalObject, res->result.value);
-    if (Bun::IsolatedModuleCache::canUse(vm, bunVM, typeAttribute))
+    if (Bun::IsolatedModuleCache::canUse(vm, bunVM, typeAttribute) && !ZigGlobalObject__hasOverriddenFsReadFileSync(globalObject))
         Bun::IsolatedModuleCache::insert(vm, specifierWtfString, provider.get());
     // provideFetch() now drives the C++ loader pipeline (parse -> module record)
     // via internal microtasks. We're about to hand this entry to require(esm)'s

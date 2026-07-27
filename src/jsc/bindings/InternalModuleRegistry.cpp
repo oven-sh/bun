@@ -174,6 +174,7 @@ JSValue InternalModuleRegistry::requireId(JSGlobalObject* globalObject, VM& vm, 
         value = createInternalModuleById(globalObject, vm, id);
         RETURN_IF_EXCEPTION(throwScope, {});
         internalField(id).set(vm, this, value);
+        Bun::installTrackedExportsForModule(defaultGlobalObject(globalObject), id, value);
     }
     return value;
 }
@@ -188,10 +189,12 @@ JSC_DEFINE_HOST_FUNCTION(InternalModuleRegistry::jsCreateInternalModuleById, (JS
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto id = callframe->argument(0).toUInt32(lexicalGlobalObject);
 
-    auto registry = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject)->internalModuleRegistry();
+    auto* zigGlobal = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
+    auto registry = zigGlobal->internalModuleRegistry();
     auto mod = registry->createInternalModuleById(lexicalGlobalObject, vm, static_cast<Field>(id));
     RETURN_IF_EXCEPTION(throwScope, {});
     registry->internalField(static_cast<Field>(id)).set(vm, registry, mod);
+    Bun::installTrackedExportsForModule(zigGlobal, static_cast<Field>(id), mod);
     return JSValue::encode(mod);
 }
 

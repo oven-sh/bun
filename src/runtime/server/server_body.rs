@@ -3708,9 +3708,7 @@ bun_jsc::impl_js_class_via_generated!(DebugHTTPSServer => crate::generated_class
 
 // ─── Exported fns ────────────────────────────────────────────────────────────
 
-/// Called from `us_internal_accept_emfile` in bun-usockets when `accept()` fails
-/// with `EMFILE`/`ENFILE`. The accept loop drains the backlog with a reserve fd
-/// and backs off instead of spinning; this surfaces the condition once.
+/// One-shot stderr warning from bun-usockets `us_internal_accept_emfile`.
 #[unsafe(no_mangle)]
 pub(super) extern "C" fn Bun__warnAcceptEMFILE(err: c_int) {
     static WARNED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);

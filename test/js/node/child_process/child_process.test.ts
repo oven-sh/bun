@@ -1010,7 +1010,9 @@ it("child.stdout.pause() after flowing stops native reads and blocks the child",
     let events = 0;
     let bytes = 0;
     let eventsAfterPause = 0;
-    const { promise: firstData, resolve: gotFirst } = Promise.withResolvers<void>();
+    const { promise: firstData, resolve: gotFirst, reject: failFirst } = Promise.withResolvers<void>();
+    c.on("error", failFirst);
+    c.on("close", () => failFirst(new Error("child closed before first 'data'")));
     c.stdout!.on("data", (d: Buffer) => {
       events++;
       bytes += d.length;

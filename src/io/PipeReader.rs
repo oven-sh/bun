@@ -1916,14 +1916,15 @@ impl WindowsBufferedReader {
         // grows by `amount_result` every chunk and never resets, so a 1 GB
         // `cat` holds 1 GB resident instead of ~64 KB. Clear it here, after
         // the streaming consumer has finished with `slice`.
+        // `should_continue` no longer gates the clear: FileReader may say
+        // stop at its highwater mark while uv keeps delivering, and leaving
+        // `_buffer` uncleared would double-buffer (here + FileReader.buffered).
+        // Parents that want the reader paused call `reader().pause()`
+        // themselves; stopping here could free a parent whose caller still
+        // holds `this` (FileResponseStream on abort).
+        let _ = should_continue;
         if has_more != ReadState::Eof && self.vtable.is_streaming_enabled() {
             self._buffer.clear();
-            if !should_continue {
-                // Mirrors POSIX `read_with_fn` returning without re-arming
-                // when the parent says stop; `read()` (= `unpause` +
-                // `start_reading`) re-arms once JS pulls again.
-                let _ = self.stop_reading();
-            }
         }
 
         // `over_budget` is terminal for the same reason EOF is: the child was

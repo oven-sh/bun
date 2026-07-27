@@ -22,7 +22,7 @@ In development mode, Bun surfaces errors in-browser with a built-in error page.
 
 To handle server-side errors, implement an `error` handler. Return a `Response` to serve to the client when an error occurs. In `development` mode, this response replaces Bun's default error page.
 
-Error messages and stack traces often contain request input (paths, query parameters, header values) and absolute filesystem paths. If you render them as HTML, escape them with [`Bun.escapeHTML`](/runtime/utils#bun-escapehtml), and only return them to the client in development. In production, log the error on the server and respond with a generic message.
+Error messages and stack traces often contain request input (paths, query parameters, header values) and absolute filesystem paths. If you render them as HTML, escape them with [`Bun.escapeHTML`](/runtime/utils#bun-escapehtml), and avoid returning them to clients in production; log the error on the server and respond with a generic message instead.
 
 ```ts
 const dev = process.env.NODE_ENV !== "production";

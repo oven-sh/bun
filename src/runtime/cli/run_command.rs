@@ -678,7 +678,10 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 
         env_loader
             .map
-            .put_default(b"INIT_CWD", strings::without_trailing_slash(top_level_dir))
+            .put(
+                b"INIT_CWD",
+                bun_paths::string_paths::without_trailing_slash_windows_path(top_level_dir),
+            )
             .expect("unreachable");
 
         // Propagate --no-orphans / [run] noOrphans to the script's env so any

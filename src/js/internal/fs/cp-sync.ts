@@ -162,13 +162,22 @@ function pathAsString(p) {
   return typeof p === "string" ? p : Buffer.prototype.toString.$call(p, "latin1");
 }
 
-// Byte-concat when not UTF-8-clean: path.resolve() would splice in a decoded process.cwd().
+// Produce an absolute target so the copied link resolves from /, not from dest's directory.
 function resolveLinkTarget(src, target) {
   if (typeof src === "string" && isUtf8(target)) {
     return resolve(dirname(src), target.toString());
   }
-  const dir = typeof src === "string" ? Buffer.from(dirname(src)) : Buffer.from(dirname(pathAsString(src)), "latin1");
-  return Buffer.concat([dir, (sepBuf ??= Buffer.from(sep)), target]);
+  sepBuf ??= Buffer.from(sep);
+  let dir;
+  if (typeof src === "string") {
+    dir = Buffer.from(resolve(dirname(src)));
+  } else {
+    const d = dirname(pathAsString(src));
+    dir = isAbsolute(d)
+      ? Buffer.from(d, "latin1")
+      : Buffer.concat([Buffer.from(process.cwd()), sepBuf, Buffer.from(d, "latin1")]);
+  }
+  return Buffer.concat([dir, sepBuf, target]);
 }
 
 const normalizePathToArray = path =>

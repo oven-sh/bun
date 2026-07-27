@@ -536,6 +536,33 @@ for (const [name, copy] of impls) {
       expect(copied.subarray(copied.length - 4).toString("hex")).toBe("636166e9");
       expect(fs.readFileSync(dst + "/link", "utf8")).toBe("hello");
     });
+
+    test.skipIf(!isLinux)(
+      "recursive - relative src with non-UTF-8 symlink target resolves against the source tree",
+      async () => {
+        const basename = tempDirWithFiles("cp", {
+          "from/placeholder": "",
+        });
+        const target = Buffer.concat([Buffer.from("caf"), Buffer.from([0xe9])]);
+        fs.writeFileSync(Buffer.concat([Buffer.from(basename + "/from/"), target]), "hello");
+        fs.symlinkSync(target, basename + "/from/link");
+        fs.unlinkSync(basename + "/from/placeholder");
+
+        const prev = process.cwd();
+        process.chdir(basename);
+        try {
+          await copy("from", "to", { recursive: true });
+        } finally {
+          process.chdir(prev);
+        }
+
+        // The copied link must be absolute (resolves against the source tree,
+        // not to/'s directory) and must follow to the source file.
+        const copied = fs.readlinkSync(basename + "/to/link", { encoding: "buffer" });
+        expect(copied[0]).toBe(0x2f);
+        expect(fs.readFileSync(basename + "/to/link", "utf8")).toBe("hello");
+      },
+    );
   });
 }
 

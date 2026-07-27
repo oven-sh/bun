@@ -1533,6 +1533,12 @@ pub mod __gated_printer {
                                 v.left_level = Level::Call;
                             }
                         }
+                        ExprData::EImportIdentifier(_) => {
+                            // When minifying, a missing import prints as "void 0"
+                            if self.options.minify_syntax {
+                                v.left_level = Level::Call;
+                            }
+                        }
                         _ => {}
                     }
                 }

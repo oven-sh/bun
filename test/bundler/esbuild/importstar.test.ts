@@ -1,4 +1,4 @@
-import { describe } from "bun:test";
+import { describe, expect } from "bun:test";
 import { itBundled } from "../expectBundled";
 
 // Tests ported from:
@@ -860,6 +860,32 @@ describe("bundler", () => {
     },
     bundleWarnings: {
       "/entry.js": [`Import "foo" will always be undefined because there is no matching export in "foo.js"`],
+    },
+  });
+  itBundled("importstar/NamespaceImportMissingES6ExponentiationLHS", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as ns from './foo'
+        // A missing import prints as "void 0" under minify_syntax, which is not
+        // a valid left operand of ** unless parenthesized.
+        console.log(ns.nope ** 2, 2 ** ns.nope, ns.x ** 2)
+      `,
+      "/foo.js": `export const x = 3`,
+    },
+    minifySyntax: true,
+    run: {
+      stdout: "NaN NaN 9",
+    },
+    bundleWarnings: {
+      "/entry.js": [`Import "nope" will always be undefined because there is no matching export in "foo.js"`],
+    },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toContain("(void 0) ** 2");
+      expect(out).toContain("2 ** void 0");
+      // The existing export and the right operand stay unwrapped.
+      expect(out).not.toContain("(2 ** void 0)");
+      expect(out).not.toMatch(/\(\w+\) \*\* 2/);
     },
   });
   itBundled("importstar/ExportOtherCommonJS", {

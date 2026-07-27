@@ -786,8 +786,7 @@ const RUNNING = 0;
 const CLOSING = 1;
 const CLOSED = 2;
 
-// Text frames are converted per binaryType before being emitted, so recover
-// the string the same way `ws`'s event-target shim does (`data.toString()`).
+// Recovers the text of a frame already converted per binaryType, like npm ws's `data.toString()`.
 function textEventData(data) {
   if (typeof data === "string") return data;
   if (Buffer.isBuffer(data)) return data.toString();
@@ -795,8 +794,7 @@ function textEventData(data) {
   return data; // Blob has no synchronous string conversion
 }
 
-// Mirrors npm ws's event-target shim: on-event-attribute wrappers are tagged
-// so removeEventListener never removes a handler assigned via `onmessage`.
+// Same tags as npm ws's event-target shim; removeEventListener skips `onmessage`-assigned wrappers.
 const kForOnEventAttribute = Symbol("kForOnEventAttribute");
 const kListener = Symbol("kListener");
 
@@ -1144,8 +1142,7 @@ class BunWebSocketMocked extends EventEmitter {
   }
 
   removeEventListener(type, listener) {
-    // listeners() unwraps once() wrappers, leaving the registered listener or
-    // message wrapper (message wrappers have no .listener, only kListener).
+    // listeners() unwraps once() wrappers but not message wrappers (kListener, not .listener)
     for (const l of this.listeners(type)) {
       if (l[kForOnEventAttribute]) continue;
       if (l === listener || l[kListener] === listener) {

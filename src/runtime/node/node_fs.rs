@@ -1802,7 +1802,7 @@ mod _async_tasks {
         }
 
         /// Directory scanning + clonefile will block this thread, then each individual file copy (what the sync version
-        /// calls "_copySingleFileSync") will be dispatched as a separate task.
+        /// calls "copy_single_file_sync") will be dispatched as a separate task.
         pub fn cp_async(nodefs: &mut NodeFS, this: *mut Self) {
             // The directory-scan task holds one reference in `subtask_count`
             // (initialized to 1 in create*). Drop it on return. `runFromJSThread`
@@ -9122,7 +9122,7 @@ impl NodeFS {
     /// `dest` copied into `sync_error_buf`.
     #[cfg_attr(windows, allow(dead_code))]
     fn cp_open_dest_with_mkdir(&mut self, dest: &ZStr, flags: i32, mode: Mode) -> Maybe<FD> {
-        // PORT: extracted from the mac/linux/freebsd arms of `_copySingleFileSync`
+        // PORT: extracted from the mac/linux/freebsd arms of `copy_single_file_sync`
         // only — there `OSPathSliceZ == ZStr`. Taking `&ZStr` keeps the body
         // monomorphic (and lets it type-check on Windows where it's dead code).
         match Syscall::open(dest, flags, mode) {
@@ -9152,27 +9152,6 @@ impl NodeFS {
                 Err(err.with_path(&self.sync_error_buf[..dest.len()]))
             }
         }
-    }
-
-    // returns boolean `should_continue`
-    fn _cp_async_directory(
-        &mut self,
-        args: args::CpFlags,
-        task: *mut AsyncCpTask,
-        src_buf: &mut OSPathBuffer,
-        src_dir_len: PathInt,
-        dest_buf: &mut OSPathBuffer,
-        dest_dir_len: PathInt,
-    ) -> bool {
-        AsyncCpTask::cp_async_directory(
-            self,
-            args,
-            task,
-            src_buf,
-            src_dir_len,
-            dest_buf,
-            dest_dir_len,
-        )
     }
 
     /// Const-generic dispatch from `NodeFSFunctionEnum` to the matching

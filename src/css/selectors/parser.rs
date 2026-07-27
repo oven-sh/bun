@@ -2584,7 +2584,7 @@ impl NthSelectorData {
         })
     }
 
-    pub fn is_function(&self) -> bool {
+    pub fn is_function_(&self) -> bool {
         self.a != 0 || self.b != 1
     }
 

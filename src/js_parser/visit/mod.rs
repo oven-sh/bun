@@ -1775,8 +1775,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         let prev_stmt = output[prev_idx];
                         if let StmtData::SExpr(prev_expr) = prev_stmt.data {
                             if !prev_stmt.is_super_call() {
-                                s_switch.test_ =
-                                    Expr::join_with_comma(prev_expr.value, s_switch.test_);
+                                s_switch.test =
+                                    Expr::join_with_comma(prev_expr.value, s_switch.test);
                                 output.truncate(prev_idx);
                             }
                         }
@@ -1790,7 +1790,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         let prev_stmt = output[prev_idx];
                         if let StmtData::SExpr(prev_expr) = prev_stmt.data {
                             if !prev_stmt.is_super_call() {
-                                s_if.test_ = Expr::join_with_comma(prev_expr.value, s_if.test_);
+                                s_if.test = Expr::join_with_comma(prev_expr.value, s_if.test);
                                 output.truncate(prev_idx);
                             }
                         }

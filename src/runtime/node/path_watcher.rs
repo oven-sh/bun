@@ -223,7 +223,7 @@ pub(crate) struct ChangeEvent {
     #[cfg(not(windows))]
     hash: u64,
     #[cfg(not(windows))]
-    event_type_: WatchEventKind,
+    event_type: WatchEventKind,
     #[cfg(not(windows))]
     timestamp: i64,
 }
@@ -234,11 +234,11 @@ impl ChangeEvent {
         let time_diff = timestamp - self.timestamp;
         if self.timestamp == 0
             || time_diff > 1
-            || self.event_type_ != event_type
+            || self.event_type != event_type
             || self.hash != hash
         {
             self.timestamp = timestamp;
-            self.event_type_ = event_type;
+            self.event_type = event_type;
             self.hash = hash;
             return true;
         }
@@ -323,9 +323,9 @@ impl PathWatcher {
     ///
     /// On macOS the FSEvents unregister happens *after* releasing `manager.mutex`:
     /// `FSEventsWatcher.deinit()` takes the FSEvents loop mutex, and the CF thread's
-    /// `_events_cb` holds that mutex while calling into `onFSEvent` (which takes
+    /// `events_cb` holds that mutex while calling into `onFSEvent` (which takes
     /// `manager.mutex`). Holding both here would be AB/BA with the CF thread. Once
-    /// `fse.deinit()` returns, `_events_cb` has released the loop mutex and nulled our
+    /// `fse.deinit()` returns, `events_cb` has released the loop mutex and nulled our
     /// slot, so no further callbacks will fire and `destroy()` is safe.
     ///
     /// # Safety
@@ -1207,7 +1207,7 @@ impl Darwin {
 
     /// Caller does NOT hold `manager.mutex` (same lock-order reasoning as `addWatch`).
     /// `FSEventsWatcher.deinit()` → `unregisterWatcher()` blocks on the FSEvents loop
-    /// mutex, which `_events_cb` holds for the whole dispatch; once this returns no
+    /// mutex, which `events_cb` holds for the whole dispatch; once this returns no
     /// further `onFSEvent` calls will arrive for `watcher`.
     ///
     /// Takes a raw `*mut PathWatcher`: while we block on the FSEvents loop mutex
@@ -1226,14 +1226,14 @@ impl Darwin {
         }
     }
 
-    /// Called from the CFRunLoop thread (`fs_events.rs`'s `_events_cb`) with the
+    /// Called from the CFRunLoop thread (`fs_events.rs`'s `events_cb`) with the
     /// FSEvents loop mutex held. Take `manager.mutex` so iterating `handlers` can't
     /// race with `watch()`/`detach()` mutating it. The JS thread never holds
     /// `manager.mutex` across a call into FSEvents, so this is deadlock-free.
     ///
     /// `watcher` itself is kept alive by the FSEvents loop mutex: `detach()` →
     /// `removeWatch()` → `fse.deinit()` → `unregisterWatcher()` blocks until
-    /// `_events_cb` releases it, so `destroy()` cannot run under us. The
+    /// `events_cb` releases it, so `destroy()` cannot run under us. The
     /// `watcher.manager == null` check catches the window where detach has already
     /// unlinked us but hasn't yet called `fse.deinit()`.
     fn on_fs_event(ctx: *mut c_void, event: Event, is_file: bool) {

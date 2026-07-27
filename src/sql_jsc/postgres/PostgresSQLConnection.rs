@@ -1329,7 +1329,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
         Self::guarded(this, |t| t.on_open(Self::socket(socket)));
     }
 
-    fn on_handshake_(
+    fn on_handshake(
         this: &PostgresSQLConnection,
         _: SocketType<SSL>,
         success: i32,
@@ -1338,10 +1338,9 @@ impl<const SSL: bool> SocketHandler<SSL> {
         Self::guarded(this, |t| t.on_handshake(success, ssl_error));
     }
 
-    // pub const onHandshake = if (ssl) onHandshake_ else null;
     pub const ON_HANDSHAKE: Option<
         fn(&PostgresSQLConnection, SocketType<SSL>, i32, uws::us_bun_verify_error_t),
-    > = if SSL { Some(Self::on_handshake_) } else { None };
+    > = if SSL { Some(Self::on_handshake) } else { None };
 
     pub fn on_close(
         this: &PostgresSQLConnection,

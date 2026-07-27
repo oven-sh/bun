@@ -1928,7 +1928,6 @@ impl<const SSL: bool> SocketHandler<SSL> {
         )
     }
 
-    // `pub const onHandshake = if (ssl) onHandshake_ else null;`
     pub const ON_HANDSHAKE: Option<
         fn(
             &JSValkeyClient,

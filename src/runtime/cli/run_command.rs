@@ -1741,8 +1741,8 @@ fn print_unhandled_version_note(vm: &mut VirtualMachine) {
 }
 
 impl RunCommand {
-    /// `_bootAndHandleError` — duplicate `path` to a process-lifetime buffer,
-    /// boot the VM, and on failure print the formatted error + `exit(1)`.
+    /// Duplicate `path` to a process-lifetime buffer, boot the VM, and on
+    /// failure print the formatted error + `exit(1)`.
     fn boot_and_handle_error(ctx: &mut ContextData, path: &[u8], loader: Option<Loader>) -> bool {
         if matches!(
             loader.or_else(|| Self::default_loader_for(path)),

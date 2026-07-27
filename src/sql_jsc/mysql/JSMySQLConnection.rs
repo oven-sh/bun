@@ -994,7 +994,6 @@ impl<const SSL: bool> SocketHandler<SSL> {
         }
     }
 
-    // pub const onHandshake = if (ssl) onHandshake_ else null;
     pub const ON_HANDSHAKE: Option<
         fn(&JSMySQLConnection, NewSocketHandler<SSL>, i32, uws::us_bun_verify_error_t),
     > = if SSL { Some(Self::on_handshake) } else { None };

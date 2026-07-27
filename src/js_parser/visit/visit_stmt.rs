@@ -1145,8 +1145,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
         data.decls.truncate(new_len);
 
-        // Track `var X = require("spec")` for cjs-module-lexer re-export detection
-        // (`Object.keys(X).forEach(...)`).
+        // Track `var X = require("spec")` for the `Object.keys(X).forEach` re-export shape.
         if p.options.features.commonjs_at_runtime
             && !p.options.features.unwrap_commonjs_to_esm
             && !p.is_control_flow_dead

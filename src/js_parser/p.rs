@@ -5281,9 +5281,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             ExprData::ERequireResolveString(_) => return None,
             _ => return None,
         };
-        // `require("x")` may have been rewritten to ERequireCallTarget; also accept a
-        // call whose single argument is itself a require-like expression (Babel's
-        // `_interopRequireWildcard(require("x"))`).
         if matches!(call.target.data, ExprData::ERequireCallTarget)
             || matches!(call.target.data, ExprData::EIdentifier(id) if id.ref_.eql(self.require_ref))
         {

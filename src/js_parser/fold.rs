@@ -426,9 +426,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 }
                             }
                             if !handled {
-                                // `module.exports = <non-object>` (a require() prod/dev shim,
-                                // a function/class, a constructed instance). The export set
-                                // depends on the runtime value; keep the eager synthetic path.
+                                // `module.exports = <non-object>`: export set is dynamic, keep the eager path.
                                 p.commonjs_module_exports_assigned_deoptimized = true;
                             }
                         }

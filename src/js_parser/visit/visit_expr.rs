@@ -2052,9 +2052,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 } else if let Data::EDot(dot) = &e_.target.data {
                     if dot.name == b"forEach" && args.len() == 1 {
-                        // Babel: `Object.keys(<x>).forEach(function (key) { ... defineProperty(exports, key, ...) })`
-                        // where `<x>` is either a direct `require("spec")` or a local that was
-                        // assigned from one (`var _x = require("spec")`).
+                        // Babel: `Object.keys(require("x") | _x).forEach(k => defineProperty(exports, k, ...))`
                         if let Data::ECall(inner) = &dot.target.data {
                             if matches!(
                                 &inner.target.data,

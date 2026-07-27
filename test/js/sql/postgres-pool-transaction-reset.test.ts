@@ -7,16 +7,26 @@
 // ROLLBACK before re-pooling when the server reports the connection is still
 // inside a transaction block.
 import { randomUUIDv7, SQL } from "bun";
-import { expect, test } from "bun:test";
+import { afterAll, expect, test } from "bun:test";
 import { describeWithContainer } from "harness";
 
 describeWithContainer("postgres", { image: "postgres_plain" }, container => {
   const url = () => `postgres://bun_sql_test@${container.host}:${container.port}/bun_sql_test`;
+  const createdTables: string[] = [];
   const freshTable = async (sql: SQL) => {
     const tbl = "txleak_" + randomUUIDv7("hex").replaceAll("-", "");
     await sql.unsafe(`create table ${tbl} (v int)`);
+    createdTables.push(tbl);
     return tbl;
   };
+
+  afterAll(async () => {
+    if (createdTables.length === 0) return;
+    await using sql = new SQL({ url: url(), max: 1, idleTimeout: 5 });
+    for (const tbl of createdTables) {
+      await sql.unsafe(`drop table if exists ${tbl}`).catch(() => {});
+    }
+  });
 
   test("reserve() + BEGIN + release() does not leak the open transaction to the next pooled query", async () => {
     await container.ready;
@@ -116,5 +126,20 @@ describeWithContainer("postgres", { image: "postgres_plain" }, container => {
       })
       .catch(() => {});
     expect(await sql.unsafe(`select v from ${tbl}`)).toEqual([{ v: 5 }]);
+  });
+
+  test("a pooled query queued while the slot is resetting waits for the reset to finish", async () => {
+    await container.ready;
+    await using sql = new SQL({ url: url(), max: 1, idleTimeout: 30 });
+
+    const r = await sql.reserve();
+    await r`BEGIN`;
+    await r`SELECT invalid_column_name`.catch(() => {});
+    // Queue the pooled query before release() gets a chance to finish the
+    // reset: it goes to waitingQueue while the only slot is rolling back, and
+    // must be served on the cleaned-up connection afterwards.
+    r.release();
+    expect(await sql`SELECT 1 AS x`).toEqual([{ x: 1 }]);
+    expect(await sql`SELECT 2 AS x`).toEqual([{ x: 2 }]);
   });
 });

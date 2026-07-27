@@ -768,9 +768,14 @@ abstract class BasePooledConnection<ConnectionHandle extends { close(): void; fl
       this.adapter.readyConnections.delete(this);
       const queries = new Set(this.queries);
       this.queries?.clear?.();
+      const resettingFlag = PooledConnectionFlags.resetting;
+      if (this.flags & resettingFlag) {
+        // balance the synthetic reset slot release() opened; its own done() will see the cleared flag and stop
+        this.adapter.totalQueries--;
+      }
       this.queryCount = 0;
       this.flags &= ~PooledConnectionFlags.reserved;
-      this.flags &= ~PooledConnectionFlags.resetting;
+      this.flags &= ~resettingFlag;
 
       // notify all queries that the connection is closed
       for (const onClose of queries) {
@@ -1080,17 +1085,19 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
       connection.flags &= ~PooledConnectionFlags.preReserved;
     }
 
+    const resettingFlag = PooledConnectionFlags.resetting;
     if (
       currentQueryCount === 0 &&
       !this.closed &&
       connection.state === PooledConnectionState.connected &&
-      !(connection.flags & PooledConnectionFlags.resetting) &&
+      !(connection.flags & resettingFlag) &&
       connection.needsReset()
     ) {
       const reset = this.resetQuery();
       if (reset !== null) {
-        connection.flags |= PooledConnectionFlags.resetting;
-        // queryCount stays at 1 so the slot is not handed out and graceful close() waits for the reset
+        connection.flags |= resettingFlag;
+        // take the slot off the scheduler while the reset runs; graceful close() waits via totalQueries
+        this.readyConnections.delete(connection);
         connection.queryCount++;
         this.totalQueries++;
         this.#resetConnection(connection, reset);
@@ -1154,14 +1161,18 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
 
   #resetConnection(connection: PooledConnection, sql: string) {
     const adapter = this;
+    const resettingFlag = PooledConnectionFlags.resetting;
     function done(err: unknown) {
-      // #finishClose clears the flag (and zeroes queryCount) if the slot died under the reset
-      if (!(connection.flags & PooledConnectionFlags.resetting)) return;
-      connection.flags &= ~PooledConnectionFlags.resetting;
+      // #finishClose clears the flag and balances totalQueries when the slot dies under the reset
+      if (!(connection.flags & resettingFlag)) return;
+      connection.flags &= ~resettingFlag;
+      connection.queryCount--;
+      adapter.totalQueries--;
       if (err != null || connection.needsReset()) {
         connection.close();
+        return;
       }
-      adapter.release(connection);
+      adapter.release(connection, true);
     }
     const query = new Query(
       sql,

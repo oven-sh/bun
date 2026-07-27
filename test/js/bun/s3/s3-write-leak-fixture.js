@@ -2,7 +2,6 @@
 // debug builds of JavaScriptCore
 let MAX_ALLOWED_MEMORY_USAGE = 0;
 let MAX_ALLOWED_MEMORY_USAGE_INCREMENT = 15;
-const dest = process.argv.at(-1);
 const { randomUUID } = require("crypto");
 const payload = new Buffer(1024 * 1024 + 1, "A".charCodeAt(0)).toString("utf-8");
 async function writeLargeFile() {

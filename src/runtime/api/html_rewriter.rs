@@ -1261,9 +1261,7 @@ where
             // If there's an exception in the scope, capture it for later retrieval
             if let Some(exc) = scope.exception() {
                 let exc_value = JSValue::from_cell(exc.as_ptr());
-                // A TerminationException raised at a safepoint inside `cb.call`
-                // must propagate; don't capture it as the handler's error or
-                // clear it (`clear_exception()` would clear it).
+                // Let a TerminationException propagate; `clear_exception()` would clear it.
                 if exc_value.is_termination_exception() {
                     return true;
                 }
@@ -1430,10 +1428,8 @@ pub struct ContentOptions {
 fn create_lolhtml_error(global: &JSGlobalObject, message: &dyn core::fmt::Display) -> JSValue {
     // If there was already a pending exception, we want to use that instead.
     if let Some(err) = global.try_take_exception() {
-        // A worker `terminate()` during `handler_callback`'s nested event loop
-        // leaves the TerminationException pending (`tryClearException()` does
-        // not clear it). Let it propagate: don't surface it as the transform's
-        // rejection value.
+        // Left pending by `tryClearException()`; propagate instead of surfacing
+        // as the transform's rejection.
         if err.is_termination_exception() {
             return JSValue::UNDEFINED;
         }

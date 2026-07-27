@@ -294,6 +294,16 @@ class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, BunSQLi
   public storedError: Error | null = null;
   private _closed: boolean = false;
   public queries: Set<Query<any, any>> = new Set();
+  // SQLite has a single underlying connection. While a transaction holds it,
+  // acquisitions from other tasks wait here so they cannot interleave with or
+  // read uncommitted state from the transaction.
+  private reservedConnection: boolean = false;
+  private connectQueue: Array<{ onConnected: OnConnected<BunSQLiteModule.Database>; reserved: boolean }> = [];
+  // Async context of the active transaction callback so nested acquisitions
+  // participate instead of deadlocking; a fresh token per transaction lets
+  // connect() tell "nested in current" apart from leaked stale context.
+  #txnContext: import("node:async_hooks").AsyncLocalStorage<symbol> | undefined;
+  #txnToken: symbol | undefined;
 
   constructor(connectionInfo: Bun.SQL.__internal.DefinedSQLiteOptions) {
     this.connectionInfo = connectionInfo;
@@ -420,28 +430,89 @@ class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, BunSQLi
       return onConnected(this.connectionClosedError(), null);
     }
 
-    // SQLite doesn't support reserved connections since it doesn't have a connection pool
-    // Reserved connections are meant for exclusive use from a pool, which SQLite doesn't have
-    if (reserved) {
-      return onConnected(new Error("SQLite doesn't support connection reservation (no connection pool)"), null);
+    if (this.reservedConnection) {
+      // Called from inside the active transaction callback's own async context
+      // (e.g. a helper closing over the outer sql handle). Queueing would
+      // deadlock, so let the query participate in the open transaction.
+      if (this.#txnToken !== undefined && this.#txnContext?.getStore() === this.#txnToken) {
+        if (reserved) {
+          return onConnected(
+            this.invalidTransactionStateError(
+              "A transaction is already open on this connection. Use savepoint() for nested transactions.",
+            ),
+            null,
+          );
+        }
+        const db = this.db;
+        return db ? onConnected(null, db) : onConnected(this.connectionClosedError(), null);
+      }
+      // Concurrent work from another task: queue behind the transaction.
+      this.connectQueue.push({ onConnected, reserved: !!reserved });
+      return;
     }
 
-    // Since SQLite connection is synchronous, we immediately know the result
+    this.#handConnection(onConnected, !!reserved);
+  }
+
+  runInTransactionContext<T>(cb: () => T): T {
+    let store = this.#txnContext;
+    if (!store) {
+      const { AsyncLocalStorage } = require("node:async_hooks");
+      store = this.#txnContext = new AsyncLocalStorage();
+    }
+    return store.run(this.#txnToken ?? (this.#txnToken = Symbol()), cb);
+  }
+
+  #handConnection(onConnected: OnConnected<BunSQLiteModule.Database>, reserved: boolean) {
     const storedError = this.storedError;
-    let db;
+    const db = this.db;
     if (storedError) {
       onConnected(storedError, null);
-    } else if ((db = this.db)) {
+    } else if (db) {
+      if (reserved) {
+        this.reservedConnection = true;
+        this.#txnToken = Symbol();
+      }
       onConnected(null, db);
     } else {
       onConnected(this.connectionClosedError(), null);
     }
   }
 
+  #draining = false;
+
+  #drainConnectQueue() {
+    // A reserved acquisition may call release() synchronously (e.g. begin with
+    // an invalid option); skipping re-entrance keeps the outer loop in control.
+    if (this.#draining) return;
+    this.#draining = true;
+    try {
+      const queue = this.connectQueue;
+      let head = 0;
+      while (head < queue.length && !this.reservedConnection) {
+        const pending = queue[head++];
+        if (this._closed) {
+          pending.onConnected(this.connectionClosedError(), null);
+          continue;
+        }
+        this.#handConnection(pending.onConnected, pending.reserved);
+      }
+      if (head > 0) queue.splice(0, head);
+    } finally {
+      this.#draining = false;
+    }
+  }
+
   release(_connection: BunSQLiteModule.Database, _connectingEvent?: boolean) {
-    // SQLite doesn't need to release connections since we don't pool. We
-    // shouldn't throw or prevent the user facing API from releasing connections
-    // so we can just no-op here
+    // Release the exclusive hold a transaction/reserved connection had and let
+    // any queued acquisitions proceed. Regular queries run synchronously and
+    // never reserve, so for them this is a no-op.
+    if (!this.reservedConnection) {
+      return;
+    }
+    this.reservedConnection = false;
+    this.#txnToken = undefined;
+    this.#drainConnectQueue();
   }
 
   async close(_options?: { timeout?: number }) {
@@ -452,6 +523,18 @@ class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, BunSQLi
     this._closed = true;
 
     this.storedError = new Error("Connection closed");
+
+    // Reject any acquisitions still waiting on the connection, using the same
+    // coded error connect() and #drainConnectQueue() reject with.
+    this.reservedConnection = false;
+    const pending = this.connectQueue;
+    this.connectQueue = [];
+    const closedError = this.connectionClosedError();
+    for (const item of pending) {
+      try {
+        item.onConnected(closedError, null);
+      } catch {}
+    }
 
     if (this.db) {
       try {
@@ -480,8 +563,15 @@ class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, BunSQLi
   }
 
   supportsReservedConnections(): boolean {
-    // SQLite doesn't have a connection pool, so it doesn't support reserved connections
+    // reserve() expects a second connection from a pool; SQLite has only one,
+    // so a nested reserve() would deadlock. Keep it unsupported.
     return false;
+  }
+
+  supportsTransactionReservation(): boolean {
+    // Transactions still need exclusive use of the single connection: while
+    // one is open, other queries and begin()s queue behind it.
+    return true;
   }
 
   getConnectionForQuery(connection: BunSQLiteModule.Database): BunSQLiteModule.Database {

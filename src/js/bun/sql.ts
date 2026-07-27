@@ -754,13 +754,19 @@ const SQL: typeof Bun.SQL = function SQL(
       };
     }
     let needs_rollback = false;
+    const runCallback = async () => {
+      let result = await callback(transaction_sql);
+      if ($isArray(result)) {
+        result = await Promise.all(result);
+      }
+      return result;
+    };
     try {
       await run_internal_transaction_sql(BEGIN_COMMAND);
       needs_rollback = true;
-      let transaction_result = await callback(transaction_sql);
-      if ($isArray(transaction_result)) {
-        transaction_result = await Promise.all(transaction_result);
-      }
+      let transaction_result = pool.runInTransactionContext
+        ? await pool.runInTransactionContext(runCallback)
+        : await runCallback();
       // at this point we dont need to rollback anymore
       needs_rollback = false;
       if (BEFORE_COMMIT_OR_ROLLBACK_COMMAND) {
@@ -877,7 +883,7 @@ const SQL: typeof Bun.SQL = function SQL(
       return Promise.$reject($ERR_INVALID_ARG_VALUE("fn", callback, "must be a function"));
     }
     const { promise, resolve, reject } = Promise.withResolvers();
-    const useReserved = pool.supportsReservedConnections?.() ?? true;
+    const useReserved = pool.supportsTransactionReservation?.() ?? pool.supportsReservedConnections?.() ?? true;
     pool.connect(onTransactionConnected.bind(null, callback, name, resolve, reject, false, true), useReserved);
     return promise;
   };
@@ -898,7 +904,7 @@ const SQL: typeof Bun.SQL = function SQL(
       return Promise.$reject($ERR_INVALID_ARG_VALUE("fn", callback, "must be a function"));
     }
     const { promise, resolve, reject } = Promise.withResolvers();
-    const useReserved = pool.supportsReservedConnections?.() ?? true;
+    const useReserved = pool.supportsTransactionReservation?.() ?? pool.supportsReservedConnections?.() ?? true;
     pool.connect(onTransactionConnected.bind(null, callback, options, resolve, reject, false, false), useReserved);
     return promise;
   };

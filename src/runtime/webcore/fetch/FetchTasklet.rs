@@ -1326,6 +1326,26 @@ impl FetchTasklet {
             }
         }
 
+        if let http::Error::ClientTLSSetup(packed) = fail {
+            let (ossl_code, ossl_msg) = crate::crypto::boringssl_jsc::err_code_and_message(packed);
+            let code = if ossl_code.is_empty() {
+                BunString::static_(fail.name())
+            } else {
+                BunString::clone_utf8(&ossl_code)
+            };
+            let message = if ossl_msg.is_empty() {
+                BunString::static_("Failed to load client TLS certificate or key")
+            } else {
+                BunString::clone_utf8(&ossl_msg)
+            };
+            return BodyValueError::SystemError(jsc::SystemError {
+                code: code.into(),
+                message: message.into(),
+                path: path.into(),
+                ..Default::default()
+            });
+        }
+
         let code = if fail == http::Error::ConnectionClosed {
             BunString::static_("ECONNRESET")
         } else {

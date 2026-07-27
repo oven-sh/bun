@@ -93,6 +93,11 @@ pub enum Error {
     HTTP3ContentLengthMismatch,
     #[error("FailedToOpenSocket")]
     FailedToOpenSocket,
+    /// Loading the client TLS certificate/key into the SSL_CTX failed. Carries
+    /// the packed BoringSSL error code so the consumer can produce Node's
+    /// `ERR_OSSL_*` shape.
+    #[error("ClientTLSSetup")]
+    ClientTLSSetup(u32),
     #[error("InvalidCRL")]
     InvalidCRL,
     #[error("UnsupportedProxyProtocol")]
@@ -306,6 +311,7 @@ impl Error {
             Self::HTTP3StreamReset => "HTTP3StreamReset",
             Self::HTTP3ContentLengthMismatch => "HTTP3ContentLengthMismatch",
             Self::FailedToOpenSocket => "FailedToOpenSocket",
+            Self::ClientTLSSetup(_) => "ClientTLSSetup",
             Self::InvalidCRL => "InvalidCRL",
             Self::UnsupportedProxyProtocol => "UnsupportedProxyProtocol",
             Self::Cert(e) => <&'static str>::from(e),

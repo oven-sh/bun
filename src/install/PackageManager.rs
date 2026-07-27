@@ -1275,7 +1275,7 @@ fn http_thread_on_init_error(err: http::InitError, opts: &http::http_thread::Ini
         http::InitError::InvalidCRL => {
             Output::err("HTTPThread", "the CRL is invalid", ());
         }
-        http::InitError::FailedToOpenSocket => {
+        http::InitError::FailedToOpenSocket | http::InitError::ClientTLSSetup(_) => {
             Output::err_generic("failed to start HTTP client thread", ());
         }
     }

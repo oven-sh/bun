@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, isASAN, tmpdirSync } from "harness";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import tls from "node:tls";
 
@@ -697,5 +698,46 @@ describe.concurrent("fetch-tls", () => {
       expect(stderr).toContain("DEPTH_ZERO_SELF_SIGNED_CERT");
       expect(stderr).toContain("ignoring extra certs");
     }
+  });
+});
+
+// When client cert/key material fails to load into the SSL_CTX, fetch used to
+// surface a generic FailedToOpenSocket "Was there a typo in the url or port?"
+// even though the same misconfiguration via node:https reports the real
+// BoringSSL error (ERR_OSSL_X509_KEY_VALUES_MISMATCH, ERR_OSSL_BAD_DECRYPT,
+// ERR_OSSL_PEM_NO_START_LINE).
+describe.concurrent("fetch tls: client cert/key load errors surface the OpenSSL code", () => {
+  const nodeTlsFixture = (f: string) =>
+    readFileSync(join(import.meta.dir, "..", "..", "node", "tls", "fixtures", f), "utf8");
+  const rsaCert = nodeTlsFixture("rsa_cert.crt");
+  const rsaEncryptedKey = nodeTlsFixture("rsa_private_encrypted.pem");
+
+  const cases: [string, { cert: string; key: string; passphrase?: string }, RegExp][] = [
+    ["cert/key mismatch", { cert: validTls.cert, key: expiredTls.key }, /^ERR_OSSL_X509_KEY_VALUES_MISMATCH$/],
+    ["encrypted key, wrong passphrase", { cert: rsaCert, key: rsaEncryptedKey, passphrase: "wrong" }, /^ERR_OSSL_/],
+    ["encrypted key, no passphrase", { cert: rsaCert, key: rsaEncryptedKey }, /^ERR_OSSL_/],
+    ["non-PEM cert string", { cert: "not a pem", key: validTls.key }, /^ERR_OSSL_PEM_NO_START_LINE$/],
+    ["non-PEM key string", { cert: validTls.cert, key: "not a pem" }, /^ERR_OSSL_PEM_NO_START_LINE$/],
+  ];
+
+  it.each(cases)("%s", async (_name, clientTls, codePattern) => {
+    using server = Bun.serve({
+      port: 0,
+      tls: validTls,
+      fetch: () => new Response("ok"),
+    });
+
+    let err: any;
+    try {
+      await fetch(server.url, { tls: { ca: validTls.cert, ...clientTls } });
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeDefined();
+    expect(err.code).toMatch(codePattern);
+    expect(err.code).not.toBe("FailedToOpenSocket");
+    expect(err.message).not.toContain("typo in the url");
+    // The failing URL is attached like every other fetch rejection.
+    expect(err.path).toBe(server.url.href);
   });
 });

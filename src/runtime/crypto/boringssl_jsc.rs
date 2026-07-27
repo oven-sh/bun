@@ -52,6 +52,39 @@ fn static_cstr<'a>(ptr: *const core::ffi::c_char) -> Option<&'a [u8]> {
     if bytes.is_empty() { None } else { Some(bytes) }
 }
 
+/// Format a packed BoringSSL error into `(code, message)` strings without
+/// touching JSC. `code` is Node's `ERR_OSSL_<LIB>_<REASON>` (or `ERR_SSL_*` for
+/// the SSL library); `message` is the raw `ERR_error_string_n` output. Both
+/// lookups are pure table reads keyed on the `u32`, so the thread that calls
+/// this need not be the thread that produced the error.
+pub fn err_code_and_message(err_code: u32) -> (Vec<u8>, Vec<u8>) {
+    let mut outbuf = [0u8; 128 + 1];
+    // SAFETY: outbuf is a valid writable buffer of outbuf.len() bytes.
+    unsafe {
+        boring::ERR_error_string_n(
+            err_code,
+            outbuf.as_mut_ptr().cast::<core::ffi::c_char>(),
+            outbuf.len(),
+        );
+    }
+    let message = bun_core::slice_to_nul(&outbuf[..]).to_vec();
+
+    let code = if let Some(reason) = static_cstr(boring::ERR_reason_error_string(err_code)) {
+        let lib = lib_short_name((err_code >> 24) & 0xff);
+        let prefix = if lib == "SSL_" { "" } else { "OSSL_" };
+        let mut code = Vec::with_capacity(4 + prefix.len() + lib.len() + reason.len());
+        code.extend_from_slice(b"ERR_");
+        code.extend_from_slice(prefix.as_bytes());
+        code.extend_from_slice(lib.as_bytes());
+        code.extend_from_slice(reason);
+        code
+    } else {
+        Vec::new()
+    };
+
+    (code, message)
+}
+
 pub fn err_to_js(global: &JSGlobalObject, err_code: u32) -> JSValue {
     // The message is the raw ERR_error_string output
     // ("error:0b000074:X.509 certificate routines:OPENSSL_internal:..."),

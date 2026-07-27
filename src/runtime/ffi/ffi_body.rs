@@ -212,6 +212,10 @@ impl Default for FFI {
 impl FFI {
     pub fn finalize(self: Box<Self>) {
         if !self.closed.get() {
+            const _: () = assert!(
+                !core::mem::needs_drop::<bun_sys::DynLib>(),
+                "FFI::finalize leaks dylib on purpose; a DynLib Drop would dlclose() under live JSFunctions"
+            );
             self.functions.with_mut(|f| {
                 for function in f.values_mut() {
                     function.leak_compiled_pages_past_drop();

@@ -676,16 +676,21 @@ impl PosixBufferedReader {
 
                         if streaming {
                             // Stream this chunk and register for next cycle
-                            if !parent.vtable.on_read_chunk(
+                            let keep_going = parent.vtable.on_read_chunk(
                                 &stack_buffer[..bytes_read],
                                 if received_hup && bytes_read < stack_buffer.len() {
                                     ReadState::Eof
                                 } else {
                                     ReadState::Progress
                                 },
-                            ) && !received_hup
-                                && !over_budget
-                            {
+                            );
+                            // Re-entrant JS inside on_read_chunk can close the
+                            // reader (nested on_pull -> read -> EOF); the
+                            // captured `fd` is then stale regardless of HUP.
+                            if parent.is_done() {
+                                return;
+                            }
+                            if !keep_going && !received_hup && !over_budget {
                                 return;
                             }
                         } else {
@@ -904,15 +909,21 @@ impl PosixBufferedReader {
                                 // Once HUP is set the kernel
                                 // returns the remaining bytes then 0, so
                                 // draining to `bytes_read == 0` is bounded.
-                                if !parent.vtable.on_read_chunk(
+                                let keep_going = parent.vtable.on_read_chunk(
                                     &event_loop.pipe_read_buffer_mut()[..head_start],
                                     if received_hup {
                                         ReadState::Eof
                                     } else {
                                         ReadState::Progress
                                     },
-                                ) && !received_hup
-                                {
+                                );
+                                // Re-entrant close (nested on_pull -> read ->
+                                // EOF) invalidates the captured `fd`; stop
+                                // before the next recv regardless of HUP.
+                                if parent.is_done() {
+                                    return;
+                                }
+                                if !keep_going && !received_hup {
                                     return;
                                 }
                                 head_start = 0;
@@ -953,15 +964,18 @@ impl PosixBufferedReader {
                 }
 
                 if head_start > 0 {
-                    if !parent.vtable.on_read_chunk(
+                    let keep_going = parent.vtable.on_read_chunk(
                         &event_loop.pipe_read_buffer_mut()[..head_start],
                         if received_hup {
                             ReadState::Eof
                         } else {
                             ReadState::Progress
                         },
-                    ) && !received_hup
-                    {
+                    );
+                    if parent.is_done() {
+                        return;
+                    }
+                    if !keep_going && !received_hup {
                         return;
                     }
                 }

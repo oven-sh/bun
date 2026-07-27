@@ -29,7 +29,7 @@ let dynamicallyAdjustChunkSize = (_?) => (
 
 type NativeReadable = typeof import("node:stream").Readable &
   typeof import("node:stream").Stream & {
-    push: (chunk: any) => void;
+    push: (chunk: any) => boolean;
     $bunNativePtr?: NativePtr;
     [kRefCount]: number;
     [kCloseState]: [boolean];

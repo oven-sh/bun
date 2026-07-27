@@ -1517,7 +1517,12 @@ pub mod __gated_printer {
                 }
                 // "**" can't contain certain unary expressions
                 Op::Code::BinPow => {
-                    match &e.left.data {
+                    // An inlined enum prints its wrapped value, so look through it.
+                    let mut left = &e.left.data;
+                    if let ExprData::EInlinedEnum(inlined) = left {
+                        left = &inlined.value.data;
+                    }
+                    match left {
                         ExprData::EUnary(left) => {
                             if Op::Code::unary_assign_target(left.op) == js_ast::AssignTarget::None
                             {
@@ -6300,7 +6305,18 @@ pub mod __gated_printer {
             level: Level,
         ) {
             match inlined {
-                js_ast::InlinedEnumValueDecoded::Number(num) => self.print_number(num, level),
+                js_ast::InlinedEnumValueDecoded::Number(num) => {
+                    // The EDot/EIndex this replaces is a valid UpdateExpression on the
+                    // left of `**`; a negative number is not. Bump the level so
+                    // print_number parenthesizes when needed, matching what
+                    // binary_check_and_prepare does for a direct ENumber left operand.
+                    let level = if level == Level::Exponentiation {
+                        Level::Call
+                    } else {
+                        level
+                    };
+                    self.print_number(num, level)
+                }
                 // TODO: extract printString
                 js_ast::InlinedEnumValueDecoded::String(str) => self.print_expr(
                     // Arena-owned `*const EString` (encoded non-null at NaN-box time);

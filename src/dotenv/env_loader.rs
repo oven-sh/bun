@@ -1183,8 +1183,10 @@ impl<'a> Parser<'a> {
                     if end < value.len() && value[end] == b'}' {
                         end += 1;
                     }
+                    // A `${A:-$B}` default re-scans bytes the inner `$B` already
+                    // claimed (end > last); clamp so the slice is never reversed.
                     self.value_buffer
-                        .splice(0..0, value[end..last].iter().copied());
+                        .splice(0..0, value[end.min(last)..last].iter().copied());
                     self.value_buffer
                         .splice(0..0, lookup_value.unwrap_or(default_value).iter().copied());
                     last = pos;

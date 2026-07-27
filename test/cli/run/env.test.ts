@@ -316,6 +316,22 @@ test(".env escaped dollar sign", () => {
   expect(stdout).toBe("foo $FOO");
 });
 
+test(".env ${A:-$B} default containing an expansion does not crash", () => {
+  const dir = tempDirWithFiles("dotenv-default-with-expansion", {
+    ".env": "D1=${D1_A:-$D1_B}\nD2=${D2_A:-$5}\n",
+    "index.ts": "console.log(JSON.stringify({D1:process.env.D1,D2:process.env.D2}));",
+  });
+  const result = Bun.spawnSync([bunExe(), `${dir}/index.ts`], {
+    cwd: dir,
+    env: { ...bunEnv, NODE_ENV: undefined },
+  });
+  expect(result.signalCode).toBeFalsy();
+  expect(result.exitCode).toBe(0);
+  const out = JSON.parse(result.stdout.toString("utf8").trim());
+  expect(typeof out.D1).toBe("string");
+  expect(out.D2).toBe("$5");
+});
+
 test(".env leaves $ literal when not followed by an identifier", () => {
   // Expansion should only fire on `$IDENT` (letter/underscore start) or `${...}`.
   // A `$` followed by a digit, another `$`, `(`, `-`, or end-of-value stays literal.

@@ -98,18 +98,16 @@ mod hardcoded_module {
     pub(super) struct Alias {
         pub path: &'static [u8],
         pub tag: ImportRecordTag,
+        pub defers_to_resolve_time: bool,
     }
     pub(super) fn get(name: &[u8], target: BundleTarget, opts: AliasOptions) -> Option<Alias> {
-        bun_resolve_builtins::Alias::get(
-            name,
-            target,
-            bun_resolve_builtins::Cfg {
-                rewrite_jest_for_tests: opts.rewrite_jest_for_tests,
-            },
-        )
-        .map(|a| Alias {
+        let cfg = bun_resolve_builtins::Cfg {
+            rewrite_jest_for_tests: opts.rewrite_jest_for_tests,
+        };
+        bun_resolve_builtins::Alias::get(name, target, cfg).map(|a| Alias {
             path: a.path.as_bytes(),
             tag: a.tag,
+            defers_to_resolve_time: a.defers_to_resolve_time(target, cfg),
         })
     }
 }
@@ -439,7 +437,13 @@ impl Linker {
                             {
                                 continue;
                             }
-                            import_record.path.text = replacement.path;
+                            // Keep the user-written specifier for
+                            // `prefer_installed` targets; the runtime resolver
+                            // decides between the installed package and the
+                            // builtin fallback.
+                            if !replacement.defers_to_resolve_time {
+                                import_record.path.text = replacement.path;
+                            }
                             import_record.tag = replacement.tag;
                             import_record
                                 .flags

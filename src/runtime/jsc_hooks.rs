@@ -4910,9 +4910,15 @@ unsafe fn resolve<'a>(
     }
 
     // Hardcoded builtin alias (`node:fs` etc.).
-    if let Some(alias) = Alias::get(specifier, Target::Bun, AliasCfg::default()) {
-        *ret_path = alias.path.as_bytes();
-        return Ok(());
+    let hardcoded_alias = Alias::get(specifier, Target::Bun, AliasCfg::default());
+    if let Some(alias) = hardcoded_alias {
+        // `prefer_installed` builtins (undici) are only a fallback; an
+        // installed copy in node_modules wins, so those fall through to the
+        // filesystem resolver below.
+        if !alias.prefer_installed {
+            *ret_path = alias.path.as_bytes();
+            return Ok(());
+        }
     }
 
     if bun_jsc::module_loader::exposed_internal_tag(specifier).is_some() {
@@ -4964,70 +4970,98 @@ unsafe fn resolve<'a>(
         ImportKind::Require
     };
 
-    // This cache-bust is disabled when the filesystem is not being used to
-    // resolve.
-    let mut retry_on_not_found = bun_paths::is_absolute(source_to_use);
-    let result: bun_resolver::Result = loop {
-        // SAFETY: `vm.transpiler.resolver` is the unique per-VM resolver; this
-        // is the only `&mut` borrow live for this call (the JS thread is
-        // single-entry here).
-        match unsafe {
-            (*vm).transpiler.resolver.resolve_and_auto_install(
-                source_to_use,
-                normalized_specifier,
-                kind,
-                global_cache,
-            )
-        } {
-            ResolveResultUnion::Success(r) => break r,
-            ResolveResultUnion::Failure(e) => return Err(e.into()),
-            ResolveResultUnion::Pending(_) | ResolveResultUnion::NotFound => {
-                if !retry_on_not_found {
-                    return Err(crate::Error::ModuleNotFound);
+    let result: bun_resolver::Result = 'resolved: {
+        // `prefer_installed` builtin fallback: probe node_modules with
+        // auto-install disabled. Only an actually-installed package wins;
+        // otherwise the builtin is used (never auto-installed).
+        if let Some(alias) = hardcoded_alias {
+            // SAFETY: `vm.transpiler.resolver` is the unique per-VM resolver;
+            // this is the only `&mut` borrow live for this call.
+            match unsafe {
+                (*vm).transpiler.resolver.resolve_and_auto_install(
+                    source_to_use,
+                    normalized_specifier,
+                    kind,
+                    GlobalCache::disable,
+                )
+            } {
+                ResolveResultUnion::Success(r) => break 'resolved r,
+                ResolveResultUnion::Failure(_)
+                | ResolveResultUnion::Pending(_)
+                | ResolveResultUnion::NotFound => {
+                    *ret_path = alias.path.as_bytes();
+                    return Ok(());
                 }
-                retry_on_not_found = false;
+            }
+        }
 
-                // Bust the dir cache for the candidate
-                // parent directory and retry once.
-                let mut buf = bun_paths::path_buffer_pool::get();
-                let buster_name: &[u8] = 'name: {
-                    if bun_paths::is_absolute(normalized_specifier) {
-                        if let Some(dir) = bun_core::dirname(normalized_specifier) {
-                            if dir.len() > buf.len() {
-                                return Err(crate::Error::ModuleNotFound);
-                            }
-                            // Normalized without trailing slash.
-                            break 'name bun_paths::string_paths::normalize_slashes_only(
-                                &mut buf[..],
-                                dir,
-                                bun_paths::SEP,
-                            );
-                        }
-                    }
-
-                    // If the specifier is too long to join, it can't name a
-                    // real directory — skip the cache bust and fail.
-                    if source_to_use.len() + normalized_specifier.len() + 4 >= buf.len() {
+        // This cache-bust is disabled when the filesystem is not being used to
+        // resolve.
+        let mut retry_on_not_found = bun_paths::is_absolute(source_to_use);
+        loop {
+            // SAFETY: `vm.transpiler.resolver` is the unique per-VM resolver; this
+            // is the only `&mut` borrow live for this call (the JS thread is
+            // single-entry here).
+            match unsafe {
+                (*vm).transpiler.resolver.resolve_and_auto_install(
+                    source_to_use,
+                    normalized_specifier,
+                    kind,
+                    global_cache,
+                )
+            } {
+                ResolveResultUnion::Success(r) => break 'resolved r,
+                ResolveResultUnion::Failure(e) => return Err(e.into()),
+                ResolveResultUnion::Pending(_) | ResolveResultUnion::NotFound => {
+                    if !retry_on_not_found {
                         return Err(crate::Error::ModuleNotFound);
                     }
+                    retry_on_not_found = false;
 
-                    let parts: [&[u8]; 3] = [source_to_use, normalized_specifier, b".."];
-                    break 'name bun_paths::resolve_path::join_abs_string_buf_z::<
-                        bun_paths::platform::Auto,
-                    >(top_level_dir, &mut buf[..], &parts)
-                    .as_bytes();
-                };
+                    // Bust the dir cache for the candidate
+                    // parent directory and retry once.
+                    let mut buf = bun_paths::path_buffer_pool::get();
+                    let buster_name: &[u8] = 'name: {
+                        if bun_paths::is_absolute(normalized_specifier) {
+                            if let Some(dir) = bun_core::dirname(normalized_specifier) {
+                                if dir.len() > buf.len() {
+                                    return Err(crate::Error::ModuleNotFound);
+                                }
+                                // Normalized without trailing slash.
+                                break 'name bun_paths::string_paths::normalize_slashes_only(
+                                    &mut buf[..],
+                                    dir,
+                                    bun_paths::SEP,
+                                );
+                            }
+                        }
 
-                // Only re-query if we previously had something cached.
-                // SAFETY: see above.
-                if unsafe {
-                    (*vm).transpiler.resolver.bust_dir_cache(
-                        bun_paths::string_paths::without_trailing_slash_windows_path(buster_name),
-                    )
-                } {
-                    continue;
+                        // If the specifier is too long to join, it can't name a
+                        // real directory — skip the cache bust and fail.
+                        if source_to_use.len() + normalized_specifier.len() + 4 >= buf.len() {
+                            return Err(crate::Error::ModuleNotFound);
+                        }
+
+                        let parts: [&[u8]; 3] = [source_to_use, normalized_specifier, b".."];
+                        break 'name bun_paths::resolve_path::join_abs_string_buf_z::<
+                            bun_paths::platform::Auto,
+                        >(top_level_dir, &mut buf[..], &parts)
+                        .as_bytes();
+                    };
+
+                    // Only re-query if we previously had something cached.
+                    // SAFETY: see above.
+                    if unsafe {
+                        (*vm).transpiler.resolver.bust_dir_cache(
+                            bun_paths::string_paths::without_trailing_slash_windows_path(
+                                buster_name,
+                            ),
+                        )
+                    } {
+                        continue;
+                    }
+                    return Err(crate::Error::ModuleNotFound);
                 }
-                return Err(crate::Error::ModuleNotFound);
             }
         }
     };
@@ -5156,14 +5190,18 @@ unsafe fn resolve_hook(
     // `require.resolve("fs")` (`is_user_require_resolve && node_builtin`) Node
     // returns the bare specifier as-is, not the canonical `node:fs`.
     if let Some(hardcoded) = Alias::get(specifier_utf8.slice(), Target::Bun, AliasCfg::default()) {
-        let path = if is_user_require_resolve && hardcoded.node_builtin {
-            specifier.dupe_ref()
-        } else {
-            bun_core::String::init(hardcoded.path.as_bytes())
-        };
-        // SAFETY: per fn contract.
-        unsafe { *res = ErrorableString::ok(path) };
-        return true;
+        // `prefer_installed` builtins go through `resolve` below, which picks
+        // the installed package when present and falls back to the builtin.
+        if !hardcoded.prefer_installed {
+            let path = if is_user_require_resolve && hardcoded.node_builtin {
+                specifier.dupe_ref()
+            } else {
+                bun_core::String::init(hardcoded.path.as_bytes())
+            };
+            // SAFETY: per fn contract.
+            unsafe { *res = ErrorableString::ok(path) };
+            return true;
+        }
     }
 
     if bun_jsc::module_loader::exposed_internal_tag(specifier_utf8.slice()).is_some() {

@@ -22,7 +22,9 @@ it("undici", () => {
     globalThis.URLSearchParams =
       42;
 
-  const undici = require("undici");
+  // Bare "undici" resolves to the installed package (test/node_modules has
+  // one); the "next/dist/compiled/undici" alias always maps to Bun's shim.
+  const undici = require("next/dist/compiled/undici");
   expect(undici).toBeDefined();
   expect(undici.Response).toBe(Response);
   expect(undici.Request).toBe(Request);

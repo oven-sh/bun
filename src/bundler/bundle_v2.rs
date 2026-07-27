@@ -5871,12 +5871,13 @@ pub mod bv2_impl {
                 }
 
                 if ctx.target.is_bun() {
+                    let alias_cfg = bun_resolve_builtins::HardcodedModule::Cfg {
+                        rewrite_jest_for_tests: self.transpiler.options.rewrite_jest_for_tests,
+                    };
                     if let Some(replacement) = bun_resolve_builtins::HardcodedModule::Alias::get(
                         import_record.path.text,
                         Target::Bun,
-                        bun_resolve_builtins::HardcodedModule::Cfg {
-                            rewrite_jest_for_tests: self.transpiler.options.rewrite_jest_for_tests,
-                        },
+                        alias_cfg,
                     ) {
                         // When bundling node builtins, remove the "node:" prefix.
                         // This supports special use cases where the bundle is put
@@ -5885,6 +5886,12 @@ pub mod bv2_impl {
                         import_record.path.text =
                             if replacement.node_builtin && !replacement.node_only_prefix {
                                 &replacement.path.as_bytes()[5..]
+                            } else if replacement.defers_to_resolve_time(Target::Bun, alias_cfg) {
+                                // Keep the user-written specifier for
+                                // `prefer_installed` targets; the runtime
+                                // resolver decides between the installed
+                                // package and the builtin fallback.
+                                import_record.path.text
                             } else {
                                 replacement.path.as_bytes()
                             };

@@ -1442,11 +1442,8 @@ fn contains_newline_or_cr(value: &[u8]) -> bool {
     strings::index_of_any(value, b"\r\n").is_some()
 }
 
-/// AWS SigV4 CanonicalHeaders "Trimall": strip leading and trailing ASCII
-/// whitespace and collapse interior runs of whitespace to a single space.
-/// Header values on the wire are parsed with outer OWS stripped, and the
-/// server re-derives the canonical request with this transform, so the signed
-/// bytes must match. Borrows the input when no rewrite is needed.
+/// AWS SigV4 CanonicalHeaders "Trimall": trim outer whitespace and collapse
+/// interior runs to a single space. Borrows when no rewrite is needed.
 fn sigv4_trimall(value: &[u8]) -> std::borrow::Cow<'_, [u8]> {
     #[inline]
     fn is_ws(b: u8) -> bool {

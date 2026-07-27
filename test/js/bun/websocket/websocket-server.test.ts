@@ -802,7 +802,6 @@ describe("ServerWebSocket", () => {
         fetch: (req, s) => (s.upgrade(req) ? undefined : new Response()),
         websocket: { publishToSelf: true, open: ws => opened.resolve(ws), message() {} },
       });
-      servers.push(server);
       const c = new WebSocket(`ws://${server.hostname}:${server.port}/`);
       c.binaryType = "arraybuffer";
       c.onmessage = e => {
@@ -814,7 +813,15 @@ describe("ServerWebSocket", () => {
         opened.reject(err);
         flushed.reject(err);
       };
-      const ws = await opened.promise;
+      let ws: ServerWebSocket<unknown>;
+      try {
+        ws = await opened.promise;
+      } catch (e) {
+        c.onclose = c.onerror = null;
+        c.close();
+        server.stop(true);
+        throw e;
+      }
       return {
         server,
         ws,

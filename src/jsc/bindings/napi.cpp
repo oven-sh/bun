@@ -1308,7 +1308,7 @@ extern "C" napi_status napi_detach_arraybuffer(napi_env env,
         // the JSArrayBuffer cell is finalized so the finalizer fires on GC.
         ArrayBufferContents contents;
         arrayBuffer->transferTo(vm, contents);
-        vm.heap.addFinalizer(jsArrayBuffer, [contents = WTF::move(contents)](JSCell*) mutable { });
+        vm.heap.addFinalizer(jsArrayBuffer, [contents = WTF::move(contents)](JSCell*) mutable {});
     }
     NAPI_RETURN_SUCCESS(env);
 }

@@ -223,6 +223,72 @@ describe("URL IDNA", () => {
   });
 });
 
+describe("Intl.Locale", () => {
+  // N distinct 7-char variant subtags; each is a well-formed `unicode_variant_subtag`, so the
+  // whole tag is a structurally valid BCP-47 language tag for any N.
+  const makeTag = (n: number) =>
+    "en" + Array.from({ length: n }, (_, i) => "-" + String(i).padStart(5, "v") + "ab").join("");
+
+  // The capacity at which ICU's canonicalization fails is an internal detail that varies by ICU
+  // build: bundled ICU 75.1 (Linux) and Apple's libicucore (macOS) fail at 23 variants / 186 bytes;
+  // Windows ICU 73.2 grows its buffer and accepts arbitrarily long tags. Probe for the threshold
+  // via getCanonicalLocales (which already throws RangeError) rather than hard-coding it.
+  let overflowTag: string | undefined;
+  for (let n = 20; n <= 200; n++) {
+    try {
+      Intl.getCanonicalLocales(makeTag(n));
+    } catch {
+      overflowTag = makeTag(n);
+      break;
+    }
+  }
+
+  const hasLimit = overflowTag !== undefined ? test : test.skip;
+  hasLimit(
+    "structurally valid tag exceeding ICU capacity throws RangeError, consistent with every other Intl entry point",
+    () => {
+      const ctor = (f: () => unknown) => {
+        try {
+          f();
+          return "no throw";
+        } catch (e) {
+          return (e as Error).constructor.name;
+        }
+      };
+      // Every Intl path that canonicalizes this tag must agree on RangeError so that a
+      // `catch (e) { if (e instanceof RangeError) ... }` validation guard is not constructor-dependent.
+      expect({
+        "Intl.Locale": ctor(() => new Intl.Locale(overflowTag!)),
+        "Intl.Locale+options": ctor(() => new Intl.Locale(overflowTag!, { language: "en" })),
+        "Intl.DateTimeFormat": ctor(() => new Intl.DateTimeFormat(overflowTag!)),
+        "Intl.NumberFormat": ctor(() => new Intl.NumberFormat(overflowTag!)),
+        "Intl.Collator": ctor(() => new Intl.Collator(overflowTag!)),
+        "Intl.getCanonicalLocales": ctor(() => Intl.getCanonicalLocales(overflowTag!)),
+        "String#localeCompare": ctor(() => "a".localeCompare("b", overflowTag!)),
+      }).toEqual({
+        "Intl.Locale": "RangeError",
+        "Intl.Locale+options": "RangeError",
+        "Intl.DateTimeFormat": "RangeError",
+        "Intl.NumberFormat": "RangeError",
+        "Intl.Collator": "RangeError",
+        "Intl.getCanonicalLocales": "RangeError",
+        "String#localeCompare": "RangeError",
+      });
+    },
+  );
+
+  // Linux ICU 75.1 has the lowest observed capacity (23 variants); the probe must find it there so
+  // the RangeError assertion above never silently degrades to a skip on the platform where the bug
+  // was reported.
+  test.skipIf(!isLinux)("probe finds the capacity limit on bundled ICU", () => {
+    expect(overflowTag).toBeDefined();
+  });
+
+  test("valid tag with a handful of variants still constructs", () => {
+    expect(() => new Intl.Locale(makeTag(5))).not.toThrow();
+  });
+});
+
 describe("Intl.getCanonicalLocales", () => {
   test("deprecated BCP-47 tags map to modern equivalents", () => {
     // ICU ships .res bundles under the deprecated tag names; canonicalization

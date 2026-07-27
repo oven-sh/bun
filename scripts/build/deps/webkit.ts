@@ -3,7 +3,12 @@
  * for local mode. Override via `--webkit-version=<hash>` to test a branch.
  * From https://github.com/oven-sh/WebKit releases.
  */
-export const WEBKIT_VERSION = "549170099226f816a4b204ea1d8fa102fb79eefa";
+// oven-sh/WebKit#350 preview, branched from 549170099226f816 (the previous
+// WEBKIT_VERSION): IntlLocale::initializeLocale throws RangeError (not
+// TypeError) when ICU canonicalization fails on a structurally valid tag,
+// matching canonicalizeLocaleList and V8. Revert to the merged-main sha once
+// #350 lands.
+export const WEBKIT_VERSION = "autobuild-preview-pr-350-db4518f8";
 
 /**
  * WebKit (JavaScriptCore) — the JS engine.

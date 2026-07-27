@@ -597,7 +597,7 @@ test("coverage report generation is not quadratic in function count", () => {
   // between (N random jumps over N mappings is O(N^2)). A module with a few
   // thousand one-line functions used to make `--coverage` take many times
   // longer than running the test without it.
-  const N = 4000;
+  const N = 2500;
   let big = "";
   for (let i = 0; i < N; i++) {
     big += `export function fn${i}(a){ if(a>${i}) return a*${i}; else return -a; }\n`;
@@ -621,9 +621,9 @@ test("coverage report generation is not quadratic in function count", () => {
 
   // Report generation is a single linear pass over the module's mappings, so
   // the covered run should cost at most a small multiple of the plain run.
-  // Before the fix the ratio here was >6x in debug and ~20x in release.
-  // 200ms floor guards against scheduler jitter dominating the release-build
-  // plain run, which completes in a few tens of ms.
-  const budget = Math.max(plain, 200) * 3;
+  // Before the fix the ratio here was >4x in debug and ~12x in release. The
+  // 100ms floor keeps scheduler jitter on the very fast release-build plain
+  // run from shrinking the budget below the noise floor.
+  const budget = Math.max(plain, 100) * 3;
   expect({ plain, covered, budget }).toSatisfy(t => t.covered < t.budget);
-}, 30_000);
+});

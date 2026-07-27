@@ -1052,9 +1052,7 @@ ExceptionOr<void> WebSocket::terminate()
 {
     // LOG(Network, "WebSocket %p terminate()", this);
 
-    // Force-close during CLOSING too (npm ws parity); it is the only way
-    // to drop a stalled send_buffer once a peer Close has flipped m_state.
-    if (m_state == CLOSED)
+    if (m_state == CLOSED) // CLOSING still force-closes (npm ws parity)
         return {};
     if (m_state == CONNECTING) {
         failConnectingWebSocket();

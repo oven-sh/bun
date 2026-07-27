@@ -238,6 +238,24 @@ test("no assertion failures", () => {
     assert.strictEqual(util.format("%s", { __proto__: null }), "[Object: null prototype] {}");
   }
 
+  // `%s` with values whose inherited `toString` comes from a non-ECMAScript
+  // built-in (Buffer, URL, ...) must call `String(value)`, not inspect it.
+  assert.strictEqual(util.format("%s", Buffer.from("ab")), "ab");
+  assert.strictEqual(util.format("%s", Buffer.from([0xe2, 0x82, 0xac])), "\u20ac");
+  assert.strictEqual(util.format("%s", new URL("http://a/b")), "http://a/b");
+  assert.strictEqual(util.format("%s", new URLSearchParams("a=1&b=2")), "a=1&b=2");
+  {
+    class MyBuffer extends Buffer {}
+    const sub = new MyBuffer(2);
+    sub[0] = 0x68;
+    sub[1] = 0x69;
+    assert.strictEqual(util.format("%s", sub), "hi");
+  }
+  // Uint8Array inherits toString from %TypedArray%.prototype, not Buffer.
+  assert.strictEqual(util.format("%s", new Uint8Array([65])), "65");
+  // ECMAScript built-ins with their own toString still take the inspect path.
+  assert.strictEqual(util.format("%s", [1, 2]), "[ 1, 2 ]");
+
   // JSON format specifier
   assert.strictEqual(util.format("%j"), "%j");
   assert.strictEqual(util.format("%j", 42), "42");

@@ -344,12 +344,22 @@ function isURL(value) {
 
 const SymbolToPrimitive = Symbol.toPrimitive;
 
-const builtInObjects = new SafeSet(
-  ArrayPrototypeFilter(
-    ObjectGetOwnPropertyNames(globalThis),
-    e => RegExpPrototypeExec(/^[A-Z][a-zA-Z0-9]+$/, e) !== null,
-  ),
-);
+// In Node.js this set is computed at bootstrap before any Node/Web globals (Buffer,
+// URL, Request, ...) are installed on globalThis, so it only contains ECMAScript
+// language built-ins. Bun installs those globals before this module loads, so we
+// hardcode the language-level names to match Node's observable `%s` behavior.
+// prettier-ignore
+const builtInObjects = new SafeSet([
+  "AggregateError", "Array", "ArrayBuffer", "AsyncDisposableStack", "Atomics",
+  "BigInt", "BigInt64Array", "BigUint64Array", "Boolean", "DataView", "Date",
+  "DisposableStack", "Error", "EvalError", "FinalizationRegistry", "Float16Array",
+  "Float32Array", "Float64Array", "Function", "Infinity", "Int16Array", "Int32Array",
+  "Int8Array", "Intl", "Iterator", "JSON", "Map", "Math", "NaN", "Number", "Object",
+  "Promise", "Proxy", "RangeError", "ReferenceError", "Reflect", "RegExp", "Set",
+  "SharedArrayBuffer", "String", "SuppressedError", "Symbol", "SyntaxError",
+  "TypeError", "URIError", "Uint16Array", "Uint32Array", "Uint8Array",
+  "Uint8ClampedArray", "WeakMap", "WeakRef", "WeakSet",
+]);
 
 // https://tc39.es/ecma262/#sec-IsHTMLDDA-internal-slot
 const isUndetectableObject = v => typeof v === "undefined" && v !== undefined;

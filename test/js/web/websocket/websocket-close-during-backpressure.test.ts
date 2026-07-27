@@ -1,8 +1,8 @@
-// https://github.com/oven-sh/bun/issues/5870 — receiving a server Close frame
-// while the client's send buffer is stalled behind a non-reading peer left the
-// WebSocket in readyState OPEN forever with no close event; send() after the
-// Close still queued to the drain buffer.
-// https://github.com/oven-sh/bun/issues/2177 — bufferedAmount always reported 0.
+// Receiving a server Close frame while the client's send buffer is stalled
+// behind a non-reading peer left the WebSocket in readyState OPEN forever with
+// no close event; send() after the Close still queued to the drain buffer.
+// https://github.com/oven-sh/bun/issues/31760 covers bufferedAmount always
+// reporting 0.
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import crypto from "node:crypto";
@@ -36,10 +36,10 @@ test("WebSocket client: server Close during stalled drain transitions to CLOSING
     close: "timeout" | { code: number; wasClean: boolean };
   };
 
-  // #2177: bufferedAmount reflects the queued send buffer while OPEN.
+  // #31760: bufferedAmount reflects the queued send buffer while OPEN.
   expect(result.maxBufferedBeforeClose).toBeGreaterThan(0);
 
-  // #5870: on receiving the server's Close, readyState is CLOSING (2) — not
+  // On receiving the server's Close, readyState is CLOSING (2), not
   // still OPEN (1). CLOSED (3) is also acceptable if teardown already ran.
   expect(result.readyStateAfterServerClose).not.toBe(WebSocket.OPEN);
 
@@ -52,13 +52,13 @@ test("WebSocket client: server Close during stalled drain transitions to CLOSING
   expect(delta).toBeGreaterThanOrEqual(8 * (1 << 20));
   expect(delta).toBeLessThanOrEqual(8 * ((1 << 20) + 14));
 
-  // #5870: a close event fires within the drain timeout. The peer never drained
+  // A close event fires within the drain timeout. The peer never drained
   // or FIN'd, so the bounded teardown reports 1006 / wasClean=false.
   expect(result.close).not.toBe("timeout");
   expect(result.close).toEqual({ code: 1006, wasClean: false });
 }, 20000);
 
-// #2177 without the stall: bufferedAmount is the live queue length and falls
+// #31760 without the stall: bufferedAmount is the live queue length and falls
 // to 0 once the socket drains. Needs no env tuning, so this runs in-process.
 test("WebSocket client: bufferedAmount tracks the outbound queue", async () => {
   let serverSock: net.Socket | undefined;

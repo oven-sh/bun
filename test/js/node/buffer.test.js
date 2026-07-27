@@ -1850,6 +1850,64 @@ for (let withOverridenBufferWrite of [false, true]) {
         expect(a.equals(b)).toBe(false);
       });
 
+      it("Buffer.prototype.equals rejects non-Uint8Array TypedArrays and DataView", () => {
+        const buf = Buffer.from([1, 2, 3, 4]);
+        const invalidArgType = { code: "ERR_INVALID_ARG_TYPE", name: "TypeError" };
+        for (const other of [
+          new Uint16Array([1, 2]),
+          new Uint32Array([1]),
+          new Int8Array([1, 2, 3, 4]),
+          new Int16Array([1, 2]),
+          new Float32Array([1]),
+          new Float64Array(1),
+          new BigInt64Array(1),
+          new Uint8ClampedArray([1, 2, 3, 4]),
+          new DataView(new ArrayBuffer(4)),
+        ]) {
+          expect(() => buf.equals(other)).toThrow(
+            expect.objectContaining({
+              ...invalidArgType,
+              message: expect.stringContaining('"otherBuffer" argument must be an instance of Buffer or Uint8Array'),
+            }),
+          );
+        }
+        expect(() => buf.equals()).toThrow(expect.objectContaining(invalidArgType));
+        expect(buf.equals(new Uint8Array([1, 2, 3, 4]))).toBe(true);
+      });
+
+      it("Buffer.compare rejects non-Uint8Array TypedArrays and DataView", () => {
+        const buf = Buffer.from([1, 2, 3, 4]);
+        const invalidArgType = { code: "ERR_INVALID_ARG_TYPE", name: "TypeError" };
+        for (const other of [
+          new Uint16Array([1, 2]),
+          new Int8Array([1, 2, 3, 4]),
+          new Float32Array([1]),
+          new Uint8ClampedArray([1, 2, 3, 4]),
+          new DataView(new ArrayBuffer(4)),
+        ]) {
+          expect(() => Buffer.compare(buf, other)).toThrow(
+            expect.objectContaining({
+              ...invalidArgType,
+              message: expect.stringContaining('"buf2" argument must be an instance of Buffer or Uint8Array'),
+            }),
+          );
+          expect(() => Buffer.compare(other, buf)).toThrow(
+            expect.objectContaining({
+              ...invalidArgType,
+              message: expect.stringContaining('"buf1" argument must be an instance of Buffer or Uint8Array'),
+            }),
+          );
+          expect(() => buf.compare(other)).toThrow(
+            expect.objectContaining({
+              ...invalidArgType,
+              message: expect.stringContaining('"target" argument must be an instance of Buffer or Uint8Array'),
+            }),
+          );
+        }
+        expect(Buffer.compare(buf, new Uint8Array([1, 2, 3, 4]))).toBe(0);
+        expect(Buffer.compare(new Uint8Array([1, 2, 3, 4]), buf)).toBe(0);
+      });
+
       it("Buffer.compare", () => {
         var a = new Uint8Array(10);
         a[2] = 1;

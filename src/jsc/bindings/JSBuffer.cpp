@@ -830,7 +830,7 @@ static JSC::EncodedJSValue jsBufferConstructorFunction_compareBody(JSC::JSGlobal
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
     auto castedThisValue = callFrame->argument(0);
-    JSC::JSArrayBufferView* castedThis = dynamicDowncast<JSC::JSArrayBufferView>(castedThisValue);
+    JSC::JSUint8Array* castedThis = dynamicDowncast<JSC::JSUint8Array>(castedThisValue);
     if (!castedThis) [[unlikely]] {
         return Bun::ERR::INVALID_ARG_INSTANCE(throwScope, lexicalGlobalObject, "buf1"_s, "Buffer or Uint8Array"_s, castedThisValue);
     }
@@ -840,7 +840,7 @@ static JSC::EncodedJSValue jsBufferConstructorFunction_compareBody(JSC::JSGlobal
     }
 
     auto buffer = callFrame->argument(1);
-    JSC::JSArrayBufferView* view = dynamicDowncast<JSC::JSArrayBufferView>(buffer);
+    JSC::JSUint8Array* view = dynamicDowncast<JSC::JSUint8Array>(buffer);
     if (!view) [[unlikely]] {
         return Bun::ERR::INVALID_ARG_INSTANCE(throwScope, lexicalGlobalObject, "buf2"_s, "Buffer or Uint8Array"_s, buffer);
     }
@@ -864,8 +864,8 @@ static JSC::EncodedJSValue jsBufferConstructorFunction_compareBody(JSC::JSGlobal
     auto targetLength = targetEnd - targetStart;
     auto actualLength = std::min(sourceLength, targetLength);
 
-    auto sourceStartPtr = reinterpret_cast<unsigned char*>(castedThis->vector()) + sourceStart;
-    auto targetStartPtr = reinterpret_cast<unsigned char*>(view->vector()) + targetStart;
+    auto sourceStartPtr = castedThis->typedVector() + sourceStart;
+    auto targetStartPtr = view->typedVector() + targetStart;
 
     auto result = actualLength > 0 ? memcmp(sourceStartPtr, targetStartPtr, actualLength) : 0;
 
@@ -1304,13 +1304,8 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_equalsBody(JSC::JSGlobalObj
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
-    if (callFrame->argumentCount() < 1) {
-        throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
-        return {};
-    }
-
-    auto buffer = callFrame->uncheckedArgument(0);
-    JSC::JSArrayBufferView* view = dynamicDowncast<JSC::JSArrayBufferView>(buffer);
+    auto buffer = callFrame->argument(0);
+    JSC::JSUint8Array* view = dynamicDowncast<JSC::JSUint8Array>(buffer);
     if (!view) [[unlikely]] {
         return Bun::ERR::INVALID_ARG_INSTANCE(throwScope, lexicalGlobalObject, "otherBuffer"_s, "Buffer or Uint8Array"_s, buffer);
     }
@@ -1323,7 +1318,7 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_equalsBody(JSC::JSGlobalObj
     size_t a_length = castedThis->byteLength();
     size_t b_length = view->byteLength();
     auto sourceStartPtr = castedThis->typedVector();
-    auto targetStartPtr = reinterpret_cast<unsigned char*>(view->vector());
+    auto targetStartPtr = view->typedVector();
 
     // same pointer, same length, same contents
     if (sourceStartPtr == targetStartPtr && a_length == b_length)

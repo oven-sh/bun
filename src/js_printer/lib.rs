@@ -781,35 +781,42 @@ where
     }
 
     while i < n {
-        let width: u8 = match ENCODING {
-            Encoding::Latin1 | Encoding::Ascii => 1,
-            Encoding::Utf8 => strings::wtf8_byte_sequence_length_with_invalid(text[i]),
-            Encoding::Utf16 => 1,
-        };
-        let clamped_width = (width as usize).min(n.saturating_sub(i));
-        let c: i32 = match ENCODING {
-            Encoding::Utf8 => {
-                let bytes: [u8; 4] = match clamped_width {
-                    1 => [text[i], 0, 0, 0],
-                    2 => [text[i], text[i + 1], 0, 0],
-                    3 => [text[i], text[i + 1], text[i + 2], 0],
-                    4 => [text[i], text[i + 1], text[i + 2], text[i + 3]],
-                    _ => unreachable!(),
-                };
-                strings::decode_wtf8_rune_t::<i32>(bytes, width, 0)
-            }
+        let (width, c): (u8, i32) = match ENCODING {
+            Encoding::Latin1 => (1, text[i] as i32),
             Encoding::Ascii => {
                 debug_assert!(text[i] <= 0x7F);
-                text[i] as i32
+                (1, text[i] as i32)
             }
-            Encoding::Latin1 => text[i] as i32,
             Encoding::Utf16 => {
                 // TODO: if this is a part of a surrogate pair, we could parse the whole codepoint in order
                 // to emit it as a single \u{result} rather than two paired \uLOW\uHIGH.
                 // eg: "\u{10334}" will convert to "𐌴" without this.
-                code_unit_at!(i)
+                (1, code_unit_at!(i))
+            }
+            Encoding::Utf8 => {
+                let first = text[i];
+                if first < 0x80 {
+                    (1, first as i32)
+                } else {
+                    // WHATWG UTF-8 decode so ill-formed sequences become U+FFFD with
+                    // maximal-subpart advancement, matching `Bun.file().text()` /
+                    // `TextDecoder` / `fs.readFileSync(..., "utf8")`.
+                    let replacement = strings::convert_utf8_bytes_into_utf16(&text[i..]);
+                    let len = (replacement.len as usize).max(1);
+                    if replacement.fail {
+                        i += len;
+                        if ascii_only {
+                            writer.write_all(&bmp_escape(strings::UNICODE_REPLACEMENT))?;
+                        } else {
+                            writer.write_all(b"\xEF\xBF\xBD")?;
+                        }
+                        continue;
+                    }
+                    (len as u8, replacement.code_point as i32)
+                }
             }
         };
+        let clamped_width = (width as usize).min(n.saturating_sub(i));
 
         if can_print_without_escape(c, ascii_only) {
             match ENCODING {
@@ -2706,36 +2713,13 @@ pub mod __gated_printer {
         }
 
         pub fn print_string_literal_utf8(&mut self, str: &[u8], allow_backtick: bool) {
-            // WTF-8 = UTF-8 plus surrogate code points (U+D800..U+DFFF as
-            // `ED A0 80`..`ED BF BF`), so validate UTF-8 shape minus the
-            // surrogate exclusion.
-            fn is_valid_wtf8(mut s: &[u8]) -> bool {
-                while let Some(&b0) = s.first() {
-                    let len = match b0 {
-                        0x00..=0x7F => 1,
-                        0xC2..=0xDF => 2,
-                        0xE0..=0xEF => 3,
-                        0xF0..=0xF4 => 4,
-                        _ => return false,
-                    };
-                    if s.len() < len {
-                        return false;
-                    }
-                    let cont_ok = s[1..len].iter().all(|&b| b & 0xC0 == 0x80);
-                    if !cont_ok {
-                        return false;
-                    }
-                    match (len, b0) {
-                        (3, 0xE0) if s[1] < 0xA0 => return false, // overlong
-                        (4, 0xF0) if s[1] < 0x90 => return false, // overlong
-                        (4, 0xF4) if s[1] > 0x8F => return false, // > U+10FFFF
-                        _ => {}
-                    }
-                    s = &s[len..];
-                }
-                true
-            }
-            debug_assert!(is_valid_wtf8(str));
+            // The `Encoding::Utf8` path below does a strict WHATWG decode, so
+            // callers must pass well-formed UTF-8. This entry point is only used
+            // for parser-derived text (aliases, property keys, `path.pretty`,
+            // directives); raw file bytes from the text loader reach the printer
+            // via `print_string_characters_e_string` without this assert and are
+            // handled by the U+FFFD replacement branch there.
+            debug_assert!(strings::is_valid_utf8(str));
 
             let quote = if !IS_JSON {
                 best_quote_char_for_string(str, allow_backtick)

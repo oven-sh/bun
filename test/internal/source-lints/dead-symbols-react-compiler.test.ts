@@ -52,6 +52,9 @@ test("react_compiler dead visitor and helper functions do not reappear", () => {
     ["src/react_compiler/compile_result.rs", /pub fn from_loc_simple\b/],
     ["src/react_compiler/codegen.rs", /pub fn into_fn_body\b/],
     ["src/react_compiler/imports.rs", /pub fn set_source_filename\b/],
+    ["src/react_compiler/imports.rs", /pub fn source_filename\b/],
+    ["src/react_compiler/imports.rs", /^\s*source_filename: /m],
+    ["src/react_compiler/hir/globals.rs", /&mut Option<&mut Vec<String>>/],
   ];
   const resurrected = checks.filter(([file, re]) => re.test(src(file))).map(([file, re]) => `${file}: ${re.source}`);
   expect(resurrected).toEqual([]);

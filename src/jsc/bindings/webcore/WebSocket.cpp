@@ -1052,7 +1052,12 @@ ExceptionOr<void> WebSocket::terminate()
 {
     // LOG(Network, "WebSocket %p terminate()", this);
 
-    if (m_state == CLOSING || m_state == CLOSED)
+    // terminate() must still force-close during CLOSING (matching npm ws,
+    // which calls _socket.destroy() for any state except CLOSED): a
+    // server-initiated Close under send backpressure flips m_state to
+    // CLOSING while the native send_buffer is still resident, and
+    // terminate() is the only JS-level escape hatch to free it.
+    if (m_state == CLOSED)
         return {};
     if (m_state == CONNECTING) {
         failConnectingWebSocket();

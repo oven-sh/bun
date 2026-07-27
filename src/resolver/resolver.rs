@@ -3716,16 +3716,15 @@ impl<'a> Resolver<'a> {
 
         match esm_resolution.status {
             Status::Exact | Status::ExactEndsWithStar => {
-                let resolved_dir_info = match self
-                    .dir_info_cached(bun_paths::dirname(abs_esm_path).unwrap())
-                {
-                    Ok(Some(d)) => d,
-                    Ok(None) => {
-                        esm_resolution.status = Status::ModuleNotFound;
-                        return MatchStatus::NotFound;
-                    }
-                    Err(e) => return MatchStatus::Failure(e),
-                };
+                let resolved_dir_info =
+                    match self.dir_info_cached(bun_paths::dirname(abs_esm_path).unwrap()) {
+                        Ok(Some(d)) => d,
+                        Ok(None) => {
+                            esm_resolution.status = Status::ModuleNotFound;
+                            return MatchStatus::NotFound;
+                        }
+                        Err(e) => return MatchStatus::Failure(e),
+                    };
                 let entries = match resolved_dir_info.get_entries_ref(self.generation) {
                     Some(e) => e,
                     None => {

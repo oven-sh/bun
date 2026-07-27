@@ -89,8 +89,7 @@ pub trait Accessor {
     /// Like statat but does not follow symlinks.
     fn lstatat(handle: Self::Handle, path: &ZStr) -> Maybe<Stat>;
     fn close(handle: Self::Handle) -> Option<SysError>;
-    /// Independent handle to the same open directory. Default is a `Copy`
-    /// (correct for accessors whose `close` is a no-op).
+    /// Independent handle to the same open directory.
     fn dup(handle: Self::Handle) -> Maybe<Self::Handle> {
         Ok(handle)
     }
@@ -275,15 +274,8 @@ pub struct GlobWalker<A: Accessor, const SENTINEL: bool> {
     pub workbuf: Vec<WorkItem<A>>,
 
     followed_links: Vec<FollowedLink>,
-    /// Parallel to `followed_links`: for each followed symlink on the current
-    /// ancestor chain, an open handle to its target directory together with
-    /// the logical-path byte length the handle anchors. Descendant opens
-    /// resolve the suffix past that length relative to the handle (at most
-    /// one symlink hop) instead of the full accumulated path relative to
-    /// `cwd_fd`, which re-resolves every ancestor link on every open and
-    /// trips the kernel's `MAXSYMLINKS` on acyclic chains deeper than ~40.
-    /// `None` entries arise only for accessors whose `openat` is not a real
-    /// syscall (the resolver cache), where the issue doesn't apply.
+    /// Parallel to `followed_links`: open handle to each followed target and
+    /// the logical-path prefix it covers; see [`Iterator::openat_anchored`].
     link_anchors: Vec<LinkAnchor<A::Handle>>,
 
     is_ignored: IgnoreFilterFn,
@@ -569,13 +561,10 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
         }
     }
 
-    /// `openat(cwd_fd, full_path)` re-resolves every symlink component in
-    /// `full_path` on every call, so a single open on a path that has
-    /// accumulated more than `MAXSYMLINKS` (40 on Linux, 32 on macOS) followed
-    /// links fails with `ELOOP` even when the chain is acyclic. The deepest
-    /// anchor on [`GlobWalker::link_anchors`] is an already-open handle to the
-    /// most recently followed link's target, so opening the suffix past its
-    /// prefix resolves at most one link: the entry being opened.
+    /// Open `full_path` relative to the deepest [`GlobWalker::link_anchors`]
+    /// handle (suffix past its prefix), so each open resolves at most one
+    /// symlink rather than every link accumulated in `full_path` relative to
+    /// `cwd_fd`, which the kernel caps at `MAXSYMLINKS` with `ELOOP`.
     fn openat_anchored(&self, full_path_z: &ZStr) -> Result<Maybe<A::Handle>, Error> {
         if let Some(&(anchor_fd, prefix_len)) = self
             .walker
@@ -601,8 +590,6 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
         A::openat(self.cwd_fd, full_path_z)
     }
 
-    /// Restore the followed-link ancestor chain (and its parallel anchor
-    /// chain) to `len`, closing anchor handles that fall off the end.
     fn truncate_followed_links(&mut self, len: usize) {
         for anchor in self.walker.link_anchors.drain(len..) {
             if let Some((fd, _)) = anchor {

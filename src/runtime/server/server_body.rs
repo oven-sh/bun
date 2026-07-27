@@ -3721,8 +3721,14 @@ pub(super) extern "C" fn Bun__warnAcceptEMFILE(err: c_int) {
     let name = bun_errno::SystemErrno::init(i64::from(err))
         .map(<&'static str>::from)
         .unwrap_or("EMFILE");
+    #[cfg(not(windows))]
     bun_core::pretty_errorln!(
         "<r><yellow>warn<r><d>:<r> accept() failed with <b>{}<r>; out of file descriptors, refusing queued connections. Raise <d><cyan>`ulimit -n`<r> if this is unexpected.",
+        name,
+    );
+    #[cfg(windows)]
+    bun_core::pretty_errorln!(
+        "<r><yellow>warn<r><d>:<r> accept() failed with <b>{}<r>; out of socket handles, refusing queued connections.",
         name,
     );
     Output::flush();

@@ -105,19 +105,24 @@ describe("SameSite=None / Partitioned require Secure", () => {
   const sameSiteNoneError = /"sameSite: none" requires secure: true/;
   const partitionedError = /"partitioned: true" requires secure: true/;
 
+  const expectTypeError = (fn: () => unknown, message: RegExp) => {
+    expect(fn).toThrow(TypeError);
+    expect(fn).toThrow(message);
+  };
+
   describe.each([
     ["new Bun.Cookie(name, value, options)", (o: Bun.CookieInit) => new Bun.Cookie("s", "v", o)],
     ["new Bun.Cookie(options)", (o: Bun.CookieInit) => new Bun.Cookie({ name: "s", value: "v", ...o })],
     ["Bun.Cookie.from(name, value, options)", (o: Bun.CookieInit) => Bun.Cookie.from("s", "v", o)],
   ] as const)("%s", (_, make) => {
     test("sameSite: 'none' without secure throws", () => {
-      expect(() => make({ sameSite: "none" })).toThrow(sameSiteNoneError);
-      expect(() => make({ sameSite: "none", secure: false })).toThrow(sameSiteNoneError);
+      expectTypeError(() => make({ sameSite: "none" }), sameSiteNoneError);
+      expectTypeError(() => make({ sameSite: "none", secure: false }), sameSiteNoneError);
     });
 
     test("partitioned: true without secure throws", () => {
-      expect(() => make({ partitioned: true })).toThrow(partitionedError);
-      expect(() => make({ partitioned: true, secure: false })).toThrow(partitionedError);
+      expectTypeError(() => make({ partitioned: true }), partitionedError);
+      expectTypeError(() => make({ partitioned: true, secure: false }), partitionedError);
     });
 
     test("sameSite: 'none' with secure: true includes Secure", () => {
@@ -139,9 +144,9 @@ describe("SameSite=None / Partitioned require Secure", () => {
 
   test("CookieMap.set throws for the same combinations", () => {
     const map = new Bun.CookieMap();
-    expect(() => map.set("s", "v", { sameSite: "none" })).toThrow(sameSiteNoneError);
-    expect(() => map.set("p", "v", { partitioned: true })).toThrow(partitionedError);
-    expect(() => map.set({ name: "s", value: "v", sameSite: "none", httpOnly: true })).toThrow(sameSiteNoneError);
+    expectTypeError(() => map.set("s", "v", { sameSite: "none" }), sameSiteNoneError);
+    expectTypeError(() => map.set("p", "v", { partitioned: true }), partitionedError);
+    expectTypeError(() => map.set({ name: "s", value: "v", sameSite: "none", httpOnly: true }), sameSiteNoneError);
     expect(map.size).toBe(0);
 
     map.set("s", "v", { sameSite: "none", secure: true });
@@ -152,33 +157,36 @@ describe("SameSite=None / Partitioned require Secure", () => {
     ]);
   });
 
-  test("CookieMap.set(Cookie) re-validates a parsed cookie", () => {
-    // Cookie.parse() reports what was on the wire; a non-Secure SameSite=None cookie is only
-    // rejected when it is handed back to the write path.
-    const parsed = Bun.Cookie.parse("s=v; SameSite=None");
-    expect(parsed.sameSite).toBe("none");
+  test.each([
+    ["s=v; SameSite=None", "sameSite", "none", sameSiteNoneError, "s=v; Path=/; Secure; SameSite=None"],
+    ["p=v; Partitioned", "partitioned", true, partitionedError, "p=v; Path=/; Secure; Partitioned; SameSite=Lax"],
+  ] as const)("CookieMap.set(Cookie) re-validates a parsed %p cookie", (header, attr, expected, error, fixed) => {
+    // Cookie.parse() reports what was on the wire; the Secure requirement is only enforced
+    // when the cookie is handed back to the write path.
+    const parsed = Bun.Cookie.parse(header);
+    expect(parsed[attr]).toBe(expected);
     expect(parsed.secure).toBe(false);
 
     const map = new Bun.CookieMap();
-    expect(() => map.set(parsed)).toThrow(sameSiteNoneError);
+    expectTypeError(() => map.set(parsed), error);
     expect(map.toSetCookieHeaders()).toEqual([]);
 
     parsed.secure = true;
     map.set(parsed);
-    expect(map.toSetCookieHeaders()).toEqual(["s=v; Path=/; Secure; SameSite=None"]);
+    expect(map.toSetCookieHeaders()).toEqual([fixed]);
   });
 
   test("a rejected CookieMap.set leaves the existing entry in place", () => {
     const map = new Bun.CookieMap();
     map.set("s", "old");
-    expect(() => map.set("s", "new", { sameSite: "none" })).toThrow(sameSiteNoneError);
+    expectTypeError(() => map.set("s", "new", { sameSite: "none" }), sameSiteNoneError);
     expect(map.get("s")).toBe("old");
   });
 
   describe("property setters on an existing Cookie", () => {
     test("sameSite = 'none' throws while secure is false", () => {
       const c = new Bun.Cookie("s", "v");
-      expect(() => (c.sameSite = "none")).toThrow(sameSiteNoneError);
+      expectTypeError(() => (c.sameSite = "none"), sameSiteNoneError);
       expect(c.sameSite).toBe("lax");
 
       c.secure = true;
@@ -188,7 +196,7 @@ describe("SameSite=None / Partitioned require Secure", () => {
 
     test("partitioned = true throws while secure is false", () => {
       const c = new Bun.Cookie("p", "v");
-      expect(() => (c.partitioned = true)).toThrow(partitionedError);
+      expectTypeError(() => (c.partitioned = true), partitionedError);
       expect(c.partitioned).toBe(false);
 
       c.secure = true;
@@ -198,14 +206,14 @@ describe("SameSite=None / Partitioned require Secure", () => {
 
     test("secure = false throws while sameSite is 'none' or partitioned is true", () => {
       const c = new Bun.Cookie("s", "v", { secure: true, sameSite: "none" });
-      expect(() => (c.secure = false)).toThrow(sameSiteNoneError);
+      expectTypeError(() => (c.secure = false), sameSiteNoneError);
       expect(c.secure).toBe(true);
       c.sameSite = "lax";
       c.secure = false;
       expect(c.secure).toBe(false);
 
       const p = new Bun.Cookie("p", "v", { secure: true, partitioned: true });
-      expect(() => (p.secure = false)).toThrow(partitionedError);
+      expectTypeError(() => (p.secure = false), partitionedError);
       expect(p.secure).toBe(true);
       p.partitioned = false;
       p.secure = false;
@@ -240,13 +248,17 @@ describe("SameSite=None / Partitioned require Secure", () => {
           } catch (e) {
             caught = e;
           }
-          return Response.json({ message: String(caught) });
+          return Response.json({
+            name: caught instanceof TypeError ? caught.name : "not a TypeError",
+            message: caught instanceof Error ? caught.message : String(caught),
+          });
         },
       },
       fetch: () => new Response("nf", { status: 404 }),
     });
     const res = await fetch(server.url);
     const body = await res.json();
+    expect(body.name).toBe("TypeError");
     expect(body.message).toMatch(sameSiteNoneError);
     expect(res.headers.getSetCookie()).toEqual([]);
     expect(res.status).toBe(200);

@@ -15,7 +15,6 @@ type UpgradeResult = {
   sockData: string;
   completeAtUpgrade: boolean;
   readableLengthAtUpgrade: number;
-  trailersAtUpgrade: Record<string, string>;
 };
 
 function sendRaw(port: number, payload: string, thenEnd = false) {
@@ -39,7 +38,6 @@ async function observeUpgrade(payload: string): Promise<UpgradeResult> {
       sockData: "",
       completeAtUpgrade: req.complete,
       readableLengthAtUpgrade: req.readableLength,
-      trailersAtUpgrade: { ...req.trailers },
     };
     req.on("data", d => (result.reqData += d));
     socket.on("data", d => (result.sockData += d));
@@ -76,39 +74,42 @@ describe("node:http 'upgrade' with a request body", () => {
       sockData: "",
       completeAtUpgrade: true,
       readableLengthAtUpgrade: 5,
-      trailersAtUpgrade: {},
     });
   });
 
-  // Same rule for a chunked body that completes in the same chunk.
-  test.concurrent("same-chunk chunked body: head is the post-body remainder", async () => {
-    const result = await observeUpgrade(
+  // Chunked body: the body is delivered once through req; the post-body
+  // remainder reaches socket 'data' (head is not pre-computed for chunked).
+  test.concurrent("same-chunk chunked body: body reaches req, remainder reaches socket 'data'", async () => {
+    const { promise, resolve, reject } = Promise.withResolvers<{ head: string; reqData: string; sockData: string }>();
+    const server = http.createServer((_req, res) => res.end());
+    server.on("error", reject);
+    server.on("clientError", reject);
+    server.on("upgrade", (req, socket, head) => {
+      let reqData = "";
+      let sockData = "";
+      req.on("data", d => (reqData += d));
+      socket.on("error", reject);
+      socket.on("data", d => {
+        sockData += d;
+        socket.end();
+      });
+      socket.on("close", () => resolve({ head: head.toString(), reqData, sockData }));
+    });
+    await once(server.listen(0), "listening");
+    const port = (server.address() as net.AddressInfo).port;
+    const client = sendRaw(
+      port,
       "GET / HTTP/1.1\r\nHost: x\r\nConnection: Upgrade\r\nUpgrade: x\r\nTransfer-Encoding: chunked\r\n\r\n" +
         "5\r\nHELLO\r\n0\r\n\r\nAFTER",
     );
-    expect(result).toEqual({
-      head: "AFTER",
-      reqData: "HELLO",
-      sockData: "",
-      completeAtUpgrade: true,
-      readableLengthAtUpgrade: 5,
-      trailersAtUpgrade: {},
-    });
-  });
-
-  test.concurrent("same-chunk chunked body with a trailer section", async () => {
-    const result = await observeUpgrade(
-      "GET / HTTP/1.1\r\nHost: x\r\nConnection: Upgrade\r\nUpgrade: x\r\nTransfer-Encoding: chunked\r\n\r\n" +
-        "5\r\nHELLO\r\n0\r\nExtra: abc\r\n\r\nAFTER",
-    );
-    expect(result).toEqual({
-      head: "AFTER",
-      reqData: "HELLO",
-      sockData: "",
-      completeAtUpgrade: true,
-      readableLengthAtUpgrade: 5,
-      trailersAtUpgrade: { extra: "abc" },
-    });
+    client.on("end", () => client.end());
+    try {
+      const { head, reqData, sockData } = await promise;
+      expect({ reqData, delivered: head + sockData }).toEqual({ reqData: "HELLO", delivered: "AFTER" });
+    } finally {
+      client.destroy();
+      await new Promise<void>(r => server.close(() => r()));
+    }
   });
 
   // Body fully in this chunk with nothing after it: head is empty and nothing
@@ -140,7 +141,6 @@ describe("node:http 'upgrade' with a request body", () => {
         sockData: "",
         completeAtUpgrade: req.complete,
         readableLengthAtUpgrade: req.readableLength,
-        trailersAtUpgrade: { ...req.trailers },
       };
       req.on("data", d => (result.reqData += d));
       socket.on("error", reject);

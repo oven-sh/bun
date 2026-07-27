@@ -270,10 +270,7 @@ function onDataIncomingMessage(this: any, chunk, isLast, aborted: NodeHTTPRespon
 
   if (isLast) {
     // Deferred 'upgrade' emit: body was in the same chunk as the headers, so
-    // fire now that it is buffered on req (Node's parser.execute() order). Run
-    // the EOF completion synchronously first so the listener also observes
-    // req.trailers (Node's parserOnMessageComplete populates both before
-    // onParserExecuteCommon emits 'upgrade').
+    // fire now that it is buffered on req (Node's parser.execute() order).
     const deferred = this[kDeferredUpgradeEmit];
     if (deferred !== undefined) {
       this[kDeferredUpgradeEmit] = undefined;

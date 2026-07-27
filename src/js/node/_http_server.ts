@@ -1007,7 +1007,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
             socket[kUpgradeIncoming] = http_req;
             http_req.once("end", clearUpgradeIncoming.bind(undefined, socket));
           }
-          const upgradeHead = connectHead ? connectHead : kEmptyBuffer;
+          const upgradeHead = (bodyCompleteInHead || !hasBody) && connectHead ? connectHead : kEmptyBuffer;
           // Like CONNECT: the connection is detached from the HTTP request
           // machinery; hold the native callback open until the raw socket
           // closes.

@@ -1253,60 +1253,19 @@ struct HttpResponseData;
              * to break here as we either have upgraded to
              * WebSockets or otherwise closed the socket. */
             /* Store any remaining data as head for Node.js compat (connect/upgrade events).
-             * Node's 'upgrade' head is the chunk remainder AFTER the declared
-             * body, so for a body-carrying Upgrade skip the body bytes (which
-             * are delivered through inStream below) and report whether the
-             * body completes in this chunk. */
+             * For an Upgrade with a Content-Length body that completes in this
+             * chunk, slice head to the post-body remainder like Node. */
             req->bodyCompleteInHead = false;
             req->head = std::span<const char>(data, length);
-            if constexpr (IsNodeHttp) {
-                /* Match NodeHTTPResponse__createForJS's has_body predicate
-                 * (has_request_body() || GET, i.e. not HEAD/TRACE) so the two
-                 * sides agree on which bytes are body. */
-                std::string_view m = req->getCaseSensitiveMethod();
-                bool methodFramesBody = !(m == "HEAD" || m == "TRACE");
-                if (!isConnectRequest && methodFramesBody
-                        && (transferEncoding.has || contentLengthStringLen)
-                        && !deferredTransferEncodingError
+            if constexpr (IsNodeHttp && !ConsumeMinimally) {
+                if (!isConnectRequest && contentLengthStringLen && !transferEncoding.has
+                        && remainingStreamingBytes <= (uint64_t) length
                         && req->getHeader("upgrade").data()) [[unlikely]] {
-                    if constexpr (ConsumeMinimally) {
-                        /* Fallback-buffer path: (data, length) is a view truncated
-                         * to maxFallbackSize, so a head sliced from it would not
-                         * match the full-buffer remainder later suppressed from
-                         * onSocketData. Clear head so JS emits immediately with
-                         * an empty head and every post-body byte reaches
-                         * socket.on('data'), matching the pre-existing delivery. */
-                        req->head = std::span<const char>();
-                    } else if (transferEncoding.has) {
-                        /* Pre-scan the chunked body with local state so the real
-                         * parse below (which fires inStream per chunk) is unchanged. */
-                        uint64_t scanState = STATE_IS_CHUNKED;
-                        uint64_t scanExt = 0;
-                        bool scanExtOverflow = false;
-                        std::string scanTrailers;
-                        std::string_view scanView(data, length);
-                        for (auto chunk : uWS::ChunkIterator(&scanView, &scanState, false, &scanExt, &scanTrailers, maxBufferedHeaderSize)) {
-                            (void) chunk;
-                            /* The real parse checks this per-chunk; the counter is
-                             * reset by consumeHexNumber at each fresh chunk-size line. */
-                            if (scanExt > MAX_CHUNK_EXTENSION_SIZE) { scanExtOverflow = true; break; }
-                        }
-                        /* Mirror the real parse's gates so bodyCompleteInHead
-                         * is never true for a body the real parse will reject
-                         * (stranding the JS deferred emit). */
-                        if (!scanExtOverflow && !isParsingChunkedEncoding(scanState) && !isParsingInvalidChunkedEncoding(scanState)
-                                && validateNodeTrailerSection(&scanTrailers, useInsecureHTTPParser) == HTTP_PARSER_ERROR_NONE) {
-                            req->head = std::span<const char>(scanView.data(), scanView.length());
-                            req->bodyCompleteInHead = true;
-                        } else {
-                            req->head = std::span<const char>();
-                        }
-                    } else if (remainingStreamingBytes <= (uint64_t) length) {
+                    std::string_view m = req->getCaseSensitiveMethod();
+                    if (m != "HEAD" && m != "TRACE") {
                         unsigned int skip = (unsigned int) remainingStreamingBytes;
                         req->head = std::span<const char>(data + skip, length - skip);
                         req->bodyCompleteInHead = true;
-                    } else {
-                        req->head = std::span<const char>();
                     }
                 }
             }

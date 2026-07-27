@@ -467,7 +467,7 @@ function WriteStream(this: FSStream, path: string | null, options?: any): void {
     if (!write) this._write = null;
     if (!writev) this._writev = null;
   } else {
-    if (!fastPath && fd == null && start === undefined) this[kFileSink] = true;
+    if (!fastPath && fd == null && start === undefined && autoClose !== false) this[kFileSink] = true;
     this._writev = undefined;
     $assert(this[kFs].write, "assuming user does not delete fs.write!");
   }
@@ -595,18 +595,19 @@ function fileSinkWrite(data, encoding, cb) {
   const sink = this[kFileSink];
   let rc;
   try {
-    sink.write(data);
-    rc = sink.flush();
+    rc = sink.write(data);
+    if (!$isPromise(rc)) rc = sink.flush();
   } catch (e) {
     return cb(e);
   }
-  this.bytesWritten += data.length;
   if ($isPromise(rc)) {
+    this[kIsPerformingIO] = true;
     rc.then(
-      () => (this.destroyed ? cb($ERR_STREAM_DESTROYED("write")) : cb(null)),
-      err => cb(err),
+      () => afterFileSinkWriteSettled(this, cb, null, data.length),
+      err => afterFileSinkWriteSettled(this, cb, err, 0),
     );
   } else {
+    this.bytesWritten += data.length;
     process.nextTick(afterFileSinkWrite, this, cb);
   }
 }
@@ -620,21 +621,34 @@ function fileSinkWritev(data, cb) {
     for (let i = 0; i < data.length; i++) {
       const chunk = data[i].chunk;
       size += chunk.length;
-      sink.write(chunk);
+      rc = sink.write(chunk);
+      if ($isPromise(rc)) break;
     }
-    rc = sink.flush();
+    if (!$isPromise(rc)) rc = sink.flush();
   } catch (e) {
     return cb(e);
   }
-  this.bytesWritten += size;
   if ($isPromise(rc)) {
+    this[kIsPerformingIO] = true;
     rc.then(
-      () => (this.destroyed ? cb($ERR_STREAM_DESTROYED("write")) : cb(null)),
-      err => cb(err),
+      () => afterFileSinkWriteSettled(this, cb, null, size),
+      err => afterFileSinkWriteSettled(this, cb, err, 0),
     );
   } else {
+    this.bytesWritten += size;
     process.nextTick(afterFileSinkWrite, this, cb);
   }
+}
+
+function afterFileSinkWriteSettled(stream, cb, err, bytes) {
+  stream[kIsPerformingIO] = false;
+  if (stream.destroyed) {
+    cb(err || $ERR_STREAM_DESTROYED("write"));
+    return stream.emit(kIoDone, err);
+  }
+  if (err) return cb(err);
+  stream.bytesWritten += bytes;
+  cb(null);
 }
 
 function afterFileSinkWrite(stream, cb) {

@@ -3712,8 +3712,7 @@ describe("createWriteStream", () => {
 
     // Without coalescing each chunk is a separate thread-pool dispatch (one
     // write(2) to the file plus one 8-byte eventfd wake), so 5000 chunks is
-    // ~10000 write syscalls. Coalescing into one thread-pool fs.write per
-    // drain cycle brings it well under N/4.
+    // ~10000 write syscalls. Coalescing brings it well under N/4.
     expect(writeSyscalls).toBeLessThan(N / 4);
   });
 
@@ -3761,6 +3760,25 @@ describe("createWriteStream", () => {
       bytesWritten: ws.bytesWritten,
       head: readFileSync(streamPath, "utf8").slice(0, chunk.length * 3),
     }).toEqual({ size: N * byteLen, bytesWritten: N * byteLen, head: chunk + chunk + chunk });
+  });
+
+  it.skipIf(!isLinux)("surfaces a synchronous write(2) failure via the stream's 'error' event", async () => {
+    const ws = createWriteStream("/dev/full");
+    await once(ws, "ready");
+    let unhandled = 0;
+    const onUnhandled = () => unhandled++;
+    process.on("unhandledRejection", onUnhandled);
+    try {
+      ws.write(Buffer.alloc(8192));
+      const [err] = (await once(ws, "error")) as [NodeJS.ErrnoException];
+      expect({ code: err.code, bytesWritten: ws.bytesWritten, unhandled }).toEqual({
+        code: "ENOSPC",
+        bytesWritten: 0,
+        unhandled: 0,
+      });
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
   });
 
   it("routes writes through fs.write so a monkey-patch is honoured", async () => {

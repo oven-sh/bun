@@ -69,6 +69,9 @@ describe("User Timing argument validation", () => {
       message: `The "startTime" argument must be of type number. Received type string ('7')`,
     });
     expect(caught(() => new PerformanceMark("x", { startTime: "7" }))).toMatchObject({ code: "ERR_INVALID_ARG_TYPE" });
+    // Node: options.startTime ?? now(), so null means "use now()".
+    expect(performance.mark("x", { startTime: null }).startTime).toBeGreaterThan(0);
+    performance.clearMarks("x");
   });
 
   test("performance.mark negative startTime throws ERR_PERFORMANCE_INVALID_TIMESTAMP", () => {

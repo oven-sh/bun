@@ -59,8 +59,8 @@ template<> PerformanceMarkOptions convertDictionary<PerformanceMarkOptions>(JSGl
         startTimeValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "startTime"_s));
         RETURN_IF_EXCEPTION(throwScope, {});
     }
-    if (!startTimeValue.isUndefined()) {
-        // Node: validateNumber(startTime), no ToNumber coercion.
+    if (!startTimeValue.isUndefinedOrNull()) {
+        // Node: validateNumber(options.startTime ?? now()), no ToNumber coercion.
         if (!startTimeValue.isNumber()) {
             Bun::ERR::INVALID_ARG_TYPE(throwScope, &lexicalGlobalObject, "startTime"_s, "number"_s, startTimeValue);
             return {};

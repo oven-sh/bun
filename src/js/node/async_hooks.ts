@@ -134,14 +134,40 @@ class AsyncLocalStorage {
     }
   }
 
-  static bind(fn, ...args: any) {
+  static bind(fn) {
     validateFunction(fn);
-    return this.snapshot().bind(null, fn, ...args);
+    var context = get();
+    var bound = function (this: unknown, ...args: unknown[]) {
+      var prev = get();
+      set(context);
+      try {
+        return fn.$apply(this, args);
+      } finally {
+        set(prev);
+      }
+    };
+    Object.defineProperties(bound, {
+      length: {
+        __proto__: null,
+        configurable: true,
+        enumerable: false,
+        value: fn.length,
+        writable: false,
+      },
+      name: {
+        __proto__: null,
+        configurable: true,
+        enumerable: false,
+        value: "bound",
+        writable: false,
+      },
+    });
+    return bound;
   }
 
   static snapshot() {
     var context = get();
-    return (fn, ...args) => {
+    var bound = function (fn, ...args: unknown[]) {
       var prev = get();
       set(context);
       try {
@@ -150,6 +176,14 @@ class AsyncLocalStorage {
         set(prev);
       }
     };
+    Object.defineProperty(bound, "name", {
+      __proto__: null,
+      configurable: true,
+      enumerable: false,
+      value: "bound",
+      writable: false,
+    });
+    return bound;
   }
 
   enterWith(store) {
@@ -192,7 +226,7 @@ class AsyncLocalStorage {
     // so a match here would skip installing store_value and let the callback
     // read the unmasked frame value instead.
     if (!this.#disabled && sameValue(this.getStore(), store_value)) {
-      return callback.$apply(undefined, args);
+      return callback.$apply(null, args);
     }
     var context = get() as any[]; // we make sure to .slice() before mutating
     var hasPrevious = false;
@@ -232,7 +266,7 @@ class AsyncLocalStorage {
     try {
       // $apply, not a spread: spreading goes through Array.prototype[Symbol.iterator],
       // which userland can delete (node uses ReflectApply here for the same reason).
-      return callback.$apply(undefined, args);
+      return callback.$apply(null, args);
     } finally {
       // Note: early `return` will prevent `throw` above from working. I think...
       // Set AsyncContextFrame to undefined if we are out of context values.

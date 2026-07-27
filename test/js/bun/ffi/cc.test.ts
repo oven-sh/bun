@@ -12,8 +12,12 @@ it.skipIf(!isASAN || isWindows)(
       "x.c": "int noop(void* p) { return 0; }\n",
       "fixture.js": `
         const { cc } = require("bun:ffi");
+        const { heapStats } = require("bun:jsc");
         const path = require("node:path");
         const src = path.join(__dirname, "x.c");
+
+        const ffiCount = () => heapStats().objectTypeCounts.FFI ?? 0;
+        const baseline = ffiCount();
 
         // Call cc() from a deep stack frame so the library wrapper becomes
         // unreachable once the frame is overwritten; only the symbol function
@@ -37,6 +41,13 @@ it.skipIf(!isASAN || isWindows)(
         Bun.gc(true);
         clobber(60);
         Bun.gc(true);
+
+        // Precondition: the wrapper must have been collected or the LSAN
+        // assertion below cannot fail. One FFI cell above baseline is the
+        // lazily-created class prototype, not the cc() instance.
+        const after = ffiCount();
+        if (after > baseline + 1)
+          throw new Error("FFI wrapper not collected (before=" + baseline + " after=" + after + "); test would be vacuous");
 
         // The wrapper has been finalized; the detached trampoline must still work.
         if (globalThis.noop(0n) !== 0) throw new Error("symbol broken after GC");

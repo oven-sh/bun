@@ -211,16 +211,10 @@ impl Default for FFI {
 
 impl FFI {
     pub fn finalize(self: Box<Self>) {
-        // JS may still hold trampolines after the wrapper is GC'd, so when
-        // `close()` never ran detach the per-function TCC state so the drop
-        // below skips `tcc_delete()`. `shared_state` / `dylib` have no `Drop`.
         if !self.closed.get() {
             self.functions.with_mut(|f| {
                 for function in f.values_mut() {
-                    function.state = None;
-                    if let Step::Compiled(compiled) = &mut function.step {
-                        compiled.ffi_callback_function_wrapper = None;
-                    }
+                    function.leak_compiled_pages_past_drop();
                 }
             });
         }
@@ -1928,6 +1922,14 @@ impl Drop for Function {
 }
 
 impl Function {
+    /// Detach the TCC state and callback wrapper so [`Drop`] skips `tcc_delete()`; JS may still hold trampolines that jump into these pages after the FFI wrapper is GC'd without `close()`.
+    fn leak_compiled_pages_past_drop(&mut self) {
+        self.state = None;
+        if let Step::Compiled(compiled) = &mut self.step {
+            compiled.ffi_callback_function_wrapper = None;
+        }
+    }
+
     pub(crate) fn needs_handle_scope(&self) -> bool {
         for arg in self.arg_types.iter() {
             if *arg == ABIType::NapiEnv || *arg == ABIType::NapiValue {

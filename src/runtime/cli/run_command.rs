@@ -2002,7 +2002,7 @@ impl RunCommand {
                     .map
                     .put(b"npm_node_execpath", bun_node_exe.as_bytes())
                     .unwrap_or_oom();
-                if !force_using_bun {
+                if !force_using_bun && !optional_bun_self_path.is_empty() {
                     env_mut
                         .map
                         .put(b"npm_execpath", optional_bun_self_path)

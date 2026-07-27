@@ -644,8 +644,14 @@ impl FileSink {
             sys::Result::Ok(fd) => fd,
         };
 
+        let owns_fd = !matches!(&options.input_path, PathOrFileDescriptor::Fd(_));
+        self.fd.set(fd);
+        #[cfg(unix)]
+        self.writer.with_mut(|w| w.close_fd = owns_fd);
+
         #[cfg(windows)]
         {
+            self.writer.with_mut(|w| w.owns_fd = owns_fd);
             if self.force_sync.get() {
                 // SAFETY(JsCell): `start_sync` is pure I/O setup; no JS.
                 match self
@@ -653,7 +659,9 @@ impl FileSink {
                     .with_mut(|w| w.start_sync(fd, self.pollable.get()))
                 {
                     sys::Result::Err(err) => {
-                        fd.close();
+                        if owns_fd {
+                            fd.close();
+                        }
                         return sys::Result::Err(err);
                     }
                     sys::Result::Ok(()) => {
@@ -668,7 +676,9 @@ impl FileSink {
         // SAFETY(JsCell): `start` is pure I/O setup; no JS.
         match self.writer.with_mut(|w| w.start(fd, self.pollable.get())) {
             sys::Result::Err(err) => {
-                fd.close();
+                if owns_fd {
+                    fd.close();
+                }
                 return sys::Result::Err(err);
             }
             sys::Result::Ok(()) => {

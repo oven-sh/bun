@@ -37,6 +37,7 @@ const { validateInteger, validateInt32, validateFunction } = require("internal/v
 
 const kIsPerformingIO = Symbol("kIsPerformingIO");
 const kIoDone = Symbol("kIoDone");
+const kFileSink = Symbol("kFileSink");
 // Bun supports a fast path for `createWriteStream("path.txt")` where instead of
 // using `node:fs`, `Bun.file(...).writer()` is used instead.
 const kWriteStreamFastPath = Symbol("kWriteStreamFastPath");
@@ -275,6 +276,15 @@ function streamConstruct(this: FSStream, callback: (e?: any) => void) {
         callback(err);
       } else {
         this.fd = fd;
+        if (this[kFileSink] === true && fs.write === write) {
+          try {
+            this[kFileSink] = Bun.file(fd).writer();
+            this._write = fileSinkWrite;
+            this._writev = fileSinkWritev;
+          } catch {
+            this[kFileSink] = undefined;
+          }
+        }
         callback();
         this.emit("open", this.fd);
         this.emit("ready");
@@ -369,6 +379,14 @@ function close(stream, err, cb) {
     return;
   }
 
+  const sink = stream[kFileSink];
+  if (sink && sink !== true) {
+    stream[kFileSink] = undefined;
+    try {
+      sink.end(err);
+    } catch {}
+  }
+
   if (!stream.fd) {
     cb(err);
   } else if (stream.flush) {
@@ -449,6 +467,8 @@ function WriteStream(this: FSStream, path: string | null, options?: any): void {
     if (!write) this._write = null;
     if (!writev) this._writev = null;
   } else {
+    if (!fastPath && fd == null && start === undefined) this[kFileSink] = true;
+    this._writev = undefined;
     $assert(this[kFs].write, "assuming user does not delete fs.write!");
   }
 
@@ -541,7 +561,7 @@ function writeAll(data, size, pos, cb, retries = 0) {
 }
 
 function writevAll(chunks, size, pos, cb, retries = 0) {
-  this[kFs].writev(this.fd, chunks, pos, (er, bytesWritten, buffers) => {
+  this[kFs].writev(this.fd, chunks, this.pos, (er, bytesWritten, buffers) => {
     // No data currently available and operation should be retried later.
     if (er?.code === "EAGAIN") {
       er = null;
@@ -568,6 +588,58 @@ function writevAll(chunks, size, pos, cb, retries = 0) {
       cb();
     }
   });
+}
+
+function fileSinkWrite(data, encoding, cb) {
+  if (this.destroyed) return cb($ERR_STREAM_DESTROYED("write"));
+  const sink = this[kFileSink];
+  let rc;
+  try {
+    sink.write(data);
+    rc = sink.flush();
+  } catch (e) {
+    return cb(e);
+  }
+  this.bytesWritten += data.length;
+  if ($isPromise(rc)) {
+    rc.then(
+      () => (this.destroyed ? cb($ERR_STREAM_DESTROYED("write")) : cb(null)),
+      err => cb(err),
+    );
+  } else {
+    process.nextTick(afterFileSinkWrite, this, cb);
+  }
+}
+
+function fileSinkWritev(data, cb) {
+  if (this.destroyed) return cb($ERR_STREAM_DESTROYED("write"));
+  const sink = this[kFileSink];
+  let rc;
+  let size = 0;
+  try {
+    for (let i = 0; i < data.length; i++) {
+      const chunk = data[i].chunk;
+      size += chunk.length;
+      sink.write(chunk);
+    }
+    rc = sink.flush();
+  } catch (e) {
+    return cb(e);
+  }
+  this.bytesWritten += size;
+  if ($isPromise(rc)) {
+    rc.then(
+      () => (this.destroyed ? cb($ERR_STREAM_DESTROYED("write")) : cb(null)),
+      err => cb(err),
+    );
+  } else {
+    process.nextTick(afterFileSinkWrite, this, cb);
+  }
+}
+
+function afterFileSinkWrite(stream, cb) {
+  if (stream.destroyed) return cb($ERR_STREAM_DESTROYED("write"));
+  cb(null);
 }
 
 function _write(data, encoding, cb) {
@@ -726,7 +798,7 @@ writeStreamPrototype._writev = function (data, cb) {
     }
   } else {
     this[kIsPerformingIO] = true;
-    const done = er => {
+    writevAll.$call(this, chunks, size, this.pos, er => {
       this[kIsPerformingIO] = false;
       if (this.destroyed) {
         // Tell ._destroy() that it's safe to close the fd now.
@@ -734,15 +806,10 @@ writeStreamPrototype._writev = function (data, cb) {
         return this.emit(kIoDone, er);
       }
       cb(er);
-    };
-    if (this[kFs].writev === writev && this[kFs].write) {
-      // Default fs.writev EINVALs past IOV_MAX; drain as one write.
-      writeAll.$call(this, len === 1 ? chunks[0] : Buffer.concat(chunks, size), size, this.pos, done);
-    } else {
-      writevAll.$call(this, chunks, size, this.pos, done);
-    }
+    });
 
     if (this.pos !== undefined) this.pos += size;
+    // Don't return anything for legacy path - matches Node.js behavior
   }
 };
 

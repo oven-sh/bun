@@ -604,6 +604,7 @@ pub struct PosixStreamingWriter<Parent: PosixStreamingWriterParent> {
     pub is_done: bool,
     pub closed_without_reporting: bool,
     pub force_sync: bool,
+    pub close_fd: bool,
 }
 
 impl<Parent: PosixStreamingWriterParent> Default for PosixStreamingWriter<Parent> {
@@ -615,6 +616,7 @@ impl<Parent: PosixStreamingWriterParent> Default for PosixStreamingWriter<Parent
             is_done: false,
             closed_without_reporting: false,
             force_sync: false,
+            close_fd: true,
         }
     }
 }
@@ -766,7 +768,8 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
         if self.get_fd() != Fd::INVALID {
             debug_assert!(!self.closed_without_reporting);
             self.closed_without_reporting = true;
-            self.handle.close(None, None::<fn(*mut c_void)>);
+            self.handle
+                .close_impl(None, None::<fn(*mut c_void)>, self.close_fd);
         }
     }
 
@@ -1026,10 +1029,11 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
         }
 
         let parent = self.parent;
-        self.handle.close(
+        self.handle.close_impl(
             Some(parent.cast()),
             // SAFETY: parent was set via set_parent with a *mut Parent.
             Some(|ctx: *mut c_void| unsafe { Parent::on_close(ctx.cast::<Parent>()) }),
+            self.close_fd,
         );
     }
 

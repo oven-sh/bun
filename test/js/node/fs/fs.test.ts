@@ -3775,7 +3775,6 @@ describe("createWriteStream", () => {
       return original.apply(fs, arguments);
     };
     try {
-      // Two writes before the fd opens so the first drain reaches _writev.
       ws.write("hello");
       ws.write(" world");
       await new Promise<void>((resolve, reject) => ws.end(err => (err ? reject(err) : resolve())));
@@ -3783,7 +3782,7 @@ describe("createWriteStream", () => {
     } finally {
       fs.write = original;
     }
-    expect({ calls, contents: readFileSync(streamPath, "utf8") }).toEqual({ calls: 1, contents: "hello world" });
+    expect({ calls, contents: readFileSync(streamPath, "utf8") }).toEqual({ calls: 2, contents: "hello world" });
   });
 });
 

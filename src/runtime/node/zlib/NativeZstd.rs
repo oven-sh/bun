@@ -491,32 +491,27 @@ mod _impl {
             self.flush = flush;
         }
 
-        const ZSTD_MAGICNUMBER: u32 = 0xFD2FB528;
-        const ZSTD_MAGIC_SKIPPABLE_START: u32 = 0x184D2A50;
-        const ZSTD_MAGIC_SKIPPABLE_MASK: u32 = 0xFFFFFFF0;
+        const ZSTD_MAGICNUMBER: [u8; 4] = 0xFD2FB528u32.to_le_bytes();
+        const ZSTD_MAGIC_SKIPPABLE: [u8; 4] = 0x184D2A50u32.to_le_bytes();
 
         /// True when the unconsumed input begins a zstd/skippable frame magic (or a prefix of one).
         fn next_input_is_frame(&self) -> bool {
-            let avail = self.input.size - self.input.pos;
-            if avail == 0 {
+            let n = (self.input.size - self.input.pos).min(4);
+            if n == 0 {
                 return false;
             }
-            // SAFETY: input.src[..input.size] is the caller-kept-alive slice from set_buffers; pos < size here.
-            let rest = unsafe {
-                core::slice::from_raw_parts(
+            let mut head = [0u8; 4];
+            // SAFETY: input.src[pos..pos+n] lies within the slice installed by set_buffers.
+            unsafe {
+                ptr::copy_nonoverlapping(
                     self.input.src.cast::<u8>().add(self.input.pos),
-                    avail.min(4),
-                )
-            };
-            let frame = Self::ZSTD_MAGICNUMBER.to_le_bytes();
-            let skippable = Self::ZSTD_MAGIC_SKIPPABLE_START.to_le_bytes();
-            if rest.len() < 4 {
-                return rest == &frame[..rest.len()]
-                    || (rest[0] & 0xF0 == skippable[0] && rest[1..] == skippable[1..rest.len()]);
+                    head.as_mut_ptr(),
+                    n,
+                );
             }
-            let magic = u32::from_le_bytes([rest[0], rest[1], rest[2], rest[3]]);
-            magic == Self::ZSTD_MAGICNUMBER
-                || magic & Self::ZSTD_MAGIC_SKIPPABLE_MASK == Self::ZSTD_MAGIC_SKIPPABLE_START
+            head[..n] == Self::ZSTD_MAGICNUMBER[..n]
+                || (head[0] & 0xF0 == Self::ZSTD_MAGIC_SKIPPABLE[0]
+                    && head[1..n] == Self::ZSTD_MAGIC_SKIPPABLE[1..n])
         }
 
         pub fn do_work(&mut self) {

@@ -264,7 +264,10 @@ describe("Response(async iterable).body: direct-controller pump guard", () => {
   // pump loop synchronously inside the first callDirectPull frame. Both, across every
   // non-Promise reader kind, must deliver the exact total.
   test.concurrent.each([
-    ["async function*", `async function* it() { for (let i = 0; i < 300; i++) yield new Uint8Array(1024).fill(0x61); }`],
+    [
+      "async function*",
+      `async function* it() { for (let i = 0; i < 300; i++) yield new Uint8Array(1024).fill(0x61); }`,
+    ],
     [
       "Promise.resolve next()",
       `function it() {

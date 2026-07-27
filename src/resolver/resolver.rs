@@ -4430,6 +4430,17 @@ impl<'a> Resolver<'a> {
                             }
                             if let crate::Error::Sys(e) = err {
                                 if e.is_fd_or_memory_exhaustion() {
+                                    if enable_logging {
+                                        let _ = self.log_mut().add_error_fmt(
+                                            None,
+                                            bun_ast::Loc::default(),
+                                            format_args!(
+                                                "Cannot read directory \"{}\": {}",
+                                                bstr::BStr::new(queue_top_unsafe_path),
+                                                bstr::BStr::new(err.name())
+                                            ),
+                                        );
+                                    }
                                     return Err(err);
                                 }
                             }

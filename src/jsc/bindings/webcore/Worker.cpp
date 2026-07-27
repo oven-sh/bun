@@ -506,14 +506,23 @@ void Worker::dispatchOnline(Zig::GlobalObject* workerGlobalObject)
     }
     RELEASE_ASSERT(&thisContext->vm() == &workerGlobalObject->vm());
     RELEASE_ASSERT(thisContext == workerGlobalObject->globalEventScope->scriptExecutionContext());
+
+    // Web workers: the dedicated worker's implicit port is enabled after the
+    // worker script has evaluated (HTML "run a worker"), not on the first
+    // listener. Starting here keeps a listener-less Web worker from
+    // accumulating the parent's postMessage() calls unboundedly.
+    // Node workers start on the first listener (onDidChangeListenerImpl).
+    if (m_options.kind == WorkerOptions::Kind::Web)
+        startWorkerInbox();
 }
 
 void Worker::fireEarlyMessages(Zig::GlobalObject* workerGlobalObject)
 {
     // Tasks queued against the worker while it was Pending (getHeapSnapshot
     // etc). Message delivery is NOT driven here: the inbox buffers until
-    // startWorkerInbox() flips m_toWorker.started (first 'message' listener)
-    // and schedules the first drain itself.
+    // startWorkerInbox() flips m_toWorker.started (first 'message' listener
+    // for Node workers; dispatchOnline for Web) and schedules the first drain
+    // itself.
     auto tasks = [&]() {
         Locker lock(m_pendingTasksMutex);
         return std::exchange(m_pendingTasks, {});

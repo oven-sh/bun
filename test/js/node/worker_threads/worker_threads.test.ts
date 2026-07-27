@@ -1775,7 +1775,7 @@ describe("parentPort buffers until the first 'message' listener", () => {
     );
     try {
       for (let i = 0; i < 100; i++) w.postMessage("m" + i);
-      const got = await new Promise<any[]>(r => w.once("message", r));
+      const [got] = await once(w, "message");
       expect(got).toEqual(Array.from({ length: 100 }, (_, i) => "m" + i));
     } finally {
       await w.terminate();
@@ -1796,7 +1796,7 @@ describe("parentPort buffers until the first 'message' listener", () => {
     );
     try {
       w.postMessage("x");
-      const reply = await new Promise(r => w.once("message", r));
+      const [reply] = await once(w, "message");
       expect(reply).toBe("got:x");
     } finally {
       await w.terminate();
@@ -1815,10 +1815,31 @@ describe("parentPort buffers until the first 'message' listener", () => {
     );
     try {
       for (let i = 0; i < 20; i++) w.postMessage(i);
-      const got = await new Promise<any[]>(r => w.once("message", r));
+      const [got] = await once(w, "message");
       expect(got).toEqual(Array.from({ length: 20 }, (_, i) => i));
     } finally {
       await w.terminate();
     }
+  });
+
+  test.concurrent("a handler that throws during entry-module load preserves process.on('exit')'s exitCode", async () => {
+    // Regression guard for test-worker-exit-code case 7/8: when the first drain runs
+    // inside the entry-module load's tick loop and the handler throws, the worker's
+    // process.on('exit') runs inside on_unhandled_rejection and may change exitCode.
+    // spin()'s Err(WorkerTerminated) arm must not clobber that value back to 1.
+    const w = new Worker(
+      `const { parentPort } = require("node:worker_threads");
+       parentPort.once("message", () => {
+         process.on("exit", () => { process.exitCode = 98; });
+         throw new Error("ok");
+       });`,
+      { eval: true },
+    );
+    // 'error' and 'exit' arrive back-to-back; register both listeners before awaiting.
+    const errP = new Promise<unknown>(r => w.once("error", r));
+    const exitP = new Promise<number>(r => w.once("exit", r));
+    w.postMessage("go");
+    expect(String(await errP)).toMatch(/ok/);
+    expect(await exitP).toBe(98);
   });
 });

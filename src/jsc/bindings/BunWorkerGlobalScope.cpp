@@ -20,11 +20,16 @@ void WorkerGlobalScope::onDidChangeListenerImpl(EventTarget& self, const AtomStr
             if (global.m_messageEventCount == 0) {
                 auto* ctx = global.scriptExecutionContext();
                 ctx->refEventLoop();
-                // First 'message' listener starts the parent→worker inbox so
-                // messages the parent posted before this add are delivered
-                // instead of dispatched into the void (node parentPort).
-                if (auto* worker = WebWorker__getParentWorker(bunVM(ctx->jsGlobalObject())))
-                    worker->startWorkerInbox();
+                // node parentPort only: the first 'message' listener starts the
+                // parent→worker inbox so messages the parent posted before this
+                // add are delivered instead of dispatched into the void. Web
+                // workers start unconditionally in dispatchOnline (HTML spec:
+                // the implicit port is enabled after entry eval regardless of
+                // listeners), so a listener-less Web worker doesn't accumulate.
+                if (auto* worker = WebWorker__getParentWorker(bunVM(ctx->jsGlobalObject()))) {
+                    if (worker->options().kind == WorkerOptions::Kind::Node)
+                        worker->startWorkerInbox();
+                }
             }
             global.m_messageEventCount++;
             break;

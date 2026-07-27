@@ -148,7 +148,10 @@ describe("attribute combinations every browser rejects", () => {
     test.each([
       [{ sameSite: "none", secure: true } as const, "s=v; Path=/; Secure; SameSite=None"],
       [{ partitioned: true, secure: true }, "s=v; Path=/; Secure; Partitioned; SameSite=Lax"],
-      [{ sameSite: "none", partitioned: true, secure: true } as const, "s=v; Path=/; Secure; Partitioned; SameSite=None"],
+      [
+        { sameSite: "none", partitioned: true, secure: true } as const,
+        "s=v; Path=/; Secure; Partitioned; SameSite=None",
+      ],
     ])("accepts %p", (options, serialized) => {
       expect(make("s", options).toString()).toBe(serialized);
     });

@@ -1043,6 +1043,22 @@ pub mod fs {
                     raised.max = lim.max.max(target);
                     if bun_sys::posix::setrlimit(resource, raised).is_ok() {
                         lim.cur = raised.cur;
+                    } else {
+                        // Unprivileged processes cannot raise rlim_max (EPERM),
+                        // so when target exceeds the current hard limit the
+                        // attempt above fails outright and leaves the soft
+                        // limit at whatever low value the parent set -- e.g.
+                        // `ulimit -Sn 256 && exec bun` observed on OHOS, where
+                        // bun then runs the whole session with a 256-fd budget.
+                        // Fall back to Node's semantics: raise soft as far as
+                        // the hard limit allows.
+                        let mut clamped = lim;
+                        clamped.cur = lim.max.min(target);
+                        if clamped.cur > lim.cur
+                            && bun_sys::posix::setrlimit(resource, clamped).is_ok()
+                        {
+                            lim.cur = clamped.cur;
+                        }
                     }
                 }
                 Ok(usize::try_from(lim.cur).expect("int cast"))

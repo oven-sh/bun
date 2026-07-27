@@ -4,9 +4,9 @@
 // Close still queued to the drain buffer.
 // https://github.com/oven-sh/bun/issues/2177 — bufferedAmount always reported 0.
 import { expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import crypto from "node:crypto";
 import net from "node:net";
-import { bunEnv, bunExe } from "harness";
 
 const FIXTURE = require.resolve("./websocket-close-during-backpressure-fixture.ts");
 

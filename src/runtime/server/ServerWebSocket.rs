@@ -207,7 +207,7 @@ pub(super) fn blob_payload<'a>(
     };
     if blob.needs_to_read_file() || blob.is_s3() {
         return Err(global_this.throw(format_args!(
-            "{fn_name} cannot send a file-backed Blob synchronously; await blob.bytes() first"
+            "{fn_name} cannot send a file- or S3-backed Blob synchronously; await blob.bytes() first"
         )));
     }
     Ok(Some(blob.shared_view()))

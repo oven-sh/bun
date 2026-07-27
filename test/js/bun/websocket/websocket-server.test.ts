@@ -892,18 +892,20 @@ describe("ServerWebSocket", () => {
       });
     });
 
-    it.concurrent("throws on file-backed Blob", async () => {
+    it.concurrent("throws on file- or S3-backed Blob", async () => {
       using h = await openOne();
       h.ws.subscribe("t");
       using dir = tempDir("ws-blob-file", { "a.bin": "abcd" });
       const file = Bun.file(path.join(String(dir), "a.bin"));
-      expect(() => h.ws.send(file)).toThrow("send cannot send a file-backed Blob synchronously");
-      expect(() => h.ws.sendBinary(file)).toThrow("sendBinary cannot send a file-backed Blob synchronously");
-      expect(() => h.ws.publish("t", file)).toThrow("publish cannot send a file-backed Blob synchronously");
-      expect(() => h.ws.publishBinary("t", file)).toThrow("publishBinary cannot send a file-backed Blob synchronously");
-      expect(() => h.ws.ping(file)).toThrow("ping cannot send a file-backed Blob synchronously");
-      expect(() => h.ws.pong(file)).toThrow("pong cannot send a file-backed Blob synchronously");
-      expect(() => h.server.publish("t", file)).toThrow("publish cannot send a file-backed Blob synchronously");
+      const msg = (fn: string) =>
+        `${fn} cannot send a file- or S3-backed Blob synchronously; await blob.bytes() first`;
+      expect(() => h.ws.send(file)).toThrow(msg("send"));
+      expect(() => h.ws.sendBinary(file)).toThrow(msg("sendBinary"));
+      expect(() => h.ws.publish("t", file)).toThrow(msg("publish"));
+      expect(() => h.ws.publishBinary("t", file)).toThrow(msg("publishBinary"));
+      expect(() => h.ws.ping(file)).toThrow(msg("ping"));
+      expect(() => h.ws.pong(file)).toThrow(msg("pong"));
+      expect(() => h.server.publish("t", file)).toThrow(msg("publish"));
     });
   });
   describe("sendBinary()", () => {

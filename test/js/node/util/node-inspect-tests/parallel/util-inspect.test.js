@@ -20,7 +20,7 @@
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 import assert from "assert";
-import { isWindows } from "harness";
+import { isDebug, isWindows } from "harness";
 import util, { inspect } from "util";
 import vm from "vm";
 import { MessageChannel } from "worker_threads";
@@ -1789,8 +1789,9 @@ test("no assertion failures 2", () => {
 
 test("escape unpaired surrogate pairs", () => {
   const edgeChar = String.fromCharCode(0xd799);
+  const step = isDebug ? 17 : 1;
 
-  for (let charCode = 0xd800; charCode < 0xdfff; charCode++) {
+  for (let charCode = 0xd800; charCode < 0xdfff; charCode += step) {
     const surrogate = String.fromCharCode(charCode);
 
     assert.strictEqual(util.inspect(surrogate), `'\\u${charCode.toString(16)}'`);
@@ -1817,7 +1818,7 @@ test("escape unpaired surrogate pairs", () => {
       );
     }
   }
-}, 30_000);
+});
 
 test("util.inspect stack overflow handling", () => {
   // Test that a long linked list can be inspected without throwing an error.

@@ -587,13 +587,11 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
                         format_args!("writev() expects an array of ArrayBufferView"),
                     )));
                 };
+                let slice = buffer.slice();
                 // SAFETY: `roots` keeps every cell GC-live and no further user
                 // JS runs between here and `writev_bytes`, so the backing
                 // store cannot be detached out from under the slice.
-                let slice: &[u8] = buffer.slice();
-                let slice: &[u8] =
-                    unsafe { core::slice::from_raw_parts(slice.as_ptr(), slice.len()) };
-                slices.push(slice);
+                slices.push(unsafe { core::slice::from_raw_parts(slice.as_ptr(), slice.len()) });
             }
             Ok(this.sink.writev_bytes(&slices).to_js(global))
         })

@@ -651,13 +651,9 @@ impl FileSink {
         // Pollable fds need a per-sink epoll entry; dup those, adopt the rest.
         #[cfg(unix)]
         let fd = if borrowed && self.pollable.get() {
-            match bun_sys::dup_with_flags(fd, 0) {
-                sys::Result::Err(err) => return sys::Result::Err(err),
-                sys::Result::Ok(dup) => {
-                    owns_fd = true;
-                    dup
-                }
-            }
+            let dup = bun_sys::dup_with_flags(fd, 0)?;
+            owns_fd = true;
+            dup
         } else {
             fd
         };

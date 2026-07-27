@@ -1031,10 +1031,13 @@ void setUpDirectStreamController(JSC::JSGlobalObject* globalObject, JSReadableSt
         // Forwarded iff the raw strategy highWaterMark is a non-zero, non-NaN number.
         if (stream->m_bunHighWaterMarkIsNumber && highWaterMark != 0 && !std::isnan(highWaterMark)) {
             options->putDirect(vm, builtinNames(vm).highWaterMarkPublicName(), jsNumber(highWaterMark), 0);
+            // A double above UINT64_MAX (including Infinity) saturates; the compare is in the
+            // wide type so the cast never sees an out-of-range value.
+            constexpr double maxU64 = static_cast<double>(std::numeric_limits<uint64_t>::max());
             if (highWaterMark > 0)
-                controller->m_highWaterMark = std::isfinite(highWaterMark)
-                    ? static_cast<uint64_t>(highWaterMark)
-                    : std::numeric_limits<uint64_t>::max();
+                controller->m_highWaterMark = highWaterMark >= maxU64
+                    ? std::numeric_limits<uint64_t>::max()
+                    : static_cast<uint64_t>(highWaterMark);
         }
         options->putDirect(vm, builtinNames(vm).streamPublicName(), jsBoolean(true), 0);
         options->putDirect(vm, builtinNames(vm).asUint8ArrayPublicName(), jsBoolean(true), 0);

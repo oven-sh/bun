@@ -429,9 +429,10 @@ JSPromise* readableStreamCancel(JSGlobalObject* globalObject, JSReadableStream* 
         auto* controller = uncheckedDowncast<WebCore::JSDirectStreamController>(stream->m_controller.get());
         controller->onClose(globalObject, reason);
         RETURN_IF_EXCEPTION(scope, nullptr);
-        // readableStreamClose above already moved the stream out of Readable, so onClose
-        // early-returned; a direct read still pending on the controller settles as done here
-        // (a canceled read resolves with { value: undefined, done: true }).
+        // readableStreamClose above already moved the stream out of Readable, so onClose ran
+        // didDrain and source.close() and returned before touching m_pendingRead; a direct
+        // read still pending on the controller settles as done here (a canceled read resolves
+        // with { value: undefined, done: true }).
         if (auto* pendingRead = controller->m_pendingRead.get()) {
             controller->m_pendingRead.clear();
             JSObject* doneResult = createIteratorResultObject(globalObject, jsUndefined(), true);

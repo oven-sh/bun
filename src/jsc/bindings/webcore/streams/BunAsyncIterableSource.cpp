@@ -290,9 +290,14 @@ static NextStep asyncIterHandleNextResult(JSGlobalObject* globalObject, JSAsyncI
             markPromiseAsHandled(vm, wrotePromise);
             // A FileSink/NetworkSink write that could not complete returns its pending
             // promise; the sink's own drain callback resolves it.
-            if (wrotePromise->status() == JSPromise::Status::Pending) {
+            auto status = wrotePromise->status();
+            if (status == JSPromise::Status::Pending) {
                 wrotePromise->performPromiseThenWithContext(vm, globalObject, runtime->onAsyncIterableSourceFlushFulfilled(), runtime->onAsyncIterableSourceErrored(), jsUndefined(), op);
                 return NextStep::Suspended;
+            }
+            if (status == JSPromise::Status::Rejected) {
+                asyncIterFinishWithError(globalObject, op, wrotePromise->result());
+                return NextStep::Finished;
             }
         }
     }

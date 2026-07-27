@@ -1,6 +1,8 @@
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, isASAN, tmpdirSync } from "harness";
+import { once } from "node:events";
 import { readFileSync } from "node:fs";
+import net from "node:net";
 import { join } from "node:path";
 import tls from "node:tls";
 
@@ -739,5 +741,36 @@ describe.concurrent("fetch tls: client cert/key load errors surface the OpenSSL 
     expect(err.message).not.toContain("typo in the url");
     // The failing URL is attached like every other fetch rejection.
     expect(err.path).toBe(server.url.href);
+  });
+
+  // The http-proxy -> https-target CONNECT-tunnel path builds the client
+  // SSL_CTX at ProxyTunnel::start, after the proxy replies 200; that site must
+  // surface the same ERR_OSSL_* code instead of a generic ConnectionRefused.
+  it.each(cases)("via http CONNECT proxy: %s", async (_name, clientTls, codePattern) => {
+    const proxy = net.createServer(client => {
+      client.once("data", () => {
+        client.write("HTTP/1.1 200 Connection established\r\n\r\n");
+      });
+    });
+    proxy.listen(0, "127.0.0.1");
+    await once(proxy, "listening");
+    const proxyPort = (proxy.address() as net.AddressInfo).port;
+    try {
+      let err: any;
+      try {
+        await fetch(`https://127.0.0.1:1/`, {
+          proxy: `http://127.0.0.1:${proxyPort}`,
+          tls: { rejectUnauthorized: false, ...clientTls },
+        });
+      } catch (e) {
+        err = e;
+      }
+      expect(err).toBeDefined();
+      expect(err.code).toMatch(codePattern);
+      expect(err.code).not.toBe("ConnectionRefused");
+      expect(err.code).not.toBe("FailedToOpenSocket");
+    } finally {
+      proxy.close();
+    }
   });
 });

@@ -52,6 +52,22 @@ fn static_cstr<'a>(ptr: *const core::ffi::c_char) -> Option<&'a [u8]> {
     if bytes.is_empty() { None } else { Some(bytes) }
 }
 
+/// Compose Node's `ERR_OSSL_<LIB>_<REASON>` code (or `ERR_SSL_<REASON>` for the
+/// SSL library) from a packed BoringSSL error's library number and reason
+/// string. Shared by [`err_code_and_message`] and [`err_to_js`] so the two
+/// paths cannot drift.
+fn build_err_ossl_code(err_code: u32, reason: &[u8]) -> Vec<u8> {
+    let lib = lib_short_name((err_code >> 24) & 0xff);
+    // Don't generate codes like "ERR_OSSL_SSL_".
+    let prefix = if lib == "SSL_" { "" } else { "OSSL_" };
+    let mut code = Vec::with_capacity(4 + prefix.len() + lib.len() + reason.len());
+    code.extend_from_slice(b"ERR_");
+    code.extend_from_slice(prefix.as_bytes());
+    code.extend_from_slice(lib.as_bytes());
+    code.extend_from_slice(reason);
+    code
+}
+
 /// Format a packed BoringSSL error into `(code, message)` strings without
 /// touching JSC. `code` is Node's `ERR_OSSL_<LIB>_<REASON>` (or `ERR_SSL_*` for
 /// the SSL library); `message` is the raw `ERR_error_string_n` output. Both
@@ -69,18 +85,9 @@ pub fn err_code_and_message(err_code: u32) -> (Vec<u8>, Vec<u8>) {
     }
     let message = bun_core::slice_to_nul(&outbuf[..]).to_vec();
 
-    let code = if let Some(reason) = static_cstr(boring::ERR_reason_error_string(err_code)) {
-        let lib = lib_short_name((err_code >> 24) & 0xff);
-        let prefix = if lib == "SSL_" { "" } else { "OSSL_" };
-        let mut code = Vec::with_capacity(4 + prefix.len() + lib.len() + reason.len());
-        code.extend_from_slice(b"ERR_");
-        code.extend_from_slice(prefix.as_bytes());
-        code.extend_from_slice(lib.as_bytes());
-        code.extend_from_slice(reason);
-        code
-    } else {
-        Vec::new()
-    };
+    let code = static_cstr(boring::ERR_reason_error_string(err_code))
+        .map(|reason| build_err_ossl_code(err_code, reason))
+        .unwrap_or_default();
 
     (code, message)
 }
@@ -89,19 +96,7 @@ pub fn err_to_js(global: &JSGlobalObject, err_code: u32) -> JSValue {
     // The message is the raw ERR_error_string output
     // ("error:0b000074:X.509 certificate routines:OPENSSL_internal:..."),
     // exactly what Node built against BoringSSL produces - no prefix.
-    let mut outbuf = [0u8; 128 + 1];
-    let message_buf = &mut outbuf[..];
-
-    // SAFETY: message_buf is a valid writable buffer of message_buf.len() bytes.
-    unsafe {
-        boring::ERR_error_string_n(
-            err_code,
-            message_buf.as_mut_ptr().cast::<core::ffi::c_char>(),
-            message_buf.len(),
-        );
-    }
-
-    let error_message: &[u8] = bun_core::slice_to_nul(&outbuf[..]);
+    let (code, error_message) = err_code_and_message(err_code);
     if error_message.is_empty() {
         return global
             .err(
@@ -114,9 +109,7 @@ pub fn err_to_js(global: &JSGlobalObject, err_code: u32) -> JSValue {
     // A plain Error carrying Node's library/function/reason/code decomposition
     // of the OpenSSL error, the way ThrowCryptoError builds it: the code is
     // ERR_OSSL_<LIB>_<REASON> (or ERR_SSL_<REASON> for the SSL library).
-    // The message must own its bytes - `outbuf` is a stack buffer and the
-    // error instance outlives this frame.
-    let err = BunString::clone_utf8(error_message).to_error_instance(global);
+    let err = BunString::clone_utf8(&error_message).to_error_instance(global);
 
     if let Some(library) = static_cstr(boring::ERR_lib_error_string(err_code)) {
         err.put(global, b"library", ZigString::init(library).to_js(global));
@@ -126,15 +119,8 @@ pub fn err_to_js(global: &JSGlobalObject, err_code: u32) -> JSValue {
     }
     if let Some(reason) = static_cstr(boring::ERR_reason_error_string(err_code)) {
         err.put(global, b"reason", ZigString::init(reason).to_js(global));
-
-        let lib = lib_short_name((err_code >> 24) & 0xff);
-        // Don't generate codes like "ERR_OSSL_SSL_".
-        let prefix = if lib == "SSL_" { "" } else { "OSSL_" };
-        let mut code = Vec::with_capacity(4 + prefix.len() + lib.len() + reason.len());
-        code.extend_from_slice(b"ERR_");
-        code.extend_from_slice(prefix.as_bytes());
-        code.extend_from_slice(lib.as_bytes());
-        code.extend_from_slice(reason);
+    }
+    if !code.is_empty() {
         err.put(global, b"code", ZigString::init(&code).to_js(global));
     }
 

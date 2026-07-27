@@ -307,6 +307,13 @@ describe("Response(async iterable).body: direct-controller pump guard", () => {
           await new Response(it()).body.pipeTo(new WritableStream({ write(c) { total += c.byteLength; } }));
           out.pipeTo = total;
         }
+        {
+          let total = 0;
+          await new Response(it()).body
+            .pipeThrough(new TransformStream())
+            .pipeTo(new WritableStream({ write(c) { total += c.byteLength; } }));
+          out.pipeThrough = total;
+        }
         process.stdout.write(JSON.stringify(out) + "\\n");
         `,
       ],
@@ -316,7 +323,12 @@ describe("Response(async iterable).body: direct-controller pump guard", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
-    expect(JSON.parse(stdout.trim())).toEqual({ reader: 300 * 1024, forAwait: 300 * 1024, pipeTo: 300 * 1024 });
+    expect(JSON.parse(stdout.trim())).toEqual({
+      reader: 300 * 1024,
+      forAwait: 300 * 1024,
+      pipeTo: 300 * 1024,
+      pipeThrough: 300 * 1024,
+    });
     expect(exitCode).toBe(0);
   });
 

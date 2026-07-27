@@ -344,8 +344,6 @@ function isURL(value) {
 
 const SymbolToPrimitive = Symbol.toPrimitive;
 
-// Frozen to the names Node v26 sees on globalThis at bootstrap, before host
-// globals (Buffer, URL, SharedArrayBuffer, Float16Array, ...) are installed.
 // prettier-ignore
 const builtInObjects = new SafeSet([
   "AggregateError", "Array", "ArrayBuffer", "Atomics", "BigInt", "BigInt64Array",

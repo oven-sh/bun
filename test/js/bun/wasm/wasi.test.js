@@ -110,6 +110,39 @@ it("path_open reports the host errno to the guest when the open fails", () => {
   expect(wasi.FD_MAP.has(4)).toBe(false);
 });
 
+it("path_open does not special-case dev/tty or proc/* inside a preopen", () => {
+  using dir = tempDir("wasi-no-magic-paths", {});
+  const wasi = new WASI({ preopens: { "/sandbox": String(dir) } });
+  wasi.setMemory(new WebAssembly.Memory({ initial: 1 }));
+  const memory = Buffer.from(wasi.memory.buffer);
+  const view = new DataView(wasi.memory.buffer);
+
+  const WASI_ENOENT = 44;
+  const WASI_ENOTCAPABLE = 76;
+  const WASI_RIGHT_FD_READ = BigInt(2);
+  const preopenFd = 3;
+  const pathPtr = 1024;
+  const fdPtr = 16384;
+  const sentinel = 0x7fffffff;
+
+  const open = p => {
+    const len = memory.write(p, pathPtr);
+    view.setUint32(fdPtr, sentinel, true);
+    const rc = wasi.wasiImport.path_open(preopenFd, 0, pathPtr, len, 0, WASI_RIGHT_FD_READ, BigInt(0), 0, fdPtr);
+    return { rc, fd: view.getUint32(fdPtr, true) };
+  };
+
+  // "dev/tty" is just a path inside the preopen. It does not exist there, so
+  // the guest sees ENOENT. It must never be mapped to the host's stdin.
+  expect(open("dev/tty")).toEqual({ rc: WASI_ENOENT, fd: sentinel });
+  // Same for any "proc/*" path.
+  expect(open("proc/self/environ")).toEqual({ rc: WASI_ENOENT, fd: sentinel });
+  // An absolute guest path is outside the capability of any dirfd.
+  expect(open("/etc/passwd")).toEqual({ rc: WASI_ENOTCAPABLE, fd: sentinel });
+  // No descriptor was allocated for any of these.
+  expect(wasi.FD_MAP.has(4)).toBe(false);
+});
+
 it("path_* syscalls cannot escape the preopened directory", () => {
   using dir = tempDir("wasi-sandbox", {
     "secret.txt": "outside",

@@ -92,10 +92,8 @@ pub struct Ast<'a> {
 }
 
 bitflags::bitflags! {
-    /// Which of the printer's bare-identifier constants (`undefined`/`NaN`/
-    /// `Infinity`) have a user declaration somewhere in this file. When the
-    /// symbol renamer has not run, the printer falls back to `void 0` / `0/0`
-    /// / `1/0` for the flagged ones so a local binding cannot capture them.
+    /// Set for each of `undefined`/`NaN`/`Infinity` that has a user declaration
+    /// anywhere in this file. Read by `js_printer::Options::can_emit_const_value_identifier`.
     #[derive(Default, Clone, Copy, PartialEq, Eq)]
     pub struct ConstValuesDeclared: u8 {
         const UNDEFINED = 1 << 0;

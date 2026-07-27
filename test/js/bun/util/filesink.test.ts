@@ -221,6 +221,7 @@ describe("FileSink", () => {
   });
 });
 
+import { once } from "node:events";
 import fs from "node:fs";
 import net from "node:net";
 import path from "node:path";
@@ -532,9 +533,8 @@ if (isWindows) {
     const pipePath = `\\\\.\\pipe\\bun-filesink-${process.pid}-${Date.now()}`;
     let received = "";
     const server = net.createServer(c => c.on("data", d => (received += d)));
-    const { promise: listening, resolve: onListen } = Promise.withResolvers<void>();
-    server.listen(pipePath, onListen);
-    await listening;
+    server.listen(pipePath);
+    await once(server, "listening");
 
     const fd = fs.openSync(pipePath, "w");
     try {

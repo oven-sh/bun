@@ -3458,7 +3458,7 @@ pub mod __gated_printer {
                         self.print(b"(");
                         flags.remove(ExprFlag::ForbidIn);
                     }
-                    self.print_expr(e.test_, Level::Conditional, flags);
+                    self.print_expr(e.test, Level::Conditional, flags);
                     self.print_space();
                     self.print(b"?");
                     self.print_space();
@@ -5561,7 +5561,7 @@ pub mod __gated_printer {
                     self.print(b"while");
                     self.print_space();
                     self.print(b"(");
-                    self.print_expr(s.test_, Level::Lowest, ExprFlag::none());
+                    self.print_expr(s.test, Level::Lowest, ExprFlag::none());
                     self.print(b")");
                     self.print_semicolon_after_statement();
                 }
@@ -5608,7 +5608,7 @@ pub mod __gated_printer {
                     self.print(b"while");
                     self.print_space();
                     self.print(b"(");
-                    self.print_expr(s.test_, Level::Lowest, ExprFlag::none());
+                    self.print_expr(s.test, Level::Lowest, ExprFlag::none());
                     self.print(b")");
                     self.print_body(s.body, tlmtlo.sub_var());
                 }
@@ -5642,18 +5642,18 @@ pub mod __gated_printer {
                     let sub_var_try = tlmtlo.sub_var();
                     self.print_block(s.body_loc, slice_of(s.body), None, sub_var_try);
 
-                    if let Some(catch_) = &s.catch_ {
+                    if let Some(catch) = &s.catch {
                         self.print_space();
-                        self.add_source_mapping(catch_.loc);
+                        self.add_source_mapping(catch.loc);
                         self.print(b"catch");
-                        if let Some(binding) = &catch_.binding {
+                        if let Some(binding) = &catch.binding {
                             self.print_space();
                             self.print(b"(");
                             self.print_binding(*binding, TopLevelAndIsExport::default());
                             self.print(b")");
                         }
                         self.print_space();
-                        self.print_block(catch_.body_loc, slice_of(catch_.body), None, sub_var_try);
+                        self.print_block(catch.body_loc, slice_of(catch.body), None, sub_var_try);
                     }
 
                     if let Some(finally) = &s.finally {
@@ -5679,8 +5679,8 @@ pub mod __gated_printer {
 
                     self.print(b";");
 
-                    if let Some(test_) = &s.test_ {
-                        self.print_expr(*test_, Level::Lowest, ExprFlag::none());
+                    if let Some(test) = &s.test {
+                        self.print_expr(*test, Level::Lowest, ExprFlag::none());
                     }
 
                     self.print(b";");
@@ -5700,7 +5700,7 @@ pub mod __gated_printer {
                     self.print(b"switch");
                     self.print_space();
                     self.print(b"(");
-                    self.print_expr(s.test_, Level::Lowest, ExprFlag::none());
+                    self.print_expr(s.test, Level::Lowest, ExprFlag::none());
                     self.print(b")");
                     self.print_space();
                     self.print(b"{");
@@ -6281,7 +6281,7 @@ pub mod __gated_printer {
             self.print(b"if");
             self.print_space();
             self.print(b"(");
-            self.print_expr(s.test_, Level::Lowest, ExprFlag::none());
+            self.print_expr(s.test, Level::Lowest, ExprFlag::none());
             self.print(b")");
 
             match &s.yes.data {

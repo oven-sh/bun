@@ -71,7 +71,7 @@ pub struct MiniEventLoop {
     // Raw pointer because the loop is C-owned
     // (created by `uws_get_loop`/`us_create_loop`) and outlives this struct.
     pub loop_: *mut UwsLoop,
-    pub file_polls_: Option<Box<FilePollStore>>,
+    pub file_polls: Option<Box<FilePollStore>>,
     /// Mutable; callers (shell spawn,
     /// `createNullDelimitedEnvMap`) write through it. Stored as `NonNull`
     /// (BACKREF) so [`EventLoopHandle::env`] can hand out a `*mut` with
@@ -239,14 +239,14 @@ impl MiniEventLoop {
     ///
     /// # Safety
     /// `this` must point to a live `MiniEventLoop`. Caller must not hold a
-    /// live `&mut` to `file_polls_` itself across this call. (Not eligible for
+    /// live `&mut` to `file_polls` itself across this call. (Not eligible for
     /// `unsafe-fn-narrow`: every unsafe op below derefs the caller-supplied
     /// `this`; the body cannot discharge that precondition.)
     pub unsafe fn file_polls_raw(this: *mut Self) -> *mut FilePollStore {
         // SAFETY: caller guarantees `this` points to a live `MiniEventLoop` (see fn `# Safety`);
-        // `addr_of_mut!` projects to `file_polls_` without forming `&mut Self`.
+        // `addr_of_mut!` projects to `file_polls` without forming `&mut Self`.
         unsafe {
-            let slot = core::ptr::addr_of_mut!((*this).file_polls_);
+            let slot = core::ptr::addr_of_mut!((*this).file_polls);
             if (*slot).is_none() {
                 slot.write(Some(Box::new(FilePollStore::init())));
             }
@@ -264,7 +264,7 @@ impl MiniEventLoop {
             tasks: Queue::init(),
             concurrent_tasks: ConcurrentTaskQueue::default(),
             loop_: UwsLoop::get(),
-            file_polls_: None,
+            file_polls: None,
             env: None,
             top_level_dir: Box::default(),
             after_event_loop_callback_ctx: None,

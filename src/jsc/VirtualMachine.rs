@@ -1842,7 +1842,7 @@ bun_io::link_impl_EventLoopCtx! {
         platform_event_loop_ptr() => vm_from_owner(this.cast()).uws_loop(),
         file_polls_ptr() => {
             let rare = vm_from_owner(this.cast()).rare_data();
-            &raw mut **rare.file_polls_.get_or_insert_with(|| Box::new(bun_io::Store::init()))
+            &raw mut **rare.file_polls.get_or_insert_with(|| Box::new(bun_io::Store::init()))
         },
         // CROSS-THREAD: reached via `KeepAlive::unref_on_next_tick_concurrently`.
         // Do NOT route through `vm_from_owner()` — that mints `&mut VM`, which

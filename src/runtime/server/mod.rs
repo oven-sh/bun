@@ -293,11 +293,11 @@ pub struct NewServer<const SSL: bool, const DEBUG: bool> {
     pub user_routes: Vec<UserRoute<SSL, DEBUG>>,
 
     /// Raw shadow of the wrapper's `m_onClientError` WriteBarrier slot.
-    /// `JSValue::ZERO` when unset; written by `server_set_on_client_error_`.
+    /// `JSValue::ZERO` when unset; written by `server_set_on_client_error`.
     pub on_clienterror: JSValue,
 
     /// Raw shadow of the wrapper's `m_onConnection` WriteBarrier slot.
-    /// `JSValue::ZERO` when unset; written by `server_set_on_connection_`.
+    /// `JSValue::ZERO` when unset; written by `server_set_on_connection`.
     pub on_connection: JSValue,
 
     pub inspector_server_id: jsc::DebuggerId,

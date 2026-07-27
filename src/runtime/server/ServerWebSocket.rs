@@ -553,6 +553,9 @@ impl ServerWebSocket {
                     .run_error_callback(on_error, vm, global_object, this_value, err);
             }
             jsc::js_promise::Status::Pending => {
+                if self.is_closed() {
+                    return;
+                }
                 result.then2(
                     global_object,
                     this_value,
@@ -1561,19 +1564,18 @@ pub(crate) fn ws_handler_promise_reject(
     callframe: &CallFrame,
 ) -> JSValue {
     let [err, ws_value] = callframe.arguments_as_array::<2>();
-    let Some(this) = ws_value.as_class_ref::<ServerWebSocket>() else {
-        let _ = VirtualMachine::get_mut().uncaught_exception(global_object, err, true);
-        return JSValue::UNDEFINED;
-    };
     // `on_close` drops `m_server`, after which the handler backref may dangle.
-    if this.is_closed() {
-        let _ = VirtualMachine::get_mut().uncaught_exception(global_object, err, true);
-        return JSValue::UNDEFINED;
+    match ws_value.as_class_ref::<ServerWebSocket>() {
+        Some(this) if !this.is_closed() => {
+            let handler = this.handler();
+            let on_error = handler.on_error;
+            let vm = handler.vm();
+            handler.run_error_callback(on_error, vm, global_object, ws_value, err);
+        }
+        _ => {
+            let _ = jsc::JSPromise::rejected_promise(global_object, err);
+        }
     }
-    let handler = this.handler();
-    let on_error = handler.on_error;
-    let vm = handler.vm();
-    handler.run_error_callback(on_error, vm, global_object, ws_value, err);
     JSValue::UNDEFINED
 }
 

@@ -743,6 +743,35 @@ describe("Server", () => {
           expect(exitCode).toBe(0);
         });
       }
+
+      it.concurrent("surfaces a rejection that settles after ws.close() as unhandledRejection", async () => {
+        const script = /* js */ `
+          const done = Promise.withResolvers();
+          process.on('unhandledRejection', e => { console.log('UR:' + e.message); done.resolve(); });
+          process.on('uncaughtException', e => { console.log('UE:' + e.message); done.resolve(); });
+          const server = Bun.serve({
+            port: 0,
+            fetch(req, s) { if (s.upgrade(req)) return; return new Response(); },
+            websocket: {
+              message(ws) { ws.close(); return (async () => { await 1; throw new Error('boom'); })(); },
+              error(ws, err) { console.log('ERROR:' + err.message); done.resolve(); },
+            },
+          });
+          const c = new WebSocket('ws://127.0.0.1:' + server.port);
+          c.onopen = () => c.send('x');
+          await done.promise;
+          await new Promise(r => setImmediate(r));
+          server.stop(true);
+        `;
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "-e", script],
+          env: bunEnv,
+          stderr: "pipe",
+        });
+        const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+        expect(stdout.trim()).toBe("UR:boom");
+        expect(exitCode).toBe(0);
+      });
     });
   });
 });

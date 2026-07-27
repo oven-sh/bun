@@ -732,6 +732,37 @@ describe("ES Decorators", () => {
       expect(out).toContain("__legacyDecorateClassTS");
       expect(out).toContain("design:type");
     });
+
+    for (const [where, base, child] of [
+      ["child", {}, { experimentalDecorators: true, emitDecoratorMetadata: true }],
+      ["base", { experimentalDecorators: true, emitDecoratorMetadata: true }, {}],
+    ] as const) {
+      test(`experimentalDecorators in the ${where} of a tsconfig extends chain selects legacy decorators`, async () => {
+        using dir = tempDir("es-dec-ts-extends", {
+          "base.json": JSON.stringify({ compilerOptions: base }),
+          "tsconfig.json": JSON.stringify({ extends: "./base.json", compilerOptions: child }),
+          "test.ts": `
+            function d(target: any, key: any, desc: any) {
+              console.log(JSON.stringify([arguments.length, typeof key, typeof desc?.value]));
+            }
+            class Foo { @d m() {} }
+            void Foo;
+          `,
+        });
+
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "test.ts"],
+          env: bunEnv,
+          cwd: String(dir),
+          stderr: "pipe",
+        });
+
+        const [stdout, rawStderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(filterStderr(rawStderr)).toBe("");
+        expect(stdout.trim()).toBe(`[3,"string","function"]`);
+        expect(exitCode).toBe(0);
+      });
+    }
   });
 
   describe("extends clause", () => {

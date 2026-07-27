@@ -2485,6 +2485,15 @@ impl VirtualMachine {
                 return;
             }
             if !self.has_pending_loop_work() {
+                // tick()'s trailing handle_rejected_promises can leave a JSC
+                // microtask undrained (the Mode::Bun handled-by-listener arm).
+                // Drain once and re-check before concluding the TLA is stalled.
+                let _ = self.event_loop_mut().drain_microtasks();
+                if crate::JSPromise::status_ptr(promise) != crate::js_promise::Status::Pending
+                    || self.has_pending_loop_work()
+                {
+                    continue;
+                }
                 return;
             }
             self.auto_tick();
@@ -3400,7 +3409,6 @@ impl VirtualMachine {
         match self.unhandled_rejections_mode() {
             Mode::Bun => {
                 if handle_unhandled() {
-                    drain(self);
                     return;
                 }
                 // continue to default handler

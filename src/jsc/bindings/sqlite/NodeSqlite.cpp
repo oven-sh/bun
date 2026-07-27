@@ -225,17 +225,14 @@ static EncodedJSValue throwNodeState(JSGlobalObject* globalObject, ThrowScope& s
     return {};
 }
 
-// Node.js wires every node:sqlite prototype method with a V8
-// FunctionTemplate Signature, so a wrong-receiver call fails V8's signature
-// check and throws a plain TypeError("Illegal invocation") with no `.code`.
+// Matches V8's FunctionTemplate Signature rejection: plain TypeError, no .code.
 static EncodedJSValue throwIllegalInvocation(JSGlobalObject* globalObject, ThrowScope& scope)
 {
     scope.throwException(globalObject, JSC::createTypeError(globalObject, "Illegal invocation"_s));
     return {};
 }
 
-// Node's native THROW_ERR_ILLEGAL_CONSTRUCTOR constructs a plain Error, not
-// the TypeError that the JS-side ERR_ILLEGAL_CONSTRUCTOR produces.
+// Matches node_errors.h THROW_ERR_ILLEGAL_CONSTRUCTOR: plain Error, not TypeError.
 static EncodedJSValue throwIllegalConstructor(JSGlobalObject* globalObject, ThrowScope& scope)
 {
     return Bun::throwError(globalObject, scope, ErrorCode::ERR_ILLEGAL_CONSTRUCTOR_Error, "Illegal constructor"_s);

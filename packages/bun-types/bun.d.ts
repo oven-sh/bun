@@ -7004,8 +7004,12 @@ declare module "bun" {
        * Use this to abort the subprocess when another part of the program is
        * aborted, such as a `fetch`.
        *
-       * If the signal is aborted, the process is killed with the signal
-       * specified by `killSignal` (defaults to SIGTERM).
+       * If the signal is already aborted when `spawn` is called, no process is
+       * created and an `AbortError` (with `cause` set to `signal.reason`) is
+       * thrown synchronously.
+       *
+       * If the signal is aborted after the process starts, the process is
+       * killed with the signal specified by `killSignal` (defaults to SIGTERM).
        *
        * @example
        * ```ts

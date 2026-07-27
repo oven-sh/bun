@@ -157,7 +157,7 @@ impl Response {
     pub fn pause(&mut self) {
         c::uws_h3_res_pause(self)
     }
-    pub fn resume_(&mut self) {
+    pub fn resume(&mut self) {
         c::uws_h3_res_resume(self)
     }
     pub fn timeout(&mut self, seconds: u8) {

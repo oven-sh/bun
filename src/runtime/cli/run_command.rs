@@ -1741,9 +1741,9 @@ fn print_unhandled_version_note(vm: &mut VirtualMachine) {
 }
 
 impl RunCommand {
-    /// `_bootAndHandleError` — duplicate `path` to a process-lifetime buffer,
-    /// boot the VM, and on failure print the formatted error + `exit(1)`.
-    fn _boot_and_handle_error(ctx: &mut ContextData, path: &[u8], loader: Option<Loader>) -> bool {
+    /// Duplicate `path` to a process-lifetime buffer, boot the VM, and on
+    /// failure print the formatted error + `exit(1)`.
+    fn boot_and_handle_error(ctx: &mut ContextData, path: &[u8], loader: Option<Loader>) -> bool {
         if matches!(
             loader.or_else(|| Self::default_loader_for(path)),
             Some(Loader::Md)
@@ -2607,10 +2607,10 @@ impl RunCommand {
                     .unwrap_or(Loader::Tsx);
                 if loader.can_be_run_by_bun() || loader == Loader::Html || loader == Loader::Md {
                     bun_core::scoped_log!(RUN_LOG, "Resolved to: `{}`", bstr::BStr::new(path.text));
-                    // borrowck — `_boot_and_handle_error` takes
+                    // borrowck — `boot_and_handle_error` takes
                     // `&mut ctx`; copy `path.text` out of the resolver borrow.
                     let text: Box<[u8]> = path.text.to_vec().into_boxed_slice();
-                    return Ok(Self::_boot_and_handle_error(ctx, &text, Some(loader)));
+                    return Ok(Self::boot_and_handle_error(ctx, &text, Some(loader)));
                 } else {
                     bun_core::scoped_log!(
                         RUN_LOG,
@@ -2627,7 +2627,7 @@ impl RunCommand {
                 if strings::has_suffix_comptime(target_name, b".html")
                     && strings::contains_char(target_name, b'*')
                 {
-                    return Ok(Self::_boot_and_handle_error(
+                    return Ok(Self::boot_and_handle_error(
                         ctx,
                         target_name,
                         Some(Loader::Html),
@@ -2884,7 +2884,7 @@ impl RunCommand {
         };
         let _ = bun_sys::close(fd);
 
-        Self::_boot_and_handle_error(ctx, &absolute_script_path, None)
+        Self::boot_and_handle_error(ctx, &absolute_script_path, None)
     }
 
     /// `bun run -` — read script from stdin into `ctx.runtime_options.eval`
@@ -2924,7 +2924,7 @@ impl RunCommand {
         passthrough_list.append(&mut ctx.passthrough);
         ctx.passthrough = passthrough_list;
 
-        // NOT routed through `_boot_and_handle_error` — the
+        // NOT routed through `boot_and_handle_error` — the
         // stdin path skips the
         // `configure_allocator(long_running=true)` / `.md` checks and prints
         // `basename(target_name)` (= "-"), not `basename(entry_path)`
@@ -3024,7 +3024,7 @@ impl RunCommand {
             Self::exec_as_if_node_missing_script();
         }
 
-        // borrowck — `_boot_and_handle_error` takes `&mut ctx`, so
+        // borrowck — `boot_and_handle_error` takes `&mut ctx`, so
         // dupe the positional out before the call.
         let filename: Box<[u8]> = ctx.positionals[0].clone();
 
@@ -3049,7 +3049,7 @@ impl RunCommand {
         };
 
         // This arm calls `Run::boot`
-        // directly — NOT `_boot_and_handle_error` — so it (a) does not call
+        // directly — NOT `boot_and_handle_error` — so it (a) does not call
         // `Global::configure_allocator` and (b) uses the
         // `Output.err(err, "Failed to run script \"...\"")` form.
         let basename: Box<[u8]> = paths::basename(&normalized).to_vec().into_boxed_slice();

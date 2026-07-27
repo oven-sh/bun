@@ -830,7 +830,7 @@ __std_minmax_8i                                                                 
 
 # ----------------------------------------------------------------------------
 # MSVC CRT libm + mem*/str* SIMD variants. Gate: __isa_available.
-# (45 symbols)
+# (44 symbols)
 # ----------------------------------------------------------------------------
 __remainder_piby2_fma3      [AVX, FMA]
 __remainder_piby2_fma3_bdl  [AVX, FMA]
@@ -873,13 +873,32 @@ sinf                        [AVX, FMA]
 sinh_fma                    [AVX, FMA]
 sinhf_fma                   [AVX, FMA]
 strnlen                     [AVX, AVX2]
-strpbrk                     [AVX, AVX2]   # UCRT vectorized str routine, runtime-gated on __isa_available
 tan                         [AVX, FMA]
 tanf                        [AVX, FMA]
 tanh_fma                    [AVX, FMA]
 tanhf_fma                   [AVX, FMA]
 wcslen                      [AVX, AVX2]
 wcsnlen                     [AVX, AVX2]
+
+
+# ----------------------------------------------------------------------------
+# MSVC CRT strspn family. Data-in-.text false positive, NOT a gate.
+#
+# ucrt/string/amd64/strspn.c (compiled 3x for strspn/strcspn/strpbrk) is
+# SSE2-only; its `switch (shift)` over _mm_srli_si128/_mm_slli_si128 lowers
+# to an indirect `jmp *table[rbp + rax*4]` where MSVC stores the table as
+# three arrays of 4-byte image-relative RVAs in .text right after the
+# function's `ret`. Those RVAs change with link layout, and linear sweep
+# desyncs into them: entry bytes `C7 F8 ..`/`C6 F8 ..` decode as
+# XBEGIN/XABORT (handled in is_impossible_feature); `C4/C5/62/8F ..` can
+# decode as stray VEX/EVEX/XOP. Blanket-pass: the source has no post-SSE2
+# path to grow past, so a ceiling here just means the next layout that
+# decodes as FMA/BMI2/AVX512* re-flakes.
+# (3 symbols)
+# ----------------------------------------------------------------------------
+strcspn
+strpbrk
+strspn
 
 
 # ----------------------------------------------------------------------------

@@ -41,14 +41,6 @@ pub struct ExecState {
     pub output_queue: std::collections::VecDeque<*mut OutputTask<Ls>>,
 }
 
-/// Custom parse error for invalid options (ls uses its own per-byte parser,
-/// not the shared `FlagParser`).
-pub enum LsParseError {
-    /// Carries an owned 1-byte copy of the offending flag char.
-    IllegalOption(Box<[u8]>),
-    ShowUsage,
-}
-
 enum ParseFlag {
     ContinueParsing,
     Done,
@@ -80,17 +72,14 @@ impl Ls {
                 // which case we run once with ".".
                 let paths_start = match Self::parse_opts(interp, cmd) {
                     Ok(p) => p,
-                    Err(e) => {
-                        let buf: Vec<u8> = match e {
-                            LsParseError::IllegalOption(opt) => Builtin::fmt_error_arena(
-                                interp,
-                                cmd,
-                                Some(Kind::Ls),
-                                format_args!("illegal option -- {}\n", bstr::BStr::new(&opt[..])),
-                            )
-                            .to_vec(),
-                            LsParseError::ShowUsage => Kind::Ls.usage_string().to_vec(),
-                        };
+                    Err(opt) => {
+                        let buf: Vec<u8> = Builtin::fmt_error_arena(
+                            interp,
+                            cmd,
+                            Some(Kind::Ls),
+                            format_args!("illegal option -- {}\n", bstr::BStr::new(&opt[..])),
+                        )
+                        .to_vec();
                         Self::state_mut(interp, cmd).state = State::WaitingWriteErr;
                         return Builtin::write_failing_error(interp, cmd, &buf, 1);
                     }
@@ -234,9 +223,9 @@ impl Ls {
         OutputTask::<Ls>::start(output_task, interp, errstr.as_deref()).run(interp);
     }
 
-    /// Returns the index of the
-    /// first non-flag arg, or `None` if there are no positional args.
-    fn parse_opts(interp: &Interpreter, cmd: NodeId) -> Result<Option<usize>, LsParseError> {
+    /// Returns the index of the first non-flag arg, or `None` if there are no
+    /// positional args. `Err` carries the offending flag byte.
+    fn parse_opts(interp: &Interpreter, cmd: NodeId) -> Result<Option<usize>, Box<[u8]>> {
         let argc = Builtin::of(interp, cmd).args_slice().len();
         if argc == 0 {
             return Ok(None);
@@ -247,7 +236,7 @@ impl Ls {
             match Self::parse_flag(&mut Self::state_mut(interp, cmd).opts, flag) {
                 ParseFlag::Done => return Ok(Some(idx)),
                 ParseFlag::ContinueParsing => {}
-                ParseFlag::IllegalOption(s) => return Err(LsParseError::IllegalOption(s)),
+                ParseFlag::IllegalOption(s) => return Err(s),
             }
             idx += 1;
         }

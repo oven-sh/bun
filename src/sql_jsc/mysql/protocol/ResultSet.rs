@@ -169,7 +169,7 @@ impl<'a> Row<'a> {
                 // BIT(1) is a special case, it's a boolean
                 if column.column_length == 1 {
                     let slice = value.slice();
-                    *cell = SQLDataCell::bool_(!slice.is_empty() && slice[0] == 1);
+                    *cell = SQLDataCell::bool(!slice.is_empty() && slice[0] == 1);
                 } else {
                     *cell = SQLDataCell::raw(value);
                 }

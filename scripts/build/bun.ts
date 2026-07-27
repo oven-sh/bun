@@ -35,7 +35,14 @@ import { generateDepVersionsHeader } from "./depVersionsHeader.ts";
 import { allDeps } from "./deps/index.ts";
 import { lolhtml } from "./deps/lolhtml.ts";
 import { assert } from "./error.ts";
-import { bunIncludes, computeFlags, extraFlagsFor, linkDepends } from "./flags.ts";
+import {
+  builtinBytecodeEmbeddable,
+  builtinBytecodePath,
+  bunIncludes,
+  computeFlags,
+  extraFlagsFor,
+  linkDepends,
+} from "./flags.ts";
 import { writeIfChanged } from "./fs.ts";
 import type { BuildNode, Ninja } from "./ninja.ts";
 import { emitRust, linkerMapPath, rustLibPath, rustLtoLinkInputs } from "./rust.ts";
@@ -499,10 +506,32 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   // is rewritten with a regular-LTO summary first (identity elsewhere).
   const linkObjects = [...allObjects, ...rustLtoLinkInputs(n, cfg, rustObjects), ...windowsRes];
   const ldflags = [...flags.ldflags, ...systemLibs(cfg), ...shims.ldflags];
-  const exe = link(n, cfg, exeName, linkObjects, {
+  const linkOpts = {
     libs: depLibs,
     flags: ldflags,
     implicitInputs: [...linkImplicitInputs(cfg), ...shims.implicitInputs],
+  };
+
+  // ─── Builtin bytecode cache: inherit-only ───
+  // The precompiled builtin bytecode blob is never built by *this* build: it is
+  // published by an earlier canary (which runs its freshly linked binary with
+  // BUN_GENERATE_BUILTIN_BYTECODE) and downloaded into codegen/ by
+  // inheritBuiltinBytecode() in ci.ts — the same chain as the symbol order file.
+  // When present, .incbin it; otherwise the weak zero-size fallback definitions
+  // in InternalBuiltinBytecode.cpp leave the loader with an empty blob. Any
+  // staleness is handled at runtime (per-module source-hash + JSC cache version
+  // keys → miss → parse from source).
+  let builtinBytecodeObject: string | undefined;
+  if (builtinBytecodeEmbeddable(cfg) && existsSync(builtinBytecodePath(cfg))) {
+    const asm = resolve(cfg.codegenDir, "InternalBuiltinBytecode.S");
+    builtinBytecodeObject = cc(n, cfg, asm, {
+      flags: cFlagsFull,
+      implicitInputs: [builtinBytecodePath(cfg)],
+    });
+  }
+
+  const exe = link(n, cfg, exeName, builtinBytecodeObject ? [...linkObjects, builtinBytecodeObject] : linkObjects, {
+    ...linkOpts,
     // Declare the `-Wl,-Map=` side-product so `perf` symbolication picks it
     // up. Linux release only — the map flag itself is gated identically in
     // flags.ts.

@@ -758,6 +758,7 @@ function emitJsModules({ n, cfg, sources, o, dirStamp }: Ctx): void {
     resolve(cfg.codegenDir, "generated_resolved_source_tag.rs"),
     o.internalModulesAsm,
     o.internalModulesBin,
+    resolve(cfg.codegenDir, "InternalBuiltinBytecode.S"),
   ];
 
   n.build({

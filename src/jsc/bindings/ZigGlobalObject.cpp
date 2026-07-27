@@ -1,6 +1,7 @@
 #include "root.h"
 
 #include "ZigGlobalObject.h"
+#include "InternalBuiltinBytecode.h"
 #include "helpers.h"
 #include "JavaScriptCore/ArgList.h"
 #include "JavaScriptCore/JSCellButterfly.h"
@@ -1991,6 +1992,10 @@ void GlobalObject::finishCreation(VM& vm)
     setStackTraceLimit(DEFAULT_ERROR_STACK_TRACE_LIMIT);
 
     Base::finishCreation(vm);
+#ifndef BUN_DYNAMIC_JS_LOAD_PATH
+    if (const char* out = getenv("BUN_GENERATE_BUILTIN_BYTECODE")) [[unlikely]]
+        Bun::BuiltinBytecode::generateBlobAndExit(this, vm, out);
+#endif
     ASSERT(inherits(info()));
 
     m_commonStrings.initialize();

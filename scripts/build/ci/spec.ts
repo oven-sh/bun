@@ -40,7 +40,7 @@ import type { AgeSpec, BunSpec, CrossToolchains, LlvmSpec, NodejsSpec, PinnedRel
  * propagate a code-only recipe change (only entry values move the hash).
  * Changing OR removing this value renames all eight images.
  */
-export const epoch = 2;
+export const epoch = 3;
 
 /** Packer + provider plugin pins for the Windows bake (azure-arm). */
 export const packer = {

@@ -369,6 +369,9 @@ pub struct Iterator<'a, A: Accessor, const SENTINEL: bool> {
     /// directory being iterated on.
     #[cfg(debug_assertions)]
     pub fds_open: usize,
+    /// Dup'd [`GlobWalker::link_anchors`] handles currently live.
+    #[cfg(debug_assertions)]
+    anchors_open: usize,
 
     #[cfg(windows)]
     pub nt_filter_buf: [u16; 256],
@@ -387,6 +390,8 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
             cwd_fd: A::Handle::EMPTY,
             #[cfg(debug_assertions)]
             fds_open: 0,
+            #[cfg(debug_assertions)]
+            anchors_open: 0,
             #[cfg(windows)]
             nt_filter_buf: [0; 256],
         }
@@ -590,10 +595,20 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
         A::openat(self.cwd_fd, full_path_z)
     }
 
+    fn close_anchor(&mut self, fd: A::Handle) {
+        let _ = A::close(fd);
+        if count_fds::<A>() {
+            #[cfg(debug_assertions)]
+            {
+                self.anchors_open -= 1;
+            }
+        }
+    }
+
     fn truncate_followed_links(&mut self, len: usize) {
-        for anchor in self.walker.link_anchors.drain(len..) {
-            if let Some((fd, _)) = anchor {
-                let _ = A::close(fd);
+        while self.walker.link_anchors.len() > len {
+            if let Some((fd, _)) = self.walker.link_anchors.pop().flatten() {
+                self.close_anchor(fd);
             }
         }
         self.walker.followed_links.truncate(len);
@@ -1016,6 +1031,12 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                                     .is_some()
                                     .then(|| A::dup(dir_fd).ok().map(|fd| (fd, anchor_prefix_len)))
                                     .flatten();
+                                if count_fds::<A>() && link_anchor.is_some() {
+                                    #[cfg(debug_assertions)]
+                                    {
+                                        self.anchors_open += 1;
+                                    }
+                                }
                                 self.walker.push_work_item(
                                     WorkItem::new_with_fd(
                                         work_item.path,
@@ -1284,18 +1305,17 @@ impl<'a, A: Accessor, const SENTINEL: bool> Drop for Iterator<'a, A, SENTINEL> {
                 self.close_disallowing_cwd(fd);
             }
             if let Some((fd, _)) = work_item.link_anchor {
-                let _ = A::close(fd);
+                self.close_anchor(fd);
             }
         }
-        for anchor in self.walker.link_anchors.drain(..) {
-            if let Some((fd, _)) = anchor {
-                let _ = A::close(fd);
-            }
-        }
+        self.truncate_followed_links(0);
 
         if count_fds::<A>() {
             #[cfg(debug_assertions)]
-            debug_assert!(self.fds_open == 0);
+            {
+                debug_assert!(self.fds_open == 0);
+                debug_assert!(self.anchors_open == 0);
+            }
         }
     }
 }

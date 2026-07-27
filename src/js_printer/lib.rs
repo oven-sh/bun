@@ -4551,9 +4551,7 @@ pub mod __gated_printer {
                 set_flag(&mut item.flags, js_ast::flags::Property::IsComputed, true);
             }
 
-            // Annex B.3.1: `{__proto__: x}` sets [[Prototype]]; shorthand and
-            // computed forms define an own property instead. An `initializer`
-            // means a destructuring target, where the two forms are equivalent.
+            // Annex B.3.1: only a literal `__proto__:` key sets [[Prototype]]; shorthand and computed forms do not.
             let is_proto_setter_key = !IS_JSON
                 && !item.flags.contains(js_ast::flags::Property::IsComputed)
                 && item.kind == G::PropertyKind::Normal

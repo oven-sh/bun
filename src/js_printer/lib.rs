@@ -4333,9 +4333,9 @@ pub mod __gated_printer {
             value.is_sign_negative()
                 || (value == f64::INFINITY
                     && (self.options.minify_syntax
-                        || !self
-                            .options
-                            .can_emit_const_value_identifier(js_ast::ConstValuesDeclared::INFINITY)))
+                        || !self.options.can_emit_const_value_identifier(
+                            js_ast::ConstValuesDeclared::INFINITY,
+                        )))
                 || (value.is_nan()
                     && !self
                         .options

@@ -2853,14 +2853,15 @@ impl RunCommand {
 
         // fstat: directories cannot be run. if only there was a faster way to
         // check this
-        let is_dir = match bun_sys::fstat(fd) {
-            Ok(st) => bun_sys::S::ISDIR(st.st_mode as _),
+        let st = match bun_sys::fstat(fd) {
+            Ok(st) => st,
             Err(_) => {
                 let _ = bun_sys::close(fd);
                 return false;
             }
         };
-        if is_dir {
+        let mode = st.st_mode as bun_core::Mode;
+        if bun_sys::S::ISDIR(mode) {
             let _ = bun_sys::close(fd);
             return false;
         }
@@ -2869,6 +2870,28 @@ impl RunCommand {
             long_running: true,
             ..Default::default()
         });
+
+        // A pipe entry point (e.g. `bun <(echo ...)` opens `/dev/fd/N`, or a
+        // named FIFO) cannot be re-opened from its canonical path:
+        // `get_fd_path` yields `pipe:[inode]` on Linux and fails outright on
+        // macOS. Read it now from the open fd and route through the same
+        // `[stdin]` virtual-source path `exec_stdin` uses; the path as typed
+        // becomes `process.argv[1]`. Deliberately only FIFOs: sockets cannot
+        // be re-opened via /dev/fd on Linux so `open` above already failed,
+        // and char/block devices (e.g. /dev/zero) would read forever.
+        if bun_sys::S::ISFIFO(mode) {
+            let mut contents: Vec<u8> = Vec::new();
+            if bun_sys::File::from_fd(fd)
+                .read_to_end_into(&mut contents)
+                .is_err()
+            {
+                return false;
+            }
+            match Self::boot_stdin_script(ctx, contents.into_boxed_slice(), target) {
+                Ok(booted) => return booted,
+                Err(err) => Self::boot_failed_exit(ctx, target, &err),
+            }
+        }
 
         // Re-derive the canonical absolute path from the open fd (resolves
         // symlinks).
@@ -2901,7 +2924,18 @@ impl RunCommand {
         if bun_sys::File::stdin().read_to_end_into(&mut list).is_err() {
             return Ok(false);
         }
-        ctx.runtime_options.eval.script = list.into_boxed_slice();
+        Self::boot_stdin_script(ctx, list.into_boxed_slice(), b"-")
+    }
+
+    /// Boot an already-read script as the synthetic `cwd/[stdin]` entry point.
+    /// `argv1` is prepended to `ctx.passthrough` so it shows up as
+    /// `process.argv[1]` (`"-"` for stdin, the path as typed for a FIFO).
+    fn boot_stdin_script(
+        ctx: &mut ContextData,
+        script: Box<[u8]>,
+        argv1: &[u8],
+    ) -> crate::Result<bool> {
+        ctx.runtime_options.eval.script = script;
 
         #[cfg(windows)]
         const STDIN_TRIGGER: &[u8] = b"\\[stdin]";
@@ -2917,21 +2951,16 @@ impl RunCommand {
         entry_point_buf[cwd_len..cwd_len + STDIN_TRIGGER.len()].copy_from_slice(STDIN_TRIGGER);
         let entry_path = &entry_point_buf[..cwd_len + STDIN_TRIGGER.len()];
 
-        // Prepend "-" to `ctx.passthrough` so `process.argv[1]` matches
-        // Node's `node -` semantics.
         let mut passthrough_list: Vec<Box<[u8]>> = Vec::with_capacity(ctx.passthrough.len() + 1);
-        passthrough_list.push(b"-".to_vec().into_boxed_slice());
+        passthrough_list.push(argv1.to_vec().into_boxed_slice());
         passthrough_list.append(&mut ctx.passthrough);
         ctx.passthrough = passthrough_list;
 
-        // NOT routed through `_boot_and_handle_error` — the
-        // stdin path skips the
-        // `configure_allocator(long_running=true)` / `.md` checks and prints
-        // `basename(target_name)` (= "-"), not `basename(entry_path)`
-        // (= "[stdin]"), in the error message.
+        // NOT routed through `_boot_and_handle_error` — skip its `.md` check
+        // and print `basename(argv1)` rather than `"[stdin]"` on boot failure.
         let owned: Box<[u8]> = entry_path.to_vec().into_boxed_slice();
         if let Err(err) = Self::boot(ctx, owned, None) {
-            Self::boot_failed_exit(ctx, b"-", &err);
+            Self::boot_failed_exit(ctx, argv1, &err);
         }
         Ok(true)
     }

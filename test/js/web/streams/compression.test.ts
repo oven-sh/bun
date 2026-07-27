@@ -240,7 +240,11 @@ describe("CompressionStream and DecompressionStream", () => {
 
     test.each([
       ["zstd frame", zlib.zstdCompressSync(Buffer.from("second frame\n")), "first frame\nsecond frame\n"],
-      ["skippable frame", Buffer.concat([skippable, zlib.zstdCompressSync(Buffer.from("second frame\n"))]), "first frame\nsecond frame\n"],
+      [
+        "skippable frame",
+        Buffer.concat([skippable, zlib.zstdCompressSync(Buffer.from("second frame\n"))]),
+        "first frame\nsecond frame\n",
+      ],
     ] as const)("decompresses a multi-frame zstd stream split across writes (next = %s)", async (_, next, expected) => {
       const f1 = zlib.zstdCompressSync(Buffer.from("first frame\n"));
       const cat = Buffer.concat([f1, next]);

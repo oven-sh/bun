@@ -343,9 +343,7 @@ export function runSetupFunction(
     return this.promises;
   };
 
-  // Expose a shallow snapshot of the caller's config, not the live object:
-  // every option has already been consumed by the time setup() runs, so
-  // top-level writes here must not feed back into the build.
+  // Shallow snapshot: setup() writes must not reach the caller's object or the build.
   const { plugins: cfgPlugins, entrypoints: cfgEntrypoints, entryPoints: cfgEntryPoints } = config;
   const configSnapshot: BuildConfigExt = { ...config };
   if ($isJSArray(cfgPlugins)) configSnapshot.plugins = [...cfgPlugins];

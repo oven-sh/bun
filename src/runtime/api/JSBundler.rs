@@ -1188,10 +1188,7 @@ pub mod js_bundler {
                 }
             }
 
-            // Plugin setup() runs after every other config field has been read so
-            // that writes to `build.config` inside setup() cannot alter the build
-            // (entrypoints, outdir, define, ...). `build.config` is exposed to
-            // plugins as a read-only snapshot; see BundlerPlugin.ts.
+            // Plugin setup() runs last so writes to `build.config` cannot alter the build.
             if let Some(array) = config.get_array(global_this, "plugins")? {
                 let length = array.get_length(global_this)?;
                 let mut iter = array.array_iterator(global_this)?;

@@ -1147,16 +1147,16 @@ describe.concurrent("bun run", () => {
         `,
       });
 
-      // A PATH containing no real `node`. Bun prepends the shim dir itself, so
-      // the `node probe.js` in the script resolves to the shim regardless.
-      const noNodePath = isWindows ? (process.env.SystemRoot ?? "C:\\Windows") + "\\System32" : "/usr/bin:/bin";
-
-      const env: Record<string, string | undefined> = { ...bunEnv, PATH: noNodePath };
+      // A PATH that provably contains no real `node` (the tempdir itself).
+      // Bun prepends the shim dir before running the script, so `node probe.js`
+      // resolves to the shim regardless; `--shell=bun` avoids needing sh/bash
+      // on PATH.
+      const env: Record<string, string | undefined> = { ...bunEnv, PATH: String(dir) };
       delete env.NODE;
       delete env.npm_node_execpath;
 
       await using proc = Bun.spawn({
-        cmd: [bunExe(), ...(bunFlag ? ["--bun"] : []), "run", "probe"],
+        cmd: [bunExe(), ...(bunFlag ? ["--bun"] : []), "--shell=bun", "run", "probe"],
         cwd: String(dir),
         env,
         stdout: "pipe",

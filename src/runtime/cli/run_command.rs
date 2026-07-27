@@ -1840,11 +1840,12 @@ impl RunCommand {
             );
 
             const FILE_NAME: &str = const_format::concatcp!(
-                "bun-node",
-                if Environment::GIT_SHA_SHORT.len() > 0 {
-                    const_format::concatcp!("-", Environment::GIT_SHA_SHORT)
+                if Environment::IS_DEBUG {
+                    "bun-node-debug"
+                } else if Environment::GIT_SHA_SHORT.len() > 0 {
+                    const_format::concatcp!("bun-node-", Environment::GIT_SHA_SHORT)
                 } else {
-                    ""
+                    "bun-node"
                 },
                 "\\node.exe"
             );

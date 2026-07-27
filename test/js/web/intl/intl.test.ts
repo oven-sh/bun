@@ -141,6 +141,84 @@ describe("Intl.Collator", () => {
 });
 
 // ---------------------------------------------------------------------------
+// String.prototype.localeCompare — collator caching for (string locale, no options)
+// ---------------------------------------------------------------------------
+
+describe("String.prototype.localeCompare with a string locale", () => {
+  // JSC caches a per-global IntlCollator for a.localeCompare(b, "<locale>") with undefined
+  // options so that arr.sort((a, b) => a.localeCompare(b, "en")) does not rebuild a UCollator
+  // on every comparison. These tests guard against the cache returning stale results.
+
+  test("matches new Intl.Collator(locale).compare", () => {
+    for (const loc of ["en", "sv", "de", "ja", "fr", "de-u-co-phonebk"]) {
+      const cmp = new Intl.Collator(loc).compare;
+      for (const [a, b] of [["ä", "z"], ["ä", "ae"], ["a", "A"], ["abc", "abd"]] as const) {
+        expect(a.localeCompare(b, loc)).toBe(cmp(a, b));
+      }
+    }
+  });
+
+  test("changing the locale string returns the new locale's order", () => {
+    // Swedish puts ä after z, English before.
+    expect("ä".localeCompare("z", "en")).toBeLessThan(0);
+    expect("ä".localeCompare("z", "sv")).toBeGreaterThan(0);
+    expect("ä".localeCompare("z", "en")).toBeLessThan(0);
+    // German phonebook sorts ä with ae.
+    expect("ä".localeCompare("ae", "de")).toBeLessThan(0);
+    expect("ä".localeCompare("ae", "de-u-co-phonebk")).toBeGreaterThan(0);
+    expect("ä".localeCompare("ae", "de")).toBeLessThan(0);
+  });
+
+  test("invalid locale still throws; cache is not poisoned", () => {
+    expect("ä".localeCompare("z", "en")).toBeLessThan(0);
+    expect(() => "a".localeCompare("b", "bad locale!!")).toThrow(RangeError);
+    expect("ä".localeCompare("z", "en")).toBeLessThan(0);
+  });
+
+  test("does not leak into calls that pass options", () => {
+    expect("a".localeCompare("A", "en", { sensitivity: "base" })).toBe(0);
+    // The next call must use the default sensitivity, not the {base} collator above.
+    expect("a".localeCompare("A", "en")).not.toBe(0);
+  });
+
+  test("non-string locales and no-arg form still work", () => {
+    expect("ä".localeCompare("z", ["sv"])).toBeGreaterThan(0);
+    expect("ä".localeCompare("z", ["en"])).toBeLessThan(0);
+    expect(typeof "a".localeCompare("b")).toBe("number");
+  });
+
+  test("cached collator survives GC", () => {
+    "a".localeCompare("b", "fr");
+    Bun.gc(true);
+    expect("ä".localeCompare("z", "fr")).toBeLessThan(0);
+    Bun.gc(true);
+    expect("ä".localeCompare("z", "fr")).toBeLessThan(0);
+  });
+
+  test("reuses the collator: sort by localeCompare(b,'en') is as fast as a hoisted Intl.Collator", () => {
+    // A 3000-element sort does ~33k comparisons. With the cache this costs one
+    // ucol_open instead of ~33k, so the two sorts should take about the same time.
+    // Without the cache the ratio is >5 on a debug build and >20 on a release build.
+    const N = 3000;
+    const arr = Array.from({ length: N }, (_, i) => ((i * 2654435761) >>> 0).toString(36) + "aä"[i % 2]);
+
+    const warm = arr.slice(0, 50);
+    [...warm].sort((a, b) => a.localeCompare(b, "en"));
+    [...warm].sort(new Intl.Collator("en").compare);
+
+    let t = performance.now();
+    [...arr].sort((a, b) => a.localeCompare(b, "en"));
+    const withLocale = performance.now() - t;
+
+    t = performance.now();
+    [...arr].sort(new Intl.Collator("en").compare);
+    const hoisted = performance.now() - t;
+
+    expect(withLocale / hoisted).toBeLessThan(3);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Segmenter — brkitr/* raw (incl. cjdict)
 // ---------------------------------------------------------------------------
 

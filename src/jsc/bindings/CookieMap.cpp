@@ -182,8 +182,8 @@ void CookieMap::removeInternal(const String& name)
 
 ExceptionOr<void> CookieMap::set(Ref<Cookie> cookie)
 {
-    // Cookie.parse() does not enforce this; re-check before emitting.
-    if (auto validation = Cookie::validateSecureRequired(cookie->secure(), cookie->sameSite(), cookie->partitioned()); validation.hasException()) {
+    // Cookie.parse() does not enforce these rules; re-check before emitting.
+    if (auto validation = Cookie::validateAttributes(cookie->name(), cookie->domain(), cookie->path(), cookie->secure(), cookie->sameSite(), cookie->partitioned()); validation.hasException()) {
         return validation.releaseException();
     }
 
@@ -195,20 +195,26 @@ ExceptionOr<void> CookieMap::set(Ref<Cookie> cookie)
 
 ExceptionOr<void> CookieMap::remove(const CookieStoreDeleteOptions& options)
 {
-    removeInternal(options.name);
-
     String name = options.name;
     String domain = options.domain;
     String path = options.path;
-    bool secure = name.startsWithIgnoringASCIICase("__Secure-"_s) || name.startsWithIgnoringASCIICase("__Host-"_s);
+    // The expiring cookie must satisfy the prefix rules or the browser ignores it and the
+    // original cookie stays. A __Host- cookie could only have been accepted with no Domain
+    // and Path=/, so the tombstone is normalized to the only shape the browser can have stored.
+    bool hasHostPrefix = Cookie::hasHostPrefix(name);
+    bool secure = hasHostPrefix || Cookie::hasSecurePrefix(name);
+    if (hasHostPrefix) {
+        domain = String();
+        path = "/"_s;
+    }
 
-    // Add the new cookie
     auto cookie_exception = Cookie::create(name, ""_s, domain, path, 1, secure, CookieSameSite::Lax, false, std::numeric_limits<double>::quiet_NaN(), false);
     if (cookie_exception.hasException()) {
         return cookie_exception.releaseException();
     }
-    auto cookie = cookie_exception.releaseReturnValue();
-    m_modifiedCookies.append(WTF::move(cookie));
+
+    removeInternal(name);
+    m_modifiedCookies.append(cookie_exception.releaseReturnValue());
     return {};
 }
 

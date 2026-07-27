@@ -9592,6 +9592,11 @@ declare module "bun" {
     | [pkg: string, info: Pick<BunLockFileBasePackageInfo, "bin" | "binDir">];
 
   interface CookieInit {
+    /**
+     * A name starting with `__Secure-` requires `secure`, and a name starting with `__Host-`
+     * requires `secure`, no `domain`, and a `path` of `"/"`. Browsers ignore cookies that use
+     * one of these prefixes without meeting its requirements.
+     */
     name?: string;
     value?: string;
     domain?: string;

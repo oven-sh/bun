@@ -99,72 +99,108 @@ describe("Bun.Cookie validation tests", () => {
   });
 });
 
-// RFC 6265bis 5.6.20: a browser rejects SameSite=None without Secure. CHIPS likewise requires
-// Partitioned cookies to be Secure. Bun refuses to build a cookie a browser would silently drop.
-describe("SameSite=None / Partitioned require Secure", () => {
+// RFC 6265bis: browsers drop a SameSite=None or Partitioned cookie that isn't Secure, and a
+// __Secure-/__Host- cookie that doesn't meet the prefix rules. Bun refuses to build a cookie
+// every browser would silently drop.
+describe("attribute combinations every browser rejects", () => {
   const sameSiteNoneError = /"sameSite: none" requires secure: true/;
   const partitionedError = /"partitioned: true" requires secure: true/;
+  const hostSecureError = /"__Host-" name prefix requires secure: true/;
+  const hostDomainError = /"__Host-" name prefix does not allow a domain/;
+  const hostPathError = /"__Host-" name prefix requires path: "\/"/;
+  const securePrefixError = /"__Secure-" name prefix requires secure: true/;
 
   const expectTypeError = (fn: () => unknown, message: RegExp) => {
     expect(fn).toThrow(TypeError);
     expect(fn).toThrow(message);
   };
 
-  describe.each([
-    ["new Bun.Cookie(name, value, options)", (o: Bun.CookieInit) => new Bun.Cookie("s", "v", o)],
-    ["new Bun.Cookie(options)", (o: Bun.CookieInit) => new Bun.Cookie({ name: "s", value: "v", ...o })],
-    ["Bun.Cookie.from(name, value, options)", (o: Bun.CookieInit) => Bun.Cookie.from("s", "v", o)],
-  ] as const)("%s", (_, make) => {
-    test("sameSite: 'none' without secure throws", () => {
-      expectTypeError(() => make({ sameSite: "none" }), sameSiteNoneError);
-      expectTypeError(() => make({ sameSite: "none", secure: false }), sameSiteNoneError);
+  const setEntryPoints = [
+    ["new Bun.Cookie(name, value, options)", (n: string, o: Bun.CookieInit) => new Bun.Cookie(n, "v", o)],
+    ["new Bun.Cookie(options)", (n: string, o: Bun.CookieInit) => new Bun.Cookie({ name: n, value: "v", ...o })],
+    ["Bun.Cookie.from(name, value, options)", (n: string, o: Bun.CookieInit) => Bun.Cookie.from(n, "v", o)],
+    [
+      "CookieMap.set(name, value, options)",
+      (n: string, o: Bun.CookieInit) => {
+        const map = new Bun.CookieMap();
+        map.set(n, "v", o);
+        return Bun.Cookie.parse(map.toSetCookieHeaders()[0]);
+      },
+    ],
+  ] as const;
+
+  describe.each(setEntryPoints)("%s", (_, make) => {
+    test.each([
+      ["sameSite: 'none' without secure", "s", { sameSite: "none" } as const, sameSiteNoneError],
+      ["sameSite: 'none' with secure: false", "s", { sameSite: "none", secure: false } as const, sameSiteNoneError],
+      ["partitioned: true without secure", "s", { partitioned: true }, partitionedError],
+      ["partitioned: true with secure: false", "s", { partitioned: true, secure: false }, partitionedError],
+      ["__Host- without secure", "__Host-s", {}, hostSecureError],
+      ["__Host- with a domain", "__Host-s", { secure: true, domain: "example.com" }, hostDomainError],
+      ["__Host- with a non-/ path", "__Host-s", { secure: true, path: "/admin" }, hostPathError],
+      ["__Host- with an empty path", "__Host-s", { secure: true, path: "" }, hostPathError],
+      ["__Secure- without secure", "__Secure-s", {}, securePrefixError],
+      ["__Secure- with secure: false", "__Secure-s", { secure: false }, securePrefixError],
+    ])("throws for %s", (_, name, options, error) => {
+      expectTypeError(() => make(name, options), error);
     });
 
-    test("partitioned: true without secure throws", () => {
-      expectTypeError(() => make({ partitioned: true }), partitionedError);
-      expectTypeError(() => make({ partitioned: true, secure: false }), partitionedError);
+    test.each([
+      [{ sameSite: "none", secure: true } as const, "s=v; Path=/; Secure; SameSite=None"],
+      [{ partitioned: true, secure: true }, "s=v; Path=/; Secure; Partitioned; SameSite=Lax"],
+      [{ sameSite: "none", partitioned: true, secure: true } as const, "s=v; Path=/; Secure; Partitioned; SameSite=None"],
+    ])("accepts %p", (options, serialized) => {
+      expect(make("s", options).toString()).toBe(serialized);
     });
 
-    test("sameSite: 'none' with secure: true includes Secure", () => {
-      expect(make({ sameSite: "none", secure: true }).toString()).toBe("s=v; Path=/; Secure; SameSite=None");
-    });
-
-    test("partitioned: true with secure: true includes Secure", () => {
-      expect(make({ partitioned: true, secure: true }).toString()).toBe(
-        "s=v; Path=/; Secure; Partitioned; SameSite=Lax",
-      );
-    });
-
-    test("both together with secure: true", () => {
-      expect(make({ sameSite: "none", partitioned: true, secure: true }).toString()).toBe(
-        "s=v; Path=/; Secure; Partitioned; SameSite=None",
-      );
+    test.each([
+      ["__Host-s", { secure: true }, "__Host-s=v; Path=/; Secure; SameSite=Lax"],
+      ["__Host-s", { secure: true, sameSite: "none" } as const, "__Host-s=v; Path=/; Secure; SameSite=None"],
+      ["__Secure-s", { secure: true }, "__Secure-s=v; Path=/; Secure; SameSite=Lax"],
+      [
+        "__Secure-s",
+        { secure: true, domain: "example.com", path: "/admin" },
+        "__Secure-s=v; Domain=example.com; Path=/admin; Secure; SameSite=Lax",
+      ],
+    ])("accepts prefixed %p with %p", (name, options, serialized) => {
+      expect(make(name, options).toString()).toBe(serialized);
     });
   });
 
-  test("CookieMap.set throws for the same combinations", () => {
-    const map = new Bun.CookieMap();
-    expectTypeError(() => map.set("s", "v", { sameSite: "none" }), sameSiteNoneError);
-    expectTypeError(() => map.set("p", "v", { partitioned: true }), partitionedError);
-    expectTypeError(() => map.set({ name: "s", value: "v", sameSite: "none", httpOnly: true }), sameSiteNoneError);
-    expect(map.size).toBe(0);
+  test("the name prefix is matched case-insensitively, like browsers do", () => {
+    expectTypeError(() => new Bun.Cookie("__host-s", "v"), hostSecureError);
+    expectTypeError(() => new Bun.Cookie("__SECURE-s", "v"), securePrefixError);
+  });
 
-    map.set("s", "v", { sameSite: "none", secure: true });
-    map.set("p", "v", { partitioned: true, secure: true });
-    expect(map.toSetCookieHeaders()).toEqual([
-      "s=v; Path=/; Secure; SameSite=None",
-      "p=v; Path=/; Secure; Partitioned; SameSite=Lax",
-    ]);
+  test("a name that merely contains a prefix token is unaffected", () => {
+    expect(new Bun.Cookie("x__Host-s", "v").toString()).toBe("x__Host-s=v; Path=/; SameSite=Lax");
+    expect(new Bun.Cookie("__Host", "v").toString()).toBe("__Host=v; Path=/; SameSite=Lax");
+    expect(new Bun.Cookie("__Secure", "v").toString()).toBe("__Secure=v; Path=/; SameSite=Lax");
+  });
+
+  test("Cookie.parse reports what was on the wire without throwing", () => {
+    const cases = [
+      ["a=b; SameSite=None", { sameSite: "none", secure: false }],
+      ["a=b; Partitioned", { partitioned: true, secure: false }],
+      ["__Host-a=b", { name: "__Host-a", secure: false }],
+      ["__Host-a=b; Domain=example.com; Secure", { name: "__Host-a", domain: "example.com", secure: true }],
+      ["__Secure-a=b", { name: "__Secure-a", secure: false }],
+    ] as const;
+    for (const [header, expected] of cases) {
+      const parsed = Bun.Cookie.parse(header);
+      for (const [key, value] of Object.entries(expected)) {
+        expect(parsed[key as keyof Bun.Cookie]).toBe(value);
+      }
+    }
   });
 
   test.each([
-    ["s=v; SameSite=None", "sameSite", "none", sameSiteNoneError, "s=v; Path=/; Secure; SameSite=None"],
-    ["p=v; Partitioned", "partitioned", true, partitionedError, "p=v; Path=/; Secure; Partitioned; SameSite=Lax"],
-  ] as const)("CookieMap.set(Cookie) re-validates a parsed %p cookie", (header, attr, expected, error, fixed) => {
-    // Cookie.parse() reports what was on the wire; the Secure requirement is only enforced
-    // when the cookie is handed back to the write path.
+    ["s=v; SameSite=None", sameSiteNoneError, "s=v; Path=/; Secure; SameSite=None"],
+    ["p=v; Partitioned", partitionedError, "p=v; Path=/; Secure; Partitioned; SameSite=Lax"],
+    ["__Host-s=v", hostSecureError, "__Host-s=v; Path=/; Secure; SameSite=Lax"],
+    ["__Secure-s=v", securePrefixError, "__Secure-s=v; Path=/; Secure; SameSite=Lax"],
+  ] as const)("CookieMap.set(Cookie) re-validates a parsed %p cookie", (header, error, fixed) => {
     const parsed = Bun.Cookie.parse(header);
-    expect(parsed[attr]).toBe(expected);
     expect(parsed.secure).toBe(false);
 
     const map = new Bun.CookieMap();
@@ -219,6 +255,38 @@ describe("SameSite=None / Partitioned require Secure", () => {
       p.secure = false;
       expect(p.secure).toBe(false);
     });
+
+    test("secure = false throws on a prefixed cookie", () => {
+      const host = new Bun.Cookie("__Host-s", "v", { secure: true });
+      expectTypeError(() => (host.secure = false), hostSecureError);
+      expect(host.secure).toBe(true);
+
+      const sec = new Bun.Cookie("__Secure-s", "v", { secure: true });
+      expectTypeError(() => (sec.secure = false), securePrefixError);
+      expect(sec.secure).toBe(true);
+    });
+
+    test("domain / path setters throw on a __Host- cookie", () => {
+      const host = new Bun.Cookie("__Host-s", "v", { secure: true });
+      expectTypeError(() => (host.domain = "example.com"), hostDomainError);
+      expectTypeError(() => (host.path = "/admin"), hostPathError);
+      expectTypeError(() => (host.path = ""), hostPathError);
+      expect(host.toString()).toBe("__Host-s=v; Path=/; Secure; SameSite=Lax");
+
+      // __Secure- only constrains the secure flag.
+      const sec = new Bun.Cookie("__Secure-s", "v", { secure: true });
+      sec.domain = "example.com";
+      sec.path = "/admin";
+      expect(sec.toString()).toBe("__Secure-s=v; Domain=example.com; Path=/admin; Secure; SameSite=Lax");
+    });
+
+    test("setters on an unprefixed cookie are otherwise unaffected", () => {
+      const c = new Bun.Cookie("a", "v", { secure: true });
+      c.secure = false;
+      c.domain = "example.com";
+      c.path = "/admin";
+      expect(c.toString()).toBe("a=v; Domain=example.com; Path=/admin; SameSite=Lax");
+    });
   });
 
   test("Bun.serve req.cookies.set emits Secure alongside SameSite=None", async () => {
@@ -227,13 +295,17 @@ describe("SameSite=None / Partitioned require Secure", () => {
       routes: {
         "/": req => {
           req.cookies.set("session", "TOKEN", { sameSite: "none", secure: true, httpOnly: true });
+          req.cookies.set("__Host-id", "TOKEN", { secure: true });
           return new Response("ok");
         },
       },
       fetch: () => new Response("nf", { status: 404 }),
     });
     const res = await fetch(server.url);
-    expect(res.headers.getSetCookie()).toEqual(["session=TOKEN; Path=/; Secure; HttpOnly; SameSite=None"]);
+    expect(res.headers.getSetCookie()).toEqual([
+      "session=TOKEN; Path=/; Secure; HttpOnly; SameSite=None",
+      "__Host-id=TOKEN; Path=/; Secure; SameSite=Lax",
+    ]);
     expect(res.status).toBe(200);
   });
 

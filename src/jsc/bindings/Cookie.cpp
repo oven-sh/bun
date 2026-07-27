@@ -51,17 +51,44 @@ ExceptionOr<Ref<Cookie>> Cookie::create(const String& name, const String& value,
     return adoptRef(*new Cookie(name, value, domain, path, expires, secure, sameSite, httpOnly, maxAge, partitioned));
 }
 
-// RFC 6265bis 5.6.20 (SameSite=None) and CHIPS (Partitioned) both require Secure; browsers drop the cookie otherwise.
-ExceptionOr<void> Cookie::validateSecureRequired(bool secure, CookieSameSite sameSite, bool partitioned)
+bool Cookie::hasHostPrefix(const String& name)
 {
-    if (secure) {
-        return {};
+    return name.startsWithIgnoringASCIICase("__Host-"_s);
+}
+
+bool Cookie::hasSecurePrefix(const String& name)
+{
+    return name.startsWithIgnoringASCIICase("__Secure-"_s);
+}
+
+// RFC 6265bis attribute combinations that every browser rejects. Checked on the "set a cookie"
+// path (CookieInit construction, CookieMap::set, and the prototype setters); parse() reports
+// what was on the wire and does not run this.
+ExceptionOr<void> Cookie::validateAttributes(const String& name, const String& domain, const String& path, bool secure, CookieSameSite sameSite, bool partitioned)
+{
+    if (!secure) {
+        // RFC 6265bis 5.6.20 step 17 and CHIPS: browsers drop the cookie without Secure.
+        if (sameSite == CookieSameSite::None) {
+            return Exception { TypeError, "Invalid cookie: \"sameSite: none\" requires secure: true"_s };
+        }
+        if (partitioned) {
+            return Exception { TypeError, "Invalid cookie: \"partitioned: true\" requires secure: true"_s };
+        }
+        // RFC 6265bis 4.1.3: the name prefixes are matched case-insensitively.
+        if (hasHostPrefix(name)) {
+            return Exception { TypeError, "Invalid cookie: \"__Host-\" name prefix requires secure: true"_s };
+        }
+        if (hasSecurePrefix(name)) {
+            return Exception { TypeError, "Invalid cookie: \"__Secure-\" name prefix requires secure: true"_s };
+        }
     }
-    if (sameSite == CookieSameSite::None) {
-        return Exception { TypeError, "Invalid cookie: \"sameSite: none\" requires secure: true"_s };
-    }
-    if (partitioned) {
-        return Exception { TypeError, "Invalid cookie: \"partitioned: true\" requires secure: true"_s };
+    if (hasHostPrefix(name)) {
+        if (!domain.isEmpty()) {
+            return Exception { TypeError, "Invalid cookie: \"__Host-\" name prefix does not allow a domain"_s };
+        }
+        if (path != "/"_s) {
+            return Exception { TypeError, "Invalid cookie: \"__Host-\" name prefix requires path: \"/\""_s };
+        }
     }
     return {};
 }

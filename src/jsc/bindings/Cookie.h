@@ -53,7 +53,7 @@ public:
         if (!isValidCookieDomain(init.domain)) {
             return Exception { TypeError, "Invalid cookie domain: contains invalid characters"_s };
         }
-        if (auto validation = validateSecureRequired(init.secure, init.sameSite, init.partitioned); validation.hasException()) {
+        if (auto validation = validateAttributes(init.name, init.domain, init.path, init.secure, init.sameSite, init.partitioned); validation.hasException()) {
             return validation.releaseException();
         }
 
@@ -75,6 +75,9 @@ public:
         if (!isValidCookieDomain(domain)) {
             return Exception { TypeError, "Invalid cookie domain: contains invalid characters"_s };
         }
+        if (auto validation = validateAttributes(m_name, domain, m_path, m_secure, m_sameSite, m_partitioned); validation.hasException()) {
+            return validation.releaseException();
+        }
         m_domain = domain;
         return {};
     }
@@ -84,6 +87,9 @@ public:
     {
         if (!isValidCookiePath(path)) {
             return Exception { TypeError, "Invalid cookie path: contains invalid characters"_s };
+        }
+        if (auto validation = validateAttributes(m_name, m_domain, path, m_secure, m_sameSite, m_partitioned); validation.hasException()) {
+            return validation.releaseException();
         }
         m_path = path;
         return {};
@@ -96,7 +102,7 @@ public:
     bool secure() const { return m_secure; }
     ExceptionOr<void> setSecure(bool secure)
     {
-        if (auto validation = validateSecureRequired(secure, m_sameSite, m_partitioned); validation.hasException()) {
+        if (auto validation = validateAttributes(m_name, m_domain, m_path, secure, m_sameSite, m_partitioned); validation.hasException()) {
             return validation.releaseException();
         }
         m_secure = secure;
@@ -106,7 +112,7 @@ public:
     CookieSameSite sameSite() const { return m_sameSite; }
     ExceptionOr<void> setSameSite(CookieSameSite sameSite)
     {
-        if (auto validation = validateSecureRequired(m_secure, sameSite, m_partitioned); validation.hasException()) {
+        if (auto validation = validateAttributes(m_name, m_domain, m_path, m_secure, sameSite, m_partitioned); validation.hasException()) {
             return validation.releaseException();
         }
         m_sameSite = sameSite;
@@ -122,7 +128,7 @@ public:
     bool partitioned() const { return m_partitioned; }
     ExceptionOr<void> setPartitioned(bool partitioned)
     {
-        if (auto validation = validateSecureRequired(m_secure, m_sameSite, partitioned); validation.hasException()) {
+        if (auto validation = validateAttributes(m_name, m_domain, m_path, m_secure, m_sameSite, partitioned); validation.hasException()) {
             return validation.releaseException();
         }
         m_partitioned = partitioned;
@@ -141,7 +147,10 @@ public:
     static bool isValidCookiePath(const String& path);
     static bool isValidCookieDomain(const String& domain);
 
-    static ExceptionOr<void> validateSecureRequired(bool secure, CookieSameSite sameSite, bool partitioned);
+    static bool hasHostPrefix(const String& name);
+    static bool hasSecurePrefix(const String& name);
+
+    static ExceptionOr<void> validateAttributes(const String& name, const String& domain, const String& path, bool secure, CookieSameSite sameSite, bool partitioned);
 
 private:
     Cookie(const String& name, const String& value,

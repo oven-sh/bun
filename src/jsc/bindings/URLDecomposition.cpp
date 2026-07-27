@@ -153,10 +153,8 @@ void URLDecomposition::setHostname(StringView host)
     if (fullURL.hasOpaquePath())
         return;
 
-    // https://url.spec.whatwg.org/#host-state: with state override = hostname state, a ':'
-    // outside an IPv6 '[' ... ']' returns without setting anything. WTF::URL::setHost only
-    // guards "contains ':' and does not start with '['" so "[::1]:81" would otherwise reach
-    // the reparse and fill the port slot.
+    // https://url.spec.whatwg.org/#host-state with state override = hostname state: a ':'
+    // outside '[...]' is a no-op. WTF::URL::setHost lets a bracketed "[::1]:81" through.
     bool insideBrackets = false;
     bool special = fullURL.hasSpecialScheme();
     for (unsigned i = 0; i < host.length(); ++i) {

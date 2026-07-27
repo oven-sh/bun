@@ -1717,20 +1717,19 @@ impl<'a> Parser<'a> {
                 break 'outer;
             }
 
+            // A user import from one of these modules does not suppress
+            // injection: names the user imported shadow the pre-declared
+            // `Kind::Unbound` refs (so their `use_count_estimate` stays 0 and
+            // they are skipped below), while any remaining jest globals the
+            // file references are still synthesized. The only thing left to do
+            // here is invalidate the transpiler cache when the import path
+            // itself will be rewritten at resolve time.
             for item in p.import_records.items() {
-                // skip if they did import it
-                if item.path.text == b"bun:test"
-                    || item.path.text == b"@jest/globals"
-                    || item.path.text == b"vitest"
-                {
+                if item.path.text == b"@jest/globals" || item.path.text == b"vitest" {
                     if let Some(cache) = p.options.features.runtime_transpiler_cache_mut() {
-                        // If we rewrote import paths, we need to disable the runtime transpiler cache
-                        if item.path.text != b"bun:test" {
-                            cache.input_hash = None;
-                        }
+                        cache.input_hash = None;
                     }
-
-                    break 'outer;
+                    break;
                 }
             }
 

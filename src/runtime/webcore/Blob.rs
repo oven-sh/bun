@@ -5453,13 +5453,15 @@ fn write_string_to_file_fast<const NEEDS_OPEN: bool>(
         }
     };
 
-    // Non-regular files (FIFO/socket/chardev) can EAGAIN; hand the open fd
-    // to the async WriteFile path so it can wait for POLLOUT.
-    if NEEDS_OPEN && !str.is_empty() {
+    // Non-regular files (FIFO/socket/chardev) can EAGAIN; route them to the
+    // async WriteFile path before any bytes go out so it can wait for POLLOUT.
+    if !str.is_empty() {
         if let bun_sys::Result::Ok(st) = bun_sys::fstat(fd) {
             if !bun_sys::is_regular_file(st.st_mode as bun_sys::Mode) {
                 *needs_async = true;
-                *handoff_fd = Some(fd);
+                if NEEDS_OPEN {
+                    *handoff_fd = Some(fd);
+                }
                 return JSValue::ZERO;
             }
         }
@@ -5554,13 +5556,15 @@ fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
         }
     };
 
-    // Non-regular files (FIFO/socket/chardev) can EAGAIN; hand the open fd
-    // to the async WriteFile path so it can wait for POLLOUT.
-    if NEEDS_OPEN && !bytes.is_empty() {
+    // Non-regular files (FIFO/socket/chardev) can EAGAIN; route them to the
+    // async WriteFile path before any bytes go out so it can wait for POLLOUT.
+    if !bytes.is_empty() {
         if let bun_sys::Result::Ok(st) = bun_sys::fstat(fd) {
             if !bun_sys::is_regular_file(st.st_mode as bun_sys::Mode) {
                 *needs_async = true;
-                *handoff_fd = Some(fd);
+                if NEEDS_OPEN {
+                    *handoff_fd = Some(fd);
+                }
                 return JSValue::ZERO;
             }
         }

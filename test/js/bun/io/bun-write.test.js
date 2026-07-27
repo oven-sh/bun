@@ -739,16 +739,16 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
     ["Blob", payload => new Blob([payload])],
     ["Response", payload => new Response(payload)],
   ])("Bun.write(fifo, %s) larger than the pipe buffer", (label, toSource) => {
-    it("delivers every byte to the reader", async () => {
-      using dir = tempDir(`bun-write-fifo-${label}`, {});
+    // 200003 bytes: well over the 64 KiB Linux pipe buffer (and the 8 KiB
+    // minimum some CI kernels use), with a distinct tail so a torn prefix
+    // is visible.
+    const N = 200003;
+    const payload = Buffer.alloc(N - 3, "x").toString() + "END";
+
+    async function exercise(suffix, writeTo) {
+      using dir = tempDir(`bun-write-fifo-${label}-${suffix}`, {});
       const fifo = join(String(dir), "f.fifo");
       mkfifo(fifo);
-
-      // 200003 bytes: well over the 64 KiB Linux pipe buffer (and the 8 KiB
-      // minimum some CI kernels use), with a distinct tail so a torn prefix
-      // is visible.
-      const N = 200003;
-      const payload = Buffer.alloc(N - 3, "x").toString() + "END";
 
       // Open the read side synchronously with O_NONBLOCK so it returns
       // immediately (no writer required) and the writer's O_WRONLY|O_NONBLOCK
@@ -761,14 +761,16 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
         for await (const chunk of Bun.file(readFd).stream()) chunks.push(chunk);
         return Buffer.concat(chunks);
       })();
+      drained.catch(() => {});
 
       let got;
       let written;
       try {
-        written = await Bun.write(fifo, toSource(payload));
+        written = await writeTo(fifo, toSource(payload));
         got = await drained;
       } finally {
         fs.closeSync(readFd);
+        await drained.catch(() => {});
       }
 
       expect({ bytes: got.length, tail: got.subarray(-3).toString(), written }).toEqual({
@@ -776,6 +778,18 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
         tail: "END",
         written: N,
       });
-    });
+    }
+
+    it("delivers every byte to the reader (path dest)", () => exercise("path", (fifo, src) => Bun.write(fifo, src)));
+
+    it("delivers every byte to the reader (O_NONBLOCK fd dest)", () =>
+      exercise("fd", async (fifo, src) => {
+        const wfd = fs.openSync(fifo, fs.constants.O_WRONLY | fs.constants.O_NONBLOCK);
+        try {
+          return await Bun.write(Bun.file(wfd), src);
+        } finally {
+          fs.closeSync(wfd);
+        }
+      }));
   });
 });

@@ -4023,9 +4023,7 @@ impl VirtualMachine {
             Default::default(),
         );
         if let Some(result) = hardcoded_alias {
-            // `prefer_installed` builtins (undici) are only a fallback; an
-            // installed copy in node_modules wins, so those fall through to
-            // the filesystem resolver below.
+            // `prefer_installed` aliases fall through to the filesystem resolver.
             if !result.prefer_installed {
                 ret.result = None;
                 ret.path = result.path.as_bytes();
@@ -4078,9 +4076,7 @@ impl VirtualMachine {
         };
 
         let result: bun_resolver::Result = 'resolved: {
-            // `prefer_installed` builtin fallback: probe node_modules with
-            // auto-install disabled. Only an actually-installed package wins;
-            // otherwise the builtin is used (never auto-installed).
+            // Probe node_modules with auto-install disabled; miss = builtin.
             if let Some(alias) = hardcoded_alias {
                 let import_kind = if is_esm {
                     bun_ast::ImportKind::Stmt
@@ -4293,8 +4289,7 @@ impl VirtualMachine {
             bun_ast::Target::Bun,
             Default::default(),
         ) {
-            // `prefer_installed` builtins go through `_resolve`, which picks
-            // the installed package when present and falls back to the builtin.
+            // `prefer_installed` aliases are decided in `_resolve`.
             if !hardcoded.prefer_installed {
                 *res = ErrorableString::ok(if is_user_require_resolve && hardcoded.node_builtin {
                     specifier.dupe_ref()

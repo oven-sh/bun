@@ -1027,9 +1027,6 @@ impl TranspilerJob {
                 transpiler.options.target,
                 alias_cfg,
             ) {
-                // Keep the user-written specifier for `prefer_installed`
-                // targets; the runtime resolver decides between the installed
-                // package and the builtin fallback.
                 if !replacement.defers_to_resolve_time(transpiler.options.target, alias_cfg) {
                     import_record.path.text = replacement.path.as_bytes();
                 }

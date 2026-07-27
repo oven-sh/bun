@@ -437,10 +437,7 @@ impl Linker {
                             {
                                 continue;
                             }
-                            // Keep the user-written specifier for
-                            // `prefer_installed` targets; the runtime resolver
-                            // decides between the installed package and the
-                            // builtin fallback.
+                            // See `Alias::defers_to_resolve_time`.
                             if !replacement.defers_to_resolve_time {
                                 import_record.path.text = replacement.path;
                             }

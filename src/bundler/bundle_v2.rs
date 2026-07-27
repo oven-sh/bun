@@ -5887,10 +5887,6 @@ pub mod bv2_impl {
                             if replacement.node_builtin && !replacement.node_only_prefix {
                                 &replacement.path.as_bytes()[5..]
                             } else if replacement.defers_to_resolve_time(Target::Bun, alias_cfg) {
-                                // Keep the user-written specifier for
-                                // `prefer_installed` targets; the runtime
-                                // resolver decides between the installed
-                                // package and the builtin fallback.
                                 import_record.path.text
                             } else {
                                 replacement.path.as_bytes()

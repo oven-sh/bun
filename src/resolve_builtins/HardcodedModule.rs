@@ -770,9 +770,7 @@ const BUN_EXTRA_ALIAS_KVS: &[AliasKv] = &[
     entry!("@vercel/fetch"),
     entry!("isomorphic-fetch"),
     entry!("node-fetch"),
-    // Bun's undici shim is incomplete (no working MockAgent etc.), so an
-    // installed copy of the real package wins; the shim is only the fallback
-    // for when undici isn't in node_modules. See #36098.
+    // The shim is only a fallback; an installed undici wins (#36098).
     (
         b"undici",
         Alias {
@@ -962,11 +960,9 @@ impl Alias {
         Self::get(name, target, cfg).is_some()
     }
 
-    /// True when an import of `self.path` resolves differently depending on
-    /// what's installed (`prefer_installed`). Transpile-time rewrites must
-    /// then keep the original specifier and let resolution decide, instead
-    /// of baking `self.path` into printed output (where a later resolve of
-    /// the bare name could pick the installed package over the builtin).
+    /// True when an import of `self.path` is `prefer_installed`, so
+    /// transpile-time rewrites keep the original specifier and let
+    /// resolve time pick installed package vs builtin.
     pub fn defers_to_resolve_time(&self, target: Target, cfg: Cfg) -> bool {
         self.prefer_installed
             || Self::get(self.path.as_bytes(), target, cfg).is_some_and(|a| a.prefer_installed)

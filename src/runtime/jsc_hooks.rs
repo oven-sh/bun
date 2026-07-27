@@ -4912,9 +4912,7 @@ unsafe fn resolve<'a>(
     // Hardcoded builtin alias (`node:fs` etc.).
     let hardcoded_alias = Alias::get(specifier, Target::Bun, AliasCfg::default());
     if let Some(alias) = hardcoded_alias {
-        // `prefer_installed` builtins (undici) are only a fallback; an
-        // installed copy in node_modules wins, so those fall through to the
-        // filesystem resolver below.
+        // `prefer_installed` aliases fall through to the filesystem resolver.
         if !alias.prefer_installed {
             *ret_path = alias.path.as_bytes();
             return Ok(());
@@ -4971,9 +4969,7 @@ unsafe fn resolve<'a>(
     };
 
     let result: bun_resolver::Result = 'resolved: {
-        // `prefer_installed` builtin fallback: probe node_modules with
-        // auto-install disabled. Only an actually-installed package wins;
-        // otherwise the builtin is used (never auto-installed).
+        // Probe node_modules with auto-install disabled; miss = builtin.
         if let Some(alias) = hardcoded_alias {
             // SAFETY: `vm.transpiler.resolver` is the unique per-VM resolver;
             // this is the only `&mut` borrow live for this call.
@@ -5190,8 +5186,7 @@ unsafe fn resolve_hook(
     // `require.resolve("fs")` (`is_user_require_resolve && node_builtin`) Node
     // returns the bare specifier as-is, not the canonical `node:fs`.
     if let Some(hardcoded) = Alias::get(specifier_utf8.slice(), Target::Bun, AliasCfg::default()) {
-        // `prefer_installed` builtins go through `resolve` below, which picks
-        // the installed package when present and falls back to the builtin.
+        // `prefer_installed` aliases are decided in `resolve` below.
         if !hardcoded.prefer_installed {
             let path = if is_user_require_resolve && hardcoded.node_builtin {
                 specifier.dupe_ref()

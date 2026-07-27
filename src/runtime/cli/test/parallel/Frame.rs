@@ -70,7 +70,7 @@ impl Frame {
         self.buf.push(kind as u8);
     }
 
-    pub(crate) fn u32_(&mut self, v: u32) {
+    pub(crate) fn u32(&mut self, v: u32) {
         self.buf.extend_from_slice(&v.to_le_bytes());
     }
 
@@ -88,7 +88,7 @@ impl Frame {
             0
         };
         if s.len() <= room {
-            self.u32_(u32::try_from(s.len()).unwrap());
+            self.u32(u32::try_from(s.len()).unwrap());
             self.buf.extend_from_slice(s);
             return;
         }
@@ -97,7 +97,7 @@ impl Frame {
         } else {
             0
         };
-        self.u32_(u32::try_from(keep + TRUNC.len()).unwrap());
+        self.u32(u32::try_from(keep + TRUNC.len()).unwrap());
         self.buf.extend_from_slice(&s[0..keep]);
         self.buf.extend_from_slice(TRUNC);
     }
@@ -120,7 +120,7 @@ pub struct Reader<'a> {
 }
 
 impl<'a> Reader<'a> {
-    pub(crate) fn u32_(&mut self) -> u32 {
+    pub(crate) fn u32(&mut self) -> u32 {
         if self.p.len() < 4 {
             return 0;
         }
@@ -130,7 +130,7 @@ impl<'a> Reader<'a> {
     }
 
     pub(crate) fn str(&mut self) -> &'a [u8] {
-        let n = self.u32_() as usize;
+        let n = self.u32() as usize;
         if self.p.len() < n {
             return b"";
         }

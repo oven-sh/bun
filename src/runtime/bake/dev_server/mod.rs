@@ -284,7 +284,6 @@ pub mod source_map_store;
 
 pub use assets::Assets;
 pub use incremental_graph::IncrementalGraph;
-pub use packed_map::PackedMap;
 pub use route_bundle::RouteBundle;
 pub use serialized_failure::SerializedFailure;
 pub use source_map_store::SourceMapStore;

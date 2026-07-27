@@ -1186,6 +1186,8 @@ where
     pub fn end_already_responded_stream(&mut self) {
         ctx_log!("endAlreadyRespondedStream");
         debug_assert!(!HTTP3);
+        // `resp` may be freed (see above); the sink resumed it at `ended_response = true`.
+        self.flags.set_request_body_paused(false);
         if self.resp.take().is_some() {
             self.flags.set_is_waiting_for_request_body(false);
             self.flags.set_has_abort_handler(false);
@@ -1506,6 +1508,7 @@ where
         }
         self.response_weakref.deref();
 
+        self.clear_request_body_stream_drain_handler(global_this);
         self.request_body_readable_stream_ref.deinit();
 
         // Releases the ref taken in `set_cookies` (via `CookieMapRef::drop`).
@@ -2374,6 +2377,10 @@ where
         self.request_body_buf = Vec::new();
 
         if let Some(resp) = self.resp.take() {
+            if self.flags.request_body_paused() {
+                self.flags.set_request_body_paused(false);
+                resp.resume();
+            }
             if self.flags.is_waiting_for_request_body() {
                 self.flags.set_is_waiting_for_request_body(false);
                 resp.clear_on_data();
@@ -2855,6 +2862,13 @@ where
             req.flags.set_aborted(aborted);
             wrote_anything = wrapper.sink.wrote > 0;
             ended_response = wrapper.sink.ended_response;
+            if ended_response {
+                // `resp` may be freed; the sink already resumed it. Clear these
+                // before `detach()` below re-enters JS so any drain callback /
+                // `on_start_buffering` reached from there early-returns.
+                req.flags.set_request_body_paused(false);
+                req.clear_request_body_stream_drain_handler(req.server().global_this());
+            }
 
             wrapper.sink.finalize();
             let sink_global = wrapper
@@ -2939,6 +2953,11 @@ where
         if let Some(wrapper) = req.sink_mut() {
             let wrapper_ptr = req.sink.take().expect("infallible: sink_mut returned Some");
             ended_response = wrapper.sink.ended_response;
+            if ended_response {
+                // `resp` may be freed; the sink already resumed it. Clear before JS below.
+                req.flags.set_request_body_paused(false);
+                req.clear_request_body_stream_drain_handler(global_this);
+            }
             if let Some(prom) = wrapper.sink.pending_flush.take() {
                 // The promise value was protected when pending_flush was
                 // assigned (flushFromJS / endFromJS). Drop that root before
@@ -3901,6 +3920,7 @@ where
             if this.request_body_streamed_len > server.config().max_request_body_size {
                 this.resp.expect("infallible: resp bound").clear_on_data();
                 this.flags.set_is_waiting_for_request_body(false);
+                this.resume_request_body_socket();
 
                 let _exit = vm.enter_event_loop_scope();
 
@@ -3911,6 +3931,9 @@ where
 
                 readable.value.ensure_still_alive();
                 if let Some(bytes) = readable.ptr.bytes() {
+                    let source = bytes.parent_const();
+                    source.drain_handler.set(None);
+                    source.drain_ctx.set(None);
                     let mut err = Body::ValueError::Message(BunString::static_(
                         "Request body exceeded maxRequestBodySize",
                     ));
@@ -3951,7 +3974,17 @@ where
                 );
                 // TODO: properly propagate exception upwards
                 let _ = bytes.on_data(WebCore::streams::Result::Temporary(borrowed));
+
+                // What `on_data` buffered; `on_stream_drained` resumes once it empties.
+                let buffered = bytes.buffer.get().len().saturating_sub(bytes.offset.get());
+                if bytes.buffer_action.get().is_some() || bytes.pipe.get().ctx.is_some() {
+                    // `.text()`-after-`.body` / native pipe want it all; no `on_pull` will fire.
+                    this.resume_request_body_socket();
+                } else if buffered >= REQUEST_BODY_HIGH_WATER_MARK {
+                    this.pause_request_body_socket();
+                }
             } else {
+                this.resume_request_body_socket();
                 // Moved out so the Strong (and its underlying GC handle) is
                 // released at scope exit via `Drop` on `strong::Optional`.
                 let _strong = core::mem::take(&mut this.request_body_readable_stream_ref);
@@ -3966,6 +3999,9 @@ where
                 let bytes = bun_ptr::BackRef::from(
                     NonNull::new(bytes_ptr).expect("Source::Bytes payload is non-null"),
                 );
+                let source = bytes.parent_const();
+                source.drain_handler.set(None);
+                source.drain_ctx.set(None);
                 // TODO: properly propagate exception upwards
                 let _ = bytes.on_data(WebCore::streams::Result::TemporaryAndDone(borrowed));
             }
@@ -4055,6 +4091,96 @@ where
                 );
             }
             this.request_body_buf.extend_from_slice(chunk);
+
+            // Pre-stream backpressure; resumed by `on_stream_drained` / `on_start_buffering`.
+            if !this.flags.request_body_buffer_all()
+                && this.request_body_buf.len() >= REQUEST_BODY_HIGH_WATER_MARK
+            {
+                this.pause_request_body_socket();
+            }
+        }
+    }
+
+    fn pause_request_body_socket(&mut self) {
+        if self.flags.request_body_paused() {
+            return;
+        }
+        let Some(resp) = self.resp else {
+            return;
+        };
+        ctx_log!("pauseRequestBodySocket");
+        self.flags.set_request_body_paused(true);
+        resp.pause();
+    }
+
+    fn resume_request_body_socket(&mut self) {
+        if !self.flags.request_body_paused() {
+            return;
+        }
+        ctx_log!("resumeRequestBodySocket");
+        self.flags.set_request_body_paused(false);
+        if self.resp_may_be_freed() {
+            return;
+        }
+        if let Some(resp) = self.resp {
+            resp.resume();
+        }
+    }
+
+    /// After a streaming-response sink has set `ended_response`, `markDone()`
+    /// dropped `onAborted` and `resp` may point at a freed `us_socket_t` (see
+    /// `end_already_responded_stream`). The sink already resumed the socket.
+    #[inline]
+    fn resp_may_be_freed(&self) -> bool {
+        if let Some(sink) = self.sink {
+            // SAFETY: `sink` is owned by this context and freed in `handle_resolve_stream`/`deinit`.
+            return unsafe { (*sink.as_ptr()).sink.ended_response };
+        }
+        false
+    }
+
+    /// Detach the body ByteStream's `drain_handler` (the stream can outlive this ctx in JS).
+    fn clear_request_body_stream_drain_handler(&self, global_this: &JSGlobalObject) {
+        let Some(readable) = self.request_body_readable_stream_ref.get(global_this) else {
+            return;
+        };
+        if let Some(bytes) = readable.ptr.bytes() {
+            let source = bytes.parent_const();
+            source.drain_handler.set(None);
+            source.drain_ctx.set(None);
+        }
+    }
+
+    /// # Safety
+    /// `ctx` must be a `*mut RequestContext` previously registered as the body
+    /// `on_stream_drained` context.
+    pub(crate) fn on_request_body_stream_drained_callback(ctx: Option<*mut c_void>) {
+        let Some(ctx) = ctx else { return };
+        let this = ctx.cast::<Self>();
+        // SAFETY: `ctx` is the registered `*mut RequestContext`. `ByteStream::
+        // on_data` can re-enter here while `on_buffered_body_chunk` already
+        // holds `&mut Self` (borrow = ptr), so dispatch via the raw pointer.
+        unsafe {
+            let flags = &raw mut (*this).flags;
+            if !(*flags).request_body_paused() {
+                return;
+            }
+            (*flags).set_request_body_paused(false);
+            if (*this).resp.is_none()
+                || (*flags).aborted()
+                || (*this).server.is_none_or(|s| s.terminated())
+            {
+                return;
+            }
+            // Inline `resp_may_be_freed()` via raw ptr (borrow = ptr; see above).
+            if let Some(sink) = (*this).sink {
+                if (*sink.as_ptr()).sink.ended_response {
+                    return;
+                }
+            }
+            if let Some(resp) = (*this).resp {
+                resp.resume();
+            }
         }
     }
 
@@ -4089,6 +4215,9 @@ where
     pub fn on_start_buffering(&mut self) {
         if let Some(server) = self.server {
             ctx_log!("onStartBuffering");
+            // `.text()`/`.json()` want the whole body; disable pre-stream backpressure.
+            self.flags.set_request_body_buffer_all(true);
+            self.resume_request_body_socket();
             // TODO: check if is someone calling onStartBuffering other than onStartBufferingCallback
             // if is not, this should be removed and only keep protect + setAbortHandler
             // HTTP/3 (RFC 9114): Content-Length is optional; the body is
@@ -4182,6 +4311,9 @@ where
 }
 
 const MAX_REQUEST_BODY_PREALLOCATE_LENGTH: usize = 1024 * 256;
+
+/// Pause socket reads at this many unconsumed request-body bytes (two 512 KB uWS recv buffers).
+const REQUEST_BODY_HIGH_WATER_MARK: usize = 1024 * 1024;
 
 // Trap host fn for the `(false, _, true)` arms of `exported_host_fns`. Those
 // `RequestContext` monomorphs (plain-HTTP/3) are type-reachable via the
@@ -4390,12 +4522,12 @@ pub struct SendfileContext {
     pub total: BlobSizeType,
 }
 
-// All flags are bool (with two debug-conditional ones), so `bitflags!` over u16
-// works. We keep all bits in every build and just gate the
-// `is_web_browser_navigation` / `has_finalized` accessors on the const params.
+// All flags are bool (with two debug-conditional ones). We keep all bits in
+// every build and just gate the `is_web_browser_navigation` / `has_finalized`
+// accessors on the const params.
 bitflags::bitflags! {
     #[derive(Default, Clone, Copy)]
-    pub struct FlagsBits: u16 {
+    pub struct FlagsBits: u32 {
         const HAS_MARKED_COMPLETE         = 1 << 0;
         const HAS_MARKED_PENDING          = 1 << 1;
         const HAS_ABORT_HANDLER           = 1 << 2;
@@ -4416,6 +4548,10 @@ bitflags::bitflags! {
         const ABORTED                     = 1 << 13;
         const HAS_FINALIZED               = 1 << 14;
         const IS_ERROR_PROMISE_PENDING    = 1 << 15;
+        /// Socket reads are paused because the request-body buffer is over its high-water mark.
+        const REQUEST_BODY_PAUSED         = 1 << 16;
+        /// `on_start_buffering` fired (`.text()` etc.); skip pre-stream backpressure.
+        const REQUEST_BODY_BUFFER_ALL     = 1 << 17;
     }
 }
 
@@ -4494,6 +4630,16 @@ impl<const DEBUG_MODE: bool> Flags<DEBUG_MODE> {
         is_error_promise_pending,
         set_is_error_promise_pending,
         IS_ERROR_PROMISE_PENDING
+    );
+    flag_accessor!(
+        request_body_paused,
+        set_request_body_paused,
+        REQUEST_BODY_PAUSED
+    );
+    flag_accessor!(
+        request_body_buffer_all,
+        set_request_body_buffer_all,
+        REQUEST_BODY_BUFFER_ALL
     );
 
     #[inline]

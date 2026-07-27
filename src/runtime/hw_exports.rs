@@ -351,7 +351,7 @@ pub(crate) unsafe extern "C" fn bindgen_NodeModuleModule_dispatch_stat1(
     // valid out-param.
     let s = unsafe { (*arg_str).to_utf8() };
     // SAFETY: `out` is a valid C++ stack out-param.
-    unsafe { *out = bun_jsc::node_module_module::_stat(s.slice()) };
+    unsafe { *out = bun_jsc::node_module_module::stat(s.slice()) };
     true
 }
 

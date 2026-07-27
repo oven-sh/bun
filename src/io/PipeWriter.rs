@@ -67,15 +67,12 @@ pub trait PosixPipeWriter {
     fn try_write(&self, force_sync: bool, buf: &[u8]) -> WriteResult {
         // PERF: try_write_with_write_fn is not monomorphized per FileType —
         // profile if hot.
-        let ft = if !force_sync {
-            self.get_file_type()
-        } else {
-            FileType::File
-        };
-        match ft {
-            FileType::NonblockingPipe | FileType::File => {
-                self.try_write_with_write_fn(buf, sys::write)
-            }
+        if force_sync {
+            return self.try_write_with_write_fn(buf, sys::write);
+        }
+        match self.get_file_type() {
+            FileType::NonblockingPipe => self.try_write_with_write_fn(buf, sys::write),
+            FileType::File => self.try_write_with_write_fn(buf, sys::write_nonblocking),
             FileType::Pipe => self.try_write_with_write_fn(buf, write_to_blocking_pipe),
             FileType::Socket => self.try_write_with_write_fn(buf, sys::send_non_block),
         }

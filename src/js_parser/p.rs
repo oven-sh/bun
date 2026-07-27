@@ -5272,7 +5272,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let call = match &ex.data {
             ExprData::ECall(c) => c,
             ExprData::ERequireString(r) => {
-                let rec = self.import_records.items().get(r.import_record_index as usize)?;
+                let rec = self
+                    .import_records
+                    .items()
+                    .get(r.import_record_index as usize)?;
                 return Some(Box::<[u8]>::from(rec.path.text));
             }
             ExprData::ERequireResolveString(_) => return None,

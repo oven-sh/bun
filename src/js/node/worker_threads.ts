@@ -446,8 +446,7 @@ function makePortWritable(port) {
 
 function setupWorkerStdio(stdio) {
   const { stdin, stdout, stderr } = stdio;
-  // Plain assignment: defineProperty would reify the lazy fd-backed stdio
-  // (JSC reifies a static PropertyCallback before defining over it).
+  // Not defineProperty: that reifies the lazy fd-backed stdio before replacing it.
   if (stdout) {
     process.stdout = makePortWritable(stdout);
   }

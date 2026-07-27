@@ -557,22 +557,19 @@ impl ByteRangeMapping {
         // JSC returns blocks in hash-map order; sort so the sourcemap cursor and
         // the line-offset hint advance monotonically instead of re-walking on
         // every forward jump.
-        let mut blocks_sorted: Vec<BasicBlockRange> = blocks.to_vec();
-        blocks_sorted.sort_unstable_by_key(|b| {
-            (
-                b.start_offset.min(b.end_offset),
-                b.start_offset.max(b.end_offset),
-            )
-        });
+        let sorted_by_range = |b: &[BasicBlockRange]| -> Vec<BasicBlockRange> {
+            let mut v = b.to_vec();
+            v.sort_unstable_by_key(|b| {
+                (
+                    b.start_offset.min(b.end_offset),
+                    b.start_offset.max(b.end_offset),
+                )
+            });
+            v
+        };
+        let blocks_sorted = sorted_by_range(blocks);
         let blocks = blocks_sorted.as_slice();
-
-        let mut function_blocks_sorted: Vec<BasicBlockRange> = function_blocks.to_vec();
-        function_blocks_sorted.sort_unstable_by_key(|b| {
-            (
-                b.start_offset.min(b.end_offset),
-                b.start_offset.max(b.end_offset),
-            )
-        });
+        let function_blocks_sorted = sorted_by_range(function_blocks);
         let function_blocks = function_blocks_sorted.as_slice();
 
         let mut executable_lines: Bitset;

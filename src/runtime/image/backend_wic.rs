@@ -413,9 +413,7 @@ fn release<T>(p: *mut T) {
     }
 }
 
-/// RAII release for a COM interface pointer — calls [`release`] on drop.
-/// Wraps `*mut T` (not `NonNull`) because `release` already null-checks, and
-/// one call site (`props` from `CreateNewFrame`) is legitimately nullable.
+/// Calls [`release`] on drop. `*mut` (not `NonNull`): `props` can be null.
 struct ComRelease<T>(*mut T);
 impl<T> Drop for ComRelease<T> {
     #[inline]

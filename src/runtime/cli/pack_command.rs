@@ -444,9 +444,7 @@ fn new_pack_queue() -> PackQueue {
 /// (dir, dir_subpath, dir_depth)
 struct DirInfo(Dir, Box<[u8]>, usize);
 
-/// `Dir` that only closes on drop when `owned` is set. Used by the tree
-/// walkers below where the depth-1 root is a borrowed fd from the caller but
-/// deeper entries are opened (and thus owned) by the walk.
+/// `Dir` that only closes on drop when `owned` is set (the walk root is borrowed).
 struct MaybeOwnedDir {
     dir: core::mem::ManuallyDrop<Dir>,
     owned: bool,

@@ -16,8 +16,6 @@ pub(crate) fn to_throw(
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    // The guard holds the `&Expect` and runs post_match on drop so it fires on
-    // every exit path (Ok and Err alike).
     let this = this.post_match_guard(global);
 
     let this_value = frame.this();

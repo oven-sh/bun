@@ -58,9 +58,6 @@ fn vm_event_loop_ctx() -> bun_io::EventLoopCtx {
 
 bun_output::define_scoped_log!(debug, RedisJS, visible);
 
-/// RAII: calls [`JSValkeyClient::update_poll_ref`] on drop. Holds a
-/// [`BackRef`] so the borrow is detached and JS re-entrancy between
-/// construction and drop cannot alias `&self`.
 struct UpdatePollOnDrop(BackRef<JSValkeyClient>);
 impl Drop for UpdatePollOnDrop {
     #[inline]

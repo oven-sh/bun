@@ -110,12 +110,6 @@ bun_output::declare_scope!(DNSLookup, visible);
 bun_output::declare_scope!(dns, hidden);
 bun_output::declare_scope!(DNSResolver, visible);
 
-// ──────────────────────────────────────────────────────────────────────────
-// RAII drop guards for C-allocated DNS resources
-// ──────────────────────────────────────────────────────────────────────────
-
-/// Calls `Resolver::request_completed` on drop. Used by the c-ares completion
-/// callbacks so the pending-request bookkeeping runs on every exit path.
 struct RequestCompletedGuard(*mut Resolver);
 impl Drop for RequestCompletedGuard {
     fn drop(&mut self) {
@@ -124,8 +118,6 @@ impl Drop for RequestCompletedGuard {
     }
 }
 
-/// Frees a c-ares-allocated reply (`ares_free_data` / `ares_free_hostent`) via
-/// the record type's [`CAresRecordType::destroy`] on drop.
 struct CAresReplyGuard<T: CAresRecordType>(Option<*mut T>);
 impl<T: CAresRecordType> Drop for CAresReplyGuard<T> {
     fn drop(&mut self) {
@@ -136,7 +128,6 @@ impl<T: CAresRecordType> Drop for CAresReplyGuard<T> {
     }
 }
 
-/// Frees a c-ares-allocated `AddrInfo` (`ares_freeaddrinfo`) on drop.
 struct CAresAddrInfoGuard(Option<*mut c_ares::AddrInfo>);
 impl Drop for CAresAddrInfoGuard {
     fn drop(&mut self) {

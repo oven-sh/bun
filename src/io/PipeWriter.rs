@@ -1432,10 +1432,7 @@ unsafe impl<Parent: WindowsBufferedWriterParent> bun_ptr::LaunderedSelf
 {
 }
 
-/// RAII: calls [`WindowsBufferedWriter::r_deref`] on drop to balance the
-/// parent ref taken in `write()`. Holds the laundered `*mut Self` so the
-/// `.parent` read happens lazily at drop time (after any re-entrant
-/// `set_parent()`).
+/// Calls [`WindowsBufferedWriter::r_deref`] on drop to balance `write()`'s ref.
 #[cfg(windows)]
 struct BufferedWriterDerefGuard<Parent: WindowsBufferedWriterParent>(
     *mut WindowsBufferedWriter<Parent>,
@@ -1974,10 +1971,7 @@ unsafe impl<Parent: WindowsStreamingWriterParent> bun_ptr::LaunderedSelf
 {
 }
 
-/// RAII: calls [`WindowsStreamingWriter::r_deref`] on drop to balance the
-/// parent ref taken in `process_send()`. Holds the laundered `*mut Self` so
-/// the `.parent` read happens lazily at drop time (after any re-entrant
-/// `set_parent()`).
+/// Calls [`WindowsStreamingWriter::r_deref`] on drop to balance `process_send()`'s ref.
 #[cfg(windows)]
 struct StreamingWriterDerefGuard<Parent: WindowsStreamingWriterParent>(
     *mut WindowsStreamingWriter<Parent>,

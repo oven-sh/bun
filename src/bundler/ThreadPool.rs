@@ -640,8 +640,7 @@ impl Worker {
         self.ast_memory_store.pop();
     }
 
-    /// [`Worker::get`] + RAII [`Worker::unget`] on drop. Replaces the
-    /// `scopeguard::guard(worker, |w| w.unget())` pattern at task entry points.
+    /// [`Worker::get`] + [`Worker::unget`] on drop.
     #[inline]
     pub fn get_scoped(ctx: &BundleV2<'_>) -> WorkerGuard {
         WorkerGuard(Self::get(ctx))
@@ -751,9 +750,7 @@ impl Worker {
     }
 }
 
-/// RAII handle returned by [`Worker::get_scoped`]: `DerefMut`s to the worker
-/// and calls [`Worker::unget`] on drop so the `ast_memory_store` push/pop is
-/// balanced on every exit path.
+/// Returned by [`Worker::get_scoped`]; calls [`Worker::unget`] on drop.
 pub struct WorkerGuard(&'static mut Worker);
 impl core::ops::Deref for WorkerGuard {
     type Target = Worker;

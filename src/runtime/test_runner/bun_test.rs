@@ -1537,10 +1537,7 @@ impl RefData {
     }
 }
 
-/// RAII owner of a [`RefDataPtr`] that calls `.deref()` on drop. `RefPtr<T>`
-/// has no `Drop` impl (see `src/ptr/ref_count.rs`), so without this the
-/// intrusive count is never released and the paired then/done-callback path
-/// never observes `has_one_ref() == true`.
+/// Owns a [`RefDataPtr`] and `.deref()`s it on drop (`RefPtr<T>` itself has no `Drop`).
 struct RefDataGuard(RefDataPtr);
 impl core::ops::Deref for RefDataGuard {
     type Target = RefData;

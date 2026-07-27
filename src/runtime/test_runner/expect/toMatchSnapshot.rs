@@ -10,8 +10,6 @@ pub(crate) fn to_match_snapshot(
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    // `defer this.postMatch(globalThis)` — guard holds `&Expect`, derefs to it
-    // for the body, and runs post_match on every exit path.
     let this = this.post_match_guard(global);
 
     let this_value = frame.this();

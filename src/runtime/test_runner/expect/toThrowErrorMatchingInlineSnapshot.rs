@@ -9,7 +9,6 @@ pub(crate) fn to_throw_error_matching_inline_snapshot(
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    // The guard holds the `&Expect`, Derefs to it, and runs post_match on Drop.
     let this = this.post_match_guard(global);
 
     let this_value = frame.this();

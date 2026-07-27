@@ -10,7 +10,6 @@ pub(crate) fn to_have_property(
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    // `defer this.postMatch(globalThis)` — guard owns `this` and calls post_match on drop.
     let this = this.post_match_guard(global);
 
     let this_value = frame.this();

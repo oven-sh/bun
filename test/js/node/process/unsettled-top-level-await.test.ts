@@ -90,3 +90,16 @@ test.concurrent("bun -e with a never-settling top-level await exits 13", async (
   expect(stderr).toContain("Detected unsettled top-level await");
   expect({ signalCode, exitCode }).toEqual({ signalCode: null, exitCode: 13 });
 });
+
+test.concurrent("top-level await rejected during beforeExit is reported (exit 1, not swallowed)", async () => {
+  using dir = tempDir("tla-reject-beforeexit", {
+    "a.mjs":
+      `const { promise, reject } = Promise.withResolvers();\n` +
+      `process.once("beforeExit", () => setImmediate(() => reject(new Error("db never connected"))));\n` +
+      `await promise;\n`,
+  });
+  const { stderr, exitCode, signalCode } = await run([bunExe(), "a.mjs"], String(dir));
+  expect(stderr).toContain("db never connected");
+  expect(stderr).not.toContain("Detected unsettled top-level await");
+  expect({ signalCode, exitCode }).toEqual({ signalCode: null, exitCode: 1 });
+});

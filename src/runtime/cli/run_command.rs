@@ -1622,15 +1622,33 @@ impl Run {
 
             if let Some(p) = vm.pending_internal_promise {
                 // SAFETY: `p` is a live JSC heap cell tracked by the VM.
-                if unsafe { &*p }.status() == PromiseStatus::Pending {
-                    pretty_errorln!(
-                        "<r><yellow>Warning<r><d>:<r> Detected unsettled top-level await at {}",
-                        bstr::BStr::new(vm.main()),
-                    );
-                    Output::flush();
-                    if vm.exit_handler.exit_code == 0 {
-                        vm.exit_handler.exit_code = 13;
+                let p = unsafe { &mut *p };
+                match p.status() {
+                    PromiseStatus::Pending => {
+                        pretty_errorln!(
+                            "<r><yellow>Warning<r><d>:<r> Detected unsettled top-level await at {}",
+                            bstr::BStr::new(vm.main()),
+                        );
+                        Output::flush();
+                        if vm.exit_handler.exit_code == 0 {
+                            vm.exit_handler.exit_code = 13;
+                        }
                     }
+                    PromiseStatus::Rejected
+                        if vm.pending_internal_promise_reported_at != vm.hot_reload_counter =>
+                    {
+                        vm.pending_internal_promise_reported_at = vm.hot_reload_counter;
+                        // SAFETY: `vm.jsc_vm` set in `init`; FFI takes `*mut`.
+                        let result = p.result(unsafe { &mut *vm.jsc_vm });
+                        let global = vm.global;
+                        // SAFETY: `global` valid for VM lifetime.
+                        let handled = vm.uncaught_exception(unsafe { &*global }, result, true);
+                        p.set_handled();
+                        if !handled {
+                            exit_with_unhandled_note(vm);
+                        }
+                    }
+                    _ => {}
                 }
             }
         }

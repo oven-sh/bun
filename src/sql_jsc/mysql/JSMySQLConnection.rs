@@ -948,7 +948,7 @@ pub struct SocketHandler<const SSL: bool>;
 // (`feature(inherent_associated_types)`), so spell out
 // `NewSocketHandler<SSL>` at every use site instead.
 impl<const SSL: bool> SocketHandler<SSL> {
-    fn _socket(s: NewSocketHandler<SSL>) -> AnySocket {
+    fn socket(s: NewSocketHandler<SSL>) -> AnySocket {
         if SSL {
             AnySocket::SocketTls(s.assume_ssl())
         } else {
@@ -957,7 +957,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
     }
 
     pub fn on_open(this: &JSMySQLConnection, s: NewSocketHandler<SSL>) {
-        let socket = Self::_socket(s);
+        let socket = Self::socket(s);
         let is_tcp = matches!(socket, AnySocket::SocketTcp(_));
         this.connection_mut().set_socket(socket);
 
@@ -973,7 +973,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
         this.update_reference_type();
     }
 
-    fn on_handshake_(
+    fn on_handshake(
         this: &JSMySQLConnection,
         _: NewSocketHandler<SSL>,
         success: i32,
@@ -997,7 +997,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
     // pub const onHandshake = if (ssl) onHandshake_ else null;
     pub const ON_HANDSHAKE: Option<
         fn(&JSMySQLConnection, NewSocketHandler<SSL>, i32, uws::us_bun_verify_error_t),
-    > = if SSL { Some(Self::on_handshake_) } else { None };
+    > = if SSL { Some(Self::on_handshake) } else { None };
 
     pub fn on_close(
         this: &JSMySQLConnection,

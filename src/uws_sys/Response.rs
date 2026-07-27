@@ -171,7 +171,7 @@ impl<const SSL: bool> Response<SSL> {
         c::uws_res_pause(Self::ssl_flag(), self.as_raw())
     }
 
-    pub fn resume_(&mut self) {
+    pub fn resume(&mut self) {
         c::uws_res_resume(Self::ssl_flag(), self.as_raw())
     }
 
@@ -826,8 +826,8 @@ impl AnyResponse {
         any_dispatch!(self, |r| r.pause())
     }
 
-    pub fn resume_(self) {
-        any_dispatch!(self, |r| r.resume_())
+    pub fn resume(self) {
+        any_dispatch!(self, |r| r.resume())
     }
 
     pub fn write_header_int(self, key: &[u8], value: u64) {

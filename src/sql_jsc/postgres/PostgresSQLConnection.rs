@@ -1302,7 +1302,7 @@ pub struct SocketHandler<const SSL: bool>;
 pub type SocketType<const SSL: bool> = uws::NewSocketHandler<SSL>;
 
 impl<const SSL: bool> SocketHandler<SSL> {
-    fn _socket(s: SocketType<SSL>) -> Socket {
+    fn socket(s: SocketType<SSL>) -> Socket {
         // `NewSocketHandler<SSL>` has identical layout for any `SSL`; rebuild the
         // monomorphic variant from the inner `InternalSocket`.
         if SSL {
@@ -1326,7 +1326,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
     }
 
     pub fn on_open(this: &PostgresSQLConnection, socket: SocketType<SSL>) {
-        Self::guarded(this, |t| t.on_open(Self::_socket(socket)));
+        Self::guarded(this, |t| t.on_open(Self::socket(socket)));
     }
 
     fn on_handshake_(

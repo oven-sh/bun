@@ -1665,11 +1665,11 @@ fn _join_abs_string_buf<'a, const IS_SENTINEL: bool, P: PlatformT>(
     _parts: &[&[u8]],
 ) -> &'a [u8] {
     if P::P == Platform::Windows || (cfg!(windows) && P::P == Platform::Loose) {
-        return _join_abs_string_buf_windows::<IS_SENTINEL>(_cwd, buf, _parts);
+        return join_abs_string_buf_windows::<IS_SENTINEL>(_cwd, buf, _parts);
     }
 
     if P::P == Platform::Nt {
-        let end_path = _join_abs_string_buf_windows::<IS_SENTINEL>(_cwd, &mut buf[4..], _parts);
+        let end_path = join_abs_string_buf_windows::<IS_SENTINEL>(_cwd, &mut buf[4..], _parts);
         let end_len = end_path.len();
         buf[0..4].copy_from_slice(b"\\\\?\\");
         if IS_SENTINEL {
@@ -1778,7 +1778,7 @@ fn _join_abs_string_buf<'a, const IS_SENTINEL: bool, P: PlatformT>(
     &buf[0..result_len + leading_len]
 }
 
-fn _join_abs_string_buf_windows<'a, const IS_SENTINEL: bool>(
+fn join_abs_string_buf_windows<'a, const IS_SENTINEL: bool>(
     cwd: &'a [u8],
     buf: &'a mut [u8],
     parts: &[&[u8]],

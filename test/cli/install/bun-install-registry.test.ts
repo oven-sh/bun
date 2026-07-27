@@ -1242,6 +1242,161 @@ cache = "${join(packageDir, ".bun-cache").replaceAll("\\", "\\\\")}"
   }
 });
 
+describe("deprecated dependencies", () => {
+  // https://github.com/oven-sh/bun/issues/6883
+  test("warns when installing a deprecated package", async () => {
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        version: "1.0.0",
+        dependencies: {
+          "no-deps-deprecated": "1.0.0",
+        },
+      }),
+    );
+
+    const { err } = await runBunInstall(env, packageDir, { allowWarnings: true });
+    expect(err).toContain("warn: deprecated no-deps-deprecated@1.0.0: ¯\\_(ツ)_/¯");
+  });
+
+  test("does not warn on empty deprecation message", async () => {
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        version: "1.0.0",
+        dependencies: {
+          "no-deps-deprecated-empty": "1.0.0",
+        },
+      }),
+    );
+
+    const { err } = await runBunInstall(env, packageDir);
+    expect(err).not.toContain("warn: deprecated");
+  });
+
+  test("warns on whitespace-only deprecation message", async () => {
+    // npm treats any truthy string as deprecated, including whitespace-only.
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        version: "1.0.0",
+        dependencies: {
+          "no-deps-deprecated-whitespace": "1.0.0",
+        },
+      }),
+    );
+
+    const { err } = await runBunInstall(env, packageDir, { allowWarnings: true });
+    expect(err).toContain("warn: deprecated no-deps-deprecated-whitespace@1.0.0:");
+  });
+
+  test("does not warn for packages without a deprecated field", async () => {
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        version: "1.0.0",
+        dependencies: {
+          "no-deps": "1.0.0",
+        },
+      }),
+    );
+
+    const { err } = await runBunInstall(env, packageDir);
+    expect(err).not.toContain("warn: deprecated");
+  });
+
+  test("warns once per resolved version", async () => {
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        version: "1.0.0",
+        workspaces: ["packages/*"],
+      }),
+    );
+    await write(
+      join(packageDir, "packages", "a", "package.json"),
+      JSON.stringify({ name: "a", dependencies: { "no-deps-deprecated": "1.0.0" } }),
+    );
+    await write(
+      join(packageDir, "packages", "b", "package.json"),
+      JSON.stringify({ name: "b", dependencies: { "no-deps-deprecated": "1.0.0" } }),
+    );
+
+    const { err } = await runBunInstall(env, packageDir, { allowWarnings: true });
+    const count = err.split("warn: deprecated no-deps-deprecated@1.0.0").length - 1;
+    expect(count).toBe(1);
+  });
+
+  test("does not warn again when the lockfile already has the resolution", async () => {
+    // The warning fires when a version is first resolved from the registry
+    // (matching pnpm/yarn), not on every install like npm.
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        version: "1.0.0",
+        dependencies: {
+          "no-deps-deprecated": "1.0.0",
+        },
+      }),
+    );
+
+    let { err } = await runBunInstall(env, packageDir, { allowWarnings: true });
+    expect(err).toContain("warn: deprecated no-deps-deprecated@1.0.0");
+
+    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+
+    ({ err } = await runBunInstall(env, packageDir, { frozenLockfile: true }));
+    expect(err).not.toContain("warn: deprecated");
+  });
+
+  test("does not warn for deprecated optional dependency skipped on this platform", async () => {
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        version: "1.0.0",
+        optionalDependencies: {
+          "no-deps-deprecated-other-os": "1.0.0",
+        },
+      }),
+    );
+
+    const { err } = await runBunInstall(env, packageDir);
+    expect(err).not.toContain("warn: deprecated");
+    expect(await exists(join(packageDir, "node_modules", "no-deps-deprecated-other-os"))).toBeFalse();
+  });
+
+  test("--silent suppresses deprecation warnings", async () => {
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        version: "1.0.0",
+        dependencies: {
+          "no-deps-deprecated": "1.0.0",
+        },
+      }),
+    );
+
+    const { stderr, exited } = spawn({
+      cmd: [bunExe(), "install", "--silent"],
+      cwd: packageDir,
+      stdout: "ignore",
+      stderr: "pipe",
+      env,
+    });
+    const [err, exitCode] = await Promise.all([stderr.text(), exited]);
+    expect(err).not.toContain("no-deps-deprecated");
+    expect(exitCode).toBe(0);
+  });
+});
+
 describe("optionalDependencies", () => {
   for (const optional of [true, false]) {
     test(`exit code is ${optional ? 0 : 1} when ${optional ? "optional" : ""} dependency tarball is missing`, async () => {

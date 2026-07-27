@@ -685,7 +685,7 @@ pub struct PackageVersion {
     // bytes — `Serializer::write_array` reinterprets the whole slice as `&[u8]`,
     // and reading uninitialized padding as `u8` is UB. With explicit `[u8; N]`
     // fields, `Default` zero-fills them and every byte of the struct is
-    // initialized. Layout (size=240, align=8) is unchanged; see the
+    // initialized. Layout (size=256, align=8) is unchanged; see the
     // `offset_of!` asserts below and `padding_checker.rs` for the contract.
     pub _padding_after_integrity: [u8; 3],
 
@@ -723,6 +723,10 @@ pub struct PackageVersion {
     /// When empty, it means that the tarball URL can be inferred
     pub tarball_url: ExternalString,
 
+    /// `"deprecated"` field in [abbreviated package metadata](https://github.com/npm/registry/blob/master/docs/responses/package-metadata.md#abbreviated-version-object).
+    /// Empty when the version is not deprecated.
+    pub deprecated: ExternalString,
+
     pub unpacked_size: u32,
     pub file_count: u32,
 
@@ -758,6 +762,7 @@ impl Default for PackageVersion {
             _padding_before_man_dir: [0; 4],
             man_dir: ExternalString::default(),
             tarball_url: ExternalString::default(),
+            deprecated: ExternalString::default(),
             unpacked_size: 0,
             file_count: 0,
             os: OperatingSystem::ALL,
@@ -793,8 +798,8 @@ impl PackageVersion {
 // means a cross-version cache read will mis-slice — fail loudly at compile
 // time instead. (Full per-type asserts live in `padding_checker::layout_asserts`.)
 const _: () = assert!(
-    core::mem::size_of::<PackageVersion>() == 240,
-    "Npm.PackageVersion layout drifted from Zig spec (expected 240 bytes); \
+    core::mem::size_of::<PackageVersion>() == 256,
+    "Npm.PackageVersion layout drifted from Zig spec (expected 256 bytes); \
      bump PackageManifest::Serializer::VERSION if intentional",
 );
 
@@ -822,7 +827,16 @@ const _: () = {
         offset_of!(PackageVersion, man_dir)
             == offset_of!(PackageVersion, _padding_before_man_dir) + 4
     );
-    // gap between `has_install_script` (bool, ends at 230) and `publish_timestamp_ms` (align 8 → 232)
+    // `deprecated` (align 8) sits immediately after `tarball_url` (ends at 216) with no gap
+    assert!(
+        offset_of!(PackageVersion, deprecated)
+            == offset_of!(PackageVersion, tarball_url) + size_of::<ExternalString>()
+    );
+    assert!(
+        offset_of!(PackageVersion, unpacked_size)
+            == offset_of!(PackageVersion, deprecated) + size_of::<ExternalString>()
+    );
+    // gap between `has_install_script` (bool, ends at 246) and `publish_timestamp_ms` (align 8 → 248)
     assert!(
         offset_of!(PackageVersion, _padding_tail)
             == offset_of!(PackageVersion, has_install_script) + size_of::<bool>()
@@ -932,8 +946,9 @@ pub mod package_manifest {
         // - v0.0.5: added bundled dependencies
         // - v0.0.6: changed semver major/minor/patch to each use u64 instead of u32
         // - v0.0.7: added version publish times and extended manifest flag for minimum release age
+        // - v0.0.8: added `deprecated` field to `PackageVersion`
         const HEADER_BYTES: &'static str =
-            concat!("#!/usr/bin/env bun\n", "bun-npm-manifest-cache-v0.0.7\n");
+            concat!("#!/usr/bin/env bun\n", "bun-npm-manifest-cache-v0.0.8\n");
 
         // Field order is hardcoded (descending alignment). Re-verify if the
         // layout changes.
@@ -2080,6 +2095,13 @@ impl PackageManifest {
                     tarball_urls_count += (!tarball.is_empty()) as usize;
                 }
 
+                if let Some(msg) = version_obj
+                    .and_then(|o| o.get(b"deprecated"))
+                    .and_then(|v| v.as_str())
+                {
+                    string_builder.count(msg);
+                }
+
                 'bin: {
                     if let Some(bin) = version_obj.and_then(|o| o.get(b"bin")) {
                         match bin {
@@ -2384,6 +2406,15 @@ impl PackageManifest {
                     version_obj.and_then(|o| o.get(b"hasInstallScript"))
                 {
                     package_version.has_install_script = *val;
+                }
+
+                if let Some(msg) = version_obj
+                    .and_then(|o| o.get(b"deprecated"))
+                    .and_then(|v| v.as_str())
+                {
+                    if !msg.is_empty() {
+                        package_version.deprecated = string_builder.append::<ExternalString>(msg);
+                    }
                 }
 
                 'bin: {

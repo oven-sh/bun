@@ -417,7 +417,7 @@ impl PackageManager {
         {
             let bun_dir_bytes = bun_core::self_exe_path().ok().and_then(|exe| {
                 Some(
-                    std::path::Path::new(exe.as_bytes())
+                    std::path::Path::new(std::os::unix::ffi::OsStrExt::from_bytes(exe.as_bytes()))
                         .parent()?
                         .as_os_str()
                         .as_encoded_bytes(),

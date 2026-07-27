@@ -734,6 +734,11 @@ static bool isModuleEvaluated(JSC::AbstractModuleRecord* record)
     return record->moduleEnvironmentMayBeNull() != nullptr;
 }
 
+extern "C" bool Bun__hasPendingRejectedPromises(JSC::JSGlobalObject* globalObject)
+{
+    return uncheckedDowncast<Zig::GlobalObject>(globalObject)->hasPendingRejectedPromises();
+}
+
 // Module specifiers suspended on their own top-level await (EvaluatingAsync,
 // syntactic TLA, no pending async dependency), NUL-joined, for the
 // unsettled-TLA warning. Empty when nothing is stalled.

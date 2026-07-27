@@ -2486,9 +2486,20 @@ impl VirtualMachine {
             }
             if !self.has_pending_loop_work() {
                 // tick()'s trailing handle_rejected_promises can leave a JSC
-                // microtask undrained (the Mode::Bun handled-by-listener arm).
-                // Drain once and re-check before concluding the TLA is stalled.
-                let _ = self.event_loop_mut().drain_microtasks();
+                // microtask undrained (the Mode::Bun handled-by-listener arm);
+                // that continuation can itself queue a rejection. Run drain +
+                // handle_rejected_promises to fixpoint before concluding the
+                // TLA is stalled.
+                let global = self.global;
+                loop {
+                    let _ = self.event_loop_mut().drain_microtasks();
+                    // SAFETY: `global` is the live per-thread global object.
+                    if !unsafe { &*global }.has_pending_rejected_promises() {
+                        break;
+                    }
+                    // SAFETY: see above.
+                    unsafe { &*global }.handle_rejected_promises();
+                }
                 if crate::JSPromise::status_ptr(promise) != crate::js_promise::Status::Pending
                     || self.has_pending_loop_work()
                 {

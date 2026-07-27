@@ -3295,7 +3295,14 @@ impl TestCommand {
                     // wait_for_module_promise returned with nothing left to
                     // settle the entry's TLA: a stalled top-level await. Treat
                     // as a load failure so we don't run a truncated test set.
-                    vm.report_unsettled_top_level_await();
+                    // Name this file directly: the module map is shared across
+                    // files without --isolate, so the walk would re-name every
+                    // previously-stalled file.
+                    bun_core::pretty_errorln!(
+                        "<r><yellow>Warning<r><d>:<r> Detected unsettled top-level await at <b>{}<r>",
+                        bstr::BStr::new(file_path),
+                    );
+                    bun_core::Output::flush();
                     true
                 }
                 jsc::js_promise::Status::Rejected => {

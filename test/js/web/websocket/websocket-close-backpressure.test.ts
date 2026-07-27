@@ -73,7 +73,7 @@ test("readyState becomes CLOSING when a Close frame arrives while the send queue
     // transition. Without the fix this stays OPEN for the entire window.
     const deadline = Date.now() + 2000;
     while (ws.readyState === WebSocket.OPEN && Date.now() < deadline) {
-      await new Promise(resolve => setTimeout(resolve, 5));
+      await new Promise<void>(resolve => setImmediate(resolve));
     }
     expect(ws.readyState).toBe(WebSocket.CLOSING);
 

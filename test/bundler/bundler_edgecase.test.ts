@@ -73,6 +73,324 @@ describe("bundler", () => {
     },
     run: true,
   });
+  // https://github.com/oven-sh/bun/issues/13092
+  itBundled("edgecase/DedupeExternalESMImports", {
+    files: {
+      "/entry.js": /* js */ `
+        import { h } from "./h.js";
+        import { a } from "./a.js";
+        import { b } from "./b.js";
+        import { c } from "./c.js";
+        import { d } from "./d.js";
+        import { e } from "./e.js";
+        import { f } from "./f.js";
+        import { g } from "./g.js";
+        console.log(JSON.stringify({ a, b, c, d, e, f, g, h }));
+      `,
+      "/h.js": /* js */ `
+        import "pkg";
+        export const h = "H";
+      `,
+      "/a.js": /* js */ `
+        import * as NS from "pkg";
+        export const a = NS.tag;
+      `,
+      "/b.js": /* js */ `
+        import * as NS from "pkg";
+        export const b = NS.tag + "2";
+      `,
+      "/c.js": /* js */ `
+        import def from "pkg";
+        export const c = def();
+      `,
+      "/d.js": /* js */ `
+        import def from "pkg";
+        export const d = def() + "!";
+      `,
+      "/e.js": /* js */ `
+        import { named } from "pkg";
+        export const e = named();
+      `,
+      "/f.js": /* js */ `
+        import { named } from "pkg";
+        export const f = named() + "?";
+      `,
+      "/g.js": /* js */ `
+        import "pkg";
+        export const g = "G";
+      `,
+    },
+    external: ["pkg"],
+    format: "esm",
+    runtimeFiles: {
+      "/node_modules/pkg/index.mjs": /* js */ `
+        export const tag = "EXT";
+        export default function def() { return "DEF"; }
+        export function named() { return "NAMED"; }
+      `,
+      "/node_modules/pkg/package.json": `{ "type": "module", "main": "./index.mjs" }`,
+    },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      const imports = out.match(/^import[^;]*;/gm) ?? [];
+      // One import statement per distinct clause shape (star, default, named);
+      // the second file of each pair and both bare side-effect imports (h
+      // before, g after the binding imports) are dropped.
+      expect(imports).toEqual(['import * as NS from "pkg";', 'import def from "pkg";', 'import { named } from "pkg";']);
+    },
+    run: {
+      stdout: '{"a":"EXT","b":"EXT2","c":"DEF","d":"DEF!","e":"NAMED","f":"NAMED?","g":"G","h":"H"}',
+    },
+  });
+  itBundled("edgecase/DedupeExternalESMImportsExactOnly", {
+    files: {
+      "/entry.js": /* js */ `
+        import { a } from "./a.js";
+        import { b } from "./b.js";
+        import { c } from "./c.js";
+        import { d } from "./d.js";
+        import { e } from "./e.js";
+        console.log(JSON.stringify({ a, b, c, d, e }));
+      `,
+      "/a.js": /* js */ `
+        import { x, y } from "pkg";
+        export const a = x + y;
+      `,
+      "/b.js": /* js */ `
+        import { y, x } from "pkg";
+        export const b = x + y;
+      `,
+      "/c.js": /* js */ `
+        import { x } from "pkg";
+        export const c = x;
+      `,
+      "/d.js": /* js */ `
+        import { x } from "pkg";
+        export const d = x;
+      `,
+      "/e.js": /* js */ `
+        import { x } from "other";
+        export const e = x;
+      `,
+    },
+    external: ["pkg", "other"],
+    format: "esm",
+    runtimeFiles: {
+      "/node_modules/pkg/index.mjs": `export const x = "X", y = "Y";`,
+      "/node_modules/pkg/package.json": `{ "type": "module", "main": "./index.mjs" }`,
+      "/node_modules/other/index.mjs": `export const x = "OX";`,
+      "/node_modules/other/package.json": `{ "type": "module", "main": "./index.mjs" }`,
+    },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      const imports = out.match(/^import[^;]*;/gm) ?? [];
+      // a and b bind the same set (order-insensitive) -> one. c and d bind the
+      // same set -> one. a/b vs c/d are different sets and stay separate so
+      // the kept `{x}` gets its own local name. e is a different package.
+      expect(imports).toEqual([
+        'import { x, y } from "pkg";',
+        'import { x as x2 } from "pkg";',
+        'import { x as x3 } from "other";',
+      ]);
+    },
+    run: {
+      stdout: '{"a":"XY","b":"XY","c":"X","d":"X","e":"OX"}',
+    },
+  });
+  itBundled("edgecase/DedupeExternalESMImportsMultiEntryOverlap", {
+    files: {
+      "/entry1.js": /* js */ `
+        import { p } from "./p.js";
+        import { q } from "./q.js";
+        console.log(p, q);
+      `,
+      "/entry2.js": /* js */ `
+        import { p } from "./p.js";
+        import { r } from "./r.js";
+        console.log(p, r);
+      `,
+      "/entry3.js": /* js */ `
+        import { q } from "./q.js";
+        import { r } from "./r.js";
+        console.log(q, r);
+      `,
+      "/p.js": /* js */ `
+        import { x } from "pkg";
+        export const p = x;
+      `,
+      "/q.js": /* js */ `
+        import { x, y } from "pkg";
+        export const q = x + y;
+      `,
+      "/r.js": /* js */ `
+        import { x } from "pkg";
+        export const r = x;
+      `,
+    },
+    entryPoints: ["/entry1.js", "/entry2.js", "/entry3.js"],
+    external: ["pkg"],
+    format: "esm",
+    runtimeFiles: {
+      "/node_modules/pkg/index.mjs": `export const x = "X", y = "Y";`,
+      "/node_modules/pkg/package.json": `{ "type": "module", "main": "./index.mjs" }`,
+    },
+    onAfterBundle(api) {
+      // entry2 holds p and r, both `{x}`: collapses to one. entry1 holds p `{x}`
+      // and q `{x, y}`: different shapes, both kept. A subset-based merge of
+      // r -> p in entry2 and r -> q in entry3 would transitively unify p.x with
+      // q.x and make entry1 emit two `import { x }` bindings with the same name
+      // (a SyntaxError). Exact-match dedup never merges across shapes, so every
+      // bundle stays valid.
+      const entry2 = api.readFile("/out/entry2.js");
+      expect(entry2.match(/^import[^;]*;/gm) ?? []).toEqual(['import { x } from "pkg";']);
+      for (const file of ["/out/entry1.js", "/out/entry3.js"]) {
+        const imports = api.readFile(file).match(/^import[^;]*;/gm) ?? [];
+        expect(imports).toHaveLength(2);
+        const names = imports.flatMap(i => [...i.matchAll(/\b(?:as\s+)?(\w+)\s*[,}]/g)].map(m => m[1]));
+        expect(new Set(names).size).toBe(names.length);
+      }
+    },
+    run: [
+      { file: "/out/entry1.js", stdout: "X XY" },
+      { file: "/out/entry2.js", stdout: "X X" },
+      { file: "/out/entry3.js", stdout: "XY X" },
+    ],
+  });
+  for (const [name, entry] of [
+    [
+      "Use",
+      `import { utilNS } from "./util.js"; import { sharedNS } from "./shared.js"; console.log(utilNS.tag, sharedNS.tag);`,
+    ],
+    ["ReExport", `export { utilNS } from "./util.js"; export { sharedNS } from "./shared.js";`],
+  ] as const) {
+    itBundled(`edgecase/DedupeExternalESMImportsSplitting${name}`, {
+      files: {
+        "/entry1.js": entry,
+        "/entry2.js": entry,
+        "/util.js": /* js */ `
+          import * as NS from "pkg";
+          export { NS as utilNS };
+        `,
+        "/shared.js": /* js */ `
+          import * as NS from "pkg";
+          export { NS as sharedNS };
+        `,
+      },
+      entryPoints: ["/entry1.js", "/entry2.js"],
+      splitting: true,
+      external: ["pkg"],
+      format: "esm",
+      runtimeFiles: {
+        "/node_modules/pkg/index.mjs": `export const tag = "EXT";`,
+        "/node_modules/pkg/package.json": `{ "type": "module", "main": "./index.mjs" }`,
+        "/out/consumer.js": /* js */ `
+          import { utilNS, sharedNS } from "./entry1.js";
+          console.log(utilNS.tag, sharedNS.tag);
+        `,
+      },
+      onAfterBundle(api) {
+        // util.js and shared.js land in one shared chunk. Their two
+        // `import * as NS` collapse to one, and both re-exported namespaces
+        // follow to the same ref, so the shared chunk exports one symbol and
+        // each entry's cross-chunk import has a single clause. Both walk()'s
+        // used-refs loop and its entry-exports loop must follow() before
+        // recording; otherwise each entry chunk gets two clause items with the
+        // same local name (a SyntaxError).
+        const chunkFiles = readdirSync(api.outdir).filter(f => !/^(entry[12]|consumer)\.js$/.test(f));
+        expect(chunkFiles).toHaveLength(1);
+        const sharedChunk = api.readFile("/out/" + chunkFiles[0]);
+        expect(sharedChunk.match(/^import\s*\*\s*as\s/gm) ?? []).toHaveLength(1);
+        for (const file of ["/out/entry1.js", "/out/entry2.js"]) {
+          const out = api.readFile(file);
+          const head = out.split(/^export\b/m)[0];
+          const locals = [...head.matchAll(/\b(?:as\s+)?(\w+)\s*\n?[,}]/g)].map(m => m[1]);
+          expect(new Set(locals).size).toBe(locals.length);
+        }
+      },
+      run: [
+        { file: name === "Use" ? "/out/entry1.js" : "/out/consumer.js", stdout: "EXT EXT" },
+        { file: name === "Use" ? "/out/entry2.js" : "/out/consumer.js", stdout: "EXT EXT" },
+      ],
+    });
+  }
+  itBundled("edgecase/DedupeExternalESMImportsNotAcrossLoader", {
+    files: {
+      "/entry.js": /* js */ `
+        import { a } from "./a.js";
+        import { b } from "./b.js";
+        import { c } from "./c.js";
+        console.log(a, b, c);
+      `,
+      "/a.js": /* js */ `
+        import data from "pkg" with { type: "json" };
+        export const a = data;
+      `,
+      "/b.js": /* js */ `
+        import data from "pkg";
+        export const b = data;
+      `,
+      "/c.js": /* js */ `
+        import data from "pkg" with { type: "json" };
+        export const c = data;
+      `,
+    },
+    external: ["pkg"],
+    target: "bun",
+    format: "esm",
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      const imports = out.match(/^import.*?;/gm) ?? [];
+      // a and c share `with { type: "json" }`; b has no attribute. a and c
+      // collapse, b stays separate.
+      expect(imports).toEqual(['import data from "pkg" with { type: "json" };', 'import data2 from "pkg";']);
+    },
+  });
+  itBundled("edgecase/DedupeExternalESMImportsMultiEntry", {
+    files: {
+      "/entry1.js": /* js */ `
+        import { s } from "./shared.js";
+        import { o1 } from "./only1.js";
+        console.log(s, o1);
+      `,
+      "/entry2.js": /* js */ `
+        import { o2 } from "./only2.js";
+        import { s } from "./shared.js";
+        console.log(s, o2);
+      `,
+      "/shared.js": /* js */ `
+        import * as NS from "pkg";
+        export const s = NS.tag;
+      `,
+      "/only1.js": /* js */ `
+        import * as NS from "pkg";
+        export const o1 = NS.tag + "1";
+      `,
+      "/only2.js": /* js */ `
+        import * as NS from "pkg";
+        export const o2 = NS.tag + "2";
+      `,
+    },
+    entryPoints: ["/entry1.js", "/entry2.js"],
+    external: ["pkg"],
+    format: "esm",
+    runtimeFiles: {
+      "/node_modules/pkg/index.mjs": `export const tag = "EXT";`,
+      "/node_modules/pkg/package.json": `{ "type": "module", "main": "./index.mjs" }`,
+    },
+    onAfterBundle(api) {
+      for (const file of ["/out/entry1.js", "/out/entry2.js"]) {
+        const out = api.readFile(file);
+        const imports = out.match(/^import[^;]*;/gm) ?? [];
+        // Each entry must still carry its own (single) import for "pkg":
+        // shared.js's statement is dropped in one chunk and kept in the other.
+        expect(imports).toEqual(['import * as NS from "pkg";']);
+      }
+    },
+    run: [
+      { file: "/out/entry1.js", stdout: "EXT EXT1" },
+      { file: "/out/entry2.js", stdout: "EXT EXT2" },
+    ],
+  });
   itBundled("edgecase/BunPluginTreeShakeImport", {
     todo: true,
     // This only appears at runtime and not with bun build, even with --no-bundle

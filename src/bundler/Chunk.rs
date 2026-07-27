@@ -1263,6 +1263,10 @@ pub struct JavaScriptChunk {
     pub files_in_chunk_order: Box<[IndexInt]>,
     pub parts_in_chunk_in_order: Box<[PartRange]>,
 
+    /// `(source_index << 32) | import_record_index` for external `SImport`s
+    /// that `dedupe_external_esm_imports` found redundant in this chunk.
+    pub external_import_records_to_skip: bun_collections::HashMap<u64, ()>,
+
     // for code splitting
     // The map hashes via `Ref`'s `Hash` impl. Values
     // are `&'static`-erased slices into bundler-owned storage (see the

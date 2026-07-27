@@ -276,9 +276,7 @@ pub fn e_from_negated(errno: core::ffi::c_int) -> E {
 }
 
 impl SystemErrno {
-    /// Process-wide fd or memory exhaustion. These say nothing about the
-    /// identity of the resource being opened; callers that would otherwise
-    /// cache "not found" or report "refused" should propagate the errno.
+    /// Process-wide fd/memory exhaustion; propagate instead of caching as not-found or reporting as refused.
     #[inline]
     pub fn is_fd_or_memory_exhaustion(self) -> bool {
         matches!(self, Self::EMFILE | Self::ENFILE | Self::ENOMEM)

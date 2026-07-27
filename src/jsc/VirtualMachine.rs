@@ -4499,6 +4499,19 @@ impl VirtualMachine {
                 .unwrap_or(false)
     }
 
+    /// Whether to attach `ModuleInfo` to runtime-transpiled ESM so JSC builds
+    /// the `JSModuleRecord` from Bun's printer output instead of re-parsing.
+    /// The record carries `m_isTypeScript` / `SingleTypeScript` entries that
+    /// let a TypeScript re-export of a type-only name resolve (#7384).
+    pub fn use_module_info_for_esm(&self) -> bool {
+        if bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_RUNTIME_MODULE_INFO::get()
+            .unwrap_or(false)
+        {
+            return self.use_isolation_source_provider_cache();
+        }
+        true
+    }
+
     /// Resets entry-point state and re-loads `entry_path` for the test runner, returning the load promise.
     pub fn reload_entry_point_for_test_runner(
         &mut self,

@@ -194,15 +194,17 @@ describe("String.prototype.localeCompare with a string locale", () => {
   test("non-string locales and no-arg form still work", () => {
     expect("ä".localeCompare("z", ["sv"])).toBeGreaterThan(0);
     expect("ä".localeCompare("z", ["en"])).toBeLessThan(0);
-    expect(typeof "a".localeCompare("b")).toBe("number");
+    expect("a".localeCompare("b")).toBeLessThan(0);
   });
 
   test("cached collator survives GC", () => {
-    "a".localeCompare("b", "fr");
+    // Use "sv" so a cleared slot that fell through to a default/root collator would return the
+    // opposite sign for "ä" vs "z" and fail the assertion, not just avoid crashing.
+    "a".localeCompare("b", "sv");
     Bun.gc(true);
-    expect("ä".localeCompare("z", "fr")).toBeLessThan(0);
+    expect("ä".localeCompare("z", "sv")).toBeGreaterThan(0);
     Bun.gc(true);
-    expect("ä".localeCompare("z", "fr")).toBeLessThan(0);
+    expect("ä".localeCompare("z", "sv")).toBeGreaterThan(0);
   });
 
   test("reuses the collator: sort by localeCompare(b,'en') is as fast as a hoisted Intl.Collator", () => {

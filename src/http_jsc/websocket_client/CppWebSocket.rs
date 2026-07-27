@@ -79,9 +79,7 @@ impl CppWebSocket {
         event_loop.exit();
     }
 
-    /// `m_state = CLOSING`; no JS is dispatched. Call as soon as a Close
-    /// frame is received so `readyState` and `send()` reflect it before the
-    /// echo Close has drained.
+    /// `m_state = CLOSING` (no JS dispatched); idempotent.
     pub(crate) fn did_start_closing_handshake(&self) {
         WebSocket__didStartClosingHandshake(self);
     }

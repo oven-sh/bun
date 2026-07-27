@@ -269,6 +269,7 @@ test("no assertion failures 2", () => {
     );
     assert.strictEqual(util.inspect(array, false), `${constructor.name}(${length}) [ 65, 97 ]`);
   });
+  assert.ok(util.inspect(new Float16Array(1), { showHidden: true }).includes("[buffer]: [Getter]"));
 
   // Now check that declaring a TypedArray in a different context works the same.
   [

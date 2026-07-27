@@ -1110,19 +1110,15 @@ pub mod fs {
             err: crate::Error,
         ) -> crate::CrateResult<&'static mut EntriesOption> {
             if bun_core::FeatureFlags::ENABLE_ENTRY_CACHE {
-                // fd/memory exhaustion is transient; Err entries are not generation-gated so don't cache.
-                if matches!(
-                    err,
-                    crate::Error::Sys(bun_errno::SystemErrno::EMFILE)
-                        | crate::Error::Sys(bun_errno::SystemErrno::ENFILE)
-                        | crate::Error::Sys(bun_errno::SystemErrno::ENOMEM)
-                ) {
-                    return Ok(temp_entries_option_write(EntriesOption::Err(
-                        dir_entry::Err {
-                            original_err: err,
-                            canonical_error: err,
-                        },
-                    )));
+                if let crate::Error::Sys(e) = err {
+                    if e.is_fd_or_memory_exhaustion() {
+                        return Ok(temp_entries_option_write(EntriesOption::Err(
+                            dir_entry::Err {
+                                original_err: err,
+                                canonical_error: err,
+                            },
+                        )));
+                    }
                 }
                 let mut get_or_put_result = self.entries.get_or_put(dir)?;
                 if err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {

@@ -701,6 +701,11 @@ int start_connections(struct us_connecting_socket_t *c, int count) {
         c->connecting_head = s;
         s->connect_state = c;
     }
+    if (opened > 0) {
+        /* A sibling's socket() failure is no longer the outcome once any
+         * address has a connect in flight; the async result decides. */
+        c->error = 0;
+    }
     return opened;
 }
 

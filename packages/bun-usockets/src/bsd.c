@@ -730,7 +730,7 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_socket(int domain, int type, int protocol, in
 
     if (UNLIKELY(created_fd == -1)) {
         if (err != NULL) {
-            *err = errno;
+            *err = LIBUS_ERR;
         }
         return LIBUS_SOCKET_ERROR;
     }
@@ -743,7 +743,7 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_socket(int domain, int type, int protocol, in
 
     if (UNLIKELY(created_fd == -1)) {
         if (err != NULL) {
-            *err = errno;
+            *err = LIBUS_ERR;
         }
         return LIBUS_SOCKET_ERROR;
     }

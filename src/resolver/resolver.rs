@@ -2698,24 +2698,31 @@ impl<'a> Resolver<'a> {
                                         .resolve(b"/", esm.subpath, &exports_map.root);
                                         // ESModule temporary dropped here; `self` is unborrowed.
 
-                                        if self
-                                            .handle_esm_resolution(
-                                                esm_resolution,
-                                                abs_package_path,
-                                                kind,
-                                                package_json,
-                                                esm.subpath,
-                                                out,
-                                            )
-                                            .is_success()
-                                        {
-                                            out.is_node_module = true;
-                                            out.module_type = module_type;
-                                            self.extension_order = prev_extension_order;
-                                            if let Some(d) = self.debug_logs.as_mut() {
-                                                d.decrease_indent();
+                                        match self.handle_esm_resolution(
+                                            esm_resolution,
+                                            abs_package_path,
+                                            kind,
+                                            package_json,
+                                            esm.subpath,
+                                            out,
+                                        ) {
+                                            MatchStatus::Success => {
+                                                out.is_node_module = true;
+                                                out.module_type = module_type;
+                                                self.extension_order = prev_extension_order;
+                                                if let Some(d) = self.debug_logs.as_mut() {
+                                                    d.decrease_indent();
+                                                }
+                                                return MatchStatus::Success;
                                             }
-                                            return MatchStatus::Success;
+                                            MatchStatus::Failure(e) => {
+                                                self.extension_order = prev_extension_order;
+                                                if let Some(d) = self.debug_logs.as_mut() {
+                                                    d.decrease_indent();
+                                                }
+                                                return MatchStatus::Failure(e);
+                                            }
+                                            _ => {}
                                         }
                                     }
 
@@ -2757,24 +2764,31 @@ impl<'a> Resolver<'a> {
                                             &esm.subpath[0..esm.subpath.len() - 3],
                                             &exports_map.root,
                                         );
-                                        if self
-                                            .handle_esm_resolution(
-                                                esm_resolution,
-                                                abs_package_path,
-                                                kind,
-                                                package_json,
-                                                esm.subpath,
-                                                out,
-                                            )
-                                            .is_success()
-                                        {
-                                            out.is_node_module = true;
-                                            out.module_type = module_type;
-                                            self.extension_order = prev_extension_order;
-                                            if let Some(d) = self.debug_logs.as_mut() {
-                                                d.decrease_indent();
+                                        match self.handle_esm_resolution(
+                                            esm_resolution,
+                                            abs_package_path,
+                                            kind,
+                                            package_json,
+                                            esm.subpath,
+                                            out,
+                                        ) {
+                                            MatchStatus::Success => {
+                                                out.is_node_module = true;
+                                                out.module_type = module_type;
+                                                self.extension_order = prev_extension_order;
+                                                if let Some(d) = self.debug_logs.as_mut() {
+                                                    d.decrease_indent();
+                                                }
+                                                return MatchStatus::Success;
                                             }
-                                            return MatchStatus::Success;
+                                            MatchStatus::Failure(e) => {
+                                                self.extension_order = prev_extension_order;
+                                                if let Some(d) = self.debug_logs.as_mut() {
+                                                    d.decrease_indent();
+                                                }
+                                                return MatchStatus::Failure(e);
+                                            }
+                                            _ => {}
                                         }
                                     }
 
@@ -3205,22 +3219,28 @@ impl<'a> Resolver<'a> {
                                         }
                                         .resolve(b"/", esm.subpath, &exports_map.root);
 
-                                        if self
-                                            .handle_esm_resolution(
-                                                esm_resolution,
-                                                abs_package_path,
-                                                kind,
-                                                package_json,
-                                                esm.subpath,
-                                                out,
-                                            )
-                                            .is_success()
-                                        {
-                                            out.is_node_module = true;
-                                            if let Some(d) = self.debug_logs.as_mut() {
-                                                d.decrease_indent();
+                                        match self.handle_esm_resolution(
+                                            esm_resolution,
+                                            abs_package_path,
+                                            kind,
+                                            package_json,
+                                            esm.subpath,
+                                            out,
+                                        ) {
+                                            MatchStatus::Success => {
+                                                out.is_node_module = true;
+                                                if let Some(d) = self.debug_logs.as_mut() {
+                                                    d.decrease_indent();
+                                                }
+                                                return MatchStatus::Success;
                                             }
-                                            return MatchStatus::Success;
+                                            MatchStatus::Failure(e) => {
+                                                if let Some(d) = self.debug_logs.as_mut() {
+                                                    d.decrease_indent();
+                                                }
+                                                return MatchStatus::Failure(e);
+                                            }
+                                            _ => {}
                                         }
                                     }
 
@@ -3247,22 +3267,28 @@ impl<'a> Resolver<'a> {
                                             &esm.subpath[0..esm.subpath.len() - 3],
                                             &exports_map.root,
                                         );
-                                        if self
-                                            .handle_esm_resolution(
-                                                esm_resolution,
-                                                abs_package_path,
-                                                kind,
-                                                package_json,
-                                                esm.subpath,
-                                                out,
-                                            )
-                                            .is_success()
-                                        {
-                                            out.is_node_module = true;
-                                            if let Some(d) = self.debug_logs.as_mut() {
-                                                d.decrease_indent();
+                                        match self.handle_esm_resolution(
+                                            esm_resolution,
+                                            abs_package_path,
+                                            kind,
+                                            package_json,
+                                            esm.subpath,
+                                            out,
+                                        ) {
+                                            MatchStatus::Success => {
+                                                out.is_node_module = true;
+                                                if let Some(d) = self.debug_logs.as_mut() {
+                                                    d.decrease_indent();
+                                                }
+                                                return MatchStatus::Success;
                                             }
-                                            return MatchStatus::Success;
+                                            MatchStatus::Failure(e) => {
+                                                if let Some(d) = self.debug_logs.as_mut() {
+                                                    d.decrease_indent();
+                                                }
+                                                return MatchStatus::Failure(e);
+                                            }
+                                            _ => {}
                                         }
                                     }
 
@@ -3692,14 +3718,13 @@ impl<'a> Resolver<'a> {
             Status::Exact | Status::ExactEndsWithStar => {
                 let resolved_dir_info = match self
                     .dir_info_cached(bun_paths::dirname(abs_esm_path).unwrap())
-                    .ok()
-                    .flatten()
                 {
-                    Some(d) => d,
-                    None => {
+                    Ok(Some(d)) => d,
+                    Ok(None) => {
                         esm_resolution.status = Status::ModuleNotFound;
                         return MatchStatus::NotFound;
                     }
+                    Err(e) => return MatchStatus::Failure(e),
                 };
                 let entries = match resolved_dir_info.get_entries_ref(self.generation) {
                     Some(e) => e,
@@ -4404,14 +4429,10 @@ impl<'a> Resolver<'a> {
                                 );
                                 break 'open_dir FD::INVALID;
                             }
-                            // fd/memory exhaustion is transient; don't cache as not-found.
-                            if matches!(
-                                err,
-                                crate::Error::Sys(bun_errno::SystemErrno::EMFILE)
-                                    | crate::Error::Sys(bun_errno::SystemErrno::ENFILE)
-                                    | crate::Error::Sys(bun_errno::SystemErrno::ENOMEM)
-                            ) {
-                                return Err(err);
+                            if let crate::Error::Sys(e) = err {
+                                if e.is_fd_or_memory_exhaustion() {
+                                    return Err(err);
+                                }
                             }
                             let cached_dir_entry_result = rfs!()
                                 .entries

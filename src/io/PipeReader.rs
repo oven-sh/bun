@@ -1066,7 +1066,7 @@ impl PosixBufferedReader {
                                 .vtable
                                 .on_read_chunk(&parent._buffer, ReadState::Progress);
                             parent._buffer.clear();
-                            if !keep_going {
+                            if parent.is_done() || !keep_going {
                                 return;
                             }
                             continue;

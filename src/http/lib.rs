@@ -293,6 +293,10 @@ pub fn normalize_idle_timeout_seconds(raw: u64) -> c_uint {
 
 pub const END_OF_CHUNKED_HTTP1_1_ENCODING_RESPONSE_BODY: &[u8] = b"0\r\n\r\n";
 
+/// Wall-clock cap on the `BodyReceiveMode::Ignore` discard-drain (not re-armed
+/// per read in `on_data`).
+pub const IGNORE_DRAIN_TIMEOUT_SECONDS: c_uint = 5;
+
 /// HTTP-thread-only scratch buffer for building NUL-terminated hostnames.
 pub static TEMP_HOSTNAME: bun_core::RacyCell<[u8; 8192]> = bun_core::RacyCell::new([0; 8192]);
 
@@ -2098,7 +2102,7 @@ impl<'a> HTTPClient<'a> {
     }
 
     pub fn on_timeout<const IS_SSL: bool>(&mut self, socket: HttpSocket<IS_SSL>) {
-        if self.flags.disable_timeout {
+        if self.flags.disable_timeout && !self.signals.is_receive_ignored() {
             return;
         }
         bun_core::scoped_log!(fetch, "Timeout  {}\n", BStr::new(self.url.href));
@@ -3336,7 +3340,7 @@ impl<'a> HTTPClient<'a> {
             }
             RequestStage::Body => {
                 bun_core::scoped_log!(fetch, "send body");
-                if !self.state.flags.receive_paused {
+                if !self.state.flags.receive_paused && !self.signals.is_receive_ignored() {
                     self.set_timeout(&socket);
                 }
 
@@ -3818,7 +3822,9 @@ impl<'a> HTTPClient<'a> {
 
         if self.proxy_tunnel.is_some() {
             // if we have a tunnel we dont care about the other stages, we will just tunnel the data
-            self.set_timeout(&socket);
+            if !self.signals.is_receive_ignored() {
+                self.set_timeout(&socket);
+            }
             self.proxy_tunnel_mut().unwrap().receive(incoming_data);
             return;
         }
@@ -3837,7 +3843,7 @@ impl<'a> HTTPClient<'a> {
                 self.handle_on_data_headers::<IS_SSL>(incoming_data, ctx, socket);
             }
             ResponseStage::Body => {
-                if !self.state.flags.receive_paused {
+                if !self.state.flags.receive_paused && !self.signals.is_receive_ignored() {
                     self.set_timeout(&socket);
                 }
 
@@ -3855,7 +3861,7 @@ impl<'a> HTTPClient<'a> {
                 }
             }
             ResponseStage::BodyChunk => {
-                if !self.state.flags.receive_paused {
+                if !self.state.flags.receive_paused && !self.signals.is_receive_ignored() {
                     self.set_timeout(&socket);
                 }
 
@@ -4042,7 +4048,13 @@ impl<'a> HTTPClient<'a> {
         // timeout disabled and the body promise pending forever.
         let _ = socket.resume_stream();
         bun_core::scoped_log!(fetch, "resume receive {}", self.async_http_id);
-        self.set_timeout(&socket);
+        if self.signals.is_receive_ignored() {
+            // Not re-armed in `on_data` while ignored: absolute drain deadline.
+            // Proxy tunnels never pause so never reach this arm.
+            socket.set_timeout(IGNORE_DRAIN_TIMEOUT_SECONDS);
+        } else {
+            self.set_timeout(&socket);
+        }
     }
 
     pub fn drain_response_body<const IS_SSL: bool>(&mut self, socket: HttpSocket<IS_SSL>) {

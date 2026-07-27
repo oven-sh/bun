@@ -79,6 +79,13 @@ impl Signals {
             .map(bun_ptr::BackRef::from)
             .is_some_and(|a| a.load(Ordering::Acquire) == BodyReceiveMode::Paused as u8)
     }
+
+    #[inline]
+    pub fn is_receive_ignored(self) -> bool {
+        self.body_receive_mode
+            .map(bun_ptr::BackRef::from)
+            .is_some_and(|a| a.load(Ordering::Acquire) == BodyReceiveMode::Ignore as u8)
+    }
 }
 
 pub struct Store {

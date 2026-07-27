@@ -1,5 +1,5 @@
 use core::ffi::c_void;
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use bun_boringssl as boringssl;
 use bun_cares_sys::c_ares_draft as c_ares;
@@ -107,6 +107,10 @@ pub struct FetchTasklet {
     pub signals: Signals,
     pub signal_store: http::signals::Store,
     pub has_schedule_callback: AtomicBool,
+    /// Atomic mirror of `BodySize::ContentLength(n)` for the Weak finalizer
+    /// (`usize::MAX` = unknown/chunked). `body_size` itself is written by the
+    /// HTTP thread under `mutex`, which the finalizer cannot take.
+    pub response_content_length: AtomicUsize,
 
     // must be stored because AbortSignal stores reason weakly
     pub abort_reason: StrongOptional,
@@ -1896,6 +1900,7 @@ impl FetchTasklet {
             signals: Signals::default(),
             signal_store: http::signals::Store::default(),
             has_schedule_callback: AtomicBool::new(false),
+            response_content_length: AtomicUsize::new(usize::MAX),
             abort_reason: StrongOptional::empty(),
             check_server_identity: fetch_options.check_server_identity,
             reject_unauthorized: fetch_options.reject_unauthorized,
@@ -2394,6 +2399,9 @@ impl FetchTasklet {
         }
 
         task_ref.body_size = task_ref.result.body_size;
+        if let http::BodySize::ContentLength(n) = task_ref.body_size {
+            task_ref.response_content_length.store(n, Ordering::Release);
+        }
 
         let success = task_ref.result.is_success();
         // `result.body` always aliases `task_ref.response_buffer` (the
@@ -2502,7 +2510,26 @@ impl FetchTasklet {
     }
 }
 
+/// Drain-to-reuse cap for a GC-abandoned body (undici's `Readable.dump` is 128 KiB).
+const ABANDONED_RESPONSE_DRAIN_MAX_BYTES: usize = 256 * 1024;
+
 impl FetchTasklet {
+    /// Scenario 2b/3 of [`on_response_finalize`]. Runs inside a Weak finalizer:
+    /// no `JSCell` may be touched, so the close arm inlines `abort_task` minus
+    /// `tracker.did_cancel`.
+    fn abandon_response_body_from_finalizer(&mut self) {
+        // `self.mutex` cannot be taken here: this finalizer can re-enter on
+        // the JS thread while `on_progress_update` already holds it.
+        let drain = self.response_content_length.load(Ordering::Acquire)
+            <= ABANDONED_RESPONSE_DRAIN_MAX_BYTES;
+        if !drain && !self.signal_store.aborted.swap(true, Ordering::Relaxed) {
+            if let Some(http_) = self.http.as_mut() {
+                http::http_thread().schedule_shutdown(http_);
+            }
+        }
+        self.ignore_remaining_response_body(true);
+    }
+
     #[bun_uws::uws_callback(export = "Bun__FetchResponse_finalize", no_catch)]
     pub(crate) fn on_response_finalize(&mut self) {
         bun_output::scoped_log!(FetchTasklet, "onResponseFinalize");
@@ -2531,11 +2558,11 @@ impl FetchTasklet {
                 if let Some(promise) = locked.promise {
                     if promise.is_empty_or_undefined_or_null() {
                         // Scenario 2b.
-                        this.ignore_remaining_response_body(true);
+                        this.abandon_response_body_from_finalizer();
                     }
                 } else {
                     // Scenario 3.
-                    this.ignore_remaining_response_body(true);
+                    this.abandon_response_body_from_finalizer();
                 }
             }
         }

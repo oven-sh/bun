@@ -4123,8 +4123,8 @@ console.log(foo, array);
       expectPrinted("(-0).toString()", "(-0).toString()");
       expectPrinted("-0 === 0", "!0");
 
-      expectPrinted("NaN", "0 / 0");
-      expectPrinted("NaN.toString()", "(0 / 0).toString()");
+      expectPrinted("NaN", "-(0 / 0)");
+      expectPrinted("NaN.toString()", "(-(0 / 0)).toString()");
       expectPrinted("NaN === NaN", "!1");
 
       expectPrinted("Infinity", "1 / 0");

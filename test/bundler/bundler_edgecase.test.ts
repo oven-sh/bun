@@ -1503,8 +1503,8 @@ describe("bundler", () => {
     minifySyntax: true,
     capture: [
       "0 /* a */",
-      "0 / 0 /* b */",
-      "0 / 0 /* c */",
+      "NaN /* b */",
+      "NaN /* c */",
       "1 / 0 /* d */",
       "-1 / 0 /* e */",
       "1 / 0 /* f */",

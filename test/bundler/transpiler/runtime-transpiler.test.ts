@@ -254,6 +254,26 @@ describe("unterminated string literals in large files", () => {
 });
 
 describe("shadowed global-constant identifiers", () => {
+  test.concurrent("NaN printed without a renamer preserves the canonical positive-sign bit pattern", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const v = new DataView(new ArrayBuffer(8));
+         v.setFloat64(0, NaN);
+         const hex = Array.from(new Uint8Array(v.buffer)).map(b => b.toString(16).padStart(2, "0")).join("");
+         console.log(hex);`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("7ff8000000000000\n");
+    expect(exitCode).toBe(0);
+  });
+
   test.concurrent("folded 0/0 does not capture a local NaN", async () => {
     await using proc = Bun.spawn({
       cmd: [

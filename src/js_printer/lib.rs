@@ -4322,8 +4322,9 @@ pub mod __gated_printer {
         /// something that is not a valid property name (e.g. "-1", "1/0", "1 / 0").
         pub fn number_property_key_must_be_computed(&self, value: f64) -> bool {
             value.is_sign_negative()
-                || ((value == f64::INFINITY || value.is_nan())
+                || (value == f64::INFINITY
                     && (self.options.minify_syntax || !self.options.has_run_symbol_renamer))
+                || (value.is_nan() && !self.options.has_run_symbol_renamer)
         }
 
         /// `E::ObjectJSON` (JSON-only): always printed in JSON shape.
@@ -6455,20 +6456,24 @@ pub mod __gated_printer {
             if value.is_nan() {
                 // Only emit the bare identifier when the renamer has reserved the name
                 // "NaN"; otherwise a user binding of the same name would capture it.
-                if IS_JSON || (!self.options.minify_syntax && self.options.has_run_symbol_renamer) {
+                // The fallback is -(0/0) rather than 0/0 because JSC evaluates 0/0
+                // to a negative-sign NaN, which changes the bit pattern observed via
+                // DataView/Buffer; -(0/0) yields the canonical positive NaN in both
+                // JSC and V8.
+                if IS_JSON || self.options.has_run_symbol_renamer {
                     self.print_space_before_identifier();
                     self.print(b"NaN");
                 } else {
-                    let wrap = level.gte(Level::Multiply);
+                    let wrap = level.gte(Level::Prefix);
                     if wrap {
                         self.print(b"(");
                     } else {
-                        self.print_space_before_identifier();
+                        self.print_space_before_operator(Op::Code::UnNeg);
                     }
                     if self.options.minify_whitespace {
-                        self.print(b"0/0");
+                        self.print(b"-(0/0)");
                     } else {
-                        self.print(b"0 / 0");
+                        self.print(b"-(0 / 0)");
                     }
                     if wrap {
                         self.print(b")");

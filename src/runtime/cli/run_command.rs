@@ -1813,8 +1813,9 @@ impl RunCommand {
     pub fn bun_node_file_utf8() -> crate::Result<&'static ZStr> {
         #[cfg(not(windows))]
         {
-            const BUN_NODE_DIR_Z: &str = const_format::concatcp!(RunCommand::BUN_NODE_DIR, "\0");
-            Ok(ZStr::from_static(BUN_NODE_DIR_Z.as_bytes()))
+            const BUN_NODE_FILE_Z: &str =
+                const_format::concatcp!(RunCommand::BUN_NODE_DIR, "/node\0");
+            Ok(ZStr::from_static(BUN_NODE_FILE_Z.as_bytes()))
         }
         #[cfg(windows)]
         {

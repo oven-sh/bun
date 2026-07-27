@@ -1119,4 +1119,69 @@ describe.concurrent("bun run", () => {
       exitCode: 0,
     });
   });
+
+  // https://github.com/oven-sh/bun/issues/6000 — with no real `node` on PATH,
+  // `bun run` sets NODE / npm_node_execpath to the shim *directory* instead of
+  // the `node` executable inside it, so `"$NODE" file.js` (husky, node-gyp
+  // wrappers, etc.) fails with "Is a directory" (rc 126).
+  for (const bunFlag of [false, true]) {
+    it(`sets NODE and npm_node_execpath to the shim executable, not its directory${bunFlag ? " (--bun)" : " (no node on PATH)"} (#6000)`, async () => {
+      using dir = tempDir("bun-run-node-env-shim", {
+        "package.json": JSON.stringify({
+          name: "p",
+          scripts: { probe: "node probe.js" },
+        }),
+        "probe.js": `
+          const { statSync } = require("fs");
+          const { execFileSync } = require("child_process");
+          const NODE = process.env.NODE;
+          const npm_node_execpath = process.env.npm_node_execpath;
+          const out = execFileSync(NODE, ["-p", "typeof Bun"], { encoding: "utf8" }).trim();
+          console.log(JSON.stringify({
+            NODE,
+            npm_node_execpath,
+            NODE_isFile: statSync(NODE).isFile(),
+            exec_isFile: statSync(npm_node_execpath).isFile(),
+            ran: out,
+          }));
+        `,
+      });
+
+      // A PATH containing no real `node`. Bun prepends the shim dir itself, so
+      // the `node probe.js` in the script resolves to the shim regardless.
+      const noNodePath = isWindows ? (process.env.SystemRoot ?? "C:\\Windows") + "\\System32" : "/usr/bin:/bin";
+
+      const env: Record<string, string | undefined> = { ...bunEnv, PATH: noNodePath };
+      delete env.NODE;
+      delete env.npm_node_execpath;
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), ...(bunFlag ? ["--bun"] : []), "run", "probe"],
+        cwd: String(dir),
+        env,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      const line = stdout.split("\n").find(l => l.startsWith("{"));
+      if (!line) {
+        // Surface what actually happened (on the broken build execFileSync
+        // throws EACCES because $NODE is a directory).
+        expect({ stdout, stderr }).toEqual({ stdout: expect.stringContaining("{"), stderr: "" });
+        throw new Error("unreachable");
+      }
+      const result = JSON.parse(line);
+      const exeSuffix = isWindows ? "\\node.exe" : "/node";
+      expect(result).toEqual({
+        NODE: expect.stringMatching(/[\\/]node(\.exe)?$/),
+        npm_node_execpath: result.NODE,
+        NODE_isFile: true,
+        exec_isFile: true,
+        ran: "object",
+      });
+      expect(result.NODE.endsWith(exeSuffix)).toBe(true);
+      expect(exitCode).toBe(0);
+    });
+  }
 });

@@ -60,10 +60,11 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string, o
     }
   }
 
-  // A resolved id may carry a `?query` suffix (part of the module cache key);
-  // match the native-addon extension against the path portion only.
+  // A resolved id is `path` or `path?query`. When the id itself ends in
+  // `.node` there is no query suffix, so any `?` is part of the filesystem
+  // path (POSIX allows it in filenames).
   const queryIndex = id.indexOf("?");
-  if (queryIndex === -1 ? id.endsWith(".node") : id.endsWith(".node", queryIndex)) {
+  if (id.endsWith(".node") || (queryIndex !== -1 && id.endsWith(".node", queryIndex))) {
     return $internalRequire(id, this);
   }
 
@@ -162,9 +163,9 @@ $visibility = "Private";
 export function internalRequire(id: string, parent: JSCommonJSModule) {
   $assert($requireMap.$get(id) === undefined, "Module " + JSON.stringify(id) + " should not be in the map");
   // `id` keys the module cache and may carry a `?query` suffix;
-  // `process.dlopen` needs the on-disk path.
-  const queryIndex = id.indexOf("?");
-  const filename = queryIndex === -1 ? id : id.substring(0, queryIndex);
+  // `process.dlopen` needs the on-disk path. When the id itself ends in
+  // `.node` there is no query suffix, so any `?` is part of the path.
+  const filename = id.endsWith(".node") ? id : id.substring(0, id.indexOf("?"));
   $assert(filename.endsWith(".node"));
 
   const module = $createCommonJSModule(id, {}, true, parent);

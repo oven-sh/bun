@@ -283,6 +283,28 @@ describe.skipIf(isWindows).concurrent("filename containing a literal ?", () => {
     expect({ stdout, stderr, exitCode }).toEqual({ stdout: "qfile\n", stderr: "", exitCode: 0 });
   });
 
+  test("import.meta inside the file reflects the literal path", async () => {
+    using dir = tempDir("qmark-meta", {
+      "weird?name.mjs": `console.log(JSON.stringify({
+        path: import.meta.path,
+        dir: import.meta.dir,
+        file: import.meta.file,
+        url: import.meta.url,
+      }));\n`,
+    });
+    const { stdout, stderr, exitCode } = await run([bunExe(), "./weird?name.mjs"], String(dir));
+    expect(stderr).toBe("");
+    const meta = JSON.parse(stdout.trim());
+    expect(meta).toEqual({
+      path: `${dir}/weird?name.mjs`,
+      dir: String(dir),
+      file: "weird?name.mjs",
+      url: Bun.pathToFileURL(`${dir}/weird?name.mjs`).href,
+    });
+    expect(meta.url).toContain("weird%3Fname.mjs");
+    expect(exitCode).toBe(0);
+  });
+
   test("?query still resolves to the stripped path when that file exists", async () => {
     using dir = tempDir("qmark-precedence", {
       "pref.mjs": `export const which = "stripped";\n`,

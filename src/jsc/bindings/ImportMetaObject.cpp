@@ -165,13 +165,30 @@ ImportMetaObject* ImportMetaObject::create(JSC::JSGlobalObject* globalObject, JS
     return ImportMetaObject::createFromSpecifier(globalObject, specifier);
 }
 
+#if !OS(WINDOWS)
+extern "C" bool Bun__existsAsFile(const char* ptr, size_t len);
+#endif
+
 ImportMetaObject* ImportMetaObject::createFromSpecifier(JSC::JSGlobalObject* globalObject, const String& specifier)
 {
     auto index = specifier.find('?');
     URL url;
     if (index != notFound) {
         StringView view = specifier;
-        url = URL::fileURLWithFileSystemPath(view.substring(0, index));
+        StringView stripped = view.substring(0, index);
+#if !OS(WINDOWS)
+        // A module key is `path?query`, except when `?` is part of the
+        // filesystem path (POSIX allows it in filenames): then the path
+        // component is the whole key and there is no query. `?` is not a
+        // valid filename character on Windows, so this check is POSIX-only.
+        if (stripped.startsWith('/')) {
+            WTF::CString utf8 = stripped.utf8();
+            if (!Bun__existsAsFile(utf8.data(), utf8.length())) {
+                return create(globalObject, URL::fileURLWithFileSystemPath(specifier).string());
+            }
+        }
+#endif
+        url = URL::fileURLWithFileSystemPath(stripped);
         url.setQuery(view.substring(index + 1));
     } else {
         url = URL::fileURLWithFileSystemPath(specifier);

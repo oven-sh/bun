@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { createHash, createHmac } from "node:crypto";
 import net from "node:net";
 
@@ -54,12 +54,13 @@ function createSigV4Origin(sockets: Set<net.Socket>) {
         const sts =
           `AWS4-HMAC-SHA256\n${h["x-amz-date"]}\n${m[2]}/${m[3]}/${m[4]}/aws4_request\n` +
           createHash("sha256").update(Buffer.from(canon, "latin1")).digest("hex");
-        let k = createHmac("sha256", "AWS4" + SECRET).update(m[2]).digest();
+        let k = createHmac("sha256", "AWS4" + SECRET)
+          .update(m[2])
+          .digest();
         for (const p of [m[3], m[4], "aws4_request"]) k = createHmac("sha256", k).update(p).digest();
         status = createHmac("sha256", k).update(sts).digest("hex") === m[6] ? 200 : 403;
       }
-      const body =
-        status === 200 ? "" : "<Error><Code>SignatureDoesNotMatch</Code><Message>sig</Message></Error>";
+      const body = status === 200 ? "" : "<Error><Code>SignatureDoesNotMatch</Code><Message>sig</Message></Error>";
       sock.write(`HTTP/1.1 ${status} X\r\nContent-Length: ${body.length}\r\nETag: "e"\r\n\r\n${body}`);
     });
   });

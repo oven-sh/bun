@@ -307,8 +307,8 @@ impl S3Credentials {
         }
         let content_encoding_canon = sign_options.content_encoding.map(sigv4_trimall);
         let content_encoding = content_encoding_canon.as_deref().filter(|s| !s.is_empty());
-        let session_token_canon = (!self.session_token.is_empty())
-            .then(|| sigv4_trimall(&self.session_token));
+        let session_token_canon =
+            (!self.session_token.is_empty()).then(|| sigv4_trimall(&self.session_token));
         let session_token = session_token_canon.as_deref().filter(|s| !s.is_empty());
 
         let acl: Option<&'static [u8]> = sign_options.acl.map(|a| a.to_string());

@@ -103,15 +103,6 @@ pub fn parse<'i, Enc: Encoding>(
     }
 }
 
-pub fn print<Enc: Encoding, W: fmt::Write>(stream: Stream<'_, Enc>, writer: &mut W) -> fmt::Result {
-    // The printer was never implemented; this is a hard panic on the
-    // (currently unreachable — `rg yaml::print src/` has no callers) path.
-    let _ = (stream, writer);
-    panic!(
-        "yaml::print: Printer is commented out in the Zig original (dead-by-spec; uses removed Node type)"
-    );
-}
-
 // ───────────────────────────────────────────────────────────────────────────
 // Context
 // ───────────────────────────────────────────────────────────────────────────

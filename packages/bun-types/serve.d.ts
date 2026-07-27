@@ -76,7 +76,7 @@ declare module "bun" {
      * ws.send(new Uint8Array([1, 2, 3, 4]));
      * ```
      */
-    send(data: string | BufferSource, compress?: boolean): ServerWebSocketSendStatus;
+    send(data: string | BufferSource | Blob, compress?: boolean): ServerWebSocketSendStatus;
 
     /**
      * Sends a text message to the client.
@@ -102,7 +102,7 @@ declare module "bun" {
      * ws.send(new Uint8Array([1, 2, 3, 4]), true);
      * ```
      */
-    sendBinary(data: BufferSource, compress?: boolean): ServerWebSocketSendStatus;
+    sendBinary(data: BufferSource | Blob, compress?: boolean): ServerWebSocketSendStatus;
 
     /**
      * Closes the connection.
@@ -134,14 +134,14 @@ declare module "bun" {
      *
      * @param data The data to send
      */
-    ping(data?: string | BufferSource): ServerWebSocketSendStatus;
+    ping(data?: string | BufferSource | Blob): ServerWebSocketSendStatus;
 
     /**
      * Sends a pong.
      *
      * @param data The data to send
      */
-    pong(data?: string | BufferSource): ServerWebSocketSendStatus;
+    pong(data?: string | BufferSource | Blob): ServerWebSocketSendStatus;
 
     /**
      * Sends a message to subscribers of the topic.
@@ -156,7 +156,7 @@ declare module "bun" {
      * ws.publish("chat", new Uint8Array([1, 2, 3, 4]));
      * ```
      */
-    publish(topic: string, data: string | BufferSource, compress?: boolean): ServerWebSocketSendStatus;
+    publish(topic: string, data: string | BufferSource | Blob, compress?: boolean): ServerWebSocketSendStatus;
 
     /**
      * Sends a text message to subscribers of the topic.
@@ -184,7 +184,7 @@ declare module "bun" {
      * ws.publish("chat", new Uint8Array([1, 2, 3, 4]), true);
      * ```
      */
-    publishBinary(topic: string, data: BufferSource, compress?: boolean): ServerWebSocketSendStatus;
+    publishBinary(topic: string, data: BufferSource | Blob, compress?: boolean): ServerWebSocketSendStatus;
 
     /**
      * Subscribes a client to the topic.
@@ -1029,7 +1029,7 @@ declare module "bun" {
      */
     publish(
       topic: string,
-      data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer,
+      data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer | Blob,
       compress?: boolean,
     ): ServerWebSocketSendStatus;
 

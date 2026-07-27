@@ -35,10 +35,6 @@ pub struct NonLocalImportSpecifier {
 pub struct ProgramContext {
     pub opts: ReactCompilerOptions,
     pub filename: Option<String>,
-    /// The source filename from the parser's sourceFilename option.
-    /// This is the filename stored on AST node `loc.filename` fields,
-    /// which may differ from `filename` (e.g., no path prefix).
-    source_filename: Option<String>,
     pub code: Option<String>,
     pub react_runtime_module: &'static str,
     pub output_mode: OutputMode,
@@ -69,7 +65,6 @@ impl ProgramContext {
         Self {
             opts,
             filename,
-            source_filename: None,
             code,
             react_runtime_module,
             output_mode: OutputMode::Client,
@@ -82,18 +77,6 @@ impl ProgramContext {
             known_referenced_names: IndexSet::new(),
             imports: IndexMap::new(),
         }
-    }
-
-    /// Set the source filename (from AST node loc.filename).
-    pub fn set_source_filename(&mut self, filename: Option<String>) {
-        if self.source_filename.is_none() {
-            self.source_filename = filename;
-        }
-    }
-
-    /// Get the source filename for logger events.
-    pub fn source_filename(&self) -> Option<&str> {
-        self.source_filename.as_deref()
     }
 
     /// Check if a function at the given start position has already been compiled.

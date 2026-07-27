@@ -2445,10 +2445,73 @@ impl VirtualMachine {
                 return Ok(promise);
             }
             self.event_loop_mut().perform_gc();
-            self.wait_for_promise(jsc::AnyPromise::Internal(promise));
+            // Returns with the promise still Pending if the loop drains with
+            // nothing left to settle it, so the caller can detect an unsettled
+            // top-level await instead of spinning forever.
+            self.wait_for_module_promise(promise);
         }
 
         Ok(self.pending_internal_promise.unwrap_or(promise))
+    }
+
+    /// Like [`wait_for_promise`](Self::wait_for_promise) but returns (with the
+    /// promise possibly still `Pending`) once nothing in the loop could settle
+    /// it, instead of spinning on an unsettled top-level await.
+    pub fn wait_for_module_promise(&mut self, promise: *mut JSInternalPromise) {
+        let jsc_vm = self.jsc_vm;
+        while crate::JSPromise::status_ptr(promise) == crate::js_promise::Status::Pending {
+            // SAFETY: `jsc_vm` is the live per-thread JSC VM (set in `init`).
+            if unsafe { &*jsc_vm }.execution_forbidden() {
+                return;
+            }
+            self.event_loop_mut().tick();
+            if crate::JSPromise::status_ptr(promise) != crate::js_promise::Status::Pending {
+                return;
+            }
+            if !self.is_event_loop_alive() {
+                return;
+            }
+            self.auto_tick();
+        }
+    }
+
+    /// True when the entry module's evaluation promise is still pending after
+    /// the loop has drained, i.e. an unsettled top-level await.
+    pub fn entry_module_promise_is_pending(&self) -> bool {
+        self.pending_internal_promise
+            .is_some_and(|p| crate::JSPromise::status_ptr(p) == crate::js_promise::Status::Pending)
+    }
+
+    /// Print Node's "Detected unsettled top-level await" warning to stderr,
+    /// naming the stalled module(s) from the JSC module registry.
+    pub fn report_unsettled_top_level_await(&self) {
+        unsafe extern "C" {
+            fn Bun__findStalledTopLevelAwait(global: *mut JSGlobalObject) -> bun_core::String;
+        }
+        // SAFETY: `self.global` is the live per-thread global object.
+        let stalled = unsafe { Bun__findStalledTopLevelAwait(self.global) };
+        let stalled_utf8 = stalled.to_utf8();
+        let slice = stalled_utf8.slice();
+        let warn = |module: &[u8]| {
+            bun_core::pretty_errorln!(
+                "<r><yellow>Warning<r><d>:<r> Detected unsettled top-level await at <b>{}<r>",
+                bstr::BStr::new(module),
+            );
+        };
+        if !slice.is_empty() {
+            for module in slice.split(|&b| b == b'\0') {
+                warn(module);
+            }
+        } else if !self.main().is_empty() {
+            warn(self.main());
+        } else {
+            bun_core::pretty_errorln!(
+                "<r><yellow>Warning<r><d>:<r> Detected unsettled top-level await"
+            );
+        }
+        bun_core::Output::flush();
+        drop(stalled_utf8);
+        stalled.deref();
     }
 }
 

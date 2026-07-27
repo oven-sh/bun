@@ -38,6 +38,7 @@
 #include "JavaScriptCore/JSModuleLoader.h"
 #include "JavaScriptCore/CyclicModuleRecord.h"
 #include "JavaScriptCore/ModuleRegistryEntry.h"
+#include <wtf/text/StringBuilder.h>
 #include "JavaScriptCore/JSModuleNamespaceObject.h"
 #include "JavaScriptCore/JSModuleNamespaceObjectInlines.h"
 #include "JavaScriptCore/JSModuleRecord.h"
@@ -731,6 +732,34 @@ static bool isModuleEvaluated(JSC::AbstractModuleRecord* record)
         return cyclic->status() == JSC::CyclicModuleRecord::Status::Evaluated && !cyclic->evaluationError();
     // SyntheticModuleRecord is "evaluated" once linked (it has an environment).
     return record->moduleEnvironmentMayBeNull() != nullptr;
+}
+
+// Module specifiers suspended on their own top-level await (EvaluatingAsync,
+// syntactic TLA, no pending async dependency), NUL-joined, for the
+// unsettled-TLA warning. Empty when nothing is stalled.
+extern "C" BunString Bun__findStalledTopLevelAwait(JSC::JSGlobalObject* globalObject)
+{
+    WTF::StringBuilder builder;
+    for (auto& [key, entry] : globalObject->moduleLoader()->moduleMap()) {
+        if (!key.first || !entry)
+            continue;
+        auto* record = entry->record();
+        if (!record || !record->hasTLA())
+            continue;
+        auto* cyclic = dynamicDowncast<JSC::CyclicModuleRecord>(record);
+        if (!cyclic || cyclic->status() != JSC::CyclicModuleRecord::Status::EvaluatingAsync)
+            continue;
+        // EvaluatingAsync because it awaits an unfinished dependency: that
+        // dependency is the real culprit, skip this one.
+        if (auto pending = record->pendingAsyncDependencies(); pending && *pending > 0)
+            continue;
+        if (!builder.isEmpty())
+            builder.append('\0');
+        builder.append(String { key.first });
+    }
+    if (builder.isEmpty())
+        return BunStringEmpty;
+    return Bun::toStringRef(builder.toString());
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionEsmNamespaceForCjs, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -3678,16 +3707,10 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
 
     auto sourceURL = sourceOrigin.url();
     String sourceOriginStringHolder;
-    int64_t referrerAsyncOrder = -1;
     if (sourceURL.isEmpty()) {
         sourceOriginStringHolder = String("."_s);
     } else if (sourceURL.protocolIsFile()) {
         sourceOriginStringHolder = sourceURL.fileSystemPath();
-        auto query = sourceURL.queryWithLeadingQuestionMark();
-        auto referrerKey = query.isEmpty()
-            ? JSC::Identifier::fromString(vm, sourceOriginStringHolder)
-            : JSC::Identifier::fromString(vm, makeString(sourceOriginStringHolder, query));
-        referrerAsyncOrder = globalObject->moduleLoader()->asyncEvaluationOrderForKey(referrerKey);
     } else if (sourceURL.protocol() == "builtin"_s) {
         ASSERT(sourceURL.string().startsWith("builtin://"_s));
         sourceOriginStringHolder = sourceURL.string().substringSharingImpl(10 /* builtin:// */);
@@ -3699,7 +3722,7 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
         if (auto resolution = globalObject->onLoadPlugins.resolveVirtualModule(moduleName, sourceURL.protocolIsFile() ? sourceOriginStringHolder : String())) {
             resolvedIdentifier = JSC::Identifier::fromString(vm, resolution.value());
 
-            auto result = JSC::importModule(globalObject, resolvedIdentifier, JSC::Identifier(), parameters, nullptr, /* deferred */ false, referrerAsyncOrder);
+            auto result = JSC::importModule(globalObject, resolvedIdentifier, JSC::Identifier(), parameters, nullptr, /* deferred */ false);
             if (scope.exception()) [[unlikely]] {
                 return JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope);
             }
@@ -3759,7 +3782,7 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
     // ScriptFetchParameters before calling this hook, so `parameters` is
     // already the parsed RefPtr (or null). Just forward it.
     auto result = JSC::importModule(globalObject, resolvedIdentifier,
-        JSC::Identifier(), WTF::move(parameters), nullptr, /* deferred */ false, referrerAsyncOrder);
+        JSC::Identifier(), WTF::move(parameters), nullptr, /* deferred */ false);
     if (scope.exception()) [[unlikely]] {
         return JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope);
     }

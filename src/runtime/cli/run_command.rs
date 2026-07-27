@@ -1571,6 +1571,18 @@ impl Run {
                 vm.auto_tick_active();
             }
 
+            // The entry module's evaluation promise is still pending after the
+            // loop drained: an unsettled top-level await (e.g. a TLA dynamic
+            // import() whose target statically imports the awaiter back, which
+            // per spec waits on an EvaluatingAsync dependency and deadlocks).
+            // Node prints a warning and exits 13; match that here.
+            if vm.entry_module_promise_is_pending() {
+                vm.report_unsettled_top_level_await();
+                if vm.exit_handler.exit_code == 0 {
+                    vm.exit_handler.exit_code = 13;
+                }
+            }
+
             if ctx.runtime_options.eval.eval_and_print {
                 let to_print: JSValue = 'brk: {
                     let result = vm

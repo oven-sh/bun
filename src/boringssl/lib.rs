@@ -218,9 +218,7 @@ fn canonical_ip_octets<'a>(
     unsafe { c_ares::ntop(af, octets.as_ptr().cast(), &mut out_ip[..]) }
 }
 
-/// Strips a single trailing `.` (the DNS root label) so an absolute FQDN
-/// compares equal to its relative form. Mirrors Node.js `unfqdn()` in
-/// lib/tls.js and RFC 6125 §6.4.2 / RFC 9525 §6.3.
+/// Strips one trailing `.` (DNS root label). Mirrors Node.js `unfqdn()` in lib/tls.js.
 #[inline]
 fn unfqdn(name: &[u8]) -> &[u8] {
     name.strip_suffix(b".").unwrap_or(name)

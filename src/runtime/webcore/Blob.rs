@@ -4668,12 +4668,6 @@ fn write_file_with_empty_source_to_destination(
     ))
 }
 
-/// Content-Type for an S3 upload: explicit `{type}` option (stored on
-/// `destination`), else the body's own type (`Blob.type` / `Bun.file()`
-/// extension / Response header), else the key-extension fallback on the
-/// destination. The `application/octet-stream` placeholder on a `Bun.file()`
-/// with no recognised extension is treated as "unknown" so the key-extension
-/// fallback still applies.
 fn resolve_s3_upload_content_type<'a>(
     destination: &'a Blob,
     source_content_type: Option<&'a [u8]>,
@@ -4685,6 +4679,7 @@ fn resolve_s3_upload_content_type<'a>(
         }
     }
     if let Some(ct) = source_content_type {
+        // `OTHER` is the `Bun.file()` placeholder for an unrecognised extension.
         if !ct.is_empty() && ct != bun_http_types::MimeType::OTHER.value.as_ref() {
             return Some(ct);
         }

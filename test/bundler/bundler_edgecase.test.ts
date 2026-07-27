@@ -1503,8 +1503,8 @@ describe("bundler", () => {
     minifySyntax: true,
     capture: [
       "0 /* a */",
-      "NaN /* b */",
-      "NaN /* c */",
+      "0 / 0 /* b */",
+      "0 / 0 /* c */",
       "1 / 0 /* d */",
       "-1 / 0 /* e */",
       "1 / 0 /* f */",
@@ -2831,6 +2831,49 @@ describe("bundler", () => {
     },
     120_000,
   );
+  for (const minifySyntax of [false, true]) {
+    const suffix = minifySyntax ? "MinifySyntax" : "";
+    itBundled(`edgecase/VoidZeroWithShadowedUndefined${suffix}`, {
+      minifySyntax,
+      files: {
+        "/entry.ts": /* js */ `
+          (function (window, undefined) {
+            if (void 0 === undefined) throw new Error("void 0 captured local undefined");
+            console.log("param undefined:", undefined);
+          })(globalThis, "PASSED-VALUE");
+          console.log("PASS");
+        `,
+      },
+      run: { stdout: "param undefined: PASSED-VALUE\nPASS" },
+    });
+    itBundled(`edgecase/FoldedNaNWithShadowedNaN${suffix}`, {
+      minifySyntax,
+      files: {
+        "/entry.ts": /* js */ `
+          function check(NaN: number) {
+            if (!globalThis.Number.isNaN(0 / 0)) throw new Error("folded 0/0 captured local NaN");
+            return NaN;
+          }
+          console.log(check(5) === 5 ? "PASS" : "FAIL");
+        `,
+      },
+      run: { stdout: "PASS" },
+    });
+    itBundled(`edgecase/InfiniteLiteralWithShadowedInfinity${suffix}`, {
+      minifySyntax,
+      files: {
+        "/entry.ts": /* js */ `
+          function check(Infinity: number) {
+            if (1e400 === Infinity) throw new Error("1e400 captured local Infinity");
+            if (1e400 !== globalThis.Infinity) throw new Error("1e400 is not Infinity");
+            return Infinity;
+          }
+          console.log(check(7) === 7 ? "PASS" : "FAIL");
+        `,
+      },
+      run: { stdout: "PASS" },
+    });
+  }
   itBundled("edgecase/NonAsciiPathDerivedWrapperName", {
     files: {
       "/entry.ts": /* js */ `

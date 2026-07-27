@@ -252,3 +252,64 @@ describe("unterminated string literals in large files", () => {
     expect(exitCode).toBe(1);
   });
 });
+
+describe("shadowed global-constant identifiers", () => {
+  test.concurrent("folded 0/0 does not capture a local NaN", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `function check(NaN) {
+           return globalThis.Number.isNaN(0 / 0);
+         }
+         console.log(check(5));`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("true\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("overflowing numeric literal does not capture a local Infinity", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `function check(Infinity) {
+           return 1e400 === Infinity ? "CAPTURED" : 1e400 === globalThis.Infinity ? "OK" : "???";
+         }
+         console.log(check(7));`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("OK\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("void 0 does not capture a local undefined", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `(function (undefined) {
+           console.log(void 0 === undefined ? "CAPTURED" : typeof void 0);
+         })("PASSED-VALUE");`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("undefined\n");
+    expect(exitCode).toBe(0);
+  });
+});

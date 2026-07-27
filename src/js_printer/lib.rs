@@ -1876,19 +1876,19 @@ pub mod __gated_printer {
 
         #[inline]
         pub fn print_undefined(&mut self, loc: bun_ast::Loc, level: Level) {
-            if self.options.minify_syntax {
-                if level.gte(Level::Prefix) {
-                    self.add_source_mapping(loc);
-                    self.print(b"(void 0)");
-                } else {
-                    self.print_space_before_identifier();
-                    self.add_source_mapping(loc);
-                    self.print(b"void 0");
-                }
-            } else {
+            // Only emit the bare identifier when the renamer has reserved the name
+            // "undefined"; otherwise a user binding of the same name would capture it.
+            if !self.options.minify_syntax && self.options.has_run_symbol_renamer {
                 self.print_space_before_identifier();
                 self.add_source_mapping(loc);
                 self.print(b"undefined");
+            } else if level.gte(Level::Prefix) {
+                self.add_source_mapping(loc);
+                self.print(b"(void 0)");
+            } else {
+                self.print_space_before_identifier();
+                self.add_source_mapping(loc);
+                self.print(b"void 0");
             }
         }
 
@@ -4322,7 +4322,7 @@ pub mod __gated_printer {
         /// something that is not a valid property name (e.g. "-1", "1/0", "1 / 0").
         pub fn number_property_key_must_be_computed(&self, value: f64) -> bool {
             value.is_sign_negative()
-                || (value == f64::INFINITY
+                || ((value == f64::INFINITY || value.is_nan())
                     && (self.options.minify_syntax || !self.options.has_run_symbol_renamer))
         }
 
@@ -6453,8 +6453,27 @@ pub mod __gated_printer {
         pub fn print_number(&mut self, value: f64, level: Level) {
             let abs_value = value.abs();
             if value.is_nan() {
-                self.print_space_before_identifier();
-                self.print(b"NaN");
+                // Only emit the bare identifier when the renamer has reserved the name
+                // "NaN"; otherwise a user binding of the same name would capture it.
+                if IS_JSON || (!self.options.minify_syntax && self.options.has_run_symbol_renamer) {
+                    self.print_space_before_identifier();
+                    self.print(b"NaN");
+                } else {
+                    let wrap = level.gte(Level::Multiply);
+                    if wrap {
+                        self.print(b"(");
+                    } else {
+                        self.print_space_before_identifier();
+                    }
+                    if self.options.minify_whitespace {
+                        self.print(b"0/0");
+                    } else {
+                        self.print(b"0 / 0");
+                    }
+                    if wrap {
+                        self.print(b")");
+                    }
+                }
             } else if value.is_infinite() {
                 let is_neg_inf = value.is_sign_negative();
                 let wrap = ((!self.options.has_run_symbol_renamer || self.options.minify_syntax)

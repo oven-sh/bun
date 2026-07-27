@@ -674,7 +674,9 @@ int start_connections(struct us_connecting_socket_t *c, int count) {
         /* The deferred-DNS path does not carry a local binding. */
         LIBUS_SOCKET_DESCRIPTOR connect_socket_fd = bsd_create_connect_socket(&addr, NULL, c->options);
         if (connect_socket_fd == LIBUS_SOCKET_ERROR) {
-            c->error = LIBUS_ERR;
+            if (c->error == 0) {
+                c->error = LIBUS_ERR;
+            }
             continue;
         }
         bsd_socket_nodelay(connect_socket_fd, 1);

@@ -37,6 +37,7 @@ const probe = async () => {
     s.once("connect", () => { s.destroy(); r(null); }).once("error", e => r({ code: e.code, syscall: e.syscall }));
   });
   try { req(mod + ".cjs"); out.require = null; } catch (e) { out.require = { code: e.code, syscall: e.syscall, path: e.path }; }
+  try { req("emfile-pkg"); out.requireBare = null; } catch (e) { out.requireBare = { code: e.code, syscall: e.syscall }; }
   try { await import(mod + ".mjs"); out.import = null; } catch (e) { out.import = { code: e.code, syscall: e.syscall, path: e.path }; }
   out.listen = await new Promise(r => {
     const s = net.createServer();
@@ -60,6 +61,8 @@ describe.skipIf(!isPosix)("EMFILE is reported as EMFILE", () => {
       "probe.mjs": fixture,
       "mod/m.cjs": "module.exports = 42;",
       "mod/m.mjs": "export const v = 42;",
+      "node_modules/emfile-pkg/package.json": JSON.stringify({ name: "emfile-pkg", main: "index.js" }),
+      "node_modules/emfile-pkg/index.js": "module.exports = 42;",
     });
     // Bun raises RLIMIT_NOFILE on startup; `ulimit -n` lowers both soft and
     // hard in dash/bash so the raise cannot exceed it. 512 leaves room for
@@ -88,6 +91,7 @@ describe.skipIf(!isPosix)("EMFILE is reported as EMFILE", () => {
     expect(parsed.exhausted).toEqual({
       connect: { code: "EMFILE", syscall: "connect" },
       require: { code: "EMFILE", syscall: "open", path: String(dir) + "/mod/m.cjs" },
+      requireBare: { code: "EMFILE", syscall: "open" },
       import: { code: "EMFILE", syscall: "open", path: String(dir) + "/mod/m.mjs" },
       listen: { code: "EMFILE", syscall: "listen" },
     });
@@ -95,6 +99,7 @@ describe.skipIf(!isPosix)("EMFILE is reported as EMFILE", () => {
     expect(parsed.recovered).toEqual({
       connect: null,
       require: null,
+      requireBare: null,
       import: null,
       listen: null,
     });

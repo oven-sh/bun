@@ -33,12 +33,17 @@ test("readyState becomes CLOSING when a Close frame arrives while the send queue
       if (end < 0) return;
       done = true;
       const key = /sec-websocket-key:\s*(\S+)/i.exec(head)![1];
-      const accept = crypto.createHash("sha1").update(key + GUID).digest("base64");
+      const accept = crypto
+        .createHash("sha1")
+        .update(key + GUID)
+        .digest("base64");
       sock.write(
         "HTTP/1.1 101 Switching Protocols\r\n" +
           "Upgrade: websocket\r\n" +
           "Connection: Upgrade\r\n" +
-          "Sec-WebSocket-Accept: " + accept + "\r\n\r\n",
+          "Sec-WebSocket-Accept: " +
+          accept +
+          "\r\n\r\n",
       );
       // Stop reading so the client's sends back up into its userspace buffer.
       sock.pause();

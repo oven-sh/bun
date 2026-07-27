@@ -384,7 +384,11 @@ impl GlobScanIterator {
     /// Early-termination hook: closes any open directory fds immediately
     /// instead of waiting for GC.
     #[bun_jsc::host_fn(method)]
-    pub fn close(&self, _global_this: &JSGlobalObject, _callframe: &CallFrame) -> JsResult<JSValue> {
+    pub fn close(
+        &self,
+        _global_this: &JSGlobalObject,
+        _callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         if self.has_pending_activity.load(Ordering::SeqCst) == 0 {
             self.state.with_mut(|state| state.teardown());
         }

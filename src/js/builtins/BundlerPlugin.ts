@@ -170,9 +170,6 @@ export function runSetupFunction(
     [RegExp, napiModule: unknown, symbol: string, external?: undefined | unknown][]
   >();
 
-  // Hook registration pushes to the local maps above, which are committed to
-  // the native side exactly once in processSetupResult(). Registrations after
-  // that point would be silently ignored, so throw instead.
   var setupComplete = false;
   function ensureSetup(name: string) {
     if (setupComplete) {

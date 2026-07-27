@@ -187,6 +187,49 @@ impl List {
         None
     }
 
+    fn find_closest_index(
+        line_column_offsets: &[LineColumnOffset],
+        line: i32,
+        column: i32,
+    ) -> Option<usize> {
+        let mut count = line_column_offsets.len();
+        let mut index: usize = 0;
+        while count > 0 {
+            let step = count / 2;
+            let i: usize = index + step;
+            let mapping = line_column_offsets[i];
+            if mapping.lines.zero_based() < line
+                || (mapping.lines.zero_based() == line && mapping.columns.zero_based() <= column)
+            {
+                index = i + 1;
+                count = count.saturating_sub(step + 1);
+            } else {
+                count = step;
+            }
+        }
+
+        if index == 0 {
+            return None;
+        }
+        Some(index - 1)
+    }
+
+    /// Closest mapping whose generated position is `<= (line, column)`, regardless of
+    /// whether the generated line matches. Returns `None` only when `(line, column)` is
+    /// before the first mapping or the list is empty. Inputs are signed 0-based offsets
+    /// (Node.js `SourceMap.prototype.findEntry` accepts negative values).
+    pub fn find_closest(&self, line: i32, column: i32) -> Option<Mapping> {
+        match &self.r#impl {
+            ListValue::WithoutNames(list) => {
+                Self::find_closest_index(list.items_generated(), line, column)
+                    .map(|i| list.get(i).to_named())
+            }
+            ListValue::WithNames(list) => {
+                Self::find_closest_index(list.items_generated(), line, column).map(|i| *list.get(i))
+            }
+        }
+    }
+
     pub fn sort(&mut self) {
         // `MultiArrayList::sort(&mut self, ctx)` swaps the `generated` column
         // in place, so the comparator cannot hold a `&[LineColumnOffset]` over

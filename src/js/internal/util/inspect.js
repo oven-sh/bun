@@ -344,15 +344,16 @@ function isURL(value) {
 
 const SymbolToPrimitive = Symbol.toPrimitive;
 
+// Frozen to the names Node v26 sees on globalThis at bootstrap, before host
+// globals (Buffer, URL, SharedArrayBuffer, Float16Array, ...) are installed.
 // prettier-ignore
 const builtInObjects = new SafeSet([
-  "AggregateError", "Array", "ArrayBuffer", "AsyncDisposableStack", "Atomics",
-  "BigInt", "BigInt64Array", "BigUint64Array", "Boolean", "DataView", "Date",
-  "DisposableStack", "Error", "EvalError", "FinalizationRegistry", "Float16Array",
-  "Float32Array", "Float64Array", "Function", "Int16Array", "Int32Array",
-  "Int8Array", "Intl", "Iterator", "JSON", "Map", "Math", "Number", "Object",
-  "Promise", "Proxy", "RangeError", "ReferenceError", "Reflect", "RegExp", "Set",
-  "SharedArrayBuffer", "String", "SuppressedError", "Symbol", "SyntaxError",
+  "AggregateError", "Array", "ArrayBuffer", "Atomics", "BigInt", "BigInt64Array",
+  "BigUint64Array", "Boolean", "DataView", "Date", "Error", "EvalError",
+  "FinalizationRegistry", "Float32Array", "Float64Array", "Function", "Infinity",
+  "Int16Array", "Int32Array", "Int8Array", "Intl", "Iterator", "JSON", "Map",
+  "Math", "NaN", "Number", "Object", "Promise", "Proxy", "RangeError",
+  "ReferenceError", "Reflect", "RegExp", "Set", "String", "Symbol", "SyntaxError",
   "TypeError", "URIError", "Uint16Array", "Uint32Array", "Uint8Array",
   "Uint8ClampedArray", "WeakMap", "WeakRef", "WeakSet",
 ]);

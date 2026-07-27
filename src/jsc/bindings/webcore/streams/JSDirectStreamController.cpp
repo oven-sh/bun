@@ -888,15 +888,18 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_boundDirectWrite, (JSGlobalObject *
     JSValue wrote = writeToDirectSink(globalObject, controller, callFrame->argument(1));
     RETURN_IF_EXCEPTION(scope, {});
     // Pump guard: the ArrayBuffer sink has no backpressure of its own, so write() signals it
-    // here once the buffered batch crosses the highWaterMark. A waiting consumer is handed the
-    // batch in-tick so the caller keeps pumping; with no consumer the negative return tells
-    // the caller to flush(true) and suspend until didDrain resolves.
+    // here once the buffered batch crosses the highWaterMark. A waiting consumer outside the
+    // initial pull frame is handed the batch in-tick so the caller keeps pumping; inside that
+    // frame (m_deferFlush == -1) onPull's own deferred onFlush owns delivery to the head-of-
+    // line promise, so always return negative there to avoid producing a second batch before
+    // callDirectPull has returned. With no consumer the negative return tells the caller to
+    // flush(true) and suspend until didDrain resolves.
     if (controller->m_sinkKind == DirectSinkKind::ArrayBuffer && wrote.isNumber()) {
         double n = wrote.asNumber();
         if (n > 0) {
             controller->m_undeliveredBytes += static_cast<uint64_t>(n);
             if (controller->m_undeliveredBytes > controller->m_highWaterMark) {
-                if (directControllerHasWaitingConsumer(controller, controller->m_stream.get())) {
+                if (controller->m_deferFlush != -1 && directControllerHasWaitingConsumer(controller, controller->m_stream.get())) {
                     controller->onFlush(globalObject);
                     RETURN_IF_EXCEPTION(scope, {});
                 } else {

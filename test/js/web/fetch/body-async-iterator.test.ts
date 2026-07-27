@@ -259,22 +259,52 @@ describe("Response(async iterable).body: direct-controller pump guard", () => {
     expect(exitCode).toBe(0);
   });
 
-  test.concurrent("bounded producer still delivers every byte", async () => {
+  // Byte-count controls. An async generator's yield has an implicit await so next() is never
+  // already-fulfilled; a manual iterator returning Promise.resolve(...) IS, which makes the
+  // pump loop synchronously inside the first callDirectPull frame. Both, across every
+  // non-Promise reader kind, must deliver the exact total.
+  test.concurrent.each([
+    ["async function*", `async function* it() { for (let i = 0; i < 300; i++) yield new Uint8Array(1024).fill(0x61); }`],
+    [
+      "Promise.resolve next()",
+      `function it() {
+         let k = 0;
+         return { [Symbol.asyncIterator]() { return this; }, next() {
+           if (k++ >= 300) return Promise.resolve({ done: true, value: undefined });
+           return Promise.resolve({ value: new Uint8Array(1024).fill(0x61), done: false });
+         } };
+       }`,
+    ],
+  ])("bounded %s producer delivers every byte to every reader kind", async (_name, iteratorSource) => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
         "-e",
         `
-        const chunk = new Uint8Array(1024).fill(0x61);
-        async function* g() { for (let i = 0; i < 300; i++) yield chunk; }
-        const r = new Response(g()).body.getReader();
-        let total = 0;
-        while (true) {
-          const { done, value } = await r.read();
-          if (done) break;
-          total += value.byteLength;
+        ${iteratorSource}
+        const expected = 300 * 1024;
+        const out = {};
+        {
+          const r = new Response(it()).body.getReader();
+          let total = 0;
+          while (true) {
+            const { done, value } = await r.read();
+            if (done) break;
+            total += value.byteLength;
+          }
+          out.reader = total;
         }
-        process.stdout.write(JSON.stringify({ total }) + "\\n");
+        {
+          let total = 0;
+          for await (const c of new Response(it()).body) total += c.byteLength;
+          out.forAwait = total;
+        }
+        {
+          let total = 0;
+          await new Response(it()).body.pipeTo(new WritableStream({ write(c) { total += c.byteLength; } }));
+          out.pipeTo = total;
+        }
+        process.stdout.write(JSON.stringify(out) + "\\n");
         `,
       ],
       env: bunEnv,
@@ -283,7 +313,7 @@ describe("Response(async iterable).body: direct-controller pump guard", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
-    expect(JSON.parse(stdout.trim())).toEqual({ total: 300 * 1024 });
+    expect(JSON.parse(stdout.trim())).toEqual({ reader: 300 * 1024, forAwait: 300 * 1024, pipeTo: 300 * 1024 });
     expect(exitCode).toBe(0);
   });
 

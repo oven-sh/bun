@@ -69,11 +69,12 @@ const ws = new WebSocket(`ws://127.0.0.1:${address.port}`);
 
 const opened = Promise.withResolvers<void>();
 ws.onopen = () => opened.resolve();
-ws.onerror = () => {};
+ws.onerror = e => opened.reject(new Error("WebSocket error before open: " + (e as ErrorEvent).message));
 const closed = Promise.withResolvers<{ code: number; wasClean: boolean }>();
 ws.onclose = e => closed.resolve({ code: e.code, wasClean: e.wasClean });
 
 await opened.promise;
+ws.onerror = () => {};
 
 const payload = new Uint8Array(CHUNK);
 let maxBufferedBeforeClose = 0;

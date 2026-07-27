@@ -14,7 +14,7 @@ const FIXTURE = require.resolve("./websocket-close-during-backpressure-fixture.t
 // BUN_CONFIG_WS_CLOSE_TIMEOUT=1 the close may take up to ~5 s to fire; the
 // fixture races that against an 8 s deadline. The default 5 s test timeout is
 // too tight for this path.
-test("WebSocket client: server Close during stalled drain transitions to CLOSING and eventually closes", async () => {
+test.concurrent("WebSocket client: server Close during stalled drain transitions to CLOSING and eventually closes", async () => {
   await using proc = Bun.spawn({
     cmd: [bunExe(), FIXTURE],
     env: {
@@ -56,11 +56,11 @@ test("WebSocket client: server Close during stalled drain transitions to CLOSING
   // or FIN'd, so the bounded teardown reports 1006 / wasClean=false.
   expect(result.close).not.toBe("timeout");
   expect(result.close).toEqual({ code: 1006, wasClean: false });
-}, 20000);
+}, 30000);
 
 // #31760 without the stall: bufferedAmount is the live queue length and falls
 // to 0 once the socket drains. Needs no env tuning, so this runs in-process.
-test("WebSocket client: bufferedAmount tracks the outbound queue", async () => {
+test.concurrent("WebSocket client: bufferedAmount tracks the outbound queue", async () => {
   let serverSock: net.Socket | undefined;
   const server = await new Promise<net.Server>(resolve => {
     const s = net.createServer(sock => {

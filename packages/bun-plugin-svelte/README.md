@@ -45,6 +45,7 @@ Bun.build({
   outdir: "dist",
   target: "browser",
   sourcemap: true, // sourcemaps not yet supported
+  conditions: ["svelte"], // resolve the "svelte" export condition used by Svelte packages
   plugins: [
     SveltePlugin({
       development: true, // turn off for prod builds. Defaults to false
@@ -52,6 +53,8 @@ Bun.build({
   ],
 });
 ```
+
+> Plugins cannot modify `Bun.build` options. If you depend on Svelte packages that only expose a `"svelte"` export condition (for example `@threlte/core`), add `conditions: ["svelte"]` to your `Bun.build` call as shown above.
 
 ## Server-Side Usage
 

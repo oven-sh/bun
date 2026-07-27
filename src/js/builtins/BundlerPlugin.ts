@@ -343,13 +343,14 @@ export function runSetupFunction(
     return this.promises;
   };
 
-  // Expose a snapshot of the caller's config, not the live object: every
-  // option has already been consumed by the time setup() runs, so writes here
-  // must not feed back into the build or into the caller's object.
+  // Expose a shallow snapshot of the caller's config, not the live object:
+  // every option has already been consumed by the time setup() runs, so
+  // top-level writes here must not feed back into the build.
+  const { plugins: cfgPlugins, entrypoints: cfgEntrypoints, entryPoints: cfgEntryPoints } = config;
   const configSnapshot: BuildConfigExt = { ...config };
-  if ($isJSArray(config.plugins)) configSnapshot.plugins = [...config.plugins];
-  if ($isJSArray(config.entrypoints)) configSnapshot.entrypoints = [...config.entrypoints!];
-  if ($isJSArray(config.entryPoints)) configSnapshot.entryPoints = [...config.entryPoints!];
+  if ($isJSArray(cfgPlugins)) configSnapshot.plugins = [...cfgPlugins];
+  if ($isJSArray(cfgEntrypoints)) configSnapshot.entrypoints = [...cfgEntrypoints];
+  if ($isJSArray(cfgEntryPoints)) configSnapshot.entryPoints = [...cfgEntryPoints];
 
   var setupResult = setup({
     config: configSnapshot,

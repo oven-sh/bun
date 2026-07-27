@@ -3821,11 +3821,11 @@ impl<'a> HTTPClient<'a> {
         if self.proxy_tunnel.is_some() {
             // Body phase only, mirroring the non-proxy dispatch below (header
             // phase is an absolute deadline; see [`IDLE_TIMEOUT_SECONDS`]).
+            debug_assert!(!self.state.flags.receive_paused); // maybe_pause_receive bails on proxy_tunnel
             if matches!(
                 self.state.response_stage,
                 ResponseStage::Body | ResponseStage::BodyChunk
-            ) && !self.state.flags.receive_paused
-            {
+            ) {
                 self.set_timeout(&socket);
             }
             self.proxy_tunnel_mut().unwrap().receive(incoming_data);

@@ -661,12 +661,8 @@ impl FileSink {
         } else {
             fd
         };
-        #[cfg(unix)]
-        self.writer.with_mut(|w| w.close_fd = owns_fd);
-
         #[cfg(windows)]
         {
-            self.writer.with_mut(|w| w.owns_fd = owns_fd);
             if self.force_sync.get() {
                 // SAFETY(JsCell): `start_sync` is pure I/O setup; no JS.
                 match self
@@ -680,6 +676,7 @@ impl FileSink {
                         return sys::Result::Err(err);
                     }
                     sys::Result::Ok(()) => {
+                        self.writer.with_mut(|w| w.owns_fd = owns_fd);
                         self.writer
                             .with_mut(|w| w.update_ref(self.io_evtloop(), false));
                     }
@@ -691,12 +688,20 @@ impl FileSink {
         // SAFETY(JsCell): `start` is pure I/O setup; no JS.
         match self.writer.with_mut(|w| w.start(fd, self.pollable.get())) {
             sys::Result::Err(err) => {
+                #[cfg(unix)]
+                self.writer.with_mut(|w| w.close_fd = owns_fd);
+                #[cfg(windows)]
+                self.writer.with_mut(|w| w.owns_fd = owns_fd);
                 if owns_fd {
                     fd.close();
                 }
                 return sys::Result::Err(err);
             }
             sys::Result::Ok(()) => {
+                #[cfg(unix)]
+                self.writer.with_mut(|w| w.close_fd = owns_fd);
+                #[cfg(windows)]
+                self.writer.with_mut(|w| w.owns_fd = owns_fd);
                 // Only keep the event loop ref'd while there's a pending write in progress.
                 // If there's no pending write, no need to keep the event loop ref'd.
                 self.writer
@@ -841,7 +846,7 @@ impl FileSink {
     pub unsafe fn on_auto_flush(this: *mut FileSink) -> bool {
         // SAFETY: caller contract — `this` is live with write+dealloc provenance.
         unsafe {
-            if (*this).done.get() || !(*this).writer.get().has_pending_data() {
+            if !(*this).writer.get().has_pending_data() {
                 (*this).update_ref(false);
                 (*this).auto_flusher.with_mut(|a| a.registered.set(false));
                 return false;
@@ -849,6 +854,7 @@ impl FileSink {
 
             let _guard = FileSinkRef::new_ref(this);
 
+            let done = (*this).done.get();
             let amount_buffered = (*this).writer.get().outgoing.size();
 
             // SAFETY(JsCell): `IOWriter::flush` is pure I/O; the `on_write`
@@ -875,11 +881,17 @@ impl FileSink {
                 }
                 WriteResult::Done(_) => {
                     (*this).update_ref(false);
+                    if done {
+                        (*this).writer.with_mut(|w| w.end());
+                    }
                     (*this).run_pending_later();
                 }
                 WriteResult::Wrote(amount_drained) => {
                     if amount_drained == amount_buffered {
                         (*this).update_ref(false);
+                        if done {
+                            (*this).writer.with_mut(|w| w.end());
+                        }
                         (*this).run_pending_later();
                     }
                 }

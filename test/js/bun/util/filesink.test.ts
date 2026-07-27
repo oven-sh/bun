@@ -179,14 +179,17 @@ describe("FileSink", () => {
     expect(await Bun.file(path).text()).toBe("one two three");
   });
 
-  it("writev rejects non-ArrayBufferView entries", () => {
+  it("writev rejects non-ArrayBufferView entries", async () => {
     const path = join(tmpdirSync(), "writev-bad.txt");
     const sink = Bun.file(path).writer();
-    expect(() => sink.writev(["string" as any])).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
-    expect(() => (sink as any).writev("not an array")).toThrow(
-      expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
-    );
-    sink.end();
+    try {
+      expect(() => sink.writev(["string" as any])).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
+      expect(() => (sink as any).writev("not an array")).toThrow(
+        expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+      );
+    } finally {
+      await sink.end();
+    }
   });
 
   it("writev does not dereference a buffer detached by an accessor getter", async () => {

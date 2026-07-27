@@ -1011,7 +1011,7 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
                     continue;
                 }
                 iov.push(libc::iovec {
-                    iov_base: b.as_ptr() as *mut core::ffi::c_void,
+                    iov_base: b.as_ptr().cast_mut().cast::<core::ffi::c_void>(),
                     iov_len: b.len(),
                 });
             }
@@ -1061,8 +1061,10 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
                     start += 1;
                 }
                 if start < iov.len() && consumed > 0 {
+                    // SAFETY: `consumed < iov[start].iov_len`, so the advanced
+                    // base stays within the original live buffer.
                     iov[start].iov_base =
-                        unsafe { (iov[start].iov_base as *mut u8).add(consumed) }.cast();
+                        unsafe { iov[start].iov_base.cast::<u8>().add(consumed) }.cast();
                     iov[start].iov_len -= consumed;
                 }
             }

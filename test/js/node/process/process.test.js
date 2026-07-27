@@ -119,6 +119,69 @@ it("process.chdir() on root dir", () => {
   }
 });
 
+// Windows keeps an open handle on the cwd, so renaming/removing it fails there.
+it.skipIf(isWindows).concurrent("process.cwd() re-queries the kernel after chdir when the directory is renamed", async () => {
+  const src = `
+    const { mkdtempSync, renameSync, rmSync } = require("node:fs");
+    const { tmpdir } = require("node:os");
+    const { join } = require("node:path");
+    const a = mkdtempSync(join(tmpdir(), "cwdstale-"));
+    const b = a + "-RENAMED";
+    process.chdir(a);
+    renameSync(a, b);
+    try {
+      console.log(JSON.stringify({ cwd: process.cwd(), expected: b }));
+    } finally {
+      rmSync(b, { recursive: true, force: true });
+    }
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const { cwd, expected } = JSON.parse(stdout);
+  expect(cwd).toBe(expected);
+  expect(exitCode).toBe(0);
+});
+
+it.skipIf(isWindows).concurrent("process.cwd() throws ENOENT once the current directory has been removed", async () => {
+  const src = `
+    const { mkdtempSync, rmdirSync } = require("node:fs");
+    const { tmpdir } = require("node:os");
+    const { join } = require("node:path");
+    const a = mkdtempSync(join(tmpdir(), "cwddel-"));
+    process.chdir(a);
+    rmdirSync(a);
+    try {
+      process.cwd();
+      console.log(JSON.stringify({ threw: false }));
+    } catch (e) {
+      console.log(JSON.stringify({ threw: true, code: e.code, syscall: e.syscall }));
+    }
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({ threw: true, code: "ENOENT", syscall: "getcwd" });
+  expect(exitCode).toBe(0);
+});
+
+it.skipIf(isWindows)("process.chdir() to a path longer than PATH_MAX throws ENAMETOOLONG", () => {
+  const longPath = "/tmp/" + Buffer.alloc(5000, "a").toString();
+  let err;
+  try {
+    process.chdir(longPath);
+  } catch (e) {
+    err = e;
+  }
+  expect(err).toBeDefined();
+  expect({ code: err.code, syscall: err.syscall, dest: err.dest }).toEqual({
+    code: "ENAMETOOLONG",
+    syscall: "chdir",
+    dest: longPath,
+  });
+  expect(typeof err.path).toBe("string");
+});
+
 it("process.hrtime()", async () => {
   const start = process.hrtime();
   const end = process.hrtime(start);

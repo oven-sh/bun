@@ -91,6 +91,16 @@ test.concurrent("bun -e with a never-settling top-level await exits 13", async (
   expect({ signalCode, exitCode }).toEqual({ signalCode: null, exitCode: 13 });
 });
 
+test.concurrent("uncaught exception during top-level await does not print a spurious TLA warning", async () => {
+  using dir = tempDir("tla-uncaught", {
+    "a.mjs": `setImmediate(() => { throw new Error("boom"); });\nawait new Promise(r => setTimeout(r, 100));\n`,
+  });
+  const { stderr, exitCode, signalCode } = await run([bunExe(), "a.mjs"], String(dir));
+  expect(stderr).toContain("boom");
+  expect(stderr).not.toContain("Detected unsettled top-level await");
+  expect({ signalCode, exitCode }).toEqual({ signalCode: null, exitCode: 1 });
+});
+
 test.concurrent("top-level await rejected during beforeExit is reported (exit 1, not swallowed)", async () => {
   using dir = tempDir("tla-reject-beforeexit", {
     "a.mjs":

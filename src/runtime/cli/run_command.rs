@@ -1493,8 +1493,13 @@ impl Run {
             }
         }
 
+        let _entry_promise_protected;
         match vm.load_entry_point(entry) {
             Ok(promise) => {
+                // `pending_internal_promise` is a raw, unvisited pointer on this
+                // path; root it so the post-`on_before_exit` status read below
+                // survives the intervening GC and user JS.
+                _entry_promise_protected = JSValue::from_cell(promise).protected();
                 // SAFETY: `promise` is a live GC cell returned by the module loader.
                 let promise = unsafe { &mut *promise };
                 if promise.status() == PromiseStatus::Rejected {
@@ -1620,8 +1625,11 @@ impl Run {
 
             vm.on_before_exit();
 
-            if let Some(p) = vm.pending_internal_promise {
-                // SAFETY: `p` is a live JSC heap cell tracked by the VM.
+            if vm.unhandled_error_counter == 0
+                && let Some(p) = vm.pending_internal_promise
+            {
+                // SAFETY: `p` is a live JSC heap cell rooted by
+                // `_entry_promise_protected` above.
                 let p = unsafe { &mut *p };
                 match p.status() {
                     PromiseStatus::Pending => {

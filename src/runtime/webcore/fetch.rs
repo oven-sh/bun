@@ -782,8 +782,14 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                                 // (the BoringSSL error queue is thread-local and uSockets does
                                 // not set `*err` for bad cert/key). Build it here so a bad
                                 // client identity rejects with the same ERR_OSSL_* code as
-                                // node:tls createSecureContext.
-                                if config.requires_custom_request_ctx {
+                                // node:tls createSecureContext. Only probe when a client
+                                // identity is present so ca-only / serverName-only configs
+                                // keep hitting the HTTP-thread cache without an extra build.
+                                let has_client_identity = config.cert.is_some()
+                                    || config.key.is_some()
+                                    || !config.cert_file_name.is_null()
+                                    || !config.key_file_name.is_null();
+                                if has_client_identity {
                                     let mut err = bun_uws::create_bun_socket_error_t::none;
                                     match config
                                         .as_usockets_for_client_verification()

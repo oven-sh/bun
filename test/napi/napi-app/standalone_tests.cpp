@@ -2597,14 +2597,15 @@ test_external_arraybuffer_finalizer(const Napi::CallbackInfo &info) {
 }
 
 // Regression test: napi_detach_arraybuffer on an external ArrayBuffer must
-// not run the finalize_cb synchronously inside the detach call. In Node/V8
-// the BackingStore stays owned by the ArrayBuffer object across Detach(),
-// so the deleter (finalize_cb) only runs when the ArrayBuffer is collected.
+// not run the finalize_cb synchronously inside the detach call. Node's
+// BackingStore deleter posts the callback via env->SetImmediateThreadsafe,
+// so it fires on the next event-loop turn regardless of whether the
+// ArrayBuffer wrapper is still reachable.
 static int detach_finalize_count = 0;
 static char detach_backing[256];
 
 static napi_value
-test_detach_external_arraybuffer_finalizer(const Napi::CallbackInfo &info) {
+create_and_detach_external_arraybuffer(const Napi::CallbackInfo &info) {
   napi_env env = info.Env();
 
   detach_finalize_count = 0;
@@ -2634,16 +2635,17 @@ test_detach_external_arraybuffer_finalizer(const Napi::CallbackInfo &info) {
   printf("second detach status=%d finalize_count after second detach=%d\n",
          (int)detach2, detach_finalize_count);
 
-  // Hold the ArrayBuffer across a few GC cycles: the finalizer must not fire
-  // while the object is still reachable.
-  napi_ref ab_ref;
-  NODE_API_CALL(env, napi_create_reference(env, arraybuffer, 1, &ab_ref));
-  run_gc(info);
-  run_gc(info);
-  printf("finalize_count while reachable=%d\n", detach_finalize_count);
+  // Return the (detached, zero-length) ArrayBuffer so the JS driver can keep
+  // it reachable across an event-loop turn and observe the count then.
+  fflush(stdout);
+  return arraybuffer;
+}
 
-  NODE_API_CALL(env, napi_delete_reference(env, ab_ref));
-  return ok(env);
+static napi_value get_detach_finalize_count(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  napi_value v;
+  NODE_API_CALL(env, napi_create_int32(env, detach_finalize_count, &v));
+  return v;
 }
 
 // Regression test: napi_create_external_arraybuffer while a napi exception
@@ -3607,8 +3609,8 @@ void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, napi_get_typeof);
   REGISTER_FUNCTION(env, exports, test_external_buffer_data_lifetime);
   REGISTER_FUNCTION(env, exports, test_external_arraybuffer_finalizer);
-  REGISTER_FUNCTION(env, exports,
-                    test_detach_external_arraybuffer_finalizer);
+  REGISTER_FUNCTION(env, exports, create_and_detach_external_arraybuffer);
+  REGISTER_FUNCTION(env, exports, get_detach_finalize_count);
   REGISTER_FUNCTION(env, exports,
                     test_external_arraybuffer_with_pending_exception);
   REGISTER_FUNCTION(env, exports,

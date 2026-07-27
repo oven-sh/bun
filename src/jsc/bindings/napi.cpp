@@ -1298,10 +1298,7 @@ extern "C" napi_status napi_detach_arraybuffer(napi_env env,
     // is a no-op in both engines, so treat that as success.
     NAPI_RETURN_EARLY_IF_FALSE(env, arrayBuffer->isDetached() || arrayBuffer->isDetachable(), napi_detachable_arraybuffer_expected);
     if (!arrayBuffer->isDetached()) {
-        // detach() would fire the napi finalize_cb synchronously; hold the contents until GC to match V8.
-        ArrayBufferContents contents;
-        arrayBuffer->transferTo(vm, contents);
-        vm.heap.addFinalizer(jsArrayBuffer, [contents = WTF::move(contents)](JSCell*) mutable {});
+        arrayBuffer->detach(vm);
     }
     NAPI_RETURN_SUCCESS(env);
 }
@@ -2325,9 +2322,10 @@ public:
 
     void run(void* data) override
     {
-        if (m_armed) {
+        if (m_armed && m_cb) {
             NAPI_LOG("external buffer finalizer");
-            m_env->doFinalizer(m_cb, data, m_hint);
+            // Node's BackingStore deleter posts via SetImmediateThreadsafe, so finalize_cb never runs inside detach/GC.
+            napi_internal_enqueue_finalizer(m_env.ptr(), m_cb, data, m_hint);
         }
     }
 

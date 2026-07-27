@@ -3,6 +3,7 @@
 // installed copy (https://github.com/oven-sh/bun/issues/36098).
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { join } from "node:path";
 // test/node_modules has the real undici installed.
 import { MockAgent } from "undici";
 
@@ -69,17 +70,59 @@ describe.concurrent("undici prefer-installed resolution", () => {
         const undici = require("undici");
         console.log(require.resolve("undici"), typeof undici.request, typeof undici.MockAgent);
       `,
+      "main.mjs": `
+        import { request, MockAgent } from "undici";
+        console.log(import.meta.resolve("undici"), typeof request, typeof MockAgent);
+      `,
     });
 
+    for (const entry of ["main.cjs", "main.mjs"]) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), entry],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("undici function function\n");
+      expect(exitCode).toBe(0);
+    }
+  });
+
+  test("bun build --target=bun defers undici to runtime resolution", async () => {
+    using dir = tempDir("undici-build", {
+      "package.json": `{ "name": "app", "dependencies": { "undici": "*" } }`,
+      "node_modules/undici/package.json": `{ "name": "undici", "version": "99.0.0", "main": "index.js" }`,
+      "node_modules/undici/index.js": `module.exports = { marker: "installed" };`,
+      "entry.mjs": `
+        import { marker } from "undici";
+        console.log(marker);
+      `,
+    });
+
+    await using build = Bun.spawn({
+      cmd: [bunExe(), "build", "--target=bun", "entry.mjs", "--outfile=out.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    expect(await build.exited).toBe(0);
+
+    // The bundle keeps the bare specifier external instead of inlining the
+    // builtin shim.
+    const bundled = await Bun.file(join(String(dir), "out.mjs")).text();
+    expect(bundled).toContain('"undici"');
+
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "main.cjs"],
+      cmd: [bunExe(), "out.mjs"],
       env: bunEnv,
       cwd: String(dir),
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
-    expect(stdout).toBe("undici function function\n");
+    expect(stdout).toBe("installed\n");
     expect(exitCode).toBe(0);
   });
 });

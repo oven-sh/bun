@@ -6,7 +6,9 @@ use core::sync::atomic::{AtomicI32, Ordering};
 use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
 use bun_io::{self, WriteResult, WriteStatus};
 use bun_jsc::JsCell;
-use bun_sys::{self as sys, Fd, FdExt as _};
+#[cfg(windows)]
+use bun_sys::FdExt as _;
+use bun_sys::{self as sys, Fd};
 
 use crate::api::bun::process::Status as SpawnStatus;
 use crate::webcore::jsc::{CallFrame, EventLoopHandle, JSGlobalObject, JSValue, JsResult};
@@ -702,10 +704,11 @@ impl FileSink {
         // SAFETY(JsCell): `start` is pure I/O setup; no JS.
         match self.writer.with_mut(|w| w.start(fd, self.pollable.get())) {
             sys::Result::Err(err) => {
+                // POSIX start() may have set handle; let Drop own the close.
                 #[cfg(unix)]
                 self.writer.with_mut(|w| w.close_fd = owns_fd);
+                // Windows start() leaves source = None on failure; close here.
                 #[cfg(windows)]
-                self.writer.with_mut(|w| w.owns_fd = owns_fd);
                 if owns_fd {
                     fd.close();
                 }

@@ -3772,6 +3772,7 @@ describe("createWriteStream", () => {
       const errorPromise = once(ws, "error");
       ws.write(Buffer.alloc(8192));
       const [err] = (await errorPromise) as [NodeJS.ErrnoException];
+      await new Promise(r => setImmediate(r));
       expect({ code: err.code, bytesWritten: ws.bytesWritten, unhandled }).toEqual({
         code: "ENOSPC",
         bytesWritten: 0,

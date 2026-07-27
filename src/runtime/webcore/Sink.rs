@@ -544,11 +544,6 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
     ) -> crate::webcore::jsc::JsResult<crate::webcore::jsc::JSValue> {
         use crate::webcore::jsc::JSValue;
         bun_core::mark_binding!();
-        let this = Self::get_this(global, frame)?;
-
-        if let Some(err) = this.sink.get_pending_error() {
-            return Err(global.throw_value(err));
-        }
 
         let arg = frame.argument(0);
         arg.ensure_still_alive();
@@ -592,6 +587,11 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
                 // JS runs between here and `writev_bytes`, so the backing
                 // store cannot be detached out from under the slice.
                 slices.push(unsafe { core::slice::from_raw_parts(slice.as_ptr(), slice.len()) });
+            }
+            // Acquire `&mut sink` only after all accessor JS has run.
+            let this = Self::get_this(global, frame)?;
+            if let Some(err) = this.sink.get_pending_error() {
+                return Err(global.throw_value(err));
             }
             Ok(this.sink.writev_bytes(&slices).to_js(global))
         })

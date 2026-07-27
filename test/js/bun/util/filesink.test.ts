@@ -531,8 +531,12 @@ if (isWindows) {
 
   it("Bun.file(fd).writer() on a named pipe dups so end() releases the sink", async () => {
     const pipePath = `\\\\.\\pipe\\bun-filesink-${process.pid}-${Date.now()}`;
-    let received = "";
-    const server = net.createServer(c => c.on("data", d => (received += d)));
+    const { promise: gotData, resolve: onData, reject: onErr } = Promise.withResolvers<string>();
+    const server = net.createServer(c => {
+      c.once("data", d => onData(String(d)));
+      c.once("error", onErr);
+    });
+    server.once("error", onErr);
     server.listen(pipePath);
     await once(server, "listening");
 
@@ -546,6 +550,7 @@ if (isWindows) {
 
       // end() must not close the caller's fd: fstat still works.
       expect(() => fs.fstatSync(fd)).not.toThrow();
+      expect(await gotData).toBe("hello");
 
       for (let i = 0; i < 50; i++) {
         Bun.gc(true);
@@ -559,7 +564,6 @@ if (isWindows) {
       } catch {}
       await new Promise<void>(r => server.close(() => r()));
     }
-    expect(received).toBe("hello");
   });
 }
 

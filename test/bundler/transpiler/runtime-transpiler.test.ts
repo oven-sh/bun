@@ -276,7 +276,7 @@ describe("assigning to an imported binding", () => {
         import * as ns from "./m.mjs";
         void d; void ns;
         function never() { ${write} }
-        if (process.env.NEVER) never();
+        void never;
         try { ${write} } catch (e) { console.log("threw:" + e.constructor.name) }
         console.log("ran:" + x);
       `,
@@ -304,6 +304,7 @@ describe("assigning to an imported binding", () => {
         import { x } from "./m.mjs";
         if (false) x = 5;
         function never() { x = 7 }
+        void never;
         console.log("ran:" + x);
       `,
     });

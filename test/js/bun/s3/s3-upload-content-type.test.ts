@@ -1,119 +1,104 @@
-import { S3Client, type S3Options } from "bun";
-import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { tempDir } from "harness";
+import { expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 import path from "node:path";
 
 // S3 stores the PUT request's Content-Type as object metadata and serves it
 // back verbatim, so a wrong header means images / HTML / JSON download instead
-// of rendering. These tests drive uploads against a local recording origin and
-// assert the Content-Type header that reached it.
+// of rendering. This test drives uploads against a local recording origin and
+// asserts the Content-Type header that reached it.
+//
+// The S3 client does not honor NO_PROXY, so an inherited proxy would hijack
+// the request to the stub server. Run the fixture in a subprocess with proxy
+// env stripped.
+const envWithoutProxy = {
+  ...bunEnv,
+  HTTP_PROXY: undefined,
+  HTTPS_PROXY: undefined,
+  http_proxy: undefined,
+  https_proxy: undefined,
+};
 
-describe("s3 - upload Content-Type from body", () => {
-  let lastPut: { path: string; contentType: string | null } | undefined;
-  let server: ReturnType<typeof Bun.serve>;
-  let client: S3Client;
-  let dir: ReturnType<typeof tempDir>;
+const fixture = /* js */ `
+import path from "node:path";
 
-  const s3Options: S3Options = {
-    accessKeyId: "AKIDEXAMPLE",
-    secretAccessKey: "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY",
-    region: "us-east-1",
-    bucket: "b",
-  };
+let last;
+const server = Bun.serve({
+  port: 0,
+  async fetch(req) {
+    if (req.method === "PUT") last = req.headers.get("content-type");
+    await req.arrayBuffer();
+    return new Response("", { status: 200, headers: { ETag: '"e"' } });
+  },
+});
 
-  beforeAll(() => {
-    server = Bun.serve({
-      port: 0,
-      async fetch(req) {
-        if (req.method === "PUT") {
-          lastPut = {
-            path: new URL(req.url).pathname,
-            contentType: req.headers.get("content-type"),
-          };
-        }
-        await req.arrayBuffer();
-        return new Response("", { status: 200, headers: { ETag: '"e"' } });
-      },
-    });
-    client = new S3Client({ ...s3Options, endpoint: server.url.href });
-    dir = tempDir("s3-upload-content-type", {
-      "logo.png": Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
-      "noext": "hello",
-    });
+const client = new Bun.S3Client({
+  endpoint: server.url.href,
+  bucket: "b",
+  accessKeyId: "AKIDEXAMPLE",
+  secretAccessKey: "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY",
+  region: "us-east-1",
+});
+
+const png = Bun.file(path.join(import.meta.dir, "logo.png"));
+const noext = Bun.file(path.join(import.meta.dir, "noext"));
+
+async function put(fn) {
+  last = undefined;
+  await fn();
+  return last ?? null;
+}
+
+const results = {
+  bunfile_extless_key: await put(() => client.write("uploads/8f3a1c", png)),
+  bun_write_bunfile: await put(() => Bun.write(client.file("assets/logo"), png)),
+  blob_type_extless_key: await put(() => client.write("noext", new Blob(['{"a":1}'], { type: "application/json" }))),
+  blob_type_overrides_key_ext: await put(() => client.write("page.txt", new Blob(["<p>hi</p>"], { type: "text/html" }))),
+  response_header: await put(() => client.write("noext-resp", new Response("a,b", { headers: { "content-type": "text/csv" } }))),
+  request_header: await put(() => client.write("noext-req", new Request("http://x/", { method: "POST", body: "a,b", headers: { "content-type": "text/csv" } }))),
+  explicit_type_option: await put(() => client.write("uploads/8f3a1c", png, { type: "text/plain" })),
+  key_ext_fallback_bytes: await put(() => client.write("photo.png", new Uint8Array([1, 2, 3]))),
+  key_ext_fallback_noext_file: await put(() => client.write("data.json", noext)),
+  key_ext_fallback_typeless_blob: await put(() => client.write("data.json", new Blob(["{}"]))),
+};
+
+process.stdout.write(JSON.stringify(results));
+server.stop(true);
+`;
+
+test("s3 upload Content-Type is taken from the body (Blob.type / Bun.file / Response header)", async () => {
+  using dir = tempDir("s3-upload-content-type", {
+    "fixture.ts": fixture,
+    "logo.png": Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
+    "noext": "hello",
   });
 
-  afterAll(() => {
-    server.stop(true);
-    dir[Symbol.dispose]();
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), path.join(String(dir), "fixture.ts")],
+    env: envWithoutProxy,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
   });
 
-  async function capturePut(fn: () => Promise<unknown>) {
-    lastPut = undefined;
-    await fn();
-    return lastPut!;
-  }
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  it("S3Client.write(key, Bun.file()) uses the source file's inferred type for an extensionless key", async () => {
-    const png = Bun.file(path.join(String(dir), "logo.png"));
-    expect(png.type).toBe("image/png");
-    const put = await capturePut(() => client.write("uploads/8f3a1c", png));
-    expect(put).toEqual({ path: "/b/uploads/8f3a1c", contentType: "image/png" });
-  });
+  expect(stderr).toBe("");
+  const results = JSON.parse(stdout) as Record<string, string | null>;
 
-  it("Bun.write(s3.file(), Bun.file()) uses the source file's inferred type", async () => {
-    const png = Bun.file(path.join(String(dir), "logo.png"));
-    const put = await capturePut(() => Bun.write(client.file("assets/logo"), png));
-    expect(put).toEqual({ path: "/b/assets/logo", contentType: "image/png" });
-  });
+  // Without the fix these six send application/octet-stream (or text/plain for
+  // page.txt), dropping the body's own type.
+  expect(results.bunfile_extless_key).toBe("image/png");
+  expect(results.bun_write_bunfile).toBe("image/png");
+  expect(results.blob_type_extless_key).toStartWith("application/json");
+  expect(results.blob_type_overrides_key_ext).toStartWith("text/html");
+  expect(results.response_header).toBe("text/csv");
+  expect(results.request_header).toBe("text/csv");
 
-  it("S3Client.write(key, Blob) uses the Blob's explicit type for an extensionless key", async () => {
-    const blob = new Blob(['{"a":1}'], { type: "application/json" });
-    const put = await capturePut(() => client.write("noext", blob));
-    expect(put.contentType).toStartWith("application/json");
-  });
+  // Controls: these must keep working exactly as before.
+  expect(results.explicit_type_option).toStartWith("text/plain");
+  expect(results.key_ext_fallback_bytes).toBe("image/png");
+  expect(results.key_ext_fallback_noext_file).toStartWith("application/json");
+  expect(results.key_ext_fallback_typeless_blob).toStartWith("application/json");
 
-  it("S3Client.write(key, Blob) prefers the Blob's explicit type over the key's extension", async () => {
-    const blob = new Blob(["<p>hi</p>"], { type: "text/html" });
-    const put = await capturePut(() => client.write("page.txt", blob));
-    expect(put.contentType).toStartWith("text/html");
-  });
-
-  it("S3Client.write(key, Response) uses the Response's Content-Type header", async () => {
-    const res = new Response("a,b", { headers: { "content-type": "text/csv" } });
-    const put = await capturePut(() => client.write("noext-resp", res));
-    expect(put).toEqual({ path: "/b/noext-resp", contentType: "text/csv" });
-  });
-
-  it("S3Client.write(key, Request) uses the Request's Content-Type header", async () => {
-    const req = new Request("http://x/", {
-      method: "POST",
-      body: "a,b",
-      headers: { "content-type": "text/csv" },
-    });
-    const put = await capturePut(() => client.write("noext-req", req));
-    expect(put).toEqual({ path: "/b/noext-req", contentType: "text/csv" });
-  });
-
-  it("explicit {type} option still overrides the body's type", async () => {
-    const png = Bun.file(path.join(String(dir), "logo.png"));
-    const put = await capturePut(() => client.write("uploads/8f3a1c", png, { type: "text/plain" }));
-    expect(put.contentType).toStartWith("text/plain");
-  });
-
-  it("falls back to key-extension inference when the body carries no type", async () => {
-    const put = await capturePut(() => client.write("photo.png", new Uint8Array([1, 2, 3])));
-    expect(put).toEqual({ path: "/b/photo.png", contentType: "image/png" });
-  });
-
-  it("falls back to key-extension inference when the source file has no recognised extension", async () => {
-    const noext = Bun.file(path.join(String(dir), "noext"));
-    expect(noext.type).toBe("application/octet-stream");
-    const put = await capturePut(() => client.write("data.json", noext));
-    expect(put.contentType).toStartWith("application/json");
-  });
-
-  it("typeless Blob does not override key-extension inference", async () => {
-    const put = await capturePut(() => client.write("data.json", new Blob(["{}"])));
-    expect(put.contentType).toStartWith("application/json");
-  });
+  expect(exitCode).toBe(0);
 });

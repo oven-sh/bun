@@ -372,9 +372,6 @@ extern "C" JSC::EncodedJSValue Bun__Dirent__toJS(Zig::GlobalObject* globalObject
     return JSValue::encode(object);
 }
 
-// readdir({ withFileTypes: true, encoding: 'buffer' }): the entry name is a
-// Node Buffer holding the raw directory-entry bytes, while path/parentPath
-// remain strings (matching Node.js).
 extern "C" JSC::EncodedJSValue Bun__Dirent__toJSWithBufferName(Zig::GlobalObject* globalObject, int type, const uint8_t* nameBytes, size_t nameLen, BunString* path, JSString** previousPath)
 {
     auto& vm = globalObject->vm();

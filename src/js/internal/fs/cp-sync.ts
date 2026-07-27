@@ -147,12 +147,8 @@ function areIdentical(srcStat, destStat) {
   return destStat.ino && destStat.dev && destStat.ino === srcStat.ino && destStat.dev === srcStat.dev;
 }
 
-// On POSIX the walkers below build child paths as Buffers so that entry names
-// that are not valid UTF-8 survive the round-trip back into syscalls. node:path
-// only operates on strings, so path-shape checks (isSrcSubdir, dirname in
-// onLink) decode via latin1: a 1:1 byte<->char mapping that keeps component
-// comparisons exact without re-encoding. Windows names are native UTF-16,
-// so strings are already lossless there.
+// POSIX entry names are arbitrary bytes; read them as Buffers so the next
+// syscall sees the exact on-disk bytes. Windows names are native UTF-16.
 const SEP_BUF = Buffer.from(sep);
 const kReaddirBufferOpts =
   process.platform === "win32" ? { withFileTypes: true } : { withFileTypes: true, encoding: "buffer" };
@@ -167,7 +163,7 @@ function joinDirEntry(dir, name) {
 }
 
 function pathToString(p) {
-  return Buffer.isBuffer(p) ? p.toString("latin1") : p;
+  return Buffer.isBuffer(p) ? p.toString() : p;
 }
 
 const normalizePathToArray = path =>

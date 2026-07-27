@@ -312,10 +312,6 @@ for (const [name, copy] of impls) {
       expect(e.code).toBe("ERR_FS_CP_FIFO_PIPE");
     });
 
-    // POSIX filenames are arbitrary byte strings (only NUL and '/' are
-    // reserved). Prior to the fix the JS walker decoded entry names as UTF-8
-    // (lossy) and re-encoded them for the next syscall, so the child lstat
-    // landed on a U+FFFD path and failed ENOENT.
     test.skipIf(isWindows)("recursive - entries with non-UTF-8 names are copied byte-exact", async () => {
       using root = tempDir("cp-nonutf8", {});
       const src = join(String(root), "src");
@@ -348,6 +344,39 @@ for (const [name, copy] of impls) {
         expect(tree(dest)).toEqual(tree(src));
       }
     });
+
+    test.skipIf(isWindows)(
+      "recursive - valid UTF-8 non-ASCII names reach filter as strings and symlinks resolve",
+      async () => {
+        const basename = tempDirWithFiles("cp-utf8-nonascii", {
+          "from/caf\u00e9/sibling.txt": "s",
+          "from/a.txt": "a",
+        });
+        fs.symlinkSync("sibling.txt", join(basename, "from", "caf\u00e9", "link"));
+
+        const seen: string[] = [];
+        await copy(join(basename, "from"), join(basename, "result"), {
+          recursive: true,
+          filter: src => {
+            seen.push(src);
+            return true;
+          },
+        });
+
+        const copiedLink = join(basename, "result", "caf\u00e9", "link");
+        expect({
+          filterSawUtf8: seen.some(s => s.endsWith(join("caf\u00e9", "sibling.txt"))),
+          filterSawMojibake: seen.some(s => s.includes("caf\u00c3\u00a9")),
+          linkTarget: fs.readlinkSync(copiedLink),
+          followed: fs.readFileSync(copiedLink, "utf8"),
+        }).toEqual({
+          filterSawUtf8: true,
+          filterSawMojibake: false,
+          linkTarget: join(basename, "from", "caf\u00e9", "sibling.txt"),
+          followed: "s",
+        });
+      },
+    );
 
     test.skipIf(isWindows)("recursive - merge into existing dest with non-UTF-8 entry names", async () => {
       using root = tempDir("cp-nonutf8-merge", {});

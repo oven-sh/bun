@@ -1823,9 +1823,7 @@ impl Dirent {
     }
 }
 
-/// [`Dirent`] for `readdir({ withFileTypes: true, encoding: 'buffer' })`:
-/// `name` is the raw directory-entry bytes (surfaced as a Node `Buffer`),
-/// while `path`/`parentPath` stay strings to match Node.js.
+/// [`Dirent`] with raw-byte `name` for `readdir({ withFileTypes, encoding: 'buffer' })`.
 pub struct DirentBuffer {
     pub name: Box<[u8]>,
     pub path: bun_core::String,
@@ -1877,6 +1875,7 @@ fn dirent_kind_to_uv(kind: DirentKind) -> i32 {
         DirentKind::BlockDevice => UV_DIRENT_BLOCK,
         DirentKind::CharacterDevice => UV_DIRENT_CHAR,
         DirentKind::Directory => UV_DIRENT_DIR,
+        // event_port is deliberate there.
         DirentKind::EventPort | DirentKind::NamedPipe => UV_DIRENT_FIFO,
         DirentKind::UnixDomainSocket => UV_DIRENT_SOCKET,
         DirentKind::SymLink => UV_DIRENT_LINK,

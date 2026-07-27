@@ -4457,9 +4457,8 @@ pub struct WriteFileOptions {
     pub mkdirp_if_not_exists: Option<bool>,
     pub extra_options: Option<JSValue>,
     pub mode: Option<bun_sys::Mode>,
-    /// An fd the sync fast path already opened for the destination. When set,
-    /// the async `WriteFile` adopts it instead of reopening the path so a
-    /// FIFO's reader never sees an intermediate EOF.
+    /// Destination fd already opened by the sync fast path, for `WriteFile`
+    /// to adopt instead of reopening.
     pub handoff_fd: Option<Fd>,
 }
 
@@ -4679,9 +4678,7 @@ pub fn write_file_with_source_destination(
     destination_blob: &mut Blob,
     options: &WriteFileOptions,
 ) -> JsResult<JSValue> {
-    // The fast path may have opened the destination and handed the fd over.
-    // Only the posix File←Bytes branch adopts it; any other branch (or an
-    // early error) must not leak it.
+    // Close the handoff fd on any branch that doesn't adopt it.
     let handoff_fd = core::cell::Cell::new(options.handoff_fd);
     let _close_handoff_fd = scopeguard::guard((), |()| {
         if let Some(fd) = handoff_fd.get() {
@@ -5061,9 +5058,7 @@ pub fn write_file_internal(
 
     #[cfg(not(windows))]
     let handoff_fd = core::cell::Cell::new(None::<Fd>);
-    // If the fast path opened an fd and handed it off, make sure it closes on
-    // any early-return between here and `write_file_with_source_destination`
-    // consuming it.
+    // Close the fast-path fd on any early return before WriteFile adopts it.
     #[cfg(not(windows))]
     let _close_handoff_fd = scopeguard::guard((), |()| {
         if let Some(fd) = handoff_fd.get() {
@@ -5458,11 +5453,8 @@ fn write_string_to_file_fast<const NEEDS_OPEN: bool>(
         }
     };
 
-    // A FIFO/socket/chardev opened O_NONBLOCK will EAGAIN once the pipe
-    // buffer fills. Closing mid-payload would deliver a torn prefix and EOF
-    // to the reader, so hand the open fd to the async WriteFile path instead
-    // and let it drive POLLOUT. Regular files never EAGAIN; keep the fast
-    // path. A 0-byte write cannot EAGAIN either, so stay on the fast path.
+    // Non-regular files (FIFO/socket/chardev) can EAGAIN; hand the open fd
+    // to the async WriteFile path so it can wait for POLLOUT.
     if NEEDS_OPEN && !str.is_empty() {
         if let bun_sys::Result::Ok(st) = bun_sys::fstat(fd) {
             if !bun_sys::is_regular_file(st.st_mode as bun_sys::Mode) {
@@ -5562,9 +5554,8 @@ fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
         }
     };
 
-    // See write_string_to_file_fast: route non-regular files to the async
-    // path with the fd we just opened, so a FIFO write never closes+reopens
-    // mid-payload.
+    // Non-regular files (FIFO/socket/chardev) can EAGAIN; hand the open fd
+    // to the async WriteFile path so it can wait for POLLOUT.
     if NEEDS_OPEN && !bytes.is_empty() {
         if let bun_sys::Result::Ok(st) = bun_sys::fstat(fd) {
             if !bun_sys::is_regular_file(st.st_mode as bun_sys::Mode) {

@@ -464,10 +464,8 @@ impl WriteFile {
                 }
             }
 
-            // We opened with O_NONBLOCK. For a regular file that flag is a
-            // no-op, but for a FIFO/socket/chardev write() can return EAGAIN
-            // and we must wait for POLLOUT rather than spin. One fstat on the
-            // just-opened fd is cheap and tells us which we have.
+            // Path-opened fds have no cached mode; fstat so a FIFO/socket
+            // reaches wait_for_writable() on EAGAIN.
             if let bun_sys::Result::Ok(st) = sys::fstat(fd) {
                 break 'brk !bun_sys::is_regular_file(st.st_mode as bun_sys::Mode);
             }

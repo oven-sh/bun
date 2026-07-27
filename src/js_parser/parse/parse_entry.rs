@@ -481,17 +481,18 @@ impl<'a> Parser<'a> {
         }
 
         // Symbol use counts are unavailable, so "any JSX parsed?" is the proxy.
-        let jsx_runtime = match p.lexer.jsx_pragma.jsx_runtime() {
-            Some(span) => options::JSX::RUNTIME_MAP
-                .get(span.text.slice())
-                .map(|pair| pair.runtime)
-                .unwrap_or(p.options.jsx.runtime),
-            None => p.options.jsx.runtime,
-        };
+        if let Some(span) = p.lexer.jsx_pragma.jsx_runtime()
+            && let Some(pair) = options::JSX::RUNTIME_MAP.get(span.text.slice())
+        {
+            p.options.jsx.runtime = pair.runtime;
+            if let Some(dev) = pair.development {
+                p.options.jsx.development = dev;
+            }
+        }
         if p.options.jsx.parse
             && p.needs_jsx_import
             && p.options.features.auto_import_jsx
-            && jsx_runtime == options::JSX::Runtime::Automatic
+            && p.options.jsx.runtime == options::JSX::Runtime::Automatic
         {
             // `add_import_record` requires `&'a [u8]`, but borrowing
             // `p.options` would conflict with `&mut p`, so copy into the arena.

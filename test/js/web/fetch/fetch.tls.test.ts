@@ -127,6 +127,25 @@ describe.concurrent("fetch-tls", () => {
     });
   });
 
+  it("fetch accepts an absolute-FQDN hostname (trailing dot) for certificate verification", async () => {
+    // RFC 6125/9525: the trailing dot denotes the DNS root and is not part of
+    // the presented identifier. Node's checkServerIdentity, curl, and browsers
+    // all treat "localhost." as equivalent to "localhost" for SAN matching.
+    // Drive the verification hostname via `serverName` so the test does not
+    // depend on the OS resolver accepting "localhost." as a name.
+    await createServer(CERT_LOCALHOST_IP, async port => {
+      const res = await fetch(`https://127.0.0.1:${port}/`, {
+        keepalive: false,
+        tls: { ca: validTls.cert, serverName: "localhost." },
+      });
+      expect(res.status).toBe(200);
+      expect(await res.text()).toBe("Hello World");
+
+      // And the native matcher must agree with Node's tls.checkServerIdentity.
+      expect(tls.checkServerIdentity("localhost.", { subjectaltname: "DNS:localhost" } as any)).toBeUndefined();
+    });
+  });
+
   it("fetch with valid tls and non-native checkServerIdentity should work", async () => {
     await createServer(CERT_LOCALHOST_IP, async port => {
       for (const isBusy of [true, false]) {

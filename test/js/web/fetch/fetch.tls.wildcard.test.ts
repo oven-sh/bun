@@ -263,6 +263,25 @@ describe.concurrent("TLS wildcard hostname verification", () => {
     expect(result.error).toBeUndefined();
   });
 
+  it("fetch accepts trailing-dot FQDN against a wildcard SAN (foo.example.com. vs *.example.com)", async () => {
+    // Exercises the native certificate matcher used by fetch() (not the JS
+    // checkServerIdentity that tls.connect defaults to).
+    using server = Bun.serve({
+      port: 0,
+      tls: wildcardExampleComTls,
+      fetch() {
+        return new Response("Hello");
+      },
+    });
+
+    const res = await fetch(`https://127.0.0.1:${server.port}/`, {
+      keepalive: false,
+      tls: { ca: wildcardExampleComTls.cert, serverName: "foo.example.com." },
+    });
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("Hello");
+  });
+
   it("should accept mixed-case wildcard match (FoO.ExAmPlE.cOm vs *.example.com)", async () => {
     // RFC 4343: DNS names are case-insensitive
     using server = Bun.serve({

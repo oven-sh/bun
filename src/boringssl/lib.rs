@@ -218,9 +218,18 @@ fn canonical_ip_octets<'a>(
     unsafe { c_ares::ntop(af, octets.as_ptr().cast(), &mut out_ip[..]) }
 }
 
+/// Strips a single trailing `.` (the DNS root label) so an absolute FQDN
+/// compares equal to its relative form. Mirrors Node.js `unfqdn()` in
+/// lib/tls.js and RFC 6125 §6.4.2 / RFC 9525 §6.3.
+#[inline]
+fn unfqdn(name: &[u8]) -> &[u8] {
+    name.strip_suffix(b".").unwrap_or(name)
+}
+
 /// Matches a DNS name pattern (possibly with a leading `*.` wildcard) against
 /// `hostname`. Mirrors Node.js `check()` in lib/tls.js for a single pattern.
 fn match_dns_name(pattern: &[u8], hostname: &[u8]) -> bool {
+    let pattern = unfqdn(pattern);
     if pattern.is_empty() {
         return false;
     }
@@ -258,6 +267,7 @@ fn match_dns_name(pattern: &[u8], hostname: &[u8]) -> bool {
 }
 
 pub fn check_x509_server_identity(x509: &mut boring::X509, hostname: &[u8]) -> bool {
+    let hostname = unfqdn(hostname);
     let host_is_ip = strings::is_ip_address(hostname);
     let mut has_identifier_san = false;
 
@@ -404,6 +414,7 @@ pub fn write_server_identity_mismatch_reason(
     out: &mut dyn core::fmt::Write,
 ) -> core::fmt::Result {
     const NO_DNS: &str = "Cert does not contain a DNS name";
+    let hostname = unfqdn(hostname);
     let host = NameBytes(hostname);
     let host_is_ip = strings::is_ip_address(hostname);
 

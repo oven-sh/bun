@@ -65,16 +65,17 @@ const cells: Cell[] = [
 
 const mainMjs = `
   const w = new Worker(new URL("./worker.mjs", import.meta.url).href);
-  const { promise: inHandler, resolve: gotHandler, reject: rejectHandler } = Promise.withResolvers();
+  const { promise: inHandler, resolve: gotHandler } = Promise.withResolvers();
   const { promise: closed, resolve: gotClose } = Promise.withResolvers();
-  w.addEventListener("error", e => rejectHandler(e.message ?? e), { once: true });
+  const { promise: workerError, reject: rejectWorkerError } = Promise.withResolvers();
+  w.addEventListener("error", e => rejectWorkerError(e.message ?? e), { once: true });
   w.addEventListener("close", () => gotClose(), { once: true });
   w.onmessage = ev => {
     if (ev.data === "in-handler") gotHandler();
   };
-  await inHandler;
+  await Promise.race([inHandler, workerError]);
   w.terminate();
-  await closed;
+  await Promise.race([closed, workerError]);
   console.log("survived");
 `;
 
@@ -103,10 +104,6 @@ describe.concurrent("terminate() while HTMLRewriter is parked in an async handle
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(stdout).toBe("survived\n");
-    if (exitCode !== 0) {
-      expect(stderr).toBe("");
-    }
-    expect(exitCode).toBe(0);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "survived\n", stderr: "", exitCode: 0 });
   });
 });

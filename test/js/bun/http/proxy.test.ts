@@ -531,10 +531,11 @@ describe.each([
   { userinfo: "squidadmin:hunter2", decoded: "squidadmin:hunter2" },
 ])("proxy Basic auth keeps the colon for userinfo $userinfo", ({ userinfo, decoded }) => {
   const expected = `Basic ${Buffer.from(decoded).toString("base64")}`;
-  // bunEnv snapshots process.env before beforeAll clears these, and lowercase
-  // is resolved before uppercase, so override every variant explicitly.
+  // Delete (not blank) every case variant: on Windows the child env is
+  // case-insensitive, so an `HTTP_PROXY: ""` alongside `http_proxy: <url>`
+  // collapses to "" and the proxy is bypassed.
   const noProxyEnv = { ...bunEnv };
-  for (const k of PROXY_ENV_KEYS) noProxyEnv[k] = "";
+  for (const k of PROXY_ENV_KEYS) delete noProxyEnv[k];
 
   test.concurrent("http target (absolute-form)", async () => {
     const proxy = await createAuthCapturingProxy();

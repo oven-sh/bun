@@ -88,6 +88,7 @@ impl Handler {
         if global_object.has_exception() {
             return;
         }
+        let error_value = error_value.to_error().unwrap_or(error_value);
         if !on_error.is_empty_or_undefined_or_null() {
             let _ = on_error
                 .call(global_object, JSValue::UNDEFINED, &[ws, error_value])

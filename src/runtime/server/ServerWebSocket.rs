@@ -786,16 +786,11 @@ impl ServerWebSocket {
             };
 
             let call_args = [cached_this, JSValue::js_number(code as f64), message_js];
-            match on_close_handler.call(global_object, JSValue::UNDEFINED, &call_args) {
-                Err(e) => {
-                    let err = global_object.take_exception(e);
-                    bun_output::scoped_log!(WebSocketServer, "onClose error {}", was_not_empty);
-                    handler.run_error_callback(on_error, vm, global_object, cached_this, err);
-                    return;
-                }
-                Ok(result) => {
-                    self.handle_handler_promise(result, cached_this, on_error, vm, global_object);
-                }
+            if let Err(e) = on_close_handler.call(global_object, JSValue::UNDEFINED, &call_args) {
+                let err = global_object.take_exception(e);
+                bun_output::scoped_log!(WebSocketServer, "onClose error {}", was_not_empty);
+                handler.run_error_callback(on_error, vm, global_object, cached_this, err);
+                return;
             }
         } else if let Some(sig) = signal {
             let _loop_guard = vm.enter_event_loop_scope();

@@ -679,13 +679,29 @@ describe("Server", () => {
       );
     });
     describe("error handler", () => {
-      const cases = [
-        ["a synchronous throw", `throw new Error('boom')`],
-        ["a returned Promise.reject()", `return Promise.reject(new Error('boom'))`],
-        ["a rejected async handler", `return (async () => { await 1; throw new Error('boom'); })()`],
+      const bodies = {
+        "a synchronous throw": `throw new Error('boom')`,
+        "a returned Promise.reject()": `return Promise.reject(new Error('boom'))`,
+        "a rejected async handler": `return (async () => { await 1; throw new Error('boom'); })()`,
+      } as const;
+      const matrix = [
+        ["message", "a synchronous throw", `c.onopen = () => c.send('x');`],
+        ["message", "a returned Promise.reject()", `c.onopen = () => c.send('x');`],
+        ["message", "a rejected async handler", `c.onopen = () => c.send('x');`],
+        ["open", "a synchronous throw", ``],
+        ["open", "a returned Promise.reject()", ``],
+        ["open", "a rejected async handler", ``],
+        ["close", "a synchronous throw", `c.onopen = () => c.close();`],
       ] as const;
-      for (const [label, body] of cases) {
-        it.concurrent(`is called with (ws, error) for ${label} in message()`, async () => {
+      for (const [handler, mode, trigger] of matrix) {
+        it.concurrent(`is called with (ws, error) for ${mode} in ${handler}()`, async () => {
+          const body = bodies[mode];
+          const handlers =
+            handler === "open"
+              ? `open(ws) { serverWs = ws; ${body}; }, message() {},`
+              : handler === "close"
+                ? `open(ws) { serverWs = ws; }, message() {}, close(ws) { ${body}; },`
+                : `open(ws) { serverWs = ws; }, message(ws, m) { ${body}; },`;
           const script = /* js */ `
             const done = Promise.withResolvers();
             process.on('unhandledRejection', e => {
@@ -697,8 +713,7 @@ describe("Server", () => {
               port: 0,
               fetch(req, s) { if (s.upgrade(req)) return; return new Response(); },
               websocket: {
-                open(ws) { serverWs = ws; },
-                message(ws, m) { ${body}; },
+                ${handlers}
                 error: function (ws, err) {
                   console.log('ERROR:' + JSON.stringify([
                     ws === serverWs,
@@ -710,7 +725,7 @@ describe("Server", () => {
               },
             });
             const c = new WebSocket('ws://127.0.0.1:' + server.port);
-            c.onopen = () => c.send('x');
+            ${trigger}
             await done.promise;
             await new Promise(r => setImmediate(r));
             await new Promise(r => setImmediate(r));

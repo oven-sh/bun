@@ -458,10 +458,9 @@ declare module "bun" {
     pong?(ws: ServerWebSocket<T>, data: Buffer): void | Promise<void>;
 
     /**
-     * Called when any of the other handlers (`open`, `message`, `close`,
-     * `drain`, `ping`, `pong`) throw or return a promise that rejects.
-     *
-     * If this is not set, the error is reported as an uncaught exception.
+     * Called when a handler on this object throws or returns a promise that
+     * rejects. Rejections that settle after the socket has closed surface as
+     * `unhandledRejection` instead.
      *
      * @param ws The websocket whose handler errored
      * @param error The thrown value or rejection reason

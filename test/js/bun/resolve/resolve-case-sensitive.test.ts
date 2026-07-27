@@ -33,11 +33,11 @@ describe.concurrent.skipIf(!isCaseSensitiveFS)("resolver on case-sensitive files
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
     const lines = stdout.trim().split("\n");
     expect(JSON.parse(lines[0])).toEqual({ L: "lower", U: "UPPER" });
     expect(lines[1]).toBe(join(String(dir), "mod.mjs"));
     expect(lines[2]).toBe(join(String(dir), "Mod.mjs"));
-    expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   });
 
@@ -61,11 +61,11 @@ describe.concurrent.skipIf(!isCaseSensitiveFS)("resolver on case-sensitive files
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
     const lines = stdout.trim().split("\n");
     expect(JSON.parse(lines[0])).toEqual({ a: "lower", b: "UPPER" });
     expect(lines[1]).toBe(join(String(dir), "readme.js"));
     expect(lines[2]).toBe(join(String(dir), "README.js"));
-    expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   });
 
@@ -87,8 +87,8 @@ describe.concurrent.skipIf(!isCaseSensitiveFS)("resolver on case-sensitive files
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(JSON.parse(stdout.trim())).toEqual({ L: "lower", U: "UPPER" });
     expect(stderr).toBe("");
+    expect(JSON.parse(stdout.trim())).toEqual({ L: "lower", U: "UPPER" });
     expect(exitCode).toBe(0);
   });
 

@@ -245,18 +245,13 @@ impl ResolveMessage {
             return None;
         }
         let source_dir = bun_paths::dirname(referrer)?;
-        // `join_abs_string_buf` writes into a `PathBuffer`-sized scratch; an
-        // overlong join panics, so skip the probe (the specifier cannot exist
-        // on disk anyway).
-        if source_dir.len().saturating_add(specifier.len()) >= bun_paths::MAX_PATH_BYTES {
-            return None;
-        }
         let mut buf = bun_paths::path_buffer_pool::get();
-        let target = bun_paths::resolve_path::join_abs_string_buf::<bun_paths::platform::Auto>(
-            source_dir,
-            &mut buf[..],
-            &[specifier],
-        );
+        let target =
+            bun_paths::resolve_path::join_abs_string_buf_checked::<bun_paths::platform::Auto>(
+                source_dir,
+                &mut buf[..],
+                &[specifier],
+            )?;
         let target_dir = bun_paths::dirname(target)?;
         let target_base = bun_paths::basename(target);
         bun_resolver::probe_case_near_miss(target_dir, target_base)

@@ -897,8 +897,7 @@ describe("ServerWebSocket", () => {
       h.ws.subscribe("t");
       using dir = tempDir("ws-blob-file", { "a.bin": "abcd" });
       const file = Bun.file(path.join(String(dir), "a.bin"));
-      const msg = (fn: string) =>
-        `${fn} cannot send a file- or S3-backed Blob synchronously; await blob.bytes() first`;
+      const msg = (fn: string) => `${fn} cannot send a file- or S3-backed Blob synchronously; await blob.bytes() first`;
       expect(() => h.ws.send(file)).toThrow(msg("send"));
       expect(() => h.ws.sendBinary(file)).toThrow(msg("sendBinary"));
       expect(() => h.ws.publish("t", file)).toThrow(msg("publish"));

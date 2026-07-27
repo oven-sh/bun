@@ -88,6 +88,7 @@ use crate::shell::builtins::{
     mv::{ShellMvBatchedTask, ShellMvCheckTargetTask},
     rm::ShellRmTask,
     touch::ShellTouchTask,
+    yes::YesTask,
 };
 use crate::shell::dispatch_tasks::{
     AsyncDeinitReader as ShellIOReaderAsyncDeinit, AsyncDeinitWriter as ShellIOWriterAsyncDeinit,
@@ -566,6 +567,12 @@ fn run_task_cold(task: Task) {
             ShellRmDirTask::run_from_main_thread(t);
         }
         task_tag::ShellGlobTask => shell_dispatch!(ShellGlobTask),
+        task_tag::ShellYesTask => {
+            let t = cast_ptr!(YesTask);
+            // SAFETY: §Dispatch — tag identifies pointee; live YesTask inside
+            // `Box<Yes>` in the interpreter arena.
+            unsafe { YesTask::run_from_main_thread(&*t) };
+        }
 
         // ── bake dev-server ──────────────────────────────────────────────
         task_tag::BakeHotReloadEvent => {
@@ -576,7 +583,7 @@ fn run_task_cold(task: Task) {
             unsafe { BakeHotReloadEvent::run(cast_ptr!(BakeHotReloadEvent)) };
         }
 
-        // ShellYesTask + any tag the hot path mis-routed: producer bug.
+        // Any tag the hot path mis-routed: producer bug.
         _ => panic!("Unexpected Task tag: {}", task.tag.0),
     }
 }

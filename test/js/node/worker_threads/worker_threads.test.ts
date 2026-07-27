@@ -1822,24 +1822,27 @@ describe("parentPort buffers until the first 'message' listener", () => {
     }
   });
 
-  test.concurrent("a handler that throws during entry-module load preserves process.on('exit')'s exitCode", async () => {
-    // Regression guard for test-worker-exit-code case 7/8: when the first drain runs
-    // inside the entry-module load's tick loop and the handler throws, the worker's
-    // process.on('exit') runs inside on_unhandled_rejection and may change exitCode.
-    // spin()'s Err(WorkerTerminated) arm must not clobber that value back to 1.
-    const w = new Worker(
-      `const { parentPort } = require("node:worker_threads");
+  test.concurrent(
+    "a handler that throws during entry-module load preserves process.on('exit')'s exitCode",
+    async () => {
+      // Regression guard for test-worker-exit-code case 7/8: when the first drain runs
+      // inside the entry-module load's tick loop and the handler throws, the worker's
+      // process.on('exit') runs inside on_unhandled_rejection and may change exitCode.
+      // spin()'s Err(WorkerTerminated) arm must not clobber that value back to 1.
+      const w = new Worker(
+        `const { parentPort } = require("node:worker_threads");
        parentPort.once("message", () => {
          process.on("exit", () => { process.exitCode = 98; });
          throw new Error("ok");
        });`,
-      { eval: true },
-    );
-    // 'error' and 'exit' arrive back-to-back; register both listeners before awaiting.
-    const errP = new Promise<unknown>(r => w.once("error", r));
-    const exitP = new Promise<number>(r => w.once("exit", r));
-    w.postMessage("go");
-    expect(String(await errP)).toMatch(/ok/);
-    expect(await exitP).toBe(98);
-  });
+        { eval: true },
+      );
+      // 'error' and 'exit' arrive back-to-back; register both listeners before awaiting.
+      const errP = new Promise<unknown>(r => w.once("error", r));
+      const exitP = new Promise<number>(r => w.once("exit", r));
+      w.postMessage("go");
+      expect(String(await errP)).toMatch(/ok/);
+      expect(await exitP).toBe(98);
+    },
+  );
 });

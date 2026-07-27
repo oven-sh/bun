@@ -1499,31 +1499,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         // Run-time TypeError per spec; only hard-error when bundling (scope hoisting would hide it).
-        if (opts.assign_target() != js_ast::AssignTarget::None || opts.is_delete_target())
+        if self.options.bundle
+            && (opts.assign_target() != js_ast::AssignTarget::None || opts.is_delete_target())
             && self.symbols[ref_.inner_index() as usize].kind == js_ast::symbol::Kind::Import
-            && (self.options.bundle || !self.options.suppress_warnings_about_weird_code)
         {
             let r = js_lexer::range_of_identifier(self.source, loc);
             // SAFETY: original_name is an arena-owned slice valid for 'a.
             let original = self.symbols[ref_.inner_index() as usize]
                 .original_name
                 .slice();
-            if self.options.bundle {
-                self.log().add_range_error_fmt(
-                    Some(self.source),
-                    r,
-                    format_args!("Cannot assign to import \"{}\"", bstr::BStr::new(original)),
-                );
-            } else {
-                self.log().add_range_warning_fmt(
-                    Some(self.source),
-                    r,
-                    format_args!(
-                        "This assignment will throw because \"{}\" is an import",
-                        bstr::BStr::new(original)
-                    ),
-                );
-            }
+            self.log().add_range_error_fmt(
+                Some(self.source),
+                r,
+                format_args!("Cannot assign to import \"{}\"", bstr::BStr::new(original)),
+            );
         }
 
         // Substitute an EImportIdentifier now if this has a namespace alias

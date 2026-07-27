@@ -2464,9 +2464,6 @@ impl VirtualMachine {
                 return Ok(promise);
             }
             self.event_loop_mut().perform_gc();
-            // Returns with the promise still Pending if the loop drains with
-            // nothing left to settle it, so the caller can detect an unsettled
-            // top-level await instead of spinning forever.
             self.wait_for_module_promise(promise);
         }
 

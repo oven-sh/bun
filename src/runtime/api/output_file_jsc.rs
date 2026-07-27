@@ -49,7 +49,6 @@ pub(crate) trait OutputFileJsc {
 
 impl OutputFileJsc for OutputFile {
     fn to_js(&mut self, owned_pathname: Option<&[u8]>, global_object: &JSGlobalObject) -> JSValue {
-        // Early-out arms that neither consume nor replace `self.value`.
         if let OutputFileValue::Noop = &self.value {
             return JSValue::UNDEFINED;
         }

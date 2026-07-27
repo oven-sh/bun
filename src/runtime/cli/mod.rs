@@ -1524,15 +1524,12 @@ pub mod command {
     #[cold]
     #[inline(never)]
     fn exec_run_as_node(log: &mut bun_ast::Log) -> CmdResult {
-        // `node -v` / `node --version`: print `process.version` and exit 0,
-        // matching Node.js. Must run before `init()` because `RUN_TABLE` has no
-        // `-v`/`--version` entry, so clap would reject `-v` and drop
-        // `--version`. Stop at the first positional or `--` so a script's own
-        // `--version` flag is left alone (`node app.js --version`).
+        // `node -v` / `node --version` → `process.version`. RUN_TABLE has no
+        // entry for these; stop at the script so `node app.js --version` is untouched.
         for a in bun::argv().iter().skip(1) {
             match a {
                 b"-v" | b"--version" => print_node_version_and_exit(),
-                b"--" => break,
+                b"--" | b"-" => break,
                 _ if a.first() != Some(&b'-') => break,
                 _ => {}
             }

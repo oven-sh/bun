@@ -1498,20 +1498,36 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
-        // Create an error for assigning to an import namespace
+        // Assigning to an ES module import is a run-time TypeError (the binding is
+        // immutable), not an early error. When bundling we keep it a hard error
+        // because scope hoisting would turn the write into a silent mutation of a
+        // hoisted local. Outside the bundler we only warn so the module still
+        // loads and the engine throws at run time, matching Node.
         if (opts.assign_target() != js_ast::AssignTarget::None || opts.is_delete_target())
             && self.symbols[ref_.inner_index() as usize].kind == js_ast::symbol::Kind::Import
+            && (self.options.bundle || !self.options.suppress_warnings_about_weird_code)
         {
             let r = js_lexer::range_of_identifier(self.source, loc);
             // SAFETY: original_name is an arena-owned slice valid for 'a.
             let original = self.symbols[ref_.inner_index() as usize]
                 .original_name
                 .slice();
-            self.log().add_range_error_fmt(
-                Some(self.source),
-                r,
-                format_args!("Cannot assign to import \"{}\"", bstr::BStr::new(original)),
-            );
+            if self.options.bundle {
+                self.log().add_range_error_fmt(
+                    Some(self.source),
+                    r,
+                    format_args!("Cannot assign to import \"{}\"", bstr::BStr::new(original)),
+                );
+            } else {
+                self.log().add_range_warning_fmt(
+                    Some(self.source),
+                    r,
+                    format_args!(
+                        "This assignment will throw because \"{}\" is an import",
+                        bstr::BStr::new(original)
+                    ),
+                );
+            }
         }
 
         // Substitute an EImportIdentifier now if this has a namespace alias

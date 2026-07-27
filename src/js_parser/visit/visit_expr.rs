@@ -1120,7 +1120,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // though this is a run-time error, we make it a compile-time error when
         // bundling because scope hoisting means these will no longer be run-time
         // errors.
-        if (in_.assign_target != js_ast::AssignTarget::None || is_delete_target)
+        if p.options.bundle
+            && (in_.assign_target != js_ast::AssignTarget::None || is_delete_target)
             && matches!(e_.target.data.tag(), Tag::EIdentifier)
             && p.symbols[e_
                 .target

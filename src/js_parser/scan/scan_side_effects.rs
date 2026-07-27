@@ -188,14 +188,14 @@ impl SideEffects {
 
                 // "foo() ? 1 : 2" => "foo()"
                 if ternary.yes.is_empty() && ternary.no.is_empty() {
-                    return Self::simplify_unused_expr(p, ternary.test_);
+                    return Self::simplify_unused_expr(p, ternary.test);
                 }
 
                 // "foo() ? 1 : bar()" => "foo() || bar()"
                 if ternary.yes.is_empty() {
                     return Some(Expr::join_with_left_associative_op(
                         Op::Code::BinLogicalOr,
-                        ternary.test_,
+                        ternary.test,
                         ternary.no,
                     ));
                 }
@@ -204,7 +204,7 @@ impl SideEffects {
                 if ternary.no.is_empty() {
                     return Some(Expr::join_with_left_associative_op(
                         Op::Code::BinLogicalAnd,
-                        ternary.test_,
+                        ternary.test,
                         ternary.yes,
                     ));
                 }
@@ -666,7 +666,7 @@ impl SideEffects {
                 if Self::should_keep_stmts_in_dead_control_flow(try_stmt.body, bump) {
                     return true;
                 }
-                if let Some(catch_stmt) = &try_stmt.catch_ {
+                if let Some(catch_stmt) = &try_stmt.catch {
                     if Self::should_keep_stmts_in_dead_control_flow(catch_stmt.body, bump) {
                         return true;
                     }

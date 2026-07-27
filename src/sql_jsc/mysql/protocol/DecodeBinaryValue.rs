@@ -244,7 +244,7 @@ pub fn decode_binary_value<Context: ReaderContext>(
             if column_length == 1 {
                 let data = reader.encode_len_string()?;
                 let slice = data.slice();
-                Ok(SQLDataCell::bool_(!slice.is_empty() && slice[0] == 1))
+                Ok(SQLDataCell::bool(!slice.is_empty() && slice[0] == 1))
             } else {
                 let data = reader.encode_len_string()?;
                 Ok(SQLDataCell::raw(Some(&data)))

@@ -133,6 +133,25 @@ describe("spawn()", () => {
     expect(!!child).toBe(true);
   });
 
+  // Node's spawn() has no encoding option and ignores unknown option keys.
+  // execa passes its own { encoding: "buffer" } option straight to spawn().
+  // https://github.com/oven-sh/bun/issues/36049
+  it.concurrent.each(["buffer", "utf8", "not-a-real-encoding"])(
+    "should ignore options.encoding %j like Node does",
+    async encoding => {
+      const child = spawn(bunExe(), ["-e", "console.log('hi')"], { env: bunEnv, encoding } as any);
+      const chunks: Buffer[] = [];
+      child.stdout!.on("data", chunk => chunks.push(chunk));
+      await once(child, "close");
+      expect(chunks.length).toBeGreaterThan(0);
+      for (const chunk of chunks) {
+        expect(chunk).toBeInstanceOf(Buffer);
+      }
+      expect(Buffer.concat(chunks).toString()).toBe("hi\n");
+      expect(child.exitCode).toBe(0);
+    },
+  );
+
   it("should use cwd from options to search for executables", async () => {
     const tmpdir = tmpdirSync();
     await Promise.all([

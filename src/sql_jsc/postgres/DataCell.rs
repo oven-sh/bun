@@ -362,13 +362,13 @@ fn parse_array(
                                     return Err(AnyPostgresError::UnsupportedArrayFormat);
                                 }
                                 if &slice[0..5] == b"false" {
-                                    array.push(SQLDataCell::bool_(false));
+                                    array.push(SQLDataCell::bool(false));
                                     slice = try_slice(slice, 5);
                                     continue;
                                 }
                                 return Err(AnyPostgresError::UnsupportedArrayFormat);
                             } else {
-                                array.push(SQLDataCell::bool_(false));
+                                array.push(SQLDataCell::bool(false));
                                 slice = try_slice(slice, 1);
                                 continue;
                             }
@@ -380,13 +380,13 @@ fn parse_array(
                                     return Err(AnyPostgresError::UnsupportedArrayFormat);
                                 }
                                 if &slice[0..4] == b"true" {
-                                    array.push(SQLDataCell::bool_(true));
+                                    array.push(SQLDataCell::bool(true));
                                     slice = try_slice(slice, 4);
                                     continue;
                                 }
                                 return Err(AnyPostgresError::UnsupportedArrayFormat);
                             } else {
-                                array.push(SQLDataCell::bool_(true));
+                                array.push(SQLDataCell::bool(true));
                                 slice = try_slice(slice, 1);
                                 continue;
                             }
@@ -809,9 +809,9 @@ pub(crate) fn from_bytes(
         T::jsonb | T::json => Ok(SQLDataCell::json(bytes)),
         T::bool => {
             if binary {
-                Ok(SQLDataCell::bool_(!bytes.is_empty() && bytes[0] == 1))
+                Ok(SQLDataCell::bool(!bytes.is_empty() && bytes[0] == 1))
             } else {
-                Ok(SQLDataCell::bool_(!bytes.is_empty() && bytes[0] == b't'))
+                Ok(SQLDataCell::bool(!bytes.is_empty() && bytes[0] == b't'))
             }
         }
         tag @ (T::date | T::timestamp | T::timestamptz) => {

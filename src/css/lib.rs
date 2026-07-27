@@ -256,12 +256,12 @@ impl VendorPrefix {
     /// Returns VendorPrefix::None if empty.
     #[inline]
     pub fn or_none(self) -> VendorPrefix {
-        self.or_(VendorPrefix::NONE)
+        self.or(VendorPrefix::NONE)
     }
 
     /// **WARNING**: NOT THE SAME as bitwise-or!!
     #[inline]
-    pub fn or_(self, other: VendorPrefix) -> VendorPrefix {
+    pub fn or(self, other: VendorPrefix) -> VendorPrefix {
         if self.is_empty() { other } else { self }
     }
 

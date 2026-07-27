@@ -833,7 +833,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     pub fn maybe_defined_helper(&mut self, identifier_expr: Expr) -> Result<Expr, crate::Error> {
         let p = self;
-        let test_ = Self::check_if_defined_helper(p, identifier_expr)?;
+        let test = Self::check_if_defined_helper(p, identifier_expr)?;
         let object_ref = p
             .find_symbol(bun_ast::Loc::EMPTY, b"Object")
             .expect("unreachable")
@@ -841,7 +841,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let yes = p.new_expr(E::Identifier::init(object_ref), bun_ast::Loc::EMPTY);
         Ok(p.new_expr(
             E::If {
-                test_,
+                test,
                 yes,
                 no: identifier_expr,
             },

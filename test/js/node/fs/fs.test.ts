@@ -3815,11 +3815,17 @@ describe("createWriteStream", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stderr, out: JSON.parse(stdout.trim()), exitCode }).toEqual({
-      stderr: "",
-      out: { ev: ["error:EFBIG"], bytesWritten: 1048576, size: 1048576, head: "AAAAAAAA" },
-      exitCode: 0,
-    });
+    const result = JSON.parse(stdout.trim());
+    // `ulimit -f` block size is 512 (dash/busybox) or 1024 (bash); assert the
+    // invariant, not the exact clamp point.
+    expect({
+      stderr,
+      ev: result.ev,
+      head: result.head,
+      sizeMatchesBytesWritten: result.size === result.bytesWritten,
+      exitCode,
+    }).toEqual({ stderr: "", ev: ["error:EFBIG"], head: "AAAAAAAA", sizeMatchesBytesWritten: true, exitCode: 0 });
+    expect(result.size).toBeWithin(1, 4 << 20);
   });
 
   it("should emit open and call close callback", done => {

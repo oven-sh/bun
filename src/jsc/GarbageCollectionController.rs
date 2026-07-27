@@ -2,7 +2,7 @@
 
 use core::ffi::c_int;
 
-use bun_core::{Timespec, TimespecMockMode, ZStr};
+use bun_core::{Timespec, TimespecMockMode, env_var};
 use bun_event_loop::EventLoopTimer::{EventLoopTimer, State as TimerState, Tag as TimerTag};
 use bun_uws as uws;
 
@@ -68,36 +68,16 @@ impl GarbageCollectionController {
         let actual = unsafe { &mut *uws::Loop::get() };
         actual.internal_loop_data.jsc_vm = vm.jsc_vm.cast();
 
-        // Fall back to process env: `load_process()` has not run when this fires.
-        let env = vm.env_loader_opt();
-        let get_env = |zkey: &'static ZStr| -> Option<&'static [u8]> {
-            env.and_then(|e| e.get(zkey))
-                .or_else(|| bun_core::getenv_z(zkey))
-        };
+        self.gc_timer_interval = env_var::BUN_GC_TIMER_INTERVAL::get()
+            .unwrap_or(1000)
+            .clamp(1, i32::MAX as u64) as i32;
 
-        let mut gc_timer_interval: i32 = 1000;
-        if let Some(timer) = get_env(ZStr::from_static(b"BUN_GC_TIMER_INTERVAL\0")) {
-            if let Some(parsed) = bun_core::fmt::parse_decimal::<i32>(timer) {
-                if parsed > 0 {
-                    gc_timer_interval = parsed;
-                }
-            }
-        }
-        self.gc_timer_interval = gc_timer_interval;
-
-        if let Some(val) = get_env(ZStr::from_static(
-            b"BUN_GC_RUNS_UNTIL_SKIP_RELEASE_ACCESS\0",
-        )) {
-            if let Some(parsed) = bun_core::fmt::parse_decimal::<c_int>(val) {
-                if parsed >= 0 {
-                    crate::virtual_machine::Bun__defaultRemainingRunsUntilSkipReleaseAccess
-                        .store(parsed, core::sync::atomic::Ordering::Relaxed);
-                }
-            }
+        if let Some(runs) = env_var::BUN_GC_RUNS_UNTIL_SKIP_RELEASE_ACCESS::get() {
+            crate::virtual_machine::Bun__defaultRemainingRunsUntilSkipReleaseAccess
+                .store(runs.min(c_int::MAX as u64) as c_int, core::sync::atomic::Ordering::Relaxed);
         }
 
-        self.disabled = get_env(ZStr::from_static(b"BUN_GC_TIMER_DISABLE\0"))
-            .is_some_and(bun_dotenv::Loader::is_truthy);
+        self.disabled = env_var::BUN_GC_TIMER_DISABLE::get().unwrap_or(false);
     }
 
     pub fn bun_vm(&mut self) -> &mut VirtualMachine {

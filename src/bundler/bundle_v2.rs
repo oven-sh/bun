@@ -7151,10 +7151,6 @@ pub mod bv2_impl {
                     }
                 }
                 parse_task::ResultValue::Err(err) => {
-                    if cfg!(feature = "debug_logs") {
-                        bun_core::scoped_log!(Bundle, "onParse() = err");
-                    }
-
                     if process_log {
                         if let Some(dev_server) = this.dev_server {
                             // Copy out the `'static` path slice so the `input_files`

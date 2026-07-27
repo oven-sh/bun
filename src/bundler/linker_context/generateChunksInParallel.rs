@@ -186,27 +186,6 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 match &chunk.content {
                     crate::chunk::Content::Javascript(js) => {
                         for (i, part_range) in js.parts_in_chunk_in_order.iter().enumerate() {
-                            #[cfg(feature = "debug_logs")]
-                            {
-                                bun_core::scoped_log!(
-                                    PartRanges,
-                                    "Part Range: {} {} ({}..{})",
-                                    bstr::BStr::new(
-                                        &c.parse_graph().input_files.items_source()
-                                            [part_range.source_index.get()]
-                                        .path
-                                        .pretty
-                                    ),
-                                    <&'static str>::from(
-                                        c.parse_graph().ast.items_target()
-                                            [part_range.source_index.get()]
-                                        .bake_graph()
-                                    ),
-                                    part_range.part_index_begin,
-                                    part_range.part_index_end,
-                                );
-                            }
-
                             combined_part_ranges.push(PendingPartRange {
                                 part_range: *part_range,
                                 i: u32::try_from(i).expect("int cast"),

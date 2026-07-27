@@ -265,29 +265,6 @@ pub(crate) fn scan_imports_and_exports(
             }
         }
 
-        if cfg!(feature = "debug_logs") {
-            let mut cjs_count: usize = 0;
-            let mut esm_count: usize = 0;
-            let mut wrap_cjs_count: usize = 0;
-            let mut wrap_esm_count: usize = 0;
-            for kind in col_ref!(exports_kind).iter() {
-                cjs_count += (*kind == ExportsKind::Cjs) as usize;
-                esm_count += (*kind == ExportsKind::Esm) as usize;
-            }
-            for flag in col_ref!(flags).iter() {
-                wrap_cjs_count += (flag.wrap == WrapKind::Cjs) as usize;
-                wrap_esm_count += (flag.wrap == WrapKind::Esm) as usize;
-            }
-            bun_core::scoped_log!(
-                LinkerCtx,
-                "Step 1: {} CommonJS modules (+ {} wrapped), {} ES modules (+ {} wrapped)",
-                cjs_count,
-                wrap_cjs_count,
-                esm_count,
-                wrap_esm_count,
-            );
-        }
-
         // Step 2: Propagate dynamic export status for export star statements that
         // are re-exports from a module whose exports are not statically analyzable.
         // In this case the export star must be evaluated at run time instead of at

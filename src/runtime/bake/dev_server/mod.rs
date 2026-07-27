@@ -10,7 +10,6 @@
 //!   - `is_file_cached`
 
 #![allow(clippy::module_inception)]
-#![allow(unexpected_cfgs)] // `feature = "bake_debugging_features"` is not yet a declared cargo feature.
 
 use core::sync::atomic::Ordering;
 

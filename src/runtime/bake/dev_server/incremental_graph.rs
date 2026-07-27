@@ -336,18 +336,6 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         unsafe { &mut (*self.owner()).bundling_failures }
     }
 
-    /// Safe sibling-projection: borrow the owning [`DevServer`]'s `dump_dir`
-    /// while holding `&mut self` (same disjoint-field rationale as
-    /// [`dev_incremental_result`](Self::dev_incremental_result)).
-    #[cfg(feature = "bake_debugging_features")]
-    #[inline]
-    fn dev_dump_dir(&mut self) -> Option<&mut bun_sys::Dir> {
-        // SAFETY: `owner()` recovers the heap-allocated `DevServer`; `dump_dir`
-        // is field-disjoint from both `client_graph` and `server_graph`, so the
-        // returned borrow and `&mut self` cover non-overlapping memory.
-        unsafe { (*self.owner()).dump_dir.as_mut() }
-    }
-
     /// `IncrementalGraph(side).getFileByIndex` — direct value-slot accessor.
     #[inline]
     pub(crate) fn get_file_by_index(&self, index: FileIndex<SIDE>) -> &File {
@@ -577,24 +565,6 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                         },
                     ));
                 }
-            }
-        }
-
-        // Dump to filesystem if enabled.
-        #[cfg(feature = "bake_debugging_features")]
-        if let ReceiveChunkContent::Js { code, .. } = &content {
-            if let Some(dump_dir) = self.dev_dump_dir() {
-                // SAFETY: sibling-field access via `owner()`; `root` is
-                // disjoint from `dump_dir` and from `self` (the graph field).
-                crate::bake::dev_server_body::dump_bundle_for_chunk(
-                    unsafe { &*dev },
-                    dump_dir,
-                    SIDE,
-                    key,
-                    code,
-                    true,
-                    is_ssr_graph,
-                );
             }
         }
 
@@ -1819,22 +1789,6 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         }
         list.extend_from_slice(&end_list);
 
-        #[cfg(feature = "bake_debugging_features")]
-        if let Some(dump_dir) = self.dev_dump_dir() {
-            let rel_path_escaped: &[u8] = match kind {
-                ChunkKind::InitialResponse => b"latest_chunk.js",
-                ChunkKind::HmrChunk => b"latest_hmr.js",
-            };
-            if let Err(err) = crate::bake::dev_server_body::dump_bundle(
-                dump_dir,
-                bake::Graph::Client,
-                rel_path_escaped,
-                &list[start..],
-                false,
-            ) {
-                bun_core::warn!("Could not dump bundle: {}", err);
-            }
-        }
         let _ = start;
         Ok(())
     }
@@ -1868,22 +1822,6 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         }
         list.extend_from_slice(end);
 
-        #[cfg(feature = "bake_debugging_features")]
-        if let Some(dump_dir) = self.dev_dump_dir() {
-            let rel_path_escaped: &[u8] = match options.kind {
-                ChunkKind::InitialResponse => b"latest_chunk.js",
-                ChunkKind::HmrChunk => b"latest_hmr.js",
-            };
-            if let Err(err) = crate::bake::dev_server_body::dump_bundle(
-                dump_dir,
-                bake::Graph::Server,
-                rel_path_escaped,
-                &list[start..],
-                false,
-            ) {
-                bun_core::warn!("Could not dump bundle: {}", err);
-            }
-        }
         let _ = start;
         Ok(())
     }

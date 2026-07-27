@@ -9,8 +9,6 @@
 //! Theorized and designed over 2 years out of pure love —— paper clover <3
 //! For questions about its core philosophy, email `devserver@paperclover.net`
 
-#![allow(unexpected_cfgs)] // `feature = "bake_debugging_features"` is not yet a declared cargo feature.
-
 use ::core::ffi::c_void;
 use bun_bundler::mal_prelude::*;
 use std::io::Write as _;
@@ -25,8 +23,6 @@ use bun_core::{Environment, Output};
 use bun_jsc::StringJsc as _;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult};
-#[cfg(feature = "bake_debugging_features")]
-use bun_paths::MAX_PATH_BYTES;
 use bun_paths::{self as paths, PathBuffer};
 use bun_sys as sys;
 use bun_uws::{self as uws, AnyResponse, Opcode, Request, WebSocketUpgradeContext};
@@ -166,17 +162,12 @@ pub(crate) use map_log;
 
 pub struct Options<'a> {
     /// Arena must live until DevServer drops
-    pub(crate) arena: &'a Arena,
-    pub(crate) root: &'a ZStr,
-    pub(crate) vm: &'a VirtualMachine,
-    pub(crate) framework: bake::Framework,
-    pub(crate) bundler_options: bake::SplitBundlerOptions,
-    pub(crate) broadcast_console_log_from_browser_to_server: bool,
-
-    // Debugging features
-    #[cfg(feature = "bake_debugging_features")]
-    pub(crate) dump_sources: Option<&'static [u8]>,
-    pub(crate) dump_state_on_crash: Option<bool>,
+    pub arena: &'a Arena,
+    pub root: &'a ZStr,
+    pub vm: &'a VirtualMachine,
+    pub framework: bake::Framework,
+    pub bundler_options: bake::SplitBundlerOptions,
+    pub broadcast_console_log_from_browser_to_server: bool,
 }
 
 // Note: the fields (`arena`, `root`, `vm`, `framework`,
@@ -184,15 +175,6 @@ pub struct Options<'a> {
 // required with no sensible zero value, so `Default` is intentionally NOT
 // implemented. Callers construct `Options` via struct-literal at the call site
 // (see `bake_body.rs::UserOptions::into_dev_server_options`).
-impl<'a> Options<'a> {
-    /// Debug builds dump bundled sources to `.bake-debug` by default.
-    #[cfg(feature = "bake_debugging_features")]
-    pub(crate) const DEFAULT_DUMP_SOURCES: Option<&'static [u8]> = if bun_core::env::IS_DEBUG {
-        Some(b".bake-debug")
-    } else {
-        None
-    };
-}
 
 // The fields `client_graph`, `server_graph`, `directory_watchers`, and `assets`
 // all use `@fieldParentPointer` to access DevServer's state. This pattern has
@@ -431,10 +413,7 @@ pub struct DevServer {
     pub(crate) active_websocket_connections: HashMap<*mut HmrSocket, ()>,
 
     // Debugging
-    #[cfg(feature = "bake_debugging_features")]
-    pub dump_dir: Option<sys::Dir>,
-    #[cfg(not(feature = "bake_debugging_features"))]
-    pub(crate) dump_dir: (),
+    pub dump_dir: (),
     /// Reference count to number of active sockets with the incremental_visualizer enabled.
     pub(crate) emit_incremental_visualizer_events: u32,
     /// Reference count to number of active sockets with the memory_visualizer enabled.
@@ -499,19 +478,6 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
     // relaxed `fetch_add(1)` is equivalent in practice.
     bun_core::analytics::Features::DEV_SERVER.fetch_add(1, ::core::sync::atomic::Ordering::Relaxed);
 
-    #[cfg(feature = "bake_debugging_features")]
-    let dump_dir = if let Some(dir) = options.dump_sources {
-        match sys::Dir::cwd().make_open_path(dir, Default::default()) {
-            Ok(d) => Some(d),
-            Err(err) => {
-                bun_core::warn!("Could not open directory for dumping sources: {}", err);
-                None
-            }
-        }
-    } else {
-        None
-    };
-    #[cfg(not(feature = "bake_debugging_features"))]
     let dump_dir = ();
 
     let separate_ssr_graph = options
@@ -572,15 +538,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
             memory_visualizer_timer,
             EventLoopTimer::init_paused(EventLoopTimerTag::DevServerMemoryVisualizerTick)
         );
-        w!(
-            has_pre_crash_handler,
-            cfg!(feature = "bake_debugging_features")
-                && options.dump_state_on_crash.unwrap_or_else(|| {
-                    bun_core::env_var::feature_flag::BUN_DUMP_STATE_ON_CRASH
-                        .get()
-                        .unwrap_or(false)
-                })
-        );
+        w!(has_pre_crash_handler, false);
         // `dev.frontend_only = dev.framework.file_system_router_types.len == 0`
         w!(
             frontend_only,
@@ -1052,14 +1010,6 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
     // after that line.
     dev.scan_initial_routes()?;
 
-    #[cfg(feature = "bake_debugging_features")]
-    if dev.has_pre_crash_handler {
-        bun_crash_handler::append_pre_crash_handler::<DevServer>(
-            &mut *dev,
-            dump_state_due_to_crash,
-        )?;
-    }
-
     debug_assert!(dev.magic == Magic::Valid);
 
     Ok(dev)
@@ -1166,11 +1116,6 @@ impl Drop for DevServer {
         // SAFETY: `Box::into_raw` yields the unique heap pointer; ownership
         // transfers to `shutdown`, which reclaims or hands off to the thread.
         unsafe { Watcher::shutdown(Box::into_raw(watcher), true) };
-
-        #[cfg(feature = "bake_debugging_features")]
-        if let Some(dir) = self.dump_dir.take() {
-            drop(dir);
-        }
 
         if self.has_pre_crash_handler {
             bun_crash_handler::remove_pre_crash_handler(std::ptr::from_mut(self).cast::<c_void>());
@@ -1421,20 +1366,6 @@ impl DevServer {
             hmr_socket_behavior::<SSL>(),
         );
 
-        #[cfg(feature = "bake_debugging_features")]
-        {
-            route!(
-                get,
-                const_format::concatcp!(INTERNAL_PREFIX, "/incremental_visualizer").as_bytes(),
-                DevHandlerId::IncrementalVisualizer
-            );
-            route!(
-                get,
-                const_format::concatcp!(INTERNAL_PREFIX, "/memory_visualizer").as_bytes(),
-                DevHandlerId::MemoryVisualizer
-            );
-        }
-
         // Only attach a catch-all handler if the framework has filesystem
         // router types. Otherwise, this can just be Bun.serve's default handler.
         if !self.framework.file_system_router_types.is_empty() {
@@ -1458,10 +1389,6 @@ pub(super) enum DevHandlerId {
     UnrefSourceMap,
     NotFound,
     Request,
-    #[cfg(feature = "bake_debugging_features")]
-    IncrementalVisualizer,
-    #[cfg(feature = "bake_debugging_features")]
-    MemoryVisualizer,
 }
 
 /// DNS-rebinding guard for `/_bun/...` internal routes and the Chrome
@@ -1625,10 +1552,6 @@ extern "C" fn dev_route_tramp<const SSL: bool, const ID: DevHandlerId>(
         DevHandlerId::UnrefSourceMap => on_unref_source_map_request(dev, req, resp),
         DevHandlerId::NotFound => on_not_found(dev, req, resp),
         DevHandlerId::Request => on_request(dev, req, resp),
-        #[cfg(feature = "bake_debugging_features")]
-        DevHandlerId::IncrementalVisualizer => on_incremental_visualizer(dev, req, resp),
-        #[cfg(feature = "bake_debugging_features")]
-        DevHandlerId::MemoryVisualizer => on_memory_visualizer(dev, req, resp),
     }
 }
 
@@ -1905,30 +1828,6 @@ fn on_src_request(_dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
     // TODO: better editor detection. on chloe's dev env, this opens apple terminal + vim
     resp.write_status(b"501 Not Implemented");
     resp.end(b"TODO", false);
-}
-
-#[cfg(feature = "bake_debugging_features")]
-fn on_incremental_visualizer(_: &mut DevServer, _: &mut Request, resp: AnyResponse) {
-    resp.corked(move || on_incremental_visualizer_corked(resp));
-}
-
-#[cfg(feature = "bake_debugging_features")]
-fn on_incremental_visualizer_corked(resp: AnyResponse) {
-    let code = bun_core::runtime_embed_file!(SrcEager, "runtime/bake/incremental_visualizer.html")
-        .as_bytes();
-    resp.end(code, false);
-}
-
-#[cfg(feature = "bake_debugging_features")]
-fn on_memory_visualizer(_: &mut DevServer, _: &mut Request, resp: AnyResponse) {
-    resp.corked(move || on_memory_visualizer_corked(resp));
-}
-
-#[cfg(feature = "bake_debugging_features")]
-fn on_memory_visualizer_corked(resp: AnyResponse) {
-    let code =
-        bun_core::runtime_embed_file!(SrcEager, "runtime/bake/memory_visualizer.html").as_bytes();
-    resp.end(code, false);
 }
 
 struct RequestEnsureRouteBundledCtx {
@@ -5576,153 +5475,23 @@ impl DevServer {
 // body module re-exports it so both modules name the same type.
 pub(super) use crate::bake::dev_server::ChunkKind;
 
-// For debugging, it is helpful to be able to see bundles.
-#[cfg(feature = "bake_debugging_features")]
-pub fn dump_bundle(
-    dump_dir: &mut sys::Dir,
-    graph: bake::Graph,
-    rel_path: &[u8],
-    chunk: &[u8],
-    wrap: bool,
-) -> crate::Result<()> {
-    let mut buf = paths::path_buffer_pool::get();
-    let name = &paths::resolve_path::join_abs_string_buf::<paths::platform::Auto>(
-        b"/",
-        &mut *buf,
-        &[<&'static str>::from(graph).as_bytes(), rel_path],
-    )[1..];
-    let inner_dir = dump_dir.make_open_path(
-        paths::resolve_path::dirname::<paths::platform::Auto>(name),
-        Default::default(),
-    )?;
-
-    let file = sys::File::create(inner_dir.fd, paths::basename(name), true)?;
-    let mut bufw = file.buffered_writer();
-
-    if !strings::has_suffix_comptime(rel_path, b".map") {
-        write!(
-            bufw,
-            "// {} bundled for {}\n",
-            bun_core::fmt::quote(rel_path),
-            <&'static str>::from(graph),
-        )?;
-        write!(
-            bufw,
-            "// Bundled at {}, Bun {}\n",
-            bun_core::time::nano_timestamp(),
-            bun_core::Global::package_json_version_with_canary,
-        )?;
-    }
-
-    if wrap {
-        bufw.write_all(b"({\n")?;
-    }
-
-    bufw.write_all(chunk)?;
-
-    if wrap {
-        bufw.write_all(b"});\n")?;
-    }
-
-    bufw.flush()?;
-    Ok(())
-}
-
-#[cfg(feature = "bake_debugging_features")]
-#[inline(never)]
-pub fn dump_bundle_for_chunk(
-    dev: &DevServer,
-    dump_dir: &mut sys::Dir,
-    side: bake::Side,
-    key: &[u8],
-    code: &[u8],
-    wrap: bool,
-    is_ssr_graph: bool,
-) {
-    let cwd = &dev.root;
-    let mut a = PathBuffer::uninit();
-    let mut b = [0u8; MAX_PATH_BYTES * 2];
-    let rel_path = paths::resolve_path::relative_buf_z(&mut a, cwd, key);
-    let from = const_format::concatcp!("..", paths::SEP_STR);
-    let to = const_format::concatcp!("_.._", paths::SEP_STR);
-    let size = bun_core::replacement_size(rel_path, from.as_bytes(), to.as_bytes());
-    let _ = bun_core::replace(rel_path, from.as_bytes(), to.as_bytes(), &mut b);
-    let rel_path_escaped = &b[..size];
-    if let Err(err) = dump_bundle(
-        dump_dir,
-        match side {
-            bake::Side::Client => bake::Graph::Client,
-            bake::Side::Server => {
-                if is_ssr_graph {
-                    bake::Graph::Ssr
-                } else {
-                    bake::Graph::Server
-                }
-            }
-        },
-        rel_path_escaped,
-        code,
-        wrap,
-    ) {
-        bun_core::warn!("Could not dump bundle: {}", err);
-    }
-}
-
 impl DevServer {
-    pub(crate) fn emit_visualizer_message_if_needed(&mut self) {
-        #[cfg(feature = "bake_debugging_features")]
-        {
-            // Note: erase `self` to a raw ptr so the `defer!` doesn't pin a
-            // unique borrow for the rest of the fn.
-            let self_ptr: *mut Self = self;
-            // SAFETY: `self_ptr` points to `*self`, live for the fn body.
-            scopeguard::defer! { unsafe { (*self_ptr).emit_memory_visualizer_message_if_needed() } };
-            if self.emit_incremental_visualizer_events == 0 {
-                return;
-            }
-
-            let mut payload: Vec<u8> = Vec::with_capacity(65536);
-
-            if self.write_visualizer_message(&mut payload).is_err() {
-                return; // visualizer does not get an update if it OOMs
-            }
-
-            self.publish(HmrTopic::IncrementalVisualizer, &payload, Opcode::BINARY);
-        }
-    }
+    pub fn emit_visualizer_message_if_needed(&mut self) {}
 
     #[inline]
     fn timer_heap(&self) -> &mut crate::timer::All {
         crate::jsc_hooks::timer_all_mut()
     }
 
-    pub(crate) fn emit_memory_visualizer_message_timer(
-        timer: &mut EventLoopTimer,
+    pub fn emit_memory_visualizer_message_timer(
+        _timer: &mut EventLoopTimer,
         _: &bun_core::Timespec,
     ) {
-        if !cfg!(feature = "bake_debugging_features") {
-            return;
-        }
-        // SAFETY: timer is the .memory_visualizer_timer field of DevServer
-        let dev: &mut DevServer = unsafe { &mut *DevServer::from_timer_ptr(timer) };
-        debug_assert!(dev.magic == Magic::Valid);
-        dev.emit_memory_visualizer_message();
-        timer.state = bun_event_loop::EventLoopTimer::State::FIRED;
-        dev.timer_heap().insert(timer);
     }
 
-    pub(crate) fn emit_memory_visualizer_message_if_needed(&mut self) {
-        if !cfg!(feature = "bake_debugging_features") {
-            return;
-        }
-        if self.emit_memory_visualizer_events == 0 {
-            return;
-        }
-        self.emit_memory_visualizer_message();
-    }
+    pub fn emit_memory_visualizer_message_if_needed(&mut self) {}
 
-    pub(crate) fn emit_memory_visualizer_message(&mut self) {
-        debug_assert!(cfg!(feature = "bake_debugging_features"));
+    pub fn emit_memory_visualizer_message(&mut self) {
         debug_assert!(self.emit_memory_visualizer_events > 0);
 
         let mut payload: Vec<u8> = Vec::with_capacity(65536);
@@ -6249,89 +6018,6 @@ impl DevServer {
     fn should_receive_console_log_from_browser(&self) -> bool {
         self.inspector().is_some() || self.broadcast_console_log_from_browser_to_server
     }
-}
-
-#[cfg(feature = "bake_debugging_features")]
-fn dump_state_due_to_crash(dev: &mut DevServer) -> crate::Result<()> {
-    debug_assert!(cfg!(feature = "bake_debugging_features"));
-
-    // being conservative about how much stuff is put on the stack.
-    let mut filepath_buf = [0u8; if 4096 < MAX_PATH_BYTES {
-        4096
-    } else {
-        MAX_PATH_BYTES
-    }];
-    let filepath = {
-        let mut cursor = &mut filepath_buf[..];
-        let _ = write!(
-            cursor,
-            "incremental-graph-crash-dump.{}.html\0",
-            bun_core::time::timestamp()
-        );
-        bun_core::slice_to_nul(&filepath_buf)
-    };
-    let file = match sys::File::create(sys::Fd::cwd(), filepath, true) {
-        Ok(f) => f,
-        Err(err) => {
-            bun_core::warn!("Could not open file for dumping incremental graph: {}", err);
-            return Ok(());
-        }
-    };
-
-    // Const-evaluate the lastIndexOf here so a
-    // missing `<script>` tag fails the build instead of panicking at
-    // crash-dump time.
-    const VISUALIZER: &[u8] = include_bytes!("incremental_visualizer.html");
-    const SPLIT: usize = {
-        const NEEDLE: &[u8] = b"<script>";
-        let mut last_match: usize = usize::MAX;
-        let mut i = 0;
-        while i + NEEDLE.len() <= VISUALIZER.len() {
-            let mut j = 0;
-            let mut matched = true;
-            while j < NEEDLE.len() {
-                if VISUALIZER[i + j] != NEEDLE[j] {
-                    matched = false;
-                    break;
-                }
-                j += 1;
-            }
-            if matched {
-                last_match = i;
-            }
-            i += 1;
-        }
-        assert!(
-            last_match != usize::MAX,
-            "incremental_visualizer.html must contain a <script> tag"
-        );
-        last_match + NEEDLE.len()
-    };
-    const START: &[u8] = VISUALIZER.split_at(SPLIT).0;
-    const END: &[u8] = VISUALIZER.split_at(SPLIT).1;
-    let (start, end) = (START, END);
-
-    file.write_all(start)?;
-    file.write_all(b"\nlet inlinedData = Uint8Array.from(atob(\"")?;
-
-    let mut payload: Vec<u8> = Vec::with_capacity(4096);
-    dev.write_visualizer_message(&mut payload)?;
-
-    // bun_base64::encode_len_from_size(4096) == ((4096 + 2) / 3) * 4 == 5464
-    let mut buf = [0u8; 5464];
-    for chunk in payload.chunks(4096) {
-        let n = bun_base64::encode(&mut buf, chunk);
-        file.write_all(&buf[..n])?;
-    }
-
-    file.write_all(b"\"), c => c.charCodeAt(0));\n")?;
-    file.write_all(end)?;
-
-    bun_core::note!(
-        "Dumped incremental bundler graph to {}",
-        bun_core::fmt::quote(filepath)
-    );
-    Ok(())
 }
 
 #[repr(transparent)]

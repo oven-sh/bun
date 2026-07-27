@@ -50,65 +50,6 @@ pub type EventLoop = Option<core::ptr::NonNull<bun_event_loop::AnyEventLoop>>;
 bun_core::declare_scope!(LinkerCtx, visible);
 bun_core::declare_scope!(TreeShake, hidden);
 
-// ══════════════════════════════════════════════════════════════════════════
-// CYCLEBREAK(b0): vtable instance for `bun_crash_handler::BundleGenerateChunkVTable`
-// (cold-path §Dispatch — crash trace only). crash_handler (T1) holds erased
-// `(*const LinkerContext, *const Chunk, *const PartRange)`; bundler supplies
-// the formatter that knows their layout.
-// ══════════════════════════════════════════════════════════════════════════
-#[cfg(feature = "show_crash_trace")]
-bun_crash_handler::link_impl_BundleGenerateChunkCtx! {
-    Linker for LinkerContext => |this| {
-        fmt(chunk, part_range, writer) => {
-            let ctx = &*this;
-            let chunk = &*chunk.cast::<Chunk>();
-            let pr = &*part_range.cast::<PartRange>();
-            let parse_graph = ctx.parse_graph();
-            let sources = parse_graph.input_files.items_source();
-            let entry = if pr.source_index.is_valid() {
-                sources
-                    .get(chunk.entry_point.source_index() as usize)
-                    .map(|s| bstr::BStr::new(&s.path.text))
-            } else {
-                None
-            };
-            let source = if pr.source_index.is_valid() {
-                sources
-                    .get(pr.source_index.get() as usize)
-                    .map(|s| bstr::BStr::new(&s.path.text))
-            } else {
-                None
-            };
-            write!(
-                writer,
-                "generating bundler chunk\n  chunk entry point: {:?}\n  source: {:?}\n  part range: {}..{}",
-                entry, source, pr.part_index_begin, pr.part_index_end,
-            )
-        },
-    }
-}
-
-/// Helper for constructing a crash-trace `Action::BundleGenerateChunk`.
-#[cfg(feature = "show_crash_trace")]
-#[inline]
-pub(crate) fn bundle_generate_chunk_action(
-    ctx: &LinkerContext,
-    chunk: &Chunk,
-    part_range: &PartRange,
-) -> bun_crash_handler::Action {
-    bun_crash_handler::Action::BundleGenerateChunk(bun_crash_handler::BundleGenerateChunk {
-        // SAFETY: `ctx`/`chunk`/`part_range` outlive the crash-trace scope this is held for.
-        ctx: unsafe {
-            bun_crash_handler::BundleGenerateChunkCtx::new(
-                bun_crash_handler::BundleGenerateChunkCtxKind::Linker,
-                core::ptr::from_ref(ctx).cast_mut(),
-            )
-        },
-        chunk: core::ptr::from_ref::<Chunk>(chunk).cast::<()>(),
-        part_range: core::ptr::from_ref::<PartRange>(part_range).cast::<()>(),
-    })
-}
-
 // Scoped-log wrappers; re-exported so `linker_context/*` submodules import directly.
 bun_core::define_scoped_log!(debug, crate::linker_context_mod::LinkerCtx);
 pub(crate) use debug;
@@ -1726,25 +1667,6 @@ pub(crate) unsafe fn pending_part_range_prologue<'a>(
     (part_range, c_ptr, chunk_ptr, worker)
 }
 
-/// `Environment.show_crash_trace` scoped-action guard for the
-/// `generate_compile_result_for_{js,css}_chunk` callbacks. Thin wrapper over
-/// [`bundle_generate_chunk_action`] + [`bun_crash_handler::scoped_action`].
-///
-/// Callers materialise the `&LinkerContext` / `&Chunk` from the worker-task
-/// raw pointers (see [`pending_part_range_prologue`]); the borrows are only
-/// used to derive erased `*const ()` for the crash-trace vtable and are not
-/// retained past the `scoped_action` expression.
-#[cfg(feature = "show_crash_trace")]
-#[inline]
-#[must_use]
-pub(crate) fn crash_guard_for_part_range(
-    c: &LinkerContext<'_>,
-    chunk: &Chunk,
-    part_range: &PartRange,
-) -> bun_crash_handler::ActionGuard {
-    bun_crash_handler::scoped_action(bundle_generate_chunk_action(c, chunk, part_range))
-}
-
 impl<'a> LinkerContext<'a> {
     pub(crate) fn generate_isolated_hash(&mut self, chunk: &Chunk, arena: &Bump) -> u64 {
         let _trace = bun::perf::trace("Bundler.generateIsolatedHash");
@@ -2690,24 +2612,6 @@ impl<'a> LinkerContext<'a> {
             }
             let out_dist = distance + 1;
 
-            #[cfg(feature = "debug_logs")]
-            {
-                let parse_graph = self.parse_graph();
-                debug_tree_shake!(
-                    "markFileReachableForCodeSplitting(entry: {}): {} {} ({})",
-                    entry_points_count,
-                    bstr::BStr::new(
-                        &parse_graph.input_files.items_source()[source_index as usize]
-                            .path
-                            .pretty
-                    ),
-                    <&'static str>::from(
-                        parse_graph.ast.items_target()[source_index as usize].bake_graph()
-                    ),
-                    out_dist,
-                );
-            }
-
             for record in ctx.import_records[source_index as usize].iter() {
                 if record.source_index.is_valid()
                     && !self.is_external_dynamic_import(record, source_index)
@@ -2941,27 +2845,7 @@ impl<'a> LinkerContext<'a> {
         let dependencies =
             &ctx.parts[source_index as usize].as_slice()[part_index as usize].dependencies;
 
-        #[cfg(feature = "debug_logs")]
-        if dependencies.is_empty() {
-            log_part_dependency_tree!(
-                "markPartLiveForTreeShaking {}:{} | EMPTY",
-                source_index,
-                part_index
-            );
-        }
-
         for dependency in dependencies.iter() {
-            #[cfg(feature = "debug_logs")]
-            if source_index != 0 && dependency.source_index.get() != 0 {
-                log_part_dependency_tree!(
-                    "markPartLiveForTreeShaking: {}:{} --> {}:{}\n",
-                    source_index,
-                    part_index,
-                    dependency.source_index.get(),
-                    dependency.part_index,
-                );
-            }
-
             let dep_source = dependency.source_index.get();
             let dep_part = dependency.part_index;
             if !ctx.parts_live[dep_source as usize].is_set(dep_part as usize) {

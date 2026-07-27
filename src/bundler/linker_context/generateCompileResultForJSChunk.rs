@@ -32,30 +32,6 @@ pub unsafe fn generate_compile_result_for_js_chunk(task: *mut ThreadPoolLib::Tas
     let (part_range, c_ptr, chunk_ptr, mut worker) =
         unsafe { crate::linker_context_mod::pending_part_range_prologue(task) };
 
-    // Wired as a cargo feature through bun_runtime → bun_bundler →
-    // bun_crash_handler. No build profile enables the feature by
-    // default — it must be opted into explicitly.
-    #[cfg(feature = "show_crash_trace")]
-    let _crash_guard = {
-        // `part_range.ctx.{c,chunk}` are `ParentRef`/`BackRef` — safe shared
-        // borrows for the crash-trace vtable only.
-        let (c, chunk): (&LinkerContext, &Chunk) =
-            (part_range.ctx.c.get(), part_range.ctx.chunk.get());
-        crate::linker_context_mod::crash_guard_for_part_range(c, chunk, &part_range.part_range)
-    };
-
-    #[cfg(feature = "show_crash_trace")]
-    {
-        // `parse_graph()` is the safe accessor over the `BundleV2.graph` backref.
-        let parse_graph = part_range.ctx.c.get().parse_graph();
-        let path = &parse_graph.input_files.items_source()
-            [part_range.part_range.source_index.get() as usize]
-            .path;
-        if bun_core::debug_flags::has_print_breakpoint(&path.pretty, &path.text) {
-            // No stable breakpoint intrinsic; left as a no-op.
-        }
-    }
-
     let result = {
         // SAFETY: `c_ptr` / `chunk_ptr` carry mutable provenance; the disjoint-write
         // contract is documented on `pending_part_range_prologue`. The `&mut`

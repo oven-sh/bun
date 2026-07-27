@@ -2079,9 +2079,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 framework: core::mem::take(&mut bake_options.framework).into(),
                 bundler_options: core::mem::take(&mut bake_options.bundler_options).into(),
                 broadcast_console_log_from_browser_to_server: broadcast,
-                #[cfg(feature = "bake_debugging_features")]
-                dump_sources: crate::bake::DevServer::Options::DEFAULT_DUMP_SOURCES,
-                dump_state_on_crash: None,
             }) {
                 Ok(d) => d,
                 Err(e) => {

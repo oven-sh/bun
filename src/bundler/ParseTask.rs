@@ -2051,15 +2051,6 @@ pub mod parse_worker {
                 result_ptr,
                 should_continue_running,
             );
-            if cfg!(feature = "debug_logs") {
-                scoped_log!(
-                    ParseTask,
-                    "callOnBeforeParsePlugins({}:{}) = {}",
-                    bstr::BStr::new(self.file_path.namespace),
-                    bstr::BStr::new(self.file_path.text),
-                    count
-                );
-            }
             if count > 0 {
                 if let Some(e) = self.deferred_error {
                     if let Some(free_user_context) = wrapper.result.free_user_context {

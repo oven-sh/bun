@@ -218,28 +218,6 @@ impl Entry {
         let json_bytes = j.done_with_end(b"\"}")?.into_vec();
         // errdefer @compileError("last try should be the final alloc") — no further fallible ops below.
 
-        #[cfg(feature = "bake_debugging_features")]
-        if let Some(dump_dir) = dev.dump_dir.as_mut() {
-            let rel_path_escaped: &[u8] = if side == Side::Client {
-                b"latest_chunk.js.map"
-            } else {
-                b"latest_hmr.js.map"
-            };
-            if let Err(err) = crate::bake::dev_server_body::dump_bundle(
-                dump_dir,
-                if side == Side::Client {
-                    bake::Graph::Client
-                } else {
-                    bake::Graph::Server
-                },
-                rel_path_escaped,
-                &json_bytes,
-                false,
-            ) {
-                bun_core::output::warn(format_args!("Could not dump bundle: {}", err));
-            }
-        }
-        #[cfg(not(feature = "bake_debugging_features"))]
         let _ = dev;
 
         Ok(json_bytes)

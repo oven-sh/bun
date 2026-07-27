@@ -707,36 +707,6 @@ mod draft {
         }
     }
 
-    /// bun.bundle_v2.LinkerContext.generateCompileResultForJSChunk
-    ///
-    /// The bundler types (`LinkerContext` / `Chunk` / `PartRange`) live in a
-    /// higher-tier crate; `chunk`/`part_range` stay erased and are reinterpreted by
-    /// the `Linker` impl in `bun_bundler::LinkerContext`.
-    #[cfg(feature = "show_crash_trace")]
-    #[derive(Clone, Copy)]
-    pub struct BundleGenerateChunk {
-        pub ctx: BundleGenerateChunkCtx,
-        /// SAFETY: erased `&bun_bundler::Chunk`
-        pub chunk: *const (),
-        /// SAFETY: erased `&bun_bundler::PartRange`
-        pub part_range: *const (),
-    }
-
-    #[cfg(feature = "show_crash_trace")]
-    bun_dispatch::link_interface! {
-        pub BundleGenerateChunkCtx[Linker] {
-            fn fmt(chunk: *const (), part_range: *const (), writer: &mut core::fmt::Formatter<'_>) -> core::fmt::Result;
-        }
-    }
-
-    #[cfg(feature = "show_crash_trace")]
-    #[derive(Clone, Copy)]
-    pub(crate) struct ResolverAction {
-        pub source_dir: &'static [u8],
-        pub import_path: &'static [u8],
-        pub kind: bun_ast::ImportKind,
-    }
-
     #[derive(Clone, Copy)]
     pub enum Action {
         Parse(&'static [u8]),
@@ -749,16 +719,8 @@ mod draft {
         // is not truly `'static`. Correctness relies on the `scoped_action`
         // RAII guard restoring the thread-local before the owning arena or
         // resolver storage is freed.
-        #[cfg(feature = "show_crash_trace")]
-        BundleGenerateChunk(BundleGenerateChunk),
-        #[cfg(not(feature = "show_crash_trace"))]
         BundleGenerateChunk(()),
-
-        #[cfg(feature = "show_crash_trace")]
-        Resolver(ResolverAction),
-        #[cfg(not(feature = "show_crash_trace"))]
         Resolver(()),
-
         Dlopen(&'static [u8]),
     }
 
@@ -768,23 +730,7 @@ mod draft {
                 Action::Parse(path) => write!(writer, "parsing {}", bstr::BStr::new(path)),
                 Action::Visit(path) => write!(writer, "visiting {}", bstr::BStr::new(path)),
                 Action::Print(path) => write!(writer, "printing {}", bstr::BStr::new(path)),
-                #[cfg(feature = "show_crash_trace")]
-                Action::BundleGenerateChunk(data) => {
-                    data.ctx.fmt(data.chunk, data.part_range, writer)
-                }
-                #[cfg(not(feature = "show_crash_trace"))]
                 Action::BundleGenerateChunk(()) => Ok(()),
-                #[cfg(feature = "show_crash_trace")]
-                Action::Resolver(res) => {
-                    write!(
-                        writer,
-                        "resolving {} from {} ({})",
-                        bstr::BStr::new(res.import_path),
-                        bstr::BStr::new(res.source_dir),
-                        bstr::BStr::new(res.kind.label()),
-                    )
-                }
-                #[cfg(not(feature = "show_crash_trace"))]
                 Action::Resolver(()) => Ok(()),
                 Action::Dlopen(path) => {
                     write!(writer, "loading native module: {}", bstr::BStr::new(path))
@@ -828,13 +774,7 @@ mod draft {
         ActionGuard(prev)
     }
 
-    /// Scoped `CURRENT_ACTION = Resolver{...}`. Set
-    /// only under `Environment.show_crash_trace` because module resolution is
-    /// extremely hot and has a low crash rate.
-    ///
-    /// `source_dir`/`import_path` are caller-interned (DirnameStore / source text)
-    /// and outlive the guard; the `&'static` lifetime erasure matches the existing
-    /// `Action::Parse`/`Visit`/`Print` slice fields (see the comment on those fields).
+    /// Scoped `CURRENT_ACTION = Resolver`.
     #[inline]
     pub fn set_current_action_resolver(
         source_dir: &[u8],
@@ -842,22 +782,8 @@ mod draft {
         kind: bun_ast::ImportKind,
     ) -> ActionGuard {
         let prev = current_action();
-        #[cfg(feature = "show_crash_trace")]
-        {
-            // SAFETY: caller-interned slices outlive the guard; see fn docs.
-            let source_dir: &'static [u8] = unsafe { &*(source_dir as *const [u8]) };
-            let import_path: &'static [u8] = unsafe { &*(import_path as *const [u8]) };
-            set_current_action(Some(Action::Resolver(ResolverAction {
-                source_dir,
-                import_path,
-                kind,
-            })));
-        }
-        #[cfg(not(feature = "show_crash_trace"))]
-        {
-            let _ = (source_dir, import_path, kind);
-            set_current_action(Some(Action::Resolver(())));
-        }
+        let _ = (source_dir, import_path, kind);
+        set_current_action(Some(Action::Resolver(())));
         ActionGuard(prev)
     }
 

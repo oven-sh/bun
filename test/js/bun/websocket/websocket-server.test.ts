@@ -802,6 +802,7 @@ describe("ServerWebSocket", () => {
         fetch: (req, s) => (s.upgrade(req) ? undefined : new Response()),
         websocket: { publishToSelf: true, open: ws => opened.resolve(ws), message() {} },
       });
+      servers.push(server);
       const c = new WebSocket(`ws://${server.hostname}:${server.port}/`);
       c.binaryType = "arraybuffer";
       c.onmessage = e => {

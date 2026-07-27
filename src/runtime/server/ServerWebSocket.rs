@@ -1297,8 +1297,10 @@ impl ServerWebSocket {
                         "bytes",
                     ));
                 } else {
-                    return Err(global_this
-                        .throw(format_args!("{} requires a string or BufferSource", name)));
+                    return Err(global_this.throw(format_args!(
+                        "{} requires a string, Blob, or BufferSource",
+                        name
+                    )));
                 }
             }
         }

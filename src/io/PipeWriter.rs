@@ -228,6 +228,17 @@ pub trait PosixPipeWriter {
 /// Free fn for the blocking-pipe path; the other file types are handled
 /// inline in `try_write` above.
 fn write_to_blocking_pipe(fd: Fd, buf: &[u8]) -> sys::Result<usize> {
+    // OHOS: expand pipe buffer from 4KB default to 1MB so large writes
+    // don't loop on every 4KB chunk + EAGAIN retry. Best-effort: if the
+    // fcntl fails (e.g. non-pipe fd or kernel doesn't support it), the
+    // write loop below falls back to the default buffer size.
+    #[cfg(target_env = "ohos")]
+    {
+        const F_SETPIPE_SZ: libc::c_int = 1031;
+        const ONE_MB: libc::c_int = 1048576;
+        let _ = unsafe { libc::fcntl(fd.0, F_SETPIPE_SZ, ONE_MB) };
+    }
+
     #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         if bun_sys::linux::RWFFlagSupport::is_maybe_supported() {

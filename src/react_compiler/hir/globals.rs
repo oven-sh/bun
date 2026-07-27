@@ -239,17 +239,6 @@ pub fn lookup_base_global(name: &str) -> Option<&'static Global> {
 /// as needed. Ported from TS `installTypeConfig` in Globals.ts.
 /// If `errors` is provided, hook-name vs hook-type consistency validation
 /// errors are collected there.
-pub fn install_type_config(
-    _globals: &mut GlobalRegistry,
-    shapes: &mut ShapeRegistry,
-    type_config: &TypeConfig,
-    module_name: &str,
-    _loc: (),
-) -> Global {
-    install_type_config_inner(_globals, shapes, type_config, module_name, _loc, &mut None)
-}
-
-/// Like `install_type_config` but collects validation errors.
 pub fn install_type_config_with_errors(
     _globals: &mut GlobalRegistry,
     shapes: &mut ShapeRegistry,

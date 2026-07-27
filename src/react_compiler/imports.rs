@@ -84,13 +84,6 @@ impl ProgramContext {
         }
     }
 
-    /// Set the source filename (from AST node loc.filename).
-    pub fn set_source_filename(&mut self, filename: Option<String>) {
-        if self.source_filename.is_none() {
-            self.source_filename = filename;
-        }
-    }
-
     /// Get the source filename for logger events.
     pub fn source_filename(&self) -> Option<&str> {
         self.source_filename.as_deref()

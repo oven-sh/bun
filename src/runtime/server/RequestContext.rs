@@ -4166,7 +4166,10 @@ where
                 return;
             }
             (*flags).set_request_body_paused(false);
-            if (*this).resp.is_none() || (*flags).aborted() {
+            if (*this).resp.is_none()
+                || (*flags).aborted()
+                || (*this).server.is_none_or(|s| s.terminated())
+            {
                 return;
             }
             // Inline `resp_may_be_freed()` via raw ptr (borrow = ptr; see above).

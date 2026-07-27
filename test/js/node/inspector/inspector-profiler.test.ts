@@ -717,9 +717,16 @@ exported.fn0(0);
 exported.fn1(0);
 exported.fn2(5);
 
-const t0 = performance.now();
-const coverage = await session.post("Profiler.takePreciseCoverage");
-const elapsed = performance.now() - t0;
+// Repeated takes cost the same and keep the script entry, so summing a few
+// keeps the small-N baseline measurable without a floor on the denominator.
+const reps = 5;
+let elapsed = 0;
+let coverage;
+for (let k = 0; k < reps; k++) {
+  const t0 = performance.now();
+  coverage = await session.post("Profiler.takePreciseCoverage");
+  elapsed += performance.now() - t0;
+}
 
 await session.post("Profiler.stopPreciseCoverage");
 session.disconnect();
@@ -782,8 +789,9 @@ describe("Profiler.takePreciseCoverage with many top-level functions", () => {
       // A 4x increase in functions grows a quadratic term 16x. The selection
       // sort in getExecutedRanges() made the release-build ratio here ~12;
       // with an O(n log n) sort the remaining work is linear and the ratio
-      // sits near 4. A 20 ms floor guards against a near-zero small run.
-      const ratio = large.elapsed / Math.max(small.elapsed, 20);
+      // sits near 4. elapsed sums 5 takes, so the denominator stays tens of
+      // milliseconds even on fast hardware.
+      const ratio = large.elapsed / small.elapsed;
       expect({ small: small.elapsed, large: large.elapsed, ratio }).toSatisfy(r => r.ratio < 8);
     },
     30_000,

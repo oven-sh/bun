@@ -140,12 +140,12 @@ test("mutual top-level await import() cycle is an unsettled TLA (exit 13)", asyn
   expect(exitCode).toBe(13);
 });
 
-// The deadlock-avoidance above must NOT fire for sibling static imports in the
-// same Evaluate() pass. Here `entry` first imports `a` (in an SCC {a,c} with
-// an async dep), popping the SCC to EvaluatingAsync, then imports `b` which
-// reads a binding from `c`. `b` must wait for the SCC; previously the
-// EvaluatingAsync check made it skip the wait and run with `c`'s bindings
-// still in TDZ. Node and pre-rewrite Bun both wait.
+// Sibling static imports in the same Evaluate() pass must wait on an
+// EvaluatingAsync SCC (step 12.b.v). Here `entry` first imports `a` (in an SCC
+// {a,c} with an async dep), popping the SCC to EvaluatingAsync, then imports
+// `b` which reads a binding from `c`. `b` must wait for the SCC. Regression
+// guard for a prior loader version that skipped the wait and ran `b` with
+// `c`'s bindings in TDZ; Node waits here.
 test("static sibling import waits for an async-pending SCC from the same Evaluate()", async () => {
   using dir = tempDir("static-sibling-async-scc", {
     "entry.mjs": `
@@ -189,13 +189,10 @@ test("static sibling import waits for an async-pending SCC from the same Evaluat
   expect(exitCode).toBe(0);
 });
 
-// #30259: same narrowing as above, but the TLA dep has NO async deps of its own
-// (pendingAsyncDependencies == 0) and is re-imported by a sibling subtree in the
-// same Evaluate(). Previously the discriminator was only "body has been entered"
-// which is also true here — `await.ts` is suspended at its first await — so the
-// sibling skipped the wait and ran with `foo` still in TDZ. The discriminator
-// must additionally check the dep entered EvaluatingAsync in a *prior*
-// Evaluate(); within the same DFS the spec wait is required.
+// #30259: a TLA dep (pendingAsyncDependencies == 0) suspended earlier in the
+// same Evaluate() is re-imported by a sibling. The sibling must wait on it per
+// step 12.b.v. Regression guard for a prior loader version that skipped the
+// wait and ran `child` with `foo` still in TDZ.
 test("static sibling import waits for a TLA dep that suspended earlier in the same Evaluate()", async () => {
   using dir = tempDir("static-sibling-tla", {
     "root.ts": `
@@ -229,8 +226,7 @@ test("static sibling import waits for a TLA dep that suspended earlier in the sa
 });
 
 // Same as above but the TLA dep is reached indirectly through different parents
-// (so neither parent is on the DFS stack when the second one visits it). Guards
-// against discriminating by "is an asyncParentModule on the stack".
+// (so neither parent is on the DFS stack when the second one visits it).
 test("static sibling import waits for an indirectly-shared TLA dep in the same Evaluate()", async () => {
   using dir = tempDir("static-sibling-tla-indirect", {
     "root.ts": `

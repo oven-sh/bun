@@ -3291,6 +3291,14 @@ impl TestCommand {
 
             // S012: `JSInternalPromise` is an `opaque_ffi!` ZST — safe `*mut → &mut` deref.
             match jsc::JSInternalPromise::opaque_mut(promise).status() {
+                jsc::js_promise::Status::Pending => {
+                    // wait_for_module_promise returned with nothing left to
+                    // settle the entry's TLA: a stalled top-level await. Treat
+                    // as a load failure so we don't run a truncated test set.
+                    vm.report_unsettled_top_level_await();
+                    reporter.summary().fail += 1;
+                    return Ok(());
+                }
                 jsc::js_promise::Status::Rejected => {
                     // `vm.global()` returns `&'static`, decoupled from `vm`'s borrow so
                     // `unhandled_rejection(&mut self, ...)` can reborrow.

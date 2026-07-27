@@ -3400,6 +3400,7 @@ impl VirtualMachine {
         match self.unhandled_rejections_mode() {
             Mode::Bun => {
                 if handle_unhandled() {
+                    drain(self);
                     return;
                 }
                 // continue to default handler

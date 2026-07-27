@@ -1259,12 +1259,9 @@ impl WebWorker {
                 // this thread is the sole owner; `runtime_state` for this
                 // worker thread is still installed (torn down in `destroy()`).
                 unsafe { (hooks.cancel_all_timers)(vm_ptr) };
-                // `close_all_socket_groups` below skips listen sockets (their
-                // owner holds a raw `*mut us_listen_socket_t`), so stop every
-                // `Bun.serve` server now while JSC is live and `stop(true)`'s
-                // on_close JS can run. Without this the listener outlives the
-                // worker's epoll fd (step 5 frees the loop) and its port stays
-                // bound for the process lifetime.
+                // `close_all_socket_groups` below skips listen sockets; stop
+                // every `Bun.serve` server via its own `stop(true)` while JSC
+                // is live, or the listener fd outlives the worker.
                 (hooks.stop_servers_for_terminate)();
             }
             // Same reason: the GC timers are heap nodes too.

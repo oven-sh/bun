@@ -1637,21 +1637,16 @@ fn close_dns_for_terminate() {
     }
 }
 
-/// `RuntimeHooks::stop_servers_for_terminate` — `stop(true)` every
-/// `Bun.serve` server this VM started so its listen socket closes before
-/// `close_all_socket_groups` (which skips listeners) and the worker loop are
-/// torn down. Walks [`IsolationHandle::Server`] entries only; watchers stay
-/// for their own finalizers.
+/// [`RuntimeHooks::stop_servers_for_terminate`] — `stop(true)` every
+/// registered `Bun.serve` server. Walks [`IsolationHandle::Server`] only.
 fn stop_servers_for_terminate() {
     let state = runtime_state();
     if state.is_null() {
         return;
     }
+    // `stop(true)` → `stop_listening` removes the entry, so snapshot first.
     // SAFETY: live boxed per-thread `RuntimeState`; single JS thread.
-    let handles = unsafe { &mut (*state).isolation_handles };
-    // `stop(true)` → `stop_listening` removes the entry from `handles`, so
-    // snapshot first and iterate the snapshot.
-    let servers: Vec<crate::server::AnyServer> = handles
+    let servers: Vec<crate::server::AnyServer> = unsafe { &(*state).isolation_handles }
         .iter()
         .filter_map(|(h, ())| match h {
             IsolationHandle::Server(s) => Some(*s),

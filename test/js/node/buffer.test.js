@@ -1882,8 +1882,7 @@ for (let withOverridenBufferWrite of [false, true]) {
           expect(() => buf.equals()).toThrow(
             expect.objectContaining({
               ...invalidArgType,
-              message:
-                'The "otherBuffer" argument must be an instance of Buffer or Uint8Array. Received undefined',
+              message: 'The "otherBuffer" argument must be an instance of Buffer or Uint8Array. Received undefined',
             }),
           );
         });

@@ -209,17 +209,12 @@ impl WalkTaskErr {
     }
 }
 
-/// Self-referential pair: `iter` borrows `*walker`. The walker is heap-allocated
-/// via `Box::into_raw` so its address is stable; the iterator's `'static`
-/// lifetime is erased (sound because `iter` is always dropped before the walker
-/// is freed, in [`Self::teardown`]).
 struct ScanIteratorState {
-    /// Null once exhausted / torn down.
+    /// `Box::into_raw`'d; null once torn down.
     walker: *mut GlobWalker,
-    /// Initialized iff `walker` is non-null.
+    /// Borrows `*walker` (lifetime erased); initialized iff `walker` is non-null.
     iter: MaybeUninit<GlobIter<'static, SyscallAccessor, false>>,
-    /// `iter.init()` has been called. For the async path this is deferred to the
-    /// first chunk so no filesystem work happens on the JS thread.
+    /// `iter.init()` done (deferred to the first chunk on the async path).
     did_init: bool,
 }
 
@@ -263,8 +258,6 @@ impl ScanIteratorState {
         self.walker = core::ptr::null_mut();
     }
 
-    /// Advance the underlying walker one match. On error or exhaustion the
-    /// state is torn down so subsequent calls return `Done`.
     fn step(&mut self) -> Step {
         if self.walker.is_null() {
             return Step::Done;
@@ -300,10 +293,7 @@ impl ScanIteratorState {
                     return Step::Done;
                 }
                 Ok(bun_sys::Result::Ok(Some(path))) => {
-                    // The previous (eager) implementation built the result
-                    // array from `matched_paths`, so a `Matched` state that was
-                    // never registered there (the absolute literal-path fast
-                    // path in `Iterator::init`) did not surface. Preserve that.
+                    // `Iterator::init`'s literal-path arm yields without registering in `matched_paths`; skip those to match the previous result set.
                     if iter.walker.matched_paths.contains_key(&path[..]) {
                         return Step::Match(path);
                     }
@@ -319,9 +309,7 @@ impl Drop for ScanIteratorState {
     }
 }
 
-/// Backing state for a single `scan()` / `scanSync()` call. Drives the
-/// underlying `GlobWalker` incrementally so the JS iterator yields matches as
-/// they are produced, rather than after the full directory walk has finished.
+/// Drives the `GlobWalker` incrementally for one `scan()` / `scanSync()` call.
 #[bun_jsc::JsClass(no_construct, no_constructor)]
 pub struct GlobScanIterator {
     state: JsCell<ScanIteratorState>,
@@ -340,9 +328,7 @@ impl GlobScanIterator {
         self.has_pending_activity.load(Ordering::SeqCst) > 0
     }
 
-    /// Called from `scanSync()` before returning to JS so the `cwd`-does-not-
-    /// exist error path throws at the `scanSync()` call site, matching previous
-    /// behaviour.
+    /// Eager `iter.init()` so a bad `cwd` still throws at the `scanSync()` call site.
     fn init_sync(&self, global_this: &JSGlobalObject) -> JsResult<()> {
         self.state.with_mut(|state| {
             if state.walker.is_null() || state.did_init {
@@ -381,8 +367,7 @@ impl GlobScanIterator {
         })
     }
 
-    /// Early-termination hook: closes any open directory fds immediately
-    /// instead of waiting for GC.
+    /// Early-`break` hook: release open directory fds now rather than at GC.
     #[bun_jsc::host_fn(method)]
     pub fn close(
         &self,
@@ -404,11 +389,9 @@ impl GlobScanIterator {
         let mut task = WalkTask::create(global_this, self);
         let promise = task.promise.value();
         task.schedule();
-        // `WalkTask<'_>` borrows `self.state` / `self.has_pending_activity` /
-        // `global_this`. `self` is GC-rooted via `hasPendingActivity()` for the
-        // task's duration, and `JSGlobalObject` outlives every scheduled task.
-        // `into_raw` erases the stack-tied `'_` once the heap allocation
-        // escapes; freed via `ConcurrentPromiseTask::destroy`.
+        // SAFETY: `self` is GC-rooted via `hasPendingActivity()` for the task's
+        // duration; `into_raw` erases the stack-tied `'_` and ownership passes
+        // to the work pool (freed via `ConcurrentPromiseTask::destroy`).
         let _ = bun_core::heap::into_raw(task);
         Ok(promise)
     }
@@ -420,9 +403,7 @@ pub(crate) type AsyncGlobWalkTask<'a> = ConcurrentPromiseTask<'a, WalkTask<'a>>;
 const ASYNC_CHUNK: usize = 64;
 
 pub(crate) struct WalkTask<'a> {
-    /// Points at the `GlobScanIterator`'s `JsCell<ScanIteratorState>` payload.
-    /// The owning JS object is GC-rooted via `hasPendingActivity` for the
-    /// task's duration, so the pointee outlives `run()`/`then()`.
+    /// Inside the `GlobScanIterator`, GC-rooted via `hasPendingActivity`.
     state: *mut ScanIteratorState,
     chunk: Vec<MatchedPath>,
     done: bool,
@@ -627,19 +608,9 @@ impl Glob {
     ) -> JsResult<Option<Box<GlobScanIterator>>> {
         let mut arguments = ArgumentsSlice::init(global_this.bun_vm(), callframe.arguments());
         let mut arena = Arena::new();
-        // GlobWalker::init/init_with_cwd own their allocations (Box); the arena
-        // here is vestigial.
-        match self.make_glob_walker(global_this, &mut arguments, fn_name, &mut arena) {
-            Err(err) => {
-                drop(arena);
-                Err(err)
-            }
-            Ok(None) => {
-                drop(arena);
-                Ok(None)
-            }
-            Ok(Some(gw)) => Ok(Some(GlobScanIterator::new(gw))),
-        }
+        Ok(self
+            .make_glob_walker(global_this, &mut arguments, fn_name, &mut arena)?
+            .map(GlobScanIterator::new))
     }
 
     #[bun_jsc::host_fn(method)]

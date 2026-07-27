@@ -60,9 +60,7 @@ template<> PerformanceMarkOptions convertDictionary<PerformanceMarkOptions>(JSGl
         RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!startTimeValue.isUndefined()) {
-        // Node validates with validateNumber(startTime) (ERR_INVALID_ARG_TYPE) rather
-        // than ToNumber-coercing. Non-finite values are still rejected by IDLDouble
-        // below; Node accepts them, but Bun stays stricter there on purpose.
+        // Node: validateNumber(startTime), no ToNumber coercion.
         if (!startTimeValue.isNumber()) {
             Bun::ERR::INVALID_ARG_TYPE(throwScope, &lexicalGlobalObject, "startTime"_s, "number"_s, startTimeValue);
             return {};

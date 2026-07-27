@@ -41,9 +41,7 @@
 
 namespace WebCore {
 
-// Node reserves the nodeTiming milestone attribute names (lib/internal/perf/usertiming.js
-// nodeTimingReadOnlyAttributes) for performance.mark() / new PerformanceMark(). The browser
-// PerformanceTiming attribute set does not apply in a server runtime.
+// Node's nodeTimingReadOnlyAttributes (lib/internal/perf/usertiming.js).
 static constexpr SortedArraySet restrictedMarkNames { std::to_array<ComparableASCIILiteral>({
     "bootstrapComplete"_s,
     "environment"_s,

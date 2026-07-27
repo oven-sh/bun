@@ -201,9 +201,7 @@ JSValue createDOMException(JSGlobalObject* lexicalGlobalObject, ExceptionCode ec
         return Bun::createError(lexicalGlobalObject, Bun::ErrorCode::ERR_PERFORMANCE_MEASURE_INVALID_OPTIONS, message);
 
     case ExceptionCode::InvalidPerformanceMarkError: {
-        // Node throws a DOMException with name "SyntaxError" (legacy code 12) for an
-        // unknown mark, not a JS SyntaxError. ExceptionCode::SyntaxError is reserved
-        // for callers that need `instanceof SyntaxError`, so route explicitly here.
+        // Node: DOMException "SyntaxError"; ExceptionCode::SyntaxError above yields a JS SyntaxError.
         JSDOMGlobalObject* globalObject = deprecatedGlobalObjectForPrototype(lexicalGlobalObject);
         JSValue errorObject = toJS(lexicalGlobalObject, globalObject, DOMException::create(message, "SyntaxError"_s));
         ASSERT(errorObject);

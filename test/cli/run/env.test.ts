@@ -352,11 +352,18 @@ test(".env leaves $ literal when not followed by an identifier", () => {
 test(".env and util.parseEnv accept non-ASCII keys", () => {
   const key = "\u00fc\u00f1\u00ed"; // üñí
   const dir = tempDirWithFiles("dotenv-utf8-key", {
-    ".env": `${key}=uval\nAFTER=ok\n`,
-    "index.ts": `console.log(JSON.stringify({uni: process.env[${JSON.stringify(key)}], after: process.env.AFTER}));`,
+    ".env": [
+      `${key}=uval`,
+      `REF=\${${key}}`,
+      // Bare $IDENT stays ASCII-only: the non-ASCII tail must not be
+      // consumed into the name, so $REF expands and `ü` is literal.
+      `BARE=$REF${key}`,
+      `AFTER=ok`,
+    ].join("\n"),
+    "index.ts": `console.log(JSON.stringify({uni: process.env[${JSON.stringify(key)}], ref: process.env.REF, bare: process.env.BARE, after: process.env.AFTER}));`,
   });
   const { stdout } = bunRun(`${dir}/index.ts`);
-  expect(JSON.parse(stdout)).toEqual({ uni: "uval", after: "ok" });
+  expect(JSON.parse(stdout)).toEqual({ uni: "uval", ref: "uval", bare: `uval${key}`, after: "ok" });
 
   // util.parseEnv goes through the same key scanner with expansion disabled;
   // Node keeps the key so Bun must too.

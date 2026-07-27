@@ -1,9 +1,7 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
-// NestJS/reflect-metadata projects need both experimentalDecorators and
-// emitDecoratorMetadata. Bun follows tsc here: emitDecoratorMetadata on its own
-// is a no-op and does not select the legacy lowering.
+// https://github.com/oven-sh/bun/issues/27526
 test("legacy decorators work when experimentalDecorators and emitDecoratorMetadata are set", async () => {
   using dir = tempDir("issue-27526", {
     "tsconfig.json": JSON.stringify({

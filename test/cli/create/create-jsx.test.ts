@@ -218,7 +218,9 @@ for (const development of [true, false]) {
     describe("shadcn/ui", () => {
       test.concurrent.todoIf(isCI || isWindows)("build", async () => {
         const dir = shadcnDir();
-        await scaffold(dir, "./index.tsx", env);
+        const { stdout: createOut } = await scaffold(dir, "./index.tsx", env);
+        expect(createOut).toContain("React + shadcn/ui + Tailwind project configured");
+        expect(createOut).toContain("bun run build");
 
         await using proc = Bun.spawn({
           cmd: [bunExe(), "run", "build"],

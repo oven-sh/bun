@@ -6,7 +6,7 @@ use bun_jsc::{
     JsRef, JsResult,
 };
 
-use super::js_valkey::{JSValkeyClient, SubscriptionCtx};
+use super::js_valkey::{JSValkeyClient, SubscriptionCtx, SubscriptionKind};
 use super::protocol_jsc as protocol;
 use super::valkey;
 use super::valkey_command_body::{Args as CommandArgs, Command, Meta as CommandMeta};
@@ -1594,8 +1594,6 @@ impl JSValkeyClient {
         NotSubscriber
     );
     cmd_key_varargs!(zrevrank, b"zrevrank", "ZREVRANK", "key", NotSubscriber);
-    cmd_strings_varargs!(psubscribe, b"psubscribe", "PSUBSCRIBE", DontCare);
-    cmd_strings_varargs!(punsubscribe, b"punsubscribe", "PUNSUBSCRIBE", DontCare);
     cmd_strings_varargs!(pubsub, b"pubsub", "PUBSUB", DontCare);
     cmd_strings_varargs!(copy, b"copy", "COPY", NotSubscriber);
     cmd_key_varargs!(unlink, b"unlink", "UNLINK", "key", NotSubscriber);
@@ -1642,8 +1640,16 @@ impl JSValkeyClient {
         )
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub fn subscribe(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    fn do_subscribe(
+        this: &Self,
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+        kind: SubscriptionKind,
+        fn_name: &'static str,
+        arg_name: &'static str,
+        redis_command: &'static [u8],
+        err_msg: &'static str,
+    ) -> JsResult<JSValue> {
         // `upsert_receive_handler`'s exit guard re-enters `on_writable` /
         // `update_poll_ref` before `send()` is reached; hold a ref so `*this`
         // stays live across those calls.
@@ -1651,16 +1657,17 @@ impl JSValkeyClient {
 
         let [channel_or_many, handler_callback] = frame.arguments_as_array::<2>();
         let mut redis_channels: Vec<JSArgument> = Vec::with_capacity(1);
+        let mut registered: Vec<JSValue> = Vec::with_capacity(1);
 
         if !handler_callback.is_callable() {
-            return Err(global.throw_invalid_argument_type("subscribe", "listener", "function"));
+            return Err(global.throw_invalid_argument_type(fn_name, "listener", "function"));
         }
 
         // The first argument given is the channel or may be an array of channels.
         if channel_or_many.is_array() {
             if channel_or_many.get_length(global)? == 0 {
                 return Err(global.throw_invalid_arguments(format_args!(
-                    "subscribe requires at least one channel"
+                    "{fn_name} requires at least one {arg_name}"
                 )));
             }
             redis_channels.ensure_total_capacity(channel_or_many.get_length(global)? as usize);
@@ -1668,63 +1675,91 @@ impl JSValkeyClient {
             let mut array_iter = channel_or_many.array_iterator(global)?;
             while let Some(channel_arg) = array_iter.next()? {
                 let Some(channel) = from_js(global, channel_arg)? else {
-                    return Err(global.throw_invalid_argument_type(
-                        "subscribe",
-                        "channel",
-                        "string",
-                    ));
+                    return Err(global.throw_invalid_argument_type(fn_name, arg_name, "string"));
                 };
                 redis_channels.push(channel);
 
                 // What we do here is add our receive handler. Notice that this doesn't really do anything until the
                 // "SUBSCRIBE" command is sent to redis and we get a response.
-                //
-                // This is less-than-ideal, still, because this assumes a happy path. What happens if
-                // the SUBSCRIBE command fails? We have no way to roll back the addition of the
-                // handler.
                 this._subscription_ctx.get().upsert_receive_handler(
+                    kind,
                     global,
                     channel_arg,
                     handler_callback,
                 )?;
+                registered.push(channel_arg);
             }
         } else if channel_or_many.is_string() {
             // It is a single string channel
             let Some(channel) = from_js(global, channel_or_many)? else {
-                return Err(global.throw_invalid_argument_type("subscribe", "channel", "string"));
+                return Err(global.throw_invalid_argument_type(fn_name, arg_name, "string"));
             };
             redis_channels.push(channel);
 
             this._subscription_ctx.get().upsert_receive_handler(
+                kind,
                 global,
                 channel_or_many,
                 handler_callback,
             )?;
+            registered.push(channel_or_many);
         } else {
-            return Err(global.throw_invalid_argument_type(
-                "subscribe",
-                "channel",
-                "string or array",
-            ));
+            return Err(global.throw_invalid_argument_type(fn_name, arg_name, "string or array"));
         }
 
         let command = Command {
-            command: b"SUBSCRIBE",
+            command: redis_command,
             args: CommandArgs::Args(&redis_channels),
             meta: CommandMeta::default() | CommandMeta::SUBSCRIPTION_REQUEST,
         };
         let promise = match this.send(global, frame.this(), &command) {
             Ok(p) => p,
             Err(err) => {
-                // If we catch an error, we need to clean up any handlers we may have added and fall out of subscription mode
-                this._subscription_ctx
-                    .get()
-                    .clear_all_receive_handlers(global)?;
-                return send_err_to_js(global, "Failed to send SUBSCRIBE command", &err);
+                for ch in &registered {
+                    let _ = this._subscription_ctx.get().remove_receive_handler(
+                        kind,
+                        global,
+                        *ch,
+                        handler_callback,
+                    );
+                }
+                return send_err_to_js(global, err_msg, &err);
             }
         };
 
         Ok(promise_to_js(promise))
+    }
+
+    #[bun_jsc::host_fn(method)]
+    pub fn subscribe(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+        Self::do_subscribe(
+            this,
+            global,
+            frame,
+            SubscriptionKind::Channel,
+            "subscribe",
+            "channel",
+            b"SUBSCRIBE",
+            "Failed to send SUBSCRIBE command",
+        )
+    }
+
+    #[bun_jsc::host_fn(method)]
+    pub fn psubscribe(
+        this: &Self,
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+    ) -> JsResult<JSValue> {
+        Self::do_subscribe(
+            this,
+            global,
+            frame,
+            SubscriptionKind::Pattern,
+            "psubscribe",
+            "pattern",
+            b"PSUBSCRIBE",
+            "Failed to send PSUBSCRIBE command",
+        )
     }
 
     /// Send redis the UNSUBSCRIBE RESP command and clean up anything necessary after the unsubscribe commoand.
@@ -1734,31 +1769,37 @@ impl JSValkeyClient {
         this: &Self,
         this_js: JSValue,
         global: &JSGlobalObject,
+        redis_command: &'static [u8],
+        err_msg: &'static str,
         redis_channels: &[JSArgument],
     ) -> JsResult<JSValue> {
         send_cmd(
             this,
             global,
             this_js,
-            b"UNSUBSCRIBE",
+            redis_command,
             CommandArgs::Args(redis_channels),
             CommandMeta::default(),
-            "Failed to send UNSUBSCRIBE command",
+            err_msg,
         )
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub fn unsubscribe(
+    fn do_unsubscribe(
         this: &Self,
         global: &JSGlobalObject,
         frame: &CallFrame,
+        kind: SubscriptionKind,
+        fn_name: &'static str,
+        arg_name: &'static str,
+        redis_command: &'static [u8],
+        err_msg: &'static str,
     ) -> JsResult<JSValue> {
         // Hold a ref so `*this` stays live across the handler-map updates and
         // the `send()` below.
         let _guard = this.ref_scope();
 
         // Check if we're in subscription mode
-        require_subscriber(this, b"unsubscribe")?;
+        require_subscriber(this, fn_name.as_bytes())?;
 
         let args_view = frame.arguments();
 
@@ -1768,11 +1809,13 @@ impl JSValkeyClient {
         if args_view.is_empty() {
             this._subscription_ctx
                 .get()
-                .clear_all_receive_handlers(global)?;
+                .clear_all_receive_handlers(kind, global)?;
             return Self::send_unsubscribe_request_and_cleanup(
                 this,
                 frame.this(),
                 global,
+                redis_command,
+                err_msg,
                 &redis_channels,
             );
         }
@@ -1793,18 +1836,14 @@ impl JSValkeyClient {
             // In this case, the first argument is a channel string and the second
             // argument is the handler to remove.
             if !channel_or_many.is_string() {
-                return Err(global.throw_invalid_argument_type("unsubscribe", "channel", "string"));
+                return Err(global.throw_invalid_argument_type(fn_name, arg_name, "string"));
             }
 
             let channel = channel_or_many;
             let listener_cb = frame.argument(1);
 
             if !listener_cb.is_callable() {
-                return Err(global.throw_invalid_argument_type(
-                    "unsubscribe",
-                    "listener",
-                    "function",
-                ));
+                return Err(global.throw_invalid_argument_type(fn_name, "listener", "function"));
             }
 
             // Populate the redis_channels list with the single channel to
@@ -1812,11 +1851,12 @@ impl JSValkeyClient {
             // the UNSUBSCRIBE command to redis. Without this, we would end up
             // unsubscribing from all channels.
             let Some(ch) = from_js(global, channel)? else {
-                return Err(global.throw_invalid_argument_type("unsubscribe", "channel", "string"));
+                return Err(global.throw_invalid_argument_type(fn_name, arg_name, "string"));
             };
             redis_channels.push(ch);
 
             let remaining_listeners = match this._subscription_ctx.get().remove_receive_handler(
+                kind,
                 global,
                 channel,
                 listener_cb,
@@ -1840,6 +1880,8 @@ impl JSValkeyClient {
                     this,
                     frame.this(),
                     global,
+                    redis_command,
+                    err_msg,
                     &redis_channels,
                 );
             }
@@ -1854,7 +1896,7 @@ impl JSValkeyClient {
         if channel_or_many.is_array() {
             if channel_or_many.get_length(global)? == 0 {
                 return Err(global.throw_invalid_arguments(format_args!(
-                    "unsubscribe requires at least one channel"
+                    "{fn_name} requires at least one {arg_name}"
                 )));
             }
 
@@ -1865,38 +1907,73 @@ impl JSValkeyClient {
             let mut array_iter = channel_or_many.array_iterator(global)?;
             while let Some(channel_arg) = array_iter.next()? {
                 let Some(channel) = from_js(global, channel_arg)? else {
-                    return Err(global.throw_invalid_argument_type(
-                        "unsubscribe",
-                        "channel",
-                        "string",
-                    ));
+                    return Err(global.throw_invalid_argument_type(fn_name, arg_name, "string"));
                 };
                 redis_channels.push(channel);
                 // Clear the handlers for this channel
                 this._subscription_ctx
                     .get()
-                    .clear_receive_handlers(global, channel_arg)?;
+                    .clear_receive_handlers(kind, global, channel_arg)?;
             }
         } else if channel_or_many.is_string() {
             // It is a single string channel
             let Some(channel) = from_js(global, channel_or_many)? else {
-                return Err(global.throw_invalid_argument_type("unsubscribe", "channel", "string"));
+                return Err(global.throw_invalid_argument_type(fn_name, arg_name, "string"));
             };
             redis_channels.push(channel);
             // Clear the handlers for this channel
             this._subscription_ctx
                 .get()
-                .clear_receive_handlers(global, channel_or_many)?;
+                .clear_receive_handlers(kind, global, channel_or_many)?;
         } else {
-            return Err(global.throw_invalid_argument_type(
-                "unsubscribe",
-                "channel",
-                "string or array",
-            ));
+            return Err(global.throw_invalid_argument_type(fn_name, arg_name, "string or array"));
         }
 
         // Now send the unsubscribe command and clean up if necessary
-        Self::send_unsubscribe_request_and_cleanup(this, frame.this(), global, &redis_channels)
+        Self::send_unsubscribe_request_and_cleanup(
+            this,
+            frame.this(),
+            global,
+            redis_command,
+            err_msg,
+            &redis_channels,
+        )
+    }
+
+    #[bun_jsc::host_fn(method)]
+    pub fn unsubscribe(
+        this: &Self,
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+    ) -> JsResult<JSValue> {
+        Self::do_unsubscribe(
+            this,
+            global,
+            frame,
+            SubscriptionKind::Channel,
+            "unsubscribe",
+            "channel",
+            b"UNSUBSCRIBE",
+            "Failed to send UNSUBSCRIBE command",
+        )
+    }
+
+    #[bun_jsc::host_fn(method)]
+    pub fn punsubscribe(
+        this: &Self,
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+    ) -> JsResult<JSValue> {
+        Self::do_unsubscribe(
+            this,
+            global,
+            frame,
+            SubscriptionKind::Pattern,
+            "punsubscribe",
+            "pattern",
+            b"PUNSUBSCRIBE",
+            "Failed to send PUNSUBSCRIBE command",
+        )
     }
 
     #[bun_jsc::host_fn(method)]

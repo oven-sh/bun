@@ -226,8 +226,9 @@ bun run publisher.ts
 
 <Note>
 Subscribing takes over the `RedisClient` connection: a client with
-subscriptions can only call `RedisClient.prototype.subscribe()`. To send other
-commands to Redis, create a separate connection with `.duplicate()`:
+subscriptions can only call `.ping()`, `.subscribe()`, `.unsubscribe()`,
+`.psubscribe()` and `.punsubscribe()`. To send other commands to Redis, create
+a separate connection with `.duplicate()`:
 
 ```ts redis.ts icon="/icons/typescript.svg"
 import { RedisClient } from "bun";
@@ -264,6 +265,25 @@ Unsubscribe with the `.unsubscribe()` method:
 await client.unsubscribe(); // Unsubscribe from all channels.
 await client.unsubscribe(channel); // Unsubscribe a particular channel.
 await client.unsubscribe(channel, listener); // Unsubscribe a particular listener.
+```
+
+### Pattern Subscriptions
+
+Subscribe to channels matching a glob-style pattern with `.psubscribe()`. The
+listener receives the message and the concrete channel it was published to:
+
+```typescript redis.ts icon="/icons/typescript.svg"
+await client.psubscribe("news.*", (message, channel) => {
+  console.log(`[${channel}] ${message}`);
+});
+```
+
+Unsubscribe from patterns with `.punsubscribe()`:
+
+```typescript redis.ts icon="/icons/typescript.svg"
+await client.punsubscribe(); // Unsubscribe from all patterns.
+await client.punsubscribe(pattern); // Unsubscribe a particular pattern.
+await client.punsubscribe(pattern, listener); // Unsubscribe a particular listener.
 ```
 
 ## Advanced Usage
@@ -368,7 +388,7 @@ The following commands disable automatic pipelining:
 - `SUBSCRIBE`
 - `PSUBSCRIBE`
 - `UNSUBSCRIBE`
-- `UNPSUBSCRIBE`
+- `PUNSUBSCRIBE`
 
 ---
 

@@ -167,7 +167,7 @@ bun_core::comptime_string_set! {
         b"SUBSCRIBE",
         b"PSUBSCRIBE",
         b"UNSUBSCRIBE",
-        b"UNPSUBSCRIBE",
+        b"PUNSUBSCRIBE",
     };
 }
 

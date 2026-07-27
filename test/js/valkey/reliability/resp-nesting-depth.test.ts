@@ -345,10 +345,10 @@ describe("Valkey: RESP push frame routing", () => {
       });
 
       try {
-        const psubscribed = client.psubscribe("news.*");
+        const psubscribed = client.psubscribe("news.*", () => {});
         const pinged = client.send("PING", []);
 
-        expect(await psubscribed).toEqual({ type: "psubscribe", data: ["news.*", 1] });
+        expect(await psubscribed).toBe(1);
         expect(await pinged).toBe("PONG");
       } finally {
         client.close();

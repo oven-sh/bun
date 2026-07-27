@@ -10,7 +10,7 @@ use bun_uws::{self as uws, AnySocket, SocketGroup, SocketKind, SslCtx};
 use bun_valkey::valkey_protocol as protocol;
 use bun_valkey::valkey_protocol::{RESPValue, RedisError};
 
-use super::js_valkey_body::JSValkeyClient;
+use super::js_valkey_body::{JSValkeyClient, SubscriptionKind};
 use super::protocol_jsc::{resp_value_to_js, valkey_error_to_js};
 use super::valkey_command_body as command;
 use super::valkey_command_body::{Args, Command};
@@ -920,10 +920,15 @@ impl ValkeyClient {
                 if let Some(msg_type) = protocol::SubscriptionPushMessage::from_bytes(&push.kind) {
                     match msg_type {
                         protocol::SubscriptionPushMessage::Message => {
-                            self.on_valkey_message(&mut push.data);
+                            self.on_valkey_message(SubscriptionKind::Channel, &mut push.data);
                             Ok(SubscribeHandled::Handled)
                         }
-                        protocol::SubscriptionPushMessage::Subscribe => {
+                        protocol::SubscriptionPushMessage::Pmessage => {
+                            self.on_valkey_message(SubscriptionKind::Pattern, &mut push.data);
+                            Ok(SubscribeHandled::Handled)
+                        }
+                        protocol::SubscriptionPushMessage::Subscribe
+                        | protocol::SubscriptionPushMessage::Psubscribe => {
                             p.add_subscription();
                             self.on_valkey_subscribe(value);
 
@@ -937,7 +942,8 @@ impl ValkeyClient {
                             }
                             Ok(SubscribeHandled::Handled)
                         }
-                        protocol::SubscriptionPushMessage::Unsubscribe => {
+                        protocol::SubscriptionPushMessage::Unsubscribe
+                        | protocol::SubscriptionPushMessage::Punsubscribe => {
                             self.on_valkey_unsubscribe()?;
                             self.parent().remove_subscription();
 
@@ -1091,14 +1097,11 @@ impl ValkeyClient {
         // For subscription clients, check if this is a push message that doesn't need a promise pair
         if let RESPValue::Push(push) = value {
             match protocol::SubscriptionPushMessage::from_bytes(&push.kind) {
-                Some(protocol::SubscriptionPushMessage::Message) => {
+                Some(kind) if kind.is_message() => {
                     // Message pushes never need promise pairs
                     should_consume_promise_pair = false;
                 }
-                Some(
-                    protocol::SubscriptionPushMessage::Subscribe
-                    | protocol::SubscriptionPushMessage::Unsubscribe,
-                ) => {
+                Some(_) => {
                     // Subscribe/unsubscribe pushes only need promise pairs if we have pending commands
                     if self.in_flight.readable_length() == 0 {
                         should_consume_promise_pair = false;
@@ -1527,8 +1530,8 @@ impl ValkeyClient {
         self.parent().on_valkey_unsubscribe()
     }
 
-    pub fn on_valkey_message(&mut self, value: &mut [RESPValue]) {
-        self.parent().on_valkey_message(value);
+    pub fn on_valkey_message(&mut self, kind: SubscriptionKind, value: &mut [RESPValue]) {
+        self.parent().on_valkey_message(kind, value);
     }
 
     pub fn on_valkey_reconnect(&mut self) {

@@ -365,6 +365,9 @@ export const context: TestContext = {
       try {
         await client.unsubscribe();
       } catch {}
+      try {
+        await client.punsubscribe();
+      } catch {}
 
       if (client.connected) {
         client.close();

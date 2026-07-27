@@ -703,10 +703,8 @@ impl PackageJSON {
                 let mut has_globs = false;
                 let mut has_exact = false;
 
-                // First pass: check if we have glob patterns and exact patterns.
-                // Per webpack's documented semantics for this field, patterns
-                // without a '/' match against the basename at any depth (as if
-                // prefixed with "**/"), so they are always glob patterns.
+                // Webpack matches slashless patterns as "**/<pattern>", so they
+                // are always globs.
                 for item in items {
                     if let Some(name) = item.as_str() {
                         if !strings::contains_char(name, b'/')

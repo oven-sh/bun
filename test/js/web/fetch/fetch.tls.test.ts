@@ -748,6 +748,7 @@ describe.concurrent("fetch tls: client cert/key load errors surface the OpenSSL 
   // surface the same ERR_OSSL_* code instead of a generic ConnectionRefused.
   it.each(cases)("via http CONNECT proxy: %s", async (_name, clientTls, codePattern) => {
     const proxy = net.createServer(client => {
+      client.on("error", () => {});
       client.once("data", () => {
         client.write("HTTP/1.1 200 Connection established\r\n\r\n");
       });

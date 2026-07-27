@@ -15,14 +15,16 @@ it.skipIf(!isASAN || isWindows)(
         const path = require("node:path");
         const src = path.join(__dirname, "x.c");
 
-        // Call cc() from a deep stack frame so the returned library becomes
-        // unreachable once the frame is overwritten, allowing GC to finalize it.
+        // Call cc() from a deep stack frame so the library wrapper becomes
+        // unreachable once the frame is overwritten; only the symbol function
+        // escapes (rooted via globalThis so it is off the stack entirely).
         function use(n) {
           if (n > 0) return use(n - 1);
           const lib = cc({ source: src, symbols: { noop: { args: ["ptr"], returns: "int" } } });
           if (lib.symbols.noop(0n) !== 0) throw new Error("bad result");
+          return lib.symbols.noop;
         }
-        use(50);
+        globalThis.noop = use(50);
 
         // Overwrite the stack region that held the library reference so JSC's
         // conservative scan does not keep it alive, then force collection.
@@ -35,7 +37,9 @@ it.skipIf(!isASAN || isWindows)(
         Bun.gc(true);
         clobber(60);
         Bun.gc(true);
-        require("node:fs").writeSync(1, "ok\\n");
+
+        // The wrapper has been finalized; the detached trampoline must still work.
+        if (globalThis.noop(0n) !== 0) throw new Error("symbol broken after GC");
       `,
     });
 
@@ -52,14 +56,16 @@ it.skipIf(!isASAN || isWindows)(
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    // Keep only the FFI leak frames so unrelated LSAN findings do not flake this test.
+    // Keep only the FFI leak frames so an unrelated LSAN finding shows up as such
+    // rather than burying the FFI signature in a wall of text.
     const ffiLeakLines = stderr
       .split("\n")
       .filter(line => line.includes("bun_runtime::ffi") || line.includes("generate_symbols"));
-    expect({ stdout, ffiLeakLines, exitedOnSignal: exitCode === null }).toEqual({
-      stdout: "ok\n",
+    expect({ stdout, stderr, ffiLeakLines, exitCode }).toEqual({
+      stdout: "",
+      stderr: "",
       ffiLeakLines: [],
-      exitedOnSignal: false,
+      exitCode: 0,
     });
   },
   30_000,

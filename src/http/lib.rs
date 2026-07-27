@@ -261,9 +261,10 @@ pub static OVERRIDDEN_DEFAULT_USER_AGENT: std::sync::OnceLock<&'static [u8]> =
     std::sync::OnceLock::new();
 
 /// Idle timeout for HTTP client sockets, in seconds. The timer is armed in
-/// `on_open` (so it covers the TLS handshake) and re-armed on every read/write;
-/// if no bytes move in either direction for this long the request fails with
-/// `error.Timeout`. 0 disables the timer (matching `disable_timeout = true`).
+/// `on_open` (so it covers the TLS handshake) and re-armed on writes and on
+/// body-phase reads; response-header reads do not re-arm it, so it is an
+/// absolute deadline for the header block to complete (undici `headersTimeout`
+/// semantics). 0 disables the timer (matching `disable_timeout = true`).
 /// Overridable via `BUN_CONFIG_HTTP_IDLE_TIMEOUT`. Default is 5 minutes — the
 /// previous hard-coded value — so unchanged environments see identical
 /// behaviour except that the handshake phase is now also covered. Values
@@ -3823,8 +3824,17 @@ impl<'a> HTTPClient<'a> {
         }
 
         if self.proxy_tunnel.is_some() {
-            // if we have a tunnel we dont care about the other stages, we will just tunnel the data
-            self.set_timeout(&socket);
+            // Re-arm only once the origin's header block has completed, same as
+            // the non-proxy dispatch below: the inner TLS handshake and the
+            // origin's response headers are bounded absolutely (the timer stays
+            // as armed by `on_writable`), and body chunks re-arm per read.
+            if matches!(
+                self.state.response_stage,
+                ResponseStage::Body | ResponseStage::BodyChunk
+            ) && !self.state.flags.receive_paused
+            {
+                self.set_timeout(&socket);
+            }
             self.proxy_tunnel_mut().unwrap().receive(incoming_data);
             return;
         }

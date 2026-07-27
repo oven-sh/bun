@@ -482,7 +482,6 @@ pub enum HTTPStage {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Stage {
     Pending,
-    Connect,
     Done,
     Fail,
 }

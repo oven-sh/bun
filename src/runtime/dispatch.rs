@@ -95,7 +95,6 @@ use crate::shell::dispatch_tasks::{
     ShellAsyncSubprocessDone, ShellCondExprStatTask, ShellGlobTask, ShellRmDirTask,
 };
 use crate::shell::interpreter::ShellTask;
-use crate::shell::io_writer::IOWriter as ShellIOWriter;
 #[cfg(not(windows))]
 use crate::shell::io_writer::Poll as ShellBufferedWriterPoll;
 use crate::shell::states::r#async::Async as ShellAsync;
@@ -293,7 +292,6 @@ pub fn run_task(
         task_tag::ShellAsync
         | task_tag::ShellAsyncSubprocessDone
         | task_tag::ShellIOWriterAsyncDeinit
-        | task_tag::ShellIOWriter
         | task_tag::ShellIOReaderAsyncDeinit
         | task_tag::ShellCondExprStatTask
         | task_tag::ShellCpTask
@@ -544,10 +542,6 @@ fn run_task_cold(task: Task) {
             let t = cast_ptr!(ShellIOWriterAsyncDeinit);
             ShellIOWriterAsyncDeinit::run_from_main_thread(t);
         }
-        task_tag::ShellIOWriter => {
-            let t = cast_ptr!(ShellIOWriter);
-            ShellIOWriter::run_from_main_thread(t);
-        }
         task_tag::ShellIOReaderAsyncDeinit => {
             let t = cast_ptr!(ShellIOReaderAsyncDeinit);
             ShellIOReaderAsyncDeinit::run_from_main_thread(t);
@@ -591,7 +585,7 @@ fn run_task_cold(task: Task) {
 /// Compile-time guard that the arm count above tracks
 /// `bun_event_loop::task_tag::COUNT`. Bump when adding a variant.
 const _: () = assert!(
-    task_tag::COUNT == 97,
+    task_tag::COUNT == 96,
     "dispatch::run_task arm count out of sync with bun_event_loop::task_tag",
 );
 

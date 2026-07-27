@@ -320,7 +320,6 @@ pub use patch_install::PatchTask;
 // PackageManager + its associated types — re-exported from the file-backed
 // `package_manager_real` so `crate::PackageManager` and
 // `package_manager_real::PackageManager` are the SAME type.
-pub use package_manager_real::package_manager_directories::CacheDirAndSubpath;
 pub use package_manager_real::{
     AsyncNetworkTaskQueue, CommandLineArguments, PackageManager, PatchTaskQueue, RootPackageId,
     Subcommand,

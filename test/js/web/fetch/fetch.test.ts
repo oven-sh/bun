@@ -2525,7 +2525,7 @@ describe("fetch should allow duplex", () => {
       cmd: [bunExe(), "-e", fixture],
       env: bunEnv,
       stdout: "pipe",
-      stderr: "pipe",
+      stderr: "inherit",
     });
     const stdoutP = proc.stdout.text();
     // The failure mode is a 100%-CPU spin that never yields, so proc.exited alone cannot

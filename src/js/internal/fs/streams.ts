@@ -527,7 +527,7 @@ function writeAll(data, size, pos, cb, retries = 0) {
 
     retries = bytesWritten ? 0 : retries + 1;
     size -= bytesWritten;
-    pos += bytesWritten;
+    if (pos !== undefined) pos += bytesWritten;
 
     // Try writing non-zero number of bytes up to 5 times.
     if (retries > 5) {
@@ -542,7 +542,7 @@ function writeAll(data, size, pos, cb, retries = 0) {
 }
 
 function writevAll(chunks, size, pos, cb, retries = 0) {
-  this[kFs].writev(this.fd, chunks, this.pos, (er, bytesWritten, buffers) => {
+  this[kFs].writev(this.fd, chunks, pos, (er, bytesWritten, buffers) => {
     // No data currently available and operation should be retried later.
     if (er?.code === "EAGAIN") {
       er = null;
@@ -557,7 +557,7 @@ function writevAll(chunks, size, pos, cb, retries = 0) {
 
     retries = bytesWritten ? 0 : retries + 1;
     size -= bytesWritten;
-    pos += bytesWritten;
+    if (pos !== undefined) pos += bytesWritten;
 
     // Try writing non-zero number of bytes up to 5 times.
     if (retries > 5) {

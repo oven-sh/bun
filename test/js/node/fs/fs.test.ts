@@ -2024,6 +2024,64 @@ describe("writeSync", () => {
     closeSync(fd);
   });
 
+  // Node's binding maps any non-safe-integer position to -1 (current file
+  // offset). NaN previously coerced to 0, overwriting the start of the file.
+  it.each([
+    ["NaN", NaN],
+    ["Infinity", Infinity],
+    ["-Infinity", -Infinity],
+    ["-1", -1],
+    ["1.5", 1.5],
+  ])("treats position %s as the current file offset", async (_label, position) => {
+    using dir = tempDir("write-position-current", {});
+    const p = join(String(dir), "f");
+    writeFileSync(p, Buffer.alloc(10, "A"));
+    const seed = Buffer.alloc(5);
+    const expected = "AAAAAXXAAA";
+
+    // writeSync(fd, buffer, offset, length, position)
+    {
+      const fd = openSync(p, "r+");
+      try {
+        readSync(fd, seed, 0, 5, null);
+        expect(writeSync(fd, Buffer.from("XX"), 0, 2, position as number)).toBe(2);
+      } finally {
+        closeSync(fd);
+      }
+      expect(readFileSync(p, "utf8")).toBe(expected);
+    }
+
+    // fs.write(fd, buffer, offset, length, position, callback)
+    writeFileSync(p, Buffer.alloc(10, "A"));
+    {
+      const fd = openSync(p, "r+");
+      try {
+        readSync(fd, seed, 0, 5, null);
+        const { promise, resolve, reject } = Promise.withResolvers<number>();
+        fs.write(fd, Buffer.from("XX"), 0, 2, position as number, (err, written) =>
+          err ? reject(err) : resolve(written),
+        );
+        expect(await promise).toBe(2);
+      } finally {
+        closeSync(fd);
+      }
+      expect(readFileSync(p, "utf8")).toBe(expected);
+    }
+
+    // writeSync(fd, string, position)
+    writeFileSync(p, Buffer.alloc(10, "A"));
+    {
+      const fd = openSync(p, "r+");
+      try {
+        readSync(fd, seed, 0, 5, null);
+        expect(writeSync(fd, "XX", position as number)).toBe(2);
+      } finally {
+        closeSync(fd);
+      }
+      expect(readFileSync(p, "utf8")).toBe(expected);
+    }
+  });
+
   // writeSync(fd, string[, position[, encoding]]): the encoding used to be
   // parsed but never applied, so utf16le/hex/base64/latin1 all wrote raw UTF-8.
   it("honors the encoding argument for strings", () => {
@@ -3670,6 +3728,92 @@ describe("createWriteStream", () => {
         done();
       }
     });
+  });
+
+  // With no `start` the stream passes `pos = undefined` to writeAll/writevAll.
+  // A partial write must retry at the current file offset (pos stays
+  // undefined), not at `undefined + bytesWritten` (NaN), which the native
+  // layer used to coerce to pwrite offset 0 and stamp the tail over the head.
+  it.each([
+    ["write", undefined],
+    ["write", 0],
+    ["writev", undefined],
+    ["writev", 0],
+  ] as const)("retries a partial %s at the correct offset with start %p", async (method, start) => {
+    using dir = tempDir("write-stream-partial", {});
+    const p = join(String(dir), "out");
+    const payload = Buffer.from("ABCDEFGHIJKLMNOPQRSTUVWXYZ");
+    const positions: unknown[] = [];
+    let first = true;
+
+    const customFs: any = {
+      open: fs.open,
+      close: fs.close,
+      write(fd, buf, offset, length, position, cb) {
+        positions.push(position);
+        if (first) {
+          first = false;
+          const half = Math.floor(length / 2);
+          fs.write(fd, buf, offset, half, position, (err, written) => cb(err, written, buf));
+          return;
+        }
+        fs.write(fd, buf, offset, length, position, cb);
+      },
+      writev(fd, chunks, position, cb) {
+        positions.push(position);
+        if (first) {
+          first = false;
+          fs.writev(fd, [chunks[0]], position, (err, written) => cb(err, written, chunks));
+          return;
+        }
+        fs.writev(fd, chunks, position, cb);
+      },
+    };
+
+    const stream = createWriteStream(p, { fs: customFs, start } as any);
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    stream.on("error", reject);
+    stream.on("finish", resolve);
+    if (method === "writev") {
+      stream.cork();
+      stream.write(payload.subarray(0, 10));
+      stream.write(payload.subarray(10));
+      stream.uncork();
+      stream.end();
+    } else {
+      stream.end(payload);
+    }
+    await promise;
+
+    expect(readFileSync(p)).toEqual(payload);
+    expect(positions.some(v => typeof v === "number" && Number.isNaN(v))).toBe(false);
+    if (start === 0) {
+      expect(positions).toEqual(method === "writev" ? [0, 10] : [0, 13]);
+    } else {
+      expect(positions).toEqual([undefined, undefined]);
+    }
+  });
+
+  // End-to-end: a kernel-enforced short write (RLIMIT_FSIZE) must surface as
+  // an EFBIG 'error' and leave the file a byte-exact prefix of the source.
+  it.skipIf(!isLinux)("surfaces EFBIG from a short write instead of overwriting the file head", async () => {
+    using dir = tempDir("write-stream-fsize", {});
+    const out = join(String(dir), "out");
+    const fixture = join(import.meta.dir, "write-stream-fsize-fixture.js");
+    await using proc = Bun.spawn({
+      cmd: ["/bin/sh", "-c", `ulimit -f 1024 && exec "$0" "$1" "$2"`, bunExe(), fixture, out],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const result = JSON.parse(stdout.trim());
+    expect({ head: result.head, isPrefix: result.isPrefix }).toEqual({ head: "AAAAAAAA", isPrefix: true });
+    expect(result.events).toContain("error:EFBIG");
+    expect(result.events).not.toContain("finish");
+    expect(result.fileSize).toBeLessThanOrEqual(1 << 20);
+    expect(exitCode).toBe(0);
   });
 });
 

@@ -3852,19 +3852,13 @@ pub mod args {
                         if !(current.is_number() || current.is_big_int()) {
                             break 'parse;
                         }
-                        let position = i52::from_js(current);
-                        if position >= 0 {
-                            args.position = Some(position);
-                        }
+                        args.position = write_position_from_js(current);
                         arguments.eat();
                     }
                     // fs.write(fd, string[, position[, encoding]], callback)
                     _ => {
                         if current.is_number() {
-                            let position = i52::from_js(current);
-                            if position >= 0 {
-                                args.position = Some(position);
-                            }
+                            args.position = write_position_from_js(current);
                         }
                         // Node consumes the position slot whatever its type
                         // (null, undefined, a non-number); the encoding is
@@ -10222,4 +10216,23 @@ impl i52 {
     fn from_js(v: JSValue) -> i64 {
         (v.to_int64() << 12) >> 12
     }
+}
+
+/// Node's `GetOffset` for `fs.write` / `fs.writeSync` position: only a
+/// non-negative safe integer selects `pwrite`; NaN, ±Infinity, non-integers
+/// and negatives fall back to the current file offset (None).
+#[inline]
+fn write_position_from_js(v: JSValue) -> Option<i64> {
+    if let Some(num) = v.get_number() {
+        if num.is_finite()
+            && num.trunc() == num
+            && num >= 0.0
+            && num <= bun_jsc::MAX_SAFE_INTEGER as f64
+        {
+            return Some(num as i64);
+        }
+        return None;
+    }
+    let position = i52::from_js(v);
+    if position >= 0 { Some(position) } else { None }
 }

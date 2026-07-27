@@ -410,9 +410,6 @@ impl RunCommand {
     const SHELLS_TO_SEARCH: &'static [&'static [u8]] = &[b"bash", b"sh", b"zsh"];
 
     /// Basename of the fake-node shim directory (`bun-node-<sha>`, or `-debug`).
-    /// The single source of truth for this name; `BUN_NODE_DIR`,
-    /// `create_fake_temporary_node_executable`, and `bun_node_file_utf8` all
-    /// derive from it so reader and writer cannot drift.
     pub const BUN_NODE_DIR_NAME: &'static str = if bun_core::env::IS_DEBUG {
         "bun-node-debug"
     } else if bun_core::env::GIT_SHA_SHORT.is_empty() {

@@ -279,7 +279,7 @@ impl SystemErrno {
     /// Process-wide fd/memory exhaustion; propagate instead of caching as not-found or reporting as refused.
     #[inline]
     pub fn is_fd_or_memory_exhaustion(self) -> bool {
-        matches!(self, Self::EMFILE | Self::ENFILE | Self::ENOMEM)
+        matches!(self, Self::EMFILE | Self::ENFILE | Self::ENOBUFS | Self::ENOMEM)
     }
 
     /// Unchecked discriminant cast.

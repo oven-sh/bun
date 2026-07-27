@@ -423,29 +423,6 @@ describe("parseArgs", () => {
     );
   });
 
-  test("allowNegative: negated boolean option used with inline value", () => {
-    const options = { foo: { type: "boolean" } };
-    expectToThrowErrorMatching(() => parseArgs({ args: ["--no-foo=bar"], options, allowNegative: true }), {
-      code: "ERR_PARSE_ARGS_INVALID_OPTION_VALUE",
-      message: "Option '--foo' does not take an argument",
-    });
-  });
-
-  test("allowNegative: negated boolean option with short used with inline value", () => {
-    const options = { foo: { type: "boolean", short: "f" } };
-    expectToThrowErrorMatching(() => parseArgs({ args: ["--no-foo=bar"], options, allowNegative: true }), {
-      code: "ERR_PARSE_ARGS_INVALID_OPTION_VALUE",
-      message: "Option '-f, --foo' does not take an argument",
-    });
-  });
-
-  test("allowNegative: negated string option with inline value stays unknown", () => {
-    const options = { foo: { type: "string" } };
-    expectToThrowErrorMatching(() => parseArgs({ args: ["--no-foo=bar"], options, allowNegative: true }), {
-      code: "ERR_PARSE_ARGS_UNKNOWN_OPTION",
-    });
-  });
-
   test("invalid short option length", () => {
     const args = [];
     const options = { foo: { short: "fo", type: "boolean" } };

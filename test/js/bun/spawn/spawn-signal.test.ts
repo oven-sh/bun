@@ -20,19 +20,29 @@ test("spawn AbortSignal works after spawning", async () => {
   expect(end - start).toBeLessThan(100);
 });
 
-test("spawn AbortSignal throws if already aborted", () => {
+test("spawn AbortSignal throws if already aborted", async () => {
   const controller = new AbortController();
   controller.abort();
-  expect(() =>
-    Bun.spawn({
+  let proc: Bun.Subprocess | undefined;
+  let thrown: any;
+  try {
+    proc = Bun.spawn({
       cmd: [bunExe(), "--eval", "await Bun.sleep(100000)"],
       env: bunEnv,
       stdout: "inherit",
       stderr: "inherit",
       stdin: "inherit",
       signal: controller.signal,
-    }),
-  ).toThrow(
+    });
+  } catch (e) {
+    thrown = e;
+  }
+  if (proc) {
+    proc.kill(9);
+    await proc.exited;
+  }
+  expect(proc).toBeUndefined();
+  expect(thrown).toEqual(
     expect.objectContaining({
       name: "AbortError",
       code: "ABORT_ERR",
@@ -64,10 +74,12 @@ test("spawn AbortSignal already aborted carries signal.reason as cause", () => {
   expect(thrown.cause).toBe(reason);
 });
 
-test("spawn AbortSignal.abort() throws synchronously", () => {
+test("spawn AbortSignal already aborted throws before resolving the executable", () => {
+  // If Bun.spawn reached PATH resolution or posix_spawn before checking the
+  // signal, this would throw ENOENT for the missing executable instead.
   expect(() =>
     Bun.spawn({
-      cmd: [bunExe(), "-e", ""],
+      cmd: ["bun-spawn-nonexistent-executable-for-abort-test"],
       env: bunEnv,
       signal: AbortSignal.abort(),
     }),

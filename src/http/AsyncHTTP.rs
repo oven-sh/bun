@@ -130,8 +130,6 @@ pub(crate) fn build_proxy_authorization(proxy: &URL<'_>) -> Option<Vec<u8>> {
             return None;
         }
     };
-    // RFC 7617: credentials are `user-id ":" password` even when password is
-    // empty, so always emit the colon (matches curl).
     let mut auth: Vec<u8> = Vec::with_capacity(username.len() + 1 + password.len());
     auth.extend_from_slice(&username);
     auth.push(b':');

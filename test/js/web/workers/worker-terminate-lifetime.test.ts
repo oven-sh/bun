@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isWindows } from "harness";
 import { join } from "path";
 
 // Worker VM startup/teardown is much slower under debug and/or ASAN; these
@@ -173,6 +173,69 @@ test.skipIf(!isASAN)(
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout, stderr, exitCode }).toEqual({ stdout: "ok\n", stderr: "", exitCode: 0 });
+  },
+  timeout,
+);
+
+// Regression: a dns.lookup() completion dispatched on the worker thread while
+// the parent's terminate() has already set the JSC termination flag would see
+// the result-to-JSArray conversion throw, leaving the value as JSValue::ZERO,
+// and then pass that empty value straight to JSC__JSPromise__resolve, hitting
+// ASSERT(!target.isEmpty()) in debug and a near-null (0x5) SIGSEGV in release.
+//
+// The worker queues 128 distinct IP-literal lookups with backend:"getaddrinfo"
+// so each becomes its own GetAddrInfoRequest on the work pool (the
+// pending-cache hive is 32 slots, so most bypass it), blocks in Atomics.wait
+// until those completions have piled up in concurrent_tasks, then the parent
+// wakes it and terminates it while the drain is running. Hermetic: IP literals
+// only. Windows uses uv_getaddrinfo which does not dispatch via
+// GetAddrInfoRequestTask, so the reproduction path does not apply there.
+test.skipIf(isWindows)(
+  "terminate() while dns.lookup() completions are draining does not resolve with an empty value",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { Worker } = require("node:worker_threads");
+        const src =
+          'const { parentPort, workerData } = require("node:worker_threads");' +
+          'const ia = new Int32Array(workerData);' +
+          'setImmediate(() => {' +
+          '  for (let i = 1; i <= 128; i++)' +
+          '    Bun.dns.lookup("127.0.0." + i, { backend: "getaddrinfo" }).catch(() => {});' +
+          '  parentPort.postMessage("up");' +
+          '  Atomics.wait(ia, 0, 0);' +
+          '});' +
+          'setTimeout(() => {}, 100000);';
+        async function once() {
+          const sab = new SharedArrayBuffer(4);
+          const ia = new Int32Array(sab);
+          const w = new Worker(src, { eval: true, workerData: sab });
+          await new Promise((res) => w.once("message", res));
+          await Bun.sleep(40);
+          Atomics.store(ia, 0, 1);
+          Atomics.notify(ia, 0);
+          await w.terminate();
+        }
+        (async () => {
+          for (let r = 0; r < ${slow ? 6 : 10}; r++) {
+            await Promise.all([once(), once(), once(), once()]);
+          }
+          console.log("ok");
+        })();
+      `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("ok\n");
+    expect(exitCode).toBe(0);
   },
   timeout,
 );

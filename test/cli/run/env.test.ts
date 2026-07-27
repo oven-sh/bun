@@ -637,7 +637,7 @@ describe("--env-file", () => {
   });
 
   test("empty string disables default dotenv behavior", () => {
-    expect(bunRun(["--env-file=''"]).stdout).toBe("");
+    expect(bunRun(["--env-file="]).stdout).toBe("");
   });
 
   test("should correctly ignore invalid values and parse the rest", () => {
@@ -645,9 +645,48 @@ describe("--env-file", () => {
     expect(res.stdout).toBe("BUNTEST_A=1,BUNTEST_B=1,BUNTEST_C=1,BUNTEST_D=,BUNTEST_E=1");
   });
 
-  test("should ignore a file that doesn't exist", () => {
-    const res = bunRun(["--env-file=.env.nonexisting"]);
-    expect(res.stdout).toBe("");
+  test("errors when an explicit env file does not exist", () => {
+    // Regression for #21105: an explicitly requested --env-file that can't be
+    // opened must fail (like Node), not silently run without the vars. Use a
+    // non-empty script — `-e ""` is treated as "no script" and prints help.
+    const result = Bun.spawnSync([bunExe(), "--env-file=.env.nonexisting", "-e", "0"], {
+      cwd: dir,
+      env: { ...bunEnv, NODE_ENV: undefined },
+    });
+    expect(result.stdout.toString("utf8")).toBe("");
+    expect(result.stderr.toString("utf8")).toContain(".env.nonexisting");
+    expect(result.exitCode).not.toBe(0);
+  });
+
+  test("errors when an explicit env file does not exist (run path)", () => {
+    // The run-file / package.json-script path loads --env-file through a
+    // different caller than -e; make sure it fails there too.
+    const file = `${dir}/index.ts`;
+    const result = Bun.spawnSync([bunExe(), "--env-file=.env.nonexisting", file], {
+      cwd: path.dirname(file),
+      env: { ...bunEnv, NODE_ENV: undefined },
+    });
+    expect(result.stdout.toString("utf8")).toBe("");
+    expect(result.stderr.toString("utf8")).toContain(".env.nonexisting");
+    expect(result.exitCode).not.toBe(0);
+  });
+
+  test("errors when an explicit env file does not exist (.sh entry path)", () => {
+    // A `.sh` entry boots through bun-shell and surfaces failures via a
+    // different handler than the JS paths; make sure it also fails with one
+    // message and doesn't leak the internal already-reported error code.
+    const shDir = tempDirWithFiles("dotenv-sh", { "script.sh": "echo hi\n" });
+    const file = `${shDir}/script.sh`;
+    const result = Bun.spawnSync([bunExe(), "--env-file=.env.nonexisting", file], {
+      cwd: path.dirname(file),
+      env: { ...bunEnv, NODE_ENV: undefined },
+    });
+    expect(result.stdout.toString("utf8")).toBe("");
+    const stderr = result.stderr.toString("utf8");
+    expect(stderr).toContain(".env.nonexisting");
+    expect(stderr).not.toContain("InvalidArgument");
+    expect(stderr).not.toContain("Failed to run");
+    expect(result.exitCode).not.toBe(0);
   });
 });
 

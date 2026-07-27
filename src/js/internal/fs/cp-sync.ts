@@ -40,10 +40,18 @@ const defaultCpOptions = {
 };
 
 function decorateSystemError(err, prefix, context) {
-  const { syscall, code, message: ctxMessage, path, dest, errno } = context;
+  const { syscall, code, message: ctxMessage, errno } = context;
+  const path = pathToString(context.path);
+  const dest = pathToString(context.dest);
   let message = `${prefix}: ${syscall} returned ${code} (${ctxMessage})`;
-  if (path !== undefined) message += ` ${path}`;
-  if (dest !== undefined) message += ` => ${dest}`;
+  if (path !== undefined) {
+    message += ` ${path}`;
+    context.path = path;
+  }
+  if (dest !== undefined) {
+    message += ` => ${dest}`;
+    context.dest = dest;
+  }
   err.message = message;
   err.name = "SystemError";
   err.info = context;

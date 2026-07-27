@@ -415,6 +415,20 @@ for (const [name, copy] of impls) {
       expect(seen.some(([s]) => s.includes("//"))).toBe(false);
     });
 
+    test("err.path is a string when a nested entry's type conflicts", async () => {
+      const basename = tempDirWithFiles("cp-errpath", {
+        "from/sub/x.txt": "x",
+        "result/sub": "not a dir",
+      });
+      const e = await copyShouldThrow(join(basename, "from"), join(basename, "result"), { recursive: true });
+      expect({ code: e.code, pathType: typeof e.path, path: e.path, infoPathType: typeof e.info?.path }).toEqual({
+        code: "ERR_FS_CP_DIR_TO_NON_DIR",
+        pathType: "string",
+        path: join(basename, "result", "sub"),
+        infoPathType: "string",
+      });
+    });
+
     test("filter - works", async () => {
       const basename = tempDirWithFiles("cp", {
         "from/a.txt": "a",

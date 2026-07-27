@@ -1938,18 +1938,12 @@ impl RunCommand {
         let bun_node_exe = Self::bun_node_file_utf8()?;
         let bun_node_dir_win =
             bun_paths::dirname(bun_node_exe.as_bytes()).ok_or(crate::Error::FailedToGetTempPath)?;
-        // Probe for a real node only when not forcing bun. We do NOT pass the
-        // shim path as `override_node` here; `NODE`/`npm_node_execpath` are
-        // written below, gated on the shim dir actually being established.
         let found_node = !force_using_bun
             && env_loader
                 .load_node_js_config(bun_paths::fs::FileSystem::instance(), b"")
                 .unwrap_or(false);
 
-        // `filter_run`/`multi_run` call this once per workspace package on a
-        // shared env loader; a previous iteration may have written our own shim
-        // into `NODE`. Treat that as "no real node" so the shim dir is still
-        // prepended for this package.
+        // Our own shim in `NODE` (written by a prior --filter iteration) is not a real node.
         let found_real_node = found_node
             && env_loader
                 .get(b"NODE")
@@ -1997,10 +1991,7 @@ impl RunCommand {
                 ),
             }
 
-            // `create_fake_temporary_node_executable` only appends the shim dir
-            // to `new_path` when it established a trusted shim (its shared-/tmp
-            // ownership check passed). Don't point `NODE` into a directory we
-            // just refused to use.
+            // Non-empty <=> the shim dir passed the ownership check and was prepended.
             if !new_path.is_empty() {
                 let env_mut = this_transpiler.env_mut();
                 env_mut

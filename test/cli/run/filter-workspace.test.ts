@@ -662,12 +662,11 @@ describe("bun", () => {
     expect(exitCode).toBe(0);
   });
 
-  // https://github.com/oven-sh/bun/issues/6000 — with no real `node` on PATH,
-  // NODE/npm_node_execpath must point at the shim *executable* (not its
-  // directory), and once the first matched package writes that into the shared
-  // env loader the next package must still get the shim dir on its PATH so
-  // bare `node` in its script resolves.
-  test("every package gets the node shim on PATH when no real node exists (#6000)", async () => {
+  // With no real `node` on PATH, NODE/npm_node_execpath must point at the
+  // shim *executable* (not its directory), and once the first matched package
+  // writes that into the shared env loader the next package must still get
+  // the shim dir on its PATH so bare `node` in its script resolves.
+  test("every package gets the node shim on PATH when no real node exists", async () => {
     const probe = (pkg: string) => `node -e "console.log(JSON.stringify({ pkg: '${pkg}', NODE: process.env.NODE }))"`;
     const dir = tempDirWithFiles("filter-shim-path", {
       packages: {
@@ -705,7 +704,7 @@ describe("bun", () => {
         { pkg: "b", NODE: shimExe },
         { pkg: "c", NODE: shimExe },
       ],
-      stderr: expect.not.stringContaining("command not found"),
+      stderr: "",
     });
     expect(exitCode).toBe(0);
   });

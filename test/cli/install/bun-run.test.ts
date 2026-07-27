@@ -1120,12 +1120,12 @@ describe.concurrent("bun run", () => {
     });
   });
 
-  // https://github.com/oven-sh/bun/issues/6000 — with no real `node` on PATH,
-  // `bun run` sets NODE / npm_node_execpath to the shim *directory* instead of
-  // the `node` executable inside it, so `"$NODE" file.js` (husky, node-gyp
-  // wrappers, etc.) fails with "Is a directory" (rc 126).
+  // With no real `node` on PATH, `bun run` set NODE / npm_node_execpath to the
+  // shim *directory* instead of the `node` executable inside it, so
+  // `"$NODE" file.js` (husky, node-gyp wrappers, etc.) failed with
+  // "Is a directory" (rc 126).
   for (const bunFlag of [false, true]) {
-    it(`sets NODE and npm_node_execpath to the shim executable, not its directory${bunFlag ? " (--bun)" : " (no node on PATH)"} (#6000)`, async () => {
+    it(`sets NODE and npm_node_execpath to the shim executable, not its directory${bunFlag ? " (--bun)" : " (no node on PATH)"}`, async () => {
       using dir = tempDir("bun-run-node-env-shim", {
         "package.json": JSON.stringify({
           name: "p",

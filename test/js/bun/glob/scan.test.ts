@@ -1157,9 +1157,7 @@ test.skipIf(isWindows || !canCreateDirSymlink)(
     expect(matched).toContain(path.join(nextPrefix, "real", "sub.txt"));
 
     expect(() =>
-      Array.from(
-        new Glob("**/*.txt").scanSync({ cwd, followSymlinks: true, throwErrorOnBrokenSymlink: true }),
-      ),
+      Array.from(new Glob("**/*.txt").scanSync({ cwd, followSymlinks: true, throwErrorOnBrokenSymlink: true })),
     ).not.toThrow();
   },
 );

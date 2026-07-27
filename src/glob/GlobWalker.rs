@@ -577,8 +577,12 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
     /// most recently followed link's target, so opening the suffix past its
     /// prefix resolves at most one link: the entry being opened.
     fn openat_anchored(&self, full_path_z: &ZStr) -> Result<Maybe<A::Handle>, Error> {
-        if let Some(&(anchor_fd, prefix_len)) =
-            self.walker.link_anchors.iter().rev().find_map(Option::as_ref)
+        if let Some(&(anchor_fd, prefix_len)) = self
+            .walker
+            .link_anchors
+            .iter()
+            .rev()
+            .find_map(Option::as_ref)
         {
             let full = full_path_z.as_bytes();
             let prefix_len = prefix_len as usize;
@@ -590,8 +594,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                 // SAFETY: `full_path_z` is NUL-terminated at `full.len()`, so
                 // `full[off..]` is NUL-terminated at its own length; `off` is
                 // in `1..=full.len()`.
-                let suffix_z =
-                    unsafe { ZStr::from_raw(full.as_ptr().add(off), full.len() - off) };
+                let suffix_z = unsafe { ZStr::from_raw(full.as_ptr().add(off), full.len() - off) };
                 return A::openat(anchor_fd, suffix_z);
             }
         }
@@ -947,35 +950,35 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                             };
 
                             self.iter_state = IterState::GetNext;
-                            let maybe_dir_fd: Option<A::Handle> =
-                                match self.openat_anchored(symlink_full_path_z)? {
-                                    Err(err) => 'brk: {
-                                        if err.get_errno() == E::ENOTDIR {
-                                            break 'brk None;
-                                        }
-                                        if self.walker.error_on_broken_symlinks {
-                                            return Ok(Err(self.walker.handle_sys_err_with_path(
-                                                &err,
-                                                symlink_full_path_z,
-                                            )));
-                                        }
-                                        if !self.walker.only_files
-                                            && self.walker.eval_file(&active, entry_name)
-                                        {
-                                            match self.walker.prepare_matched_path_symlink(
-                                                symlink_full_path_z.as_bytes(),
-                                            )? {
-                                                Some(p) => return Ok(Ok(Some(p))),
-                                                None => continue 'outer,
-                                            }
-                                        }
-                                        continue 'outer;
+                            let maybe_dir_fd: Option<A::Handle> = match self
+                                .openat_anchored(symlink_full_path_z)?
+                            {
+                                Err(err) => 'brk: {
+                                    if err.get_errno() == E::ENOTDIR {
+                                        break 'brk None;
                                     }
-                                    Ok(fd) => {
-                                        self.bump_open_fds();
-                                        Some(fd)
+                                    if self.walker.error_on_broken_symlinks {
+                                        return Ok(Err(self
+                                            .walker
+                                            .handle_sys_err_with_path(&err, symlink_full_path_z)));
                                     }
-                                };
+                                    if !self.walker.only_files
+                                        && self.walker.eval_file(&active, entry_name)
+                                    {
+                                        match self.walker.prepare_matched_path_symlink(
+                                            symlink_full_path_z.as_bytes(),
+                                        )? {
+                                            Some(p) => return Ok(Ok(Some(p))),
+                                            None => continue 'outer,
+                                        }
+                                    }
+                                    continue 'outer;
+                                }
+                                Ok(fd) => {
+                                    self.bump_open_fds();
+                                    Some(fd)
+                                }
+                            };
 
                             let Some(dir_fd) = maybe_dir_fd else {
                                 // Symlink target is a file
@@ -1022,9 +1025,10 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                                     }
                                 };
                             if descend {
-                                let link_anchor = followed_link.is_some().then(|| {
-                                    A::dup(dir_fd).ok().map(|fd| (fd, anchor_prefix_len))
-                                }).flatten();
+                                let link_anchor = followed_link
+                                    .is_some()
+                                    .then(|| A::dup(dir_fd).ok().map(|fd| (fd, anchor_prefix_len)))
+                                    .flatten();
                                 self.walker.push_work_item(
                                     WorkItem::new_with_fd(
                                         work_item.path,

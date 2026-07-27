@@ -374,7 +374,9 @@ describe("console.table with a Symbol in the properties filter", () => {
   test("Bun.inspect.table drops the Symbol column", () => {
     expect(Bun.inspect.table(data, [Symbol("col"), "a"])).toBe(expected);
     // control: a non-Symbol primitive still ToStrings into a column header.
-    expect(Bun.inspect.table(data, [42, "a"])).toBe(`┌───┬────┬───┐\n│   │ 42 │ a │\n├───┼────┼───┤\n│ 0 │    │ 1 │\n└───┴────┴───┘\n`);
+    expect(Bun.inspect.table(data, [42, "a"])).toBe(
+      `┌───┬────┬───┐\n│   │ 42 │ a │\n├───┼────┼───┤\n│ 0 │    │ 1 │\n└───┴────┴───┘\n`,
+    );
   });
 
   test("console.table drops the Symbol column", async () => {

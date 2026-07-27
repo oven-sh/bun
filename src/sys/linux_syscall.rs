@@ -100,7 +100,7 @@ pub(crate) fn openat2_beneath(dir: Fd, path: &ZStr, flags: i32, mode: Mode) -> R
             path.as_cstr(),
             oflags,
             mode,
-            rustix::fs::ResolveFlags::BENEATH,
+            rustix::fs::ResolveFlags::BENEATH | rustix::fs::ResolveFlags::NO_MAGICLINKS,
         )
     })
     .map(own_fd)

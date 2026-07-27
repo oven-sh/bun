@@ -772,19 +772,32 @@ impl AnyRoute {
             if let Some(dir) = argument.get_optional_slice(global, b"dir")? {
                 let relative_root = init_ctx.js_string_allocations.track(dir);
 
-                let style: FrameworkRouter::Style =
-                    if let Some(style_js) = argument.get(global, b"style")? {
-                        FrameworkRouter::Style::from_js(style_js, global)?
-                    } else {
-                        FrameworkRouter::Style::NextjsPages
-                    };
-                // Style impls Drop; `?` drops it on the error path.
-
                 if !strings::ends_with(path, b"/*") {
                     return Err(global.throw_invalid_arguments(format_args!(
                         "To mount a directory, make sure the path ends in `/*`"
                     )));
                 }
+
+                let style_js = argument.get(global, b"style")?;
+                if style_js.is_none() {
+                    // `{ dir }` without `style` serves the directory tree
+                    // verbatim; `{ dir, style }` opts into framework routing.
+                    let url_prefix: &[u8] = if path.len() == 2 {
+                        b"/"
+                    } else {
+                        &path[..path.len() - 1]
+                    };
+                    let route =
+                        super::DirectoryRoute::create(global, relative_root, url_prefix)?;
+                    return Ok(Some(AnyRoute::Directory(
+                        NonNull::new(route)
+                            .expect("DirectoryRoute::create returns a fresh heap allocation"),
+                    )));
+                }
+
+                let style: FrameworkRouter::Style =
+                    FrameworkRouter::Style::from_js(style_js.unwrap(), global)?;
+                // Style impls Drop; `?` drops it on the error path.
 
                 // trim the /*
                 // NOTE: `FileSystemRouterType` fields are `Cow<'static,[u8]>`.

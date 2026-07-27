@@ -579,7 +579,36 @@ declare module "bun" {
 
     type Handler<Req extends Request, S, Res> = (request: Req, server: S) => MaybePromise<Res>;
 
-    type BaseRouteValue = Response | false | HTMLBundle | BunFile;
+    /**
+     * Serve a directory tree at a URL prefix.
+     *
+     * The route path **must** end in `/*`. The part of the request URL after
+     * the prefix is percent-decoded once, cleaned of `.`/`..` segments, and
+     * opened relative to `dir`. On Linux the open uses
+     * `openat2(RESOLVE_BENEATH)`, so symlinks that would escape `dir` are
+     * rejected by the kernel.
+     *
+     * Responses carry `Content-Type` (from the file extension),
+     * `Last-Modified`, a weak `ETag`, and support single-range `Range`
+     * requests. Requests that resolve to a directory are served
+     * `index.html` from that directory. Missing files fall through to the
+     * next matching route (or `fetch`).
+     *
+     * @example
+     * ```ts
+     * Bun.serve({
+     *   routes: {
+     *     "/static/*": { dir: "./public" },
+     *   },
+     * });
+     * ```
+     */
+    interface DirectoryRouteOptions {
+      /** Path to the directory to serve. */
+      dir: string;
+    }
+
+    type BaseRouteValue = Response | false | HTMLBundle | BunFile | DirectoryRouteOptions;
 
     type Routes<WebSocketData, R extends string> = {
       [Path in R]:

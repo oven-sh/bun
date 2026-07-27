@@ -135,6 +135,21 @@ unsafe extern "C" {
     safe fn JSC__ArrayBuffer__deref(self_: &JSCArrayBuffer);
     // safe: by-value `JSValue`; no-op for non-buffer values.
     safe fn JSC__JSValue__unpinArrayBuffer(v: JSValue);
+    fn JSC__JSValue__borrowBytesForOffThread(
+        v: JSValue,
+        out_ptr: *mut *const u8,
+        out_len: *mut usize,
+    ) -> i32;
+}
+
+/// Result of [`JSValue::borrow_array_buffer_bytes`]. See `JSC__JSValue__borrowBytesForOffThread`.
+pub enum BorrowedBufferBytes {
+    /// Not a buffer, or detached.
+    None,
+    /// `FastTypedArray`: GC-movable inline storage. Copy immediately; no unpin.
+    Fast { ptr: *const u8, len: usize },
+    /// Backing `JSC::ArrayBuffer` is now `pin()`ed. Caller MUST [`ArrayBuffer::unpin`].
+    Pinned(ArrayBuffer),
 }
 
 impl JSValue {
@@ -142,6 +157,25 @@ impl JSValue {
     /// [`JSValue::as_pinned_arraybuffer`] or a pinning collector.
     pub fn unpin_array_buffer(self) {
         JSC__JSValue__unpinArrayBuffer(self);
+    }
+
+    /// [`JSValue::as_pinned_arraybuffer`] without forcing a `FastTypedArray` through `slowDownAndWasteMemory()`.
+    pub fn borrow_array_buffer_bytes(self, global: &JSGlobalObject) -> BorrowedBufferBytes {
+        let mut ptr: *const u8 = core::ptr::null();
+        let mut len: usize = 0;
+        // SAFETY: out-params are valid pointers to locals.
+        match unsafe { JSC__JSValue__borrowBytesForOffThread(self, &raw mut ptr, &raw mut len) } {
+            1 => BorrowedBufferBytes::Fast { ptr, len },
+            2 => match self.as_array_buffer(global) {
+                Some(buf) => BorrowedBufferBytes::Pinned(buf),
+                None => {
+                    // Pin was taken but the descriptor read failed; release it.
+                    JSC__JSValue__unpinArrayBuffer(self);
+                    BorrowedBufferBytes::None
+                }
+            },
+            _ => BorrowedBufferBytes::None,
+        }
     }
 }
 

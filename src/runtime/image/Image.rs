@@ -124,22 +124,6 @@ pub enum Source {
 // `Vec<u8>`, `ZString`, and
 // `Strong` all implement `Drop`, so no explicit `Drop` body is needed.
 
-// These C++ helpers are
-// Image-specific (they pin/adopt typed-array storage for the off-thread
-// pipeline) and have no `bun_jsc` wrapper.
-unsafe extern "C" {
-    fn JSC__JSValue__unpinArrayBuffer(v: JSValue);
-    /// 0 = detached/null, 1 = FastTypedArray (≤~1 KB, GC-movable — dupe),
-    /// 2 = pinned ArrayBuffer (caller must unpin). For OversizeTypedArray the
-    /// helper adopts the storage in-place (createAdopted — no byte copy) and
-    /// pins; once adopted it's detachable, so it MUST be pinned, not borrowed.
-    fn JSC__JSValue__borrowBytesForOffThread(
-        v: JSValue,
-        out_ptr: *mut *const u8,
-        out_len: *mut usize,
-    ) -> i32;
-}
-
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, strum::IntoStaticStr, strum::EnumString)]
 pub enum Fit {
@@ -706,7 +690,7 @@ impl Image {
     fn pin_for_task(
         &self,
         this_value: JSValue,
-        _global: &JSGlobalObject,
+        global: &JSGlobalObject,
     ) -> Result<Input, PinError> {
         match self.source.get() {
             Source::JsBuffer => {
@@ -721,51 +705,27 @@ impl Image {
                 // `slowDownAndWasteMemory()` → copy + allocate a wrapper for
                 // every input. The classifier returns the slice directly and
                 // tells us whether anything actually needs pinning.
-                let mut ptr: *const u8 = core::ptr::null();
-                let mut len: usize = 0;
-                // SAFETY: FFI call; out-params are valid pointers to locals.
-                match unsafe {
-                    JSC__JSValue__borrowBytesForOffThread(v, &raw mut ptr, &raw mut len)
-                } {
-                    0 => Err(PinError::Detached),
-                    // FastTypedArray (≤ fastSizeLimit elements, GC-movable): tiny
-                    // by definition — dupe instead of forcing JSC to copy via
-                    // tryCreate(span()) + allocate a butterfly.
-                    1 => {
-                        if len == 0 {
-                            Err(PinError::Detached)
-                        } else {
-                            // SAFETY: classifier guarantees `ptr[0..len]` is
-                            // valid for the duration of this call (JS thread).
-                            let copied = unsafe { bun_core::ffi::slice(ptr, len) }.to_vec();
-                            Ok(Input {
-                                copied: Some(copied),
-                                ..Default::default()
-                            })
-                        }
+                match v.borrow_array_buffer_bytes(global) {
+                    jsc::BorrowedBufferBytes::None => Err(PinError::Detached),
+                    jsc::BorrowedBufferBytes::Fast { len: 0, .. } => Err(PinError::Detached),
+                    jsc::BorrowedBufferBytes::Fast { ptr, len } => {
+                        // SAFETY: classifier guarantees `ptr[0..len]` is valid
+                        // for the duration of this call (JS thread).
+                        let copied = unsafe { bun_core::ffi::slice(ptr, len) }.to_vec();
+                        Ok(Input {
+                            copied: Some(copied),
+                            ..Default::default()
+                        })
                     }
-                    // Oversize/Wasteful/DataView/JSArrayBuffer: pinned by the
-                    // helper. For Oversize, possiblySharedBuffer() adopts the
-                    // existing fastMalloc storage in-place (zero byte copy);
-                    // pinning then keeps it alive even if JS does `.buffer` →
-                    // `transfer()` while the worker reads.
-                    2 => {
-                        if len == 0 {
-                            // SAFETY: helper pinned `v`; unpin before erroring.
-                            unsafe { JSC__JSValue__unpinArrayBuffer(v) };
-                            Err(PinError::Detached)
-                        } else {
-                            // SAFETY: pinned for the lifetime of the task;
-                            // unpinned in `then()` via `Input::release()`.
-                            let bytes = unsafe { bun_core::ffi::slice(ptr, len) };
-                            Ok(Input {
-                                bytes: bun_ptr::RawSlice::new(bytes),
-                                pinned: v,
-                                ..Default::default()
-                            })
-                        }
+                    jsc::BorrowedBufferBytes::Pinned(buf) if buf.byte_len == 0 => {
+                        buf.unpin();
+                        Err(PinError::Detached)
                     }
-                    _ => unreachable!(),
+                    jsc::BorrowedBufferBytes::Pinned(buf) => Ok(Input {
+                        bytes: bun_ptr::RawSlice::new(buf.byte_slice()),
+                        pinned: v,
+                        ..Default::default()
+                    }),
                 }
             }
             // SAFETY: `Owned` bytes outlive the task because `this_ref` is held
@@ -1435,9 +1395,7 @@ impl Input {
     }
     fn release(mut self) {
         if !self.pinned.is_empty() {
-            // SAFETY: JS thread; `pinned` was returned by
-            // `JSC__JSValue__borrowBytesForOffThread` with mode 2.
-            unsafe { JSC__JSValue__unpinArrayBuffer(self.pinned) };
+            self.pinned.unpin_array_buffer();
         }
         self.copied = None;
     }

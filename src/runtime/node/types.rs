@@ -309,6 +309,36 @@ impl bun_jsc::Unprotect for StringOrBuffer {
 }
 
 impl StringOrBuffer {
+    /// Pin `value`'s bytes (`FastTypedArray` is duped instead; pinning would `slowDownAndWasteMemory()`).
+    fn pinned_buffer_from_js(global: &JSGlobalObject, value: JSValue, protect: bool) -> Self {
+        use jsc::BorrowedBufferBytes;
+        match value.borrow_array_buffer_bytes(global) {
+            BorrowedBufferBytes::Fast { ptr, len } => {
+                // SAFETY: `ptr[0..len]` valid until next GC safe-point; copy immediately.
+                let owned = unsafe { bun_core::ffi::slice(ptr, len) }.to_vec();
+                global.vm().report_extra_memory(owned.len());
+                Self::EncodedSlice(ZigStringSlice::init_owned(owned))
+            }
+            BorrowedBufferBytes::Pinned(buf) => {
+                if protect {
+                    buf.value.protect();
+                }
+                Self::Buffer(Buffer {
+                    buffer: buf,
+                    owns_buffer: false,
+                    pinned: true,
+                })
+            }
+            BorrowedBufferBytes::None => {
+                let buffer = Buffer::from_array_buffer(global, value);
+                if protect {
+                    buffer.buffer.value.protect();
+                }
+                Self::Buffer(buffer)
+            }
+        }
+    }
+
     pub fn to_thread_safe(&mut self) {
         match self {
             Self::String(s) => {
@@ -437,18 +467,11 @@ impl StringOrBuffer {
             | JSType::BigInt64Array
             | JSType::BigUint64Array
             | JSType::DataView => {
-                let buffer = if is_async {
-                    Buffer::from_js_pinned(global, value)
-                        .unwrap_or_else(|| Buffer::from_array_buffer(global, value))
+                *out = if is_async {
+                    Self::pinned_buffer_from_js(global, value, true)
                 } else {
-                    Buffer::from_array_buffer(global, value)
+                    Self::Buffer(Buffer::from_array_buffer(global, value))
                 };
-
-                if is_async {
-                    buffer.buffer.value.protect();
-                }
-
-                *out = Self::Buffer(buffer);
                 Ok(true)
             }
             _ => Ok(false),
@@ -508,16 +531,11 @@ impl StringOrBuffer {
         allow_string_object: bool,
     ) -> JsResult<bool> {
         if value.is_cell() && value.js_type().is_array_buffer_like() {
-            let buffer = if is_async {
-                Buffer::from_js_pinned(global, value)
-                    .unwrap_or_else(|| Buffer::from_array_buffer(global, value))
+            *out = if is_async {
+                Self::pinned_buffer_from_js(global, value, true)
             } else {
-                Buffer::from_array_buffer(global, value)
+                Self::Buffer(Buffer::from_array_buffer(global, value))
             };
-            if is_async {
-                buffer.buffer.value.protect();
-            }
-            *out = Self::Buffer(buffer);
             return Ok(true);
         }
 

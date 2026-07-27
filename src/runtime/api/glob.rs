@@ -583,9 +583,6 @@ fn decr_pending_activity_flag(has_pending_activity: &AtomicUsize) {
 }
 
 impl Glob {
-    // R-2 (host-fn re-entrancy): all JS-exposed methods take `&self`. `Glob`'s
-    // only field (`pattern`) is read-only after construction, so no
-    // `Cell`/`JsCell` wrapping is needed.
     fn make_scanner(
         &self,
         global_this: &JSGlobalObject,

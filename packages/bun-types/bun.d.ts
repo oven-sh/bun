@@ -9599,9 +9599,16 @@ declare module "bun" {
     path?: string;
     expires?: number | Date | string;
     secure?: boolean;
-    /** Defaults to `lax`. */
+    /**
+     * Defaults to `"lax"`. `"none"` requires `secure: true`; browsers reject a
+     * `SameSite=None` cookie that is not `Secure`.
+     */
     sameSite?: CookieSameSite;
     httpOnly?: boolean;
+    /**
+     * Requires `secure: true`; browsers reject a `Partitioned` cookie that is
+     * not `Secure`.
+     */
     partitioned?: boolean;
     maxAge?: number;
   }

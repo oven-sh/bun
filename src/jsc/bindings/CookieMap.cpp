@@ -180,11 +180,18 @@ void CookieMap::removeInternal(const String& name)
     });
 }
 
-void CookieMap::set(Ref<Cookie> cookie)
+ExceptionOr<void> CookieMap::set(Ref<Cookie> cookie)
 {
+    // A Cookie can reach here straight from Cookie.parse(), which reports what was on the
+    // wire without enforcing the Secure requirement, so re-check before it is emitted.
+    if (auto validation = Cookie::validateSecureRequired(cookie->secure(), cookie->sameSite(), cookie->partitioned()); validation.hasException()) {
+        return validation.releaseException();
+    }
+
     removeInternal(cookie->name());
     // Add the new cookie
     m_modifiedCookies.append(WTF::move(cookie));
+    return {};
 }
 
 ExceptionOr<void> CookieMap::remove(const CookieStoreDeleteOptions& options)

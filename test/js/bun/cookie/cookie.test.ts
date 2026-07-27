@@ -99,6 +99,158 @@ describe("Bun.Cookie validation tests", () => {
   });
 });
 
+// RFC 6265bis 5.6.20: a browser rejects SameSite=None without Secure. CHIPS likewise requires
+// Partitioned cookies to be Secure. Bun refuses to build a cookie a browser would silently drop.
+describe("SameSite=None / Partitioned require Secure", () => {
+  const sameSiteNoneError = /"sameSite: none" requires secure: true/;
+  const partitionedError = /"partitioned: true" requires secure: true/;
+
+  describe.each([
+    ["new Bun.Cookie(name, value, options)", (o: Bun.CookieInit) => new Bun.Cookie("s", "v", o)],
+    ["new Bun.Cookie(options)", (o: Bun.CookieInit) => new Bun.Cookie({ name: "s", value: "v", ...o })],
+    ["Bun.Cookie.from(name, value, options)", (o: Bun.CookieInit) => Bun.Cookie.from("s", "v", o)],
+  ] as const)("%s", (_, make) => {
+    test("sameSite: 'none' without secure throws", () => {
+      expect(() => make({ sameSite: "none" })).toThrow(sameSiteNoneError);
+      expect(() => make({ sameSite: "none", secure: false })).toThrow(sameSiteNoneError);
+    });
+
+    test("partitioned: true without secure throws", () => {
+      expect(() => make({ partitioned: true })).toThrow(partitionedError);
+      expect(() => make({ partitioned: true, secure: false })).toThrow(partitionedError);
+    });
+
+    test("sameSite: 'none' with secure: true includes Secure", () => {
+      expect(make({ sameSite: "none", secure: true }).toString()).toBe("s=v; Path=/; Secure; SameSite=None");
+    });
+
+    test("partitioned: true with secure: true includes Secure", () => {
+      expect(make({ partitioned: true, secure: true }).toString()).toBe("s=v; Path=/; Secure; Partitioned; SameSite=Lax");
+    });
+
+    test("both together with secure: true", () => {
+      expect(make({ sameSite: "none", partitioned: true, secure: true }).toString()).toBe(
+        "s=v; Path=/; Secure; Partitioned; SameSite=None",
+      );
+    });
+  });
+
+  test("CookieMap.set throws for the same combinations", () => {
+    const map = new Bun.CookieMap();
+    expect(() => map.set("s", "v", { sameSite: "none" })).toThrow(sameSiteNoneError);
+    expect(() => map.set("p", "v", { partitioned: true })).toThrow(partitionedError);
+    expect(() => map.set({ name: "s", value: "v", sameSite: "none", httpOnly: true })).toThrow(sameSiteNoneError);
+    expect(map.size).toBe(0);
+
+    map.set("s", "v", { sameSite: "none", secure: true });
+    map.set("p", "v", { partitioned: true, secure: true });
+    expect(map.toSetCookieHeaders()).toEqual([
+      "s=v; Path=/; Secure; SameSite=None",
+      "p=v; Path=/; Secure; Partitioned; SameSite=Lax",
+    ]);
+  });
+
+  test("CookieMap.set(Cookie) re-validates a parsed cookie", () => {
+    // Cookie.parse() reports what was on the wire; a non-Secure SameSite=None cookie is only
+    // rejected when it is handed back to the write path.
+    const parsed = Bun.Cookie.parse("s=v; SameSite=None");
+    expect(parsed.sameSite).toBe("none");
+    expect(parsed.secure).toBe(false);
+
+    const map = new Bun.CookieMap();
+    expect(() => map.set(parsed)).toThrow(sameSiteNoneError);
+    expect(map.toSetCookieHeaders()).toEqual([]);
+
+    parsed.secure = true;
+    map.set(parsed);
+    expect(map.toSetCookieHeaders()).toEqual(["s=v; Path=/; Secure; SameSite=None"]);
+  });
+
+  test("a rejected CookieMap.set leaves the existing entry in place", () => {
+    const map = new Bun.CookieMap();
+    map.set("s", "old");
+    expect(() => map.set("s", "new", { sameSite: "none" })).toThrow(sameSiteNoneError);
+    expect(map.get("s")).toBe("old");
+  });
+
+  describe("property setters on an existing Cookie", () => {
+    test("sameSite = 'none' throws while secure is false", () => {
+      const c = new Bun.Cookie("s", "v");
+      expect(() => (c.sameSite = "none")).toThrow(sameSiteNoneError);
+      expect(c.sameSite).toBe("lax");
+
+      c.secure = true;
+      c.sameSite = "none";
+      expect(c.toString()).toBe("s=v; Path=/; Secure; SameSite=None");
+    });
+
+    test("partitioned = true throws while secure is false", () => {
+      const c = new Bun.Cookie("p", "v");
+      expect(() => (c.partitioned = true)).toThrow(partitionedError);
+      expect(c.partitioned).toBe(false);
+
+      c.secure = true;
+      c.partitioned = true;
+      expect(c.toString()).toBe("p=v; Path=/; Secure; Partitioned; SameSite=Lax");
+    });
+
+    test("secure = false throws while sameSite is 'none' or partitioned is true", () => {
+      const c = new Bun.Cookie("s", "v", { secure: true, sameSite: "none" });
+      expect(() => (c.secure = false)).toThrow(sameSiteNoneError);
+      expect(c.secure).toBe(true);
+      c.sameSite = "lax";
+      c.secure = false;
+      expect(c.secure).toBe(false);
+
+      const p = new Bun.Cookie("p", "v", { secure: true, partitioned: true });
+      expect(() => (p.secure = false)).toThrow(partitionedError);
+      expect(p.secure).toBe(true);
+      p.partitioned = false;
+      p.secure = false;
+      expect(p.secure).toBe(false);
+    });
+  });
+
+  test("Bun.serve req.cookies.set emits Secure alongside SameSite=None", async () => {
+    using server = Bun.serve({
+      port: 0,
+      routes: {
+        "/": req => {
+          req.cookies.set("session", "TOKEN", { sameSite: "none", secure: true, httpOnly: true });
+          return new Response("ok");
+        },
+      },
+      fetch: () => new Response("nf", { status: 404 }),
+    });
+    const res = await fetch(server.url);
+    expect(res.headers.getSetCookie()).toEqual(["session=TOKEN; Path=/; Secure; HttpOnly; SameSite=None"]);
+    expect(res.status).toBe(200);
+  });
+
+  test("Bun.serve req.cookies.set without secure throws before reaching the wire", async () => {
+    using server = Bun.serve({
+      port: 0,
+      routes: {
+        "/": req => {
+          let caught: unknown;
+          try {
+            req.cookies.set("session", "TOKEN", { sameSite: "none", httpOnly: true });
+          } catch (e) {
+            caught = e;
+          }
+          return Response.json({ message: String(caught) });
+        },
+      },
+      fetch: () => new Response("nf", { status: 404 }),
+    });
+    const res = await fetch(server.url);
+    const body = await res.json();
+    expect(body.message).toMatch(sameSiteNoneError);
+    expect(res.headers.getSetCookie()).toEqual([]);
+    expect(res.status).toBe(200);
+  });
+});
+
 describe("Expires serialization", () => {
   // RFC 6265 expects an IMF-fixdate: "Wdy, DD Mon YYYY HH:MM:SS GMT".
   // Date.prototype.toUTCString() produces exactly that, so the two must agree.

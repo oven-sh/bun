@@ -53,6 +53,9 @@ public:
         if (!isValidCookieDomain(init.domain)) {
             return Exception { TypeError, "Invalid cookie domain: contains invalid characters"_s };
         }
+        if (auto validation = validateSecureRequired(init.secure, init.sameSite, init.partitioned); validation.hasException()) {
+            return validation.releaseException();
+        }
 
         return create(init.name, init.value, init.domain, init.path, init.expires, init.secure, init.sameSite, init.httpOnly, init.maxAge, init.partitioned);
     }
@@ -91,10 +94,24 @@ public:
     bool hasExpiry() const { return m_expires != emptyExpiresAtValue; }
 
     bool secure() const { return m_secure; }
-    void setSecure(bool secure) { m_secure = secure; }
+    ExceptionOr<void> setSecure(bool secure)
+    {
+        if (auto validation = validateSecureRequired(secure, m_sameSite, m_partitioned); validation.hasException()) {
+            return validation.releaseException();
+        }
+        m_secure = secure;
+        return {};
+    }
 
     CookieSameSite sameSite() const { return m_sameSite; }
-    void setSameSite(CookieSameSite sameSite) { m_sameSite = sameSite; }
+    ExceptionOr<void> setSameSite(CookieSameSite sameSite)
+    {
+        if (auto validation = validateSecureRequired(m_secure, sameSite, m_partitioned); validation.hasException()) {
+            return validation.releaseException();
+        }
+        m_sameSite = sameSite;
+        return {};
+    }
 
     bool httpOnly() const { return m_httpOnly; }
     void setHttpOnly(bool httpOnly) { m_httpOnly = httpOnly; }
@@ -103,7 +120,14 @@ public:
     void setMaxAge(double maxAge) { m_maxAge = maxAge; }
 
     bool partitioned() const { return m_partitioned; }
-    void setPartitioned(bool partitioned) { m_partitioned = partitioned; }
+    ExceptionOr<void> setPartitioned(bool partitioned)
+    {
+        if (auto validation = validateSecureRequired(m_secure, m_sameSite, partitioned); validation.hasException()) {
+            return validation.releaseException();
+        }
+        m_partitioned = partitioned;
+        return {};
+    }
 
     bool isExpired() const;
 
@@ -116,6 +140,8 @@ public:
     static bool isValidCookieValue(const String& value); // values are uri component encoded, so this isn't needed
     static bool isValidCookiePath(const String& path);
     static bool isValidCookieDomain(const String& domain);
+
+    static ExceptionOr<void> validateSecureRequired(bool secure, CookieSameSite sameSite, bool partitioned);
 
 private:
     Cookie(const String& name, const String& value,

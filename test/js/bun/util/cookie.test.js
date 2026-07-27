@@ -552,7 +552,14 @@ describe("cookie.serialize(name, value, options)", function () {
 
   describe('with "partitioned" option', function () {
     it("should include partitioned flag when true", function () {
-      expect(cookie.serialize("foo", "bar", { partitioned: true })).toEqual("foo=bar; Partitioned; SameSite=Lax");
+      // Bun deviates from the `cookie` package here: CHIPS requires Secure, so
+      // partitioned without secure is a TypeError instead of an always-dropped header.
+      expect(cookie.serialize("foo", "bar", { partitioned: true, secure: true })).toEqual(
+        "foo=bar; Secure; Partitioned; SameSite=Lax",
+      );
+      expect(() => cookie.serialize("foo", "bar", { partitioned: true })).toThrow(
+        /"partitioned: true" requires secure: true/,
+      );
     });
 
     it("should not include partitioned flag when false", function () {
@@ -646,7 +653,14 @@ describe("cookie.serialize(name, value, options)", function () {
     });
 
     it("should set sameSite none", function () {
-      expect(cookie.serialize("foo", "bar", { sameSite: "none" })).toEqual("foo=bar; SameSite=None");
+      // Bun deviates from the `cookie` package here: SameSite=None requires Secure, so
+      // sameSite: "none" without secure is a TypeError instead of an always-dropped header.
+      expect(cookie.serialize("foo", "bar", { sameSite: "none", secure: true })).toEqual(
+        "foo=bar; Secure; SameSite=None",
+      );
+      expect(() => cookie.serialize("foo", "bar", { sameSite: "none" })).toThrow(
+        /"sameSite: none" requires secure: true/,
+      );
     });
 
     it.failing("should set sameSite strict when true", function () {

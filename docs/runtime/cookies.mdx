@@ -113,6 +113,15 @@ const cookie = new Bun.Cookie("visited", "true");
 cookies.set(cookie);
 ```
 
+Browsers reject a `SameSite=None` cookie that isn't also `Secure`, and likewise a `Partitioned` cookie (CHIPS) that isn't `Secure`. Bun throws a `TypeError` for these combinations instead of emitting a header every browser would drop:
+
+```ts title="secure-required.ts" icon="/icons/typescript.svg"
+cookies.set("session", "abc123", { sameSite: "none", secure: true });
+
+cookies.set("session", "abc123", { sameSite: "none" }); // TypeError
+cookies.set("id", "abc123", { partitioned: true }); // TypeError
+```
+
 #### `delete(name: string): void`
 
 #### `delete(options: CookieStoreDeleteOptions): void`
@@ -386,9 +395,10 @@ interface CookieInit {
   path?: string;
   expires?: number | Date | string;
   secure?: boolean;
-  /** Defaults to `lax`. */
+  /** Defaults to `"lax"`. `"none"` requires `secure: true`. */
   sameSite?: CookieSameSite;
   httpOnly?: boolean;
+  /** Requires `secure: true`. */
   partitioned?: boolean;
   maxAge?: number;
 }

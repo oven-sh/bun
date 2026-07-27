@@ -1575,8 +1575,10 @@ impl Run {
             // loop drained: an unsettled top-level await (e.g. a TLA dynamic
             // import() whose target statically imports the awaiter back, which
             // per spec waits on an EvaluatingAsync dependency and deadlocks).
-            // Node prints a warning and exits 13; match that here.
-            if vm.entry_module_promise_is_pending() {
+            // Node prints a warning and exits 13; match that here. Skip when an
+            // unhandled rejection already stopped the loop: that's why it's
+            // pending, not a stalled TLA.
+            if vm.unhandled_error_counter == 0 && vm.entry_module_promise_is_pending() {
                 vm.report_unsettled_top_level_await();
                 if vm.exit_handler.exit_code == 0 {
                     vm.exit_handler.exit_code = 13;

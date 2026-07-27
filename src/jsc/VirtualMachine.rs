@@ -1048,6 +1048,25 @@ impl VirtualMachine {
             || !el.next_immediate_tasks.is_empty()
     }
 
+    /// Whether anything in the loop could still settle a pending module
+    /// promise. Unlike [`is_event_loop_alive`](Self::is_event_loop_alive),
+    /// ignores `unhandled_error_counter` (an unhandled rejection doesn't mean
+    /// nothing can settle the await) and counts queued concurrent tasks.
+    pub fn has_pending_loop_work(&self) -> bool {
+        let el = self.event_loop_shared();
+        let active = self
+            .platform_loop_opt()
+            .map(|h| h.is_active())
+            .unwrap_or(false);
+        active
+            || self.active_tasks > 0
+            || el.tasks.readable_length() > 0
+            || el.has_pending_refs()
+            || !el.concurrent_tasks.is_empty()
+            || !el.immediate_tasks.is_empty()
+            || !el.next_immediate_tasks.is_empty()
+    }
+
     pub fn wakeup(&mut self) {
         self.event_loop_mut().wakeup();
     }
@@ -2468,7 +2487,7 @@ impl VirtualMachine {
             if crate::JSPromise::status_ptr(promise) != crate::js_promise::Status::Pending {
                 return;
             }
-            if !self.is_event_loop_alive() {
+            if !self.has_pending_loop_work() {
                 return;
             }
             self.auto_tick();
@@ -4654,7 +4673,7 @@ impl VirtualMachine {
                 return Ok(promise);
             }
             self.event_loop_mut().perform_gc();
-            self.wait_for_promise(jsc::AnyPromise::Internal(promise));
+            self.wait_for_module_promise(promise);
         }
 
         self.auto_tick();

@@ -820,8 +820,14 @@ describe("unref() + .exited with nothing else ref'd (Windows)", () => {
         cmd: [
           bunExe(),
           "-e",
+          // A top-level await on an unref'd handle alone is an unsettled TLA
+          // (Node exits 13 too). Keep one ref'd timer so the loop stays alive
+          // long enough to observe the unref'd child's exit, which is what
+          // this test is about: the IOCP packet must be dequeued.
           `const opts = { cmd: [${JSON.stringify(bunExe())}, "-e", ""], stdio: ["ignore", "ignore", "ignore"] };
+           const keepAlive = setTimeout(() => {}, 60_000);
            ${body}
+           clearTimeout(keepAlive);
            console.log("resolved");`,
         ],
         env: bunEnv,

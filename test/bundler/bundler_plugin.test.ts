@@ -1639,7 +1639,6 @@ describe("plugin hook registration after setup", () => {
       String(dir),
       b => {
         b.onLoad({ filter: /first\.ts$/ }, () => {
-          // Previously this was accepted and silently dropped; now it must throw.
           b.onLoad({ filter: /second\.ts$/ }, () => ({ contents: `export default "-PLUGIN"`, loader: "ts" }));
           return { contents: `import z from "./second.ts"; export default "F"+z`, loader: "ts" };
         });
@@ -1745,7 +1744,7 @@ describe("plugin hook registration after setup", () => {
         ],
       });
       expect(result.success).toBe(true);
-      expect(() => {
+      const call = () => {
         if (method === "onStart" || method === "onEnd") {
           (stale[method] as any)(() => {});
         } else if (method === "onBeforeParse") {
@@ -1753,16 +1752,9 @@ describe("plugin hook registration after setup", () => {
         } else {
           (stale[method] as any)({ filter: /x/ }, () => {});
         }
-      }).toThrow(TypeError);
-      expect(() => {
-        if (method === "onStart" || method === "onEnd") {
-          (stale[method] as any)(() => {});
-        } else if (method === "onBeforeParse") {
-          stale.onBeforeParse({ filter: /x/ }, { napiModule: {} as any, symbol: "x" });
-        } else {
-          (stale[method] as any)({ filter: /x/ }, () => {});
-        }
-      }).toThrow(lateHookMessage);
+      };
+      expect(call).toThrow(TypeError);
+      expect(call).toThrow(lateHookMessage);
     });
   }
 

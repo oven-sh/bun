@@ -3623,14 +3623,8 @@ impl<'a> HTTPClient<'a> {
         // `to_read` is a suffix of `incoming_data` and is copied into the
         // (currently empty) accumulation buffer; otherwise `to_read` is a suffix
         // of `buffer`, so the consumed prefix is drained and `buffer` is moved
-        // back into state.
-        //
-        // Intentionally does NOT re-arm the idle timer: a server that trickles
-        // one header byte per interval shorter than `idle_timeout_seconds`
-        // would otherwise keep the request alive forever. Leaving the timer as
-        // armed by `on_open` / `on_writable` makes it an absolute deadline for
-        // the header block to complete (undici `headersTimeout` semantics); the
-        // body path (`on_data` Body/BodyChunk) still re-arms per chunk.
+        // back into state. Does not re-arm the idle timer (header phase is an
+        // absolute deadline; see [`IDLE_TIMEOUT_SECONDS`]).
         macro_rules! short_read {
             () => {{
                 bun_core::scoped_log!(fetch, "handleShortRead");
@@ -3824,10 +3818,8 @@ impl<'a> HTTPClient<'a> {
         }
 
         if self.proxy_tunnel.is_some() {
-            // Re-arm only once the origin's header block has completed, same as
-            // the non-proxy dispatch below: the inner TLS handshake and the
-            // origin's response headers are bounded absolutely (the timer stays
-            // as armed by `on_writable`), and body chunks re-arm per read.
+            // Body phase only, mirroring the non-proxy dispatch below (header
+            // phase is an absolute deadline; see [`IDLE_TIMEOUT_SECONDS`]).
             if matches!(
                 self.state.response_stage,
                 ResponseStage::Body | ResponseStage::BodyChunk

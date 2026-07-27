@@ -1,6 +1,6 @@
 import { createSocketPair, fileSinkInternals } from "bun:internal-for-testing";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, fileDescriptorLeakChecker, isLinux, isPosix, isWindows, tmpdirSync } from "harness";
+import { bunEnv, bunExe, fileDescriptorLeakChecker, isLinux, isPosix, isWindows, tempDir, tmpdirSync } from "harness";
 import { mkfifo } from "mkfifo";
 import { join } from "node:path";
 
@@ -597,6 +597,36 @@ it("Bun.file(fd).writer() write/end under GC pressure does not crash", async () 
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "ok", stderr: "", exitCode: 0 });
+});
+
+it("abandoned Bun.file().writer() flushes buffered bytes when garbage-collected", async () => {
+  using dir = tempDir("filesink-gc-flush", {});
+  const paths = [0, 1, 2].map(i => join(String(dir), `sink-${i}`));
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const { readFileSync } = require("node:fs");
+        const paths = ${JSON.stringify(paths)};
+        for (let i = 0; i < paths.length; i++) {
+          const w = Bun.file(paths[i]).writer();
+          w.write("payload-" + i);
+          // abandoned: no flush(), no end(), no reference kept
+        }
+        Bun.gc(true);
+        await Bun.sleep(20);
+        Bun.gc(true);
+        console.log(JSON.stringify(paths.map(p => readFileSync(p, "utf8"))));
+      `,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout.trim())).toEqual(["payload-0", "payload-1", "payload-2"]);
+  expect(exitCode).toBe(0);
 });
 
 it("fs.promises.writeFile with iterables under GC pressure does not crash", async () => {

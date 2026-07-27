@@ -1007,6 +1007,23 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
         }
     }
 
+    /// Best-effort drain of `outgoing` without any `Parent::on_*` dispatch,
+    /// for teardown callers that hold `&mut Parent` (R-2). Stops on the first
+    /// retry/error.
+    pub fn drain_without_reporting(&mut self) {
+        if self.is_done || self.closed_without_reporting || self.outgoing.is_empty() {
+            return;
+        }
+        let drained = match self.try_write(self.force_sync, self.outgoing.slice()) {
+            WriteResult::Wrote(n) | WriteResult::Pending(n) | WriteResult::Done(n) => n,
+            WriteResult::Err(_) => 0,
+        };
+        self.outgoing.wrote(drained);
+        if self.outgoing.is_empty() {
+            self.outgoing.reset();
+        }
+    }
+
     pub fn end(&mut self) {
         if self.is_done {
             return;
@@ -2454,6 +2471,10 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
         self.process_send();
         self.last_write_result.clone()
     }
+
+    /// No-op: `process_send()` already queued the write and holds a parent
+    /// ref; draining again would have to touch the parent backref.
+    pub fn drain_without_reporting(&mut self) {}
 
     pub fn end(&mut self) {
         if self.is_done {

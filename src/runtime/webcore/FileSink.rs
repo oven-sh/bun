@@ -914,6 +914,13 @@ impl FileSink {
         // `.classes.ts` finalize — see PORTING.md §JSC. Runs during lazy sweep;
         // must not touch live JS cells.
 
+        // Drain buffered bytes so a GC between `write()` and the deferred
+        // auto-flush does not drop them. Not `flush()`: that can dispatch
+        // `Parent::on_*` via the backref while `&mut self` is live (R-2).
+        if !self.done.get() && self.writer.get().has_pending_data() {
+            self.writer.with_mut(|w| w.drain_without_reporting());
+        }
+
         // Shutdown never unwinds the writer: the loop stops ticking, so the
         // `onWrite`/`onClose`/EOF callbacks that balance these refs can no
         // longer arrive, and a queued FlushPendingFileSinkTask never runs.

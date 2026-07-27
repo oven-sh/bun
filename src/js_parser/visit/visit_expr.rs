@@ -2038,9 +2038,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     } else if args.len() == 2 && is_exports_expr(&args[1]) {
                         let target_name: &[u8] = match &e_.target.data {
                             Data::EDot(d) => &d.name,
-                            Data::EIdentifier(id) => {
-                                symbols[id.ref_.inner_index() as usize].original_name.slice()
-                            }
+                            Data::EIdentifier(id) => symbols[id.ref_.inner_index() as usize]
+                                .original_name
+                                .slice(),
                             _ => b"",
                         };
                         if matches!(target_name, b"__exportStar" | b"__export" | b"_exportStar") {
@@ -2094,9 +2094,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 };
                 match action {
-                    Action::Record(name, loc) => {
-                        p.record_runtime_commonjs_export_name(name, loc)
-                    }
+                    Action::Record(name, loc) => p.record_runtime_commonjs_export_name(name, loc),
                     Action::Deopt => p.commonjs_module_exports_assigned_deoptimized = true,
                     Action::None => {}
                 }

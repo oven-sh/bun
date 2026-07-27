@@ -12,8 +12,9 @@ import { bunEnv, bunExe, tempDir } from "harness";
 //
 // All lol-html handler bridges funnel into the same `handler_callback`; cover
 // the ones that fire more than once per document (element / comment / text on
-// `.on(...)` and comment / text on `.onDocument(...)`). `doctype` and `end`
-// fire once, so there is no "next" dispatch for the bug to reach.
+// `.on(...)`, `el.onEndTag(...)`, and comment / text on `.onDocument(...)`).
+// `doctype` and `end` fire once, so there is no "next" dispatch for the bug to
+// reach.
 
 type Cell = { name: string; body: string; register: string; extraFiles?: Record<string, string> };
 
@@ -51,6 +52,11 @@ const cells: Cell[] = [
     name: "onDocument text",
     body: stringBody,
     register: `.onDocument({ async text(t) { if (t.text) { postMessage("in-handler"); ${neverSettling} } } })`,
+  },
+  {
+    name: "onEndTag",
+    body: stringBody,
+    register: `.on("p", { element(el) { el.onEndTag(async () => { postMessage("in-handler"); ${neverSettling} }); } })`,
   },
   // A file-backed body buffers asynchronously (`is_async == true` in
   // `run_output_sink`), covering the error-unwind arm that rejects the body

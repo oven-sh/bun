@@ -203,12 +203,17 @@ describe("url", () => {
     ["file://a/p", "[::1]:81", "file://a/p"],
     // tab/newline are stripped first, so the ':' is still outside the brackets
     ["http://a/p", "[::1]\t:81", "http://a/p"],
+    ["http://a/p", "[::1]\n:81", "http://a/p"],
+    ["http://a/p", "[::1]\r:81", "http://a/p"],
+    ["http://a/p", "[::1]\r\n:81", "http://a/p"],
     ["http://a/p", "\t[::1]:81", "http://a/p"],
-    // '/', '?', '#', '\\' end the host before the ':' is reached, so these still apply
+    // '/', '?', '#' (and '\\' on special schemes) end the host before the ':' is reached
     ["http://a/p", "[::1]/x:81", "http://[::1]/p"],
     ["http://a/p", "[::1]?x:81", "http://[::1]/p"],
     ["http://a/p", "[::1]#x:81", "http://[::1]/p"],
     ["http://a/p", "[::1]\\x:81", "http://[::1]/p"],
+    // '\\' is not a terminator on a non-special scheme, so the ':' after it is still rejected
+    ["sc://a/p", "[::1]\\x:81", "sc://a/p"],
     // ':' before any terminator is a no-op regardless of what follows
     ["http://a/p", "[::1]:81/x", "http://a/p"],
     // the existing non-bracketed rejection still holds

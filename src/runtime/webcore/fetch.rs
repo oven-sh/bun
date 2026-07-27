@@ -777,6 +777,34 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                                 return Ok(JSValue::ZERO);
                             }
                             Ok(Some(config)) => {
+                                // The HTTP thread builds this SSL_CTX lazily and, on a cert/key
+                                // parse failure, can only surface a generic FailedToOpenSocket
+                                // (the BoringSSL error queue is thread-local and uSockets does
+                                // not set `*err` for bad cert/key). Build it here so a bad
+                                // client identity rejects with the same ERR_OSSL_* code as
+                                // node:tls createSecureContext.
+                                if config.requires_custom_request_ctx {
+                                    let mut err = bun_uws::create_bun_socket_error_t::none;
+                                    match config
+                                        .as_usockets_for_client_verification()
+                                        .create_ssl_context(&mut err)
+                                    {
+                                        Some(ctx) => {
+                                            // SAFETY: `create_ssl_context` hands back a +1
+                                            // ref; release it. The HTTP thread builds its
+                                            // own from the interned config.
+                                            unsafe { bun_boringssl_sys::SSL_CTX_free(ctx) };
+                                        }
+                                        None => {
+                                            return Err(global_this.throw_value(
+                                                crate::socket::uws_jsc::create_bun_socket_error_to_js(
+                                                    err,
+                                                    global_this,
+                                                ),
+                                            ));
+                                        }
+                                    }
+                                }
                                 // Intern via `ssl_config::global_registry` for dedup and pointer equality
                                 break 'extract_ssl_config Some(ssl_config_intern_for_http(config));
                             }

@@ -5225,8 +5225,7 @@ unsafe fn resolve_hook(
             &mut result_query,
         )
     } {
-        // fd/memory exhaustion surfaces as a SystemError (so `.code` is the
-        // errno); other Sys errors keep the ResolveMessage path.
+        // fd/memory exhaustion surfaces as a SystemError; other Sys errors keep the ResolveMessage path.
         let sys_errno = match &err {
             crate::Error::Resolver(bun_resolver::Error::Sys(e)) | crate::Error::Sys(e)
                 if matches!(

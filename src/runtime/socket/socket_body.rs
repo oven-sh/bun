@@ -1117,8 +1117,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             )
         } else {
             debug_assert!(errno >= 0);
-            // Unix-path errnos and local resource exhaustion keep their
-            // identity; anything else is reported as ECONNREFUSED.
+            // Unix-path and resource-exhaustion errnos keep their identity; anything else becomes ECONNREFUSED.
             let errno_: c_int = if errno == sys::SystemErrno::ENOENT as c_int
                 || errno == sys::SystemErrno::ENOTSOCK as c_int
                 || errno == sys::SystemErrno::EACCES as c_int

@@ -1558,8 +1558,7 @@ fn connect_finish<const IS_SSL: bool>(
                 bun_sys::SystemErrno::ENOENT as c_int
             }
         } else {
-            // socket()/bind() errnos keep their identity; anything else is
-            // reported as ECONNREFUSED. Mirrors handle_connect_error.
+            // socket()/bind() errnos keep their identity; anything else becomes ECONNREFUSED.
             let os_errno = bun_sys::last_errno();
             if os_errno == bun_sys::SystemErrno::EADDRINUSE as c_int
                 || os_errno == bun_sys::SystemErrno::EADDRNOTAVAIL as c_int

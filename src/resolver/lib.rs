@@ -1110,8 +1110,7 @@ pub mod fs {
             err: crate::Error,
         ) -> crate::CrateResult<&'static mut EntriesOption> {
             if bun_core::FeatureFlags::ENABLE_ENTRY_CACHE {
-                // fd/memory exhaustion is transient; caching it would stick
-                // (Err entries are not generation-gated).
+                // fd/memory exhaustion is transient; Err entries are not generation-gated so don't cache.
                 if matches!(
                     err,
                     crate::Error::Sys(bun_errno::SystemErrno::EMFILE)

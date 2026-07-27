@@ -4335,8 +4335,7 @@ impl VirtualMachine {
         );
         if let Err(err_) = resolve_result {
             let err = err_;
-            // fd/memory exhaustion surfaces as a SystemError (so `.code` is
-            // the errno); other Sys errors keep the ResolveMessage path.
+            // fd/memory exhaustion surfaces as a SystemError; other Sys errors keep the ResolveMessage path.
             let sys_errno = match &err {
                 crate::CrateError::Resolver(bun_resolver::Error::Sys(e))
                 | crate::CrateError::Sys(e)

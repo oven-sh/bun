@@ -3322,15 +3322,9 @@ extern "C" void napi_internal_check_gc(napi_env env)
     env->checkGC();
 }
 
-// napi_create_string_* must succeed and preserve any exception already on the
-// VM (Node.js does not gate these behind NAPI_PREAMBLE). The Rust entry points
-// previously routed through the generated BunString__* wrappers, whose
-// validation scope asserts "no VM exception" on success. After
-// napi_call_function has promoted a napi_throw'd value into the VM, or
-// napi_create_bigint_words has thrown a RangeError, that assertion aborts
-// debug/asan builds. SuspendExceptionScope stashes vm.m_exception for the
-// allocation and restores it on return, so the caller's exception is untouched
-// and the allocation runs under a clean scope.
+// Node.js does not gate napi_create_string_* behind NAPI_PREAMBLE, so a VM
+// exception may already be pending. SuspendExceptionScope stashes it for the
+// allocation and restores it on return.
 template<typename CharT, typename Maker>
 static JSC::EncodedJSValue napiCreateStringWithSuspendedException(napi_env env, const CharT* ptr, size_t length, Maker make)
 {

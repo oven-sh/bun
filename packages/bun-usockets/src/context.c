@@ -684,8 +684,12 @@ int start_connections(struct us_connecting_socket_t *c, int count) {
         struct us_poll_t *poll = &s->p;
         us_poll_init(poll, connect_socket_fd, POLL_TYPE_SEMI_SOCKET);
         if (us_poll_start_rc(poll, loop, LIBUS_SOCKET_WRITABLE) != 0) {
+            int saved_errno = LIBUS_ERR;
             bsd_close_socket(connect_socket_fd);
             us_poll_free(poll, loop);
+            if (c->error == 0) {
+                c->error = saved_errno;
+            }
             continue;
         }
         ++opened;

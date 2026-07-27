@@ -52,11 +52,12 @@ for (const fd of held) fs.closeSync(fd);
 const recovered = await probe();
 srv.close();
 
-process.stdout.write(JSON.stringify({ exhausted, recovered }));
+process.stdout.write(JSON.stringify({ exhausted, recovered }) + "\\n");
 `;
 
 describe.skipIf(!isPosix)("EMFILE is reported as EMFILE", () => {
-  test.concurrent("net.connect, require, import, net.listen under fd exhaustion", async () => {
+  // Subprocess startup under debug+ASAN dominates; the probe itself is fast.
+  test.concurrent("net.connect, require, import, net.listen under fd exhaustion", { timeout: 15000 }, async () => {
     using dir = tempDir("emfile-error-code", {
       "probe.mjs": fixture,
       "mod/m.cjs": "module.exports = 42;",
@@ -83,10 +84,14 @@ describe.skipIf(!isPosix)("EMFILE is reported as EMFILE", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    if (!stdout.startsWith("{")) {
-      throw new Error("no JSON on stdout; stderr:\n" + stderr);
+    // Builds without the fix may append a panic backtrace to stdout after the
+    // JSON (auto-install's MiniEventLoop init hits eventfd()=EMFILE); parse
+    // only the first line so the assertion below shows the wrong codes.
+    const first = stdout.split("\n", 1)[0];
+    if (!first.startsWith("{")) {
+      throw new Error("no JSON on stdout; stdout:\n" + stdout + "\nstderr:\n" + stderr);
     }
-    const parsed = JSON.parse(stdout);
+    const parsed = JSON.parse(first);
 
     expect(parsed.exhausted).toEqual({
       connect: { code: "EMFILE", syscall: "connect" },

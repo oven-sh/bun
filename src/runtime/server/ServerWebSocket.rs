@@ -196,10 +196,8 @@ pub(super) fn send_status_to_js(
     }
 }
 
-/// If `value` is a `Blob`, returns its in-memory bytes as `Ok(Some(slice))`.
-/// File-/S3-backed blobs throw (the send/publish APIs are synchronous and
-/// return a byte count, so async I/O cannot happen here). Non-blobs return
-/// `Ok(None)` so callers fall through to their next type check.
+/// File-/S3-backed blobs throw: these send paths return a synchronous byte
+/// count, so there is no way to do the I/O here.
 #[inline]
 pub(super) fn blob_payload<'a>(
     global_this: &JSGlobalObject,

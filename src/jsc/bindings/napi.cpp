@@ -1298,10 +1298,7 @@ extern "C" napi_status napi_detach_arraybuffer(napi_env env,
     // is a no-op in both engines, so treat that as success.
     NAPI_RETURN_EARLY_IF_FALSE(env, arrayBuffer->isDetached() || arrayBuffer->isDetachable(), napi_detachable_arraybuffer_expected);
     if (!arrayBuffer->isDetached()) {
-        // ArrayBuffer::detach() would drop the contents (and run the napi
-        // finalize_cb) synchronously; V8 keeps the BackingStore until GC.
-        // Hold the moved-out contents in a heap finalizer on this cell so
-        // the destructor fires on collection instead.
+        // detach() would fire the napi finalize_cb synchronously; hold the contents until GC to match V8.
         ArrayBufferContents contents;
         arrayBuffer->transferTo(vm, contents);
         vm.heap.addFinalizer(jsArrayBuffer, [contents = WTF::move(contents)](JSCell*) mutable {});

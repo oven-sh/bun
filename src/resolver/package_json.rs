@@ -732,11 +732,6 @@ impl PackageJSON {
 
                     for item in items {
                         if let Some(name) = item.as_str() {
-                            // Skip CSS files as they're not relevant for tree-shaking
-                            if bun_paths::extension(name) == b".css" {
-                                continue;
-                            }
-
                             let slashless = !strings::contains_char(name, b'/');
 
                             // Store the pattern relative to the package directory
@@ -772,11 +767,6 @@ impl PackageJSON {
                     glob_list.reserve(items.len());
                     for item in items {
                         if let Some(name) = item.as_str() {
-                            // Skip CSS files as they're not relevant for tree-shaking
-                            if bun_paths::extension(name) == b".css" {
-                                continue;
-                            }
-
                             // Store the pattern relative to the package directory
                             let joined: [&[u8]; 3] = [
                                 json_source.path.name().dir_with_trailing_slash(),

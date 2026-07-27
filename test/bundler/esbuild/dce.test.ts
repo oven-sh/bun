@@ -898,6 +898,33 @@ describe("bundler", () => {
       stdout: "root kept\ndone",
     },
   });
+  itBundled("dce/PackageJsonSideEffectsBareCSSAndJS", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        import "demo-pkg/style.css";
+        import "demo-pkg/setup.js";
+        import "demo-pkg/lib/setup.js";
+        import "demo-pkg/lib/other.js";
+        console.log("done");
+      `,
+      "/Users/user/project/node_modules/demo-pkg/style.css": `body { color: red; }`,
+      "/Users/user/project/node_modules/demo-pkg/setup.js": `console.log("root setup kept")`,
+      "/Users/user/project/node_modules/demo-pkg/lib/setup.js": `console.log("nested setup kept")`,
+      "/Users/user/project/node_modules/demo-pkg/lib/other.js": `console.log("TEST FAILED")`,
+      "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
+        {
+          "sideEffects": ["style.css", "setup.js"]
+        }
+      `,
+    },
+    outdir: "/out",
+    run: {
+      stdout: "root setup kept\nnested setup kept\ndone",
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.css").toContain("color: red");
+    },
+  });
   itBundled("dce/PackageJsonSideEffectsGlobInvalidPattern", {
     files: {
       "/Users/user/project/src/entry.js": /* js */ `

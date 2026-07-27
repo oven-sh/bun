@@ -57,18 +57,27 @@ mod coverage {
         pub(crate) fn write_format(
             report: &CodeCoverageReport,
             max_filename_length: usize,
-            fraction: &mut Fraction,
+            vals: Fraction,
+            threshold: Fraction,
             base_path: &[u8],
             writer: &mut impl bun_io::Write,
             enable_ansi_colors: bool,
         ) -> bun_io::Result<()> {
             if enable_ansi_colors {
-                text::write_format::<true>(report, max_filename_length, fraction, base_path, writer)
+                text::write_format::<true>(
+                    report,
+                    max_filename_length,
+                    vals,
+                    threshold,
+                    base_path,
+                    writer,
+                )
             } else {
                 text::write_format::<false>(
                     report,
                     max_filename_length,
-                    fraction,
+                    vals,
+                    threshold,
                     base_path,
                     writer,
                 )
@@ -1555,7 +1564,10 @@ impl CommandLineReporter {
         vm: &mut VirtualMachine,
         opts: &mut CodeCoverageOptions,
     ) -> crate::Result<()> {
-        if !REPORTERS_TEXT && !REPORTERS_LCOV {
+        // With no reporters (`coverageReporter = []` in bunfig) there is still
+        // work to do when a coverageThreshold is configured: the per-file
+        // fractions decide the exit code.
+        if !REPORTERS_TEXT && !REPORTERS_LCOV && !opts.fail_on_low_coverage {
             return Ok(());
         }
 
@@ -1681,13 +1693,9 @@ impl CommandLineReporter {
         } else if REPORTERS_LCOV {
             bun::perf::trace("TestCommand.printCodeCoverageLCov")
         } else {
-            // Unreachable by construction.
-            unreachable!("No reporters enabled")
+            // No reporters enabled: only the coverageThreshold evaluation runs.
+            bun::perf::trace("TestCommand.printCodeCoverageThresholdOnly")
         };
-
-        if !REPORTERS_TEXT && !REPORTERS_LCOV {
-            unreachable!("No reporters enabled");
-        }
 
         let relative_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
 
@@ -1907,12 +1915,19 @@ impl CommandLineReporter {
                 continue;
             };
 
+            // The threshold check decides the exit code, so it runs for every
+            // reporter combination, not only when the text table is printed.
+            let fraction = report.coverage_fraction(base_fraction);
+            if fraction.failing {
+                failing = true;
+            }
+
             if REPORTERS_TEXT {
-                let mut fraction = base_fraction;
                 if coverage::Text::write_format(
                     &report,
                     max_filepath_length,
-                    &mut fraction,
+                    fraction,
+                    base_fraction,
                     relative_dir,
                     console_writer,
                     ENABLE_ANSI_COLORS,
@@ -1925,9 +1940,6 @@ impl CommandLineReporter {
                 avg.lines += fraction.lines;
                 avg.stmts += fraction.stmts;
                 avg_count += 1.0;
-                if fraction.failing {
-                    failing = true;
-                }
 
                 console_writer.extend_from_slice(b"\n");
             }
@@ -1942,6 +1954,8 @@ impl CommandLineReporter {
 
             drop(report);
         }
+
+        opts.fractions.failing = failing;
 
         if REPORTERS_TEXT {
             {
@@ -2001,7 +2015,6 @@ impl CommandLineReporter {
                 return Ok(());
             }
 
-            opts.fractions.failing = failing;
             Output::flush();
         }
 

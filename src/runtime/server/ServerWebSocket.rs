@@ -11,7 +11,7 @@ use bun_uws_sys::{Opcode, SendStatus};
 use crate::server::WebSocketServerHandler;
 use crate::server::jsc::{
     self, AbortSignal, ArrayBuffer, BinaryType, CallFrame, CommonAbortReason, JSGlobalObject,
-    JSType, JSValue, JsError, JsRef, JsResult, ZigStringSlice,
+    JSType, JSValue, JsError, JsRef, JsResult, VirtualMachine, ZigStringSlice,
 };
 use crate::server::web_socket_server_context::HandlerFlags;
 
@@ -449,14 +449,17 @@ impl ServerWebSocket {
                 this_value.unprotect();
             }
 
-            handler.run_error_callback(on_error, vm, global_object, err_value);
+            handler.run_error_callback(on_error, vm, global_object, this_value, err_value);
             if closed_here {
                 if let Some(server) = server {
                     // May run the idle pass; no `&Handler` borrow is live here.
                     server.on_websocket_closed();
                 }
             }
+            return;
         }
+
+        self.handle_handler_promise(result, this_value, on_error, vm, global_object);
     }
 
     /// `&self` for the same noalias-reentry reason as `on_open` (R-2).
@@ -515,28 +518,56 @@ impl ServerWebSocket {
 
         if let Some(err_value) = result.to_error() {
             self.handler()
-                .run_error_callback(on_error, vm, global_object, err_value);
+                .run_error_callback(on_error, vm, global_object, arguments[0], err_value);
             return;
         }
 
-        if let Some(promise) = result.as_any_promise() {
-            match promise.status() {
-                jsc::js_promise::Status::Rejected => {
-                    // Value discarded; the side
-                    // effect (JSC__JSPromise__result) conditionally sets
-                    // `isHandledFlag` so this doesn't surface as an
-                    // unhandledRejection.
-                    let _ = promise.result(global_object.vm());
-                    return;
-                }
-                _ => {}
-            }
-        }
+        self.handle_handler_promise(result, arguments[0], on_error, vm, global_object);
     }
 
     #[inline]
     pub fn is_closed(&self) -> bool {
         self.flags.get().closed()
+    }
+
+    /// Route a handler's returned promise (if any) to the `error` callback on
+    /// rejection. All `WebSocketHandler` callbacks are typed
+    /// `void | Promise<void>`; without this, a rejected promise surfaces as a
+    /// process-level `unhandledRejection` and never reaches `websocket.error`.
+    ///
+    /// A no-op when no `error` handler is configured, so that case keeps the
+    /// existing behavior (the rejection surfaces as `unhandledRejection`).
+    fn handle_handler_promise(
+        &self,
+        result: JSValue,
+        this_value: JSValue,
+        on_error: JSValue,
+        vm: &VirtualMachine,
+        global_object: &JSGlobalObject,
+    ) {
+        if on_error.is_empty_or_undefined_or_null() {
+            return;
+        }
+        let Some(promise) = result.as_any_promise() else {
+            return;
+        };
+        match promise.status() {
+            jsc::js_promise::Status::Fulfilled => {}
+            jsc::js_promise::Status::Rejected => {
+                promise.set_handled(global_object.vm());
+                let err = promise.result(global_object.vm());
+                self.handler()
+                    .run_error_callback(on_error, vm, global_object, this_value, err);
+            }
+            jsc::js_promise::Status::Pending => {
+                result.then2(
+                    global_object,
+                    this_value,
+                    __jsc_host_ws_handler_promise_resolve,
+                    __jsc_host_ws_handler_promise_reject,
+                );
+            }
+        }
     }
 
     /// `&self` for the same noalias-reentry reason as `on_open` (R-2).
@@ -570,7 +601,9 @@ impl ServerWebSocket {
             let result = corker.result;
 
             if let Some(err_value) = result.to_error() {
-                handler.run_error_callback(on_error, vm, global_object, err_value);
+                handler.run_error_callback(on_error, vm, global_object, args[0], err_value);
+            } else {
+                self.handle_handler_promise(result, args[0], on_error, vm, global_object);
             }
         }
     }
@@ -608,10 +641,15 @@ impl ServerWebSocket {
             self.binary_to_js(global_this, data)
                 .unwrap_or(JSValue::ZERO), // TODO: properly propagate exception upwards
         ];
-        if let Err(e) = cb.call(global_this, JSValue::UNDEFINED, &args) {
-            let err = global_this.take_exception(e);
-            bun_output::scoped_log!(WebSocketServer, "onPing error");
-            handler.run_error_callback(on_error, vm, global_this, err);
+        match cb.call(global_this, JSValue::UNDEFINED, &args) {
+            Err(e) => {
+                let err = global_this.take_exception(e);
+                bun_output::scoped_log!(WebSocketServer, "onPing error");
+                handler.run_error_callback(on_error, vm, global_this, args[0], err);
+            }
+            Ok(result) => {
+                self.handle_handler_promise(result, args[0], on_error, vm, global_this);
+            }
         }
     }
 
@@ -643,10 +681,15 @@ impl ServerWebSocket {
             self.binary_to_js(global_this, data)
                 .unwrap_or(JSValue::ZERO), // TODO: properly propagate exception upwards
         ];
-        if let Err(e) = cb.call(global_this, JSValue::UNDEFINED, &args) {
-            let err = global_this.take_exception(e);
-            bun_output::scoped_log!(WebSocketServer, "onPong error");
-            handler.run_error_callback(on_error, vm, global_this, err);
+        match cb.call(global_this, JSValue::UNDEFINED, &args) {
+            Err(e) => {
+                let err = global_this.take_exception(e);
+                bun_output::scoped_log!(WebSocketServer, "onPong error");
+                handler.run_error_callback(on_error, vm, global_this, args[0], err);
+            }
+            Ok(result) => {
+                self.handle_handler_promise(result, args[0], on_error, vm, global_this);
+            }
         }
     }
 
@@ -744,17 +787,22 @@ impl ServerWebSocket {
                         "onClose error (message) {}",
                         was_not_empty
                     );
-                    handler.run_error_callback(on_error, vm, global_object, err);
+                    handler.run_error_callback(on_error, vm, global_object, cached_this, err);
                     return;
                 }
             };
 
             let call_args = [cached_this, JSValue::js_number(code as f64), message_js];
-            if let Err(e) = on_close_handler.call(global_object, JSValue::UNDEFINED, &call_args) {
-                let err = global_object.take_exception(e);
-                bun_output::scoped_log!(WebSocketServer, "onClose error {}", was_not_empty);
-                handler.run_error_callback(on_error, vm, global_object, err);
-                return;
+            match on_close_handler.call(global_object, JSValue::UNDEFINED, &call_args) {
+                Err(e) => {
+                    let err = global_object.take_exception(e);
+                    bun_output::scoped_log!(WebSocketServer, "onClose error {}", was_not_empty);
+                    handler.run_error_callback(on_error, vm, global_object, cached_this, err);
+                    return;
+                }
+                Ok(result) => {
+                    self.handle_handler_promise(result, cached_this, on_error, vm, global_object);
+                }
             }
         } else if let Some(sig) = signal {
             let _loop_guard = vm.enter_event_loop_scope();
@@ -1509,6 +1557,37 @@ impl WebSocketHandler for ServerWebSocket {
         // SAFETY: per trait contract.
         unsafe { &*this }.on_close(ws, code, message)
     }
+}
+
+#[bun_jsc::host_fn(export = "Bun__ServerWebSocket__onHandlerPromiseResolve")]
+pub(crate) fn ws_handler_promise_resolve(
+    _global_object: &JSGlobalObject,
+    _callframe: &CallFrame,
+) -> JSValue {
+    JSValue::UNDEFINED
+}
+
+#[bun_jsc::host_fn(export = "Bun__ServerWebSocket__onHandlerPromiseReject")]
+pub(crate) fn ws_handler_promise_reject(
+    global_object: &JSGlobalObject,
+    callframe: &CallFrame,
+) -> JSValue {
+    let [err, ws_value] = callframe.arguments_as_array::<2>();
+    let Some(this) = ws_value.as_class_ref::<ServerWebSocket>() else {
+        let _ = VirtualMachine::get_mut().uncaught_exception(global_object, err, true);
+        return JSValue::UNDEFINED;
+    };
+    // After `on_close` the handler backref may dangle (the server wrapper,
+    // sole GC root for the handler slots, was dropped from `m_server`).
+    if this.is_closed() {
+        let _ = VirtualMachine::get_mut().uncaught_exception(global_object, err, true);
+        return JSValue::UNDEFINED;
+    }
+    let handler = this.handler();
+    let on_error = handler.on_error;
+    let vm = handler.vm();
+    handler.run_error_callback(on_error, vm, global_object, ws_value, err);
+    JSValue::UNDEFINED
 }
 
 struct Corker<'a> {

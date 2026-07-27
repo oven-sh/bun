@@ -14,6 +14,10 @@ Bun.serve({
       expectType(ws.data).is<undefined>();
       expectType(message).is<string | Buffer<ArrayBuffer>>();
     },
+    error(ws, err) {
+      expectType(ws).is<Bun.ServerWebSocket<undefined>>();
+      expectType(err).is<unknown>();
+    },
   },
 });
 

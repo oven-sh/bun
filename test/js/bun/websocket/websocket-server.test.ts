@@ -678,6 +678,61 @@ describe("Server", () => {
         },
       );
     });
+    describe("error handler", () => {
+      const cases = [
+        ["a synchronous throw", `throw new Error('boom')`],
+        ["a returned Promise.reject()", `return Promise.reject(new Error('boom'))`],
+        ["a rejected async handler", `return (async () => { await 1; throw new Error('boom'); })()`],
+      ] as const;
+      for (const [label, body] of cases) {
+        it.concurrent(`is called with (ws, error) for ${label} in message()`, async () => {
+          const script = /* js */ `
+            const done = Promise.withResolvers();
+            process.on('unhandledRejection', e => {
+              console.log('UNHANDLED:' + (e instanceof Error ? e.message : e));
+              done.resolve();
+            });
+            let serverWs;
+            const server = Bun.serve({
+              port: 0,
+              fetch(req, s) { if (s.upgrade(req)) return; return new Response(); },
+              websocket: {
+                open(ws) { serverWs = ws; },
+                message(ws, m) { ${body}; },
+                error: function (ws, err) {
+                  console.log('ERROR:' + JSON.stringify([
+                    ws === serverWs,
+                    err instanceof Error ? err.message : String(err),
+                    arguments.length,
+                  ]));
+                  done.resolve();
+                },
+              },
+            });
+            const c = new WebSocket('ws://127.0.0.1:' + server.port);
+            c.onopen = () => c.send('x');
+            await done.promise;
+            await new Promise(r => setImmediate(r));
+            await new Promise(r => setImmediate(r));
+            c.close();
+            server.stop(true);
+          `;
+          await using proc = Bun.spawn({
+            cmd: [bunExe(), "-e", script],
+            env: bunEnv,
+            stderr: "pipe",
+          });
+          const [stdout, stderr, exitCode] = await Promise.all([
+            proc.stdout.text(),
+            proc.stderr.text(),
+            proc.exited,
+          ]);
+          expect(stderr).toBe("");
+          expect(stdout.trim()).toBe(`ERROR:[true,"boom",2]`);
+          expect(exitCode).toBe(0);
+        });
+      }
+    });
   });
 });
 describe("ServerWebSocket", () => {

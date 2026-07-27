@@ -3077,20 +3077,14 @@ it("the idle timer is an absolute deadline for the response header block (not re
   // the header block may take to arrive in total (undici `headersTimeout`
   // semantics). Once the header block completes the body path re-arms per
   // chunk, so a slow-but-steady body is still accepted.
-  const HEAD = "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\n";
-  const BODY = "hello";
+  const BODY = "abc";
+  const HEAD = `HTTP/1.1 200 OK\r\nContent-Length: ${BODY.length}\r\n\r\n`;
   const DRIP_MS = 2_000;
   const DRIP_N = 10; // header drip sends this many single bytes, then the rest at once
   const IDLE_MS = 5_000;
 
   const sockets = new Set<net.Socket>();
   const intervals = new Set<ReturnType<typeof setInterval>>();
-  const reset = () => {
-    for (const iv of intervals) clearInterval(iv);
-    intervals.clear();
-    for (const s of sockets) s.destroy();
-    sockets.clear();
-  };
   const server = net.createServer(sock => {
     sockets.add(sock);
     sock.on("close", () => sockets.delete(sock));
@@ -3130,21 +3124,21 @@ it("the idle timer is an absolute deadline for the response header block (not re
         e => ({ ok: false as const, name: e?.name as string, message: String(e?.message ?? e) }),
       );
 
-    // Header drip: DRIP_N bytes * DRIP_MS = ~20s of drip before the response
-    // would complete. The 5s idle deadline (served by uSockets' 4s-tick sweep,
-    // so worst case ~9s) must fire first. On a build that re-arms the timer on
-    // every partial header read this resolves with 200 after the full drip.
-    const hdr = await settle("/h");
-    expect(hdr).toEqual({ ok: false, name: "TimeoutError", message: "The operation timed out." });
-    reset();
-
-    // Body drip: headers arrive in one write, then the 5-byte body trickles at
-    // DRIP_MS/byte (~10s total). Each body chunk re-arms the idle timer, so
-    // this resolves despite taking longer than IDLE_MS overall.
-    const bod = await settle("/b");
-    expect(bod).toEqual({ ok: true, status: 200, body: "hello" });
+    // /h: DRIP_N bytes * DRIP_MS = ~20s of drip before the response would
+    // complete; the 5s idle deadline (uSockets 4s-tick sweep, so ~5-9s) must
+    // fire first. A build that re-arms on every partial header read resolves
+    // 200 after the full drip instead.
+    // /b: headers arrive in one write, then the 3-byte body trickles at
+    // DRIP_MS/byte (~8s). Each body chunk re-arms the idle timer, so this
+    // resolves despite taking longer than IDLE_MS overall.
+    const [hdr, bod] = await Promise.all([settle("/h"), settle("/b")]);
+    expect({ hdr, bod }).toEqual({
+      hdr: { ok: false, name: "TimeoutError", message: "The operation timed out." },
+      bod: { ok: true, status: 200, body: BODY },
+    });
   } finally {
-    reset();
+    for (const iv of intervals) clearInterval(iv);
+    for (const s of sockets) s.destroy();
     await new Promise<void>(r => server.close(() => r()));
   }
 }, 60_000);

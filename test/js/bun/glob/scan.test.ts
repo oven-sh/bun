@@ -1153,9 +1153,7 @@ describe.skipIf(!canCreateDirSymlink)("literal path segment through a symlinked 
     const files = Array.from(new Glob("start/**/f*.txt").scanSync({ cwd, followSymlinks: true }));
     expect(files.length).toBe(hops + 2);
 
-    const entries = norm(
-      Array.from(new Glob("start/**").scanSync({ cwd, followSymlinks: true, onlyFiles: false })),
-    );
+    const entries = norm(Array.from(new Glob("start/**").scanSync({ cwd, followSymlinks: true, onlyFiles: false })));
     // No live "next" link is yielded as if it were a broken-link leaf.
     expect(entries.filter(e => e.endsWith("/next")).length).toBe(hops + 1);
     expect(entries.filter(e => e.endsWith(".txt")).length).toBe(hops + 2);
@@ -1183,24 +1181,21 @@ describe.skipIf(!canCreateDirSymlink)("literal path segment through a symlinked 
     expect(err.path).toContain("dangling");
   });
 
-  test.skipIf(isWindows)(
-    "a followed symlink whose own target chain loops is surfaced as ELOOP",
-    () => {
-      using dir = tempDir("glob-scan-symlink-self-eloop", { "start/keep.txt": "x" });
-      const cwd = String(dir);
-      fs.symlinkSync("b", path.join(cwd, "start", "a"));
-      fs.symlinkSync("a", path.join(cwd, "start", "b"));
+  test.skipIf(isWindows)("a followed symlink whose own target chain loops is surfaced as ELOOP", () => {
+    using dir = tempDir("glob-scan-symlink-self-eloop", { "start/keep.txt": "x" });
+    const cwd = String(dir);
+    fs.symlinkSync("b", path.join(cwd, "start", "a"));
+    fs.symlinkSync("a", path.join(cwd, "start", "b"));
 
-      let err: any;
-      try {
-        Array.from(new Glob("start/**").scanSync({ cwd, followSymlinks: true, onlyFiles: false }));
-      } catch (e) {
-        err = e;
-      }
-      expect(err).toBeDefined();
-      expect(err.code).toBe("ELOOP");
-    },
-  );
+    let err: any;
+    try {
+      Array.from(new Glob("start/**").scanSync({ cwd, followSymlinks: true, onlyFiles: false }));
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeDefined();
+    expect(err.code).toBe("ELOOP");
+  });
 });
 
 // A directory the user can read but not write (RX-only grant) must still be

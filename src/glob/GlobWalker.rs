@@ -856,11 +856,8 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                             let work_item_path: &[u8] = work_item_logical_path(&work_item.path);
                             if self.walker.followed_links.len() >= MAX_FOLLOWED_SYMLINKS {
                                 release_parent!();
-                                return Ok(Err(SysError::from_code(
-                                    E::ELOOP,
-                                    Syscall::Tag::open,
-                                )
-                                .with_path(work_item_path)));
+                                return Ok(Err(SysError::from_code(E::ELOOP, Syscall::Tag::open)
+                                    .with_path(work_item_path)));
                             }
                             if work_item_path.len() >= MAX_PATH_BYTES {
                                 release_parent!();
@@ -946,20 +943,17 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                                     match err.get_errno() {
                                         E::ENOTDIR => break 'brk None,
                                         E::ELOOP | E::ENAMETOOLONG => {
-                                            return Ok(Err(self
-                                                .walker
-                                                .handle_sys_err_with_path(
-                                                    &err,
-                                                    symlink_full_path_z,
-                                                )));
+                                            return Ok(Err(self.walker.handle_sys_err_with_path(
+                                                &err,
+                                                symlink_full_path_z,
+                                            )));
                                         }
                                         _ => {}
                                     }
                                     if self.walker.error_on_broken_symlinks {
-                                        return Ok(Err(self.walker.handle_sys_err_with_path(
-                                            &err,
-                                            symlink_full_path_z,
-                                        )));
+                                        return Ok(Err(self
+                                            .walker
+                                            .handle_sys_err_with_path(&err, symlink_full_path_z)));
                                     }
                                     if !self.walker.only_files
                                         && self.walker.eval_file(&active, entry_name)

@@ -95,6 +95,39 @@ fn ssl_config_intern_for_http(config: SSLConfig) -> http::ssl_config::SharedPtr 
     http::ssl_config::global_registry::intern(config)
 }
 
+/// Build the client `SSL_CTX` on the JS thread so bad cert/key material rejects
+/// with the BoringSSL reason (`ERR_OSSL_*`), matching `node:tls`
+/// `createSecureContext`. The HTTP thread builds this context lazily and can
+/// only surface `FailedToOpenSocket` for these failures: uSockets leaves `*err`
+/// at `.none` for cert/key, and the detail is on the thread-local error queue.
+///
+/// Skipped when no client identity is supplied so ca-only / serverName-only
+/// requests incur no extra build.
+fn validate_client_tls_identity(global: &JSGlobalObject, config: &SSLConfig) -> JsResult<()> {
+    let has_client_identity = config.cert.is_some()
+        || config.key.is_some()
+        || !config.cert_file_name.is_null()
+        || !config.key_file_name.is_null();
+    if !has_client_identity {
+        return Ok(());
+    }
+    let mut err = bun_uws::create_bun_socket_error_t::none;
+    match config
+        .as_usockets_for_client_verification()
+        .create_ssl_context(&mut err)
+    {
+        Some(ctx) => {
+            // SAFETY: `create_ssl_context` returns a +1 ref; the HTTP thread
+            // builds its own from the interned config, so release this one.
+            unsafe { bun_boringssl_sys::SSL_CTX_free(ctx) };
+            Ok(())
+        }
+        None => Err(global.throw_value(
+            crate::socket::uws_jsc::create_bun_socket_error_to_js(err, global),
+        )),
+    }
+}
+
 /// Build the refcounted `bun_s3_signing::S3Credentials` from the lower-tier
 /// `bun_dotenv::S3Credentials` POD mirror. The dotenv crate (T2) cannot name
 /// `bun_s3_signing` types (would be an upward dep), so the conversion lives at
@@ -777,40 +810,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                                 return Ok(JSValue::ZERO);
                             }
                             Ok(Some(config)) => {
-                                // The HTTP thread builds this SSL_CTX lazily and, on a cert/key
-                                // parse failure, can only surface a generic FailedToOpenSocket
-                                // (the BoringSSL error queue is thread-local and uSockets does
-                                // not set `*err` for bad cert/key). Build it here so a bad
-                                // client identity rejects with the same ERR_OSSL_* code as
-                                // node:tls createSecureContext. Only probe when a client
-                                // identity is present so ca-only / serverName-only configs
-                                // keep hitting the HTTP-thread cache without an extra build.
-                                let has_client_identity = config.cert.is_some()
-                                    || config.key.is_some()
-                                    || !config.cert_file_name.is_null()
-                                    || !config.key_file_name.is_null();
-                                if has_client_identity {
-                                    let mut err = bun_uws::create_bun_socket_error_t::none;
-                                    match config
-                                        .as_usockets_for_client_verification()
-                                        .create_ssl_context(&mut err)
-                                    {
-                                        Some(ctx) => {
-                                            // SAFETY: `create_ssl_context` hands back a +1
-                                            // ref; release it. The HTTP thread builds its
-                                            // own from the interned config.
-                                            unsafe { bun_boringssl_sys::SSL_CTX_free(ctx) };
-                                        }
-                                        None => {
-                                            return Err(global_this.throw_value(
-                                                crate::socket::uws_jsc::create_bun_socket_error_to_js(
-                                                    err,
-                                                    global_this,
-                                                ),
-                                            ));
-                                        }
-                                    }
-                                }
+                                validate_client_tls_identity(global_this, &config)?;
                                 // Intern via `ssl_config::global_registry` for dedup and pointer equality
                                 break 'extract_ssl_config Some(ssl_config_intern_for_http(config));
                             }

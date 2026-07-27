@@ -1644,7 +1644,7 @@ it("readdir with { withFileTypes: true, encoding: 'buffer' } returns Dirent with
   ).toEqual(expectedRecursive);
 });
 
-it.skipIf(isWindows)(
+it.skipIf(!isLinux)(
   "readdir with { withFileTypes: true, encoding: 'buffer' } preserves non-UTF-8 name bytes",
   async () => {
     using dir = tempDir("readdir-buffer-dirent-bytes", {});

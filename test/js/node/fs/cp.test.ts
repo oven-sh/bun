@@ -312,7 +312,7 @@ for (const [name, copy] of impls) {
       expect(e.code).toBe("ERR_FS_CP_FIFO_PIPE");
     });
 
-    test.skipIf(isWindows)("recursive - entries with non-UTF-8 names are copied byte-exact", async () => {
+    test.skipIf(!isLinux)("recursive - entries with non-UTF-8 names are copied byte-exact", async () => {
       using root = tempDir("cp-nonutf8", {});
       const src = join(String(root), "src");
       fs.mkdirSync(src);
@@ -378,7 +378,7 @@ for (const [name, copy] of impls) {
       },
     );
 
-    test.skipIf(isWindows)("recursive - merge into existing dest with non-UTF-8 entry names", async () => {
+    test.skipIf(!isLinux)("recursive - merge into existing dest with non-UTF-8 entry names", async () => {
       using root = tempDir("cp-nonutf8-merge", {});
       const src = join(String(root), "src");
       const dest = join(String(root), "dest");

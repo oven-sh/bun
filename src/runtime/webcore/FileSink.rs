@@ -643,9 +643,6 @@ impl FileSink {
             }
             sys::Result::Ok(fd) => fd,
         };
-        // Record the dup'd/opened fd so `get_fd()` and the process.stdout
-        // force-sync hook (which clears O_NONBLOCK on it) see a real fd.
-        self.fd.set(fd);
 
         #[cfg(windows)]
         {
@@ -660,6 +657,7 @@ impl FileSink {
                         return sys::Result::Err(err);
                     }
                     sys::Result::Ok(()) => {
+                        self.fd.set(fd);
                         self.writer
                             .with_mut(|w| w.update_ref(self.io_evtloop(), false));
                     }
@@ -675,6 +673,9 @@ impl FileSink {
                 return sys::Result::Err(err);
             }
             sys::Result::Ok(()) => {
+                // Record the dup'd/opened fd so `get_fd()` and the process.stdout
+                // force-sync hook (which clears O_NONBLOCK on it) see a real fd.
+                self.fd.set(fd);
                 // Only keep the event loop ref'd while there's a pending write in progress.
                 // If there's no pending write, no need to keep the event loop ref'd.
                 self.writer

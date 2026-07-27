@@ -503,6 +503,27 @@ pub(super) mod lib_uv_backend {
 // normalizeDNSName
 // ──────────────────────────────────────────────────────────────────────────
 
+unsafe extern "C" {
+    fn Bun__hostnameToASCII(
+        input: *const u8,
+        input_len: usize,
+        output: *mut u8,
+        output_cap: usize,
+    ) -> i32;
+}
+
+pub(super) fn hostname_to_ascii<'a>(name: &'a [u8], buf: &'a mut [u8; 1024]) -> &'a [u8] {
+    if strings::first_non_ascii(name).is_none() {
+        return name;
+    }
+    // SAFETY: `buf` is a valid 1024-byte buffer; `name` is a valid slice.
+    let n = unsafe { Bun__hostnameToASCII(name.as_ptr(), name.len(), buf.as_mut_ptr(), buf.len()) };
+    if n <= 0 {
+        return &[];
+    }
+    &buf[..n as usize]
+}
+
 pub(super) fn normalize_dns_name<'a>(name: &'a [u8], backend: &mut GetAddrInfoBackend) -> &'a [u8] {
     if *backend == GetAddrInfoBackend::CAres {
         // https://github.com/c-ares/c-ares/issues/477
@@ -5211,6 +5232,9 @@ impl Resolver {
         options: GetAddrInfoOptions,
         global_this: &JSGlobalObject,
     ) -> JsResult<JSValue> {
+        let mut ascii_buf = [0u8; 1024];
+        let name = hostname_to_ascii(name, &mut ascii_buf);
+
         // The system backends copy the hostname into a fixed `bun.PathBuffer` on the
         // stack before null-terminating it. Reject anything that cannot fit so we never
         // index past that buffer. RFC 1035 caps hostnames at 253 octets and NI_MAXHOST
@@ -5433,11 +5457,15 @@ impl Resolver {
         // SAFETY: `request` just heap-allocated in `init()`; `tail` points at its inline `head`.
         let promise = unsafe { (*(*request).tail).promise.value() };
 
+        // Encode for the wire only so `err.hostname` still echoes the caller's spelling.
+        let mut ascii_buf = [0u8; 1024];
+        let ascii_name = hostname_to_ascii(name, &mut ascii_buf);
+
         // SAFETY: `channel` is the live c-ares channel owned by `self`; `request`
         // is the freshly heap-allocated ResolveInfoRequest. c-ares stores the ctx
         // pointer and calls `T::RAW_CALLBACK` (→ `on_cares_complete`) which
         // consumes the request, so the `&mut` borrow is not held past this call.
-        unsafe { (*channel).resolve(name, &mut *request) };
+        unsafe { (*channel).resolve(ascii_name, &mut *request) };
 
         // SAFETY: bun_vm() returns a live VM pointer for the duration of the call.
         self.request_sent(global_this.bun_vm());

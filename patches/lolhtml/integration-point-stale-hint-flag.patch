@@ -1,3 +1,5 @@
+Upstream: https://github.com/cloudflare/lol-html/pull/329
+
 --- a/src/transform_stream/dispatcher.rs
 +++ b/src/transform_stream/dispatcher.rs
 @@ -376,8 +376,16 @@

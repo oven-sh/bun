@@ -1263,12 +1263,8 @@ describe("tagName, endTag.name, and comment.text setters", () => {
 });
 
 describe("SVG/MathML integration-point elements reach handlers after a sibling integration point", () => {
-  // These elements switch the parser from foreign content back into HTML parsing
-  // for their children. lol-html models this with a RequestLexeme feedback that
-  // forces the tag scanner to hand off to the full lexer without emitting a tag
-  // hint first. A stale "hint already handled" flag in the dispatcher previously
-  // caused the lexer to skip selector matching for the *second* such element in
-  // a row, so it never reached any handler (including `*`).
+  // A stale dispatcher flag made the second consecutive integration-point
+  // sibling skip selector matching: https://github.com/cloudflare/lol-html/pull/329
 
   async function census(doc) {
     const tags = [];

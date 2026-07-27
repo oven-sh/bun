@@ -1,5 +1,5 @@
 import { describe, expect, it, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isDebug, tempDir, tmpdirSync } from "harness";
 import { once } from "node:events";
 import fs from "node:fs";
 import { join, relative, resolve } from "node:path";
@@ -1763,21 +1763,27 @@ test("the SHARE_ENV founding thread's process.env stays live after the swap", as
 // and delivered in order once it does. Bun previously dispatched them into the
 // listener-less globalEventScope and silently dropped them.
 describe("parentPort buffers parent→worker messages while there is no 'message' listener", () => {
+  const nextMessage = async (w: Worker) => {
+    const [msg] = await once(w, "message");
+    return msg;
+  };
+
   // The shape that bites real code: the parent posts right after `new Worker()`
   // and the worker only wires up parentPort after an async init step.
   test.concurrent("listener attached after async init receives everything posted at construction", async () => {
+    // The outer setImmediate defers listener attachment past fireEarlyMessages();
+    // the worker reports once the known-count batch has fully arrived.
     const src = `
       const { parentPort } = require('node:worker_threads');
       const got = [];
-      setTimeout(() => {
-        parentPort.on('message', m => got.push(m));
-        setTimeout(() => parentPort.postMessage(got), 200);
-      }, 100);`;
+      setImmediate(() => parentPort.on('message', m => {
+        got.push(m);
+        if (got.length === 5) parentPort.postMessage(got);
+      }));`;
     const w = new Worker(src, { eval: true });
     try {
       for (let i = 1; i <= 5; i++) w.postMessage("m" + i);
-      const got = await new Promise(r => w.once("message", r));
-      expect(got).toEqual(["m1", "m2", "m3", "m4", "m5"]);
+      expect(await nextMessage(w)).toEqual(["m1", "m2", "m3", "m4", "m5"]);
     } finally {
       await w.terminate();
     }
@@ -1787,16 +1793,15 @@ describe("parentPort buffers parent→worker messages while there is no 'message
     const src = `
       const { parentPort } = require('node:worker_threads');
       const got = [];
-      setTimeout(() => {
-        parentPort.on('message', m => got.push(m));
-        setTimeout(() => parentPort.postMessage(got), 200);
-      }, 100);`;
+      setImmediate(() => parentPort.on('message', m => {
+        got.push(m);
+        if (got.length === 5) parentPort.postMessage(got);
+      }));`;
     const w = new Worker(src, { eval: true });
     try {
       await once(w, "online");
       for (let i = 1; i <= 5; i++) w.postMessage("a" + i);
-      const got = await new Promise(r => w.once("message", r));
-      expect(got).toEqual(["a1", "a2", "a3", "a4", "a5"]);
+      expect(await nextMessage(w)).toEqual(["a1", "a2", "a3", "a4", "a5"]);
     } finally {
       await w.terminate();
     }
@@ -1805,20 +1810,21 @@ describe("parentPort buffers parent→worker messages while there is no 'message
   test.concurrent("once('message') consumes one; the rest re-queue for the next listener", async () => {
     const src = `
       const { parentPort } = require('node:worker_threads');
-      setTimeout(() => {
+      setImmediate(() => {
         let first;
         parentPort.once('message', m => { first = m; });
-        setTimeout(() => {
+        setImmediate(() => {
           const rest = [];
-          parentPort.on('message', m => rest.push(m));
-          setTimeout(() => parentPort.postMessage({ first, rest }), 200);
-        }, 100);
-      }, 100);`;
+          parentPort.on('message', m => {
+            rest.push(m);
+            if (rest.length === 4) parentPort.postMessage({ first, rest });
+          });
+        });
+      });`;
     const w = new Worker(src, { eval: true });
     try {
       for (let i = 1; i <= 5; i++) w.postMessage("m" + i);
-      const result = await new Promise(r => w.once("message", r));
-      expect(result).toEqual({ first: "m1", rest: ["m2", "m3", "m4", "m5"] });
+      expect(await nextMessage(w)).toEqual({ first: "m1", rest: ["m2", "m3", "m4", "m5"] });
     } finally {
       await w.terminate();
     }
@@ -1830,22 +1836,50 @@ describe("parentPort buffers parent→worker messages while there is no 'message
     const src = `
       const { parentPort } = require('node:worker_threads');
       const log = [];
-      setTimeout(() => {
-        parentPort.on('message', m => log.push('got:' + m));
+      setImmediate(() => {
+        parentPort.on('message', m => {
+          log.push('got:' + m);
+          if (log.length === 4) parentPort.postMessage(log);
+        });
         log.push('after-on');
-        setTimeout(() => parentPort.postMessage(log), 200);
-      }, 100);`;
+      });`;
     const w = new Worker(src, { eval: true });
     try {
       for (let i = 1; i <= 3; i++) w.postMessage("m" + i);
-      const log = await new Promise(r => w.once("message", r));
-      expect(log).toEqual(["after-on", "got:m1", "got:m2", "got:m3"]);
+      expect(await nextMessage(w)).toEqual(["after-on", "got:m1", "got:m2", "got:m3"]);
+    } finally {
+      await w.terminate();
+    }
+  });
+
+  // https://github.com/oven-sh/bun/issues/15408
+  // https://github.com/oven-sh/bun/issues/21101
+  // A worker whose entry module never settles (top-level await on a pending
+  // promise, or an infinite await-setImmediate loop) never reaches
+  // fireEarlyMessages(). parentPort must still drain once a listener is
+  // attached, and keep draining for messages the parent posts afterwards.
+  test.concurrent("listener attached before an unsettled top-level await receives messages", async () => {
+    using dir = tempDir("parentport-tla", {
+      "worker.mjs": `
+        import { parentPort } from "node:worker_threads";
+        parentPort.on("message", m => parentPort.postMessage("echo:" + m));
+        await new Promise(() => {});
+      `,
+    });
+    const w = new Worker(join(String(dir), "worker.mjs"));
+    try {
+      w.postMessage("m1");
+      expect(await nextMessage(w)).toBe("echo:m1");
+      w.postMessage("m2");
+      expect(await nextMessage(w)).toBe("echo:m2");
     } finally {
       await w.terminate();
     }
   });
 
   test.concurrent("Web Worker semantics are unchanged: no buffering without a listener", async () => {
+    // Asserting "nothing arrived" has no observable completion signal; a short
+    // bounded window is the assertion.
     const src = `
       const got = [];
       setTimeout(() => {
@@ -1856,7 +1890,10 @@ describe("parentPort buffers parent→worker messages while there is no 'message
     const w = new globalThis.Worker(url);
     try {
       for (let i = 1; i <= 3; i++) w.postMessage("m" + i);
-      const got = await new Promise(r => (w.onmessage = e => r(e.data)));
+      const got = await new Promise((resolve, reject) => {
+        w.onmessage = e => resolve(e.data);
+        w.onerror = e => reject(e.error ?? e.message);
+      });
       expect(got).toEqual([]);
     } finally {
       w.terminate();

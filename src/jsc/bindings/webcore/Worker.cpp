@@ -230,14 +230,23 @@ void Worker::enqueueToWorker(MessageWithMessagePorts&& message)
     {
         Locker locker { m_toWorker.lock };
         m_toWorker.queue.append(WTF::move(message));
-        // If the worker isn't Running yet, just buffer; fireEarlyMessages()
-        // drains the inbox on the worker thread once it is. If Closing/
-        // Closed, also buffer (dropped with the Worker) — postMessage()
+        // Closing/Closed: buffer (dropped with the Worker) — postMessage()
         // already rejects on Closed, so only the close-handler window lands
         // here. If a drain is already scheduled, don't double-schedule.
         // drainScheduled is only set/cleared under the lock so the
         // load/store pair is not a race.
-        if (m_state.load() != State::Running || m_toWorker.drainScheduled.load(std::memory_order_relaxed))
+        auto state = m_state.load();
+        if (state >= State::Closing || m_toWorker.drainScheduled.load(std::memory_order_relaxed))
+            return;
+        // Web Workers: messages dispatch only after script execution (HTML
+        // "run a worker" step 26), so buffer until fireEarlyMessages().
+        // Node workers: parentPort starts draining once it has a listener,
+        // independent of entry-eval completion (an awaited import / top-level
+        // await may keep the entry promise pending indefinitely), so try to
+        // schedule now — drainToWorker bails if no listener is attached yet,
+        // and postTaskTo returns false if the worker context isn't
+        // registered yet.
+        if (state == State::Pending && m_options.kind != WorkerOptions::Kind::Node)
             return;
         m_toWorker.drainScheduled.store(true, std::memory_order_relaxed);
     }

@@ -3072,11 +3072,30 @@ JSC_DEFINE_HOST_FUNCTION(Process_functiongetgroups, (JSGlobalObject * globalObje
         throwSystemError(throwScope, globalObject, "getgroups"_s, errno);
         return {};
     }
-    JSArray* groups = constructEmptyArray(globalObject, nullptr, ngroups);
-    RETURN_IF_EXCEPTION(throwScope, {});
-    Vector<gid_t> groupVector(ngroups);
+    Vector<gid_t> groupVector;
+    groupVector.resize(ngroups);
     getgroups(ngroups, groupVector.begin());
-    for (unsigned i = 0; i < ngroups; i++) {
+
+    // Node's documented behavior: "POSIX leaves it unspecified if the
+    // effective group ID is included, but Node.js ensures it is." A raw
+    // getgroups(2) returns only supplementary groups, and on platforms
+    // where the effective gid is not also in the supplementary list
+    // (observed on OHOS: egid 20020101 not in the list, while `id -G`
+    // reports it) this array disagrees with both Node and `id -G`.
+    const gid_t egid = getegid();
+    bool hasEgid = false;
+    for (unsigned i = 0; i < groupVector.size(); i++) {
+        if (groupVector[i] == egid) {
+            hasEgid = true;
+            break;
+        }
+    }
+    if (!hasEgid)
+        groupVector.append(egid);
+
+    JSArray* groups = constructEmptyArray(globalObject, nullptr, groupVector.size());
+    RETURN_IF_EXCEPTION(throwScope, {});
+    for (unsigned i = 0; i < groupVector.size(); i++) {
         groups->putDirectIndex(globalObject, i, jsNumber(groupVector[i]));
     }
     return JSValue::encode(groups);

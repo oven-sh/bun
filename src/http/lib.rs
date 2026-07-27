@@ -3727,6 +3727,8 @@ impl<'a> HTTPClient<'a> {
                 return;
             }
         };
+        // Headers complete: start the body-idle window fresh (see [`IDLE_TIMEOUT_SECONDS`]).
+        self.set_timeout(&socket);
 
         if (self.state.content_encoding_i as usize) < response.headers.list.len()
             && !self.state.flags.did_set_content_encoding

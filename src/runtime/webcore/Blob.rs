@@ -1508,16 +1508,19 @@ impl BlobExt for Blob {
                 };
 
                 let borrowed = matches!(pathlike, PathOrFileDescriptor::Fd(_));
-                let (writer_fd, owns_fd) =
-                    match dup_borrowed_pipe_for_uv(fd, borrowed, is_stdout_or_stderr) {
-                        bun_sys::Result::Ok(r) => r,
-                        bun_sys::Result::Err(err) => {
-                            return Ok(JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
+                let (writer_fd, owns_fd) = match dup_borrowed_pipe_for_uv(
+                    fd,
+                    borrowed,
+                    is_stdout_or_stderr,
+                ) {
+                    bun_sys::Result::Ok(r) => r,
+                    bun_sys::Result::Err(err) => {
+                        return Ok(JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                                 global_this,
                                 err.to_js(global_this),
                             ));
-                        }
-                    };
+                    }
+                };
 
                 let sink = webcore::FileSink::init(
                     fd,

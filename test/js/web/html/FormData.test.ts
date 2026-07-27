@@ -1,5 +1,5 @@
 import { describe, expect, it, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { join } from "path";
 
 describe("FormData", () => {
@@ -61,6 +61,84 @@ describe("FormData", () => {
     b1 = form.get("foo") as Blob;
     expect(blob.name).toBeUndefined();
     expect(b1.name).toBe("foo.txt");
+  });
+
+  // https://xhr.spec.whatwg.org/#create-an-entry — when `filename` is given,
+  // the entry value is a new File named `filename` regardless of whether the
+  // input is a Blob or already a File.
+  it("append/set honor the filename argument when value is already a File", () => {
+    const origA = new File(["x"], "orig-a.txt", { type: "text/plain" });
+    const origB = new File(["x"], "orig-b.txt");
+    const origC = new File([], "orig-c.txt");
+    const fd = new FormData();
+
+    fd.append("a", origA, "over-a.txt");
+    fd.set("b", origB, "over-b.txt");
+    fd.append("c", origC, "over-c.txt");
+    fd.append("shared1", origA, "shared-1.txt");
+    fd.append("shared2", origA, "shared-2.txt");
+
+    expect({
+      a: (fd.get("a") as File).name,
+      b: (fd.get("b") as File).name,
+      c: (fd.get("c") as File).name,
+      shared1: (fd.get("shared1") as File).name,
+      shared2: (fd.get("shared2") as File).name,
+      getAllA: (fd.getAll("a") as File[]).map(f => f.name),
+      iter: [...fd].map(([k, v]) => [k, (v as File).name]),
+    }).toEqual({
+      a: "over-a.txt",
+      b: "over-b.txt",
+      c: "over-c.txt",
+      shared1: "shared-1.txt",
+      shared2: "shared-2.txt",
+      getAllA: ["over-a.txt"],
+      iter: [
+        ["a", "over-a.txt"],
+        ["b", "over-b.txt"],
+        ["c", "over-c.txt"],
+        ["shared1", "shared-1.txt"],
+        ["shared2", "shared-2.txt"],
+      ],
+    });
+
+    // The caller's original File must not be mutated.
+    expect([origA.name, origB.name, origC.name]).toEqual(["orig-a.txt", "orig-b.txt", "orig-c.txt"]);
+    // Entry value is a distinct File and preserves the type.
+    const a = fd.get("a") as File;
+    expect(a).not.toBe(origA);
+    expect(a instanceof File).toBe(true);
+    expect(a.type).toBe(origA.type);
+  });
+
+  // When no filename argument is given, the entry keeps the File's own
+  // user-visible `.name`, not the store-derived path or stored_name.
+  it("append/set without a filename keep the File's own name", async () => {
+    using dir = tempDir("formdata-file-name", { "payload.bin": "payload" });
+    const onDisk = join(String(dir), "payload.bin");
+
+    const fileBacked = new File([Bun.file(onDisk)], "display.txt");
+    expect(fileBacked.name).toBe("display.txt");
+
+    const renamed = new File(["abc"], "one.txt") as File & { name: string };
+    renamed.name = "two.txt";
+    expect(renamed.name).toBe("two.txt");
+
+    const fd = new FormData();
+    fd.append("file", fileBacked);
+    fd.set("renamed", renamed);
+
+    expect({
+      file: (fd.get("file") as File).name,
+      renamed: (fd.get("renamed") as File).name,
+    }).toEqual({
+      file: "display.txt",
+      renamed: "two.txt",
+    });
+
+    const body = await new Response(fd).text();
+    expect(body).toContain('Content-Disposition: form-data; name="file"; filename="display.txt"\r\n');
+    expect(body).toContain('Content-Disposition: form-data; name="renamed"; filename="two.txt"\r\n');
   });
 
   const multipartFormDataFixturesRawBody = [

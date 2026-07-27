@@ -1193,27 +1193,6 @@ where
 {
     jsc::mark_binding();
 
-    let wrapper = Z::init(value);
-    // SAFETY: Z::init returns a fresh heap allocation.
-    unsafe { (*wrapper).ref_() };
-
-    // When using RefCount, we don't check the count value directly as it's an
-    // opaque type now. The init values are handled by Box::new with Cell::new(1).
-
-    // SAFETY: wrapper is a live heap allocation (ref'd above) for the entire
-    // scope of this guard; deref runs at most once on this path.
-    let _guard = scopeguard::guard(wrapper, |w| unsafe {
-        if Z::HAS_INVALIDATE {
-            // Some wrapper types (Element) hand out sub-objects that borrow
-            // from the underlying lol-html value and must be detached along
-            // with the wrapper itself.
-            (*w).invalidate();
-        } else {
-            clear_field(&*w);
-        }
-        Z::deref(w);
-    });
-
     // SAFETY: `this` is the Box<ElementHandler>/Box<DocumentHandler> userdata
     // pointer we registered with lol-html; it lives in LOLHTMLContext for the
     // duration of the rewriter. `&` (not `&mut`) — `cb.call()` below re-enters
@@ -1244,10 +1223,32 @@ where
     // A prior handler's `wait_for_promise` may have been interrupted by a
     // worker `terminate()`, leaving the TerminationException pending. Stop the
     // rewriter instead of calling into JS (executeCallImpl asserts
-    // `!exception()` on assert builds).
+    // `!exception()` on assert builds). Checked before allocating `wrapper` so
+    // no +1 is stranded on this path.
     if scope.has_exception() {
         return true;
     }
+
+    let wrapper = Z::init(value);
+    // SAFETY: Z::init returns a fresh heap allocation.
+    unsafe { (*wrapper).ref_() };
+
+    // When using RefCount, we don't check the count value directly as it's an
+    // opaque type now. The init values are handled by Box::new with Cell::new(1).
+
+    // SAFETY: wrapper is a live heap allocation (ref'd above) for the entire
+    // scope of this guard; deref runs at most once on this path.
+    let _guard = scopeguard::guard(wrapper, |w| unsafe {
+        if Z::HAS_INVALIDATE {
+            // Some wrapper types (Element) hand out sub-objects that borrow
+            // from the underlying lol-html value and must be detached along
+            // with the wrapper itself.
+            (*w).invalidate();
+        } else {
+            clear_field(&*w);
+        }
+        Z::deref(w);
+    });
 
     let cb = get_callback(this).expect("callback must be set if handler registered");
     let result = match cb.call(

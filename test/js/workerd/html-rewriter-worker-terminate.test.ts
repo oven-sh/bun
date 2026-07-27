@@ -28,8 +28,9 @@ test("terminating a worker parked in an async HTMLRewriter element handler does 
     `,
     "main.mjs": `
       const w = new Worker(new URL("./worker.mjs", import.meta.url).href);
-      const { promise: inHandler, resolve: gotHandler } = Promise.withResolvers();
+      const { promise: inHandler, resolve: gotHandler, reject: rejectHandler } = Promise.withResolvers();
       const { promise: closed, resolve: gotClose } = Promise.withResolvers();
+      w.addEventListener("error", e => rejectHandler(e.message ?? e), { once: true });
       w.addEventListener("close", () => gotClose(), { once: true });
       w.onmessage = ev => {
         if (ev.data === "in-handler") gotHandler();

@@ -2053,25 +2053,51 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 } else if let Data::EDot(dot) = &e_.target.data {
                     if dot.name == b"forEach" && args.len() == 1 {
                         // Babel: `Object.keys(require("x") | _x).forEach(k => defineProperty(exports, k, ...))`
-                        if let Data::ECall(inner) = &dot.target.data {
-                            if matches!(
-                                &inner.target.data,
-                                Data::EDot(d) if d.name == b"keys" && is_unbound_object(&d.target)
-                            ) {
-                                let inner_args = inner.args.slice();
-                                if inner_args.len() == 1 {
-                                    let spec = p.require_specifier(&inner_args[0]).or_else(|| {
-                                        if let Data::EIdentifier(id) = &inner_args[0].data {
-                                            p.commonjs_require_bindings
-                                                .iter()
-                                                .find(|(r, _)| r.eql(id.ref_))
-                                                .map(|(_, s)| s.clone())
-                                        } else {
-                                            None
+                        let body_stmts: &[Stmt] = match &args[0].data {
+                            Data::EArrow(a) => a.body.stmts.slice(),
+                            Data::EFunction(f) => f.func.body.stmts.slice(),
+                            _ => &[],
+                        };
+                        let callback_writes_exports = body_stmts.iter().any(|s| {
+                            let js_ast::StmtData::SExpr(se) = &s.data else {
+                                return false;
+                            };
+                            match &se.value.data {
+                                Data::ECall(c) => {
+                                    matches!(
+                                        &c.target.data,
+                                        Data::EDot(d) if d.name == b"defineProperty" && is_unbound_object(&d.target)
+                                    ) && c.args.slice().first().is_some_and(is_exports_expr)
+                                }
+                                Data::EBinary(b) => {
+                                    b.op == js_ast::OpCode::BinAssign
+                                        && matches!(&b.left.data, Data::EIndex(i) if is_exports_expr(&i.target))
+                                }
+                                _ => false,
+                            }
+                        });
+                        if callback_writes_exports {
+                            if let Data::ECall(inner) = &dot.target.data {
+                                if matches!(
+                                    &inner.target.data,
+                                    Data::EDot(d) if d.name == b"keys" && is_unbound_object(&d.target)
+                                ) {
+                                    let inner_args = inner.args.slice();
+                                    if inner_args.len() == 1 {
+                                        let spec =
+                                            p.require_specifier(&inner_args[0]).or_else(|| {
+                                                if let Data::EIdentifier(id) = &inner_args[0].data {
+                                                    p.commonjs_require_bindings
+                                                        .iter()
+                                                        .find(|(r, _)| r.eql(id.ref_))
+                                                        .map(|(_, s)| s.clone())
+                                                } else {
+                                                    None
+                                                }
+                                            });
+                                        if let Some(spec) = spec {
+                                            p.record_runtime_commonjs_reexport(&spec);
                                         }
-                                    });
-                                    if let Some(spec) = spec {
-                                        p.record_runtime_commonjs_reexport(&spec);
                                     }
                                 }
                             }

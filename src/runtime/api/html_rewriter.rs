@@ -889,14 +889,17 @@ impl BufferOutputSink {
         if let Err(e) = unsafe { (*rewriter).write(bytes) } {
             // Poisoned: never call `end()` after a failed `write()`. The
             // field stays non-null so `Drop` frees the rewriter.
+            // A TerminationException left pending by `handler_callback` means
+            // the worker is tearing down; skip the JS error path on both arms.
+            if global.has_exception() {
+                return None;
+            }
             if is_async {
-                if !global.has_exception() {
-                    // SAFETY: response kept alive by response_value Strong.
-                    let _ = unsafe { (*response).get_body_value() }.to_error_instance(
-                        webcore::body::ValueError::Message(lol_err_string(&e)),
-                        &global,
-                    );
-                }
+                // SAFETY: response kept alive by response_value Strong.
+                let _ = unsafe { (*response).get_body_value() }.to_error_instance(
+                    webcore::body::ValueError::Message(lol_err_string(&e)),
+                    &global,
+                );
                 // TODO: properly propagate exception upwards
                 return None;
             } else {
@@ -910,14 +913,15 @@ impl BufferOutputSink {
         unsafe { (*sink).rewriter = core::ptr::null_mut() };
         // SAFETY: `rewriter` was heap-allocated by init(); sole owner now.
         if let Err(e) = unsafe { bun_core::heap::take(rewriter) }.end() {
+            if global.has_exception() {
+                return None;
+            }
             if is_async {
-                if !global.has_exception() {
-                    // SAFETY: response kept alive by response_value Strong.
-                    let _ = unsafe { (*response).get_body_value() }.to_error_instance(
-                        webcore::body::ValueError::Message(lol_err_string(&e)),
-                        &global,
-                    );
-                }
+                // SAFETY: response kept alive by response_value Strong.
+                let _ = unsafe { (*response).get_body_value() }.to_error_instance(
+                    webcore::body::ValueError::Message(lol_err_string(&e)),
+                    &global,
+                );
                 // TODO: properly propagate exception upwards
                 return None;
             } else {
@@ -1432,11 +1436,6 @@ pub struct ContentOptions {
 fn create_lolhtml_error(global: &JSGlobalObject, message: &dyn core::fmt::Display) -> JSValue {
     // If there was already a pending exception, we want to use that instead.
     if let Some(err) = global.try_take_exception() {
-        // Left pending by `tryClearException()`; propagate instead of surfacing
-        // as the transform's rejection.
-        if err.is_termination_exception() {
-            return JSValue::UNDEFINED;
-        }
         // it's a synchronous error
         return err;
     }

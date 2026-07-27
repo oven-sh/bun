@@ -5417,12 +5417,9 @@ pub fn write_file(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResu
 
 const WRITE_PERMISSIONS: bun_sys::Mode = 0o664;
 
-/// `Source::open` adopts a pipe/tty fd into a `uv_pipe_t`/`uv_tty_t`, which
-/// owns (and will close) the underlying HANDLE. For a caller-supplied fd we
-/// hand the writer a dup so `owns_fd` stays true: `end()` then runs `close()`,
-/// `on_close` fires, and the keep-alive ref taken on the first pending write
-/// is released. stdout/stderr are opened via `start_sync` (no uv handle), and
-/// file handles do not take ownership, so neither needs a dup.
+/// `uv_pipe_open`/`uv_tty_init` adopt (and later close) the HANDLE, so a
+/// borrowed pipe/tty fd is dup'd and the writer owns the dup. stdout/stderr
+/// use `start_sync` and file handles are not adopted, so neither is dup'd.
 #[cfg(windows)]
 fn dup_borrowed_pipe_for_uv(
     fd: Fd,

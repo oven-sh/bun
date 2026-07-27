@@ -1636,9 +1636,7 @@ pub(crate) fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> Js
 
             if let Some(handles) = crate::jsc_hooks::isolation_handles() {
                 bun_core::handle_oom(handles.put(
-                    crate::jsc_hooks::IsolationHandle::Server(AnyServer::from(
-                        server.cast_const(),
-                    )),
+                    crate::jsc_hooks::IsolationHandle::Server(AnyServer::from(server.cast_const())),
                     (),
                 ));
             }

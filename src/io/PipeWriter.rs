@@ -2464,7 +2464,14 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
         self.is_done = true;
 
         if !self.has_pending_data() {
-            if !self.owns_fd {
+            // `close()` must run so `Parent::on_close` fires and the FileSink
+            // keep-alive ref is released. For File/SyncFile `close()` already
+            // honours `!owns_fd` (it takes the `detach_borrowed_fd()` arm and
+            // leaves the fd open). For Pipe/Tty the callers dup a borrowed fd
+            // before `start()`, so `owns_fd` is true there and skipping only
+            // avoids `uv_close` on a handle that adopted a fd we never owned.
+            if !self.owns_fd && !matches!(self.source, Some(Source::File(_) | Source::SyncFile(_)))
+            {
                 return;
             }
             self.close();

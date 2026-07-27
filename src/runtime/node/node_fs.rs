@@ -3843,7 +3843,9 @@ pub mod args {
                         }
                         // BigInt is a Bun extension kept for this overload.
                         let position = i52::offset_from_js(current).or_else(|| {
-                            current.is_big_int().then(|| (current.to_int64() << 12) >> 12)
+                            current
+                                .is_big_int()
+                                .then(|| (current.to_int64() << 12) >> 12)
                         });
                         if let Some(position @ 0..) = position {
                             args.position = Some(position);

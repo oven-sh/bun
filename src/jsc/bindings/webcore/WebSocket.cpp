@@ -1938,6 +1938,10 @@ extern "C" void WebSocket__didAbruptClose(WebCore::WebSocket* webSocket, Bun::We
 {
     webSocket->didFailWithErrorCode(errorCode);
 }
+extern "C" void WebSocket__didStartClosingHandshake(WebCore::WebSocket* webSocket)
+{
+    webSocket->didStartClosingHandshake();
+}
 extern "C" void WebSocket__didClose(WebCore::WebSocket* webSocket, uint16_t errorCode, BunString* reason)
 {
     WTF::String wtf_reason = reason->transferToWTFString();

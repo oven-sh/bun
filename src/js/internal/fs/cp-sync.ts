@@ -148,8 +148,7 @@ function areIdentical(srcStat, destStat) {
 }
 
 let sepBuf;
-// Stay a string while every path component is valid UTF-8 (so options.filter
-// keeps seeing strings); fall through to Buffer the moment a name is not.
+// Stay string while the path is UTF-8-clean (for options.filter); switch to Buffer once any name is not.
 function joinEntry(dir, name) {
   if (typeof dir === "string") {
     if (isUtf8(name)) return join(dir, name.toString());
@@ -163,8 +162,7 @@ function pathAsString(p) {
   return typeof p === "string" ? p : Buffer.prototype.toString.$call(p, "latin1");
 }
 
-// path.resolve() would mix in process.cwd() as a decoded string, so once
-// either side is raw bytes just concatenate; symlink(2) resolves `..` itself.
+// Byte-concat when not UTF-8-clean: path.resolve() would splice in a decoded process.cwd().
 function resolveLinkTarget(src, target) {
   if (typeof src === "string" && isUtf8(target)) {
     return resolve(dirname(src), target.toString());

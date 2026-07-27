@@ -9682,17 +9682,22 @@ declare module "bun" {
     expires?: Date;
 
     /**
-     * Whether the cookie has the `Secure` attribute
+     * Whether the cookie has the `Secure` attribute. Setting this to `false`
+     * throws a `TypeError` if `sameSite` is `"none"` or `partitioned` is `true`.
      */
     secure: boolean;
 
     /**
-     * The cookie's `SameSite` attribute. Defaults to `lax`.
+     * The cookie's `SameSite` attribute. Defaults to `"lax"`. Setting this to
+     * `"none"` requires `secure` to be `true`; browsers reject a `SameSite=None`
+     * cookie that is not `Secure`.
      */
     sameSite: CookieSameSite;
 
     /**
-     * Whether the cookie has the `Partitioned` attribute
+     * Whether the cookie has the `Partitioned` attribute. Setting this to `true`
+     * requires `secure` to be `true`; browsers reject a `Partitioned` cookie
+     * that is not `Secure`.
      */
     partitioned: boolean;
 

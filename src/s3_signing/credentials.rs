@@ -297,23 +297,19 @@ impl S3Credentials {
 
         let search_params = sign_options.search_params;
 
-        let mut content_disposition = sign_options.content_disposition;
-        if matches!(content_disposition, Some(s) if s.is_empty()) {
-            content_disposition = None;
-        }
+        let content_disposition_canon = sign_options.content_disposition.map(sigv4_trimall);
+        let content_disposition = content_disposition_canon
+            .as_deref()
+            .filter(|s| !s.is_empty());
         let mut content_type = sign_options.content_type;
         if matches!(content_type, Some(s) if s.is_empty()) {
             content_type = None;
         }
-        let mut content_encoding = sign_options.content_encoding;
-        if matches!(content_encoding, Some(s) if s.is_empty()) {
-            content_encoding = None;
-        }
-        let session_token: Option<&[u8]> = if self.session_token.is_empty() {
-            None
-        } else {
-            Some(&self.session_token)
-        };
+        let content_encoding_canon = sign_options.content_encoding.map(sigv4_trimall);
+        let content_encoding = content_encoding_canon.as_deref().filter(|s| !s.is_empty());
+        let session_token_canon = (!self.session_token.is_empty())
+            .then(|| sigv4_trimall(&self.session_token));
+        let session_token = session_token_canon.as_deref().filter(|s| !s.is_empty());
 
         let acl: Option<&'static [u8]> = sign_options.acl.map(|a| a.to_string());
         let storage_class: Option<&'static [u8]> =
@@ -1444,6 +1440,57 @@ impl CanonicalRequest {
 /// which would allow HTTP header injection if used in a header value.
 fn contains_newline_or_cr(value: &[u8]) -> bool {
     strings::index_of_any(value, b"\r\n").is_some()
+}
+
+/// AWS SigV4 CanonicalHeaders "Trimall": strip leading and trailing ASCII
+/// whitespace and collapse interior runs of whitespace to a single space.
+/// Header values on the wire are parsed with outer OWS stripped, and the
+/// server re-derives the canonical request with this transform, so the signed
+/// bytes must match. Borrows the input when no rewrite is needed.
+fn sigv4_trimall(value: &[u8]) -> std::borrow::Cow<'_, [u8]> {
+    #[inline]
+    fn is_ws(b: u8) -> bool {
+        b == b' ' || b == b'\t'
+    }
+    let mut start = 0usize;
+    let mut end = value.len();
+    while start < end && is_ws(value[start]) {
+        start += 1;
+    }
+    while end > start && is_ws(value[end - 1]) {
+        end -= 1;
+    }
+    let trimmed = &value[start..end];
+    let mut prev_ws = false;
+    let mut needs_rewrite = false;
+    for &b in trimmed {
+        if is_ws(b) {
+            if prev_ws || b != b' ' {
+                needs_rewrite = true;
+                break;
+            }
+            prev_ws = true;
+        } else {
+            prev_ws = false;
+        }
+    }
+    if !needs_rewrite {
+        return std::borrow::Cow::Borrowed(trimmed);
+    }
+    let mut out = Vec::with_capacity(trimmed.len());
+    let mut prev_ws = false;
+    for &b in trimmed {
+        if is_ws(b) {
+            if !prev_ws {
+                out.push(b' ');
+            }
+            prev_ws = true;
+        } else {
+            out.push(b);
+            prev_ws = false;
+        }
+    }
+    std::borrow::Cow::Owned(out)
 }
 
 fn is_valid_host_component(value: &[u8]) -> bool {

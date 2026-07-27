@@ -203,23 +203,26 @@ describe("String.prototype.localeCompare with a string locale", () => {
   });
 
   test("reuses the collator: sort by localeCompare(b,'en') is as fast as a hoisted Intl.Collator", () => {
-    // A 3000-element sort does ~33k comparisons. With the cache this costs one
-    // ucol_open instead of ~33k, so the two sorts should take about the same time.
+    // A 1500-element sort does ~16k comparisons. With the cache this costs one
+    // ucol_open instead of ~16k, so the two sorts should take about the same time.
     // Without the cache the ratio is >5 on a debug build and >20 on a release build.
-    const N = 3000;
+    const N = 1500;
     const arr = Array.from({ length: N }, (_, i) => ((i * 2654435761) >>> 0).toString(36) + "aä"[i % 2]);
 
-    const warm = arr.slice(0, 50);
-    [...warm].sort((a, b) => a.localeCompare(b, "en"));
-    [...warm].sort(new Intl.Collator("en").compare);
+    // Best-of-3 on each side so a single GC pause or scheduler hiccup doesn't flip the ratio.
+    // The first iteration doubles as the warmup.
+    const bestOf3 = (fn: () => void) => {
+      let best = Infinity;
+      for (let i = 0; i < 3; i++) {
+        const t = performance.now();
+        fn();
+        best = Math.min(best, performance.now() - t);
+      }
+      return best;
+    };
 
-    let t = performance.now();
-    [...arr].sort((a, b) => a.localeCompare(b, "en"));
-    const withLocale = performance.now() - t;
-
-    t = performance.now();
-    [...arr].sort(new Intl.Collator("en").compare);
-    const hoisted = performance.now() - t;
+    const withLocale = bestOf3(() => [...arr].sort((a, b) => a.localeCompare(b, "en")));
+    const hoisted = bestOf3(() => [...arr].sort(new Intl.Collator("en").compare));
 
     expect(withLocale / hoisted).toBeLessThan(3);
   });

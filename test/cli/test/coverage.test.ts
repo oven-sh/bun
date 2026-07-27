@@ -589,3 +589,47 @@ Ran 1 test across 1 file."
 `);
   expect(result.exitCode).toBe(0);
 });
+
+test(
+  "coverage report generation is not quadratic in function count",
+  () => {
+    // JSC returns function ranges in hash-map order. The sourcemap cursor used
+    // during report generation only reseeks on backward jumps, so when blocks
+    // were processed in hash order, large forward jumps walked every mapping in
+    // between (N random jumps over N mappings is O(N^2)). A module with a few
+    // thousand one-line functions used to make `--coverage` take many times
+    // longer than running the test without it.
+    const N = 4000;
+    let big = "";
+    for (let i = 0; i < N; i++) {
+      big += `export function fn${i}(a){ if(a>${i}) return a*${i}; else return -a; }\n`;
+    }
+    const dir = tempDirWithFiles("cov-many-fns", {
+      "big.js": big,
+      "big.test.js": `import { fn0 } from "./big.js";\ntest("c", () => { expect(fn0(0)).toBeLessThan(1); });\n`,
+    });
+
+    const run = (withCoverage: boolean) => {
+      const cmd = withCoverage
+        ? [bunExe(), "test", "--coverage", "./big.test.js"]
+        : [bunExe(), "test", "./big.test.js"];
+      const t0 = performance.now();
+      const result = Bun.spawnSync(cmd, { cwd: dir, env: bunEnv, stdio: ["ignore", "ignore", "pipe"] });
+      const elapsed = performance.now() - t0;
+      expect(result.exitCode).toBe(0);
+      return elapsed;
+    };
+
+    const plain = run(false);
+    const covered = run(true);
+
+    // Report generation is a single linear pass over the module's mappings, so
+    // the covered run should cost at most a small multiple of the plain run.
+    // Before the fix the ratio here was >6x in debug and ~20x in release.
+    // 200ms floor guards against scheduler jitter dominating the release-build
+    // plain run, which completes in a few tens of ms.
+    const budget = Math.max(plain, 200) * 3;
+    expect({ plain, covered, budget }).toSatisfy(t => t.covered < t.budget);
+  },
+  30_000,
+);

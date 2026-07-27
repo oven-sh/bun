@@ -197,6 +197,13 @@ pub struct Entry {
     // Necessary because the hash table uses it as a key
     pub base_lowercase_: strings::StringOrTinyString,
 
+    // Singly-linked chain of entries in the same directory whose lowercased
+    // basenames collide (e.g. `mod.mjs` and `Mod.mjs` on a case-sensitive
+    // filesystem). `DirEntry::data` holds the chain head; `get()` walks the
+    // chain for an exact-case match before falling back to the head. Null when
+    // no collision exists.
+    pub next_case_variant: *mut Entry,
+
     pub mutex: Mutex,
     pub need_stat: core::cell::Cell<bool>,
 
@@ -339,6 +346,7 @@ impl Clone for Entry {
             dir: self.dir,
             base_: strings::StringOrTinyString::init(self.base_.slice()),
             base_lowercase_: strings::StringOrTinyString::init(self.base_lowercase_.slice()),
+            next_case_variant: self.next_case_variant,
             mutex: Mutex::default(),
             need_stat: core::cell::Cell::new(self.need_stat.get()),
             abs_path: self.abs_path,
@@ -353,6 +361,7 @@ impl Default for Entry {
             dir: b"",
             base_: strings::StringOrTinyString::init(b""),
             base_lowercase_: strings::StringOrTinyString::init(b""),
+            next_case_variant: core::ptr::null_mut(),
             mutex: Mutex::default(),
             need_stat: core::cell::Cell::new(true),
             abs_path: Interned::EMPTY,
@@ -410,7 +419,11 @@ impl<'a> EntryLookup<'a> {
 pub mod dir_entry {
     use super::{Entry, EntryStoreBacking};
 
-    /// Lowercased-basename → entry-pointer map backing `DirEntry::data`.
+    /// Lowercased-basename → entry-pointer map backing `DirEntry::data`. The
+    /// value is the head of a singly-linked chain through
+    /// `Entry::next_case_variant`; a chain longer than one element only occurs
+    /// on case-sensitive filesystems where multiple files in one directory
+    /// differ only in ASCII case.
     pub(crate) type EntryMap = bun_collections::StringHashMap<*mut Entry>;
 
     /// Process-wide append-only store that owns all `Entry` allocations.
@@ -561,7 +574,14 @@ impl DirEntry {
                 // `data` keys are the lowercased basenames, so an exact match on
                 // `name_lc` is the case-insensitive match — and reuses
                 // `name_hash` instead of re-hashing.
-                if let Some(&existing_ptr) = map.get_hashed(name_hash, name_lc) {
+                if let Some(&existing_ptr) = map.get_hashed(name_hash, name_lc)
+                    // Case-colliding siblings share one map slot (the chain head).
+                    // Only recycle the previous-generation entry when its on-disk
+                    // basename matches exactly; otherwise fall through and create
+                    // a fresh `Entry` so `mod.mjs` and `Mod.mjs` stay distinct.
+                    // SAFETY: EntryStore-owned pointer, valid for lifetime of store.
+                    && strings::eql_long(unsafe { &*existing_ptr }.base(), name_slice, true)
+                {
                     // SAFETY: EntryStore-owned pointer, valid for lifetime of store
                     let existing = unsafe { &mut *existing_ptr };
                     // `MutexGuard` stores a `BackRef<Mutex>` (lifetime-erased), so
@@ -624,6 +644,7 @@ impl DirEntry {
                     strings::StringOrTinyString::init_append_if_needed(name_lc, filename_store)?
                 };
                 addr_of_mut!((*p).base_lowercase_).write(base_lowercase);
+                addr_of_mut!((*p).next_case_variant).write(core::ptr::null_mut());
                 addr_of_mut!((*p).dir).write(self.dir);
                 addr_of_mut!((*p).mutex).write(Mutex::new());
                 // Call "stat" lazily for performance. The "@material-ui/icons" package
@@ -659,6 +680,21 @@ impl DirEntry {
         // `(*stored).base_lowercase()` equals `name_lc` byte-for-byte (a fresh
         // entry interned `name_lc`; a recycled one matched it exactly above), so
         // `name_hash` is its hash too — insert without re-hashing.
+        //
+        // On a case-sensitive filesystem a directory can hold several files
+        // whose names differ only in ASCII case. They all lowercase to the same
+        // key, so chain them: the new entry becomes the head and links to the
+        // previous head via `next_case_variant`. `get()` walks the chain and
+        // prefers an exact-case match.
+        let prev_head = self
+            .data
+            .get_hashed(name_hash, key)
+            .copied()
+            .filter(|&p| p != stored)
+            .unwrap_or(core::ptr::null_mut());
+        // SAFETY: `stored` is a live EntryStore slot exclusively owned by this
+        // scan; the chain link is set once here before any reader observes it.
+        unsafe { (*stored).next_case_variant = prev_head };
         self.data.put_static_key_hashed(name_hash, key, stored)?;
 
         if !I::IS_VOID {
@@ -695,29 +731,50 @@ impl DirEntry {
         let mut scratch_lookup_buffer = PathBuffer::uninit();
 
         let query = strings::copy_lowercase_if_needed(query_, &mut scratch_lookup_buffer[..]);
-        let &result_ptr = self.data.get(query)?;
-        // SAFETY: EntryStore-owned pointer, valid for lifetime of store; read-only
-        // borrow here only to compare basename — never overlaps a writer.
-        let basename = unsafe { &*result_ptr }.base();
-        if !strings::eql_long(basename, query_, true) {
-            return Some(EntryLookup {
-                entry: result_ptr,
-                diff_case: Some(DifferentCase {
-                    dir: self.dir,
-                    // intern a copy of the caller's (possibly
-                    // threadlocal-buffer-backed) slice so the `'static` in
-                    // `DifferentCase<'static>` is real, not discipline-based.
-                    query: bun_core::handle_oom(FilenameStore::instance().append(query_)),
-                    // SAFETY: `basename` borrows EntryStore (process-lifetime).
-                    actual: unsafe { &*core::ptr::from_ref::<[u8]>(basename) },
-                }),
-                _marker: core::marker::PhantomData,
-            });
+        let &head = self.data.get(query)?;
+
+        // Walk the case-variant chain for an exact-case match. The chain is a
+        // single entry (head.next == null) in the overwhelmingly common case;
+        // it only has siblings when the directory holds multiple files whose
+        // names differ only in ASCII case, which can only happen on a
+        // case-sensitive filesystem.
+        let mut cur = head;
+        let mut has_siblings = false;
+        while !cur.is_null() {
+            // SAFETY: EntryStore-owned pointer, valid for lifetime of store; read-only
+            // borrow here only to compare basename — never overlaps a writer.
+            let entry = unsafe { &*cur };
+            if strings::eql_long(entry.base(), query_, true) {
+                return Some(EntryLookup {
+                    entry: cur,
+                    diff_case: None,
+                    _marker: core::marker::PhantomData,
+                });
+            }
+            has_siblings |= !entry.next_case_variant.is_null();
+            cur = entry.next_case_variant;
         }
 
+        // No exact match. If the chain has more than one entry the filesystem
+        // is provably case-sensitive (two distinct files share one lowercased
+        // name), so the queried spelling does not exist on disk.
+        if has_siblings {
+            return None;
+        }
+
+        // SAFETY: `head` came from `self.data.get()` above and is non-null.
+        let basename = unsafe { &*head }.base();
         Some(EntryLookup {
-            entry: result_ptr,
-            diff_case: None,
+            entry: head,
+            diff_case: Some(DifferentCase {
+                dir: self.dir,
+                // intern a copy of the caller's (possibly
+                // threadlocal-buffer-backed) slice so the `'static` in
+                // `DifferentCase<'static>` is real, not discipline-based.
+                query: bun_core::handle_oom(FilenameStore::instance().append(query_)),
+                // SAFETY: `basename` borrows EntryStore (process-lifetime).
+                actual: unsafe { &*core::ptr::from_ref::<[u8]>(basename) },
+            }),
             _marker: core::marker::PhantomData,
         })
     }
@@ -725,26 +782,38 @@ impl DirEntry {
     /// Looks up a cached entry by name. Takes a `&'static [u8]` that is
     /// already lowercase, so no per-call lowercasing buffer is needed.
     pub fn get_comptime_query<'a>(&'a self, query_lower: &'static [u8]) -> Option<EntryLookup<'a>> {
-        let &result_ptr = self.data.get(query_lower)?;
-        // SAFETY: EntryStore-owned pointer; read-only basename compare.
-        let basename = unsafe { &*result_ptr }.base();
+        let &head = self.data.get(query_lower)?;
 
-        if basename != query_lower {
-            return Some(EntryLookup {
-                entry: result_ptr,
-                diff_case: Some(DifferentCase {
-                    dir: self.dir,
-                    query: query_lower,
-                    // SAFETY: `basename` borrows EntryStore (process-lifetime).
-                    actual: unsafe { &*core::ptr::from_ref::<[u8]>(basename) },
-                }),
-                _marker: core::marker::PhantomData,
-            });
+        let mut cur = head;
+        let mut has_siblings = false;
+        while !cur.is_null() {
+            // SAFETY: EntryStore-owned pointer; read-only basename compare.
+            let entry = unsafe { &*cur };
+            if entry.base() == query_lower {
+                return Some(EntryLookup {
+                    entry: cur,
+                    diff_case: None,
+                    _marker: core::marker::PhantomData,
+                });
+            }
+            has_siblings |= !entry.next_case_variant.is_null();
+            cur = entry.next_case_variant;
         }
 
+        if has_siblings {
+            return None;
+        }
+
+        // SAFETY: `head` came from `self.data.get()` above and is non-null.
+        let basename = unsafe { &*head }.base();
         Some(EntryLookup {
-            entry: result_ptr,
-            diff_case: None,
+            entry: head,
+            diff_case: Some(DifferentCase {
+                dir: self.dir,
+                query: query_lower,
+                // SAFETY: `basename` borrows EntryStore (process-lifetime).
+                actual: unsafe { &*core::ptr::from_ref::<[u8]>(basename) },
+            }),
             _marker: core::marker::PhantomData,
         })
     }

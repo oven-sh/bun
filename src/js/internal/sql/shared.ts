@@ -1089,10 +1089,8 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
     ) {
       const reset = this.resetQuery();
       if (reset !== null) {
-        // Roll the leaked transaction back before the slot is handed to an
-        // unrelated query; queryCount stays at 1 so the pool does not hand it
-        // out and graceful close() waits for the reset to finish.
         connection.flags |= PooledConnectionFlags.resetting;
+        // queryCount stays at 1 so the slot is not handed out and graceful close() waits for the reset
         connection.queryCount++;
         this.totalQueries++;
         this.#resetConnection(connection, reset);

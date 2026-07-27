@@ -1524,8 +1524,7 @@ pub mod command {
     #[cold]
     #[inline(never)]
     fn exec_run_as_node(log: &mut bun_ast::Log) -> CmdResult {
-        // `node -v` / `node --version` → `process.version`. RUN_TABLE has no
-        // entry for these; stop at the script so `node app.js --version` is untouched.
+        // Handle `node -v`/`--version` before init(): RUN_TABLE has no entry for them.
         for a in bun::argv().iter().skip(1) {
             match a {
                 b"-v" | b"--version" => print_node_version_and_exit(),

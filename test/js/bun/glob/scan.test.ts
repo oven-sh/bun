@@ -619,6 +619,62 @@ describe("literal fast path", async () => {
   });
 });
 
+describe("lazy iteration", () => {
+  // scanSync()/scan() drive the directory walk incrementally rather than
+  // materialising the whole result set before the first value is yielded.
+  // A file created inside a subdirectory *after* the iterator has produced
+  // its first match (but before the walker has descended there) is observed
+  // by a lazy walk and missed by an eager one, giving a deterministic
+  // fail-before signal that does not depend on timing.
+
+  test("scanSync: subdirectories are read when reached, not upfront", () => {
+    using dir = tempDir("glob-lazy-sync", {
+      "first.txt": "",
+      "sub/original.txt": "",
+    });
+    const it = new Glob("**/*.txt").scanSync({ cwd: String(dir) });
+    // Root-level files are yielded before the walker descends into `sub`,
+    // regardless of readdir order (subdirectories are queued and processed
+    // only once the current directory is exhausted).
+    expect(it.next()).toEqual({ value: "first.txt", done: false });
+    fs.writeFileSync(path.join(String(dir), "sub", "added.txt"), "");
+    const rest = [...it].sort();
+    expect(rest).toEqual([`sub${path.sep}added.txt`, `sub${path.sep}original.txt`]);
+  });
+
+  test("scan: subdirectories are read when reached, not upfront", async () => {
+    // The async walker pulls matches off the thread pool in bounded chunks.
+    // Put enough root-level files in front of `sub/` that the first chunk
+    // cannot reach it.
+    const files: Record<string, string> = { "sub/original.txt": "" };
+    for (let i = 0; i < 200; i++) files[`f${i}.txt`] = "";
+    using dir = tempDir("glob-lazy-async", files);
+    const it = new Glob("**/*.txt").scan({ cwd: String(dir) })[Symbol.asyncIterator]();
+    const first = await it.next();
+    expect(first.done).toBeFalse();
+    expect(first.value).not.toStartWith("sub" + path.sep);
+    fs.writeFileSync(path.join(String(dir), "sub", "added.txt"), "");
+    const rest: string[] = [];
+    for (let r = await it.next(); !r.done; r = await it.next()) rest.push(r.value);
+    expect(rest).toContain(`sub${path.sep}added.txt`);
+    expect(rest).toContain(`sub${path.sep}original.txt`);
+    expect(rest.length + 1).toBe(202);
+  });
+
+  test("scanSync: breaking early releases the directory fd", () => {
+    using dir = tempDir("glob-lazy-fd", { "a/b.txt": "", "a/c.txt": "" });
+    // `a` is open between the two yields; `break` must close it eagerly
+    // rather than waiting for GC so the directory can be removed immediately
+    // on Windows.
+    for (const entry of new Glob("**/*.txt").scanSync({ cwd: String(dir) })) {
+      expect(entry).toStartWith("a" + path.sep);
+      break;
+    }
+    fs.rmSync(path.join(String(dir), "a"), { recursive: true });
+    expect(fs.existsSync(path.join(String(dir), "a"))).toBeFalse();
+  });
+});
+
 describe("trailing directory separator", async () => {
   test("matches directories absolute", async () => {
     const tmpdir = tmpdirSync();

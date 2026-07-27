@@ -10,8 +10,7 @@ pub enum InitError {
     InvalidCA,
     #[error("InvalidCRL")]
     InvalidCRL,
-    /// Client cert/key failed to load into the SSL_CTX; payload is the packed
-    /// BoringSSL error from [`crate::error::take_boringssl_error`].
+    /// Packed BoringSSL error from [`crate::error::take_boringssl_error`].
     #[error("ClientTLSSetup")]
     ClientTLSSetup(u32),
 }

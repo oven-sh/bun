@@ -52,10 +52,8 @@ fn static_cstr<'a>(ptr: *const core::ffi::c_char) -> Option<&'a [u8]> {
     if bytes.is_empty() { None } else { Some(bytes) }
 }
 
-/// Node's `ERR_OSSL_<LIB>_<REASON>` (or `ERR_SSL_<REASON>`) code string.
 fn build_err_ossl_code(err_code: u32, reason: &[u8]) -> Vec<u8> {
     let lib = lib_short_name((err_code >> 24) & 0xff);
-    // Don't generate codes like "ERR_OSSL_SSL_".
     let prefix = if lib == "SSL_" { "" } else { "OSSL_" };
     let mut code = Vec::with_capacity(4 + prefix.len() + lib.len() + reason.len());
     code.extend_from_slice(b"ERR_");
@@ -65,8 +63,7 @@ fn build_err_ossl_code(err_code: u32, reason: &[u8]) -> Vec<u8> {
     code
 }
 
-/// JSC-free `(code, message)` formatter for a packed BoringSSL error. Pure
-/// table lookups on the `u32`, so callable from any thread.
+/// JSC-free `(ERR_OSSL_* code, message)` for a packed BoringSSL error; thread-agnostic lookup.
 pub fn err_code_and_message(err_code: u32) -> (Vec<u8>, Vec<u8>) {
     let mut outbuf = [0u8; 128 + 1];
     // SAFETY: outbuf is a valid writable buffer of outbuf.len() bytes.

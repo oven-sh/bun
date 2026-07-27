@@ -15,7 +15,7 @@ import { describe, expect, test } from "bun:test";
 import { isMacOS, tempDir } from "harness";
 import { join, resolve } from "node:path";
 
-import { emitDsymutil, emitSmokeTest } from "../../scripts/build/bun.ts";
+import { emitPostLink } from "../../scripts/build/bun.ts";
 import { resolveConfig, type Config, type PartialConfig, type Toolchain } from "../../scripts/build/config.ts";
 import { Ninja } from "../../scripts/build/ninja.ts";
 
@@ -57,7 +57,7 @@ function mockToolchain(overrides: Partial<Toolchain> = {}): Toolchain {
 
 /**
  * Resolve a host-targeted config: no os/arch override, so `canRunOnHost` is
- * true and emitSmokeTest emits the real rule (not the phony short-circuit).
+ * true and the smoke_test rule emits the real edge (not the phony short-circuit).
  */
 function hostConfig(partial: PartialConfig, buildDir: string): Config {
   return resolveConfig(
@@ -70,13 +70,13 @@ function hostConfig(partial: PartialConfig, buildDir: string): Config {
 
 /** Find one build-edge line in the generated ninja text (continuations unwrapped). */
 function buildEdge(ninja: string, rule: string): string {
-  const flat = ninja.replace(/\$\n {2}/g, "");
+  const flat = ninja.replace(/ \$\n +/g, " ");
   const line = flat.split("\n").find(l => l.startsWith("build ") && l.includes(`: ${rule} `));
   if (line === undefined) throw new Error(`no '${rule}' edge in ninja output:\n${ninja}`);
   return line;
 }
 
-describe("post-link ninja ordering", () => {
+describe("emitPostLink ninja ordering", () => {
   test("release smoke_test is ordered after strip", () => {
     using dir = tempDir("build-post-link", {});
     const buildDir = String(dir);
@@ -85,15 +85,17 @@ describe("post-link ninja ordering", () => {
 
     const n = new Ninja({ buildDir });
     const exe = resolve(buildDir, `bun-profile${cfg.exeSuffix}`);
-    const strippedExe = resolve(buildDir, `bun${cfg.exeSuffix}`);
-    emitSmokeTest(n, cfg, exe, "bun-profile", strippedExe);
+    const { strippedExe } = emitPostLink(n, cfg, exe, "bun-profile", []);
+    const out = n.toString();
 
+    expect(strippedExe).toBe(resolve(buildDir, `bun${cfg.exeSuffix}`));
     // strip writes `bun`; the smoke_test wrapper execs cfg.jsRuntime
     // (= `bun` here). Without `|| bun` ninja schedules them concurrently
     // and the wrapper sees a half-written file.
-    expect(buildEdge(n.toString(), "smoke_test")).toBe(
+    expect(buildEdge(out, "smoke_test")).toBe(
       `build bun-profile.smoke-test-passed: smoke_test bun-profile${cfg.exeSuffix} || bun${cfg.exeSuffix}`,
     );
+    expect(buildEdge(out, "strip")).toBe(`build bun${cfg.exeSuffix}: strip bun-profile${cfg.exeSuffix}`);
   });
 
   test("debug smoke_test has no strip dep (nothing to order against)", () => {
@@ -103,11 +105,14 @@ describe("post-link ninja ordering", () => {
 
     const n = new Ninja({ buildDir });
     const exe = resolve(buildDir, `bun-debug${cfg.exeSuffix}`);
-    emitSmokeTest(n, cfg, exe, "bun-debug", undefined);
+    const { strippedExe, dsym } = emitPostLink(n, cfg, exe, "bun-debug", []);
+    const out = n.toString();
 
-    expect(buildEdge(n.toString(), "smoke_test")).toBe(
+    expect({ strippedExe, dsym }).toEqual({ strippedExe: undefined, dsym: undefined });
+    expect(buildEdge(out, "smoke_test")).toBe(
       `build bun-debug.smoke-test-passed: smoke_test bun-debug${cfg.exeSuffix}`,
     );
+    expect(buildEdge(out, "phony")).toBe(`build bun: phony bun-debug${cfg.exeSuffix}`);
   });
 
   // Cross-config path only: on macOS, resolveConfig({ os: "darwin" }) probes
@@ -117,12 +122,17 @@ describe("post-link ninja ordering", () => {
     using dir = tempDir("build-post-link", {});
     const buildDir = String(dir);
     const cfg = resolveConfig({ os: "darwin", arch: "aarch64", buildType: "Release", buildDir }, mockToolchain());
+    expect(cfg.canRunOnHost).toBe(false);
 
     const n = new Ninja({ buildDir });
     const exe = resolve(buildDir, "bun-profile");
-    const strippedExe = resolve(buildDir, "bun");
-    emitDsymutil(n, cfg, exe, "bun-profile", strippedExe);
+    const { dsym } = emitPostLink(n, cfg, exe, "bun-profile", []);
+    const out = n.toString();
 
-    expect(buildEdge(n.toString(), "dsymutil")).toBe("build bun-profile.dSYM: dsymutil bun-profile || bun");
+    expect(dsym).toBe(resolve(buildDir, "bun-profile.dSYM"));
+    expect(buildEdge(out, "dsymutil")).toBe("build bun-profile.dSYM: dsymutil bun-profile || bun");
+    // Cross-compile: smoke_test short-circuits to a `check` phony (the
+    // binary can't run on this host), so the strip race can't happen there.
+    expect(buildEdge(out, "phony")).toBe("build check: phony bun-profile");
   });
 });

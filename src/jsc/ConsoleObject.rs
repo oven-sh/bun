@@ -3644,7 +3644,6 @@ pub mod formatter {
             value: JSValue,
             js_type: jsc::JSType,
         ) -> JsResult<()> {
-            // This is called from the '%s' formatter, so it can actually be any value
             use crate::StringJsc as _;
             let str = OwnedString::new(BunString::from_js(value, self.global_this)?);
             let mut writer = WrappedWriter {

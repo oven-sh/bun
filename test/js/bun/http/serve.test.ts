@@ -3547,7 +3547,8 @@ describe("request body backpressure", () => {
 
       // The socket was resumed, so the upload pump (still parked on `drain`)
       // moves past the plateau as the server discards the remaining body.
-      while (getSent() === sentBeforeGate) await Bun.sleep(25);
+      const deadline = Date.now() + 2000;
+      while (getSent() === sentBeforeGate && Date.now() < deadline) await Bun.sleep(25);
       expect(getSent()).toBeGreaterThan(sentBeforeGate);
     } finally {
       sock.destroy();

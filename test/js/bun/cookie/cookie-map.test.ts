@@ -475,6 +475,7 @@ describe("delete with prefixed cookie names", () => {
 
   test("a rejected delete leaves the existing entry in place", () => {
     const map = new Bun.CookieMap("a=1");
+    expect(() => map.delete({ name: "a", path: ";" })).toThrow(TypeError);
     expect(() => map.delete({ name: "a", path: ";" })).toThrow("Invalid cookie path");
     expect(map.get("a")).toBe("1");
     expect(map.toSetCookieHeaders()).toEqual([]);

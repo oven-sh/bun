@@ -147,6 +147,8 @@ cookies.delete({
 });
 ```
 
+For a `__Host-` or `__Secure-` name, `delete()` adds `Secure` to the expiring cookie so the browser accepts it. For a `__Host-` name it also uses `path: "/"` and no `domain`, ignoring any supplied values, since that is the only shape the browser could have stored.
+
 #### `toJSON(): Record<string, string>`
 
 Converts the cookie map to a serializable format.

@@ -37,7 +37,9 @@ describe.concurrent("undici prefer-installed resolution", () => {
   test("undici is not reported as a builtin module", () => {
     expect(Module.isBuiltin("undici")).toBe(false);
     expect(Module.builtinModules).not.toContain("undici");
+    expect(process.getBuiltinModule("undici")).toBeUndefined();
     expect(Module.isBuiltin("node:fs")).toBe(true);
+    expect(process.getBuiltinModule("fs")).toBeDefined();
   });
 
   test("subpath imports mapping to undici prefer the installed package", async () => {

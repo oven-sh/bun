@@ -464,6 +464,11 @@ pub(crate) unsafe extern "C" fn Bun__resolveAndFetchBuiltinModule(
     let Some(alias) = bun_aliases_get(spec_utf8.slice()) else {
         return false;
     };
+    // Agree with `ModuleLoader__isBuiltin`: `prefer_installed` specifiers are
+    // not builtins, so `process.getBuiltinModule` returns undefined for them.
+    if alias.prefer_installed {
+        return false;
+    }
     let Some(&hardcoded) = bun_resolve_builtins::Module::MAP.get(alias.path.as_bytes()) else {
         debug_assert!(false);
         return false;

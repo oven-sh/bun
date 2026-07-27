@@ -304,9 +304,7 @@ fn find_playwright_shell() -> Option<ZBox> {
     let cache_dir = resolve_path::join_string_buf_z::<platform::Auto>(&mut dir_buf[..], &parts);
 
     let fd = bun_sys::open(cache_dir, O::RDONLY | O::DIRECTORY, 0).ok()?;
-    // `defer fd.close()` — Fd has no Drop; close explicitly on all
-    // exit paths via scopeguard.
-    let _fd_guard = scopeguard::guard(fd, |fd| fd.close());
+    let _fd_guard = bun_sys::CloseOnDrop::new(fd);
 
     // Scan for chromium_headless_shell-<rev> and track max rev.
     let mut best_rev: u32 = 0;
@@ -423,11 +421,9 @@ fn spawn(
             0,
             false, // .blocking
         )?;
-        let fds = scopeguard::guard(fds, |fds| {
-            fds[0].close();
-            fds[1].close();
-        });
-        bun_sys::set_nonblocking(fds[0])?;
+        let fd0 = bun_sys::CloseOnDrop::new(fds[0]);
+        let fd1 = bun_sys::CloseOnDrop::new(fds[1]);
+        bun_sys::set_nonblocking(fd0.fd())?;
 
         // Minimal flags. --remote-debugging-pipe is the one that matters;
         // --headless works on both full Chrome (switches to headless mode) and
@@ -522,7 +518,7 @@ fn spawn(
             // fd 3 AND fd 4 both point at fds[1]. spawnProcess dup2's each
             // .pipe entry to 3+index; passing the same fd twice gives Chrome
             // the same socket at both positions.
-            extra_fds: vec![Stdio::Pipe(fds[1]), Stdio::Pipe(fds[1])].into_boxed_slice(),
+            extra_fds: vec![Stdio::Pipe(fd1.fd()), Stdio::Pipe(fd1.fd())].into_boxed_slice(),
             argv0: Some(chrome.as_ptr()),
             ..SpawnOptions::default()
         };
@@ -532,15 +528,16 @@ fn spawn(
         let spawned =
             unsafe { bun_spawn::spawn_process(&opts, argv.as_ptr(), env.as_ptr().cast()) }??;
 
-        // Disarm the cleanup guard here and close each fd exactly once on the
-        // WatchFailed path below; keeping it armed would re-close the
-        // already-closed fds[1] there.
-        let fds = scopeguard::ScopeGuard::into_inner(fds);
+        // Disarm the cleanup guards here and close each fd exactly once on the
+        // WatchFailed path below; keeping them armed would re-close the
+        // already-closed fd1 there.
+        let fd0 = fd0.into_raw();
+        let fd1 = fd1.into_raw();
 
         // Parent doesn't need the child's end. POSIX_SPAWN_CLOEXEC_DEFAULT
         // already closed our copy in the child (only fd 3/4 survive the exec);
         // close our reference so Chrome's death EOF's our end.
-        fds[1].close();
+        fd1.close();
 
         // SAFETY: `vm` is the live thread-local VM; `event_loop()` is its
         // per-thread `jsc::EventLoop`.
@@ -570,14 +567,14 @@ fn spawn(
                     Process::deref(process.as_ptr());
                     drop(bun_core::heap::take(self_ptr));
                 }
-                fds[0].close();
+                fd0.close();
                 return Err(crate::Error::WatchFailed);
             }
         }
         INSTANCE.store(self_ptr, core::sync::atomic::Ordering::Relaxed);
         // fd returned to C++ which adopts it into usockets. Not stored here —
         // usockets owns it; we only own the process lifetime.
-        Ok(fds[0])
+        Ok(fd0)
     }
 }
 

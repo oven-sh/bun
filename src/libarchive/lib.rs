@@ -1261,7 +1261,7 @@ impl Archiver {
         };
         // Fd has no Drop impl; close explicitly on every return path to avoid leaking
         // a directory HANDLE on Windows. Mirrors the guard pattern in extract_to_disk.
-        let _close_dir_guard = scopeguard::guard(dir, |d| d.close());
+        let _close_dir_guard = bun_sys::CloseOnDrop::new(dir);
 
         'loop_: loop {
             // SAFETY: archive valid for stream lifetime
@@ -1326,8 +1326,7 @@ impl Archiver {
                         else {
                             continue 'loop_;
                         };
-                        // defer opened.close()
-                        let _close_guard = scopeguard::guard(opened, |fd| fd.close());
+                        let _close_guard = bun_sys::CloseOnDrop::new(opened);
                         let stat_size = bun_sys::get_file_size(opened)?;
 
                         if stat_size > 0 {
@@ -1764,11 +1763,9 @@ impl Archiver {
 
                             let file_handle: Fd = {
                                 // errdefer file_handle_native.close()
-                                let guard = scopeguard::guard(file_handle_native, |fd| {
-                                    fd.close();
-                                });
-                                let owned = (*guard).make_lib_uv_owned()?;
-                                scopeguard::ScopeGuard::into_inner(guard);
+                                let guard = bun_sys::CloseOnDrop::new(file_handle_native);
+                                let owned = guard.fd().make_lib_uv_owned()?;
+                                let _ = guard.into_raw();
                                 owned
                             };
 

@@ -336,8 +336,7 @@ impl StringOrBuffer {
             return Ok(bytes.to_vec());
         }
 
-        let str = bun_core::String::from_js(value, global_object)?;
-        scopeguard::defer! { str.deref(); }
+        let str = bun_core::OwnedString::new(bun_core::String::from_js(value, global_object)?);
 
         let result = str.to_owned_slice();
         global_object.vm().report_extra_memory(result.len());

@@ -1765,9 +1765,7 @@ impl<'a> Linker<'a> {
                             return;
                         }
                     };
-                    let _close = scopeguard::guard(target_dir, |fd| {
-                        let _ = sys::close(fd);
-                    });
+                    let _close = sys::Dir::from_fd(target_dir);
 
                     let abs_dest_dir_end = dest_off;
 
@@ -1922,9 +1920,7 @@ impl<'a> Linker<'a> {
                             return;
                         }
                     };
-                    let _close = scopeguard::guard(target_dir, |fd| {
-                        let _ = sys::close(fd);
-                    });
+                    let _close = sys::Dir::from_fd(target_dir);
 
                     let abs_dest_dir_end = dest_off;
 

@@ -46,6 +46,27 @@ unsafe extern "C" {
     fn spng_set_iccp(ctx: *mut spng_ctx, iccp: *const Iccp) -> c_int;
 }
 
+/// RAII owner for a libspng context — `spng_ctx_free` on drop.
+struct Ctx(NonNull<spng_ctx>);
+impl Ctx {
+    #[inline]
+    fn new(flags: c_int) -> Option<Self> {
+        // SAFETY: spng_ctx_new is safe to call with any flags; null return = OOM.
+        NonNull::new(unsafe { spng_ctx_new(flags) }).map(Self)
+    }
+    #[inline]
+    fn as_ptr(&self) -> *mut spng_ctx {
+        self.0.as_ptr()
+    }
+}
+impl Drop for Ctx {
+    #[inline]
+    fn drop(&mut self) {
+        // SAFETY: ctx was returned non-null by spng_ctx_new and is freed exactly once here.
+        unsafe { spng_ctx_free(self.0.as_ptr()) };
+    }
+}
+
 #[repr(C)]
 struct Iccp {
     /// PNG's Latin-1 iCCP keyword (1-79 chars + NUL). libspng requires it
@@ -98,15 +119,8 @@ struct Trns {
 }
 
 pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, codecs::Error> {
-    // SAFETY: spng_ctx_new is safe to call with any flags; null return = OOM.
-    let ctx = unsafe { spng_ctx_new(0) };
-    if ctx.is_null() {
-        return Err(codecs::Error::OutOfMemory);
-    }
-    let _ctx_guard = scopeguard::guard(ctx, |c| {
-        // SAFETY: ctx was returned non-null by spng_ctx_new and is freed exactly once here.
-        unsafe { spng_ctx_free(c) }
-    });
+    let ctx_guard = Ctx::new(0).ok_or(codecs::Error::OutOfMemory)?;
+    let ctx = ctx_guard.as_ptr();
 
     // SAFETY: ctx is valid; bytes outlives the ctx (freed at end of scope).
     if unsafe { spng_set_png_buffer(ctx, bytes.as_ptr(), bytes.len()) } != 0 {
@@ -203,15 +217,8 @@ pub(crate) fn encode(
     level: i8,
     icc_profile: Option<&[u8]>,
 ) -> Result<codecs::Encoded, codecs::Error> {
-    // SAFETY: spng_ctx_new is safe to call; null return = OOM.
-    let ctx = unsafe { spng_ctx_new(SPNG_CTX_ENCODER) };
-    if ctx.is_null() {
-        return Err(codecs::Error::OutOfMemory);
-    }
-    let _ctx_guard = scopeguard::guard(ctx, |c| {
-        // SAFETY: ctx was returned non-null by spng_ctx_new and is freed exactly once here.
-        unsafe { spng_ctx_free(c) }
-    });
+    let ctx_guard = Ctx::new(SPNG_CTX_ENCODER).ok_or(codecs::Error::OutOfMemory)?;
+    let ctx = ctx_guard.as_ptr();
 
     // SAFETY: ctx is valid.
     let _ = unsafe { spng_set_option(ctx, SPNG_ENCODE_TO_BUFFER, 1) };
@@ -288,15 +295,8 @@ pub(crate) fn encode_indexed(
     )
     .map_err(|_| codecs::Error::OutOfMemory)?;
 
-    // SAFETY: spng_ctx_new is safe to call; null return = OOM.
-    let ctx = unsafe { spng_ctx_new(SPNG_CTX_ENCODER) };
-    if ctx.is_null() {
-        return Err(codecs::Error::OutOfMemory);
-    }
-    let _ctx_guard = scopeguard::guard(ctx, |c| {
-        // SAFETY: ctx was returned non-null by spng_ctx_new and is freed exactly once here.
-        unsafe { spng_ctx_free(c) }
-    });
+    let ctx_guard = Ctx::new(SPNG_CTX_ENCODER).ok_or(codecs::Error::OutOfMemory)?;
+    let ctx = ctx_guard.as_ptr();
 
     // SAFETY: ctx is valid.
     let _ = unsafe { spng_set_option(ctx, SPNG_ENCODE_TO_BUFFER, 1) };

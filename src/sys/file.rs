@@ -74,6 +74,12 @@ impl File {
             handle: Fd::stdout(),
         }
     }
+    #[inline]
+    pub fn stderr() -> Self {
+        Self {
+            handle: Fd::stderr(),
+        }
+    }
 
     pub fn open(path: &ZStr, flags: i32, mode: Mode) -> Maybe<Self> {
         open(path, flags, mode).map(Self::from_fd)

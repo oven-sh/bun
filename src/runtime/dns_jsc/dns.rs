@@ -111,6 +111,43 @@ bun_output::declare_scope!(dns, hidden);
 bun_output::declare_scope!(DNSResolver, visible);
 
 // ──────────────────────────────────────────────────────────────────────────
+// RAII drop guards for C-allocated DNS resources
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Calls `Resolver::request_completed` on drop. Used by the c-ares completion
+/// callbacks so the pending-request bookkeeping runs on every exit path.
+struct RequestCompletedGuard(*mut Resolver);
+impl Drop for RequestCompletedGuard {
+    fn drop(&mut self) {
+        // SAFETY: `self.0` is the live intrusive-RC resolver stored on the request.
+        unsafe { (*self.0).request_completed() };
+    }
+}
+
+/// Frees a c-ares-allocated reply (`ares_free_data` / `ares_free_hostent`) via
+/// the record type's [`CAresRecordType::destroy`] on drop.
+struct CAresReplyGuard<T: CAresRecordType>(Option<*mut T>);
+impl<T: CAresRecordType> Drop for CAresReplyGuard<T> {
+    fn drop(&mut self) {
+        if let Some(r) = self.0 {
+            // SAFETY: `r` is the c-ares-allocated reply owned by this guard.
+            unsafe { T::destroy(r) };
+        }
+    }
+}
+
+/// Frees a c-ares-allocated `AddrInfo` (`ares_freeaddrinfo`) on drop.
+struct CAresAddrInfoGuard(Option<*mut c_ares::AddrInfo>);
+impl Drop for CAresAddrInfoGuard {
+    fn drop(&mut self) {
+        if let Some(r) = self.0 {
+            // SAFETY: `r` is the c-ares-allocated AddrInfo owned by this guard.
+            unsafe { c_ares::AddrInfo::destroy(r) };
+        }
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
 // C type aliases
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -679,7 +716,7 @@ impl<T: CAresRecordType> ResolveInfoRequest<T> {
         // SAFETY: this is the heap-allocated request c-ares calls back with
         unsafe {
             if let Some(resolver) = (*this).resolver_for_caching {
-                scopeguard::defer! { (*resolver).request_completed() };
+                let _done = RequestCompletedGuard(resolver);
                 if (*this).cache.pending_cache() {
                     (*resolver).drain_pending_cares::<T>(
                         (*this).cache.pos_in_pending(),
@@ -1070,7 +1107,7 @@ impl GetNameInfoRequest {
         // `resolver` (if set) is the live intrusive-RC ctx stored at init time.
         unsafe {
             if let Some(resolver) = (*this).resolver_for_caching {
-                scopeguard::defer! { (*resolver).request_completed() };
+                let _done = RequestCompletedGuard(resolver);
                 if (*this).cache.pending_cache() {
                     (*resolver).drain_pending_name_info_cares(
                         (*this).cache.pos_in_pending(),
@@ -1270,10 +1307,14 @@ pub mod get_addr_info_request {
 
             // do not free addrinfo when err != 0: getaddrinfo only allocates the
             // result list on success, so the out-pointer is unspecified on error.
-            let _free = scopeguard::guard(addrinfo, |a| {
-                // SAFETY: `a` was returned by libc::getaddrinfo (non-null per the check above).
-                unsafe { bun_dns::freeaddrinfo(a) }
-            });
+            struct LibcAddrInfoGuard(*mut AddrInfo);
+            impl Drop for LibcAddrInfoGuard {
+                fn drop(&mut self) {
+                    // SAFETY: `self.0` was returned by libc::getaddrinfo (non-null).
+                    unsafe { bun_dns::freeaddrinfo(self.0) }
+                }
+            }
+            let _free = LibcAddrInfoGuard(addrinfo);
 
             // SAFETY: addrinfo is non-null (checked above); freed by `_free` guard after copy.
             *self = LibcBackend::Success(GetAddrInfoResult::to_list(unsafe { &*addrinfo }));
@@ -1834,12 +1875,7 @@ impl<T: CAresRecordType> CAresLookup<T> {
         // This path is reached when the pending cache is full (`.disabled`),
         // so we own the c-ares result here. The cached path frees it in
         // `drainPendingCares`; callers from there always pass `null`.
-        let _free = scopeguard::guard(result, |r| {
-            if let Some(r) = r {
-                // SAFETY: r is the c-ares-allocated reply; we own it on this path.
-                unsafe { T::destroy(r) };
-            }
-        });
+        let _free = CAresReplyGuard::<T>(result);
 
         // SAFETY: caller contract — `this` is live; JSGlobalObject outlives the request.
         unsafe {
@@ -2006,12 +2042,7 @@ impl DNSLookup {
         // This path is reached when the pending-host cache is full (`.disabled`),
         // so we own the c-ares result here. The cached path frees it in
         // `drainPendingHostCares`; callers from there always pass `null`.
-        let _free = scopeguard::guard(result, |r| {
-            if let Some(r) = r {
-                // SAFETY: r is the c-ares-allocated AddrInfo; we own it on this path.
-                unsafe { c_ares::AddrInfo::destroy(r) };
-            }
-        });
+        let _free = CAresAddrInfoGuard(result);
 
         // SAFETY: caller contract — `this` is live; JSGlobalObject outlives the request.
         unsafe {
@@ -2043,7 +2074,7 @@ impl DNSLookup {
     pub(crate) unsafe fn on_complete(this: *mut Self, result: *mut c_ares::AddrInfo) {
         bun_output::scoped_log!(DNSLookup, "onComplete");
         // SAFETY: caller contract — `this` is live; result is a live c-ares AddrInfo
-        // owned by the caller's scopeguard; JSGlobalObject outlives the request.
+        // owned by the caller's drop guard; JSGlobalObject outlives the request.
         unsafe {
             let array =
                 super::cares_jsc::addr_info_to_js_array(&mut *result, (*this).global_this())
@@ -4386,7 +4417,7 @@ impl Resolver {
                 .to_js_response(prev_global, T::TYPE_NAME)
                 .unwrap_or(JSValue::ZERO); // TODO: properly propagate exception upwards
             // SAFETY: addr is the c-ares-allocated reply; freed once after all consumers run.
-            let _free_addr = scopeguard::guard(addr, |a| T::destroy(a));
+            let _free_addr = CAresReplyGuard::<T>(Some(addr));
             array.ensure_still_alive();
             CAresLookup::<T>::on_complete(ptr::addr_of_mut!((*key.lookup).head), array);
             drop(bun_core::heap::take(key.lookup));
@@ -4452,7 +4483,7 @@ impl Resolver {
                 .unwrap_or(JSValue::ZERO); // TODO: properly propagate exception upwards
             // SAFETY: addr is the c-ares-allocated AddrInfo; freed once after all consumers run.
             // Move the raw pointer into the guard so the loop body can keep borrowing `*addr`.
-            let _free_addr = scopeguard::guard(addr, |a| c_ares::AddrInfo::destroy(a));
+            let _free_addr = CAresAddrInfoGuard(Some(addr));
             array.ensure_still_alive();
             DNSLookup::on_complete_with_array(ptr::addr_of_mut!((*key.lookup).head), array);
             drop(bun_core::heap::take(key.lookup));
@@ -5538,10 +5569,14 @@ impl Resolver {
                 ))),
             );
         }
-        scopeguard::defer! {
-            // SAFETY: `servers` was allocated by ares_get_servers_ports; ares_free_data is its deallocator.
-            unsafe { c_ares::ares_free_data(servers.cast()) }
-        };
+        struct AresServersGuard(*mut c_ares::struct_ares_addr_port_node);
+        impl Drop for AresServersGuard {
+            fn drop(&mut self) {
+                // SAFETY: `self.0` was allocated by ares_get_servers_ports; ares_free_data is its deallocator.
+                unsafe { c_ares::ares_free_data(self.0.cast()) }
+            }
+        }
+        let _free = AresServersGuard(servers);
 
         let values = JSValue::create_empty_array(global_this, 0)?;
 

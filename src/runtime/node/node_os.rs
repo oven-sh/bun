@@ -1579,8 +1579,7 @@ mod _impl {
 
         let result = JSValue::create_empty_object(global_this, 5);
 
-        let home = homedir(global_this)?;
-        let home = scopeguard::guard(home, |h| h.deref());
+        let home = bun_core::OwnedString::new(homedir(global_this)?);
 
         result.put(global_this, b"homedir", home.to_js(global_this)?);
 

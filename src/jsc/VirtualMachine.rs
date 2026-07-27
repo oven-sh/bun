@@ -6650,10 +6650,7 @@ pub fn plugin_runner_on_resolve_jsc(
         }
         break 'brk bun_core::String::static_(b"file");
     };
-    // `bun_core::String`
-    // is `Copy` (no `Drop`), so guard the WTF refcount across the remaining
-    // early-return paths.
-    let user_namespace = scopeguard::guard(user_namespace, |s| s.deref());
+    let user_namespace = bun_core::OwnedString::new(user_namespace);
 
     // A `file`-namespace result (the default) is a filesystem path, not a new
     // specifier: hand it back unprefixed. Other namespaces keep the `ns:path`

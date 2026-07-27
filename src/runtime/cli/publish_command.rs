@@ -29,7 +29,6 @@ use bun_core::OSPathChar;
 use bun_install::Access;
 use bun_install::dependency;
 use bun_install::{AuthType, LogLevel};
-use bun_sys::FdExt as _;
 
 use crate::api::bun_process::sync as spawn_sync;
 
@@ -1547,9 +1546,7 @@ impl PublishCommand {
                     Global::crash();
                 }
             };
-            let _close = scopeguard::guard(workspace_root, |fd| {
-                let _ = fd.close();
-            });
+            let _close = bun_sys::CloseOnDrop::new(workspace_root);
 
             Self::normalize_bin(json, &bump, package_name, workspace_root)?;
         }
@@ -1586,9 +1583,7 @@ impl PublishCommand {
     /// or `None` if none is present.
     pub(crate) fn find_workspace_readme(abs_workspace_path: &[u8]) -> Option<ReadmeInfo> {
         let workspace_dir = bun_sys::open_dir_absolute(abs_workspace_path).ok()?;
-        let _close = scopeguard::guard(workspace_dir, |d| {
-            let _ = d.close();
-        });
+        let _close = bun_sys::CloseOnDrop::new(workspace_dir);
 
         let mut iter = DirIterator::iterate(workspace_dir);
         while let Some(entry) = iter.next().ok().flatten() {
@@ -1806,11 +1801,7 @@ impl PublishCommand {
 
                 while let Some(dir_info) = dirs.pop() {
                     let (dir, dir_subpath, close_dir) = dir_info;
-                    let _close = scopeguard::guard(dir, move |d| {
-                        if close_dir {
-                            let _ = d.close();
-                        }
-                    });
+                    let _close = close_dir.then(|| bun_sys::CloseOnDrop::new(dir));
 
                     let mut iter = DirIterator::iterate(dir);
                     while let Some(entry) = iter.next().ok().flatten() {

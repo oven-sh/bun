@@ -1130,10 +1130,17 @@ pub fn DeleteFileBun(sub_path_w: &[u16], options: DeleteFileOptions) -> bun_sys:
     if let Some(err) = bun_sys::Result::<()>::errno_sys(rc, bun_sys::Tag::open) {
         return err;
     }
-    // SAFETY: tmp_handle is valid; closed at scope exit
-    let _close_guard = scopeguard::guard(tmp_handle, |h| unsafe {
-        let _ = externs::CloseHandle(h);
-    });
+    struct CloseHandleOnDrop(HANDLE);
+    impl Drop for CloseHandleOnDrop {
+        #[inline]
+        fn drop(&mut self) {
+            // SAFETY: handle is valid
+            unsafe {
+                let _ = externs::CloseHandle(self.0);
+            }
+        }
+    }
+    let _close_guard = CloseHandleOnDrop(tmp_handle);
 
     // FileDispositionInformationEx (and therefore FILE_DISPOSITION_POSIX_SEMANTICS and FILE_DISPOSITION_IGNORE_READONLY_ATTRIBUTE)
     // are only supported on NTFS filesystems, so the version check on its own is only a partial solution. To support non-NTFS filesystems
@@ -1724,14 +1731,19 @@ pub fn spawn_watcher_child(
     let image_path_z = bun_core::WStr::from_buf(&wbuf[..], image_path.len());
 
     let kernelenv = kernel32_2::GetEnvironmentStringsW();
-    let _free_env = scopeguard::guard(kernelenv, |envptr| {
-        if !envptr.is_null() {
-            // SAFETY: envptr was returned from GetEnvironmentStringsW and is non-null
-            unsafe {
-                let _ = kernel32_2::FreeEnvironmentStringsW(envptr);
+    struct FreeEnvOnDrop(LPWSTR);
+    impl Drop for FreeEnvOnDrop {
+        #[inline]
+        fn drop(&mut self) {
+            if !self.0.is_null() {
+                // SAFETY: returned from GetEnvironmentStringsW and non-null
+                unsafe {
+                    let _ = kernel32_2::FreeEnvironmentStringsW(self.0);
+                }
             }
         }
-    });
+    }
+    let _free_env = FreeEnvOnDrop(kernelenv);
 
     let mut size: usize = 0;
     if !kernelenv.is_null() {

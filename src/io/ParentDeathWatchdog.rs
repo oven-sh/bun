@@ -682,10 +682,7 @@ fn list_child_pids_linux(parent: libc::pid_t, out: &mut [libc::pid_t]) -> Option
         Ok(fd) => fd,
         Err(_) => return None,
     };
-    // `Fd` is Copy and does not impl Drop, so close explicitly via a guard.
-    let _task_fd_guard = scopeguard::guard(task_fd, |fd| {
-        let _ = bun_sys::close(fd);
-    });
+    let _task_fd_guard = bun_sys::CloseOnDrop::new(task_fd);
 
     let mut written: usize = 0;
     // Sized so a single read can saturate the 4096-pid `out` buffer
@@ -739,9 +736,7 @@ fn read_file_once<'a>(path: &ZStr, buf: &'a mut [u8]) -> Option<&'a [u8]> {
         Ok(fd) => fd,
         Err(_) => return None,
     };
-    let _guard = scopeguard::guard(fd, |fd| {
-        let _ = bun_sys::close(fd);
-    });
+    let _guard = bun_sys::CloseOnDrop::new(fd);
     // Fixed-buffer read-until-EOF-or-full. `File::read_all` grows a `Vec`,
     // which would allocate; do the loop here.
     let mut written = 0usize;

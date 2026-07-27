@@ -88,7 +88,7 @@ use bun_paths::PathBuffer;
 #[cfg(windows)]
 use bun_paths::WPathBuffer;
 use bun_shell_parser::braces as Braces;
-use bun_sys::{self as sys, Fd, FdExt as _};
+use bun_sys::{self as sys, Fd};
 use bun_zlib as zlib;
 
 use crate::api::csrf_jsc;
@@ -405,7 +405,7 @@ pub(crate) fn shell_escape(
     if global_this.has_exception() {
         return Ok(JSValue::ZERO);
     }
-    let bunstr = scopeguard::guard(bunstr, |s| s.deref());
+    let bunstr = bun_core::OwnedString::new(bunstr);
 
     let mut outbuf: Vec<u8> = Vec::new();
 
@@ -883,7 +883,7 @@ pub fn get_main(global_this: &JSGlobalObject) -> JSValue {
                 break 'use_resolved_path;
             };
 
-            let _close = scopeguard::guard(fd, |fd: Fd| fd.close());
+            let _close = bun_sys::CloseOnDrop::new(fd);
             #[cfg(windows)]
             {
                 let mut wpath = WPathBuffer::uninit();
@@ -1140,17 +1140,16 @@ fn do_resolve(global_this: &JSGlobalObject, arguments: &[JSValue]) -> JsResult<J
     }
 
     let specifier_str = specifier.to_bun_string(global_this)?;
-    let specifier_str = scopeguard::guard(specifier_str, |s| s.deref());
+    let specifier_str = bun_core::OwnedString::new(specifier_str);
     let from_str = from.to_bun_string(global_this)?;
-    let from_str = scopeguard::guard(from_str, |s| s.deref());
+    let from_str = bun_core::OwnedString::new(from_str);
     do_resolve_with_args::<false>(global_this, *specifier_str, *from_str, is_esm, false)
 }
 
-/// Single Drop point for the three `BunString`s `do_resolve_with_args` may own.
-/// Replaces three separate `scopeguard::guard(_, |s| s.deref())` closures —
-/// each of which generated its own drop frame and landing pad — with one
-/// contiguous cleanup. Fields default to `BunString::empty()`, whose `deref()`
-/// is a single tag-compare no-op, so unused slots cost effectively nothing.
+/// Single Drop point for the three `BunString`s `do_resolve_with_args` may own —
+/// one contiguous cleanup instead of three separate drop frames and landing
+/// pads. Fields default to `BunString::empty()`, whose `deref()` is a single
+/// tag-compare no-op, so unused slots cost effectively nothing.
 struct ResolveDerefOnDrop {
     query_string: BunString,
     /// Only set when the specifier had a `file://` prefix and we allocated a
@@ -1260,12 +1259,12 @@ pub fn bun_resolve(
     let Ok(specifier_str) = specifier.to_bun_string(global) else {
         return JSValue::ZERO;
     };
-    let specifier_str = scopeguard::guard(specifier_str, |s| s.deref());
+    let specifier_str = bun_core::OwnedString::new(specifier_str);
 
     let Ok(source_str) = source.to_bun_string(global) else {
         return JSValue::ZERO;
     };
-    let source_str = scopeguard::guard(source_str, |s| s.deref());
+    let source_str = bun_core::OwnedString::new(source_str);
 
     let value =
         match do_resolve_with_args::<true>(global, *specifier_str, *source_str, is_esm, false) {
@@ -1292,7 +1291,7 @@ pub fn bun_resolve_sync(
     let Ok(specifier_str) = specifier.to_bun_string(global) else {
         return JSValue::ZERO;
     };
-    let specifier_str = scopeguard::guard(specifier_str, |s| s.deref());
+    let specifier_str = bun_core::OwnedString::new(specifier_str);
 
     if specifier_str.length() == 0 {
         let _ = global
@@ -1307,7 +1306,7 @@ pub fn bun_resolve_sync(
     let Ok(source_str) = source.to_bun_string(global) else {
         return JSValue::ZERO;
     };
-    let source_str = scopeguard::guard(source_str, |s| s.deref());
+    let source_str = bun_core::OwnedString::new(source_str);
 
     jsc::to_js_host_call(global, || {
         do_resolve_with_args::<true>(
@@ -1349,7 +1348,7 @@ pub fn bun_resolve_sync_with_paths(
     let Ok(specifier_str) = specifier.to_bun_string(global) else {
         return JSValue::ZERO;
     };
-    let specifier_str = scopeguard::guard(specifier_str, |s| s.deref());
+    let specifier_str = bun_core::OwnedString::new(specifier_str);
 
     if specifier_str.length() == 0 {
         let _ = global
@@ -1364,7 +1363,7 @@ pub fn bun_resolve_sync_with_paths(
     let Ok(source_str) = source.to_bun_string(global) else {
         return JSValue::ZERO;
     };
-    let source_str = scopeguard::guard(source_str, |s| s.deref());
+    let source_str = bun_core::OwnedString::new(source_str);
 
     // SAFETY: bun_vm() returns the live thread-local VM for a Bun-owned global.
     let bun_vm = global.bun_vm().as_mut();
@@ -1419,7 +1418,7 @@ pub fn bun_resolve_sync_with_source(
     let Ok(specifier_str) = specifier.to_bun_string(global) else {
         return JSValue::ZERO;
     };
-    let specifier_str = scopeguard::guard(specifier_str, |s| s.deref());
+    let specifier_str = bun_core::OwnedString::new(specifier_str);
     if specifier_str.length() == 0 {
         let _ = global
             .err(

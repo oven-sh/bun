@@ -28,16 +28,26 @@ pub fn convert_env_to_wtf8() -> Result<(), AllocError> {
         "convertEnvToWTF8 may only be called once"
     );
     ENV_CONVERTED.store(true, core::sync::atomic::Ordering::Relaxed);
-    let env_guard = scopeguard::guard((), |()| {
-        ENV_CONVERTED.store(false, core::sync::atomic::Ordering::Relaxed);
-    });
+    struct ResetConvertedOnDrop;
+    impl Drop for ResetConvertedOnDrop {
+        #[inline]
+        fn drop(&mut self) {
+            ENV_CONVERTED.store(false, core::sync::atomic::Ordering::Relaxed);
+        }
+    }
+    let env_guard = ResetConvertedOnDrop;
 
     let mut num_vars: usize = 0;
     let wtf8_buf: Vec<u8> = 'blk: {
         let wtf16_buf: *mut u16 = crate::windows::GetEnvironmentStringsW()?;
-        let _free = scopeguard::guard(wtf16_buf, |p| {
-            crate::windows::FreeEnvironmentStringsW(p);
-        });
+        struct FreeEnvOnDrop(*mut u16);
+        impl Drop for FreeEnvOnDrop {
+            #[inline]
+            fn drop(&mut self) {
+                crate::windows::FreeEnvironmentStringsW(self.0);
+            }
+        }
+        let _free = FreeEnvOnDrop(wtf16_buf);
         let mut len: usize = 0;
         loop {
             // SAFETY: `wtf16_buf` is a contiguous double-NUL-terminated block returned by the OS;
@@ -86,6 +96,6 @@ pub fn convert_env_to_wtf8() -> Result<(), AllocError> {
         bun_core::os::set_environ(envp_slice.as_mut_ptr(), envp_nonnull_len);
     }
 
-    let _ = scopeguard::ScopeGuard::into_inner(env_guard);
+    core::mem::forget(env_guard);
     Ok(())
 }

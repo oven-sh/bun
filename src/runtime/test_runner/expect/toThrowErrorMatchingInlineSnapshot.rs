@@ -9,8 +9,8 @@ pub(crate) fn to_throw_error_matching_inline_snapshot(
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    // The guard owns the &mut, Derefs to it, and runs post_match on Drop.
-    let this = scopeguard::guard(this, |t| t.post_match(global));
+    // The guard holds the `&Expect`, Derefs to it, and runs post_match on Drop.
+    let this = this.post_match_guard(global);
 
     let this_value = frame.this();
     let arguments: &[JSValue] = frame.arguments();
@@ -79,7 +79,7 @@ pub(crate) fn to_throw_error_matching_inline_snapshot(
     };
 
     Expect::inline_snapshot(
-        &**this,
+        &*this,
         global,
         frame,
         value,

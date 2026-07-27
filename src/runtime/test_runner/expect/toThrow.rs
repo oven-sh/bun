@@ -16,10 +16,9 @@ pub(crate) fn to_throw(
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    // The scopeguard owns the &mut Expect and runs
-    // post_match on drop; the body re-borrows `this` through Deref/DerefMut so post_match
-    // runs on every exit path (Ok and Err alike).
-    let this = scopeguard::guard(this, |t| t.post_match(global));
+    // The guard holds the `&Expect` and runs post_match on drop so it fires on
+    // every exit path (Ok and Err alike).
+    let this = this.post_match_guard(global);
 
     let this_value = frame.this();
     let arguments = frame.arguments_as_array::<1>();

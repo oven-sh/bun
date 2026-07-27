@@ -705,8 +705,15 @@ impl Terminal {
         }
         // Both reader callbacks below re-enter user JS and may deref; hold a
         // +1 so `self` stays live for the trailing field accesses.
+        struct DerefGuard<'a>(&'a Terminal);
+        impl Drop for DerefGuard<'_> {
+            #[inline]
+            fn drop(&mut self) {
+                self.0.deref_();
+            }
+        }
         self.ref_();
-        let guard = scopeguard::guard((), |()| self.deref_());
+        let guard = DerefGuard(self);
         if flags.contains(Flags::READER_STARTED) && !flags.contains(Flags::READER_DONE) {
             // SAFETY: single JS thread; re-entrant user JS (data callback may
             // call `terminal.close()`) is handled via the raw-pointer dispatch
@@ -1304,7 +1311,7 @@ fn create_pty_windows(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError>
         }
     };
     // errdefer read_fd.close()
-    let read_fd_guard = scopeguard::guard(read_fd, |fd| fd.close());
+    let read_fd_guard = sys::CloseOnDrop::new(read_fd);
 
     let write_fd = match Fd::from_system(in_server.unwrap()).make_libuv_owned() {
         Ok(fd) => fd,
@@ -1315,7 +1322,7 @@ fn create_pty_windows(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError>
     };
 
     let result_hpcon = hpcon.take().unwrap();
-    let read_fd = scopeguard::ScopeGuard::into_inner(read_fd_guard);
+    let read_fd = read_fd_guard.into_raw();
 
     Ok(PtyResult {
         master: Fd::INVALID,

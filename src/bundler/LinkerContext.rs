@@ -1012,9 +1012,8 @@ impl<'a> LinkerContext<'a> {
         // container_of pattern. `Worker::get` only reads `bundle.graph.pool`
         // (shared), so a `&` is sufficient and avoids aliasing.
         let chunk: &mut Chunk = unsafe { &mut *chunk };
-        let worker = crate::thread_pool::Worker::get(ctx.bundle());
-        let mut worker = scopeguard::guard(worker, |w| w.unget());
-        let worker: &mut crate::thread_pool::Worker = &mut **worker;
+        let mut worker = crate::thread_pool::Worker::get_scoped(ctx.bundle());
+        let worker: &mut crate::thread_pool::Worker = &mut *worker;
         // Note: dispatch on a discriminant copy so `chunk` isn't borrowed
         // across the post-process call (which takes `&mut Chunk`).
         let result = match chunk.content {
@@ -1043,10 +1042,9 @@ impl<'a> LinkerContext<'a> {
         // SAFETY: `each_ptr` hands us a unique `*mut Chunk` per task; deref for
         // the body. container_of pattern — see `generate_chunk` above.
         let chunk: &mut Chunk = unsafe { &mut *chunk };
-        let worker = crate::thread_pool::Worker::get(ctx.bundle());
-        let mut worker = scopeguard::guard(worker, |w| w.unget());
+        let mut worker = crate::thread_pool::Worker::get_scoped(ctx.bundle());
         if let crate::chunk::Content::Javascript(_) = chunk.content {
-            Self::generate_js_renamer_(*ctx, &mut **worker, chunk, chunk_index);
+            Self::generate_js_renamer_(*ctx, &mut *worker, chunk, chunk_index);
         }
     }
 
@@ -1696,7 +1694,8 @@ pub struct PendingPartRange<'a> {
 /// callbacks: recover the intrusive [`PendingPartRange`] from `task`, extract
 /// the raw `*mut LinkerContext` / `*mut Chunk` from its [`GenerateChunkCtx`],
 /// and acquire the per-thread [`Worker`](crate::thread_pool::Worker) (returned
-/// as a scopeguard that calls `unget()` on drop).
+/// as a [`WorkerGuard`](crate::thread_pool::WorkerGuard) that calls `unget()`
+/// on drop).
 ///
 /// `GenerateChunkCtx.{c, chunk}` are raw `*mut T` (Copy), so reading them
 /// through `&GenerateChunkCtx` preserves the mutable provenance they were
@@ -1722,10 +1721,7 @@ pub(crate) unsafe fn pending_part_range_prologue<'a>(
     &'a PendingPartRange<'a>,
     *mut LinkerContext<'a>,
     *mut Chunk,
-    scopeguard::ScopeGuard<
-        &'static mut crate::thread_pool::Worker,
-        impl FnOnce(&'static mut crate::thread_pool::Worker),
-    >,
+    crate::thread_pool::WorkerGuard,
 ) {
     // SAFETY: per fn contract — `task` is the intrusive `task` field.
     let part_range: &PendingPartRange =
@@ -1733,8 +1729,7 @@ pub(crate) unsafe fn pending_part_range_prologue<'a>(
     let ctx = part_range.ctx;
     let c_ptr: *mut LinkerContext = ctx.c.as_mut_ptr().cast();
     let chunk_ptr: *mut Chunk = ctx.chunk.as_ptr();
-    let worker = crate::thread_pool::Worker::get(ctx.bundle());
-    let worker = scopeguard::guard(worker, |w| w.unget());
+    let worker = crate::thread_pool::Worker::get_scoped(ctx.bundle());
     (part_range, c_ptr, chunk_ptr, worker)
 }
 

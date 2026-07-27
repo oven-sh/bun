@@ -92,7 +92,7 @@ pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, BackendE
     }
 
     let stream = f.create_stream().ok_or(BackendUnavailable)?;
-    scopeguard::defer! { release(stream.as_ptr()); }
+    let _stream_release = ComRelease(stream.as_ptr());
     if stream.initialize_from_memory(
         bytes.as_ptr(),
         u32::try_from(bytes.len()).expect("int cast"),
@@ -105,10 +105,10 @@ pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, BackendE
     let dec = f
         .create_decoder_from_stream(stream.cast::<IUnknown>().as_ptr(), 0)
         .ok_or(DecodeFailed)?;
-    scopeguard::defer! { release(dec.as_ptr()); }
+    let _dec_release = ComRelease(dec.as_ptr());
 
     let frame = dec.get_frame(0).ok_or(DecodeFailed)?;
-    scopeguard::defer! { release(frame.as_ptr()); }
+    let _frame_release = ComRelease(frame.as_ptr());
 
     let mut w: u32 = 0;
     let mut h: u32 = 0;
@@ -131,7 +131,7 @@ pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, BackendE
         return Err(DecodeFailed);
     }
     let conv = ComPtr::new(conv).ok_or(DecodeFailed)?;
-    scopeguard::defer! { release(conv.as_ptr()); }
+    let _conv_release = ComRelease(conv.as_ptr());
 
     // Compute stride/size in u64 first: with `maxPixels` raised past ~1.07B,
     // `w * 4` can wrap u32 (0x4000_0001×4 → 4); the checked cast below is a
@@ -191,22 +191,22 @@ pub(crate) fn encode(
         return Err(BackendUnavailable);
     }
     let stream = ComPtr::new(stream).ok_or(BackendUnavailable)?;
-    scopeguard::defer! { release(stream.as_ptr()); }
+    let _stream_release = ComRelease(stream.as_ptr());
 
     // WINCODEC_ERR_COMPONENTNOTFOUND when the HEIF/AV1 store extension isn't
     // installed → BackendUnavailable so codecs.encode() falls through to
     // UnsupportedOnPlatform instead of a generic "encode failed".
     let guid = container_guid(opts.format).ok_or(BackendUnavailable)?;
     let enc = f.create_encoder(guid).ok_or(BackendUnavailable)?;
-    scopeguard::defer! { release(enc.as_ptr()); }
+    let _enc_release = ComRelease(enc.as_ptr());
     // WICBitmapEncoderNoCache = 2.
     if enc.initialize(stream.as_ptr(), 2) < 0 {
         return Err(EncodeFailed);
     }
 
     let (frame, props) = enc.create_new_frame().ok_or(EncodeFailed)?;
-    scopeguard::defer! { release(frame.as_ptr()); }
-    scopeguard::defer! { release(props); }
+    let _frame_release = ComRelease(frame.as_ptr());
+    let _props_release = ComRelease(props);
 
     // Thread `quality` and the HEIF sub-codec through the IPropertyBag2 the
     // encoder hands back. Both go via the C++ shim so the SDK's own VARIANT/
@@ -278,7 +278,7 @@ pub(crate) fn encode(
                 rgba.as_ptr(),
             )
             .ok_or(EncodeFailed)?;
-        scopeguard::defer! { release(src.as_ptr()); }
+        let _src_release = ComRelease(src.as_ptr());
         let convert_fn = wicConvertBitmapSource
             .get()
             .copied()
@@ -289,7 +289,7 @@ pub(crate) fn encode(
             return Err(EncodeFailed);
         }
         let conv = ComPtr::new(conv).ok_or(EncodeFailed)?;
-        scopeguard::defer! { release(conv.as_ptr()); }
+        let _conv_release = ComRelease(conv.as_ptr());
         if frame.write_source(conv, ptr::null()) < 0 {
             return Err(EncodeFailed);
         }
@@ -413,13 +413,24 @@ fn release<T>(p: *mut T) {
     }
 }
 
+/// RAII release for a COM interface pointer — calls [`release`] on drop.
+/// Wraps `*mut T` (not `NonNull`) because `release` already null-checks, and
+/// one call site (`props` from `CreateNewFrame`) is legitimately nullable.
+struct ComRelease<T>(*mut T);
+impl<T> Drop for ComRelease<T> {
+    #[inline]
+    fn drop(&mut self) {
+        release(self.0);
+    }
+}
+
 /// Non-null COM interface pointer. Exists solely to move the per-call-site
 /// `unsafe { ((*(*p).vt).Method)(p, ..) }` vtable dance into one place per
 /// method, so `decode`/`encode` read as straight-line safe code.
 ///
-/// Not an owning smart pointer — release is still explicit via
-/// `scopeguard::defer! { release(p.as_ptr()) }` at the call site. `Copy` so the defer-guard
-/// closure captures a copy and the handle stays usable afterwards.
+/// Not an owning smart pointer — release is via a sibling [`ComRelease`]
+/// guard at the call site. `Copy` so the handle stays usable after the guard
+/// is constructed.
 #[repr(transparent)]
 struct ComPtr<T>(ptr::NonNull<T>);
 

@@ -575,6 +575,17 @@ pub struct S3UploadStreamWrapper {
 // Inherent associated types are unstable; expose as a module-level alias instead.
 pub(crate) type ResumableSink = ResumableS3UploadSink;
 
+/// RAII `deref_()` on scope exit for [`S3UploadStreamWrapper`].
+struct DerefOnDrop(*mut S3UploadStreamWrapper);
+impl Drop for DerefOnDrop {
+    #[inline]
+    fn drop(&mut self) {
+        // SAFETY: constructed from a live Box-allocated `S3UploadStreamWrapper`;
+        // `deref_` decrements ref_count and frees only after the last ref drops.
+        unsafe { S3UploadStreamWrapper::deref_(self.0) };
+    }
+}
+
 impl S3UploadStreamWrapper {
     /// Intrusive `deref()` — decrements ref_count; runs finalizer + frees on zero.
     /// SAFETY: `this` must be a live Box-allocated `Self` (created via heap::alloc).
@@ -638,12 +649,7 @@ impl S3UploadStreamWrapper {
     pub(crate) fn write_end_request(&mut self, err: Option<JSValue>) {
         bun_output::scoped_log!(S3UploadStream, "writeEndRequest {}", err.is_some());
         self.detach_sink();
-        // scope-exit deref via guard (keeps borrowck happy)
-        let _deref_guard = scopeguard::guard(std::ptr::from_mut::<Self>(self), |s| {
-            // SAFETY: s points to self which is alive for the duration of the guard; deref_
-            // decrements ref_count and may free self only after all borrows above are released
-            unsafe { Self::deref_(s) }
-        });
+        let _deref_guard = DerefOnDrop(std::ptr::from_mut::<Self>(self));
         if let Some(js_err) = err {
             if self.end_promise.has_value() && !js_err.is_empty_or_undefined_or_null() {
                 // if we have a explicit error, reject the promise
@@ -666,12 +672,7 @@ impl S3UploadStreamWrapper {
 
     pub(crate) fn resolve(result: S3UploadResult, self_: &mut Self) -> JsTerminatedResult<()> {
         bun_output::scoped_log!(S3UploadStream, "resolve");
-        // scope-exit deref via guard (keeps borrowck happy)
-        let _deref_guard = scopeguard::guard(std::ptr::from_mut::<Self>(self_), |s| {
-            // SAFETY: s points to self_ which is alive for the duration of the guard; deref_
-            // decrements ref_count and may free self only after all borrows above are released
-            unsafe { Self::deref_(s) }
-        });
+        let _deref_guard = DerefOnDrop(std::ptr::from_mut::<Self>(self_));
         match &result {
             S3UploadResult::Success => {
                 if self_.end_promise.has_value() {
@@ -1126,14 +1127,17 @@ pub fn readable_stream(
             request_err: Option<Error::S3Error>,
             self_: &mut Self,
         ) -> JsTerminatedResult<()> {
-            // scope-exit cleanup via guard (keeps borrowck happy)
-            let _guard = scopeguard::guard(std::ptr::from_mut::<Self>(self_), move |s| {
-                if !has_more {
-                    // SAFETY: s is a live Box-allocated pointer (heap::alloc in S3DownloadStreamWrapper::new);
-                    // reconstituting and dropping the Box runs Drop::drop and frees the allocation
-                    drop(unsafe { bun_core::heap::take(s) });
+            struct FreeOnLast(*mut S3DownloadStreamWrapper, bool);
+            impl Drop for FreeOnLast {
+                fn drop(&mut self) {
+                    if !self.1 {
+                        // SAFETY: self.0 is a live Box-allocated pointer (heap::alloc in S3DownloadStreamWrapper::new);
+                        // reconstituting and dropping the Box runs Drop::drop and frees the allocation
+                        drop(unsafe { bun_core::heap::take(self.0) });
+                    }
                 }
-            });
+            }
+            let _guard = FreeOnLast(std::ptr::from_mut::<Self>(self_), has_more);
 
             if let Some(readable) = self_.readable_stream_ref.get(&self_.global) {
                 // BACKREF: see `Source::bytes()` — payload live while the

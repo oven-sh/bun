@@ -82,7 +82,7 @@ macro_rules! __expect_throw_dispatch {
     // base: no positional args left. `$this`/`$global` are always plain idents
     // at every call site (this/self, global/global_this); duplicating them
     // across the two colour branches is side-effect-free and avoids moving a
-    // `PostMatchGuard`/`scopeguard` before its natural scope end.
+    // `PostMatchGuard` before its natural scope end.
     (@go $this:expr, $global:expr, $sig:expr, $fmt:expr;
         bound = [$(($n:ident $v:expr))*];
         args  = [];
@@ -465,7 +465,7 @@ pub mod expect {
             rel: OrderingRelation,
         ) -> JsResult<JSValue> {
             // `defer this.postMatch(globalThis)` — run on every exit path.
-            let this = scopeguard::guard(self, |this| this.post_match(global));
+            let this = self.post_match_guard(global);
 
             let this_value = frame.this();
             let arguments: &[JSValue] = frame.arguments();

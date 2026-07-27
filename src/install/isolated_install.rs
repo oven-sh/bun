@@ -1720,10 +1720,7 @@ pub(crate) fn install_isolated_packages(
                     // so close explicitly. The guard fires on
                     // normal fall-through to step 3 and on every
                     // `break 'is_new_bun_modules true` early exit.
-                    let _close_node_modules = scopeguard::guard(node_modules, |fd| {
-                        use bun_sys::FdExt as _;
-                        fd.close();
-                    });
+                    let _close_node_modules = sys::Dir::from_fd(node_modules);
 
                     let mut entry_path = AutoRelPath::from(b"node_modules").assume_ok();
 

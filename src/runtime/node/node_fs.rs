@@ -2019,7 +2019,7 @@ mod _async_tasks {
                 }
                 Ok(fd_) => fd_,
             };
-            let _close = scopeguard::guard(fd, |fd| fd.close());
+            let _close = sys::CloseOnDrop::new(fd);
 
             #[cfg(windows)]
             let mut buf = OSPathBuffer::uninit();
@@ -3232,7 +3232,7 @@ pub mod args {
                     if next_val.is_string() {
                         arguments.eat();
                         let str = next_val.to_bun_string(ctx)?;
-                        let str = scopeguard::guard(str, |s| s.deref());
+                        let str = bun_core::OwnedString::new(str);
                         if str.eql_comptime("dir") {
                             break 'link_type SymlinkLinkType::Dir;
                         }
@@ -4765,7 +4765,7 @@ impl NodeFS {
             PathOrFileDescriptor::Path(path_) => {
                 let path = path_.slice_z(&mut self.sync_error_buf);
                 let fd = Syscall::open(path, FileSystemFlags::A.as_int(), args.mode)?;
-                let _close = scopeguard::guard(fd, |fd| fd.close());
+                let _close = sys::CloseOnDrop::new(fd);
                 while !data.is_empty() {
                     let written = Syscall::write(fd, data)?;
                     data = &data[written..];
@@ -5031,7 +5031,7 @@ impl NodeFS {
                         Ok(result) => result,
                         Err(err) => return Err(err.with_path(args.src.slice())),
                     };
-                    let _close_src = scopeguard::guard(src_fd, |fd| fd.close());
+                    let _close_src = sys::CloseOnDrop::new(src_fd);
 
                     let mut flags: i32 = sys::O::CREAT | sys::O::WRONLY;
                     // VERIFY-FIX(round1): was `usize` then passed as `&mut (wrote as u64)` —
@@ -5099,7 +5099,7 @@ impl NodeFS {
                 Ok(result) => result,
                 Err(err) => return Err(err.with_path(args.src.slice())),
             };
-            let _close_src = scopeguard::guard(src_fd, |fd| fd.close());
+            let _close_src = sys::CloseOnDrop::new(src_fd);
 
             let stat_ = match Syscall::fstat(src_fd) {
                 Ok(result) => result,
@@ -5121,7 +5121,7 @@ impl NodeFS {
                 Ok(result) => result,
                 Err(err) => return Err(err),
             };
-            let _close_dest = scopeguard::guard(dest_fd, |fd| fd.close());
+            let _close_dest = sys::CloseOnDrop::new(dest_fd);
 
             // Don't O_TRUNC at open: if src and dest resolve to the same
             // inode, that would zero the file before the first read. Match
@@ -5200,7 +5200,7 @@ impl NodeFS {
             let dest = args.dest.slice_z(&mut dest_buf);
 
             let src_fd = Syscall::open(src, sys::O::RDONLY, 0o644)?;
-            let _close_src = scopeguard::guard(src_fd, |fd| fd.close());
+            let _close_src = sys::CloseOnDrop::new(src_fd);
 
             let stat_ = Syscall::fstat(src_fd)?;
 
@@ -6968,7 +6968,7 @@ impl NodeFS {
             Err(err) => return Err(err.with_path(args.path.slice())),
             Ok(fd_) => fd_,
         };
-        let _close = scopeguard::guard(fd, |fd| fd.close());
+        let _close = sys::CloseOnDrop::new(fd);
 
         let mut entries: Vec<T> = Vec::new();
         match Self::readdir_with_entries::<T>(args, fd, path, &mut entries) {
@@ -7672,7 +7672,7 @@ impl NodeFS {
                 Err(err) => return Err(err.with_path(path)),
                 Ok(fd_) => fd_,
             };
-            let _close = scopeguard::guard(fd, |fd| fd.close());
+            let _close = sys::CloseOnDrop::new(fd);
 
             let buf = match Syscall::get_fd_path(fd, &mut outbuf) {
                 Err(err) => return Err(err.with_path(path)),
@@ -8000,7 +8000,7 @@ impl NodeFS {
                     ..Default::default()
                 });
             };
-            let _close = scopeguard::guard(fd, |fd| fd.close());
+            let _close = sys::CloseOnDrop::new(fd);
             return match Syscall::ftruncate(fd, len_i64) {
                 Ok(r) => Ok(r),
                 Err(err) => Err(err.with_path_and_syscall(path.slice(), sys::Tag::truncate)),
@@ -8346,7 +8346,7 @@ impl NodeFS {
             Err(err) => return Err(err.with_path(self.os_path_into_sync_error_buf(&src_buf[..sd]))),
             Ok(fd_) => fd_,
         };
-        let _close = scopeguard::guard(fd, |fd| fd.close());
+        let _close = sys::CloseOnDrop::new(fd);
 
         match self.mkdir_recursive_os_path(dest, args::Mkdir::DEFAULT_MODE, false) {
             Err(err) => return Err(err),
@@ -8601,7 +8601,7 @@ impl NodeFS {
                         return Err(err.with_path(&self.sync_error_buf[..src.len()]));
                     }
                 };
-                let _close_src = scopeguard::guard(src_fd, |fd| fd.close());
+                let _close_src = sys::CloseOnDrop::new(src_fd);
 
                 let mut flags: i32 = sys::O::CREAT | sys::O::WRONLY;
                 let wrote: core::cell::Cell<u64> = core::cell::Cell::new(0);
@@ -8682,7 +8682,7 @@ impl NodeFS {
                     return Err(err);
                 }
             };
-            let _close_src = scopeguard::guard(src_fd, |fd| fd.close());
+            let _close_src = sys::CloseOnDrop::new(src_fd);
 
             let stat_ = match Syscall::fstat(src_fd) {
                 Ok(result) => result,
@@ -8854,7 +8854,7 @@ impl NodeFS {
                     return Err(err);
                 }
             };
-            let _close_src = scopeguard::guard(src_fd, |fd| fd.close());
+            let _close_src = sys::CloseOnDrop::new(src_fd);
 
             let stat_ = match Syscall::fstat(src_fd) {
                 Ok(result) => result,
@@ -9048,7 +9048,7 @@ impl NodeFS {
                     Err(err) => return Err(err),
                     Ok(fd) => fd,
                 };
-                let _close = scopeguard::guard(handle, |fd| fd.close());
+                let _close = sys::CloseOnDrop::new(handle);
                 let mut wbuf = paths::os_path_buffer_pool::get();
                 let len = unsafe {
                     windows::GetFinalPathNameByHandleW(

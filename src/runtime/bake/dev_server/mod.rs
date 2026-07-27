@@ -1388,11 +1388,8 @@ impl DirectoryWatchStore {
         } else {
             (bun_sys::Fd::INVALID, false)
         };
-        let fd_guard = scopeguard::guard(fd, move |fd| {
-            if bun_watcher::REQUIRES_FILE_DESCRIPTORS && owned_fd {
-                fd.close();
-            }
-        });
+        let fd_guard = (bun_watcher::REQUIRES_FILE_DESCRIPTORS && owned_fd)
+            .then(|| bun_sys::CloseOnDrop::new(fd));
 
         // `add_directory::<true>` so the `WatchItem` owns its path: the watcher
         // retains the path until eviction runs (deferred onto `evict_list` and
@@ -1412,7 +1409,7 @@ impl DirectoryWatchStore {
         };
 
         // Disarm errdefer guards: success path.
-        let fd = scopeguard::ScopeGuard::into_inner(fd_guard);
+        let _ = fd_guard.map(bun_sys::CloseOnDrop::into_raw);
         let _ = scopeguard::ScopeGuard::into_inner(watches_guard);
 
         let dep = self.append_dep_assume_capacity(directory_watch_store::Dep {

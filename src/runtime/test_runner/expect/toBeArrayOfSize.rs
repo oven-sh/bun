@@ -10,8 +10,6 @@ pub(crate) fn to_be_array_of_size(
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    // scopeguard::defer! would hold &mut *this for the whole fn, so use the
-    // post-match guard instead.
     let this = this.post_match_guard(global);
 
     let this_value = frame.this();

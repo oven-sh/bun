@@ -1985,10 +1985,19 @@ bun_jsc::jsc_host_abi! {
     }
 }
 
+/// RAII: `CronJob::release_pending_ref(ptr)` on drop.
+struct ReleasePendingRefOnDrop(*mut CronJob);
+impl Drop for ReleasePendingRefOnDrop {
+    #[inline]
+    fn drop(&mut self) {
+        CronJob::release_pending_ref(self.0);
+    }
+}
+
 fn on_promise_resolve(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let args = frame.arguments();
     let this: *mut CronJob = args[args.len() - 1].as_promise_ptr::<CronJob>();
-    let _guard = scopeguard::guard(this, CronJob::release_pending_ref);
+    let _guard = ReleasePendingRefOnDrop(this);
     // `pending_ref` holds a ref on `this`.
     let this_ref = CronJob::from_ctx_ptr(this);
     // SAFETY: `bun_vm()` returns the per-thread singleton.
@@ -2003,7 +2012,7 @@ fn on_promise_resolve(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<J
 fn on_promise_reject(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let args = frame.arguments();
     let this: *mut CronJob = args[args.len() - 1].as_promise_ptr::<CronJob>();
-    let _guard = scopeguard::guard(this, CronJob::release_pending_ref);
+    let _guard = ReleasePendingRefOnDrop(this);
     // `pending_ref` holds a ref on `this`.
     let this_ref = CronJob::from_ctx_ptr(this);
     // SAFETY: `bun_vm()` returns the per-thread singleton.

@@ -664,9 +664,8 @@ impl Cursor {
         // later window. Without the second check a caller feeding targets in
         // random order (e.g. hash-map iteration) would walk every intervening
         // mapping one at a time, which is O(mappings) per call.
-        let must_reseek = !self.has_state
-            || !self.state.less_or_equal(target_line, target_col)
-            || {
+        let must_reseek =
+            !self.has_state || !self.state.less_or_equal(target_line, target_col) || {
                 let next = self.sync_idx as usize + 1;
                 next < self.map.sync_count() as usize
                     && self

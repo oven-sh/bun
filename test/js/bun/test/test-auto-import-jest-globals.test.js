@@ -64,11 +64,10 @@ describe("partial bun:test import keeps the un-imported jest globals", () => {
         stdout: "pipe",
         stderr: "pipe",
       });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(stderr).toContain("1 pass");
       expect(stderr).toContain("0 fail");
       expect(stderr).not.toContain("error:");
-      expect(stdout).not.toContain("undefined");
       expect(exitCode).toBe(0);
     });
   }

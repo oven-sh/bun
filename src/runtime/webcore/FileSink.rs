@@ -643,6 +643,9 @@ impl FileSink {
             }
             sys::Result::Ok(fd) => fd,
         };
+        // Record the dup'd/opened fd so `get_fd()` and the process.stdout
+        // force-sync hook (which clears O_NONBLOCK on it) see a real fd.
+        self.fd.set(fd);
 
         #[cfg(windows)]
         {

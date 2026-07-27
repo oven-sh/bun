@@ -446,37 +446,27 @@ function makePortWritable(port) {
 
 function setupWorkerStdio(stdio) {
   const { stdin, stdout, stderr } = stdio;
+  // Plain assignment, not Object.defineProperty: process.stdout/stderr/stdin
+  // are static PropertyCallback slots, and JSC's defineOwnProperty reifies the
+  // lazy value first (running the fd-backed constructor on the shared fd 1/2)
+  // before replacing it. put() replaces the slot without reifying and yields
+  // the same {writable,enumerable,configurable}=true descriptor.
   if (stdout) {
-    Object.defineProperty(process, "stdout", {
-      value: makePortWritable(stdout),
-      writable: true,
-      configurable: true,
-      enumerable: true,
-    });
+    process.stdout = makePortWritable(stdout);
   }
   if (stderr) {
-    Object.defineProperty(process, "stderr", {
-      value: makePortWritable(stderr),
-      writable: true,
-      configurable: true,
-      enumerable: true,
-    });
+    process.stderr = makePortWritable(stderr);
   }
   // node always replaces a worker's process.stdin: port-backed when { stdin: true },
   // otherwise an immediately-EOF'd stream — never the process-wide fd 0, which
   // would race the main thread (and hang on a TTY).
-  Object.defineProperty(process, "stdin", {
-    value: stdin
-      ? makePortReadable(stdin, true)
-      : new Readable({
-          read() {
-            this.push(null);
-          },
-        }),
-    writable: true,
-    configurable: true,
-    enumerable: true,
-  });
+  process.stdin = stdin
+    ? makePortReadable(stdin, true)
+    : new Readable({
+        read() {
+          this.push(null);
+        },
+      });
   // node routes console.log through process.stdout/stderr; Bun's global console
   // writes the fd directly, so rebind it to the captured streams when present.
   if (stdout || stderr) {

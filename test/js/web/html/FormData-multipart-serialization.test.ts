@@ -136,7 +136,7 @@ describe("multipart serialization (new Response(formData))", () => {
       ["dup", "first"],
       ["dup", "second"],
       ["unicode name ☺", "ünïcode välue 😊"],
-      ["blob", { file: true, name: undefined, type: "", text: "blob-bytes" }],
+      ["blob", { file: true, name: undefined, type: "application/octet-stream", text: "blob-bytes" }],
       ["file", { file: true, name: "日本語ファイル名.html", type: "text/html;charset=utf-8", text: "<p>hi</p>" }],
     ]);
   });

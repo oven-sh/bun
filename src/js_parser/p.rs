@@ -8039,19 +8039,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 .append_slice(self.import_records_for_current_part.as_slice());
                         }
 
-                        // Wipe the source slot's heap-backed maps so a multi-pass
-                        // re-scan of `idx` never aliases the compacted survivor.
-                        // SAFETY: `idx < parts.len()`; field-only write, `part` owns the old bits.
-                        unsafe {
-                            let src = parts.as_mut_ptr().add(idx);
-                            core::ptr::write(&raw mut (*src).symbol_uses, Default::default());
-                            core::ptr::write(
-                                &raw mut (*src).import_symbol_property_uses,
-                                Default::default(),
-                            );
-                        }
-                        // SAFETY: bitwise overwrite — the old slot value is intentionally not
-                        // dropped (its fields are arena-owned, so abandoning it does not leak).
+                        // SAFETY: `parts_end <= idx < parts.len()`; bitwise overwrite
+                        // of arena-owned data, paired with the `ptr::read` above.
                         unsafe {
                             core::ptr::write(
                                 parts.as_mut_ptr().add(parts_end),
@@ -8060,30 +8049,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         };
                         parts_end += 1;
                     } else {
-                        // Filtered out; free the global-heap maps and clear the
-                        // alias in `parts[idx]` so a re-scan never sees freed handles.
                         drop(core::mem::take(&mut part.symbol_uses));
                         drop(core::mem::take(&mut part.import_symbol_property_uses));
-                        // SAFETY: `idx < parts.len()`; field-only write, old bits just freed above.
-                        unsafe {
-                            let slot = parts.as_mut_ptr().add(idx);
-                            core::ptr::write(&raw mut (*slot).symbol_uses, Default::default());
-                            core::ptr::write(
-                                &raw mut (*slot).import_symbol_property_uses,
-                                Default::default(),
-                            );
-                        }
-                        // `part` is `ManuallyDrop`; falls out of scope without dropping.
                         let _ = part;
                     }
                 }
 
-                // leave the first part in there for namespace export when bundling
-                // `truncate` would drop slots that may alias kept parts (the loop
-                // above did `ptr::read` without clearing the source), so use
+                // SAFETY: `parts_end <= parts.len()`; tail slots may alias kept parts
+                // (the loop did `ptr::read` without clearing the source), so use
                 // `set_len`, which runs no destructors.
-                // SAFETY: `parts_end <= parts.len()`; tail slots are abandoned
-                // (arena-/process-lifetime).
                 unsafe { parts.set_len(parts_end) };
             }
 

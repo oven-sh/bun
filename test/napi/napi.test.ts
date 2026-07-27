@@ -433,6 +433,29 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       expect(result).toContain("side_effect arr[7]=undefined");
       expect(result).toContain("side_effect script_ran=false");
     });
+
+    it("napi_create_string_* succeeds while a VM exception is pending", async () => {
+      // Two routes put an exception into the VM (napi_call_function promotes a
+      // napi_throw'd value; napi_create_bigint_words over the engine cap
+      // throws RangeError). The string creators must return napi_ok and leave
+      // the exception pending, matching Node. In debug/asan builds Bun's
+      // validation scope previously aborted here.
+      const result = await checkSameOutput("test_create_string_with_vm_exception", []);
+      expect(result).toContain("call_function napi_call_function: status=10");
+      expect(result).toContain("bigint_words napi_create_bigint_words: status=10");
+      for (const route of ["call_function", "bigint_words"]) {
+        for (const fn of [
+          "napi_create_string_utf8",
+          "napi_create_string_latin1",
+          "napi_create_string_utf16",
+          "napi_create_string_utf8_nonascii",
+        ]) {
+          expect(result).toContain(`${route} ${fn}: status=0`);
+        }
+        expect(result).toContain(`${route} pending_after_create=true`);
+      }
+      expect(result).toContain("call_function exception=Error: E1");
+    });
   });
 
   describe("napi_async_work", () => {

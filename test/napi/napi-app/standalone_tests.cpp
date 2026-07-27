@@ -2892,6 +2892,80 @@ static napi_value test_pending_exception_gate(const Napi::CallbackInfo &info) {
   return ok(env);
 }
 
+// napi_create_string_* must succeed (napi_ok) and preserve a pending
+// exception that already lives on the VM. Two ways to put one there without
+// relying on Bun internals:
+//   (a) napi_throw(E) then napi_call_function(), which returns status 10 and
+//       promotes E into the VM, and
+//   (b) napi_create_bigint_words() with a length past the engine cap, which
+//       throws a RangeError directly into the VM and returns status 10.
+// In debug/asan builds the Rust string creators previously routed through a
+// validation scope that asserts "no VM exception" on success and aborted.
+static napi_value test_create_string_with_vm_exception(
+    const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+
+  napi_value global, isNaN;
+  NODE_API_CALL(env, napi_get_global(env, &global));
+  NODE_API_CALL(env, napi_get_named_property(env, global, "isNaN", &isNaN));
+
+  const char *labels[] = {"call_function", "bigint_words"};
+  for (int route = 0; route < 2; route++) {
+    // Arm a VM-level exception.
+    if (route == 0) {
+      napi_value msg, err;
+      NODE_API_CALL(env, napi_create_string_utf8(env, "E1", 2, &msg));
+      NODE_API_CALL(env, napi_create_error(env, nullptr, msg, &err));
+      NODE_API_CALL(env, napi_throw(env, err));
+      napi_value r;
+      napi_status st = napi_call_function(env, global, isNaN, 0, nullptr, &r);
+      printf("%s napi_call_function: status=%d\n", labels[route], (int)st);
+    } else {
+      static const uint64_t word = 1;
+      napi_value big;
+      napi_status st =
+          napi_create_bigint_words(env, 0, (size_t)INT_MAX, &word, &big);
+      printf("%s napi_create_bigint_words: status=%d\n", labels[route],
+             (int)st);
+    }
+
+    // String creators must succeed with the exception still pending.
+    napi_value s;
+    static const char16_t wide[] = {'x', 0};
+    napi_status st = napi_create_string_utf8(env, "x", 1, &s);
+    printf("%s napi_create_string_utf8: status=%d\n", labels[route], (int)st);
+    st = napi_create_string_latin1(env, "x", 1, &s);
+    printf("%s napi_create_string_latin1: status=%d\n", labels[route],
+           (int)st);
+    st = napi_create_string_utf16(env, wide, 1, &s);
+    printf("%s napi_create_string_utf16: status=%d\n", labels[route], (int)st);
+    // Non-ASCII path (utf8 decoder takes a different branch).
+    st = napi_create_string_utf8(env, "\xc3\xa9", 2, &s);
+    printf("%s napi_create_string_utf8_nonascii: status=%d\n", labels[route],
+           (int)st);
+
+    bool pending = false;
+    napi_is_exception_pending(env, &pending);
+    printf("%s pending_after_create=%s\n", labels[route],
+           pending ? "true" : "false");
+
+    napi_value exc;
+    napi_get_and_clear_last_exception(env, &exc);
+    if (route == 0) {
+      // Only the napi_throw'd Error has a portable message across engines.
+      napi_value exc_msg;
+      if (napi_coerce_to_string(env, exc, &exc_msg) == napi_ok) {
+        char buf[64];
+        size_t n;
+        napi_get_value_string_utf8(env, exc_msg, buf, sizeof(buf), &n);
+        printf("%s exception=%s\n", labels[route], buf);
+      }
+    }
+  }
+
+  return ok(env);
+}
+
 // Regression test: PROPERTY_NAME_FROM_UTF8 must copy string data.
 // Previously it used StringImpl::createWithoutCopying for ASCII strings,
 // which could leave dangling pointers in JSC's atom string table.
@@ -3562,6 +3636,7 @@ void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports,
                     test_external_buffer_with_pending_exception);
   REGISTER_FUNCTION(env, exports, test_pending_exception_gate);
+  REGISTER_FUNCTION(env, exports, test_create_string_with_vm_exception);
   REGISTER_FUNCTION(env, exports, test_napi_get_named_property_copied_string);
   REGISTER_FUNCTION(env, exports, test_issue_25933);
   REGISTER_FUNCTION(env, exports, test_napi_make_callback_status);

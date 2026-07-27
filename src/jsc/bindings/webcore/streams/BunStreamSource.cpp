@@ -1381,7 +1381,7 @@ static void resumableEnd(JSC::VM& vm, JSGlobalObject* globalObject, JSResumableS
         if (hasError)
             args.append(error);
         ASSERT(!args.hasOverflowed());
-        invokeMethod(vm, globalObject, sink, builtinNames(vm).endPublicName(), args);
+        invokeMethod(vm, globalObject, sink, hasError ? vm.propertyNames->error : builtinNames(vm).endPublicName(), args);
         if (catchScope.exception()) [[unlikely]] {
             if (takeAbruptCompletion(globalObject, catchScope).isEmpty())
                 return;
@@ -1563,6 +1563,7 @@ static void resumableSetupDirect(JSC::VM& vm, JSGlobalObject* globalObject, JSRe
 
     if (!pull.isCallable()) {
         MarkedArgumentBuffer noArgs;
+        scope.release();
         invokeMethod(vm, globalObject, sink, builtinNames(vm).endPublicName(), noArgs);
         return;
     }
@@ -1601,7 +1602,7 @@ JSValue assignStreamIntoResumableSink(JSGlobalObject* globalObject, JSReadableSt
             MarkedArgumentBuffer args;
             args.append(thrown);
             ASSERT(!args.hasOverflowed());
-            invokeMethod(vm, globalObject, resumableSink, builtinNames(vm).endPublicName(), args);
+            invokeMethod(vm, globalObject, resumableSink, vm.propertyNames->error, args);
         }
         RETURN_IF_EXCEPTION(scope, {});
         return jsUndefined();
@@ -1909,7 +1910,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onResumableSinkDirectPullRejected, 
     MarkedArgumentBuffer args;
     args.append(callFrame->argument(0));
     ASSERT(!args.hasOverflowed());
-    invokeOptionalMethod(globalObject, sink, builtinNames(vm).endPublicName(), args);
+    invokeOptionalMethod(globalObject, sink, vm.propertyNames->error, args);
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsUndefined());
 }

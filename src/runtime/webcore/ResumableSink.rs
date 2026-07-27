@@ -377,11 +377,13 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
         Ok(promise_value)
     }
 
+    /// `error(e)` on the controller surface: abort the upload with `e`.
     #[bun_jsc::host_fn(method)]
     pub fn js_end(
         this: &mut Self,
-        _global_this: &JSGlobalObject,
+        global_this: &JSGlobalObject,
         callframe: &CallFrame,
+        this_value: JSValue,
     ) -> JsResult<JSValue> {
         bun_jsc::mark_binding!();
         let args = callframe.arguments();
@@ -389,28 +391,33 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
         if this.is_detached() {
             return Ok(JSValue::UNDEFINED);
         }
+        let err = if args.len() > 0 { Some(args[0]) } else { None };
+        if let Some(promise) = Self::take_flush_promise(this_value, global_this) {
+            let _ = promise.reject_as_handled(global_this, err.unwrap_or(JSValue::UNDEFINED));
+        }
         this.detach_js();
         scoped_log!(ResumableSink, "jsEnd {}", args.len());
         this.status = Status::Done;
 
-        Self::on_end(
-            this.context,
-            if args.len() > 0 { Some(args[0]) } else { None },
-        );
+        Self::on_end(this.context, err);
         Ok(JSValue::UNDEFINED)
     }
 
-    /// `close()` on the direct-stream controller surface: a clean end regardless of the
-    /// reason argument (the direct controller's `end`/`close` are the same no-error target).
+    /// `end()` / `close()` on the controller surface: a clean end regardless of the reason
+    /// argument (the direct controller's `end`/`close` are the same no-error target).
     #[bun_jsc::host_fn(method)]
     pub fn js_close(
         this: &mut Self,
-        _global_this: &JSGlobalObject,
+        global_this: &JSGlobalObject,
         _callframe: &CallFrame,
+        this_value: JSValue,
     ) -> JsResult<JSValue> {
         bun_jsc::mark_binding!();
         if this.is_detached() {
             return Ok(JSValue::UNDEFINED);
+        }
+        if let Some(promise) = Self::take_flush_promise(this_value, global_this) {
+            let _ = promise.resolve(global_this, JSValue::UNDEFINED);
         }
         this.detach_js();
         scoped_log!(ResumableSink, "jsClose");

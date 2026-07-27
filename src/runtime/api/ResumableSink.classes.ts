@@ -25,16 +25,19 @@ function generate(name) {
         passThis: true,
       },
       end: {
-        fn: "jsEnd",
-        length: 1,
+        fn: "jsClose",
+        length: 0,
+        passThis: true,
       },
       close: {
         fn: "jsClose",
         length: 0,
+        passThis: true,
       },
       error: {
         fn: "jsEnd",
         length: 1,
+        passThis: true,
       },
       setHandlers: {
         fn: "jsSetHandlers",

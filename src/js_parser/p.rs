@@ -1498,8 +1498,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
-        // Assigning to an import is a run-time TypeError, not an early error. Only the
-        // bundler hard-errors here since scope hoisting would make the write silently succeed.
+        // Run-time TypeError per spec; only hard-error when bundling (scope hoisting would hide it).
         if (opts.assign_target() != js_ast::AssignTarget::None || opts.is_delete_target())
             && self.symbols[ref_.inner_index() as usize].kind == js_ast::symbol::Kind::Import
             && (self.options.bundle || !self.options.suppress_warnings_about_weird_code)

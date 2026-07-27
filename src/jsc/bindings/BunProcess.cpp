@@ -388,6 +388,7 @@ extern "C" size_t Bun__process_dlopen_count;
 extern "C" void Bun__unlink(const char*, size_t);
 
 extern "C" void CrashHandler__setDlOpenAction(const char* action);
+extern "C" bool ohos_ensure_elf_signed(const char* path);
 extern "C" bool Bun__VM__allowAddons(void* vm);
 
 JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalObject_, JSC::CallFrame* callFrame))
@@ -535,6 +536,12 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
 // On Windows, we use GetLastError() for error messages, so we can only delete after checking for errors
 #else
     CrashHandler__setDlOpenAction(utf8.data());
+#if defined(__OHOS__)
+    // OHOS requires ELF files to have a .codesign section before dlopen.
+    // Auto-sign .node addons compiled by node-gyp during lifecycle scripts
+    // and any other unsigned native addon.
+    ohos_ensure_elf_signed(utf8.data());
+#endif
     void* handle = dlopen(utf8.data(), RTLD_LAZY);
     CrashHandler__setDlOpenAction(nullptr);
 

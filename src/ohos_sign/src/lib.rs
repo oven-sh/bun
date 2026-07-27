@@ -64,3 +64,28 @@ pub fn sign_selfsign_inplace_with_strip(path: &std::path::Path) -> Result<(), Si
     std::fs::write(path, &signed)?;
     Ok(())
 }
+
+/// C FFI bridge: ensure an ELF file at `path` has a `.codesign` section.
+/// If unsigned, signs it in-place using self-sign. Returns true if the file
+/// is (or became) signed; false if not an ELF or signing failed.
+/// Called from BunProcess.cpp before `dlopen()` on OHOS.
+#[no_mangle]
+pub extern "C" fn ohos_ensure_elf_signed(path: *const core::ffi::c_char) -> bool {
+    if path.is_null() {
+        return false;
+    }
+    let cstr = unsafe { core::ffi::CStr::from_ptr(path) };
+    let path_bytes = cstr.to_bytes();
+    let path = std::path::Path::new(std::str::from_utf8(path_bytes).unwrap_or(""));
+    let bytes = match std::fs::read(path) {
+        Ok(b) => b,
+        Err(_) => return false,
+    };
+    if bytes.len() < 4 || bytes[..4] != [0x7f, 0x45, 0x4c, 0x46] {
+        return false;
+    }
+    if has_codesign(&bytes) {
+        return true;
+    }
+    sign_selfsign_inplace(path).is_ok()
+}

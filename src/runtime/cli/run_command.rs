@@ -676,6 +676,14 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             .put_default(b"npm_config_local_prefix", top_level_dir)
             .expect("unreachable");
 
+        env_loader
+            .map
+            .put(
+                b"INIT_CWD",
+                bun_paths::string_paths::without_trailing_slash_windows_path(top_level_dir),
+            )
+            .expect("unreachable");
+
         // Propagate --no-orphans / [run] noOrphans to the script's env so any
         // Bun process the script spawns enables its own watchdog. The env
         // loader snapshots `environ` before flag parsing runs, so the

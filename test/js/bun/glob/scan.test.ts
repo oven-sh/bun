@@ -681,6 +681,25 @@ describe("lazy iteration", () => {
     }
   });
 
+  test("scan: breaking early releases the directory fd", async () => {
+    // The async close() path is gated on has_pending_activity == 0, which the
+    // sync variant never touches; exercise it separately.
+    using dir = tempDir("glob-lazy-fd-async", { "a/b.txt": "", "a/c.txt": "" });
+    const before = getFDCount();
+    for (let i = 0; i < 64; i++) {
+      for await (const entry of new Glob("**/*.txt").scan({ cwd: String(dir) })) {
+        expect(entry).toStartWith("a" + path.sep);
+        break;
+      }
+    }
+    if (isWindows) {
+      fs.rmSync(path.join(String(dir), "a"), { recursive: true });
+      expect(fs.existsSync(path.join(String(dir), "a"))).toBeFalse();
+    } else {
+      expect(getFDCount() - before).toBeLessThan(8);
+    }
+  });
+
   test("scanSync: never-iterated result holds no fd", () => {
     using dir = tempDir("glob-lazy-fd-noiter", { "a/b.txt": "" });
     const before = getFDCount();

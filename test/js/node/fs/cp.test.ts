@@ -404,6 +404,17 @@ for (const [name, copy] of impls) {
       });
     });
 
+    test.skipIf(isWindows)("filter - trailing slash on src/dest does not double the separator", async () => {
+      const basename = tempDirWithFiles("cp-trailing", { "from/a.txt": "a" });
+      const seen: [string, string][] = [];
+      await copy(basename + "/from/", basename + "/result/", {
+        recursive: true,
+        filter: (s, d) => (seen.push([s, d]), true),
+      });
+      expect(seen).toContainEqual([basename + "/from/a.txt", basename + "/result/a.txt"]);
+      expect(seen.some(([s]) => s.includes("//"))).toBe(false);
+    });
+
     test("filter - works", async () => {
       const basename = tempDirWithFiles("cp", {
         "from/a.txt": "a",

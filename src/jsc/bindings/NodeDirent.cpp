@@ -328,7 +328,7 @@ extern "C" JSC::EncodedJSValue Bun__JSDirentObjectConstructor(Zig::GlobalObject*
     return JSValue::encode(globalobject->m_JSDirentClassStructure.constructor(globalobject));
 }
 
-extern "C" JSC::EncodedJSValue Bun__Dirent__toJS(Zig::GlobalObject* globalObject, int type, BunString* name, BunString* path, JSString** previousPath)
+static JSC::EncodedJSValue createDirentObject(Zig::GlobalObject* globalObject, int type, JSValue nameValue, BunString* path, JSString** previousPath)
 {
     auto& vm = globalObject->vm();
 
@@ -361,48 +361,24 @@ extern "C" JSC::EncodedJSValue Bun__Dirent__toJS(Zig::GlobalObject* globalObject
         }
     }
 
-    auto nameString = name->transferToWTFString();
-    auto nameValue = jsString(vm, WTF::move(nameString));
-    auto typeValue = jsNumber(type);
     object->putDirectOffset(vm, 0, nameValue);
     object->putDirectOffset(vm, 1, pathValue);
-    object->putDirectOffset(vm, 2, typeValue);
+    object->putDirectOffset(vm, 2, jsNumber(type));
     object->putDirectOffset(vm, 3, pathValue);
 
     return JSValue::encode(object);
 }
 
-extern "C" JSC::EncodedJSValue Bun__Dirent__toJSWithBufferName(Zig::GlobalObject* globalObject, int type, const uint8_t* nameBytes, size_t nameLen, BunString* path, JSString** previousPath)
+extern "C" JSC::EncodedJSValue Bun__Dirent__toJS(Zig::GlobalObject* globalObject, int type, BunString* name, BunString* path, JSString** previousPath)
 {
     auto& vm = globalObject->vm();
+    auto nameString = name->transferToWTFString();
+    return createDirentObject(globalObject, type, jsString(vm, WTF::move(nameString)), path, previousPath);
+}
 
-    auto* structure = globalObject->m_JSDirentClassStructure.get(globalObject);
-    auto* object = JSC::JSFinalObject::create(vm, structure);
-    JSString* pathValue = nullptr;
-    if (path && path->tag == BunStringTag::WTFStringImpl && previousPath && *previousPath) {
-        auto* prevImpl = (*previousPath)->tryGetValueImpl();
-        if (prevImpl && (prevImpl == path->impl.wtf || WTF::equal(prevImpl, path->impl.wtf))) {
-            pathValue = *previousPath;
-            auto pathString = path->transferToWTFString();
-        }
-    }
-
-    if (!pathValue) {
-        auto pathString = path->transferToWTFString();
-        pathValue = jsString(vm, WTF::move(pathString));
-        if (previousPath) {
-            *previousPath = pathValue;
-        }
-    }
-
-    auto* nameValue = WebCore::createBuffer(globalObject, nameBytes, nameLen);
-    auto typeValue = jsNumber(type);
-    object->putDirectOffset(vm, 0, nameValue);
-    object->putDirectOffset(vm, 1, pathValue);
-    object->putDirectOffset(vm, 2, typeValue);
-    object->putDirectOffset(vm, 3, pathValue);
-
-    return JSValue::encode(object);
+extern "C" JSC::EncodedJSValue Bun__Dirent__toJSWithBufferName(Zig::GlobalObject* globalObject, int type, const uint8_t* nameBytes, size_t nameLen, BunString* path, JSString** previousPath)
+{
+    return createDirentObject(globalObject, type, WebCore::createBuffer(globalObject, nameBytes, nameLen), path, previousPath);
 }
 
 const ClassInfo JSDirentPrototype::s_info = { "Dirent"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSDirentPrototype) };

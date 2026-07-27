@@ -149,17 +149,16 @@ function areIdentical(srcStat, destStat) {
 
 // POSIX entry names are arbitrary bytes; read them as Buffers so the next
 // syscall sees the exact on-disk bytes. Windows names are native UTF-16.
+const SEP_BYTE = sep.charCodeAt(0);
 const SEP_BUF = Buffer.from(sep);
 const kReaddirBufferOpts =
   process.platform === "win32" ? { withFileTypes: true } : { withFileTypes: true, encoding: "buffer" };
 
-function toBuffer(p) {
-  return Buffer.isBuffer(p) ? p : Buffer.from(String(p));
-}
-
 function joinDirEntry(dir, name) {
-  if (Buffer.isBuffer(name)) return Buffer.concat([toBuffer(dir), SEP_BUF, name]);
-  return join(dir, name);
+  if (!Buffer.isBuffer(name)) return join(dir, name);
+  const dirBuf = Buffer.isBuffer(dir) ? dir : Buffer.from(String(dir));
+  if (dirBuf.length && dirBuf[dirBuf.length - 1] === SEP_BYTE) return Buffer.concat([dirBuf, name]);
+  return Buffer.concat([dirBuf, SEP_BUF, name]);
 }
 
 function pathToString(p) {

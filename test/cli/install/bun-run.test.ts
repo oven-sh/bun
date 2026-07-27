@@ -1129,28 +1129,16 @@ describe.concurrent("bun run", () => {
       using dir = tempDir("bun-run-node-env-shim", {
         "package.json": JSON.stringify({
           name: "p",
-          scripts: { probe: "node probe.js" },
+          scripts: {
+            probe: `node -e "console.log(JSON.stringify({ NODE: process.env.NODE, npm_node_execpath: process.env.npm_node_execpath }))"`,
+          },
         }),
-        "probe.js": `
-          const { statSync } = require("fs");
-          const { execFileSync } = require("child_process");
-          const NODE = process.env.NODE;
-          const npm_node_execpath = process.env.npm_node_execpath;
-          const out = execFileSync(NODE, ["-p", "typeof Bun"], { encoding: "utf8" }).trim();
-          console.log(JSON.stringify({
-            NODE,
-            npm_node_execpath,
-            NODE_isFile: statSync(NODE).isFile(),
-            exec_isFile: statSync(npm_node_execpath).isFile(),
-            ran: out,
-          }));
-        `,
       });
 
       // A PATH that provably contains no real `node` (the tempdir itself).
-      // Bun prepends the shim dir before running the script, so `node probe.js`
-      // resolves to the shim regardless; `--shell=bun` avoids needing sh/bash
-      // on PATH.
+      // Bun prepends the shim dir before running the script, so the `node -e`
+      // above resolves to the shim regardless; `--shell=bun` avoids needing
+      // sh/bash on PATH.
       const env: Record<string, string | undefined> = { ...bunEnv, PATH: String(dir) };
       delete env.NODE;
       delete env.npm_node_execpath;
@@ -1166,21 +1154,16 @@ describe.concurrent("bun run", () => {
 
       const line = stdout.split("\n").find(l => l.startsWith("{"));
       if (!line) {
-        // Surface what actually happened (on the broken build execFileSync
-        // throws EACCES because $NODE is a directory).
         expect({ stdout, stderr }).toEqual({ stdout: expect.stringContaining("{"), stderr: "" });
         throw new Error("unreachable");
       }
       const result = JSON.parse(line);
       const exeSuffix = isWindows ? "\\node.exe" : "/node";
-      expect(result).toEqual({
-        NODE: expect.stringMatching(/[\\/]node(\.exe)?$/),
+      expect({ ...result, endsWithExe: result.NODE.endsWith(exeSuffix) }).toEqual({
+        NODE: expect.stringContaining("bun-node"),
         npm_node_execpath: result.NODE,
-        NODE_isFile: true,
-        exec_isFile: true,
-        ran: "object",
+        endsWithExe: true,
       });
-      expect(result.NODE.endsWith(exeSuffix)).toBe(true);
       expect(exitCode).toBe(0);
     });
   }

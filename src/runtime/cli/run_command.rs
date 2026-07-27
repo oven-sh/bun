@@ -2044,10 +2044,20 @@ impl RunCommand {
     fn basename_or_bun(str: &[u8]) -> &[u8] {
         // The full path is not used here, because on windows it is dependant on the
         // username. Before windows we checked bun_node_dir, but this is not allowed on Windows.
-        let suffix_posix =
-            const_format::concatcp!("/bun-node/node", std::env::consts::EXE_SUFFIX).as_bytes();
-        let suffix_win =
-            const_format::concatcp!("\\bun-node\\node", std::env::consts::EXE_SUFFIX).as_bytes();
+        let suffix_posix = const_format::concatcp!(
+            "/",
+            bun_install::RunCommand::BUN_NODE_DIR_NAME,
+            "/node",
+            std::env::consts::EXE_SUFFIX
+        )
+        .as_bytes();
+        let suffix_win = const_format::concatcp!(
+            "\\",
+            bun_install::RunCommand::BUN_NODE_DIR_NAME,
+            "\\node",
+            std::env::consts::EXE_SUFFIX
+        )
+        .as_bytes();
         if str.ends_with(suffix_posix) || (cfg!(windows) && str.ends_with(suffix_win)) {
             return b"bun";
         }

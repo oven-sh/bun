@@ -540,42 +540,45 @@ describe.skipIf(!isWindows).each([
   ["file", "fileFd"],
 ])("does not leak native FileSink for a borrowed %s fd on Windows", (kind, fdExpr) => {
   it("releases the keep-alive ref and leaves the caller's fd open", async () => {
+    const dir = tmpdirSync();
     const childSrc = /* js */ `
       const { fileSinkInternals } = require("bun:internal-for-testing");
       const fs = require("node:fs");
-      const os = require("node:os");
-      const path = require("node:path");
 
       const iterations = 8;
-      const fileFd = fs.openSync(path.join(os.tmpdir(), "filesink-borrowed-" + process.pid), "w");
+      const tmpPath = ${JSON.stringify(join(dir, "borrowed"))};
+      const fileFd = fs.openSync(tmpPath, "w");
+      try {
+        async function once() {
+          const w = Bun.file(${fdExpr}).writer();
+          const p = w.write("x");
+          if (p && typeof p.then === "function") await p;
+          await Promise.resolve(w.end()).catch(() => {});
+        }
 
-      async function once() {
-        const w = Bun.file(${fdExpr}).writer();
-        const p = w.write("x");
-        if (p && typeof p.then === "function") await p;
-        await Promise.resolve(w.end()).catch(() => {});
-      }
-
-      // Warm up so any one-off allocations are in the baseline.
-      await once();
-      Bun.gc(true);
-      const baseline = fileSinkInternals.liveCount();
-
-      for (let i = 0; i < iterations; i++) await once();
-
-      for (let i = 0; i < 50; i++) {
+        // Warm up so any one-off allocations are in the baseline.
+        await once();
         Bun.gc(true);
-        if (fileSinkInternals.liveCount() <= baseline) break;
-        await Bun.sleep(10);
+        const baseline = fileSinkInternals.liveCount();
+
+        for (let i = 0; i < iterations; i++) await once();
+
+        for (let i = 0; i < 50; i++) {
+          Bun.gc(true);
+          if (fileSinkInternals.liveCount() <= baseline) break;
+          await Bun.sleep(10);
+        }
+        const leaked = fileSinkInternals.liveCount() - baseline;
+
+        // The caller's fd must still be open after the writer's end().
+        let fdOpen = true;
+        try { fs.fstatSync(${fdExpr}); } catch { fdOpen = false; }
+
+        process.stdout.write(JSON.stringify({ leaked, fdOpen, iterations }));
+      } finally {
+        fs.closeSync(fileFd);
+        try { fs.unlinkSync(tmpPath); } catch {}
       }
-      const leaked = fileSinkInternals.liveCount() - baseline;
-
-      // The caller's fd must still be open after the writer's end().
-      let fdOpen = true;
-      try { fs.fstatSync(${fdExpr}); } catch { fdOpen = false; }
-      fs.closeSync(fileFd);
-
-      process.stdout.write(JSON.stringify({ leaked, fdOpen, iterations }));
     `;
 
     // child_process.spawn gives the child a named-pipe fd 3 on Windows;

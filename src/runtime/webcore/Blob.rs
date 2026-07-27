@@ -5418,8 +5418,7 @@ pub fn write_file(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResu
 const WRITE_PERMISSIONS: bun_sys::Mode = 0o664;
 
 /// `uv_pipe_open`/`uv_tty_init` adopt (and later close) the HANDLE, so a
-/// borrowed pipe/tty fd is dup'd and the writer owns the dup. stdout/stderr
-/// use `start_sync` and file handles are not adopted, so neither is dup'd.
+/// borrowed pipe/tty fd is dup'd and the writer owns the dup.
 #[cfg(windows)]
 fn dup_borrowed_pipe_for_uv(
     fd: Fd,

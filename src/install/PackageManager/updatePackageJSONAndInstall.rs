@@ -379,6 +379,7 @@ fn update_package_json_and_install_with_manager_with_updates(
         js_printer::PrintJsonOptions {
             indent: current_package_json_indent,
             mangled_props: None,
+            preserve_comments: &current_package_json.comments,
             ..Default::default()
         },
     ) {
@@ -494,6 +495,7 @@ fn update_package_json_and_install_with_manager_with_updates(
                 js_printer::PrintJsonOptions {
                     indent: root_package_json.indentation,
                     mangled_props: None,
+                    preserve_comments: &root_package_json.comments,
                     ..Default::default()
                 },
             ) {
@@ -544,9 +546,14 @@ fn update_package_json_and_install_with_manager_with_updates(
         // Now, we _re_ parse our in-memory edited package.json
         // so we can commit the version we changed from the lockfile
         let json_arena = bun_alloc::Arena::new();
-        let mut new_package_json: bun_ast::Expr =
-            match json::parse_package_json_utf8(&source, manager.log_mut(), &json_arena) {
-                Ok(v) => v,
+        let (mut new_package_json, new_package_json_comments): (bun_ast::Expr, _) =
+            match json::parse_package_json_utf8_with_opts(
+                json::PACKAGE_JSON_OPTS,
+                &source,
+                manager.log_mut(),
+                &json_arena,
+            ) {
+                Ok(v) => (v.root, v.comments),
                 Err(err) => {
                     bun_core::pretty_errorln!(
                         "package.json failed to parse due to error {}",
@@ -596,6 +603,7 @@ fn update_package_json_and_install_with_manager_with_updates(
             js_printer::PrintJsonOptions {
                 indent: current_package_json_indent,
                 mangled_props: None,
+                preserve_comments: &new_package_json_comments,
                 ..Default::default()
             },
         ) {

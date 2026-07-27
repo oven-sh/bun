@@ -46,6 +46,7 @@ struct PackageJson {
     contents: Box<[u8]>,
     source: Source,
     indentation: bun_ast::Indentation,
+    comments: Vec<bun_ast::Range>,
 }
 
 impl PmPkgCommand {
@@ -184,6 +185,7 @@ impl PmPkgCommand {
             contents,
             source,
             indentation: result.indentation,
+            comments: result.comments,
         })
     }
 
@@ -705,9 +707,10 @@ impl PmPkgCommand {
 
             let temp_source = Source::init_path_string(b"package.json", value);
             let mut temp_log = Log::init();
-            if let Ok(json_expr) =
+            if let Ok(mut json_expr) =
                 json::parse_package_json_utf8(&temp_source, &mut temp_log, dummy_bump())
             {
+                json_expr.clear_source_locs();
                 return Ok(json_expr);
             } else {
                 let data: &[u8] = dummy_bump().alloc_slice_copy(value);
@@ -845,6 +848,7 @@ impl PmPkgCommand {
             js_printer::PrintJsonOptions {
                 indent: pkg.indentation,
                 mangled_props: None,
+                preserve_comments: &pkg.comments,
                 ..Default::default()
             },
         ) {

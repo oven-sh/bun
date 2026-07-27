@@ -1082,6 +1082,10 @@ pub struct Options<'a> {
     pub line_offset_tables: Option<&'a SourceMap::line_offset_table::List<bun_alloc::AstAlloc>>,
 
     pub mangled_props: Option<&'a crate::MangledProps>,
+
+    /// Comment byte-ranges into `json_comment_source`, re-emitted when printing JSONC.
+    pub json_preserve_comments: &'a [bun_ast::Range],
+    pub json_comment_source: &'a [u8],
 }
 
 impl<'a> Options<'a> {
@@ -1137,6 +1141,8 @@ impl<'a> Default for Options<'a> {
             ts_enums: None,
             line_offset_tables: None,
             mangled_props: None,
+            json_preserve_comments: &[],
+            json_comment_source: &[],
         }
     }
 }
@@ -1150,6 +1156,8 @@ pub struct PrintJsonOptions<'a> {
     pub indent: Indentation,
     pub mangled_props: Option<&'a MangledProps>,
     pub minify_whitespace: bool,
+    /// Comment byte-ranges into `source.contents`, re-emitted relative to surviving nodes.
+    pub preserve_comments: &'a [bun_ast::Range],
 }
 
 // `print_json` lives below the `Printer` impl (after `__gated_printer`) so it
@@ -1406,6 +1414,10 @@ pub mod __gated_printer {
         pub was_lazy_export: bool,
         // Always carried; gated at call sites with MAY_HAVE_MODULE_INFO.
         pub module_info: Option<&'a mut analyze_transpiled_module::ModuleInfo>,
+
+        /// Next `options.json_preserve_comments` entry to emit.
+        pub json_comment_cursor: usize,
+        pub json_comment_watermark: i32,
 
         /// Arena for transient allocations during printing (rope flattening,
         /// UTF-16→UTF-8 transcoding).
@@ -1666,6 +1678,82 @@ pub mod __gated_printer {
                 let amt = i.min(indentation_buf.len());
                 self.print(&indentation_buf[..amt]);
                 i -= amt;
+            }
+        }
+
+        /// Emit the next pending JSONC comment(s) inline if they share a source line with the value ending at `after` (no newline between).
+        #[inline]
+        pub fn flush_json_same_line_comment(&mut self, after: i32) {
+            if !IS_JSON || after < 0 {
+                return;
+            }
+            let comments = self.options.json_preserve_comments;
+            let source = self.options.json_comment_source;
+            while self.json_comment_cursor < comments.len() {
+                let range = comments[self.json_comment_cursor];
+                if range.loc.start <= after || range.len <= 0 {
+                    break;
+                }
+                let start = range.loc.start as usize;
+                let end = start + range.len as usize;
+                if end > source.len() || (after as usize) >= start {
+                    break;
+                }
+                if source[after as usize..start]
+                    .iter()
+                    .any(|&b| b == b'\n' || b == b'\r')
+                {
+                    break;
+                }
+                self.json_comment_cursor += 1;
+                self.json_comment_watermark = range.loc.start;
+                self.print(b" ");
+                self.print(&source[start..end]);
+                if source.get(start + 1) == Some(&b'/') {
+                    break;
+                }
+            }
+        }
+
+        /// Emit each preserved JSONC comment starting before `before` exactly once; `leading_break` puts the newline/indent before it instead of after.
+        #[inline]
+        pub fn flush_json_comments_before(&mut self, before: i32, leading_break: bool) {
+            if !IS_JSON {
+                return;
+            }
+            let comments = self.options.json_preserve_comments;
+            if self.json_comment_cursor >= comments.len() {
+                return;
+            }
+            // `Loc::EMPTY` is -1; nodes spliced in by the editor carry it.
+            if before <= 0 || before < self.json_comment_watermark {
+                return;
+            }
+            self.json_comment_watermark = before;
+            let source = self.options.json_comment_source;
+            while self.json_comment_cursor < comments.len() {
+                let range = comments[self.json_comment_cursor];
+                if range.loc.start >= before {
+                    break;
+                }
+                self.json_comment_cursor += 1;
+                if range.loc.start < 0 || range.len <= 0 {
+                    continue;
+                }
+                let start = range.loc.start as usize;
+                let end = start + range.len as usize;
+                if end > source.len() {
+                    continue;
+                }
+                if leading_break {
+                    self.print_newline();
+                    self.print_indent();
+                }
+                self.print(&source[start..end]);
+                if !leading_break {
+                    self.print_newline();
+                    self.print_indent();
+                }
             }
         }
 
@@ -3572,35 +3660,60 @@ pub mod __gated_printer {
                     self.add_source_mapping(expr.loc);
                     self.print(b"[");
                     let items = e.items.slice();
+                    let close_loc = e.close_bracket_loc.start;
+                    let had_comments = IS_JSON
+                        && items.is_empty()
+                        && close_loc > 0
+                        && self
+                            .options
+                            .json_preserve_comments
+                            .get(self.json_comment_cursor)
+                            .is_some_and(|r| r.loc.start < close_loc);
                     if !items.is_empty() {
                         if !e.is_single_line {
                             self.indent();
                         }
 
                         for (i, item) in items.iter().enumerate() {
-                            if i != 0 {
+                            if !e.is_single_line {
+                                self.print_newline();
+                                self.print_indent();
+                                if IS_JSON {
+                                    self.flush_json_comments_before(item.loc.start, false);
+                                }
+                            }
+                            self.print_expr(*item, Level::Comma, ExprFlag::none());
+
+                            let last = i == items.len() - 1;
+                            if last && matches!(item.data, ExprData::EMissing(_)) {
+                                // Make sure there's a comma after trailing missing items
+                                self.print(b",");
+                            }
+                            if !last {
                                 self.print(b",");
                                 if e.is_single_line {
                                     self.print_space();
                                 }
                             }
-                            if !e.is_single_line {
-                                self.print_newline();
-                                self.print_indent();
-                            }
-                            self.print_expr(*item, Level::Comma, ExprFlag::none());
-
-                            if i == items.len() - 1 && matches!(item.data, ExprData::EMissing(_)) {
-                                // Make sure there's a comma after trailing missing items
-                                self.print(b",");
+                            if IS_JSON && !e.is_single_line {
+                                self.flush_json_same_line_comment(json_value_end_loc(item));
                             }
                         }
 
                         if !e.is_single_line {
+                            if IS_JSON {
+                                self.flush_json_comments_before(close_loc, true);
+                            }
                             self.unindent();
                             self.print_newline();
                             self.print_indent();
                         }
+                    } else if had_comments {
+                        self.indent();
+                        self.flush_json_comments_before(close_loc, true);
+                        self.unindent();
+                        self.print_newline();
+                        self.print_indent();
                     }
 
                     if e.close_bracket_loc.start > expr.loc.start {
@@ -3623,39 +3736,67 @@ pub mod __gated_printer {
                     self.add_source_mapping(expr.loc);
                     self.print(b"{");
                     let props = e.properties.slice();
+                    let close_loc = e.close_brace_loc.start;
+                    let had_comments = IS_JSON
+                        && props.is_empty()
+                        && close_loc > 0
+                        && self
+                            .options
+                            .json_preserve_comments
+                            .get(self.json_comment_cursor)
+                            .is_some_and(|r| r.loc.start < close_loc);
                     if !props.is_empty() {
                         if !e.is_single_line {
                             self.indent();
                         }
 
-                        if e.is_single_line && !IS_JSON {
-                            self.print_space();
-                        } else {
-                            self.print_newline();
-                            self.print_indent();
-                        }
-                        self.print_property(&props[0]);
-
-                        if props.len() > 1 {
-                            for property in &props[1..] {
+                        for (i, property) in props.iter().enumerate() {
+                            if e.is_single_line && !IS_JSON {
+                                if i == 0 {
+                                    self.print_space();
+                                }
+                            } else {
+                                self.print_newline();
+                                self.print_indent();
+                            }
+                            let key_loc = property.key.as_ref().map_or(-1, |k| k.loc.start);
+                            if IS_JSON {
+                                self.flush_json_comments_before(key_loc, false);
+                            }
+                            self.print_property(property);
+                            if i + 1 < props.len() {
                                 self.print(b",");
                                 if e.is_single_line && !IS_JSON {
                                     self.print_space();
-                                } else {
-                                    self.print_newline();
-                                    self.print_indent();
                                 }
-                                self.print_property(property);
+                            }
+                            if IS_JSON {
+                                let end_loc = property
+                                    .value
+                                    .as_ref()
+                                    .map(json_value_end_loc)
+                                    .filter(|&l| l >= 0)
+                                    .unwrap_or(key_loc);
+                                self.flush_json_same_line_comment(end_loc);
                             }
                         }
 
                         if e.is_single_line && !IS_JSON {
                             self.print_space();
                         } else {
+                            if IS_JSON {
+                                self.flush_json_comments_before(close_loc, true);
+                            }
                             self.unindent();
                             self.print_newline();
                             self.print_indent();
                         }
+                    } else if had_comments {
+                        self.indent();
+                        self.flush_json_comments_before(close_loc, true);
+                        self.unindent();
+                        self.print_newline();
+                        self.print_indent();
                     }
                     if e.close_brace_loc.start > expr.loc.start {
                         self.add_source_mapping(e.close_brace_loc);
@@ -6725,6 +6866,8 @@ pub mod __gated_printer {
                 stack_overflowed: false,
                 was_lazy_export: false,
                 module_info: None,
+                json_comment_cursor: 0,
+                json_comment_watermark: 0,
             };
             // The `Builder` field is `&'static [u32]` pending lifetime threading,
             // so instead of caching a self-borrow here,
@@ -7763,6 +7906,15 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
     Ok(usize::try_from(printer.writer.written().max(0)).expect("int cast"))
 }
 
+/// Best-effort last source byte of a JSON value, for same-line-comment detection.
+fn json_value_end_loc(expr: &js_ast::Expr) -> i32 {
+    match &expr.data {
+        js_ast::expr::Data::EObject(o) if o.close_brace_loc.start > 0 => o.close_brace_loc.start,
+        js_ast::expr::Data::EArray(a) if a.close_bracket_loc.start > 0 => a.close_bracket_loc.start,
+        _ => expr.loc.start,
+    }
+}
+
 pub fn print_json<W: WriterTrait>(
     _writer: W,
     expr: js_ast::Expr,
@@ -7782,6 +7934,8 @@ pub fn print_json<W: WriterTrait>(
         indent: opts.indent,
         mangled_props: opts.mangled_props,
         minify_whitespace: opts.minify_whitespace,
+        json_preserve_comments: opts.preserve_comments,
+        json_comment_source: &source.contents,
         ..Default::default()
     };
     let mut printer = PrinterType::<W>::init(
@@ -7795,6 +7949,9 @@ pub fn print_json<W: WriterTrait>(
     printer.binary_expression_stack = Vec::new();
 
     printer.print_expr(expr, js_ast::op::Level::Lowest, ExprFlagSet::empty());
+    if !opts.preserve_comments.is_empty() {
+        printer.flush_json_comments_before(source.contents.len() as i32 + 1, true);
+    }
     printer.check_stack_overflow()?;
     printer.writer.get_error()?;
     printer.writer.done()?;

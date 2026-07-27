@@ -213,6 +213,7 @@ pub fn edit_trusted_dependencies(
             .data
             .e_object()
             .expect("infallible: variant checked");
+        let prev_close_brace_loc = obj.close_brace_loc;
         let old_props = obj.properties.slice();
         let mut root_properties: Vec<G::Property> = Vec::with_capacity(old_props.len() + 1);
         for p in old_props {
@@ -229,6 +230,7 @@ pub fn edit_trusted_dependencies(
         *package_json = Expr::init(
             E::Object {
                 properties: G::PropertyList::move_from_list(root_properties),
+                close_brace_loc: prev_close_brace_loc,
                 ..Default::default()
             },
             bun_ast::Loc::EMPTY,
@@ -992,6 +994,11 @@ pub(crate) fn edit(
                 bun_ast::Loc::EMPTY,
             );
         } else {
+            let prev_close_brace_loc = current_package_json
+                .data
+                .e_object()
+                .expect("infallible: variant checked")
+                .close_brace_loc;
             if needs_new_dependency_list && needs_new_trusted_dependencies_list {
                 let obj = current_package_json
                     .data
@@ -1024,6 +1031,7 @@ pub(crate) fn edit(
                     arena,
                     E::Object {
                         properties: G::PropertyList::move_from_list(root_properties),
+                        close_brace_loc: prev_close_brace_loc,
                         ..Default::default()
                     },
                     bun_ast::Loc::EMPTY,
@@ -1059,6 +1067,7 @@ pub(crate) fn edit(
                     arena,
                     E::Object {
                         properties: G::PropertyList::move_from_list(root_properties),
+                        close_brace_loc: prev_close_brace_loc,
                         ..Default::default()
                     },
                     bun_ast::Loc::EMPTY,

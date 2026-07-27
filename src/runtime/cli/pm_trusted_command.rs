@@ -552,12 +552,13 @@ impl TrustCommand {
 
         let bump = Bump::new();
         // SAFETY: `ctx.log` set by `Command::init`, non-null for the command.
-        // Layering: `parse_utf8` returns the T2
+        // Layering: the parser returns the T2
         // `bun_ast::Expr`; `PackageJSONEditor` and
         // `js_printer::print_json` consume the T4 `bun_ast::Expr`. Lift
         // once via `From<T2> for T4` (same as `updatePackageJSONAndInstall` /
         // `pack_command`).
-        let mut package_json: bun_ast::Expr = match bun_parsers::json::parse_utf8(
+        let parse_result = match bun_parsers::json::parse_package_json_utf8_with_opts(
+            bun_parsers::json::PACKAGE_JSON_OPTS,
             &package_json_source,
             unsafe { ctx.log_mut() },
             &bump,
@@ -572,6 +573,8 @@ impl TrustCommand {
                 Global::crash();
             }
         };
+        let mut package_json: bun_ast::Expr = parse_result.root;
+        let package_json_comments = parse_result.comments;
 
         // now add the package names to lockfile.trustedDependencies and package.json `trustedDependencies`
         debug_assert!(!package_names_to_add.keys().is_empty());
@@ -657,6 +660,7 @@ impl TrustCommand {
             &package_json_source,
             bun_js_printer::PrintJsonOptions {
                 mangled_props: None,
+                preserve_comments: &package_json_comments,
                 ..Default::default()
             },
         ) {

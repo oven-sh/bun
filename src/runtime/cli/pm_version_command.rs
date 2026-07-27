@@ -214,6 +214,7 @@ impl PmVersionCommand {
                 JSPrinter::PrintJsonOptions {
                     indent: printer_indent,
                     mangled_props: None,
+                    preserve_comments: &json_result.comments,
                     ..Default::default()
                 },
             ) {

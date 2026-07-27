@@ -19,7 +19,6 @@ use bun_sys as syscall;
 #[bun_jsc::JsClass]
 pub struct Glob {
     pattern: Box<[u8]>,
-    has_pending_activity: AtomicUsize,
 }
 
 struct ScanOpts {
@@ -571,18 +570,7 @@ impl Glob {
             .into_vec()
             .into_boxed_slice();
 
-        Ok(Box::new(Glob {
-            pattern: pat_str,
-            has_pending_activity: AtomicUsize::new(0),
-        }))
-    }
-
-    /// Called on the GC thread concurrently with the mutator. Reads only the
-    /// atomic counter; never allocates, locks, or touches JS. The codegen shim
-    /// (`Glob__hasPendingActivity`) handles the `callconv(.c)` ABI and passes
-    /// `&*this`.
-    pub fn has_pending_activity(&self) -> bool {
-        self.has_pending_activity.load(Ordering::SeqCst) > 0
+        Ok(Box::new(Glob { pattern: pat_str }))
     }
 }
 
@@ -596,10 +584,8 @@ fn decr_pending_activity_flag(has_pending_activity: &AtomicUsize) {
 
 impl Glob {
     // R-2 (host-fn re-entrancy): all JS-exposed methods take `&self`. `Glob`'s
-    // fields are read-only after construction (`pattern`) or already atomic
-    // (`has_pending_activity`), so no `Cell`/`JsCell` wrapping is needed — the
-    // `&mut self` receivers were vestigial. The codegen shim still emits
-    // `this: &mut Glob`; `&mut T` auto-derefs to `&T`.
+    // only field (`pattern`) is read-only after construction, so no
+    // `Cell`/`JsCell` wrapping is needed.
     fn make_scanner(
         &self,
         global_this: &JSGlobalObject,

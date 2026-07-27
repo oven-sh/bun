@@ -2379,7 +2379,7 @@ where
         if let Some(resp) = self.resp.take() {
             if self.flags.request_body_paused() {
                 self.flags.set_request_body_paused(false);
-                resp.resume_();
+                resp.resume();
             }
             if self.flags.is_waiting_for_request_body() {
                 self.flags.set_is_waiting_for_request_body(false);
@@ -4123,7 +4123,7 @@ where
             return;
         }
         if let Some(resp) = self.resp {
-            resp.resume_();
+            resp.resume();
         }
     }
 
@@ -4179,7 +4179,7 @@ where
                 }
             }
             if let Some(resp) = (*this).resp {
-                resp.resume_();
+                resp.resume();
             }
         }
     }

@@ -24,7 +24,7 @@ import { Glob, GlobScanOptions } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { execSync } from "child_process";
 import fg from "fast-glob";
-import { bunEnv, bunExe, isWindows, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
+import { bunEnv, bunExe, fileDescriptorLeakChecker, isWindows, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
 import * as fs from "node:fs";
 import * as path from "path";
 import { createTempDirectoryWithBrokenSymlinks, prepareEntries, tempFixturesDir } from "./util";
@@ -563,33 +563,38 @@ describe("scan/scanSync iterate the filesystem lazily", () => {
     expect(norm(await Array.fromAsync(it))).toEqual(["a/x.txt", "b/x.txt"]);
   });
 
-  test("early break stops the walk and releases directory handles", () => {
+  // More matches than the native batch size so the iterator is parked in the
+  // scan handle across yields and return()/finally has real cleanup to do.
+  test.skipIf(isWindows)("scanSync early break releases directory handles", () => {
     const files: Record<string, string> = {};
-    for (let i = 0; i < 20; i++) for (let j = 0; j < 10; j++) files[`d${i}/f${j}.txt`] = "x";
+    for (let i = 0; i < 30; i++) for (let j = 0; j < 10; j++) files[`d${i}/f${j}.txt`] = "x";
     using dir = tempDir("glob-scan-lazy-break", files);
     const cwd = String(dir);
 
+    using _ = fileDescriptorLeakChecker();
     for (let k = 0; k < 64; k++) {
       const it = new Glob("**/*.txt").scanSync({ cwd });
       expect(it.next().value).toBeString();
       it.return?.(undefined);
     }
-    // Full scan after repeated early breaks still finds everything.
-    expect([...new Glob("**/*.txt").scanSync({ cwd })]).toHaveLength(200);
+    Bun.gc(true);
+    expect([...new Glob("**/*.txt").scanSync({ cwd })]).toHaveLength(300);
   });
 
-  test("scan releases directory handles on early break", async () => {
+  test.skipIf(isWindows)("scan early break releases directory handles", async () => {
     const files: Record<string, string> = {};
-    for (let i = 0; i < 20; i++) for (let j = 0; j < 10; j++) files[`d${i}/f${j}.txt`] = "x";
+    for (let i = 0; i < 30; i++) for (let j = 0; j < 10; j++) files[`d${i}/f${j}.txt`] = "x";
     using dir = tempDir("glob-scan-lazy-break-async", files);
     const cwd = String(dir);
 
+    using _ = fileDescriptorLeakChecker();
     for (let k = 0; k < 64; k++) {
       const it = new Glob("**/*.txt").scan({ cwd });
       expect((await it.next()).value).toBeString();
       await it.return?.(undefined);
     }
-    expect(await Array.fromAsync(new Glob("**/*.txt").scan({ cwd }))).toHaveLength(200);
+    Bun.gc(true);
+    expect(await Array.fromAsync(new Glob("**/*.txt").scan({ cwd }))).toHaveLength(300);
   });
 
   test("partial iteration yields a bounded prefix of a large tree", () => {
@@ -606,6 +611,29 @@ describe("scan/scanSync iterate the filesystem lazily", () => {
     }
     expect(taken).toHaveLength(50);
     expect([...new Glob("**/*.txt").scanSync({ cwd })]).toHaveLength(400);
+  });
+});
+
+describe("absolute literal pattern honours onlyFiles", () => {
+  test("matches a regular file, skips a directory by default", () => {
+    using dir = tempDir("glob-abs-literal", { "file.txt": "x", "subdir/keep": "x" });
+    const file = path.join(String(dir), "file.txt");
+    const subdir = path.join(String(dir), "subdir");
+
+    expect([...new Glob(file).scanSync()]).toEqual([file]);
+    expect([...new Glob(subdir).scanSync()]).toEqual([]);
+    expect([...new Glob(subdir).scanSync({ onlyFiles: false })]).toEqual([subdir]);
+    expect([...new Glob(path.join(String(dir), "missing")).scanSync()]).toEqual([]);
+  });
+
+  test("async matches a regular file, skips a directory by default", async () => {
+    using dir = tempDir("glob-abs-literal-async", { "file.txt": "x", "subdir/keep": "x" });
+    const file = path.join(String(dir), "file.txt");
+    const subdir = path.join(String(dir), "subdir");
+
+    expect(await Array.fromAsync(new Glob(file).scan())).toEqual([file]);
+    expect(await Array.fromAsync(new Glob(subdir).scan())).toEqual([]);
+    expect(await Array.fromAsync(new Glob(subdir).scan({ onlyFiles: false }))).toEqual([subdir]);
   });
 });
 

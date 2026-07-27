@@ -142,13 +142,13 @@ describe("spawn()", () => {
       const child = spawn(bunExe(), ["-e", "console.log('hi')"], { env: bunEnv, encoding } as any);
       const chunks: Buffer[] = [];
       child.stdout!.on("data", chunk => chunks.push(chunk));
-      const [exitCode] = await once(child, "exit");
+      await once(child, "close");
       expect(chunks.length).toBeGreaterThan(0);
       for (const chunk of chunks) {
         expect(chunk).toBeInstanceOf(Buffer);
       }
       expect(Buffer.concat(chunks).toString()).toBe("hi\n");
-      expect(exitCode).toBe(0);
+      expect(child.exitCode).toBe(0);
     },
   );
 

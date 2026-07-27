@@ -160,11 +160,7 @@ pub struct PostgresSQLConnection {
     pub connection_timeout_ms: u32,
 
     pub flags: Cell<ConnectionFlags>,
-    /// Transaction-status byte from the most recent `ReadyForQuery` message
-    /// (`'I'` idle, `'T'` in a transaction block, `'E'` in a failed
-    /// transaction block). Exposed to JS via the `inTransaction` getter so the
-    /// pool can roll a leaked transaction back before handing the connection
-    /// out again.
+    /// Status byte from the most recent `ReadyForQuery` (I/T/E). Backs the `inTransaction` getter.
     pub transaction_status: Cell<protocol::TransactionStatusIndicator>,
 
     /// Before being connected, this is a connection timeout timer.

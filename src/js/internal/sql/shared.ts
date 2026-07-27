@@ -581,8 +581,7 @@ const enum PooledConnectionFlags {
   reserved = 1 << 1,
   /// preReserved is used to indicate that the connection will be reserved in the future when queryCount drops to 0
   preReserved = 1 << 2,
-  /// resetting is set while release() is running the reset query (ROLLBACK) so
-  /// the reset's own completion does not re-enter the reset path
+  /// release() is rolling back a leaked transaction on this slot; gates re-entry of the reset path
   resetting = 1 << 3,
 }
 export type { PooledConnectionState };
@@ -623,12 +622,7 @@ abstract class BasePooledConnection<ConnectionHandle extends { close(): void; fl
   protected abstract startConnection(): Promise<void>;
   /** Wraps a driver error options object into the driver's Error class. */
   protected abstract wrapError(error: any): Error;
-  /**
-   * Whether the server reports this connection is currently inside a
-   * transaction block (open or aborted). A connection returned to the pool in
-   * this state would leak the transaction to whichever unrelated query the
-   * pool hands it to next, so release() issues `resetQuery()` first.
-   */
+  /** Whether the server reports this connection is still inside a transaction block. */
   needsReset(): boolean {
     return false;
   }
@@ -956,12 +950,7 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
   abstract unsafeTransactionError(): Error;
   abstract getHelperCommand(query: string): SQLCommand;
 
-  /**
-   * SQL statement issued on a connection being returned to the pool while
-   * still inside a transaction block (per `BasePooledConnection.needsReset`).
-   * `null` disables the reset for adapters that have no per-connection
-   * transaction state to leak.
-   */
+  /** Statement that rolls back a leaked transaction on release; null disables the reset. */
   resetQuery(): string | null {
     return null;
   }
@@ -1100,13 +1089,9 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
     ) {
       const reset = this.resetQuery();
       if (reset !== null) {
-        // The server says this connection is still inside a transaction block
-        // (ReadyForQuery 'T' or 'E'). Roll it back before it is handed to an
-        // unrelated pooled query, otherwise that query would land inside the
-        // leaked transaction (its writes silently vanish on a later ROLLBACK,
-        // or every query fails with 25P02 until somebody rolls back).
-        // queryCount is held at 1 for the duration so the pool does not hand
-        // the slot out and graceful close() waits for the reset to finish.
+        // Roll the leaked transaction back before the slot is handed to an
+        // unrelated query; queryCount stays at 1 so the pool does not hand it
+        // out and graceful close() waits for the reset to finish.
         connection.flags |= PooledConnectionFlags.resetting;
         connection.queryCount++;
         this.totalQueries++;
@@ -1172,15 +1157,9 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
   #resetConnection(connection: PooledConnection, sql: string) {
     const adapter = this;
     function done(err: unknown) {
-      // The connection may have closed under the reset (which zeroed
-      // queryCount and cleared the flag via #finishClose); only balance the
-      // queryCount bump release() made if this reset is still the owner.
+      // #finishClose clears the flag (and zeroes queryCount) if the slot died under the reset
       if (!(connection.flags & PooledConnectionFlags.resetting)) return;
       connection.flags &= ~PooledConnectionFlags.resetting;
-      // A reset that could not clear the transaction state (the ROLLBACK
-      // itself failed, or the server still reports 'T'/'E' afterwards) means
-      // the connection is not safe for the pool: close it so the next
-      // connect() retries a fresh one.
       if (err != null || connection.needsReset()) {
         connection.close();
       }

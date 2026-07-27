@@ -787,12 +787,10 @@ impl AnyRoute {
                     } else {
                         &path[..path.len() - 1]
                     };
-                    let route =
-                        super::DirectoryRoute::create(global, relative_root, url_prefix)?;
-                    return Ok(Some(AnyRoute::Directory(
-                        NonNull::new(route)
-                            .expect("DirectoryRoute::create returns a fresh heap allocation"),
-                    )));
+                    let route = super::DirectoryRoute::create(global, relative_root, url_prefix)?;
+                    return Ok(Some(AnyRoute::Directory(NonNull::new(route).expect(
+                        "DirectoryRoute::create returns a fresh heap allocation",
+                    ))));
                 }
 
                 let style: FrameworkRouter::Style =

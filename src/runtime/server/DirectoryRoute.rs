@@ -160,11 +160,7 @@ impl DirectoryRoute {
         ) {
             Some(n) => n,
             None => {
-                bun_output::scoped_log!(
-                    DirectoryRoute,
-                    "reject {}",
-                    bstr::BStr::new(req.url())
-                );
+                bun_output::scoped_log!(DirectoryRoute, "reject {}", bstr::BStr::new(req.url()));
                 req.set_yield(true);
                 Self::on_response_complete(this_ptr, resp);
                 return;
@@ -287,7 +283,11 @@ impl DirectoryRoute {
         write_any_status(resp, status_code);
         resp.write_mark();
 
-        let ext: &[u8] = if is_index { b"html" } else { extension_for_mime(rel) };
+        let ext: &[u8] = if is_index {
+            b"html"
+        } else {
+            extension_for_mime(rel)
+        };
         let mime = bun_http_types::MimeType::by_extension(ext);
         resp.write_header(b"content-type", &mime.value);
         if let Some(lm) = last_modified {
@@ -585,8 +585,14 @@ mod tests {
 
     #[test]
     fn resolve_basic() {
-        assert_eq!(resolve(b"/static/a.txt", b"/static/").as_deref(), Some(&b"a.txt"[..]));
-        assert_eq!(resolve(b"/static/a/b.txt", b"/static/").as_deref(), Some(&b"a/b.txt"[..]));
+        assert_eq!(
+            resolve(b"/static/a.txt", b"/static/").as_deref(),
+            Some(&b"a.txt"[..])
+        );
+        assert_eq!(
+            resolve(b"/static/a/b.txt", b"/static/").as_deref(),
+            Some(&b"a/b.txt"[..])
+        );
         assert_eq!(resolve(b"/a.txt", b"/").as_deref(), Some(&b"a.txt"[..]));
         assert_eq!(resolve(b"/", b"/").as_deref(), Some(&b""[..]));
         assert_eq!(resolve(b"/static", b"/static/").as_deref(), Some(&b""[..]));
@@ -649,6 +655,9 @@ mod tests {
     fn etag_format() {
         let mut buf = [0u8; 40];
         assert_eq!(format_weak_etag(&mut buf, 0, 0), b"W/\"0-0\"");
-        assert_eq!(format_weak_etag(&mut buf, 1234, 5678_000), b"W/\"4d2-162e\"");
+        assert_eq!(
+            format_weak_etag(&mut buf, 1234, 5678_000),
+            b"W/\"4d2-162e\""
+        );
     }
 }

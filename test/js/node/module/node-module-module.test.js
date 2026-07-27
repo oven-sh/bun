@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, ospath } from "harness";
+import { bunEnv, bunExe, ospath, tempDir } from "harness";
 import Module, { _nodeModulePaths, builtinModules, createRequire, isBuiltin, wrap } from "module";
 import path from "path";
 
@@ -205,6 +205,53 @@ describe.concurrent("node-module-module", () => {
     const stdout = await proc.stdout.text();
     expect(stdout.trim().endsWith("--pass--")).toBe(true);
     expect(await proc.exited).toBe(0);
+  });
+
+  // https://github.com/oven-sh/bun/issues/36099
+  test("overridden _resolveFilename sees a parent module when require comes from ESM", async () => {
+    using dir = tempDir("resolve-filename-esm-parent", {
+      "entry.mjs": `
+        import Module, { createRequire } from "node:module";
+        const seen = [];
+        const orig = Module._resolveFilename;
+        Module._resolveFilename = function (request, parent, isMain, options) {
+          if (request.startsWith("./")) {
+            seen.push({
+              request,
+              filenameOk: parent?.filename === import.meta.filename,
+              pathOk: parent?.path === import.meta.dirname,
+              hasPaths: Array.isArray(parent?.paths) && parent.paths.length > 0,
+            });
+          }
+          return orig.call(this, request, parent, isMain, options);
+        };
+        const r = createRequire(import.meta.url);
+        const value = r("./probe.cjs");
+        const resolvedOk = r.resolve("./probe.cjs").endsWith("probe.cjs");
+        console.log(JSON.stringify({ seen, value, resolvedOk }));
+      `,
+      "probe.cjs": `module.exports = 42;`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "entry.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      seen: [
+        { request: "./probe.cjs", filenameOk: true, pathOk: true, hasPaths: true },
+        { request: "./probe.cjs", filenameOk: true, pathOk: true, hasPaths: true },
+      ],
+      value: 42,
+      resolvedOk: true,
+    });
+    expect(exitCode).toBe(0);
   });
 
   test("Overwriting Module.prototype.require", async () => {

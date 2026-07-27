@@ -326,6 +326,17 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
                         parentID = parent->filename();
                     } else {
                         parentID = from;
+                        // A require() whose referrer is an ES module (createRequire) has
+                        // no entry in the require map. Node synthesizes a parent module so
+                        // overridden Module._resolveFilename implementations can use
+                        // parent.filename / parent.path / parent.paths.
+                        if (from.isString()) {
+                            auto fromStr = from.toWTFString(globalObject);
+                            RETURN_IF_EXCEPTION(scope, {});
+                            if (!fromStr.isEmpty()) {
+                                parentModuleObject = Bun::JSCommonJSModule::create(globalObject, fromStr, JSC::constructEmptyObject(globalObject), false, JSValue());
+                            }
+                        }
                     }
 
                     MarkedArgumentBuffer args;

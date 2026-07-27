@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, bunRunAsScript, tempDirWithFiles } from "harness";
-import path from "node:path";
 import fs from "node:fs";
+import path from "node:path";
 
 describe("process.env", () => {
   test("npm_lifecycle_event", () => {

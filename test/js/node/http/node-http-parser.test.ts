@@ -241,10 +241,11 @@ describe("ConnectionsList", () => {
     closed.close();
 
     try {
-      // Both parsers are iterated; the close()d one must be skipped, not
-      // dereferenced. A freshly initialized parser is not idle (see above).
       expect(list.idle()).toEqual([]);
-      expect(list.expired()).toEqual([]);
+      // expired() short-circuits when both timeouts are 0, so pass 1ms to
+      // actually iterate; only assert the closed parser is skipped since
+      // `alive` may legitimately appear.
+      expect(list.expired(1, 1)).not.toContain(closed);
       expect(list.all()).toEqual([alive, closed]);
     } finally {
       alive.close();

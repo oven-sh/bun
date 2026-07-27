@@ -131,6 +131,11 @@ function read(this: NativeReadable, maxToRead: number) {
     this.push(null);
     return;
   }
+  this[kPendingRead] = true;
+  // Chunks from ptr.start()/ptr.drain() on the first call are held until the pull result is
+  // pushed so that _read() never calls push() synchronously (Node's Readable.fromWeb adapter
+  // pushes from a reader.read() continuation, which is always at least a microtask later).
+  let startChunk, drainChunk;
   if (!this[kConstructed]) {
     const result: any = ptr.start(this[kHighWaterMark]);
     $debug(`[${this.debugId}] start, initial hwm:`, result);
@@ -139,13 +144,13 @@ function read(this: NativeReadable, maxToRead: number) {
       this[kHighWaterMark] = Math.min(this[kHighWaterMark], result);
     }
     if ($isTypedArrayView(result) && result.byteLength > 0) {
-      this.push(result);
+      startChunk = result;
     }
     const drainResult = ptr.drain();
     this[kConstructed] = true;
     $debug(`[${this.debugId}] drain result: ${drainResult?.byteLength ?? "null"}`);
     if ((drainResult?.byteLength ?? 0) > 0) {
-      this.push(drainResult);
+      drainChunk = drainResult;
     }
   }
   const chunk = getRemainingChunk(this, maxToRead);
@@ -155,22 +160,31 @@ function read(this: NativeReadable, maxToRead: number) {
     `[${this.debugId}] pull ${chunk?.byteLength} bytes, result: ${$isPromise(result) ? "<pending>" : $isTypedArrayView(result) ? `<${result.byteLength} bytes>` : result}, closeState: ${this[kCloseState][0]}`,
   );
   if ($isPromise(result)) {
-    this[kPendingRead] = true;
     return result.then(
       result => {
         $debug(
           `[${this.debugId}] pull, resolved: ${$isTypedArrayView(result) ? `<${result.byteLength} bytes>` : result}, closeState: ${this[kCloseState][0]}`,
         );
         this[kPendingRead] = false;
+        if (startChunk !== undefined) this.push(startChunk);
+        if (drainChunk !== undefined) this.push(drainChunk);
         this[kRemainingChunk] = handleResult(this, result, chunk, this[kCloseState][0]);
       },
       reason => {
+        this[kPendingRead] = false;
         errorOrDestroy(this, reason);
       },
     );
   } else {
-    this[kRemainingChunk] = handleResult(this, result, chunk, this[kCloseState][0]);
+    process.nextTick(handleSyncResult, this, result, chunk, startChunk, drainChunk);
   }
+}
+
+function handleSyncResult(stream: NativeReadable, result: any, chunk: Buffer, startChunk: any, drainChunk: any) {
+  stream[kPendingRead] = false;
+  if (startChunk !== undefined) stream.push(startChunk);
+  if (drainChunk !== undefined) stream.push(drainChunk);
+  stream[kRemainingChunk] = handleResult(stream, result, chunk, stream[kCloseState][0]);
 }
 
 function handleResult(stream: NativeReadable, result: any, chunk: Buffer, isClosed: boolean) {

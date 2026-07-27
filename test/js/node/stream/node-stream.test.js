@@ -563,6 +563,64 @@ it("Readable.fromWeb: destroy(err) after consuming a chunk cancels the web sourc
   });
 });
 
+// When the underlying source can supply data synchronously (native-backed Blob/Response
+// bodies do), Readable.fromWeb must still respect the read(n) contract: if n exceeds the
+// currently buffered length and the stream has not ended, read(n) returns null and the
+// consumer waits for 'readable'. Node's adapter pushes via reader.read().then(...), which
+// defers the push by a microtask; Bun's native fast path was pushing inside _read() so
+// Readable.prototype.read would re-evaluate howMuchToRead against the newly pushed bytes
+// and hand back a chunk larger than readableLength.
+describe.each([
+  ["Blob.stream()", n => new Blob([Buffer.alloc(n, "abc")]).stream()],
+  ["Response.body", n => new Response(Buffer.alloc(n, "abc")).body],
+  [
+    "ReadableStream",
+    n =>
+      new ReadableStream({
+        start(c) {
+          const buf = Buffer.alloc(n, "abc");
+          c.enqueue(buf.subarray(0, 81920));
+          c.enqueue(buf.subarray(81920));
+          c.close();
+        },
+      }),
+  ],
+])("Readable.fromWeb over %s", (_, makeWeb) => {
+  it("read(n) with n > readableLength returns null before end", async () => {
+    const N = 300_000;
+    const r = Readable.fromWeb(makeWeb(N));
+    await new Promise(resolve => r.once("readable", resolve));
+    const buffered = r.readableLength;
+    // Sanity: we need room to over-ask (the source has not been fully buffered yet).
+    expect(buffered).toBeGreaterThan(0);
+    expect(buffered).toBeLessThan(N);
+    expect(r.readableEnded).toBe(false);
+
+    const ask = buffered + 5000;
+    const got = r.read(ask);
+    expect(got).toBeNull();
+
+    // Draining to completion must still yield every byte in order.
+    const chunks = [];
+    for await (const chunk of r) chunks.push(chunk);
+    const all = Buffer.concat(chunks);
+    expect(all.length).toBe(N);
+    expect(all.equals(Buffer.alloc(N, "abc"))).toBe(true);
+  });
+
+  it("read(n) with n <= readableLength returns a chunk of length n", async () => {
+    const N = 300_000;
+    const r = Readable.fromWeb(makeWeb(N));
+    await new Promise(resolve => r.once("readable", resolve));
+    const buffered = r.readableLength;
+    expect(buffered).toBeGreaterThan(1);
+
+    const got = r.read(buffered - 1);
+    expect(got?.length).toBe(buffered - 1);
+    r.destroy();
+  });
+});
+
 it("Readable.toWeb(Readable.fromWeb(rs)).cancel(reason) propagates to the web source", async () => {
   let cancelReason;
   const web = new ReadableStream({

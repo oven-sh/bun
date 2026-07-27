@@ -1756,3 +1756,111 @@ test("the SHARE_ENV founding thread's process.env stays live after the swap", as
   expect(stdout.trim()).toBe("yes,unset");
   expect(exitCode).toBe(0);
 });
+
+// https://github.com/oven-sh/bun/issues/5460
+// Node's parentPort is a MessagePort that stays stopped until it has a 'message'
+// listener: messages the parent posts before the worker attaches one are queued
+// and delivered in order once it does. Bun previously dispatched them into the
+// listener-less globalEventScope and silently dropped them.
+describe("parentPort buffers parent→worker messages while there is no 'message' listener", () => {
+  // The shape that bites real code: the parent posts right after `new Worker()`
+  // and the worker only wires up parentPort after an async init step.
+  test.concurrent("listener attached after async init receives everything posted at construction", async () => {
+    const src = `
+      const { parentPort } = require('node:worker_threads');
+      const got = [];
+      setTimeout(() => {
+        parentPort.on('message', m => got.push(m));
+        setTimeout(() => parentPort.postMessage(got), 200);
+      }, 100);`;
+    const w = new Worker(src, { eval: true });
+    try {
+      for (let i = 1; i <= 5; i++) w.postMessage("m" + i);
+      const got = await new Promise(r => w.once("message", r));
+      expect(got).toEqual(["m1", "m2", "m3", "m4", "m5"]);
+    } finally {
+      await w.terminate();
+    }
+  });
+
+  test.concurrent("listener attached after 'online' receives everything posted then", async () => {
+    const src = `
+      const { parentPort } = require('node:worker_threads');
+      const got = [];
+      setTimeout(() => {
+        parentPort.on('message', m => got.push(m));
+        setTimeout(() => parentPort.postMessage(got), 200);
+      }, 100);`;
+    const w = new Worker(src, { eval: true });
+    try {
+      await once(w, "online");
+      for (let i = 1; i <= 5; i++) w.postMessage("a" + i);
+      const got = await new Promise(r => w.once("message", r));
+      expect(got).toEqual(["a1", "a2", "a3", "a4", "a5"]);
+    } finally {
+      await w.terminate();
+    }
+  });
+
+  test.concurrent("once('message') consumes one; the rest re-queue for the next listener", async () => {
+    const src = `
+      const { parentPort } = require('node:worker_threads');
+      setTimeout(() => {
+        let first;
+        parentPort.once('message', m => { first = m; });
+        setTimeout(() => {
+          const rest = [];
+          parentPort.on('message', m => rest.push(m));
+          setTimeout(() => parentPort.postMessage({ first, rest }), 200);
+        }, 100);
+      }, 100);`;
+    const w = new Worker(src, { eval: true });
+    try {
+      for (let i = 1; i <= 5; i++) w.postMessage("m" + i);
+      const result = await new Promise(r => w.once("message", r));
+      expect(result).toEqual({ first: "m1", rest: ["m2", "m3", "m4", "m5"] });
+    } finally {
+      await w.terminate();
+    }
+  });
+
+  // Delivery is scheduled, not synchronous inside on(): matches Node's
+  // port.start() semantics.
+  test.concurrent("buffered delivery is async (fires after the code that added the listener)", async () => {
+    const src = `
+      const { parentPort } = require('node:worker_threads');
+      const log = [];
+      setTimeout(() => {
+        parentPort.on('message', m => log.push('got:' + m));
+        log.push('after-on');
+        setTimeout(() => parentPort.postMessage(log), 200);
+      }, 100);`;
+    const w = new Worker(src, { eval: true });
+    try {
+      for (let i = 1; i <= 3; i++) w.postMessage("m" + i);
+      const log = await new Promise(r => w.once("message", r));
+      expect(log).toEqual(["after-on", "got:m1", "got:m2", "got:m3"]);
+    } finally {
+      await w.terminate();
+    }
+  });
+
+  test.concurrent("Web Worker semantics are unchanged: no buffering without a listener", async () => {
+    const src = `
+      const got = [];
+      setTimeout(() => {
+        self.addEventListener('message', e => got.push(e.data));
+        setTimeout(() => self.postMessage(got), 200);
+      }, 100);`;
+    const url = URL.createObjectURL(new Blob([src], { type: "application/javascript" }));
+    const w = new globalThis.Worker(url);
+    try {
+      for (let i = 1; i <= 3; i++) w.postMessage("m" + i);
+      const got = await new Promise(r => (w.onmessage = e => r(e.data)));
+      expect(got).toEqual([]);
+    } finally {
+      w.terminate();
+      URL.revokeObjectURL(url);
+    }
+  });
+});

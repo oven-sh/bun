@@ -159,7 +159,13 @@ describe.concurrent("undici prefer-installed resolution", () => {
       cwd: String(dir),
       stderr: "pipe",
     });
-    expect(await build.exited).toBe(0);
+    const [, buildStderr, buildExitCode] = await Promise.all([
+      build.stdout.text(),
+      build.stderr.text(),
+      build.exited,
+    ]);
+    expect(buildStderr).toBe("");
+    expect(buildExitCode).toBe(0);
 
     // The bundle keeps the bare specifier external instead of inlining the
     // builtin shim.

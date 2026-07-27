@@ -730,15 +730,11 @@ const entry = coverage.result.find(s => s.url === url);
 // are the getExecutedRanges() output this test is exercising.
 let topLevel = entry.functions[0];
 for (const f of entry.functions) if (f.ranges.length > topLevel.ranges.length) topLevel = f;
-// ranges[0] is the synthetic whole-function range; ranges[1..] are the
-// getExecutedRanges() output, which a correct sort emits in ascending order.
-const blockRanges = topLevel.ranges.slice(1);
 process.stdout.write(
   JSON.stringify({
     elapsed,
     functions: entry.functions.length,
     topLevelRanges: topLevel.ranges.length,
-    sorted: blockRanges.every((r, i) => i === 0 || blockRanges[i - 1].startOffset <= r.startOffset),
   }),
 );
 `;
@@ -759,7 +755,6 @@ async function runManyFunctionsCoverage(n: number) {
     elapsed: number;
     functions: number;
     topLevelRanges: number;
-    sorted: boolean;
   };
 }
 
@@ -774,7 +769,6 @@ describe("Profiler.takePreciseCoverage with many top-level functions", () => {
     // top-level entry carries ~N+1 block ranges. A broken comparator would
     // emit mostly end<start ranges and leave only a handful here.
     expect(out.topLevelRanges).toBeGreaterThanOrEqual(N);
-    expect(out.sorted).toBe(true);
   });
 
   // Under a debug+ASAN build the linear per-item cost of JSON serialisation

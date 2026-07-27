@@ -3314,9 +3314,7 @@ pub mod formatter {
             colors: bool,
         ) -> JSValue;
 
-        /// C++ helper (`UtilInspect.cpp`) — calls the single `formatPercentS`
-        /// routine from `internal/util/inspect.js` so the native console `%s`
-        /// uses the exact same decision tree as `util.format` and `Console`.
+        /// `formatPercentS` from `internal/util/inspect.js` (see `UtilInspect.cpp`).
         safe fn Bun__callFormatPercentS(global: &JSGlobalObject, arg: JSValue) -> JSValue;
     }
 
@@ -3891,10 +3889,6 @@ pub mod formatter {
             Ok(())
         }
 
-        /// Node's `util.format` `%s` semantics. Strings pass straight through;
-        /// everything else is delegated to the shared JS `formatPercentS`
-        /// routine so the global console, `Console` instances, and
-        /// `util.format` cannot disagree.
         #[inline(never)]
         fn print_percent_s(
             &mut self,

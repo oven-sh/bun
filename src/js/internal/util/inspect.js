@@ -344,10 +344,7 @@ function isURL(value) {
 
 const SymbolToPrimitive = Symbol.toPrimitive;
 
-// Node computes this at bootstrap before any host globals (Buffer, URL, Request, ...)
-// are installed, so its set contains only ECMAScript language intrinsics. Bun already
-// has every host global on globalThis when this module loads, so the dynamic scrape
-// would wrongly include them and `%s` would inspect instead of String()-ing them.
+// ECMA-262 intrinsics only; Bun's globalThis already has Buffer/URL/etc. when this loads.
 // prettier-ignore
 const builtInObjects = new SafeSet([
   "AggregateError", "Array", "ArrayBuffer", "AsyncDisposableStack", "Atomics",
@@ -2789,8 +2786,6 @@ function formatBigIntNoColor(bigint, options) {
   return formatBigInt(stylizeNoColor, bigint, options?.numericSeparator ?? inspectDefaultOptions.numericSeparator);
 }
 
-// Node's `%s` rule, shared by util.format, Console instances, and the native global
-// console (via Bun__callFormatPercentS) so all three agree on one value.
 function formatPercentS(inspectOptions, arg) {
   if (typeof arg === "number") {
     return formatNumberNoColor(arg, inspectOptions);

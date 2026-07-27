@@ -330,8 +330,24 @@ pub trait JsSinkType: Sized {
     fn write_bytes(&mut self, data: &streams::Result) -> streams::result::Writable;
     fn write_utf16(&mut self, data: &streams::Result) -> streams::result::Writable;
     fn write_latin1(&mut self, data: &streams::Result) -> streams::result::Writable;
-    fn writev_bytes(&mut self, _bufs: &[&[u8]]) -> streams::result::Writable {
-        streams::result::Writable::Done
+    fn writev_bytes(&mut self, bufs: &[&[u8]]) -> streams::result::Writable {
+        use streams::result::Writable;
+        let mut total: u64 = 0;
+        for b in bufs {
+            if b.is_empty() {
+                continue;
+            }
+            let data = bun_ptr::RawSlice::new(b);
+            match self.write_bytes(&streams::Result::Temporary(data)) {
+                Writable::Owned(n) | Writable::Temporary(n) => total += n,
+                Writable::OwnedAndDone(n) | Writable::TemporaryAndDone(n) => {
+                    return Writable::OwnedAndDone(total + n)
+                }
+                Writable::Done => return Writable::OwnedAndDone(total),
+                other => return other,
+            }
+        }
+        Writable::Owned(total)
     }
     fn end(&mut self, err: Option<SysError>) -> sys::Result<()>;
     fn end_from_js(&mut self, global: &JSGlobalObject) -> sys::Result<JSValue>;
@@ -539,27 +555,39 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
         if len == 0 {
             return Ok(JSValue::js_number(0.0));
         }
-
-        let mut keepers: Vec<bun_jsc::EnsureStillAlive> = Vec::with_capacity(len);
-        let mut slices: Vec<&[u8]> = Vec::with_capacity(len);
-        for i in 0..len {
-            let item = arg.get_index(global, i as u32)?;
-            item.ensure_still_alive();
-            let Some(buffer) = item.as_array_buffer(global) else {
-                return Err(global.throw_value(global.to_type_error(
-                    bun_jsc::ErrorCode::INVALID_ARG_TYPE,
-                    format_args!("writev() expects an array of ArrayBufferView"),
-                )));
-            };
-            let slice: &[u8] = buffer.slice();
-            // SAFETY: the JS value is kept alive via `keepers` for the
-            // duration of this call, so `slice` remains valid.
-            let slice: &[u8] = unsafe { core::slice::from_raw_parts(slice.as_ptr(), slice.len()) };
-            keepers.push(bun_jsc::EnsureStillAlive(item));
-            slices.push(slice);
+        const MAX_CHUNKS: usize = 1 << 20;
+        if len > MAX_CHUNKS {
+            return Err(global.throw_value(global.to_type_error(
+                bun_jsc::ErrorCode::OUT_OF_RANGE,
+                format_args!("writev() chunk count {} exceeds {}", len, MAX_CHUNKS),
+            )));
         }
 
-        Ok(this.sink.writev_bytes(&slices).to_js(global))
+        bun_jsc::MarkedArgumentBuffer::new(|roots| {
+            let mut items: Vec<JSValue> = Vec::with_capacity(len);
+            for i in 0..len {
+                let item = arg.get_index(global, i as u32)?;
+                roots.append(item);
+                items.push(item);
+            }
+            let mut slices: Vec<&[u8]> = Vec::with_capacity(len);
+            for item in &items {
+                let Some(buffer) = item.as_array_buffer(global) else {
+                    return Err(global.throw_value(global.to_type_error(
+                        bun_jsc::ErrorCode::INVALID_ARG_TYPE,
+                        format_args!("writev() expects an array of ArrayBufferView"),
+                    )));
+                };
+                // SAFETY: `roots` keeps every cell GC-live and no further user
+                // JS runs between here and `writev_bytes`, so the backing
+                // store cannot be detached out from under the slice.
+                let slice: &[u8] = buffer.slice();
+                let slice: &[u8] =
+                    unsafe { core::slice::from_raw_parts(slice.as_ptr(), slice.len()) };
+                slices.push(slice);
+            }
+            Ok(this.sink.writev_bytes(&slices).to_js(global))
+        })
     }
 
     /// `${abi_name}__flush` host-fn body.

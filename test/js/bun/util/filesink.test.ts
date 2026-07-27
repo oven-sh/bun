@@ -186,6 +186,34 @@ describe("FileSink", () => {
     expect(() => (sink as any).writev("not an array")).toThrow();
     sink.end();
   });
+
+  it("writev does not dereference a buffer detached by an accessor getter", async () => {
+    const path = join(tmpdirSync(), "writev-detach.txt");
+    const sink = Bun.file(path).writer();
+    const ab = new ArrayBuffer(64);
+    const u8 = new Uint8Array(ab);
+    const arr: any[] = [u8, null];
+    Object.defineProperty(arr, 1, {
+      get() {
+        (ab as any).transfer();
+        return new Uint8Array([0x6f, 0x6b]);
+      },
+    });
+    // The first element is validated after all getters have run, so it is
+    // seen as detached (byteLength 0) and contributes no bytes; the second
+    // element's two bytes are written.
+    sink.writev(arr);
+    await sink.end();
+    expect(await Bun.file(path).text()).toBe("ok");
+  });
+
+  it("writev on ArrayBufferSink falls through to write()", () => {
+    const s = new Bun.ArrayBufferSink();
+    s.start();
+    s.writev([Buffer.from("hello"), Buffer.from(" "), Buffer.from("world")]);
+    const out = s.end();
+    expect(new TextDecoder().decode(out)).toBe("hello world");
+  });
 });
 
 import fs from "node:fs";

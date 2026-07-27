@@ -30,13 +30,13 @@ srv.bind(0, "127.0.0.1", () => {
   R.setServers([`127.0.0.1:${port}`]);
 
   let ok = 0;
-  let err = 0;
+  const errCodes: string[] = [];
   const ps: Promise<void>[] = [];
   for (let i = 0; i < 32; i++) {
     ps.push(
       R.resolve4(`ok.a${i}.test`).then(
         () => void ok++,
-        () => void err++,
+        e => void errCodes.push(e.code),
       ),
     );
   }
@@ -44,13 +44,13 @@ srv.bind(0, "127.0.0.1", () => {
     ps.push(
       R.resolve4(`silent.a${i}.test`).then(
         () => void ok++,
-        () => void err++,
+        e => void errCodes.push(e.code),
       ),
     );
   }
 
   Promise.allSettled(ps).then(() => {
-    console.log(JSON.stringify({ ok, err }));
+    console.log(JSON.stringify({ ok, errCodes: errCodes.sort() }));
     srv.close();
     R.cancel();
   });

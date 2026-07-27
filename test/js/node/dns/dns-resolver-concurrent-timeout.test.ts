@@ -19,6 +19,6 @@ test("dns.Resolver: unanswered queries past 32 concurrent still time out", async
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stderr.trim()).toBe("");
-  expect(JSON.parse(stdout.trim())).toEqual({ ok: 32, err: 8 });
+  expect(JSON.parse(stdout.trim())).toEqual({ ok: 32, errCodes: Array(8).fill("ETIMEOUT") });
   expect(exitCode).toBe(0);
 }, 20_000);

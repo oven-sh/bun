@@ -4155,12 +4155,9 @@ impl Resolver {
             pending_addr_cache_cares,
             pending_nameinfo_cache_cares
         );
-        // The pending caches above are fixed-size (32 slots each); any
-        // query issued past that is dispatched to c-ares untracked
-        // (`LookupCacheHit::Disabled`). Ask c-ares directly so the timeout
-        // timer stays armed for those too. Safe from inside a c-ares callback:
-        // the channel lock is recursive on every platform (PTHREAD_MUTEX_RECURSIVE
-        // on posix, CRITICAL_SECTION on Windows).
+        // The 32-slot caches overflow to `LookupCacheHit::Disabled`; c-ares' own
+        // queue length covers those too. Its channel lock is recursive, so this
+        // is safe from inside a completion callback.
         if let Some(channel) = self.channel.get() {
             // SAFETY: `channel` is the live c-ares channel owned by `self`.
             if c_ares::ares_queue_active_queries(unsafe { &*channel }) != 0 {
@@ -4220,12 +4217,11 @@ impl Resolver {
         // Normally checkTimeouts does this, so we have to be sure to do it ourself if we cancel the timer
         let this = self.as_ctx_ptr();
         scopeguard::defer! {
-            // SAFETY: `this` is the heap allocation from `init`. This releases the
-            // ref taken by `add_timer`. Callers via `request_completed` hold an
-            // `IntrusiveRc<Resolver>`; the `close_channel_for_terminate` caller is
-            // the global resolver, which carries a permanent +1 pin from
-            // `global_resolver()`. Either way the timer ref is never the last and
-            // this `deref` cannot reach 0 while `&self` is live.
+            // SAFETY: `this` is the heap allocation from `init`. This releases
+            // the ref taken by `add_timer`. Every caller holds at least one
+            // other ref for the duration of this call (an `IntrusiveRc`, a
+            // `ref_scope` guard, or the global-resolver permanent pin), so this
+            // `deref` cannot reach 0 while `&self` is live.
             unsafe {
                 let uws_loop = (*this).vm().uws_loop();
                 let state = crate::jsc_hooks::runtime_state();
@@ -4798,8 +4794,7 @@ impl Resolver {
                 );
             }
 
-            // See `on_dns_poll` — re-check after `ares_process_fd` has
-            // detached any just-completed queries.
+            // See `on_dns_poll` for why this re-check follows `ares_process_fd`.
             if !(*parent).any_requests_pending() {
                 (*parent).remove_timer();
             }
@@ -4848,10 +4843,8 @@ impl Resolver {
             (*channel).process(poll.fd.native(), poll.is_readable(), poll.is_writable());
         }
 
-        // c-ares detaches a query from its queue only *after* the callback
-        // returns, so `request_completed` (inside the callback) may have seen
-        // the just-finished query still counted and left the timeout timer
-        // armed. Re-check now that `ares_process_fd` has returned.
+        // c-ares detaches a query only *after* its callback returns, so
+        // `request_completed` may have seen it still counted; re-check now.
         if !self.any_requests_pending() {
             self.remove_timer();
         }

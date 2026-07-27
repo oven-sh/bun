@@ -69,7 +69,7 @@ pub fn sign_selfsign_inplace_with_strip(path: &std::path::Path) -> Result<(), Si
 /// If unsigned, signs it in-place using self-sign. Returns true if the file
 /// is (or became) signed; false if not an ELF or signing failed.
 /// Called from BunProcess.cpp before `dlopen()` on OHOS.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ohos_ensure_elf_signed(path: *const core::ffi::c_char) -> bool {
     if path.is_null() {
         return false;

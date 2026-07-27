@@ -68,7 +68,6 @@ fn parse_header(elf: &[u8]) -> Result<(u64, u16, u16, u16), SignError> {
         return Err(SignError::NotElf64);
     }
     let e_shoff = read_u64(elf, E_SHOFF);
-    let e_shentsize = read_u16(elf, E_SHENTSIZE);
     let e_shnum = read_u16(elf, E_SHNUM);
     let e_shentsize = read_u16(elf, E_SHENTSIZE);
     let e_shstrndx = read_u16(elf, E_SHSTRNDX);

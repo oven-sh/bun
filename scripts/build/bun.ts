@@ -521,7 +521,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     // Must run BEFORE stripping could discard sections it needs (we don't
     // strip bun-profile itself, only copy → bun, so this is safe).
     if (cfg.darwin) {
-      dsym = emitDsymutil(n, cfg, exe, exeName);
+      dsym = emitDsymutil(n, cfg, exe, exeName, strippedExe);
     }
   }
 
@@ -542,7 +542,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   // ASAN binaries to run from subprocesses (shadow memory layout conflict
   // with ELF_ET_DYN_BASE, see sanitizers/856). We try with setarch first,
   // fall back to direct invocation.
-  emitSmokeTest(n, cfg, exe, exeName);
+  emitSmokeTest(n, cfg, exe, exeName, strippedExe);
 
   return { exe, strippedExe, dsym, deps, codegen, rustObjects, objects: allObjects };
 }
@@ -656,10 +656,10 @@ function emitLinkOnly(n: Ninja, cfg: Config): BunOutput {
   let dsym: string | undefined;
   if (shouldStrip(cfg)) {
     strippedExe = emitStrip(n, cfg, exe, flags.stripflags);
-    if (cfg.darwin) dsym = emitDsymutil(n, cfg, exe, exeName);
+    if (cfg.darwin) dsym = emitDsymutil(n, cfg, exe, exeName, strippedExe);
   }
   if (strippedExe === undefined) n.phony("bun", [exe]);
-  emitSmokeTest(n, cfg, exe, exeName);
+  emitSmokeTest(n, cfg, exe, exeName, strippedExe);
 
   return {
     exe,
@@ -737,10 +737,10 @@ function emitRustAndLink(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   let dsym: string | undefined;
   if (shouldStrip(cfg)) {
     strippedExe = emitStrip(n, cfg, exe, flags.stripflags);
-    if (cfg.darwin) dsym = emitDsymutil(n, cfg, exe, exeName);
+    if (cfg.darwin) dsym = emitDsymutil(n, cfg, exe, exeName, strippedExe);
   }
   if (strippedExe === undefined) n.phony("bun", [exe]);
-  emitSmokeTest(n, cfg, exe, exeName);
+  emitSmokeTest(n, cfg, exe, exeName, strippedExe);
 
   return {
     exe,
@@ -758,8 +758,22 @@ function emitRustAndLink(n: Ninja, cfg: Config, sources: Sources): BunOutput {
  * errors, the build failed — typically means a link-time issue that the
  * linker didn't catch (missing symbol only referenced at init, ICU ABI
  * mismatch, etc.).
+ *
+ * `strippedExe`: the strip output (release builds only). Added as an
+ * order-only input so this rule never runs while strip is mid-write: the
+ * rule command's `cfg.jsRuntime` wrapper is `process.execPath`, which can
+ * BE the strip output when `bun` on PATH resolves into the build directory
+ * (build/release/bun). Without the ordering, ninja runs strip and this edge
+ * concurrently (both depend only on `exe`) and the wrapper exec fails with
+ * "Permission denied" on the half-written file.
  */
-function emitSmokeTest(n: Ninja, cfg: Config, exe: string, exeName: string): void {
+export function emitSmokeTest(
+  n: Ninja,
+  cfg: Config,
+  exe: string,
+  exeName: string,
+  strippedExe: string | undefined,
+): void {
   // Skip when the binary can't run on this host (different os/arch/abi) —
   // `ninja check` becomes a no-op alias for the exe.
   if (!cfg.canRunOnHost) {
@@ -804,6 +818,7 @@ function emitSmokeTest(n: Ninja, cfg: Config, exe: string, exeName: string): voi
     outputs: [stamp],
     rule: "smoke_test",
     inputs: [exe],
+    ...(strippedExe !== undefined ? { orderOnlyInputs: [strippedExe] } : {}),
   });
 
   // Phony target — `ninja check` runs the smoke test.
@@ -860,8 +875,11 @@ function emitStrip(n: Ninja, cfg: Config, inputExe: string, stripflags: string[]
  * Runs dsymutil on bun-profile (which has full DWARF). The .dSYM lets you
  * symbolicate crash logs from the stripped `bun` — lldb/Instruments find
  * it automatically by UUID.
+ *
+ * `strippedExe` is order-only for the same reason as emitSmokeTest: the
+ * `cfg.jsRuntime` wrapper may be the strip output itself.
  */
-function emitDsymutil(n: Ninja, cfg: Config, inputExe: string, exeName: string): string {
+export function emitDsymutil(n: Ninja, cfg: Config, inputExe: string, exeName: string, strippedExe: string): string {
   assert(cfg.darwin, "dsymutil is darwin-only");
   assert(cfg.dsymutil !== undefined, "dsymutil not found in toolchain");
 
@@ -892,6 +910,7 @@ function emitDsymutil(n: Ninja, cfg: Config, inputExe: string, exeName: string):
     outputs: [out],
     rule: "dsymutil",
     inputs: [inputExe],
+    orderOnlyInputs: [strippedExe],
   });
 
   return out;

@@ -134,7 +134,7 @@ pub struct If {
 pub struct For {
     /// May be a SConst, SLet, SVar, or SExpr
     pub init: Option<StmtNodeIndex>, // = None
-    pub test: Option<ExprNodeIndex>,  // = None
+    pub test: Option<ExprNodeIndex>,   // = None
     pub update: Option<ExprNodeIndex>, // = None
     pub body: StmtNodeIndex,
 }
@@ -174,7 +174,7 @@ pub struct Try {
     pub body_loc: crate::Loc,
     pub body: StmtNodeList,
 
-    pub catch: Option<Catch>,    // = None
+    pub catch: Option<Catch>,     // = None
     pub finally: Option<Finally>, // = None
 }
 

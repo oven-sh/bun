@@ -1,4 +1,5 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
+import { bunEnv, bunExe, isLinux, isPosix, tempDir } from "harness";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -240,4 +241,90 @@ describe("Dir explicit resource management", () => {
     expect(() => dir[Symbol.dispose]()).not.toThrow();
     await expect(dir[Symbol.asyncDispose]()).resolves.toBeUndefined();
   });
+});
+
+// Node opens the directory at opendir time and iterates that fd; the handle
+// pins the inode, so renaming or removing the path between opendir and read
+// has no effect on what is iterated.
+describe.skipIf(!isPosix)("Dir pins the directory at open time", () => {
+  it("readSync sees entries from the opened inode after the path is rename-swapped", () => {
+    using root = tempDir("opendir-swap", { "d/ORIGINAL": "" });
+    using dir = fs.opendirSync(path.join(String(root), "d"));
+    fs.renameSync(path.join(String(root), "d"), path.join(String(root), "old"));
+    fs.mkdirSync(path.join(String(root), "d"));
+    fs.writeFileSync(path.join(String(root), "d", "REPLACEMENT"), "");
+    const names: string[] = [];
+    for (let e; (e = dir.readSync()); ) names.push(e.name);
+    expect(names).toEqual(["ORIGINAL"]);
+  });
+
+  it("async opendir + read sees entries from the opened inode after the path is rename-swapped", async () => {
+    using root = tempDir("opendir-swap-async", { "d/ORIGINAL": "" });
+    const { promise, resolve, reject } = Promise.withResolvers<fs.Dir>();
+    fs.opendir(path.join(String(root), "d"), (err, dir) => (err ? reject(err) : resolve(dir)));
+    await using dir = await promise;
+    fs.renameSync(path.join(String(root), "d"), path.join(String(root), "old"));
+    fs.mkdirSync(path.join(String(root), "d"));
+    fs.writeFileSync(path.join(String(root), "d", "REPLACEMENT"), "");
+    const names: string[] = [];
+    for (let e; (e = await dir.read()); ) names.push(e.name);
+    expect(names).toEqual(["ORIGINAL"]);
+  });
+
+  it("reading after the directory is removed returns end-of-stream, not ENOENT", () => {
+    using root = tempDir("opendir-rm", { "d/ORIGINAL": "" });
+    using dir = fs.opendirSync(path.join(String(root), "d"));
+    fs.rmSync(path.join(String(root), "d"), { recursive: true });
+    expect(dir.readSync()).toBeNull();
+  });
+
+  // /proc/self/fd is the simplest fd census; skip elsewhere.
+  it.skipIf(!isLinux)("opendirSync holds one fd per handle and close releases it", () => {
+    using root = tempDir("opendir-fds", { "d/x": "" });
+    const count = () => fs.readdirSync("/proc/self/fd").length;
+    const before = count();
+    const dir = fs.opendirSync(path.join(String(root), "d"));
+    expect(count() - before).toBe(1);
+    dir.closeSync();
+    expect(count() - before).toBe(0);
+  });
+});
+
+it("an unclosed Dir closes its fd and warns when garbage collected", async () => {
+  using root = tempDir("opendir-gc", { "d/x": "" });
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const fs = require("node:fs");
+       let warnings = 0;
+       process.on("warning", w => {
+         if (w.message === "Closing directory handle on garbage collection") warnings++;
+       });
+       (function scope() {
+         for (let i = 0; i < 4; i++) fs.opendirSync(process.argv[1]);
+         fs.opendirSync(process.argv[1]).closeSync(); // explicit close must not warn
+       })();
+       (async () => {
+         // FinalizationRegistry callbacks run on a task, not a microtask.
+         for (let i = 0; i < 10 && warnings < 4; i++) {
+           Bun.gc(true);
+           await new Promise(r => setImmediate(r));
+         }
+         const leaked = process.platform === "linux"
+           ? fs.readdirSync("/proc/self/fd").filter(f => {
+               try { return fs.readlinkSync("/proc/self/fd/" + f) === process.argv[1]; } catch { return false; }
+             }).length
+           : 0;
+         console.log(JSON.stringify({ warnings, leaked }));
+       })();`,
+      path.join(String(root), "d"),
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout.trim())).toEqual({ warnings: 4, leaked: 0 });
+  expect(exitCode).toBe(0);
 });

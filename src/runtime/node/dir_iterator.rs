@@ -162,10 +162,13 @@ mod platform {
                             self.received_eof = true;
                             return Ok(None);
                         }
-                        return Err(sys::Error::from_code_int(
-                            sys::last_errno(),
-                            Tag::getdirentries64,
-                        ));
+                        let e = sys::last_errno();
+                        // ENOENT iterating an unlinked but still-open dir: POSIX says EOF.
+                        if e == libc::ENOENT {
+                            self.received_eof = true;
+                            return Ok(None);
+                        }
+                        return Err(sys::Error::from_code_int(e, Tag::getdirentries64));
                     }
 
                     self.index = 0;
@@ -369,10 +372,12 @@ mod platform {
                         )
                     };
                     if rc < 0 {
-                        return Err(sys::Error::from_code_int(
-                            sys::last_errno(),
-                            Tag::getdents64,
-                        ));
+                        let e = sys::last_errno();
+                        // ENOENT iterating an unlinked but still-open dir: POSIX says EOF.
+                        if e == libc::ENOENT {
+                            return Ok(None);
+                        }
+                        return Err(sys::Error::from_code_int(e, Tag::getdents64));
                     }
                     if rc == 0 {
                         return Ok(None);

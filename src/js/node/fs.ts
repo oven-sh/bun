@@ -600,24 +600,18 @@ var access = function access(path, mode, callback) {
     return require("internal/fs/watch").watch(path, options, listener);
   },
   opendir = function opendir(path, options, callback) {
-    // TODO: validatePath
-    // validateString(path, "path");
     if (typeof options === "function") {
       callback = options;
       options = undefined;
     }
     validateFunction(callback, "callback");
     // Argument validation errors throw synchronously (node does the same);
-    // the eager path check runs on an async stat so the JS thread isn't
-    // blocked and the callback never fires synchronously.
-    const result = new Dir(1, path, options, kAlreadyValidated);
+    // construct the Dir up front so options validation runs before the open.
+    const result = new Dir(-2, path, options);
     // Invoke the callback from process.nextTick so an exception thrown by it
     // surfaces as an uncaught exception instead of rejecting this internal
     // promise chain (same convention as glob() below).
-    fs.stat(path).then(
-      onOpendirStatFulfilled.bind(null, callback, path, result),
-      onOpendirStatRejected.bind(null, callback, path),
-    );
+    fs.opendir(path).then(onOpendirFulfilled.bind(null, callback, result), onOpendirRejected.bind(null, callback));
   };
 
 const { defineCustomPromisifyArgs } = require("internal/promisify");
@@ -1005,15 +999,12 @@ function _toUnixTimestamp(time: any, name = "time") {
   throw $ERR_INVALID_ARG_TYPE(name, "number or Date", time);
 }
 
-function onOpendirStatFulfilled(callback, path, result, stats) {
-  if (!stats.isDirectory()) {
-    process.nextTick(callback, opendirNotDirError(path));
-    return;
-  }
+function onOpendirFulfilled(callback, result, fd) {
+  dirSetHandle(result, fd);
   process.nextTick(callback, null, result);
 }
-function onOpendirStatRejected(callback, path, err) {
-  process.nextTick(callback, typeof err?.errno === "number" ? opendirStatError(err, path) : err);
+function onOpendirRejected(callback, err) {
+  process.nextTick(callback, err);
 }
 function callOnceWithNull(callback) {
   callback(null);
@@ -1023,49 +1014,44 @@ function callOnceWithNullThen(callback, value) {
 }
 
 function opendirSync(path, options) {
-  // TODO: validatePath
-  // validateString(path, "path");
-  return new Dir(1, path, options);
+  const result = new Dir(-2, path, options);
+  dirSetHandle(result, fs.opendirSync(path));
+  return result;
 }
 
-// Reshape a stat error as node's eager opendir error. Stat errors arrive as
-// "ECODE: <description>, stat '<path>'"; pull out just the description before
-// re-prefixing (avoids "EACCES: EACCES: ...").
-function opendirStatError(err, path) {
-  err.syscall = "opendir";
-  const description = err.message.replace(/^[A-Z]+: /, "").replace(/, l?stat '.*'$/, "");
-  err.message = `${err.code}: ${description}, opendir '${path}'`;
-  return err;
+// Node closes an un-closed Dir's fd from its native finalizer and emits a
+// process warning. Mirror that with a FinalizationRegistry so a dropped Dir
+// doesn't leak the descriptor opened above.
+let dirHandleRegistry: FinalizationRegistry<number> | undefined;
+function onDirHandleCollected(fd: number) {
+  try {
+    fs.closeSync(fd);
+  } catch {}
+  process.emitWarning("Closing directory handle on garbage collection");
 }
 
-function opendirNotDirError(path) {
-  const err = new Error(`ENOTDIR: not a directory, opendir '${path}'`);
-  err.code = "ENOTDIR";
-  // libuv's UV_ENOTDIR: -ENOTDIR on POSIX, -4052 on Windows
-  err.errno = process.platform === "win32" ? -4052 : -20;
-  err.syscall = "opendir";
-  err.path = path;
-  return err;
-}
-
-// Passed as the Dir constructor's 4th argument by the async opendir paths,
-// which run the eager path check with an async stat instead.
-const kAlreadyValidated = Symbol("kAlreadyValidated");
+let dirSetHandle;
 
 class Dir {
-  /**
-   * `-1` when closed. stdio handles (0, 1, 2) don't actually get closed by
-   * {@link close} or {@link closeSync}.
-   */
+  /** Directory fd from `fs.opendir`. `-1` once closed; `-2` before the native open completes. */
   #handle: number;
+  /** Set only by `dirSetHandle`; close is skipped for handles supplied via the public constructor. */
+  #owned = false;
   #path: PathLike;
   #options;
   #entries: DirentType[] | null = null;
   #entriesIdx = 0;
 
-  constructor(handle, path: PathLike, options, validated?) {
+  static {
+    dirSetHandle = (dir: Dir, fd: number) => {
+      dir.#handle = fd;
+      dir.#owned = true;
+      (dirHandleRegistry ??= new FinalizationRegistry(onDirHandleCollected)).register(dir, fd, dir);
+    };
+  }
+
+  constructor(handle, path: PathLike, options) {
     if ($isUndefinedOrNull(handle)) throw $ERR_MISSING_ARGS("handle");
-    validateInteger(handle, "handle", 0);
     if (options != null && typeof options !== "object" && typeof options !== "string") {
       throw $ERR_INVALID_ARG_TYPE("options", "object", options);
     }
@@ -1078,20 +1064,7 @@ class Dir {
     if (options?.bufferSize !== undefined) {
       validateInteger(options.bufferSize, "options.bufferSize", 1);
     }
-    if (handle === 1 && validated !== kAlreadyValidated) {
-      // node's opendir opens the directory eagerly and reports ENOTDIR/ENOENT
-      let stats;
-      try {
-        stats = fs.statSync(path);
-      } catch (err: any) {
-        if (typeof err?.errno !== "number") throw err; // argument validation errors throw as-is
-        throw opendirStatError(err, path);
-      }
-      if (!stats.isDirectory()) {
-        throw opendirNotDirError(path);
-      }
-    }
-    this.#handle = $toLength(handle);
+    this.#handle = handle;
     this.#path = path;
     this.#options = options;
   }
@@ -1131,11 +1104,16 @@ class Dir {
     if (this.#handle < 0) throw $ERR_DIR_CLOSED();
     if (this.#pendingCount > 0) throw this.#dirConcurrentError();
 
-    let entries = (this.#entries ??= fs.readdirSync(this.#path, {
-      withFileTypes: true,
-      encoding: this.#options?.encoding,
-      recursive: this.#options?.recursive,
-    }));
+    let entries = (this.#entries ??= this.#options?.recursive
+      ? fs.readdirSync(this.#path, {
+          withFileTypes: true,
+          encoding: this.#options?.encoding,
+          recursive: true,
+        })
+      : fs.fdreaddirSync(this.#handle, this.#path, {
+          withFileTypes: true,
+          encoding: this.#options?.encoding,
+        }));
     return this.#entriesIdx < entries.length ? entries[this.#entriesIdx++] : null;
   }
 
@@ -1158,13 +1136,17 @@ class Dir {
     if (this.#handle < 0) throw $ERR_DIR_CLOSED();
     const entries = this.#entries;
     if (entries) return this.#entriesIdx < entries.length ? entries[this.#entriesIdx++] : null;
-    return fs
-      .readdir(this.#path, {
-        withFileTypes: true,
-        encoding: this.#options?.encoding,
-        recursive: this.#options?.recursive,
-      })
-      .then(this.#onReaddir.bind(this));
+    const p = this.#options?.recursive
+      ? fs.readdir(this.#path, {
+          withFileTypes: true,
+          encoding: this.#options?.encoding,
+          recursive: true,
+        })
+      : fs.fdreaddir(this.#handle, this.#path, {
+          withFileTypes: true,
+          encoding: this.#options?.encoding,
+        });
+    return p.then(this.#onReaddir.bind(this));
   }
 
   #onReaddir(entries) {
@@ -1176,8 +1158,9 @@ class Dir {
   #closeOp() {
     const handle = this.#handle;
     if (handle < 0) throw $ERR_DIR_CLOSED();
-    if (handle > 2) fs.closeSync(handle);
     this.#handle = -1;
+    dirHandleRegistry?.unregister(this);
+    if (this.#owned) fs.closeSync(handle);
   }
 
   close(cb?: (err?: Error) => void) {
@@ -1193,8 +1176,9 @@ class Dir {
     const handle = this.#handle;
     if (handle < 0) throw $ERR_DIR_CLOSED();
     if (this.#pendingCount > 0) throw this.#dirConcurrentError();
-    if (handle > 2) fs.closeSync(handle);
     this.#handle = -1;
+    dirHandleRegistry?.unregister(this);
+    if (this.#owned) fs.closeSync(handle);
   }
 
   // Like node, disposing an already-closed Dir is a no-op rather than

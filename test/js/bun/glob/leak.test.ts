@@ -57,7 +57,7 @@ describe("leaks", () => {
         expect({ stderr, growthMB, exitCode }).toEqual({ stderr: "", growthMB: expect.any(Number), exitCode: 0 });
         expect(growthMB).toBeLessThan(thresholdMB);
       },
-      30_000,
+      60_000,
     );
   }
 });

@@ -481,8 +481,6 @@ impl<'a> Parser<'a> {
         }
 
         // Symbol use counts are unavailable, so "any JSX parsed?" is the proxy.
-        // Mirror the full-parse auto-import gate so scanImports() and scan()
-        // agree on the injected JSX runtime import.
         if p.options.jsx.parse
             && p.needs_jsx_import
             && p.options.features.auto_import_jsx

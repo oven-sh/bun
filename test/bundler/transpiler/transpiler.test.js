@@ -2273,11 +2273,7 @@ console.log(<div {...obj} key="after" />);`),
       expect(new Bun.Transpiler(opts).scan("export const x = 1;").imports).toEqual([]);
     });
 
-    // scanImports() used to unconditionally add a `require-call` record for
-    // `<importSource>/jsx-dev-runtime` *and* a second one for the classic
-    // source, regardless of auto_import_jsx or the configured JSX runtime.
-    // It now mirrors the full-parse gate so it agrees with scan().
-    describe(".scanImports() agrees with .scan() on the injected JSX runtime import", () => {
+    describe(".scanImports() reports the injected JSX runtime import", () => {
       const dev = { loader: "tsx", define: { "process.env.NODE_ENV": JSON.stringify("development") } };
       const jsxDevRuntime = [{ kind: "import-statement", path: "react/jsx-dev-runtime" }];
 

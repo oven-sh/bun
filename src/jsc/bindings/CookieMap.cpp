@@ -182,8 +182,7 @@ void CookieMap::removeInternal(const String& name)
 
 ExceptionOr<void> CookieMap::set(Ref<Cookie> cookie)
 {
-    // A Cookie can reach here straight from Cookie.parse(), which reports what was on the
-    // wire without enforcing the Secure requirement, so re-check before it is emitted.
+    // Cookie.parse() does not enforce this; re-check before emitting.
     if (auto validation = Cookie::validateSecureRequired(cookie->secure(), cookie->sameSite(), cookie->partitioned()); validation.hasException()) {
         return validation.releaseException();
     }

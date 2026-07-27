@@ -51,9 +51,7 @@ ExceptionOr<Ref<Cookie>> Cookie::create(const String& name, const String& value,
     return adoptRef(*new Cookie(name, value, domain, path, expires, secure, sameSite, httpOnly, maxAge, partitioned));
 }
 
-// RFC 6265bis 5.6.20: a cookie with SameSite=None that is not Secure is rejected by the user agent.
-// CHIPS (draft-cutler-httpbis-partitioned-cookies 2.3) likewise requires Partitioned cookies to be
-// Secure. Emitting either attribute without Secure produces a header every modern browser drops.
+// RFC 6265bis 5.6.20 (SameSite=None) and CHIPS (Partitioned) both require Secure; browsers drop the cookie otherwise.
 ExceptionOr<void> Cookie::validateSecureRequired(bool secure, CookieSameSite sameSite, bool partitioned)
 {
     if (secure) {

@@ -1596,6 +1596,7 @@ describe.concurrent("publish() return value reflects subscriber backpressure", (
 
 it.concurrent("server.publish() throws on null/undefined message like ws.send()/ws.publish()", async () => {
   const opened = Promise.withResolvers<ServerWebSocket<unknown>>();
+  const gotOk = Promise.withResolvers<void>();
   const received: string[] = [];
   await using server = serve({
     port: 0,
@@ -1613,8 +1614,17 @@ it.concurrent("server.publish() throws on null/undefined message like ws.send()/
   });
 
   const client = new WebSocket(`ws://127.0.0.1:${server.port}/`);
-  client.onmessage = e => received.push(String(e.data));
-  client.onerror = e => opened.reject(e);
+  const fail = (e: Event) => {
+    const err = new Error(`client ${e.type} before ok`);
+    opened.reject(err);
+    gotOk.reject(err);
+  };
+  client.onerror = fail;
+  client.onclose = fail;
+  client.onmessage = e => {
+    received.push(String(e.data));
+    if (e.data === "ok") gotOk.resolve();
+  };
   try {
     const ws = await opened.promise;
     for (const value of [null, undefined] as const) {
@@ -1627,14 +1637,10 @@ it.concurrent("server.publish() throws on null/undefined message like ws.send()/
     }
     // Nothing should have been broadcast. Round-trip a sentinel to flush.
     expect(server.publish("t", "ok")).toBeGreaterThan(0);
-    const gotOk = Promise.withResolvers<void>();
-    client.onmessage = e => {
-      received.push(String(e.data));
-      if (e.data === "ok") gotOk.resolve();
-    };
     await gotOk.promise;
     expect(received).toEqual(["ok"]);
   } finally {
+    client.onerror = client.onclose = null;
     client.close();
   }
 });

@@ -2299,6 +2299,13 @@ console.log(<div {...obj} key="after" />);`),
           "export default <div/>;",
           [],
         ],
+        [
+          "@jsxRuntime automatic over classic tsconfig",
+          { loader: "tsx", tsconfig: { compilerOptions: { jsx: "react" } } },
+          "// @jsxRuntime automatic\nexport default <div/>;",
+          jsxDevRuntime,
+        ],
+        ["@jsxRuntime classic over automatic", dev, "// @jsxRuntime classic\nexport default <div/>;", []],
         ["no JSX", dev, "export const x = 1;", []],
       ])("%s", (_, opts, src, expected) => {
         const t = new Bun.Transpiler(opts);

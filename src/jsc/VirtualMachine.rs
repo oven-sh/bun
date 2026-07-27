@@ -4335,6 +4335,35 @@ impl VirtualMachine {
         );
         if let Err(err_) = resolve_result {
             let err = err_;
+            // fd/memory exhaustion during resolution is not "module not
+            // found": surface it as the system error Node would, so `.code`
+            // names the errno instead of ERR_MODULE_NOT_FOUND. Other Sys
+            // errors keep flowing to the ResolveMessage path, which may
+            // already carry better context from the resolver's log.
+            let sys_errno = match &err {
+                crate::CrateError::Resolver(bun_resolver::Error::Sys(e))
+                | crate::CrateError::Sys(e)
+                    if matches!(
+                        *e,
+                        bun_errno::SystemErrno::EMFILE
+                            | bun_errno::SystemErrno::ENFILE
+                            | bun_errno::SystemErrno::ENOMEM
+                    ) =>
+                {
+                    Some(*e)
+                }
+                _ => None,
+            };
+            if let Some(errno) = sys_errno {
+                let js_err = crate::SystemError::from(
+                    bun_sys::Error::new(errno, bun_sys::Tag::open)
+                        .with_path(specifier_utf8.slice())
+                        .to_system_error(),
+                )
+                .to_error_instance(global);
+                *res = ErrorableString::err(ErrorCode(ErrorCode::JS_ERROR_OBJECT), js_err);
+                return Ok(());
+            }
             let import_kind = if is_esm {
                 bun_ast::ImportKind::Stmt
             } else if is_user_require_resolve {

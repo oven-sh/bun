@@ -5225,6 +5225,35 @@ unsafe fn resolve_hook(
             &mut result_query,
         )
     } {
+        // fd/memory exhaustion during resolution is not "module not found":
+        // surface it as the system error Node would, so `.code` names the
+        // errno instead of MODULE_NOT_FOUND. Other Sys errors keep flowing
+        // to the ResolveMessage path, which may already carry better context
+        // from the resolver's log.
+        let sys_errno = match &err {
+            crate::Error::Resolver(bun_resolver::Error::Sys(e)) | crate::Error::Sys(e)
+                if matches!(
+                    *e,
+                    bun_errno::SystemErrno::EMFILE
+                        | bun_errno::SystemErrno::ENFILE
+                        | bun_errno::SystemErrno::ENOMEM
+                ) =>
+            {
+                Some(*e)
+            }
+            _ => None,
+        };
+        if let Some(errno) = sys_errno {
+            let js_err = bun_jsc::SystemError::from(
+                bun_sys::Error::new(errno, bun_sys::Tag::open)
+                    .with_path(specifier_utf8.slice())
+                    .to_system_error(),
+            )
+            .to_error_instance(global_ref);
+            // SAFETY: per fn contract.
+            unsafe { *res = ErrorableString::err(ErrorCode(ErrorCode::JS_ERROR_OBJECT), js_err) };
+            return true;
+        }
         // Synthesise a `ResolveMessage` from the first
         // `.resolve`-tagged log msg, or fall back to `ResolveMessage::fmt`.
         let msg: bun_ast::Msg = 'brk: {

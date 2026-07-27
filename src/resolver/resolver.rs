@@ -1884,26 +1884,26 @@ impl<'a> Resolver<'a> {
             // Run node's resolution rules (e.g. adding ".js")
             let mut normalizer = ResolvePath::PosixToWinNormalizer::default();
             let mut entry = MatchResult::default();
-            if self
-                .load_as_file_or_directory(
-                    normalizer.resolve(source_dir, import_path),
-                    kind,
-                    &mut entry,
-                )
-                .is_success()
-            {
-                return ResultUnion::Success(Result {
-                    dirname_fd: entry.dirname_fd,
-                    path_pair: entry.path_pair,
-                    diff_case: entry.diff_case,
-                    package_json: entry.package_json,
-                    file_fd: entry.file_fd,
-                    jsx: self.opts.jsx.clone(),
-                    ..Default::default()
-                });
+            match self.load_as_file_or_directory(
+                normalizer.resolve(source_dir, import_path),
+                kind,
+                &mut entry,
+            ) {
+                MatchStatus::Success => {
+                    return ResultUnion::Success(Result {
+                        dirname_fd: entry.dirname_fd,
+                        path_pair: entry.path_pair,
+                        diff_case: entry.diff_case,
+                        package_json: entry.package_json,
+                        file_fd: entry.file_fd,
+                        jsx: self.opts.jsx.clone(),
+                        ..Default::default()
+                    });
+                }
+                MatchStatus::Failure(e) => return ResultUnion::Failure(e),
+                MatchStatus::Pending(p) => return ResultUnion::Pending(*p),
+                MatchStatus::NotFound => return ResultUnion::NotFound,
             }
-
-            return ResultUnion::NotFound;
         }
 
         // Check both relative and package paths for CSS URL tokens, with relative
@@ -2172,20 +2172,18 @@ impl<'a> Resolver<'a> {
             self.extension_order = self.opts.extension_order.kind(kind, true);
         }
         let mut res = MatchResult::default();
-        let ret = if self
-            .load_as_file_or_directory(abs_path, kind, &mut res)
-            .is_success()
-        {
-            ResultUnion::Success(Result {
+        let ret = match self.load_as_file_or_directory(abs_path, kind, &mut res) {
+            MatchStatus::Success => ResultUnion::Success(Result {
                 path_pair: res.path_pair,
                 diff_case: res.diff_case,
                 dirname_fd: res.dirname_fd,
                 package_json: res.package_json,
                 jsx: self.opts.jsx.clone(),
                 ..Default::default()
-            })
-        } else {
-            ResultUnion::NotFound
+            }),
+            MatchStatus::Failure(e) => ResultUnion::Failure(e),
+            MatchStatus::Pending(p) => ResultUnion::Pending(*p),
+            MatchStatus::NotFound => ResultUnion::NotFound,
         };
         self.extension_order = prev_extension_order;
         ret
@@ -2200,7 +2198,7 @@ impl<'a> Resolver<'a> {
     ) -> ResultUnion {
         let mut import_path = unremapped_import_path;
         let mut source_dir_info: DirInfoRef = match self.dir_info_cached(source_dir) {
-            Err(_) => return ResultUnion::NotFound,
+            Err(e) => return ResultUnion::Failure(e),
             Ok(Some(d)) => d,
             Ok(None) => 'dir: {
                 // It is possible to resolve with a source file that does not exist:
@@ -2233,7 +2231,7 @@ impl<'a> Resolver<'a> {
                 // the drive root should always exist.
                 while let Some(current) = bun_paths::dirname(closest_dir) {
                     match self.dir_info_cached(current) {
-                        Err(_) => return ResultUnion::NotFound,
+                        Err(e) => return ResultUnion::Failure(e),
                         Ok(Some(dir)) => break 'dir dir,
                         Ok(None) => {}
                     }
@@ -4371,6 +4369,17 @@ impl<'a> Resolver<'a> {
                                 );
                                 break 'open_dir FD::INVALID;
                             }
+                            // fd/memory exhaustion says nothing about whether the
+                            // directory exists; caching it as not-found would lie about
+                            // the filesystem until the next cache bust.
+                            if matches!(
+                                err,
+                                crate::Error::Sys(bun_errno::SystemErrno::EMFILE)
+                                    | crate::Error::Sys(bun_errno::SystemErrno::ENFILE)
+                                    | crate::Error::Sys(bun_errno::SystemErrno::ENOMEM)
+                            ) {
+                                return Err(err);
+                            }
                             let cached_dir_entry_result = rfs!()
                                 .entries
                                 .get_or_put(queue_top_unsafe_path)
@@ -5409,14 +5418,14 @@ impl<'a> Resolver<'a> {
         let dir_info: DirInfoRef = match self.dir_info_cached(path) {
             Ok(Some(d)) => d,
             Ok(None) => dec_ret!(MatchStatus::NotFound),
-            Err(_err) => {
+            Err(err) => {
                 #[cfg(debug_assertions)]
                 bun_core::pretty_errorln!(
                     "err: {} reading {}",
-                    bstr::BStr::new(_err.name()),
+                    bstr::BStr::new(err.name()),
                     bstr::BStr::new(path)
                 );
-                dec_ret!(MatchStatus::NotFound);
+                dec_ret!(MatchStatus::Failure(err));
             }
         };
         let mut package_json: Option<*const PackageJSON> = None;

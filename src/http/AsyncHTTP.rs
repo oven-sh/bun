@@ -111,7 +111,7 @@ fn http_thread_timer_read() -> u64 {
 /// Build the `Proxy-Authorization: Basic <b64(user:pass)>` header value.
 /// Returns `None` (and logs) if percent-decoding fails.
 pub(crate) fn build_proxy_authorization(proxy: &URL<'_>) -> Option<Vec<u8>> {
-    if proxy.username.is_empty() {
+    if proxy.username.is_empty() && proxy.password.is_empty() {
         return None;
     }
 

@@ -519,15 +519,16 @@ test("proxy with long password (> 4096 chars) works correctly after redirect", a
 });
 
 // RFC 7617: the Basic credential is always `user-id ":" password`, so a proxy
-// URL with an empty password (`user:@host`) must send base64("user:"), not
-// base64("user"). curl does this; bun previously dropped the colon, which
-// strict proxies reject.
+// URL with an empty password (`user:@host`) or an empty username (`:pass@host`)
+// must still send the colon. bun previously dropped the colon for empty
+// password and sent no header at all for empty username.
 //
 // Exercised via http_proxy in a subprocess (rather than the `{proxy}` option)
 // so the raw env string reaches bun_url::URL::parse without WHATWG
 // normalization first dropping the `:` and tripping the userinfo heuristic.
 describe.each([
   { userinfo: "squidadmin:", decoded: "squidadmin:" },
+  { userinfo: ":hunter2", decoded: ":hunter2" },
   { userinfo: "squidadmin:hunter2", decoded: "squidadmin:hunter2" },
 ])("proxy Basic auth keeps the colon for userinfo $userinfo", ({ userinfo, decoded }) => {
   const expected = `Basic ${Buffer.from(decoded).toString("base64")}`;

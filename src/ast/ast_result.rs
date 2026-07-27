@@ -92,8 +92,7 @@ pub struct Ast<'a> {
 }
 
 bitflags::bitflags! {
-    /// Set for each of `undefined`/`NaN`/`Infinity` that has a user declaration
-    /// anywhere in this file. Read by `js_printer::Options::can_emit_const_value_identifier`.
+    /// Set when the file declares a local binding of the named global constant.
     #[derive(Default, Clone, Copy, PartialEq, Eq)]
     pub struct ConstValuesDeclared: u8 {
         const UNDEFINED = 1 << 0;

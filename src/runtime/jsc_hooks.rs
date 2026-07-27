@@ -3908,9 +3908,7 @@ unsafe fn normalize_specifier_for_loader<'a>(
     if let Some(i) = bun_core::strings::index_of_char_usize(slice, b'?') {
         let i = i as usize;
         let stripped = &slice[..i];
-        // A resolved module key's path component is a file on disk. If the
-        // stripped prefix is not, the `?` is part of the filesystem path
-        // (POSIX allows it in filenames), not a query separator.
+        // `?` starts a query only when the stripped prefix is itself a file.
         if !bun_paths::is_absolute(stripped) || bun_sys::exists_as_file(stripped) {
             query = &slice[i..];
             slice = stripped;
@@ -4948,8 +4946,7 @@ unsafe fn _resolve<'a>(
     let is_special_source = source == MAIN_FILE_NAME || bun_js_parser::Macro::is_macro_path(source);
     let mut query_string: &[u8] = b"";
     let mut normalized_specifier = normalize_specifier_for_resolution(specifier, &mut query_string);
-    // POSIX filenames may contain a literal `?`; if the stripped specifier
-    // does not resolve, retry once with the `?` treated as part of the path.
+    // POSIX filenames may contain a literal `?`.
     let mut retry_with_literal_question_mark = !query_string.is_empty();
     // `Fs.PathName.init(source).dirWithTrailingSlash()` slices
     // `source` in place, so the `'a` lifetime is preserved.

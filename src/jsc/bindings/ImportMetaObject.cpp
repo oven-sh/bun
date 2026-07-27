@@ -177,10 +177,7 @@ ImportMetaObject* ImportMetaObject::createFromSpecifier(JSC::JSGlobalObject* glo
         StringView view = specifier;
         StringView stripped = view.substring(0, index);
 #if !OS(WINDOWS)
-        // A module key is `path?query`, except when `?` is part of the
-        // filesystem path (POSIX allows it in filenames): then the path
-        // component is the whole key and there is no query. `?` is not a
-        // valid filename character on Windows, so this check is POSIX-only.
+        // `?` starts a query only when the stripped prefix is itself a file.
         if (stripped.startsWith('/')) {
             WTF::CString utf8 = stripped.utf8();
             if (!Bun__existsAsFile(utf8.data(), utf8.length())) {

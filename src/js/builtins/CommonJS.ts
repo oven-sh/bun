@@ -60,9 +60,7 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string, o
     }
   }
 
-  // A resolved id is `path` or `path?query`. When the id itself ends in
-  // `.node` there is no query suffix, so any `?` is part of the filesystem
-  // path (POSIX allows it in filenames).
+  // An id ending in ".node" has no query suffix; any `?` is part of the path.
   const queryIndex = id.indexOf("?");
   if (id.endsWith(".node") || (queryIndex !== -1 && id.endsWith(".node", queryIndex))) {
     return $internalRequire(id, this);
@@ -162,9 +160,7 @@ export function requireResolve(
 $visibility = "Private";
 export function internalRequire(id: string, parent: JSCommonJSModule) {
   $assert($requireMap.$get(id) === undefined, "Module " + JSON.stringify(id) + " should not be in the map");
-  // `id` keys the module cache and may carry a `?query` suffix;
-  // `process.dlopen` needs the on-disk path. When the id itself ends in
-  // `.node` there is no query suffix, so any `?` is part of the path.
+  // Strip a `?query` suffix for dlopen; an id ending in `.node` has none.
   const filename = id.endsWith(".node") ? id : id.substring(0, id.indexOf("?"));
   $assert(filename.endsWith(".node"));
 

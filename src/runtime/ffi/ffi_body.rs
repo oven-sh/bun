@@ -211,14 +211,9 @@ impl Default for FFI {
 
 impl FFI {
     pub fn finalize(self: Box<Self>) {
-        // Compiled trampolines / dlopen'd symbols may still be reachable from
-        // JS after the wrapper is GC'd (e.g. `const { fn } = dlopen(...).symbols`),
-        // so when `close()` was never called we must not run `Function::drop`'s
-        // `tcc_delete()` on the executable pages those JSFunctions jump into.
-        // Detach the per-function TCC state so `Drop` skips it, then drop the
-        // Box normally so the symbol-map keys / `base_name` / `arg_types` /
-        // column Vecs are freed instead of leaking. `shared_state` and `dylib`
-        // are raw handles with no `Drop`, so they stay valid until process exit.
+        // JS may still hold trampolines after the wrapper is GC'd, so when
+        // `close()` never ran detach the per-function TCC state so the drop
+        // below skips `tcc_delete()`. `shared_state` / `dylib` have no `Drop`.
         if !self.closed.get() {
             self.functions.with_mut(|f| {
                 for function in f.values_mut() {

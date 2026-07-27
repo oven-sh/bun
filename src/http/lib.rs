@@ -3618,11 +3618,18 @@ impl<'a> HTTPClient<'a> {
             buffer.list.as_slice()
         };
 
-        // Persist the unparsed tail for the next `on_data` and re-arm the
-        // receive timeout. When `needs_move`, `to_read` is a suffix of
-        // `incoming_data` and is copied into the (currently empty) accumulation
-        // buffer; otherwise `to_read` is a suffix of `buffer`, so the consumed
-        // prefix is drained and `buffer` is moved back into state.
+        // Persist the unparsed tail for the next `on_data`. When `needs_move`,
+        // `to_read` is a suffix of `incoming_data` and is copied into the
+        // (currently empty) accumulation buffer; otherwise `to_read` is a suffix
+        // of `buffer`, so the consumed prefix is drained and `buffer` is moved
+        // back into state.
+        //
+        // Intentionally does NOT re-arm the idle timer: a server that trickles
+        // one header byte per interval shorter than `idle_timeout_seconds`
+        // would otherwise keep the request alive forever. Leaving the timer as
+        // armed by `on_open` / `on_writable` makes it an absolute deadline for
+        // the header block to complete (undici `headersTimeout` semantics); the
+        // body path (`on_data` Body/BodyChunk) still re-arms per chunk.
         macro_rules! short_read {
             () => {{
                 bun_core::scoped_log!(fetch, "handleShortRead");
@@ -3638,7 +3645,6 @@ impl<'a> HTTPClient<'a> {
                         .drain_front(buffer.list.len().saturating_sub(keep));
                     self.state.response_message_buffer = buffer;
                 }
-                self.set_timeout(&socket);
                 return;
             }};
         }

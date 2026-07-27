@@ -458,7 +458,11 @@ impl PosixBufferedReader {
 
     // Exists for consistently with Windows.
     pub fn has_pending_read(&self) -> bool {
-        matches!(&self.handle, PollOrFd::Poll(poll) if poll.is_registered())
+        // `is_watching()` (registered && !needs-rearm) rather than
+        // `is_registered()`: a one-shot poll that has fired but not been
+        // re-armed will not deliver another callback, so callers that skip
+        // `read()` on "pending" must not be told one is in flight.
+        matches!(&self.handle, PollOrFd::Poll(poll) if poll.is_watching())
     }
 
     pub fn watch(&mut self) {
@@ -1912,8 +1916,14 @@ impl WindowsBufferedReader {
         // grows by `amount_result` every chunk and never resets, so a 1 GB
         // `cat` holds 1 GB resident instead of ~64 KB. Clear it here, after
         // the streaming consumer has finished with `slice`.
-        if should_continue && has_more != ReadState::Eof && self.vtable.is_streaming_enabled() {
+        if has_more != ReadState::Eof && self.vtable.is_streaming_enabled() {
             self._buffer.clear();
+            if !should_continue {
+                // Mirrors POSIX `read_with_fn` returning without re-arming
+                // when the parent says stop; `read()` (= `unpause` +
+                // `start_reading`) re-arms once JS pulls again.
+                let _ = self.stop_reading();
+            }
         }
 
         // `over_budget` is terminal for the same reason EOF is: the child was

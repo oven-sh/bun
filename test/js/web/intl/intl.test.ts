@@ -221,8 +221,9 @@ describe("String.prototype.localeCompare with a string locale", () => {
       return best;
     };
 
+    const compare = new Intl.Collator("en").compare;
     const withLocale = bestOf3(() => [...arr].sort((a, b) => a.localeCompare(b, "en")));
-    const hoisted = bestOf3(() => [...arr].sort(new Intl.Collator("en").compare));
+    const hoisted = bestOf3(() => [...arr].sort(compare));
 
     expect(withLocale / hoisted).toBeLessThan(3);
   });

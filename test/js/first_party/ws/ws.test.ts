@@ -372,6 +372,34 @@ it("onmessage", done => {
   };
 });
 
+it("assigning a non-function to onmessage clears the handler", async () => {
+  const wss = new WebSocketServer({ port: 0 });
+  let called = 0;
+  const observed: unknown[] = [];
+  const { promise, resolve, reject } = Promise.withResolvers<void>();
+  wss.on("connection", ws => {
+    observed.push(ws.onmessage);
+    ws.onmessage = () => called++;
+    ws.onmessage = null;
+    observed.push(ws.onmessage);
+    ws.addEventListener("message", () => resolve());
+    ws.on("error", reject);
+  });
+
+  const ws = new WebSocket("ws://localhost:" + wss.address().port);
+  try {
+    ws.on("error", reject);
+    ws.on("open", () => ws.send("hello"));
+
+    await promise;
+    expect(observed).toEqual([null, null]);
+    expect(called).toBe(0);
+  } finally {
+    wss.close();
+    ws.close();
+  }
+});
+
 // https://github.com/oven-sh/bun/issues/36060
 it("addEventListener('message') converts text frames to strings", async () => {
   const wss = new WebSocketServer({ port: 0 });
@@ -408,14 +436,16 @@ it("addEventListener('message') converts text frames to strings", async () => {
 it("text frames stay Buffer/string when binaryType is 'blob'", async () => {
   const wss = new WebSocketServer({ port: 0 });
   const emitted: [unknown, boolean][] = [];
-  const eventData: unknown[] = [];
+  const events: any[] = [];
+  let serverSocket: any;
   const { promise, resolve, reject } = Promise.withResolvers<void>();
   wss.on("connection", ws => {
+    serverSocket = ws;
     ws.binaryType = "blob";
     ws.on("message", (data, isBinary) => emitted.push([data, isBinary]));
     ws.addEventListener("message", event => {
-      eventData.push(event.data);
-      if (eventData.length === 2) resolve();
+      events.push(event);
+      if (events.length === 2) resolve();
     });
     ws.on("error", reject);
   });
@@ -432,10 +462,14 @@ it("text frames stay Buffer/string when binaryType is 'blob'", async () => {
     // binaryType only affects binary frames, like npm ws
     expect(Buffer.isBuffer(emitted[0][0])).toBeTrue();
     expect(emitted[0][1]).toBeFalse();
-    expect(eventData[0]).toBe("hello");
+    expect(events[0].type).toBe("message");
+    expect(events[0].target).toBe(serverSocket);
+    expect(events[0].data).toBe("hello");
     expect(emitted[1][0]).toBeInstanceOf(Blob);
     expect(emitted[1][1]).toBeTrue();
-    expect(eventData[1]).toBeInstanceOf(Blob);
+    expect(events[1].type).toBe("message");
+    expect(events[1].target).toBe(serverSocket);
+    expect(events[1].data).toBeInstanceOf(Blob);
   } finally {
     wss.close();
     ws.close();
@@ -447,6 +481,7 @@ it("addEventListener supports { once: true } and removeEventListener", async () 
   let onceCount = 0;
   let removedCount = 0;
   let sharedCount = 0;
+  let directCount = 0;
   const seen: string[] = [];
   const { promise, resolve, reject } = Promise.withResolvers<void>();
   wss.on("connection", ws => {
@@ -464,6 +499,10 @@ it("addEventListener supports { once: true } and removeEventListener", async () 
     ws.addEventListener("message", shared);
     ws.removeEventListener("message", shared);
     ws.onmessage = () => {};
+    // plain .on() subscriptions are invisible to removeEventListener
+    const direct = () => directCount++;
+    ws.on("message", direct);
+    ws.removeEventListener("message", direct);
     ws.addEventListener("message", event => {
       seen.push(event.data);
       if (seen.length === 2) resolve();
@@ -486,6 +525,7 @@ it("addEventListener supports { once: true } and removeEventListener", async () 
     // removeEventListener took the addEventListener registration and the
     // onmessage reassignment replaced the rest, so shared never fires
     expect(sharedCount).toBe(0);
+    expect(directCount).toBe(2);
   } finally {
     wss.close();
     ws.close();

@@ -1088,7 +1088,9 @@ class BunWebSocketMocked extends EventEmitter {
   set onmessage(cb) {
     if (this.#onmessage) {
       this.removeListener("message", this.#onmessage);
+      this.#onmessage = undefined;
     }
+    if (!$isCallable(cb)) return;
     const l = createMessageEventWrapper(this, cb, true);
     this.on("message", l);
     this.#onmessage = l;
@@ -1111,7 +1113,7 @@ class BunWebSocketMocked extends EventEmitter {
   }
 
   get onmessage() {
-    return this.#onmessage?.[kListener];
+    return this.#onmessage?.[kListener] ?? null;
   }
 
   get onopen() {
@@ -1128,10 +1130,12 @@ class BunWebSocketMocked extends EventEmitter {
   }
 
   removeEventListener(type, listener) {
-    // listeners() unwraps once() wrappers but not message wrappers (kListener, not .listener)
+    // listeners() unwraps once() wrappers but not message wrappers (kListener, not .listener).
+    // Message listeners are always wrapped, so matching only kListener there keeps
+    // plain .on("message") subscriptions invisible to removeEventListener, like npm ws.
     for (const l of this.listeners(type)) {
       if (l[kForOnEventAttribute]) continue;
-      if (l === listener || l[kListener] === listener) {
+      if (type === "message" ? l[kListener] === listener : l === listener) {
         this.removeListener(type, l);
         break;
       }

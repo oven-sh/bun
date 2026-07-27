@@ -393,19 +393,14 @@ test.skipIf(isWindows)(
   30_000,
 );
 
-// FileReader::on_cancel sets `done = true` and calls `reader().close()`. In the
-// normal case `close()` reaches `on_reader_done`, which clears
-// `waiting_for_on_reader_done` and releases the io-ref taken by `from_pipe`.
-// If `close()` does not reach `on_reader_done` (PollOrFd::close_impl skips the
-// callback when the handle's fd is already invalid), the io-ref is stranded
-// with `done = true` and `finalize_detach` later observes `done && waiting`,
-// which is a debug_assert in assertion builds and a refcount leak in release.
-//
-// This test asserts the post-cancel invariant directly: after cancelling a
-// from_pipe FileReader, the Strong pin must be released so the wrapper becomes
-// collectable. It cancels before any data arrives (the io-ref is the only
-// thing keeping the wrapper protected) so a stranded ref shows up as a
-// surviving FileInternalReadableStreamSource after GC.
+// Post-cancel invariant: after cancelling a from_pipe FileReader, the Strong
+// pin (the io-ref taken by `from_pipe`) must be released so the wrapper is
+// collectable. This scenario reaches FileReader::on_cancel with
+// waiting_for_on_reader_done = true; on current main the release happens via
+// close() → on_reader_done. It guards against any future change that makes
+// on_cancel return with the io-ref still held (which would be a silent
+// NewSource<FileReader> leak in release and a `done && waiting` debug_assert
+// at finalize_detach in assertion builds).
 test.skipIf(isWindows)(
   "cancelling a subprocess stdout FileReader before any data releases the io-ref",
   async () => {

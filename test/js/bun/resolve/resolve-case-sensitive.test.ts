@@ -92,7 +92,45 @@ describe.concurrent.skipIf(!isCaseSensitiveFS)("resolver on case-sensitive files
     expect(exitCode).toBe(0);
   });
 
-  test("nonexistent case variant does not resolve when case-colliding siblings exist", async () => {
+  test("case-mismatched specifier fails when only the other case exists", async () => {
+    using dir = tempDir("resolve-case-miss", {
+      "Mod.mjs": `export const who = "UPPER";`,
+      "entry.mjs": `import { who } from "./mod.mjs"; console.log(who);`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "entry.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("");
+    expect(stderr).toContain("Cannot find module './mod.mjs'");
+    expect(stderr).toContain("Mod.mjs");
+    expect(stderr.toLowerCase()).toContain("case-sensitive");
+    expect(exitCode).not.toBe(0);
+  });
+
+  test("case-mismatched extension fails", async () => {
+    using dir = tempDir("resolve-case-extcase", {
+      "mod.js": `export const who = "lower";`,
+      "entry.mjs": `import { who } from "./mod.JS"; console.log(who);`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "entry.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("");
+    expect(stderr).toContain("mod.JS");
+    expect(exitCode).not.toBe(0);
+  });
+
+  test("nonexistent case variant fails when case-colliding siblings exist", async () => {
     using dir = tempDir("resolve-case-phantom", {
       "mod.mjs": `export const who = "lower";`,
       "Mod.mjs": `export const who = "UPPER";`,
@@ -106,6 +144,23 @@ describe.concurrent.skipIf(!isCaseSensitiveFS)("resolver on case-sensitive files
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stdout).toBe("");
     expect(stderr).toContain("MOD.mjs");
+    expect(exitCode).not.toBe(0);
+  });
+
+  test("directory-component case is not folded (control: unchanged from before)", async () => {
+    using dir = tempDir("resolve-case-dirseg", {
+      "Dir/x.js": `module.exports = 1;`,
+      "entry.js": `require("./dir/x.js");`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "entry.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("dir/x.js");
     expect(exitCode).not.toBe(0);
   });
 });

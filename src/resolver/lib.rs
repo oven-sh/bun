@@ -687,7 +687,7 @@ pub mod fs {
     // Re-exported here so the public path `bun_resolver::fs::*` is preserved.
     pub use crate::fs_full::{
         DifferentCase, DirEntry, DirEntryIterator, Entry, EntryCache, EntryKind, EntryKindResolver,
-        EntryLookup, FilenameStoreAppender, dir_entry,
+        EntryLookup, FS_CASE_SENSITIVE, FilenameStoreAppender, dir_entry,
     };
 
     use bun_core::Generation;
@@ -2434,6 +2434,24 @@ pub mod cache {
 }
 
 pub use ::bun_paths::{is_package_path, is_package_path_not_absolute};
+
+/// Error-path helper for "Cannot find module" diagnostics on case-sensitive
+/// filesystems: if the cached listing for `dir` holds an entry whose basename
+/// matches `base` case-insensitively but not exactly, return that basename.
+/// `None` on case-insensitive hosts, before [`fs::FileSystem::init`], if `dir`
+/// was never read, or if no near-miss exists. Cold path; locks
+/// `entries_mutex`.
+pub fn probe_case_near_miss(dir: &[u8], base: &[u8]) -> Option<&'static [u8]> {
+    if !fs::FS_CASE_SENSITIVE || !fs::INSTANCE_LOADED.load(core::sync::atomic::Ordering::Acquire) {
+        return None;
+    }
+    let fs_ = fs::FileSystem::instance();
+    let _guard = fs_.fs.entries_mutex.lock_guard();
+    match fs_.fs.entries.get(dir)? {
+        fs::EntriesOption::Entries(e) => e.get_case_near_miss(base),
+        fs::EntriesOption::Err(_) => None,
+    }
+}
 
 // Resolver implementation modules. Each file declares the sibling-crate `use`s
 // it needs; cross-file references go through `crate::*` paths.

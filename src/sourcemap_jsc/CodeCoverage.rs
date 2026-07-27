@@ -411,12 +411,9 @@ impl<'a> Generator<'a> {
     }
 }
 
-/// Walks the generated lines that a byte range `[min, max)` covers, yielding
-/// `(line, lo, hi)` where `[lo, hi)` is the sub-range of block bytes on that
-/// line that the old per-byte loop would have visited (i.e. bytes `b` with
-/// `line_starts[line] < b < line_starts[line + 1]`). The last entry of
-/// `line_starts` is treated as a sentinel to match `LineOffsetTable::find_index`,
-/// which returns `None` past it.
+/// Walks the generated lines covered by `[min, max)`. Yields `(line, lo, hi)`
+/// where `[lo, hi)` are the bytes `b` on that line with
+/// `line_starts[line] < b < line_starts[line + 1]`.
 struct LineRangeIter<'a> {
     line_starts: &'a [u32],
     max: usize,
@@ -557,12 +554,9 @@ impl ByteRangeMapping {
     ) -> Result<Report, bun_alloc::AllocError> {
         let line_starts = self.line_offset_table.items_byte_offset_to_start_of_line();
 
-        // JSC hands us blocks in hash-map iteration order. Sorting lets both the
-        // line-offset lookup and the sourcemap cursor walk forward monotonically
-        // instead of re-walking from an earlier sync point on every forward jump
-        // (which is O(total functions^2) on large generated modules).
-        // Report consumers only read `.len()` / `.count()` on the derived Vecs
-        // and bitsets, so the relative block order is not observable.
+        // JSC returns blocks in hash-map order; sort so the sourcemap cursor and
+        // the line-offset hint advance monotonically instead of re-walking on
+        // every forward jump.
         let mut blocks_sorted: Vec<BasicBlockRange> = blocks.to_vec();
         blocks_sorted.sort_unstable_by_key(|b| {
             (

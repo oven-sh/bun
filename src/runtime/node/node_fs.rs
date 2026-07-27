@@ -2444,7 +2444,9 @@ mod _async_tasks {
             match self.args.tag() {
                 ret::ReaddirTag::Files => impl_tag!(BunString, Files),
                 ret::ReaddirTag::WithFileTypes => impl_tag!(Dirent, WithFileTypes),
-                ret::ReaddirTag::WithFileTypesBuffer => impl_tag!(DirentBuffer, WithFileTypesBuffer),
+                ret::ReaddirTag::WithFileTypesBuffer => {
+                    impl_tag!(DirentBuffer, WithFileTypesBuffer)
+                }
                 ret::ReaddirTag::Buffers => impl_tag!(Buffer, Buffers),
             }
         }

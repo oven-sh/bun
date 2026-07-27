@@ -4551,12 +4551,9 @@ pub mod __gated_printer {
                 set_flag(&mut item.flags, js_ast::flags::Property::IsComputed, true);
             }
 
-            // "{ __proto__: x }" sets the prototype, while "{ __proto__ }" and
-            // "{ ['__proto__']: x }" define an own data property (Annex B.3.1).
-            // The shorthand and colon forms are therefore not interchangeable
-            // for this one key name. A property carrying an `initializer` is a
-            // destructuring target, where both forms just read the property and
-            // are equivalent, so the gate does not apply.
+            // Annex B.3.1: `{__proto__: x}` sets [[Prototype]]; shorthand and
+            // computed forms define an own property instead. An `initializer`
+            // means a destructuring target, where the two forms are equivalent.
             let is_proto_setter_key = !IS_JSON
                 && !item.flags.contains(js_ast::flags::Property::IsComputed)
                 && item.kind == G::PropertyKind::Normal
@@ -4565,10 +4562,6 @@ pub mod __gated_printer {
                 && matches!(&key.data, ExprData::EString(s) if s.eql_comptime(b"__proto__"));
 
             if is_proto_setter_key && item.flags.contains(js_ast::flags::Property::WasShorthand) {
-                // A shorthand `__proto__` whose value identifier was renamed or
-                // rewritten can no longer print as `{ __proto__ }`; expanding it
-                // to `{ __proto__: x }` would change it into a prototype setter,
-                // so print it as a computed key instead.
                 let stays_shorthand = match item.value.as_ref().map(|v| &v.data) {
                     Some(ExprData::EIdentifier(e)) => self.name_for_symbol(e.ref_) == b"__proto__",
                     Some(ExprData::EImportIdentifier(e))
@@ -4624,10 +4617,6 @@ pub mod __gated_printer {
                     if key_str.is_utf8() {
                         key_str.resolve_rope_if_needed(self.bump);
                         self.print_space_before_identifier();
-                        // Never introduce the shorthand form for `__proto__`:
-                        // `{ __proto__: x }` sets the prototype, `{ __proto__ }`
-                        // does not. Only keep it shorthand if it was written
-                        // that way (handled above for the renamed case).
                         let mut allow_shorthand = !is_proto_setter_key
                             || item.flags.contains(js_ast::flags::Property::WasShorthand);
                         if !IS_JSON && lexer::is_identifier(key_str.slice8()) {

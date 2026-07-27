@@ -125,7 +125,9 @@ describe("SameSite=None / Partitioned require Secure", () => {
     });
 
     test("partitioned: true with secure: true includes Secure", () => {
-      expect(make({ partitioned: true, secure: true }).toString()).toBe("s=v; Path=/; Secure; Partitioned; SameSite=Lax");
+      expect(make({ partitioned: true, secure: true }).toString()).toBe(
+        "s=v; Path=/; Secure; Partitioned; SameSite=Lax",
+      );
     });
 
     test("both together with secure: true", () => {

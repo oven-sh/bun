@@ -7491,8 +7491,15 @@ pub fn writev_nonblocking(fd: Fd, vecs: &[PlatformIoVec]) -> Maybe<usize> {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     while linux::RWFFlagSupport::is_maybe_supported() {
         // SAFETY: fd valid; vecs is a live slice of iovec.
-        let rc =
-            unsafe { sys_pwritev2(fd.native(), vecs.as_ptr(), vecs.len() as c_int, -1, RWF_NOWAIT) };
+        let rc = unsafe {
+            sys_pwritev2(
+                fd.native(),
+                vecs.as_ptr(),
+                vecs.len() as c_int,
+                -1,
+                RWF_NOWAIT,
+            )
+        };
         if rc < 0 {
             let e = last_errno();
             match e {

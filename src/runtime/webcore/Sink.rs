@@ -341,7 +341,7 @@ pub trait JsSinkType: Sized {
             match self.write_bytes(&streams::Result::Temporary(data)) {
                 Writable::Owned(n) | Writable::Temporary(n) => total += n,
                 Writable::OwnedAndDone(n) | Writable::TemporaryAndDone(n) => {
-                    return Writable::OwnedAndDone(total + n)
+                    return Writable::OwnedAndDone(total + n);
                 }
                 Writable::Done => return Writable::OwnedAndDone(total),
                 other => return other,

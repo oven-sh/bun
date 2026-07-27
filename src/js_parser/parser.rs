@@ -1890,9 +1890,11 @@ pub enum WrapMode {
 /// The upstream transforms do not declare `$RefreshReg$` or `$RefreshSig$`. A typical
 /// implementation might look like this, prepending this data to the module start:
 ///
-///     import * as Refresh from 'react-refresh/runtime';
-///     const $RefreshReg$ = (type, id) => Refresh.register(type, "<file id here>" + id);
-///     const $RefreshSig$ = Refresh.createSignatureFunctionForTransform;
+/// ```js
+/// import * as Refresh from 'react-refresh/runtime';
+/// const $RefreshReg$ = (type, id) => Refresh.register(type, "<file id here>" + id);
+/// const $RefreshSig$ = Refresh.createSignatureFunctionForTransform;
+/// ```
 ///
 /// Since Bun is a transpiler *and* bundler, we take a slightly different approach. Aside
 /// from including the link to the refresh runtime, our notation of $RefreshReg$ is just

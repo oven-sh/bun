@@ -171,8 +171,10 @@ pub(crate) fn quantize(
 /// quantisation error is pushed to its yet-unvisited neighbours with the
 /// classic 7/3/5/1 ÷16 kernel:
 ///
-///         ·   X   7
-///         3   5   1
+/// ```text
+/// ·   X   7
+/// 3   5   1
+/// ```
 ///
 /// Serpentine scan (alternate L→R / R→L per row) so the diffusion direction
 /// flips each row, avoiding the directional artefacts a fixed scan produces.

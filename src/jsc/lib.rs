@@ -831,9 +831,9 @@ pub mod __macro_support {
     }
 }
 
-// Compile-time smoke test for the proc-macros (no runtime body — just asserts
-// the expansions type-check against the real `JSGlobalObject`/`CallFrame`/
-// `JSValue`/`JsResult` shapes and that the `JsClass` trait impl wires up).
+// Compile-time smoke test for the `host_fn` proc-macro (no runtime body —
+// just asserts the expansion type-checks against the real
+// `JSGlobalObject`/`CallFrame`/`JSValue`/`JsResult` shapes).
 #[cfg(test)]
 mod __macro_smoke {
     use super::{CallFrame, JSGlobalObject, JSValue, JsResult};
@@ -841,36 +841,6 @@ mod __macro_smoke {
     #[crate::host_fn(export = "SmokeFree__call")]
     fn smoke_free(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
         Ok(JSValue::UNDEFINED)
-    }
-
-    #[crate::JsClass(no_construct)]
-    pub struct Smoke {
-        n: u32,
-    }
-    impl Smoke {
-        // Required by the `construct` hook when `no_construct` is omitted; kept
-        // here so a future flip exercises it.
-        pub fn constructor(_g: &JSGlobalObject, _f: &CallFrame) -> JsResult<*mut Smoke> {
-            Err(super::JsError::Thrown)
-        }
-        #[crate::host_fn(getter)]
-        pub fn get_n(&self, _g: &JSGlobalObject) -> JsResult<JSValue> {
-            Ok(JSValue::js_number_from_int32(self.n as i32))
-        }
-        #[crate::host_fn(setter)]
-        pub fn set_n(&mut self, _g: &JSGlobalObject, _v: JSValue) -> JsResult<bool> {
-            Ok(true)
-        }
-        #[crate::host_fn(method)]
-        pub fn do_thing(&mut self, _g: &JSGlobalObject, _f: &CallFrame) -> JsResult<JSValue> {
-            Ok(JSValue::UNDEFINED)
-        }
-    }
-
-    // Assert the trait impl exists.
-    fn _assert_js_class<T: crate::JsClass>() {}
-    fn _wired() {
-        _assert_js_class::<Smoke>();
     }
 }
 

@@ -136,14 +136,14 @@ impl<Impl: ValidSelectorImpl> SelectorBuilder<Impl> {
     /// Builds a selector with the given specificity and flags.
     ///
     /// PERF:
-    ///     Recall that this code is ported from servo, which optimizes for matching speed, so
-    ///     the final AST has the components of the selector stored in reverse order, which is
-    ///     optimized for matching.
+    /// Recall that this code is ported from servo, which optimizes for matching speed, so
+    /// the final AST has the components of the selector stored in reverse order, which is
+    /// optimized for matching.
     ///
-    ///     We don't really care about matching selectors, and storing the components in reverse
-    ///     order requires additional allocations, and undoing the reversal when serializing the
-    ///     selector. So we could just change this code to store the components in the same order
-    ///     as the source.
+    /// We don't really care about matching selectors, and storing the components in reverse
+    /// order requires additional allocations, and undoing the reversal when serializing the
+    /// selector. So we could just change this code to store the components in the same order
+    /// as the source.
     pub(crate) fn build_with_specificity_and_flags(
         &mut self,
         spec: SpecificityAndFlags,

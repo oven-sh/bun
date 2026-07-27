@@ -156,17 +156,17 @@ impl Watcher {
     /// receives watch callbacks on the watcher thread. This function does not
     /// actually start the watcher thread.
     ///
-    ///     let watcher = Watcher::init(instance_of_t, fs)?;
-    ///     // on error: watcher.shutdown(false);
-    ///     watcher.start()?;
+    /// ```ignore
+    /// let watcher = Watcher::init(instance_of_t, fs)?;
+    /// // on error: watcher.shutdown(false);
+    /// watcher.start()?;
     ///
-    /// To integrate a started watcher into module resolution:
+    /// // To integrate a started watcher into module resolution:
+    /// transpiler.resolver.watcher = watcher.get_resolve_watcher();
     ///
-    ///     transpiler.resolver.watcher = watcher.get_resolve_watcher();
-    ///
-    /// To integrate a started watcher into bundle_v2:
-    ///
-    ///     bundle_v2.bun_watcher = watcher;
+    /// // To integrate a started watcher into bundle_v2:
+    /// bundle_v2.bun_watcher = watcher;
+    /// ```
     pub fn init<T: WatcherContext>(
         ctx: *mut T,
         top_level_dir: &'static [u8],

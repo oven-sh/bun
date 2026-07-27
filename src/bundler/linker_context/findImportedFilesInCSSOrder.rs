@@ -52,11 +52,13 @@ fn memcpy_and_reset(order: &mut Vec<CssImportOrder>, wip: &mut Vec<CssImportOrde
 /// unlike JavaScript import statements, CSS "@import" rules are evaluated every
 /// time instead of just the first time.
 ///
-///      A
-///     / \
-///    B   C
-///     \ /
-///      D
+/// ```text
+///   A
+///  / \
+/// B   C
+///  \ /
+///   D
+/// ```
 ///
 /// If A imports B and then C, B imports D, and C imports D, then the CSS
 /// traversal order is D B D C A.

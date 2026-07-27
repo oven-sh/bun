@@ -1563,7 +1563,7 @@ pub fn encode_bytes_to_hex(destination: &mut [u8], source: &[u8]) -> usize {
 }
 
 /// Leave a single leading char
-/// ```
+/// ```text
 /// trim_subsequent_leading_chars("foo\n\n\n\n", '\n') -> "foo\n"
 /// ```
 pub fn trim_subsequent_leading_chars(slice: &[u8], char: u8) -> &[u8] {

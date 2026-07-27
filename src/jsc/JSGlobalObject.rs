@@ -1053,10 +1053,12 @@ impl JSGlobalObject {
     ///
     /// The pattern:
     ///
-    ///     let result = match value.call(...) {
-    ///         Ok(v) => v,
-    ///         Err(err) => return global.report_active_exception_as_unhandled(err),
-    ///     };
+    /// ```ignore
+    /// let result = match value.call(...) {
+    ///     Ok(v) => v,
+    ///     Err(err) => return global.report_active_exception_as_unhandled(err),
+    /// };
+    /// ```
     ///
     pub fn report_active_exception_as_unhandled(&self, err: JsError) {
         let exception = self.take_exception(err);

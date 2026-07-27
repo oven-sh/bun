@@ -1072,9 +1072,11 @@ impl IntermediateOutput {
 /// When a file wants a path to an emitted chunk, it emits the unique key
 /// in hex followed by the kind of path it wants:
 ///
-///     `74f92237f4a85a6aA00000009` --> `./some-asset.png`
-///      ^--------------^|^------- .query.index
-///      unique_key      .query.kind
+/// ```text
+/// `74f92237f4a85a6aA00000009` --> `./some-asset.png`
+///  ^--------------^|^------- .query.index
+///  unique_key      .query.kind
+/// ```
 ///
 /// An output piece is the concatenation of source code text and an output
 /// path, in that order. An array of pieces makes up an entire file.

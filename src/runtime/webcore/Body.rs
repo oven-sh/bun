@@ -499,12 +499,14 @@ pub enum Value {
     ///
     /// Example code:
     ///
-    ///     Bun.serve({
-    ///         fetch(req) {
-    ///              /* Body.Value becomes InternalBlob */
-    ///              return new Response("hello world 🤭");
-    ///         }
-    ///     })
+    /// ```js
+    /// Bun.serve({
+    ///     fetch(req) {
+    ///          /* Body.Value becomes InternalBlob */
+    ///          return new Response("hello world 🤭");
+    ///     }
+    /// })
+    /// ```
     ///
     /// This works for .json(), too.
     // `bun_core::WTFStringImpl` = `*mut WTFStringImplStruct` — a Copy raw

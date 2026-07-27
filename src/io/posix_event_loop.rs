@@ -1577,7 +1577,7 @@ pub use crate::waker::KEventWaker;
 #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
 pub use crate::waker::Waker;
 
-#[cfg(test)]
+#[cfg(all(test, not(windows)))]
 mod tests {
     use super::*;
 
@@ -1587,7 +1587,6 @@ mod tests {
     /// every real errno — panicking at the `.unwrap()` call sites whenever an
     /// `EV_DELETE` failed (e.g. EBADF/ENOENT from a pipe fd closed while its
     /// `FilePoll` was still registered).
-    #[cfg(not(windows))]
     #[test]
     fn kevent_change_error_decodes_errno_value_not_return_code() {
         let err = kevent_change_error(sys::E::EBADF as i64).unwrap_err();

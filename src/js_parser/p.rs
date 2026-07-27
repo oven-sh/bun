@@ -8505,9 +8505,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// The bundler will generate wrappers to contain top-level side effects using
     /// the '__esm' helper. Example:
     ///
-    ///     var init_foo = __esm(() => {
-    ///         someExport = Math.random();
-    ///     });
+    /// ```js
+    /// var init_foo = __esm(() => {
+    ///     someExport = Math.random();
+    /// });
+    /// ```
     ///
     /// This wrapper can be removed if all of the constructs get moved
     /// outside of the file. Due to paralleization, we can't retroactively

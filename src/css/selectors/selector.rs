@@ -1793,7 +1793,7 @@ impl<'a> CompoundSelectorIter<'a> {
     /// ```
     ///
     /// The iterator would return:
-    /// ```
+    /// ```text
     /// First slice:
     ///   [ LocalName("div") ]
     ///

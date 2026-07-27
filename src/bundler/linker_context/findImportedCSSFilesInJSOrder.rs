@@ -10,11 +10,13 @@ use bun_collections::DynamicBitSet as BitSet;
 /// order that JavaScript modules were evaluated in before the top-level await
 /// feature was introduced.
 ///
-///      A
-///     / \
-///    B   C
-///     \ /
-///      D
+/// ```text
+///   A
+///  / \
+/// B   C
+///  \ /
+///   D
+/// ```
 ///
 /// If A imports B and then C, B imports D, and C imports D, then the JavaScript
 /// traversal order is D B C A.

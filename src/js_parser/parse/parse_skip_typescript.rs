@@ -188,17 +188,21 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// This is a spot where the TypeScript grammar is highly ambiguous. Here are
     /// some cases that are valid:
     ///
-    ///     let x = (y: any): (() => {}) => { };
-    ///     let x = (y: any): () => {} => { };
-    ///     let x = (y: any): (y) => {} => { };
-    ///     let x = (y: any): (y[]) => {};
-    ///     let x = (y: any): (a | b) => {};
+    /// ```ts
+    /// let x = (y: any): (() => {}) => { };
+    /// let x = (y: any): () => {} => { };
+    /// let x = (y: any): (y) => {} => { };
+    /// let x = (y: any): (y[]) => {};
+    /// let x = (y: any): (a | b) => {};
+    /// ```
     ///
     /// Here are some cases that aren't valid:
     ///
-    ///     let x = (y: any): (y) => {};
-    ///     let x = (y: any): (y) => {return 0};
-    ///     let x = (y: any): asserts y is (y) => {};
+    /// ```ts
+    /// let x = (y: any): (y) => {};
+    /// let x = (y: any): (y) => {return 0};
+    /// let x = (y: any): asserts y is (y) => {};
+    /// ```
     ///
     pub fn skip_type_script_paren_or_fn_type<const GET_METADATA: bool>(
         &mut self,

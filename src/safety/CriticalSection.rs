@@ -3,9 +3,11 @@
 //! Store an instance of this type in or alongside shared data. Then, add the following to any
 //! block of code that accesses the shared data:
 //!
-//!     shared_data.critical_section.begin();
-//!     defer shared_data.critical_section.end();
-//!     // (do stuff with shared_data...)
+//! ```ignore
+//! shared_data.critical_section.begin();
+//! defer shared_data.critical_section.end();
+//! // (do stuff with shared_data...)
+//! ```
 //!
 //! If a mutex is being used to ensure threads don't access the data simultaneously, call `begin`
 //! *after* locking the mutex, and call `end` before releasing it, since it's the code that runs
@@ -15,9 +17,11 @@
 //! used instead. This allows multiple threads to read the data simultaneously, but will still
 //! error if a thread tries to modify it (via calling `begin`).
 //!
-//!     shared_data.critical_section.beginReadOnly();
-//!     defer shared_data.critical_section.end();
-//!     // (do *read-only* stuff with shared_data...)
+//! ```ignore
+//! shared_data.critical_section.beginReadOnly();
+//! defer shared_data.critical_section.end();
+//! // (do *read-only* stuff with shared_data...)
+//! ```
 //!
 //! One use of this type could be to ensure that single-threaded containers aren't being used
 //! concurrently without appropriate synchronization. For example, each method in an `ArrayList`

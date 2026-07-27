@@ -480,27 +480,22 @@ impl<'a> Parser<'a> {
             }
         }
 
-        // Symbol use counts are unavailable
-        // So we say "did we parse any JSX?"
-        // if yes, just automatically add the import so that .bun knows to include the file.
-        if p.options.jsx.parse && p.needs_jsx_import {
+        // Symbol use counts are unavailable, so "any JSX parsed?" is the proxy.
+        // Mirror the full-parse auto-import gate so scanImports() and scan()
+        // agree on the injected JSX runtime import.
+        if p.options.jsx.parse
+            && p.needs_jsx_import
+            && p.options.features.auto_import_jsx
+            && p.options.jsx.runtime == options::JSX::Runtime::Automatic
+        {
             // `add_import_record` requires `&'a [u8]`, but borrowing
             // `p.options` would conflict with `&mut p`, so copy into the arena.
             let arena = p.arena;
             let import_source: &'a [u8] = arena.alloc_slice_copy(p.options.jsx.import_source());
-            let classic_import_source: &'a [u8] =
-                arena.alloc_slice_copy(&p.options.jsx.classic_import_source);
             let _ = p.add_import_record(
-                bun_ast::ImportKind::Require,
+                bun_ast::ImportKind::Stmt,
                 bun_ast::Loc { start: 0 },
                 import_source,
-            );
-            // Ensure we have both classic and automatic
-            // This is to handle cases where they use fragments in the automatic runtime
-            let _ = p.add_import_record(
-                bun_ast::ImportKind::Require,
-                bun_ast::Loc { start: 0 },
-                classic_import_source,
             );
         }
 

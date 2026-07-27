@@ -2272,6 +2272,39 @@ console.log(<div {...obj} key="after" />);`),
       expect(new Bun.Transpiler({ ...opts, autoImportJSX: false }).scan("export default <div/>;").imports).toEqual([]);
       expect(new Bun.Transpiler(opts).scan("export const x = 1;").imports).toEqual([]);
     });
+
+    // scanImports() used to unconditionally add a `require-call` record for
+    // `<importSource>/jsx-dev-runtime` *and* a second one for the classic
+    // source, regardless of auto_import_jsx or the configured JSX runtime.
+    // It now mirrors the full-parse gate so it agrees with scan().
+    describe(".scanImports() agrees with .scan() on the injected JSX runtime import", () => {
+      const dev = { loader: "tsx", define: { "process.env.NODE_ENV": JSON.stringify("development") } };
+      const jsxDevRuntime = [{ kind: "import-statement", path: "react/jsx-dev-runtime" }];
+
+      it.each([
+        ["automatic (dev)", dev, "export default <div/>;", jsxDevRuntime],
+        ["automatic + fragment", dev, "export default <><div/></>;", jsxDevRuntime],
+        [
+          "automatic (prod)",
+          { loader: "tsx", tsconfig: { compilerOptions: { jsx: "react-jsx" } } },
+          "export default <div/>;",
+          [{ kind: "import-statement", path: "react/jsx-runtime" }],
+        ],
+        [
+          "automatic + jsxImportSource",
+          { loader: "tsx", tsconfig: { compilerOptions: { jsx: "react-jsx", jsxImportSource: "preact" } } },
+          "export default <div/>;",
+          [{ kind: "import-statement", path: "preact/jsx-runtime" }],
+        ],
+        ["autoImportJSX: false", { ...dev, autoImportJSX: false }, "export default <div/>;", []],
+        ["classic runtime", { loader: "tsx", tsconfig: { compilerOptions: { jsx: "react" } } }, "export default <div/>;", []],
+        ["no JSX", dev, "export const x = 1;", []],
+      ])("%s", (_, opts, src, expected) => {
+        const t = new Bun.Transpiler(opts);
+        expect(t.scanImports(src)).toEqual(expected);
+        expect(t.scan(src).imports).toEqual(expected);
+      });
+    });
   });
 
   it("JSX bare key prop followed by key with a value does not crash", async () => {

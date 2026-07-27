@@ -208,11 +208,12 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
     async *lines() {
       const { stdout } = (await this.#quiet(true)) as ShellOutput;
 
-      if (process.platform === "win32") {
-        yield* stdout.toString().split(/\r?\n/);
-      } else {
-        yield* stdout.toString().split("\n");
-      }
+      const text = stdout.toString();
+      const lines = process.platform === "win32" ? text.split(/\r?\n/) : text.split("\n");
+      // A trailing newline produces a final "" from split(); drop it so callers
+      // get one element per line instead of a spurious empty trailing element.
+      if (lines[lines.length - 1] === "") lines.length--;
+      yield* lines;
     }
 
     async arrayBuffer() {

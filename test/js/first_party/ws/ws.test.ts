@@ -499,10 +499,12 @@ it("addEventListener supports { once: true } and removeEventListener", async () 
     ws.addEventListener("message", shared);
     ws.removeEventListener("message", shared);
     ws.onmessage = () => {};
-    // plain .on() subscriptions are invisible to removeEventListener
+    // plain .on() subscriptions are invisible to removeEventListener,
+    // and non-function listeners must not match anything
     const direct = () => directCount++;
     ws.on("message", direct);
     ws.removeEventListener("message", direct);
+    ws.removeEventListener("message", undefined);
     ws.addEventListener("message", event => {
       seen.push(event.data);
       if (seen.length === 2) resolve();

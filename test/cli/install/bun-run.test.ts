@@ -1129,16 +1129,13 @@ describe.concurrent("bun run", () => {
       using dir = tempDir("bun-run-node-env-shim", {
         "package.json": JSON.stringify({
           name: "p",
-          scripts: {
-            probe: `node -e "console.log(JSON.stringify({ NODE: process.env.NODE, npm_node_execpath: process.env.npm_node_execpath }))"`,
-          },
+          scripts: { probe: `echo "<$NODE><$npm_node_execpath>"` },
         }),
       });
 
       // A PATH that provably contains no real `node` (the tempdir itself).
-      // Bun prepends the shim dir before running the script, so the `node -e`
-      // above resolves to the shim regardless; `--shell=bun` avoids needing
-      // sh/bash on PATH.
+      // `echo` is a `--shell=bun` builtin, so nothing here touches the
+      // machine-global shim that concurrent siblings may be recreating.
       const env: Record<string, string | undefined> = { ...bunEnv, PATH: String(dir) };
       delete env.NODE;
       delete env.npm_node_execpath;
@@ -1152,16 +1149,16 @@ describe.concurrent("bun run", () => {
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-      const line = stdout.split("\n").find(l => l.startsWith("{"));
-      if (!line) {
-        expect({ stdout, stderr }).toEqual({ stdout: expect.stringContaining("{"), stderr: "" });
+      const match = stdout.match(/^<(.*)><(.*)>$/m);
+      if (!match) {
+        expect({ stdout, stderr }).toEqual({ stdout: expect.stringMatching(/^<.*><.*>$/m), stderr: "" });
         throw new Error("unreachable");
       }
-      const result = JSON.parse(line);
+      const [, NODE, npm_node_execpath] = match;
       const exeSuffix = isWindows ? "\\node.exe" : "/node";
-      expect({ ...result, endsWithExe: result.NODE.endsWith(exeSuffix) }).toEqual({
+      expect({ NODE, npm_node_execpath, endsWithExe: NODE.endsWith(exeSuffix) }).toEqual({
         NODE: expect.stringContaining("bun-node"),
-        npm_node_execpath: result.NODE,
+        npm_node_execpath: NODE,
         endsWithExe: true,
       });
       expect(exitCode).toBe(0);

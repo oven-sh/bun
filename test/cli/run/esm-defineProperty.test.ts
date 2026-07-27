@@ -40,7 +40,7 @@ test("arraylike", () => {
   expect(CJSArrayLike.default[1]).toBe(1);
   expect(CJSArrayLike.default[2]).toBe(3);
   expect(CJSArrayLike.default[3]).toBe(4);
-  expect(() => CJSArrayLike.default[4]).toThrow();
+  expect(() => CJSArrayLike.default[4]).toThrow("4");
 
   expect(Bun.inspect(CJSArrayLike)).toBe(`Module {
   "1": 1,

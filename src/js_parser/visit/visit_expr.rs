@@ -1986,7 +1986,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // cjs-module-lexer shapes: `Object.defineProperty(exports, "X", ...)` records X;
             // `__exportStar(_, exports)` / `Object.keys(_).forEach(k => exports[k] = ...)` deopt.
             if p.options.features.commonjs_at_runtime
-                && !p.options.features.unwrap_commonjs_to_esm
+                && !p.should_unwrap_common_js_to_esm()
                 && !p.is_control_flow_dead
             {
                 enum Action<'s> {

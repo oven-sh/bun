@@ -1742,6 +1742,7 @@ bool evaluateDeferredCommonJSModuleForESM(
     bool putResult = false;
     symbolTablePutTouchWatchpointSet(env, globalObject, Identifier::fromString(vm, cjsWrapperDefaultLocal), defaultValue, false, true, putResult);
     RETURN_IF_EXCEPTION(scope, true);
+    ASSERT(putResult);
 
     for (unsigned i = 0; i < moduleObject->m_staticExportNames.size(); ++i) {
         JSValue value = readExport(moduleObject->m_staticExportNames[i]);
@@ -1749,6 +1750,7 @@ bool evaluateDeferredCommonJSModuleForESM(
         auto localName = Identifier::fromString(vm, makeString("$e"_s, i));
         symbolTablePutTouchWatchpointSet(env, globalObject, localName, value, false, true, putResult);
         RETURN_IF_EXCEPTION(scope, true);
+        ASSERT(putResult);
     }
 
     return true;

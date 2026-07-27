@@ -76,7 +76,7 @@ describe("ESM importing CommonJS: evaluation order", () => {
         import "./b.cjs";
         console.log(JSON.stringify(globalThis.__O__));
       `,
-      "a.cjs": `(globalThis.__O__ ||= []).push("a"); module.exports.a = 1;`,
+      "a.cjs": pad + `(globalThis.__O__ ||= []).push("a"); module.exports.a = 1;`,
       "b.cjs": `(globalThis.__O__ ||= []).push("b"); module.exports.b = 1;`,
     });
     const results = await Promise.all(Array.from({ length: 5 }, () => run(String(dir), "entry.mjs")));

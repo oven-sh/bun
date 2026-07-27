@@ -1052,11 +1052,8 @@ ExceptionOr<void> WebSocket::terminate()
 {
     // LOG(Network, "WebSocket %p terminate()", this);
 
-    // terminate() must still force-close during CLOSING (matching npm ws,
-    // which calls _socket.destroy() for any state except CLOSED): a
-    // server-initiated Close under send backpressure flips m_state to
-    // CLOSING while the native send_buffer is still resident, and
-    // terminate() is the only JS-level escape hatch to free it.
+    // Force-close during CLOSING too (npm ws parity); it is the only way
+    // to drop a stalled send_buffer once a peer Close has flipped m_state.
     if (m_state == CLOSED)
         return {};
     if (m_state == CONNECTING) {

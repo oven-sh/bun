@@ -1792,7 +1792,33 @@ describe("plugin hook registration after setup", () => {
     expect((thrown as Error).message).toMatch(lateHookMessage);
   });
 
-  test("registration during setup (including onStart) is still valid", async () => {
+  for (const position of ["only", "first", "last"] as const) {
+    test(`async onStart registering after an await throws (plugin position: ${position})`, async () => {
+      using dir = tempDir("plugin-async-onstart", { "entry.ts": `export default 1` });
+      const p: import("bun").BunPlugin = {
+        name: "a",
+        setup(b) {
+          b.onStart(async () => {
+            await Promise.resolve();
+            b.onLoad({ filter: /never/ }, () => ({ contents: "", loader: "ts" }));
+          });
+        },
+      };
+      const noop: import("bun").BunPlugin = { name: "noop", setup() {} };
+      const plugins = position === "only" ? [p] : position === "first" ? [p, noop] : [noop, p];
+      let thrown: unknown;
+      try {
+        await Bun.build({ entrypoints: [path.join(String(dir), "entry.ts")], plugins });
+      } catch (e) {
+        thrown = e;
+      }
+      expect(thrown).toBeDefined();
+      expect(String(thrown)).toMatch(lateHookMessage);
+      expect(String(thrown)).toMatch(/onLoad\(\)/);
+    });
+  }
+
+  test("registration during setup (including a synchronous onStart body) is still valid", async () => {
     using dir = tempDir("plugin-valid-reg", files);
     let hits = 0;
     const result = await buildWith(String(dir), b => {
@@ -1806,6 +1832,29 @@ describe("plugin hook registration after setup", () => {
           return { contents: `export default "-PLUGIN"`, loader: "ts" };
         });
       });
+    });
+    expect(result.success).toBe(true);
+    expect(hits).toBe(1);
+    expect(await result.outputs[0].text()).toContain("-PLUGIN");
+  });
+
+  test("registration after an await inside async setup() is still valid", async () => {
+    using dir = tempDir("plugin-async-setup", files);
+    let hits = 0;
+    const result = await Bun.build({
+      entrypoints: [path.join(String(dir), "entry.ts")],
+      plugins: [
+        {
+          name: "async-setup",
+          async setup(b) {
+            await Promise.resolve();
+            b.onLoad({ filter: /second\.ts$/ }, () => {
+              hits++;
+              return { contents: `export default "-PLUGIN"`, loader: "ts" };
+            });
+          },
+        },
+      ],
     });
     expect(result.success).toBe(true);
     expect(hits).toBe(1);

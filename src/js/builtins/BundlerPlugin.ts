@@ -294,7 +294,6 @@ export function runSetupFunction(
   }
 
   const processSetupResult = () => {
-    setupComplete = true;
     var anyOnLoad = false,
       anyOnResolve = false;
 
@@ -404,20 +403,22 @@ export function runSetupFunction(
       setupResult = $peekPromiseSettledValue(setupResult);
     } else {
       return setupResult.$then(() => {
+        setupComplete = true;
         let selfPromises;
         if (is_last && (selfPromises = self.promises) !== undefined && selfPromises.length > 0) {
           const awaitAll = Promise.all(selfPromises);
-          return awaitAll.$then(processSetupResult, closeSetupAndRethrow);
+          return awaitAll.$then(processSetupResult);
         }
         return processSetupResult();
       }, closeSetupAndRethrow);
     }
   }
 
+  setupComplete = true;
   let pendingPromises;
   if (is_last && (pendingPromises = this.promises) !== undefined && pendingPromises.length > 0) {
     const awaitAll = Promise.all(pendingPromises);
-    return awaitAll.$then(processSetupResult, closeSetupAndRethrow);
+    return awaitAll.$then(processSetupResult);
   }
 
   return processSetupResult();

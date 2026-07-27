@@ -657,9 +657,7 @@ impl FileSink {
         } else {
             fd
         };
-        // uv_pipe_open / uv_tty_init adopt the handle and uv_close will
-        // CloseHandle it; dup a borrowed pipe/tty so close() can run and
-        // the caller keeps their fd.
+        // uv_pipe_open adopts the handle; dup so the caller keeps their fd.
         #[cfg(windows)]
         let fd = if borrowed
             && !self.force_sync.get()

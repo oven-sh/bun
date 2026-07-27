@@ -1125,6 +1125,82 @@ describe.skipIf(!canCreateDirSymlink)("literal path segment through a symlinked 
     );
     expect(norm(result)).toEqual(["linkdir/file.txt"]);
   });
+
+  // Each followed link is opened relative to its parent directory fd, so an
+  // acyclic chain of directory symlinks deeper than the kernel's per-open
+  // MAXSYMLINKS (40 on Linux/macOS) is walked to completion instead of
+  // silently truncating at the hop where the accumulated cwd-relative path
+  // would have returned ELOOP.
+  function makeSymlinkChain(prefix: string, hops: number) {
+    const dir = tempDir(prefix, { "start/f_start.txt": "x" });
+    const cwd = String(dir);
+    for (let k = 0; k <= hops; k++) {
+      fs.mkdirSync(path.join(cwd, `d${k}`));
+      fs.writeFileSync(path.join(cwd, `d${k}`, `f${k}.txt`), "x");
+    }
+    fs.symlinkSync(path.join("..", "d0"), path.join(cwd, "start", "next"), "dir");
+    for (let k = 1; k <= hops; k++) {
+      fs.symlinkSync(path.join("..", `d${k}`), path.join(cwd, `d${k - 1}`, "next"), "dir");
+    }
+    return dir;
+  }
+
+  test("** with followSymlinks walks an acyclic symlink chain deeper than MAXSYMLINKS", () => {
+    const hops = 90;
+    using dir = makeSymlinkChain("glob-scan-symlink-chain", hops);
+    const cwd = String(dir);
+
+    const files = Array.from(new Glob("start/**/f*.txt").scanSync({ cwd, followSymlinks: true }));
+    expect(files.length).toBe(hops + 2);
+
+    const entries = norm(
+      Array.from(new Glob("start/**").scanSync({ cwd, followSymlinks: true, onlyFiles: false })),
+    );
+    // No live "next" link is yielded as if it were a broken-link leaf.
+    expect(entries.filter(e => e.endsWith("/next")).length).toBe(hops + 1);
+    expect(entries.filter(e => e.endsWith(".txt")).length).toBe(hops + 2);
+  });
+
+  test("throwErrorOnBrokenSymlink reports ENOENT for a dangling link beside a deep chain", () => {
+    using dir = makeSymlinkChain("glob-scan-symlink-chain-dangling", 90);
+    const cwd = String(dir);
+    fs.symlinkSync(path.join("..", "nonexistent"), path.join(cwd, "start", "dangling"), "dir");
+
+    let err: any;
+    try {
+      Array.from(
+        new Glob("start/**/*.txt").scanSync({
+          cwd,
+          followSymlinks: true,
+          throwErrorOnBrokenSymlink: true,
+        }),
+      );
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeDefined();
+    expect(err.code).toBe("ENOENT");
+    expect(err.path).toContain("dangling");
+  });
+
+  test.skipIf(isWindows)(
+    "a followed symlink whose own target chain loops is surfaced as ELOOP",
+    () => {
+      using dir = tempDir("glob-scan-symlink-self-eloop", { "start/keep.txt": "x" });
+      const cwd = String(dir);
+      fs.symlinkSync("b", path.join(cwd, "start", "a"));
+      fs.symlinkSync("a", path.join(cwd, "start", "b"));
+
+      let err: any;
+      try {
+        Array.from(new Glob("start/**").scanSync({ cwd, followSymlinks: true, onlyFiles: false }));
+      } catch (e) {
+        err = e;
+      }
+      expect(err).toBeDefined();
+      expect(err.code).toBe("ELOOP");
+    },
+  );
 });
 
 // A directory the user can read but not write (RX-only grant) must still be

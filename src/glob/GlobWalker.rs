@@ -68,6 +68,11 @@ pub fn statat_windows(_fd: Fd, _path: &ZStr) -> Maybe<Stat> {
 // Accessor trait
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Upper bound on followed directory symlinks along one ancestor chain. With
+/// per-directory `openat(parent_fd, name)` resolution the kernel's per-open
+/// `MAXSYMLINKS` no longer caps chain depth, so this is the walker's own bound.
+pub const MAX_FOLLOWED_SYMLINKS: usize = 255;
+
 pub trait AccessorHandle: Copy {
     const EMPTY: Self;
     fn is_empty(self) -> bool;
@@ -335,6 +340,11 @@ pub struct Directory<A: Accessor> {
 
     pub iter_closed: bool,
     pub at_cwd: bool,
+    /// Set once the first Symlink work item from this directory is pushed with
+    /// `owns_fd = true`: ownership of `fd` has moved to that work item (it is
+    /// popped last, LIFO, so every sibling symlink can still borrow `fd`), and
+    /// the end-of-iteration path must not close it.
+    pub fd_handed_off: bool,
 }
 
 impl<A: Accessor> Directory<A> {
@@ -544,8 +554,6 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
             #[cfg(debug_assertions)]
             {
                 self.fds_open += 1;
-                // If this is over 2 then this means that there is a bug in the iterator code
-                debug_assert!(self.fds_open <= 2);
             }
         }
     }
@@ -742,6 +750,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
             active,
             iter_closed: false,
             at_cwd,
+            fd_handed_off: false,
         });
 
         Ok(Ok(()))
@@ -819,11 +828,42 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                             continue;
                         }
                         WorkItemKind::Symlink => {
+                            let parent_fd: Option<A::Handle> = work_item.fd;
+                            let owns_parent_fd = work_item.owns_fd;
+                            let cwd_fd_for_release = self.cwd_fd;
+                            // Inlined `close_disallowing_cwd` so the active-set block below
+                            // (which split-borrows `self.walker`) can release on its early
+                            // exits without a whole-`self` method borrow.
+                            macro_rules! release_parent {
+                                () => {
+                                    if owns_parent_fd {
+                                        if let Some(pfd) = parent_fd {
+                                            if !pfd.is_empty() && !pfd.eql(cwd_fd_for_release) {
+                                                let _ = A::close(pfd);
+                                                #[cfg(debug_assertions)]
+                                                if count_fds::<A>() {
+                                                    self.fds_open -= 1;
+                                                }
+                                            }
+                                        }
+                                    }
+                                };
+                            }
+
                             // For SENTINEL=true the joined symlink path carries a trailing
                             // NUL in `.len()`; drop it (see `work_item_logical_path`) so the
                             // NUL re-written at `[len]` below isn't left embedded in the path.
                             let work_item_path: &[u8] = work_item_logical_path(&work_item.path);
+                            if self.walker.followed_links.len() >= MAX_FOLLOWED_SYMLINKS {
+                                release_parent!();
+                                return Ok(Err(SysError::from_code(
+                                    E::ELOOP,
+                                    Syscall::Tag::open,
+                                )
+                                .with_path(work_item_path)));
+                            }
                             if work_item_path.len() >= MAX_PATH_BYTES {
+                                release_parent!();
                                 return Ok(Err(SysError::from_code(
                                     E::ENAMETOOLONG,
                                     Syscall::Tag::open,
@@ -857,10 +897,14 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                                         scratch_path_buf,
                                         &mut has_dot_dot,
                                     ) {
-                                        Err(e) => return Ok(Err(e)),
+                                        Err(e) => {
+                                            release_parent!();
+                                            return Ok(Err(e));
+                                        }
                                         Ok(i) => i,
                                     };
                                     if norm as usize >= walker.pattern_components.len() {
+                                        release_parent!();
                                         self.iter_state = IterState::GetNext;
                                         continue;
                                     }
@@ -872,6 +916,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
 
                             // Buffer is read-only from here on; read via &self.walker.
                             let scratch_ptr = self.walker.path_buf.as_ptr();
+                            let entry_len = symlink_full_path_len - entry_start;
                             // SAFETY: scratch_ptr is self.walker.path_buf (boxed, outlives this
                             // borrow); the write block above NUL-terminated it at index
                             // symlink_full_path_len and skip_special_components_disjoint preserves that.
@@ -879,44 +924,60 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                                 unsafe { ZStr::from_raw(scratch_ptr, symlink_full_path_len) };
                             // SAFETY: entry_start is the entry-name offset within the path written
                             // above, so [entry_start..symlink_full_path_len] lies inside the
-                            // initialized region of self.walker.path_buf.
-                            let entry_name: &[u8] = unsafe {
-                                core::slice::from_raw_parts(
-                                    scratch_ptr.add(entry_start),
-                                    symlink_full_path_len - entry_start,
-                                )
-                            };
+                            // initialized region of self.walker.path_buf, NUL-terminated at
+                            // symlink_full_path_len.
+                            let entry_name_z =
+                                unsafe { ZStr::from_raw(scratch_ptr.add(entry_start), entry_len) };
+                            let entry_name: &[u8] = entry_name_z.as_bytes();
 
                             self.iter_state = IterState::GetNext;
-                            let maybe_dir_fd: Option<A::Handle> =
-                                match A::openat(self.cwd_fd, symlink_full_path_z)? {
-                                    Err(err) => 'brk: {
-                                        if err.get_errno() == E::ENOTDIR {
-                                            break 'brk None;
+                            // Open relative to the parent directory fd so the kernel resolves
+                            // one link per open (per-open MAXSYMLINKS never accumulates across
+                            // the chain). The accumulated logical path is kept only for the
+                            // result string and error reporting.
+                            let (open_base, open_path) = match parent_fd {
+                                Some(pfd) => (pfd, entry_name_z),
+                                None => (self.cwd_fd, symlink_full_path_z),
+                            };
+                            let open_result = A::openat(open_base, open_path);
+                            release_parent!();
+                            let maybe_dir_fd: Option<A::Handle> = match open_result? {
+                                Err(err) => 'brk: {
+                                    match err.get_errno() {
+                                        E::ENOTDIR => break 'brk None,
+                                        E::ELOOP | E::ENAMETOOLONG => {
+                                            return Ok(Err(self
+                                                .walker
+                                                .handle_sys_err_with_path(
+                                                    &err,
+                                                    symlink_full_path_z,
+                                                )));
                                         }
-                                        if self.walker.error_on_broken_symlinks {
-                                            return Ok(Err(self.walker.handle_sys_err_with_path(
-                                                &err,
-                                                symlink_full_path_z,
-                                            )));
-                                        }
-                                        if !self.walker.only_files
-                                            && self.walker.eval_file(&active, entry_name)
-                                        {
-                                            match self.walker.prepare_matched_path_symlink(
-                                                symlink_full_path_z.as_bytes(),
-                                            )? {
-                                                Some(p) => return Ok(Ok(Some(p))),
-                                                None => continue 'outer,
-                                            }
-                                        }
-                                        continue 'outer;
+                                        _ => {}
                                     }
-                                    Ok(fd) => {
-                                        self.bump_open_fds();
-                                        Some(fd)
+                                    if self.walker.error_on_broken_symlinks {
+                                        return Ok(Err(self.walker.handle_sys_err_with_path(
+                                            &err,
+                                            symlink_full_path_z,
+                                        )));
                                     }
-                                };
+                                    if !self.walker.only_files
+                                        && self.walker.eval_file(&active, entry_name)
+                                    {
+                                        match self.walker.prepare_matched_path_symlink(
+                                            symlink_full_path_z.as_bytes(),
+                                        )? {
+                                            Some(p) => return Ok(Ok(Some(p))),
+                                            None => continue 'outer,
+                                        }
+                                    }
+                                    continue 'outer;
+                                }
+                                Ok(fd) => {
+                                    self.bump_open_fds();
+                                    Some(fd)
+                                }
+                            };
 
                             let Some(dir_fd) = maybe_dir_fd else {
                                 // Symlink target is a file
@@ -995,10 +1056,11 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                         Err(err) => {
                             let dir_fd = dir.fd;
                             let at_cwd = dir.at_cwd;
+                            let fd_handed_off = dir.fd_handed_off;
                             let dir_path = dir.dir_path();
                             // Note: reshaped for borrowck
                             let err = self.walker.handle_sys_err_with_path(&err, dir_path);
-                            if !at_cwd {
+                            if !at_cwd && !fd_handed_off {
                                 self.close_disallowing_cwd(dir_fd);
                             }
                             if let IterState::Directory(d) = &mut self.iter_state {
@@ -1011,7 +1073,8 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                     let Some(entry) = entry else {
                         let dir_fd = dir.fd;
                         let at_cwd = dir.at_cwd;
-                        if !at_cwd {
+                        let fd_handed_off = dir.fd_handed_off;
+                        if !at_cwd && !fd_handed_off {
                             self.close_disallowing_cwd(dir_fd);
                         }
                         if let IterState::Directory(d) = &mut self.iter_state {
@@ -1091,11 +1154,15 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                             };
 
                             if let Some(follow_active) = follow_active {
+                                let owns_fd = !dir.fd_handed_off;
                                 self.walker.push_symlink_work_item(
                                     dir_dir_path,
                                     entry_name,
                                     follow_active,
+                                    dir_fd,
+                                    owns_fd,
                                 )?;
+                                dir.fd_handed_off = true;
                                 continue;
                             }
 
@@ -1182,11 +1249,15 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                                             (subset.count() != 0).then_some(subset)
                                         };
                                     if let Some(follow_active) = follow_active {
+                                        let owns_fd = !dir.fd_handed_off;
                                         self.walker.push_symlink_work_item(
                                             dir_dir_path,
                                             entry_name,
                                             follow_active,
+                                            dir_fd,
+                                            owns_fd,
                                         )?;
+                                        dir.fd_handed_off = true;
                                     } else if !self.walker.only_files {
                                         if self.walker.eval_file(&active, entry_name) {
                                             match self
@@ -1217,15 +1288,17 @@ impl<'a, A: Accessor, const SENTINEL: bool> Drop for Iterator<'a, A, SENTINEL> {
     fn drop(&mut self) {
         self.close_cwd_fd();
         if let IterState::Directory(dir) = &self.iter_state {
-            if !dir.iter_closed {
+            if !dir.iter_closed && !dir.fd_handed_off {
                 let fd = dir.fd;
                 self.close_disallowing_cwd(fd);
             }
         }
 
         while let Some(work_item) = self.walker.workbuf.pop() {
-            if let Some(fd) = work_item.fd {
-                self.close_disallowing_cwd(fd);
+            if work_item.owns_fd {
+                if let Some(fd) = work_item.fd {
+                    self.close_disallowing_cwd(fd);
+                }
             }
         }
 
@@ -1274,7 +1347,13 @@ pub struct WorkItem<A: Accessor> {
     pub active: ComponentSet,
     pub kind: WorkItemKind,
     pub entry_start: u32,
+    /// `Directory`: pre-opened target fd (owned; consumed by
+    /// `transition_to_dir_iter_state`). `Symlink`: the parent directory fd the
+    /// link's basename is opened relative to; owned only when `owns_fd`.
     pub fd: Option<A::Handle>,
+    /// Whether this item is responsible for closing `fd`. Siblings that share a
+    /// Symlink parent fd set this on the first-pushed (last-popped) item only.
+    pub owns_fd: bool,
     /// `followed_links.len()` when this item was pushed: the length of its
     /// followed-link ancestor chain, restored by truncation when it is popped.
     followed_links_len: usize,
@@ -1297,6 +1376,7 @@ impl<A: Accessor> WorkItem<A> {
             kind,
             entry_start: 0,
             fd: None,
+            owns_fd: true,
             followed_links_len: 0,
             followed_link: None,
         }
@@ -1314,9 +1394,17 @@ impl<A: Accessor> WorkItem<A> {
         }
     }
 
-    fn new_symlink(path: Box<[u8]>, active: ComponentSet, entry_start: u32) -> Self {
+    fn new_symlink(
+        path: Box<[u8]>,
+        active: ComponentSet,
+        entry_start: u32,
+        parent_fd: A::Handle,
+        owns_fd: bool,
+    ) -> Self {
         Self {
             entry_start,
+            fd: Some(parent_fd),
+            owns_fd,
             ..Self::new(path, active, WorkItemKind::Symlink)
         }
     }
@@ -1976,13 +2064,15 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         dir_path: &[u8],
         entry_name: &[u8],
         active: ComponentSet,
+        parent_fd: A::Handle,
+        owns_fd: bool,
     ) -> Result<(), AllocError> {
         let subdir_entry_name = self.join(&[dir_path, entry_name])?;
         let joined = work_item_logical_path(&subdir_entry_name);
         let entry_start: u32 =
             u32::try_from(joined.len() - strings::basename(joined).len()).unwrap();
         self.push_work_item(
-            WorkItem::new_symlink(subdir_entry_name, active, entry_start),
+            WorkItem::new_symlink(subdir_entry_name, active, entry_start, parent_fd, owns_fd),
             None,
         );
         Ok(())

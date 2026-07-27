@@ -722,11 +722,7 @@ describe("Server", () => {
             env: bunEnv,
             stderr: "pipe",
           });
-          const [stdout, stderr, exitCode] = await Promise.all([
-            proc.stdout.text(),
-            proc.stderr.text(),
-            proc.exited,
-          ]);
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
           expect(stderr).toBe("");
           expect(stdout.trim()).toBe(`ERROR:[true,"boom",2]`);
           expect(exitCode).toBe(0);

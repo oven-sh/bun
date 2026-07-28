@@ -42,6 +42,55 @@ test.concurrent("RedisClient survives a failed custom-TLS context without freein
   expect(exitCode).toBe(0);
 });
 
+// Fuzzer found a heap-use-after-free: on_data -> parse fail -> close()
+// dispatches SocketHandler::on_close synchronously, whose on_valkey_close()
+// unconditionally adopted the socket keep-alive ref. A re-entrant close/
+// reconnect path that had already released it would then over-release by one,
+// and SocketHandler::on_data's trailing update_poll_ref() read the freed
+// allocation. With socket_ref_held the release is idempotent.
+test.concurrent("RedisClient survives a malformed RESP reply that closes the socket from on_data", async () => {
+  const src = `
+    const CRLF = "\\r\\n";
+    const server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        open() {},
+        data(s) { s.write("!garbage" + CRLF); },
+        close() {},
+      },
+    });
+    for (let i = 0; i < 50; i++) {
+      const c = new Bun.RedisClient("redis://127.0.0.1:" + server.port, {
+        autoReconnect: false,
+        connectionTimeout: 5000,
+      });
+      c.onclose = () => {};
+      try { await c.connect(); } catch {}
+      if (typeof c.connected !== "boolean") throw new Error("connected getter broken");
+      try { c.close(); } catch {}
+      Bun.gc(true);
+      await new Promise(r => setImmediate(r));
+    }
+    server.stop(true);
+    console.log("OK");
+    process.exit(0);
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+  expect(stdout.trim()).toBe("OK");
+  expect(proc.signalCode).toBeNull();
+  expect(exitCode).toBe(0);
+});
+
 // Fuzzer found a heap-use-after-free that survived the ScopedRef refactor:
 // on_connection_timeout's unconditional `ScopedRef::adopt` released a ref the
 // timer no longer held, so the ScopedRef drop at scope end brought the

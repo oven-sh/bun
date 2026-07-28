@@ -358,6 +358,13 @@ pub struct JSValkeyClient {
 
     pub timer: RefCountedTimer,
     pub reconnect_timer: RefCountedTimer,
+    /// Mirrors the socket keep-alive `ref_()` taken in [`connect`] so
+    /// [`take_socket_ref`] releases it exactly once even when the
+    /// close/reconnect/fail paths re-enter each other.
+    ///
+    /// [`connect`]: Self::connect
+    /// [`take_socket_ref`]: Self::take_socket_ref
+    socket_ref_held: Cell<bool>,
     pub ref_count: bun_ptr::RefCount<JSValkeyClient>,
 }
 
@@ -499,6 +506,17 @@ impl JSValkeyClient {
     pub fn ref_scope(&self) -> ScopedRef<Self> {
         // SAFETY: `self` is live; the guard's own ref keeps it alive past Drop.
         unsafe { ScopedRef::new(self.as_ctx_ptr()) }
+    }
+    /// Release the socket keep-alive ref taken in [`connect`](Self::connect),
+    /// at most once. `None` when it was already released (re-entrant close /
+    /// reconnect paths), so a second caller can't over-release.
+    #[inline]
+    fn take_socket_ref(&self) -> Option<ScopedRef<Self>> {
+        self.socket_ref_held.replace(false).then(|| {
+            // SAFETY: `connect()` took the ref and set the flag; this scope
+            // consumes it.
+            unsafe { ScopedRef::adopt(self.as_ctx_ptr()) }
+        })
     }
     #[inline]
     pub fn new(init: JSValkeyClient) -> *mut JSValkeyClient {
@@ -817,6 +835,7 @@ impl JSValkeyClient {
             _secure: Cell::new(None),
             timer: RefCountedTimer::new(Timer::Tag::ValkeyConnectionTimeout),
             reconnect_timer: RefCountedTimer::new(Timer::Tag::ValkeyConnectionReconnect),
+            socket_ref_held: Cell::new(false),
         }))
     }
 
@@ -937,6 +956,7 @@ impl JSValkeyClient {
             _secure: Cell::new(None),
             timer: RefCountedTimer::new(Timer::Tag::ValkeyConnectionTimeout),
             reconnect_timer: RefCountedTimer::new(Timer::Tag::ValkeyConnectionReconnect),
+            socket_ref_held: Cell::new(false),
         }))
     }
 
@@ -1350,11 +1370,7 @@ impl JSValkeyClient {
 
     // Callback for when Valkey client needs to reconnect
     pub fn on_valkey_reconnect(&self) {
-        // SAFETY: adopts connect()'s socket keep-alive ref for the just-closed
-        // socket. Reached only from `ValkeyClient::on_close()`'s reconnect
-        // branch, which never calls `on_valkey_close()`, so this scope is the
-        // sole releaser. The caller holds its own scoped ref, so count > 0.
-        let _socket_ref = unsafe { ScopedRef::adopt(self.as_ctx_ptr()) };
+        let _socket_ref = self.take_socket_ref();
 
         self.reconnect_timer
             .arm(self, self.client.get().get_reconnect_delay());
@@ -1364,9 +1380,7 @@ impl JSValkeyClient {
     pub fn on_valkey_close(&self) -> JsTerminatedResult<()> {
         let global_object = self.global_object;
 
-        // SAFETY: adopts connect()'s socket keep-alive ref; the caller holds
-        // its own scoped ref so count stays > 0 until this drops.
-        let _socket_ref = unsafe { ScopedRef::adopt(self.as_ctx_ptr()) };
+        let _socket_ref = self.take_socket_ref();
         let _defer = scopeguard::guard(BackRef::new(self), |p| p.update_poll_ref());
 
         let Some(this_jsvalue) = self.this_value.get().try_get() else {
@@ -1507,11 +1521,16 @@ impl JSValkeyClient {
 
         let _guard = self.ref_scope();
 
-        // Socket keep-alive ref, released by on_valkey_close/on_valkey_reconnect.
-        // Taken before the TLS-context check so the `tls_ctx_failed` branch's
-        // `on_valkey_close()` has a ref to consume instead of over-releasing.
-        // Forgotten on success (the socket adopts it).
+        // Socket keep-alive ref, released (at most once) by `take_socket_ref()`
+        // in on_valkey_close/on_valkey_reconnect. The flag is set immediately
+        // so the `tls_ctx_failed` branch's `on_valkey_close()` has a ref to
+        // consume; on early error return `socket_ref` drops and the flag is
+        // cleared by the scopeguard below.
         let socket_ref = self.ref_scope();
+        debug_assert!(!self.socket_ref_held.get());
+        self.socket_ref_held.set(true);
+        let errdefer_socket_flag =
+            scopeguard::guard(BackRef::new(self), |p| p.socket_ref_held.set(false));
 
         let is_tls = self.client.get().tls != valkey::TLS::None;
         let vm = self.client.get().vm.as_mut();
@@ -1549,8 +1568,9 @@ impl JSValkeyClient {
                 b"Failed to create TLS context",
                 protocol::RedisError::ConnectionClosed,
             )?;
-            // `on_valkey_close()` consumes the socket ref; hand it over so it
-            // isn't released twice.
+            // `on_valkey_close()` takes the socket ref via the flag; hand it
+            // over and disarm our releasers so it isn't released twice.
+            scopeguard::ScopeGuard::into_inner(errdefer_socket_flag);
             socket_ref.forget();
             self.client_mut().on_valkey_close()?;
             self.client_mut().status = valkey::Status::Disconnected;
@@ -1592,6 +1612,7 @@ impl JSValkeyClient {
         self.client_mut().socket = socket;
         // Disarm on success: the socket now owns the keep-alive ref.
         scopeguard::ScopeGuard::into_inner(errdefer_status);
+        scopeguard::ScopeGuard::into_inner(errdefer_socket_flag);
         socket_ref.forget();
         Ok(())
     }
@@ -1665,6 +1686,7 @@ impl JSValkeyClient {
             debug_assert!(this_ref.client.get().socket.is_closed());
             debug_assert!(!this_ref.timer.ref_held.get());
             debug_assert!(!this_ref.reconnect_timer.ref_held.get());
+            debug_assert!(!this_ref.socket_ref_held.get());
             if let Some(s) = this_ref._secure.get() {
                 // SAFETY: SSL_CTX is C-refcounted; this releases our ref.
                 unsafe { boringssl::c::SSL_CTX_free(s) };

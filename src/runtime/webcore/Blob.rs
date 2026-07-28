@@ -2270,7 +2270,6 @@ impl BlobExt for Blob {
                 if file.seekable == Some(false) {
                     return JSValue::js_number(f64::INFINITY);
                 }
-                self.size.set(0);
                 return JSValue::js_number(0.0);
             }
         }

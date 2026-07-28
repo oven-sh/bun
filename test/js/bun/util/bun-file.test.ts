@@ -239,4 +239,16 @@ describe("BunFile exists()/size/lastModified reflect the current filesystem stat
       expect(Bun.file("/dev/null").slice(0, 5).size).toBe(5);
     }
   });
+
+  test("size on a deleted file does not poison a later read", async () => {
+    using dir = tempDir("bunfile-stat-poison", {});
+    const p = join(String(dir), "f");
+    fs.writeFileSync(p, "0123456789");
+    const f = Bun.file(p);
+    expect(f.size).toBe(10);
+    fs.unlinkSync(p);
+    expect(f.size).toBe(0);
+    fs.writeFileSync(p, "content");
+    expect(await f.text()).toBe("content");
+  });
 });

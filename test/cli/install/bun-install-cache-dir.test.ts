@@ -35,11 +35,7 @@ describe.skipIf(isWindows)("BUN_INSTALL_CACHE_DIR inside a dangling symlink", ()
       stderr: "pipe",
       timeout: 15_000,
     });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     // On hang, Bun.spawn's timeout fires and the child is killed with a
     // signal. With the fix, bun exits on its own (registry is unreachable).

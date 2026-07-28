@@ -620,8 +620,7 @@ async function runTests() {
   // dns-tcp-bidirectional-poll and test-https-timeout). `--parallel` already
   // widens `limit` above and supersedes this split. Windows caps lower
   // because process creation is heavier there.
-  const parallelSafeCap = isWindows ? 2 : 4;
-  const parallelSafeWidth = parallelism > 1 ? parallelism : Math.min(parallelSafeCap, availableParallelism());
+  const parallelSafeWidth = parallelism > 1 ? parallelism : Math.max(availableParallelism() - 1, 1);
   const parallelSafeLimit = parallelism > 1 ? limit : pLimit(parallelSafeWidth);
   const isParallelSafeTest = testPath => {
     const p = testPath.replaceAll("\\", "/");

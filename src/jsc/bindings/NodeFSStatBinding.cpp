@@ -657,10 +657,10 @@ extern "C" JSC::EncodedJSValue Bun__createJSBigIntStatsObject(Zig::GlobalObject*
     int64_t mtimeMs,
     int64_t ctimeMs,
     int64_t birthtimeMs,
-    uint64_t atimeNs,
-    uint64_t mtimeNs,
-    uint64_t ctimeNs,
-    uint64_t birthtimeNs)
+    int64_t atimeNs,
+    int64_t mtimeNs,
+    int64_t ctimeNs,
+    int64_t birthtimeNs)
 {
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);

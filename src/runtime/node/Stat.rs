@@ -10,6 +10,7 @@ pub use bun_sys::PosixStat;
 
 const MS_PER_S: i64 = bun_core::time::MS_PER_S as i64;
 const NS_PER_MS: i64 = bun_core::time::NS_PER_MS as i64;
+const NS_PER_S: i64 = bun_core::time::NS_PER_S as i64;
 
 /// Stats and BigIntStats classes from node:fs
 // `BIG` selects the BigIntStats (i64) vs Stats (f64) flavour. A
@@ -33,11 +34,21 @@ impl<const BIG: bool> StatType<BIG> {
     }
 
     #[inline]
-    fn to_nanoseconds(ts: StatTimespec) -> u64 {
-        if ts.sec < 0 {
-            return ts.ns_signed().max(0) as u64;
-        }
-        ts.ns()
+    fn to_nanoseconds(ts: StatTimespec) -> i64 {
+        // On windows, Node.js purposefully misinterprets time values
+        // > On win32, time is stored in uint64_t and starts from 1601-01-01.
+        // > libuv calculates tv_sec and tv_nsec from it and converts to signed long,
+        // > which causes Y2038 overflow. On the other platforms it is safe to treat
+        // > negative values as pre-epoch time.
+        #[cfg(windows)]
+        let (tv_sec, tv_nsec): (i64, i64) = (
+            ((ts.sec as i32) as u32) as i64,
+            ((ts.nsec as i32) as u32) as i64,
+        );
+        #[cfg(not(windows))]
+        let (tv_sec, tv_nsec): (i64, i64) = (ts.sec, ts.nsec);
+
+        tv_sec.saturating_mul(NS_PER_S).saturating_add(tv_nsec)
     }
 
     // Split into i64/f64 variants for const-generic type selection — see the
@@ -198,10 +209,10 @@ unsafe extern "C" {
         mtime_ms: i64,
         ctime_ms: i64,
         birthtime_ms: i64,
-        atime_ns: u64,
-        mtime_ns: u64,
-        ctime_ns: u64,
-        birthtime_ns: u64,
+        atime_ns: i64,
+        mtime_ns: i64,
+        ctime_ns: i64,
+        birthtime_ns: i64,
     ) -> JSValue;
 }
 

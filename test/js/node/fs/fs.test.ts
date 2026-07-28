@@ -4806,6 +4806,43 @@ it("new Stats", () => {
   expect(Math.abs(withBigInt.birthtime.getTime() - withoutBigInt.birthtime.getTime())).toBeLessThanOrEqual(1);
 });
 
+// On Windows, Node.js deliberately reinterprets stat times via `unsigned long` (see
+// libuv Y2038 note), so pre-epoch semantics there are not "negative ns".
+it.skipIf(isWindows)("BigIntStats *Ns fields are negative for pre-epoch timestamps", () => {
+  using dir = tempDir("bigintstats-pre-epoch", { "f.txt": "x" });
+  const f = join(String(dir), "f.txt");
+
+  // 1969-12-20T10:13:19.750Z; kernel stores this as {sec: -1000001, nsec: 750000000}.
+  const preEpoch = new Date(-1_000_000_250);
+  fs.utimesSync(f, preEpoch, preEpoch);
+
+  const st = statSync(f, { bigint: true });
+  expect({
+    atimeNs: st.atimeNs,
+    mtimeNs: st.mtimeNs,
+    atimeMs: st.atimeMs,
+    mtimeMs: st.mtimeMs,
+  }).toEqual({
+    atimeNs: -1_000_000_250_000_000n,
+    mtimeNs: -1_000_000_250_000_000n,
+    atimeMs: -1_000_000_250n,
+    mtimeMs: -1_000_000_250n,
+  });
+  // Documented invariant: xtimeNs / 1_000_000n === xtimeMs
+  expect(st.mtimeNs / 1_000_000n).toBe(st.mtimeMs);
+  expect(st.atimeNs / 1_000_000n).toBe(st.atimeMs);
+  expect(st.mtime.toISOString()).toBe("1969-12-20T10:13:19.750Z");
+
+  // A small negative offset just below the epoch.
+  fs.utimesSync(f, new Date(-500), new Date(-500));
+  const st2 = statSync(f, { bigint: true });
+  expect({ atimeNs: st2.atimeNs, mtimeNs: st2.mtimeNs }).toEqual({
+    atimeNs: -500_000_000n,
+    mtimeNs: -500_000_000n,
+  });
+  expect(st2.atimeNs / 1_000_000n).toBe(st2.atimeMs);
+});
+
 it("test syscall errno, issue#4198", () => {
   const path = `${tmpdir()}/non-existent-${Date.now()}.txt`;
   expect(() => openSync(path, "r")).toThrow("no such file or directory");

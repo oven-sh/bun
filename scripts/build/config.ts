@@ -10,6 +10,7 @@ import { execSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, symlinkSync } from "node:fs";
 import { homedir, arch as hostArch, platform as hostPlatform } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { crossToolchains } from "./ci/spec.ts";
 import { NODEJS_ABI_VERSION, NODEJS_V8_VERSION, NODEJS_VERSION } from "./deps/nodejs-headers.ts";
 import { WEBKIT_VERSION } from "./deps/webkit.ts";
 import { assert, BuildError } from "./error.ts";
@@ -539,7 +540,7 @@ export const ANDROID_API_LEVEL_DEFAULT = 28;
  * produces binaries that run on 14.3+ (FreeBSD guarantees forward ABI
  * compat within a major).
  */
-export const FREEBSD_VERSION_DEFAULT = "14.3";
+export const FREEBSD_VERSION_DEFAULT = crossToolchains.freebsdSysroot.version;
 
 /**
  * Locate a FreeBSD sysroot (extracted base.txz). Checks env var then
@@ -563,7 +564,7 @@ export function detectFreebsdSysroot(arch: Arch): string | undefined {
 /**
  * Locate the linux-gnu sysroot: ubuntu:20.04 (glibc 2.31) + gcc-13 libstdc++,
  * matching the WebKit prebuilt's build environment. Arch-specific. See
- * install_linux_glibc_sysroot() in scripts/bootstrap.sh.
+ * the glibcSysroot component in scripts/build/ci/machine/components/linux/cross.ts.
  */
 export function detectLinuxGlibcSysroot(arch: Arch): string | undefined {
   const looksValid = (p: string) => existsSync(join(p, "usr", "include", "c++", "13"));
@@ -575,7 +576,7 @@ export function detectLinuxGlibcSysroot(arch: Arch): string | undefined {
 
 /**
  * Locate a linux-musl sysroot — alpine rootfs with musl + modern libstdc++;
- * see install_linux_musl_sysroot() in scripts/bootstrap.sh. Checks env var then
+ * see the muslSysroot component in scripts/build/ci/machine/components/linux/cross.ts. Checks env var then
  * well-known install paths. Arch-specific. Returns undefined if none found.
  */
 export function detectLinuxMuslSysroot(arch: Arch): string | undefined {
@@ -655,7 +656,7 @@ function ndkHostTag(host: Host): string {
  * setup for NDK cross-builds (Chromium does the same).
  *
  * Idempotent. Warns with a sudo hint if the resource dir isn't writable
- * (CI build images create the symlinks as root in bootstrap.sh/Dockerfile).
+ * (CI build images create the symlinks as root in scripts/build/ci/machine).
  */
 function linkNdkRuntimesIntoClang(cc: string, ndk: string, host: Host, triple: string): void {
   const resourceDir = execSync(`"${cc}" -print-resource-dir`, { encoding: "utf8" }).trim();
@@ -693,7 +694,7 @@ function linkNdkRuntimesIntoClang(cc: string, ndk: string, host: Host, triple: s
       if (!existsSync(dst)) symlinkSync(src, dst);
     }
   } catch (cause) {
-    // Don't throw — rust-only mode doesn't need these, and on CI bootstrap.sh
+    // Don't throw — rust-only mode doesn't need these, and on CI the image bootstrap
     // creates them as root during image build. The actual link step will fail
     // loudly later if they're genuinely missing where needed.
     const lnCmds = Object.entries(links)
@@ -1025,7 +1026,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
         if (sysroot === undefined) {
           const p = arch === "aarch64" ? "/opt/linux-sysroot-musl-arm64" : "/opt/linux-sysroot-musl";
           throw new BuildError(`--os=linux --arch=${arch} --abi=musl requires a musl sysroot when cross-compiling`, {
-            hint: `Set LINUX_MUSL_SYSROOT or provision ${p} (see install_linux_musl_sysroot() in scripts/bootstrap.sh).`,
+            hint: `Set LINUX_MUSL_SYSROOT or provision ${p} (see the muslSysroot component in scripts/build/ci/machine/components/linux/cross.ts).`,
           });
         }
       }
@@ -1041,7 +1042,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
         if (sysroot === undefined) {
           const p = arch === "aarch64" ? "/opt/linux-sysroot-glibc-arm64" : "/opt/linux-sysroot-glibc";
           throw new BuildError(`--os=linux --arch=${arch} --abi=gnu cross-compile requires a glibc sysroot`, {
-            hint: `Set LINUX_GLIBC_SYSROOT or provision ${p} (see install_linux_glibc_sysroot() in scripts/bootstrap.sh).`,
+            hint: `Set LINUX_GLIBC_SYSROOT or provision ${p} (see the glibcSysroot component in scripts/build/ci/machine/components/linux/cross.ts).`,
           });
         }
       }

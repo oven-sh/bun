@@ -33,7 +33,7 @@ if [ "${BUILDKITE_JOB_CANCELLED:-}" = "true" ]; then exit 0; fi
 # TODO(ci): the exit-code fallback below is only needed while agents older than
 # v3.94.0 remain in the fleet (as of 2026-07: the linux queue=ci image is still
 # on v3.87.0 and several bare-metal darwin boxes are on v3.87.0/v3.94.0;
-# scripts/bootstrap.sh already pins 3.114.0, those images just need rebaking).
+# scripts/build/ci/spec.ts already pins 3.114.0, those images just need rebaking).
 # -1 is the posix agent-killed code, 3221225786 is Windows STATUS_CONTROL_C_EXIT,
 # both observed on cancel in build 76127. Delete this `case` once every agent is
 # v3.94.0+.

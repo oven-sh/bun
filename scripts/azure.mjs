@@ -1,5 +1,6 @@
-// Azure REST API client for machine.mjs
-// Used by the [build images] pipeline to create Windows VM images (x64 and ARM64)
+// Azure REST API client for machine.ts
+// Backs the azure cloud implementation in machine.ts (createMachine).
+// Windows CI images themselves are baked via Packer (scripts/build/ci/packer.ts).
 
 import { getSecret, isCI } from "./utils.mjs";
 
@@ -460,8 +461,8 @@ export const azure = {
   config,
 
   /**
-   * @param {import("./machine.mjs").MachineOptions} options
-   * @returns {Promise<import("./machine.mjs").Machine>}
+   * @param {import("./machine.ts").MachineOptions} options
+   * @returns {Promise<import("./machine.ts").Machine>}
    */
   async createMachine(options) {
     const { os, arch, tags, sshKeys } = options;

@@ -4,7 +4,7 @@ channel = "nightly-2026-07-20"
 # aarch64-unknown-freebsd have no prebuilt std). miri is for
 # `bun run rust:miri`. targets ensures the
 # Tier 2 cross-targets' prebuilt std is installed for THIS toolchain
-# (bootstrap.sh / Dockerfile install only for the *default* toolchain at
+# (the CI image bake installs only for the *default* toolchain at
 # image-build time, so a `channel` bump here would otherwise leave the
 # pinned nightly without them). Note: rustup ignores this whole file when
 # RUSTUP_TOOLCHAIN is set in the env (which CI does to pin across worktree

@@ -10,6 +10,7 @@ import {
   isDebug,
   isLinux,
   isWindows,
+  tempDir,
   tempDirWithFiles,
 } from "harness";
 import { parseEnv } from "node:util";
@@ -33,7 +34,7 @@ function bunRunWithoutTrim(file: string, env?: Record<string, string>) {
 
 describe(".env file is loaded", () => {
   test(".env", () => {
-    const dir = tempDirWithFiles("dotenv", {
+    using dir = tempDir("dotenv", {
       ".env": "FOO=bar\n",
       "index.ts": "console.log(process.env.FOO);",
     });
@@ -41,7 +42,7 @@ describe(".env file is loaded", () => {
     expect(stdout).toBe("bar");
   });
   test(".env.local", () => {
-    const dir = tempDirWithFiles("dotenv", {
+    using dir = tempDir("dotenv", {
       ".env": "FOO=fail\nBAR=baz\n",
       ".env.local": "FOO=bar\n",
       "index.ts": "console.log(process.env.FOO, process.env.BAR);",
@@ -50,7 +51,7 @@ describe(".env file is loaded", () => {
     expect(stdout).toBe("bar baz");
   });
   test(".env.development (NODE_ENV=undefined)", () => {
-    const dir = tempDirWithFiles("dotenv", {
+    using dir = tempDir("dotenv", {
       ".env": "FOO=fail\nBAR=baz\n",
       ".env.development": "FOO=bar\n",
       ".env.local": "LOCAL=true\n",
@@ -60,7 +61,7 @@ describe(".env file is loaded", () => {
     expect(stdout).toBe("undefined bar baz true");
   });
   test(".env.development (NODE_ENV=development)", () => {
-    const dir = tempDirWithFiles("dotenv", {
+    using dir = tempDir("dotenv", {
       ".env": "FOO=fail\nBAR=baz\n",
       ".env.development": "FOO=bar\n",
       ".env.local": "LOCAL=true\n",
@@ -70,7 +71,7 @@ describe(".env file is loaded", () => {
     expect(stdout).toBe("bar baz true");
   });
   test(".env.production", () => {
-    const dir = tempDirWithFiles("dotenv", {
+    using dir = tempDir("dotenv", {
       ".env": "FOO=fail\nBAR=baz\n",
       ".env.production": "FOO=bar\n",
       ".env.local": "LOCAL=true\n",
@@ -80,7 +81,7 @@ describe(".env file is loaded", () => {
     expect(stdout).toBe("bar baz true");
   });
   test(".env.development and .env.test ignored when NODE_ENV=production", () => {
-    const dir = tempDirWithFiles("dotenv", {
+    using dir = tempDir("dotenv", {
       ".env": "FOO=bar\nBAR=baz\n",
       ".env.development": "FOO=development\n",
       ".env.development.local": "FOO=development.local\n",
@@ -93,7 +94,7 @@ describe(".env file is loaded", () => {
     expect(stdout).toBe("bar baz true");
   });
   test(".env.production and .env.test ignored when NODE_ENV=development", () => {
-    const dir = tempDirWithFiles("dotenv", {
+    using dir = tempDir("dotenv", {
       ".env": "FOO=bar\nBAR=baz\n",
       ".env.production": "FOO=production\n",
       ".env.production.local": "FOO=production.local\n",
@@ -106,7 +107,7 @@ describe(".env file is loaded", () => {
     expect(stdout).toBe("bar baz true");
   });
   test(".env and .env.test used in testing", () => {
-    const dir = tempDirWithFiles("dotenv", {
+    using dir = tempDir("dotenv", {
       ".env": "A=a\n",
       ".env.test.local": "B=b\n",
       ".env.test": "C=c\n",
@@ -120,7 +121,7 @@ describe(".env file is loaded", () => {
     expect(stdout).toBe(`bun test ${Bun.version_with_sha}\n` + "a b c undefined");
   });
   test(".env.local ignored when bun test", () => {
-    const dir = tempDirWithFiles("dotenv", {
+    using dir = tempDir("dotenv", {
       ".env": "FAILED=false\n",
       ".env.local": "FAILED=true\n",
       "index.test.ts": "console.log(process.env.FAILED);",
@@ -129,7 +130,7 @@ describe(".env file is loaded", () => {
     expect(stdout).toBe(`bun test ${Bun.version_with_sha}\n` + "false");
   });
   test(".env.development and .env.production ignored when bun test", () => {
-    const dir = tempDirWithFiles("dotenv", {
+    using dir = tempDir("dotenv", {
       ".env": "FAILED=false\n",
       ".env.development": "FAILED=development\n",
       ".env.development.local": "FAILED=development.local\n",
@@ -141,7 +142,7 @@ describe(".env file is loaded", () => {
     expect(stdout).toBe(`bun test ${Bun.version_with_sha}\n` + "false");
   });
   test("NODE_ENV is automatically set to test within bun test", () => {
-    const dir = tempDirWithFiles("dotenv", {
+    using dir = tempDir("dotenv", {
       "index.test.ts": "console.log(process.env.NODE_ENV);",
     });
     const { stdout } = bunTest(`${dir}/index.test.ts`);
@@ -150,7 +151,7 @@ describe(".env file is loaded", () => {
 });
 describe("dotenv priority", () => {
   test("process env overrides everything else", () => {
-    const dir = tempDirWithFiles("dotenv", {
+    using dir = tempDir("dotenv", {
       ".env": "FOO=.env\n",
       ".env.development": "FOO=.env.development\n",
       ".env.development.local": "FOO=.env.development.local\n",
@@ -169,7 +170,7 @@ describe("dotenv priority", () => {
     expect(stdout2).toBe(`bun test ${Bun.version_with_sha}\n` + "override");
   });
   test(".env.{NODE_ENV}.local overrides .env.local", () => {
-    const dir = tempDirWithFiles("dotenv", {
+    using dir = tempDir("dotenv", {
       ".env": "FOO=.env\n",
       ".env.development": "FOO=.env.development\n",
       ".env.development.local": "FOO=.env.development.local\n",
@@ -189,7 +190,7 @@ describe("dotenv priority", () => {
     expect(stdout_test).toBe(`bun test ${Bun.version_with_sha}\n` + ".env.test.local");
   });
   test(".env.local overrides .env.{NODE_ENV}", () => {
-    const dir = tempDirWithFiles("dotenv", {
+    using dir = tempDir("dotenv", {
       ".env": "FOO=.env\n",
       ".env.development": "FOO=.env.development\n",
       ".env.production": "FOO=.env.production\n",
@@ -207,7 +208,7 @@ describe("dotenv priority", () => {
     expect(stdout_test).toBe(`bun test ${Bun.version_with_sha}\n` + ".env.test");
   });
   test(".env.{NODE_ENV} overrides .env", () => {
-    const dir = tempDirWithFiles("dotenv", {
+    using dir = tempDir("dotenv", {
       ".env": "FOO=.env\n",
       ".env.development": "FOO=.env.development\n",
       ".env.production": "FOO=.env.production\n",
@@ -225,7 +226,7 @@ describe("dotenv priority", () => {
 });
 
 test(".env colon assign", () => {
-  const dir = tempDirWithFiles("dotenv-colon", {
+  using dir = tempDir("dotenv-colon", {
     ".env": "FOO: foo",
     "index.ts": "console.log(process.env.FOO);",
   });
@@ -234,7 +235,7 @@ test(".env colon assign", () => {
 });
 
 test(".env export assign", () => {
-  const dir = tempDirWithFiles("dotenv-export", {
+  using dir = tempDir("dotenv-export", {
     ".env": "export FOO = foo\nexport = bar",
     "index.ts": "console.log(process.env.FOO, process.env.export);",
   });
@@ -243,7 +244,7 @@ test(".env export assign", () => {
 });
 
 test(".env value expansion", () => {
-  const dir = tempDirWithFiles("dotenv-expand", {
+  using dir = tempDir("dotenv-expand", {
     ".env": "FOO=foo\nBAR=$FOO bar\nMOO=${FOO} ${BAR:-fail} ${MOZ:-moo}",
     "index.ts": "console.log([process.env.FOO, process.env.BAR, process.env.MOO].join('|'));",
   });
@@ -252,7 +253,7 @@ test(".env value expansion", () => {
 });
 
 test(".env comments", () => {
-  const dir = tempDirWithFiles("dotenv-comments", {
+  using dir = tempDir("dotenv-comments", {
     ".env": "#FOZ\nFOO = foo#FAIL\nBAR='bar' #BAZ",
     "index.ts": "console.log(process.env.FOO, process.env.BAR);",
   });
@@ -261,7 +262,7 @@ test(".env comments", () => {
 });
 
 test(".env process variables no comments", () => {
-  const dir = tempDirWithFiles("env-no-comments", {
+  using dir = tempDir("env-no-comments", {
     "index.ts": "console.log(process.env.TEST1, process.env.TEST2);",
   });
   const { stdout } = bunRun(`${dir}/index.ts`, { TEST1: "test#1", TEST2: '"test#2"' });
@@ -277,7 +278,7 @@ describe("package scripts load from .env.production and .env.development", () =>
         "test": `'${bunExe()}' run index.ts`,
       },
     };
-    const dir = tempDirWithFiles("dotenv-package-script-prod", {
+    using dir = tempDir("dotenv-package-script-prod", {
       "index.ts": "console.log(process.env.TEST);",
       "package.json": JSON.stringify(pkgjson),
       ".env.production": "TEST=prod",
@@ -295,7 +296,7 @@ describe("package scripts load from .env.production and .env.development", () =>
         "test": `'${bunExe()}' run index.ts`,
       },
     };
-    const dir = tempDirWithFiles("dotenv-package-script-prod", {
+    using dir = tempDir("dotenv-package-script-prod", {
       "index.ts": "console.log(process.env.TEST);",
       "package.json": JSON.stringify(pkgjson),
       ".env.production": "TEST=prod",
@@ -308,7 +309,7 @@ describe("package scripts load from .env.production and .env.development", () =>
 });
 
 test(".env escaped dollar sign", () => {
-  const dir = tempDirWithFiles("dotenv-dollar", {
+  using dir = tempDir("dotenv-dollar", {
     ".env": "FOO=foo\nBAR=\\$FOO",
     "index.ts": "console.log(process.env.FOO, process.env.BAR);",
   });
@@ -317,7 +318,7 @@ test(".env escaped dollar sign", () => {
 });
 
 test(".env doesnt crash with 159 bytes", () => {
-  const dir = tempDirWithFiles("dotenv-159", {
+  using dir = tempDir("dotenv-159", {
     ".env":
       "123456789=1234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678" +
       "\n",
@@ -342,7 +343,7 @@ test(".env doesnt crash with 159 bytes", () => {
 test(
   ".env with 50000 entries",
   () => {
-    const dir = tempDirWithFiles("dotenv-many-entries", {
+    using dir = tempDir("dotenv-many-entries", {
       ".env": new Array(50000)
         .fill(null)
         .map((_, i) => `TEST_VAR${i}=TEST_VAL${i}`)
@@ -365,7 +366,7 @@ test(
 );
 
 test(".env space edgecase (issue #411)", () => {
-  const dir = tempDirWithFiles("dotenv-issue-411", {
+  using dir = tempDir("dotenv-issue-411", {
     ".env": "VARNAME=A B",
     "index.ts": "console.log('[' + process.env.VARNAME + ']');",
   });
@@ -383,7 +384,7 @@ test(".env does not byte-trim 0xA0 out of UTF-8 values", () => {
     D: "x",
   });
 
-  const dir = tempDirWithFiles("dotenv-utf8-nbsp", {
+  using dir = tempDir("dotenv-utf8-nbsp", {
     ".env": "A=x\u0920\nB=\u00A0x\u00A0\n",
     "index.ts": "console.log(JSON.stringify({ A: process.env.A, B: process.env.B }));",
   });
@@ -392,7 +393,7 @@ test(".env does not byte-trim 0xA0 out of UTF-8 values", () => {
 });
 
 test(".env special characters 1 (issue #2823)", () => {
-  const dir = tempDirWithFiles("dotenv-issue-2823", {
+  using dir = tempDir("dotenv-issue-2823", {
     ".env": 'A="a$t"\nC=`c\\$v`',
     "index.ts": "console.log('[' + process.env.A + ']', '[' + process.env.C + ']');",
   });
@@ -401,7 +402,7 @@ test(".env special characters 1 (issue #2823)", () => {
 });
 
 test("env escaped quote (issue #2484)", () => {
-  const dir = tempDirWithFiles("env-issue-2484", {
+  using dir = tempDir("env-issue-2484", {
     "index.ts": "console.log(process.env.VALUE, process.env.VALUE2);",
   });
   const { stdout } = bunRun(`${dir}/index.ts`, { VALUE: `\\"`, VALUE2: `\\\\"` });
@@ -409,7 +410,7 @@ test("env escaped quote (issue #2484)", () => {
 });
 
 test(".env Windows-style newline (issue #3042)", () => {
-  const dir = tempDirWithFiles("dotenv-issue-3042", {
+  using dir = tempDir("dotenv-issue-3042", {
     ".env": "FOO=\rBAR='bar\r\rbaz'\r\nMOO=moo\r",
     "index.ts": "console.log([process.env.FOO, process.env.BAR, process.env.MOO].join('|'));",
   });
@@ -418,7 +419,7 @@ test(".env Windows-style newline (issue #3042)", () => {
 });
 
 test(".env with zero length strings", () => {
-  const dir = tempDirWithFiles("dotenv-issue-zerolength", {
+  using dir = tempDir("dotenv-issue-zerolength", {
     ".env": "FOO=''\n",
     "index.ts":
       "function i(a){return a}\nconsole.log([process.env.FOO,i(process.env).FOO,process.env.FOO.length,i(process.env).FOO.length].join('|'));",
@@ -428,7 +429,7 @@ test(".env with zero length strings", () => {
 });
 
 test("process with zero length environment variable", () => {
-  const dir = tempDirWithFiles("process-issue-zerolength", {
+  using dir = tempDir("process-issue-zerolength", {
     "index.ts": "console.log(`'${process.env.TEST_ENV_VAR}'`);",
   });
   const { stdout } = bunRun(`${dir}/index.ts`, {
@@ -438,7 +439,7 @@ test("process with zero length environment variable", () => {
 });
 
 test(".env in a folder doesn't throw an error", () => {
-  const dir = tempDirWithFiles("dotenv-issue-3670", {
+  using dir = tempDir("dotenv-issue-3670", {
     ".env": {
       ".env.local": "FOO=''\n",
     },
@@ -450,7 +451,7 @@ test(".env in a folder doesn't throw an error", () => {
 });
 
 test("#3911", () => {
-  const dir = tempDirWithFiles("dotenv", {
+  using dir = tempDir("dotenv", {
     ".env": 'KEY="a\\nb"',
     "index.ts": "console.log(process.env.KEY);",
   });
@@ -485,7 +486,7 @@ describe(".env quoted value with trailing junk does not swallow following lines"
     });
 
     test(".env file", () => {
-      const dir = tempDirWithFiles("dotenv-trailing-junk", {
+      using dir = tempDir("dotenv-trailing-junk", {
         ".env": `A=${q}hello${q} junk\nB=${q}x${q}\nC=3\n`,
         "index.ts": "console.log(JSON.stringify({A: process.env.A, B: process.env.B, C: process.env.C}));",
       });
@@ -498,7 +499,7 @@ describe(".env quoted value with trailing junk does not swallow following lines"
 describe("boundary tests", () => {
   // TODO: this is a regression in bun ~1.0.15 ish
   test.todo("src boundary", () => {
-    const dir = tempDirWithFiles("dotenv", {
+    using dir = tempDir("dotenv", {
       ".env": 'KEY="a\\n"',
       "index.ts": "console.log(process.env.KEY);",
     });
@@ -506,7 +507,7 @@ describe("boundary tests", () => {
     // should be "a\n" but console.log adds a newline
     expect(stdout).toBe("a\n\n");
 
-    const dir2 = tempDirWithFiles("dotenv", {
+    using dir2 = tempDir("dotenv", {
       ".env": 'KEY="a\\n',
       "index.ts": "console.log(process.env.KEY);",
     });
@@ -517,13 +518,13 @@ describe("boundary tests", () => {
 
   test("buffer boundary", () => {
     const expected = "a".repeat(4094);
-    const dir = tempDirWithFiles("dotenv", {
+    using dir = tempDir("dotenv", {
       ".env": `KEY="${expected + "a"}"`,
       "index.ts": "console.log(process.env.KEY);",
     });
     const { stdout } = bunRun(`${dir}/index.ts`);
 
-    const dir2 = tempDirWithFiles("dotenv", {
+    using dir2 = tempDir("dotenv", {
       ".env": `KEY="${expected + "\\n"}"`,
       "index.ts": "console.log(process.env.KEY);",
     });
@@ -657,7 +658,7 @@ describe(".env with a UTF-8 BOM", () => {
   const bom = "\uFEFF";
 
   test("automatic .env load keeps the first variable", () => {
-    const dir = tempDirWithFiles("dotenv-bom", {
+    using dir = tempDir("dotenv-bom", {
       ".env": `${bom}BUNTEST_BOM_A=1\r\nBUNTEST_BOM_B=2\r\n`,
       "index.ts": "console.log(JSON.stringify({A: process.env.BUNTEST_BOM_A, B: process.env.BUNTEST_BOM_B}));",
     });
@@ -666,7 +667,7 @@ describe(".env with a UTF-8 BOM", () => {
   });
 
   test("--env-file keeps the first variable", () => {
-    const dir = tempDirWithFiles("dotenv-bom-envfile", {
+    using dir = tempDir("dotenv-bom-envfile", {
       "with-bom.env": `${bom}BUNTEST_BOM_A=1\nBUNTEST_BOM_B=2\n`,
       "index.ts": "console.log(JSON.stringify({A: process.env.BUNTEST_BOM_A, B: process.env.BUNTEST_BOM_B}));",
     });
@@ -686,7 +687,7 @@ describe(".env with a UTF-8 BOM", () => {
 });
 
 test.if(isWindows)("environment variables are case-insensitive on Windows", () => {
-  const dir = tempDirWithFiles("dotenv", {
+  using dir = tempDir("dotenv", {
     ".env": "FOO=bar\n",
     "index.ts": "console.log(process.env.FOO, process.env.foo, process.env.fOo);",
   });
@@ -696,7 +697,7 @@ test.if(isWindows)("environment variables are case-insensitive on Windows", () =
 
 describe("process.env is not inlined", () => {
   test("basic case", () => {
-    const tmp = tempDirWithFiles("env-inlining", {
+    using tmp = tempDir("env-inlining", {
       "index.ts": `process.env.NODE_ENV = "production";
 process.env.YOLO = "woo!";
 console.log(process.env.NODE_ENV, process.env.YOLO);`,
@@ -709,7 +710,7 @@ console.log(process.env.NODE_ENV, process.env.YOLO);`,
     ).toBe("production woo!");
   });
   test("pass explicit NODE_ENV case", () => {
-    const tmp = tempDirWithFiles("env-inlining", {
+    using tmp = tempDir("env-inlining", {
       "index.ts": `console.log(process.env.NODE_ENV);
 process.env.NODE_ENV = "development";
 process.env.YOLO = "woo!";
@@ -723,7 +724,7 @@ console.log(process.env.NODE_ENV, process.env.YOLO);`,
     ).toBe("production\ndevelopment woo!");
   });
   test("pass weird NODE_ENV case", () => {
-    const tmp = tempDirWithFiles("env-inlining", {
+    using tmp = tempDir("env-inlining", {
       "index.ts": `console.log(process.env.NODE_ENV);
 process.env.NODE_ENV = "development";
 process.env.YOLO = "woo!";
@@ -737,7 +738,7 @@ console.log(process.env.NODE_ENV, process.env.YOLO);`,
     ).toBe("buh\ndevelopment woo!");
   });
   test("in bun test", () => {
-    const tmp = tempDirWithFiles("env-inlining", {
+    using tmp = tempDir("env-inlining", {
       "index.test.ts": `test("my test", () => {
   console.log(process.env.NODE_ENV);
   process.env.NODE_ENV = "development";
@@ -752,7 +753,7 @@ console.log(process.env.NODE_ENV, process.env.YOLO);`,
     ).toBe(`bun test ${Bun.version_with_sha}\n` + "test\ndevelopment woo!");
   });
   test("in bun test with explicit setting", () => {
-    const tmp = tempDirWithFiles("env-inlining", {
+    using tmp = tempDir("env-inlining", {
       "index.test.ts": `test("my test", () => {
   console.log(process.env.NODE_ENV);
   process.env.NODE_ENV = "development";
@@ -768,7 +769,7 @@ console.log(process.env.NODE_ENV, process.env.YOLO);`,
     ).toBe(`bun test ${Bun.version_with_sha}\n` + "production\ndevelopment woo!");
   });
   test("in bun test with dynamic access", () => {
-    const tmp = tempDirWithFiles("env-inlining", {
+    using tmp = tempDir("env-inlining", {
       "index.test.ts": `const dynamic = () => require('process')['e' + String('nv')];
 test("my test", () => {
   console.log(dynamic().NODE_ENV);
@@ -781,7 +782,7 @@ test("my test", () => {
     );
   });
   test("in bun test with dynamic access + explicit set", () => {
-    const tmp = tempDirWithFiles("env-inlining", {
+    using tmp = tempDir("env-inlining", {
       "index.test.ts": `const dynamic = () => require('process')['e' + String('nv')];
 test("my test", () => {
   console.log(dynamic().NODE_ENV);
@@ -796,7 +797,7 @@ test("my test", () => {
 });
 
 test("NODE_ENV has a default value", () => {
-  const tmp = tempDirWithFiles("default-node-env", {
+  using tmp = tempDir("default-node-env", {
     "index.ts": `const dynamic = () => require('process')['e' + String('nv')];
 console.log(process.env.NODE_ENV);
 console.log(dynamic().NODE_ENV);
@@ -812,7 +813,7 @@ test("NODE_ENV default is not propogated in bun run", () => {
     process.platform !== "win32"
       ? "env | grep -v npm_lifecycle_script | grep NODE_ENV && exit 1 || true"
       : "node -e 'if(process.env.NODE_ENV)throw(1)'";
-  const tmp = tempDirWithFiles("default-node-env", {
+  using tmp = tempDir("default-node-env", {
     "package.json": '{"scripts":{"show-env":' + JSON.stringify(getenv) + "}}",
   });
   expect(bunRunAsScript(tmp, "show-env", {}).stdout).toBe("");
@@ -831,7 +832,7 @@ for (const shell of ["system", "bun"]) {
 
   describe(`script runner with ${shell} shell`, () => {
     test("does not pass variables from .env files into scripts", () => {
-      const tmp = tempDirWithFiles("script-runner-env", {
+      using tmp = tempDir("script-runner-env", {
         "package.json": '{"scripts":{"show-env":"' + show_env_script + '"}}',
 
         ".env.development": "ENV_FILE_NAME=.env.development",
@@ -863,7 +864,7 @@ for (const shell of ["system", "bun"]) {
       },
     ]) {
       test("explicit NODE_ENV=" + NODE_ENV, () => {
-        const tmp = tempDirWithFiles("script-runner-env", {
+        using tmp = tempDir("script-runner-env", {
           "package.json": '{"scripts":{"show-env":"' + show_env_script + '"}}',
 
           ".env.development": "ENV_FILE_NAME=.env.development",
@@ -883,7 +884,7 @@ for (const shell of ["system", "bun"]) {
         // TODO: couldnt get a working thing for this on windows
         const run_index_script = `NODE_ENV=${NODE_ENV} bun run index.ts`;
 
-        const tmp = tempDirWithFiles("script-runner-env", {
+        using tmp = tempDir("script-runner-env", {
           "package.json": '{"scripts":{"start":"' + run_index_script + '"}}',
           "index.ts": "console.log(`ENV_FILE_NAME=${process.env.ENV_FILE_NAME}, NODE_ENV=${process.env.NODE_ENV}`);",
 
@@ -919,7 +920,7 @@ todoOnPosix("setting process.env coerces the value to a string", () => {
 });
 
 test("NODE_ENV=test loads .env.test even when .env.production exists", () => {
-  const dir = tempDirWithFiles("dotenv", {
+  using dir = tempDir("dotenv", {
     "index.ts": "console.log(process.env.AWESOME);",
     ".env.production": "AWESOME=production",
     ".env.test": "AWESOME=test",
@@ -932,7 +933,7 @@ describe("env loader buffer handling", () => {
   test("handles large quoted values with escape sequences", () => {
     // This test ensures the env loader properly handles large values that exceed the initial buffer size
     // The env loader doesn't process escape sequences, so \\\\ remains as \\\\
-    const dir = tempDirWithFiles("dotenv-buffer-overflow", {
+    using dir = tempDir("dotenv-buffer-overflow", {
       ".env": `OVERFLOW_VAR="${"\\\\".repeat(2049)}"`, // 2049 * 2 = 4098 characters
       "index.ts": "console.log(process.env.OVERFLOW_VAR?.length || 0);",
     });
@@ -941,7 +942,7 @@ describe("env loader buffer handling", () => {
   });
 
   test("handles multiple large values in same file", () => {
-    const dir = tempDirWithFiles("dotenv-multiple-large", {
+    using dir = tempDir("dotenv-multiple-large", {
       ".env": `
 LARGE1="${"a".repeat(3000)}"
 LARGE2="${"b".repeat(3000)}"
@@ -957,7 +958,7 @@ LARGE3="${"c".repeat(3000)}"
   test("handles escape sequences at buffer boundaries", () => {
     // Test that values with content near the old 4096-byte buffer boundary work correctly
     const prefix = "x".repeat(4090);
-    const dir = tempDirWithFiles("dotenv-boundary-escape", {
+    using dir = tempDir("dotenv-boundary-escape", {
       ".env": `BOUNDARY="${prefix}suffix"`, // Total length would exceed 4096
       "index.ts": "console.log(process.env.BOUNDARY?.length || 0);",
     });
@@ -983,7 +984,7 @@ const canUseRunuser =
   hasNobodyUser();
 
 test.skipIf(!canUseRunuser)("process.env is preserved when cwd lacks read permission", () => {
-  const dir = tempDirWithFiles("env-eacces", {
+  using dir = tempDir("env-eacces", {
     // Script lives in the readable root; the cwd will be a separate
     // execute-only directory.
     "script.ts": "console.log(JSON.stringify(!!process.env.MY_VAR));",
@@ -1043,7 +1044,7 @@ test.skipIf(!canUseRunuser)("process.env is preserved when cwd lacks read permis
 // `handle_alloc_error` before any user code ran. It must surface as a
 // recoverable error. ASAN-only: ASAN rejects the 1 TiB request deterministically.
 test.skipIf(!isASAN || isWindows)(".env with a huge lying st_size does not abort the process", async () => {
-  const dir = tempDirWithFiles("dotenv-huge-sparse", {
+  await using dir = tempDir("dotenv-huge-sparse", {
     ".env": "",
     "app.js": `console.log("reached user code");`,
   });

@@ -46,11 +46,12 @@ test("webcrypto dead functions do not reappear", () => {
     ["src/jsc/bindings/webcrypto/CryptoKeyHMAC.h", /generateFromBytes/],
     ["src/jsc/bindings/webcrypto/CryptoKeyHMAC.cpp", /generateFromBytes/],
     // CryptoKeyOKP helpers with no callers (the EC flavour of namedCurveString is live).
+    // importJwkInternal existed only to share the body with importPublicJwk.
     [
       "src/jsc/bindings/webcrypto/CryptoKeyOKP.h",
-      /importPublicJwk|isEd25519PrivateKey|exportKeySizeInBits\b|namedCurveString/,
+      /importPublicJwk|importJwkInternal|isEd25519PrivateKey|exportKeySizeInBits\b|namedCurveString/,
     ],
-    ["src/jsc/bindings/webcrypto/CryptoKeyOKP.cpp", /importPublicJwk|::namedCurveString/],
+    ["src/jsc/bindings/webcrypto/CryptoKeyOKP.cpp", /importPublicJwk|importJwkInternal|::namedCurveString/],
     // CryptoKeyEC::keySizeInBytes: every caller computes (keySizeInBits()+7)/8 locally.
     ["src/jsc/bindings/webcrypto/CryptoKeyEC.h", /size_t keySizeInBytes\(/],
     // #if 0 CommonCrypto and #if USE(GCRYPT) blocks.

@@ -87,7 +87,6 @@ private:
     Vector<uint8_t> platformExportRaw() const;
     Vector<uint8_t> platformExportSpki() const;
     Vector<uint8_t> platformExportPkcs8() const;
-    static RefPtr<CryptoKeyOKP> importJwkInternal(CryptoAlgorithmIdentifier identifier, NamedCurve namedCurve, JsonWebKey&& keyData, bool extractable, CryptoKeyUsageBitmap usages, bool onlyPublic);
 
     NamedCurve m_curve;
     KeyMaterial m_data;

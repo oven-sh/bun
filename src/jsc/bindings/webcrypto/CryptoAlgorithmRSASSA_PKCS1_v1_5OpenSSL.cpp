@@ -33,8 +33,12 @@
 
 namespace WebCore {
 
-static ExceptionOr<Vector<uint8_t>> signWithEVP_MD(const CryptoKeyRSA& key, const EVP_MD* md, size_t padding, const Vector<uint8_t>& data)
+static ExceptionOr<Vector<uint8_t>> signWithEVP_MD(const CryptoKeyRSA& key, const EVP_MD* md, const Vector<uint8_t>& data)
 {
+    std::optional<Vector<uint8_t>> digest = calculateDigest(md, data);
+    if (!digest)
+        return Exception { OperationError };
+
     auto ctx = EvpPKeyCtxPtr(EVP_PKEY_CTX_new(key.platformKey(), nullptr));
     if (!ctx)
         return Exception { OperationError };
@@ -42,25 +46,18 @@ static ExceptionOr<Vector<uint8_t>> signWithEVP_MD(const CryptoKeyRSA& key, cons
     if (EVP_PKEY_sign_init(ctx.get()) <= 0)
         return Exception { OperationError };
 
-    if (EVP_PKEY_CTX_set_rsa_padding(ctx.get(), padding) <= 0)
+    if (EVP_PKEY_CTX_set_rsa_padding(ctx.get(), RSA_PKCS1_PADDING) <= 0)
         return Exception { OperationError };
 
-    auto toSign = data;
-    if (md) {
-        if (EVP_PKEY_CTX_set_signature_md(ctx.get(), md) <= 0)
-            return Exception { OperationError };
-        std::optional<Vector<uint8_t>> digest = calculateDigest(md, data);
-        if (!digest)
-            return Exception { OperationError };
-        toSign = std::move(digest.value());
-    }
+    if (EVP_PKEY_CTX_set_signature_md(ctx.get(), md) <= 0)
+        return Exception { OperationError };
 
     size_t signatureLen;
-    if (EVP_PKEY_sign(ctx.get(), nullptr, &signatureLen, toSign.begin(), toSign.size()) <= 0)
+    if (EVP_PKEY_sign(ctx.get(), nullptr, &signatureLen, digest->begin(), digest->size()) <= 0)
         return Exception { OperationError };
 
     Vector<uint8_t> signature(signatureLen);
-    if (EVP_PKEY_sign(ctx.get(), signature.begin(), &signatureLen, toSign.begin(), toSign.size()) <= 0)
+    if (EVP_PKEY_sign(ctx.get(), signature.begin(), &signatureLen, digest->begin(), digest->size()) <= 0)
         return Exception { OperationError };
     signature.shrink(signatureLen);
 
@@ -73,7 +70,7 @@ ExceptionOr<Vector<uint8_t>> CryptoAlgorithmRSASSA_PKCS1_v1_5::platformSign(cons
     if (!md)
         return Exception { NotSupportedError };
 
-    return signWithEVP_MD(key, md, RSA_PKCS1_PADDING, data);
+    return signWithEVP_MD(key, md, data);
 }
 
 static ExceptionOr<bool> verifyWithEVP_MD(const CryptoKeyRSA& key, const EVP_MD* md, const Vector<uint8_t>& signature, const Vector<uint8_t>& data)

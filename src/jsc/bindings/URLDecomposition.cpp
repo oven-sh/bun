@@ -137,7 +137,7 @@ void URLDecomposition::setHost(StringView value)
                 fullURL.setHostAndPort(value.left(separator + 1 + portLength));
         }
     }
-    if (fullURL.isValid())
+    if (fullURL.isValid() && Bun::urlHostIsValidIDNA(fullURL))
         setFullURL(fullURL);
 }
 
@@ -154,7 +154,7 @@ void URLDecomposition::setHostname(StringView host)
     if (fullURL.hasOpaquePath())
         return;
     fullURL.setHost(host);
-    if (fullURL.isValid())
+    if (fullURL.isValid() && Bun::urlHostIsValidIDNA(fullURL))
         setFullURL(fullURL);
 }
 

@@ -5,8 +5,8 @@
 // with a tight `fs.inotify.max_user_instances` budget this surfaced as
 // `EMFILE while initializing file watcher for development server`.
 
-import { test, expect } from "bun:test";
-import { bunEnv, bunExe, tempDir, isLinux, isWindows } from "harness";
+import { expect, test } from "bun:test";
+import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
 
 // Windows watcher `wake()` is intentionally a no-op (see
 // `src/watcher/WindowsWatcher.rs`), so the thread/handle are held until

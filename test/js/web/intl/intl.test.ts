@@ -141,8 +141,14 @@ describe("Intl.DateTimeFormat", () => {
       // every hour/minute/second-following separator literal for each endpoint.
       expect({
         range,
-        startRange: { contains: range.includes(hms(f.formatToParts(a))), separators: fieldSeparators(rangeParts.filter(p => p.source === "startRange")) },
-        endRange: { contains: range.includes(hms(f.formatToParts(b))), separators: fieldSeparators(rangeParts.filter(p => p.source === "endRange")) },
+        startRange: {
+          contains: range.includes(hms(f.formatToParts(a))),
+          separators: fieldSeparators(rangeParts.filter(p => p.source === "startRange")),
+        },
+        endRange: {
+          contains: range.includes(hms(f.formatToParts(b))),
+          separators: fieldSeparators(rangeParts.filter(p => p.source === "endRange")),
+        },
       }).toEqual({
         range,
         startRange: { contains: true, separators: fieldSeparators(f.formatToParts(a)) },

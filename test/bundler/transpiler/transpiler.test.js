@@ -2674,6 +2674,12 @@ console.log(<div {...obj} key="after" />);`),
       expectParseError("(function* yield() {})", 'A generator function expression cannot be named "yield"');
       expectPrinted_("x = function await() {}", "x = function await() {}");
       expectPrinted_("x = async function yield() {}", "x = async function yield() {}");
+
+      // TypeScript overload signatures take the forward-declaration early return but are still checked.
+      ts.expectParseError(
+        "async function outer() { function await(): void; function await(): void {} }",
+        'Cannot use "await" as an identifier here',
+      );
     });
 
     it("import assert", () => {

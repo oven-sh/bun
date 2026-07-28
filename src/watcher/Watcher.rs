@@ -294,16 +294,10 @@ impl Watcher {
                 me.mutex.lock();
                 me.close_descriptors.store(close_descriptors);
                 me.running.store(false);
-                // Wake the watcher thread out of its blocking wait so it can
-                // observe `running == false`, run `platform.stop()`, and free
-                // `*this`. Without this the thread stays parked (in inotify
-                // `read()` / `kevent()`) and every disposed dev server leaks its
-                // inotify/kqueue instance until process exit.
                 me.platform.wake();
                 me.mutex.unlock();
                 // `*this` may be freed by the watcher thread any time after this
-                // point; `thread_main` takes/releases `mutex` as a barrier before
-                // `heap::take(this)` so it cannot proceed until the unlock above.
+                // unlock; `thread_main` lock/unlocks `mutex` before `heap::take`.
                 false
             } else {
                 if close_descriptors && me.running.load() {
@@ -350,9 +344,6 @@ impl Watcher {
         // argument is still protected is UB under Stacked Borrows / Tree Borrows.
         let owner_still_alive = unsafe { (*this).thread_body() };
 
-        // Close trace file if open
-        WatcherTrace::deinit();
-
         Output::flush();
 
         if !owner_still_alive {
@@ -383,18 +374,12 @@ impl Watcher {
             Ok(()) => false,
         };
 
-        // Barrier: `shutdown()` holds `self.mutex` across
-        // `running.store(false)` and `platform.wake()`. This thread can
-        // observe `running == false` at the unlocked `while` check and
-        // fall through here before `shutdown()` has unlocked, so without
-        // this pair `platform.stop()` below could race `wake()` touching
-        // the same platform fds, and `heap::take(this)` could free
-        // `self.mutex` out from under `shutdown()`'s pending unlock.
+        // Barrier: `shutdown()` holds `mutex` across `running.store(false)`
+        // and `platform.wake()`; `stop()` and `heap::take(this)` below
+        // must not run until `shutdown()` has unlocked.
         self.mutex.lock();
         self.mutex.unlock();
 
-        // Release platform resources. `wake()` makes the loop exit via
-        // `Ok(())`, so this must run on both arms (previously only `Err`).
         self.platform.stop();
 
         // deinit and close descriptors if needed

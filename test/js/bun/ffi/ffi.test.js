@@ -932,6 +932,62 @@ it("JSCallback exceptions propagate out of the native call", async () => {
   });
 });
 
+it("worker teardown drops queued threadsafe JSCallback invocations without crashing", async () => {
+  using dir = tempDir("ffi-jscallback-terminate-queued", {
+    "main.js": `
+      import { join } from "node:path";
+      import { Worker } from "node:worker_threads";
+
+      const sab = new SharedArrayBuffer(4);
+      const queued = new Int32Array(sab);
+
+      const worker = new Worker(join(import.meta.dir, "worker.js"), { workerData: sab });
+      worker.on("error", err => {
+        console.error("worker error:", err);
+        process.exit(1);
+      });
+
+      // Wait until the worker has queued a batch of threadsafe invocations that its blocked
+      // event loop cannot drain, then tear it down with those tasks still pending.
+      await Atomics.waitAsync(queued, 0, 0).value;
+      await worker.terminate();
+      console.log("done");
+    `,
+    "worker.js": `
+      import { CFunction, JSCallback } from "bun:ffi";
+      import { workerData } from "node:worker_threads";
+
+      const queued = new Int32Array(workerData);
+      let ran = 0;
+      const callback = new JSCallback(() => { ran++; }, { returns: "void", args: [], threadsafe: true });
+      const fire = new CFunction({ ptr: callback.ptr, returns: "void", args: [] });
+
+      // Each call enqueues an invocation onto this worker's event loop; none can run while
+      // this module keeps the loop occupied, so they are all still queued at terminate().
+      for (let i = 0; i < 200; i++) fire();
+
+      Atomics.store(queued, 0, 1);
+      Atomics.notify(queued, 0);
+      while (true) {}
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+    stdout: "done\n",
+    stderr: "",
+    exitCode: 0,
+    signalCode: null,
+  });
+});
+
 // worker.terminate() delivered inside a threadsafe JSCallback used to trip
 // "ASSERTION FAILED: !isTerminationException(exception) || hasTerminationRequest()"
 // in JSC::VM::setException on the worker thread and re-enter the terminated VM.

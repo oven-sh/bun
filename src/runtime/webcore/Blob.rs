@@ -1284,8 +1284,7 @@ impl BlobExt for Blob {
         if !matches!(store.data, store::Data::File(_)) {
             return JSValue::FALSE;
         }
-        // A slice has concrete `size`, so the `MAX_SIZE` gate above skipped the
-        // stat and `file.mode` is still 0. `seekable == None` means never stat'd.
+        // Slices have concrete `size` so the stat above was skipped; `seekable == None` means never stat'd.
         if store.data_mut().as_file().seekable.is_none() {
             resolve_file_stat(store);
         }

@@ -36,6 +36,7 @@ const ArrayPrototypeSplice = Array.prototype.splice;
 var ArrayBufferIsView = ArrayBuffer.isView;
 
 var NumberIsInteger = Number.isInteger;
+var MathMax = Math.max;
 var StringPrototypeIncludes = String.prototype.includes;
 var Uint8ArrayPrototypeIncludes = Uint8Array.prototype.includes;
 
@@ -346,6 +347,7 @@ function execFile(file, args, options, callback) {
     if (encoding) child_buffer.setEncoding(encoding);
 
     let totalLen = 0;
+    let maxBufferTripped = false;
     if (maxBuffer === Infinity) {
       child_buffer.on("data", function onDataNoMaxBuf(chunk) {
         $arrayPush(_buffer, chunk);
@@ -353,13 +355,18 @@ function execFile(file, args, options, callback) {
       return;
     }
     child_buffer.on("data", function onData(chunk) {
+      // A chunk that was already queued in the pipe may be delivered after
+      // kill()/destroy(). Once the limit has tripped, drop late chunks so the
+      // callback's stdout/stderr never exceeds maxBuffer and kill() runs once.
+      if (maxBufferTripped) return;
       const encoding = child_buffer.readableEncoding;
       if (encoding) {
         const length = Buffer.byteLength(chunk, encoding);
         totalLen += length;
 
         if (totalLen > maxBuffer) {
-          const truncatedLen = maxBuffer - (totalLen - length);
+          maxBufferTripped = true;
+          const truncatedLen = MathMax(0, maxBuffer - (totalLen - length));
           $arrayPush(_buffer, String.prototype.slice.$call(chunk, 0, truncatedLen));
 
           ex = $ERR_CHILD_PROCESS_STDIO_MAXBUFFER(kind);
@@ -372,7 +379,8 @@ function execFile(file, args, options, callback) {
         totalLen += length;
 
         if (totalLen > maxBuffer) {
-          const truncatedLen = maxBuffer - (totalLen - length);
+          maxBufferTripped = true;
+          const truncatedLen = MathMax(0, maxBuffer - (totalLen - length));
           $arrayPush(_buffer, chunk.slice(0, truncatedLen));
 
           ex = $ERR_CHILD_PROCESS_STDIO_MAXBUFFER(kind);

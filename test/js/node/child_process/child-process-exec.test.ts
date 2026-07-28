@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { bunExe, isWindows } from "harness";
-import { exec } from "node:child_process";
+import { bunEnv, bunExe, isWindows } from "harness";
+import { exec, execFile } from "node:child_process";
 
 const SIZE = 262145;
 
@@ -101,6 +101,31 @@ describe.concurrent("child_process.exec", () => {
       expect(out.length).toBeGreaterThan(1024 * 100);
       expect(other).toBe("");
     });
+  });
+});
+
+// Regression: a chunk already queued in the pipe when kill()/destroy() fires
+// was being appended past maxBuffer because slice(0, negative) keeps a tail.
+// Needs a writer that fills the pipe faster than the reader drains it; a
+// debug-build Bun child starts too slowly to trigger it, so use head(1).
+describe.concurrent.each(["buffer", "utf8"] as const)("maxBuffer cap with fast writer (%s)", enc => {
+  test.skipIf(isWindows)("stdout never exceeds maxBuffer", async () => {
+    const maxBuffer = 64 * 1024;
+    const results = await Promise.all(
+      Array.from({ length: 10 }, () => {
+        const { promise, resolve } = Promise.withResolvers<{ code: unknown; len: number }>();
+        execFile(
+          "head",
+          ["-c", String(4 * 1024 * 1024), "/dev/zero"],
+          { maxBuffer, encoding: enc, env: bunEnv },
+          (err, stdout) => resolve({ code: (err as NodeJS.ErrnoException | null)?.code, len: stdout.length }),
+        );
+        return promise;
+      }),
+    );
+    expect(results).toEqual(
+      Array.from({ length: 10 }, () => ({ code: "ERR_CHILD_PROCESS_STDIO_MAXBUFFER", len: maxBuffer })),
+    );
   });
 });
 

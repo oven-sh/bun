@@ -150,7 +150,11 @@ function arrayValueSerializer(type: ArrayType, is_numeric: boolean, is_json: boo
     if (is_json) {
       return `"${arrayEscape(JSON.stringify(hexValue))}"`;
     }
-    throw $ERR_INVALID_ARG_VALUE("values", value, `ArrayBufferView elements are only supported in BYTEA or JSON arrays (got ${type})`);
+    throw $ERR_INVALID_ARG_VALUE(
+      "values",
+      value,
+      `ArrayBufferView elements are only supported in BYTEA or JSON arrays (got ${type})`,
+    );
   }
   if ($isArray(value)) {
     if (!value.length) return "{}";

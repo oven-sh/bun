@@ -1448,10 +1448,6 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
                 } else {
                     api::JsxRuntime::Automatic
                 },
-                // Match `Pragma::default()` so that passing only e.g.
-                // `--jsx-import-source` doesn't silently flip the automatic
-                // runtime from jsx-dev-runtime to jsx-runtime. `set_production`
-                // flips this later when NODE_ENV=production.
                 development: true,
                 side_effects: jsx_side_effects,
             });

@@ -752,15 +752,20 @@ impl FetchTasklet {
                 }
             }
 
+            // raw ptr: `body` and `get_fetch_headers()` are disjoint fields but borrowck can't see through the accessors.
+            let body: *mut BodyValue = response.get_body_value();
+            // `BodyAbortListener::on_abort` may have set `Error` while this
+            // callback was queued; checked before `buffer_reset.set(false)` so
+            // the defer still drops the bytes.
+            // SAFETY: just obtained from live `response`.
+            if !matches!(unsafe { &*body }, BodyValue::Locked(_)) {
+                return Ok(());
+            }
             // we will reach here when not streaming, this is also the only case we dont wanna to reset the buffer
             buffer_reset.set(false);
             if !self.result.has_more {
                 let scheduled_response_buffer =
                     core::mem::take(&mut self.scheduled_response_buffer.list);
-                // `body` (&mut response.body.value) and `get_fetch_headers()`
-                // (&response.init.headers) are disjoint fields, but borrowck can't see
-                // through the accessor methods. Hold `body` as a raw ptr.
-                let body: *mut BodyValue = response.get_body_value();
                 // done resolve body
                 let old = core::mem::replace(
                     // SAFETY: just obtained from live `response`; uniquely accessed here.
@@ -1859,6 +1864,11 @@ impl FetchTasklet {
         // SAFETY: `response` is the live heap allocation owned by JSC after
         // `make_maybe_pooled`; `ref_` bumps the intrusive refcount.
         self.native_response = Some(Response::ref_(response));
+        // Response-owned listener so abort still errors the body after this tasklet detaches its own.
+        if let Some(signal) = self.abort_signal() {
+            // SAFETY: `response` is the live heap allocation owned by JSC.
+            unsafe { Response::attach_abort_signal(response, &global_this, signal) };
+        }
         response_js
     }
 

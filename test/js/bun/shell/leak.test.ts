@@ -1,7 +1,7 @@
 import { $ } from "bun";
 import { heapStats } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, isASAN, isPosix, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, isASAN, isPosix, tempDir } from "harness";
 import { join } from "path";
 import { bunExe } from "./test_builder";
 import { createTestBuilder } from "./util";
@@ -404,7 +404,7 @@ describe.concurrent("fd leak", () => {
   describe.serial("#11816", async () => {
     function doit(builtin: boolean) {
       test(builtin ? "builtin" : "external", async () => {
-        const files = tempDirWithFiles("hi", {
+        await using files = tempDir("hi", {
           "input.txt": Array(2048).fill("a").join(""),
         });
         for (let j = 0; j < 10; j++) {
@@ -445,7 +445,7 @@ describe.concurrent("fd leak", () => {
   describe.serial("not leaking ParsedShellScript when ShellInterpreter never runs", () => {
     function doit(builtin: boolean) {
       test(builtin ? "builtin" : "external", async () => {
-        const files = tempDirWithFiles("hi", {
+        await using files = tempDir("hi", {
           "input.txt": Array(2048).fill("a").join(""),
         });
         // wrapping in a function

@@ -339,6 +339,12 @@ pub struct VirtualMachine {
 
     pub test_isolation_generation: u32,
     pub test_isolation_enabled: bool,
+    pub test_isolation_state: TestIsolationState,
+}
+
+#[derive(Default)]
+pub struct TestIsolationState {
+    pub saved_cwd: Option<Box<[u8]>>,
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -4615,6 +4621,47 @@ impl VirtualMachine {
             .remove_listening_socket_for_watch_mode(socket);
     }
 
+    pub fn test_isolation_scope<R>(
+        &mut self,
+        f: impl FnOnce(&mut TestIsolationState) -> R,
+    ) -> Option<R> {
+        if !self.test_isolation_enabled {
+            return None;
+        }
+        Some(f(&mut self.test_isolation_state))
+    }
+
+    pub fn set_process_cwd(&mut self, to: &bun_core::ZStr) -> bun_sys::Result<()> {
+        let fs = self.transpiler.fs_mut();
+        bun_sys::chdir(to)?;
+        let mut buf = bun_paths::PathBuffer::uninit();
+        let into_cwd_len = match bun_sys::getcwd(&mut buf[..]) {
+            bun_sys::Result::Ok(r) => r,
+            bun_sys::Result::Err(err) => {
+                let mut rollback = bun_paths::PathBuffer::uninit();
+                let _ = bun_sys::chdir(bun_paths::resolve_path::z(fs.top_level_dir, &mut rollback));
+                return bun_sys::Result::Err(err);
+            }
+        };
+        fs.top_level_dir_buf[..into_cwd_len].copy_from_slice(&buf[..into_cwd_len]);
+        fs.top_level_dir_buf[into_cwd_len] = 0;
+        // SAFETY: `top_level_dir_buf` is a process-lifetime field of the
+        // FileSystem singleton, so the detached borrow never outlives its
+        // backing storage.
+        fs.top_level_dir =
+            unsafe { bun_ptr::detach_lifetime(&fs.top_level_dir_buf[..into_cwd_len]) };
+        let len = fs.top_level_dir.len();
+        if fs.top_level_dir_buf[len - 1] != bun_paths::SEP {
+            fs.top_level_dir_buf[len] = bun_paths::SEP;
+            fs.top_level_dir_buf[len + 1] = 0;
+            // SAFETY: see above.
+            fs.top_level_dir =
+                unsafe { bun_ptr::detach_lifetime(&fs.top_level_dir_buf[..len + 1]) };
+        }
+        bun_core::set_top_level_dir(fs.top_level_dir);
+        Ok(())
+    }
+
     /// Replaces the global object between test files so each file runs in a fresh realm.
     ///
     /// Callers must run `bun_runtime::jsc_hooks::close_isolation_handles(vm)`
@@ -4624,6 +4671,12 @@ impl VirtualMachine {
     /// and cannot be called from here.
     pub fn swap_global_for_test_isolation(&mut self) {
         debug_assert!(self.test_isolation_enabled);
+
+        if let Some(cwd) = self.test_isolation_state.saved_cwd.take() {
+            let mut buf = bun_paths::PathBuffer::uninit();
+            let z = bun_paths::resolve_path::z(&cwd, &mut buf);
+            let _ = self.set_process_cwd(z);
+        }
 
         let _ = self.event_loop_mut().drain_microtasks();
 

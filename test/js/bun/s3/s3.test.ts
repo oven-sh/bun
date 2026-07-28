@@ -3,7 +3,7 @@ import { S3Client, s3 as defaultS3, file, randomUUIDv7 } from "bun";
 import { describe, expect, it } from "bun:test";
 import child_process from "child_process";
 import { randomUUID } from "crypto";
-import { bunEnv, bunExe, dockerExe, getSecret, isCI, isDockerEnabled, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, dockerExe, getSecret, isCI, isDockerEnabled, tempDir, tempDirWithFiles } from "harness";
 import path from "path";
 const s3 = (...args) => defaultS3.file(...args);
 const S3 = (...args) => new S3Client(...args);
@@ -1028,7 +1028,7 @@ for (let credentials of allCredentials) {
         });
 
         it("Bun.write(s3file, file) should work with empty file", async () => {
-          const dir = tempDirWithFiles("fsr", {
+          await using dir = tempDir("fsr", {
             "hello.txt": "",
           });
           const tmp_filename = `${randomUUID()}.txt`;

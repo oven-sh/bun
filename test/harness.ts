@@ -315,9 +315,8 @@ export async function expectMaxObjectTypeCount(
 
 // we must ensure that finalizers are run
 // so that the reference-counting logic is exercised
-export function gcTick(trace = false) {
-  trace && console.trace("");
-  // console.trace("hello");
+export function gcTick(traceForDebugging = false) {
+  traceForDebugging && console.trace("");
   gc();
   return Bun.sleep(0);
 }

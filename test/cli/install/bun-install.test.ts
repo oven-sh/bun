@@ -12,7 +12,6 @@ import {
   readdirSorted,
   runBunInstall,
   tempDir,
-  tempDirWithFiles,
   textLockfile,
   toBeValidBin,
   toBeWorkspaceLink,
@@ -458,7 +457,7 @@ describe.concurrent("bun-install", () => {
   });
 
   it("should work when moving workspace packages", async () => {
-    const package_dir = tempDirWithFiles("lol", {
+    await using package_dir = tempDir("lol", {
       "package.json": JSON.stringify({
         "name": "my-workspace",
         private: "true",
@@ -530,7 +529,7 @@ describe.concurrent("bun-install", () => {
   });
 
   it("should work when renaming a single workspace package", async () => {
-    const package_dir = tempDirWithFiles("lol", {
+    await using package_dir = tempDir("lol", {
       "package.json": JSON.stringify({
         "name": "my-workspace",
         private: "true",
@@ -7403,7 +7402,7 @@ describe.concurrent("bun-install", () => {
   });
 
   it("should handle installing workspaces with more complicated globs", async () => {
-    const package_dir = tempDirWithFiles("complicated-glob", {
+    await using package_dir = tempDir("complicated-glob", {
       "package.json": JSON.stringify({
         name: "package3",
         version: "0.0.1",
@@ -7460,7 +7459,7 @@ describe.concurrent("bun-install", () => {
   });
 
   it("should handle installing workspaces with multiple glob patterns", async () => {
-    const package_dir = tempDirWithFiles("multi-glob", {
+    await using package_dir = tempDir("multi-glob", {
       "package.json": JSON.stringify({
         name: "main",
         version: "0.0.1",
@@ -7523,7 +7522,7 @@ describe.concurrent("bun-install", () => {
   });
 
   it.todo("should handle installing workspaces with absolute glob patterns", async () => {
-    const package_dir = tempDirWithFiles("absolute-glob", {
+    await using package_dir = tempDir("absolute-glob", {
       "package.json": base =>
         JSON.stringify({
           name: "package3",

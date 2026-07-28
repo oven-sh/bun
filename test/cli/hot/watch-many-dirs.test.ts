@@ -1,6 +1,6 @@
 import { spawn } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, forEachLine, isASAN, isCI, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, forEachLine, isASAN, isCI, tempDir } from "harness";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -12,7 +12,7 @@ describe("--hot with many directories", () => {
     "handles 129 directories being updated simultaneously",
     async () => {
       // Create initial test structure
-      const tmpdir = tempDirWithFiles("hot-many-dirs", {
+      await using tmpdir = tempDir("hot-many-dirs", {
         "entry.js": `console.log('Initial load');`,
       });
 

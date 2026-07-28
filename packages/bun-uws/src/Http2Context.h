@@ -781,7 +781,15 @@ struct Http2Context {
          * scoped) but only deliver the FIN. */
         if (auto it = c->streams.find(stream); it != c->streams.end()) {
             Http2Response *r = it->second;
-            if (!decodeHeaderBlock(s, nullptr)) return;
+            bool malformed = false;
+            if (!decodeHeaderBlock(s, nullptr, nullptr, &malformed)) return;
+            if (malformed) {
+                /* §8.2.1 applies to trailer field names too; §8.1.1 says
+                 * a malformed message MUST be a stream PROTOCOL_ERROR.
+                 * HPACK state was advanced above, siblings stay healthy. */
+                abortStream(s, stream, h2::ERR_PROTOCOL);
+                return;
+            }
             if (r->getHttpResponseData()->remoteClosed) {
                 /* §5.1: HEADERS in half-closed(remote) → STREAM_CLOSED.
                  * Tear down locally too: once we RST we MUST NOT write
@@ -889,28 +897,30 @@ struct Http2Context {
                 protocolError(s, h2::ERR_COMPRESSION);
                 return false;
             }
-            if (!out || (malformed && *malformed)) continue;
             size_t nlen = xh.name_len, vlen = xh.val_len;
-            if (used + nlen + vlen > h2::MAX_HEADER_LIST) {
-                protocolError(s, h2::ERR_ENHANCE_YOUR_CALM);
-                return false;
-            }
             /* §8.2.1: field names MUST NOT contain uppercase and MUST be
              * valid tokens (RFC 9110 §5.6.2 tchar, lowercase-only). Flag
              * via `malformed` — the caller RSTs the stream — and keep
              * decoding so the connection-scoped HPACK state stays valid
-             * for sibling streams. */
-            const char *np = hpackBuf + xh.name_offset;
-            if (nlen == 0) { if (malformed) *malformed = true; continue; }
-            for (size_t j = 0; j < nlen; j++) {
-                unsigned char b = (unsigned char) np[j];
-                if (b < 0x21 || b >= 0x7f || (unsigned)(b - 'A') < 26u ||
-                    (b == ':' && j != 0)) {
-                    if (malformed) *malformed = true;
-                    break;
+             * for sibling streams. Runs regardless of `out` so trailer
+             * blocks (decoded state-only) are checked too. */
+            if (malformed && !*malformed) {
+                const char *np = hpackBuf + xh.name_offset;
+                if (nlen == 0) *malformed = true;
+                for (size_t j = 0; j < nlen; j++) {
+                    unsigned char b = (unsigned char) np[j];
+                    if (b < 0x21 || b >= 0x7f || (unsigned)(b - 'A') < 26u ||
+                        (b == ':' && j != 0)) {
+                        *malformed = true;
+                        break;
+                    }
                 }
             }
-            if (malformed && *malformed) continue;
+            if (!out || (malformed && *malformed)) continue;
+            if (used + nlen + vlen > h2::MAX_HEADER_LIST) {
+                protocolError(s, h2::ERR_ENHANCE_YOUR_CALM);
+                return false;
+            }
             store->append(hpackBuf + xh.name_offset, nlen);
             store->append(hpackBuf + xh.val_offset, vlen);
             out->append({(const char *)(uintptr_t) used, (unsigned) nlen,

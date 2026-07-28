@@ -438,6 +438,35 @@ describe("Bun.serve http2: true", () => {
     });
   });
 
+  test("a malformed trailer field name resets only its stream; siblings continue", async () => {
+    // §8.2.1 applies to trailer sections too. Stream 1: valid HEADERS,
+    // DATA, then a trailer HEADERS carrying an uppercase name. Stream 3:
+    // a valid GET on the same connection that must still succeed after
+    // stream 1 is RST — proves the trailer decode kept HPACK in sync
+    // and didn't GOAWAY.
+    await withServer(async port => {
+      using h2 = await rawH2(port);
+      h2.request(1, "POST", "/hold", false);
+      h2.sock.write(h2.frame(0x00, 0x00, 1, Buffer.from("x"))); // DATA, no END_STREAM
+      const badTrailer = Buffer.concat([
+        Buffer.from([0x00, "X-Trailer".length]),
+        Buffer.from("X-Trailer"),
+        Buffer.from([1]),
+        Buffer.from("t"),
+      ]);
+      h2.sock.write(h2.frame(0x01, 0x04 | 0x01, 1, badTrailer)); // HEADERS, END_HEADERS|END_STREAM
+      h2.request(3, "GET", "/hello", true);
+
+      const rst = await h2.waitFor(f => f.type === 0x03 && f.sid === 1);
+      expect(rst.payload.readUInt32BE(0)).toBe(1); // PROTOCOL_ERROR
+      expect(h2.frames.some(f => f.type === 0x07)).toBe(false); // no GOAWAY
+
+      await h2.waitFor(f => f.type === 0x00 && f.sid === 3 && !!(f.flags & 0x01));
+      const body = Buffer.concat(h2.frames.filter(f => f.type === 0x00 && f.sid === 3).map(f => f.payload));
+      expect(body.toString()).toBe("hello over h2");
+    });
+  });
+
   test("SETTINGS_ENABLE_PUSH value other than 0/1 → GOAWAY(PROTOCOL_ERROR)", async () => {
     // RFC 9113 §6.5.2: "Any value other than 0 or 1 MUST be treated as a
     // connection error of type PROTOCOL_ERROR." ENABLE_PUSH is a *defined*

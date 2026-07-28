@@ -375,7 +375,7 @@ unsafe fn ensure_cache_directory(this: *mut PackageManager) -> Dir {
 pub struct CacheDir {
     pub path: Vec<u8>,
     pub is_node_modules: bool,
-    /// True only for `BUN_INSTALL_CACHE_DIR` / bunfig `install.cache.dir`.
+    /// `BUN_INSTALL_CACHE_DIR`, `--cache-dir`, or bunfig `install.cache.dir`.
     pub is_explicit: bool,
 }
 

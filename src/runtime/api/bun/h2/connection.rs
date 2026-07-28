@@ -809,6 +809,11 @@ impl Connection {
     /// Drain one token from the inbound RST_STREAM bucket (nghttp2_ratelim, CVE-2023-44487),
     /// refilling `stream_reset_rate` per elapsed second. Returns true if the session was GOAWAY'd.
     fn note_peer_reset(&mut self, sink: &impl Sink) -> bool {
+        // nghttp2's session_update_stream_reset_ratelim is server-only and a no-op once a GOAWAY
+        // has been submitted.
+        if !self.is_server || self.going_away {
+            return false;
+        }
         let now = std::time::Instant::now();
         let elapsed = now
             .saturating_duration_since(self.reset_last_refill)

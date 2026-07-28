@@ -856,6 +856,27 @@ impl<'a> Parser<'a> {
 
         parse_tracer.end();
 
+        // Top-level await parses under the Module goal regardless of output
+        // format. Reject it here for formats that cannot represent it so the
+        // diagnostic points at the format mismatch instead of the generic
+        // `"await" can only be used inside an "async" function` lexer error.
+        if p.top_level_await_keyword.len > 0 && p.options.bundle {
+            let format_name: Option<&'static str> = match p.options.output_format {
+                options::Format::Cjs => Some("cjs"),
+                options::Format::Iife => Some("iife"),
+                options::Format::Esm | options::Format::InternalBakeDev => None,
+            };
+            if let Some(format_name) = format_name {
+                p.log().add_range_error_fmt(
+                    Some(p.source),
+                    p.top_level_await_keyword,
+                    format_args!(
+                        "Top-level await is currently not supported with the \"{format_name}\" output format"
+                    ),
+                );
+            }
+        }
+
         // Halt parsing right here if there were any errors
         // This fixes various conditions that would cause crashes due to the AST being in an invalid state while visiting
         // In a number of situations, we continue to parsing despite errors so that we can report more errors to the user

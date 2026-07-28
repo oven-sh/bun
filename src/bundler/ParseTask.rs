@@ -2463,8 +2463,10 @@ pub mod parse_worker {
         opts.features.allow_runtime = !task.source_index.is_runtime();
         opts.features.unwrap_commonjs_to_esm =
             output_format == options::Format::Esm && FeatureFlags::UNWRAP_COMMONJS_TO_ESM;
-        opts.features.top_level_await = output_format == options::Format::Esm
-            || output_format == options::Format::InternalBakeDev;
+        // Always parse with the Module goal so top-level await is accepted
+        // syntactically; formats that cannot represent it (cjs/iife) are
+        // rejected after the parse with a format-specific error.
+        opts.features.top_level_await = true;
         opts.features.auto_import_jsx = task.jsx.parse && topts.auto_import_jsx;
         opts.features.trim_unused_imports =
             loader.is_typescript() || topts.trim_unused_imports.unwrap_or(false);

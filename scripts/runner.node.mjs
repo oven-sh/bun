@@ -618,8 +618,13 @@ async function runTests() {
   // finished, so no parallel-safe process ever overlaps a serial test (an
   // overlap surfaced new flakes in tight-timeout / port-bind tests such as
   // dns-tcp-bidirectional-poll and test-https-timeout). `--parallel` already
-  // widens `limit` above and supersedes this split.
-  const parallelSafeWidth = parallelism > 1 ? parallelism : Math.max(availableParallelism() - 1, 1);
+  // widens `limit` above and supersedes this split. macOS is capped at 4: the
+  // Intel minis are 6-core i7-8700B (12 HT threads => width 11), and each
+  // M2 Ultra host runs two 18-vCPU tart VMs (width 17 apiece, 34 on 24
+  // cores when both are busy); both hit the 45-minute job timeout uncapped.
+  const parallelSafeCap = isMacOS ? 4 : Infinity;
+  const parallelSafeWidth =
+    parallelism > 1 ? parallelism : Math.min(parallelSafeCap, Math.max(availableParallelism() - 1, 1));
   const parallelSafeLimit = parallelism > 1 ? limit : pLimit(parallelSafeWidth);
   const isParallelSafeTest = testPath => {
     const p = testPath.replaceAll("\\", "/");

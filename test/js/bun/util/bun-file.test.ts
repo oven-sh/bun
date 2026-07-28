@@ -302,13 +302,27 @@ describe("BunFile exists()/size/lastModified reflect the current filesystem stat
     using dir = tempDir("bunfile-clone-poison", {});
     const p = join(String(dir), "f");
     const f = Bun.file(p);
-    structuredClone(f);
+    const fc = structuredClone(f);
     fs.writeFileSync(p, "content");
-    expect(await f.text()).toBe("content");
+    expect({ source: await f.text(), clone: await fc.text() }).toEqual({
+      source: "content",
+      clone: "content",
+    });
 
     const g = Bun.file(p);
-    structuredClone(g);
+    const gc = structuredClone(g);
     fs.appendFileSync(p, "!!!");
-    expect(await g.text()).toBe("content!!!");
+    expect({ source: await g.text(), clone: await gc.text() }).toEqual({
+      source: "content!!!",
+      clone: "content!!!",
+    });
+
+    const s = Bun.file(p).slice(0, 5);
+    const sc = structuredClone(s);
+    fs.writeFileSync(p, "0123456789");
+    expect({ source: await s.text(), clone: await sc.text() }).toEqual({
+      source: "01234",
+      clone: "01234",
+    });
   });
 });

@@ -396,17 +396,17 @@ for (const info of [
     await runBunInstall(env, packageDir);
 
     const results = await Promise.all([
-      exists(join(packageDir, "node_modules", ".bin", isWindows ? "bin1.bunx" : "bin1")),
-      exists(join(packageDir, "node_modules", ".bin", isWindows ? "bin2.bunx" : "bin2")),
-      exists(join(packageDir, "node_modules", ".bin", isWindows ? "bin3.js.bunx" : "bin3.js")),
-      exists(join(packageDir, "node_modules", ".bin", isWindows ? "bin4.js.bunx" : "bin4.js")),
+      exists(join(packageDir, "node_modules", ".bin", isWindows ? "bin1.exe" : "bin1")),
+      exists(join(packageDir, "node_modules", ".bin", isWindows ? "bin2.exe" : "bin2")),
+      exists(join(packageDir, "node_modules", ".bin", isWindows ? "bin3.js.exe" : "bin3.js")),
+      exists(join(packageDir, "node_modules", ".bin", isWindows ? "bin4.js.exe" : "bin4.js")),
       exists(join(packageDir, "node_modules", ".bin", isWindows ? "moredir" : "moredir/bin4.js")),
       exists(
         join(
           packageDir,
           "node_modules",
           ".bin",
-          isWindows ? `publish-pkg-${info.user}.bunx` : "publish-pkg-" + info.user,
+          isWindows ? `publish-pkg-${info.user}.exe` : "publish-pkg-" + info.user,
         ),
       ),
     ]);

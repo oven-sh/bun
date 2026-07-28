@@ -1048,7 +1048,7 @@ describe.concurrent("bun run", () => {
         expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
       }
 
-      expect(await Bun.file(join(String(dir), "node_modules", ".bin", "print-env-len.bunx")).exists()).toBe(true);
+      expect(await Bun.file(join(String(dir), "node_modules", ".bin", "print-env-len.exe")).exists()).toBe(true);
 
       // Two 25,000-char values plus the rest of bunEnv push the serialized
       // block past 32,767 u16s without approaching any per-variable or

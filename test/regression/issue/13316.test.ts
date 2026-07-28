@@ -39,9 +39,9 @@ console.log(JSON.stringify(process.argv.slice(2)));
     });
     await installProc.exited;
 
-    // Verify the .bunx file was created (this is what triggers the fast path)
-    const bunxPath = path.join(String(dir), "node_modules", ".bin", "echo-args-test.bunx");
-    expect(fs.existsSync(bunxPath)).toBe(true);
+    // Verify the bin shim was created (this is what triggers the fast path)
+    const exePath = path.join(String(dir), "node_modules", ".bin", "echo-args-test.exe");
+    expect(fs.existsSync(exePath)).toBe(true);
 
     // Run with an empty string argument - this was triggering the panic
     // We use `bun run` which goes through the same BunXFastPath when .bunx exists

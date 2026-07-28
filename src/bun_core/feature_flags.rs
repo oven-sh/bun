@@ -97,9 +97,11 @@ pub const DISABLE_AUTO_JS_TO_TS_IN_NODE_MODULES: bool = true;
 
 pub const RUNTIME_TRANSPILER_CACHE: bool = true;
 
-/// On Windows, node_modules/.bin uses pairs of '.exe' + '.bunx' files.  The
-/// fast path is to load the .bunx file within `bun.exe` instead of
-/// `bun_shim_impl.exe` by using `bun_shim_impl.tryStartupFromBunJS`
+/// On Windows, node_modules/.bin holds a '.exe' stub per bin whose metadata
+/// lives in a ':bunx' NTFS alternate data stream (or a sibling '.bunx' file
+/// on volumes without named streams). The fast path is to load that metadata
+/// within `bun.exe` instead of `bun_shim_impl.exe` by using
+/// `bun_shim_impl.tryStartupFromBunJS`
 ///
 /// When debugging weird script runner issues, it may be worth disabling this in
 /// order to isolate your bug.

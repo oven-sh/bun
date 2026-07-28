@@ -1,7 +1,7 @@
 import { file, spawn, write } from "bun";
 import { install_test_helpers } from "bun:internal-for-testing";
 import { afterAll, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { copyFileSync, mkdirSync } from "fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { cp, exists, lstat, mkdir, readlink, rm, writeFile } from "fs/promises";
 import {
   assertManifestsPopulated,
@@ -22,6 +22,7 @@ import {
   toHaveBins,
   toMatchNodeModulesAt,
   VerdaccioRegistry,
+  windowsBinShimExists,
   writeShebangScript,
 } from "harness";
 import { join, resolve } from "path";
@@ -2682,12 +2683,7 @@ describe("binaries", () => {
 
     // now `what-bin` should be installed in the global bin directory
     if (isWindows) {
-      expect(
-        await Promise.all([
-          exists(join(packageDir, "global-bin-dir", "what-bin.exe")),
-          exists(join(packageDir, "global-bin-dir", "what-bin.bunx")),
-        ]),
-      ).toEqual([true, true]);
+      expect(windowsBinShimExists(join(packageDir, "global-bin-dir", "what-bin"))).toBeTrue();
     } else {
       expect(await exists(join(packageDir, "global-bin-dir", "what-bin"))).toBeTrue();
     }
@@ -8759,6 +8755,88 @@ registry = "http://localhost:${port}/"
       expect(await exited).toBe(0);
     });
   }
+
+  test("metadata is stored as a :bunx alternate data stream on the exe", async () => {
+    const binDir = join(packageDir, "node_modules", ".bin");
+    const entries = await readdirSorted(binDir);
+    // On NTFS every bin is a single `.exe` file; the metadata lives in its
+    // `:bunx` stream, not a sibling `.bunx` file.
+    expect(entries.filter(e => e.endsWith(".bunx"))).toEqual([]);
+    expect(entries.filter(e => e.endsWith(".exe")).length).toBeGreaterThan(0);
+    for (const exe of entries.filter(e => e.endsWith(".exe"))) {
+      const stream = readFileSync(join(binDir, exe + ":bunx"));
+      expect(stream.length).toBeGreaterThan(0);
+    }
+  });
+
+  test("standalone shim falls back to a .bunx sidecar when no stream exists", async () => {
+    const binDir = join(packageDir, "node_modules", ".bin");
+    const exe = join(binDir, "bin1.exe");
+    const stream = join(binDir, "bin1.exe:bunx");
+    const sidecar = join(binDir, "bin1.bunx");
+
+    const metadata = readFileSync(stream);
+    // Recreate the exe from scratch so the `:bunx` stream is gone (named
+    // streams are dropped when the host file is deleted) and put the metadata
+    // in a sidecar instead.
+    const exeBytes = readFileSync(exe);
+    rmSync(exe);
+    writeFileSync(exe, exeBytes);
+    expect(existsSync(stream)).toBe(false);
+    writeFileSync(sidecar, metadata);
+
+    try {
+      var { stdout, stderr, exited } = spawn({
+        cmd: [exe, "arg1", "arg2"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stdin: "pipe",
+        stderr: "pipe",
+        env: mergeWindowEnvs([env, { PATH: PATH }]),
+      });
+      const err = await stderr.text();
+      const out = await stdout.text();
+      expect(err.trim()).toBe("");
+      expect(out.trim()).toBe("i am bin1 arg1 arg2");
+      expect(await exited).toBe(0);
+    } finally {
+      writeFileSync(stream, metadata);
+      rmSync(sidecar, { force: true });
+    }
+  });
+
+  test("reinstall removes stale .bunx sidecars from the two-file layout", async () => {
+    const dir = tmpdirSync();
+    await writeFile(
+      join(dir, "bunfig.toml"),
+      `[install]\ncache = false\nregistry = "http://localhost:${port}/"\n`,
+    );
+    await writeFile(
+      join(dir, "package.json"),
+      JSON.stringify({ name: "foo", version: "1.0.0", dependencies: { "what-bin": "1.0.0" } }),
+    );
+
+    await spawn({ cmd: [bunExe(), "install"], cwd: dir, stdout: "ignore", stderr: "ignore", env }).exited;
+
+    const binDir = join(dir, "node_modules", ".bin");
+    expect(existsSync(join(binDir, "what-bin.exe"))).toBe(true);
+    expect(existsSync(join(binDir, "what-bin.bunx"))).toBe(false);
+
+    // Simulate a project installed by an older bun that wrote sidecar files.
+    writeFileSync(join(binDir, "what-bin.bunx"), Buffer.from("stale"));
+    const { exited } = spawn({
+      cmd: [bunExe(), "install", "--force"],
+      cwd: dir,
+      stdout: "ignore",
+      stderr: "ignore",
+      env,
+    });
+    expect(await exited).toBe(0);
+
+    expect(existsSync(join(binDir, "what-bin.exe"))).toBe(true);
+    expect(existsSync(join(binDir, "what-bin.exe:bunx"))).toBe(true);
+    expect(existsSync(join(binDir, "what-bin.bunx"))).toBe(false);
+  });
 });
 
 test("rejects dependency aliases containing relative path segments", async () => {

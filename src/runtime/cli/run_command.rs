@@ -4023,36 +4023,71 @@ impl BunXFastPath {
         // SAFETY: process-lifetime static, single-threaded CLI dispatch.
         let direct_launch_buffer =
             unsafe { &mut *bunx_fast_path_buffers::DIRECT_LAUNCH_BUFFER.get() };
-        let (path_to_use, command_line) = direct_launch_buffer.split_at_mut(path_len);
 
+        debug_assert!(paths::is_absolute_windows_wtf16(&direct_launch_buffer[..path_len]));
+        debug_assert!(direct_launch_buffer[..path_len].ends_with(bun_core::w!(".bunx")));
+
+        let open_opts = sys::NtCreateFileOptions {
+            access_mask: sys::windows::STANDARD_RIGHTS_READ
+                | sys::windows::FILE_READ_DATA
+                | sys::windows::FILE_READ_ATTRIBUTES
+                | sys::windows::FILE_READ_EA
+                | sys::windows::SYNCHRONIZE,
+            disposition: sys::windows::FILE_OPEN,
+            options: sys::windows::FILE_NON_DIRECTORY_FILE
+                | sys::windows::FILE_SYNCHRONOUS_IO_NONALERT,
+            ..Default::default()
+        };
+
+        // Prefer the `:bunx` alternate data stream on the exe. Callers built
+        // `<...>.bunx` at `[..path_len]`; rewrite the tail to `<...>.exe:bunx`
+        // (+4 u16s) for the probe, then restore `.bunx` so the buffer handed to
+        // the launcher (which walks it to find `node_modules`) is unchanged.
+        let ads_suffix = bun_core::w!(".exe:bunx");
+        let ads_len = path_len - b".bunx".len() + ads_suffix.len();
+        direct_launch_buffer[ads_len - ads_suffix.len()..ads_len].copy_from_slice(ads_suffix);
         bun_core::scoped_log!(
             BUNX_FAST_PATH_LOG,
             "Attempting to find and load bunx file: '{}'",
-            bun_core::fmt::utf16(path_to_use)
+            bun_core::fmt::utf16(&direct_launch_buffer[..ads_len])
         );
-        debug_assert!(paths::is_absolute_windows_wtf16(path_to_use));
-
         let handle = match sys::open_file_at_windows(
             Fd::INVALID, // absolute path is given
-            path_to_use,
-            sys::NtCreateFileOptions {
-                access_mask: sys::windows::STANDARD_RIGHTS_READ
-                    | sys::windows::FILE_READ_DATA
-                    | sys::windows::FILE_READ_ATTRIBUTES
-                    | sys::windows::FILE_READ_EA
-                    | sys::windows::SYNCHRONIZE,
-                disposition: sys::windows::FILE_OPEN,
-                options: sys::windows::FILE_NON_DIRECTORY_FILE
-                    | sys::windows::FILE_SYNCHRONOUS_IO_NONALERT,
-                ..Default::default()
-            },
+            &direct_launch_buffer[..ads_len],
+            open_opts,
         ) {
             Ok(fd) => fd.native(),
-            Err(err) => {
-                bun_core::scoped_log!(BUNX_FAST_PATH_LOG, "Failed to open bunx file: '{}'", err);
-                return;
+            Err(_) => {
+                let bunx_suffix = bun_core::w!(".bunx");
+                direct_launch_buffer[path_len - bunx_suffix.len()..path_len]
+                    .copy_from_slice(bunx_suffix);
+                bun_core::scoped_log!(
+                    BUNX_FAST_PATH_LOG,
+                    "ADS not found, trying sidecar: '{}'",
+                    bun_core::fmt::utf16(&direct_launch_buffer[..path_len])
+                );
+                match sys::open_file_at_windows(
+                    Fd::INVALID,
+                    &direct_launch_buffer[..path_len],
+                    open_opts,
+                ) {
+                    Ok(fd) => fd.native(),
+                    Err(err) => {
+                        bun_core::scoped_log!(
+                            BUNX_FAST_PATH_LOG,
+                            "Failed to open bunx file: '{}'",
+                            err
+                        );
+                        return;
+                    }
+                }
             }
         };
+
+        let bunx_suffix = bun_core::w!(".bunx");
+        direct_launch_buffer[path_len - bunx_suffix.len()..path_len].copy_from_slice(bunx_suffix);
+        direct_launch_buffer[path_len] = 0;
+        let (path_to_use, command_line) = direct_launch_buffer.split_at_mut(path_len);
 
         let mut i: usize = 0;
         for arg in passthrough {

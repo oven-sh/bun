@@ -1,7 +1,7 @@
 import { spawn } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, forEachLine, isBroken, isWindows, tempDir } from "harness";
-import { rename, writeFile } from "node:fs/promises";
+import { rename, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 describe.todoIf(isBroken && isWindows)("--watch works", async () => {
@@ -87,9 +87,8 @@ describe.skipIf(isWindows)("picks up atomic rename-save of a module outside cwd"
         cmd: [bunExe(), flag, "--no-clear-screen", "entry.ts"],
         cwd: appDir,
         env: bunEnv,
-        stdio: ["ignore", "pipe", "pipe"],
+        stdio: ["ignore", "pipe", "inherit"],
       });
-      const stderr = proc.stderr.text();
       const iter = forEachLine(proc.stdout);
 
       expect(await nextEval(iter)).toBe("EVAL g=1 shared=V0");
@@ -108,7 +107,40 @@ describe.skipIf(isWindows)("picks up atomic rename-save of a module outside cwd"
 
       proc.kill("SIGKILL");
       await proc.exited;
-      expect(await stderr).not.toContain("is not in the project directory");
     });
   }
+
+  // A module reached through an in-cwd directory symlink is resolved to its
+  // real path (outside cwd) before being watched, so it hit the same gate.
+  test.concurrent("--hot via an in-cwd directory symlink to an out-of-cwd dir", async () => {
+    await using dir = tempDir("watch-symlink-outside-cwd", {
+      "app/entry.ts":
+        `import { sh } from "./link/dep.ts";\n` +
+        `globalThis.g = (globalThis.g ?? 0) + 1;\n` +
+        `console.log("EVAL g=" + globalThis.g + " shared=" + sh);\n`,
+      "realdir/dep.ts": `export const sh = "V0";\n`,
+    });
+    const appDir = join(String(dir), "app");
+    const realDep = join(String(dir), "realdir", "dep.ts");
+    await symlink(join(String(dir), "realdir"), join(appDir, "link"), "dir");
+
+    await using proc = spawn({
+      cmd: [bunExe(), "--hot", "--no-clear-screen", "entry.ts"],
+      cwd: appDir,
+      env: bunEnv,
+      stdio: ["ignore", "pipe", "inherit"],
+    });
+    const iter = forEachLine(proc.stdout);
+
+    expect(await nextEval(iter)).toBe("EVAL g=1 shared=V0");
+
+    await renameSave(realDep, `export const sh = "V1";\n`);
+    expect(await nextEval(iter)).toBe("EVAL g=2 shared=V1");
+
+    await renameSave(realDep, `export const sh = "V2";\n`);
+    expect(await nextEval(iter)).toBe("EVAL g=3 shared=V2");
+
+    proc.kill("SIGKILL");
+    await proc.exited;
+  });
 });

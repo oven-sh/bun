@@ -384,9 +384,8 @@ pub struct DevServer {
     // `Watcher::shutdown` instead.
     pub bun_watcher: ::core::mem::ManuallyDrop<Box<Watcher>>,
     pub directory_watchers: DirectoryWatchStore,
-    /// Heap-allocated so the inline `HotReloadEvent.concurrent_task` node can
-    /// outlive `DevServer` when it is still linked in the event loop's
-    /// concurrent queue at drop time; see `Drop for DevServer`.
+    /// Boxed so a still-queued `HotReloadEvent.concurrent_task` can outlive
+    /// `DevServer`; see the `next_event` check in `Drop`.
     pub watcher_atomics: ::core::mem::ManuallyDrop<Box<WatcherAtomics>>,
     pub testing_batch_events: TestingBatchEvents,
 
@@ -1205,12 +1204,10 @@ impl Drop for DevServer {
             self.timer_heap().remove(timer_ptr);
         }
 
-        // `Watcher::shutdown` above serialises with `dispatch_file_updates`
-        // on `Watcher.mutex`, so no further `on_file_update` will run and
-        // `next_event` is now stable from the watcher side.
-        //
-        // SAFETY: `watcher_atomics` was written exactly once in `init()`;
-        // this is `Drop`, so the field is not read again.
+        // `Watcher::shutdown` serialises with `dispatch_file_updates` on
+        // `Watcher.mutex`, so `next_event` is stable from the watcher side.
+        // SAFETY: `watcher_atomics` was written once in `init()`; this is
+        // `Drop`, so the field is not read again.
         let mut atomics = unsafe { ::core::mem::ManuallyDrop::take(&mut self.watcher_atomics) };
         let next = atomics
             .next_event
@@ -1223,11 +1220,9 @@ impl Drop for DevServer {
             }
             drop(atomics);
         } else {
-            // A `HotReloadEvent.concurrent_task` is still linked in the event
-            // loop's concurrent queue (or its `Task` is already in the drain
-            // FIFO). Freeing this allocation now would leave that queue node
-            // dangling; keep it alive and let `HotReloadEvent::run` reclaim
-            // it (it checks for `owner.is_null()`).
+            // A `HotReloadEvent.concurrent_task` is still linked in the
+            // concurrent queue; `HotReloadEvent::run` will see the nulled
+            // `owner` and reclaim this box.
             for event in atomics.events.iter_mut() {
                 event.owner = ::core::ptr::null_mut();
             }

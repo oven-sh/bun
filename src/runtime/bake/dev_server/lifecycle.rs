@@ -51,12 +51,9 @@ impl WatcherAtomics {
             #[cfg(debug_assertions)]
             dbg_server_event: None,
         });
-        // Back-fill each event's BACKREF to this allocation once the Box
-        // address is stable. All access goes through the one raw pointer so
-        // Stacked Borrows sees a single Unique-derived tag.
         let atomics: *mut WatcherAtomics = &raw mut *boxed;
-        // SAFETY: `atomics` was just derived from `boxed`; the whole
-        // allocation is exclusively reachable through it here.
+        // SAFETY: `atomics` was just derived from `boxed`; the allocation is
+        // exclusively reachable through it for these writes.
         unsafe {
             for ev in &mut (*atomics).events {
                 ev.atomics = atomics;

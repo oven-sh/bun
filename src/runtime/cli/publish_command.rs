@@ -465,6 +465,7 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
         manager: &'a mut PackageManager,
     ) -> Result<Context<'static, true>, FromWorkspaceError> {
         let mut lockfile = Lockfile::default();
+        let log_level = manager.options.log_level;
         let manager_ptr: *mut PackageManager = manager;
         let log: &mut bun_ast::Log = manager.log_mut();
         // SAFETY: `manager_ptr` was just derived from `manager: &'a mut PackageManager`;
@@ -482,19 +483,7 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
                 {
                     break 'err None;
                 }
-                let step = match cause.step {
-                    LoadStep::OpenFile => "open",
-                    LoadStep::ParseFile => "parse",
-                    LoadStep::ReadFile => "read",
-                    LoadStep::Migrating => "migrate",
-                };
-                Output::warn(format_args!(
-                    "failed to {} {}: {}, continuing without it",
-                    step,
-                    bstr::BStr::new(cause.lockfile_path.as_bytes()),
-                    cause.value.name(),
-                ));
-                log.reset();
+                pack::warn_lockfile_unreadable(&cause, log, log_level);
                 None
             }
         };

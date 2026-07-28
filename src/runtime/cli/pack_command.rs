@@ -197,6 +197,33 @@ pub struct BundledDep {
 // exec
 // ───────────────────────────────────────────────────────────────────────────
 
+pub(crate) fn warn_lockfile_unreadable(
+    cause: &bun_install::lockfile::LoadResultErr,
+    log: &mut bun_ast::Log,
+    log_level: LogLevel,
+) {
+    use bun_install::lockfile::LoadStep;
+    if log_level != LogLevel::Silent {
+        let step = match cause.step {
+            LoadStep::OpenFile => "open",
+            LoadStep::ParseFile => "parse",
+            LoadStep::ReadFile => "read",
+            LoadStep::Migrating => "migrate",
+        };
+        Output::warn(format_args!(
+            "failed to {} {}: {}, continuing without it",
+            step,
+            bstr::BStr::new(cause.lockfile_path.as_bytes()),
+            cause.value.name(),
+        ));
+        if log.has_errors() {
+            let _ = log.print(std::ptr::from_mut(Output::error_writer()));
+        }
+        Output::flush();
+    }
+    log.reset();
+}
+
 impl PackCommand {
     pub fn exec_with_manager(
         ctx: Command::Context<'_>,
@@ -204,9 +231,8 @@ impl PackCommand {
     ) -> crate::Result<()> {
         use bun_install::lockfile::{LoadResult, LoadStep};
 
-        if manager.options.log_level != LogLevel::Silent
-            && manager.options.log_level != LogLevel::Quiet
-        {
+        let log_level = manager.options.log_level;
+        if log_level != LogLevel::Silent && log_level != LogLevel::Quiet {
             bun_core::prettyln!(
                 "<r><b>bun pack <r><d>v{}<r>",
                 Global::package_json_version_with_sha,
@@ -232,19 +258,7 @@ impl PackCommand {
                 {
                     break 'err None;
                 }
-                let step = match cause.step {
-                    LoadStep::OpenFile => "open",
-                    LoadStep::ParseFile => "parse",
-                    LoadStep::ReadFile => "read",
-                    LoadStep::Migrating => "migrate",
-                };
-                Output::warn(format_args!(
-                    "failed to {} {}: {}, continuing without it",
-                    step,
-                    bstr::BStr::new(cause.lockfile_path.as_bytes()),
-                    cause.value.name(),
-                ));
-                pm_log(manager_ptr).reset();
+                warn_lockfile_unreadable(&cause, pm_log(manager_ptr), log_level);
                 None
             }
             LoadResult::NotFound => None,

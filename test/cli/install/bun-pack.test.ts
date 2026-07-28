@@ -68,9 +68,14 @@ describe("unreadable lockfile", () => {
 }
 `;
 
-  for (const { label, file, contents } of [
-    { label: "empty bun.lock", file: "bun.lock", contents: "" },
-    { label: "bun.lock with git conflict markers", file: "bun.lock", contents: mergeConflict },
+  for (const { label, file, contents, diagnostic } of [
+    { label: "empty bun.lock", file: "bun.lock", contents: "", diagnostic: "Missing lockfile version" },
+    {
+      label: "bun.lock with git conflict markers",
+      file: "bun.lock",
+      contents: mergeConflict,
+      diagnostic: `Expected string but found "<<<<<<<"`,
+    },
     { label: "corrupt bun.lockb", file: "bun.lockb", contents: "not a lockfile" },
   ]) {
     test(`packs with ${label}`, async () => {
@@ -93,7 +98,7 @@ describe("unreadable lockfile", () => {
       expect(err).toContain("warn:");
       expect(err).toContain(`failed to parse ${file}`);
       expect(err).toContain("continuing without it");
-      expect(err).not.toContain("error:");
+      if (diagnostic) expect(err).toContain(diagnostic);
       expect(out).toContain("Total files: 2");
       expect(exitCode).toBe(0);
 
@@ -104,6 +109,29 @@ describe("unreadable lockfile", () => {
       ]);
     });
   }
+
+  test("--silent suppresses the warning", async () => {
+    await Promise.all([
+      write(join(packageDir, "package.json"), JSON.stringify({ name: "pack-bad-lockfile-silent", version: "1.0.0" })),
+      write(join(packageDir, "index.js"), "module.exports = 1"),
+      write(join(packageDir, "bun.lock"), ""),
+    ]);
+
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "pm", "pack", "--silent"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+      env: bunEnv,
+    });
+    const [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
+
+    expect(err).toBe("");
+    expect(out).toContain("pack-bad-lockfile-silent-1.0.0.tgz");
+    expect(exitCode).toBe(0);
+    expect(await exists(join(packageDir, "pack-bad-lockfile-silent-1.0.0.tgz"))).toBeTrue();
+  });
 
   test("still errors when a workspace version must be resolved", async () => {
     await Promise.all([

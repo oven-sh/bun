@@ -120,8 +120,10 @@ it("process.chdir() on root dir", () => {
 });
 
 // Windows keeps an open handle on the cwd, so renaming/removing it fails there.
-it.skipIf(isWindows).concurrent("process.cwd() re-queries the kernel after chdir when the directory is renamed", async () => {
-  const src = `
+it.skipIf(isWindows).concurrent(
+  "process.cwd() re-queries the kernel after chdir when the directory is renamed",
+  async () => {
+    const src = `
     const { mkdtempSync, renameSync, rmSync } = require("node:fs");
     const { tmpdir } = require("node:os");
     const { join } = require("node:path");
@@ -135,13 +137,14 @@ it.skipIf(isWindows).concurrent("process.cwd() re-queries the kernel after chdir
       rmSync(b, { recursive: true, force: true });
     }
   `;
-  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
-  const { cwd, expected } = JSON.parse(stdout);
-  expect(cwd).toBe(expected);
-  expect(exitCode).toBe(0);
-});
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const { cwd, expected } = JSON.parse(stdout);
+    expect(cwd).toBe(expected);
+    expect(exitCode).toBe(0);
+  },
+);
 
 it.skipIf(isWindows).concurrent("process.cwd() throws ENOENT once the current directory has been removed", async () => {
   const src = `

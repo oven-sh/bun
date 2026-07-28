@@ -424,9 +424,9 @@ mod _impl {
         // rather than read the resolver's `fs.top_level_dir` snapshot.
         let mut buf = PathBuffer::uninit();
         match Syscall::getcwd(&mut buf[..]) {
-            bun_sys::Result::Ok(len) => {
-                Ok(ZigString::init(&buf[..len]).with_encoding().to_js(global_object))
-            }
+            bun_sys::Result::Ok(len) => Ok(ZigString::init(&buf[..len])
+                .with_encoding()
+                .to_js(global_object)),
             bun_sys::Result::Err(e) => Err(global_object.throw_value(e.to_js(global_object))),
         }
     }

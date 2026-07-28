@@ -380,32 +380,6 @@ impl TimerObjectInternals {
             return false;
         }
 
-        // SAFETY: `vm` is live; `event_loop()` returns `*mut` to the embedded
-        // EventLoop. Re-entrancy is permitted by the raw-ptr contract above.
-        unsafe { (*(*vm).event_loop()).enter() };
-        // SAFETY: per fn contract.
-        let exception_thrown = unsafe { Self::dispatch_immediate_call(this, vm) };
-        // --- after this point, the timer is no longer guaranteed to be alive ---
-
-        // SAFETY: `vm` is live; see `enter()` note above.
-        if unsafe { (*(*vm).event_loop()).exit_maybe_drain_microtasks(!exception_thrown) }.is_err()
-        {
-            return true;
-        }
-
-        exception_thrown
-    }
-
-    /// Not inlined so this frame's `timer`/`callback`/`arguments` JSValue
-    /// locals are popped before the caller's microtask drain; a `Bun.gc(true)`
-    /// inside that drain would otherwise conservatively root them.
-    ///
-    /// # Safety
-    /// See [`run_immediate_task`].
-    #[inline(never)]
-    unsafe fn dispatch_immediate_call(this: *mut Self, vm: *mut VirtualMachine) -> bool {
-        // SAFETY: per caller contract.
-        let s = unsafe { &*this };
         let Some(timer) = s.this_value.get().try_get() else {
             #[cfg(debug_assertions)]
             panic!("TimerObjectInternals.runImmediateTask: this_object is null");
@@ -423,27 +397,41 @@ impl TimerObjectInternals {
         s.set_enable_keeping_event_loop_alive(vm, false);
         timer.ensure_still_alive();
 
+        // SAFETY: `vm` is live; `event_loop()` returns `*mut` to the embedded
+        // EventLoop. Re-entrancy is permitted by the raw-ptr contract above.
+        unsafe { (*(*vm).event_loop()).enter() };
         let callback =
             JSImmediate::callback_get_cached(timer).expect("ImmediateObject callback slot");
         let arguments =
             JSImmediate::arguments_get_cached(timer).expect("ImmediateObject arguments slot");
 
-        s.ref_();
-        let async_id = s.async_id();
-        // SAFETY: `this` is the live `internals` per caller contract; `ref_()`
-        // above pins the parent across re-entrancy.
-        let result =
-            unsafe { Self::run(this, global_this, timer, callback, arguments, async_id, vm) };
-        // `Self::run` has no early return so the deref ordering below is
-        // preserved. After the second `deref()` `*this` may be
-        // freed; do not touch it past this point.
-        // Fresh read: re-entrant `cancel()`/`refresh()` may have changed
-        // `state` (`ref_()` above pins the parent).
-        if s.event_loop_timer_state() == EventLoopTimerState::FIRED {
+        let exception_thrown = {
+            s.ref_();
+            let async_id = s.async_id();
+            // SAFETY: `this` is the live `internals` per fn contract; `ref_()`
+            // above pins the parent across re-entrancy.
+            let result =
+                unsafe { Self::run(this, global_this, timer, callback, arguments, async_id, vm) };
+            // `Self::run` has no early return so the deref ordering below is
+            // preserved. After the second `deref()` `*this` may be
+            // freed; do not touch it past this block.
+            // Fresh read: re-entrant `cancel()`/`refresh()` may have changed
+            // `state` (`ref_()` above pins the parent).
+            if s.event_loop_timer_state() == EventLoopTimerState::FIRED {
+                s.deref();
+            }
             s.deref();
+            result
+        };
+        // --- after this point, the timer is no longer guaranteed to be alive ---
+
+        // SAFETY: `vm` is live; see `enter()` note above.
+        if unsafe { (*(*vm).event_loop()).exit_maybe_drain_microtasks(!exception_thrown) }.is_err()
+        {
+            return true;
         }
-        s.deref();
-        result
+
+        exception_thrown
     }
 
     /// # Safety

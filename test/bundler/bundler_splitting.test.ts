@@ -298,7 +298,7 @@ describe("bundler", () => {
         export const v = "V";
         export async function reload() {
           const m = await import("./entry.js");
-          return "got " + m.v + " " + typeof m.reload;
+          return "got " + m.v + " " + (m.reload === reload);
         }
         reload().then(x => console.log(x));
       `,
@@ -310,7 +310,7 @@ describe("bundler", () => {
     run: {
       file: "/out/entry.js",
       env,
-      stdout: "got V function",
+      stdout: "got V true",
     },
     onAfterBundle(api) {
       api.expectFile("/out/entry.js").not.toContain("require_entry");
@@ -330,7 +330,7 @@ describe("bundler", () => {
         export const name = "lib";
         export async function self() {
           const m = await import("./lib.js");
-          return m.name + " " + typeof m.self;
+          return m.name + " " + (m.self === self);
         }
       `,
     },
@@ -341,7 +341,7 @@ describe("bundler", () => {
     run: {
       file: "/out/main.js",
       env,
-      stdout: "main: lib lib function",
+      stdout: "main: lib lib true",
     },
   });
 

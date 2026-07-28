@@ -133,6 +133,8 @@ void PerformanceObserver::queueEntry(PerformanceEntry& entry)
 
 void PerformanceObserver::deliver()
 {
+    if (!m_registered)
+        return;
     if (m_entriesToDeliver.isEmpty())
         return;
 

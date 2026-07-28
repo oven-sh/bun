@@ -711,8 +711,12 @@ pub use bun_bunfig::arguments::{load_config, load_config_path, load_config_with_
 ///
 /// `command::tag_params(cmd)` does a runtime lookup of the per-subcommand
 /// param table, and the per-`cmd` blocks below are guarded by
-/// `if matches!(cmd, …)`.
-pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformOptions> {
+/// `if matches!(cmd, …)`. `help_as` selects the `--help` / parse-error text.
+pub fn parse(
+    cmd: CommandTag,
+    help_as: CommandTag,
+    ctx: Context<'_>,
+) -> crate::Result<api::TransformOptions> {
     let mut diag = clap::Diagnostic::default();
     let table = tag_table(cmd);
 
@@ -731,13 +735,13 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
         Err(err) => {
             // Report useful error and exit
             let _ = diag.report(Output::error_writer(), err);
-            command::tag_print_help(cmd, false);
+            command::tag_print_help(help_as, false);
             Global::exit(1);
         }
     };
 
     if args.flag(b"--help") {
-        command::tag_print_help(cmd, true);
+        command::tag_print_help(help_as, true);
         Output::flush();
         Global::exit(0);
     }

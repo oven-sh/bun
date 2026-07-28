@@ -1,4 +1,6 @@
 import { describe, expect, it } from "bun:test";
+import crypto from "node:crypto";
+import tls from "node:tls";
 
 // This test verifies that wildcard certificate hostname matching follows RFC 6125 Section 6.4.3:
 // - Wildcards must match exactly one label (not multiple labels)
@@ -297,5 +299,146 @@ describe.concurrent("TLS wildcard hostname verification", () => {
 
     expect(result.success).toBe(true);
     expect(result.error).toBeUndefined();
+  });
+});
+
+// fetch() uses a native Rust port of Node's lib/tls.js check() for certificate
+// name matching; tls.connect() defaults to the JS tls.checkServerIdentity().
+// These must agree for every certificate Node accepts, including RFC 6125
+// §6.4.3 partial-wildcard SAN entries (f*.example.com / *b.example.com).
+describe("fetch() and tls.checkServerIdentity() agree on certificate SAN wildcards", () => {
+  // Minimal DER encoder sufficient to build a self-signed EC certificate with
+  // an arbitrary subjectAltName. Real CAs don't issue partial-wildcard SANs,
+  // so the test has to mint its own.
+  const tlv = (t: number, b: Buffer) => {
+    const l =
+      b.length < 0x80
+        ? Buffer.from([b.length])
+        : b.length < 0x100
+          ? Buffer.from([0x81, b.length])
+          : Buffer.from([0x82, b.length >> 8, b.length & 0xff]);
+    return Buffer.concat([Buffer.from([t]), l, b]);
+  };
+  const seq = (...b: Buffer[]) => tlv(0x30, Buffer.concat(b));
+  const set = (b: Buffer) => tlv(0x31, b);
+  const oid = (h: string) => tlv(0x06, Buffer.from(h, "hex"));
+  const ecdsaWithSha256 = seq(oid("2a8648ce3d040302"));
+  const dn = (cn: string) => seq(set(seq(oid("550403"), tlv(0x0c, Buffer.from(cn)))));
+
+  function makeCert(sanDns: string[]) {
+    const { privateKey, publicKey } = crypto.generateKeyPairSync("ec", { namedCurve: "prime256v1" });
+    const subject = dn("cn-not-in-san.test");
+    const exts = tlv(0xa3, seq(seq(oid("551d11"), tlv(0x04, seq(...sanDns.map(d => tlv(0x82, Buffer.from(d))))))));
+    const tbs = seq(
+      tlv(0xa0, tlv(0x02, Buffer.from([2]))),
+      tlv(0x02, Buffer.from([9])),
+      ecdsaWithSha256,
+      subject,
+      seq(tlv(0x17, Buffer.from("240101000000Z")), tlv(0x17, Buffer.from("340101000000Z"))),
+      subject,
+      publicKey.export({ type: "spki", format: "der" }) as Buffer,
+      exts,
+    );
+    const der = seq(
+      tbs,
+      ecdsaWithSha256,
+      tlv(0x03, Buffer.concat([Buffer.from([0]), crypto.sign("sha256", tbs, privateKey)])),
+    );
+    const cert =
+      "-----BEGIN CERTIFICATE-----\n" +
+      der
+        .toString("base64")
+        .match(/.{1,64}/g)!
+        .join("\n") +
+      "\n-----END CERTIFICATE-----\n";
+    return { cert, key: privateKey.export({ type: "pkcs8", format: "pem" }) as string };
+  }
+
+  const sans = ["*.wild.test", "f*.partial.test", "*b.partial2.test", "a*c.mid.test"];
+  const material = makeCert(sans);
+  const x509 = new crypto.X509Certificate(material.cert);
+  const legacy = x509.toLegacyObject();
+
+  // Expected values were taken from Node.js v26.3.0.
+  const cases: Array<[host: string, ok: boolean]> = [
+    ["foo.wild.test", true],
+    ["a.b.wild.test", false],
+    ["wild.test", false],
+    ["foo.partial.test", true],
+    ["f.partial.test", true],
+    ["FOO.partial.test", true],
+    ["bar.partial.test", false],
+    ["foo.bar.partial.test", false],
+    ["foob.partial2.test", true],
+    ["b.partial2.test", true],
+    ["fooc.partial2.test", false],
+    ["abc.mid.test", true],
+    ["ac.mid.test", true],
+    ["xbc.mid.test", false],
+    ["cn-not-in-san.test", false],
+  ];
+
+  let server: ReturnType<typeof Bun.serve>;
+  it("server starts", () => {
+    server = Bun.serve({
+      port: 0,
+      tls: material,
+      fetch: () => new Response("ok"),
+    });
+  });
+
+  it.each(cases)("tls.checkServerIdentity(%j) === fetch()", async (host, ok) => {
+    // JS matcher (the same one tls.connect defaults to).
+    const jsErr = tls.checkServerIdentity(host, legacy);
+    expect(jsErr === undefined).toBe(ok);
+
+    // Native matcher via fetch().
+    let fetchOk: boolean;
+    let fetchCode: string | undefined;
+    try {
+      const res = await fetch(`https://127.0.0.1:${server.port}/`, {
+        // @ts-expect-error Bun extension
+        tls: { ca: material.cert, serverName: host },
+        keepalive: false,
+      });
+      await res.text();
+      fetchOk = res.ok;
+    } catch (e: any) {
+      fetchOk = false;
+      fetchCode = e.code;
+    }
+    if (ok) {
+      expect({ fetchOk, fetchCode }).toEqual({ fetchOk: true, fetchCode: undefined });
+    } else {
+      expect({ fetchOk, fetchCode }).toEqual({ fetchOk: false, fetchCode: "ERR_TLS_CERT_ALTNAME_INVALID" });
+    }
+  });
+
+  it("server stops", () => {
+    server?.stop(true);
+  });
+
+  // The native matcher must not be more permissive than Node on the rejections
+  // Node's lib/tls.js check() applies to the pattern's left-most label.
+  const nativeRejects: Array<[san: string, host: string]> = [
+    ["f**.partial.test", "foo.partial.test"],
+    ["*.test", "foo.test"],
+    ["xn--f*.partial.test", "xn--foo.partial.test"],
+    ["a..b.test", "a..b.test"],
+  ];
+  it.each(nativeRejects)("SAN %j must not match %j", async (san, host) => {
+    const m = makeCert([san]);
+    expect(tls.checkServerIdentity(host, new crypto.X509Certificate(m.cert).toLegacyObject())).toBeInstanceOf(Error);
+
+    await using s = Bun.serve({ port: 0, tls: m, fetch: () => new Response("ok") });
+    const err = await fetch(`https://127.0.0.1:${s.port}/`, {
+      // @ts-expect-error Bun extension
+      tls: { ca: m.cert, serverName: host },
+      keepalive: false,
+    }).then(
+      () => undefined,
+      e => e,
+    );
+    expect(err?.code).toBe("ERR_TLS_CERT_ALTNAME_INVALID");
   });
 });

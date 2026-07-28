@@ -46,7 +46,6 @@ pub(crate) mod x509 {
         true
     }
 }
-use x509 as X509;
 
 /// BoringSSL's translated C API
 pub use boring as c;
@@ -218,43 +217,104 @@ fn canonical_ip_octets<'a>(
     unsafe { c_ares::ntop(af, octets.as_ptr().cast(), &mut out_ip[..]) }
 }
 
-/// Matches a DNS name pattern (possibly with a leading `*.` wildcard) against
-/// `hostname`. Mirrors Node.js `check()` in lib/tls.js for a single pattern.
+/// Strips a single trailing `.` (the DNS root label). Mirrors Node.js
+/// `unfqdn()` in lib/tls.js.
+#[inline]
+fn unfqdn(name: &[u8]) -> &[u8] {
+    name.strip_suffix(b".").unwrap_or(name)
+}
+
+/// Matches one DNS name from a certificate (possibly containing a single `*`
+/// wildcard in its left-most label) against `hostname`.
+///
+/// This is a line-for-line port of Node.js `check()` in lib/tls.js so that the
+/// native hostname verification used by `fetch()`, `WebSocket`, `Bun.connect`
+/// and the SQL clients agrees with `tls.checkServerIdentity()` (and therefore
+/// `tls.connect`). In particular Node permits RFC 6125 §6.4.3 partial
+/// wildcards (`f*.example.com`, `*b.example.com`, `a*b.example.com`), which
+/// the previous implementation rejected.
 fn match_dns_name(pattern: &[u8], hostname: &[u8]) -> bool {
+    let pattern = unfqdn(pattern);
+    let hostname = unfqdn(hostname);
     if pattern.is_empty() {
         return false;
     }
-    if !X509::is_safe_alt_name(pattern, false) {
+
+    // Node's `isBad` regex rejects any byte outside U+0021..=U+007F anywhere in
+    // the pattern, and `splitHost` + `includes("")` rejects empty labels.
+    let mut label_start = true;
+    for &b in pattern {
+        if !(0x21..=0x7f).contains(&b) {
+            return false;
+        }
+        if b == b'.' {
+            if label_start {
+                return false;
+            }
+            label_start = true;
+        } else {
+            label_start = false;
+        }
+    }
+    if label_start {
         return false;
     }
 
-    if pattern[0] == b'*' {
-        // RFC 6125 Section 6.4.3: Wildcard must match exactly one label.
-        // Enforce "*." prefix (wildcard must be leftmost and followed by a dot).
-        if pattern.len() >= 2 && pattern[1] == b'.' {
-            let suffix = &pattern[2..];
-            // Disallow "*.tld" (suffix must contain at least one dot for proper domain hierarchy)
-            if strings::index_of_char(suffix, b'.').is_some() {
-                // Host must be at least "label.suffix" (suffix_len + 1 for dot + at least 1 char for label)
-                if hostname.len() > suffix.len() + 1 {
-                    let dot_index = hostname.len() - suffix.len() - 1;
-                    // The character before suffix must be a dot, and there must be no other
-                    // dots in the prefix (single-label wildcard only).
-                    if hostname[dot_index] == b'.'
-                        && strings::index_of_char(&hostname[..dot_index], b'.').is_none()
-                    {
-                        let host_suffix = &hostname[dot_index + 1..];
-                        // RFC 4343: DNS names are case-insensitive
-                        if strings::eql_case_insensitive_ascii(suffix, host_suffix, true) {
-                            return true;
-                        }
-                    }
-                }
+    // The pattern's left-most label is the only label Node inspects for a
+    // wildcard; every subsequent label is compared literally.
+    let pat_first_end = strings::index_of_char(pattern, b'.')
+        .map(|i| i as usize)
+        .unwrap_or(pattern.len());
+    let pat_first = &pattern[..pat_first_end];
+    let pat_rest = pattern.get(pat_first_end + 1..).unwrap_or(b"");
+
+    let host_first_end = strings::index_of_char(hostname, b'.')
+        .map(|i| i as usize)
+        .unwrap_or(hostname.len());
+    let host_first = &hostname[..host_first_end];
+    let host_rest = hostname.get(host_first_end + 1..).unwrap_or(b"");
+
+    // Node compares every non-first label for equality after lowercasing; a
+    // case-insensitive byte comparison of the joined remainder is equivalent
+    // because the label count only matches when both remainders are identical.
+    if !strings::eql_case_insensitive_ascii(pat_rest, host_rest, true) {
+        return false;
+    }
+
+    let star = strings::index_of_char(pat_first, b'*').map(|i| i as usize);
+
+    // Node never expands a wildcard inside an IDNA A-label (`xn--`); `splitHost`
+    // has already lowercased the pattern, so the JS `includes("xn--")` is an
+    // ASCII-case-insensitive substring test on the raw certificate bytes.
+    let is_idna = pat_first.len() >= 4
+        && pat_first
+            .windows(4)
+            .any(|w| strings::eql_case_insensitive_ascii(w, b"xn--", false));
+
+    match star {
+        None => strings::eql_case_insensitive_ascii(pat_first, host_first, true),
+        Some(_) if is_idna => strings::eql_case_insensitive_ascii(pat_first, host_first, true),
+        Some(star) => {
+            let prefix = &pat_first[..star];
+            let suffix = &pat_first[star + 1..];
+            // At most one `*`; at least three labels overall.
+            if strings::index_of_char(suffix, b'*').is_some() {
+                return false;
             }
+            if strings::index_of_char(pat_rest, b'.').is_none() {
+                return false;
+            }
+            if prefix.len() + suffix.len() > host_first.len() {
+                return false;
+            }
+            strings::eql_case_insensitive_ascii(prefix, &host_first[..prefix.len()], true)
+                && strings::eql_case_insensitive_ascii(
+                    suffix,
+                    &host_first[host_first.len() - suffix.len()..],
+                    true,
+                )
         }
     }
-    // RFC 4343: DNS names are case-insensitive
-    strings::eql_case_insensitive_ascii(pattern, hostname, true)
 }
 
 pub fn check_x509_server_identity(x509: &mut boring::X509, hostname: &[u8]) -> bool {

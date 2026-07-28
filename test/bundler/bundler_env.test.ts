@@ -134,6 +134,7 @@ describe("env/invalid-pattern", () => {
     { pattern: "*", expect: `use "inline"` },
     { pattern: "1", expect: `must be "inline", "disable"` },
     { pattern: "0", expect: `must be "inline", "disable"` },
+    { pattern: "", expect: `must be "inline", "disable"` },
   ] as const;
 
   describe.each(cases)("$pattern", ({ pattern, expect: fragment }) => {

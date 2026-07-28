@@ -3668,14 +3668,9 @@ impl VirtualMachine {
         vm_ref.hot_reload = parent.hot_reload;
         vm_ref.initial_script_execution_context_identifier = worker.execution_context_id() as i32;
         vm_ref.transpiler.resolver.store_fd = opts.store_fd;
-        // Inherit the auto-install / global-cache resolver settings the main
-        // thread received from the CLI (`run_command::wire_transpiler_from_ctx`).
-        // `Transpiler::init` built the worker's options via
-        // `BundleOptions::from_api`, which defaults `global_cache` to `disable`,
-        // so without this a Worker cannot resolve bare specifiers from the
-        // global cache even when the parent already populated it. The `install`
-        // backref points at the CLI-owned `Box<BunInstall>` (process-lifetime,
-        // read-only) and is safe to share.
+        // Auto-install settings are CLI-wired post-init
+        // (`run_command::wire_transpiler_from_ctx`), not carried by
+        // `TransformOptions`, so inherit them from the parent.
         {
             let b = &mut vm_ref.transpiler;
             let p = &parent.transpiler;

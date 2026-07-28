@@ -1544,10 +1544,10 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
 
     if bun_core::env::SHOW_CRASH_TRACE {
         // argv slices are process-lifetime.
-        let _ = cli::debug_flags::RESOLVE_BREAKPOINTS
-            .set(args.options(b"--breakpoint-resolve").to_vec());
-        let _ =
-            cli::debug_flags::PRINT_BREAKPOINTS.set(args.options(b"--breakpoint-print").to_vec());
+        bun_core::debug_flags::set_resolve_breakpoints(
+            args.options(b"--breakpoint-resolve").to_vec(),
+        );
+        bun_core::debug_flags::set_print_breakpoints(args.options(b"--breakpoint-print").to_vec());
     }
 
     Ok(opts)

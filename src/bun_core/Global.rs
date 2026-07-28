@@ -388,19 +388,34 @@ macro_rules! mark_binding {
 pub static JSC_SCOPE: crate::output::ScopedLogger =
     crate::output::ScopedLogger::new("JSC", crate::output::Visibility::Hidden);
 
-// ─── debug_flags (MOVE_DOWN from bun_cli, for bun_resolver) ───────────────
+// ─── debug_flags (populated by bun_cli, read by bun_resolver/bundler) ─────
 // Debug-build-only breakpoint matchers.
 pub mod debug_flags {
     #[cfg(debug_assertions)]
-    pub(crate) static RESOLVE_BREAKPOINTS: crate::Once<&'static [&'static [u8]]> =
-        crate::Once::new();
+    static RESOLVE_BREAKPOINTS: crate::Once<Vec<&'static [u8]>> = crate::Once::new();
     #[cfg(debug_assertions)]
-    pub(crate) static PRINT_BREAKPOINTS: crate::Once<&'static [&'static [u8]]> = crate::Once::new();
+    static PRINT_BREAKPOINTS: crate::Once<Vec<&'static [u8]>> = crate::Once::new();
+
+    #[inline]
+    pub fn set_resolve_breakpoints(list: Vec<&'static [u8]>) {
+        #[cfg(debug_assertions)]
+        let _ = RESOLVE_BREAKPOINTS.set(list);
+        #[cfg(not(debug_assertions))]
+        let _ = list;
+    }
+
+    #[inline]
+    pub fn set_print_breakpoints(list: Vec<&'static [u8]>) {
+        #[cfg(debug_assertions)]
+        let _ = PRINT_BREAKPOINTS.set(list);
+        #[cfg(not(debug_assertions))]
+        let _ = list;
+    }
 
     #[inline]
     pub fn has_resolve_breakpoint(str_: &[u8]) -> bool {
         #[cfg(debug_assertions)]
-        for bp in RESOLVE_BREAKPOINTS.get().copied().unwrap_or(&[]) {
+        for bp in RESOLVE_BREAKPOINTS.get().map(Vec::as_slice).unwrap_or(&[]) {
             if crate::strings::includes(str_, bp) {
                 return true;
             }
@@ -412,7 +427,7 @@ pub mod debug_flags {
     #[inline]
     pub fn has_print_breakpoint(pretty: &[u8], text: &[u8]) -> bool {
         #[cfg(debug_assertions)]
-        for bp in PRINT_BREAKPOINTS.get().copied().unwrap_or(&[]) {
+        for bp in PRINT_BREAKPOINTS.get().map(Vec::as_slice).unwrap_or(&[]) {
             if crate::strings::includes(pretty, bp) || crate::strings::includes(text, bp) {
                 return true;
             }

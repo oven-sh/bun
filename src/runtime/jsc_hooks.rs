@@ -432,22 +432,6 @@ unsafe fn init_runtime_state(
                     t.resolver.on_wake_package_manager = bun_resolver::install_types::WakeHandler {
                         context: core::ptr::NonNull::new(ptr::addr_of_mut!((*vm).modules).cast()),
                         handler: Some(bun_jsc::async_module::Queue::on_wake_handler),
-                        on_dependency_error: Some({
-                            unsafe fn adapter(
-                                ctx: *mut core::ffi::c_void,
-                                dep: &bun_resolver::install_types::Dependency,
-                                id: bun_resolver::install_types::DependencyID,
-                                err: &'static str,
-                            ) {
-                                // SAFETY: `ctx` is the `WakeHandler::context` set just above to `&mut (*vm).modules` (a live `Queue`).
-                                unsafe {
-                                    bun_jsc::async_module::Queue::on_dependency_error(
-                                        ctx, dep, id, err,
-                                    )
-                                }
-                            }
-                            adapter
-                        }),
                     };
                     // Branch on `opts.graph` here — with a module graph,
                     // auto_jsx=true would

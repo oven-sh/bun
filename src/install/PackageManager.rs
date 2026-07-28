@@ -2301,11 +2301,14 @@ pub(crate) fn init_with_runtime_once(
         );
         wr!(root_dir, root_dir);
         wr!(ast_arena, bun_alloc::Arena::new());
-        // reborrow `&mut *env` so the local stays usable for
-        // the post-construction `BUN_MANIFEST_CACHE` / `options.load`
-        // reads. `BackRef` stores a raw pointer —
-        // ending the reborrow here does not alias the later uses.
-        wr!(env, Some(bun_ptr::BackRef::new_mut(&mut *env)));
+        wr!(
+            env,
+            Some(bun_ptr::BackRef::new_mut(&mut *bun_core::heap::into_raw(
+                Box::new(dot_env::Loader::init_with_map(
+                    env.map.clone_with_allocator()?,
+                ))
+            )))
+        );
         wr!(
             thread_pool,
             ThreadPool::init(thread_pool::Config {

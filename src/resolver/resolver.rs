@@ -451,7 +451,7 @@ thread_local! {
 /// Serializes `PackageManager` singleton access across JS VMs for the runtime
 /// auto-install path. Reentrant on the owning thread because
 /// `PackageManager::sleep_until` pumps the JS event loop under the lock.
-/// SAFETY: the returned guard must be dropped on the thread that acquired it.
+/// SAFETY: the guard is `!Send`, so it is always dropped on the acquiring thread.
 #[must_use = "the mutex unlocks immediately if the guard is dropped"]
 pub fn auto_install_lock() -> AutoInstallGuard {
     let depth = AUTO_INSTALL_LOCK_DEPTH.with(|d| {
@@ -463,11 +463,15 @@ pub fn auto_install_lock() -> AutoInstallGuard {
     if acquired {
         AUTO_INSTALL_LOCK.lock();
     }
-    AutoInstallGuard { acquired }
+    AutoInstallGuard {
+        acquired,
+        _not_send: core::marker::PhantomData,
+    }
 }
 
 pub struct AutoInstallGuard {
     acquired: bool,
+    _not_send: core::marker::PhantomData<*const ()>,
 }
 
 impl Drop for AutoInstallGuard {

@@ -199,6 +199,26 @@ it("cpus() array is safely mutable", () => {
   expect(os.cpus().length).toBe(length);
 });
 
+it("cpus() snapshots times at call time", () => {
+  // The canonical CPU-utilization idiom: snapshot, wait, snapshot, diff.
+  // With the old lazyCpus wrapper, /proc/stat was not read until the first
+  // property access, so `a` and `b` both materialized inside the diff loop at
+  // the same instant (b first, then a), giving dTotal <= 0 and busy% = NaN.
+  const tot = t => t.user + t.nice + t.sys + t.idle + t.irq;
+  const a = os.cpus();
+  const until = performance.now() + 100;
+  while (performance.now() < until) Math.sqrt(2);
+  const b = os.cpus();
+  // First touch of either result's .times happens here, reading `b` before
+  // `a` as real CPU meters do (end - start).
+  let dTotal = 0;
+  for (let i = 0; i < b.length; i++) {
+    dTotal += tot(b[i].times) - tot(a[i].times);
+  }
+  expect(a.length).toBe(b.length);
+  expect(dTotal).toBeGreaterThan(0);
+});
+
 it("networkInterfaces", () => {
   const networkInterfaces = os.networkInterfaces();
 

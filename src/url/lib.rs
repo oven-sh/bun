@@ -338,11 +338,22 @@ impl<'a> URL<'a> {
         b""
     }
 
-    /// `"blob:".len + UUID.stringLength` — see `runtime/webcore/ObjectURLRegistry.specifier_len`.
-    const BLOB_SPECIFIER_LEN: usize = b"blob:".len() + 36;
+    /// `href` up to (not including) the fragment. `#` only ever occurs in a
+    /// serialized URL as the fragment delimiter (WHATWG URL serializer).
+    pub fn href_without_fragment(&self) -> &'a [u8] {
+        match strings::index_of_char(self.href, b'#') {
+            Some(i) => &self.href[..i as usize],
+            None => self.href,
+        }
+    }
 
+    /// Any `blob:`-scheme URL. A `blob:` URL is never a network request, so
+    /// fetch must not fall through to the HTTP path regardless of what follows
+    /// the scheme (fragment, query, or a pathname that does not parse as a
+    /// UUID). WHATWG parsing lowercases the scheme, so a literal prefix match
+    /// on `href` is sufficient.
     pub fn is_blob(&self) -> bool {
-        self.href.len() == Self::BLOB_SPECIFIER_LEN && self.href.starts_with(b"blob:")
+        self.href.starts_with(b"blob:")
     }
 
     // Ownership: returns an `OwnedURL` that owns the buffer; callers borrow

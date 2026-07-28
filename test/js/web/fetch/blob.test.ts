@@ -123,6 +123,57 @@ test("blob: can be fetched", async () => {
   }).toThrow();
 });
 
+// https://w3c.github.io/FileAPI/#blob-url-resolve: lookup uses the URL serialized
+// with the exclude-fragment flag, and a blob: URL that misses the store is a
+// network error. Either way, a blob: URL must never reach the HTTP/DNS stack.
+// Before this was fixed, the "with fragment"/"with query"/"not a UUID" cases
+// below fell through to the remote path and attempted a DNS lookup for host
+// "blob" (getaddrinfo ENOTFOUND blob).
+test("blob: fetch with a fragment resolves from the store; any other blob: URL rejects without touching the network", async () => {
+  const blob = new Blob(["payload"], { type: "video/mp4" });
+  const url = URL.createObjectURL(blob);
+  try {
+    // Fragment is excluded from the store lookup.
+    const withFragment = await fetch(url + "#t=10");
+    expect(withFragment.headers.get("Content-Type")).toBe("video/mp4");
+    expect(withFragment.url).toBe(url);
+    expect(await withFragment.text()).toBe("payload");
+
+    const emptyFragment = await fetch(url + "#");
+    expect(emptyFragment.url).toBe(url);
+    expect(await emptyFragment.text()).toBe("payload");
+
+    // Blob URL store misses: reject with TypeError (as Node does), and never
+    // fall through to the HTTP client. With http_proxy set (as in CI) the
+    // remote path would succeed against the proxy, so assert on the error
+    // shape rather than just "rejects".
+    const assertStoreMiss = async (u: string) => {
+      let err: unknown;
+      try {
+        await fetch(u);
+      } catch (e) {
+        err = e;
+      }
+      expect(err).toBeInstanceOf(TypeError);
+      // When the blob: URL leaks to the HTTP client, the error is a DNS
+      // failure for host "blob" (or, with a proxy, no error at all).
+      expect((err as any)?.code).not.toBe("ENOTFOUND");
+      expect(String((err as Error)?.message)).not.toContain("getaddrinfo");
+    };
+
+    // Query is part of the serialization (not excluded), so this is a miss.
+    await assertStoreMiss(url + "?x=1");
+    await assertStoreMiss(url + "?x=1#frag");
+    // Not a registered UUID.
+    await assertStoreMiss("blob:00000000-0000-0000-0000-000000000000#frag");
+    // Not a UUID at all.
+    await assertStoreMiss("blob:not-a-uuid");
+    await assertStoreMiss("blob:http://example.com/whatever");
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+});
+
 test("blob: URL has Content-Type", async () => {
   const blob = new File(["Bun", "Foo"], "file.txt", { type: "text/javascript;charset=utf-8" });
   const url = URL.createObjectURL(blob);

@@ -477,32 +477,29 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
             LoadResult::Ok(ok) => Some(&*ok.lockfile),
             LoadResult::NotFound => None,
             LoadResult::Err(cause) => 'err: {
-                match cause.step {
-                    LoadStep::OpenFile => {
-                        if cause.value == bun_install::Error::Sys(bun_errno::SystemErrno::ENOENT) {
-                            break 'err None;
-                        }
-                        Output::err_generic("failed to open lockfile: {}", (cause.value.name(),));
-                    }
-                    LoadStep::ParseFile => {
-                        Output::err_generic("failed to parse lockfile: {}", (cause.value.name(),));
-                    }
-                    LoadStep::ReadFile => {
-                        Output::err_generic("failed to read lockfile: {}", (cause.value.name(),));
-                    }
-                    LoadStep::Migrating => {
-                        Output::err_generic(
-                            "failed to migrate lockfile: {}",
-                            (cause.value.name(),),
-                        );
-                    }
+                if matches!(cause.step, LoadStep::OpenFile)
+                    && cause.value == bun_install::Error::Sys(bun_errno::SystemErrno::ENOENT)
+                {
+                    break 'err None;
                 }
-
-                if log.has_errors() {
-                    let _ = log.print(std::ptr::from_mut(Output::error_writer()));
-                }
-
-                Global::crash();
+                // A lockfile is only needed to resolve `workspace:^` / `workspace:~` /
+                // `workspace:*` / `catalog:` specifiers. If it is unreadable for any
+                // reason, warn and continue; `edit_root_package_json` will error with
+                // "Run `bun install`" if resolution actually needs it.
+                let step = match cause.step {
+                    LoadStep::OpenFile => "open",
+                    LoadStep::ParseFile => "parse",
+                    LoadStep::ReadFile => "read",
+                    LoadStep::Migrating => "migrate",
+                };
+                Output::warn(format_args!(
+                    "failed to {} {}: {}, continuing without it",
+                    step,
+                    bstr::BStr::new(cause.lockfile_path.as_bytes()),
+                    cause.value.name(),
+                ));
+                log.reset();
+                None
             }
         };
 

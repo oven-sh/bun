@@ -227,39 +227,29 @@ impl PackCommand {
         let lockfile_ref: Option<&Lockfile> = match load_from_disk_result {
             LoadResult::Ok(ok) => Some(&*ok.lockfile),
             LoadResult::Err(cause) => 'err: {
-                match cause.step {
-                    LoadStep::OpenFile => {
-                        if cause.value == bun_install::Error::Sys(bun_errno::SystemErrno::ENOENT) {
-                            break 'err None;
-                        }
-                        Output::err_generic(
-                            "failed to open lockfile: {}",
-                            format_args!("{}", cause.value.name()),
-                        );
-                    }
-                    LoadStep::ParseFile => {
-                        Output::err_generic(
-                            "failed to parse lockfile: {}",
-                            format_args!("{}", cause.value.name()),
-                        );
-                    }
-                    LoadStep::ReadFile => {
-                        Output::err_generic(
-                            "failed to read lockfile: {}",
-                            format_args!("{}", cause.value.name()),
-                        );
-                    }
-                    LoadStep::Migrating => {
-                        Output::err_generic(
-                            "failed to migrate lockfile: {}",
-                            format_args!("{}", cause.value.name()),
-                        );
-                    }
+                if matches!(cause.step, LoadStep::OpenFile)
+                    && cause.value == bun_install::Error::Sys(bun_errno::SystemErrno::ENOENT)
+                {
+                    break 'err None;
                 }
-                if pm_log(manager_ptr).has_errors() {
-                    let _ = pm_log(manager_ptr).print(std::ptr::from_mut(Output::error_writer()));
-                }
-                Global::crash();
+                // A lockfile is only needed to resolve `workspace:^` / `workspace:~` /
+                // `workspace:*` / `catalog:` specifiers. If it is unreadable for any
+                // reason, warn and continue; `edit_root_package_json` will error with
+                // "Run `bun install`" if resolution actually needs it.
+                let step = match cause.step {
+                    LoadStep::OpenFile => "open",
+                    LoadStep::ParseFile => "parse",
+                    LoadStep::ReadFile => "read",
+                    LoadStep::Migrating => "migrate",
+                };
+                Output::warn(format_args!(
+                    "failed to {} {}: {}, continuing without it",
+                    step,
+                    bstr::BStr::new(cause.lockfile_path.as_bytes()),
+                    cause.value.name(),
+                ));
+                pm_log(manager_ptr).reset();
+                None
             }
             LoadResult::NotFound => None,
         };

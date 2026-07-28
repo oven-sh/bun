@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 
 // TypeError messages thrown from JSC builtin JavaScript must not leak the
 // builtin's private @-prefixed identifiers (e.g. `@call`, `@getWrapForValidIteratorInternalField`)
@@ -23,9 +23,7 @@ test("%WrapForValidIteratorPrototype%.next on a wrapped iterator with no next me
 });
 
 test("%WrapForValidIteratorPrototype%.return with a non-callable return", () => {
-  const msg = messageOf(() =>
-    Iterator.from({ next: () => ({ done: false, value: 1 }), return: 5 } as any).return(),
-  );
+  const msg = messageOf(() => Iterator.from({ next: () => ({ done: false, value: 1 }), return: 5 } as any).return());
   expect(msg).not.toContain("@");
   expect(msg).not.toContain("returnMethod");
   expect(msg).toBe("5 is not a function");

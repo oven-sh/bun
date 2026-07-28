@@ -863,7 +863,6 @@ describe("compile --target executable download", () => {
     return { stdout, stderr, exitCode, cachedExecutable: join(cacheDir, target) };
   }
 
-
   function shasumOnly(manifest: Record<string, any>) {
     const versionEntry = manifest.versions[version];
     versionEntry.dist.shasum = versionEntry.dist.integrity;

@@ -1,14 +1,6 @@
 import type { Server, ServerWebSocket, Socket } from "bun";
 import { describe, expect, test } from "bun:test";
-import {
-  bunEnv,
-  bunExe,
-  isWindows,
-  normalizeBunSnapshot,
-  rejectUnauthorizedScope,
-  tempDirWithFiles,
-  tls,
-} from "harness";
+import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, rejectUnauthorizedScope, tempDir, tls } from "harness";
 import path from "path";
 
 describe.concurrent("Server", () => {
@@ -1336,7 +1328,7 @@ describe("HEAD requests #15355", () => {
   });
 
   test("HEAD requests should not have body", async () => {
-    const dir = tempDirWithFiles("fsr", {
+    await using dir = tempDir("fsr", {
       "hello": "Hello World",
     });
 

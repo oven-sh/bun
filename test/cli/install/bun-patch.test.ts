@@ -1,6 +1,6 @@
 import { $, ShellOutput } from "bun";
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isASAN, tempDir } from "harness";
 import { join } from "path";
 
 const expectNoError = (o: ShellOutput) => expect(o.stderr.toString()).not.toContain("error");
@@ -11,7 +11,7 @@ setDefaultTimeout(1000 * 60 * 5);
 
 describe("error messages", () => {
   test("'bun patch' with no package name shows a usage example", async () => {
-    const dir = tempDirWithFiles("bun-patch-noarg", {
+    await using dir = tempDir("bun-patch-noarg", {
       "package.json": JSON.stringify({ name: "t" }),
     });
     await using proc = Bun.spawn({
@@ -29,7 +29,7 @@ describe("error messages", () => {
   });
 
   test("'bun patch --commit' with no directory shows a usage example", async () => {
-    const dir = tempDirWithFiles("bun-patch-commit-noarg", {
+    await using dir = tempDir("bun-patch-commit-noarg", {
       "package.json": JSON.stringify({ name: "t" }),
     });
     await using proc = Bun.spawn({
@@ -47,7 +47,7 @@ describe("error messages", () => {
   });
 
   test("'bun patch-commit' with no directory shows a usage example", async () => {
-    const dir = tempDirWithFiles("bun-patchcommit-noarg", {
+    await using dir = tempDir("bun-patchcommit-noarg", {
       "package.json": JSON.stringify({ name: "t" }),
     });
     await using proc = Bun.spawn({
@@ -78,7 +78,7 @@ describe("bun patch <pkg>", async () => {
       ];
       for (const [arg, path] of args) {
         test(arg, async () => {
-          const tempdir = tempDirWithFiles("lol", {
+          await using tempdir = tempDir("lol", {
             "package.json": JSON.stringify({
               "name": "my-workspace",
               private: "true",
@@ -153,7 +153,7 @@ describe("bun patch <pkg>", async () => {
       ];
       for (const [arg, path] of args) {
         test(arg, async () => {
-          const tempdir = tempDirWithFiles("lol", {
+          await using tempdir = tempDir("lol", {
             "package.json": JSON.stringify({
               "name": "my-workspace",
               private: "true",
@@ -231,7 +231,7 @@ describe("bun patch <pkg>", async () => {
       ];
       for (const [arg, path] of args) {
         test(arg, async () => {
-          const tempdir = tempDirWithFiles("lol", {
+          await using tempdir = tempDir("lol", {
             "package.json": JSON.stringify({
               "name": "my-workspace",
               private: "true",
@@ -317,7 +317,7 @@ describe("bun patch <pkg>", async () => {
       ];
       for (const [arg, path, version, patch_path] of args) {
         test(arg, async () => {
-          const tempdir = tempDirWithFiles("lol", {
+          await using tempdir = tempDir("lol", {
             "package.json": JSON.stringify({
               "name": "my-workspace",
               private: "true",
@@ -396,7 +396,7 @@ describe("bun patch <pkg>", async () => {
       test(
         `${pkgName}@${version}`,
         async () => {
-          const tempdir = tempDirWithFiles("popular", {
+          await using tempdir = tempDir("popular", {
             "package.json": JSON.stringify({
               "name": "bun-patch-test",
               "module": "index.ts",
@@ -466,7 +466,7 @@ describe("bun patch <pkg>", async () => {
     makeTest("@types/uuencode", "0.0.3", "@types/uuencode");
   });
   test("should patch a package when it is already patched", async () => {
-    const tempdir = tempDirWithFiles("lol", {
+    await using tempdir = tempDir("lol", {
       "package.json": JSON.stringify({
         "name": "bun-patch-test",
         "module": "index.ts",
@@ -554,7 +554,7 @@ module.exports = function isOdd(i) {
   });
 
   test("bad patch arg", async () => {
-    const tempdir = tempDirWithFiles("lol", {
+    await using tempdir = tempDir("lol", {
       "package.json": JSON.stringify({
         "name": "bun-patch-test",
         "module": "index.ts",
@@ -573,7 +573,7 @@ module.exports = function isOdd(i) {
   });
 
   test("bad patch commit arg", async () => {
-    const tempdir = tempDirWithFiles("lol", {
+    await using tempdir = tempDir("lol", {
       "package.json": JSON.stringify({
         "name": "bun-patch-test",
         "module": "index.ts",
@@ -617,7 +617,7 @@ module.exports = function isOdd(i) {
     test(name, async () => {
       $.throws(true);
 
-      const filedir = tempDirWithFiles("patch1", {
+      await using filedir = tempDir("patch1", {
         "package.json": JSON.stringify({
           "name": "bun-patch-test",
           "module": "index.ts",
@@ -661,7 +661,7 @@ Once you're done with your changes, run:
   test(
     "overwriting module with multiple levels of directories",
     async () => {
-      const filedir = tempDirWithFiles("patch1", {
+      await using filedir = tempDir("patch1", {
         "package.json": JSON.stringify({
           "name": "bun-patch-test",
           "module": "index.ts",
@@ -765,7 +765,7 @@ Once you're done with your changes, run:
     for (const patchArg of patchArgs) {
       $.throws(true);
 
-      const filedir = tempDirWithFiles("patch1", {
+      await using filedir = tempDir("patch1", {
         "package.json": JSON.stringify({
           "name": "bun-patch-test",
           "module": "index.ts",
@@ -791,7 +791,7 @@ module.exports = function isEven() {
         await $`echo ${newCode} > node_modules/is-even/index.js`.env(bunEnv).cwd(filedir);
       }
 
-      const tempdir = tempDirWithFiles("unpatched", {
+      await using tempdir = tempDir("unpatched", {
         "package.json": JSON.stringify({
           "name": "bun-patch-test",
           "module": "index.ts",
@@ -820,7 +820,7 @@ module.exports = function isEven() {
     for (const patchArg of patchArgs) {
       $.throws(true);
 
-      const filedir = tempDirWithFiles("patch1", {
+      await using filedir = tempDir("patch1", {
         "package.json": JSON.stringify({
           "name": "bun-patch-test",
           "module": "index.ts",
@@ -848,7 +848,7 @@ module.exports = function isOdd() {
         await $`echo ${newCode} > node_modules/is-even/node_modules/is-odd/index.js`.env(bunEnv).cwd(filedir);
       }
 
-      const tempdir = tempDirWithFiles("unpatched", {
+      await using tempdir = tempDir("unpatched", {
         "package.json": JSON.stringify({
           "name": "bun-patch-test",
           "module": "index.ts",

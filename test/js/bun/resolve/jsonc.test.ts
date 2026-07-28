@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test";
-import { tempDirWithFiles } from "harness";
+import { tempDir } from "harness";
 import { join } from "path";
 test("empty jsonc - package.json", async () => {
-  const dir = tempDirWithFiles("jsonc", {
+  await using dir = tempDir("jsonc", {
     "package.json": ``,
     "index.ts": `
     import pkg from './package.json';
@@ -13,7 +13,7 @@ test("empty jsonc - package.json", async () => {
 });
 
 test("empty jsonc - tsconfig.json", async () => {
-  const dir = tempDirWithFiles("jsonc", {
+  await using dir = tempDir("jsonc", {
     "tsconfig.json": ``,
     "index.ts": `
     import tsconfig from './tsconfig.json';
@@ -28,7 +28,7 @@ test("import anything.jsonc as json", async () => {
     // comment
     "trailingComma": 0,
   }`;
-  const dir = tempDirWithFiles("jsonc", {
+  await using dir = tempDir("jsonc", {
     "anything.jsonc": jsoncFile,
     "index.ts": `
     import file from './anything.jsonc';
@@ -41,7 +41,7 @@ test("import anything.jsonc as json", async () => {
 
 test("imported JSON strings match JSON.parse exactly (escapes, lone surrogates, non-ASCII)", async () => {
   const json = `{"lone":"\\ud800","pair":"\\ud83d\\ude00","mix":"a\\udfffz","e":"caf\\u00e9\\ud800x","lit":"é🚀","esc\\nkey":"a\\n\\"b\\""}`;
-  const dir = tempDirWithFiles("jsonc", {
+  await using dir = tempDir("jsonc", {
     "weird.json": json,
     "weird.jsonc": json,
     "index.ts": `

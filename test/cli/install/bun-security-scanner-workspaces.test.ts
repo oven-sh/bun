@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
 import { getRegistry, startRegistry, stopRegistry } from "./simple-dummy-registry";
 
@@ -70,7 +70,7 @@ describe.concurrent("security scanner workspaces", () => {
 }`,
     };
 
-    const dir = tempDirWithFiles("scanner-workspaces", files);
+    await using dir = tempDir("scanner-workspaces", files);
 
     await Bun.write(
       join(dir, "bunfig.toml"),
@@ -145,7 +145,7 @@ scanner = "./scanner.js"`,
 }`,
     };
 
-    const dir = tempDirWithFiles("scanner-workspaces-hoisted", files);
+    await using dir = tempDir("scanner-workspaces-hoisted", files);
 
     await Bun.write(
       join(dir, "bunfig.toml"),
@@ -219,7 +219,7 @@ scanner = "./scanner.js"`,
 }`,
     };
 
-    const dir = tempDirWithFiles("scanner-workspaces-isolated", files);
+    await using dir = tempDir("scanner-workspaces-isolated", files);
 
     await Bun.write(
       join(dir, "bunfig.toml"),

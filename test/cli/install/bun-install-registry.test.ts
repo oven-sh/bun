@@ -15,7 +15,7 @@ import {
   runBunInstall,
   runBunUpdate,
   stderrForInstall,
-  tempDirWithFiles,
+  tempDir,
   tls,
   tmpdirSync,
   toBeValidBin,
@@ -6538,7 +6538,7 @@ describe("semver", () => {
 });
 
 test("doesn't error when the migration is out of sync", async () => {
-  const cwd = tempDirWithFiles("out-of-sync-1", {
+  await using cwd = tempDir("out-of-sync-1", {
     "package.json": JSON.stringify({
       "devDependencies": {
         "no-deps": "1.0.0",

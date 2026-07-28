@@ -1161,6 +1161,14 @@ describe.skipIf(!canCreateDirSymlink)("literal path segment through a symlinked 
     expect(scan("*/cyc1", { onlyFiles: false })).toEqual(["sub/cyc1"]);
     expect(scan("*/cyc1", { onlyFiles: true })).toEqual([]);
 
+    // A trailing `/` means directories-only; a broken link (or regular file)
+    // never satisfies that, and literal/wildcard agree.
+    expect(scan("dangling/", { onlyFiles: false })).toEqual([]);
+    expect(scan("dangling*/", { onlyFiles: false })).toEqual([]);
+    expect(scan("cyc1/", { onlyFiles: false })).toEqual([]);
+    expect(scan("a.txt/", { onlyFiles: false })).toEqual([]);
+    expect(scan("a.txt*/", { onlyFiles: false })).toEqual([]);
+
     // throwErrorOnBrokenSymlink still surfaces the original following-stat error.
     const throwing = (p: string, onlyFiles: boolean) => () => [
       ...new Glob(p).scanSync({ cwd, onlyFiles, throwErrorOnBrokenSymlink: true }),

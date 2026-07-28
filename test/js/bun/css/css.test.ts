@@ -7924,6 +7924,27 @@ describe("css tests", () => {
       // variant is synthesized.
       minify_test("@-webkit-keyframes foo{0%{opacity:0}}", "@-webkit-keyframes foo{0%{opacity:0}}");
 
+      // Logical properties inside keyframe blocks are preserved verbatim when
+      // the targets would otherwise lower them, because keyframes have no
+      // `:dir()` wrapper to emit the ltr/rtl fallbacks into.
+      prefix_test(
+        "@keyframes foo{0%{padding-inline-start:10px}}",
+        indoc`
+          @-webkit-keyframes foo {
+            0% {
+              padding-inline-start: 10px;
+            }
+          }
+
+          @keyframes foo {
+            0% {
+              padding-inline-start: 10px;
+            }
+          }
+        `,
+        { safari: 4 << 16 },
+      );
+
       // Color fallback: a wide-gamut color in a `var()` fallback inside a
       // keyframe emits an `@supports`-guarded copy and rewrites the original
       // to the RGB fallback.

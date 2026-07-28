@@ -81,9 +81,12 @@ impl<'a> PropertyHandlerContext<'a> {
     }
 
     pub fn should_compile_logical(&self, feature: css::compat::Feature) -> bool {
-        // Don't convert logical properties in style attributes because
-        // our fallbacks rely on extra rules to define --ltr and --rtl.
-        if self.context == DeclarationContext::StyleAttribute {
+        // Don't convert logical properties in style attributes or keyframes
+        // because our fallbacks rely on extra rules to define --ltr and --rtl.
+        if matches!(
+            self.context,
+            DeclarationContext::StyleAttribute | DeclarationContext::Keyframes
+        ) {
             return false;
         }
 

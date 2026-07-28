@@ -144,6 +144,10 @@ describe("Bun.serve() directory routes", () => {
     const followed = await fetch(`${server.url}sub`);
     expect(followed.status).toBe(200);
     expect(await followed.text()).toBe("<h1>sub</h1>");
+
+    // A trailing slash on a regular file is a miss (nginx/send behavior).
+    const fileSlash = await fetch(`${server.url}index.html/`, { redirect: "manual" });
+    expect(fileSlash.status).toBe(404);
   });
 
   it("sets Content-Type case-insensitively by extension", async () => {
@@ -522,6 +526,7 @@ describe("Bun.serve() directory routes", () => {
     using dir = tempDir("serve-dir-bypass", {
       "public/admin/secret.txt": "SECRET",
       "public/admin/index.html": "SECRET-INDEX",
+      "public/secret.pdf": "SECRET-PDF",
       "public/ok.txt": "ok",
     });
 
@@ -529,6 +534,7 @@ describe("Bun.serve() directory routes", () => {
       port: 0,
       routes: {
         "/static/admin/*": () => new Response("auth", { status: 401 }),
+        "/static/secret.pdf": () => new Response("auth", { status: 401 }),
         "/static/*": { dir: join(String(dir), "public") },
       },
     });
@@ -536,6 +542,7 @@ describe("Bun.serve() directory routes", () => {
     // Canonical path hits the inner route.
     expect((await fetch(`${server.url}static/admin/secret.txt`)).status).toBe(401);
     expect((await fetch(`${server.url}static/admin/`)).status).toBe(401);
+    expect((await fetch(`${server.url}static/secret.pdf`)).status).toBe(401);
 
     // Non-canonical forms that uWS routes to the outer wildcard must not
     // reach public/admin/ via the directory route.
@@ -564,6 +571,12 @@ describe("Bun.serve() directory routes", () => {
     expect(noSlash.status).toBe(301);
     expect(noSlash.headers.location).toBe("/static/admin/");
     expect((await fetch(`${server.url}static/admin`)).status).toBe(401);
+
+    // A trailing slash on a regular file routes past the exact `/static/secret.pdf`
+    // handler in uWS; the directory route must not strip the slash and serve it.
+    const fileSlash = await raw("/static/secret.pdf/");
+    expect(fileSlash.body).not.toContain("SECRET");
+    expect(fileSlash.status).toBe(404);
 
     // Canonical paths under the outer route still work.
     expect(await (await fetch(`${server.url}static/ok.txt`)).text()).toBe("ok");

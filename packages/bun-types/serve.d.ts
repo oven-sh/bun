@@ -585,7 +585,8 @@ declare module "bun" {
      * The route path **must** end in `/*`. The part of the request URL after
      * the prefix is percent-decoded once and opened relative to `dir`.
      * Non-canonical paths (containing `.`, `..`, empty segments, `%2F`, or a
-     * percent-encoded ASCII character) are rejected with `404` so the served
+     * `%XX` sequence encoding a character that may appear literally in a path
+     * segment) are rejected with `404` so the served
      * path is always the path the router matched. On Linux the open uses
      * `openat2(RESOLVE_IN_ROOT)`, so symlinks that would escape `dir` are
      * clamped by the kernel.

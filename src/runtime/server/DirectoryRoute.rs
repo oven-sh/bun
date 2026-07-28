@@ -155,6 +155,10 @@ impl DirectoryRoute {
             Some(Subpath::RedirectSlash) => {
                 let mut loc = bun_paths::path_buffer_pool::get();
                 let n = build_slash_redirect(req.url(), &mut loc.0[..]);
+                if n == 0 {
+                    write_miss(&mut req, resp);
+                    return;
+                }
                 req.set_yield(false);
                 write_any_status(resp, 301);
                 resp.write_mark();
@@ -306,7 +310,9 @@ impl DirectoryRoute {
             return bun_sys::S::ISREG(s.st_mode as bun_sys::Mode)
                 .then_some(Subpath::File(f, s, true));
         }
-        bun_sys::S::ISREG(mode).then_some(Subpath::File(file, stat, false))
+        // Trailing slash on a regular file is a miss (nginx, npm `send`):
+        // `/file/` would route past an exact `/file` handler in uWS.
+        (bun_sys::S::ISREG(mode) && !had_trailing_slash).then_some(Subpath::File(file, stat, false))
     }
 
     /// `openat2(RESOLVE_IN_ROOT|NO_MAGICLINKS)` on Linux, `openat` elsewhere.
@@ -427,17 +433,14 @@ fn write_miss(req: &mut AnyRequest, resp: AnyResponse) {
 fn build_slash_redirect(url: &[u8], out: &mut [u8]) -> usize {
     let (path, query) = path_and_query(url);
     debug_assert!(path.first() == Some(&b'/') && path.get(1) != Some(&b'/'));
-    let n = path.len() + 1 + query.len();
-    if n > out.len() {
-        // Oversized query: redirect without it rather than fail the request.
-        out[..path.len()].copy_from_slice(path);
-        out[path.len()] = b'/';
-        return path.len() + 1;
+    if path.len() >= out.len() {
+        return 0;
     }
     out[..path.len()].copy_from_slice(path);
     out[path.len()] = b'/';
-    out[path.len() + 1..n].copy_from_slice(query);
-    n
+    let q = query.len().min(out.len() - path.len() - 1);
+    out[path.len() + 1..path.len() + 1 + q].copy_from_slice(&query[..q]);
+    path.len() + 1 + q
 }
 
 /// Split a raw request-target (uWS `getFullUrl()`) into `(path, query)`.
@@ -707,5 +710,12 @@ mod tests {
         assert_eq!(&out[..n], b"/static/sub/?v=1&x=2");
         let n = build_slash_redirect(b"http://h/static/sub?v=1", &mut out);
         assert_eq!(&out[..n], b"/static/sub/?v=1");
+        // Path alone does not fit: bail rather than panic.
+        let mut small = [0u8; 8];
+        assert_eq!(build_slash_redirect(b"/static/sub", &mut small), 0);
+        // Query truncated to fit.
+        let mut small = [0u8; 14];
+        let n = build_slash_redirect(b"/static/sub?verylongquery", &mut small);
+        assert_eq!(&small[..n], b"/static/sub/?v");
     }
 }

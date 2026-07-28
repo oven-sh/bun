@@ -273,10 +273,6 @@ impl FileRoute {
         }
     }
 
-    fn write_status_code(&self, status: u16, resp: AnyResponse) {
-        write_any_status(resp, status);
-    }
-
     /// # Safety
     /// `this` must point to a live heap `FileRoute` (intrusive ref held by the
     /// route table) for the duration of the call.
@@ -451,7 +447,7 @@ impl FileRoute {
 
         req.set_yield(false);
 
-        this.write_status_code(status_code, resp);
+        write_any_status(resp, status_code);
         if this.has_date_header {
             resp.mark_wrote_date_header();
         }

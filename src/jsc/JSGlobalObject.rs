@@ -1702,9 +1702,61 @@ impl ScriptExecutionContextIdentifier {
     pub fn valid(self) -> bool {
         self.global_object().is_some()
     }
+
+    /// `true` while the context exists and has not been marked terminating.
+    /// Serializes with `markTerminating()` on the contexts-map lock.
+    #[inline]
+    pub fn is_alive(self) -> bool {
+        ScriptExecutionContext__isAlive(self.0)
+    }
+
+    /// Enqueue a heap-allocated [`ConcurrentTaskItem`] onto this context's
+    /// event loop from any thread. Runs under the contexts-map lock (same lock
+    /// as `markTerminating()`), so the target VM is dereferenced only while
+    /// known live.
+    ///
+    /// Returns `true` if enqueued (ownership transferred). Returns `false` if
+    /// the context is gone or terminating; caller retains ownership of `task`
+    /// and must free it without touching the target VM/JSC heap.
+    ///
+    /// [`ConcurrentTaskItem`]: crate::event_loop::ConcurrentTaskItem
+    #[inline]
+    pub fn post_concurrent_task(
+        self,
+        task: core::ptr::NonNull<crate::event_loop::ConcurrentTaskItem>,
+    ) -> bool {
+        ScriptExecutionContext__postConcurrentTask(self.0, task.as_ptr().cast::<c_void>())
+    }
+
+    /// Decrement this context's event-loop `concurrent_ref` from off-thread
+    /// under the contexts-map lock; no-op when the context is gone or
+    /// terminating.
+    #[inline]
+    pub fn unref_event_loop_concurrently(self) {
+        ScriptExecutionContext__unrefEventLoopConcurrently(self.0);
+    }
 }
 
 unsafe extern "C" {
     // safe: by-value `u32` in, raw nullable pointer out (caller checks before deref).
     safe fn ScriptExecutionContextIdentifier__getGlobalObject(id: u32) -> *mut JSGlobalObject;
+    // safe: by-value `u32` in, opaque pointer C++ only forwards back to Rust
+    // under the contexts-map lock; bool out.
+    safe fn ScriptExecutionContext__postConcurrentTask(id: u32, task: *mut c_void) -> bool;
+    // safe: by-value `u32` in; bool out.
+    safe fn ScriptExecutionContext__isAlive(id: u32) -> bool;
+    // safe: by-value `u32` in; void out.
+    safe fn ScriptExecutionContext__unrefEventLoopConcurrently(id: u32);
+    // safe: `&JSGlobalObject` is a live opaque handle; returns the context's id.
+    safe fn ScriptExecutionContextIdentifier__forGlobalObject(global: &JSGlobalObject) -> u32;
+}
+
+impl JSGlobalObject {
+    /// The stable id for this global's `ScriptExecutionContext`. Capture on the
+    /// JS thread; post completions back via
+    /// [`ScriptExecutionContextIdentifier::post_concurrent_task`].
+    #[inline]
+    pub fn script_execution_context_identifier(&self) -> ScriptExecutionContextIdentifier {
+        ScriptExecutionContextIdentifier(ScriptExecutionContextIdentifier__forGlobalObject(self))
+    }
 }

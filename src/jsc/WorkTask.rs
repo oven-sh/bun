@@ -4,7 +4,7 @@ use bun_threading::{IntrusiveWorkTask as _, WorkPoolTask, work_pool::WorkPool};
 
 use crate::JSGlobalObject;
 use crate::debugger::AsyncTaskTracker;
-use crate::event_loop::EventLoop;
+use crate::js_global_object::ScriptExecutionContextIdentifier;
 use bun_ptr::BackRef;
 
 /// A generic task that runs work on a thread pool and executes a callback on the main JavaScript thread.
@@ -34,9 +34,8 @@ pub trait WorkTaskContext: Sized {
 pub struct WorkTask<Context: WorkTaskContext> {
     pub ctx: *mut Context,
     pub task: WorkPoolTask,
-    /// BACKREF — captured from the JS-thread VM at create time; the VM (and its
-    /// `EventLoop`) outlives every task scheduled on it.
-    pub event_loop: BackRef<EventLoop>,
+    /// See [`ScriptExecutionContextIdentifier::post_concurrent_task`].
+    pub context_id: ScriptExecutionContextIdentifier,
     // allocator field dropped — global mimalloc (see PORTING.md §Allocators)
     pub global_this: BackRef<JSGlobalObject>,
     pub concurrent_task: ConcurrentTask,
@@ -61,9 +60,8 @@ impl<Context: WorkTaskContext> Taskable for WorkTask<Context> {
 impl<Context: WorkTaskContext> WorkTask<Context> {
     pub fn create_on_js_thread(global_this: &JSGlobalObject, value: *mut Context) -> *mut Self {
         let vm = global_this.bun_vm().as_mut();
-        let event_loop = BackRef::new(vm.event_loop_shared());
         let mut this = Box::new(Self {
-            event_loop,
+            context_id: global_this.script_execution_context_identifier(),
             ctx: value,
             global_this: BackRef::new(global_this),
             task: WorkPoolTask {
@@ -129,14 +127,13 @@ impl<Context: WorkTaskContext> WorkTask<Context> {
         // re-initializes it in place and returns the same address. Passing
         // `this_ptr` while holding `&mut *this` is sound because `from` only
         // stores the pointer (does not dereference it).
-        let event_loop = this.event_loop;
+        let context_id = this.context_id;
         let this_ptr: *mut Self = this;
         let task = core::ptr::NonNull::from(
             this.concurrent_task
                 .from(this_ptr, AutoDeinit::ManualDeinit),
         );
-        // `task` is the inline `concurrent_task` field of the live
-        // heap-allocated `*this`; `event_loop` is the JS-thread loop stored at init.
-        event_loop.enqueue_task_concurrent(task);
+        // Abandon: JSC handles cannot drop off-thread, leak the box (task is intrusive).
+        let _ = context_id.post_concurrent_task(task);
     }
 }

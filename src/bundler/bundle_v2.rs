@@ -3471,7 +3471,14 @@ pub mod bv2_impl {
             // SAFETY: arena outlives the bundle pass; reborrow `*mut` as `&mut`.
             let task: &mut ParseTask = self.arena_create(task_val);
             task.loader = Some(loader);
-            task.jsx = self.transpiler_for_target(known_target).options.jsx.clone();
+            if let Some(dev) = self
+                .transpiler_for_target(known_target)
+                .options
+                .force_node_env
+                .jsx_development_override()
+            {
+                task.jsx.development = dev;
+            }
             task.task.node.next = core::ptr::null_mut();
             task.io_task.node.next = core::ptr::null_mut();
             task.tree_shaking = self.linker.options.tree_shaking;

@@ -717,6 +717,11 @@ pub mod js_bundler {
                         this.jsx.runtime = jsx_runtime_to_api(runtime.runtime);
                         if let Some(dev) = runtime.development {
                             this.jsx.development = dev;
+                            this.force_node_env = if dev {
+                                options::ForceNodeEnv::Development
+                            } else {
+                                options::ForceNodeEnv::Production
+                            };
                         }
                     } else {
                         return Err(global_this.throw_invalid_arguments(format_args!(
@@ -744,6 +749,11 @@ pub mod js_bundler {
 
                 if let Some(dev) = jsx_value.get_boolean_loose(global_this, "development")? {
                     this.jsx.development = dev;
+                    this.force_node_env = if dev {
+                        options::ForceNodeEnv::Development
+                    } else {
+                        options::ForceNodeEnv::Production
+                    };
                 }
 
                 if let Some(val) = jsx_value.get_boolean_loose(global_this, "sideEffects")? {

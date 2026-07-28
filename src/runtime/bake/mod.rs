@@ -299,6 +299,13 @@ impl Framework {
         out.configure_linker();
         out.configure_defines()?;
         out.options.jsx.development = mode == Mode::Development;
+        out.options.force_node_env = match mode {
+            Mode::Development => bun_bundler::options::ForceNodeEnv::Development,
+            Mode::ProductionDynamic | Mode::ProductionStatic => {
+                bun_bundler::options::ForceNodeEnv::Production
+            }
+        };
+        out.resolver.opts.force_node_env = out.options.force_node_env;
 
         bake_body::add_import_meta_defines(
             &mut out.options.define,

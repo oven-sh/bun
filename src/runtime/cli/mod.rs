@@ -1120,12 +1120,8 @@ pub mod command {
     /// Returns `&'static mut` to the process-global `CONTEXT_DATA`. Sound
     /// because CLI dispatch is single-threaded and this is the sole live
     /// borrow at the time of return; callers thread it down via the `ctx`
-    /// parameter rather than re-deriving.
-    ///
-    /// `help_as` is the user-facing subcommand: recorded in `CMD` / the crash
-    /// handler and used by `arguments::parse` for `--help` / parse-error
-    /// output. It equals `cmd` everywhere except `bun repl`, which parses as
-    /// `RunCommand`.
+    /// parameter rather than re-deriving. `help_as` is the user-facing
+    /// subcommand for `CMD`, the crash handler, and `--help` output.
     ///
     /// `#[inline(never)]`: this is the `init` step of the `bun run <script>`
     /// dispatch chain (`exec_auto_or_run → init → RunCommand::exec_with_cfg`)

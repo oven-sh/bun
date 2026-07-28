@@ -711,11 +711,7 @@ pub use bun_bunfig::arguments::{load_config, load_config_path, load_config_with_
 ///
 /// `command::tag_params(cmd)` does a runtime lookup of the per-subcommand
 /// param table, and the per-`cmd` blocks below are guarded by
-/// `if matches!(cmd, …)`.
-///
-/// `help_as` is the tag whose help text is printed on `--help` or a clap parse
-/// error. It equals `cmd` except for `bun repl`, which parses as `RunCommand`
-/// but prints `ReplCommand`'s help.
+/// `if matches!(cmd, …)`. `help_as` selects the `--help` / parse-error text.
 pub fn parse(
     cmd: CommandTag,
     help_as: CommandTag,

@@ -1,5 +1,5 @@
 import { expect, it } from "bun:test";
-import { BinaryLike, CipherGCM, createCipheriv, createDecipheriv, DecipherGCM, randomBytes } from "crypto";
+import { BinaryLike, CipherGCM, createCipheriv, createDecipheriv, DecipherGCM, getCipherInfo, getCiphers, randomBytes } from "crypto";
 
 /**
  * Perform a sample encryption and decryption
@@ -149,6 +149,18 @@ const references = {
     ciphertext: "8497dba3f7f3252e7f5f3cf2c49c5e16cd83da98a942532537a77283afb875ec5a865020ced4242615edb7ec2eaf7e6c",
     authTag: null,
   },
+  "aes-192-cfb": {
+    iv: "c367b0a830ab0fc8aacaa5674c1f3b4d",
+    key: "d5bb1ece4b60a10b34a7e5e1ff0cb49f846fde6105346c5b",
+    ciphertext: "52e454fbba99f8891db30a34d989524e2bd701e8df157b4983080061bb6b11d9ee3d3d7665bd6b58b5f0f2175cd44a67",
+    authTag: null,
+  },
+  "aes-256-cfb": {
+    iv: "e3985bfbe4b780790ea8df1eafba3f60",
+    key: "4a020405fcd8d24a3c73346b0556a5bcc341c48e87234d7ac7e5abb5222cd4f3",
+    ciphertext: "9a2df90bf614aae748e7c32a978e73db1c1cd405871afbd30521eacc672fc421ab7cb58c6cd7e0a00e9bc01259954cc4",
+    authTag: null,
+  },
 
   // BoringSSL does not support these modes
   // "aes-128-cfb8": {
@@ -247,4 +259,27 @@ it("should ignore authTagLength for non-authenticated cipher modes", () => {
   gcm.update("hi");
   gcm.final();
   expect(gcm.getAuthTag().length).toBe(12);
+});
+
+// https://github.com/oven-sh/bun/issues/6890
+// BoringSSL's cipher lookup table omitted aes-192-cfb while its 128/256
+// siblings (and every other aes-192-* mode) were present.
+it.each([
+  ["aes-128-cfb", 16],
+  ["aes-192-cfb", 24],
+  ["aes-256-cfb", 32],
+] as const)("%s is registered and round-trips", (name, keyLength) => {
+  expect(getCiphers()).toContain(name);
+  expect(getCipherInfo(name)).toEqual({
+    mode: "cfb",
+    name,
+    nid: expect.any(Number),
+    keyLength,
+    blockSize: 1,
+    ivLength: 16,
+  });
+
+  const key = randomBytes(keyLength);
+  const iv = randomBytes(16);
+  expect(sampleEncryptDecrypt(name, key, iv)).toBe(true);
 });

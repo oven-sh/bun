@@ -36,10 +36,16 @@ export const boringssl: Dependency = {
     commit: BORINGSSL_COMMIT,
   }),
 
-  // Upstream mem.cc gates OPENSSL_memory_* weak-symbol overrides on __ELF__;
-  // on Mach-O/COFF the hooks compile to static nullptr and OPENSSL_malloc goes
-  // straight to libc. Declare them as plain externs so lib.rs binds everywhere.
-  patches: ["patches/boringssl/require-memory-hooks.patch"],
+  patches: [
+    // Upstream mem.cc gates OPENSSL_memory_* weak-symbol overrides on __ELF__;
+    // on Mach-O/COFF the hooks compile to static nullptr and OPENSSL_malloc goes
+    // straight to libc. Declare them as plain externs so lib.rs binds everywhere.
+    "patches/boringssl/require-memory-hooks.patch",
+    // BoringSSL ships EVP_aes_192_cfb128 in decrepit/cfb/cfb.cc but omits it
+    // from the kCiphers lookup table and EVP_CIPHER_do_all_sorted, so
+    // EVP_get_cipherbyname("aes-192-cfb") returns null while 128/256 work.
+    "patches/boringssl/register-aes-192-cfb.patch",
+  ],
 
   build: cfg => {
     // win-x64 uses NASM-syntax .asm; everything else (including win-aarch64)

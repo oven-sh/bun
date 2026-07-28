@@ -280,12 +280,24 @@ impl Watcher {
             me.mutex.lock();
             me.close_descriptors.store(close_descriptors);
             me.running.store(false);
+            // Wake the watcher thread out of its blocking wait so it can
+            // observe `running == false`, run `platform.stop()`, and free
+            // `*this`. Without this the thread stays parked (in inotify
+            // `read()` / `kevent()`) and every disposed dev server leaks its
+            // inotify/kqueue instance until process exit.
+            me.platform.wake();
             me.mutex.unlock();
+            // `*this` may be freed by the watcher thread any time after this
+            // point; `thread_main` takes/releases `mutex` as a barrier before
+            // `heap::take(this)` so it cannot proceed until the unlock above.
         } else {
+            me.platform.stop();
             if close_descriptors && me.running.load() {
                 let fds = me.watchlist.items_fd();
                 for &fd in fds {
-                    let _ = bun_sys::close(fd);
+                    if fd.is_valid() {
+                        let _ = bun_sys::close(fd);
+                    }
                 }
             }
             // watchlist freed by Drop on Box
@@ -324,7 +336,6 @@ impl Watcher {
             match me.watch_loop() {
                 Err(err) => {
                     me.watchloop_handle.store(false);
-                    me.platform.stop();
                     if me.running.load() {
                         (me.on_error)(me.ctx, err);
                     }
@@ -332,11 +343,27 @@ impl Watcher {
                 Ok(()) => {}
             }
 
+            // Barrier: `shutdown()` holds `self.mutex` across
+            // `running.store(false)` and `platform.wake()`. This thread can
+            // observe `running == false` at the unlocked `while` check and
+            // fall through here before `shutdown()` has unlocked, so without
+            // this pair `platform.stop()` below could race `wake()` touching
+            // the same platform fds, and `heap::take(this)` could free
+            // `self.mutex` out from under `shutdown()`'s pending unlock.
+            me.mutex.lock();
+            me.mutex.unlock();
+
+            // Release platform resources. `wake()` makes the loop exit via
+            // `Ok(())`, so this must run on both arms (previously only `Err`).
+            me.platform.stop();
+
             // deinit and close descriptors if needed
             if me.close_descriptors.load() {
                 let fds = me.watchlist.items_fd();
                 for &fd in fds {
-                    let _ = bun_sys::close(fd);
+                    if fd.is_valid() {
+                        let _ = bun_sys::close(fd);
+                    }
                 }
             }
             // watchlist freed by Drop below

@@ -21,6 +21,12 @@ pub struct WindowsWatcher {
     pub watcher: DirWatcher,
     pub buf: PathBuffer,
     pub base_idx: usize,
+    /// Latched true once `next()` has armed a `ReadDirectoryChangesW` on
+    /// `self.watcher.overlapped`. While set, `stop()` must not close the
+    /// handles from `thread_main`: the kernel may still write the
+    /// cancellation status into `overlapped` after `CloseHandle`, which lands
+    /// in freed memory once `heap::take(this)` runs.
+    pub armed: bool,
 }
 
 impl Default for WindowsWatcher {
@@ -34,6 +40,7 @@ impl Default for WindowsWatcher {
             },
             buf: PathBuffer::uninit(),
             base_idx: 0,
+            armed: false,
         }
     }
 }
@@ -304,6 +311,7 @@ impl WindowsWatcher {
             bun_core::scoped_log!(watcher, "prepare() returned error");
             return Err(err);
         }
+        self.armed = true;
 
         let mut nbytes: w::DWORD = 0;
         let mut key: w::ULONG_PTR = 0;
@@ -380,12 +388,31 @@ impl WindowsWatcher {
     }
 
     pub(crate) fn stop(&mut self) {
+        if self.armed {
+            // A `ReadDirectoryChangesW` is (or may still be) pending on
+            // `self.watcher.overlapped`; `CloseHandle(dir_handle)` cancels it
+            // asynchronously and `thread_main` frees `*self` right after this
+            // returns, so the kernel's cancellation write can land in freed
+            // memory. Leak the two handles until process exit; the proper fix
+            // is a `CancelIoEx` + IOCP drain before `heap::take`.
+            return;
+        }
         // SAFETY: handles were opened in init() and are valid until stop() is called once.
         unsafe {
             w::CloseHandle(self.watcher.dir_handle);
             w::CloseHandle(self.iocp);
         }
     }
+
+    /// On Linux/macOS `wake()` unblocks the watcher thread so it can observe
+    /// `Watcher.running == false`, run `stop()`, and exit. On Windows that
+    /// teardown is not yet safe: `next()` keeps a `ReadDirectoryChangesW`
+    /// pending on `self.watcher.overlapped`, and freeing `self` after `stop()`
+    /// races the kernel's cancellation write into that buffer. A proper fix
+    /// needs `CancelIoEx` + draining the IOCP before `heap::take`; until then
+    /// the thread stays parked in `GetQueuedCompletionStatus` until process
+    /// exit (unchanged from before).
+    pub(crate) fn wake(&self) {}
 }
 
 #[repr(u32)]

@@ -11,12 +11,23 @@ pub struct KEventWatcher {
 
 const CHANGELIST_COUNT: usize = 128;
 
+/// Arbitrary non-zero `ident` for the EVFILT_USER wakeup event registered in
+/// `new()` and triggered by `wake()`.
+const WAKE_EVENT_IDENT: usize = 0x2307;
+
 impl KEventWatcher {
     pub fn new(_root: &[u8]) -> crate::Result<Self> {
         let fd = bun_sys::kqueue()?;
         if fd.native() == 0 {
             return Err(crate::Error::KQueueError);
         }
+        // Register a user-triggered event so `wake()` can unblock the
+        // blocking `kevent()` in `watch_loop_cycle` during shutdown.
+        let mut ev: libc::kevent = bun_core::ffi::zeroed();
+        ev.ident = WAKE_EVENT_IDENT;
+        ev.filter = libc::EVFILT_USER;
+        ev.flags = (libc::EV_ADD | libc::EV_CLEAR) as _;
+        let _ = bun_sys::kevent(fd, core::slice::from_ref(&ev), &mut [], None);
         Ok(Self { fd })
     }
 
@@ -25,6 +36,20 @@ impl KEventWatcher {
             let _ = bun_sys::close(self.fd);
             self.fd = Fd::INVALID;
         }
+    }
+
+    /// Unblock the watcher thread's blocking `kevent()` so it can observe
+    /// `Watcher.running == false` and exit. Called from `Watcher::shutdown`
+    /// on the main thread while holding `Watcher.mutex`.
+    pub fn wake(&self) {
+        if !self.fd.is_valid() {
+            return;
+        }
+        let mut ev: libc::kevent = bun_core::ffi::zeroed();
+        ev.ident = WAKE_EVENT_IDENT;
+        ev.filter = libc::EVFILT_USER;
+        ev.fflags = libc::NOTE_TRIGGER;
+        let _ = bun_sys::kevent(self.fd, core::slice::from_ref(&ev), &mut [], None);
     }
 }
 
@@ -70,21 +95,23 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
     let changes = &changelist[..count];
     let watchevents = &mut this.watch_events[..count];
     let mut out_len: usize = 0;
-    if let [first, rest @ ..] = changes {
-        watchevents[0] = watch_event_from_kevent(first);
-        out_len = 1;
-        let mut prev_event = first;
-        for event in rest {
-            if prev_event.udata == event.udata {
-                let new = watch_event_from_kevent(event);
-                watchevents[out_len - 1].merge(new);
+    let mut prev_event: Option<&libc::kevent> = None;
+    for event in changes {
+        // Only VNODE events map to watch items; skip the EVFILT_USER wakeup
+        // posted by `wake()`.
+        if event.filter != libc::EVFILT_VNODE {
+            continue;
+        }
+        if let Some(prev) = prev_event {
+            if prev.udata == event.udata {
+                watchevents[out_len - 1].merge(watch_event_from_kevent(event));
+                prev_event = Some(event);
                 continue;
             }
-
-            watchevents[out_len] = watch_event_from_kevent(event);
-            prev_event = event;
-            out_len += 1;
         }
+        watchevents[out_len] = watch_event_from_kevent(event);
+        prev_event = Some(event);
+        out_len += 1;
     }
 
     this.dispatch_file_updates(out_len, out_len);

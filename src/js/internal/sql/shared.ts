@@ -2123,6 +2123,7 @@ export interface DatabaseAdapter<Connection, ConnectionHandle, QueryHandle> {
 
   supportsReservedConnections?(): boolean;
   getConnectionForQuery?(pooledConnection: Connection): ConnectionHandle | null;
+  isConnectionInTransaction?(connection: Connection): boolean;
   attachConnectionCloseHandler?(connection: Connection, handler: () => void): void;
   detachConnectionCloseHandler?(connection: Connection, handler: () => void): void;
 

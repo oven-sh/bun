@@ -1,6 +1,6 @@
 import { randomUUIDv7, SQL } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, mock, test } from "bun:test";
-import { tempDirWithFiles } from "harness";
+import { isDebug, tempDirWithFiles } from "harness";
 import { existsSync } from "node:fs";
 import { rm, stat } from "node:fs/promises";
 import { join } from "node:path";
@@ -1144,6 +1144,225 @@ describe("Transactions", () => {
     const accounts = await sql`SELECT * FROM accounts WHERE id = 1`;
     expect(accounts[0].balance).toBe(1002);
   });
+
+  describe("SQLite automatic ROLLBACK (ON CONFLICT ROLLBACK / OR ROLLBACK / RAISE(ROLLBACK))", () => {
+    beforeEach(async () => {
+      await sql`CREATE TABLE t (v TEXT PRIMARY KEY ON CONFLICT ROLLBACK)`;
+      await sql`CREATE TABLE log (v TEXT)`;
+      await sql`INSERT INTO t VALUES ('dup')`;
+    });
+
+    test("uncaught conflict: begin() rejects with the original statement error, not 'cannot rollback'", async () => {
+      let caught: any;
+      try {
+        await sql.begin(async tx => {
+          await tx`INSERT INTO t VALUES ('dup')`;
+        });
+      } catch (e) {
+        caught = e;
+      }
+      expect({ code: caught?.code, message: String(caught) }).toEqual({
+        code: "SQLITE_CONSTRAINT_PRIMARYKEY",
+        message: "SQLiteError: UNIQUE constraint failed: t.v",
+      });
+    });
+
+    test("caught conflict: later statements are refused and nothing is committed", async () => {
+      let beginErr: any;
+      let stmtErr: any;
+      try {
+        await sql.begin(async tx => {
+          await tx`INSERT INTO log VALUES ('first')`;
+          try {
+            await tx`INSERT INTO t VALUES ('dup')`;
+          } catch {}
+          try {
+            await tx`INSERT INTO log VALUES ('after-auto-rollback')`;
+          } catch (e) {
+            stmtErr = e;
+            throw e;
+          }
+        });
+      } catch (e) {
+        beginErr = e;
+      }
+      const durable = (await sql`SELECT v FROM log`).map((r: any) => r.v);
+      expect({
+        stmtErrCode: stmtErr?.code,
+        beginErrCode: beginErr?.code,
+        durable,
+      }).toEqual({
+        stmtErrCode: "ERR_SQLITE_INVALID_TRANSACTION_STATE",
+        beginErrCode: "ERR_SQLITE_INVALID_TRANSACTION_STATE",
+        durable: [],
+      });
+      // the connection must remain usable for a fresh transaction afterwards
+      await sql.begin(async tx => {
+        await tx`INSERT INTO log VALUES ('next-tx')`;
+      });
+      expect((await sql`SELECT v FROM log`).map((r: any) => r.v)).toEqual(["next-tx"]);
+    });
+
+    test("caught conflict where callback swallows everything: begin() still rejects, COMMIT is not attempted", async () => {
+      let beginErr: any;
+      try {
+        await sql.begin(async tx => {
+          try {
+            await tx`INSERT INTO t VALUES ('dup')`;
+          } catch {}
+          // every subsequent statement keeps failing; swallowing one must not let the next through
+          try {
+            await tx`INSERT INTO log VALUES ('a')`;
+          } catch {}
+          try {
+            await tx`INSERT INTO log VALUES ('b')`;
+          } catch {}
+        });
+      } catch (e) {
+        beginErr = e;
+      }
+      expect({
+        code: beginErr?.code,
+        message: String(beginErr),
+        durable: (await sql`SELECT v FROM log`).map((r: any) => r.v),
+      }).toEqual({
+        code: "ERR_SQLITE_INVALID_TRANSACTION_STATE",
+        message:
+          "SQLiteError: current transaction is aborted (the database already rolled it back), commands ignored until end of transaction",
+        durable: [],
+      });
+    });
+
+    test("array-return form: queries created before the conflict are refused at execution time", async () => {
+      let beginErr: any;
+      await sql
+        .begin(tx => [
+          tx`INSERT INTO log VALUES ('before')`,
+          tx`INSERT INTO t VALUES ('dup')`,
+          tx`INSERT INTO log VALUES ('leaked')`,
+        ])
+        .catch(e => (beginErr = e));
+      expect({
+        code: beginErr?.code,
+        durable: (await sql`SELECT v FROM log`).map((r: any) => r.v),
+      }).toEqual({
+        code: "SQLITE_CONSTRAINT_PRIMARYKEY",
+        durable: [],
+      });
+    });
+
+    test("INSERT OR ROLLBACK (statement-level conflict clause) behaves the same", async () => {
+      await sql`CREATE TABLE t2 (v TEXT PRIMARY KEY)`;
+      await sql`INSERT INTO t2 VALUES ('dup')`;
+      let caught: any;
+      try {
+        await sql.begin(async tx => {
+          await tx`INSERT OR ROLLBACK INTO t2 VALUES ('dup')`;
+        });
+      } catch (e) {
+        caught = e;
+      }
+      expect(caught?.code).toBe("SQLITE_CONSTRAINT_PRIMARYKEY");
+    });
+
+    test("tx.unsafe refuses to run after auto-rollback", async () => {
+      let stmtErr: any;
+      await sql
+        .begin(async tx => {
+          try {
+            await tx`INSERT INTO t VALUES ('dup')`;
+          } catch {}
+          await tx.unsafe("INSERT INTO log VALUES ('after-auto-rollback')");
+        })
+        .catch(e => (stmtErr = e));
+      expect({
+        code: stmtErr?.code,
+        durable: (await sql`SELECT v FROM log`).map((r: any) => r.v),
+      }).toEqual({
+        code: "ERR_SQLITE_INVALID_TRANSACTION_STATE",
+        durable: [],
+      });
+    });
+
+    test("tx.savepoint after auto-rollback is refused and its body never runs", async () => {
+      let bodyRan = false;
+      let conflictErr: any;
+      let beginErr: any;
+      try {
+        await sql.begin(async tx => {
+          try {
+            await tx`INSERT INTO t VALUES ('dup')`;
+          } catch (e) {
+            conflictErr = e;
+          }
+          await tx.savepoint(async sp => {
+            bodyRan = true;
+            await sp`INSERT INTO log VALUES ('from-savepoint')`;
+          });
+        });
+      } catch (e) {
+        beginErr = e;
+      }
+      expect({
+        bodyRan,
+        conflictErrCode: conflictErr?.code,
+        beginErrCode: beginErr?.code,
+        durable: (await sql`SELECT v FROM log`).map((r: any) => r.v),
+      }).toEqual({
+        bodyRan: false,
+        conflictErrCode: "SQLITE_CONSTRAINT_PRIMARYKEY",
+        beginErrCode: "ERR_SQLITE_INVALID_TRANSACTION_STATE",
+        durable: [],
+      });
+    });
+
+    test("tx.savepoint with a concurrent unawaited conflict is refused at SAVEPOINT execution time", async () => {
+      let bodyRan = false;
+      let beginErr: any;
+      await sql
+        .begin(async tx => {
+          // .catch() enqueues this query's execution microtask before SAVEPOINT's, without
+          // awaiting it; the conflict auto-rolls-back between the savepoint() call-time
+          // check and the SAVEPOINT command actually running.
+          tx`INSERT INTO t VALUES ('dup')`.catch(() => {});
+          await tx.savepoint(async sp => {
+            bodyRan = true;
+            await sp`INSERT INTO log VALUES ('from-savepoint')`;
+          });
+        })
+        .catch(e => (beginErr = e));
+      expect({
+        bodyRan,
+        code: beginErr?.code,
+        durable: (await sql`SELECT v FROM log`).map((r: any) => r.v),
+      }).toEqual({
+        bodyRan: false,
+        code: "ERR_SQLITE_INVALID_TRANSACTION_STATE",
+        durable: [],
+      });
+    });
+
+    test("auto-rollback inside a savepoint propagates the original error and aborts the outer transaction", async () => {
+      let caught: any;
+      try {
+        await sql.begin(async tx => {
+          await tx`INSERT INTO log VALUES ('outer')`;
+          await tx.savepoint(async sp => {
+            await sp`INSERT INTO t VALUES ('dup')`;
+          });
+        });
+      } catch (e) {
+        caught = e;
+      }
+      expect({
+        code: caught?.code,
+        durable: (await sql`SELECT v FROM log`).map((r: any) => r.v),
+      }).toEqual({
+        code: "SQLITE_CONSTRAINT_PRIMARYKEY",
+        durable: [],
+      });
+    });
+  });
 });
 
 describe("SQLite-specific features", () => {
@@ -2014,7 +2233,8 @@ describe("Memory and resource management", () => {
 
     await sql`CREATE TABLE stmt_test (id INTEGER PRIMARY KEY, value TEXT)`;
 
-    const iterations = 10000;
+    // debug+ASAN runs ~100x slower; 10k INSERTs there exceed the per-test timeout
+    const iterations = isDebug ? 1000 : 10000;
 
     for (let i = 0; i < iterations; i++) {
       await sql`INSERT INTO stmt_test (id, value) VALUES (${i}, ${"test" + i})`;

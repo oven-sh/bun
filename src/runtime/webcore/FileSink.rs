@@ -60,9 +60,7 @@ pub struct FileSink {
     /// Currently, only used when `stdin` in `Bun.spawn` is a ReadableStream.
     pub readable_stream: JsCell<readable_stream::Strong>,
 
-    /// Producer error from the stdin ReadableStream pump (spawn-only, like
-    /// `readable_stream`). Set by `handle_reject_stream`; `Subprocess::
-    /// on_process_exit` forwards it as `onExit`'s fourth argument.
+    /// Producer error from the stdin ReadableStream pump, for `Subprocess::on_process_exit`.
     pub stream_error: JsCell<bun_jsc::strong::Optional>,
 
     /// Strong reference to the JS wrapper object to prevent GC from collecting it
@@ -1466,9 +1464,7 @@ impl FileSink {
         }
 
         if self.done.get() {
-            // The attached subprocess has already run `on_process_exit` (which
-            // is what sets `done` via `on_attached_process_exit`), so there is
-            // no later consumer for `stream_error`. Surface it now.
+            // `done` ⇒ `on_process_exit` already ran; no later `take_stream_error`.
             let _ = bun_jsc::JSPromise::rejected_promise(global_this, err);
         } else {
             self.stream_error.with_mut(|s| s.set(global_this, err));
@@ -1476,8 +1472,6 @@ impl FileSink {
         }
     }
 
-    /// Take the stdin ReadableStream pump error, if one was recorded. Called by
-    /// `Subprocess::on_process_exit` to populate `onExit`'s error argument.
     pub fn take_stream_error(&self) -> Option<JSValue> {
         self.stream_error.with_mut(|s| s.try_swap())
     }
@@ -1578,10 +1572,7 @@ impl FileSink {
                         // These don't ref().
                         // SAFETY: `js_promise` is non-null (`as_any_promise`).
                         let result = unsafe { (*js_promise).result(global_this.vm()) };
-                        // `handle_reject_stream` captures `result` into
-                        // `stream_error` for `Subprocess::on_process_exit` to
-                        // deliver; mark the pump promise handled so it is not
-                        // also reported via the unhandled-rejection tracker.
+                        // `handle_reject_stream` owns delivering `result`; don't also report it.
                         // SAFETY: `js_promise` is non-null (`as_any_promise`).
                         unsafe { (*js_promise).set_handled() };
                         self.handle_reject_stream(global_this, result);

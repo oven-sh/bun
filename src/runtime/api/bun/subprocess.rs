@@ -1066,8 +1066,6 @@ impl Subprocess<'_> {
 
         let mut stdin_stream_error = JSValue::ZERO;
         if let Some(pipe_ptr) = stdin {
-            // Pull the stdin ReadableStream pump error (if any) before
-            // `on_attached_process_exit` tears the sink down.
             stdin_stream_error = bun_ptr::BackRef::from(pipe_ptr)
                 .take_stream_error()
                 .unwrap_or(JSValue::ZERO);
@@ -1197,8 +1195,6 @@ impl Subprocess<'_> {
                     // SAFETY: event_loop points into the live VM.
                     unsafe { (*event_loop).run_callback(callback, global_this, this_value, &args) };
                 } else if !stdin_stream_error.is_empty() {
-                    // No onExit handler to receive the stdin producer error;
-                    // report it so the truncation is not silent.
                     let _ = bun_jsc::JSPromise::rejected_promise(global_this, stdin_stream_error);
                 }
             }

@@ -1200,18 +1200,16 @@ impl<'a> Linker<'a> {
         // SAFETY: dest_buf[abs_dest_w_len + ".exe".len()] == 0 written above
         let abs_exe_file = bun_core::WStr::from_buf(&dest_buf[..], abs_dest_w_len + b".exe".len());
 
-        match sys::File::write_file_os_path(
+        let exe_rewritten = match sys::File::write_file_os_path(
             Fd::invalid(),
             abs_exe_file,
             crate::windows_shim::embedded_executable_data(),
         ) {
-            Ok(()) => {}
+            Ok(()) => true,
             Err(err) => {
                 let err: crate::Error = err.into();
                 match err {
-                    crate::Error::Sys(bun_errno::SystemErrno::EBUSY) => {
-                        // exe is running; metadata goes to a separate stream/file below.
-                    }
+                    crate::Error::Sys(bun_errno::SystemErrno::EBUSY) => false,
                     crate::Error::Sys(bun_errno::SystemErrno::ENOENT) if !global => {
                         let node_modules_path_save = self.node_modules_path.len();
                         let _ = self.node_modules_path.append(b".bin");
@@ -1226,6 +1224,7 @@ impl<'a> Linker<'a> {
                             self.err = Some(real_err.into());
                             return;
                         }
+                        true
                     }
                     _ => {
                         self.err = Some(err);
@@ -1233,7 +1232,7 @@ impl<'a> Linker<'a> {
                     }
                 }
             }
-        }
+        };
 
         // Prefer the `:bunx` alternate data stream; fall back to a `<name>.bunx`
         // sidecar on any error (exFAT, some network shares lack named streams).
@@ -1270,11 +1269,13 @@ impl<'a> Linker<'a> {
         let abs_bunx_file =
             bun_core::WStr::from_buf(&dest_buf[..], abs_dest_w_len + b".bunx".len());
 
-        if wrote_ads {
+        if wrote_ads && exe_rewritten {
             let _ = sys::unlink_w(abs_bunx_file);
             return;
         }
 
+        // Sidecar write: either the fallback, or (when the exe was EBUSY) a
+        // fresh copy so a pre-ADS shim PE left on disk still finds metadata.
         let bunx_file = match sys::File::openat_os_path(
             Fd::invalid(),
             abs_bunx_file,

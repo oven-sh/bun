@@ -656,24 +656,29 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
             }
         };
 
+        // `UNICODE_STRING.Length` is u16, so guard on the byte length; the
+        // same bound covers buf1 (`u16::MAX/2 < BUF1_LEN`).
+        let nt_len_bytes = |len_u16s: usize| -> Option<u16> {
+            if len_u16s <= BUF1_LEN { u16::try_from(2 * len_u16s).ok() } else { None }
+        };
+
         let ads_path_len = NT_OBJECT_PREFIX.len() + image_path_b_len / 2 + 5 /* ":bunx".len */;
-        let mut rc = if ads_path_len <= BUF1_LEN {
-            // BUF1: '\??\C:\Users\chloe\project\node_modules\.bin\hello.exe:bunx!!!!!!!!!!!!!!!!!!'
-            // SAFETY: ads_path_len <= BUF1_LEN guarantees the 5 u16s after the copied image path
-            // are within buf1.
-            unsafe {
-                buf1_u8
-                    .add(image_path_b_len + 2 * NT_OBJECT_PREFIX.len())
-                    .cast::<[u16; 5]>()
-                    .write_unaligned([':' as u16, 'b' as u16, 'u' as u16, 'n' as u16, 'x' as u16]);
+        let mut rc = match nt_len_bytes(ads_path_len) {
+            Some(path_len_bytes) => {
+                // BUF1: '\??\C:\Users\chloe\project\node_modules\.bin\hello.exe:bunx!!!!!!!!!!!!!!!!!!'
+                // SAFETY: ads_path_len <= BUF1_LEN guarantees the 5 u16s after the copied image
+                // path are within buf1.
+                unsafe {
+                    buf1_u8
+                        .add(image_path_b_len + 2 * NT_OBJECT_PREFIX.len())
+                        .cast::<[u16; 5]>()
+                        .write_unaligned([
+                            ':' as u16, 'b' as u16, 'u' as u16, 'n' as u16, 'x' as u16,
+                        ]);
+                }
+                open_metadata(path_len_bytes, &mut metadata_handle, &mut io)
             }
-            open_metadata(
-                u16::try_from(2 * ads_path_len).unwrap(),
-                &mut metadata_handle,
-                &mut io,
-            )
-        } else {
-            NTSTATUS::OBJECT_NAME_NOT_FOUND
+            None => NTSTATUS::OBJECT_NAME_NOT_FOUND,
         };
 
         if rc != NTSTATUS::SUCCESS {
@@ -682,9 +687,9 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
             }
             let sidecar_path_len =
                 NT_OBJECT_PREFIX.len() + image_path_b_len / 2 - 3 /* "exe".len */ + 4 /* "bunx".len */;
-            if sidecar_path_len > BUF1_LEN {
+            let Some(path_len_bytes) = nt_len_bytes(sidecar_path_len) else {
                 return LauncherMode::fail(MODE, FailReason::InvalidShimBounds);
-            }
+            };
             // BUF1: '\??\C:\Users\chloe\project\node_modules\.bin\hello.bunxbunx!!!!!!!!!!!!!!!!!!'
             //                                                       ^^^^ overwritten, trailing
             //                                                            bytes ignored by Length
@@ -695,11 +700,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
                     .cast::<[u16; 4]>()
                     .write_unaligned(['b' as u16, 'u' as u16, 'n' as u16, 'x' as u16]);
             }
-            rc = open_metadata(
-                u16::try_from(2 * sidecar_path_len).unwrap(),
-                &mut metadata_handle,
-                &mut io,
-            );
+            rc = open_metadata(path_len_bytes, &mut metadata_handle, &mut io);
         }
 
         if rc != NTSTATUS::SUCCESS {

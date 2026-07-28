@@ -7870,10 +7870,7 @@ describe("css tests", () => {
 
       // Same-name merge: a later `@keyframes` with the same name and the same
       // vendor prefix replaces the earlier one.
-      minify_test(
-        "@keyframes foo{0%{color:red}}@keyframes foo{0%{color:#00f}}",
-        "@keyframes foo{0%{color:#00f}}",
-      );
+      minify_test("@keyframes foo{0%{color:red}}@keyframes foo{0%{color:#00f}}", "@keyframes foo{0%{color:#00f}}");
 
       // Same-name merge across vendor prefixes: identical keyframe bodies
       // under different prefixes collapse into a single rule that emits both
@@ -7925,10 +7922,7 @@ describe("css tests", () => {
 
       // Authored `@-webkit-keyframes` alone stays prefixed; no unprefixed
       // variant is synthesized.
-      minify_test(
-        "@-webkit-keyframes foo{0%{opacity:0}}",
-        "@-webkit-keyframes foo{0%{opacity:0}}",
-      );
+      minify_test("@-webkit-keyframes foo{0%{opacity:0}}", "@-webkit-keyframes foo{0%{opacity:0}}");
 
       // Color fallback: a wide-gamut color in a `var()` fallback inside a
       // keyframe emits an `@supports`-guarded copy and rewrites the original

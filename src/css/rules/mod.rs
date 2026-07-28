@@ -556,7 +556,8 @@ impl<R> CssRuleList<R> {
                             .prefixes(keyframez.vendor_prefix, css::prefixes::Feature::AtKeyframes);
 
                         let name = keyframez.name;
-                        let fallbacks = keyframez.get_fallbacks::<R>(context.arena, context.targets);
+                        let fallbacks =
+                            keyframez.get_fallbacks::<R>(context.arena, context.targets);
 
                         // Appending a non-style rule ends the current
                         // style-rule merge run; mirror the fall-through path

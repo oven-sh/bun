@@ -1161,10 +1161,13 @@ describe.skipIf(!canCreateDirSymlink)("literal path segment through a symlinked 
     expect(scan("*/cyc1", { onlyFiles: false })).toEqual(["sub/cyc1"]);
     expect(scan("*/cyc1", { onlyFiles: true })).toEqual([]);
 
-    // throwErrorOnBrokenSymlink still surfaces the failure.
-    expect(() => [
-      ...new Glob("dangling").scanSync({ cwd, onlyFiles: false, throwErrorOnBrokenSymlink: true }),
-    ]).toThrow(/ENOENT/);
+    // throwErrorOnBrokenSymlink still surfaces the original following-stat error.
+    const throwing = (p: string, onlyFiles: boolean) => () => [
+      ...new Glob(p).scanSync({ cwd, onlyFiles, throwErrorOnBrokenSymlink: true }),
+    ];
+    expect(throwing("dangling", false)).toThrow(/ENOENT/);
+    expect(throwing("cyc1", false)).toThrow(/ELOOP/);
+    expect(throwing("cyc1", true)).toThrow(/ELOOP/);
   });
 });
 

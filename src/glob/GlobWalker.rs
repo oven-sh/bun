@@ -677,14 +677,23 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                     // statat follows symlinks; a broken link still exists as an
                     // entry, so fall back to lstat like directory iteration does.
                     Err(e) => match A::lstatat(fd, pathz_ref) {
-                        Ok(lst) if !self.walker.error_on_broken_symlinks => lst,
-                        lstat_result => {
+                        Ok(lst) => {
+                            if self.walker.error_on_broken_symlinks {
+                                self.close_disallowing_cwd(fd);
+                                return Ok(Err(e.with_path(
+                                    self.walker.pattern_components[idx as usize]
+                                        .pattern_slice(&self.walker.pattern),
+                                )));
+                            }
+                            lst
+                        }
+                        Err(le) => {
                             self.close_disallowing_cwd(fd);
-                            if lstat_result.is_err() && e.get_errno() == E::ENOENT {
+                            if le.get_errno() == E::ENOENT {
                                 self.iter_state = IterState::GetNext;
                                 return Ok(Ok(()));
                             }
-                            return Ok(Err(e.with_path(
+                            return Ok(Err(le.with_path(
                                 self.walker.pattern_components[idx as usize]
                                     .pattern_slice(&self.walker.pattern),
                             )));

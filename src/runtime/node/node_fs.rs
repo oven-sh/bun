@@ -435,9 +435,7 @@ fn err_from_static(name: &'static str) -> crate::Error {
 const PREALLOCATE_SUPPORTED: bool = cfg!(any(target_os = "linux", target_os = "android"));
 const PREALLOCATE_LENGTH: usize = 2048 * 1024;
 
-/// Node's `kWriteFileMaxChunkSize` (lib/internal/fs/promises.js): `writeFile`
-/// polls the AbortSignal between writes of this size so an in-flight abort can
-/// stop the write before the whole buffer is committed.
+/// Node's `kWriteFileMaxChunkSize`: AbortSignal is polled between writes of this size.
 const WRITE_FILE_CHUNK_SIZE: usize = 512 * 1024;
 
 /// `CLONE_NOFOLLOW` from `<sys/clonefile.h>` — not re-exported by `bun_sys::c`
@@ -7443,11 +7441,8 @@ impl NodeFS {
         let mut written: usize = 0;
         let has_signal = args.signal.is_some();
 
-        // Attempt to pre-allocate large files.
-        // Worthwhile after 6 MB at least on ext4 linux. Skip it when an
-        // AbortSignal is attached: fallocate(mode 0) grows the file to the full
-        // length up front, and an abort mid-write would leave a zeroed tail on
-        // paths where the post-loop truncate does not run (fd targets, r+).
+        // Attempt to pre-allocate large files (worthwhile after 6 MB on ext4).
+        // Skipped under a signal: an abort would leave a fallocate-zeroed tail.
         if PREALLOCATE_SUPPORTED && !has_signal && buf.len() >= PREALLOCATE_LENGTH {
             'preallocate: {
                 let is_path = matches!(args.file, PathOrFileDescriptor::Path(_));
@@ -7487,10 +7482,6 @@ impl NodeFS {
         // the bytes that did land.
         let mut write_err: Option<sys::Error> = None;
         while !buf.is_empty() {
-            // Node checks the abort signal between 512 KiB chunks
-            // (kWriteFileMaxChunkSize in lib/internal/fs/promises.js); without
-            // the per-write bound a single write() can commit the whole buffer
-            // before the signal is consulted.
             let chunk = if has_signal {
                 if args.aborted() {
                     write_err = Some(abort_err());

@@ -428,4 +428,109 @@ describe("bundler", () => {
       expect(bundled).not.toMatch(/await\s+__promiseAll\s*\(/);
     },
   });
+
+  itBundled("bundler/__promiseAll is emitted when an unwrapped entry awaits two async ESM wrappers", {
+    files: {
+      "/entry.mjs": `
+        import { a } from "./a.mjs";
+        import { b } from "./b.mjs";
+        console.log("got", a, b);
+        console.log("dyn", Object.keys(await import("./a.mjs")).join(","), Object.keys(await import("./b.mjs")).join(","));
+      `,
+      "/a.mjs": `export const a = await Promise.resolve("A");`,
+      "/b.mjs": `export const b = await Promise.resolve("B");`,
+    },
+    format: "esm",
+    target: "bun",
+    run: {
+      stdout: "got A B\ndyn a b\n",
+    },
+    onAfterBundle(api) {
+      const bundled = api.readFile("out.js");
+      // The entry itself is not wrapped, so the parallel-init `await` is emitted
+      // at the top level of the chunk. The helper must be defined, not just
+      // referenced.
+      expect(bundled).toMatch(/await\s+__promiseAll\s*\(\s*\[/);
+      expect(bundled).toContain("var __promiseAll = ");
+    },
+  });
+
+  itBundled("bundler/__promiseAll is emitted when an unwrapped entry awaits three async ESM wrappers", {
+    files: {
+      "/entry.mjs": `
+        import { a } from "./a.mjs";
+        import { b } from "./b.mjs";
+        import { c } from "./c.mjs";
+        console.log("got", a, b, c);
+        await import("./a.mjs");
+        await import("./b.mjs");
+        await import("./c.mjs");
+      `,
+      "/a.mjs": `export const a = await Promise.resolve("A");`,
+      "/b.mjs": `export const b = await Promise.resolve("B");`,
+      "/c.mjs": `export const c = await Promise.resolve("C");`,
+    },
+    format: "esm",
+    target: "bun",
+    run: {
+      stdout: "got A B C\n",
+    },
+    onAfterBundle(api) {
+      const bundled = api.readFile("out.js");
+      expect(bundled).toMatch(/await\s+__promiseAll\s*\(\s*\[/);
+      expect(bundled).toContain("var __promiseAll = ");
+      expect(bundled).toContain("init_a()");
+      expect(bundled).toContain("init_b()");
+      expect(bundled).toContain("init_c()");
+    },
+  });
+
+  itBundled("bundler/__promiseAll is emitted when an unwrapped non-entry file awaits two async ESM wrappers", {
+    files: {
+      "/entry.mjs": `
+        import { joined } from "./mid.mjs";
+        console.log("got", joined);
+        await import("./a.mjs");
+        await import("./b.mjs");
+      `,
+      "/mid.mjs": `
+        import { a } from "./a.mjs";
+        import { b } from "./b.mjs";
+        export const joined = a + b;
+      `,
+      "/a.mjs": `export const a = await Promise.resolve("A");`,
+      "/b.mjs": `export const b = await Promise.resolve("B");`,
+    },
+    format: "esm",
+    target: "bun",
+    run: {
+      stdout: "got AB\n",
+    },
+    onAfterBundle(api) {
+      const bundled = api.readFile("out.js");
+      expect(bundled).toMatch(/await\s+__promiseAll\s*\(\s*\[/);
+      expect(bundled).toContain("var __promiseAll = ");
+    },
+  });
+
+  itBundled("bundler/__promiseAll is not emitted when an unwrapped entry awaits a single async ESM wrapper", {
+    files: {
+      "/entry.mjs": `
+        import { a } from "./a.mjs";
+        console.log("got", a);
+        console.log("dyn", Object.keys(await import("./a.mjs")).join(","));
+      `,
+      "/a.mjs": `export const a = await Promise.resolve("A");`,
+    },
+    format: "esm",
+    target: "bun",
+    run: {
+      stdout: "got A\ndyn a\n",
+    },
+    onAfterBundle(api) {
+      const bundled = api.readFile("out.js");
+      expect(bundled).toMatch(/await\s+init_a\s*\(\s*\)\s*;/);
+      expect(bundled).not.toContain("__promiseAll");
+    },
+  });
 });

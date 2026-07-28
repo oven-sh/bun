@@ -1434,8 +1434,6 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             &mut path_buf2[..],
             match url_type {
                 URLType::File => url.path,
-                // Blob URL store lookup excludes the fragment
-                // (https://w3c.github.io/FileAPI/#blob-url-resolve).
                 URLType::Blob => &url.href_without_fragment()[b"blob:".len()..],
                 URLType::Remote => unreachable!(),
             },

@@ -2189,3 +2189,31 @@ export function getPuppeteerInstallEnv(): Record<string, string> {
   // env to whatever later launches puppeteer so it finds the browser.
   return { PUPPETEER_CACHE_DIR: tmpdirSync("puppeteer-cache") };
 }
+
+const compiledFixtures = new Map<string, string>();
+export function compileFixture(sourcePath: string, options: { flags?: string[] } = {}): string {
+  const cacheKey = sourcePath + "\0" + (options.flags ?? []).join("\0");
+  const cached = compiledFixtures.get(cacheKey);
+  if (cached) return cached;
+
+  const outDir = tmpdirSync("ffi-fixture-");
+  const base = basename(sourcePath).replace(/\.c$/, "");
+  const libExt = isWindows ? "dll" : isMacOS ? "dylib" : "so";
+  const flagsTag = options.flags?.length ? "-" + Bun.hash((options.flags ?? []).join(" ")).toString(36) : "";
+  const outPath = join(outDir, `${base}${flagsTag}.${libExt}`);
+
+  const cc = which("cc") || which("clang") || which("gcc");
+  if (!cc) throw new Error("compileFixture: no C compiler (cc/clang/gcc) found in $PATH");
+
+  const cmd = isWindows
+    ? [cc, sourcePath, "-shared", "-o", outPath, ...(options.flags ?? [])]
+    : [cc, sourcePath, "-shared", "-fPIC", "-O2", "-o", outPath, ...(options.flags ?? [])];
+  const { exitCode, stderr } = spawnSync({ cmd, cwd: outDir, stdout: "inherit", stderr: "pipe", env: bunEnv });
+  if (exitCode !== 0) {
+    throw new Error(
+      `compileFixture: \`${cmd.join(" ")}\` failed (exit ${exitCode}):\n${stderr?.toString?.() ?? stderr}`,
+    );
+  }
+  compiledFixtures.set(cacheKey, outPath);
+  return outPath;
+}

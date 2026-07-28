@@ -53,11 +53,7 @@ test("auto-install resolve wait does not run user JS inside the sync call", asyn
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   const events: string[] = JSON.parse(stdout.trim());
   const inside = events.filter(e => e.includes("@INSIDE"));

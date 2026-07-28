@@ -1313,9 +1313,6 @@ impl BunTest {
         };
 
         let junit_ctx: *mut core::ffi::c_void = 'ctx: {
-            if handle_status != HandleUncaughtExceptionResult::ShowHandledError {
-                break 'ctx core::ptr::null_mut();
-            }
             let Some(reporter) = self.reporter else {
                 break 'ctx core::ptr::null_mut();
             };
@@ -1327,12 +1324,27 @@ impl BunTest {
             }
         };
 
-        self.bun_test_root.on_before_print();
-        if matches!(
+        let is_unhandled = matches!(
             handle_status,
             HandleUncaughtExceptionResult::ShowUnhandledErrorBetweenTests
                 | HandleUncaughtExceptionResult::ShowUnhandledErrorInDescribe
-        ) {
+        );
+        // For unhandled errors we consume `last_failure` ourselves below; stash
+        // any pending handled-error state so it still reaches its test's
+        // `write_test_case`.
+        let saved_failure = if is_unhandled && !junit_ctx.is_null() {
+            // SAFETY: `junit_ctx` is `&mut JunitReporter`; see the derivation above.
+            unsafe {
+                (*junit_ctx.cast::<crate::cli::test_command::JunitReporter>())
+                    .last_failure
+                    .take()
+            }
+        } else {
+            None
+        };
+
+        self.bun_test_root.on_before_print();
+        if is_unhandled {
             // SAFETY: reporter is Some (asserted by call sites that reach here);
             // `NonNull<CommandLineReporter>` carries write provenance from
             // `enter_file`'s `&mut`; single-threaded, no other borrow live.
@@ -1357,12 +1369,35 @@ impl BunTest {
             vm.on_print_error_zig_exception_ctx = core::ptr::null_mut();
         }
 
-        if matches!(
-            handle_status,
-            HandleUncaughtExceptionResult::ShowUnhandledErrorBetweenTests
-                | HandleUncaughtExceptionResult::ShowUnhandledErrorInDescribe
-        ) {
+        if is_unhandled {
             bun_core::pretty_error!("<r><d>-------------------------------<r>\n\n");
+            if !junit_ctx.is_null() {
+                // SAFETY: `self.reporter` is `Some` whenever `junit_ctx` is set
+                // (both derive from the same `Some(reporter)` arm above).
+                let file: &[u8] = unsafe {
+                    (*self.reporter.unwrap().as_ptr()).jest.files.items_source()
+                        [self.file_id as usize]
+                        .path
+                        .text
+                };
+                // SAFETY: `junit_ctx` is `&mut JunitReporter`; `run_error_handler`
+                // has returned so no other borrow of the reporter is live.
+                let junit = unsafe {
+                    &mut *junit_ctx.cast::<crate::cli::test_command::JunitReporter>()
+                };
+                // `run_error_handler` short-circuits before populating a
+                // `ZigException` for `BuildMessage`/`ResolveMessage`, so pull
+                // their text directly when the callback never fired.
+                if junit.last_failure.is_none() {
+                    if let Some(m) = exception.as_class_ref::<crate::api::BuildMessage>() {
+                        junit.record_failure_text(b"BuildMessage", m.msg.data.text.as_ref());
+                    } else if let Some(m) = exception.as_class_ref::<crate::api::ResolveMessage>() {
+                        junit.record_failure_text(b"ResolveMessage", m.msg.data.text.as_ref());
+                    }
+                }
+                junit.write_unhandled_error(file).expect("oom");
+                junit.last_failure = saved_failure;
+            }
         }
 
         Output::flush();

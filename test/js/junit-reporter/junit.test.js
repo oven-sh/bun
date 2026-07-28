@@ -503,6 +503,108 @@ describe("junit reporter", () => {
     expect(exitCode).toBe(1);
   });
 
+  it("records files that fail to load as <error> testcases", async () => {
+    await using tmpDir = tempDir("junit-load-errors", {
+      "package.json": "{}",
+      "a_good.test.js": `
+        import { test, expect } from "bun:test";
+        test("good", () => { expect(1).toBe(1); });
+      `,
+      "b_syntax_error.test.js": `const x = ;`,
+      "c_top_level_throw.test.js": `throw new Error("top-level-import-throw");`,
+      "d_missing_import.test.js": `
+        import { nope } from "./does-not-exist";
+        nope();
+      `,
+      "e_describe_throw.test.js": `
+        import { describe } from "bun:test";
+        describe("boom-describe", () => { throw new Error("describe-body-throw"); });
+      `,
+    });
+
+    const junitPath = join(tmpDir, "junit.xml");
+    await using proc = spawn([bunExe(), "test", "--reporter=junit", "--reporter-outfile", junitPath], {
+      cwd: tmpDir,
+      env: { ...bunEnv, BUN_DEBUG_QUIET_LOGS: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const xmlContent = await file(junitPath).text();
+    const result = await new Promise((resolve, reject) => {
+      xml2js.parseString(xmlContent, { strict: true }, (err, r) => (err ? reject(err) : resolve(r)));
+    });
+
+    // Every file, including the ones that failed to load, must have a suite.
+    const suites = Object.fromEntries(result.testsuites.testsuite.map(s => [s.$.name, s]));
+    expect(Object.keys(suites).sort()).toEqual([
+      "a_good.test.js",
+      "b_syntax_error.test.js",
+      "c_top_level_throw.test.js",
+      "d_missing_import.test.js",
+      "e_describe_throw.test.js",
+    ]);
+
+    // The broken files each carry a single <error> testcase with the real
+    // message (not a placeholder).
+    for (const [name, expectedMsg] of [
+      ["b_syntax_error.test.js", "Unexpected"],
+      ["c_top_level_throw.test.js", "top-level-import-throw"],
+      ["d_missing_import.test.js", "does-not-exist"],
+      ["e_describe_throw.test.js", "describe-body-throw"],
+    ]) {
+      const suite = suites[name];
+      expect(suite.$.errors).toBe("1");
+      expect(suite.$.tests).toBe("1");
+      const tc = suite.testcase[0];
+      expect(tc.$.file).toBe(name);
+      expect(tc.error).toBeDefined();
+      const err = tc.error[0];
+      const haystack = [err.$?.message, err.$?.type, err._].filter(Boolean).join(" ");
+      expect(haystack).toContain(expectedMsg);
+    }
+
+    // Top-level aggregates must reconcile with the console: tests counts every
+    // emitted testcase, and failures+errors covers every non-pass file.
+    expect(result.testsuites.$).toMatchObject({
+      tests: "5",
+      failures: "0",
+      errors: "4",
+    });
+
+    expect(exitCode).toBe(1);
+  });
+
+  it("writes the junit outfile even when every file fails to load", async () => {
+    await using tmpDir = tempDir("junit-all-errors", {
+      "package.json": "{}",
+      "a.test.js": `throw new Error("a-load-error");`,
+      "b.test.js": `const x = ;`,
+    });
+
+    const junitPath = join(tmpDir, "junit.xml");
+    await using proc = spawn([bunExe(), "test", "--reporter=junit", "--reporter-outfile", junitPath], {
+      cwd: tmpDir,
+      env: { ...bunEnv, BUN_DEBUG_QUIET_LOGS: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const xmlContent = await file(junitPath).text();
+    const result = await new Promise((resolve, reject) => {
+      xml2js.parseString(xmlContent, { strict: true }, (err, r) => (err ? reject(err) : resolve(r)));
+    });
+
+    expect(result.testsuites.$).toMatchObject({ tests: "2", failures: "0", errors: "2" });
+    expect(result.testsuites.testsuite).toHaveLength(2);
+    for (const suite of result.testsuites.testsuite) {
+      expect(suite.testcase[0].error).toBeDefined();
+    }
+    expect(exitCode).toBe(1);
+  });
+
   it("includes the error type, message and stack in <failure>", async () => {
     await using tmpDir = tempDir("junit-failure", {
       "package.json": "{}",

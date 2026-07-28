@@ -9,8 +9,8 @@
  * frame-parse buffer) lives in the socket ext; each stream is a
  * heap-allocated Http2Response.
  *
- * Public surface (Http2App/Response/Request) mirrors Http3* so Zig's
- * AnyResponse/AnyRequest `inline else` dispatch works unchanged.
+ * Public surface (Http2App/Response/Request) mirrors Http3* so Rust's
+ * AnyResponse/AnyRequest match-dispatch works unchanged.
  *
  * RFC 9113 (framing, flow control, §6.*), RFC 7541/lshpack (HPACK). Minimal:
  * SETTINGS/PING/WINDOW_UPDATE handled, PRIORITY and PUSH_PROMISE are
@@ -115,7 +115,7 @@ struct Http2Connection : AsyncSocketData<true> {
      * across insert. */
     std::map<uint32_t, Http2Response *> streams;
     /* Streams that completed while a callback was on the stack. We can't
-     * `delete` inside markDone() because the caller (Zig's StaticRoute,
+     * `delete` inside markDone() because the caller (Rust's StaticRoute,
      * RequestContext.renderBytes, …) still holds the pointer and calls
      * clearAborted()/clearOnWritable() right after tryEnd() returns.
      * H3 gets away with this because lsquic defers stream teardown to
@@ -826,10 +826,19 @@ struct Http2Context {
         }
 
         if (stream <= c->lastStreamId) {
-            /* §5.1.1: new stream IDs MUST monotonically increase; an
-             * unexpected stream identifier is a connection error of
-             * type PROTOCOL_ERROR (h2spec 5.1.1/2 expects GOAWAY). */
-            return protocolError(s, h2::ERR_PROTOCOL);
+            /* §5.1 closed: HEADERS racing our own RST_STREAM(NO_ERROR)
+             * (markDone's early-response path) lands here once the
+             * stream is erased from the map. Decode so HPACK stays in
+             * sync for siblings, then stream-scoped STREAM_CLOSED —
+             * mirroring handleData's not-in-map branch. Without a
+             * tombstone we can't distinguish this from §5.1.1's
+             * out-of-order new-stream case; h2spec 5.1.1/2 accepts
+             * RST_STREAM here, and nginx/nghttp2 make the same
+             * tradeoff so an early 401/429 doesn't GOAWAY the whole
+             * multiplexed connection. */
+            if (!decodeHeaderBlock(s, nullptr)) return;
+            writeRstStream(s, stream, h2::ERR_STREAM_CLOSED);
+            return;
         }
         c->lastStreamId = stream;
 

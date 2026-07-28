@@ -12,7 +12,7 @@ namespace uWS {
 struct Http2Response;
 
 /* One name/value pair for the outgoing header block. Same shape as
- * us_quic_header_t so the Zig side and the tests can reason about both
+ * us_quic_header_t so the Rust side and the tests can reason about both
  * transports identically. */
 struct Http2Header {
     const char *name;
@@ -22,7 +22,7 @@ struct Http2Header {
 };
 
 /* Per-stream response state. Same bit values and callback shapes as
- * HttpResponseData / Http3ResponseData so Zig's State enum and the
+ * HttpResponseData / Http3ResponseData so Rust's State enum and the
  * uws_res_* C ABI stay 1:1. Heap-allocated (one per stream, many per
  * connection). */
 struct Http2ResponseData {

@@ -41,7 +41,7 @@ struct Http2Response {
     Http2Response *writeStatus(std::string_view status) {
         if (data.state & Http2ResponseData::HTTP_STATUS_CALLED) return this;
         data.state |= Http2ResponseData::HTTP_STATUS_CALLED;
-        /* Zig hands us "200 OK"; HTTP/2 wants only the 3-digit code. */
+        /* Rust hands us "200 OK"; HTTP/2 wants only the 3-digit code. */
         std::string_view code = status.size() >= 3 ? status.substr(0, 3) : std::string_view{"200"};
         data.appendHeader(":status", 7, code.data(), (unsigned) code.size());
         return this;

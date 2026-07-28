@@ -1,5 +1,5 @@
-// HTTP/2 C ABI for Zig. Mirrors the uws_h3_* surface in libuwsockets_h3.cpp
-// 1:1 (same parameter shapes, same callback signatures) so the Zig side can
+// HTTP/2 C ABI for Rust. Mirrors the uws_h3_* surface in libuwsockets_h3.cpp
+// 1:1 (same parameter shapes, same callback signatures) so the Rust side can
 // pattern-match NewApp/NewResponse/H3 without protocol-specific branches.
 // Kept in its own TU so HTTP/1.1, HTTP/2 and HTTP/3 stay file-level
 // separable.
@@ -222,7 +222,7 @@ uint64_t uws_h2_res_get_remote_address_info(uws_h2_res_t* res, const char** dest
      * uws_res_get_remote_address_info (libuwsockets.cpp) and the H3
      * wrapper: us_get_remote_address_info only memcpy()s raw
      * in_addr/in6_addr bytes into b and sets *port — dest/is_ipv6 are
-     * vestigial — so stringify with inet_ntop here so the Zig side
+     * vestigial — so stringify with inet_ntop here so the Rust side
      * gets a text slice, not raw address bytes. */
     static thread_local char b[64];
     Http2Response* r = (Http2Response*)res;

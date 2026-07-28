@@ -22,9 +22,10 @@ namespace uWS {
 struct H2App {
     Http2Context *http2Context;
     /* Kept so the destructor can null the parent's adoption hook — the
-     * H1 context typically outlives H2App by a few frames (server.zig
-     * destroys h2_app before app), and a late on_data on a connected
-     * socket would otherwise consult freed memory. */
+     * H1 context typically outlives H2App by a few frames
+     * (src/runtime/server/mod.rs deinit() destroys h2_app before app),
+     * and a late on_data on a connected socket would otherwise consult
+     * freed memory. */
     HttpContextData<true> *parentData;
 
     /* `parentApp` is the HTTP/1 SSLApp; we read its root sslCtx and any
@@ -321,6 +322,19 @@ inline void Http2Response::maybeDestroy() {
     dead = true;
     Http2Connection *c = Http2Context::conn(socket);
     c->streams.erase(id);
+    /* Park before the JS-reentrant callback (same ordering as
+     * abortStream()/handleRstStream()) so a server.stop() reached
+     * via onAborted that fired on_close synchronously still frees
+     * `this` via ~Http2Connection. The caller may still hold `this`
+     * on its stack (e.g. Rust's StaticRoute calls clearAborted()
+     * right after tryEnd(), and the async render path touches `resp`
+     * after the promise resolves), so the actual free is deferred to
+     * the next sweep() — on_data/on_writable exit for the sync path,
+     * connection close for anything that slips through. The GOAWAY
+     * last-stream close also stays in sweep(): closing here would run
+     * on_close → ~Http2Connection → free pendingDelete (including
+     * `this`) while the caller is still on the stack. */
+    c->pendingDelete.append(this);
     /* Like H3: fire onAborted so the holder drops its pointer — it
      * distinguishes via hasResponded(). */
     if (data.onAborted) {
@@ -328,16 +342,6 @@ inline void Http2Response::maybeDestroy() {
         data.onAborted = nullptr;
         cb(this, data.userData);
     }
-    /* The caller may still hold `this` on its stack (e.g. Zig's
-     * StaticRoute calls clearAborted() right after tryEnd(), and the
-     * async render path touches `resp` after the promise resolves).
-     * Always defer the free to the next sweep() — on_data/on_writable
-     * exit for the sync path, connection close for anything that
-     * slips through. The GOAWAY last-stream close also stays in
-     * sweep(): closing here would run on_close → ~Http2Connection →
-     * free pendingDelete (including `this`) while the caller is still
-     * on the stack. */
-    c->pendingDelete.append(this);
 }
 
 }

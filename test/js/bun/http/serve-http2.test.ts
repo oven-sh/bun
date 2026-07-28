@@ -69,6 +69,9 @@ const server = serve({
       await req.text();
       await new Promise(() => {});
     }
+    if (url.pathname === "/deny") {
+      return new Response("no", { status: 401 });
+    }
     if (url.pathname === "/deferred") {
       await deferred.promise;
       return new Response("late");
@@ -148,7 +151,7 @@ async function withServer(
   expect(exitCode).toBe(0);
 }
 
-describe("Bun.serve http2: true", () => {
+describe.concurrent("Bun.serve http2: true", () => {
   test("simple GET over ALPN h2", async () => {
     await withServer(async port => {
       const res = await fetchH2(port, "/hello");
@@ -622,6 +625,45 @@ describe("Bun.serve http2: true", () => {
       h2.sock.write(h2.frame(0x00, 0x01, 1, Buffer.from("evil")));
       const rst = await h2.waitFor(f => f.type === 0x03 && f.sid === 1);
       expect(rst.payload.readUInt32BE(0)).toBe(5); // STREAM_CLOSED
+    });
+  });
+
+  test("trailer HEADERS racing an early response is stream-scoped; siblings continue", async () => {
+    // §8.1 lets the server RST_STREAM(NO_ERROR) after a complete
+    // response to stop an unread body, which markDone() does. An
+    // already-in-flight trailer HEADERS then arrives for a stream
+    // that's been erased from the map. §5.1 (closed) says such frames
+    // MUST be minimally processed and discarded; they must not GOAWAY
+    // the connection and kill siblings.
+    await withServer(async port => {
+      using h2 = await rawH2(port);
+      // Stream 1: POST to /deny, which responds 401 without reading →
+      // markDone() emits RST_STREAM(NO_ERROR) and erases the stream.
+      h2.request(1, "POST", "/deny", false);
+      await h2.waitFor(f => f.type === 0x03 && f.sid === 1 && f.payload.readUInt32BE(0) === 0);
+      // Client's in-flight body + trailer HEADERS now land on a closed
+      // stream. The server must decode the HPACK block (connection-
+      // scoped) and RST, not GOAWAY.
+      h2.sock.write(h2.frame(0x00, 0x00, 1, Buffer.from("body")));
+      const trailer = Buffer.concat([
+        Buffer.from([0x00, "x-trailer".length]),
+        Buffer.from("x-trailer"),
+        Buffer.from([1]),
+        Buffer.from("t"),
+      ]);
+      h2.sock.write(h2.frame(0x01, 0x04 | 0x01, 1, trailer));
+      // Stream 3 on the same connection must still succeed.
+      h2.request(3, "GET", "/hello", true);
+
+      const rst = await h2.waitFor(
+        f => f.type === 0x03 && f.sid === 1 && f.payload.readUInt32BE(0) === 5,
+      );
+      expect(rst.payload.readUInt32BE(0)).toBe(5); // STREAM_CLOSED
+      expect(h2.frames.some(f => f.type === 0x07)).toBe(false); // no GOAWAY
+
+      await h2.waitFor(f => f.type === 0x00 && f.sid === 3 && !!(f.flags & 0x01));
+      const body = Buffer.concat(h2.frames.filter(f => f.type === 0x00 && f.sid === 3).map(f => f.payload));
+      expect(body.toString()).toBe("hello over h2");
     });
   });
 

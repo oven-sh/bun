@@ -2865,13 +2865,14 @@ pub fn get_thread_count() -> u16 {
                 crate::zstr!("UV_THREADPOOL_SIZE"),
                 crate::zstr!("GOMAXPROCS"),
             ] {
-                // Set var is always honoured (libuv semantics): unparseable/0/1 → MIN, not core count.
+                // Set var is always honoured (libuv semantics): junk/0/1 → MIN, overflow → MAX.
                 if let Some(v) = getenv_z(key) {
-                    return Some(
-                        crate::fmt::parse_int::<u16>(v.trim_ascii(), 10)
-                            .unwrap_or(0)
-                            .clamp(MIN, MAX),
-                    );
+                    use crate::fmt::ParseIntError;
+                    return Some(match crate::fmt::parse_int::<u32>(v.trim_ascii(), 10) {
+                        Ok(n) => n.clamp(u32::from(MIN), u32::from(MAX)) as u16,
+                        Err(ParseIntError::Overflow) => MAX,
+                        Err(ParseIntError::InvalidCharacter) => MIN,
+                    });
                 }
                 // Windows: `getenv_z` is currently a no-op (no narrow C
                 // environ to borrow from); honour the override via
@@ -2882,7 +2883,12 @@ pub fn get_thread_count() -> u16 {
                     // SAFETY: keys above are ASCII literals.
                     unsafe { core::str::from_utf8_unchecked(key.as_bytes()) },
                 ) {
-                    return Some(s.trim().parse::<u16>().unwrap_or(0).clamp(MIN, MAX));
+                    use core::num::IntErrorKind;
+                    return Some(match s.trim().parse::<u32>() {
+                        Ok(n) => n.clamp(u32::from(MIN), u32::from(MAX)) as u16,
+                        Err(e) if *e.kind() == IntErrorKind::PosOverflow => MAX,
+                        Err(_) => MIN,
+                    });
                 }
             }
             None

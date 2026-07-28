@@ -23,18 +23,10 @@ bun_output::declare_scope!(DirectoryRoute, hidden);
 /// `wyhash(subpath) % N` direct-mapped StatHash cache; collisions overwrite.
 const STAT_CACHE_SLOTS: usize = 1024;
 
+#[derive(Default)]
 struct StatCacheEntry {
-    path_hash: u64,
+    path: Vec<u8>,
     stat_hash: StatHash,
-}
-
-impl Default for StatCacheEntry {
-    fn default() -> Self {
-        Self {
-            path_hash: 0,
-            stat_hash: StatHash::default(),
-        }
-    }
 }
 
 #[derive(bun_ptr::CellRefCounted)]
@@ -310,12 +302,13 @@ impl DirectoryRoute {
             });
             return (sh.last_modified_u64, buf, len.unwrap_or(0));
         }
-        let path_hash = bun_wyhash::hash(rel);
-        let slot = &self.stat_cache[(path_hash as usize) % self.stat_cache.len()];
+        let slot =
+            &self.stat_cache[(bun_wyhash::hash(rel) as usize) % self.stat_cache.len()];
         let mut entry = slot.replace(StatCacheEntry::default());
-        if entry.path_hash != path_hash {
-            entry = StatCacheEntry::default();
-            entry.path_hash = path_hash;
+        if entry.path.as_slice() != rel {
+            entry.path.clear();
+            entry.path.extend_from_slice(rel);
+            entry.stat_hash = StatHash::default();
         }
         entry.stat_hash.hash(stat, rel);
         let ms = entry.stat_hash.last_modified_u64;

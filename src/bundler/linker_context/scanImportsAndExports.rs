@@ -866,11 +866,8 @@ pub fn scan_imports_and_exports(
             );
 
             let parts_len = col_ref!(parts_list)[id].len() as usize;
-            // Static imports of async ESM-wrapped modules become `await init_X()`
-            // calls in this file's wrapper prefix. Two or more of those are
-            // coalesced into `await __promiseAll([...])` at codegen time. Count
-            // them across all parts so the part that observes the second one can
-            // pull in the runtime helper.
+            // Counted across every part of this file: `InsideWrapperPrefix`
+            // coalesces the whole file's async init calls into one statement.
             let mut async_esm_init_count: u32 = 0;
             for part_index in 0..parts_len {
                 let mut to_esm_uses: u32 = 0;

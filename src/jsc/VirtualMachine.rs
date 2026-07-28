@@ -1484,6 +1484,18 @@ impl VirtualMachine {
         }
 
         ExitHandler::dispatch_on_exit(self);
+
+        // Drain the deferred auto-flush queue so `FileSink` (and other buffered
+        // writers registered via `AutoFlusher`) push their bytes before the
+        // process terminates. On the natural-exit path this happens inside
+        // `tick()` -> `drain_microtasks_with_global()`, but a same-tick
+        // `process.exit()` never returns to the event loop and would otherwise
+        // drop those buffers on the floor. Running after `dispatch_on_exit`
+        // also covers writes performed inside an `'exit'` listener.
+        self.is_inside_deferred_task_queue.set(true);
+        self.event_loop_mut().deferred_tasks.run();
+        self.is_inside_deferred_task_queue.set(false);
+
         self.is_shutting_down = true;
 
         // Make sure we run new cleanup hooks introduced by running cleanup

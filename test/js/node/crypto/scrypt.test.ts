@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { scryptSync } from "node:crypto";
 import { bunEnv, bunExe, tempDir } from "harness";
 
 // When `crypto.scrypt` fails to allocate the output buffer (OOM for a huge
@@ -78,7 +79,6 @@ test("scrypt async does not leak callback/buffers when output allocation fails",
 });
 
 test("scryptSync reads its buffers only after every argument has been coerced", () => {
-  const { scryptSync } = require("crypto");
   const passwordBytes = new Uint8Array(64).fill(97);
   const key = scryptSync(passwordBytes, "salt", 16, {
     get N() {

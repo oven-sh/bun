@@ -1515,9 +1515,12 @@ impl PublishCommand {
                         // always use replace https with http
                         // https://github.com/npm/cli/blob/9281ebf8e428d40450ad75ba61bc6f040b3bf896/workspaces/libnpmpublish/lib/publish.js#L120
                         bstr::BStr::new(strings::without_trailing_slash(strings::without_prefix(
-                            &registry.url.url().href_without_auth(),
-                            b"https://"
-                        ),)),
+                            strings::without_prefix(
+                                &registry.url.url().href_without_auth(),
+                                b"https://"
+                            ),
+                            b"http://",
+                        ))),
                         bstr::BStr::new(package_name),
                         pack::fmt_tarball_filename(
                             package_name,

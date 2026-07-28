@@ -1128,7 +1128,7 @@ test("dist.tarball in the published manifest does not include userinfo from the 
   expect(tarball).not.toContain("pubuser");
   expect(tarball).not.toContain("hunter2");
   expect(tarball).not.toContain("@");
-  expect(tarball).toEndWith(`localhost:${mock.port}/tarball-url-pkg/-/tarball-url-pkg-1.0.0.tgz`);
+  expect(tarball).toBe(`http://localhost:${mock.port}/tarball-url-pkg/-/tarball-url-pkg-1.0.0.tgz`);
   expect(exitCode).toBe(0);
 });
 

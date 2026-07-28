@@ -231,7 +231,7 @@ struct SecretsJobOptions {
         }
 
         if (service.contains(static_cast<char16_t>(0)) || name.contains(static_cast<char16_t>(0)) || password.contains(static_cast<char16_t>(0))) {
-            Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "Expected service, name, and value to be strings without null bytes"_s);
+            Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_VALUE, "Expected service, name, and value to be strings without null bytes"_s);
             RELEASE_AND_RETURN(scope, nullptr);
         }
 

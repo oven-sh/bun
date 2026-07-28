@@ -21,7 +21,7 @@ describe("Bun.secrets argument validation", () => {
         thrown = error;
       }
       expect(thrown).toBeDefined();
-      expect(thrown.code).toBe("ERR_INVALID_ARG_TYPE");
+      expect(thrown.code).toBe("ERR_INVALID_ARG_VALUE");
       expect(thrown.message).toBe("Expected service, name, and value to be strings without null bytes");
     }
   });

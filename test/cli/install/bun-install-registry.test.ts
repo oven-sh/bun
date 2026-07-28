@@ -1,5 +1,5 @@
 import { file, spawn, write } from "bun";
-import { install_test_helpers } from "bun:internal-for-testing";
+import { install_test_helpers, npm_manifest_test_helpers } from "bun:internal-for-testing";
 import { afterAll, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { copyFileSync, mkdirSync } from "fs";
 import { cp, exists, lstat, mkdir, readlink, rm, writeFile } from "fs/promises";
@@ -9224,7 +9224,6 @@ test("npm manifest cache entries with invalid package version records are treate
   expect(manifestFile).toBeString();
   const original = join(cacheDir, manifestFile!);
 
-  const { npm_manifest_test_helpers } = require("bun:internal-for-testing");
   const { parseManifest } = npm_manifest_test_helpers;
   expect(parseManifest(original, registryUrl()).versions.length).toBeGreaterThan(0);
 

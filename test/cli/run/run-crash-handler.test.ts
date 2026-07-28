@@ -1,6 +1,7 @@
 import { crash_handler } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isLinux, isPosix, isWindows, mergeWindowEnvs, tempDir } from "harness";
+import { rmSync } from "node:fs";
 import path from "path";
 const { getMachOImageZeroOffset } = crash_handler;
 
@@ -524,29 +525,37 @@ test.if(isWindows)(
       },
     });
 
-    using dir = tempDir("crash-report-system-powershell", { "placeholder.js": "" });
-    await Bun.write(path.join(String(dir), "powershell.exe"), Bun.file(bunExe()));
+    // Not `using`: the crash reporter's PowerShell child inherits this cwd
+    // and can outlive the crashed process, so a scoped delete races it.
+    const dir = tempDir("crash-report-system-powershell", { "placeholder.js": "" });
+    try {
+      await Bun.write(path.join(String(dir), "powershell.exe"), Bun.file(bunExe()));
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), path.join(import.meta.dir, "fixture-crash.js"), "panic"],
-      cwd: String(dir),
-      env: mergeWindowEnvs([
-        bunEnv,
-        {
-          BUN_CRASH_REPORT_URL: server.url.toString(),
-          BUN_ENABLE_CRASH_REPORTING: "1",
-          GITHUB_ACTIONS: undefined,
-          CI: undefined,
-        },
-      ]),
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), path.join(import.meta.dir, "fixture-crash.js"), "panic"],
+        cwd: String(dir),
+        env: mergeWindowEnvs([
+          bunEnv,
+          {
+            BUN_CRASH_REPORT_URL: server.url.toString(),
+            BUN_ENABLE_CRASH_REPORTING: "1",
+            GITHUB_ACTIONS: undefined,
+            CI: undefined,
+          },
+        ]),
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
-    await acked.promise;
+      await acked.promise;
 
-    expect(stderr).toContain(server.url.toString());
-    expect(sent).toBe(true);
-    expect(exitCode).not.toBe(0);
+      expect(stderr).toContain(server.url.toString());
+      expect(sent).toBe(true);
+      expect(exitCode).not.toBe(0);
+    } finally {
+      try {
+        rmSync(String(dir), { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });
+      } catch {}
+    }
   },
 );

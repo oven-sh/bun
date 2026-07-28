@@ -137,7 +137,7 @@ impl DirectoryRoute {
 
         let mut decode_buf = bun_paths::path_buffer_pool::get();
         let mut path_buf = bun_paths::path_buffer_pool::get();
-        let Some(rel_len) = resolve_subpath(
+        let Some((rel_len, had_trailing_slash)) = resolve_subpath(
             req.url(),
             &this.url_prefix,
             &mut decode_buf.0[..],
@@ -150,10 +150,24 @@ impl DirectoryRoute {
         drop(decode_buf);
         let rel: &[u8] = &path_buf.0[..rel_len];
 
-        let Some((file, stat, is_index)) = this.open_subpath(rel) else {
-            bun_output::scoped_log!(DirectoryRoute, "miss  {}", bstr::BStr::new(rel));
-            write_miss(&mut req, resp);
-            return;
+        let (file, stat, is_index) = match this.open_subpath(rel, had_trailing_slash) {
+            Some(Subpath::File(f, s, idx)) => (f, s, idx),
+            Some(Subpath::RedirectSlash) => {
+                let mut loc = bun_paths::path_buffer_pool::get();
+                let n = build_slash_redirect(req.url(), &mut loc.0[..]);
+                req.set_yield(false);
+                write_any_status(resp, 301);
+                resp.write_mark();
+                resp.write_header(b"location", &loc.0[..n]);
+                resp.write_header_int(b"content-length", 0);
+                resp.end(b"", resp.should_close_connection());
+                return;
+            }
+            None => {
+                bun_output::scoped_log!(DirectoryRoute, "miss  {}", bstr::BStr::new(rel));
+                write_miss(&mut req, resp);
+                return;
+            }
         };
 
         let size: u64 = u64::try_from(stat.st_size.max(0)).expect("int cast");
@@ -261,31 +275,38 @@ impl DirectoryRoute {
         });
     }
 
-    /// Returns `(file, stat, served_index_html)` for a regular file; tries
-    /// `index.html` for directories.
-    fn open_subpath(&self, rel: &[u8]) -> Option<(File, bun_sys::Stat, bool)> {
+    /// Open `rel` under the root. For directories: serve `index.html` when the
+    /// URL had a trailing slash, otherwise ask the caller to 301-redirect to
+    /// the slash form so the new request re-enters routing (the served
+    /// resource's canonical URL may be owned by a more-specific route).
+    fn open_subpath(&self, rel: &[u8], had_trailing_slash: bool) -> Option<Subpath> {
         let open_and_stat = |p: &[u8]| -> Option<(File, bun_sys::Stat)> {
             let f = self.open_beneath(p)?;
             let s = f.stat().ok()?;
             Some((f, s))
         };
-        if rel.is_empty() || rel == b"." {
+        if rel.is_empty() {
             let (f, s) = open_and_stat(b"index.html")?;
-            return bun_sys::S::ISREG(s.st_mode as bun_sys::Mode).then_some((f, s, true));
+            return bun_sys::S::ISREG(s.st_mode as bun_sys::Mode)
+                .then_some(Subpath::File(f, s, true));
         }
         let (file, stat) = open_and_stat(rel)?;
         let mode = stat.st_mode as bun_sys::Mode;
         if bun_sys::S::ISDIR(mode) {
             drop(file);
+            if !had_trailing_slash {
+                return Some(Subpath::RedirectSlash);
+            }
             let mut buf = bun_paths::path_buffer_pool::get();
             let joined = resolve_path::join_string_buf::<resolve_path::platform::Posix>(
                 &mut buf.0[..],
                 &[rel, b"index.html"],
             );
             let (f, s) = open_and_stat(joined)?;
-            return bun_sys::S::ISREG(s.st_mode as bun_sys::Mode).then_some((f, s, true));
+            return bun_sys::S::ISREG(s.st_mode as bun_sys::Mode)
+                .then_some(Subpath::File(f, s, true));
         }
-        bun_sys::S::ISREG(mode).then_some((file, stat, false))
+        bun_sys::S::ISREG(mode).then_some(Subpath::File(file, stat, false))
     }
 
     /// `openat2(RESOLVE_IN_ROOT|NO_MAGICLINKS)` on Linux, `openat` elsewhere.
@@ -385,6 +406,13 @@ fn on_stream_error(ctx: *mut c_void, resp: AnyResponse, _err: bun_sys::Error) {
     DirectoryRoute::on_response_complete(NonNull::new(ctx.cast()).unwrap(), resp);
 }
 
+// `Stat` is ~144 bytes; boxing it would add a heap alloc on the hot path.
+#[allow(clippy::large_enum_variant)]
+enum Subpath {
+    File(File, bun_sys::Stat, bool),
+    RedirectSlash,
+}
+
 fn write_miss(req: &mut AnyRequest, resp: AnyResponse) {
     req.set_yield(false);
     write_any_status(resp, 404);
@@ -392,45 +420,98 @@ fn write_miss(req: &mut AnyRequest, resp: AnyResponse) {
     resp.end(b"", resp.should_close_connection());
 }
 
-/// Strip `url_prefix`, percent-decode once, reject NUL/`\`, normalize `.`/`..`;
-/// `None` if the result would escape the root. Writes into `out`.
-fn resolve_subpath(
-    url: &[u8],
-    url_prefix: &[u8],
-    scratch: &mut [u8],
-    out: &mut [u8],
-) -> Option<usize> {
-    // `req.url()` is uWS `getFullUrl()`: the raw request-target. Strip the
-    // query string first, then an absolute-form scheme+authority (RFC 9112
-    // §3.2.2), mirroring uWS `getUrlForRouting()` exactly — it operates on
-    // `getUrl()` (already truncated at `?`) so the authority search never
-    // sees a `/` that appears inside the query.
-    let url = match strings::index_of_char(url, b'?') {
-        Some(i) => &url[..i as usize],
-        None => url,
+/// `Location: {path}/{?query}` into `out`. `resolve_subpath` has already
+/// validated `path`: it starts with `url_prefix` (which starts with `/`) and
+/// its first segment is non-empty, so the result cannot be a `//...`
+/// protocol-relative URL (CVE-2024-43799).
+fn build_slash_redirect(url: &[u8], out: &mut [u8]) -> usize {
+    let (path, query) = path_and_query(url);
+    debug_assert!(path.first() == Some(&b'/') && path.get(1) != Some(&b'/'));
+    let n = path.len() + 1 + query.len();
+    if n > out.len() {
+        // Oversized query: redirect without it rather than fail the request.
+        out[..path.len()].copy_from_slice(path);
+        out[path.len()] = b'/';
+        return path.len() + 1;
+    }
+    out[..path.len()].copy_from_slice(path);
+    out[path.len()] = b'/';
+    out[path.len() + 1..n].copy_from_slice(query);
+    n
+}
+
+/// Split a raw request-target (uWS `getFullUrl()`) into `(path, query)`.
+/// Strips `?query` first, then any absolute-form scheme+authority (RFC 9112
+/// §3.2.2), mirroring uWS `getUrlForRouting()` exactly. `query` includes the
+/// leading `?` when present.
+fn path_and_query(url: &[u8]) -> (&[u8], &[u8]) {
+    let (path, query) = match strings::index_of_char(url, b'?') {
+        Some(i) => (&url[..i as usize], &url[i as usize..]),
+        None => (url, &b""[..]),
     };
-    let url = if !url.is_empty() && url[0] != b'/' {
-        let skip = if strings::has_prefix_case_insensitive(url, b"http://") {
+    let path = if !path.is_empty() && path[0] != b'/' {
+        let skip = if strings::has_prefix_case_insensitive(path, b"http://") {
             7
-        } else if strings::has_prefix_case_insensitive(url, b"https://") {
+        } else if strings::has_prefix_case_insensitive(path, b"https://") {
             8
         } else {
             0
         };
         if skip > 0 {
-            match strings::index_of_char(&url[skip..], b'/') {
-                Some(i) => &url[skip + i as usize..],
+            match strings::index_of_char(&path[skip..], b'/') {
+                Some(i) => &path[skip + i as usize..],
                 None => b"/",
             }
         } else {
-            url
+            path
         }
     } else {
-        url
+        path
     };
-    let after_prefix = if strings::starts_with(url, url_prefix) {
-        &url[url_prefix.len()..]
-    } else if url.len() + 1 == url_prefix.len() && url == &url_prefix[..url_prefix.len() - 1] {
+    (path, query)
+}
+
+/// RFC 3986 `pchar` (the bytes that may appear literally in a path segment):
+/// unreserved / sub-delims / ":" / "@". `%XX` encoding one of these never
+/// changes the URL's meaning, so there is no legitimate reason to send it.
+#[inline]
+fn is_url_path_literal(b: u8) -> bool {
+    b.is_ascii_alphanumeric()
+        || matches!(
+            b,
+            b'-' | b'.'
+                | b'_'
+                | b'~'
+                | b'!'
+                | b'$'
+                | b'&'
+                | b'\''
+                | b'('
+                | b')'
+                | b'*'
+                | b'+'
+                | b','
+                | b';'
+                | b'='
+                | b':'
+                | b'@'
+        )
+}
+
+/// Strip `url_prefix`, percent-decode once, and validate the result is a
+/// canonical relative path. `None` for any input that would make the served
+/// path differ from the routed path (see comment on the segment scan below).
+/// Writes into `out`; returns `(len, had_trailing_slash)`.
+fn resolve_subpath(
+    url: &[u8],
+    url_prefix: &[u8],
+    scratch: &mut [u8],
+    out: &mut [u8],
+) -> Option<(usize, bool)> {
+    let (path, _query) = path_and_query(url);
+    let after_prefix = if strings::starts_with(path, url_prefix) {
+        &path[url_prefix.len()..]
+    } else if path.len() + 1 == url_prefix.len() && path == &url_prefix[..url_prefix.len() - 1] {
         b""
     } else {
         return None;
@@ -442,25 +523,48 @@ fn resolve_subpath(
         return None;
     }
 
-    let raw_slashes = after_prefix.iter().filter(|&&b| b == b'/').count();
+    // uWS routed on the raw URL split on literal `/` with no decode and no
+    // normalization. Any transformation we apply that uWS did not creates a
+    // path uWS never matched, which can bypass a more-specific overlapping
+    // route. So reject every such transformation: `%XX` whose decoded byte is
+    // a `pchar` (would let `%61dmin` reach `admin/`); encoded `%2F`; and any
+    // non-canonical segment (empty / `.` / `..`). Route segments can only
+    // consist of `pchar`s on the wire, so rejecting encoded `pchar`s leaves
+    // percent-decoding as the identity on every byte that could influence
+    // routing, while still decoding `%20`, high-bit bytes, etc.
+    let mut raw_slashes = 0usize;
+    let mut i = 0usize;
+    while i < after_prefix.len() {
+        match after_prefix[i] {
+            b'/' => {
+                raw_slashes += 1;
+                i += 1;
+            }
+            b'%' if i + 2 < after_prefix.len()
+                && after_prefix[i + 1].is_ascii_hexdigit()
+                && after_prefix[i + 2].is_ascii_hexdigit() =>
+            {
+                let b = (strings::to_ascii_hex_value(after_prefix[i + 1]) << 4)
+                    | strings::to_ascii_hex_value(after_prefix[i + 2]);
+                if is_url_path_literal(b) {
+                    return None;
+                }
+                i += 3;
+            }
+            _ => i += 1,
+        }
+    }
+
     let decoded_len =
         bun_url::PercentEncoding::decode_into(&mut scratch[..after_prefix.len()], after_prefix)
             .ok()? as usize;
     let decoded = &scratch[..decoded_len];
 
-    // uWS routed on the raw URL split on literal `/` with no decode and no
-    // normalization. Any transformation we apply that uWS did not creates a
-    // path uWS never matched, which can bypass a more-specific overlapping
-    // route. So: reject if percent-decoding introduced a `/` (encoded %2F),
-    // and require the decoded path to already be in canonical form (no empty,
-    // `.`, or `..` segments). A single trailing `/` is allowed and stripped.
     if decoded.iter().filter(|&&b| b == b'/').count() != raw_slashes {
         return None;
     }
-    let mut end = decoded_len;
-    if end > 0 && decoded[end - 1] == b'/' {
-        end -= 1;
-    }
+    let had_trailing_slash = decoded_len > 0 && decoded[decoded_len - 1] == b'/';
+    let end = decoded_len - usize::from(had_trailing_slash);
     let mut seg_start = 0;
     let mut i = 0;
     while i <= end {
@@ -468,7 +572,7 @@ fn resolve_subpath(
             let seg = &decoded[seg_start..i];
             if seg.is_empty() || seg == b"." || seg == b".." {
                 if i == 0 && end == 0 {
-                    return Some(0);
+                    return Some((0, had_trailing_slash));
                 }
                 return None;
             }
@@ -480,7 +584,7 @@ fn resolve_subpath(
     }
 
     out[..end].copy_from_slice(&decoded[..end]);
-    Some(end)
+    Some((end, had_trailing_slash))
 }
 
 /// `W/"<size-hex>-<mtime-sec-hex>"` (nginx/send scheme).
@@ -501,63 +605,52 @@ fn extension_for_mime(path: &[u8]) -> &[u8] {
 mod tests {
     use super::*;
 
-    fn resolve(url: &[u8], prefix: &[u8]) -> Option<Vec<u8>> {
+    fn resolve(url: &[u8], prefix: &[u8]) -> Option<(Vec<u8>, bool)> {
         let mut scratch = [0u8; 4096];
         let mut out = [0u8; 4096];
-        resolve_subpath(url, prefix, &mut scratch, &mut out).map(|n| out[..n].to_vec())
+        resolve_subpath(url, prefix, &mut scratch, &mut out).map(|(n, s)| (out[..n].to_vec(), s))
+    }
+    fn ok(bytes: &[u8], slash: bool) -> Option<(Vec<u8>, bool)> {
+        Some((bytes.to_vec(), slash))
     }
 
     #[test]
     fn resolve_basic() {
+        assert_eq!(resolve(b"/static/a.txt", b"/static/"), ok(b"a.txt", false));
         assert_eq!(
-            resolve(b"/static/a.txt", b"/static/").as_deref(),
-            Some(&b"a.txt"[..])
+            resolve(b"/static/a/b.txt", b"/static/"),
+            ok(b"a/b.txt", false)
+        );
+        assert_eq!(resolve(b"/a.txt", b"/"), ok(b"a.txt", false));
+        assert_eq!(resolve(b"/", b"/"), ok(b"", false));
+        assert_eq!(resolve(b"/static", b"/static/"), ok(b"", false));
+        assert_eq!(resolve(b"/static/", b"/static/"), ok(b"", false));
+        assert_eq!(
+            resolve(b"/static/a.txt?v=1", b"/static/"),
+            ok(b"a.txt", false)
+        );
+        assert_eq!(resolve(b"/static?x", b"/static/"), ok(b"", false));
+        assert_eq!(
+            resolve(b"http://x/static/a.txt", b"/static/"),
+            ok(b"a.txt", false)
         );
         assert_eq!(
-            resolve(b"/static/a/b.txt", b"/static/").as_deref(),
-            Some(&b"a/b.txt"[..])
+            resolve(b"HTTP://x/static/a.txt", b"/static/"),
+            ok(b"a.txt", false)
         );
-        assert_eq!(resolve(b"/a.txt", b"/").as_deref(), Some(&b"a.txt"[..]));
-        assert_eq!(resolve(b"/", b"/").as_deref(), Some(&b""[..]));
-        assert_eq!(resolve(b"/static", b"/static/").as_deref(), Some(&b""[..]));
-        assert_eq!(resolve(b"/static/", b"/static/").as_deref(), Some(&b""[..]));
+        assert_eq!(resolve(b"http://x?q/admin/secret", b"/"), ok(b"", false));
+        assert_eq!(resolve(b"http://x", b"/"), ok(b"", false));
         assert_eq!(
-            resolve(b"/static/a.txt?v=1", b"/static/").as_deref(),
-            Some(&b"a.txt"[..])
-        );
-        assert_eq!(
-            resolve(b"/static?x", b"/static/").as_deref(),
-            Some(&b""[..])
-        );
-        assert_eq!(
-            resolve(b"http://x/static/a.txt", b"/static/").as_deref(),
-            Some(&b"a.txt"[..])
-        );
-        assert_eq!(
-            resolve(b"HTTP://x/static/a.txt", b"/static/").as_deref(),
-            Some(&b"a.txt"[..])
-        );
-        assert_eq!(
-            resolve(b"http://x?q/admin/secret", b"/").as_deref(),
-            Some(&b""[..])
-        );
-        assert_eq!(resolve(b"http://x", b"/").as_deref(), Some(&b""[..]));
-        assert_eq!(
-            resolve(b"https://x:8080/static/a.txt?v=1", b"/static/").as_deref(),
-            Some(&b"a.txt"[..])
+            resolve(b"https://x:8080/static/a.txt?v=1", b"/static/"),
+            ok(b"a.txt", false)
         );
     }
 
     #[test]
     fn resolve_trailing_slash() {
-        assert_eq!(
-            resolve(b"/static/a/", b"/static/").as_deref(),
-            Some(&b"a"[..])
-        );
-        assert_eq!(
-            resolve(b"/static/a/b/", b"/static/").as_deref(),
-            Some(&b"a/b"[..])
-        );
+        assert_eq!(resolve(b"/static/a/", b"/static/"), ok(b"a", true));
+        assert_eq!(resolve(b"/static/a/b/", b"/static/"), ok(b"a/b", true));
+        assert_eq!(resolve(b"/static/a", b"/static/"), ok(b"a", false));
     }
 
     #[test]
@@ -576,8 +669,8 @@ mod tests {
     fn resolve_route_precedence_parity() {
         // These all route to the outer wildcard in uWS (which matches on raw
         // segments) but would reach a file under an inner prefix if we
-        // normalized or decoded `/`. Reject so the served path equals the
-        // routed path.
+        // normalized, decoded `/`, or decoded a pchar. Reject so the served
+        // path equals the routed path.
         assert_eq!(resolve(b"/static/a%2Fb.txt", b"/static/"), None);
         assert_eq!(resolve(b"/static/a%2fb.txt", b"/static/"), None);
         assert_eq!(resolve(b"/static//a/b.txt", b"/static/"), None);
@@ -586,10 +679,33 @@ mod tests {
         assert_eq!(resolve(b"/static/a/./b.txt", b"/static/"), None);
         assert_eq!(resolve(b"/static/a/../b.txt", b"/static/"), None);
         assert_eq!(resolve(b"/static/a/..", b"/static/"), None);
-        // Legitimate percent-encoding (not `/`) still works.
+        // `%XX` encoding a pchar (RFC 3986) is rejected: uWS would not have
+        // matched the literal segment, so decoding it creates a new path.
+        assert_eq!(resolve(b"/static/%61dmin/x", b"/static/"), None);
+        assert_eq!(resolve(b"/static/admi%6E/x", b"/static/"), None);
+        assert_eq!(resolve(b"/static/ad%4Din/x", b"/static/"), None);
+        assert_eq!(resolve(b"/static/%40user/x", b"/static/"), None);
+        assert_eq!(resolve(b"/static/%2Ewell-known/x", b"/static/"), None);
+        // Legitimate percent-encoding (bytes that cannot appear literally in
+        // a path segment) still works.
         assert_eq!(
-            resolve(b"/static/hello%20world.txt", b"/static/").as_deref(),
-            Some(&b"hello world.txt"[..])
+            resolve(b"/static/hello%20world.txt", b"/static/"),
+            ok(b"hello world.txt", false)
         );
+        assert_eq!(
+            resolve(b"/static/%C3%A9.txt", b"/static/"),
+            ok(b"\xC3\xA9.txt", false)
+        );
+    }
+
+    #[test]
+    fn slash_redirect_location() {
+        let mut out = [0u8; 256];
+        let n = build_slash_redirect(b"/static/sub", &mut out);
+        assert_eq!(&out[..n], b"/static/sub/");
+        let n = build_slash_redirect(b"/static/sub?v=1&x=2", &mut out);
+        assert_eq!(&out[..n], b"/static/sub/?v=1&x=2");
+        let n = build_slash_redirect(b"http://h/static/sub?v=1", &mut out);
+        assert_eq!(&out[..n], b"/static/sub/?v=1");
     }
 }

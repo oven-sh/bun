@@ -583,15 +583,19 @@ declare module "bun" {
      * Serve a directory tree at a URL prefix.
      *
      * The route path **must** end in `/*`. The part of the request URL after
-     * the prefix is percent-decoded once, cleaned of `.`/`..` segments, and
-     * opened relative to `dir`. On Linux the open uses
+     * the prefix is percent-decoded once and opened relative to `dir`.
+     * Non-canonical paths (containing `.`, `..`, empty segments, `%2F`, or a
+     * percent-encoded ASCII character) are rejected with `404` so the served
+     * path is always the path the router matched. On Linux the open uses
      * `openat2(RESOLVE_IN_ROOT)`, so symlinks that would escape `dir` are
      * clamped by the kernel.
      *
      * Responses carry `Content-Type` (from the file extension),
      * `Last-Modified`, a weak `ETag`, and support single-range `Range`
-     * requests. Requests that resolve to a directory are served
-     * `index.html` from that directory. Missing files return `404`.
+     * requests. A request that resolves to a directory without a trailing
+     * `/` is redirected (`301`) to the trailing-slash URL; with the trailing
+     * slash, `index.html` from that directory is served. Missing files
+     * return `404`.
      *
      * @example
      * ```ts

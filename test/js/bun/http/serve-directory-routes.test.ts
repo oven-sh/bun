@@ -14,7 +14,7 @@ describe("Bun.serve() directory routes", () => {
 
   // fetch() normalizes `..` client-side, so the traversal/adversarial tests
   // send raw request bytes over a socket.
-  async function raw(path: string): Promise<{ status: number; body: string }> {
+  async function raw(path: string): Promise<{ status: number; headers: Record<string, string>; body: string }> {
     const { promise, resolve } = Promise.withResolvers<string>();
     let buf = "";
     const sock = await Bun.connect({
@@ -35,8 +35,14 @@ describe("Bun.serve() directory routes", () => {
     sock.write(`GET ${path} HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n`);
     const full = await promise;
     const status = parseInt(full.slice(9, 12), 10);
-    const body = full.split("\r\n\r\n").slice(1).join("\r\n\r\n");
-    return { status, body };
+    const headEnd = full.indexOf("\r\n\r\n");
+    const headers: Record<string, string> = {};
+    for (const line of full.slice(full.indexOf("\r\n") + 2, headEnd).split("\r\n")) {
+      const i = line.indexOf(":");
+      if (i > 0) headers[line.slice(0, i).toLowerCase()] = line.slice(i + 1).trim();
+    }
+    const body = full.slice(headEnd + 4);
+    return { status, headers, body };
   }
 
   it("serves files from a directory at /*", async () => {
@@ -125,9 +131,41 @@ describe("Bun.serve() directory routes", () => {
     expect(sub.status).toBe(200);
     expect(await sub.text()).toBe("<h1>sub</h1>");
 
-    const subNoSlash = await fetch(`${server.url}sub`);
-    expect(subNoSlash.status).toBe(200);
-    expect(await subNoSlash.text()).toBe("<h1>sub</h1>");
+    // Without a trailing slash the server 301-redirects to the slash form so
+    // the followed request re-enters routing.
+    const noSlash = await fetch(`${server.url}sub`, { redirect: "manual" });
+    expect(noSlash.status).toBe(301);
+    expect(noSlash.headers.get("location")).toBe("/sub/");
+
+    const withQuery = await fetch(`${server.url}sub?v=1`, { redirect: "manual" });
+    expect(withQuery.status).toBe(301);
+    expect(withQuery.headers.get("location")).toBe("/sub/?v=1");
+
+    const followed = await fetch(`${server.url}sub`);
+    expect(followed.status).toBe(200);
+    expect(await followed.text()).toBe("<h1>sub</h1>");
+  });
+
+  it("sets Content-Type case-insensitively by extension", async () => {
+    using dir = tempDir("serve-dir-mime-case", {
+      "public/photo.JPG": Buffer.alloc(8, 0).toString("binary"),
+      "public/style.CSS": "body{}",
+      "public/app.MJS": "export{}",
+    });
+    server = serve({
+      port: 0,
+      routes: { "/*": { dir: join(String(dir), "public") } },
+    });
+
+    const jpg = await fetch(`${server.url}photo.JPG`);
+    expect(jpg.status).toBe(200);
+    expect(jpg.headers.get("content-type")).toContain("image/jpeg");
+
+    const css = await fetch(`${server.url}style.CSS`);
+    expect(css.headers.get("content-type")).toContain("text/css");
+
+    const mjs = await fetch(`${server.url}app.MJS`);
+    expect(mjs.headers.get("content-type")).toContain("javascript");
   });
 
   describe.each(["/static/*", "/*"] as const)("mounted at %s", prefix => {
@@ -483,6 +521,7 @@ describe("Bun.serve() directory routes", () => {
   it("cannot bypass a more-specific overlapping route via path manipulation", async () => {
     using dir = tempDir("serve-dir-bypass", {
       "public/admin/secret.txt": "SECRET",
+      "public/admin/index.html": "SECRET-INDEX",
       "public/ok.txt": "ok",
     });
 
@@ -496,19 +535,35 @@ describe("Bun.serve() directory routes", () => {
 
     // Canonical path hits the inner route.
     expect((await fetch(`${server.url}static/admin/secret.txt`)).status).toBe(401);
+    expect((await fetch(`${server.url}static/admin/`)).status).toBe(401);
 
     // Non-canonical forms that uWS routes to the outer wildcard must not
-    // reach public/admin/secret.txt via the directory route.
+    // reach public/admin/ via the directory route.
     for (const p of [
       "/static//admin/secret.txt",
       "/static/./admin/secret.txt",
       "/static/x/../admin/secret.txt",
       "/static/admin%2Fsecret.txt",
+      // `%XX` encoding a character that can appear literally in a path
+      // segment: uWS sees `%61dmin` != `admin` and routes to `/static/*`.
+      "/static/%61dmin/secret.txt",
+      "/static/admi%6E/secret.txt",
+      "/static/ad%4Din/secret.txt",
+      "/static/%61dmin/",
     ]) {
       const r = await raw(p);
       expect(r.body).not.toContain("SECRET");
       expect([401, 404]).toContain(r.status);
     }
+
+    // A directory hit without a trailing slash 301-redirects to the slash
+    // form, which re-enters routing and matches `/static/admin/*`. It must
+    // not serve `admin/index.html` directly.
+    const noSlash = await raw("/static/admin");
+    expect(noSlash.body).not.toContain("SECRET");
+    expect(noSlash.status).toBe(301);
+    expect(noSlash.headers.location).toBe("/static/admin/");
+    expect((await fetch(`${server.url}static/admin`)).status).toBe(401);
 
     // Canonical paths under the outer route still work.
     expect(await (await fetch(`${server.url}static/ok.txt`)).text()).toBe("ok");

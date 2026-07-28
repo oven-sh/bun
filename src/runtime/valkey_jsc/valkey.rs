@@ -985,7 +985,6 @@ impl ValkeyClient {
                     self.status = Status::Connected;
                     self.flags.is_authenticated = true;
                     self.flags.is_reconnecting = false;
-                    self.flags.is_preconnecting = false;
                     self.retry_attempts = 0;
                     self.on_valkey_connect(value)?;
                     return Ok(());
@@ -1026,7 +1025,6 @@ impl ValkeyClient {
                 self.status = Status::Connected;
                 self.flags.is_authenticated = true;
                 self.flags.is_reconnecting = false;
-                self.flags.is_preconnecting = false;
                 self.retry_attempts = 0;
                 self.on_valkey_connect(value)?;
                 Ok(())

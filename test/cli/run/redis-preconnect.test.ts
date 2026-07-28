@@ -4,7 +4,7 @@ import { bunEnv, bunExe, tempDir } from "harness";
 describe("--redis-preconnect", () => {
   test("should attempt to preconnect to Redis on startup", async () => {
     let connectionAttempts = 0;
-    const { promise, resolve } = Promise.withResolvers<void>();
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
 
     await using server = Bun.listen({
       port: 0,
@@ -35,6 +35,7 @@ describe("--redis-preconnect", () => {
       cwd: testDir,
     });
 
+    proc.exited.then(code => reject(new Error(`child exited (${code}) before preconnecting`)));
     await promise;
     proc.kill();
     await proc.exited;

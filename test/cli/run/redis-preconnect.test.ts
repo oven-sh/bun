@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
-describe("--sql-preconnect", () => {
-  test("should attempt to preconnect to PostgreSQL on startup", async () => {
+describe("--redis-preconnect", () => {
+  test("should attempt to preconnect to Redis on startup", async () => {
     let connectionAttempts = 0;
     const { promise, resolve } = Promise.withResolvers<void>();
 
@@ -22,15 +22,15 @@ describe("--sql-preconnect", () => {
       },
     });
 
-    await using testDir = tempDir("sql-preconnect-test", {
+    await using testDir = tempDir("redis-preconnect-test", {
       "index.js": `console.log("Script executed");`,
     });
 
     const proc = Bun.spawn({
-      cmd: [bunExe(), "--sql-preconnect", "index.js"],
+      cmd: [bunExe(), "--redis-preconnect", "index.js"],
       env: {
         ...bunEnv,
-        DATABASE_URL: `postgres://127.0.0.1:${server.port}/MY_DATABASE`,
+        REDIS_URL: `redis://127.0.0.1:${server.port}`,
       },
       cwd: testDir,
     });
@@ -42,7 +42,7 @@ describe("--sql-preconnect", () => {
     expect(connectionAttempts).toBeGreaterThan(0);
   });
 
-  test("does not fail the script when the server is unreachable", async () => {
+  test("does not fail or hang when the server is unreachable", async () => {
     // Grab a port that has nothing listening on it.
     const server = Bun.listen({
       port: 0,
@@ -53,10 +53,10 @@ describe("--sql-preconnect", () => {
     server.stop(true);
 
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "--sql-preconnect", "-e", `console.log("script done")`],
+      cmd: [bunExe(), "--redis-preconnect", "-e", `console.log("script done")`],
       env: {
         ...bunEnv,
-        DATABASE_URL: `postgres://127.0.0.1:${port}/nope`,
+        REDIS_URL: `redis://127.0.0.1:${port}`,
       },
       stderr: "pipe",
     });
@@ -68,48 +68,53 @@ describe("--sql-preconnect", () => {
     ]);
 
     expect(stdout).toBe("script done\n");
-    expect(stderr).not.toContain("PostgresError");
-    expect(stderr).not.toContain("ERR_POSTGRES");
+    expect(stderr).not.toContain("RedisError");
+    expect(stderr).not.toContain("ERR_REDIS");
     expect(exitCode).toBe(0);
   });
 
-  test("should not connect when flag is not used", async () => {
-    let connectionAttempts = 0;
-
+  test("a later explicit .connect() still keeps the loop alive", async () => {
+    // Preconnect starts a background attempt that does not ref the loop. When
+    // the script then calls .connect() itself, the returned promise must still
+    // settle (resolve here) before the process exits.
+    const { promise, resolve } = Promise.withResolvers<void>();
     await using server = Bun.listen({
       port: 0,
       hostname: "127.0.0.1",
       socket: {
         open(socket) {
-          connectionAttempts++;
-          socket.end();
+          resolve();
+          // RESP3 HELLO → reply with a minimal map so the handshake succeeds.
+          socket.write("%1\r\n$6\r\nserver\r\n$5\r\nredis\r\n");
         },
         data() {},
         close() {},
       },
     });
 
-    await using testDir = tempDir("sql-no-preconnect", {
-      "index.js": `console.log("Normal script executed");`,
-    });
-
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "index.js"],
+      cmd: [
+        bunExe(),
+        "--redis-preconnect",
+        "-e",
+        `await Bun.redis.connect(); console.log("connected");`,
+      ],
       env: {
         ...bunEnv,
-        DATABASE_URL: `postgres://127.0.0.1:${server.port}/MY_DATABASE`,
+        REDIS_URL: `redis://127.0.0.1:${server.port}`,
       },
-      cwd: testDir,
+      stderr: "pipe",
     });
 
     const [stdout, stderr, exitCode] = await Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
+      proc.stdout.text(),
+      proc.stderr.text(),
       proc.exited,
     ]);
+    await promise;
 
+    expect(stderr).toBe("");
+    expect(stdout).toBe("connected\n");
     expect(exitCode).toBe(0);
-    expect(stdout).toContain("Normal script executed");
-    expect(connectionAttempts).toBe(0); // No connection should be attempted without the flag
   });
 });

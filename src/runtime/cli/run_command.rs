@@ -1419,7 +1419,7 @@ impl Run {
             };
             // SAFETY: `as_` returns a live `m_ctx` pointer owned by the JS
             // wrapper; accessed here under the API lock.
-            if let Err(e) = unsafe { &*client }.do_connect(global, redis) {
+            if let Err(e) = unsafe { &*client }.do_preconnect(global, redis) {
                 global.report_active_exception_as_unhandled(e);
             }
         }
@@ -1454,8 +1454,16 @@ impl Run {
                     break 'do_postgres_preconnect;
                 }
             };
-            if let Err(e) = connect_fn.call(global, sql_object, &[]) {
-                global.report_active_exception_as_unhandled(e);
+            match connect_fn.call(global, sql_object, &[]) {
+                Ok(promise) => {
+                    // Preconnect is best-effort: a failed attempt must not
+                    // surface as an unhandled rejection and kill a script that
+                    // never touches SQL.
+                    if let Some(p) = promise.as_promise() {
+                        bun_jsc::JSPromise::opaque_mut(p).set_handled();
+                    }
+                }
+                Err(e) => global.report_active_exception_as_unhandled(e),
             }
         }
 

@@ -26,9 +26,10 @@ pub enum Kind {
     /// (empty)
     Shutdown,
     // worker → coordinator (appended; discriminants above stay stable)
-    /// str xml — one file's completed <testsuite> element(s). Workers never
-    /// write reports to disk; the coordinator concatenates chunks into the
-    /// single junit document it writes at the end.
+    /// u32 file_idx, str xml — one file's completed <testsuite> element(s).
+    /// Workers never write reports to disk; the coordinator files chunks by
+    /// index and emits them in the run's canonical file order, so the merged
+    /// document is identical regardless of which worker finishes first.
     JunitChunk,
     /// str lcov — this worker's coverage data, sent at exit; the coordinator
     /// merges every worker's into the one report it writes.

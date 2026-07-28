@@ -989,6 +989,14 @@ async function runTests() {
       // other test in the log and the durations job times it header-to-header
       // as usual. `filesSeen` are those that got a group (i.e. produced
       // output); `i` advances once per file, in whatever order they surface.
+      const byPath = new Map(bucketFiles.map(t => [join("test", t).replaceAll("\\", "/"), t]));
+      const norm = p =>
+        byPath.get(
+          p
+            .trim()
+            .replace(/ \(\d+s\)$/, "")
+            .replaceAll("\\", "/"),
+        );
       const filesSeen = new Set();
       const makePipe = io => {
         let partial = "";
@@ -1042,14 +1050,6 @@ async function runTests() {
       // and the interrupt report's still-running / not-started lists. A file
       // that passed either way is never re-run; only a run that left neither
       // junit nor streamed evidence re-runs the whole batch.
-      const byPath = new Map(bucketFiles.map(t => [join("test", t).replaceAll("\\", "/"), t]));
-      const norm = p =>
-        byPath.get(
-          p
-            .trim()
-            .replace(/ \(\d+s\)$/, "")
-            .replaceAll("\\", "/"),
-        );
       const suites = new Map(); // repo-relative path -> failures count
       try {
         for (const [, attrs] of readFileSync(junitPath, "utf-8").matchAll(/<testsuite\b([^>]*)>/g)) {
@@ -1151,12 +1151,27 @@ async function runTests() {
           if (result?.ok && failed.has(testPath) && isBuildkite) {
             const title = join("test", testPath).replaceAll("\\", "/");
             const output = blocks.get(testPath)?.trim();
+            // Lead with the failure itself, like a serial failure's title.
+            const firstError = output
+              ? (stripAnsi(output)
+                  .split(/\r?\n/)
+                  .map(line => line.trim())
+                  .find(
+                    line =>
+                      /^(?:error|\d+ \| .*error|✗|TypeError|RangeError|Error|AssertionError|SyntaxError):?\b/i.test(
+                        line,
+                      ) || /\btimed out\b|\(worker crashed/.test(line),
+                  ) ?? "")
+              : "";
+            const reason = firstError
+              ? escapeHtml(firstError.length > 100 ? `${firstError.slice(0, 97)}…` : firstError)
+              : "failed in the parallel bucket";
             const detail = output ? `\n\n\`\`\`terminal\n${escapeCodeBlock(output)}\n\`\`\`\n\n` : "";
             reportAnnotationToBuildKite({
               context: "flaky",
               label: title,
               style: "warning",
-              content: `<details><summary><a href="${getFileUrl(title)}"><code>${title}</code></a> - failed inside a <code>bun test --parallel</code> bucket on ${getBuildLabel()}, passed when re-run alone</summary>${detail}</details>`,
+              content: `<details><summary><a href="${getFileUrl(title)}"><code>${title}</code></a> - ${reason} <i>(in the parallel bucket on ${getBuildLabel()}; passed alone)</i></summary>${detail}</details>`,
             });
           }
         }
@@ -1642,6 +1657,47 @@ async function spawnSafe(options) {
       error += ` thrown from ${thrown[1]} @ ${repoRel(thrown[2])}`;
     }
     if (count > 1) error += ` +${count - 1} more`;
+  } else if (/LeakSanitizer: detected memory leaks/.test(buffer)) {
+    // LSAN report — name the leak, not the SIGABRT it exits with:
+    //   Direct leak of N byte(s) in M object(s) allocated from:
+    //     #0 0x… in malloc …
+    //     #1 0x… in <first real frame> <file:line>
+    error = "leak";
+    const leak =
+      /(Direct|Indirect) leak of (\d+) byte\(s\) in (\d+) object\(s\) allocated from:\s*\n((?:\s*#\d+[^\n]*\n)+)/.exec(
+        buffer,
+      );
+    if (leak) {
+      const [, kind, bytes, objects, stack] = leak;
+      error = `${kind.toLowerCase()} leak of ${bytes}b${objects === "1" ? "" : ` in ${objects} objects`}`;
+      // First frame that is not the allocator itself is where the leak lives.
+      const frames = stack
+        .split("\n")
+        .map(line => /#\d+ 0x[0-9a-f]+ in ([^\n]+)/i.exec(line)?.[1]?.trim())
+        .filter(Boolean);
+      // Where the leak lives: the first frame from Bun's own tree, else the
+      // first frame past the allocator. Rendered as `symbol file:line`.
+      // Allocator / sanitizer plumbing on any platform (ELF interceptors,
+      // darwin's malloc zone, mimalloc/bmalloc, WTF fastMalloc, `new`).
+      const isAlloc = f =>
+        /^(?:__interceptor_|__sanitizer|_?malloc\b|_?malloc_zone|calloc|realloc|posix_memalign|operator new|mi_|bmalloc|bun_alloc|WTF::fast(?:Zeroed)?Malloc|WTF::Malloc)/i.test(
+          f,
+        );
+      // A frame's location, minus the cmake `../..` prefix; Bun's own tree
+      // begins at src/ (vendor/*/src/ is someone else's).
+      const ownTree = f => {
+        const loc = /(\S+):\d+$/.exec(f)?.[1];
+        return !!loc && loc.replace(/^(?:\.\.?[\\/])+/, "").startsWith("src/");
+      };
+      const where = frames.find(f => !isAlloc(f) && ownTree(f)) ?? frames.find(f => !isAlloc(f));
+      if (where) {
+        const [, symbol, loc] = /^(.*?)\s+(\S+:\d+)$/.exec(where) ?? [null, where, ""];
+        const file = loc.replace(/^(?:\.\.?[\\/])+/, "");
+        error += ` in ${symbol.replace(/\(.*$/, "")}${file ? ` (${file})` : ""}`.slice(0, 160);
+      }
+    }
+    const leaks = buffer.match(/(?:Direct|Indirect) leak of/g)?.length ?? 1;
+    if (leaks > 1) error += ` +${leaks - 1} more`;
   } else if (
     (error = /thread \d+ panic: (.*)(?:\r\n|\r|\n|\\n)/i.exec(buffer)) ||
     (error = /panic\(.*\): (.*)(?:\r\n|\r|\n|\\n)/i.exec(buffer)) ||

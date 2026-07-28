@@ -59,18 +59,24 @@ pub(crate) fn add_junit_chunk_totals(totals: &mut JunitTotals, chunk: &[u8]) {
 
 pub(crate) fn merge_junit_fragments(coord: &mut Coordinator, outfile: &[u8], summary: &Summary) {
     // Files streamed their <testsuite> over IPC as they finished (including
-    // from workers that later crashed), so the body is what actually ran.
-    let mut body: Vec<u8> = core::mem::take(&mut coord.junit_body);
-    let totals = core::mem::take(&mut coord.junit_totals);
-    let mut totals = totals;
-
-    for &idx in &coord.crashed_files {
+    // from workers that later crashed). Emit in the run's canonical file
+    // order — never completion order — with crashed files' synthetic suites
+    // slotted at their own index, so the document is the same on every run.
+    let mut totals = core::mem::take(&mut coord.junit_totals);
+    let mut chunks = core::mem::take(&mut coord.junit_chunks);
+    let crashed: Vec<u32> = coord.crashed_files.clone();
+    let mut entries: Vec<(u32, u8, Box<[u8]>)> = Vec::with_capacity(chunks.len() + crashed.len());
+    for (idx, chunk) in chunks.drain(..) {
+        entries.push((idx, 0, chunk));
+    }
+    for &idx in &crashed {
         let rel = coord.rel_path(idx);
-        body.extend_from_slice(b"  <testsuite name=\"");
-        let _ = test_command::escape_xml(rel, &mut body); // fmt::Result into Vec<u8> is infallible
-        body.extend_from_slice(b"\" tests=\"1\" assertions=\"0\" failures=\"1\" skipped=\"0\" time=\"0\">\n    <testcase name=\"(worker crashed)\" classname=\"");
-        let _ = test_command::escape_xml(rel, &mut body); // fmt::Result into Vec<u8> is infallible
-        body.extend_from_slice(
+        let mut suite: Vec<u8> = Vec::new();
+        suite.extend_from_slice(b"  <testsuite name=\"");
+        let _ = test_command::escape_xml(rel, &mut suite); // fmt::Result into Vec<u8> is infallible
+        suite.extend_from_slice(b"\" tests=\"1\" assertions=\"0\" failures=\"1\" skipped=\"0\" time=\"0\">\n    <testcase name=\"(worker crashed)\" classname=\"");
+        let _ = test_command::escape_xml(rel, &mut suite); // fmt::Result into Vec<u8> is infallible
+        suite.extend_from_slice(
             b"\">\n\
               \x20     <failure message=\"worker process crashed before reporting results\"></failure>\n\
               \x20   </testcase>\n\
@@ -78,6 +84,17 @@ pub(crate) fn merge_junit_fragments(coord: &mut Coordinator, outfile: &[u8], sum
         );
         totals.tests += 1;
         totals.failures += 1;
+        entries.push((idx, 1, suite.into_boxed_slice()));
+    }
+    // idx, then real-report-before-crash-entry for the same idx (a stable
+    // tiebreak; both should not normally coexist).
+    entries.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
+    let mut body: Vec<u8> = Vec::new();
+    for (_, _, chunk) in &entries {
+        body.extend_from_slice(chunk);
+        if !strings::ends_with_char(chunk, b'\n') {
+            body.push(b'\n');
+        }
     }
 
     let mut contents: Vec<u8> = Vec::new();

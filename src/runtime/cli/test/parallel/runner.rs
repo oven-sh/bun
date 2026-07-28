@@ -161,7 +161,7 @@ pub fn run_as_coordinator(
         },
         bail: ctx.test_options.bail,
         dots: ctx.test_options.reporters.dots,
-        junit_body: Vec::new(),
+        junit_chunks: Vec::new(),
         junit_totals: Default::default(),
         coverage_chunks: Vec::new(),
         last_header_idx: None,
@@ -565,6 +565,7 @@ impl<'a> WorkerLoop<'a> {
                 junit.current_file = Box::default();
                 if junit.contents.len() > junit.sent_upto {
                     wf.begin(frame::Kind::JunitChunk);
+                    wf.u32(idx);
                     wf.str(&junit.contents[junit.sent_upto..]);
                     self.cmds.send(wf.finish());
                     junit.sent_upto = junit.contents.len();
@@ -703,6 +704,7 @@ fn worker_flush_aggregates(
         let start = junit.sent_upto;
         if junit.contents.len() > start {
             wf.begin(frame::Kind::JunitChunk);
+            wf.u32(u32::MAX); // tail belongs to no single file; sorts last
             wf.str(&junit.contents[start..]);
             cmds.send(wf.finish());
             junit.sent_upto = junit.contents.len();

@@ -38,6 +38,41 @@ test("registry url password is masked in request error output", async () => {
   expect(exitCode).toBe(1);
 });
 
+test("registry port is not mistaken for a credential when the package is scoped", async () => {
+  await using server = Bun.serve({
+    port: 0,
+    fetch() {
+      return new Response(JSON.stringify({ error: "not found" }), {
+        status: 404,
+        headers: { "content-type": "application/json" },
+      });
+    },
+  });
+
+  using dir = tempDir("redacted-registry-scoped-port", {
+    "package.json": JSON.stringify({ name: "foo", version: "1.0.0" }),
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "pm", "view", "@scope/pkg"],
+    cwd: String(dir),
+    env: {
+      ...bunEnv,
+      NO_COLOR: "1",
+      npm_config_registry: `http://${server.hostname}:${server.port}/`,
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(err).toContain(`http://${server.hostname}:${server.port}/`);
+  expect(err).not.toContain("*");
+  expect(out).not.toContain("*");
+  expect(exitCode).toBe(1);
+});
+
 describe.concurrent("redact", async () => {
   const tests = [
     {

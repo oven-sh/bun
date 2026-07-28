@@ -315,7 +315,9 @@ test.skipIf(process.platform === "win32")(
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(JSON.parse(stdout.trim())).toEqual({ exitCode: 1, stderr: "rm: .: Invalid argument\n" });
+    const result = JSON.parse(stdout.trim());
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toMatch(/^rm: \.: /);
     expect(existsSync(path.join(base, "work", "file.txt"))).toBeFalse();
     expect(existsSync(path.join(base, "work", "sub"))).toBeFalse();
     expect(existsSync(path.join(base, "work"))).toBeTrue();

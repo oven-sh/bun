@@ -442,12 +442,14 @@ async function resolveFileCandidate(token: string): Promise<string | undefined> 
     token.includes(path.sep) ||
     path.extname(token).length > 1;
 
+  if (!looksLikePath) {
+    return undefined;
+  }
+
   const candidates = new Set<string>();
-  if (looksLikePath) {
-    candidates.add(token);
-    if (token.startsWith("~/")) {
-      candidates.add(path.join(os.homedir(), token.slice(2)));
-    }
+  candidates.add(token);
+  if (token.startsWith("~/")) {
+    candidates.add(path.join(os.homedir(), token.slice(2)));
   }
   candidates.add(path.join(process.cwd(), token));
 

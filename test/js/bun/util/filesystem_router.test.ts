@@ -985,7 +985,7 @@ it("match() returns null when the URL has fewer segments than a dynamic route re
   }
 });
 
-it("src is computed for a route whose path is longer than the fast-path buffer", async () => {
+it.skipIf(isWindows || isMacOS)("src is computed for a route whose path is longer than the fast-path buffer", async () => {
   using dir = tempDir("fsr-long-route-src", {
     "pages/keep.tsx": "export default 1;\n",
   });

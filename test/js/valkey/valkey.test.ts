@@ -6421,6 +6421,29 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         await subscriber.unsubscribe(channels);
       });
 
+      test("commands issued alongside a multi-pattern psubscribe resolve with their own values", async () => {
+        const keyA = testKey();
+        const keyB = testKey();
+        const valueA = testValue();
+        const valueB = testValue();
+        expect(await ctx.redis.set(keyA, valueA)).toBe("OK");
+        expect(await ctx.redis.set(keyB, valueB)).toBe("OK");
+
+        const subscriber = await ctx.newSubscriberClient(connectionType);
+        const patterns = [`${testChannel()}*`, `${testChannel()}*`];
+
+        const subscribed = subscriber.psubscribe(...patterns);
+        const gotA = subscriber.get(keyA);
+        const gotB = subscriber.get(keyB);
+
+        const [, resultA, resultB] = await Promise.all([subscribed, gotA, gotB]);
+
+        expect(resultA).toBe(valueA);
+        expect(resultB).toBe(valueB);
+
+        await subscriber.punsubscribe(...patterns);
+      });
+
       test("unsubscribing from specific channels while remaining subscribed to others", async () => {
         const channel1 = "channel-1";
         const channel2 = "channel-2";

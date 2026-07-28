@@ -999,7 +999,7 @@ pub fn read_file_with_handle_impl<'buf, const USE_SHARED_BUFFER: bool, const STR
                 }
 
                 if (bytes_read as usize) < new_size {
-                    shared_buffer.grow_by(new_size - size)?;
+                    shared_buffer.grow_by(new_size.saturating_sub(size))?;
                     // SAFETY: u8; `read_all` overwrites the exposed tail before any read.
                     unsafe { shared_buffer.list.expand_to_capacity() };
                     size = new_size;
@@ -1073,7 +1073,8 @@ pub fn read_file_with_handle_impl<'buf, const USE_SHARED_BUFFER: bool, const STR
         // Allocate UNINITIALIZED (no zero-fill):
         // `extend_from_slice` writes the prefix, `read_all` writes
         // the tail, then `set_len` exposes only the initialized `..total`.
-        let mut buf: Vec<u8> = Vec::with_capacity(size + 1);
+        let cap = size.max(initial_read.len());
+        let mut buf: Vec<u8> = Vec::with_capacity(cap + 1);
         buf.extend_from_slice(initial_read);
 
         if size == 0 {
@@ -1082,7 +1083,7 @@ pub fn read_file_with_handle_impl<'buf, const USE_SHARED_BUFFER: bool, const STR
             });
         }
 
-        let tail_len = size + 1 - initial_read.len();
+        let tail_len = cap + 1 - initial_read.len();
         let tail = &mut buf.spare_capacity_mut()[..tail_len];
         // stick a zero at the end
         tail[tail_len - 1].write(0);
@@ -1094,7 +1095,7 @@ pub fn read_file_with_handle_impl<'buf, const USE_SHARED_BUFFER: bool, const STR
         })?;
         let total = read_count + initial_read.len();
         debug!("read({}, {}) = {}", file.handle(), size, read_count);
-        // SAFETY: capacity ≥ `size + 1` ≥ `total`; bytes `..initial_read.len()`
+        // SAFETY: capacity ≥ `cap + 1` ≥ `total`; bytes `..initial_read.len()`
         // were written by `extend_from_slice` and `initial_read.len()..total` by
         // `read_all` above.
         unsafe { buf.set_len(total) };

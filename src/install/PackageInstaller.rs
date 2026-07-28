@@ -2150,7 +2150,13 @@ impl<'a> PackageInstaller<'a> {
                     .get(&truncated_dep_name_hash)
                 {
                     // is a new trusted dependency. need to enqueue scripts and maybe add to lockfile
-                    if *added.name == *alias.slice(string_buf!()) {
+                    if *added.name == *alias.slice(string_buf!())
+                        && self.lockfile().has_trusted_dependency(
+                            alias.slice(string_buf!()),
+                            pkg_name.slice(string_buf!()),
+                            resolution,
+                        )
+                    {
                         break 'brk (true, false, added.add_to_lockfile);
                     }
                 }

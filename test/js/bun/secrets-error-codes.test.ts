@@ -1,6 +1,32 @@
 import { describe, expect, test } from "bun:test";
 import { isCI, isMacOS, isWindows } from "harness";
 
+describe("Bun.secrets argument validation", () => {
+  test("rejects service, name, and value strings containing a null byte", () => {
+    const cases = [
+      () => Bun.secrets.get({ service: "a\0b", name: "test" }),
+      () => Bun.secrets.get({ service: "test", name: "a\0b" }),
+      () => Bun.secrets.delete({ service: "a\0b", name: "test" }),
+      () => Bun.secrets.delete({ service: "test", name: "a\0b" }),
+      () => Bun.secrets.set({ service: "a\0b", name: "test", value: "v" }),
+      () => Bun.secrets.set({ service: "test", name: "a\0b", value: "v" }),
+      () => Bun.secrets.set({ service: "test", name: "test", value: "a\0b" }),
+    ];
+
+    for (const fn of cases) {
+      let thrown: any;
+      try {
+        fn();
+      } catch (error) {
+        thrown = error;
+      }
+      expect(thrown).toBeDefined();
+      expect(thrown.code).toBe("ERR_INVALID_ARG_TYPE");
+      expect(thrown.message).toBe("Expected service, name, and value to be strings without null bytes");
+    }
+  });
+});
+
 describe.todoIf(isCI && !isWindows)("Bun.secrets error codes", () => {
   test("non-existent secret returns null without error", async () => {
     const result = await Bun.secrets.get({

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { createHash, randomBytes } from "crypto";
 import { bunEnv, bunExe, isASAN, tempDir, tls } from "harness";
+import { connect } from "node:quic";
 import { join } from "path";
 
 // Native HTTP/3 fetch wrapper. Every request in this file forces
@@ -1273,6 +1274,97 @@ describe("Bun.serve HTTP/3 production", () => {
   // (server.zig prepareJsRequestContextFor). Not testable via the native
   // client either — `isConnectionSpecific()` strips the header before
   // encoding — so the check is defense-in-depth against raw QUIC clients.
+
+  test("request header values containing CR or LF are rejected before the handler runs", async () => {
+    const script = `
+      const tls = ${JSON.stringify(tls)};
+      let seen = 0;
+      const server = Bun.serve({
+        port: 0, tls, http3: true,
+        fetch(req) {
+          const url = new URL(req.url);
+          if (url.pathname === "/probe") { seen++; return new Response("probe:" + seen); }
+          if (url.pathname === "/seen") return new Response(String(seen));
+          return new Response("ok");
+        },
+      });
+      console.error("PORT=" + server.port);
+      process.stdin.on("data", () => {});
+      ${STOP_ON_STDIN_END}
+    `;
+    await withCustomServer(script, async port => {
+      const open = async () => {
+        const client = await connect(`127.0.0.1:${port}`, {
+          servername: "localhost",
+          verifyPeer: "manual",
+          transportParams: { maxIdleTimeout: 5 },
+        });
+        client.onerror = () => {};
+        client.closed.catch(() => {});
+        await client.opened;
+        return client;
+      };
+      {
+        const client = await open();
+        const status = Promise.withResolvers<string>();
+        const stream = await client.createBidirectionalStream({
+          headers: {
+            ":method": "GET",
+            ":path": "/probe",
+            ":scheme": "https",
+            ":authority": "localhost",
+            "x-probe": "clean",
+          },
+          onheaders(headers: Record<string, string>) {
+            status.resolve(headers[":status"]);
+          },
+        });
+        stream.closed.catch(() => {});
+        expect(await status.promise).toBe("200");
+        client.close();
+        await client.closed.catch(() => {});
+      }
+      const probe = async (value: string) => {
+        const client = await open();
+        let responded = false;
+        const settled = Promise.withResolvers<void>();
+        client.closed.then(settled.resolve, settled.resolve);
+        const stream = await client.createBidirectionalStream({
+          headers: {
+            ":method": "GET",
+            ":path": "/probe",
+            ":scheme": "https",
+            ":authority": "localhost",
+            "x-probe": value,
+          },
+          onheaders() {
+            responded = true;
+            settled.resolve();
+          },
+        });
+        stream.closed.then(settled.resolve, settled.resolve);
+        try {
+          const barrier = await client.createBidirectionalStream({
+            headers: { ":method": "GET", ":path": "/barrier", ":scheme": "https", ":authority": "localhost" },
+            onheaders() {
+              settled.resolve();
+            },
+          });
+          barrier.closed.then(settled.resolve, settled.resolve);
+        } catch {
+          settled.resolve();
+        }
+        await settled.promise;
+        client.close();
+        await client.closed.catch(() => {});
+        return responded;
+      };
+      const cr = await probe("before\rafter");
+      const lf = await probe("before\nafter");
+      const seen = await fetchH3(port, "/seen").then(r => r.text());
+      expect({ cr, lf, seen }).toEqual({ cr: false, lf: false, seen: "1" });
+    });
+  });
 
   // I: server.upgrade() returns false over H3 instead of crashing, and the
   // handler can still send a normal response.

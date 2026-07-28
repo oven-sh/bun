@@ -21,7 +21,7 @@ impl UnknownAtRule {
         // dest.add_mapping(self.loc);
 
         dest.write_char(b'@')?;
-        dest.write_str(self.name)?;
+        dest.serialize_identifier(self.name)?;
 
         if !self.prelude.v.is_empty() {
             dest.write_char(b' ')?;

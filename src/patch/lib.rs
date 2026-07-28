@@ -1038,6 +1038,7 @@ fn parse_file_mode(mode: &[u8]) -> Option<FileMode> {
 
 fn is_safe_patch_path(path: &[u8]) -> bool {
     !path.is_empty()
+        && !path.contains(&0)
         && !paths::is_absolute_loose(path)
         && !path
             .split(|&c| c == b'/' || c == b'\\')
@@ -1886,27 +1887,17 @@ fn git_diff_postprocess(
     let old_folder_trimmed = strings::trim(old_folder, b"/");
     let new_folder_trimmed = strings::trim(new_folder, b"/");
 
-    let mut old_buf = PathBuffer::uninit();
-    let mut new_buf = PathBuffer::uninit();
+    let mut old_buf: Vec<u8> = Vec::with_capacity(old_folder_trimmed.len() + 3);
+    old_buf.extend_from_slice(b"a/");
+    old_buf.extend_from_slice(old_folder_trimmed);
+    old_buf.push(b'/');
 
-    let (a_old_folder_slash, b_new_folder_slash) = {
-        let ob = &mut old_buf[..];
-        ob[0] = b'a';
-        ob[1] = b'/';
-        ob[2..2 + old_folder_trimmed.len()].copy_from_slice(old_folder_trimmed);
-        ob[2 + old_folder_trimmed.len()] = b'/';
+    let mut new_buf: Vec<u8> = Vec::with_capacity(new_folder_trimmed.len() + 3);
+    new_buf.extend_from_slice(b"b/");
+    new_buf.extend_from_slice(new_folder_trimmed);
+    new_buf.push(b'/');
 
-        let nb = &mut new_buf[..];
-        nb[0] = b'b';
-        nb[1] = b'/';
-        nb[2..2 + new_folder_trimmed.len()].copy_from_slice(new_folder_trimmed);
-        nb[2 + new_folder_trimmed.len()] = b'/';
-
-        (
-            &old_buf[0..2 + old_folder_trimmed.len() + 1],
-            &new_buf[0..2 + new_folder_trimmed.len() + 1],
-        )
-    };
+    let (a_old_folder_slash, b_new_folder_slash) = (&old_buf[..], &new_buf[..]);
 
     // const @"$old_folder/" = @"a/$old_folder/"[2..];
     // const @"$new_folder/" = @"b/$new_folder/"[2..];

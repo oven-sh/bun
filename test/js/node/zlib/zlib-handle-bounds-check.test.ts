@@ -378,3 +378,78 @@ describe.concurrent("zlib native handle driven outside the zlib.ts lifecycle", (
     });
   });
 });
+
+describe.concurrent("zlib native handle argument validation", () => {
+  async function run(body: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `const zlib = require("node:zlib");\n${body}`],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.trim(), exitCode };
+  }
+
+  test.concurrent("brotli: writeSync() rejects a flush operation outside the brotli range", async () => {
+    expect(
+      await run(
+        `const s = zlib.createBrotliCompress();
+         try { s._processChunk(Buffer.from("x"), zlib.constants.Z_FINISH); console.log("handled"); }
+         catch (e) { console.log("threw " + e.code + ": " + e.message); }
+         console.log(zlib.brotliDecompressSync(zlib.brotliCompressSync("still works")).toString());`,
+      ),
+    ).toEqual({ stdout: "threw ERR_INVALID_ARG_VALUE: Invalid flush value\nstill works", exitCode: 0 });
+  });
+
+  test.concurrent("brotli: write() rejects a flush operation outside the brotli range", async () => {
+    expect(
+      await run(
+        `const h = zlib.createBrotliCompress()._handle;
+         try { h.write(zlib.constants.Z_FINISH, null, 0, 0, new Uint8Array(64), 0, 64); console.log("handled"); }
+         catch (e) { console.log("threw " + e.code + ": " + e.message); }`,
+      ),
+    ).toEqual({ stdout: "threw ERR_INVALID_ARG_VALUE: Invalid flush value", exitCode: 0 });
+  });
+
+  test.concurrent("brotli: writeSync() accepts every brotli flush operation", async () => {
+    expect(
+      await run(
+        `const ops = [zlib.constants.BROTLI_OPERATION_PROCESS, zlib.constants.BROTLI_OPERATION_FLUSH, zlib.constants.BROTLI_OPERATION_FINISH, zlib.constants.BROTLI_OPERATION_EMIT_METADATA];
+         for (const op of ops) {
+           const h = zlib.createBrotliCompress()._handle;
+           h.writeSync(op, null, 0, 0, new Uint8Array(64), 0, 64);
+         }
+         try { zlib.createBrotliCompress()._handle.writeSync(zlib.constants.BROTLI_OPERATION_EMIT_METADATA + 1, null, 0, 0, new Uint8Array(64), 0, 64); console.log("handled"); }
+         catch (e) { console.log("threw " + e.code + ": " + e.message); }`,
+      ),
+    ).toEqual({ stdout: "threw ERR_INVALID_ARG_VALUE: Invalid flush value", exitCode: 0 });
+  });
+
+  test.concurrent("write() rejects an output buffer backed by a resizable ArrayBuffer", async () => {
+    expect(
+      await run(
+        `const h = zlib.createDeflateRaw()._handle;
+         const out = new Uint8Array(new ArrayBuffer(64, { maxByteLength: 128 }));
+         try { h.write(zlib.constants.Z_NO_FLUSH, null, 0, 0, out, 0, 64); console.log("handled"); }
+         catch (e) { console.log("threw " + e.code + ": " + e.message); }`,
+      ),
+    ).toEqual({
+      stdout: 'threw ERR_INVALID_ARG_VALUE: The "out" argument must not be backed by a resizable ArrayBuffer',
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent("write() rejects an input buffer backed by a resizable ArrayBuffer", async () => {
+    expect(
+      await run(
+        `const h = zlib.createDeflateRaw()._handle;
+         const input = new Uint8Array(new ArrayBuffer(16, { maxByteLength: 64 }));
+         try { h.write(zlib.constants.Z_NO_FLUSH, input, 0, 16, new Uint8Array(1024), 0, 1024); console.log("handled"); }
+         catch (e) { console.log("threw " + e.code + ": " + e.message); }`,
+      ),
+    ).toEqual({
+      stdout: 'threw ERR_INVALID_ARG_VALUE: The "in" argument must not be backed by a resizable ArrayBuffer',
+      exitCode: 0,
+    });
+  });
+});

@@ -1830,7 +1830,7 @@ impl JSValkeyClient {
             this_js,
             b"UNSUBSCRIBE",
             CommandArgs::Args(redis_channels),
-            CommandMeta::default(),
+            CommandMeta::default() | CommandMeta::SUBSCRIPTION_REQUEST,
             "Failed to send UNSUBSCRIBE command",
         )
     }

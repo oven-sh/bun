@@ -1749,6 +1749,24 @@ describe("Bun.Archive", () => {
       expect(await Bun.file(join(String(dir), "README.md")).exists()).toBe(false);
     });
 
+    test("negative patterns apply to entries stored with a leading ./ or repeated separators", async () => {
+      const tar = buildTarball([
+        { name: "./node_modules/pkg/index.js", data: "module" },
+        { name: "src//utils.test.ts", data: "test()" },
+        { name: "src/index.ts", data: "export {}" },
+      ]);
+
+      using dir = tempDir("archive-glob-normalized-entry-paths", {});
+      const count = await new Bun.Archive(tar).extract(String(dir), {
+        glob: ["**", "!node_modules/**", "!**/*.test.ts"],
+      });
+
+      expect(count).toBe(1);
+      expect(await Bun.file(join(String(dir), "src/index.ts")).exists()).toBe(true);
+      expect(await Bun.file(join(String(dir), "node_modules/pkg/index.js")).exists()).toBe(false);
+      expect(await Bun.file(join(String(dir), "src/utils.test.ts")).exists()).toBe(false);
+    });
+
     test("extracts all files when no patterns are provided", async () => {
       const archive = new Bun.Archive({
         "file1.txt": "content1",

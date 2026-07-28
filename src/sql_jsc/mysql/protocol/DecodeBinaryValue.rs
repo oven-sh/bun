@@ -132,7 +132,10 @@ pub(crate) fn decode_binary_value<Context: ReaderContext>(
                     let data = reader.read(l as usize)?;
                     let time = Time::from_data(&data)?;
 
-                    let total_hours: u32 = time.hours as u32 + time.days * 24;
+                    let total_hours: u32 = time
+                        .days
+                        .saturating_mul(24)
+                        .saturating_add(time.hours as u32);
                     // -838:59:59 to 838:59:59 is valid (it only store seconds)
                     // it should be represented as HH:MM:SS or HHH:MM:SS if total_hours > 99
                     let mut buffer = [0u8; 32];

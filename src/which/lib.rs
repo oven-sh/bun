@@ -83,7 +83,7 @@ pub fn which_for_spawn<'a>(
 // Like /usr/bin/which but without needing to exec a child process
 // Remember to resolve the symlink if necessary
 pub fn which<'a>(buf: &'a mut PathBuffer, path: &[u8], cwd: &[u8], bin: &[u8]) -> Option<&'a ZStr> {
-    if bin.len() > MAX_PATH_BYTES {
+    if bin.len() >= MAX_PATH_BYTES {
         return None;
     }
     bun_core::scoped_log!(

@@ -1,7 +1,42 @@
 import { write } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tmpdirSync } from "harness";
+import { bunEnv, bunExe, tempDir, tmpdirSync } from "harness";
 import { join } from "path";
+
+test("registry url password is masked in request error output", async () => {
+  await using server = Bun.serve({
+    port: 0,
+    fetch() {
+      return new Response(JSON.stringify({ error: "unauthorized" }), {
+        status: 401,
+        headers: { "content-type": "application/json" },
+      });
+    },
+  });
+
+  using dir = tempDir("redacted-registry-url", {
+    "package.json": JSON.stringify({ name: "foo", version: "1.0.0" }),
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "pm", "view", "is-number"],
+    cwd: String(dir),
+    env: {
+      ...bunEnv,
+      NO_COLOR: "1",
+      npm_config_registry: `http://user:secretpass@${server.hostname}:${server.port}/`,
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(err).toContain(`401 Unauthorized: http://user:**********@${server.hostname}:${server.port}/is-number`);
+  expect(err).not.toContain("secretpass");
+  expect(out).not.toContain("secretpass");
+  expect(exitCode).toBe(1);
+});
 
 describe.concurrent("redact", async () => {
   const tests = [

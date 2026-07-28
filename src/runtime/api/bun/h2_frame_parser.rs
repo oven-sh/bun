@@ -8173,6 +8173,17 @@ impl H2FrameParser {
                 };
                 let value_slice = value_str.to_slice(global_object);
                 let value = value_slice.slice();
+                if !is_valid_header_value(value) {
+                    return Err(global_object
+                        .err(
+                            JscErrorCode::HTTP2_INVALID_HEADER_VALUE,
+                            format_args!(
+                                "Invalid value for header \"{}\"",
+                                BStr::new(validated_name)
+                            ),
+                        )
+                        .throw());
+                }
                 if this
                     .encode_header_into_list(
                         &mut encoded_headers,

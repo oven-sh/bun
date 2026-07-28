@@ -1797,7 +1797,7 @@ function parseOptions(
     username ||= options.user || options.username || decodeIfValid(url.username);
     password ||= options.pass || options.password || decodeIfValid(url.password);
 
-    path ||= options.path || url.pathname;
+    path ||= options.path || (url.hostname ? "" : url.pathname);
 
     const queryObject = url.searchParams.toJSON();
     for (const key in queryObject) {

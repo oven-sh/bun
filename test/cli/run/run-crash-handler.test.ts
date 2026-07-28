@@ -1,6 +1,6 @@
 import { crash_handler } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isLinux, isPosix, isWindows, mergeWindowEnvs } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, isPosix, isWindows, mergeWindowEnvs, tempDir } from "harness";
 import path from "path";
 const { getMachOImageZeroOffset } = crash_handler;
 
@@ -507,3 +507,46 @@ describe("automatic crash reporter", () => {
     });
   }
 });
+
+test.if(isWindows)(
+  "Windows: crash report upload runs the system PowerShell, not a powershell.exe in the working directory",
+  async () => {
+    let sent = false;
+    const acked = Promise.withResolvers<void>();
+
+    using server = Bun.serve({
+      port: 0,
+      fetch(request) {
+        expect(request.url).toEndWith("/ack");
+        sent = true;
+        acked.resolve();
+        return new Response("OK");
+      },
+    });
+
+    using dir = tempDir("crash-report-system-powershell", { "placeholder.js": "" });
+    await Bun.write(path.join(String(dir), "powershell.exe"), Bun.file(bunExe()));
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), path.join(import.meta.dir, "fixture-crash.js"), "panic"],
+      cwd: String(dir),
+      env: mergeWindowEnvs([
+        bunEnv,
+        {
+          BUN_CRASH_REPORT_URL: server.url.toString(),
+          BUN_ENABLE_CRASH_REPORTING: "1",
+          GITHUB_ACTIONS: undefined,
+          CI: undefined,
+        },
+      ]),
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+    await acked.promise;
+
+    expect(stderr).toContain(server.url.toString());
+    expect(sent).toBe(true);
+    expect(exitCode).not.toBe(0);
+  },
+);

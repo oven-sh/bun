@@ -204,7 +204,7 @@ pub mod fs {
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_nanos())
                 .unwrap_or(0);
-            let hex_value: u64 = (u128::from(hash) | nanos) as u64;
+            let hex_value: u64 = hash ^ (nanos as u64);
 
             let len = buf.len();
             let mut cursor = &mut buf[..];

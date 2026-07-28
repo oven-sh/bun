@@ -322,6 +322,23 @@ impl Stdio {
         }
     }
 
+    pub fn borrows_caller_fd(&self) -> bool {
+        match self {
+            Self::Fd(_) => true,
+            Self::Blob(blob) => {
+                blob.needs_to_read_file()
+                    && matches!(
+                        blob.store(),
+                        Some(store) if matches!(
+                            store.data,
+                            StoreData::File(ref file) if matches!(file.pathlike, PathOrFileDescriptor::Fd(_))
+                        )
+                    )
+            }
+            _ => false,
+        }
+    }
+
     fn extract_body_value(
         out_stdio: &mut Stdio,
         global: &JSGlobalObject,
@@ -557,6 +574,12 @@ impl Stdio {
             if array_buffer.byte_slice().is_empty() {
                 *out_stdio = Stdio::Ignore;
                 return Ok(());
+            }
+
+            if i == 1 || i == 2 {
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "ArrayBufferView cannot be used for stdout/stderr yet"
+                )));
             }
 
             let copied_value =

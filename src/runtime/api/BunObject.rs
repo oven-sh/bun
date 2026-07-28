@@ -1707,13 +1707,19 @@ fn mmap_file(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JS
                         );
                     }
                     let paths = &[path_str.slice()];
-                    break 'brk bun_paths::resolve_path::join_abs_string_buf::<
+                    let buf_len = buf.len();
+                    let Some(joined) = bun_paths::resolve_path::join_abs_string_buf_checked::<
                         bun_paths::resolve_path::platform::Auto,
                     >(
                         bun_paths::fs::FileSystem::instance().top_level_dir(),
-                        &mut buf,
+                        &mut buf[..buf_len - 1],
                         paths,
-                    );
+                    ) else {
+                        return Err(
+                            global_this.throw_invalid_arguments(format_args!("Path too long"))
+                        );
+                    };
+                    break 'brk joined;
                 }
             }
             return Err(global_this.throw_invalid_arguments(format_args!("Expected a path")));

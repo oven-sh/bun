@@ -901,8 +901,9 @@ impl PublishCommand {
         }
 
         // continues from `printSummary`
+        let registry_href = registry_url.href_without_auth();
         bun_core::pretty!(
-            "<b><blue>Tag<r>: {}\n<b><blue>Access<r>: {}\n<b><blue>Registry<r>: {}\n",
+            "<b><blue>Tag<r>: {}\n<b><blue>Access<r>: {}\n<b><blue>Registry<r>: {}/\n",
             bstr::BStr::new(if !ctx.manager.options.publish_config.tag.is_empty() {
                 ctx.manager.options.publish_config.tag
             } else {
@@ -913,7 +914,7 @@ impl PublishCommand {
             } else {
                 "default"
             },
-            bstr::BStr::new(registry.url.href()),
+            bstr::BStr::new(strings::without_trailing_slash(&registry_href)),
         );
 
         // dry-run stops here
@@ -1183,6 +1184,16 @@ impl PublishCommand {
                     break 'try_web;
                 };
                 let done_url = URL::parse(crate::cli::cli_dupe(done_url_str));
+                {
+                    let registry_url = registry.url.url();
+                    if !(done_url.is_http() || done_url.is_https())
+                        || done_url.protocol != registry_url.protocol
+                        || done_url.hostname != registry_url.hostname
+                        || done_url.get_port_auto() != registry_url.get_port_auto()
+                    {
+                        break 'try_web;
+                    }
+                }
 
                 if auth_url_is_web {
                     bun_core::prettyln!(
@@ -1504,7 +1515,7 @@ impl PublishCommand {
                         // always use replace https with http
                         // https://github.com/npm/cli/blob/9281ebf8e428d40450ad75ba61bc6f040b3bf896/workspaces/libnpmpublish/lib/publish.js#L120
                         bstr::BStr::new(strings::without_trailing_slash(strings::without_prefix(
-                            registry.url.href(),
+                            &registry.url.url().href_without_auth(),
                             b"https://"
                         ),)),
                         bstr::BStr::new(package_name),

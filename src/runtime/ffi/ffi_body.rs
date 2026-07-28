@@ -2106,6 +2106,145 @@ impl Function {
         Ok(())
     }
 
+||||||| parent of e5da4eabe27e (Broaden robustness pass across install, css, shell, spawn, node compat, and the resolver)
+    pub(crate) fn compile_callback(
+        &mut self,
+        js_context: &JSGlobalObject,
+        js_function: JSValue,
+        is_threadsafe: bool,
+    ) -> crate::Result<()> {
+        jsc::mark_binding();
+        let mut source_code: Vec<u8> = Vec::new();
+        // SAFETY: js_context/js_function are live for the call
+        let ffi_wrapper = unsafe { Bun__createFFICallbackFunction(js_context, js_function) };
+        self.print_callback_source_code(Some(js_context), Some(ffi_wrapper), &mut source_code)?;
+
+        #[cfg(all(debug_assertions, unix))]
+        'debug_write: {
+            // SAFETY: best-effort debug write; failures are swallowed
+            unsafe {
+                let fd = libc::open(
+                    c"/tmp/bun-ffi-callback-source.c".as_ptr(),
+                    libc::O_CREAT | libc::O_WRONLY,
+                    0o644,
+                );
+                if fd < 0 {
+                    break 'debug_write;
+                }
+                let _ = libc::write(fd, source_code.as_ptr().cast::<c_void>(), source_code.len());
+                let _ = libc::ftruncate(fd, source_code.len() as libc::off_t);
+                libc::close(fd);
+            }
+        }
+
+        source_code.push(0);
+        // defer source_code.deinit();
+
+        let tcc_options: &'static ZStr = if cfg!(debug_assertions) {
+            zstr!("-std=c11 -nostdlib -Wl,--export-all-symbols -g")
+        } else {
+            zstr!("-std=c11 -nostdlib -Wl,--export-all-symbols")
+        };
+        let state = match TCC::State::init::<Function, false>(&TCC::Config {
+            options: Some(NonNull::from(tcc_options)),
+            output_type: TCC::OutputFormat::Memory,
+            err: TCC::ConfigErr {
+                ctx: Some(std::ptr::from_mut::<Function>(self)),
+                handler: Self::handle_tcc_error,
+            },
+        }) {
+            Ok(s) => s,
+            Err(TCC::Error::Alloc(bun_alloc::AllocError)) => {
+                return Err(crate::Error::TCCMissing);
+            }
+            // 1. .Memory is always a valid option, so InvalidOptions is
+            //    impossible
+            // 2. other throwable functions arent called, so their errors
+            //    aren't possible
+            Err(_) => unreachable!(),
+        };
+        self.state = Some(state);
+        let _guard = scopeguard::guard(std::ptr::from_mut::<Function>(self), |this_ptr| {
+            // SAFETY: this_ptr is &mut self for the duration of compile_callback()
+            let this = unsafe { &mut *this_ptr };
+            if matches!(this.step, Step::Failed { .. }) {
+                if let Some(s) = this.state.take() {
+                    // SAFETY: we own the state
+                    unsafe { TCC::State::destroy(s.as_ptr()) };
+                }
+            }
+        });
+        // SAFETY: just stored above
+        let state = unsafe { self.state.unwrap().as_mut() };
+
+        if self.needs_napi_env() {
+            if state
+                .add_symbol(
+                    zstr!("Bun__thisFFIModuleNapiEnv"),
+                    js_context.make_napi_env_for_ffi().cast_const(),
+                )
+                .is_err()
+            {
+                self.fail(b"Failed to add NAPI env symbol");
+                return Ok(());
+            }
+        }
+
+        CompilerRT::define(state);
+
+        // SAFETY: source_code was NUL-terminated above
+        if state
+            .compile_string(ZStr::from_slice_with_nul(&source_code[..]))
+            .is_err()
+        {
+            self.fail(b"Failed to compile source code");
+            return Ok(());
+        }
+
+        CompilerRT::inject(state);
+        let callback_sym: *const c_void = if is_threadsafe {
+            FFI_Callback_threadsafe_call as *const c_void
+        } else {
+            // TODO: stage2 - make these ptrs
+            match self.arg_types.len() {
+                0 => FFI_Callback_call_0 as *const c_void,
+                1 => FFI_Callback_call_1 as *const c_void,
+                2 => FFI_Callback_call_2 as *const c_void,
+                3 => FFI_Callback_call_3 as *const c_void,
+                4 => FFI_Callback_call_4 as *const c_void,
+                5 => FFI_Callback_call_5 as *const c_void,
+                6 => FFI_Callback_call_6 as *const c_void,
+                7 => FFI_Callback_call_7 as *const c_void,
+                _ => FFI_Callback_call as *const c_void,
+            }
+        };
+        // `callback_sym` is one of the process-lifetime `FFI_Callback_call*`
+        // extern fns.
+        if state
+            .add_symbol(zstr!("FFI_Callback_call"), callback_sym)
+            .is_err()
+        {
+            self.fail(b"Failed to add FFI callback symbol");
+            return Ok(());
+        }
+        // TinyCC now manages relocation memory internally
+        if dangerously_run_without_jit_protections(|| state.relocate()).is_err() {
+            self.fail(b"tcc_relocate returned a negative value");
+            return Ok(());
+        }
+
+        let Some(symbol) = state.get_symbol(zstr!("my_callback_function")) else {
+            self.fail(b"missing generated symbol in source code");
+            return Ok(());
+        };
+
+        self.step = Step::Compiled(Compiled {
+            ptr: symbol.as_ptr().cast::<c_void>(),
+            ffi_callback_function_wrapper: NonNull::new(ffi_wrapper),
+        });
+        Ok(())
+    }
+
     pub(crate) fn print_source_code(&self, writer: &mut impl std::io::Write) -> crate::Result<()> {
         if !self.arg_types.is_empty() {
             writer.write_all(b"#define HAS_ARGUMENTS\n")?;

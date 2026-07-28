@@ -11,8 +11,8 @@ use bun_core::{Global, Output};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_options_types::context::MacroOptions;
 use bun_ptr::Interned;
-use bun_resolver::fs::FileSystem;
-use bun_sys::Fd;
+use bun_resolver::fs::{FileSystem, RealFS};
+use bun_sys::{Fd, FdExt};
 
 use super::aggregate;
 use super::channel::{Channel, ChannelOwner};
@@ -64,6 +64,56 @@ pub(crate) fn run_as_coordinator(
         let _ = env.map.put(b"FORCE_COLOR", b"1");
     }
     if ctx.test_options.reporters.junit {
+        let mut dir: Option<Box<[u8]>> = None;
+        for _ in 0..8 {
+            let mut name_buf = bun_paths::PathBuffer::uninit();
+            let Ok(name) =
+                FileSystem::tmpname(b"bun-test-worker", &mut name_buf.0, bun_core::fast_random())
+            else {
+                break;
+            };
+            let candidate: Box<[u8]> = format_bytes!(
+                "{}/{}",
+                bstr::BStr::new(RealFS::get_default_temp_dir()),
+                bstr::BStr::new(name.as_bytes())
+            )
+            .into_boxed_slice();
+            match bun_sys::mkdir(ZBox::from_bytes(&candidate).as_zstr(), 0o700) {
+                Ok(()) => {
+                    dir = Some(candidate);
+                    break;
+                }
+                Err(e) if e.get_errno() == bun_sys::E::EEXIST => continue,
+                Err(e) if e.get_errno() == bun_sys::E::ENOENT => {
+                    if Fd::cwd()
+                        .make_path_u8(RealFS::get_default_temp_dir())
+                        .is_err()
+                    {
+                        Output::err(
+                            e,
+                            "failed to create worker temp dir {}",
+                            &[&bstr::BStr::new(&*candidate)],
+                        );
+                        Global::exit(1);
+                    }
+                    continue;
+                }
+                Err(e) => {
+                    Output::err(
+                        e,
+                        "failed to create worker temp dir {}",
+                        &[&bstr::BStr::new(&*candidate)],
+                    );
+                    Global::exit(1);
+                }
+            }
+        }
+        let Some(dir) = dir else {
+            Output::err_generic("failed to create worker temp dir", ());
+            Global::exit(1);
+        };
+        let dir_bytes: &[u8] = &dir;
+        let _ = env.map.put(b"BUN_TEST_WORKER_TMP", dir_bytes);
         // Coordinator's own JunitReporter would otherwise produce an empty
         // document and overwrite the merged one in writeJUnitReportIfNeeded.
         if let Some(jr) = reporter.reporters.junit.take() {

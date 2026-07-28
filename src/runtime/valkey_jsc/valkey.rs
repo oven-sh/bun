@@ -1096,7 +1096,13 @@ impl ValkeyClient {
                     | protocol::SubscriptionPushMessage::Unsubscribe,
                 ) => {
                     // Subscribe/unsubscribe pushes only need promise pairs if we have pending commands
-                    if self.in_flight.readable_length() == 0 {
+                    if self.in_flight.readable_length() == 0
+                        || !self
+                            .in_flight
+                            .peek_item_mut(0)
+                            .meta
+                            .contains(command::Meta::SUBSCRIPTION_REQUEST)
+                    {
                         should_consume_promise_pair = false;
                     }
                 }

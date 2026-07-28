@@ -9193,3 +9193,66 @@ describe("registry/token env var priority", () => {
     expect(hits).toEqual({ preferred: 1, other: 0 });
   });
 });
+
+test("npm manifest cache entries with invalid package version records are treated as invalid", async () => {
+  await write(
+    packageJson,
+    JSON.stringify({
+      name: "foo",
+      version: "1.0.0",
+      dependencies: {
+        "no-deps": "1.0.0",
+      },
+    }),
+  );
+
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    stdout: "pipe",
+    stdin: "ignore",
+    stderr: "pipe",
+    env,
+  });
+  const [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
+  expect(err).toContain("Saved lockfile");
+  expect(out).toContain("+ no-deps@1.0.0");
+  expect(exitCode).toBe(0);
+
+  const cacheDir = join(packageDir, ".bun-cache");
+  const manifestFile = (await readdirSorted(cacheDir)).find(name => name.endsWith(".npm"));
+  expect(manifestFile).toBeString();
+  const original = join(cacheDir, manifestFile!);
+
+  const { npm_manifest_test_helpers } = require("bun:internal-for-testing");
+  const { parseManifest } = npm_manifest_test_helpers;
+  expect(parseManifest(original, registryUrl()).versions.length).toBeGreaterThan(0);
+
+  const bytes = new Uint8Array(await file(original).arrayBuffer());
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const alignUp = (value: number, alignment: number) => Math.ceil(value / alignment) * alignment;
+  let pos = alignUp(49 + 16, 8) + 120;
+  const readArray = (alignment: number) => {
+    const byteLength = Number(view.getBigUint64(pos, true));
+    pos += 8;
+    if (byteLength === 0) return { start: pos, byteLength: 0 };
+    pos = alignUp(pos, alignment);
+    const start = pos;
+    pos += byteLength;
+    return { start, byteLength };
+  };
+  readArray(1);
+  readArray(8);
+  readArray(8);
+  readArray(8);
+  const versionRecords = readArray(8);
+  expect(versionRecords.byteLength).toBeGreaterThan(0);
+  expect(versionRecords.byteLength % 240).toBe(0);
+  expect(versionRecords.start + versionRecords.byteLength).toBeLessThanOrEqual(bytes.byteLength);
+
+  bytes.fill(0xff, versionRecords.start, versionRecords.start + versionRecords.byteLength);
+  const corrupted = join(packageDir, "corrupted-manifest.npm");
+  await write(corrupted, bytes);
+
+  expect(() => parseManifest(corrupted, registryUrl())).toThrow("manifest is invalid");
+});

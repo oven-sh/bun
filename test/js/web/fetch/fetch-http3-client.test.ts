@@ -726,6 +726,66 @@ describe("Alt-Svc upgrade (--experimental-http3-fetch)", () => {
     expect(stdout).toMatch(/second status=200 sessions=0\n$/);
     expect(exitCode).toBe(0);
   });
+
+  test("Alt-Svc on a proxy's CONNECT reply is not applied to the tunneled origin", async () => {
+    const proxyFixture = `
+      import { fetchH3Internals } from "bun:internal-for-testing";
+      import net from "node:net";
+      import tls from "node:tls";
+      const { liveCounts } = fetchH3Internals;
+      const cert = ${JSON.stringify(tls)};
+      using origin = Bun.serve({ port: 0, tls: cert, fetch: () => new Response("from-origin") });
+      using other = Bun.serve({
+        port: 0,
+        tls: cert,
+        http3: true,
+        http1: false,
+        fetch: () => new Response("from-other"),
+      });
+      const proxy = tls.createServer({ ...cert }, client => {
+        client.on("error", () => {});
+        client.once("data", data => {
+          const target = data.toString("latin1").split(" ")[1] ?? "";
+          const [host, port] = target.split(":");
+          const upstream = net.connect(Number(port), host, () => {
+            client.write(
+              'HTTP/1.1 200 Connection Established\\r\\nAlt-Svc: h3=":' +
+                other.port +
+                '"; ma=86400\\r\\n\\r\\n',
+            );
+            client.pipe(upstream);
+            upstream.pipe(client);
+          });
+          upstream.on("error", () => client.destroy());
+        });
+      });
+      await new Promise(r => proxy.listen(0, "127.0.0.1", r));
+      const proxyUrl = "https://127.0.0.1:" + proxy.address().port;
+      const url = "https://127.0.0.1:" + origin.port + "/";
+      const opts = { tls: { rejectUnauthorized: false } };
+      {
+        const r = await fetch(url, { ...opts, proxy: proxyUrl, keepalive: false });
+        console.log("proxied body=%s", await r.text());
+      }
+      {
+        const r = await fetch(url, opts);
+        console.log("direct body=%s sessions=%d", await r.text(), liveCounts().sessions);
+      }
+      proxy.close();
+    `;
+    const env = { ...bunEnv, BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP3_CLIENT: "1" } as Record<string, string>;
+    for (const key of ["NO_PROXY", "no_proxy", "HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy"]) {
+      delete env[key];
+    }
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", proxyFixture],
+      env,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("proxied body=from-origin\ndirect body=from-origin sessions=0\n");
+    expect(exitCode).toBe(0);
+  });
 });
 
 // The HTTP/3 client cannot apply per-request TLS trust configuration (custom

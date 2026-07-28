@@ -435,15 +435,21 @@ type PositionalContent = {
 };
 
 async function resolveFileCandidate(token: string): Promise<string | undefined> {
+  const looksLikePath =
+    path.isAbsolute(token) ||
+    token.startsWith("~/") ||
+    token.includes("/") ||
+    token.includes(path.sep) ||
+    path.extname(token).length > 1;
+
   const candidates = new Set<string>();
-  candidates.add(token);
-
-  if (token.startsWith("~/")) {
-    candidates.add(path.join(os.homedir(), token.slice(2)));
+  if (looksLikePath) {
+    candidates.add(token);
+    if (token.startsWith("~/")) {
+      candidates.add(path.join(os.homedir(), token.slice(2)));
+    }
   }
-
-  const resolved = path.join(process.cwd(), token);
-  candidates.add(resolved);
+  candidates.add(path.join(process.cwd(), token));
 
   for (const candidate of candidates) {
     try {
@@ -616,6 +622,8 @@ async function main() {
       if (interactiveBody && interactiveBody.trim().length > 0) {
         message = interactiveBody;
       }
+    } else if (positionalContent.files.length > 0) {
+      process.stderr.write(`${dim}+ ${positionalContent.files.map(file => file.filename).join(", ")}${reset}\n`);
     }
 
     const normalizedMessage = message.trim();

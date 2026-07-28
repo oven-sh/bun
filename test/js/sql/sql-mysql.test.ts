@@ -1,8 +1,17 @@
 import { SQL, randomUUIDv7 } from "bun";
 import { beforeAll, describe, expect, mock, test } from "bun:test";
-import { bunEnv, bunRun, describeWithContainer, isDockerEnabled, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, bunRun, describeWithContainer, isDockerEnabled, tempDirWithFiles } from "harness";
 import path from "path";
-import { listeningServer } from "./wire-frames";
+import {
+  listeningServer,
+  mysqlColumnDefinition,
+  mysqlHandshakeV10,
+  mysqlLenencInt,
+  mysqlOkPacket,
+  mysqlRawPacket,
+  mysqlReadPackets,
+  mysqlStmtPrepareOk,
+} from "./wire-frames";
 const dir = tempDirWithFiles("sql-test", {
   "select-param.sql": `select ? as x`,
   "select.sql": `select CAST(1 AS SIGNED) as x`,
@@ -1197,3 +1206,72 @@ if (isDockerEnabled()) {
     );
   }
 }
+
+test("MySQL: binary TIME with a very large days field formats without integer wraparound", async () => {
+  const COM_STMT_PREPARE = 0x16;
+  const COM_STMT_EXECUTE = 0x17;
+  const MYSQL_TYPE_TIME = 0x0b;
+
+  const timeRow = mysqlRawPacket(
+    3,
+    Buffer.concat([Buffer.from([0x00, 0x00]), Buffer.from([0x08, 0x00, 0xff, 0xff, 0xff, 0xff, 0x00, 0x3b, 0x3a])]),
+  );
+
+  const { server, port } = await listeningServer(socket => {
+    let buffered = Buffer.alloc(0);
+    let authed = false;
+    socket.write(mysqlHandshakeV10());
+    socket.on("data", chunk => {
+      buffered = mysqlReadPackets(Buffer.concat([buffered, chunk]), (seq, payload) => {
+        if (!authed) {
+          authed = true;
+          socket.write(mysqlOkPacket(seq + 1));
+          return;
+        }
+        if (payload[0] === COM_STMT_PREPARE) {
+          socket.write(mysqlStmtPrepareOk(1, 1, 0, 0));
+        } else if (payload[0] === COM_STMT_EXECUTE) {
+          socket.write(
+            Buffer.concat([
+              mysqlRawPacket(1, mysqlLenencInt(1)),
+              mysqlColumnDefinition(2, { name: "t", type: MYSQL_TYPE_TIME }),
+              timeRow,
+              mysqlOkPacket(4, 0xfe),
+            ]),
+          );
+        } else {
+          socket.end();
+        }
+      });
+    });
+    socket.on("error", () => {});
+  });
+
+  try {
+    const fixture = /* js */ `
+      const { SQL } = require("bun");
+      const sql = new SQL({ url: "mysql://root@127.0.0.1:${port}/db", max: 1 });
+      const rows = await sql\`SELECT t\`;
+      console.log(JSON.stringify([...rows]));
+      await sql.close().catch(() => {});
+      process.exit(0);
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 60_000,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stderr, stdout: stdout.trim() }).toEqual({
+      stderr: expect.any(String),
+      stdout: JSON.stringify([{ t: "4294967295:59:58" }]),
+    });
+    expect(exitCode).toBe(0);
+  } finally {
+    await new Promise<void>(r => server.close(() => r()));
+  }
+});

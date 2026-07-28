@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isASAN } from "harness";
 
 import crypto from "node:crypto";
 import { PassThrough, Readable } from "node:stream";
@@ -1154,3 +1154,35 @@ describe("KeyObject raw-public / raw-private / raw-seed formats", () => {
     expect(pt.toString()).toBe("hello");
   });
 });
+
+it("createHash releases the native hasher when options parsing throws", async () => {
+  const script = `
+    const crypto = require("node:crypto");
+    const badOptions = { get outputLength() { throw 1; } };
+    const source = crypto.createHash("sha3-256");
+    function batch(n) {
+      for (let i = 0; i < n; i++) {
+        try { crypto.createHash("sha3-256", badOptions); } catch {}
+        try { source.copy(badOptions); } catch {}
+      }
+    }
+    batch(1000);
+    Bun.gc(true);
+    const before = process.memoryUsage.rss();
+    for (let i = 0; i < 50; i++) batch(1500);
+    Bun.gc(true);
+    const after = process.memoryUsage.rss();
+    process.stdout.write(String(Math.max(0, after - before)));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const growthMB = Number(stdout) / 1024 / 1024;
+  expect(Number.isFinite(growthMB)).toBe(true);
+  expect(growthMB).toBeLessThan(isASAN ? 400 : 20);
+  expect(exitCode).toBe(0);
+}, 60_000);

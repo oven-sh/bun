@@ -4036,17 +4036,12 @@ pub(super) fn finalize_bundle(
             let first_1024 = &code.buffer[..code.buffer.len().min(1024)];
             strings::index_of(first_1024, b"tailwind").is_some()
         };
-        let asset_index = dev.assets.replace_path(
+        dev.assets.replace_path(
             key,
             crate::webcore::blob::Any::from_owned_slice(code.buffer.into()),
             &MimeType::CSS,
             h,
         )?;
-        // Later code needs to retrieve the CSS content
-        // The hack is to use `entry_point_id`, which is otherwise unused, to store an index.
-        chunk
-            .entry_point
-            .set_entry_point_id(asset_index.get() as u32);
 
         if let Some(map) = &mut dev.has_tailwind_plugin_hack {
             if looks_like_tailwind {
@@ -4496,7 +4491,7 @@ pub(super) fn finalize_bundle(
     if will_hear_hot_update {
         if dev.client_graph.current_chunk_len > 0 || !css_chunks.is_empty() {
             // Send CSS mutations
-            let asset_values = dev.assets.files.values();
+            dev.assets.reindex_if_needed()?;
             w_int!(u32, u32::try_from(css_chunks.len()).expect("int cast"));
             use bun_bundler::Graph::InputFileColumns as _;
             let sources = bv2.graph.input_files.items_source();
@@ -4504,15 +4499,15 @@ pub(super) fn finalize_bundle(
                 let key = sources[chunk.entry_point.source_index() as usize]
                     .path
                     .key_for_incremental_graph();
+                let content_hash = hash(key);
                 let mut hex = [0u8; 16];
-                let n = bun_core::fmt::bytes_to_hex_lower(&hash(key).to_ne_bytes(), &mut hex);
+                let n = bun_core::fmt::bytes_to_hex_lower(&content_hash.to_ne_bytes(), &mut hex);
                 w_all!(&hex[..n]);
-                // SAFETY: `asset_values[i]` is `*mut StaticRoute` owned by `dev.assets`.
-                let css_data =
-                    &unsafe { &*asset_values[chunk.entry_point.entry_point_id() as usize] }
-                        .blob
-                        .internal_blob()
-                        .bytes;
+                let css_data: &[u8] = match dev.assets.get(content_hash) {
+                    // SAFETY: pointer is a live intrusively-refcounted `StaticRoute` held by `dev.assets`.
+                    Some(route) => &unsafe { &*route }.blob.internal_blob().bytes,
+                    None => b"",
+                };
                 w_int!(u32, u32::try_from(css_data.len()).expect("int cast"));
                 w_all!(css_data);
             }
@@ -5755,7 +5750,7 @@ impl DevServer {
                         || event.op.contains(bun_watcher::Op::RENAME)
                     {
                         // TODO: audit this line heavily
-                        self.bun_watcher.remove_at_index(
+                        self.bun_watcher.remove_at_index::<false>(
                             bun_watcher::Kind::File,
                             event.index,
                             0,

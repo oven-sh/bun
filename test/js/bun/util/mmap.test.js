@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, it } from "bun:test";
-import { gcTick, isWindows, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, gcTick, isWindows, tempDir, tmpdirSync } from "harness";
 import { writeFileSync } from "node:fs";
 import { join } from "path";
 
@@ -128,6 +128,29 @@ describe.skipIf(isWindows)("Bun.mmap", async () => {
     expect(() => Bun.mmap(file, { offset: 100 })).toThrow("EINVAL");
     expect(() => Bun.mmap(file, { offset: 50 })).toThrow("EINVAL");
     expect(() => Bun.mmap(file, { offset: 1, size: 0 })).toThrow("EINVAL");
+  });
+
+  it("mmap throws a catchable error when the resolved path does not fit", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const max = process.platform === "linux" ? 4096 : 1024;
+const rel = Buffer.alloc(max - 1, "a").toString();
+try {
+  Bun.mmap(rel);
+  console.log("no throw");
+} catch (e) {
+  console.log(e.message);
+}`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("Path too long\n");
+    expect(exitCode).toBe(0);
   });
 
   it("mmap rejects negative offset", () => {

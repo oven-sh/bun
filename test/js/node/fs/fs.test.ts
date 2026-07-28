@@ -710,6 +710,45 @@ describe("writeFile with a non-truncating flag", () => {
   });
 });
 
+describe("appendFile honors an exclusive append flag", () => {
+  it("appendFileSync with flag 'ax' fails with EEXIST on an existing file", () => {
+    const path = join(tmpdirSync(), "exclusive.txt");
+    writeFileSync(path, "0123456789");
+    let err: any;
+    try {
+      fs.appendFileSync(path, "ZZ", { flag: "ax" });
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(Error);
+    expect(err.code).toBe("EEXIST");
+    expect(err.syscall).toBe("open");
+    expect(readFileSync(path, "utf8")).toBe("0123456789");
+  });
+
+  it("fs.appendFile with flag 'ax+' fails with EEXIST on an existing file", async () => {
+    const path = join(tmpdirSync(), "exclusive-callback.txt");
+    writeFileSync(path, "0123456789");
+    const { promise, resolve } = Promise.withResolvers<any>();
+    fs.appendFile(path, "ZZ", { flag: "ax+" }, err => resolve(err));
+    const err = await promise;
+    expect(err).toBeInstanceOf(Error);
+    expect(err.code).toBe("EEXIST");
+    expect(err.syscall).toBe("open");
+    expect(readFileSync(path, "utf8")).toBe("0123456789");
+  });
+
+  it("promises.appendFile with flag 'ax' rejects with EEXIST on an existing file", async () => {
+    const path = join(tmpdirSync(), "exclusive-promise.txt");
+    writeFileSync(path, "0123456789");
+    await expect(promises.appendFile(path, "ZZ", { flag: "ax" })).rejects.toMatchObject({
+      code: "EEXIST",
+      syscall: "open",
+    });
+    expect(readFileSync(path, "utf8")).toBe("0123456789");
+  });
+});
+
 // A write that dies partway through must not leave the old tail sitting behind
 // the bytes that did land. `ulimit -f 1` gives the child a 512 byte RLIMIT_FSIZE,
 // and Linux's generic_write_checks() then clamps the write to the limit and fails

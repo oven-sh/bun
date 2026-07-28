@@ -1,7 +1,7 @@
 import { pathToFileURL } from "bun";
 import { describe, expect, it } from "bun:test";
-import { chmodSync, chownSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, bunRun, isLinux, isWindows, joinP, tempDir, tempDirWithFiles } from "harness";
+import { chmodSync, chownSync, mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "fs";
+import { bunEnv, bunExe, bunRun, isLinux, isMacOS, isWindows, joinP, tempDir, tempDirWithFiles } from "harness";
 import { join, resolve, sep } from "path";
 
 const fixture = (...segs: string[]) => resolve(import.meta.dir, "fixtures", ...segs);
@@ -1054,5 +1054,51 @@ it("resolves through many directories without corrupting the dir cache", async (
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
   expect(stdout).toBe(`${(N * (N - 1)) / 2}\n${3 + 77}\n`);
+  expect(exitCode).toBe(0);
+});
+
+it.skipIf(isWindows)("runs a script from a working directory nested 256 directories deep", async () => {
+  using dir = tempDir("resolver-deep-cwd", { ".keep": "" });
+  const base = realpathSync(String(dir));
+  const depth = 256 - base.split("/").filter(part => part.length > 0).length;
+  let leaf = base;
+  for (let d = 0; d < depth; d++) leaf = join(leaf, "d");
+  mkdirSync(leaf, { recursive: true });
+  writeFileSync(join(leaf, "index.js"), `console.log("deep-cwd-ok");`);
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "index.js"],
+    env: bunEnv,
+    cwd: leaf,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("deep-cwd-ok\n");
+  expect(exitCode).toBe(0);
+});
+
+it.skipIf(isWindows)("reports a resolution error for an absolute specifier of the maximum path length", async () => {
+  using dir = tempDir("resolver-max-length-specifier", {
+    "package.json": JSON.stringify({ name: "host" }),
+  });
+  const maxPathBytes = isMacOS ? 1024 : 4096;
+  const prefix = "/no-such-directory/";
+  const specifier = prefix + Buffer.alloc(maxPathBytes - prefix.length, "a").toString();
+  expect(specifier.length).toBe(maxPathBytes);
+
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `try { Bun.resolveSync(${JSON.stringify(specifier)}, process.cwd()); console.log("resolved"); } catch (e) { console.log(e.name, e.code); }`,
+    ],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("ResolveMessage ERR_MODULE_NOT_FOUND\n");
   expect(exitCode).toBe(0);
 });

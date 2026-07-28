@@ -85,6 +85,18 @@ double identity_double(double a) { return a; }
 int8_t identity_int8_t(int8_t a) { return a; }
 int16_t identity_int16_t(int16_t a) { return a; }
 int32_t identity_int32_t(int32_t a) { return a; }
+
+FFI_EXPORT const char *returns_cstring(void) { return "engine cstring"; }
+
+FFI_EXPORT const char *returns_null_cstring(void) { return NULL; }
+
+FFI_EXPORT const char *echoes_cstring(const char *s) { return s; }
+
+FFI_EXPORT uint64_t strlen_cstring(const char *s) {
+  uint64_t n = 0;
+  while (s && s[n]) n++;
+  return n;
+}
 int64_t identity_int64_t(int64_t a) { return a; }
 uint8_t identity_uint8_t(uint8_t a) { return a; }
 uint16_t identity_uint16_t(uint16_t a) { return a; }

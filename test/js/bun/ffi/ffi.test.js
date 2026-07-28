@@ -158,6 +158,22 @@ function getTypes(fast) {
       returns: "int32_t",
       args: ["int32_t"],
     },
+    returns_cstring: {
+      returns: "cstring",
+      args: [],
+    },
+    returns_null_cstring: {
+      returns: "cstring",
+      args: [],
+    },
+    echoes_cstring: {
+      returns: "cstring",
+      args: ["cstring"],
+    },
+    strlen_cstring: {
+      returns: "uint64_t",
+      args: ["cstring"],
+    },
     identity_int64_t: {
       returns: int64_t,
       args: [int64_t],
@@ -721,6 +737,75 @@ it(".ptr is not leaked", () => {
     expect(fn).not.toHaveProperty("ptr");
     expect(fn.ptr).toBeUndefined();
   }
+});
+
+describe.skipIf(!FFI_FIXTURE_PATH)("engine-native cstring", () => {
+  it("dlopen returns:'cstring' yields a string primitive; NULL yields null", () => {
+    const {
+      symbols: { returns_cstring, returns_null_cstring },
+    } = dlopen(FFI_FIXTURE_PATH, {
+      returns_cstring: { returns: "cstring", args: [] },
+      returns_null_cstring: { returns: "cstring", args: [] },
+    });
+    const value = returns_cstring();
+    expect(typeof value).toBe("string");
+    expect(value).toBe("engine cstring");
+    expect(returns_null_cstring()).toBe(null);
+  });
+
+  it("args:['cstring'] accepts a JS string, a TypedArray, and a pointer", () => {
+    const {
+      symbols: { echoes_cstring, strlen_cstring },
+    } = dlopen(FFI_FIXTURE_PATH, {
+      echoes_cstring: { returns: "cstring", args: ["cstring"] },
+      strlen_cstring: { returns: "uint64_t", args: ["cstring"] },
+    });
+    expect(echoes_cstring("round trip")).toBe("round trip");
+    expect(strlen_cstring("héllo")).toBe(6n);
+    const bytes = Buffer.from("bytes\0", "utf8");
+    expect(strlen_cstring(bytes)).toBe(5n);
+    expect(strlen_cstring(ptr(bytes))).toBe(5n);
+  });
+
+  it("a JSCallback receiving a cstring parameter gets a string", () => {
+    const {
+      symbols: { echoes_cstring },
+    } = dlopen(FFI_FIXTURE_PATH, {
+      echoes_cstring: { returns: "cstring", args: ["cstring"] },
+    });
+    let received;
+    const cb = new JSCallback(s => (received = s), { args: ["cstring"], returns: "void" });
+    try {
+      const call = CFunction({ ptr: cb.ptr, args: ["cstring"], returns: "void" });
+      call("hello from js");
+    } finally {
+      cb.close();
+    }
+    expect(received).toBe("hello from js");
+    expect(typeof received).toBe("string");
+    expect(echoes_cstring(received)).toBe("hello from js");
+  });
+});
+
+describe("read edge cases", () => {
+  it("a negative byteOffset does not abort the process", () => {
+    const buf = new Uint8Array([9, 8, 7, 6]);
+    const base = ptr(buf) + 2;
+    expect(read.u8(base, -1)).toBe(8);
+    expect(read.u8(base, -2)).toBe(9);
+    expect(() => read.u8(1, -5)).toThrow("ptr cannot be zero");
+    expect(() => read.u8(0)).toThrow("ptr cannot be zero");
+  });
+
+  it("read.* and toArrayBuffer accept a BigInt pointer", () => {
+    const buf = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8]);
+    const address = BigInt(ptr(buf));
+    expect(read.u8(address, 0)).toBe(1);
+    expect(read.u8(address, 3)).toBe(4);
+    expect(new Uint8Array(toArrayBuffer(address, 0, 8))).toEqual(buf);
+    expect(() => read.u8(-1n, 0)).toThrow("Expected a pointer");
+    expect(() => CFunction({ ptr: -1n, args: [], returns: "void" })).toThrow(/out of range/);
+  });
 });
 
 describe("CString", () => {

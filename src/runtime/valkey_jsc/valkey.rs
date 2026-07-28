@@ -1151,8 +1151,13 @@ impl ValkeyClient {
 
             match value {
                 RESPValue::Error(err) => {
-                    self.fail(err, RedisError::InvalidResponse)?;
-                    return Ok(());
+                    if self.parent().is_subscriber() {
+                        self.fail(err, RedisError::InvalidResponse)?;
+                        return Ok(());
+                    }
+                    // A raw subscription request from a client that is not (yet) a
+                    // subscriber failed on the server; fall through so only this
+                    // promise is rejected.
                 }
                 RESPValue::Push(push) => {
                     if protocol::SubscriptionPushMessage::from_bytes(&push.kind).is_some() {

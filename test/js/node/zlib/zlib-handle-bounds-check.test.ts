@@ -411,6 +411,17 @@ describe.concurrent("zlib native handle argument validation", () => {
     ).toEqual({ stdout: "threw ERR_INVALID_ARG_VALUE: Invalid flush value", exitCode: 0 });
   });
 
+  test.concurrent("zstd: writeSync() rejects a flush operation outside the zstd range", async () => {
+    expect(
+      await run(
+        `const h = zlib.createZstdCompress()._handle;
+         try { h.writeSync(zlib.constants.Z_FINISH, null, 0, 0, new Uint8Array(64), 0, 64); console.log("handled"); }
+         catch (e) { console.log("threw " + e.code + ": " + e.message); }
+         console.log(zlib.zstdDecompressSync(zlib.zstdCompressSync("still works")).toString());`,
+      ),
+    ).toEqual({ stdout: "threw ERR_INVALID_ARG_VALUE: Invalid flush value\nstill works", exitCode: 0 });
+  });
+
   test.concurrent("brotli: writeSync() accepts every brotli flush operation", async () => {
     expect(
       await run(

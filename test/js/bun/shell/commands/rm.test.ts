@@ -318,8 +318,12 @@ test.skipIf(process.platform === "win32")(
     const result = JSON.parse(stdout.trim());
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toMatch(/^rm: \.: /);
-    expect(existsSync(path.join(base, "work", "file.txt"))).toBeFalse();
-    expect(existsSync(path.join(base, "work", "sub"))).toBeFalse();
+    if (process.platform === "linux") {
+      // Only Linux permits unlinking "." out from under itself; macOS returns
+      // before iterating, so its children survive there.
+      expect(existsSync(path.join(base, "work", "file.txt"))).toBeFalse();
+      expect(existsSync(path.join(base, "work", "sub"))).toBeFalse();
+    }
     expect(existsSync(path.join(base, "work"))).toBeTrue();
     expect(existsSync(path.join(base, "keep.txt"))).toBeTrue();
     expect(exitCode).toBe(0);

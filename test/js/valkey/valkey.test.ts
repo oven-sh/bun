@@ -6449,6 +6449,28 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         await subscriber.punsubscribe(...patterns);
       });
 
+      test("a raw SUBSCRIBE issued through send() resolves and keeps the client usable", async () => {
+        const subscriber = await ctx.newSubscriberClient(connectionType);
+        const channel = testChannel();
+        const acked = await subscriber.send("SUBSCRIBE", [channel]);
+        expect(acked).toBeDefined();
+        expect(await subscriber.send("PING", [])).toBe("PONG");
+        await subscriber.send("UNSUBSCRIBE", [channel]);
+        expect(subscriber.connected).toBe(true);
+
+        // A raw subscription command the server rejects (wrong arity) must
+        // reject only that promise, not fail the whole connection.
+        const plain = createClient(connectionType);
+        await plain.connect();
+        try {
+          expect(async () => await plain.send("SUBSCRIBE", [])).toThrow();
+          expect(await plain.send("PING", [])).toBe("PONG");
+          expect(plain.connected).toBe(true);
+        } finally {
+          plain.close();
+        }
+      });
+
       test("unsubscribing from specific channels while remaining subscribed to others", async () => {
         const channel1 = "channel-1";
         const channel2 = "channel-2";

@@ -495,7 +495,7 @@ mod _impl {
         }
 
         pub fn flush_value_is_valid(flush: u32) -> bool {
-            flush <= 6
+            flush <= 2
         }
 
         pub fn set_flush(&mut self, flush: c_int) {

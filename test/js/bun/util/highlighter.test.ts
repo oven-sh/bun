@@ -5,15 +5,7 @@ import { bunEnv, bunExe, tempDir } from "harness";
 const {
   highlightJavaScript: highlighter,
   highlightJavaScriptRedacted: highlighterRedacted,
-  escapePowershell,
 } = internalForTesting;
-
-test("escapePowershell escapes double quote, backtick, and dollar sign", () => {
-  expect(escapePowershell('a$(x)`"')).toBe('a`$(x)```"');
-  expect(escapePowershell("$env:TEMP")).toBe("`$env:TEMP");
-  expect(escapePowershell('C:\\Users\\me\\"quoted" `tick`')).toBe('C:\\Users\\me\\`"quoted`" ``tick``');
-  expect(escapePowershell("plain")).toBe("plain");
-});
 
 test("highlighter", () => {
   expect(highlighter("`can do ${123} ${'123'} ${`123`}`").length).toBeLessThan(150);

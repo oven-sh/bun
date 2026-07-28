@@ -6441,6 +6441,11 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         expect(resultA).toBe(valueA);
         expect(resultB).toBe(valueB);
 
+        const channel = patterns[0].slice(0, -1) + "x";
+        expect(await ctx.redis.publish(channel, "hello")).toBeGreaterThanOrEqual(1);
+        expect(await subscriber.send("PING", [])).toBe("PONG");
+        expect(subscriber.connected).toBe(true);
+
         await subscriber.punsubscribe(...patterns);
       });
 

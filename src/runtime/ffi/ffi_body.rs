@@ -2500,10 +2500,25 @@ impl CompilerRT {
             return;
         };
 
-        #[cfg(unix)]
-        let uid = bun_sys::c::getuid();
         #[cfg(windows)]
-        let uid = bun_sys::windows::user_unique_id();
+        {
+            let Ok(bun_cc) = tmpdir.make_open_path(b"bun-cc", bun_sys::OpenDirOptions::default())
+            else {
+                return;
+            };
+            if let Some(path) = Self::populate_compiler_rt_dir(&bun_cc) {
+                let _ = COMPILER_RT_DIR.set(path);
+            }
+            return;
+        }
+
+        #[cfg(unix)]
+        Self::create_compiler_rt_dir_owned(&tmpdir);
+    }
+
+    #[cfg(unix)]
+    fn create_compiler_rt_dir_owned(tmpdir: &bun_sys::Dir) {
+        let uid = bun_sys::c::getuid();
         let mut dir_name = Vec::new();
         if write!(&mut dir_name, "bun-cc-{uid}").is_err() {
             return;
@@ -2550,16 +2565,24 @@ impl CompilerRT {
         }
     }
 
-    fn populate_compiler_rt_dir(bun_cc: &bun_sys::Dir, uid: u32) -> Option<ZBox> {
-        #[cfg(unix)]
-        {
-            let st = bun_sys::fstat(bun_cc.fd()).ok()?;
-            if st.st_uid != uid || (st.st_mode & (libc::S_IWGRP | libc::S_IWOTH)) != 0 {
-                return None;
-            }
+    #[cfg(windows)]
+    fn populate_compiler_rt_dir(bun_cc: &bun_sys::Dir) -> Option<ZBox> {
+        for (name, source) in CompilerRtSources::SOURCES {
+            let name_z = ZBox::from_bytes(name.as_bytes());
+            let _ = bun_sys::File::write_file(bun_cc.fd(), name_z.as_zstr(), source);
         }
-        #[cfg(windows)]
-        let _ = uid;
+
+        let mut path_buf = PathBuffer::uninit();
+        let path = bun_sys::get_fd_path(bun_cc.fd(), &mut path_buf).ok()?;
+        Some(ZBox::from_bytes(&*path))
+    }
+
+    #[cfg(unix)]
+    fn populate_compiler_rt_dir(bun_cc: &bun_sys::Dir, uid: u32) -> Option<ZBox> {
+        let st = bun_sys::fstat(bun_cc.fd()).ok()?;
+        if st.st_uid != uid || (st.st_mode & (libc::S_IWGRP | libc::S_IWOTH)) != 0 {
+            return None;
+        }
 
         for (name, source) in CompilerRtSources::SOURCES {
             let file = bun_cc

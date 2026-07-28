@@ -787,6 +787,9 @@ pub enum SubscriptionPushMessage {
     Message,
     Subscribe,
     Unsubscribe,
+    /// `pmessage` / `smessage` — delivered without a promise pair; no listener
+    /// API is exposed for pattern subscriptions, so the payload is dropped.
+    PatternMessage,
 }
 
 bun_core::comptime_string_map! {
@@ -806,6 +809,7 @@ impl SubscriptionPushMessage {
         match bytes.split_first() {
             Some((b'p' | b's', base)) => match SUBSCRIPTION_PUSH_MESSAGES.get(base).copied() {
                 Some(kind @ (Self::Subscribe | Self::Unsubscribe)) => Some(kind),
+                Some(Self::Message) => Some(Self::PatternMessage),
                 _ => None,
             },
             _ => None,

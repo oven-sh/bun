@@ -599,24 +599,45 @@ impl PatchTask {
         );
 
         let cache_dir_subpath_z: &ZStr = patch.cache_dir_subpath.as_zstr();
-        if let Err(e) = sys::renameat_concurrently(
+        let renamed = sys::renameat2(
             system_tmpdir,
             path_in_tmpdir,
             patch.cache_dir,
             cache_dir_subpath_z,
-            sys::RenameOptions {
-                move_fallback: true,
+            sys::Renameat2Flags {
+                exclude: true,
                 ..Default::default()
             },
-        ) {
-            log.add_error_fmt_opts(
-                format_args!(
-                    "renaming changes to cache dir: {}",
-                    e.with_path(cache_dir_subpath_z.as_bytes())
-                ),
-                Default::default(),
-            );
-            return Ok(());
+        )
+        .is_ok();
+        if !renamed
+            && sys::directory_exists_at(patch.cache_dir, cache_dir_subpath_z).unwrap_or(false)
+        {
+            // A concurrent `bun install` created the same entry; its name embeds
+            // the patch hash, so the contents are equivalent. Keep theirs and
+            // discard ours: replacing it would unlink files while another
+            // process copies them out of the cache.
+            let _ = sys::Dir::borrow(&system_tmpdir).delete_tree(path_in_tmpdir.as_bytes());
+        } else if !renamed {
+            if let Err(e) = sys::renameat_concurrently(
+                system_tmpdir,
+                path_in_tmpdir,
+                patch.cache_dir,
+                cache_dir_subpath_z,
+                sys::RenameOptions {
+                    move_fallback: true,
+                    ..Default::default()
+                },
+            ) {
+                log.add_error_fmt_opts(
+                    format_args!(
+                        "renaming changes to cache dir: {}",
+                        e.with_path(cache_dir_subpath_z.as_bytes())
+                    ),
+                    Default::default(),
+                );
+                return Ok(());
+            }
         }
         Ok(())
     }

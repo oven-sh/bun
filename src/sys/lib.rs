@@ -9074,7 +9074,7 @@ pub fn exists(path: &[u8]) -> bool {
 }
 /// `moveFileZ`. Routes through
 /// [`renameat_concurrently_without_fallback`] (renameat2 NOREPLACE → EXCHANGE →
-/// delete-tree + rename); on EISDIR removes the dest dir and
+/// rename-aside + rename); on EISDIR removes the dest dir and
 /// retries; on EXDEV falls back to the slow open+copy path. Only opens the
 /// source inside the EXDEV branch.
 pub fn move_file_z(from_dir: Fd, filename: &ZStr, to_dir: Fd, destination: &ZStr) -> Maybe<()> {
@@ -9172,8 +9172,9 @@ pub fn move_file_z_slow_maybe(
 }
 
 /// `renameatConcurrently`. Tries an atomic NOREPLACE rename,
-/// then EXCHANGE, then a racy delete-tree + rename. With `move_fallback` set,
-/// an EXDEV result falls through to a slow open/copy.
+/// then EXCHANGE, then moving the destination aside before renaming into
+/// place. With `move_fallback` set, an EXDEV result falls through to a slow
+/// open/copy.
 pub fn renameat_concurrently(
     from_dir_fd: Fd,
     from: &ZStr,
@@ -9253,19 +9254,90 @@ pub fn renameat_concurrently_without_fallback(
             }
         }
 
-        //  sad path: let's try to delete the folder and then rename it
-        if to_dir_fd.is_valid() {
-            let _ = Dir::borrow(&to_dir_fd).delete_tree(to.as_bytes());
-        } else {
-            let _ = delete_tree_absolute(to.as_bytes());
-        }
-        match renameat(from_dir_fd, from, to_dir_fd, to) {
-            Err(err) => return Err(err),
-            Ok(()) => {}
+        // Sad path: no atomic exchange (NFS/FUSE, Windows). Deleting the
+        // destination in place would let a concurrent reader open the
+        // directory and then hit ENOENT on its files mid-delete, so move the
+        // destination aside first, rename the source into place, and only
+        // then delete the old tree under its aside name.
+        let delete_tree_at = |path: &[u8]| {
+            if to_dir_fd.is_valid() {
+                let _ = Dir::borrow(&to_dir_fd).delete_tree(path);
+            } else {
+                let _ = delete_tree_absolute(path);
+            }
+        };
+        let mut aside_buf = bun_paths::path_buffer_pool::get();
+        let mut attempts_left: u32 = 8;
+        loop {
+            let Some(aside) = rename_aside_name(to, &mut aside_buf) else {
+                // No room to append a suffix; fall back to the racy
+                // in-place delete.
+                delete_tree_at(to.as_bytes());
+                renameat(from_dir_fd, from, to_dir_fd, to)?;
+                break;
+            };
+            let moved_aside = match renameat(to_dir_fd, to, to_dir_fd, aside) {
+                Ok(()) => true,
+                // The destination vanished (e.g. a concurrent process moved
+                // it aside itself); go straight to the rename.
+                Err(err) if err.get_errno() == E::ENOENT => false,
+                Err(err) => return Err(err),
+            };
+            match renameat(from_dir_fd, from, to_dir_fd, to) {
+                Ok(()) => {
+                    if moved_aside {
+                        delete_tree_at(aside.as_bytes());
+                    }
+                    break;
+                }
+                Err(err)
+                    if matches!(err.get_errno(), E::EEXIST | E::ENOTEMPTY)
+                        && attempts_left > 0 =>
+                {
+                    // A concurrent process recreated the destination between
+                    // the two renames; retry against the new one.
+                    if moved_aside {
+                        delete_tree_at(aside.as_bytes());
+                    }
+                    attempts_left -= 1;
+                }
+                Err(err) => {
+                    // Best-effort restore of the displaced destination.
+                    if moved_aside {
+                        let _ = renameat(to_dir_fd, aside, to_dir_fd, to);
+                    }
+                    return Err(err);
+                }
+            }
         }
     }
 
     Ok(())
+}
+
+/// Builds `{to}.{16 random hex chars}.tmp\0` into `buf` for the rename-aside
+/// fallback in [`renameat_concurrently_without_fallback`]. Returns `None`
+/// when the result would not fit.
+fn rename_aside_name<'a>(to: &ZStr, buf: &'a mut bun_paths::PathBuffer) -> Option<&'a ZStr> {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let to_bytes = to.as_bytes();
+    // "." + 16 hex + ".tmp" + NUL
+    if to_bytes.len() + 22 > buf.0.len() {
+        return None;
+    }
+    buf.0[..to_bytes.len()].copy_from_slice(to_bytes);
+    let mut pos = to_bytes.len();
+    buf.0[pos] = b'.';
+    pos += 1;
+    let r = bun_core::fast_random();
+    for i in 0..16 {
+        buf.0[pos + i] = HEX[((r >> ((15 - i) * 4)) & 0xf) as usize];
+    }
+    pos += 16;
+    buf.0[pos..pos + 4].copy_from_slice(b".tmp");
+    pos += 4;
+    buf.0[pos] = 0;
+    Some(ZStr::from_buf(&buf.0[..], pos))
 }
 
 /// `eventfd(initval, flags)` — kernel notification fd. Linux native (Android
@@ -9563,10 +9635,10 @@ bun_core::link_impl_OutputSink! {
 mod owned_handle_tests {
     use super::*;
 
-    /// `renameat_concurrently_without_fallback` falls back to `delete_tree` +
-    /// retry when the destination exists. The `delete_tree` is run via a `Dir`
-    /// borrowed from the caller's `to_dir_fd`; if it took ownership instead,
-    /// `to_dir_fd` would be closed out from under the caller.
+    /// `renameat_concurrently_without_fallback` falls back to rename-aside +
+    /// `delete_tree` when the destination exists. The `delete_tree` is run via
+    /// a `Dir` borrowed from the caller's `to_dir_fd`; if it took ownership
+    /// instead, `to_dir_fd` would be closed out from under the caller.
     #[test]
     fn renameat_concurrently_does_not_close_caller_fd() {
         let _g = crate::file::tests::FD_TEST_LOCK.lock();

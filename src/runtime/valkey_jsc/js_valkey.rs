@@ -1081,8 +1081,7 @@ impl JSValkeyClient {
         Ok(promise)
     }
 
-    /// Best-effort connect for `--redis-preconnect`. Does not ref the event
-    /// loop; marks the returned promise handled so a failure is silent.
+    /// `--redis-preconnect`: best-effort, no event-loop ref, failure is silent.
     pub fn do_preconnect(
         &self,
         global_object: &JSGlobalObject,
@@ -1103,8 +1102,6 @@ impl JSValkeyClient {
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
         if self.client.get().flags.is_preconnecting {
-            // `do_connect` early-returns the cached promise without touching
-            // `poll_ref`, so re-ref explicitly now the user is waiting on it.
             self.client_mut().flags.is_preconnecting = false;
             self.update_poll_ref();
         }

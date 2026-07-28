@@ -27,7 +27,15 @@ async function runFeedback(args: string[], cwd: string) {
   });
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  const form = await received;
+  // The mock server resolves `received` before it responds and the CLI waits for
+  // that response, so by the time the process has exited the POST has either
+  // arrived or never will — race a settled sentinel instead of hanging.
+  const form = await Promise.race([received, Promise.resolve(null)]);
+  if (!form) {
+    throw new Error(`bun feedback exited with ${exitCode} without posting.
+stdout: ${stdout}
+stderr: ${stderr}`);
+  }
   return { stdout, stderr, exitCode, form };
 }
 

@@ -893,7 +893,7 @@ describe("compile --target executable download", () => {
 
     expect(stderr).toContain("did not match the integrity value reported by the npm registry");
     expect(existsSync(cachedExecutable)).toBe(false);
-    expect(exitCode).not.toBe(0);
+    expect(exitCode).toBe(1);
   });
 
   for (const registryEnvKey of ["NPM_CONFIG_REGISTRY", "npm_config_registry"] as const) {
@@ -941,7 +941,7 @@ describe("compile --target executable download", () => {
 
     expect(stderr).toContain("did not match the integrity value reported by the npm registry");
     expect(existsSync(cachedExecutable)).toBe(false);
-    expect(exitCode).not.toBe(0);
+    expect(exitCode).toBe(1);
   });
 
   test("reports unusable registry metadata as a metadata error, not a corrupted download", async () => {
@@ -957,7 +957,7 @@ describe("compile --target executable download", () => {
     expect(stderr).toContain("registry returned unusable metadata");
     expect(stderr).not.toContain("appears to be corrupted");
     expect(existsSync(cachedExecutable)).toBe(false);
-    expect(exitCode).not.toBe(0);
+    expect(exitCode).toBe(1);
   });
 });
 

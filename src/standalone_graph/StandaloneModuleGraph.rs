@@ -1718,7 +1718,7 @@ fn resolve_release(
     let mut log = bun_ast::Log::init();
     bun_ast::initialize_store();
     let _reset_guard = bun_ast::StoreResetGuard::new();
-    let parsed = bun_parsers::json::ParsedJson::parse_json(&source, &mut log)
+    let parsed = bun_parsers::json::ParsedJson::parse_npm_manifest(&source, &mut log)
         .map_err(|_| crate::Error::InvalidRegistryMetadata)?;
     let versions = parsed
         .root

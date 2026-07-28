@@ -3243,9 +3243,9 @@ impl RunCommand {
             let embedded_v4 = v6.to_ipv4_mapped().or_else(|| {
                 let low32 =
                     || ::core::net::Ipv4Addr::from(u32::from(seg[6]) << 16 | u32::from(seg[7]));
-                if seg[..6] == [0u16; 6] && (seg[6] != 0 || seg[7] > 1) {
-                    Some(low32())
-                } else if seg[..6] == [0x64, 0xff9b, 0, 0, 0, 0] {
+                if (seg[..6] == [0u16; 6] && (seg[6] != 0 || seg[7] > 1))
+                    || seg[..6] == [0x64, 0xff9b, 0, 0, 0, 0]
+                {
                     Some(low32())
                 } else if seg[0] == 0x2002 {
                     Some(::core::net::Ipv4Addr::from(

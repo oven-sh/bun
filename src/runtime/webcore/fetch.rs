@@ -1477,10 +1477,12 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 if method != Method::GET {
                     reject!("fetch failed: only GET is allowed for blob: URLs");
                 }
-                let Some(blob) =
-                    ObjectURLRegistry::singleton().resolve_and_dupe(url_path_decoded)
+                let Some(blob) = ObjectURLRegistry::singleton().resolve_and_dupe(url_path_decoded)
                 else {
-                    reject!("Failed to resolve blob:{}", bstr::BStr::new(url_path_decoded));
+                    reject!(
+                        "Failed to resolve blob:{}",
+                        bstr::BStr::new(url_path_decoded)
+                    );
                 };
 
                 let url_string = BunString::create_format(format_args!(
@@ -1521,9 +1523,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                             // 9.7.1. If rangeStart is greater than or equal to
                             //        fullLength, then return a network error.
                             if start >= full_length {
-                                reject!(
-                                    "fetch failed: Range start is greater than the blob's size"
-                                )
+                                reject!("fetch failed: Range start is greater than the blob's size")
                             }
                             // 9.7.2. If rangeEnd is null or rangeEnd is greater than or
                             //        equal to fullLength, set rangeEnd to fullLength − 1.

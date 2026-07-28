@@ -1901,3 +1901,50 @@ describe("parentPort buffers parent→worker messages while there is no 'message
     }
   });
 });
+
+// Pins on_unhandled_rejection's exit_code=1 write: an unhandled promise
+// rejection while the entry module is blocked in top-level await must fire
+// process.on('exit') with code=1 and exit 1 by default, and the exit handler
+// must be able to override it. Subprocess so the isBunTest branch (which skips
+// the non-test exit_code=1 write in uncaught_exception) is the path exercised.
+describe("worker exit code after an unhandled rejection during unsettled top-level await", () => {
+  const runWorkerFrom = async (body: string) => {
+    using dir = tempDir("worker-reject-tla", { "w.mjs": body });
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { Worker } = require("node:worker_threads");
+         const w = new Worker(${JSON.stringify(join(String(dir), "w.mjs"))});
+         w.on("error", () => {});
+         w.on("exit", c => console.log("exit:" + c));`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.trim(), stderr: stderr.trim(), exitCode };
+  };
+
+  test.concurrent("exits 1 and the 'exit' handler observes code=1", async () => {
+    const { stdout, stderr, exitCode } = await runWorkerFrom(`
+      process.on("exit", code => process.stderr.write("handler-code:" + code));
+      setImmediate(() => Promise.reject(new Error("boom")));
+      await new Promise(() => {});
+    `);
+    expect(stderr).toBe("handler-code:1");
+    expect(stdout).toBe("exit:1");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("an 'exit' handler that sets process.exitCode overrides the default", async () => {
+    const { stdout, stderr, exitCode } = await runWorkerFrom(`
+      process.on("exit", code => { process.stderr.write("handler-code:" + code); process.exitCode = 7; });
+      setImmediate(() => Promise.reject(new Error("boom")));
+      await new Promise(() => {});
+    `);
+    expect(stderr).toBe("handler-code:1");
+    expect(stdout).toBe("exit:7");
+    expect(exitCode).toBe(0);
+  });
+});

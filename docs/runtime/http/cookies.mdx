@@ -55,6 +55,8 @@ Bun.serve({
 });
 ```
 
+Cookies are emitted as `Set-Cookie` response headers, so they must be set before the response head is written. For synchronous and `async` handlers this means before the `Response` is returned (or resolved). Once the head has been written, for example from inside a streaming `ReadableStream` body or from a timer that fires after the handler has returned, calling `set()` or `delete()` on that request's `CookieMap` throws `ERR_HTTP_HEADERS_SENT`. Reading cookies with `get()`/`has()` continues to work.
+
 ## Deleting cookies
 
 To delete a cookie, use the `delete` method on the `request.cookies` (`CookieMap`) object:

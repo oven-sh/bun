@@ -31,6 +31,7 @@
 #include <wtf/PointerPreparations.h>
 #include <variant>
 #include "HTTPParsers.h"
+#include "ErrorCode.h"
 namespace WebCore {
 
 using namespace JSC;
@@ -370,6 +371,10 @@ static inline JSC::EncodedJSValue jsCookieMapPrototypeFunction_setBody(JSC::JSGl
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto& impl = castedThis->wrapped();
 
+    if (impl.headersWritten()) [[unlikely]] {
+        return throwVMError(lexicalGlobalObject, throwScope, Bun::createError(lexicalGlobalObject, Bun::ErrorCode::ERR_HTTP_HEADERS_SENT, "Cannot set cookie after response headers have been sent to the client"_s));
+    }
+
     if (callFrame->argumentCount() < 1)
         return JSValue::encode(jsUndefined());
 
@@ -434,6 +439,10 @@ static inline JSC::EncodedJSValue jsCookieMapPrototypeFunction_deleteBody(JSC::J
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto& impl = castedThis->wrapped();
+
+    if (impl.headersWritten()) [[unlikely]] {
+        return throwVMError(lexicalGlobalObject, throwScope, Bun::createError(lexicalGlobalObject, Bun::ErrorCode::ERR_HTTP_HEADERS_SENT, "Cannot delete cookie after response headers have been sent to the client"_s));
+    }
 
     if (callFrame->argumentCount() < 1)
         return JSValue::encode(jsUndefined());

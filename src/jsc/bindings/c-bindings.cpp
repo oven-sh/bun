@@ -158,8 +158,7 @@ static int bun__cgroup2_constrained_cpu(const char* cgroup_root, const char* buf
     return min_cpus;
 }
 
-// cgroup v1: cpu.cfs_{quota,period}_us under the "cpu" controller's path
-// (whole-token match, so "cpuacct" alone is skipped).
+// cgroup v1: cpu.cfs_{quota,period}_us under the "cpu" (whole-token) controller path.
 static int bun__cgroup1_constrained_cpu(const char* cgroup_root, char* buf)
 {
     char filename[4097];
@@ -216,16 +215,13 @@ static int bun__cgroup_constrained_cpu(const char* proc_self_cgroup, const char*
 }
 #endif
 
-// navigator.hardwareConcurrency / os.availableParallelism(). On Linux this
-// matches libuv's uv_available_parallelism(): min(sched_getaffinity, cgroup
-// quota) with fractional quotas truncated toward zero, where
-// WTF::numberOfProcessorCores() rounds them up. BUN_INTERNAL_CGROUP_ROOT is a
-// test-only override that returns the fixture's cgroup value directly.
+// navigator.hardwareConcurrency / os.availableParallelism(): libuv semantics (floor cgroup quota), not WTF's ceil.
 extern "C" int32_t Bun__availableParallelism()
 {
 #if OS(LINUX)
     static const int cached = [] {
         if (const char* root = getenv("BUN_INTERNAL_CGROUP_ROOT")) {
+            // Test-only override: return the fixture's cgroup value, ignore host affinity.
             char proc_path[4097];
             snprintf(proc_path, sizeof(proc_path), "%s/proc_self_cgroup", root);
             int constrained = bun__cgroup_constrained_cpu(proc_path, root);

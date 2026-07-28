@@ -11,8 +11,8 @@
     "rule": "a directory is listed when >= 67% of its bun test files are <= 15000ms (median, default lane of expected-durations.json) with zero flaky/failed annotations in the scanned builds; its other files are listed in excludeFiles",
     "stats": {
       "dirs": 283,
-      "files": 1669,
-      "excluded": 126
+      "files": 1666,
+      "excluded": 129
     }
   },
   "dirs": [
@@ -311,7 +311,6 @@
     "bundler/compile-argv.test.ts",
     "bundler/resolver/cache-invalidation.test.ts",
     "bundler/transpiler/macro-test.test.ts",
-    "cli/update_interactive_snapshots.test.ts",
     "cli/inspect/inspect.test.ts",
     "cli/install/bun-add.test.ts",
     "cli/install/bun-create.test.ts",
@@ -326,12 +325,12 @@
     "cli/install/bun-workspaces.test.ts",
     "cli/install/bunx.test.ts",
     "cli/install/hoist.test.ts",
-    "cli/install/isolated-install.test.ts",
-    "cli/install/public-hoist-pattern.test.ts",
-    "cli/install/symlink-path-traversal.test.ts",
     "cli/install/hosted-git-info/boundary-conditions.test.ts",
+    "cli/install/isolated-install.test.ts",
     "cli/install/migration/complex-workspace.test.ts",
     "cli/install/migration/pnpm-migration.test.ts",
+    "cli/install/public-hoist-pattern.test.ts",
+    "cli/install/symlink-path-traversal.test.ts",
     "cli/run/cpu-prof.test.ts",
     "cli/run/filter-workspace.test.ts",
     "cli/run/multi-run.test.ts",
@@ -340,6 +339,7 @@
     "cli/run/run-crash-handler.test.ts",
     "cli/run/transpiler-cache.test.ts",
     "cli/test/parallel.test.ts",
+    "cli/update_interactive_snapshots.test.ts",
     "js/bun/crypto/wpt-webcrypto.generateKey.test.ts",
     "js/bun/ffi/cc.test.ts",
     "js/bun/http/async-iterator-stream.test.ts",
@@ -360,9 +360,9 @@
     "js/bun/http/serve-http3.test.ts",
     "js/bun/http/serve.test.ts",
     "js/bun/net/socket.test.ts",
+    "js/bun/shell/commands/rm.test.ts",
     "js/bun/shell/shell-hang.test.ts",
     "js/bun/shell/shell-load.test.ts",
-    "js/bun/shell/commands/rm.test.ts",
     "js/bun/spawn/spawn-pipe-leak.test.ts",
     "js/bun/spawn/spawn-stdin-pipe-fd-leak.test.ts",
     "js/bun/spawn/spawn-streaming-stdin.test.ts",
@@ -372,6 +372,7 @@
     "js/bun/test/pretty-format-overflow.test.ts",
     "js/bun/util/filesink.test.ts",
     "js/bun/util/filesystem_router.test.ts",
+    "js/bun/util/mmap.test.js",
     "js/bun/util/password.test.ts",
     "js/bun/websocket/websocket-server.test.ts",
     "js/bun/webview/webview-chrome.test.ts",
@@ -415,6 +416,7 @@
     "js/web/fetch/headers-case.test.ts",
     "js/web/fetch/headers.undici.test.ts",
     "js/web/html/FormData.test.ts",
+    "js/web/timers/setTimeout.test.js",
     "js/workerd/html-rewriter-leak.test.ts",
     "regression/issue/18413-truncation.test.ts",
     "regression/issue/21311.test.ts",
@@ -426,6 +428,7 @@
     "regression/issue/26298.test.ts",
     "regression/issue/28632.test.ts",
     "regression/issue/29181.test.ts",
-    "regression/issue/29371.test.ts"
+    "regression/issue/29371.test.ts",
+    "regression/issue/tty-reopen-after-stdin-eof.test.ts"
   ]
 }

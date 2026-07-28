@@ -367,12 +367,30 @@ impl Pac {
         ) {
             Ok(list) => list.as_deref().and_then(first_proxy_from_list),
             Err(err) => {
+                const ERROR_WINHTTP_UNRECOGNIZED_SCHEME: u32 = 12006;
+                const ERROR_WINHTTP_BAD_AUTO_PROXY_SCRIPT: u32 = 12166;
+                const ERROR_WINHTTP_AUTO_PROXY_SERVICE_ERROR: u32 = 12178;
+                const ERROR_WINHTTP_AUTODETECTION_FAILED: u32 = 12180;
+                let permanent = matches!(
+                    err,
+                    ERROR_WINHTTP_UNRECOGNIZED_SCHEME
+                        | ERROR_WINHTTP_BAD_AUTO_PROXY_SCRIPT
+                        | ERROR_WINHTTP_AUTO_PROXY_SERVICE_ERROR
+                        | ERROR_WINHTTP_AUTODETECTION_FAILED
+                );
                 bun_core::scoped_log!(
                     system_proxy,
-                    "WinHttpGetProxyForUrl failed ({}); disabling PAC for this process",
-                    err
+                    "WinHttpGetProxyForUrl failed ({}); {}",
+                    err,
+                    if permanent {
+                        "disabling PAC for this process"
+                    } else {
+                        "DIRECT for this origin"
+                    }
                 );
-                inner.failed.store(true, Ordering::Relaxed);
+                if permanent {
+                    inner.failed.store(true, Ordering::Relaxed);
+                }
                 None
             }
         }

@@ -1172,13 +1172,7 @@ impl struct_ares_caa_reply {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// TLSA — c-ares has no legacy `ares_parse_tlsa_reply`; it's exposed only via
-// the newer `ares_dns_record` API. We parse into a Rust-owned linked list so
-// the rest of the resolver pipeline (which expects a `*mut R` list head) sees
-// the same shape as the other reply structs.
-// ──────────────────────────────────────────────────────────────────────────
-
+// TLSA — c-ares has no legacy `ares_parse_tlsa_reply`, only the `ares_dns_record` API.
 bun_opaque::opaque_ffi! { pub struct ares_dns_record_t; }
 bun_opaque::opaque_ffi! { pub struct ares_dns_rr_t; }
 
@@ -1208,9 +1202,7 @@ unsafe extern "C" {
     pub fn ares_dns_rr_get_bin(rr: *const ares_dns_rr_t, key: c_int, len: *mut usize) -> *const u8;
 }
 
-/// Rust-owned TLSA reply node; shaped like the other `struct_ares_*_reply`
-/// linked lists so the generic list walker and `ares_reply_callback` thunk
-/// apply unchanged.
+/// Rust-owned TLSA reply node; `next`-linked to match the other reply structs.
 pub struct struct_ares_tlsa_reply {
     pub next: *mut struct_ares_tlsa_reply,
     pub cert_usage: u8,
@@ -1286,10 +1278,8 @@ impl AresReply for struct_ares_tlsa_reply {
 }
 
 impl struct_ares_tlsa_reply {
-    /// Walk and drop a Rust-owned list built by `AresReply::parse`.
-    ///
     /// # Safety
-    /// `this` must be null or the head returned from `parse`; not aliased.
+    /// `this` must be null or the list head from `parse`; not aliased.
     pub unsafe fn destroy(this: *mut Self) {
         let mut p = this;
         while !p.is_null() {

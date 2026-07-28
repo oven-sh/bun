@@ -3366,9 +3366,7 @@ impl_cares_record_type!(
     super::cares_jsc::caa_reply_to_js_response
 );
 
-// TLSA — reply list is Rust-owned (built via `ares_dns_parse`, see
-// `struct_ares_tlsa_reply::parse`), so `destroy` walks and drops Boxes
-// instead of calling `ares_free_data`.
+// TLSA reply list is Rust-owned; `destroy` drops Boxes instead of `ares_free_data`.
 impl CAresRecordType for c_ares::struct_ares_tlsa_reply {
     const TYPE_NAME: &'static str = "tlsa";
     const SYSCALL: &'static str = "queryTlsa";

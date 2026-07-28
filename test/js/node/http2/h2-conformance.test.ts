@@ -1115,6 +1115,44 @@ describe("server stream reset (RFC 9113 §6.4)", () => {
     }
   });
 
+  test.each([
+    [ErrorCode.NO_ERROR, "NO_ERROR"],
+    [ErrorCode.CANCEL, "CANCEL"],
+    [ErrorCode.INTERNAL_ERROR, "INTERNAL_ERROR"],
+  ])("close(%i) before respond() writes the reset exactly once", async code => {
+    const { c, cleanup } = await resetServer("GET", stream => {
+      stream.close(code);
+    });
+    try {
+      await c.waitFor(f => f.type === FrameType.RST_STREAM && f.streamId === 1);
+      // close() and _destroy each schedule an rstNextTick; the second must not reach the wire via
+      // the native map-miss fallback. A PING round-trip flushes whatever the deferred tick queued.
+      c.sendFrame(FrameType.PING, 0, 0, Buffer.alloc(8));
+      await c.waitFor(f => f.type === FrameType.PING && (f.flags & 0x1) !== 0);
+      const onStream1 = c.frames.filter(f => f.streamId === 1);
+      expect(onStream1.map(f => ({ type: f.type, code: f.payload.readUInt32BE(0) }))).toEqual([
+        { type: FrameType.RST_STREAM, code },
+      ]);
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("end() without respond() sends nothing on the stream", async () => {
+    // A response MUST begin with a HEADERS frame: _final on a server stream that never sent one
+    // has no frame it is allowed to write. node's shutdown is a no-op in nghttp2 here.
+    const { c, cleanup } = await resetServer("GET", stream => {
+      stream.end();
+    });
+    try {
+      c.sendFrame(FrameType.PING, 0, 0, Buffer.alloc(8));
+      await c.waitFor(f => f.type === FrameType.PING && (f.flags & 0x1) !== 0);
+      expect(c.frames.filter(f => f.streamId === 1)).toEqual([]);
+    } finally {
+      cleanup();
+    }
+  });
+
   test("destroy() mid-body sends RST_STREAM(NO_ERROR) rather than a clean end-of-stream", async () => {
     const { c, cleanup } = await resetServer("GET", stream => {
       stream.respond({ ":status": 200 });

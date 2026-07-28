@@ -2648,6 +2648,9 @@ class Http2Stream extends Duplex {
     // push(null)) and a throwing listener would otherwise skip the clear and
     // leave a retained stream pinning the store.
     this[bunHTTP2AsyncContextFrame] = undefined;
+    // close() already scheduled the RST_STREAM: a second rstNextTick hits the native map-miss
+    // fallback once the first evicted the stream, and writes the frame again.
+    const rstAlreadyPending = (this[bunHTTP2StreamStatus] & StreamState.RstPending) !== 0;
     const { ending } = this._writableState;
     this.push(null);
     // A pushed stream's request was synthesized by the server, so its local (writable) half is
@@ -2709,6 +2712,7 @@ class Http2Stream extends Duplex {
       session &&
       typeof this.#id === "number" &&
       !this[kNeverAnnounced] &&
+      !rstAlreadyPending &&
       // A cleanly closed stream the native side already freed has nothing to send:
       // the deferred rstStream would be a guaranteed no-op host call per request.
       (rstCode !== 0 || (this[bunHTTP2StreamStatus] & StreamState.NativeClosed) === 0)
@@ -2743,12 +2747,16 @@ class Http2Stream extends Duplex {
     if (session) {
       const native = session[bunHTTP2Native];
       if (native) {
-        if (this instanceof ServerHttp2Stream && !this.headersSent && (this.id & 1) === 0) {
-          // A locally-pushed (even-id) stream ended before respond() (HEAD/endStream pushes): an
-          // empty DATA frame would precede the response HEADERS on the wire. respond() forces
-          // endStream for these streams, so END_STREAM rides on the HEADERS frame and the
-          // onStreamEnd(5) dispatch completes this callback through markWritableDone.
-          this[bunHTTP2StreamFinal] = callback;
+        if (this instanceof ServerHttp2Stream && !this.headersSent) {
+          // RFC 9113 §8.1: a response begins with HEADERS, so DATA here is a connection error.
+          // A pushed stream (even id) stashes the callback for the respond() that follows; a
+          // client-initiated stream just settles the writable, with any reset already scheduled.
+          if ((this.id & 1) === 0) {
+            this[bunHTTP2StreamFinal] = callback;
+          } else {
+            this[bunHTTP2StreamStatus] |= StreamState.FinalCalled | StreamState.WritableClosed;
+            callback();
+          }
           return;
         }
         this[bunHTTP2StreamStatus] |= StreamState.FinalCalled;

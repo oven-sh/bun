@@ -326,7 +326,10 @@ pub fn match_hostname(pattern: &[u8], hostname: &[u8], opts: MatchOpts) -> bool 
     // OpenSSL `wildcard_match`: the bytes the `*` spans must be LDH (plus `.`
     // under multi-label) and a partial wildcard never matches an IDNA host
     // label. Node lib/tls.js `check()` applies neither host-side check.
-    if matches!(opts.wildcards, Wildcards::FullLabel | Wildcards::EdgePartial) {
+    if matches!(
+        opts.wildcards,
+        Wildcards::FullLabel | Wildcards::EdgePartial
+    ) {
         let span = &host_first[prefix.len()..host_first.len() - suffix.len()];
         let allow_dot = opts.multi_label_wildcards && is_full_label;
         if span

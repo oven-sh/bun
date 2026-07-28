@@ -209,7 +209,6 @@ test.skipIf(isWindows)("fetch rejects when the Bun.file body is truncated mid-up
     const req = fetch(`http://127.0.0.1:${port}/upload`, {
       method: "POST",
       body: Bun.file(p),
-      signal: AbortSignal.timeout(10_000),
     });
 
     await gotHead.promise;
@@ -229,7 +228,6 @@ test.skipIf(isWindows)("fetch rejects when the Bun.file body is truncated mid-up
       err = e;
     }
     expect(err).toBeDefined();
-    expect(err?.name).not.toBe("TimeoutError");
     expect(err?.code).toBe("RequestBodyTruncated");
 
     // The client must close the connection so the origin is not left

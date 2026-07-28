@@ -140,6 +140,33 @@ describe("bun", () => {
       expect(out).not.toContain("bun run");
       expect(exitCode).toBe(0);
     });
+
+    test("bun repl parse error prints repl help, not run help", async () => {
+      // -e with no value triggers clap's error path inside arguments::parse
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "repl", "-e"],
+        env: { ...bunEnv, NO_COLOR: "1" },
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const out = stdout + stderr;
+      expect(out).toContain("requires a value");
+      expect(out).toContain("bun repl");
+      expect(out).not.toContain("bun run");
+      expect(exitCode).toBe(1);
+    });
+
+    test("bun repl does not intercept --help after passthrough cutoff", async () => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "repl", "-e", "console.log(JSON.stringify(process.argv.slice(1)))", "foo", "--help"],
+        env: { ...bunEnv, NO_COLOR: "1" },
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout.trim()).toBe('["--help"]');
+      expect(exitCode).toBe(0);
+    });
   });
   describe("test command line arguments", () => {
     test("test --config, issue #4128", () => {

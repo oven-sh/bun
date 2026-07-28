@@ -665,7 +665,7 @@ pub(crate) static BASE_RUNTIME_TRANSPILER_TABLE: &clap::ConvertedTable =
 pub(crate) fn tag_table(cmd: CommandTag) -> &'static clap::ConvertedTable {
     match cmd {
         CommandTag::AutoCommand => AUTO_TABLE,
-        CommandTag::RunCommand | CommandTag::RunAsNodeCommand => RUN_TABLE,
+        CommandTag::RunCommand | CommandTag::RunAsNodeCommand | CommandTag::ReplCommand => RUN_TABLE,
         CommandTag::BuildCommand => BUILD_TABLE,
         CommandTag::TestCommand => TEST_TABLE,
         CommandTag::BunxCommand => RUN_TABLE,
@@ -721,7 +721,7 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
         clap::ParseOptions {
             diagnostic: Some(&mut diag),
             stop_after_positional_at: match cmd {
-                CommandTag::RunCommand => 2,
+                CommandTag::RunCommand | CommandTag::ReplCommand => 2,
                 CommandTag::AutoCommand | CommandTag::RunAsNodeCommand => 1,
                 _ => 0,
             },
@@ -924,6 +924,7 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
             | CommandTag::RunCommand
             | CommandTag::TestCommand
             | CommandTag::RunAsNodeCommand
+            | CommandTag::ReplCommand
     ) {
         {
             let preloads = args.options(b"--preload");

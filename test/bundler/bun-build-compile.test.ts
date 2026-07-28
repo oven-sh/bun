@@ -809,6 +809,7 @@ describe("compile --target executable download", () => {
     dir: string,
     integrity: (tarball: Uint8Array) => string,
     manifest?: (defaults: Record<string, unknown>) => Record<string, unknown>,
+    registryEnvKey: "BUN_CONFIG_REGISTRY" | "NPM_CONFIG_REGISTRY" = "BUN_CONFIG_REGISTRY",
   ) {
     const tarball = await makeTarball();
     using server = Bun.serve({
@@ -843,7 +844,10 @@ describe("compile --target executable download", () => {
       cmd: [bunExe(), "build", "--compile", `--target=${target}`, join(dir, "app.js"), "--outfile", "out/app"],
       env: {
         ...bunEnv,
-        BUN_CONFIG_REGISTRY: server.url.origin,
+        BUN_CONFIG_REGISTRY: undefined,
+        NPM_CONFIG_REGISTRY: undefined,
+        npm_config_registry: undefined,
+        [registryEnvKey]: server.url.origin,
         BUN_INSTALL_CACHE_DIR: cacheDir,
         // A released bun ignores BUN_CONFIG_REGISTRY here; keep it from
         // reaching the public registry by pointing the proxy at ourselves.
@@ -883,6 +887,22 @@ describe("compile --target executable download", () => {
     expect(stderr).toContain("did not match the integrity value reported by the npm registry");
     expect(existsSync(cachedExecutable)).toBe(false);
     expect(exitCode).not.toBe(0);
+  });
+
+  test("resolves the target through NPM_CONFIG_REGISTRY when BUN_CONFIG_REGISTRY is not set", async () => {
+    using dir = tempDir("build-compile-target-npm-config-registry", {
+      "app.js": `console.log("hi");`,
+    });
+    const { stderr, cachedExecutable } = await compileWithRegistry(
+      String(dir),
+      tarball => sriFor(tarball),
+      undefined,
+      "NPM_CONFIG_REGISTRY",
+    );
+
+    expect(stderr).not.toContain("did not match the integrity value");
+    expect(stderr).not.toContain("appears to be corrupted");
+    expect(existsSync(cachedExecutable)).toBe(true);
   });
 
   test("reports unusable registry metadata as a metadata error, not a corrupted download", async () => {

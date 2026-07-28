@@ -122,11 +122,19 @@ impl CompileTarget {
 
     /// The npm registry to fetch the target executable from.
     pub fn npm_registry_url<'e>(env: &'e bun_dotenv::Loader) -> &'e [u8] {
-        if let Some(registry) = env.get(b"BUN_CONFIG_REGISTRY") {
-            if strings::has_prefix(registry, b"http://")
-                || strings::has_prefix(registry, b"https://")
-            {
-                return bun_core::without_trailing_slash(registry);
+        // technically, npm_config is case in-sensitive
+        const REGISTRY_KEYS: [&[u8]; 3] = [
+            b"BUN_CONFIG_REGISTRY",
+            b"NPM_CONFIG_REGISTRY",
+            b"npm_config_registry",
+        ];
+        for registry_key in REGISTRY_KEYS {
+            if let Some(registry) = env.get(registry_key) {
+                if strings::has_prefix(registry, b"http://")
+                    || strings::has_prefix(registry, b"https://")
+                {
+                    return bun_core::without_trailing_slash(registry);
+                }
             }
         }
         Self::DEFAULT_NPM_REGISTRY

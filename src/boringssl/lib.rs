@@ -10,43 +10,6 @@ pub use bun_boringssl_sys as boring;
 use bun_cares_sys as c_ares;
 use bun_core::strings;
 
-// MOVE_DOWN: lives here so `boringssl` does not depend on `bun_runtime`
-// (tier-6).
-pub(crate) mod x509 {
-    /// Returns `true` iff `name` contains no characters that would require
-    /// escaping in a subjectAltName entry.
-    #[inline]
-    pub(crate) fn is_safe_alt_name(name: &[u8], utf8: bool) -> bool {
-        for &c in name {
-            match c {
-                // These mess with encoding rules.
-                // Commas make it impossible to split the list of subject
-                // alternative names unambiguously, which is why we escape.
-                // Single quotes are unlikely to appear in any legitimate values,
-                // but they could be used to make a value look like it was escaped
-                // (i.e., enclosed in single/double quotes).
-                b'"' | b'\\' | b',' | b'\'' => return false,
-                _ => {
-                    if utf8 {
-                        // In UTF-8 strings, require escaping for any ASCII control
-                        // character, but NOT for non-ASCII characters. All bytes of
-                        // any multi-byte code point have their MSB set.
-                        if c < b' ' || c == 0x7f {
-                            return false;
-                        }
-                    } else {
-                        // Reject control characters and non-ASCII characters.
-                        if c < b' ' || c > b'~' {
-                            return false;
-                        }
-                    }
-                }
-            }
-        }
-        true
-    }
-}
-
 /// BoringSSL's translated C API
 pub use boring as c;
 pub use boring::rand_bytes;

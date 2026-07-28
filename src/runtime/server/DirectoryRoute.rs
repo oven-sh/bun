@@ -38,6 +38,8 @@ pub struct DirectoryRoute {
     /// Mount prefix with trailing `/` (`"/static/"`, or `"/"` for `"/*"`).
     url_prefix: Box<[u8]>,
     stat_cache: Box<[Cell<StatCacheEntry>]>,
+    /// Sum of `StatCacheEntry.path` capacities, for `memory_cost()`.
+    stat_cache_path_bytes: Cell<usize>,
 }
 
 impl DirectoryRoute {
@@ -50,6 +52,7 @@ impl DirectoryRoute {
         size_of::<DirectoryRoute>()
             + self.url_prefix.len()
             + self.stat_cache.len() * size_of::<Cell<StatCacheEntry>>()
+            + self.stat_cache_path_bytes.get()
     }
 
     /// Open `root` and construct the route. `url_prefix` must end in `/`.
@@ -89,6 +92,7 @@ impl DirectoryRoute {
             root_fd: Cell::new(root_fd),
             url_prefix: url_prefix.to_vec().into_boxed_slice(),
             stat_cache: stat_cache.into_boxed_slice(),
+            stat_cache_path_bytes: Cell::new(0),
         })))
     }
 
@@ -305,9 +309,12 @@ impl DirectoryRoute {
         let slot = &self.stat_cache[(bun_wyhash::hash(rel) as usize) % self.stat_cache.len()];
         let mut entry = slot.replace(StatCacheEntry::default());
         if entry.path.as_slice() != rel {
+            let old_cap = entry.path.capacity();
             entry.path.clear();
             entry.path.extend_from_slice(rel);
             entry.stat_hash = StatHash::default();
+            self.stat_cache_path_bytes
+                .set(self.stat_cache_path_bytes.get() + entry.path.capacity() - old_cap);
         }
         entry.stat_hash.hash(stat, rel);
         let ms = entry.stat_hash.last_modified_u64;

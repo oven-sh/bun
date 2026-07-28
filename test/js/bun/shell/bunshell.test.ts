@@ -181,6 +181,31 @@ describe("bunshell", () => {
       expect(stdout.toString()).toEqual("a  b\n");
     });
 
+    test("$.escape of a reserved shell word quotes it", async () => {
+      const words = [
+        "if",
+        "then",
+        "elif",
+        "else",
+        "fi",
+        "while",
+        "until",
+        "for",
+        "do",
+        "done",
+        "case",
+        "esac",
+        "select",
+        "function",
+        "!",
+      ];
+      for (const w of words) expect({ in: w, out: $.escape(w) }).toEqual({ in: w, out: `"${w}"` });
+      // `{ raw: $.escape(v) }` must round-trip the same as `${v}` in command position.
+      const { stderr, exitCode } = await $`${{ raw: $.escape("while") }}`.nothrow().quiet();
+      expect(stderr.toString()).toBe("bun: command not found: while\n");
+      expect(exitCode).toBe(1);
+    });
+
     test("quotes values containing a tab, carriage return, or question mark", async () => {
       expect($.escape("a\tb")).toEqual('"a\tb"');
       expect($.escape("a\rb")).toEqual('"a\rb"');

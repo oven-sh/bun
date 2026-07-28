@@ -659,7 +659,11 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
         // `UNICODE_STRING.Length` is u16, so guard on the byte length; the
         // same bound covers buf1 (`u16::MAX/2 < BUF1_LEN`).
         let nt_len_bytes = |len_u16s: usize| -> Option<u16> {
-            if len_u16s <= BUF1_LEN { u16::try_from(2 * len_u16s).ok() } else { None }
+            if len_u16s <= BUF1_LEN {
+                u16::try_from(2 * len_u16s).ok()
+            } else {
+                None
+            }
         };
 
         let ads_path_len = NT_OBJECT_PREFIX.len() + image_path_b_len / 2 + 5 /* ":bunx".len */;

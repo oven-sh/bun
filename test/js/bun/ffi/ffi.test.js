@@ -737,10 +737,10 @@ describe("CString", () => {
     expect(CString(address)).toBe("bigint ok");
   });
   it("throws (not stringifies) on an invalid pointer", () => {
-    expect(() => new CString(-1)).toThrow();
-    expect(() => CString(-1)).toThrow();
-    expect(() => new CString(-1n)).toThrow();
-    expect(() => CString(-1n)).toThrow();
+    expect(() => new CString(-1)).toThrow("ptr must be a number");
+    expect(() => CString(-1)).toThrow("ptr must be a number");
+    expect(() => new CString(-1n)).toThrow(/out of range/);
+    expect(() => CString(-1n)).toThrow(/out of range/);
   });
   const hello = Buffer.from("Hello, world!\0", "utf8");
   (globalThis.__ffiTestPinnedBuffers ??= []).push(hello);
@@ -1305,7 +1305,7 @@ describe.skipIf(!FFI_FIXTURE_PATH)("engine-native FFI (single implementation)", 
     const {
       symbols: { identity_int32_t },
     } = dlopen(lib, { identity_int32_t: { args: ["i32"], returns: "i32" } });
-    expect(() => identity_int32_t("42")).toThrow();
+    expect(() => identity_int32_t("42")).toThrow(TypeError);
     expect(identity_int32_t(42)).toBe(42);
   });
 

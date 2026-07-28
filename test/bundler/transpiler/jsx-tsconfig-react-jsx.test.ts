@@ -99,16 +99,11 @@ describe("tsconfig compilerOptions.jsx", () => {
             stdout: "pipe",
             stderr: "pipe",
           });
-          const [stdout, stderr, exitCode] = await Promise.all([
-            proc.stdout.text(),
-            proc.stderr.text(),
-            proc.exited,
-          ]);
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
           expect(stderr).toBe("");
           // Both the entry point and the imported file go through the bundler;
           // neither should have its runtime flipped.
-          const unwanted =
-            importSource === "shim/jsx-runtime" ? "shim/jsx-dev-runtime" : "shim/jsx-runtime";
+          const unwanted = importSource === "shim/jsx-runtime" ? "shim/jsx-dev-runtime" : "shim/jsx-runtime";
           expect(stdout).toContain(`"${importSource}"`);
           expect(stdout).not.toContain(`"${unwanted}"`);
           expect(exitCode).toBe(0);
@@ -130,11 +125,7 @@ describe("tsconfig compilerOptions.jsx", () => {
         stdout: "pipe",
         stderr: "pipe",
       });
-      const [stdout, stderr, exitCode] = await Promise.all([
-        proc.stdout.text(),
-        proc.stderr.text(),
-        proc.exited,
-      ]);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(stderr).toBe("");
       expect(stdout).toContain("shim/jsx-runtime");
       expect(stdout).not.toContain("jsx-dev-runtime");

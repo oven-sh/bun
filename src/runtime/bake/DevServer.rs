@@ -384,7 +384,10 @@ pub struct DevServer {
     // `Watcher::shutdown` instead.
     pub bun_watcher: ::core::mem::ManuallyDrop<Box<Watcher>>,
     pub directory_watchers: DirectoryWatchStore,
-    pub watcher_atomics: WatcherAtomics,
+    /// Heap-allocated so the inline `HotReloadEvent.concurrent_task` node can
+    /// outlive `DevServer` when it is still linked in the event loop's
+    /// concurrent queue at drop time; see `Drop for DevServer`.
+    pub watcher_atomics: ::core::mem::ManuallyDrop<Box<WatcherAtomics>>,
     pub testing_batch_events: TestingBatchEvents,
 
     /// Number of bundles that have been executed. This is currently not read, but
@@ -676,7 +679,12 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
     // SAFETY: `WatcherAtomics::init` / `HotReloadEvent::init_empty` only store `p`
     // as a BACKREF for later `concurrent_task.from(dev)` / `run`; not dereferenced
     // during construction.
-    unsafe { w!(watcher_atomics, WatcherAtomics::init(p)) };
+    unsafe {
+        w!(
+            watcher_atomics,
+            ::core::mem::ManuallyDrop::new(WatcherAtomics::init(p))
+        )
+    };
 
     // This causes a memory leak, but the allocator is otherwise used on multiple threads.
     // (allocator param dropped — global mimalloc)
@@ -1197,10 +1205,33 @@ impl Drop for DevServer {
             self.timer_heap().remove(timer_ptr);
         }
 
-        for event in &mut self.watcher_atomics.events {
-            event.dirs.clear_and_free();
-            event.files.clear_and_free();
-            event.extra_files.clear();
+        // `Watcher::shutdown` above serialises with `dispatch_file_updates`
+        // on `Watcher.mutex`, so no further `on_file_update` will run and
+        // `next_event` is now stable from the watcher side.
+        //
+        // SAFETY: `watcher_atomics` was written exactly once in `init()`;
+        // this is `Drop`, so the field is not read again.
+        let mut atomics = unsafe { ::core::mem::ManuallyDrop::take(&mut self.watcher_atomics) };
+        let next = atomics
+            .next_event
+            .load(::core::sync::atomic::Ordering::Acquire);
+        if next == crate::bake::dev_server::NextEvent::DONE.0 {
+            for event in atomics.events.iter_mut() {
+                event.dirs.clear_and_free();
+                event.files.clear_and_free();
+                event.extra_files.clear();
+            }
+            drop(atomics);
+        } else {
+            // A `HotReloadEvent.concurrent_task` is still linked in the event
+            // loop's concurrent queue (or its `Task` is already in the drain
+            // FIFO). Freeing this allocation now would leave that queue node
+            // dangling; keep it alive and let `HotReloadEvent::run` reclaim
+            // it (it checks for `owner.is_null()`).
+            for event in atomics.events.iter_mut() {
+                event.owner = ::core::ptr::null_mut();
+            }
+            ::core::mem::forget(atomics);
         }
 
         if let TestingBatchEvents::Enabled(batch) = &mut self.testing_batch_events {

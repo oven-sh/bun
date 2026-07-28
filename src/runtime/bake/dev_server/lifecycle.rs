@@ -39,9 +39,9 @@ impl bun_watcher::WatcherContext for DevServer {
 }
 
 impl WatcherAtomics {
-    pub(crate) fn init(owner: *mut DevServer) -> Self {
+    pub(crate) fn init(owner: *mut DevServer) -> Box<Self> {
         let mk_event = || HotReloadEvent::init_empty(owner);
-        WatcherAtomics {
+        let mut boxed = Box::new(WatcherAtomics {
             events: [mk_event(), mk_event(), mk_event()],
             next_event: core::sync::atomic::AtomicU8::new(super::NextEvent::DONE.0),
             current_event: None,
@@ -50,6 +50,18 @@ impl WatcherAtomics {
             dbg_watcher_event: None,
             #[cfg(debug_assertions)]
             dbg_server_event: None,
+        });
+        // Back-fill each event's BACKREF to this allocation once the Box
+        // address is stable. All access goes through the one raw pointer so
+        // Stacked Borrows sees a single Unique-derived tag.
+        let atomics: *mut WatcherAtomics = &raw mut *boxed;
+        // SAFETY: `atomics` was just derived from `boxed`; the whole
+        // allocation is exclusively reachable through it here.
+        unsafe {
+            for ev in &mut (*atomics).events {
+                ev.atomics = atomics;
+            }
         }
+        boxed
     }
 }

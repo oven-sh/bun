@@ -373,9 +373,14 @@ impl HmrSocket {
 // adjacent-line prefetch.
 #[repr(align(128))]
 pub struct HotReloadEvent {
-    /// BACKREF (LIFETIMES.tsv): inline element of `WatcherAtomics.events: [3]`.
+    /// BACKREF (LIFETIMES.tsv): element of `WatcherAtomics.events: [3]`.
     /// `*mut` (not `*const`) because `run` mutates the owning DevServer.
+    /// Set to null by `Drop for DevServer` when a hot-reload event is still
+    /// queued at teardown; `run` checks for this before dereferencing.
     pub owner: *mut DevServer,
+    /// BACKREF: the heap `Box<WatcherAtomics>` that contains this event.
+    /// Used by `run` to reclaim the allocation when `owner` has been nulled.
+    pub atomics: *mut WatcherAtomics,
     pub concurrent_task: bun_event_loop::ConcurrentTask::ConcurrentTask,
     pub files: StringArrayHashMap<()>,
     pub dirs: StringArrayHashMap<()>,
@@ -396,6 +401,7 @@ impl HotReloadEvent {
     pub fn init_empty(owner: *mut DevServer) -> HotReloadEvent {
         HotReloadEvent {
             owner,
+            atomics: core::ptr::null_mut(),
             concurrent_task: Default::default(),
             files: Default::default(),
             dirs: Default::default(),
@@ -611,6 +617,22 @@ impl HotReloadEvent {
         // DevServer that owns the WatcherAtomics array containing this event;
         // DevServer outlives all HotReloadEvents it holds.
         let dev: *mut DevServer = unsafe { (*first).owner };
+        if dev.is_null() {
+            // `Drop for DevServer` ran while this event's `concurrent_task`
+            // was still linked in the event loop's concurrent queue (or its
+            // `Task` was already in the drain FIFO). Drop nulled `owner` and
+            // forgot the `Box<WatcherAtomics>` so the queue node stayed valid;
+            // reclaim that allocation here.
+            // SAFETY: `first` is live (caller contract); `atomics` was set by
+            // `WatcherAtomics::init` to the owning Box's heap address and is
+            // the unique owner now that DevServer has released it.
+            let atomics = unsafe { (*first).atomics };
+            debug_assert!(!atomics.is_null());
+            // SAFETY: `atomics` is the raw pointer `Box::into_raw` would have
+            // returned; `Drop for DevServer` forgot the Box without dropping.
+            drop(unsafe { Box::from_raw(atomics) });
+            return;
+        }
         // SAFETY: see above; `magic` read is non-aliasing.
         debug_assert!(unsafe { (*dev).magic } == Magic::Valid);
         bun_core::scoped_log!(DevServer, "HMR Task start");

@@ -1281,7 +1281,11 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
    * @param {function} onConnected - The callback function to be called when the connection is established.
    * @param {boolean} reserved - Whether the connection is reserved, if is reserved the connection will not be released until release is called, if not release will only decrement the queryCount counter
    */
-  connect(onConnected: (err: Error | null, result: any) => void, reserved: boolean = false, preconnect: boolean = false) {
+  connect(
+    onConnected: (err: Error | null, result: any) => void,
+    reserved: boolean = false,
+    preconnect: boolean = false,
+  ) {
     if (this.closed) {
       return onConnected(this.connectionClosedError(), null);
     }

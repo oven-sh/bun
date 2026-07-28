@@ -2663,6 +2663,8 @@ console.log(<div {...obj} key="after" />);`),
         'Cannot use "await" as an identifier here',
       );
       expectParseError("async function outer() { function await() {} }", 'Cannot use "await" as an identifier here');
+      // At the top level of a module (top-level await is enabled here), "await" is reserved.
+      expectParseError("function await() {}", 'Cannot use "await" as an identifier here');
       // Inside a generator, "yield" cannot name a nested function declaration.
       expectParseError("function* outer() { function* yield() {} }", 'Cannot use "yield" as an identifier here');
       expectParseError("function* outer() { function yield() {} }", 'Cannot use "yield" as an identifier here');

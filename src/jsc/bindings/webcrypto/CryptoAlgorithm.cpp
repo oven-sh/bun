@@ -87,6 +87,16 @@ void CryptoAlgorithm::unwrapKey(Ref<CryptoKey>&&, Vector<uint8_t>&&, VectorCallb
     exceptionCallback(NotSupportedError, ""_s);
 }
 
+void CryptoAlgorithm::encapsulate(Ref<CryptoKey>&&, VectorPairCallback&&, ExceptionCallback&& exceptionCallback)
+{
+    exceptionCallback(NotSupportedError, ""_s);
+}
+
+void CryptoAlgorithm::decapsulate(Ref<CryptoKey>&&, Vector<uint8_t>&&, VectorCallback&&, ExceptionCallback&& exceptionCallback)
+{
+    exceptionCallback(NotSupportedError, ""_s);
+}
+
 ExceptionOr<std::optional<size_t>> CryptoAlgorithm::getKeyLength(const CryptoAlgorithmParameters&)
 {
     return Exception { NotSupportedError };

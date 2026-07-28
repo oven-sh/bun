@@ -10,34 +10,15 @@ use super::source_map_store::{self, RemoveOrUpgradeMode};
 use super::{ConsoleLogKind, DevServer, HmrTopic, IncomingMessageId, MessageId};
 use crate::bake::dev_server_body::HmrTopicBits;
 
-// Shared with `DevServer::on_web_socket_upgrade`.
-// The trait lives in `dev_server/mod.rs`; only the dev server needs it.
-pub(crate) use super::ResponseLike;
-
 // Struct definition lives in `dev_server/mod.rs` so the public
 // `crate::bake::dev_server::HmrSocket` path and these impl blocks name a
 // single type (no cross-type pointer casts).
 pub(crate) use super::HmrSocket;
 
 impl HmrSocket {
-    // `res` is generic — only `.get_remote_socket_info()` is called on it.
-    // Bound matches the caller in `DevServer::on_web_socket_upgrade`.
-    pub fn new<R>(dev: &mut DevServer, res: &mut R) -> Box<HmrSocket>
-    where
-        R: ResponseLike,
-    {
-        let is_from_localhost = if let Some(addr) = res.get_remote_socket_info() {
-            if addr.is_ipv6 {
-                &addr.ip[..] == b"::1"
-            } else {
-                &addr.ip[..] == b"127.0.0.1"
-            }
-        } else {
-            false
-        };
+    pub fn new(dev: &mut DevServer) -> Box<HmrSocket> {
         Box::new(HmrSocket {
             dev: bun_ptr::BackRef::new_mut(dev),
-            is_from_localhost,
             subscriptions: HmrTopicBits::empty(),
             active_route: None,
             referenced_source_maps: HashMap::default(),

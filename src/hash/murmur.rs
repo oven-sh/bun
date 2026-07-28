@@ -66,51 +66,6 @@ impl Murmur2_32 {
         h1 ^= h1 >> 15;
         h1
     }
-
-    #[inline]
-    pub fn hash_uint32(v: u32) -> u32 {
-        Self::hash_uint32_with_seed(v, DEFAULT_SEED)
-    }
-
-    pub fn hash_uint32_with_seed(v: u32, seed: u32) -> u32 {
-        const M: u32 = 0x5bd1e995;
-        let len: u32 = 4;
-        let mut h1: u32 = seed ^ len;
-        let mut k1 = v.wrapping_mul(M);
-        k1 ^= k1 >> 24;
-        k1 = k1.wrapping_mul(M);
-        h1 = h1.wrapping_mul(M);
-        h1 ^= k1;
-        h1 ^= h1 >> 13;
-        h1 = h1.wrapping_mul(M);
-        h1 ^= h1 >> 15;
-        h1
-    }
-
-    #[inline]
-    pub fn hash_uint64(v: u64) -> u32 {
-        Self::hash_uint64_with_seed(v, DEFAULT_SEED)
-    }
-
-    pub fn hash_uint64_with_seed(v: u64, seed: u32) -> u32 {
-        const M: u32 = 0x5bd1e995;
-        let len: u32 = 8;
-        let mut h1: u32 = seed ^ len;
-        let mut k1 = (v as u32).wrapping_mul(M);
-        k1 ^= k1 >> 24;
-        k1 = k1.wrapping_mul(M);
-        h1 = h1.wrapping_mul(M);
-        h1 ^= k1;
-        k1 = ((v >> 32) as u32).wrapping_mul(M);
-        k1 ^= k1 >> 24;
-        k1 = k1.wrapping_mul(M);
-        h1 = h1.wrapping_mul(M);
-        h1 ^= k1;
-        h1 ^= h1 >> 13;
-        h1 = h1.wrapping_mul(M);
-        h1 ^= h1 >> 15;
-        h1
-    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -151,44 +106,6 @@ impl Murmur2_64 {
             h1 ^= k1;
             h1 = h1.wrapping_mul(M);
         }
-        h1 ^= h1 >> 47;
-        h1 = h1.wrapping_mul(M);
-        h1 ^= h1 >> 47;
-        h1
-    }
-
-    #[inline]
-    pub fn hash_uint32(v: u32) -> u64 {
-        Self::hash_uint32_with_seed(v, DEFAULT_SEED as u64)
-    }
-
-    pub fn hash_uint32_with_seed(v: u32, seed: u64) -> u64 {
-        const M: u64 = 0xc6a4a7935bd1e995;
-        let len: u64 = 4;
-        let mut h1: u64 = seed ^ len.wrapping_mul(M);
-        let k1: u64 = v as u64;
-        h1 ^= k1;
-        h1 = h1.wrapping_mul(M);
-        h1 ^= h1 >> 47;
-        h1 = h1.wrapping_mul(M);
-        h1 ^= h1 >> 47;
-        h1
-    }
-
-    #[inline]
-    pub fn hash_uint64(v: u64) -> u64 {
-        Self::hash_uint64_with_seed(v, DEFAULT_SEED as u64)
-    }
-
-    pub fn hash_uint64_with_seed(v: u64, seed: u64) -> u64 {
-        const M: u64 = 0xc6a4a7935bd1e995;
-        let len: u64 = 8;
-        let mut h1: u64 = seed ^ len.wrapping_mul(M);
-        let mut k1 = v.wrapping_mul(M);
-        k1 ^= k1 >> 47;
-        k1 = k1.wrapping_mul(M);
-        h1 ^= k1;
-        h1 = h1.wrapping_mul(M);
         h1 ^= h1 >> 47;
         h1 = h1.wrapping_mul(M);
         h1 ^= h1 >> 47;
@@ -264,52 +181,6 @@ impl Murmur3_32 {
         h1 ^= len;
         fmix32(h1)
     }
-
-    #[inline]
-    pub fn hash_uint32(v: u32) -> u32 {
-        Self::hash_uint32_with_seed(v, DEFAULT_SEED)
-    }
-
-    pub fn hash_uint32_with_seed(v: u32, seed: u32) -> u32 {
-        const C1: u32 = 0xcc9e2d51;
-        const C2: u32 = 0x1b873593;
-        let len: u32 = 4;
-        let mut h1: u32 = seed;
-        let mut k1 = v.wrapping_mul(C1);
-        k1 = Self::rotl32(k1, 15);
-        k1 = k1.wrapping_mul(C2);
-        h1 ^= k1;
-        h1 = Self::rotl32(h1, 13);
-        h1 = h1.wrapping_mul(5).wrapping_add(0xe6546b64);
-        h1 ^= len;
-        fmix32(h1)
-    }
-
-    #[inline]
-    pub fn hash_uint64(v: u64) -> u32 {
-        Self::hash_uint64_with_seed(v, DEFAULT_SEED)
-    }
-
-    pub fn hash_uint64_with_seed(v: u64, seed: u32) -> u32 {
-        const C1: u32 = 0xcc9e2d51;
-        const C2: u32 = 0x1b873593;
-        let len: u32 = 8;
-        let mut h1: u32 = seed;
-        let mut k1 = (v as u32).wrapping_mul(C1);
-        k1 = Self::rotl32(k1, 15);
-        k1 = k1.wrapping_mul(C2);
-        h1 ^= k1;
-        h1 = Self::rotl32(h1, 13);
-        h1 = h1.wrapping_mul(5).wrapping_add(0xe6546b64);
-        k1 = ((v >> 32) as u32).wrapping_mul(C1);
-        k1 = Self::rotl32(k1, 15);
-        k1 = k1.wrapping_mul(C2);
-        h1 ^= k1;
-        h1 = Self::rotl32(h1, 13);
-        h1 = h1.wrapping_mul(5).wrapping_add(0xe6546b64);
-        h1 ^= len;
-        fmix32(h1)
-    }
 }
 
 #[cfg(test)]
@@ -318,55 +189,13 @@ mod tests {
     use crate::verify::{smhasher_32, smhasher_64};
 
     #[test]
-    fn murmur2_32_uint() {
-        let v0: u32 = 0x12345678;
-        let v1: u64 = 0x1234567812345678;
-        assert_eq!(
-            Murmur2_32::hash(&v0.to_le_bytes()),
-            Murmur2_32::hash_uint32(v0)
-        );
-        assert_eq!(
-            Murmur2_32::hash(&v1.to_le_bytes()),
-            Murmur2_32::hash_uint64(v1)
-        );
-    }
-
-    #[test]
     fn murmur2_32_smhasher() {
         assert_eq!(smhasher_32(Murmur2_32::hash_with_seed), 0x27864C1E);
     }
 
     #[test]
-    fn murmur2_64_uint() {
-        let v0: u32 = 0x12345678;
-        let v1: u64 = 0x1234567812345678;
-        assert_eq!(
-            Murmur2_64::hash(&v0.to_le_bytes()),
-            Murmur2_64::hash_uint32(v0)
-        );
-        assert_eq!(
-            Murmur2_64::hash(&v1.to_le_bytes()),
-            Murmur2_64::hash_uint64(v1)
-        );
-    }
-
-    #[test]
     fn murmur2_64_smhasher() {
         assert_eq!(smhasher_64(Murmur2_64::hash_with_seed), 0x1F0D3804);
-    }
-
-    #[test]
-    fn murmur3_32_uint() {
-        let v0: u32 = 0x12345678;
-        let v1: u64 = 0x1234567812345678;
-        assert_eq!(
-            Murmur3_32::hash(&v0.to_le_bytes()),
-            Murmur3_32::hash_uint32(v0)
-        );
-        assert_eq!(
-            Murmur3_32::hash(&v1.to_le_bytes()),
-            Murmur3_32::hash_uint64(v1)
-        );
     }
 
     #[test]

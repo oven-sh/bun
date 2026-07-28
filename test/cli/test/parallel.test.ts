@@ -341,6 +341,57 @@ test("--parallel --reporter=junit produces a merged report covering all files", 
   expect(exitCode).toBe(1);
 });
 
+test("--parallel --reporter=junit keeps the suites of files a worker finished before it crashed", async () => {
+  using dir = tempDir("parallel-junit-crash", {
+    "aslow.test.js": `import {test,expect} from "bun:test"; test("slow", async () => { await Bun.sleep(400); expect(1).toBe(1); });`,
+    "pass.test.js": `import {test,expect} from "bun:test"; test("finished before the crash", () => expect(1).toBe(1));`,
+    "zcrash.test.js": `import {test} from "bun:test"; test("boom", () => process.exit(7));`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--parallel=2", "--reporter=junit", "--reporter-outfile=out.xml"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const xml = await Bun.file(String(dir) + "/out.xml").text();
+  expect(xml).toContain('name="finished before the crash"');
+  expect(xml).toContain("pass.test.js");
+  expect(xml).toContain("aslow.test.js");
+  expect(xml).toContain("zcrash.test.js");
+  expect(xml).toContain("worker process crashed");
+  expect(xml.split("<testsuites ").length - 1).toBe(1);
+  expect(xml.split("</testsuites>").length - 1).toBe(1);
+  expect(exitCode).toBe(1);
+});
+
+test("--parallel --reporter=junit carries a large per-file report intact over IPC", async () => {
+  const cases = 4000;
+  const pad = Buffer.alloc(240, "x").toString();
+  using dir = tempDir("parallel-junit-large", {
+    "big.test.js": `import {test,expect} from "bun:test";
+      const pad = ${JSON.stringify(pad)};
+      for (let i = 0; i < ${cases}; i++) test("big-" + i + "-" + pad, () => expect(1).toBe(1));`,
+    "other.test.js": `import {test,expect} from "bun:test"; test("other", () => expect(1).toBe(1));`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--parallel=2", "--reporter=junit", "--reporter-outfile=out.xml"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const xml = await Bun.file(String(dir) + "/out.xml").text();
+  expect(xml.length).toBeGreaterThan(1024 * 1024); // genuinely a multi-MB report
+  expect(xml.split('<testcase name="big-').length - 1).toBe(cases);
+  expect(xml).toContain('name="other"');
+  expect(xml.split("<testsuites ").length - 1).toBe(1);
+  expect(xml.split("</testsuites>").length - 1).toBe(1);
+  expect(exitCode).toBe(0);
+});
+
 test("--parallel --coverage merges LCOV across workers", async () => {
   using dir = tempDir("parallel-coverage-lcov", {
     "shared.js": `export function hit() { return 1; }\nexport function miss() { return 2; }\n`,
@@ -449,8 +500,8 @@ test("--parallel --dots prints one status character per test", async () => {
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  // No file headers in dots mode.
-  expect(stderr).not.toContain(".test.js:");
+  expect(stderr).toContain("a.test.js:");
+  expect(stderr).not.toContain("b.test.js:");
   // 7 dots (6 pass + 1 skip), no per-test "(pass) name" lines for them.
   expect(stderr.match(/\./g)!.length).toBeGreaterThanOrEqual(7);
   expect(stderr).not.toMatch(/\(pass\)/);

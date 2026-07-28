@@ -853,11 +853,6 @@ impl<'a> ParseArgsState<'a> {
                 Token::Option(token) => {
                     obj.put(
                         global,
-                        ZigString::static_("index"),
-                        JSValue::js_number(token.index as f64),
-                    );
-                    obj.put(
-                        global,
                         ZigString::static_("name"),
                         token.name.as_js_value(global)?,
                     );
@@ -865,6 +860,11 @@ impl<'a> ParseArgsState<'a> {
                         global,
                         ZigString::static_("rawName"),
                         token.make_raw_name_js_value(global)?,
+                    );
+                    obj.put(
+                        global,
+                        ZigString::static_("index"),
+                        JSValue::js_number(token.index as f64),
                     );
 
                     // value exists only for string options, otherwise the property exists with "undefined" as value
@@ -1061,10 +1061,10 @@ fn parse_args_impl(
     bun_output::scoped_log!(parseArgs, "Phase 4: Build result object");
 
     let result = JSValue::create_empty_object(global, if return_tokens { 3 } else { 2 });
+    result.put(global, ZigString::static_("values"), state.values);
+    result.put(global, ZigString::static_("positionals"), state.positionals);
     if return_tokens {
         result.put(global, ZigString::static_("tokens"), state.tokens);
     }
-    result.put(global, ZigString::static_("values"), state.values);
-    result.put(global, ZigString::static_("positionals"), state.positionals);
     Ok(result)
 }

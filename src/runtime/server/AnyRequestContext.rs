@@ -189,17 +189,6 @@ impl AnyRequestContext {
         })
     }
 
-    pub fn on_abort(self, response: uws::AnyResponse) {
-        dispatch!(self, (), |T, ctx| {
-            // `RequestContext::on_abort`
-            // takes `uws::AnyResponse` directly (and re-checks H3 internally),
-            // so forward the enum as-is.
-            // SAFETY: `ctx` is the live request context this `AnyRequestContext`
-            // wraps; `on_abort` only derefs that exact pointer.
-            T::on_abort(core::ptr::from_mut::<T>(ctx), response);
-        })
-    }
-
     pub fn ref_(self) {
         dispatch!(self, (), |_T, ctx| ctx.ref_())
     }

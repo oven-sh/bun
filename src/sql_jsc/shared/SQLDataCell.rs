@@ -120,25 +120,6 @@ impl Array {
         unsafe { slice::from_raw_parts_mut(self.ptr, self.len as usize) }
     }
 
-    pub fn allocated_slice(&mut self) -> &mut [SQLDataCell] {
-        if self.ptr.is_null() {
-            return &mut [];
-        }
-        // SAFETY: ptr is non-null and the backing allocation spans `cap`
-        // `SQLDataCell`s, so the pointer arithmetic stays in-bounds. CAUTION:
-        // the only producer (postgres/DataCell.rs `parse_array`) decomposes a
-        // plain `Vec` and does NOT initialize spare capacity, so only
-        // `[..len]` is guaranteed initialized — elements in `len..cap` may be
-        // uninitialized, and materializing `&mut [SQLDataCell]` over them is
-        // UB. This method currently has no callers; before using it, either
-        // restrict the view to `len` (use `slice()`), return
-        // `&mut [MaybeUninit<SQLDataCell>]`, or make every producer init the
-        // full capacity. Genuine FFI: ptr/len/cap are thin C fields read
-        // directly by C++ (SQLClient.cpp), so this cannot be a `Vec` without
-        // breaking ABI.
-        unsafe { slice::from_raw_parts_mut(self.ptr, self.cap as usize) }
-    }
-
     pub fn deinit(&mut self) {
         let p = self.ptr;
         let cap = self.cap as usize;
@@ -329,7 +310,7 @@ impl SQLDataCell {
     }
 
     #[inline]
-    pub fn bool_(value: bool) -> SQLDataCell {
+    pub fn bool(value: bool) -> SQLDataCell {
         SQLDataCell {
             tag: Tag::Bool,
             value: Value { bool_: value as u8 },

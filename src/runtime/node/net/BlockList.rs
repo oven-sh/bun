@@ -181,7 +181,7 @@ impl BlockList {
             validators::validate_string(global, family_js, format_args!("family"))?;
             SocketAddress::init_from_addr_family(global, end_js, family_js)?._addr
         };
-        if let Some(ord) = _compare(&start, &end) {
+        if let Some(ord) = compare(&start, &end) {
             if ord == Ordering::Greater {
                 return Err(global.throw_invalid_argument_value_custom(
                     b"start",
@@ -272,26 +272,30 @@ impl BlockList {
                 }
             }
         };
-        let _guard = this.mutex.lock_guard();
-        for item in this.da_rules.get().iter() {
+        Ok(JSValue::js_boolean(this.check_sockaddr(address)))
+    }
+
+    pub(crate) fn check_sockaddr(&self, address: &sockaddr) -> bool {
+        let _guard = self.mutex.lock_guard();
+        for item in self.da_rules.get().iter() {
             match item {
                 Rule::Addr(a) => {
-                    let Some(order) = _compare(address, a) else {
+                    let Some(order) = compare(address, a) else {
                         continue;
                     };
                     if order.is_eq() {
-                        return Ok(JSValue::TRUE);
+                        return true;
                     }
                 }
                 Rule::Range { start, end } => {
-                    let Some(os) = _compare(address, start) else {
+                    let Some(os) = compare(address, start) else {
                         continue;
                     };
-                    let Some(oe) = _compare(address, end) else {
+                    let Some(oe) = compare(address, end) else {
                         continue;
                     };
                     if os.is_ge() && oe.is_le() {
-                        return Ok(JSValue::TRUE);
+                        return true;
                     }
                 }
                 Rule::Subnet { network, prefix } => {
@@ -299,13 +303,13 @@ impl BlockList {
                         if let Some(subnet_addr) = network.as_sin().map(|s| s.addr) {
                             if *prefix == 32 {
                                 if ip_addr == subnet_addr {
-                                    return Ok(JSValue::TRUE);
+                                    return true;
                                 } else {
                                     continue;
                                 }
                             }
                             if *prefix == 0 {
-                                return Ok(JSValue::TRUE);
+                                return true;
                             }
                             let one: u32 = 1;
                             let mask_addr: u32 =
@@ -313,7 +317,7 @@ impl BlockList {
                             let ip_net: u32 = u32::swap_bytes(ip_addr) & mask_addr;
                             let subnet_net: u32 = u32::swap_bytes(subnet_addr) & mask_addr;
                             if ip_net == subnet_net {
-                                return Ok(JSValue::TRUE);
+                                return true;
                             }
                         }
                     }
@@ -332,26 +336,26 @@ impl BlockList {
                         let subnet_addr: u128 = u128::from_ne_bytes(net6.addr);
                         if *prefix == 128 {
                             if ip_addr == subnet_addr {
-                                return Ok(JSValue::TRUE);
+                                return true;
                             } else {
                                 continue;
                             }
                         }
                         if *prefix == 0 {
-                            return Ok(JSValue::TRUE);
+                            return true;
                         }
                         let one: u128 = 1;
                         let mask_addr = ((one << (*prefix as u32)) - 1) << (128 - *prefix as u32);
                         let ip_net: u128 = ip_addr.swap_bytes() & mask_addr;
                         let subnet_net: u128 = subnet_addr.swap_bytes() & mask_addr;
                         if ip_net == subnet_net {
-                            return Ok(JSValue::TRUE);
+                            return true;
                         }
                     }
                 }
             }
         }
-        Ok(JSValue::FALSE)
+        false
     }
 
     #[bun_jsc::host_fn(getter)]
@@ -506,19 +510,19 @@ pub(crate) enum Rule {
     Subnet { network: sockaddr, prefix: u8 },
 }
 
-fn _compare(l: &sockaddr, r: &sockaddr) -> Option<Ordering> {
+fn compare(l: &sockaddr, r: &sockaddr) -> Option<Ordering> {
     if let Some(l_4) = l.as_v4() {
         if let Some(r_4) = r.as_v4() {
             return Some(l_4.swap_bytes().cmp(&r_4.swap_bytes()));
         }
     }
     if let (Some(l6), Some(r6)) = (l.as_sin6(), r.as_sin6()) {
-        return Some(_compare_ipv6(l6, r6));
+        return Some(compare_ipv6(l6, r6));
     }
     None
 }
 
-fn _compare_ipv6(l: &inet::sockaddr_in6, r: &inet::sockaddr_in6) -> Ordering {
+fn compare_ipv6(l: &inet::sockaddr_in6, r: &inet::sockaddr_in6) -> Ordering {
     let l128 = u128::from_ne_bytes(l.addr).swap_bytes();
     let r128 = u128::from_ne_bytes(r.addr).swap_bytes();
     l128.cmp(&r128)

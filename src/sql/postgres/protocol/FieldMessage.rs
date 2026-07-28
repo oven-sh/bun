@@ -8,7 +8,6 @@ use crate::postgres::AnyPostgresError;
 
 pub enum FieldMessage {
     Severity(String),
-    LocalizedSeverity(String),
     Code(String),
     Message(String),
     Detail(String),
@@ -38,7 +37,6 @@ impl FieldMessage {
     pub fn payload(&self) -> &String {
         match self {
             FieldMessage::Severity(s)
-            | FieldMessage::LocalizedSeverity(s)
             | FieldMessage::Code(s)
             | FieldMessage::Message(s)
             | FieldMessage::Detail(s)
@@ -60,19 +58,19 @@ impl FieldMessage {
 
     pub fn decode_list<Context: super::new_reader::ReaderContext>(
         mut reader: NewReader<Context>,
+        mut remaining: usize,
     ) -> Result<Vec<FieldMessage>, AnyPostgresError> {
         let mut messages: Vec<FieldMessage> = Vec::new();
-        loop {
+        while remaining > 0 {
             let field_int: u8 = reader.int::<u8>()?;
+            remaining -= 1;
             if field_int == 0 {
                 break;
             }
             let field: FieldType = FieldType::from(field_int);
 
-            let message = reader.read_z()?;
-            if message.slice().is_empty() {
-                break;
-            }
+            let (message, consumed) = reader.string_within(remaining)?;
+            remaining -= consumed;
 
             let Ok(field_msg) = FieldMessage::init(field, message.slice()) else {
                 continue;

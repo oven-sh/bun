@@ -41,7 +41,6 @@ use bun_sys::Dir;
 #[cfg(not(windows))]
 use bun_sys::OpenDirOptions;
 
-use crate::api::js_bundler::BuildArtifact;
 use crate::api::js_bundler::js_bundler::{Config as JSBundlerConfig, Plugin, PluginJscExt};
 use crate::api::output_file_jsc::OutputFileJsc as _;
 use crate::node::fs::{self as node_fs, NodeFS, args as fs_args};
@@ -66,7 +65,7 @@ pub struct JSBundleCompletionTask {
     pub global_this: BackRef<JSGlobalObject>,
     pub promise: jsc::JSPromiseStrong,
     pub poll_ref: KeepAlive,
-    pub env: *mut bun_dotenv::Loader<'static>,
+    pub env: *mut bun_dotenv::Loader,
     pub log: bun_ast::Log,
     pub cancelled: bool,
 
@@ -163,22 +162,6 @@ pub(crate) fn create_and_schedule_completion_task(
     };
 
     Ok(completion)
-}
-
-/// `BundleV2.generateFromJavaScript` — schedule a build and return its Promise.
-pub fn generate_from_javascript(
-    config: JSBundlerConfig,
-    plugins: Option<NonNull<Plugin>>,
-    global_this: &JSGlobalObject,
-    event_loop: *mut EventLoop,
-) -> crate::Result<JSValue> {
-    let completion = create_and_schedule_completion_task(config, plugins, global_this, event_loop)?;
-    // SAFETY: `completion` is the freshly-boxed allocation; sole owner on the JS
-    // thread until the enqueued task runs.
-    unsafe {
-        (*completion).promise = jsc::JSPromiseStrong::init(global_this);
-        Ok((*completion).promise.value())
-    }
 }
 
 /// `if (s.slice().len > 0) s.slice() else null` for the windows-options block.
@@ -398,7 +381,7 @@ impl JSBundleCompletionTask {
 
         // SAFETY: `self.env` is the per-VM `DotEnv.Loader` stashed at
         // construction; valid for the lifetime of the VirtualMachine.
-        let env = unsafe { &mut *self.env.cast::<bun_dotenv::Loader>() };
+        let env = unsafe { &mut *self.env };
 
         let result = match to_executable(
             &compile_options.compile_target,
@@ -668,12 +651,6 @@ impl JSBundleCompletionTask {
                             global_this,
                             result,
                         );
-                        if let Some(artifact) = to_assign_on_sourcemap.as_::<BuildArtifact>() {
-                            // SAFETY: `as_` returned a live `*mut BuildArtifact`
-                            // owned by the JS wrapper; the borrow lasts only for
-                            // this `set` call (no other Rust alias exists).
-                            unsafe { (*artifact).sourcemap.set(global_this, result) };
-                        }
                         to_assign_on_sourcemap = JSValue::ZERO;
                     }
 
@@ -994,8 +971,7 @@ impl CompletionStruct for JSBundleCompletionTask {
         }
         // `transpiler.env` is the dotenv loader installed by
         // `Transpiler::init`; non-null and valid for `'a`.
-        transpiler.resolver.env_loader =
-            NonNull::new(transpiler.env.cast::<bun_dotenv::Loader<'_>>());
+        transpiler.resolver.env_loader = NonNull::new(transpiler.env);
         // `Resolver.opts` is the resolver-crate subset
         // — re-project from the now-mutated `transpiler.options`.
         transpiler.sync_resolver_opts();
@@ -1073,11 +1049,7 @@ impl CompletionStruct for JSBundleCompletionTask {
         };
 
         let log: *mut bun_ast::Log = &raw mut self.log;
-        // SAFETY: `self.env` is the per-VM dotenv loader stashed at
-        // construction; cast erases `'_` (bun_dotenv::Loader is invariant on
-        // its arena lifetime, but `Transpiler::init` only stores the pointer).
-        let env = self.env.cast::<bun_dotenv::Loader<'static>>();
-        let t = Transpiler::init(bump, log, opts, Some(env))?;
+        let t = Transpiler::init(bump, log, opts, Some(self.env))?;
         let transpiler: &'a mut Transpiler<'a> = bump.alloc(t);
 
         // Post-init field wiring.
@@ -1104,7 +1076,7 @@ impl CompletionStruct for JSBundleCompletionTask {
         // it outlives the BACKREF in `linker.loop`.
         let mut any_loop = bun_event_loop::AnyEventLoop::default();
         let event_loop: bun_bundler::linker_context_mod::EventLoop =
-            Some(NonNull::from(&mut any_loop).cast::<bun_event_loop::AnyEventLoop<'static>>());
+            Some(NonNull::from(&mut any_loop).cast::<bun_event_loop::AnyEventLoop>());
 
         // `thread_pool` is the `WorkPool` singleton (`OnceLock`-backed,
         // process-lifetime, concurrently read by worker threads). Do NOT

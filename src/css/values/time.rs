@@ -26,18 +26,7 @@ pub enum Time {
     Milliseconds(CSSNumber) = 2,
 }
 
-const TAG_SECONDS: u16 = 1;
-const TAG_MILLISECONDS: u16 = 2;
-
 impl Time {
-    #[inline]
-    fn tag(self) -> u16 {
-        match self {
-            Time::Seconds(_) => TAG_SECONDS,
-            Time::Milliseconds(_) => TAG_MILLISECONDS,
-        }
-    }
-
     // css.implementDeepClone / css.implementEql / css.implementHash — provided
     // by `#[derive(DeepClone, CssEql, CssHash)]` above (POD f32 payload).
     // Kept as an inherent assoc fn for `protocol::CalcValue` callers that
@@ -173,21 +162,11 @@ impl Time {
     }
 
     pub fn op(self, other: Time, op_fn: impl Fn(f32, f32) -> f32) -> Time {
-        let _ = (self.tag(), TAG_SECONDS, TAG_MILLISECONDS); // keep tag consts referenced
         match (self, other) {
             (Time::Seconds(a), Time::Seconds(b)) => Time::Seconds(op_fn(a, b)),
             (Time::Milliseconds(a), Time::Milliseconds(b)) => Time::Milliseconds(op_fn(a, b)),
             (Time::Seconds(a), Time::Milliseconds(b)) => Time::Seconds(op_fn(a, b / 1000.0)),
             (Time::Milliseconds(a), Time::Seconds(b)) => Time::Milliseconds(op_fn(a, b * 1000.0)),
-        }
-    }
-
-    pub fn op_to<R>(self, other: Time, op_fn: impl Fn(f32, f32) -> R) -> R {
-        match (self, other) {
-            (Time::Seconds(a), Time::Seconds(b)) => op_fn(a, b),
-            (Time::Milliseconds(a), Time::Milliseconds(b)) => op_fn(a, b),
-            (Time::Seconds(a), Time::Milliseconds(b)) => op_fn(a, b / 1000.0),
-            (Time::Milliseconds(a), Time::Seconds(b)) => op_fn(a, b * 1000.0),
         }
     }
 }

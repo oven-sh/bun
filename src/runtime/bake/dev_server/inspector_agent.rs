@@ -144,34 +144,6 @@ impl BunFrontendDevServerAgent {
         }
     }
 
-    pub fn notify_client_error_reported(
-        &self,
-        dev_server_id: DebuggerId,
-        client_error_payload_base64: &mut BunString,
-    ) {
-        if let Some(handle) = self.handle_mut() {
-            ffi::InspectorBunFrontendDevServerAgent__notifyClientErrorReported(
-                handle,
-                dev_server_id.get(),
-                client_error_payload_base64,
-            )
-        }
-    }
-
-    pub fn notify_graph_update(
-        &self,
-        dev_server_id: DebuggerId,
-        visualizer_payload_base64: &mut BunString,
-    ) {
-        if let Some(handle) = self.handle_mut() {
-            ffi::InspectorBunFrontendDevServerAgent__notifyGraphUpdate(
-                handle,
-                dev_server_id.get(),
-                visualizer_payload_base64,
-            )
-        }
-    }
-
     /// `notifyConsoleLog`. `kind` is `DevServer.ConsoleLogKind as u8` (`b'l'`
     /// / `b'e'`) — caller does `kind as u8`.
     pub fn notify_console_log(&self, dev_server_id: DebuggerId, kind: u8, data: &mut BunString) {
@@ -235,16 +207,6 @@ mod ffi {
             connection_id: i32,
             url: &mut BunString,
             route_bundle_id: i32,
-        );
-        pub(super) safe fn InspectorBunFrontendDevServerAgent__notifyClientErrorReported(
-            agent: &mut InspectorBunFrontendDevServerAgentHandle,
-            dev_server_id: i32,
-            client_error_payload_base64: &mut BunString,
-        );
-        pub(super) safe fn InspectorBunFrontendDevServerAgent__notifyGraphUpdate(
-            agent: &mut InspectorBunFrontendDevServerAgentHandle,
-            dev_server_id: i32,
-            visualizer_payload_base64: &mut BunString,
         );
         pub(super) safe fn InspectorBunFrontendDevServerAgent__notifyConsoleLog(
             agent: &mut InspectorBunFrontendDevServerAgentHandle,

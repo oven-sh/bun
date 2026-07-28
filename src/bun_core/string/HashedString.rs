@@ -33,11 +33,6 @@ impl HashedString {
         }
     }
 
-    pub fn eql(&self, other: &HashedString) -> bool {
-        ((self.hash.max(other.hash) > 0 && self.hash == other.hash) || (self.ptr == other.ptr))
-            && self.len == other.len
-    }
-
     pub fn eql_bytes(&self, other: &[u8]) -> bool {
         (self.len as usize) == other.len()
             && (hash(other) as u32) == self.hash

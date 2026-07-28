@@ -19,18 +19,12 @@ use std::io::Write as _;
 use ::bun_install_types::resolver_hooks as Install;
 use ::bun_install_types::resolver_hooks::{AutoInstaller, Resolution};
 use ::bun_semver as Semver;
-// Re-exported so downstream (bun_bundler) can name the trait in
-// `Transpiler::get_package_manager`'s return type without a direct
-// `bun_install_types` dep (LAYERING: pass-through, no new edge).
-pub use ::bun_install_types::resolver_hooks::AutoInstaller as PackageManagerTrait;
 
 // LAYERING: `PackageManager.initWithRuntime` lives in
 // `bun_install`, which depends on this crate. The lazy-init body is defined
 // `#[no_mangle]` in `bun_install::auto_installer` and resolved at link time
 // (same pattern as `__bun_regex_*` / `__BUN_RUNTIME_HOOKS`). `install` is the
-// `?*Api.BunInstall` (`self.opts.install`); `env` is the `*DotEnv.Loader`
-// (lifetime-erased to `'static` — the install crate stores it as a raw
-// `NonNull<Loader<'static>>`).
+// `?*Api.BunInstall` (`self.opts.install`); `env` is the `*DotEnv.Loader`.
 unsafe extern "Rust" {
     /// SAFETY (genuine FFI precondition — NOT a `safe fn` candidate): impl
     /// reborrows `&mut *log` / `&mut *env` and reads `*install` if non-null.
@@ -41,7 +35,7 @@ unsafe extern "Rust" {
     fn __bun_resolver_init_package_manager(
         log: NonNull<bun_ast::Log>,
         install: Option<NonNull<bun_options_types::schema::api::BunInstall>>,
-        env: NonNull<bun_dotenv::Loader<'static>>,
+        env: NonNull<bun_dotenv::Loader>,
     ) -> core::result::Result<NonNull<dyn AutoInstaller>, bun_errno::SystemErrno>;
 }
 use crate::cache::Set as CacheSet;
@@ -58,10 +52,6 @@ pub mod Dependency {
     }
 }
 
-/// Transitional re-export module: `package_json.rs` and a few external crates
-/// still spell these paths via `__forward_decls`; the items are now real
-/// re-exports of `bun_install_types` (no local stubs).
-pub(crate) mod __forward_decls {}
 // bun_paths shim — value-dispatched join helpers over `resolve_path::Platform`.
 // `dirname` (`Option`-returning) and
 // `PosixToWinNormalizer` are the real `::bun_paths` items — brought in by the
@@ -297,9 +287,9 @@ use bun_ast::SideEffects;
 // address is stable across `Vec` growth, so handing out `&'static T` is sound.
 
 /// Intern a parsed `PackageJSON` into the process-lifetime DirInfo arena.
-/// Returns `NonNull` (not `&'static`) so the mut-provenance survives into
-/// `DirInfo::reset()`'s `drop_in_place` -- handing out `&T` here and casting
-/// back to `*mut T` at the drop site would be UB under Stacked Borrows.
+/// Returns `NonNull` (not `&'static`) so mut-provenance survives to write
+/// sites — handing out `&T` here and casting back to `*mut T` would be UB
+/// under Stacked Borrows.
 fn intern_package_json(pkg: PackageJSON) -> core::ptr::NonNull<PackageJSON> {
     // `Box` is load-bearing: returns `NonNull<PackageJSON>` derived from the
     // box interior, treated as `'static`; unboxing would dangle on `Vec` realloc.
@@ -332,8 +322,6 @@ static ResolverDev: bun_core::output::ScopedLogger =
 // DirnameStore/FilenameStore). Alias here so the ~80 bare-`Path` use sites
 // resolve without a per-site lifetime annotation.
 type Path = crate::fs::Path<'static>;
-
-use crate::dir_info::HashMapExt as _;
 
 /// A temporary threadlocal buffer with a lifetime more than the current
 /// function call.
@@ -380,7 +368,6 @@ pub struct Bufs {
     pub remap_path_trailing_slash: PathBuffer,
     pub path_in_global_disk_cache: PathBuffer,
     pub abs_to_rel: PathBuffer,
-    pub node_modules_paths_buf: PathBuffer,
     pub import_path_for_standalone_module_graph: PathBuffer,
 
     #[cfg(windows)]
@@ -477,30 +464,6 @@ pub use bun_watcher::AnyResolveWatcher;
 // runtime fn-pointer alongside the context — `init` produces the
 // `AnyResolveWatcher` erased shim.
 
-pub struct ResolveWatcher<C> {
-    on_watch: fn(*mut C, &[u8], FD),
-    _marker: core::marker::PhantomData<*mut C>,
-}
-impl<C> ResolveWatcher<C> {
-    pub const fn new(on_watch: fn(*mut C, &[u8], FD)) -> Self {
-        Self {
-            on_watch,
-            _marker: core::marker::PhantomData,
-        }
-    }
-    pub fn init(self, ctx: *mut C) -> AnyResolveWatcher {
-        AnyResolveWatcher {
-            context: ctx.cast(),
-            // SAFETY: `fn(*mut C, ..)` and `fn(*mut (), ..)` are ABI-identical
-            // (Rust-ABI, thin-ptr first arg). The callback body discharges its
-            // own type-recovery.
-            callback: unsafe {
-                bun_ptr::cast_fn_ptr::<fn(*mut C, &[u8], FD), fn(*mut (), &[u8], FD)>(self.on_watch)
-            },
-        }
-    }
-}
-
 pub struct Resolver<'a> {
     pub opts: options::BundleOptions,
     // NOTE: `fs` / `log` are raw aliasing
@@ -548,7 +511,7 @@ pub struct Resolver<'a> {
     // → `run_env_loader()` which takes `&mut *self.env`). Holding a live
     // `&Loader` across that `&mut Loader` would be aliased-&mut UB; a raw
     // pointer carries no aliasing guarantee.
-    pub env_loader: Option<NonNull<DotEnv::Loader<'a>>>,
+    pub env_loader: Option<NonNull<DotEnv::Loader>>,
     pub store_fd: bool,
 
     pub standalone_module_graph: Option<&'a dyn StandaloneModuleGraph>,
@@ -670,8 +633,7 @@ impl<'a> Resolver<'a> {
             generation: from.generation,
             package_manager: from.package_manager,
             on_wake_package_manager: from.on_wake_package_manager,
-            // SAFETY: see fn doc — pointee outlives `'a`.
-            env_loader: from.env_loader.map(|p| p.cast::<DotEnv::Loader<'a>>()),
+            env_loader: from.env_loader,
             store_fd: from.store_fd,
             // SAFETY: see fn doc — lifetime-widen the trait-object borrow. The
             // vtable layout is identical (only the borrow-checker tag differs);
@@ -733,13 +695,6 @@ impl<'a> Resolver<'a> {
         // all mutation across worker clones; `&mut self` rules out
         // intra-instance aliasing.
         unsafe { &mut *self.fs }
-    }
-
-    /// Resolve the current [`options::ExtOrder`] tag to the slice it names
-    /// inside `self.opts`.
-    #[inline(always)]
-    pub fn extension_order(&self) -> &[Box<[u8]>] {
-        self.opts.ext_order_slice(self.extension_order)
     }
 
     /// Raw-pointer projection to the inner `RealFS` (`self.fs.fs`).
@@ -875,13 +830,9 @@ impl<'a> Resolver<'a> {
         if let Some(pm) = self.package_manager {
             return Ok(pm.as_ptr());
         }
-        // SAFETY: `DotEnv::Loader<'a>` is layout-identical across `'a`;
-        // `init_with_runtime` only borrows it for the synchronous init (the
-        // static `PackageManager` retains a raw `NonNull<Loader<'static>>`).
-        let env: NonNull<DotEnv::Loader<'static>> = self
+        let env: NonNull<DotEnv::Loader> = self
             .env_loader
-            .expect("Resolver.env_loader must be set before auto-install")
-            .cast::<DotEnv::Loader<'static>>();
+            .expect("Resolver.env_loader must be set before auto-install");
         // SAFETY: `__bun_resolver_init_package_manager` is defined
         // `#[no_mangle]` in `bun_install::auto_installer` and linked into the
         // final binary; `self.log` / `self.opts.install` / `env` point at
@@ -921,7 +872,7 @@ impl<'a> Resolver<'a> {
     /// live concurrently — see the field comment for why this is *not* stored
     /// as `Option<&'a Loader>`.
     #[inline]
-    pub fn env_loader(&self) -> Option<&'a DotEnv::Loader<'a>> {
+    pub fn env_loader(&self) -> Option<&'a DotEnv::Loader> {
         // SAFETY: BACKREF — `env_loader` names the Transpiler-owned
         // `DotEnv::Loader`, live for the resolver's lifetime `'a`; resolution
         // never mutates the env, so no `&mut Loader` overlaps this shared
@@ -1199,6 +1150,9 @@ impl<'a> Resolver<'a> {
                         rewrite_jest_for_tests: self.opts.rewrite_jest_for_tests,
                     },
                 )
+                // Node's `--expose-internals`.
+                || (import_path.starts_with(b"internal/")
+                    && ::bun_resolve_builtins::expose_internals_enabled())
             {
                 self.extension_order = original_order;
                 return ResultUnion::Success(Result {
@@ -2272,9 +2226,7 @@ impl<'a> Resolver<'a> {
                 //
                 // [1]: https://github.com/oven-sh/bun/issues/16705
                 // [2]: https://github.com/nodejs/node/blob/e346323109b49fa6b9a4705f4e3816fc3a30c151/lib/internal/modules/cjs/loader.js#L1934
-                if cfg!(debug_assertions) {
-                    debug_assert!(is_package_path(import_path));
-                }
+                debug_assert!(is_package_path(import_path));
                 let mut closest_dir = source_dir;
                 // `dirname` returns `None` once the entire directory tree
                 // has been visited. `None` is theoretically impossible since
@@ -2452,78 +2404,6 @@ impl<'a> Resolver<'a> {
             MatchStatus::Pending(p) => ResultUnion::Pending(*p),
             MatchStatus::Failure(p) => ResultUnion::Failure(p),
             MatchStatus::NotFound => ResultUnion::NotFound,
-        }
-    }
-
-    // This is a fallback, hopefully not called often. It should be relatively quick because everything should be in the cache.
-    pub fn package_json_for_resolved_node_module(
-        &mut self,
-        result: &Result,
-    ) -> Option<*const PackageJSON> {
-        let mut dir_info = self
-            .dir_info_cached(result.path_pair.primary.name().dir)
-            .ok()
-            .flatten()?;
-        loop {
-            if let Some(pkg) = dir_info.package_json() {
-                // if it doesn't have a name, assume it's something just for adjusting the main fields (react-bootstrap does this)
-                // In that case, we really would like the top-level package that you download from NPM
-                // so we ignore any unnamed packages
-                return Some(std::ptr::from_ref(pkg));
-            }
-
-            dir_info = dir_info.get_parent()?;
-        }
-    }
-
-    pub fn root_node_module_package_json(&mut self, result: &Result) -> Option<RootPathPair<'_>> {
-        let path = result.path_const()?;
-        let mut absolute = path.text();
-        // /foo/node_modules/@babel/standalone/index.js
-        //     ^------------^
-        let mut end = strings::last_index_of(absolute, NODE_MODULE_ROOT_STRING).or_else(|| {
-            // try non-symlinked version
-            if path.pretty().len() != absolute.len() {
-                absolute = path.pretty();
-                return strings::last_index_of(absolute, NODE_MODULE_ROOT_STRING);
-            }
-            None
-        })?;
-        end += NODE_MODULE_ROOT_STRING.len();
-
-        let is_scoped_package = absolute[end] == b'@';
-        end += strings::index_of_char(&absolute[end..], SEP)? as usize;
-
-        // /foo/node_modules/@babel/standalone/index.js
-        //                   ^
-        if is_scoped_package {
-            end += 1;
-            end += strings::index_of_char(&absolute[end..], SEP)? as usize;
-        }
-
-        end += 1;
-
-        // /foo/node_modules/@babel/standalone/index.js
-        //                                    ^
-        let slice = &absolute[0..end];
-
-        // Try to avoid the hash table lookup whenever possible
-        // That can cause filesystem lookups in parent directories and it requires a lock
-        if let Some(pkg) = result.package_json_ref() {
-            if slice == pkg.source.path.name().dir_with_trailing_slash() {
-                return Some(RootPathPair {
-                    package_json: std::ptr::from_ref(pkg),
-                    base_path: slice,
-                });
-            }
-        }
-
-        {
-            let dir_info = self.dir_info_cached(slice).ok().flatten()?;
-            Some(RootPathPair {
-                base_path: slice,
-                package_json: std::ptr::from_ref(dir_info.package_json()?),
-            })
         }
     }
 
@@ -3254,7 +3134,6 @@ impl<'a> Resolver<'a> {
                                     return MatchStatus::Pending(Box::new(PendingResolution {
                                         esm: cloned,
                                         dependency: dependency_version,
-                                        resolution_id: resolved_package_id,
                                         string_buf,
                                         tag: PendingResolutionTag::Download,
                                         ..Default::default()
@@ -3466,7 +3345,10 @@ impl<'a> Resolver<'a> {
                 unsafe { &mut *rfs }
             };
         }
-        // resolver mutex held; `EntriesMap` methods are safe wrappers over the singleton.
+        // Hold `entries_mutex` across the in-place `DirEntry` rewrite below and
+        // the `dir_info_uncached` call, mirroring `dir_info_cached_miss`: the
+        // route loaders iterate the `DirEntry.data` map under this lock.
+        let _entries_unlock = rfs!().entries_mutex.lock_guard();
         let mut cached_dir_entry_result = rfs!().entries.get_or_put(dir_path)?;
 
         // NOTE: always assigned by either the cached-hit arm or the
@@ -4148,6 +4030,16 @@ impl<'a> Resolver<'a> {
             return Ok(None);
         }
 
+        // `PathName::init` leaves `.dir` empty when the separator is the
+        // leading one (e.g. `/a.js`) or the path has no separator at all
+        // (virtual/plugin specifiers). Callers like `finalize_result` pass
+        // that `.dir` straight through and already treat `None` as "skip",
+        // so return it here instead of walking the cache with an empty key.
+        // https://github.com/oven-sh/bun/issues/30429
+        if input_path.is_empty() {
+            return Ok(None);
+        }
+
         #[cfg(windows)]
         {
             let win32_normalized_dir_info_cache_buf = bufs!(win32_normalized_dir_info_cache);
@@ -4180,11 +4072,12 @@ impl<'a> Resolver<'a> {
             }
         }
 
-        assert!(
-            bun_paths::is_absolute(input_path),
-            "cannot resolve DirInfo for non-absolute path: {}",
-            bstr::BStr::new(input_path)
-        );
+        // A non-absolute path has no DirInfo. Every caller already routes
+        // `Ok(None)` into its fallback, so bail instead of panicking on a
+        // path shape the caller produced.
+        if !bun_paths::is_absolute(input_path) {
+            return Ok(None);
+        }
 
         let path_without_trailing_slash = strings::without_trailing_slash_windows_path(input_path);
         Self::assert_valid_cache_key(path_without_trailing_slash);
@@ -4348,9 +4241,7 @@ impl<'a> Resolver<'a> {
         }
 
         let mut queue_slice_len = i;
-        if cfg!(debug_assertions) {
-            debug_assert!(queue_slice_len > 0);
-        }
+        debug_assert!(queue_slice_len > 0);
         let open_dir_count = core::cell::Cell::new(0usize);
 
         // When this function halts, any item not processed means it's not found.
@@ -4433,7 +4324,6 @@ impl<'a> Resolver<'a> {
                             bun_sys::WindowsOpenDirOptions {
                                 iterable: true,
                                 no_follow: false,
-                                read_only: true,
                                 ..Default::default()
                             },
                         )
@@ -4463,6 +4353,23 @@ impl<'a> Resolver<'a> {
                                 || err == crate::Error::Sys(bun_errno::SystemErrno::EISDIR)
                             {
                                 return Ok(None);
+                            }
+                            // A permission-denied ancestor (sandboxed drive roots, x-only
+                            // shared dirs) is treated as opaque and empty, like the
+                            // ENOTDIR tolerance; the requested directory itself stays fatal.
+                            if queue_slice_len > 0
+                                && matches!(
+                                    err,
+                                    crate::Error::Sys(bun_errno::SystemErrno::EPERM)
+                                        | crate::Error::Sys(bun_errno::SystemErrno::EACCES)
+                                )
+                            {
+                                debuglog!(
+                                    "treating permission-denied ancestor \"{}\" as empty: {}",
+                                    bstr::BStr::new(queue_top_unsafe_path),
+                                    bstr::BStr::new(err.name())
+                                );
+                                break 'open_dir FD::INVALID;
                             }
                             let cached_dir_entry_result = rfs!()
                                 .entries
@@ -4496,7 +4403,9 @@ impl<'a> Resolver<'a> {
                 }
             };
 
-            if !queue_top.fd.is_valid() {
+            // `open_dir` is INVALID for a permission-denied ancestor treated as
+            // an opaque directory; there is nothing to track or close then.
+            if !queue_top.fd.is_valid() && open_dir.is_valid() {
                 Fs::FileSystem::set_max_fd(open_dir.native());
                 // these objects mostly just wrap the file descriptor, so it's fine to keep it.
                 bufs!(open_dirs)[open_dir_count.get()] = open_dir;
@@ -4590,27 +4499,31 @@ impl<'a> Resolver<'a> {
                 // still rehash from there (cheap relative to starting at 0).
                 new_entry.data.reserve(64);
 
-                let mut dir_iterator = bun_sys::iterate_dir(open_dir);
-                // NOTE: `WrappedIterator::next` returns
-                // `Result<Option<IteratorResult>>`, so use `?`-style break-on-error.
-                // Hoist the `FilenameStore` singleton resolve out of the per-entry loop
-                // (see `DirEntry::add_entry` doc-comment) and reuse the appender state.
-                let mut filename_store = FilenameStoreAppender::new();
-                loop {
-                    let _value = match dir_iterator.next() {
-                        Ok(Some(v)) => v,
-                        Ok(None) => break,
-                        Err(_) => break,
-                    };
-                    new_entry
-                        .add_entry_with_store(
-                            // SAFETY: see block-wide note above.
-                            in_place.map(|existing| unsafe { &mut (*existing).data }),
-                            &_value,
-                            &mut filename_store,
-                            (),
-                        )
-                        .expect("unreachable");
+                // A permission-denied ancestor has no fd to enumerate; its
+                // entry set stays empty.
+                if open_dir.is_valid() {
+                    let mut dir_iterator = bun_sys::iterate_dir(open_dir);
+                    // NOTE: `WrappedIterator::next` returns
+                    // `Result<Option<IteratorResult>>`, so use `?`-style break-on-error.
+                    // Hoist the `FilenameStore` singleton resolve out of the per-entry loop
+                    // (see `DirEntry::add_entry` doc-comment) and reuse the appender state.
+                    let mut filename_store = FilenameStoreAppender::new();
+                    loop {
+                        let _value = match dir_iterator.next() {
+                            Ok(Some(v)) => v,
+                            Ok(None) => break,
+                            Err(_) => break,
+                        };
+                        new_entry
+                            .add_entry_with_store(
+                                // SAFETY: see block-wide note above.
+                                in_place.map(|existing| unsafe { &mut (*existing).data }),
+                                &_value,
+                                &mut filename_store,
+                                (),
+                            )
+                            .expect("unreachable");
+                    }
                 }
                 if let Some(existing) = in_place {
                     // SAFETY: see block-wide note above.
@@ -4793,7 +4706,8 @@ impl<'a> Resolver<'a> {
                 // because we want the output to always be deterministic
                 let plen = i32::try_from(prefix.len()).expect("int cast");
                 let slen = i32::try_from(suffix.len()).expect("int cast");
-                if path.starts_with(prefix)
+                if path.len() >= prefix.len() + suffix.len()
+                    && path.starts_with(prefix)
                     && path.ends_with(suffix)
                     && (plen > longest_match_prefix_length
                         || (plen == longest_match_prefix_length
@@ -5456,9 +5370,7 @@ impl<'a> Resolver<'a> {
                 }
             }
 
-            if cfg!(debug_assertions) {
-                debug_assert!(bun_paths::is_absolute(file.path));
-            }
+            debug_assert!(bun_paths::is_absolute(file.path));
 
             *out = MatchResult {
                 path_pair: PathPair {
@@ -6201,7 +6113,10 @@ impl<'a> Resolver<'a> {
 
             // Make sure "absRealPath" is the real path of the directory (resolving any symlinks)
             if !self.opts.preserve_symlinks {
-                if let Some(parent_entries) = parent_.get_entries_ref(self.generation) {
+                // The only caller that reaches this with `parent` set
+                // (`dir_info_cached_miss`) already holds `entries_mutex`, and that
+                // mutex is non-recursive, so go through the `_locked` accessor.
+                if let Some(parent_entries) = parent_.get_entries_ref_locked(self.generation) {
                     if let Some(lookup) = parent_entries.get(base) {
                         let entries_fd = entries!().fd;
                         if entries_fd.is_valid()
@@ -6545,29 +6460,6 @@ impl<'a> Resolver<'a> {
     }
 }
 
-impl<'a> Resolver<'a> {
-    /// NOTE: NOT `impl Drop` — the bundler builds a `Resolver` per worker
-    /// thread (see `for_worker`), and all instances share the same `dir_cache`
-    /// singleton. A `Drop` impl would fire once per worker going out of scope,
-    /// resetting the SHARED cache (freeing PackageJSON/TSConfigJSON, closing cached
-    /// fds) while other live Resolvers still hold pointers into it. Call
-    /// `deinit` explicitly exactly once at shutdown.
-    pub fn deinit(&mut self) {
-        // Caller is the sole remaining owner at shutdown; no other Resolver alias is live.
-        for di in self.dir_cache_mut().values_mut() {
-            // `DirInfo::reset` releases owned PackageJSON / TSConfigJSON resources
-            // in-place (side effects beyond memory: those Drops close cached fds /
-            // deref intrusive refcounts).
-            di.reset();
-        }
-        // dir_cache is &'static — do not deinit the singleton here. `dir_cache`
-        // is the process-global
-        // BSSMap singleton (`DirInfo.HashMap` / `hash_map_instance()`); the
-        // entries' owned resources are released by the `reset()` loop above and
-        // the map storage itself lives for the process.
-    }
-}
-
 // ─── nested helper types ───────────────────────────────────────────────────
 
 enum DependencyToResolve {
@@ -6705,9 +6597,6 @@ fn module_type_from_ext(ext: &[u8]) -> Option<options::ModuleType> {
     MODULE_TYPE_FROM_EXT.get(ext).copied()
 }
 
-const NODE_MODULE_ROOT_STRING: &[u8] =
-    const_format::concatcp!(SEP_STR, "node_modules", SEP_STR).as_bytes();
-
 pub struct Dirname;
 
 impl Dirname {
@@ -6763,9 +6652,4 @@ impl Dirname {
 
         &path[0..end_index + 1]
     }
-}
-
-pub struct RootPathPair<'b> {
-    pub base_path: &'b [u8],
-    pub package_json: *const PackageJSON,
 }

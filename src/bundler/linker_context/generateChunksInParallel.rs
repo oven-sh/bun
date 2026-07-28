@@ -1311,8 +1311,6 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
     Ok(output_files.take())
 }
 
-pub use crate::ThreadPool;
-
 use crate::EntryPoint;
 use crate::options::SourceMapOption;
 use crate::output_file::BakeExtra;

@@ -92,11 +92,6 @@ impl EnvMap {
         self.map.keys().iter().zip(self.map.values())
     }
 
-    pub fn clear_retaining_capacity(&mut self) {
-        self.deref_strings();
-        self.map.clear_retaining_capacity();
-    }
-
     pub fn ensure_total_capacity(&mut self, new_capacity: usize) {
         self.map.ensure_total_capacity(new_capacity).expect("OOM");
     }
@@ -114,11 +109,6 @@ impl EnvMap {
         };
         new.ref_strings();
         new
-    }
-
-    // With a single global allocator (mimalloc), this is identical to `clone`.
-    pub fn clone_with_allocator(&self) -> EnvMap {
-        self.clone()
     }
 
     fn ref_strings(&self) {

@@ -1,5 +1,7 @@
+import { dlopen, FFIType } from "bun:ffi";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles, VerdaccioRegistry } from "harness";
+import { closeSync, createReadStream } from "fs";
+import { bunEnv, bunExe, isMusl, isWindows, tempDir, VerdaccioRegistry } from "harness";
 import { join } from "path";
 
 let registry: VerdaccioRegistry;
@@ -17,7 +19,7 @@ afterAll(() => {
 
 describe("bun update --interactive", () => {
   it("should handle package names of unusual lengths", async () => {
-    const dir = tempDirWithFiles("update-interactive-test", {
+    await using dir = tempDir("update-interactive-test", {
       "package.json": JSON.stringify({
         name: "test-project",
         version: "1.0.0",
@@ -128,7 +130,7 @@ describe("bun update --interactive", () => {
   });
 
   it("should handle version strings of unusual lengths", async () => {
-    const dir = tempDirWithFiles("update-interactive-versions-test", {
+    await using dir = tempDir("update-interactive-versions-test", {
       "package.json": JSON.stringify({
         name: "test-project",
         version: "1.0.0",
@@ -180,7 +182,7 @@ describe("bun update --interactive", () => {
 
   it("should truncate extremely long package names", async () => {
     const extremelyLongPackageName = "a".repeat(100);
-    const dir = tempDirWithFiles("update-interactive-truncate-test", {
+    await using dir = tempDir("update-interactive-truncate-test", {
       "package.json": JSON.stringify({
         name: "test-project",
         version: "1.0.0",
@@ -221,7 +223,7 @@ describe("bun update --interactive", () => {
   });
 
   it("should show workspace column with --filter", async () => {
-    const dir = tempDirWithFiles("update-interactive-workspace-col-test", {
+    await using dir = tempDir("update-interactive-workspace-col-test", {
       "package.json": JSON.stringify({
         name: "root",
         version: "1.0.0",
@@ -259,7 +261,7 @@ describe("bun update --interactive", () => {
   });
 
   it("should handle catalog dependencies in interactive update", async () => {
-    const dir = tempDirWithFiles("update-interactive-catalog-test", {
+    await using dir = tempDir("update-interactive-catalog-test", {
       "package.json": JSON.stringify({
         name: "root",
         version: "1.0.0",
@@ -301,7 +303,7 @@ describe("bun update --interactive", () => {
   });
 
   it("should handle mixed dependency types with various name lengths", async () => {
-    const dir = tempDirWithFiles("update-interactive-mixed-test", {
+    await using dir = tempDir("update-interactive-mixed-test", {
       "package.json": JSON.stringify({
         name: "test-project",
         version: "1.0.0",
@@ -358,8 +360,109 @@ describe("bun update --interactive", () => {
     expect(stderr).not.toContain("overflow");
   });
 
+  // The header's help-text budget is `terminal_width - 30`; on a tty narrower
+  // than 30 columns that usize subtraction overflows (panics on overflow-checks
+  // builds). Exercise the render path through a 20-column pty.
+  it.skipIf(isWindows)("should render on a terminal narrower than the header prefix", async () => {
+    const openptyDecl = {
+      args: [FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr],
+      returns: FFIType.i32,
+    } as const;
+    const lib =
+      process.platform === "darwin"
+        ? dlopen("libc.dylib", { openpty: openptyDecl })
+        : isMusl
+          ? dlopen(process.arch === "arm64" ? "libc.musl-aarch64.so.1" : "libc.musl-x86_64.so.1", {
+              openpty: openptyDecl,
+            })
+          : dlopen("libutil.so.1", { openpty: openptyDecl });
+
+    const masterBuf = new Int32Array(1);
+    const slaveBuf = new Int32Array(1);
+    // struct winsize { u16 ws_row; u16 ws_col; u16 ws_xpixel; u16 ws_ypixel; }
+    const winsize = new Uint16Array([24, 20, 0, 0]);
+    expect(lib.symbols.openpty(masterBuf, slaveBuf, null, null, winsize)).toBe(0);
+    const master = masterBuf[0];
+    const slave = slaveBuf[0];
+    let slaveOpen = true;
+
+    try {
+      await using dir = tempDir("update-interactive-narrow-tty", {
+        "bunfig.toml": `[install]
+cache = false
+registry = "${registryUrl}"
+`,
+        "package.json": JSON.stringify({
+          name: "test-project",
+          version: "1.0.0",
+          dependencies: { "no-deps": "1.0.0" },
+        }),
+      });
+
+      await using install = Bun.spawn({
+        cmd: [bunExe(), "install"],
+        cwd: dir,
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [installOut, installErr, installCode] = await Promise.all([
+        install.stdout.text(),
+        install.stderr.text(),
+        install.exited,
+      ]);
+      expect({ stdout: installOut, stderr: installErr, exitCode: installCode }).toMatchObject({ exitCode: 0 });
+
+      await using update = Bun.spawn({
+        cmd: [bunExe(), "update", "--interactive", "--dry-run"],
+        cwd: dir,
+        env: bunEnv,
+        stdin: "pipe",
+        stdout: slave,
+        stderr: "pipe",
+      });
+      // Drop the parent's slave handle so master reads see EOF on child exit.
+      closeSync(slave);
+      slaveOpen = false;
+
+      // Drain the master concurrently so a crashing debug build's backtrace
+      // doesn't block on a full pty buffer.
+      let ptyOutput = "";
+      const ptyStream = createReadStream("", { fd: master, autoClose: false });
+      const drained = new Promise<void>(resolve => {
+        ptyStream.on("data", chunk => (ptyOutput += chunk.toString("utf8")));
+        ptyStream.on("error", () => resolve());
+        ptyStream.on("end", () => resolve());
+        ptyStream.on("close", () => resolve());
+      });
+
+      update.stdin.write("\r");
+      update.stdin.end();
+
+      const [stderr, exitCode] = await Promise.all([update.stderr.text(), update.exited]);
+      await drained;
+
+      if (exitCode !== 0) {
+        console.error("stderr:", stderr);
+      }
+
+      // The header proves we reached process_multi_select where width is used.
+      expect(ptyOutput).toContain("Select packages to update");
+      expect(exitCode).toBe(0);
+    } finally {
+      if (slaveOpen) {
+        try {
+          closeSync(slave);
+        } catch {}
+      }
+      try {
+        closeSync(master);
+      } catch {}
+    }
+  });
+
   it("should update packages when 'a' (select all) is used", async () => {
-    const dir = tempDirWithFiles("update-interactive-select-all", {
+    await using dir = tempDir("update-interactive-select-all", {
       "bunfig.toml": `[install]
 cache = false
 registry = "${registryUrl}"
@@ -428,7 +531,7 @@ registry = "${registryUrl}"
   });
 
   it("should handle workspace updates with recursive flag", async () => {
-    const dir = tempDirWithFiles("update-interactive-workspace-recursive", {
+    await using dir = tempDir("update-interactive-workspace-recursive", {
       "bunfig.toml": `[install]
 cache = false
 registry = "${registryUrl}"
@@ -484,7 +587,7 @@ registry = "${registryUrl}"
   });
 
   it("should handle catalog updates correctly", async () => {
-    const dir = tempDirWithFiles("update-interactive-catalog-actual", {
+    await using dir = tempDir("update-interactive-catalog-actual", {
       "bunfig.toml": `[install]
 cache = false
 registry = "${registryUrl}"
@@ -548,7 +651,7 @@ registry = "${registryUrl}"
   });
 
   it("should work correctly when run from inside a workspace directory", async () => {
-    const dir = tempDirWithFiles("update-interactive-from-workspace", {
+    await using dir = tempDir("update-interactive-from-workspace", {
       "bunfig.toml": `[install]
 cache = false
 registry = "${registryUrl}"
@@ -618,7 +721,7 @@ registry = "${registryUrl}"
   });
 
   it("should handle basic interactive update with select all", async () => {
-    const dir = tempDirWithFiles("update-interactive-basic", {
+    await using dir = tempDir("update-interactive-basic", {
       "bunfig.toml": `[install]
 cache = false
 registry = "${registryUrl}"
@@ -665,7 +768,7 @@ registry = "${registryUrl}"
   });
 
   it("should preserve version prefixes for all semver range types in catalogs", async () => {
-    const dir = tempDirWithFiles("update-interactive-semver-prefixes", {
+    await using dir = tempDir("update-interactive-semver-prefixes", {
       "bunfig.toml": `[install]
 cache = false
 registry = "${registryUrl}"
@@ -727,7 +830,7 @@ registry = "${registryUrl}"
   });
 
   it("should handle catalog updates in workspaces.catalogs object", async () => {
-    const dir = tempDirWithFiles("update-interactive-workspaces-catalogs", {
+    await using dir = tempDir("update-interactive-workspaces-catalogs", {
       "bunfig.toml": `[install]
 cache = false
 registry = "${registryUrl}"
@@ -797,7 +900,7 @@ registry = "${registryUrl}"
   });
 
   it("should handle mixed workspace and catalog dependencies", async () => {
-    const dir = tempDirWithFiles("update-interactive-mixed-deps", {
+    await using dir = tempDir("update-interactive-mixed-deps", {
       "bunfig.toml": `[install]
 cache = false
 registry = "${registryUrl}"
@@ -867,7 +970,7 @@ registry = "${registryUrl}"
   });
 
   it("should handle selecting specific packages in interactive mode", async () => {
-    const dir = tempDirWithFiles("update-interactive-selective", {
+    await using dir = tempDir("update-interactive-selective", {
       "bunfig.toml": `[install]
 cache = false
 registry = "${registryUrl}"
@@ -926,7 +1029,7 @@ registry = "${registryUrl}"
   });
 
   it("should handle empty catalog definitions gracefully", async () => {
-    const dir = tempDirWithFiles("update-interactive-empty-catalog", {
+    await using dir = tempDir("update-interactive-empty-catalog", {
       "bunfig.toml": `[install]
 cache = false
 registry = "${registryUrl}"
@@ -982,7 +1085,7 @@ registry = "${registryUrl}"
   });
 
   it("should handle cancellation (Ctrl+C) gracefully", async () => {
-    const dir = tempDirWithFiles("update-interactive-cancel", {
+    await using dir = tempDir("update-interactive-cancel", {
       "bunfig.toml": `[install]
 cache = false
 registry = "${registryUrl}"
@@ -1032,7 +1135,7 @@ registry = "${registryUrl}"
   });
 
   it("should handle packages with pre-release versions correctly", async () => {
-    const dir = tempDirWithFiles("update-interactive-prerelease", {
+    await using dir = tempDir("update-interactive-prerelease", {
       "bunfig.toml": `[install]
 cache = false
 registry = "${registryUrl}"
@@ -1084,7 +1187,7 @@ registry = "${registryUrl}"
   });
 
   it("should update catalog in workspaces object (not workspaces.catalogs)", async () => {
-    const dir = tempDirWithFiles("update-interactive-workspaces-catalog", {
+    await using dir = tempDir("update-interactive-workspaces-catalog", {
       "bunfig.toml": `[install]
 cache = false
 registry = "${registryUrl}"
@@ -1146,7 +1249,7 @@ registry = "${registryUrl}"
   });
 
   it("should handle scoped packages in catalogs correctly", async () => {
-    const dir = tempDirWithFiles("update-interactive-scoped-catalog", {
+    await using dir = tempDir("update-interactive-scoped-catalog", {
       "bunfig.toml": `[install]
 cache = false
 registry = "${registryUrl}"
@@ -1206,7 +1309,7 @@ registry = "${registryUrl}"
   });
 
   it("should handle catalog updates when running from root with filter", async () => {
-    const dir = tempDirWithFiles("update-interactive-filter-catalog", {
+    await using dir = tempDir("update-interactive-filter-catalog", {
       "bunfig.toml": `[install]
 cache = false
 registry = "${registryUrl}"
@@ -1270,7 +1373,7 @@ registry = "${registryUrl}"
   });
 
   it("should handle multiple catalog definitions with same package", async () => {
-    const dir = tempDirWithFiles("update-interactive-multi-catalog", {
+    await using dir = tempDir("update-interactive-multi-catalog", {
       "bunfig.toml": `[install]
 cache = false
 registry = "${registryUrl}"
@@ -1338,7 +1441,7 @@ registry = "${registryUrl}"
   });
 
   it("should handle version ranges with multiple conditions", async () => {
-    const dir = tempDirWithFiles("update-interactive-complex-ranges", {
+    await using dir = tempDir("update-interactive-complex-ranges", {
       "bunfig.toml": `[install]
 cache = false
 registry = "${registryUrl}"
@@ -1396,7 +1499,7 @@ registry = "${registryUrl}"
   });
 
   it("should handle dry-run mode correctly", async () => {
-    const dir = tempDirWithFiles("update-interactive-dry-run", {
+    await using dir = tempDir("update-interactive-dry-run", {
       "bunfig.toml": `[install]
 cache = false
 registry = "${registryUrl}"
@@ -1448,7 +1551,7 @@ registry = "${registryUrl}"
   });
 
   it("should handle keyboard navigation correctly", async () => {
-    const dir = tempDirWithFiles("update-interactive-navigation", {
+    await using dir = tempDir("update-interactive-navigation", {
       "bunfig.toml": `[install]
 cache = false
 registry = "${registryUrl}"
@@ -1500,7 +1603,7 @@ registry = "${registryUrl}"
 
   // Comprehensive tests from separate file
   it("comprehensive interactive update test with all scenarios", async () => {
-    const dir = tempDirWithFiles("update-interactive-comprehensive", {
+    await using dir = tempDir("update-interactive-comprehensive", {
       "bunfig.toml": `[install]
 cache = false
 registry = "${registryUrl}"
@@ -1644,7 +1747,7 @@ registry = "${registryUrl}"
   });
 
   it("interactive update with workspace filters", async () => {
-    const dir = tempDirWithFiles("update-interactive-filter", {
+    await using dir = tempDir("update-interactive-filter", {
       "bunfig.toml": `[install]
 cache = false
 registry = "${registryUrl}"
@@ -1713,7 +1816,7 @@ registry = "${registryUrl}"
   });
 
   it("interactive update with workspaces.catalogs structure", async () => {
-    const dir = tempDirWithFiles("update-interactive-workspaces-catalogs", {
+    await using dir = tempDir("update-interactive-workspaces-catalogs", {
       "bunfig.toml": `[install]
 cache = false
 registry = "${registryUrl}"
@@ -1804,7 +1907,7 @@ registry = "${registryUrl}"
   });
 
   it("interactive update dry run mode", async () => {
-    const dir = tempDirWithFiles("update-interactive-dry-run", {
+    await using dir = tempDir("update-interactive-dry-run", {
       "bunfig.toml": `[install]
 cache = false
 registry = "${registryUrl}"
@@ -1862,7 +1965,7 @@ registry = "${registryUrl}"
   });
 
   it("should preserve npm: alias prefix when updating packages", async () => {
-    const dir = tempDirWithFiles("update-interactive-npm-alias", {
+    await using dir = tempDir("update-interactive-npm-alias", {
       "bunfig.toml": `[install]
 cache = false
 registry = "${registryUrl}"
@@ -1907,7 +2010,7 @@ registry = "${registryUrl}"
   });
 
   it("interactive update with mixed dependency types", async () => {
-    const dir = tempDirWithFiles("update-interactive-mixed", {
+    await using dir = tempDir("update-interactive-mixed", {
       "bunfig.toml": `[install]
 cache = false
 registry = "${registryUrl}"

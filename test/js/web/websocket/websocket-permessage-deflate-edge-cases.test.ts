@@ -1,6 +1,8 @@
 import { serve } from "bun";
 import { expect, setDefaultTimeout, test } from "bun:test";
-import { deflateRawSync } from "node:zlib";
+import crypto from "node:crypto";
+import net from "node:net";
+import { deflateRawSync, constants as zc } from "node:zlib";
 
 // The decompression bomb test needs extra time to compress 150MB of test data
 setDefaultTimeout(30_000);
@@ -463,3 +465,108 @@ test("WebSocket client accepts RSV1 on the first frame of a fragmented compresse
 
   expect(outcome).toEqual({ code: 0, reason: "<still open>", messages: ["Hello, World!"] });
 });
+
+// RFC 7692 §7.2.3: a sender may end a DEFLATE stream with BFINAL=1 and begin
+// a fresh one for the next message. The client's inflater must be reset on
+// Z_STREAM_END even with context takeover, otherwise every later compressed
+// message is silently delivered as 0 bytes.
+test.each([false, true])(
+  "WebSocket client resets inflater after BFINAL (server_no_context_takeover=%p)",
+  async serverNoContextTakeover => {
+    // Deterministic incompressible bytes so msg1 bypasses the libdeflate fast
+    // path (200KiB decompressed exceeds the 128KiB output buffer) and reaches
+    // the persistent zlib stream.
+    const msg1 = Buffer.alloc(200 * 1024);
+    let x = 12345;
+    for (let i = 0; i < msg1.length; i++) {
+      x = (Math.imul(x, 1103515245) + 12345) | 0;
+      msg1[i] = (x >>> 16) & 255;
+    }
+    const msg2 = Buffer.alloc(30 * 19, "hello after bfinal ");
+    const msg3 = Buffer.alloc(30 * 6, "third ");
+
+    // msg1: Z_FINISH -> ends with BFINAL=1 (Z_STREAM_END on the receiver).
+    // msg2/msg3: Z_SYNC_FLUSH with the 4-byte trailer stripped (RFC 7692 §7.2.1).
+    const syncFlush = (p: Buffer) => {
+      const o = deflateRawSync(p, { flush: zc.Z_SYNC_FLUSH, finishFlush: zc.Z_SYNC_FLUSH });
+      return o.subarray(0, o.length - 4);
+    };
+    const wire = [deflateRawSync(msg1), syncFlush(msg2), syncFlush(msg3)];
+
+    const compressedBinaryFrame = (p: Buffer) => {
+      const h = [0xc2]; // FIN=1, RSV1=1, opcode=2 (binary)
+      if (p.length < 126) h.push(p.length);
+      else if (p.length < 65536) h.push(126, (p.length >> 8) & 0xff, p.length & 0xff);
+      else
+        h.push(
+          127,
+          0,
+          0,
+          0,
+          0,
+          Math.floor(p.length / 2 ** 24) & 0xff,
+          (p.length >>> 16) & 0xff,
+          (p.length >>> 8) & 0xff,
+          p.length & 0xff,
+        );
+      return Buffer.concat([Buffer.from(h), p]);
+    };
+
+    const ext = "permessage-deflate" + (serverNoContextTakeover ? "; server_no_context_takeover" : "");
+    const server = net.createServer(sock => {
+      sock.on("error", () => {});
+      let pre = Buffer.alloc(0);
+      const onData = (d: Buffer) => {
+        pre = Buffer.concat([pre, d]);
+        if (pre.indexOf("\r\n\r\n") < 0) return;
+        sock.off("data", onData);
+        const key = pre
+          .toString("latin1")
+          .match(/^sec-websocket-key:\s*(.*)$/im)![1]
+          .trim();
+        const acc = crypto
+          .createHash("sha1")
+          .update(key + WEBSOCKET_GUID)
+          .digest("base64");
+        sock.write(
+          "HTTP/1.1 101 Switching Protocols\r\n" +
+            "Upgrade: websocket\r\n" +
+            "Connection: Upgrade\r\n" +
+            `Sec-WebSocket-Accept: ${acc}\r\n` +
+            `Sec-WebSocket-Extensions: ${ext}\r\n` +
+            "\r\n",
+        );
+        for (const w of wire) sock.write(compressedBinaryFrame(w));
+      };
+      sock.on("data", onData);
+    });
+    await new Promise<void>(r => server.listen(0, "127.0.0.1", r));
+
+    const got: Buffer[] = [];
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    const ws = new WebSocket(`ws://127.0.0.1:${(server.address() as net.AddressInfo).port}/`);
+    ws.binaryType = "arraybuffer";
+    ws.onmessage = e => {
+      got.push(Buffer.from(e.data as ArrayBuffer));
+      if (got.length === 3) resolve();
+    };
+    ws.onerror = ev => reject(new Error(`WebSocket error: ${String(ev)}`));
+    ws.onclose = ev => reject(new Error(`closed before 3 messages: code=${ev.code} reason=${ev.reason}`));
+
+    try {
+      await promise;
+      expect({
+        msg1: { len: got[0].length, ok: got[0].equals(msg1) },
+        msg2: { len: got[1].length, ok: got[1].equals(msg2) },
+        msg3: { len: got[2].length, ok: got[2].equals(msg3) },
+      }).toEqual({
+        msg1: { len: 200 * 1024, ok: true },
+        msg2: { len: 570, ok: true },
+        msg3: { len: 180, ok: true },
+      });
+    } finally {
+      ws.close();
+      await new Promise<void>(r => server.close(() => r()));
+    }
+  },
+);

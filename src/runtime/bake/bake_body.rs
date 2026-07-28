@@ -12,7 +12,7 @@ use bun_collections::ArrayHashMap;
 use bun_core::Output;
 use bun_jsc::{JSGlobalObject, JSValue, JsError, JsResult, ZigStringSlice};
 // peechy batch 2 landed: `bun_options_types::schema::api` now provides
-// {StringMap, LoaderMap, DotEnvBehavior, SourceMapMode, TransformOptions}.
+// {StringMap, DotEnvBehavior, SourceMapMode, TransformOptions}.
 // Alias as `bun_schema` so existing field paths resolve unchanged.
 use bun_core::{ZStr, strings};
 use bun_options_types::schema as bun_schema;
@@ -390,7 +390,6 @@ impl SplitBundlerOptions {
 }
 
 pub struct BuildConfigSubset {
-    pub loader: Option<bun_schema::api::LoaderMap>,
     pub ignore_dce_annotations: Option<bool>,
     pub conditions: ArrayHashMap<&'static [u8], ()>,
     pub drop: ArrayHashMap<&'static [u8], ()>,
@@ -456,7 +455,6 @@ impl Default for BuildConfigSubset {
         // Note: was `pub const DEFAULT` — `ArrayHashMap::new()` is not
         // `const fn`, so this lives behind `Default` instead.
         BuildConfigSubset {
-            loader: None,
             ignore_dce_annotations: None,
             conditions: ArrayHashMap::new(),
             drop: ArrayHashMap::new(),
@@ -626,8 +624,6 @@ impl Framework {
             built_in_modules: bun_core::handle_oom(self.built_in_modules.clone()),
         }
     }
-
-    pub const REACT_INSTALL_COMMAND: &'static str = "bun i react@experimental react-dom@experimental react-server-dom-bun react-refresh@experimental";
 
     pub fn add_react_install_command_note(log: &mut bun_ast::Log) -> crate::Result<()> {
         let clone_line_text = log.clone_line_text;
@@ -1139,38 +1135,6 @@ impl Framework {
             server_components,
             react_fast_refresh,
             self.is_built_in_react,
-        )
-    }
-
-    pub fn init_transpiler<'a>(
-        &mut self,
-        arena: &'a Arena,
-        log: &mut bun_ast::Log,
-        mode: Mode,
-        renderer: Graph,
-        out: &mut core::mem::MaybeUninit<bun_bundler::Transpiler<'a>>,
-        bundler_options: &BuildConfigSubset,
-    ) -> crate::Result<()> {
-        let source_map: bun_bundler::options::SourceMapOption = match mode {
-            // Source maps must always be external, as DevServer special cases
-            // the linking and part of the generation of these. It also relies
-            // on source maps always being enabled.
-            Mode::Development => bun_bundler::options::SourceMapOption::External,
-            // TODO: follow user configuration
-            _ => bun_bundler::options::SourceMapOption::None,
-        };
-
-        self.init_transpiler_with_options(
-            arena,
-            log,
-            mode,
-            renderer,
-            out,
-            bundler_options,
-            source_map,
-            None,
-            None,
-            None,
         )
     }
 

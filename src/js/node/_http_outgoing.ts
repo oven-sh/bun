@@ -11,6 +11,7 @@ const {
   validateHeaderValue,
   _checkInvalidHeaderChar: checkInvalidHeaderChar,
   chunkExpression: RE_TE_CHUNKED,
+  isLenient,
 } = require("node:_http_common");
 const { FakeSocket } = require("internal/http/FakeSocket");
 const EE = require("node:events");
@@ -22,6 +23,62 @@ const ObjectHasOwn = Object.hasOwn;
 const ArrayIsArray = Array.isArray;
 const MathFloor = Math.floor;
 
+// kOutHeaders is keyed by the lowercased header name, so every setHeader /
+// getHeader / hasHeader / removeHeader lowercases its argument. For the
+// conventionally-cased spellings frameworks actually pass ("Content-Type",
+// "ETag", ...) toLowerCase() allocates a new string on every call, which the
+// property access then has to intern. Map those spellings to a literal that is
+// already interned; anything else still takes toLowerCase(). Same result, no
+// allocation on the common path.
+const commonLowercasedHeaders = { __proto__: null };
+for (const name of [
+  "accept",
+  "accept-encoding",
+  "accept-language",
+  "accept-ranges",
+  "access-control-allow-origin",
+  "age",
+  "cache-control",
+  "connection",
+  "content-disposition",
+  "content-encoding",
+  "content-language",
+  "content-length",
+  "content-range",
+  "content-type",
+  "cookie",
+  "date",
+  "etag",
+  "expires",
+  "host",
+  "last-modified",
+  "location",
+  "pragma",
+  "server",
+  "set-cookie",
+  "transfer-encoding",
+  "user-agent",
+  "vary",
+  "x-content-type-options",
+  "x-forwarded-for",
+  "x-powered-by",
+  "x-requested-with",
+]) {
+  commonLowercasedHeaders[name] = name;
+  // The Http-Header-Case spelling, which is what callers overwhelmingly pass.
+  let titled = "";
+  for (const part of name.split("-")) titled += (titled ? "-" : "") + part.charAt(0).toUpperCase() + part.slice(1);
+  commonLowercasedHeaders[titled] = name;
+}
+// Spellings that title-casing does not produce.
+commonLowercasedHeaders["ETag"] = "etag";
+commonLowercasedHeaders["etag"] = "etag";
+
+function lowercaseHeaderName(name) {
+  const known = commonLowercasedHeaders[name];
+  return known !== undefined ? known : name.toLowerCase();
+}
+
 const kCorked = Symbol("corked");
 const kSocket = Symbol("kSocket");
 const kChunkedBuffer = Symbol("kChunkedBuffer");
@@ -31,6 +88,7 @@ const kBytesWritten = Symbol("kBytesWritten");
 const kErrored = Symbol("errored");
 const kHighWaterMark = Symbol("kHighWaterMark");
 const kRejectNonStandardBodyWrites = Symbol("kRejectNonStandardBodyWrites");
+const kLenientValidation = Symbol("kLenientValidation");
 
 const nop = () => {};
 
@@ -99,8 +157,49 @@ function OutgoingMessage(options) {
   this[kErrored] = null;
   this[kHighWaterMark] = options?.highWaterMark ?? getDefaultHighWaterMark();
   this[kRejectNonStandardBodyWrites] = options?.rejectNonStandardBodyWrites ?? false;
+  // Declared here so the memoizing _isLenientHeaderValidation never
+  // shape-transitions the message when it caches.
+  this[kLenientValidation] = undefined;
 }
 $toClass(OutgoingMessage, "OutgoingMessage", Stream);
+
+// Check if lenient header validation should be used.
+// For ClientRequest: checks this.httpValidation or this.insecureHTTPParser
+// For ServerResponse: checks the server's httpValidation or insecureHTTPParser
+// Falls back to global --insecure-http-parser flag.
+// Every input is fixed for the life of the message, but setHeader and
+// appendHeader consult this once per header: compute once, cache in the
+// constructor-declared slot.
+OutgoingMessage.prototype._isLenientHeaderValidation = function () {
+  const cached = this[kLenientValidation];
+  if (cached !== undefined) return cached;
+
+  let result;
+  // New httpValidation option takes priority (ClientRequest case)
+  const httpValidation = this.httpValidation;
+  if (httpValidation !== undefined) {
+    result = httpValidation !== "strict";
+  } else {
+    // ServerResponse routes both options through the owning server; walk the
+    // req -> socket -> server chain once, not once per option.
+    const server = this.req?.socket?.server;
+    const serverHttpValidation = server?.httpValidation;
+    if (serverHttpValidation !== undefined) {
+      result = serverHttpValidation !== "strict";
+    } else {
+      // Legacy insecureHTTPParser - ClientRequest has it directly
+      const insecureHTTPParser = this.insecureHTTPParser;
+      if (typeof insecureHTTPParser === "boolean") {
+        result = insecureHTTPParser;
+      } else {
+        // ServerResponse can access via the server
+        const serverOption = server?.insecureHTTPParser;
+        result = typeof serverOption === "boolean" ? serverOption : isLenient();
+      }
+    }
+  }
+  return (this[kLenientValidation] = result);
+};
 
 ObjectDefineProperty(OutgoingMessage.prototype, "errored", {
   __proto__: null,
@@ -349,18 +448,19 @@ function _storeHeader(this: any, firstLine, headers) {
     header: firstLine,
   };
 
+  const lenient = this._isLenientHeaderValidation();
   if (headers) {
     if (headers === this[kOutHeaders]) {
       for (const key in headers) {
         const entry = headers[key];
-        processHeader(this, state, entry[0], entry[1], false);
+        processHeader(this, state, entry[0], entry[1], false, lenient);
       }
     } else if (ArrayIsArray(headers)) {
       const headersLength = headers.length;
       if (headersLength && ArrayIsArray(headers[0])) {
         for (let i = 0; i < headersLength; i++) {
           const entry = headers[i];
-          processHeader(this, state, entry[0], entry[1], true);
+          processHeader(this, state, entry[0], entry[1], true, lenient);
         }
       } else {
         if (headersLength % 2 !== 0) {
@@ -368,13 +468,13 @@ function _storeHeader(this: any, firstLine, headers) {
         }
 
         for (let n = 0; n < headersLength; n += 2) {
-          processHeader(this, state, headers[n + 0], headers[n + 1], true);
+          processHeader(this, state, headers[n + 0], headers[n + 1], true, lenient);
         }
       }
     } else {
       for (const key in headers) {
         if (ObjectHasOwn(headers, key)) {
-          processHeader(this, state, key, headers[key], true);
+          processHeader(this, state, key, headers[key], true, lenient);
         }
       }
     }
@@ -471,7 +571,7 @@ function _storeHeader(this: any, firstLine, headers) {
   if (state.expect) this._send("");
 }
 
-function processHeader(self, state, key, value, validate) {
+function processHeader(self, state, key, value, validate, lenient) {
   if (validate) validateHeaderName(key);
 
   // If key is content-disposition and there is content-length
@@ -497,16 +597,28 @@ function processHeader(self, state, key, value, validate) {
     ) {
       // Retain for(;;) loop for performance reasons
       // Refs: https://github.com/nodejs/node/pull/30958
-      for (let i = 0; i < valueLength; i++) storeHeader(self, state, key, value[i], validate);
+      for (let i = 0; i < valueLength; i++) storeHeader(self, state, key, value[i], validate, lenient);
       return;
     }
     value = value.join("; ");
   }
-  storeHeader(self, state, key, value, validate);
+  storeHeader(self, state, key, value, validate, lenient);
 }
 
-function storeHeader(self, state, key, value, validate) {
-  if (validate) validateHeaderValue(key, value);
+// Same as node's three-argument validateHeaderValue in _http_outgoing.js: the lenient flag
+// (httpValidation 'relaxed'/'insecure' or insecureHTTPParser) relaxes the character check to
+// only reject NUL/CR/LF. The public two-argument validateHeaderValue stays in _http_common.
+function validateHeaderValueLenient(name, value, lenient) {
+  if (value === undefined) {
+    throw $ERR_HTTP_INVALID_HEADER_VALUE(value, name);
+  }
+  if (checkInvalidHeaderChar(value, lenient)) {
+    throw $ERR_INVALID_CHAR("header content", name);
+  }
+}
+
+function storeHeader(self, state, key, value, validate, lenient) {
+  if (validate) validateHeaderValueLenient(key, value, lenient);
   state.header += key + ": " + value + "\r\n";
   matchHeader(self, state, key, value);
 }
@@ -561,12 +673,12 @@ OutgoingMessage.prototype.setHeader = function setHeader(name, value) {
     throw $ERR_HTTP_HEADERS_SENT("set");
   }
   validateHeaderName(name);
-  validateHeaderValue(name, value);
+  validateHeaderValueLenient(name, value, this._isLenientHeaderValidation());
 
   let headers = this[kOutHeaders];
   if (headers === null) this[kOutHeaders] = headers = { __proto__: null };
 
-  headers[name.toLowerCase()] = [name, value];
+  headers[lowercaseHeaderName(name)] = [name, value];
   return this;
 };
 
@@ -612,9 +724,9 @@ OutgoingMessage.prototype.appendHeader = function appendHeader(name, value) {
     throw $ERR_HTTP_HEADERS_SENT("append");
   }
   validateHeaderName(name);
-  validateHeaderValue(name, value);
+  validateHeaderValueLenient(name, value, this._isLenientHeaderValidation());
 
-  const field = name.toLowerCase();
+  const field = lowercaseHeaderName(name);
   const headers = this[kOutHeaders];
   if (headers === null || !headers[field]) {
     return this.setHeader(name, value);
@@ -643,7 +755,7 @@ OutgoingMessage.prototype.getHeader = function getHeader(name) {
   const headers = this[kOutHeaders];
   if (headers === null) return;
 
-  const entry = headers[name.toLowerCase()];
+  const entry = headers[lowercaseHeaderName(name)];
   return entry?.[1];
 };
 
@@ -687,7 +799,7 @@ OutgoingMessage.prototype.getHeaders = function getHeaders() {
 
 OutgoingMessage.prototype.hasHeader = function hasHeader(name) {
   validateString(name, "name");
-  return this[kOutHeaders] !== null && !!this[kOutHeaders][name.toLowerCase()];
+  return this[kOutHeaders] !== null && !!this[kOutHeaders][lowercaseHeaderName(name)];
 };
 
 OutgoingMessage.prototype.removeHeader = function removeHeader(name) {
@@ -697,7 +809,7 @@ OutgoingMessage.prototype.removeHeader = function removeHeader(name) {
     throw $ERR_HTTP_HEADERS_SENT("remove");
   }
 
-  const key = name.toLowerCase();
+  const key = lowercaseHeaderName(name);
 
   switch (key) {
     case "connection":
@@ -878,6 +990,7 @@ OutgoingMessage.prototype.addTrailers = function addTrailers(headers) {
   this._trailer = "";
   const keys = ObjectKeys(headers);
   const isArray = ArrayIsArray(headers);
+  const lenient = this._isLenientHeaderValidation();
   // Retain for(;;) loop for performance reasons
   // Refs: https://github.com/nodejs/node/pull/30958
   for (let i = 0, l = keys.length; i < l; i++) {
@@ -897,7 +1010,7 @@ OutgoingMessage.prototype.addTrailers = function addTrailers(headers) {
     const valueLength = isArrayValue ? value.length : 0;
     if (isArrayValue && valueLength > 1 && (!this[kUniqueHeaders] || !this[kUniqueHeaders].has(field.toLowerCase()))) {
       for (let j = 0, l = valueLength; j < l; j++) {
-        if (checkInvalidHeaderChar(value[j])) {
+        if (checkInvalidHeaderChar(value[j], lenient)) {
           throw $ERR_INVALID_CHAR("trailer content", field);
         }
         this._trailer += field + ": " + value[j] + "\r\n";
@@ -907,7 +1020,7 @@ OutgoingMessage.prototype.addTrailers = function addTrailers(headers) {
         value = value.join("; ");
       }
 
-      if (checkInvalidHeaderChar(value)) {
+      if (checkInvalidHeaderChar(value, lenient)) {
         throw $ERR_INVALID_CHAR("trailer content", field);
       }
       this._trailer += field + ": " + value + "\r\n";
@@ -1100,7 +1213,7 @@ ObjectDefineProperty(OutgoingMessage.prototype, "_headers", {
         // Refs: https://github.com/nodejs/node/pull/30958
         for (let i = 0; i < keys.length; ++i) {
           const name = keys[i];
-          headers[name.toLowerCase()] = [name, val[name]];
+          headers[lowercaseHeaderName(name)] = [name, val[name]];
         }
       }
     },

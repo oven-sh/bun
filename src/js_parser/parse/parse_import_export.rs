@@ -123,7 +123,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let alias = p.parse_clause_alias(b"import")?;
             let mut name = LocRef {
                 loc: alias_loc,
-                ref_: p.store_name_in_ref(alias)?,
+                ref_: p.store_name_in_ref(alias),
             };
             let mut original_name = alias;
             p.lexer.next()?;
@@ -147,7 +147,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         original_name = p.lexer.identifier;
                         name = LocRef {
                             loc: p.lexer.loc(),
-                            ref_: p.store_name_in_ref(original_name)?,
+                            ref_: p.store_name_in_ref(original_name),
                         };
                         p.lexer.next()?;
 
@@ -173,7 +173,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         original_name = p.lexer.identifier;
                         name = LocRef {
                             loc: p.lexer.loc(),
-                            ref_: p.store_name_in_ref(original_name)?,
+                            ref_: p.store_name_in_ref(original_name),
                         };
                         p.lexer.expect(T::TIdentifier)?;
 
@@ -222,7 +222,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     original_name = p.lexer.identifier;
                     name = LocRef {
                         loc: alias_loc,
-                        ref_: p.store_name_in_ref(original_name)?,
+                        ref_: p.store_name_in_ref(original_name),
                     };
                     p.lexer.expect(T::TIdentifier)?;
                 } else if !is_identifier {
@@ -296,7 +296,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             let name = LocRef {
                 loc: alias_loc,
-                ref_: p.store_name_in_ref(alias).expect("unreachable"),
+                ref_: p.store_name_in_ref(alias),
             };
             let original_name = alias;
 

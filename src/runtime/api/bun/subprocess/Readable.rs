@@ -17,8 +17,7 @@ use super::subprocess_pipe_reader::PipeReader;
 use super::{StdioResult, Subprocess};
 
 // `bun.ptr.CowString` — owned/borrowed byte slice (has
-// `init_owned` / `length` / `take_slice`). Distinct from the std `Cow` alias
-// re-exported at `bun_ptr::CowString`.
+// `init_owned` / `length` / `take_slice`).
 pub type CowString = CowSlice<u8>;
 
 pub enum Readable {
@@ -183,8 +182,6 @@ impl Readable {
     }
 
     pub fn on_ready(&mut self, _: Option<BlobSizeType>, _: Option<BlobSizeType>) {}
-
-    pub fn on_start(&mut self) {}
 
     pub fn close(&mut self) {
         match self {

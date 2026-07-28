@@ -218,17 +218,6 @@ impl TopExceptionScope {
         this
     }
 
-    /// RAII constructor: initialize in `storage` and return a guard that runs the C++
-    /// dtor on drop. Called by [`top_scope!`](crate::top_scope); rarely needed directly.
-    #[track_caller]
-    #[inline]
-    pub fn init_guard<'a>(
-        storage: &'a mut core::mem::MaybeUninit<Self>,
-        global: &JSGlobalObject,
-    ) -> TopExceptionScopeGuard<'a> {
-        TopExceptionScopeGuard(Self::init(storage, global))
-    }
-
     /// RAII constructor with explicit [`SourceLocation`].
     #[inline]
     pub fn init_guard_at<'a>(
@@ -539,13 +528,6 @@ impl ExceptionValidationScope {
         ExceptionValidationScopeGuard(Self::init_at(storage, global, src))
     }
 
-    pub fn init_in_place(&mut self, global: &JSGlobalObject, src: SourceLocation) {
-        #[cfg(any(debug_assertions, bun_asan))]
-        self.scope.init_in_place(global, src);
-        #[cfg(not(any(debug_assertions, bun_asan)))]
-        let _ = (global, src);
-    }
-
     /// Asserts there has not been any exception thrown.
     pub fn assert_no_exception(&mut self) {
         #[cfg(any(debug_assertions, bun_asan))]
@@ -731,35 +713,6 @@ pub fn call_check_slow_at<R>(
 #[inline]
 pub fn call_check_slow<R>(global: &JSGlobalObject, f: impl FnOnce() -> R) -> JsResult<R> {
     call_check_slow_at(global, SourceLocation::from_caller(), f)
-}
-
-/// Macro forms of the per-mode wrappers — expand [`src!`](crate::src) at the *call site* so
-/// the debug-build diagnostic `SourceLocation` is a NUL-terminated literal (zero-cost),
-/// not a `#[track_caller]` `Location::file()` interned through a process-level HashMap.
-/// Prefer these over the bare `call_*_is_throw` fns in hand-written hot-path shims.
-#[macro_export]
-macro_rules! call_zero_is_throw {
-    ($global:expr, $f:expr $(,)?) => {
-        $crate::top_exception_scope::call_zero_is_throw_at($global, $crate::src!(), $f)
-    };
-}
-#[macro_export]
-macro_rules! call_false_is_throw {
-    ($global:expr, $f:expr $(,)?) => {
-        $crate::top_exception_scope::call_false_is_throw_at($global, $crate::src!(), $f)
-    };
-}
-#[macro_export]
-macro_rules! call_null_is_throw {
-    ($global:expr, $f:expr $(,)?) => {
-        $crate::top_exception_scope::call_null_is_throw_at($global, $crate::src!(), $f)
-    };
-}
-#[macro_export]
-macro_rules! call_check_slow {
-    ($global:expr, $f:expr $(,)?) => {
-        $crate::top_exception_scope::call_check_slow_at($global, $crate::src!(), $f)
-    };
 }
 
 // safe fn: `&mut [u8; SIZE]` is ABI-identical to a non-null `*mut [u8; SIZE]`

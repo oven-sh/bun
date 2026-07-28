@@ -117,8 +117,8 @@ pub mod socket {
 
 // ─── RawSocketEvents glue ────────────────────────────────────────────────────
 // `uws_handlers::RawSocketEvents<SSL>` is the raw-pointer dispatch trait the
-// vtable layer requires of `api::NewSocket<SSL>` (routed via `RawPtrHandler`,
-// not `PtrHandler`). The handlers take `ThisPtr<Self>` rather than `&mut self`:
+// vtable layer requires of `api::NewSocket<SSL>` (routed via `RawPtrHandler`). The
+// handlers take `ThisPtr<Self>` rather than `&mut self`:
 // a JS callback can close the socket and drop its last ref mid-dispatch, and a
 // `&mut` argument protector outliving the allocation is UB.
 impl<const SSL: bool> uws_handlers::RawSocketEvents<SSL> for NewSocket<SSL> {

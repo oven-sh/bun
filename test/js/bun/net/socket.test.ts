@@ -3,7 +3,17 @@ import { connect, fileURLToPath, SocketHandler, spawn } from "bun";
 import { createSocketPair } from "bun:internal-for-testing";
 import { describe, expect, it, jest } from "bun:test";
 import { closeSync } from "fs";
-import { bunEnv, bunExe, expectMaxObjectTypeCount, getMaxFD, isWindows, tempDir, tls } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  expectMaxObjectTypeCount,
+  getMaxFD,
+  isLinux,
+  isWindows,
+  libcPathForDlopen,
+  tempDir,
+  tls,
+} from "harness";
 import net from "node:net";
 import { createSecureContext, connect as tlsConnect } from "node:tls";
 describe.concurrent("socket", () => {
@@ -583,6 +593,64 @@ describe.concurrent("socket", () => {
     await promise;
     expect(socket.authorized).toBe(true);
   });
+  // A server-side upgradeTLS handed only a SecureContext has no parsed tls
+  // options to take requestCert/rejectUnauthorized from, so the per-socket
+  // verify mode has to come from the context. Clearing it there would silently
+  // stop the server from sending a CertificateRequest.
+  it("upgradeTLS with only a secureContext keeps the context's verify mode", async () => {
+    const secureContext = createSecureContext({
+      cert: tls.cert,
+      key: tls.key,
+      ca: tls.cert,
+      requestCert: true,
+      rejectUnauthorized: true,
+    });
+    const { promise, resolve, reject } = Promise.withResolvers<boolean>();
+    const server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        open(socket) {
+          socket.upgradeTLS({
+            tls: true,
+            secureContext: (secureContext as any).context,
+            isServer: true,
+            data: {},
+            socket: {
+              handshake(tlsSocket) {
+                const peer = tlsSocket.getPeerCertificate();
+                resolve(!!peer && Object.keys(peer).length > 0);
+              },
+              data() {},
+              close() {},
+              error(_s, err) {
+                reject(err);
+              },
+            },
+          });
+        },
+        data() {},
+        close() {},
+        error() {},
+      },
+    });
+    try {
+      // The client only sends its certificate if the server asked for one.
+      const client = tlsConnect({
+        port: server.port,
+        host: "127.0.0.1",
+        rejectUnauthorized: false,
+        cert: tls.cert,
+        key: tls.key,
+      });
+      client.on("error", () => {});
+      expect(await promise).toBe(true);
+      client.destroy();
+    } finally {
+      server.stop(true);
+    }
+  });
+
   it("upgradeTLS handles errors", async () => {
     using server = Bun.serve({
       port: 0,
@@ -1779,6 +1847,108 @@ it.concurrent("setTypeOfService validates its argument instead of asserting", as
   void stderr;
 });
 
+// initialDelay is ms; TCP_KEEPIDLE is seconds. 0 = enable SO_KEEPALIVE and
+// leave the kernel-default idle. Verified via getsockopt(2) on the live fd.
+it.concurrent.skipIf(isWindows)("setKeepAlive converts ms to seconds and treats 0 as success", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const { dlopen, FFIType, ptr } = require("bun:ffi");
+        const isDarwin = process.platform === "darwin";
+        const libc = dlopen(${JSON.stringify(libcPathForDlopen())}, {
+          getsockopt: {
+            args: [FFIType.int, FFIType.int, FFIType.int, FFIType.ptr, FFIType.ptr],
+            returns: FFIType.int,
+          },
+        });
+        const SOL_SOCKET = isDarwin ? 0xffff : 1;
+        const SO_KEEPALIVE = isDarwin ? 0x0008 : 9;
+        const IPPROTO_TCP = 6;
+        // Linux TCP_KEEPIDLE = 4; Darwin names it TCP_KEEPALIVE = 0x10.
+        const TCP_KEEPIDLE = isDarwin ? 0x10 : 4;
+        function readIntOpt(fd, level, opt) {
+          const val = new Int32Array(1);
+          const len = new Uint32Array([4]);
+          const rc = libc.symbols.getsockopt(fd, level, opt, ptr(val), ptr(len));
+          if (rc !== 0) throw new Error("getsockopt(" + level + "," + opt + ") failed");
+          return val[0];
+        }
+        // Darwin returns SO_KEEPALIVE as so_options & 0x0008 (= 8), Linux as 0/1.
+        const readBoolOpt = (fd, level, opt) => (readIntOpt(fd, level, opt) ? 1 : 0);
+
+        const open = Promise.withResolvers();
+        using listener = Bun.listen({
+          hostname: "127.0.0.1",
+          port: 0,
+          socket: { data() {}, open() {}, close() {}, error() {} },
+        });
+        await using client = await Bun.connect({
+          hostname: "127.0.0.1",
+          port: listener.port,
+          socket: {
+            data() {}, close() {},
+            open: () => open.resolve(),
+            error: (_s, e) => open.reject(e),
+            connectError: (_s, e) => open.reject(e),
+          },
+        });
+        await open.promise;
+        const fd = client.fd;
+
+        const out = {};
+        // (a) ms -> seconds: 4000ms must land as TCP_KEEPIDLE=4.
+        out.a_ret = client.setKeepAlive(true, 4000);
+        out.a_keepalive = readBoolOpt(fd, SOL_SOCKET, SO_KEEPALIVE);
+        out.a_keepidle = readIntOpt(fd, IPPROTO_TCP, TCP_KEEPIDLE);
+
+        // (b) default shape: setKeepAlive(true) must report success, leave
+        // SO_KEEPALIVE on, and not touch the previously-set TCP_KEEPIDLE.
+        out.off_ret = client.setKeepAlive(false);
+        out.off_keepalive = readBoolOpt(fd, SOL_SOCKET, SO_KEEPALIVE);
+        out.b_ret = client.setKeepAlive(true);
+        out.b_keepalive = readBoolOpt(fd, SOL_SOCKET, SO_KEEPALIVE);
+        out.b_keepidle = readIntOpt(fd, IPPROTO_TCP, TCP_KEEPIDLE);
+
+        // node:net on the same runtime must still write the right idle.
+        const net = require("node:net");
+        const srv = net.createServer(() => {});
+        await new Promise(r => srv.listen(0, "127.0.0.1", r));
+        const nc = net.connect(srv.address().port, "127.0.0.1");
+        await new Promise((res, rej) => { nc.on("connect", res); nc.on("error", rej); });
+        nc.setKeepAlive(true, 4000);
+        out.net_keepidle = readIntOpt(nc._handle.fd, IPPROTO_TCP, TCP_KEEPIDLE);
+        nc.destroy();
+        srv.close();
+
+        console.log(JSON.stringify(out));
+        client.end();
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ out: JSON.parse(stdout.trim() || "null"), exitCode }).toEqual({
+    out: {
+      a_ret: true,
+      a_keepalive: 1,
+      a_keepidle: 4,
+      off_ret: true,
+      off_keepalive: 0,
+      b_ret: true,
+      b_keepalive: 1,
+      b_keepidle: 4,
+      net_keepidle: 4,
+    },
+    exitCode: 0,
+  });
+  void stderr;
+});
+
 it("socket handler validation errors throw instead of crashing", async () => {
   // Handlers protects its callbacks only after validation succeeds, so the
   // validation error paths must throw without tearing down a never-protected
@@ -2118,8 +2288,10 @@ Reo=
 
     it("closes a connection whose server certificate is not trusted", async () => {
       using t = await connectTo({ key: ROGUE_KEY, cert: ROGUE_CRT }, { ca: CA_CRT });
+      // A rejecting client reports the failed verdict at the callback, like
+      // node v26.3.0 (secureConnect never fires; socket.authorized is false).
       expect(await t.handshake.promise).toEqual({
-        authorizedArg: true,
+        authorizedArg: false,
         authorizedGetter: false,
         callbackError: UNTRUSTED_MESSAGE,
         getterError: UNTRUSTED_MESSAGE,
@@ -2132,8 +2304,10 @@ Reo=
 
     it("closes an untrusted connection with tls: true", async () => {
       using t = await connectTo({ key: ROGUE_KEY, cert: ROGUE_CRT }, true);
+      // Same node v26.3.0 contract as above: the rejected handshake reports
+      // authorized=false at the callback.
       expect(await t.handshake.promise).toEqual({
-        authorizedArg: true,
+        authorizedArg: false,
         authorizedGetter: false,
         callbackError: UNTRUSTED_MESSAGE,
         getterError: UNTRUSTED_MESSAGE,
@@ -2243,7 +2417,9 @@ Reo=
             handshake.resolve({
               authorized: socket.authorized,
               error: authorizationError?.message ?? null,
-              // The raw twin shares the fd: its writes must refuse too.
+              // The raw twin shares the fd: its writes must refuse too. A
+              // rejecting client's REJECTED flag propagates to the twin so a
+              // MITM that failed verification can never receive plaintext.
               rawWrite: raw.write("must-not-reach-the-peer"),
             });
           },
@@ -2262,6 +2438,58 @@ Reo=
       expect(await handshake.promise).toEqual({ authorized: false, error: UNTRUSTED_MESSAGE, rawWrite: -1 });
       await closed.promise;
       expect(received).toEqual([]);
+    });
+
+    it("refuses raw-twin writes after a failed (non-policy) handshake", async () => {
+      // rejectUnauthorized: false so the policy-reject path stays out of the
+      // picture: the transport must fail closed purely because the handshake
+      // itself failed (the peer is not speaking TLS), the way node destroys
+      // the underlying socket on a TLS failure.
+      const serverReceived: string[] = [];
+      const failure = Promise.withResolvers<number>();
+      const closed = Promise.withResolvers<void>();
+      using server = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        socket: {
+          open(socket) {
+            socket.write("this-is-not-a-tls-server\n");
+          },
+          data(_socket, data) {
+            serverReceived.push(data.toString("latin1"));
+          },
+          close() {},
+          error() {},
+        },
+      });
+      using tcp = await Bun.connect({
+        hostname: "127.0.0.1",
+        port: server.port,
+        socket: { data() {}, close() {}, error() {} },
+      });
+      const [raw, secure] = tcp.upgradeTLS({
+        tls: { rejectUnauthorized: false },
+        socket: {
+          handshake(_socket: Socket, success: boolean) {
+            if (!success) failure.resolve(raw.write("plaintext-after-failed-handshake"));
+          },
+          error() {
+            // Protocol failures surface here; the raw twin must already be
+            // fail-closed by the time JS observes the failure.
+            failure.resolve(raw.write("plaintext-after-failed-handshake"));
+          },
+          data() {},
+          close() {
+            closed.resolve();
+          },
+        },
+      } as any);
+      using _raw = raw;
+      using _secure = secure;
+
+      expect(await failure.promise).toBe(-1);
+      await closed.promise;
+      expect(serverReceived.join("")).not.toContain("plaintext-after-failed-handshake");
     });
 
     it("keeps a connection whose server certificate is trusted", async () => {
@@ -2354,6 +2582,9 @@ Reo=
         socket: {
           open() {},
           handshake(socket) {
+            // Fail closed: the rejected peer failed chain verification, so the
+            // write is refused outright (-1) rather than sealed with keys a
+            // malicious server can derive from the ECDHE exchange.
             handshake.resolve(socket.write("token-that-must-never-reach-a-mitm"));
           },
           data() {},
@@ -2989,5 +3220,113 @@ Reo=
       await t.echoed.promise;
       expect(t.serverReceived.join("")).toBe("client-app-data\n");
     });
+  });
+});
+
+// Linux-only: uses /proc/self/fd to find and close the connected socket's fd
+// so getsockname()/getpeername() fail with EBADF.
+it.skipIf(!isLinux)(
+  "socket.localPort / socket.remotePort return undefined when the underlying fd is gone",
+  async () => {
+    const script = /* js */ `
+    import { readdirSync, readlinkSync, closeSync } from "node:fs";
+
+    function socketFds() {
+      const out = new Set();
+      for (const e of readdirSync("/proc/self/fd")) {
+        let link = "";
+        try { link = readlinkSync("/proc/self/fd/" + e); } catch {}
+        if (link.startsWith("socket:")) out.add(Number(e));
+      }
+      return out;
+    }
+
+    const opened = Promise.withResolvers();
+    const server = Bun.listen({
+      port: 0,
+      hostname: "127.0.0.1",
+      socket: { open() {}, data() {}, close() {} },
+    });
+
+    const before = socketFds();
+    const client = await Bun.connect({
+      port: server.port,
+      hostname: "127.0.0.1",
+      socket: { open: opened.resolve, data() {}, close() {} },
+    });
+    await opened.promise;
+
+    const after = socketFds();
+    const newFds = [...after].filter(fd => !before.has(fd));
+    if (newFds.length === 0) {
+      console.log(JSON.stringify({ skipped: true }));
+      server.stop(true);
+      process.exit(0);
+    }
+    for (const fd of newFds) closeSync(fd);
+
+    console.log(JSON.stringify({
+      localPort: client.localPort ?? null,
+      remotePort: client.remotePort ?? null,
+    }));
+    server.stop(true);
+    process.exit(0);
+  `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+
+    const out = JSON.parse(stdout.trim());
+    if (out.skipped) return;
+    expect(out).toEqual({ localPort: null, remotePort: null });
+  },
+);
+
+describe("TLS handshake callback throw", () => {
+  // A throw from a Bun-native handshake callback must reach the socket's own
+  // error handler (the documented contract), not crash the process — node:tls
+  // gets its uncaughtException semantics in net.ts, not in the shared native
+  // dispatch.
+  it("is delivered to the socket's own error handler", async () => {
+    const { promise, resolve, reject } = Promise.withResolvers<Error>();
+    const server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      tls,
+      socket: {
+        data() {},
+        error() {},
+      },
+    });
+    try {
+      const boom = new Error("boom-native-handshake");
+      await Bun.connect({
+        hostname: "127.0.0.1",
+        port: server.port,
+        tls: { rejectUnauthorized: false },
+        socket: {
+          handshake() {
+            throw boom;
+          },
+          error(_socket, err) {
+            resolve(err as Error);
+          },
+          data() {},
+          close() {
+            reject(new Error("socket closed before the error handler ran"));
+          },
+        },
+      });
+      expect(await promise).toBe(boom);
+    } finally {
+      server.stop(true);
+    }
   });
 });

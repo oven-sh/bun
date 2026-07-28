@@ -756,10 +756,6 @@ impl FileSink {
         Some(unsafe { &mut *p.cast::<bun_jsc::VirtualMachineRef>() })
     }
 
-    pub fn connect(&self, signal: streams::Signal) {
-        self.signal.set(signal);
-    }
-
     pub fn start(&self, stream_start: &streams::Start) -> sys::Result<()> {
         match stream_start {
             streams::Start::FileSink(file)
@@ -833,7 +829,26 @@ impl FileSink {
             // SAFETY(JsCell): `IOWriter::flush` is pure I/O; the `on_write`
             // callback it may trigger goes via the stored `*mut FileSink` backref.
             match (*this).writer.with_mut(|w| w.flush()) {
-                WriteResult::Err(_) | WriteResult::Done(_) => {
+                WriteResult::Err(err) => {
+                    (*this).update_ref(false);
+                    // `flush()` returns a write error without routing through the
+                    // writer's `_on_error`, so the pending slot still holds the
+                    // `Owned(consumed)` result `to_result` seeded and
+                    // `run_pending_later()` alone would resolve it as if every
+                    // buffered byte had reached the reader. Latch the error and
+                    // move the sink to its terminal state (mirrors `end_from_js`).
+                    (*this).done.set(true);
+                    if (*this).pending.get().state == streams::PendingState::Pending {
+                        (*this)
+                            .pending
+                            .with_mut(|p| p.result = streams::Writable::Err(err));
+                    }
+                    (*this).writer.with_mut(|w| w.end());
+                    (*this).run_pending_later();
+                    (*this).auto_flusher.with_mut(|a| a.registered.set(false));
+                    return false;
+                }
+                WriteResult::Done(_) => {
                     (*this).update_ref(false);
                     (*this).run_pending_later();
                 }
@@ -898,6 +913,31 @@ impl FileSink {
     pub fn finalize(&mut self) {
         // `.classes.ts` finalize — see PORTING.md §JSC. Runs during lazy sweep;
         // must not touch live JS cells.
+
+        // Shutdown never unwinds the writer: the loop stops ticking, so the
+        // `onWrite`/`onClose`/EOF callbacks that balance these refs can no
+        // longer arrive, and a queued FlushPendingFileSinkTask never runs.
+        // Release them here (a piped stdout whose write once returned
+        // `.pending` otherwise strands its keep-alive ref forever and the sink
+        // leaks). Only under `is_shutting_down`: on a live VM those events
+        // still arrive and must keep the sink alive past the wrapper.
+        if let Some(vm) = self.js_vm() {
+            if vm.is_shutting_down() {
+                let this = std::ptr::from_mut::<Self>(self);
+                // SAFETY: `this` is the canonical allocation pointer (finalize
+                // receives the wrapper's `m_ctx`); the wrapper's +1 is still
+                // held until the trailing `deref` below, so neither release
+                // can free `this` mid-body. `clear_keep_alive_ref` is
+                // flag-gated, so a (theoretical) late `onClose` is a no-op.
+                unsafe { FileSink::clear_keep_alive_ref(this) };
+                if self.run_pending_later.has.get() {
+                    self.run_pending_later.has.set(false);
+                    // SAFETY: as above; balances the `ref_()` taken in
+                    // `run_pending_later()` for a task that will never run.
+                    unsafe { FileSink::deref(this) };
+                }
+            }
+        }
 
         // Per-wrapper accounting is on `ref_count` directly: each path that
         // hands `self` to C++ (`to_js` / `to_js_with_destructor`) takes a +1
@@ -1004,16 +1044,34 @@ impl FileSink {
             return sys::Result::Ok(());
         }
 
+        // A backpressured `write()` may have left its promise in `self.pending`;
+        // `writer.end()` only re-enters `on_close`, which never touches it, so
+        // every synchronous arm that tears the writer down here must settle it
+        // (mirrors `on_auto_flush`). `js_close` can't hand the promise back, so
+        // the outcome is delivered via `run_pending` and the call returns `Ok`.
+        let has_pending = self.pending.get().state == streams::PendingState::Pending;
+
         // SAFETY(JsCell): `IOWriter::flush` is pure I/O; any callback re-entry
         // goes via the stored `*mut FileSink` backref, not this borrow.
         match self.writer.with_mut(|w| w.flush()) {
-            WriteResult::Done(written) => {
+            WriteResult::Done(written) | WriteResult::Wrote(written) => {
                 self.written.set(self.written.get() + written as usize); // @truncate
                 self.writer.with_mut(|w| w.end());
+                if has_pending {
+                    // `to_result` already seeded `Owned(consumed)`; just deliver it.
+                    self.run_pending_later();
+                }
                 sys::Result::Ok(())
             }
             WriteResult::Err(e) => {
                 self.done.set(true);
+                if has_pending {
+                    self.pending
+                        .with_mut(|p| p.result = streams::Writable::Err(e));
+                    self.writer.with_mut(|w| w.end());
+                    self.run_pending_later();
+                    return sys::Result::Ok(());
+                }
                 self.writer.with_mut(|w| w.end());
                 sys::Result::Err(e)
             }
@@ -1024,11 +1082,6 @@ impl FileSink {
                     self.ref_();
                 }
                 self.done.set(true);
-                sys::Result::Ok(())
-            }
-            WriteResult::Wrote(written) => {
-                self.written.set(self.written.get() + written as usize); // @truncate
-                self.writer.with_mut(|w| w.end());
                 sys::Result::Ok(())
             }
         }
@@ -1086,14 +1139,54 @@ impl FileSink {
         // SAFETY(JsCell): `IOWriter::flush` is pure I/O; no JS while held.
         let flush_result = self.writer.with_mut(|w| w.flush());
 
+        // `writer.end()` only re-enters `on_close`, which never touches
+        // `self.pending`; every arm that tears the writer down here with a
+        // backpressured `write()` outstanding must hand that promise back and
+        // schedule `run_pending` to settle it.
+        let has_pending = self.pending.get().state == streams::PendingState::Pending;
+
         match flush_result {
             WriteResult::Done(written) => {
                 self.update_ref(false);
                 self.writer.with_mut(|w| w.end());
+                if has_pending {
+                    // `to_result` already seeded `Owned(consumed)`.
+                    // SAFETY: JsCell — `WritablePending::promise` allocates a
+                    // JSPromise (may GC) but invokes no FileSink host-fn.
+                    let promise = unsafe { self.pending.get_mut() }.promise(global_this);
+                    self.run_pending_later();
+                    // SAFETY: `WritablePending::promise()` never returns null.
+                    return sys::Result::Ok(unsafe { (*promise).to_js() });
+                }
                 sys::Result::Ok(JSValue::js_number(written as f64))
             }
             WriteResult::Err(err) => {
                 self.done.set(true);
+                if has_pending {
+                    // A backpressured write() left its promise outstanding.
+                    // Throwing here would report the failure to the caller and
+                    // then let the auto-flush/error path reject that promise a
+                    // second time — with nobody holding it when the caller
+                    // discarded write()'s return value, that second delivery
+                    // surfaces as an unhandledRejection. Deliver the error to
+                    // the pending promise instead and hand the caller the same
+                    // promise (exactly like the Pending arm), so the failure is
+                    // reported once, to whichever await is watching. The latch
+                    // and promise grab happen before `writer.end()`: its
+                    // teardown can re-enter `on_error`/`run_pending`
+                    // synchronously, and the slot must already hold the error
+                    // and this caller's promise when that runs.
+                    self.pending
+                        .with_mut(|p| p.result = streams::Writable::Err(err));
+                    // SAFETY: JsCell — `WritablePending::promise` allocates a
+                    // JSPromise (may GC) but does not invoke any FileSink
+                    // host-fn synchronously.
+                    let promise_result = unsafe { self.pending.get_mut() }.promise(global_this);
+                    self.writer.with_mut(|w| w.end());
+                    self.run_pending_later();
+                    // SAFETY: `WritablePending::promise()` never returns null.
+                    return sys::Result::Ok(unsafe { (*promise_result).to_js() });
+                }
                 self.writer.with_mut(|w| w.end());
                 sys::Result::Err(err)
             }
@@ -1123,13 +1216,16 @@ impl FileSink {
             }
             WriteResult::Wrote(written) => {
                 self.writer.with_mut(|w| w.end());
+                if has_pending {
+                    // SAFETY: JsCell — see the `Done` arm above.
+                    let promise = unsafe { self.pending.get_mut() }.promise(global_this);
+                    self.run_pending_later();
+                    // SAFETY: `WritablePending::promise()` never returns null.
+                    return sys::Result::Ok(unsafe { (*promise).to_js() });
+                }
                 sys::Result::Ok(JSValue::js_number(written as f64))
             }
         }
-    }
-
-    pub fn sink(&mut self) -> crate::webcore::sink::Sink<'_> {
-        crate::webcore::sink::Sink::init(self)
     }
 
     pub fn update_ref(&self, value: bool) {
@@ -1150,7 +1246,6 @@ impl FileSink {
 pub type JSSink = crate::webcore::sink::JSSink<FileSink>;
 pub type SinkSignal = crate::webcore::sink::SinkSignal<FileSink>;
 
-crate::impl_sink_handler!(FileSink);
 crate::impl_js_sink_abi!(FileSink, "FileSink");
 
 // `JsSinkType` impl: routes the codegen `FileSink__*` thunks (via
@@ -1159,8 +1254,6 @@ crate::impl_js_sink_abi!(FileSink, "FileSink");
 impl crate::webcore::sink::JsSinkType for FileSink {
     const NAME: &'static str = "FileSink";
     const HAS_CONSTRUCT: bool = true;
-    const HAS_SIGNAL: bool = true;
-    const HAS_DONE: bool = true;
     const HAS_FLUSH_FROM_JS: bool = true;
     const HAS_PROTECT_JS_WRAPPER: bool = true;
     const HAS_UPDATE_REF: bool = true;

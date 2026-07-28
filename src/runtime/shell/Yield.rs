@@ -58,10 +58,6 @@ impl Yield {
     pub const fn failed() -> Yield {
         Yield::Failed
     }
-
-    pub fn is_done(&self) -> bool {
-        matches!(self, Yield::Done)
-    }
 }
 
 thread_local! {

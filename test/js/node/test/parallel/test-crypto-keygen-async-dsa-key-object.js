@@ -4,6 +4,9 @@ const common = require('../common');
 if (!common.hasCrypto)
   common.skip('missing crypto');
 
+if (process.features.openssl_is_boringssl)
+  common.skip('not supported by BoringSSL');
+
 const assert = require('assert');
 const {
   generateKeyPair,
@@ -12,9 +15,7 @@ const {
 const { hasOpenSSL3 } = require('../common/crypto');
 
 // Test async DSA key object generation.
-
-// BoringSSL does not support DSA key generation.
-if (!common.openSSLIsBoringSSL) {
+{
   generateKeyPair('dsa', {
     modulusLength: hasOpenSSL3 ? 2048 : 512,
     divisorLength: 256
@@ -25,7 +26,6 @@ if (!common.openSSLIsBoringSSL) {
       modulusLength: hasOpenSSL3 ? 2048 : 512,
       divisorLength: 256
     });
-    
 
     assert.strictEqual(privateKey.type, 'private');
     assert.strictEqual(privateKey.asymmetricKeyType, 'dsa');

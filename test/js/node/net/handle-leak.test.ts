@@ -84,11 +84,13 @@ const post_rss = process.memoryUsage.rss();
 
 server.close();
 
-let margin = 1024 * 1024 * 15;
+// Per-Socket fields added for onread/tls bookkeeping raise steady-state RSS a
+// few MB across ~30k iterations; a real per-connection leak would blow past 24.
+let margin = 1024 * 1024 * 24;
 if (isWindows) margin = 1024 * 1024 * 40;
 // Under ASAN we use the system allocator so the interceptor sees every
 // allocation. The ASAN free-quarantine (default 256 MB) plus glibc malloc
-// retaining freed pages causes RSS to grow well past the 15 MB native margin
+// retaining freed pages causes RSS to grow well past the native margin above
 // even with no real leak. Observed ~130 MB on linux x64-asan; allow up to the
 // default quarantine size.
 if (isASAN) margin = 1024 * 1024 * 256;

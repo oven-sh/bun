@@ -84,7 +84,7 @@ fn deregistration_already_gone(errno: sys::E) -> bool {
     matches!(errno, sys::E::ENOENT | sys::E::EBADF)
 }
 
-pub use crate::{EventLoopCtx, EventLoopCtxKind, EventLoopKind, OpaqueCallback};
+pub use crate::{EventLoopCtx, EventLoopCtxKind, OpaqueCallback};
 
 unsafe extern "Rust" {
     /// Defined `#[no_mangle]` in `bun_runtime::jsc_hooks`.
@@ -108,13 +108,6 @@ pub enum FileType {
 }
 
 impl FileType {
-    pub fn is_pollable(self) -> bool {
-        matches!(
-            self,
-            FileType::Pipe | FileType::NonblockingPipe | FileType::Socket
-        )
-    }
-
     pub fn is_blocking(self) -> bool {
         self == FileType::Pipe
     }
@@ -381,25 +374,9 @@ impl FilePoll {
         self.on_update(0);
     }
 
-    pub fn clear_event(&mut self, flag: Flags) {
-        self.flags.remove(flag);
-    }
-
     pub fn is_readable(&mut self) -> bool {
         let readable = self.flags.contains(Flags::Readable);
         self.flags.remove(Flags::Readable);
-        readable
-    }
-
-    pub fn is_hup(&mut self) -> bool {
-        let readable = self.flags.contains(Flags::Hup);
-        self.flags.remove(Flags::Hup);
-        readable
-    }
-
-    pub fn is_eof(&mut self) -> bool {
-        let readable = self.flags.contains(Flags::Eof);
-        self.flags.remove(Flags::Eof);
         readable
     }
 
@@ -593,16 +570,6 @@ impl FilePoll {
         poll
     }
 
-    #[inline]
-    pub fn can_ref(&self) -> bool {
-        !self.flags.contains(Flags::HasIncrementedPollCount)
-    }
-
-    #[inline]
-    pub fn can_unref(&self) -> bool {
-        self.flags.contains(Flags::HasIncrementedPollCount)
-    }
-
     /// Prevent a poll from keeping the process alive.
     pub fn unref(&mut self, event_loop_ctx: EventLoopCtx) {
         syslog!("unref");
@@ -616,19 +583,6 @@ impl FilePoll {
         }
         syslog!("ref");
         self.enable_keeping_process_alive(event_loop_ctx);
-    }
-
-    pub fn on_ended(&mut self, event_loop_ctx: EventLoopCtx) {
-        self.flags.remove(Flags::KeepsEventLoopAlive);
-        self.flags.insert(Flags::Closed);
-        // `loop_mut()` — crate-private nonnull-asref accessor; `deactivate` is
-        // a leaf counter op so the `&mut Loop` borrow does not escape.
-        self.deactivate(event_loop_ctx.loop_mut());
-    }
-
-    #[inline]
-    pub fn file_descriptor(&self) -> Fd {
-        self.fd
     }
 
     pub fn register(&mut self, loop_: &mut Loop, flag: Flags, one_shot: bool) -> sys::Result<()> {
@@ -992,7 +946,6 @@ impl FilePoll {
         fd: Fd,
         force_unregister: bool,
     ) -> sys::Result<()> {
-        #[cfg(debug_assertions)]
         debug_assert!(fd.native() >= 0 && fd != INVALID_FD);
 
         if !(self.flags.contains(Flags::PollReadable)
@@ -1285,7 +1238,6 @@ pub enum Flags {
 
     // What is the type of file descriptor?
     Fifo,
-    Tty,
 
     OneShot,
     NeedsRearm,
@@ -1301,27 +1253,12 @@ pub enum Flags {
     WasEverRegistered,
     IgnoreUpdates,
 
-    /// Was O_NONBLOCK set on the file descriptor?
-    Nonblock,
-
     Socket,
 }
 
 pub type FlagsSet = enumset::EnumSet<Flags>;
-pub type FlagsStruct = FlagsSet;
 
 impl Flags {
-    pub fn poll(self) -> Flags {
-        match self {
-            Flags::Readable => Flags::PollReadable,
-            Flags::Writable => Flags::PollWritable,
-            Flags::Process => Flags::PollProcess,
-            Flags::Machport => Flags::PollMachport,
-            Flags::MemoryPressure => Flags::PollMemoryPressure,
-            other => other,
-        }
-    }
-
     #[cfg(any(target_os = "macos", target_os = "freebsd"))]
     pub fn from_kqueue_event(kqueue_event: &KQueueEvent) -> FlagsSet {
         #[cfg(target_os = "macos")]
@@ -1521,7 +1458,7 @@ impl Store {
 #[derive(Copy, Clone)]
 #[allow(dead_code)]
 pub(crate) struct Pollable {
-    repr: bun_collections::TaggedPointer,
+    repr: bun_collections::TaggedPtr,
 }
 
 impl Pollable {
@@ -1533,7 +1470,7 @@ impl Pollable {
     #[allow(dead_code)]
     pub(crate) fn init(ptr: *const crate::FilePoll) -> Self {
         Self {
-            repr: bun_collections::TaggedPointer::init(ptr, Self::FILE_POLL_TAG),
+            repr: bun_collections::TaggedPtr::init(ptr, Self::FILE_POLL_TAG),
         }
     }
 
@@ -1541,7 +1478,7 @@ impl Pollable {
     #[allow(dead_code)]
     pub(crate) fn from(val: *mut c_void) -> Self {
         Self {
-            repr: bun_collections::TaggedPointer::from(val),
+            repr: bun_collections::TaggedPtr::from(val),
         }
     }
 

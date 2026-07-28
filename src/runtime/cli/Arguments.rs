@@ -1947,31 +1947,26 @@ fn parse_build_command_options(
     }
 
     if let Some(env) = args.option(b"--env") {
-        if env == b"inline" || env == b"1" {
+        if env == b"inline" {
             ctx.bundler_options.env_behavior = options::EnvBehavior::LoadAll;
-        } else if env == b"disable" || env == b"0" {
+        } else if env == b"disable" {
             ctx.bundler_options.env_behavior = options::EnvBehavior::LoadAllWithoutInlining;
-        } else if let Some(asterisk) = strings::index_of_char(env, b'*') {
-            if asterisk as usize + 1 != env.len() {
-                bun_core::pretty_errorln!(
-                    "<r><red>error<r>: Invalid --env pattern \"{}\": '*' must be the final character; suffix and infix patterns are not supported",
-                    BStr::new(env)
-                );
-                Global::crash();
-            }
-            if asterisk == 0 {
-                bun_core::pretty_errorln!(
-                    "<r><red>error<r>: Invalid --env pattern \"*\": use --env=inline to inline every environment variable"
-                );
-                Global::crash();
-            }
-            ctx.bundler_options.env_behavior = options::EnvBehavior::Prefix;
-            ctx.bundler_options.env_prefix = Box::<[u8]>::from(&env[..asterisk as usize]);
         } else {
-            bun_core::pretty_errorln!(
-                "<r><red>error<r>: Expected --env to be 'inline', 'disable', or a prefix pattern ending in '*' (e.g. \"PUBLIC_*\")"
-            );
-            Global::crash();
+            match options::EnvBehavior::parse_str(env) {
+                Ok((options::EnvBehavior::Prefix, Some(prefix))) => {
+                    ctx.bundler_options.env_behavior = options::EnvBehavior::Prefix;
+                    ctx.bundler_options.env_prefix = Box::<[u8]>::from(prefix);
+                }
+                Ok(_) => unreachable!(),
+                Err(msg) => {
+                    bun_core::pretty_errorln!(
+                        "<r><red>error<r>: Invalid --env \"{}\": {}",
+                        BStr::new(env),
+                        msg
+                    );
+                    Global::crash();
+                }
+            }
         }
     }
 

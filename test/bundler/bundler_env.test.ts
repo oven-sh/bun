@@ -128,10 +128,12 @@ describe("env/invalid-pattern", () => {
   const childEnv = { ...bunEnv, SECRET_ZZ: "sec", A_B: "ab" };
 
   const cases = [
-    { pattern: "*_PUBLIC", expect: "must be the final character" },
-    { pattern: "A*B", expect: "must be the final character" },
-    { pattern: "A*B*", expect: "must be the final character" },
-    { pattern: "*", expect: "inline every environment variable" },
+    { pattern: "*_PUBLIC", expect: "must end with '*'" },
+    { pattern: "A*B", expect: "must end with '*'" },
+    { pattern: "A*B*", expect: "only one '*'" },
+    { pattern: "*", expect: `use "inline"` },
+    { pattern: "1", expect: `must be "inline", "disable"` },
+    { pattern: "0", expect: `must be "inline", "disable"` },
   ] as const;
 
   describe.each(cases)("$pattern", ({ pattern, expect: fragment }) => {

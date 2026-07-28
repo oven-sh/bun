@@ -64,25 +64,21 @@ impl DotEnvBehavior {
 
     pub fn parse_str(s: &[u8]) -> Result<(Self, Option<&[u8]>), &'static str> {
         if s == b"inline" {
-            Ok((Self::load_all, None))
-        } else if s == b"disable" {
-            Ok((Self::disable, None))
-        } else if let Some(asterisk) = s.iter().position(|&b| b == b'*') {
-            if asterisk + 1 != s.len() {
-                Err(
-                    "'*' in an env pattern must be the final character; suffix and infix patterns are not supported",
-                )
-            } else if asterisk == 0 {
-                Err(
-                    "env pattern \"*\" has no prefix; use \"inline\" to inline every environment variable",
-                )
-            } else {
-                Ok((Self::prefix, Some(&s[..asterisk])))
+            return Ok((Self::load_all, None));
+        }
+        if s == b"disable" {
+            return Ok((Self::disable, None));
+        }
+        match s.iter().filter(|&&b| b == b'*').count() {
+            0 => Err("must be \"inline\", \"disable\", or a prefix pattern like \"PUBLIC_*\""),
+            1 if s == b"*" => {
+                Err("pattern \"*\" has no prefix; use \"inline\" to inline every environment variable")
             }
-        } else {
-            Err(
-                "expected \"inline\", \"disable\", or a prefix pattern ending in '*' (e.g. \"PUBLIC_*\")",
-            )
+            1 if *s.last().unwrap() == b'*' => Ok((Self::prefix, Some(&s[..s.len() - 1]))),
+            1 => Err(
+                "pattern must end with '*' (e.g. \"PUBLIC_*\"); a leading '*' would inline every variable including secrets",
+            ),
+            _ => Err("pattern may contain only one '*'"),
         }
     }
 }

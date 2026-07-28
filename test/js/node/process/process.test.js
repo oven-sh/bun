@@ -1713,7 +1713,6 @@ describe("NODE_NO_WARNINGS", () => {
 });
 
 describe("process.throwDeprecation", () => {
-  // https://github.com/oven-sh/bun/issues/6302
   it.concurrent("set at runtime throws deprecation warnings as uncaught exceptions", async () => {
     await using proc = Bun.spawn({
       cmd: [

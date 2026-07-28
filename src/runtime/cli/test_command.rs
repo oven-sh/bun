@@ -275,6 +275,7 @@ pub struct Metrics {
     pub test_cases: u32,
     pub assertions: u32,
     pub failures: u32,
+    pub errors: u32,
     pub skipped: u32,
     pub elapsed_time: u64,
 }
@@ -284,6 +285,7 @@ impl Metrics {
         self.test_cases += other.test_cases;
         self.assertions += other.assertions;
         self.failures += other.failures;
+        self.errors += other.errors;
         self.skipped += other.skipped;
     }
 }
@@ -405,6 +407,20 @@ impl JunitReporter {
                 body.push(b')');
             }
             body.push(b'\n');
+        }
+    }
+
+    pub fn record_failure_text(&mut self, name: &[u8], message: &[u8]) {
+        let failure = self.last_failure.get_or_insert_default();
+        if failure.name.is_empty() {
+            failure.name.extend_from_slice(name);
+        }
+        if failure.message.is_empty() {
+            push_stripping_ansi(&mut failure.message, message);
+        }
+        if failure.body.is_empty() {
+            push_stripping_ansi(&mut failure.body, message);
+            failure.body.push(b'\n');
         }
     }
 
@@ -610,10 +626,11 @@ impl JunitReporter {
             // Std::io::Write removed; bun_io::Write (top-level) provides write_fmt.
             let _ = write!(
                 &mut summary,
-                "tests=\"{}\" assertions=\"{}\" failures=\"{}\" skipped=\"{}\" time=\"{}\" hostname=\"{}\"",
+                "tests=\"{}\" assertions=\"{}\" failures=\"{}\" errors=\"{}\" skipped=\"{}\" time=\"{}\" hostname=\"{}\"",
                 suite_info.metrics.test_cases,
                 suite_info.metrics.assertions,
                 suite_info.metrics.failures,
+                suite_info.metrics.errors,
                 suite_info.metrics.skipped,
                 elapsed_time_seconds,
                 bstr::BStr::new(&hostname),
@@ -832,9 +849,80 @@ impl JunitReporter {
         Ok(())
     }
 
+    /// Emit a `<testcase><error>` for `last_failure`, attributed to `file`.
+    pub fn write_unhandled_error(&mut self, file: &[u8]) -> crate::Result<()> {
+        let top = FileSystem::instance().top_level_dir;
+        let filename: &[u8] = if strings::has_prefix(file, top) {
+            without_leading_path_separator(&file[top.len()..])
+        } else {
+            file
+        };
+
+        if !strings::eql(&self.current_file, filename) {
+            while !self.suite_stack.is_empty()
+                && !self.suite_stack[self.suite_stack.len() - 1].is_file_suite
+            {
+                self.end_test_suite()?;
+            }
+            if !self.current_file.is_empty() {
+                self.end_test_suite()?;
+            }
+            self.begin_test_suite(filename)?;
+        }
+
+        if !self.suite_stack.is_empty() {
+            let last = self.suite_stack.len() - 1;
+            self.suite_stack[last].metrics.test_cases += 1;
+            self.suite_stack[last].metrics.errors += 1;
+        }
+
+        let indent = Self::get_indent(self.current_depth);
+        self.contents.extend_from_slice(indent);
+        self.contents
+            .extend_from_slice(b"<testcase name=\"(load error)\" classname=\"");
+        escape_xml(filename, &mut self.contents)?;
+        self.contents.extend_from_slice(b"\" time=\"0\" file=\"");
+        escape_xml(filename, &mut self.contents)?;
+        self.contents.extend_from_slice(b"\" assertions=\"0\">\n");
+
+        let failure = self.last_failure.take();
+        let type_name: &[u8] = failure
+            .as_ref()
+            .map(|f| f.name.as_slice())
+            .filter(|n| !n.is_empty())
+            .unwrap_or(b"Error");
+        self.contents.extend_from_slice(indent);
+        self.contents.extend_from_slice(b"  <error type=\"");
+        escape_xml(type_name, &mut self.contents)?;
+        self.contents.extend_from_slice(b"\"");
+        if let Some(f) = failure.as_ref().filter(|f| !f.message.is_empty()) {
+            self.contents.extend_from_slice(b" message=\"");
+            escape_xml(&f.message, &mut self.contents)?;
+            self.contents.extend_from_slice(b"\"");
+        }
+        match failure.as_ref().filter(|f| !f.body.is_empty()) {
+            Some(f) => {
+                self.contents.extend_from_slice(b">");
+                escape_xml(&f.body, &mut self.contents)?;
+                self.contents.extend_from_slice(b"</error>\n");
+            }
+            None => {
+                self.contents.extend_from_slice(b" />\n");
+            }
+        }
+        self.contents.extend_from_slice(indent);
+        self.contents.extend_from_slice(b"</testcase>\n");
+        Ok(())
+    }
+
     pub fn write_to_file(&mut self, path: &[u8]) -> crate::Result<()> {
         if self.contents.is_empty() {
-            return Ok(());
+            self.contents
+                .extend_from_slice(b"<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
+            self.contents
+                .extend_from_slice(b"<testsuites name=\"bun test\" ");
+            self.offset_of_testsuites_value = self.contents.len();
+            self.contents.extend_from_slice(b">\n");
         }
 
         while !self.suite_stack.is_empty() {
@@ -850,10 +938,11 @@ impl JunitReporter {
                 // Std::io::Write removed; bun_io::Write (top-level) provides write_fmt.
                 let _ = write!(
                     &mut summary,
-                    "tests=\"{}\" assertions=\"{}\" failures=\"{}\" skipped=\"{}\" time=\"{}\"",
+                    "tests=\"{}\" assertions=\"{}\" failures=\"{}\" errors=\"{}\" skipped=\"{}\" time=\"{}\"",
                     metrics.test_cases,
                     metrics.assertions,
                     metrics.failures,
+                    metrics.errors,
                     metrics.skipped,
                     elapsed_time,
                 );

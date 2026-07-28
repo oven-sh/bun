@@ -39,6 +39,11 @@ pub mod bun_install_js_bindings {
         frame: &bun_jsc::CallFrame,
     ) -> bun_jsc::JsResult<JSValue> {
         let args = frame.arguments();
+        if args.len() < 2 {
+            return Err(global.throw(format_args!(
+                "Expected two volume arguments; pass 0 for an unavailable volume",
+            )));
+        }
         let volume = |value: JSValue| match value.to_u32() {
             0 => None,
             id => Some(u64::from(id)),

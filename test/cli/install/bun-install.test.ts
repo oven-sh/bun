@@ -9175,10 +9175,20 @@ describe.concurrent("bun-install", () => {
   });
 
   test.each([
+    ["zero", []],
+    ["one", [1]],
+  ] as const)("hardlink fallback decision rejects %s-argument calls", (_, args) => {
+    expect(() => Reflect.apply(install_test_helpers.simulateHardlinkFallback, undefined, args)).toThrow(
+      "Expected two volume arguments; pass 0 for an unavailable volume",
+    );
+  });
+
+  test.each([
     ["different volumes", [1, 2], true],
     ["same volume", [1, 1], false],
     ["unavailable cache volume", [0, 2], false],
     ["unavailable destination volume", [1, 0], false],
+    ["both volumes unavailable", [0, 0], false],
   ] as const)("hardlink fallback decision caches synthetic volumes: %s", (_, args, useCopyfile) => {
     expect(install_test_helpers.simulateHardlinkFallback(...args)).toEqual({
       copyfileDecisionCount: useCopyfile ? 2 : 0,

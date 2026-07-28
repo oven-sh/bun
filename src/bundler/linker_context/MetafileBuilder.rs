@@ -478,9 +478,6 @@ impl JsonObject {
             .find(|(k, _)| &k[..] == key)
             .map(|(_, v)| v)
     }
-    fn contains(&self, key: &[u8]) -> bool {
-        self.entries.iter().any(|(k, _)| &k[..] == key)
-    }
     fn count(&self) -> usize {
         self.entries.len()
     }
@@ -731,10 +728,6 @@ struct ImportedByInfo<'a> {
     count: usize,
 }
 
-struct PathOnly<'a> {
-    path: &'a [u8],
-}
-
 /// Generates a markdown visualization of the module graph from metafile JSON.
 /// This is a post-processing step that parses the JSON and produces LLM-friendly output.
 /// Designed to help diagnose bundle bloat, dependency chains, and entry point analysis.
@@ -831,6 +824,21 @@ pub fn generate_markdown(metafile_json: &[u8]) -> crate::Result<Box<[u8]>> {
     let mut imported_by: StringHashMap<Vec<&[u8]>> = StringHashMap::default();
     // defer { ... imported_by.deinit() } — handled by Drop (Vec values drop automatically)
 
+    // Index input keys for O(1) exact-match and O(k) basename-match below.
+    // Import paths are absolute (`record.path.text`) while input keys are
+    // `source.path.pretty`, so the fallback suffix match is the common case.
+    let mut input_key_set: StringHashMap<()> = StringHashMap::with_capacity(inputs_obj.count());
+    let mut input_keys_by_basename: StringHashMap<Vec<&[u8]>> =
+        StringHashMap::with_capacity(inputs_obj.count());
+    for (input_key, _) in inputs_obj.iter() {
+        input_key_set.put(input_key, ())?;
+        let gop = input_keys_by_basename.get_or_put(bun_paths::basename(input_key))?;
+        if !gop.found_existing {
+            *gop.value_ptr = Vec::new();
+        }
+        gop.value_ptr.push(input_key);
+    }
+
     // Second pass: collect all input file info and build reverse dependency map
     for (path, input) in inputs_obj.iter() {
         let JsonValue::Object(input_obj) = input else {
@@ -887,39 +895,44 @@ pub fn generate_markdown(metafile_json: &[u8]) -> crate::Result<Box<[u8]>> {
 
                                 // First, try exact match
                                 let mut matched_key: Option<&[u8]> = None;
-                                if inputs_obj.contains(target) {
+                                if input_key_set.contains_key(target) {
                                     matched_key = Some(target);
                                 } else {
-                                    // Try matching by basename or suffix
-                                    for (input_key, _) in inputs_obj.iter() {
-                                        // Check if target ends with the input key
-                                        if target.ends_with(input_key) {
-                                            // Make sure it's a path boundary (preceded by / or \ or start)
-                                            if target.len() == input_key.len()
-                                                || (target.len() > input_key.len()
-                                                    && (target[target.len() - input_key.len() - 1]
-                                                        == b'/'
-                                                        || target
+                                    // Try matching by basename or suffix. Both match
+                                    // criteria below require basename equality, so only
+                                    // input keys in this basename bucket are candidates.
+                                    let target_base = bun_paths::basename(target);
+                                    let target_has_dots =
+                                        strings::index_of(target, b"..").is_some();
+                                    let target_without_dots = strip_parent_refs(target);
+                                    if let Some(candidates) =
+                                        input_keys_by_basename.get(target_base)
+                                    {
+                                        for &input_key in candidates {
+                                            // Check if target ends with the input key
+                                            if target.ends_with(input_key) {
+                                                // Make sure it's a path boundary (preceded by / or \ or start)
+                                                if target.len() == input_key.len()
+                                                    || (target.len() > input_key.len()
+                                                        && (target
                                                             [target.len() - input_key.len() - 1]
-                                                            == b'\\'))
-                                            {
-                                                matched_key = Some(input_key);
-                                                break;
-                                            }
-                                        }
-                                        // Also check if input_key ends with target (for relative paths)
-                                        // e.g., target="../utils/logger.js" might match "src/utils/logger.js"
-                                        if strings::index_of(target, b"..").is_some() {
-                                            // This is a relative path, try matching just the filename parts
-                                            let target_base = bun_paths::basename(target);
-                                            let key_base = bun_paths::basename(input_key);
-                                            if target_base == key_base {
-                                                // Check if paths share common suffix
-                                                let target_without_dots = strip_parent_refs(target);
-                                                if input_key.ends_with(target_without_dots) {
+                                                            == b'/'
+                                                            || target[target.len()
+                                                                - input_key.len()
+                                                                - 1]
+                                                                == b'\\'))
+                                                {
                                                     matched_key = Some(input_key);
                                                     break;
                                                 }
+                                            }
+                                            // Also check if input_key ends with target (for relative paths)
+                                            // e.g., target="../utils/logger.js" might match "src/utils/logger.js"
+                                            if target_has_dots
+                                                && input_key.ends_with(target_without_dots)
+                                            {
+                                                matched_key = Some(input_key);
+                                                break;
                                             }
                                         }
                                     }
@@ -1269,24 +1282,17 @@ pub fn generate_markdown(metafile_json: &[u8]) -> crate::Result<Box<[u8]>> {
     md.extend_from_slice(b"\n## Full Module Graph\n\n");
     md.extend_from_slice(b"Complete dependency information for each module.\n\n");
 
-    // Sort inputs alphabetically for easier navigation
-    let mut sorted_paths: Vec<PathOnly> = Vec::new();
-
-    for (key, _) in inputs_obj.iter() {
-        sorted_paths.push(PathOnly { path: key });
+    // Sort inputs alphabetically for easier navigation. Carry the value
+    // reference so the loop body doesn't re-scan `inputs_obj` per entry.
+    let mut sorted_inputs: Vec<(&[u8], &JsonObject)> = Vec::with_capacity(inputs_obj.count());
+    for (key, value) in inputs_obj.iter() {
+        if let JsonValue::Object(obj) = value {
+            sorted_inputs.push((key, obj));
+        }
     }
+    sorted_inputs.sort_by(|a, b| a.0.cmp(b.0));
 
-    sorted_paths.sort_by(|a, b| a.path.cmp(b.path));
-
-    for sp in sorted_paths.iter() {
-        let input_path = sp.path;
-        let Some(input) = inputs_obj.get(input_path) else {
-            continue;
-        };
-        let JsonValue::Object(input_obj) = input else {
-            continue;
-        };
-
+    for &(input_path, input_obj) in sorted_inputs.iter() {
         write!(md, "### `{}`\n\n", BStr::new(input_path))?;
 
         // Show bytes contributed to output

@@ -101,9 +101,7 @@ pub enum ForceNodeEnv {
 }
 
 impl ForceNodeEnv {
-    /// `Some(dev)` when this value should override the per-file tsconfig
-    /// `jsx.development`; `None` (Unspecified) leaves the resolver-merged
-    /// value in place.
+    /// `Some(dev)` to override per-file tsconfig `jsx.development`; `None` keeps it.
     pub fn jsx_development_override(self) -> Option<bool> {
         match self {
             ForceNodeEnv::Development => Some(true),

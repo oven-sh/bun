@@ -550,8 +550,14 @@ mod tests {
 
     #[test]
     fn resolve_trailing_slash() {
-        assert_eq!(resolve(b"/static/a/", b"/static/").as_deref(), Some(&b"a"[..]));
-        assert_eq!(resolve(b"/static/a/b/", b"/static/").as_deref(), Some(&b"a/b"[..]));
+        assert_eq!(
+            resolve(b"/static/a/", b"/static/").as_deref(),
+            Some(&b"a"[..])
+        );
+        assert_eq!(
+            resolve(b"/static/a/b/", b"/static/").as_deref(),
+            Some(&b"a/b"[..])
+        );
     }
 
     #[test]

@@ -547,7 +547,8 @@ test.if(isWindows)(
       });
       const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
-      await acked.promise;
+      /// Wait two seconds for a slow http request, or continue immediately once the request is heard.
+      await Promise.race([acked.promise, Bun.sleep(2000)]);
 
       expect(stderr).toContain(server.url.toString());
       expect(sent).toBe(true);

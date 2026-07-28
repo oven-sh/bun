@@ -1,8 +1,14 @@
 import { bunEnv, bunExe, isWindows, runBunInstall, tempDirWithFiles } from "harness";
-import { rm } from "node:fs/promises";
+import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { isCI } from "../../harness";
 import { getRegistry, SimpleRegistry, startRegistry, stopRegistry } from "./simple-dummy-registry";
+import expectedRequests from "./bun-security-scanner-matrix-expected.json";
+
+// Set to regenerate bun-security-scanner-matrix-expected.json from observed
+// behavior. When set, the process writes the file on exit and the registry
+// request assertions do not fail.
+const UPDATE_EXPECTED = process.env.SCANNER_TEST_UPDATE_EXPECTED === "1";
 
 const CI_SAMPLE_PERCENT = 10; // only 10% of tests will run in CI because this matrix generates so many tests
 
@@ -32,6 +38,7 @@ const TESTS_TO_SKIP: Set<string> = new Set<TestName>([
 ]);
 
 interface SecurityScannerTestOptions {
+  testId: string;
   command: "install" | "update" | "add" | "remove" | "uninstall";
   args: readonly string[];
   hasExistingNodeModules: boolean;
@@ -56,8 +63,6 @@ async function globEverything(dir: string) {
   );
 }
 
-let registryUrl: string;
-
 async function runSecurityScannerTest(options: SecurityScannerTestOptions) {
   const registry = getRegistry();
 
@@ -65,10 +70,8 @@ async function runSecurityScannerTest(options: SecurityScannerTestOptions) {
     throw new Error("Registry not found");
   }
 
-  registry.clearRequestLog();
-  registry.setScannerBehavior(options.scannerReturns ?? "none");
-
   const {
+    testId,
     command,
     args,
     hasExistingNodeModules,
@@ -81,6 +84,8 @@ async function runSecurityScannerTest(options: SecurityScannerTestOptions) {
     hasTTY,
     ttyResponse,
   } = options;
+
+  const session = registry.newSession(scannerReturns);
 
   const expectedExitCode = shouldFail ? 1 : 0;
 
@@ -167,11 +172,11 @@ async function runSecurityScannerTest(options: SecurityScannerTestOptions) {
     `[install]
 cache.disable = true
 linker = "${linker}"
-registry = "${registryUrl}/"`,
+registry = "${session.url}/"`,
   );
 
   const shouldDoInitialInstall = hasExistingNodeModules || hasLockfile;
-  if (hasExistingNodeModules || hasLockfile) {
+  if (shouldDoInitialInstall) {
     if (DO_TEST_DEBUG) console.log(redShellPrefix, `${bunExe()} install`);
     await runBunInstall(bunEnv, dir);
   }
@@ -196,7 +201,7 @@ registry = "${registryUrl}/"`,
     console.log(redShellPrefix, cmd.join(" "));
   }
 
-  registry.clearRequestLog();
+  session.clearRequestLog();
 
   // write the full bunfig WITH scanner configuration
   await Bun.write(
@@ -204,7 +209,7 @@ registry = "${registryUrl}/"`,
     `[install]
 cache.disable = true
 linker = "${linker}"
-registry = "${registryUrl}/"
+registry = "${session.url}/"
 
 [install.security]
 scanner = "${scannerPath}"`,
@@ -324,14 +329,12 @@ scanner = "${scannerPath}"`,
     console.log("Expected exit code:", expectedExitCode, "Got:", exitCode);
     console.log("Test directory:", dir);
     console.log("Files in test dir:", await globEverything(dir));
-    console.log("Registry:", registryUrl);
+    console.log("Registry:", session.url);
     console.log();
     console.log("bunfig:");
     console.log(await Bun.file(join(dir, "bunfig.toml")).text());
     console.log();
   }
-
-  expect(exitCode).toBe(expectedExitCode);
 
   // If the scanner is from npm and there are no node modules when the test "starts"
   // then we should expect Bun to do the partial install first of all
@@ -341,7 +344,9 @@ scanner = "${scannerPath}"`,
   }
 
   if (scannerType === "npm.bunfigonly") {
-    expect(errAndOut).toContain("");
+    expect(errAndOut).toContain(
+      "Security scanner 'test-security-scanner' is configured in bunfig.toml but is not installed.",
+    );
   }
 
   if (scannerType !== "npm.bunfigonly" && !scannerSyncronouslyThrows) {
@@ -369,6 +374,8 @@ scanner = "${scannerPath}"`,
       expect(errAndOut).toContain("Test fatal error");
     }
   }
+
+  expect(exitCode).toBe(expectedExitCode);
 
   if (scannerType !== "npm.bunfigonly" && !hasExistingNodeModules) {
     switch (scannerReturns) {
@@ -461,8 +468,8 @@ scanner = "${scannerPath}"`,
     }
   }
 
-  const requestedPackages = registry.getRequestedPackages();
-  const requestedTarballs = registry.getRequestedTarballs();
+  const requestedPackages = session.getRequestedPackages();
+  const requestedTarballs = session.getRequestedTarballs();
 
   // when we have no node modules and the scanner comes from npm, we must first install the scanner
   // but, if we expect the scanner to report failure then we should ONLY see the scanner tarball requested, no others
@@ -493,9 +500,39 @@ scanner = "${scannerPath}"`,
   const sortedPackages = [...requestedPackages].sort();
   const sortedTarballs = [...requestedTarballs].sort();
 
-  const key = `${command} ${args.length > 0 ? "with args" : "without args"}` as const;
-  expect(sortedPackages).toMatchSnapshot(`requested-packages: ${key}`);
-  expect(sortedTarballs).toMatchSnapshot(`requested-tarballs: ${key}`);
+  const expectedKey = hasExistingNodeModules ? "with" : "without";
+  if (UPDATE_EXPECTED) {
+    expectedRequests[expectedKey][testId] = { packages: sortedPackages, tarballs: sortedTarballs };
+  } else {
+    const expected: { packages: string[]; tarballs: string[] } | undefined = expectedRequests[expectedKey][testId];
+    expect(
+      expected,
+      `No expected registry requests for test ${testId} (${expectedKey}). Run with SCANNER_TEST_UPDATE_EXPECTED=1 to regenerate.`,
+    ).toBeDefined();
+    expect({ packages: sortedPackages, tarballs: sortedTarballs }).toEqual(expected!);
+  }
+}
+
+function writeExpected() {
+  const emit = (obj: Record<string, { packages: string[]; tarballs: string[] }>) => {
+    const keys = Object.keys(obj).sort();
+    return keys.map((k, i) => `    ${JSON.stringify(k)}: ${JSON.stringify(obj[k])}${i < keys.length - 1 ? "," : ""}`);
+  };
+  const lines = [
+    "{",
+    '  "with": {',
+    ...emit(expectedRequests.with),
+    "  },",
+    '  "without": {',
+    ...emit(expectedRequests.without),
+    "  }",
+    "}",
+  ];
+  return writeFile(
+    join(import.meta.dirname, "bun-security-scanner-matrix-expected.json"),
+    lines.join("\n") + "\n",
+    "utf8",
+  );
 }
 
 export function runSecurityScannerTests(selfModuleName: string, hasExistingNodeModules: boolean) {
@@ -504,11 +541,12 @@ export function runSecurityScannerTests(selfModuleName: string, hasExistingNodeM
   const { describe, beforeAll, afterAll, test } = Bun.jest(selfModuleName);
 
   beforeAll(async () => {
-    registryUrl = await startRegistry(DO_TEST_DEBUG);
+    await startRegistry(DO_TEST_DEBUG);
   });
 
-  afterAll(() => {
+  afterAll(async () => {
     stopRegistry();
+    if (UPDATE_EXPECTED) await writeExpected();
   });
 
   const ttyConfigs = [
@@ -540,23 +578,26 @@ export function runSecurityScannerTests(selfModuleName: string, hasExistingNodeM
                   return;
                 }
 
-                const testName = getTestName(String(++i).padStart(4, "0"), hasExistingNodeModules);
+                const testId = String(++i).padStart(4, "0");
+                const testName = getTestName(testId, hasExistingNodeModules);
 
+                // Use test.concurrent.skip (not test.skip) so skipped cases
+                // don't break the concurrent batch and serialize the run.
                 if (TESTS_TO_SKIP.has(testName)) {
-                  return test.skip(testName, async () => {
+                  return test.concurrent.skip(testName, async () => {
                     // TODO
                   });
                 }
 
                 if (hasTTY && isWindows) {
-                  return test.skip(testName, async () => {
+                  return test.concurrent.skip(testName, async () => {
                     // PTY not supported on Windows
                   });
                 }
 
-                if (isCI) {
+                if (isCI && !UPDATE_EXPECTED) {
                   if (command === "uninstall") {
-                    return test.skip(testName, async () => {
+                    return test.concurrent.skip(testName, async () => {
                       // Same as `remove`, optimising for CI time here
                     });
                   }
@@ -564,7 +605,7 @@ export function runSecurityScannerTests(selfModuleName: string, hasExistingNodeM
                   const random = Math.random();
 
                   if (random < (100 - CI_SAMPLE_PERCENT) / 100) {
-                    return test.skip(testName, async () => {
+                    return test.concurrent.skip(testName, async () => {
                       // skipping this one for CI
                     });
                   }
@@ -579,24 +620,31 @@ export function runSecurityScannerTests(selfModuleName: string, hasExistingNodeM
                   scannerReturns === "fatal" ||
                   (scannerReturns === "warn" && (!hasTTY || ttyResponse === "n"));
 
-                test(testName, async () => {
-                  await runSecurityScannerTest({
-                    command,
-                    args,
-                    hasExistingNodeModules,
-                    linker,
-                    scannerType,
-                    scannerReturns,
-                    shouldFail,
-                    hasLockfile,
+                test.concurrent(
+                  testName,
+                  async () => {
+                    await runSecurityScannerTest({
+                      testId,
+                      command,
+                      args,
+                      hasExistingNodeModules,
+                      linker,
+                      scannerType,
+                      scannerReturns,
+                      shouldFail,
+                      hasLockfile,
 
-                    // TODO(@alii): Test this case
-                    scannerSyncronouslyThrows: false,
+                      // TODO(@alii): Test this case
+                      scannerSyncronouslyThrows: false,
 
-                    hasTTY,
-                    ttyResponse,
-                  });
-                });
+                      hasTTY,
+                      ttyResponse,
+                    });
+                  },
+                  // Each case spawns up to two `bun install`-class subprocesses, so the
+                  // default 5s can trip under concurrent load on a debug+ASAN build.
+                  30_000,
+                );
               });
             });
           });

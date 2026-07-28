@@ -4110,10 +4110,10 @@ impl Resolver {
             // SAFETY: `state` is the boxed per-thread `RuntimeState`; single-threaded JS heap.
             unsafe { (*state).timer.increment_timer_ref(-1, uws_loop) };
             // SAFETY: `deref_this` is the heap allocation from `init`. This releases the
-            // ref taken by `add_timer` (no local `ref_()` pairing). The timer is
-            // only ACTIVE while at least one pending request also holds an
-            // `IntrusiveRc<Resolver>`, so this `deref` cannot drop the last ref
-            // and `*self` stays live for the rest of the function body.
+            // ref taken by `add_timer` (no local `ref_()` pairing). When the
+            // post-`ares_process_fd` re-check below called `remove_timer()`
+            // this may be the final release; nothing dereferences `*self` after
+            // this point (same shape as `on_dns_poll`'s `ref_scope` guard).
             unsafe { Self::deref(deref_this) };
         }
 

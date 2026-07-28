@@ -43,14 +43,19 @@ describe("dns.Resolver does not keep the event loop alive after the last query t
     return JSON.parse(stdout.trim()) as { delay: number; code: string };
   }
 
-  for (const [name, stmt] of [
-    ["resolveCaa", `r.resolveCaa("x.invalid", done);`],
-    ["resolve4", `r.resolve4("x.invalid", done);`],
-    ["reverse", `r.reverse("192.0.2.1", done);`],
+  for (const [name, stmt, expected] of [
+    ["resolveCaa", `r.resolveCaa("x.invalid", done);`, "ETIMEOUT"],
+    ["resolve4", `r.resolve4("x.invalid", done);`, "ETIMEOUT"],
+    // ares_gethostbyaddr swallows the PTR query status and reports ENOTFOUND
+    // after the file-lookup fallback; the PTR query itself still completes
+    // via the retransmit timer.
+    ["reverse", `r.reverse("192.0.2.1", done);`, "ENOTFOUND"],
   ] as const) {
     test.concurrent(name, async () => {
       const { delay, code } = await run(stmt);
-      expect(typeof code).toBe("string");
+      // ETIMEOUT proves completion routed through `check_timeouts`
+      // (the path changed here), not `on_dns_poll`.
+      expect(code).toBe(expected);
       // Before the fix: delay ≈ 1000 ms (one retransmit-timer interval).
       expect(delay).toBeLessThan(500);
     });

@@ -393,6 +393,7 @@ pub struct PackageManager {
 
     pub on_wake: bun_core::Mutex<Vec<WakeHandler>>,
     pub failed_root_dependencies: bun_core::Mutex<Vec<(DependencyID, &'static str)>>,
+    pub runtime_wake_via_handlers: AtomicBool,
 
     pub peer_dependencies: LinearFifo<DependencyID, DynamicBuffer<DependencyID>>,
 
@@ -898,7 +899,9 @@ impl PackageManager {
                     (h.get_handler())(ctx.as_ptr(), this.cast::<c_void>());
                 }
             }
-            (*core::ptr::addr_of_mut!((*this).event_loop)).wakeup();
+            if !(*core::ptr::addr_of!((*this).runtime_wake_via_handlers)).load(Ordering::Acquire) {
+                (*core::ptr::addr_of_mut!((*this).event_loop)).wakeup();
+            }
         }
     }
 
@@ -1940,6 +1943,7 @@ pub fn init(
         wr!(global_link_dir_path, Box::default());
         wr!(on_wake, bun_core::Mutex::new(Vec::new()));
         wr!(failed_root_dependencies, bun_core::Mutex::new(Vec::new()));
+        wr!(runtime_wake_via_handlers, AtomicBool::new(false));
         wr!(
             peer_dependencies,
             LinearFifo::<DependencyID, DynamicBuffer<DependencyID>>::init()
@@ -2304,9 +2308,9 @@ pub(crate) fn init_with_runtime_once(
         wr!(
             env,
             Some(bun_ptr::BackRef::new_mut(&mut *bun_core::heap::into_raw(
-                Box::new(dot_env::Loader::init_with_map(
-                    env.map.clone_with_allocator()?,
-                ))
+                Box::new(dot_env::Loader::init_with_map(bun_core::handle_oom(
+                    env.map.clone_with_allocator()
+                ),))
             )))
         );
         wr!(
@@ -2329,6 +2333,7 @@ pub(crate) fn init_with_runtime_once(
         // erased *mut () set by tier-6; `js_current()` resolves the per-thread JS
         // event loop via `bun_io::__bun_get_vm_ctx` (link-time, definer in bun_runtime).
         wr!(event_loop, AnyEventLoop::js_current());
+        (*core::ptr::addr_of_mut!((*p).runtime_wake_via_handlers)).store(true, Ordering::Release);
         wr!(
             original_package_json_path,
             ZBox::from_vec_with_nul(original_package_json_path)
@@ -2379,6 +2384,7 @@ pub(crate) fn init_with_runtime_once(
         wr!(global_link_dir_path, Box::default());
         wr!(on_wake, bun_core::Mutex::new(Vec::new()));
         wr!(failed_root_dependencies, bun_core::Mutex::new(Vec::new()));
+        wr!(runtime_wake_via_handlers, AtomicBool::new(false));
         wr!(
             peer_dependencies,
             LinearFifo::<DependencyID, DynamicBuffer<DependencyID>>::init()

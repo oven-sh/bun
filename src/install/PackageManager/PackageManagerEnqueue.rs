@@ -527,6 +527,7 @@ pub fn enqueue_dependency_to_root(
                 this.start_progress_bar_if_none();
             }
 
+            this.event_loop = bun_event_loop::AnyEventLoop::js_current();
             let mgr: *mut PackageManager = this;
             let mut closure = Closure {
                 err: None,

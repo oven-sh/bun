@@ -387,12 +387,10 @@ impl Queue {
             }
         }
         if !leftover.is_empty() {
-            VirtualMachine::get()
-                .as_mut()
-                .package_manager()
-                .failed_root_dependencies
-                .lock()
-                .extend(leftover);
+            let pm = VirtualMachine::get().as_mut().package_manager();
+            if pm.on_wake.lock().len() > 1 {
+                pm.failed_root_dependencies.lock().extend(leftover);
+            }
         }
     }
 

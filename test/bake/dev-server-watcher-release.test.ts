@@ -85,7 +85,7 @@ test.skipIf(!isLinux)("dev server releases its file watcher on stop()", async ()
   if (!line) {
     throw new Error(`no JSON summary in stdout.\nstdout:\n${stdout}\nstderr:\n${stderr}`);
   }
-  const { iterations, inotifyDelta, threadDelta } = JSON.parse(line);
+  const { inotifyDelta, threadDelta } = JSON.parse(line);
 
   expect(stderr).not.toContain("error:");
 
@@ -98,7 +98,6 @@ test.skipIf(!isLinux)("dev server releases its file watcher on stop()", async ()
     inotifyDelta: 0,
     threadDelta: expect.any(Number),
   });
-  expect(inotifyDelta).toBeLessThan(iterations);
 
   expect(exitCode).toBe(0);
 });

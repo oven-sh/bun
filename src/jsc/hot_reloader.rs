@@ -984,8 +984,9 @@ where
 
                         let affected_len: usize = 'brk: {
                             if IS_KQUEUE {
-                                // SAFETY: hot-reload runs single-threaded on the JS thread;
-                                // no other live `&mut EntriesOption` for this key here.
+                                // Index lookup only (`BSSMap::get` locks internally); the slot
+                                // contents are read under `entries_mutex` in the 'locked block
+                                // below, since a JS-thread resolve can now rewrite them in place.
                                 if let Some(existing) = rfs.entries.get(file_path) {
                                     self.put_tombstone(file_path, existing);
                                     entries_option = Some(existing);
@@ -1085,10 +1086,6 @@ where
                             }
                         }
 
-                        let _ = self.ctx_mut().bust_dir_cache(
-                            strings::paths::without_trailing_slash_windows_path(file_path),
-                        );
-
                         // The watched entrypoint has a per-file inotify watch on its inode.
                         // An atomic rename (`rename(tmp, entrypoint)`) or a rm+recreate over
                         // the entrypoint replaces that inode, so the kernel drops the
@@ -1137,10 +1134,22 @@ where
                             }
                         }
 
-                        if let Some(dir_ent) = entries_option {
+                        'locked: {
+                            let Some(dir_ent) = entries_option else {
+                                break 'locked;
+                            };
+                            // `bust_entries_cache` now marks the `DirEntry` stale in place
+                            // instead of orphaning the slot, so a concurrent resolve on the
+                            // JS thread can rewrite this exact `DirEntry`/`EntryMap` via the
+                            // in-place path. Serialize with those writers by holding the
+                            // same mutex they take.
+                            let _entries_g = rfs.entries_mutex.lock_guard();
                             // SAFETY: dir_ent points into rfs.entries (or a tombstoned copy);
                             // both outlive this loop iteration.
                             let dir_ent = unsafe { &mut *dir_ent };
+                            if !matches!(dir_ent, Fs::EntriesOption::Entries(_)) {
+                                break 'locked;
+                            }
                             let mut last_file_hash: bun_watcher::HashType =
                                 bun_watcher::HashType::MAX;
 
@@ -1265,6 +1274,12 @@ where
                                 }
                             }
                         }
+
+                        // Bust after releasing `entries_mutex`: `bust_entries_cache`
+                        // takes it internally and the lock is non-recursive.
+                        let _ = self.ctx_mut().bust_dir_cache(
+                            strings::paths::without_trailing_slash_windows_path(file_path),
+                        );
 
                         if self.verbose {
                             Self::debug(format_args!(

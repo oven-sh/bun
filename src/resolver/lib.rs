@@ -1194,7 +1194,7 @@ pub mod fs {
                         // scrutinee directly so no second `&mut *cached_ptr` is materialized
                         // while the first is on the borrow stack (Stacked Borrows hygiene).
                         match unsafe { &mut *cached_ptr } {
-                            EntriesOption::Entries(e) if e.generation < generation => {
+                            EntriesOption::Entries(e) if e.stale || e.generation < generation => {
                                 in_place = Some(std::ptr::from_mut::<DirEntry>(*e));
                             }
                             cached => return Ok(cached),
@@ -1277,6 +1277,24 @@ pub mod fs {
                     entries.fd = handle;
                 }
 
+                // When refreshing a slot that already holds an open directory
+                // handle, keep that handle: its raw value may also be cached
+                // in `ParseTask.contents_or_fd`, the watcher's watchlist, or
+                // the dev server's `DirectoryWatchStore`, so replacing it
+                // would strand an open fd with no owner. The freshly-opened
+                // `handle` was only needed for the readdir above; release it
+                // here (the guard above does not, under `store_fd`).
+                if let Some(original) = in_place {
+                    // SAFETY: BSSMap-owned; entries_mutex held.
+                    let prev_fd = unsafe { (*original).fd };
+                    if prev_fd.is_valid() {
+                        if !should_close_handle && !had_handle && entries.fd != prev_fd {
+                            let _ = bun_sys::close(entries.fd);
+                        }
+                        entries.fd = prev_fd;
+                    }
+                }
+
                 // SAFETY: `entries_ptr` is either a live BSSMap slot (`in_place`) or a fresh
                 // leaked Box; exclusively owned here under `entries_mutex`.
                 unsafe { *entries_ptr = entries };
@@ -1300,16 +1318,36 @@ pub mod fs {
             })))
         }
 
-        /// Evicts `file_path` from the directory-entry cache; returns whether
-        /// an entry was removed.
+        /// Invalidates `file_path` in the directory-entry cache; returns
+        /// whether an entry was invalidated.
         pub fn bust_entries_cache(&mut self, file_path: &[u8]) -> bool {
-            // `entries` is the process-global
-            // BSSMap singleton and `remove` mutates it; callers (transpiler /
-            // hot-reloader / VM) reach this without `RESOLVER_MUTEX`, so take
-            // `entries_mutex` to satisfy `EntriesMap::inner`'s aliasing
-            // invariant. No caller already holds it (no re-entry from
+            // `entries` is the process-global BSSMap singleton; callers
+            // (transpiler / hot-reloader / VM) reach this without
+            // `RESOLVER_MUTEX`. `read_directory_with_iterator` and
+            // `dir_info_cached_miss` hold `entries_mutex` while they read and
+            // overwrite slot contents, so take it here too for the tag check
+            // and `stale` write. No caller already holds it (no re-entry from
             // `read_directory`/`dir_info_cached_maybe_log`).
             let _g = self.entries_mutex.lock_guard();
+
+            // `BSSMap::remove()` only drops the hash→index mapping; the backing
+            // slot (and the leaked `Box<DirEntry>` it points at, with its open
+            // `.fd` when `store_fd` is true) is orphaned, and the next lookup
+            // allocates a fresh slot and re-opens the directory. Under
+            // `--hot`/`--watch` this leaked one directory fd per reload.
+            //
+            // The fd cannot simply be closed here: its raw value is also copied
+            // into `ParseTask.contents_or_fd`, the dev server's
+            // `DirectoryWatchStore`, and the watcher's own watchlist, and a
+            // close would race those readers on another thread. Instead keep
+            // the slot reachable and mark it stale; the next locked directory
+            // read takes the in-place re-scan path and carries the fd forward.
+            if let Some(EntriesOption::Entries(entries)) = self.entries.get(file_path) {
+                entries.stale = true;
+                return true;
+            }
+            // `Err` slots and `NotFound` sentinels hold no `DirEntry`; drop the
+            // key so the next read re-checks disk.
             self.entries.remove(file_path)
         }
 
@@ -1591,9 +1629,15 @@ pub mod fs {
                     // SAFETY: see above — exclusive `&mut` on the prev map for the duration of `readdir`.
                     let prev = Some(unsafe { &mut (*e_ptr).data });
                     match self.readdir(false, prev, dir, generation, handle, ()) {
-                        Ok(new_entry) => {
+                        Ok(mut new_entry) => {
                             // SAFETY: see above.
                             unsafe { (*e_ptr).data.clear() };
+                            // `readdir(store_fd=false, …)` leaves `new_entry.fd` invalid;
+                            // carry over any previously stored descriptor so callers that
+                            // cached it via `DirInfo::get_file_descriptor` keep a live
+                            // handle and it is not leaked by the overwrite below.
+                            // SAFETY: see above.
+                            new_entry.fd = unsafe { (*e_ptr).fd };
                             // SAFETY: see above — slot is exclusively owned here.
                             unsafe { *e_ptr = new_entry };
                         }

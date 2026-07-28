@@ -1,7 +1,19 @@
 import { spawn } from "bun";
 import { beforeEach, expect, it } from "bun:test";
-import { copyFileSync, cpSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isDebug, isWindows, tmpdirSync, waitForFileToExist } from "harness";
+import {
+  appendFileSync,
+  copyFileSync,
+  cpSync,
+  readdirSync,
+  readFileSync,
+  readlinkSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  unlinkSync,
+  writeFileSync,
+} from "fs";
+import { bunEnv, bunExe, isDebug, isLinux, isWindows, tempDir, tmpdirSync, waitForFileToExist } from "harness";
 import { join } from "path";
 
 const timeout = isDebug ? Infinity : 10_000;
@@ -775,4 +787,104 @@ ${Buffer.alloc(counter * 2, " ").toString()}throw new Error(${counter});`,
     // TODO: bun has a memory leak when --hot is used on very large files
   },
   longTimeout,
+);
+
+// /proc/<pid>/fd is Linux-only.
+it.skipIf(!isLinux)(
+  "does not leak file descriptors on each reload",
+  async () => {
+    using dir = tempDir("hot-fd-leak", {
+      "entry.ts": 'import { value } from "./sub/dep.ts";\nconsole.log("RELOAD", value, process.pid);\n',
+      "sub/dep.ts": "export const value = 0;\n",
+    });
+    const dirReal = realpathSync(String(dir));
+    const depPath = join(String(dir), "sub", "dep.ts");
+
+    await using runner = spawn({
+      cmd: [bunExe(), "--hot", "entry.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+    const stderrDrain = runner.stderr.text();
+
+    // Resolve once stdout prints `RELOAD <n>`; the module logs that line on
+    // every re-evaluation.
+    const seen = new Set<number>();
+    let pending: { n: number; resolve: () => void } | null = null;
+    let childPid = 0;
+    const pump = (async () => {
+      const decoder = new TextDecoder();
+      let buffered = "";
+      for await (const chunk of runner.stdout) {
+        buffered += decoder.decode(chunk, { stream: true });
+        let nl: number;
+        while ((nl = buffered.indexOf("\n")) !== -1) {
+          const line = buffered.slice(0, nl);
+          buffered = buffered.slice(nl + 1);
+          const match = /^RELOAD (\d+) (\d+)$/.exec(line);
+          if (!match) continue;
+          const n = Number(match[1]);
+          childPid ||= Number(match[2]);
+          seen.add(n);
+          if (pending?.n === n) {
+            pending.resolve();
+            pending = null;
+          }
+        }
+      }
+    })();
+    const waitForReload = (n: number) =>
+      new Promise<void>((resolve, reject) => {
+        if (seen.has(n)) return resolve();
+        pending = { n, resolve };
+        runner.exited.then(code => reject(new Error(`--hot exited early with code ${code}`)));
+      });
+
+    const countProjectFds = () => {
+      const counts: Record<string, number> = {};
+      for (const fd of readdirSync(`/proc/${childPid}/fd`)) {
+        let target: string;
+        try {
+          target = readlinkSync(`/proc/${childPid}/fd/${fd}`);
+        } catch {
+          continue;
+        }
+        if (target === dirReal || target.startsWith(dirReal + "/")) {
+          counts[target] = (counts[target] ?? 0) + 1;
+        }
+      }
+      return counts;
+    };
+
+    await waitForReload(0);
+    // Warm up: the resolver's `store_fd` flag is set after VM init, so the
+    // first reload is what caches a directory handle. Measure after it so the
+    // steady-state handle is already present in `before`.
+    {
+      const reloaded = waitForReload(1);
+      writeFileSync(depPath, "export const value = 1;\n");
+      await reloaded;
+    }
+    const before = countProjectFds();
+
+    const reloads = 20;
+    for (let i = 2; i <= reloads + 1; i++) {
+      const reloaded = waitForReload(i);
+      writeFileSync(depPath, `export const value = ${i};\n`);
+      await reloaded;
+    }
+    const after = countProjectFds();
+
+    runner.kill();
+    await Promise.allSettled([pump, stderrDrain, runner.exited]);
+
+    // Previously: every reload orphaned one open descriptor on the entrypoint
+    // and two O_DIRECTORY handles on the edited module's directory; long
+    // sessions eventually hit EMFILE.
+    expect({ reloads, before, after }).toEqual({ reloads, before, after: before });
+  },
+  timeout,
 );

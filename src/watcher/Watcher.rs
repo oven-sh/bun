@@ -867,7 +867,19 @@ impl Watcher {
                 // On Linux, the file descriptor might be out of date.
                 if fd.is_valid() {
                     let fds = self.watchlist.items_fd_mut();
+                    let previous = fds[index as usize];
                     fds[index as usize] = fd;
+                    // Close the replaced descriptor so it is not orphaned, but only
+                    // while its inode is still linked: releasing the last reference
+                    // to an unlinked inode makes the kernel deliver the deferred
+                    // IN_DELETE_SELF on this item's still-registered watch, which
+                    // the dev server would turn into a spurious reload.
+                    if previous.is_valid()
+                        && previous != fd
+                        && matches!(bun_sys::fstat(previous), Ok(st) if st.st_nlink > 0)
+                    {
+                        let _ = bun_sys::close(previous);
+                    }
                 }
             }
             self.mutex.unlock();

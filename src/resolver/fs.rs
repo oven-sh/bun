@@ -478,6 +478,13 @@ pub struct DirEntry {
     pub dir: &'static [u8],
     pub fd: Fd,
     pub generation: Generation,
+    /// Set by `RealFS::bust_entries_cache`. Forces the next read through
+    /// `read_directory_with_iterator` / `dir_info_cached_miss` /
+    /// `dir_info_for_resolution` to take the in-place re-scan path even when
+    /// `generation` matches, so the existing `DirEntry` (and its cached
+    /// directory `fd`) is reused instead of being orphaned with the fd left
+    /// open.
+    pub stale: bool,
     pub data: dir_entry::EntryMap,
 }
 
@@ -490,6 +497,7 @@ impl DirEntry {
             dir,
             data: dir_entry::EntryMap::default(),
             generation,
+            stale: false,
             fd: Fd::INVALID,
         }
     }

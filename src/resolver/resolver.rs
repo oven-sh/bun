@@ -3369,10 +3369,16 @@ impl<'a> Resolver<'a> {
                 return Err(err.into());
             }
         };
+        let open_dir_adopted = core::cell::Cell::new(false);
+        let _close_open_dir = scopeguard::guard((), |()| {
+            if !open_dir_adopted.get() {
+                let _ = ::bun_sys::close(open_dir);
+            }
+        });
 
         if let Some(cached_entry) = rfs!().entries.at_index(cached_dir_entry_result.index) {
             if let Fs::file_system::real_fs::EntriesOption::Entries(entries) = cached_entry {
-                if entries.generation >= self.generation {
+                if !entries.stale && entries.generation >= self.generation {
                     dir_entries_option = cached_entry;
                     needs_iter = false;
                 } else {
@@ -3425,8 +3431,17 @@ impl<'a> Resolver<'a> {
                 unsafe { &mut *existing }.data.clear();
             }
 
-            if self.store_fd {
+            // SAFETY: see block-wide note above.
+            let prev_fd = in_place
+                .map(|p| unsafe { (*p).fd })
+                .filter(|f| f.is_valid());
+            if let Some(prev) = prev_fd {
+                // Keep the descriptor that was already stored for this slot;
+                // see `bust_entries_cache` for why it cannot be released here.
+                new_entry.fd = prev;
+            } else if self.store_fd {
                 new_entry.fd = open_dir;
+                open_dir_adopted.set(true);
             }
             // NOTE: see `dir_info_cached_maybe_log` — `DirEntry.data` holds a `NonNull`,
             // so a zeroed slot is UB; box `new_entry` directly for the fresh case.
@@ -4405,12 +4420,20 @@ impl<'a> Resolver<'a> {
 
             // `open_dir` is INVALID for a permission-denied ancestor treated as
             // an opaque directory; there is nothing to track or close then.
-            if !queue_top.fd.is_valid() && open_dir.is_valid() {
+            let open_dir_freshly_opened = !queue_top.fd.is_valid() && open_dir.is_valid();
+            if open_dir_freshly_opened {
                 Fs::FileSystem::set_max_fd(open_dir.native());
                 // these objects mostly just wrap the file descriptor, so it's fine to keep it.
                 bufs!(open_dirs)[open_dir_count.get()] = open_dir;
                 open_dir_count.set(open_dir_count.get() + 1);
             }
+            // Set when `open_dir` is stored as `DirEntry.fd`; otherwise, a
+            // freshly-opened `open_dir` is released after `dir_info_uncached`
+            // (which still uses it for `openat`). Previously the `store_fd`
+            // guard above assumed every opened handle was adopted and never
+            // closed the ones that were not (entry already fresh, or an
+            // existing handle carried over in place), leaking one per call.
+            let mut open_dir_adopted = false;
 
             let dir_path: &'static [u8] = if !queue_top_safe_path.is_empty() {
                 // SAFETY: non-empty `safe_path` is always a dirname_store-backed
@@ -4468,7 +4491,7 @@ impl<'a> Resolver<'a> {
 
             if let Some(cached_entry) = rfs!().entries.at_index(cached_dir_entry_result.index) {
                 if let Fs::file_system::real_fs::EntriesOption::Entries(entries) = cached_entry {
-                    if entries.generation >= self.generation {
+                    if !entries.stale && entries.generation >= self.generation {
                         dir_entries_option = cached_entry;
                         needs_iter = false;
                     } else {
@@ -4530,7 +4553,23 @@ impl<'a> Resolver<'a> {
                     // NOTE: bun_collections::StringHashMap exposes `clear`, which drops all entries.
                     unsafe { &mut *existing }.data.clear();
                 }
-                new_entry.fd = if self.store_fd { open_dir } else { FD::INVALID };
+                // SAFETY: see block-wide note above.
+                let prev_fd = in_place
+                    .map(|p| unsafe { (*p).fd })
+                    .filter(|f| f.is_valid());
+                new_entry.fd = if let Some(prev) = prev_fd {
+                    // This slot already holds an open directory handle. Keep it:
+                    // its raw value may also be cached in `ParseTask`/bake/the
+                    // watcher (see `bust_entries_cache`), so replacing it would
+                    // strand an open fd with no owner. `open_dir` was only used
+                    // for the readdir above and for `dir_info_uncached` below.
+                    prev
+                } else if self.store_fd {
+                    open_dir_adopted = open_dir.is_valid();
+                    open_dir
+                } else {
+                    FD::INVALID
+                };
                 // NOTE: `DirEntry.data` is a `HashMap`
                 // (`NonNull` inside), so a zeroed slot is UB and `*ptr = new_entry` would drop it.
                 // Box `new_entry` directly for the fresh case; assign-into only for `in_place`.
@@ -4593,6 +4632,13 @@ impl<'a> Resolver<'a> {
                 open_dir,
                 None,
             )?;
+
+            if open_dir_freshly_opened && !open_dir_adopted {
+                let n = open_dir_count.get();
+                debug_assert!(n > 0 && bufs!(open_dirs)[n - 1] == open_dir);
+                open_dir_count.set(n - 1);
+                let _ = ::bun_sys::close(open_dir);
+            }
 
             top_parent = queue_top.result;
 

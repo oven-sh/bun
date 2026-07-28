@@ -303,7 +303,9 @@ describe("spawn stdin ReadableStream", () => {
         });
         const out = await child.stdout.text();
         const code = await child.exited.catch(e => { exitedRejection = String(e?.message ?? e); return -1; });
-        await Bun.sleep(50);
+        // The no-onExit fallback creates its rejected promise inside
+        // on_process_exit; the tracker reports it on a later event-loop turn.
+        for (let i = 0; i < 10; i++) await Bun.sleep(0);
         console.log(JSON.stringify({ out, code, onExitArgs, exitedRejection, reasons }));
         `,
       ],
@@ -354,12 +356,14 @@ describe("spawn stdin ReadableStream", () => {
         const reasons = [];
         process.on("unhandledRejection", r => { reasons.push(String(r?.message ?? r)); });
         const chunk = Buffer.alloc(256 * 1024, "x");
+        const { promise: errored, resolve: markErrored } = Promise.withResolvers();
         let n = 0;
         const stream = new ReadableStream({
           async pull(c) {
             n++;
-            if (n === 1) { c.enqueue(chunk); await Bun.sleep(10); return; }
+            if (n === 1) { c.enqueue(chunk); await Bun.sleep(0); return; }
             c.error(new Error("stdin stream boom"));
+            markErrored();
           },
         });
         let onExitArgs = null;
@@ -370,10 +374,15 @@ describe("spawn stdin ReadableStream", () => {
           stdout: "ignore",
           onExit(proc, code, signal, err) { onExitArgs = String(err?.message ?? err); },
         });
-        await Bun.sleep(100);
+        await errored;
+        // One task turn so the pump's rejection microtask chain from c.error()
+        // reaches handle_reject_stream before the child is killed.
+        await Bun.sleep(0);
         child.kill();
         await child.exited;
-        await Bun.sleep(50);
+        // Give the unhandled-rejection tracker enough turns to report any stray
+        // rejection so asserting reasons: [] below is meaningful.
+        for (let i = 0; i < 10; i++) await Bun.sleep(0);
         console.log(JSON.stringify({ onExitArgs, reasons }));
         `,
       ],

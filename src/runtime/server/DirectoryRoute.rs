@@ -186,7 +186,10 @@ impl DirectoryRoute {
         } else {
             extension_for_mime(rel)
         };
-        resp.write_header(b"content-type", &bun_http_types::MimeType::by_extension(ext).value);
+        resp.write_header(
+            b"content-type",
+            &bun_http_types::MimeType::by_extension(ext).value,
+        );
         if let Some(lm) = last_modified {
             resp.write_header(b"last-modified", lm);
         }
@@ -382,11 +385,9 @@ fn resolve_subpath(
         return None;
     }
 
-    let decoded_len = bun_url::PercentEncoding::decode_into(
-        &mut scratch[..after_prefix.len()],
-        after_prefix,
-    )
-    .ok()? as usize;
+    let decoded_len =
+        bun_url::PercentEncoding::decode_into(&mut scratch[..after_prefix.len()], after_prefix)
+            .ok()? as usize;
 
     let mut start = 0;
     while start < decoded_len && scratch[start] == b'/' {
@@ -402,8 +403,9 @@ fn resolve_subpath(
         return Some(0);
     }
 
-    let norm =
-        resolve_path::normalize_string_buf::<true, resolve_path::platform::Posix, false>(decoded, out);
+    let norm = resolve_path::normalize_string_buf::<true, resolve_path::platform::Posix, false>(
+        decoded, out,
+    );
     if norm == b".." || strings::starts_with(norm, b"../") {
         return None;
     }
@@ -436,14 +438,26 @@ mod tests {
 
     #[test]
     fn resolve_basic() {
-        assert_eq!(resolve(b"/static/a.txt", b"/static/").as_deref(), Some(&b"a.txt"[..]));
-        assert_eq!(resolve(b"/static/a/b.txt", b"/static/").as_deref(), Some(&b"a/b.txt"[..]));
+        assert_eq!(
+            resolve(b"/static/a.txt", b"/static/").as_deref(),
+            Some(&b"a.txt"[..])
+        );
+        assert_eq!(
+            resolve(b"/static/a/b.txt", b"/static/").as_deref(),
+            Some(&b"a/b.txt"[..])
+        );
         assert_eq!(resolve(b"/a.txt", b"/").as_deref(), Some(&b"a.txt"[..]));
         assert_eq!(resolve(b"/", b"/").as_deref(), Some(&b""[..]));
         assert_eq!(resolve(b"/static", b"/static/").as_deref(), Some(&b""[..]));
         assert_eq!(resolve(b"/static/", b"/static/").as_deref(), Some(&b""[..]));
-        assert_eq!(resolve(b"/static/a.txt?v=1", b"/static/").as_deref(), Some(&b"a.txt"[..]));
-        assert_eq!(resolve(b"/static?x", b"/static/").as_deref(), Some(&b""[..]));
+        assert_eq!(
+            resolve(b"/static/a.txt?v=1", b"/static/").as_deref(),
+            Some(&b"a.txt"[..])
+        );
+        assert_eq!(
+            resolve(b"/static?x", b"/static/").as_deref(),
+            Some(&b""[..])
+        );
     }
 
     #[test]
@@ -452,8 +466,14 @@ mod tests {
         assert_eq!(resolve(b"/static/..%2Fetc", b"/static/"), None);
         assert_eq!(resolve(b"/static/%2e%2e/etc", b"/static/"), None);
         assert_eq!(resolve(b"/static/a/../../etc", b"/static/"), None);
-        assert_eq!(resolve(b"/static/a/../b.txt", b"/static/").as_deref(), Some(&b"b.txt"[..]));
-        assert_eq!(resolve(b"/static/a//b.txt", b"/static/").as_deref(), Some(&b"a/b.txt"[..]));
+        assert_eq!(
+            resolve(b"/static/a/../b.txt", b"/static/").as_deref(),
+            Some(&b"b.txt"[..])
+        );
+        assert_eq!(
+            resolve(b"/static/a//b.txt", b"/static/").as_deref(),
+            Some(&b"a/b.txt"[..])
+        );
         assert_eq!(resolve(b"/static/a%00.txt", b"/static/"), None);
         assert_eq!(resolve(b"/static/a%5Cb.txt", b"/static/"), None);
     }

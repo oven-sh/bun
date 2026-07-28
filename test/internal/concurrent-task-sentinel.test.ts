@@ -15,9 +15,9 @@ import { access } from "node:fs/promises";
 test("tag 0 is no longer a real task type (fs.promises.access still dispatches)", async () => {
   // `access` was the tag-0 type before the sentinel reserved it; this round-trip
   // through the work-pool → concurrent queue → dispatch path proves the shift
-  // left it intact.
-  await expect(access(import.meta.path)).resolves.toBeNull();
-  await expect(access(import.meta.path + ".does-not-exist")).rejects.toThrow();
+  // left it intact. A plain await proves dispatch (any rejection fails the test).
+  await access(import.meta.path);
+  await expect(access(import.meta.path + ".does-not-exist")).rejects.toMatchObject({ code: "ENOENT" });
 });
 
 // The child intentionally panics; the debug build's crash handler symbolicates

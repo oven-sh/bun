@@ -57,6 +57,12 @@ impl SendFile {
 
             if errcode != bun_sys::E::SUCCESS || self.remain == 0 || val == 0 {
                 if errcode == bun_sys::E::SUCCESS {
+                    // sendfile(2) returning 0 with bytes still owed means the
+                    // source file's EOF moved below our offset; the advertised
+                    // Content-Length can no longer be satisfied.
+                    if self.remain > 0 {
+                        return Status::Err(crate::Error::RequestBodyTruncated);
+                    }
                     return Status::Done;
                 }
 
@@ -87,6 +93,9 @@ impl SendFile {
             self.remain = (self.remain as u64).saturating_sub(wrote) as usize;
             if errcode != bun_sys::E::EAGAIN || self.remain == 0 || sbytes == 0 {
                 if errcode == bun_sys::E::SUCCESS {
+                    if self.remain > 0 {
+                        return Status::Err(crate::Error::RequestBodyTruncated);
+                    }
                     return Status::Done;
                 }
                 return Status::Err(bun_errno::from_errno(errcode as i32).into());
@@ -118,6 +127,9 @@ impl SendFile {
             self.remain = (self.remain as u64).saturating_sub(wrote) as usize;
             if errcode != bun_sys::E::EAGAIN || self.remain == 0 || sbytes == 0 {
                 if errcode == bun_sys::E::SUCCESS {
+                    if self.remain > 0 {
+                        return Status::Err(crate::Error::RequestBodyTruncated);
+                    }
                     return Status::Done;
                 }
 

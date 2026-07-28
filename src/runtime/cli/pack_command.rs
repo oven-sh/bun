@@ -1550,9 +1550,7 @@ fn bin_path_escapes_root(p: &[u8]) -> bool {
     path::is_absolute_loose(p) || p == b".." || p.starts_with(b"../")
 }
 
-/// `main` and the string form of `browser` are always packed, even if ignored
-/// or not in `files`. npm-packlist emits strict `!/${main}` / `!/${browser}`
-/// rules for these alongside the `bin` rules.
+/// npm-packlist force-includes `main` and string-form `browser` alongside `bin`.
 fn get_package_entry_points(json: &Expr, bins: &[BinInfo]) -> Result<Vec<ZBox>, AllocError> {
     let mut entry_points: Vec<ZBox> = Vec::new();
     let mut path_buf = PathBuffer::uninit();
@@ -2743,10 +2741,8 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
                 }
             };
 
-            // `main` / `browser` / `bin` may name a directory (or other
-            // non-regular file). `openat` succeeds on a directory on POSIX,
-            // so the ENOENT skip above is bypassed; archiving it as a regular
-            // file would crash on EISDIR from `read()`.
+            // `openat` succeeds on directories on POSIX; skip non-regular
+            // optional items so a `main`/`bin` naming a directory is not fatal.
             if item.optional && !bun_core::S::ISREG(stat.st_mode as bun_sys::Mode) {
                 ctx.stats.total_files -= 1;
                 if log_level.show_progress() {

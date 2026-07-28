@@ -101,6 +101,17 @@ describe("dns.resolveTlsa against a local mock server", () => {
     expect(records[0].certUsage).toBe(3);
     expect(Buffer.from(records[0].data).equals(certData)).toBe(true);
   });
+
+  test("resolver.resolveAny includes TLSA records as {type: 'TLSA', ...}", async () => {
+    const records = await resolver.resolveAny("_443._tcp.example.org");
+    const tlsa = records.filter(r => r.type === "TLSA");
+    expect(tlsa.length).toBe(1);
+    expect(tlsa[0].certUsage).toBe(3);
+    expect(tlsa[0].selector).toBe(1);
+    expect(tlsa[0].match).toBe(1);
+    expect(tlsa[0].data).toBeInstanceOf(ArrayBuffer);
+    expect(Buffer.from(tlsa[0].data).equals(certData)).toBe(true);
+  });
 });
 
 test("dns.resolveTlsa error carries syscall=queryTlsa and a translated code", async () => {

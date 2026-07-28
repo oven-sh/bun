@@ -1252,7 +1252,7 @@ impl AresReply for struct_ares_tlsa_reply {
             // SAFETY: c-ares guarantees `data_ptr[..data_len]` is readable while
             // `dnsrec` is live; we copy into a Rust-owned buffer before destroy.
             let data: Box<[u8]> = unsafe { core::slice::from_raw_parts(data_ptr, data_len) }.into();
-            let node = Box::into_raw(Box::new(Self {
+            let node = bun_core::heap::into_raw(Box::new(Self {
                 next: ptr::null_mut(),
                 // SAFETY: `rr` is a valid TLSA record; keys are `ARES_DATATYPE_U8`.
                 cert_usage: unsafe { ares_dns_rr_get_u8(rr, ARES_RR_TLSA_CERT_USAGE) },
@@ -1283,8 +1283,8 @@ impl struct_ares_tlsa_reply {
     pub unsafe fn destroy(this: *mut Self) {
         let mut p = this;
         while !p.is_null() {
-            // SAFETY: each node was `Box::into_raw`'d in `parse`.
-            let node = unsafe { Box::from_raw(p) };
+            // SAFETY: each node was `heap::into_raw`'d in `parse`.
+            let node = unsafe { bun_core::heap::take(p) };
             p = node.next;
         }
     }
@@ -1395,6 +1395,7 @@ pub struct struct_any_reply {
     pub naptr_reply: *mut struct_ares_naptr_reply,
     pub soa_reply: *mut struct_ares_soa_reply,
     pub caa_reply: *mut struct_ares_caa_reply,
+    pub tlsa_reply: *mut struct_ares_tlsa_reply,
 }
 
 impl Default for struct_any_reply {
@@ -1410,6 +1411,7 @@ impl Default for struct_any_reply {
             naptr_reply: ptr::null_mut(),
             soa_reply: ptr::null_mut(),
             caa_reply: ptr::null_mut(),
+            tlsa_reply: ptr::null_mut(),
         }
     }
 }
@@ -1549,6 +1551,14 @@ impl struct_any_reply {
             last_error = Some(result);
         }
 
+        // SAFETY: see `ares_parse_mx_reply` call above.
+        result = unsafe { struct_ares_tlsa_reply::parse(abuf, alen, &raw mut reply.tlsa_reply) };
+        if result == ARES_SUCCESS {
+            any_success = true;
+        } else {
+            last_error = Some(result);
+        }
+
         if !any_success {
             return Err(Error::get(last_error.unwrap()).unwrap());
         }
@@ -1586,6 +1596,7 @@ impl Drop for struct_any_reply {
             if !self.caa_reply.is_null() {
                 ares_free_data(self.caa_reply.cast::<c_void>());
             }
+            struct_ares_tlsa_reply::destroy(self.tlsa_reply);
         }
     }
 }

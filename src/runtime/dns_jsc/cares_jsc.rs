@@ -617,7 +617,8 @@ fn any_reply_to_js(
         + (!this.ptr_reply.is_null()) as usize
         + (!this.naptr_reply.is_null()) as usize
         + (!this.soa_reply.is_null()) as usize
-        + (!this.caa_reply.is_null()) as usize;
+        + (!this.caa_reply.is_null()) as usize
+        + (!this.tlsa_reply.is_null()) as usize;
 
     let array = JSValue::create_empty_array(global_this, len)?;
     let mut i: u32 = 0;
@@ -677,6 +678,12 @@ fn any_reply_to_js(
         let response =
             caa_reply_to_js_response(unsafe { &mut *this.caa_reply }, global_this, b"caa")?;
         any_reply_append_all(global_this, array, &mut i, response, b"caa")?;
+    }
+    if !this.tlsa_reply.is_null() {
+        // SAFETY: non-null Rust-owned linked list head.
+        let response =
+            tlsa_reply_to_js_response(unsafe { &mut *this.tlsa_reply }, global_this, b"tlsa")?;
+        any_reply_append_all(global_this, array, &mut i, response, b"tlsa")?;
     }
 
     Ok(array)

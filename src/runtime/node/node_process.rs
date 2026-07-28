@@ -418,10 +418,7 @@ mod _impl {
     }
 
     fn get_cwd(global_object: &JSGlobalObject) -> JsResult<JSValue> {
-        // Node's `process.cwd()` is `uv_cwd()` behind a cache that `chdir`
-        // invalidates (does_own_process_state.js). The C++ side owns the
-        // cache; this is the cache-miss path, so it must hit the kernel
-        // rather than read the resolver's `fs.top_level_dir` snapshot.
+        // C++ owns the cache; this cache-miss path must hit the kernel, not `fs.top_level_dir`.
         let mut buf = PathBuffer::uninit();
         match Syscall::getcwd(&mut buf[..]) {
             bun_sys::Result::Ok(len) => Ok(ZigString::init(&buf[..len])
@@ -455,9 +452,7 @@ mod _impl {
 
         let mut buf = PathBuffer::uninit();
         let Ok(slice) = to.slice_z_buf(&mut buf) else {
-            // `slice_z_buf` only fails when the target overflows PATH_MAX_BYTES.
-            // Node surfaces this as an ENAMETOOLONG chdir SystemError with
-            // `path=cwd, dest=target`, matching the syscall-failure branch below.
+            // Buffer overflow (> PATH_MAX_BYTES): same ENAMETOOLONG shape as the chdir-syscall branch.
             let dest = to.to_slice();
             let e = Syscall::Error::from_code(Syscall::E::ENAMETOOLONG, Syscall::Tag::chdir)
                 .with_path_dest(fs.top_level_dir, dest.slice());

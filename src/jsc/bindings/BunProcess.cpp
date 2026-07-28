@@ -1001,10 +1001,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionChdir, (JSC::JSGlobalObject * globalObj
     JSC::JSValue result = JSC::JSValue::decode(Bun__Process__setCwd(globalObject, &str));
     RETURN_IF_EXCEPTION(scope, {});
 
-    // Node clears its cwd cache on chdir and lets the next process.cwd()
-    // re-query the kernel (does_own_process_state.js wrappedChdir). Caching
-    // the chdir-time getcwd() here would return a stale path once the
-    // directory is later renamed or removed.
+    // Node's wrappedChdir clears the cache so the next cwd() re-queries the kernel.
     auto* processObject = defaultGlobalObject(globalObject)->processObject();
     processObject->clearCachedCwd();
     RELEASE_AND_RETURN(scope, JSC::JSValue::encode(result));

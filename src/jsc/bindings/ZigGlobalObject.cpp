@@ -692,9 +692,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFulfillModuleSync,
     JSC::JSValue keyAny = callFrame->argument(0);
     JSC::JSString* moduleKeyString = keyAny.toString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
-    // Plain String, not GCOwnedDataScope: fetchESMSourceCodeSync may transpile
-    // synchronously and spin the event loop for an async macro, during which
-    // IncrementalSweeper asserts no GCOwnedDataScope is live with entryScope null.
+    // Not `auto` (GCOwnedDataScope): fetchESMSourceCodeSync can spin the event loop for an async macro, and IncrementalSweeper asserts no scope is live with entryScope null.
     WTF::String moduleKey = moduleKeyString->value(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
@@ -3676,9 +3674,7 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
 
     JSC::Identifier resolvedIdentifier;
 
-    // Plain String, not GCOwnedDataScope: JSC::importModule below may drive
-    // moduleLoaderFetch synchronously and reach the same event-loop spin as
-    // that function (see its comment).
+    // Not `auto` (GCOwnedDataScope): importModule below can drive moduleLoaderFetch synchronously; see that function for why no scope may be live.
     WTF::String moduleName = moduleNameValue->value(globalObject);
     RETURN_IF_EXCEPTION(scope, nullptr);
 
@@ -3800,10 +3796,7 @@ JSC::JSPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject,
 
     auto moduleKeyJS = key.toString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
-    // Plain String, not GCOwnedDataScope: fetchESMSourceCode may transpile the
-    // main entry synchronously and spin the event loop for an async macro,
-    // during which IncrementalSweeper asserts no GCOwnedDataScope is live with
-    // entryScope null.
+    // Not `auto` (GCOwnedDataScope): fetchESMSourceCode can transpile the main entry synchronously and spin the event loop for an async macro, during which IncrementalSweeper asserts no scope is live with entryScope null.
     WTF::String moduleKey = moduleKeyJS->value(globalObject);
     if (scope.exception()) [[unlikely]]
         return rejectedInternalPromise(globalObject, scope.exception()->value());

@@ -1942,7 +1942,6 @@ describe("should support Content-Range with Bun.file()", () => {
   const badRanges = [
     [10, NaN],
     [10, -Infinity],
-    [-(full.byteLength / 2) | 0, Infinity],
     [-(full.byteLength / 2) | 0, -Infinity],
     [full.byteLength + 100, full.byteLength],
     [full.byteLength + 100, full.byteLength + 100],
@@ -1960,6 +1959,18 @@ describe("should support Content-Range with Bun.file()", () => {
       });
     });
   }
+
+  it("negative start resolves against the live file size", async () => {
+    // Blob.slice(-N, Infinity) is the last N bytes per the W3C slice algorithm.
+    // This used to be treated as a bad range because slice() saw the unresolved
+    // MAX_SIZE sentinel and produced a past-EOF offset.
+    const start = -(full.byteLength / 2) | 0;
+    await getServer(async server => {
+      const response = await fetch(`${server.url.origin}/?start=${start}&end=Infinity`);
+      expect(await response.arrayBuffer()).toEqual(full.buffer.slice(start));
+      expect(response.status).toBe(206);
+    });
+  });
 });
 
 it("formats error responses correctly", async () => {

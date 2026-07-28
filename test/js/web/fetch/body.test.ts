@@ -613,6 +613,28 @@ for (const { body, fn } of bodyTypes) {
         // loop going. Each non-empty enqueue (and the initial read) banks one
         // re-pull via m_pullAgain, so the stall appears once two consecutive
         // pulls decode to nothing.
+        const rawChunkedServer = async (body: (sock: net.Socket) => Promise<void>) => {
+          const listening = Promise.withResolvers<void>();
+          const server = net.createServer(sock => {
+            sock.on("error", () => {});
+            sock.once("data", async () => {
+              sock.write("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n");
+              await body(sock);
+            });
+          });
+          server.listen(0, "127.0.0.1", () => listening.resolve());
+          await listening.promise;
+          return {
+            port: (server.address() as net.AddressInfo).port,
+            [Symbol.asyncDispose]: () => new Promise<void>(r => server.close(() => r())),
+          };
+        };
+        const writeChunk = async (sock: net.Socket, bytes: number[]) => {
+          sock.write(bytes.length.toString(16) + "\r\n");
+          sock.write(Uint8Array.from(bytes));
+          sock.write("\r\n");
+          await new Promise(r => setImmediate(r));
+        };
         test.each([
           ["leading 4-byte char split 2-way", [[0xf0, 0x9f], [0xab, 0xa0], [0x42]], "🫠B"],
           ["leading 4-byte char split 3-way", [[0xf0], [0x9f, 0xab], [0xa0], [0x42]], "🫠B"],
@@ -621,35 +643,38 @@ for (const { body, fn } of bodyTypes) {
           ["4-byte char byte-at-a-time", [[0x41], [0xf0], [0x9f], [0xab], [0xa0], [0x42]], "A🫠B"],
           ["3-byte char byte-at-a-time", [[0x41], [0xe4], [0xb8], [0xad], [0x42]], "A中B"],
           ["BOM byte-at-a-time then text", [[0xef], [0xbb], [0xbf], [0x68], [0x69]], "hi"],
+          ["incomplete tail only then close", [[0xf0], [0x9f]], "\ufffd"],
+          ["text then incomplete tail then close", [[0x41], [0xf0], [0x9f]], "A\ufffd"],
+          ["BOM prefix only then close", [[0xef], [0xbb]], "\ufffd"],
         ])(
           "completes a fetch textStream() when consecutive chunks decode to nothing: %s",
           async (_, parts, expected) => {
-            const listening = Promise.withResolvers<void>();
-            const server = net.createServer(sock => {
-              sock.once("data", async () => {
-                sock.write("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n");
-                for (const p of parts) {
-                  sock.write(p.length.toString(16) + "\r\n");
-                  sock.write(Uint8Array.from(p));
-                  sock.write("\r\n");
-                  await new Promise(r => setImmediate(r));
-                }
-                sock.end("0\r\n\r\n");
-              });
+            await using server = await rawChunkedServer(async sock => {
+              for (const p of parts) await writeChunk(sock, p);
+              sock.end("0\r\n\r\n");
             });
-            server.listen(0, "127.0.0.1", () => listening.resolve());
-            await listening.promise;
-            try {
-              const { port } = server.address() as net.AddressInfo;
-              const res = await fetch(`http://127.0.0.1:${port}/`);
-              const chunks = await Array.fromAsync(res.textStream());
-              for (const chunk of chunks) expect(typeof chunk).toBe("string");
-              expect(chunks.join("")).toBe(expected);
-            } finally {
-              await new Promise<void>(r => server.close(() => r()));
-            }
+            const res = await fetch(`http://127.0.0.1:${server.port}/`);
+            const chunks = await Array.fromAsync(res.textStream());
+            for (const chunk of chunks) expect(typeof chunk).toBe("string");
+            expect(chunks.join("")).toBe(expected);
           },
         );
+        test("rejects a fetch textStream() when the connection drops after an empty decode", async () => {
+          await using server = await rawChunkedServer(async sock => {
+            for (const p of [[0x41], [0xf0], [0x9f]]) await writeChunk(sock, p);
+            sock.destroy();
+          });
+          const res = await fetch(`http://127.0.0.1:${server.port}/`);
+          let received = "";
+          let error: unknown;
+          try {
+            for await (const ch of res.textStream()) received += ch;
+          } catch (e) {
+            error = e;
+          }
+          expect(received).toBe("A");
+          expect(error).toBeInstanceOf(Error);
+        });
       }
       if (body === Request) {
         test("streams an incoming request body server-side", async () => {
@@ -693,6 +718,34 @@ for (const { body, fn } of bodyTypes) {
           expect(result.chunks.join("")).toBe("hello world 🫠");
           expect(result.bodyUsedAfter).toBe(true);
           expect(result.secondCallThrew).toBe(true);
+        });
+        test("completes server-side when a multi-byte character is split across upload chunks", async () => {
+          const done = Promise.withResolvers<string>();
+          await using server = Bun.serve({
+            port: 0,
+            async fetch(req) {
+              try {
+                done.resolve((await Array.fromAsync(req.textStream())).join(""));
+              } catch (e: any) {
+                done.reject(e);
+              }
+              return new Response("ok");
+            },
+          });
+          const connected = Promise.withResolvers<void>();
+          const sock = net.connect(server.port, "127.0.0.1", () => connected.resolve());
+          sock.on("error", () => {});
+          await connected.promise;
+          sock.write("POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n");
+          for (const p of [[0x41], [0xf0], [0x9f], [0xab, 0xa0], [0x42]]) {
+            sock.write(p.length.toString(16) + "\r\n");
+            sock.write(Uint8Array.from(p));
+            sock.write("\r\n");
+            await new Promise(r => setImmediate(r));
+          }
+          sock.write("0\r\n\r\n");
+          expect(await done.promise).toBe("A🫠B");
+          sock.end();
         });
         test("rejects when the client aborts mid-upload server-side", async () => {
           const firstChunk = Promise.withResolvers<void>();

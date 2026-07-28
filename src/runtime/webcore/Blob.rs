@@ -2168,9 +2168,25 @@ impl BlobExt for Blob {
     }
 
     fn get_size_for_bindings(&self) -> u64 {
-        if self.is_bun_file() {
-            let live = self.view_size();
-            return if live == MAX_SIZE { u64::MAX } else { live };
+        if let Some(store) = self.store.get() {
+            if matches!(store.data, store::Data::File(_)) {
+                resolve_file_stat(store);
+                let file = store.data_mut().as_file();
+                if file.seekable.is_some() && file.max_size != MAX_SIZE {
+                    let offset = file.max_size.min(self.offset.get());
+                    let available = file.max_size - offset;
+                    return if self.size_is_explicit.get() {
+                        available.min(self.size.get())
+                    } else {
+                        available
+                    };
+                }
+                return if self.size_is_explicit.get() {
+                    self.size.get()
+                } else {
+                    u64::MAX
+                };
+            }
         }
         if self.size.get() == MAX_SIZE {
             self.resolve_size();

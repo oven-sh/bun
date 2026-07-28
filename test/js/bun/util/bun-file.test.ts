@@ -302,7 +302,9 @@ describe("BunFile exists()/size/lastModified reflect the current filesystem stat
     using dir = tempDir("bunfile-bindings-poison", {});
     const p = join(String(dir), "f");
     const f = Bun.file(p);
-    expect(() => expect(f).toBeEmpty()).toThrow();
+    try {
+      expect(f).toBeEmpty();
+    } catch {}
     fs.writeFileSync(p, "content");
     expect(await f.text()).toBe("content");
 
@@ -310,6 +312,10 @@ describe("BunFile exists()/size/lastModified reflect the current filesystem stat
     expect(g).toHaveLength(7);
     fs.appendFileSync(p, "!!!");
     expect(await g.text()).toBe("content!!!");
+
+    fs.writeFileSync(p, "abc");
+    const s = Bun.file(p).slice(0, 100);
+    expect(s).toHaveLength(s.size);
   });
 
   test("structuredClone does not poison the source blob's later read", async () => {

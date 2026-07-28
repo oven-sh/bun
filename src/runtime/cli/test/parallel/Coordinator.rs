@@ -300,16 +300,22 @@ impl<'a> Coordinator<'a> {
     }
 
     fn ensure_header(&mut self, file_idx: u32) {
-        if self.dots {
-            return;
-        }
+        // Under --dots the callers only reach here for non-dot output (a
+        // failure, an error body, captured stdout), so the header is printed
+        // lazily on the file's first real line — same as the serial reporter.
         if self.last_header_idx == Some(file_idx) {
             return;
         }
         self.last_header_idx = Some(file_idx);
+        let file_prefix: &[u8] = if Output::is_github_action() {
+            b"::group::"
+        } else {
+            b""
+        };
         let _ = write!(
             Output::error_writer(),
-            "\n{}:\n",
+            "\n{}{}:\n",
+            bstr::BStr::new(file_prefix),
             bstr::BStr::new(self.rel_path(file_idx))
         );
     }

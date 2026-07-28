@@ -925,19 +925,19 @@ async function runTests() {
     };
 
     /**
-     * Run allowlisted files as one `bun test --parallel` invocation. Files
-     * the JUnit report doesn't record as all-passing (a real failure, a
-     * load error, or a worker that died) fall back to their own runOneTest so
-     * they still get retries and an annotation.
+     * Run allowlisted files as one `bun test --parallel` invocation. With
+     * GITHUB_ACTIONS set every failure prints a `::error file=<path>` line
+     * and a dead worker prints `✗ <path> (worker crashed …)`; those files
+     * fall back to their own runOneTest for retries and an annotation. A
+     * failure that names no bucket file (a timeout annotation, an error
+     * thrown from a shared helper) re-runs the whole bucket individually
+     * without annotating anything.
      * @param {string[]} bucketFiles
-     * @param {number} bucketIndex
-     * @param {number} bucketCount
      */
-    const runParallelBucket = async (bucketFiles, bucketIndex, bucketCount) => {
+    const runParallelBucket = async bucketFiles => {
       const width = parallelSafeWidth;
-      const label = `test/ (parallel bucket ${bucketIndex}/${bucketCount}: ${bucketFiles.length} files, ${width}-wide)`;
+      const label = `test/ (parallel bucket: ${bucketFiles.length} files, ${width}-wide)`;
       const range = `${getAnsi("gray")}[${i + 1}-${i + bucketFiles.length}/${total}]${getAnsi("reset")}`;
-      const junitPath = join(tmpdir(), `bun-parallel-bucket-${process.pid}-${bucketIndex}.xml`);
       const isAsan = basename(execPath).includes("asan");
       const perTestTimeout = Math.ceil(testTimeout / 2) * (isAsan ? 3 : 1);
       const env = { GITHUB_ACTIONS: "true" };
@@ -950,15 +950,13 @@ async function runTests() {
       }
       if (isAsan) env.BUN_FEATURE_FLAG_NO_ORPHANS = "1";
 
-      const { ok, crashes } = await startGroup(`${range} ${label}`, () =>
+      const { ok, stdout, crashes } = await startGroup(`${range} ${label}`, () =>
         spawnBun(execPath, {
           args: [
             "test",
             `--parallel=${width}`,
             `--timeout=${perTestTimeout}`,
-            "--reporter=dots",
-            "--reporter=junit",
-            `--reporter-outfile=${junitPath}`,
+            "--dots",
             ...bucketFiles.map(t => join(testsPath, t)),
           ],
           cwd,
@@ -970,22 +968,33 @@ async function runTests() {
       );
       if (crashes) process.stderr.write(crashes);
 
-      const passed = new Set();
-      try {
-        for (const [, attrs] of readFileSync(junitPath, "utf-8").matchAll(/<testsuite\b([^>]*)>/g)) {
-          const file = /\bfile="([^"]+)"/.exec(attrs)?.[1];
-          const failures = /\bfailures="(\d+)"/.exec(attrs)?.[1];
-          if (file && failures === "0") passed.add(unescapeXml(file).replaceAll("\\", "/"));
+      // Attribute the bucket's failures to files: the `::error file=…`
+      // annotations bun prints for each failure and the coordinator's
+      // `✗ <path> (worker crashed …)` lines.
+      const byPath = new Map(bucketFiles.map(t => [join("test", t).replaceAll("\\", "/"), t]));
+      const norm = p => byPath.get(p.replaceAll("\\", "/"));
+      const failed = new Set();
+      if (!ok) {
+        // A `::error` without a usable file= (timeouts, an assertion thrown
+        // from a shared helper) is attributed to the `::group::<file>:` it
+        // was printed under.
+        let currentFile = null;
+        for (const line of stripAnsi(stdout).split(/\r?\n/)) {
+          const group = /^::group::(.+):$/.exec(line);
+          if (group) {
+            currentFile = norm(group[1]) ?? null;
+            continue;
+          }
+          if (line.startsWith("::endgroup")) {
+            currentFile = null;
+            continue;
+          }
+          const named = /^::error file=([^,]+),/.exec(line)?.[1] ?? /^✗ (.+?) \(worker crashed/.exec(line)?.[1];
+          const testPath = (named && norm(named)) || (line.startsWith("::error") && currentFile);
+          if (testPath) failed.add(testPath);
         }
-      } catch {}
-      if (cliOptions.junit && cliOptions["junit-upload"] && existsSync(junitPath)) addToJunitUploadQueue(junitPath);
-      else rmSync(junitPath, { force: true });
-
-      // A non-zero exit with every suite clean means the failure wasn't
-      // attributable to a file; re-run the whole bucket individually.
-      const rerun = bucketFiles.filter(
-        t => !ok && (!passed.size || !passed.has(join("test", t).replaceAll("\\", "/"))),
-      );
+      }
+      const rerun = !ok && !failed.size ? [...bucketFiles] : [...failed];
       const rerunSet = new Set(rerun);
       for (const t of bucketFiles) {
         if (rerunSet.has(t)) continue;
@@ -1002,17 +1011,20 @@ async function runTests() {
       }
       if (rerun.length) {
         console.log(
-          `${getAnsi("yellow")}bucket ${bucketIndex}/${bucketCount}: re-running ${rerun.length} file(s) individually${getAnsi("reset")}`,
+          `${getAnsi("yellow")}parallel bucket: re-running ${rerun.length}${failed.size ? "" : " (all, unattributed failure)"} file(s) individually${getAnsi("reset")}`,
         );
         for (const testPath of rerun) {
           const result = await runOneTest(testPath, false);
-          if (result?.ok && isBuildkite) {
+          // Only a file the bucket actually blamed and that then passes alone
+          // is a parallel-mode flake; a whole-bucket fallback proves nothing
+          // per file, so it re-runs quietly.
+          if (result?.ok && failed.has(testPath) && isBuildkite) {
             const title = join("test", testPath).replaceAll("\\", "/");
             reportAnnotationToBuildKite({
               context: "flaky",
               label: title,
               style: "warning",
-              content: `<details><summary><a href="${getFileUrl(title)}"><code>${title}</code></a> - failed inside a <code>bun test --parallel</code> bucket, passed when re-run alone</summary></details>`,
+              content: `<details><summary><a href="${getFileUrl(title)}"><code>${title}</code></a> - failed inside a <code>bun test --parallel</code> bucket on ${getBuildLabel()}, passed when re-run alone</summary></details>`,
             });
           }
         }
@@ -1022,9 +1034,9 @@ async function runTests() {
     // Phase 1: this PR's modified test files, alone and first, so their output
     // leads the log. Phase 2: every other non-parallel-safe file, one at a
     // time (or `--parallel` wide). Phase 3: the allowlisted fast/non-flaky
-    // bun-test files, batched into `bun test --parallel` buckets (one
-    // coordinator process fanning files across workers). Phase 4: the
-    // parallel-safe node-style set, N-wide. The two wide phases run after
+    // bun-test files as one `bun test --parallel` bucket (one coordinator
+    // process fanning files across workers). Phase 4: the parallel-safe
+    // node-style set, N-wide. The two wide phases run after
     // every one-at-a-time file has finished so nothing serial contends with
     // (or leaves residue for) them. `--parallel` (parallelism > 1) already
     // widens phases 1-2 and disables bucketing.
@@ -1049,12 +1061,11 @@ async function runTests() {
 
     await Promise.all(modifiedSerialTests.map(t => limit(() => runOneTest(t, parallelism > 1))));
     await Promise.all(restSerialTests.map(t => limit(() => runOneTest(t, parallelism > 1))));
-    if (bucketable.size) {
-      const bucketCount = Math.min(4, Math.ceil(bucketCandidates.length / 32));
-      const buckets = Array.from({ length: bucketCount }, () => []);
-      bucketCandidates.forEach((t, n) => buckets[n % bucketCount].push(t));
-      for (let b = 0; b < bucketCount; b++) await runParallelBucket(buckets[b], b + 1, bucketCount);
-    }
+    // One invocation for the whole set: the --parallel coordinator hands
+    // files to workers as they free up, so splitting into batches would only
+    // add sync barriers where the tail of one batch drains before the next
+    // starts.
+    if (bucketable.size) await runParallelBucket(bucketCandidates);
     // Concurrent tests log their title without opening a group (interleaved
     // output can't nest), so give the phase its own group instead of letting
     // the log viewer fold every line under the last serial test's group.
@@ -2770,19 +2781,6 @@ function escapeGitHubAction(string) {
  */
 function unescapeGitHubAction(string) {
   return string.replace(/%25/g, "%").replace(/%0D/g, "\r").replace(/%0A/g, "\n");
-}
-
-/**
- * @param {string} string XML attribute value from the junit reporter
- * @returns {string}
- */
-function unescapeXml(string) {
-  return string
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&apos;/g, "'")
-    .replace(/&amp;/g, "&");
 }
 
 /**

@@ -2029,6 +2029,16 @@ pub fn init(
     {
         // SAFETY: as above; scoped reborrow for the options/manifest-cache block.
         let manager = unsafe { &mut *manager_ptr };
+        manager.options.load(
+            // SAFETY: ctx.log is the process-lifetime CLI log set by
+            // create_context_data(); single-threaded init region.
+            unsafe { &mut *ctx.log },
+            env,
+            Some(cli),
+            ctx.install.as_deref(),
+            subcommand,
+        )?;
+
         if !manager.options.enable.cache() {
             manager.options.enable.set_manifest_cache(false);
             manager.options.enable.set_manifest_cache_control(false);
@@ -2046,16 +2056,6 @@ pub fn init(
                 manager.options.enable.set_manifest_cache_control(false);
             }
         }
-
-        manager.options.load(
-            // SAFETY: ctx.log is the process-lifetime CLI log set by
-            // create_context_data(); single-threaded init region.
-            unsafe { &mut *ctx.log },
-            env,
-            Some(cli),
-            ctx.install.as_deref(),
-            subcommand,
-        )?;
 
         if let Some(config) = ctx.install.as_deref_mut() {
             if let Some(p) = config.public_hoist_pattern.take() {
@@ -2414,6 +2414,18 @@ pub(crate) fn init_with_runtime_once(
         manager.options.log_level = package_manager_options::LogLevel::DefaultNoProgress;
     }
 
+    match manager
+        .options
+        .load(log, env, Some(cli), bun_install, Subcommand::Install)
+    {
+        Ok(()) => {}
+        Err(e) => {
+            // only error.OutOfMemory possible
+            let _ = e;
+            bun_core::out_of_memory();
+        }
+    }
+
     if !manager.options.enable.cache() {
         manager.options.enable.set_manifest_cache(false);
         manager.options.enable.set_manifest_cache_control(false);
@@ -2429,18 +2441,6 @@ pub(crate) fn init_with_runtime_once(
         } else {
             manager.options.enable.set_manifest_cache(false);
             manager.options.enable.set_manifest_cache_control(false);
-        }
-    }
-
-    match manager
-        .options
-        .load(log, env, Some(cli), bun_install, Subcommand::Install)
-    {
-        Ok(()) => {}
-        Err(e) => {
-            // only error.OutOfMemory possible
-            let _ = e;
-            bun_core::out_of_memory();
         }
     }
 

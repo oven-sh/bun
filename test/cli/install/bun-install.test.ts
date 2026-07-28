@@ -10018,3 +10018,64 @@ it.each([
     expect(exitCode).not.toBe(0);
   });
 });
+
+it("bunfig '[install.cache] disable = true' also disables the npm manifest cache", async () => {
+  await withContext(undefined, async ctx => {
+    const urls: string[] = [];
+    setContextHandler(ctx, dummyRegistryForContext(ctx, urls));
+
+    // createTestContext writes `cache = false` (boolean form, disables both the
+    // global cache and the manifest cache). This test needs the table form with
+    // `disable = true`, which previously left the manifest cache enabled.
+    await writeFile(
+      join(ctx.package_dir, "bunfig.toml"),
+      `[install]
+registry = "${ctx.registry_url}"
+saveTextLockfile = false
+[install.cache]
+disable = true
+`,
+    );
+    await writeFile(
+      join(ctx.package_dir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+        version: "0.0.1",
+        dependencies: { bar: "0.0.2" },
+      }),
+    );
+
+    async function install() {
+      await using proc = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: ctx.package_dir,
+        stdout: "pipe",
+        stderr: "pipe",
+        env,
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).not.toContain("error:");
+      expect(stdout).toContain("1 package installed");
+      expect(exitCode).toBe(0);
+    }
+
+    await install();
+    expect(urls.sort()).toEqual([`${ctx.registry_url}bar`, `${ctx.registry_url}bar-0.0.2.tgz`]);
+
+    // `disable = true` points the cache at node_modules/.cache. With the manifest
+    // cache left on (the bug), a *.npm manifest file lands here and a second
+    // install reads it instead of asking the registry.
+    const cacheDir = join(ctx.package_dir, "node_modules", ".cache");
+    expect(await readdirSorted(cacheDir).then(files => files.filter(f => f.endsWith(".npm")))).toEqual([]);
+
+    // Re-resolve from scratch but keep node_modules/.cache so any manifest cache
+    // entry written above would be picked up. The extracted tarball is cached
+    // under node_modules/.cache as well, so only the manifest request repeats.
+    await rm(join(ctx.package_dir, "bun.lockb"), { force: true });
+    await rm(join(ctx.package_dir, "node_modules", "bar"), { recursive: true, force: true });
+    urls.length = 0;
+
+    await install();
+    expect(urls).toContain(`${ctx.registry_url}bar`);
+  });
+});

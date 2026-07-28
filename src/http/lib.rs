@@ -589,10 +589,7 @@ pub struct ProxySettings {
     http_proxy: Box<[u8]>,
     https_proxy: Box<[u8]>,
     no_proxy: Box<[u8]>,
-    /// Set when `from_env()` fell back to the Windows system proxy (no proxy
-    /// env vars present). `resolve()` then consults it for the WinINet
-    /// `<local>` bypass rule and, when no static per-scheme proxy matched,
-    /// PAC/WPAD via `WinHttpGetProxyForUrl`.
+    /// Set when `from_env()` fell back to the Windows system proxy; `resolve()` uses it for `<local>` bypass and PAC.
     system: Option<&'static bun_dotenv::windows_system_proxy::SystemProxy>,
 }
 
@@ -616,9 +613,7 @@ impl ProxySettings {
         }))
     }
 
-    /// Capture `http_proxy` / `https_proxy` / `no_proxy` from the process env.
-    /// On Windows, when none of the proxy env vars are set, falls back to the
-    /// system (WinINet) proxy configuration.
+    /// Capture `http_proxy`/`https_proxy`/`no_proxy` from env; falls back to the Windows system proxy when none are set.
     pub fn from_env(env: &bun_dotenv::Loader) -> Option<Box<Self>> {
         #[inline]
         fn is_emptyish(v: &[u8]) -> bool {
@@ -679,9 +674,6 @@ impl ProxySettings {
         if !href.is_empty() {
             return Some(href);
         }
-        // Static proxy wasn't configured for this scheme. On the Windows
-        // system-proxy path that can mean PAC/WPAD; the interned result is
-        // `'static`, which outlives `self`.
         self.system.and_then(|sys| sys.resolve(url))
     }
 }

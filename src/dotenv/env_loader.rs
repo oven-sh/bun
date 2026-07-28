@@ -300,8 +300,6 @@ impl Loader {
         if let Some(p) = self.get_http_proxy(url.is_http(), Some(url.hostname), Some(url.host)) {
             return Some(p);
         }
-        // Windows: fall back to the system (WinINet) proxy when no proxy env
-        // var is set. `NO_PROXY` from the environment is still honoured.
         if self.has_http_proxy_env() {
             return None;
         }

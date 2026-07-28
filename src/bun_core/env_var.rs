@@ -155,6 +155,8 @@ new!(pub NODE_NO_WARNINGS: string, "NODE_NO_WARNINGS", {});
 // child's CLI entrypoint checks this before anything else and hands off to
 // C++ Bun__WebView__hostMain. Never returns — no JSC, no VM.
 new!(pub BUN_INTERNAL_WEBVIEW_HOST: string, "BUN_INTERNAL_WEBVIEW_HOST", {});
+// Test-only stand-in for WinHttpGetIEProxyConfigForCurrentUser (windows_system_proxy.rs).
+new!(pub BUN_INTERNAL_WINHTTP_IE_PROXY_CONFIG: string, "BUN_INTERNAL_WINHTTP_IE_PROXY_CONFIG", {});
 new!(pub NODE_PRESERVE_SYMLINKS_MAIN: boolean, "NODE_PRESERVE_SYMLINKS_MAIN", { default: false });
 new!(pub NODE_USE_SYSTEM_CA: boolean, "NODE_USE_SYSTEM_CA", { default: false });
 new!(pub npm_lifecycle_event: string, "npm_lifecycle_event", {});

@@ -1,28 +1,14 @@
-//! Fallback to the Windows system proxy (Internet Options / WinINet) when the
-//! standard `http_proxy`/`HTTPS_PROXY`/`NO_PROXY` environment variables are
-//! unset.
-//!
-//! Corporate Windows environments typically configure the proxy in Windows
-//! settings rather than the environment. Chromium's `ProxyConfigServiceWin`
-//! and curl's schannel backend both consult this source.
-//!
-//! The configuration is read once via `WinHttpGetIEProxyConfigForCurrentUser`
-//! and cached for the process lifetime. A static proxy + bypass list is mapped
-//! onto `http_proxy`/`https_proxy`/`no_proxy` so the existing proxy plumbing
-//! handles it unchanged. When only a PAC URL or WPAD auto-detect is
-//! configured, `WinHttpGetProxyForUrl` is consulted per request origin.
-//!
-//! Env vars always win: this module is only consulted when none of the proxy
-//! env vars are present.
+//! Windows system-proxy fallback: when `http_proxy`/`HTTPS_PROXY`/`NO_PROXY`
+//! are unset, read `WinHttpGetIEProxyConfigForCurrentUser` once and map its
+//! static proxy/bypass list onto the existing proxy plumbing; PAC/WPAD is
+//! resolved per origin via `WinHttpGetProxyForUrl`. Env vars always win.
 
 use bun_core::strings;
 use std::sync::OnceLock;
 
 bun_core::declare_scope!(system_proxy, hidden);
 
-/// Parsed copy of the WinINet per-user proxy configuration. Held in a
-/// process-static `OnceLock`, so all `&[u8]` views handed out borrow
-/// `'static` storage.
+/// Parsed WinINet per-user proxy config, owned by a process-static `OnceLock`.
 pub struct SystemProxy {
     http_proxy: Box<[u8]>,
     https_proxy: Box<[u8]>,
@@ -54,8 +40,6 @@ impl SystemProxy {
         self.pac.is_some()
     }
 
-    /// Static-config proxy href for `is_https`, or `None` when no static proxy
-    /// is configured for that scheme.
     #[inline]
     pub fn proxy_for_scheme(&self, is_https: bool) -> Option<&[u8]> {
         if is_https {
@@ -65,10 +49,7 @@ impl SystemProxy {
         }
     }
 
-    /// Proxy href for `url` from either the static config or PAC/WPAD. Returns
-    /// `None` for a direct connection. The returned slice borrows `'static`
-    /// storage (static config is owned by this `SystemProxy`; PAC results are
-    /// interned in `Pac::cache`).
+    /// Proxy href for `url` (static config or PAC); `None` → direct.
     pub fn resolve(&'static self, url: &bun_url::URL<'_>) -> Option<&'static [u8]> {
         let hostname = url.hostname;
         if self.bypass_local && !hostname.is_empty() && !hostname.contains(&b'.') {
@@ -88,8 +69,6 @@ fn non_empty(s: &[u8]) -> Option<&[u8]> {
 
 static CACHE: OnceLock<Option<SystemProxy>> = OnceLock::new();
 
-/// The cached system proxy configuration, or `None` when no system proxy is
-/// configured (or on non-Windows hosts without the test-hook env var).
 pub fn get() -> Option<&'static SystemProxy> {
     CACHE.get_or_init(load).as_ref()
 }
@@ -106,8 +85,7 @@ fn load() -> Option<SystemProxy> {
     None
 }
 
-/// Raw string fields as returned by `WinHttpGetIEProxyConfigForCurrentUser`,
-/// already converted to UTF-8.
+/// UTF-8 copy of `WINHTTP_CURRENT_USER_IE_PROXY_CONFIG`.
 struct RawConfig {
     auto_detect: bool,
     auto_config_url: Vec<u8>,
@@ -151,20 +129,14 @@ fn parse_raw_config(raw: RawConfig) -> Option<SystemProxy> {
     })
 }
 
-/// `BUN_INTERNAL_WINHTTP_IE_PROXY_CONFIG` provides a fake
-/// `WINHTTP_CURRENT_USER_IE_PROXY_CONFIG` for tests:
-/// `<fAutoDetect 0|1>|<auto_config_url>|<proxy>|<bypass>`.
-/// Allows exercising the parser and wiring without touching the user's
-/// registry; honoured on all platforms so the test can run in the Linux gate.
+/// Test-only stand-in for the WinHTTP call: `fAutoDetect|pac_url|proxy|bypass`.
 fn test_hook_config() -> Option<RawConfig> {
-    let v = std::env::var_os("BUN_INTERNAL_WINHTTP_IE_PROXY_CONFIG")?
-        .into_string()
-        .ok()?;
-    let mut it = v.splitn(4, '|');
-    let auto_detect = it.next()? == "1";
-    let auto_config_url = it.next()?.as_bytes().to_vec();
-    let proxy = it.next()?.as_bytes().to_vec();
-    let proxy_bypass = it.next().unwrap_or("").as_bytes().to_vec();
+    let v = bun_core::env_var::BUN_INTERNAL_WINHTTP_IE_PROXY_CONFIG::get()?;
+    let mut it = v.splitn(4, |&b| b == b'|');
+    let auto_detect = it.next()? == b"1";
+    let auto_config_url = it.next()?.to_vec();
+    let proxy = it.next()?.to_vec();
+    let proxy_bypass = it.next().unwrap_or(b"").to_vec();
     Some(RawConfig {
         auto_detect,
         auto_config_url,
@@ -173,23 +145,13 @@ fn test_hook_config() -> Option<RawConfig> {
     })
 }
 
-// ── WinINet proxy-string parsing ────────────────────────────────────────────
-
-/// Parse the WinINet `ProxyServer` value into `(http_proxy, https_proxy)`
-/// hrefs with an explicit `http://` scheme so `URL::parse` recognises them.
-///
-/// Accepted forms (whitespace around entries is trimmed):
-/// - `host[:port]` — one proxy for every scheme
-/// - `scheme=host[:port][;...]` — per-scheme list. Only `http=` / `https=` /
-///   `socks=` are consumed; `ftp=` and unknown schemes are ignored.
+/// WinINet `ProxyServer` (`host:port` or `http=a;https=b;socks=s`) → `(http_proxy, https_proxy)` hrefs.
 fn parse_proxy_server(raw: &[u8]) -> (Vec<u8>, Vec<u8>) {
     let raw = strings::trim(raw, &strings::WHITESPACE_CHARS);
     if raw.is_empty() {
         return (Vec::new(), Vec::new());
     }
-    // Per-scheme form is present iff any entry contains `=`.
-    let per_scheme = raw.iter().any(|&b| b == b'=');
-    if !per_scheme {
+    if !raw.iter().any(|&b| b == b'=') {
         let href = schemeify_proxy(raw);
         return (href.clone(), href);
     }
@@ -219,8 +181,6 @@ fn parse_proxy_server(raw: &[u8]) -> (Vec<u8>, Vec<u8>) {
             };
         }
     }
-    // A `socks=` entry with no `http=`/`https=` applies to both, matching
-    // Chromium's `ProxyConfigServiceWin`.
     if http.is_empty() && !socks.is_empty() {
         http = socks.clone();
     }
@@ -230,8 +190,6 @@ fn parse_proxy_server(raw: &[u8]) -> (Vec<u8>, Vec<u8>) {
     (http, https)
 }
 
-/// Prefix `http://` unless `host` already carries a scheme. WinINet usually
-/// stores bare `host:port`; occasionally a user pastes a full URL.
 fn schemeify_proxy(host: &[u8]) -> Vec<u8> {
     if strings::index_of(host, b"://").is_some() {
         return host.to_vec();
@@ -242,10 +200,7 @@ fn schemeify_proxy(host: &[u8]) -> Vec<u8> {
     v
 }
 
-/// Convert a WinINet bypass list (`;`-separated, `*.foo.com`, `<local>`,
-/// `<-loopback>`) into the curl/`NO_PROXY` comma-separated form
-/// `foo.com,10.0.0.1` that `no_proxy_matches` understands. `<local>` is
-/// returned out-of-band because `NO_PROXY` has no equivalent token.
+/// WinINet bypass list (`;`-separated, `*.foo`, `<local>`) → `(no_proxy, had_local)`.
 fn parse_bypass_list(raw: &[u8]) -> (Vec<u8>, bool) {
     let mut out = Vec::new();
     let mut bypass_local = false;
@@ -267,7 +222,6 @@ fn parse_bypass_list(raw: &[u8]) -> (Vec<u8>, bool) {
                 entry = &entry[1..];
             }
             if entry.is_empty() {
-                // `*` → everything direct
                 return (b"*".to_vec(), bypass_local);
             }
         }
@@ -279,9 +233,7 @@ fn parse_bypass_list(raw: &[u8]) -> (Vec<u8>, bool) {
     (out, bypass_local)
 }
 
-/// First proxy from a `WinHttpGetProxyForUrl` result list (entries separated
-/// by `;` or whitespace), as an `http://host:port` href.
-#[cfg_attr(not(windows), allow(dead_code))]
+#[cfg(any(windows, test))]
 fn first_proxy_from_list(list: &[u8]) -> Option<Vec<u8>> {
     for entry in list.split(|&b| b == b';' || b.is_ascii_whitespace()) {
         let entry = strings::trim(entry, &strings::WHITESPACE_CHARS);
@@ -293,13 +245,7 @@ fn first_proxy_from_list(list: &[u8]) -> Option<Vec<u8>> {
     None
 }
 
-// ── PAC/WPAD ────────────────────────────────────────────────────────────────
-
-/// Lazily-initialised WinHTTP session plus a per-origin result cache. Results
-/// are interned (leaked) so callers receive `&'static [u8]` that survives
-/// `HashMap` rehash. Origins are `scheme://host` which matches Chromium's
-/// `ProxyService` cache granularity; a process talks to a bounded set of
-/// origins so the interned set stays small.
+/// WinHTTP session + per-origin PAC result cache (interned so callers get `&'static [u8]`).
 struct Pac {
     #[cfg(windows)]
     inner: PacInner,
@@ -314,8 +260,7 @@ struct PacInner {
     failed: std::sync::atomic::AtomicBool,
 }
 
-// SAFETY: WinHTTP session handles are documented as usable from multiple
-// threads concurrently; every other field is already `Send + Sync`.
+// SAFETY: WinHTTP session handles are thread-safe; other fields are `Send+Sync`.
 #[cfg(windows)]
 unsafe impl Send for PacInner {}
 #[cfg(windows)]
@@ -414,8 +359,6 @@ fn pac_cache_key(url: &bun_url::URL<'_>) -> Vec<u8> {
     k
 }
 
-// ── Windows FFI ─────────────────────────────────────────────────────────────
-
 #[cfg(windows)]
 mod ffi {
     use super::RawConfig;
@@ -429,14 +372,11 @@ mod ffi {
     };
     use core::ptr;
 
-    /// Convert a WinHTTP-allocated `LPWSTR` to an owned UTF-8 `Vec<u8>` and
-    /// `GlobalFree` it. `null` → empty vec.
     unsafe fn take_lpwstr(p: *mut u16) -> Vec<u8> {
         if p.is_null() {
             return Vec::new();
         }
-        // SAFETY: WinHTTP contract — non-null out-strings are NUL-terminated
-        // and owned by the caller until `GlobalFree`.
+        // SAFETY: WinHTTP out-strings are NUL-terminated and caller-owned until `GlobalFree`.
         let len = unsafe { bun_core::ffi::wcslen(p) };
         let slice = unsafe { core::slice::from_raw_parts(p, len) };
         let out = strings::to_utf8_alloc(slice);
@@ -461,8 +401,7 @@ mod ffi {
             );
             return None;
         }
-        // SAFETY: on success WinHTTP populated the LPWSTR fields (each either
-        // null or a GlobalAlloc'd NUL-terminated wide string we now own).
+        // SAFETY: on success each LPWSTR is null or a GlobalAlloc'd NUL-terminated wide string we own.
         unsafe {
             Some(RawConfig {
                 auto_detect: cfg.fAutoDetect != 0,
@@ -475,7 +414,7 @@ mod ffi {
 
     pub(super) fn open_session() -> Option<HINTERNET> {
         static AGENT: &[u16] = &[b'B' as u16, b'u' as u16, b'n' as u16, 0];
-        // SAFETY: WINHTTP_NO_PROXY_NAME / _BYPASS are documented as NULL.
+        // SAFETY: WINHTTP_NO_PROXY_NAME/_BYPASS are NULL by definition.
         let h = unsafe {
             WinHttpOpen(
                 AGENT.as_ptr(),
@@ -496,8 +435,6 @@ mod ffi {
         Some(h)
     }
 
-    /// `Ok(Some(list))` → named proxy list (UTF-8), `Ok(None)` → DIRECT,
-    /// `Err(code)` → WinHTTP error (`GetLastError`).
     pub(super) fn get_proxy_for_url(
         session: HINTERNET,
         url_href: &[u8],
@@ -526,8 +463,7 @@ mod ffi {
             lpszProxy: ptr::null_mut(),
             lpszProxyBypass: ptr::null_mut(),
         };
-        // SAFETY: all pointers are valid for the duration of the call; WinHTTP
-        // writes into `info` and allocates its string fields on success.
+        // SAFETY: all pointers are valid for the call; WinHTTP populates `info` on success.
         let ok = unsafe { WinHttpGetProxyForUrl(session, url_w.as_ptr(), &mut opts, &mut info) };
         if ok == 0 {
             return Err(bun_sys::windows::kernel32::GetLastError());
@@ -542,8 +478,6 @@ mod ffi {
         }
     }
 }
-
-// ── Tests ───────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {

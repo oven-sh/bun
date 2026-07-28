@@ -2053,9 +2053,7 @@ unsafe extern "C" {
     pub fn windows_enable_stdio_inheritance();
 }
 
-// ── WinHTTP (`winhttp.h`) — system proxy configuration ─────────────────────
-// Used by `bun_dotenv::windows_system_proxy` to fall back to the Windows
-// Internet Settings proxy when `http_proxy`/`HTTPS_PROXY` are unset.
+/// `winhttp.h` — system proxy configuration (see `bun_dotenv::windows_system_proxy`).
 pub mod winhttp {
     use super::{BOOL, DWORD, LPCWSTR, LPWSTR, c_void};
 

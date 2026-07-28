@@ -2281,8 +2281,7 @@ impl BlobExt for Blob {
         self.size.get()
     }
 
-    /// Re-stat `store` and return bytes available past `self.offset`, clamped
-    /// by an explicit slice bound. `None` when non-seekable or stat failed.
+    /// Re-stat: bytes past `self.offset` (clamped by an explicit bound), or `None`.
     fn stat_file_size(&self, store: &StoreRef) -> Option<SizeType> {
         resolve_file_stat(store);
         let file = store.data_mut().as_file();

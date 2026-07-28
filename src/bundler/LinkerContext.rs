@@ -394,11 +394,8 @@ impl<'a> LinkerContext<'a> {
 
     pub fn is_external_dynamic_import(&self, record: &ImportRecord) -> bool {
         use crate::linker_graph::FileColumns as _;
-        // A dynamic import of a file that is itself an entry point (user-specified
-        // or promoted via dynamic_import_entry_points) becomes a runtime `import()`
-        // of that entry's chunk. This includes a file dynamically importing itself:
-        // excluding that case leaves the record pointing at an unwrapped file, and
-        // the printer then emits a call to a wrapper that was never generated.
+        // Self-imports count too: every dynamic-import target is an entry point,
+        // and splitting never wraps it, so the record must become a chunk import.
         self.graph.code_splitting
             && record.kind == ImportKind::Dynamic
             && self.graph.files.items_entry_point_kind()[record.source_index.get() as usize]

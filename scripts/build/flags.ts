@@ -978,6 +978,7 @@ export const linkerFlags: Flag[] = [
       "/delayload:ADVAPI32.dll",
       "/delayload:IPHLPAPI.dll",
       "/delayload:CRYPT32.dll",
+      "/delayload:WINHTTP.dll",
     ],
     when: c => c.windows && c.release,
     desc: "Release link opts + delay-load non-critical DLLs (faster startup)",

@@ -112,6 +112,7 @@ if (process.platform === "win32") {
     "shell32.dll",
     "user32.dll",
     "userenv.dll",
+    "winhttp.dll",
     "winmm.dll",
     "ws2_32.dll",
     "wsock32.dll",

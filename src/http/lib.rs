@@ -678,62 +678,7 @@ impl ProxySettings {
     }
 }
 
-/// Returns true if the given hostname/host should bypass the proxy according
-/// to the supplied `no_proxy` list. Runs on the HTTP thread from a captured
-/// copy of the env value; see https://about.gitlab.com/blog/2021/01/27/we-need-to-talk-no-proxy/.
-fn no_proxy_matches(no_proxy_text: &[u8], hostname: &[u8], host: &[u8]) -> bool {
-    if hostname.is_empty() {
-        return false;
-    }
-    for item in no_proxy_text.split(|&b| b == b',') {
-        let mut entry = strings::trim(item, &strings::WHITESPACE_CHARS);
-        if entry.is_empty() {
-            continue;
-        }
-        if entry == b"*" {
-            return true;
-        }
-        if strings::starts_with_char(entry, b'.') {
-            entry = &entry[1..];
-            if entry.is_empty() {
-                continue;
-            }
-        }
-
-        // IPv6 literals contain multiple colons (e.g., "::1"); bracketed IPv6
-        // with port is "[::1]:8080"; host:port has a single colon.
-        let colon_count = entry.iter().filter(|&&b| b == b':').count();
-        let has_port = if strings::starts_with_char(entry, b'[') {
-            strings::index_of(entry, b"]:").is_some()
-        } else {
-            colon_count == 1
-        };
-
-        if has_port {
-            if strings::eql_case_insensitive_ascii(host, entry, true) {
-                return true;
-            }
-        } else {
-            let entry_len = entry.len();
-            if hostname.len() == entry_len {
-                if strings::eql_case_insensitive_ascii(hostname, entry, true) {
-                    return true;
-                }
-            } else if hostname.len() > entry_len
-                && hostname[hostname.len() - entry_len - 1] == b'.'
-                && strings::eql_case_insensitive_ascii(
-                    &hostname[hostname.len() - entry_len..],
-                    entry,
-                    true,
-                )
-            {
-                return true;
-            }
-        }
-    }
-
-    false
-}
+use bun_dotenv::env_loader::no_proxy_list_matches as no_proxy_matches;
 
 // TODO: reduce the size of this struct
 // Many of these fields can be moved to a packed struct and use less space

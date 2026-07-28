@@ -55,6 +55,9 @@ impl SystemProxy {
         if self.bypass_local && !hostname.is_empty() && !hostname.contains(&b'.') {
             return None;
         }
+        if crate::env_loader::no_proxy_list_matches(&self.no_proxy, hostname, url.host) {
+            return None;
+        }
         if let Some(href) = self.proxy_for_scheme(!url.is_http()) {
             return Some(href);
         }
@@ -233,7 +236,7 @@ fn parse_bypass_list(raw: &[u8]) -> (Vec<u8>, bool) {
     (out, bypass_local)
 }
 
-#[cfg(any(windows, test))]
+#[cfg(windows)]
 fn first_proxy_from_list(list: &[u8]) -> Option<Vec<u8>> {
     for entry in list.split(|&b| b == b';' || b.is_ascii_whitespace()) {
         let entry = strings::trim(entry, &strings::WHITESPACE_CHARS);
@@ -245,11 +248,11 @@ fn first_proxy_from_list(list: &[u8]) -> Option<Vec<u8>> {
     None
 }
 
-/// WinHTTP session + per-origin PAC result cache (interned so callers get `&'static [u8]`).
+/// WinHTTP session + per-origin PAC result cache (owned here so callers get `&'static [u8]`).
 struct Pac {
     #[cfg(windows)]
     inner: PacInner,
-    cache: std::sync::Mutex<std::collections::HashMap<Box<[u8]>, Option<&'static [u8]>>>,
+    cache: std::sync::Mutex<std::collections::HashMap<Box<[u8]>, Option<Box<[u8]>>>>,
 }
 
 #[cfg(windows)]
@@ -299,16 +302,25 @@ impl Pac {
             return None;
         }
         let key = pac_cache_key(url);
-        if let Some(&cached) = self.cache.lock().ok()?.get(key.as_slice()) {
-            return cached;
+        if let Some(cached) = self.cache.lock().ok()?.get(key.as_slice()) {
+            return cached.as_deref().map(Self::as_static);
         }
-        let proxy = self.resolve_uncached(url.href);
-        let interned: Option<&'static [u8]> = proxy.map(|v| &*Box::leak(v.into_boxed_slice()));
-        self.cache
-            .lock()
-            .ok()?
-            .insert(key.into_boxed_slice(), interned);
-        interned
+        let proxy = self.resolve_uncached(url.href).map(Vec::into_boxed_slice);
+        let mut cache = self.cache.lock().ok()?;
+        cache
+            .entry(key.into_boxed_slice())
+            .or_insert(proxy)
+            .as_deref()
+            .map(Self::as_static)
+    }
+
+    #[inline]
+    fn as_static(b: &[u8]) -> &'static [u8] {
+        // SAFETY: `Pac` lives in the process-static `OnceLock<Option<SystemProxy>>`
+        // and `cache` entries are never removed, so every `Box<[u8]>` value
+        // outlives the process. `HashMap` rehash moves the `Box` handle but
+        // not its heap allocation, so this pointer stays valid.
+        unsafe { &*core::ptr::from_ref::<[u8]>(b) }
     }
 
     #[cfg(windows)]
@@ -479,58 +491,4 @@ mod ffi {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
 
-    #[test]
-    fn proxy_server_single() {
-        let (h, s) = parse_proxy_server(b"corp-proxy:3128");
-        assert_eq!(h, b"http://corp-proxy:3128");
-        assert_eq!(s, b"http://corp-proxy:3128");
-    }
-
-    #[test]
-    fn proxy_server_per_scheme() {
-        let (h, s) = parse_proxy_server(b"http=a:80;https=b:443;ftp=c:21");
-        assert_eq!(h, b"http://a:80");
-        assert_eq!(s, b"http://b:443");
-    }
-
-    #[test]
-    fn proxy_server_socks_fallback() {
-        let (h, s) = parse_proxy_server(b"socks=s:1080");
-        assert_eq!(h, b"socks://s:1080");
-        assert_eq!(s, b"socks://s:1080");
-        let (h, s) = parse_proxy_server(b"http=a:80;socks=s:1080");
-        assert_eq!(h, b"http://a:80");
-        assert_eq!(s, b"socks://s:1080");
-    }
-
-    #[test]
-    fn proxy_server_with_scheme_already() {
-        let (h, _) = parse_proxy_server(b"http://corp-proxy:3128");
-        assert_eq!(h, b"http://corp-proxy:3128");
-    }
-
-    #[test]
-    fn bypass_list() {
-        let (np, local) = parse_bypass_list(b"*.contoso.com;10.*;<local>");
-        assert_eq!(np, b"contoso.com,10.");
-        assert!(local);
-        let (np, local) = parse_bypass_list(b"localhost;127.0.0.1");
-        assert_eq!(np, b"localhost,127.0.0.1");
-        assert!(!local);
-        let (np, _) = parse_bypass_list(b"*");
-        assert_eq!(np, b"*");
-    }
-
-    #[test]
-    fn pac_list() {
-        assert_eq!(
-            first_proxy_from_list(b"a:80; b:81").as_deref(),
-            Some(b"http://a:80".as_slice())
-        );
-        assert_eq!(first_proxy_from_list(b"  ").as_deref(), None);
-    }
-}

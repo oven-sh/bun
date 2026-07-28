@@ -1117,6 +1117,25 @@ impl BunTest {
         }
     }
 
+    /// Spec `Promise.resolve(value)` coercion, for callbacks that return a userland
+    /// thenable (`PromiseLike`) instead of a native promise: the runner must await it,
+    /// and only a real `JSPromise` can carry its completion reactions.
+    fn coerce_thenable(global_this: &JSGlobalObject, value: JSValue) -> JsResult<JSValue> {
+        if !value.is_object() || value.as_promise().is_some() {
+            return Ok(value);
+        }
+        // `resolve()` is the spec's ResolvePromise, which reads `then` exactly once:
+        // a thenable leaves the promise pending until the job it queued calls `then`,
+        // a `then` getter that throws rejects it, and anything else fulfills it here.
+        let promise = bun_jsc::JSPromise::create(global_this);
+        promise.resolve(global_this, value)?;
+        match promise.status() {
+            // Not a thenable. Keep the original value on the synchronous path.
+            PromiseStatus::Fulfilled => Ok(value),
+            PromiseStatus::Pending | PromiseStatus::Rejected => Ok(promise.to_js()),
+        }
+    }
+
     /// if sync, the result is returned. if async, None is returned.
     pub fn run_test_callback(
         this_strong: &BunTestPtr,
@@ -1167,6 +1186,18 @@ impl BunTest {
                 // SAFETY: re-derive after JS callback returned; no outer `&mut` was held across it.
                 unsafe { (*this).on_uncaught_exception(global_this, global_this.try_take_exception(), false, &cfg_data) };
                 bun_core::scoped_log!(bun_test_group, "callTestCallback -> error");
+                JSValue::ZERO
+            }
+        };
+
+        // A returned thenable is an async callback too, so await it like a promise.
+        let result: JSValue = match Self::coerce_thenable(global_this, result) {
+            Ok(v) => v,
+            Err(_) => {
+                global_this.clear_termination_exception();
+                // SAFETY: re-derive after the `then` getter ran JS; no outer `&mut` was held across it.
+                unsafe { (*this).on_uncaught_exception(global_this, global_this.try_take_exception(), false, &cfg_data) };
+                bun_core::scoped_log!(bun_test_group, "callTestCallback -> thenable coercion threw");
                 JSValue::ZERO
             }
         };

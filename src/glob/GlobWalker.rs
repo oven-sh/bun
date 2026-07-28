@@ -674,10 +674,8 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                 let pathz_ref = ZStr::from_slice_with_nul(&pathz[..]);
                 let stat_result: Stat = match A::statat(fd, pathz_ref) {
                     Ok(stat) => stat,
-                    // statat follows symlinks, so a dangling or cyclic link
-                    // fails (ENOENT/ELOOP) even though the directory entry
-                    // exists. Retry without following so this path agrees with
-                    // directory iteration, which sees the entry regardless.
+                    // statat follows symlinks; a broken link still exists as an
+                    // entry, so fall back to lstat like directory iteration does.
                     Err(e) => match A::lstatat(fd, pathz_ref) {
                         Ok(lst) if !self.walker.error_on_broken_symlinks => lst,
                         lstat_result => {

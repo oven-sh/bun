@@ -79,6 +79,10 @@ describe.skipIf(!isLinux)("UV_THREADPOOL_SIZE", () => {
     expect(await poolThreads({ UV_THREADPOOL_SIZE: "4" })).toBe(4);
   });
 
+  test.concurrent("leading + is accepted (=+5 → 5)", async () => {
+    expect(await poolThreads({ UV_THREADPOOL_SIZE: "+5" })).toBe(5);
+  });
+
   test.concurrent(">u32::MAX caps at ceiling (Overflow arm), does not collapse to floor", async () => {
     expect(await poolThreads({ UV_THREADPOOL_SIZE: "99999999999" })).toBeGreaterThan(4);
   });

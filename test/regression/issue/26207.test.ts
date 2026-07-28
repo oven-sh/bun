@@ -6,8 +6,11 @@ import { describe, expect, test } from "bun:test";
 import { chmodSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 
-// Each test owns its own tempDir and subprocess, so they are safe to run in parallel.
-describe.concurrent("issue 26207", () => {
+// These cases must stay serial: every one forces the fake-node fallback and in
+// debug builds `create_fake_temporary_node_executable` wipes the shared
+// `bun-node-debug` temp dir before recreating it, so concurrent runs can race
+// on that delete/recreate sequence.
+describe("issue 26207", () => {
   test.each([
     ["--workspaces", ["--workspaces"]],
     ["--filter", ["--filter", "*"]],

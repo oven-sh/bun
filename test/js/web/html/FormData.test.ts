@@ -895,6 +895,11 @@ it("drops multipart part Content-Type values containing control characters", asy
     'Content-Disposition: form-data; name="tabbed"; filename="tabbed.txt"\r\n' +
     "\r\n" +
     "tabbed\r\n" +
+    "--formboundary\r\n" +
+    'Content-Disposition: form-data; name="stdorder"; filename="stdorder.bin"\r\n' +
+    "Content-Type: application/pdf\r\n" +
+    "\r\n" +
+    "ordered\r\n" +
     "--formboundary--\r\n";
 
   const response = new Response(body, {
@@ -921,6 +926,12 @@ it("drops multipart part Content-Type values containing control characters", asy
   expect(tabbed instanceof Blob).toBe(true);
   expect(await tabbed.text()).toBe("tabbed");
   expect(tabbed.type).toBe("text/plain;\tcharset=utf-8");
+
+  // Content-Type after Content-Disposition (the order browsers/curl/undici emit).
+  const stdorder = formData.get("stdorder") as File;
+  expect(stdorder instanceof Blob).toBe(true);
+  expect(await stdorder.text()).toBe("ordered");
+  expect(stdorder.type).toBe("application/pdf");
 });
 
 it("does not content-sniff multipart file parts that have no Content-Type header", async () => {
@@ -935,8 +946,9 @@ it("does not content-sniff multipart file parts that have no Content-Type header
     part("bmp", "notes", "BM: buy milk") +
     part("gif", "journal", "GIF89a; not an image, just text") +
     part("png", "x.unknownzz", "\x89PNG\r\n\x1a\nzz") +
-    // Control: an explicit part Content-Type is still honored.
-    `--${boundary}\r\nContent-Type: application/pdf\r\nContent-Disposition: form-data; name="typed"; filename="typed.bin"\r\n\r\nBM: typed\r\n` +
+    // Control: an explicit part Content-Type is still honored, in the standard
+    // Content-Disposition-before-Content-Type order real clients emit.
+    `--${boundary}\r\nContent-Disposition: form-data; name="typed"; filename="typed.bin"\r\nContent-Type: application/pdf\r\n\r\nBM: typed\r\n` +
     `--${boundary}--\r\n`;
 
   const formData = await new Response(Buffer.from(body, "latin1"), {

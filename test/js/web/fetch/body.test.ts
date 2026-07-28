@@ -666,14 +666,13 @@ for (const { body, fn } of bodyTypes) {
           });
           const res = await fetch(`http://127.0.0.1:${server.port}/`);
           let received = "";
-          let error: unknown;
+          let error: any;
           try {
             for await (const ch of res.textStream()) received += ch;
           } catch (e) {
             error = e;
           }
-          expect(received).toBe("A");
-          expect(error).toBeInstanceOf(Error);
+          expect({ code: error?.code, received }).toEqual({ code: "ECONNRESET", received: "A" });
         });
       }
       if (body === Request) {

@@ -1,5 +1,5 @@
-import { expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 import path from "path";
 
 test("verify we print error messages passed to done callbacks", () => {
@@ -80,7 +80,6 @@ test("verify we print error messages passed to done callbacks", () => {
     ^
     error: you should see this(async)
     at <anonymous> (<dir>/test-error-done-callback-fixture.ts:42:14)
-    at <anonymous> (<dir>/test-error-done-callback-fixture.ts:37:3)
     (fail) error done callback (async)
     43 |   });
     44 | });
@@ -111,7 +110,6 @@ test("verify we print error messages passed to done callbacks", () => {
     ^
     error: you should see this(async, nextTick)
     at <anonymous> (<dir>/test-error-done-callback-fixture.ts:60:14)
-    at <anonymous> (<dir>/test-error-done-callback-fixture.ts:54:5)
     (fail) error done callback (async, nextTick)
     62 | });
     63 |
@@ -140,3 +138,95 @@ test("verify we print error messages passed to done callbacks", () => {
     "
   `);
 });
+
+// A `done(error)` in a lifecycle hook must fail the hook's dependent tests,
+// exactly like a synchronous throw in the same hook does. `node:test` routes
+// every hook through the done-callback form.
+describe.concurrent("done(error) in a lifecycle hook", () => {
+  // One describe block containing 2 tests; expected counts match the
+  // synchronous-throw variant of each hook.
+  const expected = {
+    beforeAll: { pass: 0, fail: 1 },
+    beforeEach: { pass: 0, fail: 2 },
+    afterEach: { pass: 0, fail: 2 },
+    afterAll: { pass: 2, fail: 1 },
+  } as const;
+
+  test.each(Object.keys(expected) as (keyof typeof expected)[])(
+    "%s(done => done(err)) matches the synchronous-throw counts",
+    async hook => {
+      using dir = tempDir(`done-error-${hook}`, {
+        "hook.test.ts": `
+          import { describe, ${hook}, test } from "bun:test";
+          describe("suite", () => {
+            ${hook}(done => { done(new Error("hook failed")); });
+            test("t1", () => {});
+            test("t2", () => {});
+          });
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", "./hook.test.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const out = stdout + stderr;
+      // The hook's error is still reported, attributed to the failing entry.
+      expect(out).toContain("error: hook failed");
+      expect(summaryCounts(out)).toEqual(expected[hook]);
+      expect(exitCode).toBe(1);
+    },
+  );
+});
+
+// A done callback orphaned by its body throwing must stay an "Unhandled error
+// between tests" and never be blamed on whatever entry is active when it fires.
+// A macrotask fires on a later turn; a microtask drains inside the next entry.
+describe.concurrent("a late done(err) from a test whose body threw", () => {
+  test.each([
+    ["setImmediate", "setImmediate(fire)"],
+    ["a microtask", "Promise.resolve().then(fire)"],
+  ])("scheduled via %s does not fail an unrelated test", async (_name, schedule) => {
+    using dir = tempDir("orphaned-done", {
+      "orphan.test.ts": `
+        import { test, describe, beforeEach } from "bun:test";
+        const { promise: orphanFired, resolve: markOrphanFired } = Promise.withResolvers<void>();
+        test("a", done => {
+          const fire = () => { done(new Error("late orphan")); markOrphanFired(); };
+          ${schedule};
+          throw new Error("immediate");
+        });
+        describe("suite", () => {
+          // The orphan's done(err) lands while this hook is the active entry.
+          beforeEach(done => { orphanFired.then(() => done()); });
+          test("b still passes", () => {});
+        });
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "./orphan.test.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const out = stdout + stderr;
+    expect(out).toContain("(pass) suite > b still passes");
+    expect(out).toContain("Unhandled error between tests");
+    expect(summaryCounts(out)).toEqual({ pass: 1, fail: 1, error: 1 });
+    expect(exitCode).toBe(1);
+  });
+});
+
+/** `" 2 pass\n 0 fail\n 1 error\n"` -> `{ pass: 2, fail: 0, error: 1 }` */
+function summaryCounts(out: string): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const [, n, label] of out.matchAll(/^ (\d+) (pass|fail|skip|todo|error)s?$/gm)) {
+    counts[label] = Number(n);
+  }
+  return counts;
+}

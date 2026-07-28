@@ -323,6 +323,15 @@ describe("node:test", () => {
       stderr: expect.stringContaining("0 fail"),
     });
   });
+
+  test("should not report a test as passing when its before() hook threw", async () => {
+    const { exitCode, stderr } = await runTests(["06-failing-before-hook.js"]);
+    // node fails every test under a suite whose before() hook failed.
+    expect(stderr).toContain("error: DB connection failed");
+    expect(stderr).toContain(" 0 pass\n 1 fail\n");
+    expect(stderr).not.toContain("Unhandled error between tests");
+    expect(exitCode).toBe(1);
+  });
 });
 
 async function runTests(filenames: string[], env: Record<string, string> = {}, args: string[] = []) {

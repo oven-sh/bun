@@ -109,10 +109,9 @@ async function runStressTest({
   }
   server.stop(true);
   await Bun.sleep(10);
-  expect({ bodyMismatches, serverReceived, initialMaxFD }).toEqual({
+  expect({ bodyMismatches, serverReceived }).toEqual({
     bodyMismatches: 0,
     serverReceived: issued,
-    initialMaxFD: expect.any(Number),
   });
   expect(initialMaxFD).toBeGreaterThanOrEqual(0);
   expect(getMaxFD()).toBeLessThan(initialMaxFD + 10);

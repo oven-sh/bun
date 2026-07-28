@@ -233,19 +233,20 @@ const nativeConsole = globalThis.console;
 
 function wrapConsoleMethodForChannel(ch, method) {
   if (wrappedConsoleMethods[method]) return;
-  // A replaced global console either already publishes (new console.Console, via
-  // Console.prototype.<method>) or is user-owned; wrapping it would double-publish.
-  if (globalThis.console !== nativeConsole) return;
   const orig = nativeConsole[method];
   if (typeof orig !== "function") return;
-  wrappedConsoleMethods[method] = true;
-  // Shorthand method: non-constructible and .name === method, like the native fn.
-  nativeConsole[method] = {
-    [method](...args) {
-      if (ch.hasSubscribers) ch.publish(args);
-      return orig.$apply(this, args);
-    },
-  }[method];
+  try {
+    // Shorthand method: non-constructible and .name === method, like the native fn.
+    nativeConsole[method] = {
+      [method](...args) {
+        if (ch.hasSubscribers) ch.publish(args);
+        return orig.$apply(this, args);
+      },
+    }[method];
+    wrappedConsoleMethods[method] = true;
+  } catch {
+    // Frozen / non-writable console: leave subscribe() infallible.
+  }
 }
 
 function channel(name) {

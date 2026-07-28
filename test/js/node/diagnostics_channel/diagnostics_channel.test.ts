@@ -491,6 +491,30 @@ describe.concurrent("built-in console.* channels", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("subscribe on a console channel does not throw when console is frozen", async () => {
+    const script = `
+      Object.freeze(console);
+      const dc = require("node:diagnostics_channel");
+      let n = 0;
+      dc.subscribe("console.log", () => n++);
+      dc.subscribe("console.log", () => {});
+      console.log("x");
+      if (!dc.hasSubscribers("console.log")) throw new Error("not subscribed");
+      process.stdout.write("RESULT " + n + "\\n");
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(stdout).toContain("RESULT 0\n");
+    expect(exitCode).toBe(0);
+  });
+
   test("materializing the console.log channel does not affect other console methods", async () => {
     const script = `
       const dc = require("node:diagnostics_channel");

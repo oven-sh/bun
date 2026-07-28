@@ -2333,7 +2333,6 @@ pub(crate) fn init_with_runtime_once(
         // erased *mut () set by tier-6; `js_current()` resolves the per-thread JS
         // event loop via `bun_io::__bun_get_vm_ctx` (link-time, definer in bun_runtime).
         wr!(event_loop, AnyEventLoop::js_current());
-        (*core::ptr::addr_of_mut!((*p).runtime_wake_via_handlers)).store(true, Ordering::Release);
         wr!(
             original_package_json_path,
             ZBox::from_vec_with_nul(original_package_json_path)
@@ -2384,7 +2383,7 @@ pub(crate) fn init_with_runtime_once(
         wr!(global_link_dir_path, Box::default());
         wr!(on_wake, bun_core::Mutex::new(Vec::new()));
         wr!(failed_root_dependencies, bun_core::Mutex::new(Vec::new()));
-        wr!(runtime_wake_via_handlers, AtomicBool::new(false));
+        wr!(runtime_wake_via_handlers, AtomicBool::new(true));
         wr!(
             peer_dependencies,
             LinearFifo::<DependencyID, DynamicBuffer<DependencyID>>::init()

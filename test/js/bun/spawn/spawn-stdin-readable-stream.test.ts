@@ -341,6 +341,56 @@ describe("spawn stdin ReadableStream", () => {
     await expectStdinStreamErrorSurfaces("pull", false);
   });
 
+  // When the producer errors while a chunk is still backpressured in the pipe,
+  // the pump's abrupt-completion path calls sink.close() -> FileSink::end()
+  // (which sets `done`) before the pump promise rejection lands. The error must
+  // still be stored for onExit rather than falling back to unhandledRejection.
+  test("ReadableStream error with a backpressured write surfaces via onExit", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const reasons = [];
+        process.on("unhandledRejection", r => { reasons.push(String(r?.message ?? r)); });
+        const chunk = Buffer.alloc(256 * 1024, "x");
+        let n = 0;
+        const stream = new ReadableStream({
+          async pull(c) {
+            n++;
+            if (n === 1) { c.enqueue(chunk); await Bun.sleep(10); return; }
+            c.error(new Error("stdin stream boom"));
+          },
+        });
+        let onExitArgs = null;
+        const child = Bun.spawn({
+          // Child never reads stdin, so the 256 KiB chunk cannot drain.
+          cmd: [process.execPath, "-e", "setTimeout(() => {}, 1e9)"],
+          stdin: stream,
+          stdout: "ignore",
+          onExit(proc, code, signal, err) { onExitArgs = String(err?.message ?? err); },
+        });
+        await Bun.sleep(100);
+        child.kill();
+        await child.exited;
+        await Bun.sleep(50);
+        console.log(JSON.stringify({ onExitArgs, reasons }));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("stdin stream boom");
+    expect(JSON.parse(stdout.trim())).toEqual({
+      onExitArgs: "stdin stream boom",
+      reasons: [],
+    });
+    expect(exitCode).toBe(0);
+  });
+
   // The ReadableStream -> stdin FileSink pump intentionally does not await the
   // Promise FileSink.write() returns for writes it cannot complete synchronously
   // (a full pipe on POSIX, every pipe write on Windows). When the child dies

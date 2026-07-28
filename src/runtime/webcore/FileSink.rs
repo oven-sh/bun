@@ -1463,11 +1463,8 @@ impl FileSink {
             self.readable_stream.set(readable_stream::Strong::default());
         }
 
-        if self.done.get() {
-            // `done` ⇒ `on_process_exit` already ran; no later `take_stream_error`.
-            let _ = bun_jsc::JSPromise::rejected_promise(global_this, err);
-        } else {
-            self.stream_error.with_mut(|s| s.set(global_this, err));
+        self.stream_error.with_mut(|s| s.set(global_this, err));
+        if !self.done.get() {
             self.writer.with_mut(|w| w.close());
         }
     }

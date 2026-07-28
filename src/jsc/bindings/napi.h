@@ -32,6 +32,10 @@ extern "C" void Bun__crashHandler(const char* message, size_t message_len);
 
 static bool equal(napi_async_cleanup_hook_handle, napi_async_cleanup_hook_handle);
 
+namespace Zig {
+class NapiPrototype;
+}
+
 namespace Napi {
 
 static constexpr int DEFAULT_NAPI_VERSION = 10;
@@ -126,7 +130,7 @@ private:
 
 using HookSet = std::unordered_set<EitherCleanupHook, EitherCleanupHook::Hash>;
 
-napi_status defineProperty(napi_env env, JSC::JSObject* to, const napi_property_descriptor& property, JSC::ThrowScope& scope);
+napi_status defineProperty(napi_env env, JSC::JSObject* to, const napi_property_descriptor& property, JSC::ThrowScope& scope, Zig::NapiPrototype* signaturePrototype = nullptr);
 }
 
 struct napi_async_cleanup_hook_handle__ {
@@ -886,6 +890,8 @@ static inline napi_ref toNapi(NapiRef* val)
     return reinterpret_cast<napi_ref>(val);
 }
 
+class NapiPrototype;
+
 class NapiClass final : public JSC::JSFunction {
 public:
     using Base = JSFunction;
@@ -929,6 +935,14 @@ public:
     inline void* const& dataPtr() const { return m_dataPtr; }
     inline napi_env env() const { return m_env; }
 
+    // When this function is a prototype method defined via napi_define_class,
+    // this points at the class's prototype object. A normal (non-construct)
+    // call then validates that |this| was constructed by that class and throws
+    // "Illegal invocation" otherwise, matching V8's FunctionTemplate signature
+    // check that Node.js applies to instance methods.
+    inline NapiPrototype* signaturePrototype() const { return m_signaturePrototype.get(); }
+    inline void setSignaturePrototype(VM& vm, NapiPrototype* prototype);
+
 private:
     NapiClass(VM& vm, NativeExecutable* executable, napi_env env, Structure* structure, void* data)
         : Base(vm, executable, env->globalObject(), structure)
@@ -945,6 +959,7 @@ private:
     void* m_dataPtr = nullptr;
     napi_callback m_constructor = nullptr;
     napi_env m_env = nullptr;
+    JSC::WriteBarrier<NapiPrototype> m_signaturePrototype;
 
     DECLARE_VISIT_CHILDREN;
 };
@@ -987,14 +1002,32 @@ public:
         return NapiPrototype::create(vm, structure);
     }
 
+    // Set on instances created via a NapiClass [[Construct]] to record which
+    // napi_define_class prototype produced them. Prototype methods compare this
+    // against their own signature prototype before invoking the native callback.
+    inline NapiPrototype* constructedBy() const { return m_constructedBy.get(); }
+    inline void setConstructedBy(VM& vm, NapiPrototype* prototype)
+    {
+        m_constructedBy.set(vm, this, prototype);
+    }
+
     NapiRef* napiRef = nullptr;
+
+    DECLARE_VISIT_CHILDREN;
 
 private:
     NapiPrototype(VM& vm, Structure* structure)
         : Base(vm, structure)
     {
     }
+
+    JSC::WriteBarrier<NapiPrototype> m_constructedBy;
 };
+
+inline void NapiClass::setSignaturePrototype(VM& vm, NapiPrototype* prototype)
+{
+    m_signaturePrototype.set(vm, this, prototype);
+}
 
 static inline NapiRef* toJS(napi_ref val)
 {

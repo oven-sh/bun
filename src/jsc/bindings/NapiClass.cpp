@@ -10,9 +10,21 @@ void NapiClass::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     NapiClass* thisObject = uncheckedDowncast<NapiClass>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
+    visitor.append(thisObject->m_signaturePrototype);
 }
 
 DEFINE_VISIT_CHILDREN(NapiClass);
+
+template<typename Visitor>
+void NapiPrototype::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+{
+    NapiPrototype* thisObject = uncheckedDowncast<NapiPrototype>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    Base::visitChildren(thisObject, visitor);
+    visitor.append(thisObject->m_constructedBy);
+}
+
+DEFINE_VISIT_CHILDREN(NapiPrototype);
 
 template<bool ConstructCall>
 JSC_HOST_CALL_ATTRIBUTES JSC::EncodedJSValue NapiClass_ConstructorFunction(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame)
@@ -45,21 +57,38 @@ JSC_HOST_CALL_ATTRIBUTES JSC::EncodedJSValue NapiClass_ConstructorFunction(JSC::
         }
 
         newTarget = callFrame->newTarget();
-        JSObject* thisValue;
+        NapiPrototype* thisValue;
         // Match the behavior from
         // https://github.com/oven-sh/WebKit/blob/397dafc9721b8f8046f9448abb6dbc14efe096d3/Source/JavaScriptCore/runtime/ObjectConstructor.cpp#L118-L145
         if (newTarget && newTarget != napi) {
             JSGlobalObject* functionGlobalObject = getFunctionRealm(globalObject, asObject(newTarget));
             RETURN_IF_EXCEPTION(scope, {});
-            Structure* baseStructure = functionGlobalObject->objectStructureForObjectConstructor();
+            auto* zigFunctionGlobal = dynamicDowncast<Zig::GlobalObject>(functionGlobalObject);
+            Structure* baseStructure = zigFunctionGlobal
+                ? zigFunctionGlobal->NapiPrototypeStructure()
+                : uncheckedDowncast<Zig::GlobalObject>(globalObject)->NapiPrototypeStructure();
             Structure* objectStructure = InternalFunction::createSubclassStructure(globalObject, asObject(newTarget), baseStructure);
             RETURN_IF_EXCEPTION(scope, {});
-            thisValue = constructEmptyObject(vm, objectStructure);
+            thisValue = NapiPrototype::create(vm, objectStructure);
         } else {
             thisValue = prototype->subclass(globalObject, asObject(newTarget));
         }
         RETURN_IF_EXCEPTION(scope, {});
+        if (thisValue) {
+            thisValue->setConstructedBy(vm, prototype);
+        }
         callFrame->setThisValue(thisValue);
+    } else if (NapiPrototype* signaturePrototype = napi->signaturePrototype()) {
+        // Node.js builds napi_define_class prototype methods with a
+        // v8::Signature, so V8 throws before the native callback when |this| is
+        // not an instance of the defining class. Enforce the same contract so
+        // addons cannot be handed a foreign napi_wrap pointer.
+        JSValue thisValue = callFrame->thisValue();
+        NapiPrototype* instance = thisValue.isCell() ? dynamicDowncast<NapiPrototype>(thisValue.asCell()) : nullptr;
+        if (!instance || instance->constructedBy() != signaturePrototype) [[unlikely]] {
+            JSC::throwVMError(globalObject, scope, JSC::createTypeError(globalObject, "Illegal invocation"_s));
+            return JSValue::encode(JSC::jsUndefined());
+        }
     }
 
     NAPICallFrame frame(globalObject, callFrame, napi->dataPtr(), newTarget);
@@ -124,8 +153,9 @@ napi_status NapiClass::finishCreation(VM& vm, const String& name, napi_callback 
     for (size_t i = 0; i < property_count; i++) {
         const napi_property_descriptor& property = properties[i];
 
-        JSC::JSObject* target = (property.attributes & napi_static) ? static_cast<JSC::JSObject*>(this) : prototype;
-        napi_status status = Napi::defineProperty(env, target, property, throwScope);
+        bool isStatic = property.attributes & napi_static;
+        JSC::JSObject* target = isStatic ? static_cast<JSC::JSObject*>(this) : prototype;
+        napi_status status = Napi::defineProperty(env, target, property, throwScope, isStatic ? nullptr : prototype);
 
         if (throwScope.exception()) {
             result = napi_pending_exception;

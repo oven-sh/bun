@@ -711,6 +711,62 @@ nativeTests.test_napi_class_non_constructor_call = () => {
   console.log("global foo set to ", typeof foo != "undefined" ? foo : undefined);
 };
 
+nativeTests.test_napi_class_receiver_check = () => {
+  const { A, B } = nativeTests.get_receiver_check_classes();
+  const report = (label, fn) => {
+    try {
+      console.log(label + ":", "returned", fn());
+    } catch (e) {
+      console.log(label + ":", e.name + ":", e.message);
+    }
+  };
+
+  const a = new A();
+  const b = new B();
+  const check = B.prototype.check;
+  const getAccessor = Object.getOwnPropertyDescriptor(B.prototype, "accessor").get;
+  const setAccessor = Object.getOwnPropertyDescriptor(B.prototype, "accessor").set;
+
+  // valid receivers
+  report("b.check()", () => b.check());
+  report("getter on b", () => getAccessor.call(b));
+  report("setter on b", () => (setAccessor.call(b, 1), "ok"));
+
+  // cross-class receiver: must throw before the native callback runs
+  report("check.call(a)", () => check.call(a));
+
+  // other non-instance receivers
+  report("check.call({})", () => check.call({}));
+  report("check.call(Object.create(B.prototype))", () => check.call(Object.create(B.prototype)));
+  report("check.call(42)", () => check.call(42));
+  report("check.call(null)", () => check.call(null));
+
+  // Node.js does not apply a signature check to prototype accessors; verify
+  // Bun matches that by letting the getter/setter run for a foreign receiver.
+  report("getter on a", () => getAccessor.call(a));
+  report("setter on a", () => (setAccessor.call(a, 1), "ok"));
+
+  // JS subclass instances remain valid receivers
+  class SubB extends B {}
+  const sub = new SubB();
+  report("sub.check()", () => sub.check());
+  report("getter on sub", () => getAccessor.call(sub));
+
+  // Reflect.construct still yields a valid receiver for prototype methods
+  const reflected = Reflect.construct(B, [], function () {});
+  report("check.call(reflected)", () => check.call(reflected));
+
+  // static methods must not have a receiver check
+  report("B.staticCheck.call({})", () => B.staticCheck.call({}));
+
+  // prototype mutation does not change the receiver's identity
+  const a2 = new A();
+  Object.setPrototypeOf(a2, B.prototype);
+  report("check.call(a with B.prototype)", () => a2.check());
+
+  console.log("native callback calls:", nativeTests.get_receiver_check_call_count());
+};
+
 nativeTests.test_reflect_construct_napi_class = () => {
   const NapiClass = nativeTests.get_class_with_constructor();
   let instance = Reflect.construct(NapiClass, [], Object);

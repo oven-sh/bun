@@ -326,7 +326,7 @@ void NAPICallFrame::extract(size_t* argc, napi_value* argv, napi_value* this_arg
     }
 }
 
-napi_status Napi::defineProperty(napi_env env, JSC::JSObject* to, const napi_property_descriptor& property, JSC::ThrowScope& scope)
+napi_status Napi::defineProperty(napi_env env, JSC::JSObject* to, const napi_property_descriptor& property, JSC::ThrowScope& scope, Zig::NapiPrototype* signaturePrototype)
 {
     Zig::GlobalObject* globalObject = env->globalObject();
     JSC::VM& vm = JSC::getVM(globalObject);
@@ -370,7 +370,11 @@ napi_status Napi::defineProperty(napi_env env, JSC::JSObject* to, const napi_pro
         if (!propertyName.isSymbol()) {
             name = propertyName.string();
         }
-        descriptor.setValue(NapiClass::create(vm, env, name, property.method, dataPtr, 0, nullptr));
+        auto* function = NapiClass::create(vm, env, name, property.method, dataPtr, 0, nullptr);
+        if (signaturePrototype) {
+            function->setSignaturePrototype(vm, signaturePrototype);
+        }
+        descriptor.setValue(function);
         descriptor.setWritable(writable);
         failureStatus = napi_generic_failure;
     } else {

@@ -164,6 +164,102 @@ static napi_value get_class_with_constructor(const Napi::CallbackInfo &info) {
   return napi_class;
 }
 
+static int receiver_check_method_calls = 0;
+
+static void receiver_check_finalize(napi_env env, void *data, void *hint) {
+  free(data);
+}
+
+static napi_value receiver_check_ctor_a(napi_env env, napi_callback_info info) {
+  napi_value self;
+  size_t argc = 0;
+  NODE_API_CALL(env, napi_get_cb_info(env, info, &argc, nullptr, &self, nullptr));
+  void *p = calloc(1, 8);
+  NODE_API_CALL(env,
+                napi_wrap(env, self, p, receiver_check_finalize, nullptr, nullptr));
+  return nullptr;
+}
+
+static napi_value receiver_check_ctor_b(napi_env env, napi_callback_info info) {
+  napi_value self;
+  size_t argc = 0;
+  NODE_API_CALL(env, napi_get_cb_info(env, info, &argc, nullptr, &self, nullptr));
+  void *p = calloc(1, 40);
+  NODE_API_CALL(env,
+                napi_wrap(env, self, p, receiver_check_finalize, nullptr, nullptr));
+  return nullptr;
+}
+
+static napi_value receiver_check_method(napi_env env, napi_callback_info info) {
+  // With a receiver signature check in place, this must never be reached for a
+  // receiver that was not constructed by B.
+  receiver_check_method_calls++;
+  napi_value self;
+  size_t argc = 0;
+  NODE_API_CALL(env, napi_get_cb_info(env, info, &argc, nullptr, &self, nullptr));
+  void *data = nullptr;
+  napi_status status = napi_unwrap(env, self, &data);
+  napi_value result;
+  NODE_API_CALL(env, napi_create_int32(env, static_cast<int32_t>(status), &result));
+  return result;
+}
+
+static napi_value receiver_check_getter(napi_env env, napi_callback_info info) {
+  receiver_check_method_calls++;
+  napi_value result;
+  NODE_API_CALL(env, napi_create_int32(env, 1, &result));
+  return result;
+}
+
+static napi_value receiver_check_setter(napi_env env, napi_callback_info info) {
+  receiver_check_method_calls++;
+  return nullptr;
+}
+
+static napi_value receiver_check_static(napi_env env, napi_callback_info info) {
+  napi_value result;
+  NODE_API_CALL(env, napi_create_string_utf8(env, "static", NAPI_AUTO_LENGTH, &result));
+  return result;
+}
+
+static napi_value get_receiver_check_classes(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  receiver_check_method_calls = 0;
+
+  napi_value class_a;
+  NODE_API_CALL(env, napi_define_class(env, "A", NAPI_AUTO_LENGTH,
+                                       receiver_check_ctor_a, nullptr, 0,
+                                       nullptr, &class_a));
+
+  const napi_property_descriptor b_props[] = {
+      {"check", nullptr, receiver_check_method, nullptr, nullptr, nullptr,
+       napi_default_method, nullptr},
+      {"accessor", nullptr, nullptr, receiver_check_getter,
+       receiver_check_setter, nullptr, napi_default, nullptr},
+      {"staticCheck", nullptr, receiver_check_static, nullptr, nullptr, nullptr,
+       static_cast<napi_property_attributes>(napi_default_method | napi_static),
+       nullptr},
+  };
+  napi_value class_b;
+  NODE_API_CALL(env, napi_define_class(env, "B", NAPI_AUTO_LENGTH,
+                                       receiver_check_ctor_b, nullptr,
+                                       sizeof(b_props) / sizeof(b_props[0]),
+                                       b_props, &class_b));
+
+  napi_value result;
+  NODE_API_CALL(env, napi_create_object(env, &result));
+  NODE_API_CALL(env, napi_set_named_property(env, result, "A", class_a));
+  NODE_API_CALL(env, napi_set_named_property(env, result, "B", class_b));
+  return result;
+}
+
+static napi_value get_receiver_check_call_count(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  napi_value result;
+  NODE_API_CALL(env, napi_create_int32(env, receiver_check_method_calls, &result));
+  return result;
+}
+
 static napi_value test_constructor_with_no_prototype(const Napi::CallbackInfo &info) {
   // This test verifies that Reflect.construct with a newTarget that has no prototype
   // property doesn't crash. This was a bug where jsDynamicCast was called on a JSValue
@@ -211,6 +307,8 @@ static napi_value test_constructor_with_no_prototype(const Napi::CallbackInfo &i
 void register_class_test(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, get_class_with_constructor);
   REGISTER_FUNCTION(env, exports, test_constructor_with_no_prototype);
+  REGISTER_FUNCTION(env, exports, get_receiver_check_classes);
+  REGISTER_FUNCTION(env, exports, get_receiver_check_call_count);
 }
 
 } // namespace napitests

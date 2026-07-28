@@ -4201,7 +4201,11 @@ impl<'a> Resolver<'a> {
                         // SAFETY: slot was written immediately above.
                         let slot = unsafe { queue[i].assume_init_mut() };
                         slot.safe_path = bun_ptr::RawSlice::new(entries.dir);
-                        slot.fd = entries.fd;
+                        // A stale entry's stored fd is at EOF from its previous
+                        // iteration; leave it INVALID so the re-scan opens fresh.
+                        if !entries.stale {
+                            slot.fd = entries.fd;
+                        }
                     }
                     Fs::file_system::real_fs::EntriesOption::Err(err) => {
                         debuglog!(
@@ -4235,7 +4239,9 @@ impl<'a> Resolver<'a> {
                             // SAFETY: slot was written immediately above.
                             let slot = unsafe { queue[i].assume_init_mut() };
                             slot.safe_path = bun_ptr::RawSlice::new(entries.dir);
-                            slot.fd = entries.fd;
+                            if !entries.stale {
+                                slot.fd = entries.fd;
+                            }
                         }
                         Fs::file_system::real_fs::EntriesOption::Err(err) => {
                             debuglog!(

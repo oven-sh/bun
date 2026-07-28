@@ -1084,6 +1084,10 @@ where
                             }
                         }
 
+                        let _ = self.ctx_mut().bust_dir_cache(
+                            strings::paths::without_trailing_slash_windows_path(file_path),
+                        );
+
                         // The watched entrypoint has a per-file inotify watch on its inode.
                         // An atomic rename (`rename(tmp, entrypoint)`) or a rm+recreate over
                         // the entrypoint replaces that inode, so the kernel drops the
@@ -1269,11 +1273,6 @@ where
                                 }
                             }
                         }
-
-                        // `bust_entries_cache` takes `entries_mutex` itself (non-recursive).
-                        let _ = self.ctx_mut().bust_dir_cache(
-                            strings::paths::without_trailing_slash_windows_path(file_path),
-                        );
 
                         if self.verbose {
                             Self::debug(format_args!(

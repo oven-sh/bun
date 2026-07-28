@@ -1084,76 +1084,84 @@ test.skipIf(isWindows)("Response(Bun.file(FIFO)) frames the body as chunked, not
   // Hold the FIFO open read+write for the whole test so the server's
   // O_RDONLY|O_NONBLOCK open always finds a writer: its reads then EAGAIN
   // instead of reporting EOF before we have written the payload.
-  const writerFd = openSync(fifoPath, "r+");
-
-  await using server = Bun.serve({
-    port: 0,
-    hostname: "127.0.0.1",
-    fetch(req) {
-      return new URL(req.url).pathname === "/fifo"
-        ? new Response(Bun.file(fifoPath))
-        : new Response(Bun.file(join(String(dir), "plain.txt")));
-    },
-  });
-
-  const { promise: wireDone, resolve: resolveWire } = Promise.withResolvers<string>();
-  let wire = "";
-  const client = await Bun.connect({
-    hostname: "127.0.0.1",
-    port: server.port,
-    socket: {
-      open(s) {
-        s.write("GET /fifo HTTP/1.1\r\nHost: x\r\n\r\n");
+  let writerFd: number | undefined = openSync(fifoPath, "r+");
+  try {
+    await using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req) {
+        return new URL(req.url).pathname === "/fifo"
+          ? new Response(Bun.file(fifoPath))
+          : new Response(Bun.file(join(String(dir), "plain.txt")));
       },
-      data(_s, d) {
-        wire += Buffer.from(d).toString("latin1");
-        if (wire.includes("SECOND-RESPONSE")) resolveWire(wire);
+    });
+
+    const { promise: wireDone, resolve: resolveWire } = Promise.withResolvers<string>();
+    let wire = "";
+    let socketClosed = false;
+    const client = await Bun.connect({
+      hostname: "127.0.0.1",
+      port: server.port,
+      socket: {
+        open(s) {
+          s.write("GET /fifo HTTP/1.1\r\nHost: x\r\n\r\n");
+        },
+        data(_s, d) {
+          wire += Buffer.from(d).toString("latin1");
+          if (wire.includes("SECOND-RESPONSE")) resolveWire(wire);
+        },
+        close() {
+          socketClosed = true;
+          resolveWire(wire);
+        },
+        error() {
+          socketClosed = true;
+          resolveWire(wire);
+        },
       },
-      close() {
-        resolveWire(wire);
-      },
-      error() {
-        resolveWire(wire);
-      },
-    },
-  });
+    });
 
-  // The payload sits in the FIFO buffer (kept alive by writerFd) until the
-  // server opens its read end; then the server's first body write flushes it
-  // to the wire, which proves the server's fd is open and we can close ours
-  // to signal EOF.
-  writeSync(writerFd, "PIPEBYTES!");
-  while (!wire.includes("PIPEBYTES!")) await Bun.sleep(0);
-  closeSync(writerFd);
+    // The payload sits in the FIFO buffer (kept alive by writerFd) until the
+    // server opens its read end; then the server's first body write flushes it
+    // to the wire, which proves the server's fd is open and we can close ours
+    // to signal EOF. If the socket closes first the body never arrives, so
+    // stop waiting and let the assertion below report it.
+    writeSync(writerFd, "PIPEBYTES!");
+    while (!wire.includes("PIPEBYTES!") && !socketClosed) await Bun.sleep(0);
+    closeSync(writerFd);
+    writerFd = undefined;
 
-  // Second request on the same keep-alive connection. With correct framing
-  // the two responses are independently delimited; the broken build wrote the
-  // pipe bytes raw after a Content-Length: 0 head, so they abut the next
-  // status line.
-  client.write("GET /plain HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+    // Second request on the same keep-alive connection. With correct framing
+    // the two responses are independently delimited; the broken build wrote the
+    // pipe bytes raw after a Content-Length: 0 head, so they abut the next
+    // status line.
+    client.write("GET /plain HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
 
-  const captured = await wireDone;
-  client.end();
+    const captured = await wireDone;
+    client.end();
 
-  const head1 = captured.split("\r\n\r\n")[0];
-  expect({
-    firstStatus: head1.split("\r\n")[0],
-    firstHasContentLength: /^content-length:/im.test(head1),
-    firstIsChunked: /^transfer-encoding:\s*chunked/im.test(head1),
-    bodyDelivered: captured.includes("PIPEBYTES!"),
-    // The broken build put the pipe bytes immediately before the next status
-    // line with at most a stray CRLF between them; with chunked framing the
-    // terminator (0\r\n\r\n) separates them.
-    gluedToNextStatusLine: /PIPEBYTES!(?:\r\n)?HTTP\/1\.1/.test(captured),
-    secondBody: captured.includes("SECOND-RESPONSE"),
-  }).toEqual({
-    firstStatus: "HTTP/1.1 200 OK",
-    firstHasContentLength: false,
-    firstIsChunked: true,
-    bodyDelivered: true,
-    gluedToNextStatusLine: false,
-    secondBody: true,
-  });
+    const head1 = captured.split("\r\n\r\n")[0];
+    expect({
+      firstStatus: head1.split("\r\n")[0],
+      firstHasContentLength: /^content-length:/im.test(head1),
+      firstIsChunked: /^transfer-encoding:\s*chunked/im.test(head1),
+      bodyDelivered: captured.includes("PIPEBYTES!"),
+      // The broken build put the pipe bytes immediately before the next status
+      // line with at most a stray CRLF between them; with chunked framing the
+      // terminator (0\r\n\r\n) separates them.
+      gluedToNextStatusLine: /PIPEBYTES!(?:\r\n)?HTTP\/1\.1/.test(captured),
+      secondBody: captured.includes("SECOND-RESPONSE"),
+    }).toEqual({
+      firstStatus: "HTTP/1.1 200 OK",
+      firstHasContentLength: false,
+      firstIsChunked: true,
+      bodyDelivered: true,
+      gluedToNextStatusLine: false,
+      secondBody: true,
+    });
+  } finally {
+    if (writerFd !== undefined) closeSync(writerFd);
+  }
 });
 
 // A request that declares a body arms the request-body (onData) callback on

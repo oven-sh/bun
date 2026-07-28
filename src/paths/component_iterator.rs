@@ -207,6 +207,14 @@ pub enum MakePathStep<E> {
 /// `previous()` (returning `Err(e)` when there is none — i.e. the very first
 /// component's parent does not exist).
 ///
+/// Once the walk has advanced forward at all, a subsequent `NotFound` is
+/// terminal: the parent was just confirmed `Created`/`Exists`, so stepping
+/// back would only bounce between the two forever. This is exactly what
+/// happens when a component is a dangling symlink (the link itself is
+/// `EEXIST` but any child is `ENOENT`) or a procfs-like path that cannot host
+/// children. `node_fs::mkdir_recursive_os_path_impl` encodes the same rule by
+/// running a distinct forward pass where `ENOENT` is fatal.
+///
 /// `mkdir` is invoked with `component.path`: a borrowed prefix slice into the
 /// original input, never NUL-terminated. Callers that need a sentinel must
 /// copy into a scratch buffer.
@@ -217,14 +225,17 @@ pub fn make_path_with<'a, T: PathChar, E>(
     let Some(mut comp) = it.last() else {
         return Ok(());
     };
+    let mut advanced = false;
     loop {
         match mkdir(comp.path)? {
             MakePathStep::Created | MakePathStep::Exists => {
+                advanced = true;
                 comp = match it.next() {
                     Some(c) => c,
                     None => return Ok(()),
                 };
             }
+            MakePathStep::NotFound(e) if advanced => return Err(e),
             MakePathStep::NotFound(e) => {
                 comp = match it.previous() {
                     Some(c) => c,
@@ -388,5 +399,53 @@ mod tests {
         assert_eq!(it.next().unwrap().name, b"b");
         assert_eq!(it.next().unwrap().name, b"c");
         assert!(it.next().is_none());
+    }
+
+    #[test]
+    fn make_path_terminates_when_parent_exists_but_child_is_enoent() {
+        // Model a dangling symlink at `/a/b`: mkdir `/a/b` → EEXIST (the link
+        // itself exists) but mkdir `/a/b/c` → ENOENT (the link target does
+        // not). Without the forward-pass termination this loops forever.
+        let it = ComponentIterator::init(&b"/a/b/c"[..], PathFormat::Posix).unwrap();
+        let mut calls = 0u32;
+        let r = make_path_with(it, |p| {
+            calls += 1;
+            assert!(calls < 100, "runaway loop");
+            match p {
+                b"/a" | b"/a/b" => Ok(MakePathStep::Exists),
+                b"/a/b/c" => Ok(MakePathStep::NotFound(())),
+                _ => unreachable!(),
+            }
+        });
+        assert!(r.is_err());
+        // leaf ENOENT → parent EEXIST → leaf ENOENT → stop.
+        assert_eq!(calls, 3);
+    }
+
+    #[test]
+    fn make_path_walks_back_then_forward() {
+        // `/a` exists, `/a/b` and `/a/b/c` do not.
+        let it = ComponentIterator::init(&b"/a/b/c"[..], PathFormat::Posix).unwrap();
+        let mut created: Vec<&[u8]> = vec![];
+        let mut calls = 0u32;
+        let r = make_path_with::<u8, ()>(it, |p| {
+            calls += 1;
+            assert!(calls < 100, "runaway loop");
+            if p == b"/a" {
+                return Ok(MakePathStep::Exists);
+            }
+            if created.iter().any(|c| *c == p) {
+                return Ok(MakePathStep::Exists);
+            }
+            let parent = &p[..p.iter().rposition(|b| *b == b'/').unwrap()];
+            if parent == b"/a" || created.iter().any(|c| *c == parent) {
+                created.push(p);
+                Ok(MakePathStep::Created)
+            } else {
+                Ok(MakePathStep::NotFound(()))
+            }
+        });
+        assert!(r.is_ok());
+        assert_eq!(created, vec![&b"/a/b"[..], &b"/a/b/c"[..]]);
     }
 }

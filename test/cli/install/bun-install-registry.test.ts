@@ -8812,7 +8812,9 @@ registry = "http://localhost:${port}/"
       JSON.stringify({ name: "foo", version: "1.0.0", dependencies: { "what-bin": "1.0.0" } }),
     );
 
-    await spawn({ cmd: [bunExe(), "install"], cwd: dir, stdout: "ignore", stderr: "ignore", env }).exited;
+    expect(await spawn({ cmd: [bunExe(), "install"], cwd: dir, stdout: "ignore", stderr: "ignore", env }).exited).toBe(
+      0,
+    );
 
     const binDir = join(dir, "node_modules", ".bin");
     expect(existsSync(join(binDir, "what-bin.exe"))).toBe(true);

@@ -379,6 +379,7 @@ pub struct Map {
 
 impl Map {
     // Debug-only dump of the symbol table.
+    #[cfg(debug_assertions)]
     pub fn dump(&self) {
         for (i, symbols) in self.symbols_for_source.iter().enumerate() {
             bun_core::prettyln!("\n\n-- Source ID: {} ({} symbols) --\n", i, symbols.len(),);

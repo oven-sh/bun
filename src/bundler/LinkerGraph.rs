@@ -47,7 +47,6 @@ pub mod entry_point {
         None,
         UserSpecified,
         DynamicImport,
-        Html,
     }
     impl Kind {
         #[inline]

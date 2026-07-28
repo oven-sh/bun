@@ -216,19 +216,6 @@ impl<'a, T> BabyVec<'a, T> {
         }
     }
 
-    pub fn remove(&mut self, index: usize) -> T {
-        let len = self.len as usize;
-        assert!(index < len, "BabyVec::remove index {index} >= len {len}");
-        // SAFETY: `index < len`; read moves out the element, then shift the
-        // `len-1-index` initialized tail down by one. `len` decremented after.
-        unsafe {
-            let p = self.ptr.as_ptr().add(index);
-            let v = p.read();
-            ptr::copy(p.add(1), p, len - index - 1);
-            self.len -= 1;
-            v
-        }
-    }
 
     #[inline]
     pub fn truncate(&mut self, new_len: usize) {

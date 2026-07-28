@@ -112,11 +112,8 @@ pub struct JestPrettyFormat {}
 #[repr(u32)]
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum MessageLevel {
-    Log = 0,
-    Warning = 1,
     Error = 2,
     Debug = 3,
-    Info = 4,
 }
 
 #[derive(Copy, Clone, Default)]

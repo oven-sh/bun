@@ -49,6 +49,7 @@ impl Mutex {
     /// Tries to acquire the mutex without blocking the caller's thread.
     /// Returns `false` if the calling thread would have to block to acquire it.
     /// Otherwise, returns `true` and the caller should `unlock()` the Mutex to release it.
+    #[cfg(debug_assertions)]
     pub fn try_lock(&self) -> bool {
         self.impl_.try_lock()
     }
@@ -231,6 +232,7 @@ impl WindowsImpl {
         }
     }
 
+    #[cfg(debug_assertions)]
     fn try_lock(&self) -> bool {
         TryAcquireSRWLockExclusive(&self.srwlock) != 0
     }
@@ -289,6 +291,7 @@ impl DarwinImpl {
         }
     }
 
+    #[cfg(debug_assertions)]
     fn try_lock(&self) -> bool {
         os_unfair_lock_trylock(&self.oul)
     }

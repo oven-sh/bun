@@ -2595,17 +2595,6 @@ lexer_impl_header! {
         }
     }
 
-    pub fn init(
-        log: &mut Log,
-        source: &'a Source,
-        arena: &'a Arena,
-    ) -> Result<Self, Error> {
-        let mut lex = Self::init_without_reading(log, source, arena);
-        lex.step();
-        lex.next()?;
-        Ok(lex)
-    }
-
     pub(crate) fn to_e_string(&mut self) -> Result<js_ast::E::String, Error> {
         match self.string_literal_raw_format {
             StringLiteralRawFormat::Ascii => {

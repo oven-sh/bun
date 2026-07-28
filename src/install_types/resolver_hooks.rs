@@ -234,6 +234,7 @@ impl Behavior {
     }
 
     #[inline]
+    #[cfg(debug_assertions)]
     pub fn eq(lhs: Behavior, rhs: Behavior) -> bool {
         lhs.bits() == rhs.bits()
     }

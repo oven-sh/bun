@@ -193,19 +193,6 @@ impl<T: 'static> PoolStorage<T> for UnwiredStorage {
     }
 }
 
-/// Trait alias so callers can name `<Pool as ObjectPoolTrait>::Node` without
-/// knowing the concrete generics.
-pub trait ObjectPoolTrait {
-    type Item;
-    type Node;
-}
-
-impl<T: ObjectPoolType, const TS: bool, const MAX: usize, S> ObjectPoolTrait
-    for ObjectPool<T, TS, MAX, S>
-{
-    type Item = T;
-    type Node = Node<T>;
-}
 
 /// RAII handle for a pooled `T`. Derefs to the inner value; on `Drop`, the
 /// node is returned to its pool.

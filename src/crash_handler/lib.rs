@@ -765,6 +765,7 @@ mod draft {
 
     /// Scoped `CURRENT_ACTION = Resolver`.
     #[inline]
+    #[cfg(debug_assertions)]
     pub fn set_current_action_resolver() -> ActionGuard {
         scoped_action(Action::Resolver)
     }

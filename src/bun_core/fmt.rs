@@ -1042,11 +1042,6 @@ pub fn parse_ascii<T: core::str::FromStr>(s: &[u8]) -> Option<T> {
         .ok()
 }
 
-#[deprecated = "use parse_int / parse_f64 / parse_ascii (no from_utf8)"]
-#[inline]
-pub fn parse_num<T: core::str::FromStr>(s: &[u8]) -> Option<T> {
-    parse_ascii(s)
-}
 
 // ───────────────────────────────────────────────────────────────────────────
 // Latin-1 formatting

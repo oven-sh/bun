@@ -1789,21 +1789,6 @@ pub fn length_of_leading_whitespace_ascii(slice: &[u8]) -> usize {
     slice.len()
 }
 
-pub fn join(slices: &[&[u8]], delimiter: &[u8]) -> Result<Box<[u8]>, AllocError> {
-    if slices.is_empty() {
-        return Ok(Box::default());
-    }
-    let total: usize =
-        slices.iter().map(|s| s.len()).sum::<usize>() + delimiter.len() * (slices.len() - 1);
-    let mut out = Vec::with_capacity(total);
-    out.extend_from_slice(slices[0]);
-    for s in &slices[1..] {
-        out.extend_from_slice(delimiter);
-        out.extend_from_slice(s);
-    }
-    Ok(out.into_boxed_slice())
-}
-
 // ── Lexicographic slice ordering ──────────────────────────────────────────
 // Canonical home for lexicographic slice ordering; exactly one copy of each
 // shape lives here.

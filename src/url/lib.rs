@@ -70,7 +70,6 @@ pub mod whatwg {
         safe fn URL__getHref(input: &mut String) -> String;
         safe fn URL__getFileURLString(input: &mut String) -> String;
         safe fn URL__getHrefJoin(base: &mut String, relative: &mut String) -> String;
-        safe fn URL__pathFromFileURL(input: &mut String) -> String;
         safe fn URL__fragmentIdentifier(url: &URL) -> String;
         fn URL__originLength(latin1_slice: *const u8, len: usize) -> u32;
     }
@@ -96,10 +95,6 @@ pub mod whatwg {
     pub fn file_url_from_string(str: &String) -> String {
         let mut input = *str;
         URL__getFileURLString(&mut input)
-    }
-    pub fn path_from_file_url(str: &String) -> String {
-        let mut input = *str;
-        URL__pathFromFileURL(&mut input)
     }
     /// Returns the origin (`scheme://host[:port]`) prefix of `slice` as a borrowed
     /// subslice, or `None` if `slice` does not parse as a valid WHATWG URL.

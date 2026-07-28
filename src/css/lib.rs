@@ -199,7 +199,6 @@ pub use error::{
     BasicParseError, BasicParseErrorKind, Err, ErrorLocation, MinifyError, MinifyErrorKind,
     ParseError, ParserError, ParserErrorKind, PrinterError, PrinterErrorKind, SelectorError,
 };
-pub type Error = Err<ParserError>;
 pub(crate) use logical::PropertyCategory;
 pub use targets::{Browsers, Features, Targets};
 

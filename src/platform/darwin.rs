@@ -120,16 +120,6 @@ pub enum Category {
     UserCustom = 5,
 }
 
-/// Common subsystems that Instruments recognizes
-pub struct Subsystem;
-impl Subsystem {
-    pub const NETWORK: &'static CStr = c"com.apple.network";
-    pub const FILE_IO: &'static CStr = c"com.apple.disk_io";
-    pub const GRAPHICS: &'static CStr = c"com.apple.graphics";
-    pub const MEMORY: &'static CStr = c"com.apple.memory";
-    pub const PERFORMANCE: &'static CStr = c"com.apple.performance";
-}
-
 unsafe extern "C" {
     fn os_log_create(subsystem: *const c_char, category: *const c_char) -> *mut OSLog;
 
@@ -149,7 +139,6 @@ static SIGNPOST_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq)]
 enum SignpostType {
-    Event = 0,
     IntervalBegin = 1,
     IntervalEnd = 2,
 }
@@ -181,19 +170,6 @@ pub struct Signpost<'a> {
 }
 
 impl<'a> Signpost<'a> {
-    pub fn emit(&self, category: Category) {
-        // SAFETY: self.log is a valid os_log_t handle for 'a.
-        unsafe {
-            bun_signpost_emit(
-                self.log,
-                self.id,
-                SignpostType::Event,
-                self.name,
-                category as u8,
-            );
-        }
-    }
-
     pub fn interval(self, category: Category) -> Interval<'a> {
         // SAFETY: self.log is a valid os_log_t handle for 'a.
         unsafe {
@@ -233,4 +209,3 @@ impl<'a> Interval<'a> {
     }
 }
 
-use core::ffi::CStr;

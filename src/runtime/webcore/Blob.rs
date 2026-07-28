@@ -114,7 +114,8 @@ pub use bun_jsc::webcore_types::{
 /// 3: Added File name serialization for File objects (when is_jsdom_file is true)
 /// 4: Added the blob's `size` to file-backed stores so a sliced Bun.file()
 ///    keeps its window's end across structuredClone/postMessage
-const SERIALIZATION_VERSION: u8 = 4;
+/// 5: Added `is_sliced_view` so a cloned slice stays read-only for writes
+const SERIALIZATION_VERSION: u8 = 5;
 
 pub use bun_jsc::generated::JSBlob as js;
 
@@ -778,6 +779,8 @@ impl BlobExt for Blob {
                 writer.write_int_le::<u32>(0)?;
             }
         }
+
+        writer.write_int_le::<u8>(self.is_sliced_view.get() as u8)?;
         Ok(())
     }
 
@@ -1266,7 +1269,8 @@ impl BlobExt for Blob {
     }
 
     fn get_exists_sync(&self) -> JSValue {
-        if self.size.get() == MAX_SIZE {
+        let size_was_unresolved = self.size.get() == MAX_SIZE;
+        if size_was_unresolved {
             self.resolve_size();
         }
 
@@ -1284,8 +1288,8 @@ impl BlobExt for Blob {
         if !matches!(store.data, store::Data::File(_)) {
             return JSValue::FALSE;
         }
-        // Slices have concrete `size` so the stat above was skipped; `seekable == None` means never stat'd.
-        if store.data_mut().as_file().seekable.is_none() {
+        // Slices have concrete `size`, so `resolve_size()` above was skipped and `file.mode` is still 0.
+        if !size_was_unresolved && store.data_mut().as_file().seekable.is_none() {
             resolve_file_stat(store);
         }
         let file = store.data_mut().as_file();
@@ -4261,9 +4265,11 @@ fn on_structured_clone_deserialize<B: AsRef<[u8]>>(
             blob.name.set(BunString::clone_utf8(&name_bytes));
         }
 
-        if version == 3 {
+        if version <= 4 {
             break 'versions;
         }
+
+        blob.is_sliced_view.set(reader.read_int_le::<u8>()? != 0);
     }
 
     debug_assert!(
@@ -5021,9 +5027,9 @@ pub fn write_file_internal(
         debug_assert!(!matches!(blob_store.data, store::Data::Bytes(_)));
         // Some callers bypass `validate_writable_blob`; reject sliced here too.
         if blob.is_sliced_view.get() {
-            return Err(global_this.throw_invalid_arguments(format_args!(
-                "A sliced Bun.file() is a read-only byte-range view; delete() and write() would affect the whole file. Use the un-sliced Bun.file() instead."
-            )));
+            return Err(
+                global_this.throw_invalid_arguments(format_args!("{}", SLICED_VIEW_READONLY_MSG))
+            );
         }
         // TODO only reset last_modified on success paths instead of resetting
         // last_modified at the beginning for better performance.
@@ -5311,6 +5317,8 @@ pub fn write_file_internal(
     )
 }
 
+const SLICED_VIEW_READONLY_MSG: &str = "A sliced Bun.file() is a read-only byte-range view; delete() and write() would affect the whole file. Use the un-sliced Bun.file() instead.";
+
 fn validate_writable_blob(global_this: &JSGlobalObject, blob: &Blob) -> JsResult<()> {
     let Some(store) = blob.store.get() else {
         return Err(global_this.throw(format_args!("Cannot write to a detached Blob")));
@@ -5321,9 +5329,9 @@ fn validate_writable_blob(global_this: &JSGlobalObject, blob: &Blob) -> JsResult
         )));
     }
     if blob.is_sliced_view.get() {
-        return Err(global_this.throw_invalid_arguments(format_args!(
-            "A sliced Bun.file() is a read-only byte-range view; delete() and write() would affect the whole file. Use the un-sliced Bun.file() instead."
-        )));
+        return Err(
+            global_this.throw_invalid_arguments(format_args!("{}", SLICED_VIEW_READONLY_MSG))
+        );
     }
     Ok(())
 }

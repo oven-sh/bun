@@ -258,6 +258,32 @@ describe("Bun.file().slice() is a read-only view", () => {
     }
   });
 
+  test.concurrent("structuredClone of a slice is also a read-only view", async () => {
+    using dir = tempDir("bun-file-slice-clone", { "f.txt": "0123456789" });
+    const p = join(String(dir), "f.txt");
+
+    const clone = structuredClone(Bun.file(p).slice(2, 5));
+    expect(await clone.text()).toBe("234");
+
+    const { err } = await tryOp(() => clone.delete());
+    expect({ err, after: fs.readFileSync(p, "utf8") }).toEqual({
+      err: expect.any(TypeError),
+      after: "0123456789",
+    });
+    expect(() => Bun.write(clone, "XY")).toThrow(TypeError);
+    expect(fs.readFileSync(p, "utf8")).toBe("0123456789");
+  });
+
+  test.concurrent("structuredClone of an un-sliced Bun.file() can still write after .size was read", async () => {
+    using dir = tempDir("bun-file-unsliced-clone", { "f.txt": "0123456789" });
+    const p = join(String(dir), "f.txt");
+    const f = Bun.file(p);
+    expect(f.size).toBe(10);
+    const clone = structuredClone(f);
+    await Bun.write(clone, "abc");
+    expect(fs.readFileSync(p, "utf8")).toBe("abc");
+  });
+
   // `exists()` reads `file.mode` from the store, which is only populated by
   // `resolve_size()`. A slice's `size` is concrete so `resolve_size()` was
   // skipped and `exists()` returned false while `stat()` succeeded.

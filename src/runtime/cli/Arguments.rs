@@ -307,7 +307,80 @@ pub(crate) const RUNTIME_PARAMS_: &[ParamType] = &[
     parse_param!("--trace-exit"),
     parse_param!("--expose-internals"),
     parse_param!("--stack-trace-limit <STR>"),
+    // Node.js security flags Bun does not implement; see `reject_unsupported_security_flags`.
+    parse_param!("--enable-fips"),
+    parse_param!("--force-fips"),
+    parse_param!("--tls-cipher-list <STR>"),
+    parse_param!("--experimental-loader <STR>..."),
+    parse_param!("--policy <STR>"),
+    parse_param!("--experimental-policy <STR>"),
+    parse_param!("--experimental-config-file <STR>"),
+    parse_param!("--frozen-intrinsics"),
+    parse_param!("--disallow-code-generation-from-strings"),
+    parse_param!("--disable-proto <STR>"),
+    parse_param!("--secure-heap <STR>"),
+    parse_param!("--secure-heap-min <STR>"),
+    parse_param!("--permission"),
+    parse_param!("--experimental-permission"),
 ];
+
+#[derive(Copy, Clone)]
+enum SecurityFlagKind {
+    Flag,
+    Option,
+    Options,
+    /// `--loader` under `node` emulation only (Bun owns `--loader` otherwise).
+    NodeLoader,
+}
+
+/// Node.js hardening flags Bun refuses rather than ignores (fail-closed). Keep kinds in step with [`RUNTIME_PARAMS_`].
+const UNSUPPORTED_SECURITY_FLAGS: &[(&[u8], SecurityFlagKind)] = &[
+    (b"--enable-fips", SecurityFlagKind::Flag),
+    (b"--force-fips", SecurityFlagKind::Flag),
+    (b"--tls-cipher-list", SecurityFlagKind::Option),
+    (b"--experimental-loader", SecurityFlagKind::Options),
+    (b"--loader", SecurityFlagKind::NodeLoader),
+    (b"--policy", SecurityFlagKind::Option),
+    (b"--experimental-policy", SecurityFlagKind::Option),
+    (b"--experimental-config-file", SecurityFlagKind::Option),
+    (b"--frozen-intrinsics", SecurityFlagKind::Flag),
+    (
+        b"--disallow-code-generation-from-strings",
+        SecurityFlagKind::Flag,
+    ),
+    (b"--disable-proto", SecurityFlagKind::Option),
+    (b"--secure-heap", SecurityFlagKind::Option),
+    (b"--secure-heap-min", SecurityFlagKind::Option),
+    (b"--permission", SecurityFlagKind::Flag),
+    (b"--experimental-permission", SecurityFlagKind::Flag),
+];
+
+/// Exits 9 (Node's bad-option code) if any [`UNSUPPORTED_SECURITY_FLAGS`] entry was passed, so the caller's hardening request fails closed instead of running unrestricted.
+fn reject_unsupported_security_flags(args: &clap::Args<clap::Help>, cmd: CommandTag) {
+    for &(name, kind) in UNSUPPORTED_SECURITY_FLAGS {
+        let present = match kind {
+            SecurityFlagKind::Flag => args.flag(name),
+            SecurityFlagKind::Option => args.option(name).is_some(),
+            SecurityFlagKind::Options => !args.options(name).is_empty(),
+            SecurityFlagKind::NodeLoader => {
+                cmd == CommandTag::RunAsNodeCommand && !args.options(b"--loader").is_empty()
+            }
+        };
+        if present {
+            refuse_security_flag(name);
+        }
+    }
+}
+
+#[cold]
+#[inline(never)]
+fn refuse_security_flag(name: &[u8]) -> ! {
+    Output::err_generic(
+        "{} is not supported in Bun. Refusing to start because silently ignoring it would run without the security restriction it requests.",
+        format_args!("{}", BStr::new(name)),
+    );
+    Global::exit(9);
+}
 
 pub(crate) const AUTO_OR_RUN_PARAMS: &[ParamType] = &[
     parse_param!(
@@ -925,6 +998,8 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
             | CommandTag::TestCommand
             | CommandTag::RunAsNodeCommand
     ) {
+        reject_unsupported_security_flags(&args, cmd);
+
         {
             let preloads = args.options(b"--preload");
             let preloads2 = args.options(b"--require");

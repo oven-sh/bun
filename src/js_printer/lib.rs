@@ -1797,11 +1797,6 @@ pub mod __gated_printer {
 
                 self.print_semicolon_after_statement();
             }
-
-            // Record var declarations for module_info. printGlobalBunImportStatement
-            // bypasses printDeclStmt/printBinding, so we must record vars explicitly.
-            // reshaped for borrowck — compute names before borrowing module_info.
-            if Self::MAY_HAVE_MODULE_INFO && self.module_info.is_some() {}
         }
 
         #[inline]

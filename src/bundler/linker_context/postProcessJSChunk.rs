@@ -219,10 +219,10 @@ pub fn post_process_js_chunk(
         );
     }
 
-    // Populate ModuleInfo with declarations collected during parallel printing,
-    // external import records from the original AST, and wrapper refs.
+    // Populate ModuleInfo with the import.meta flag and the external
+    // import records from the original AST.
     if let Some(mi) = module_info.as_deref_mut() {
-        // 1b. Check if any source in this chunk uses import.meta. The per-part
+        // Check if any source in this chunk uses import.meta. The per-part
         // parallel printer does not have module_info, so the printer cannot set
         // this flag during per-part printing. We derive it from the AST instead.
         // Note: the runtime source (index 0) also uses import.meta (e.g.
@@ -364,9 +364,6 @@ pub fn post_process_js_chunk(
                 part_i += 1;
             }
         }
-
-        // 3. Add wrapper-generated declarations (init_xxx, require_xxx) that are
-        // not in any part statement.
     }
 
     // Generate the exports for the entry point, if there are any.
@@ -828,9 +825,6 @@ pub fn post_process_js_chunk(
 
     Ok(())
 }
-
-/// Recursively walk a binding and add all declared names to `ModuleInfo`.
-/// Handles `b_identifier`, `b_array`, `b_object`, and `b_missing`.
 
 // `js_printer::print` ties bump/Options/import_records/renamer to a
 // single `'a`, and `Renamer<'r, 'src>` is invariant in `'src` — so the caller's

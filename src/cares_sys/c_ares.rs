@@ -1205,11 +1205,7 @@ unsafe extern "C" {
     ) -> *const ares_dns_rr_t;
     pub fn ares_dns_rr_get_type(rr: *const ares_dns_rr_t) -> c_int;
     pub fn ares_dns_rr_get_u8(rr: *const ares_dns_rr_t, key: c_int) -> u8;
-    pub fn ares_dns_rr_get_bin(
-        rr: *const ares_dns_rr_t,
-        key: c_int,
-        len: *mut usize,
-    ) -> *const u8;
+    pub fn ares_dns_rr_get_bin(rr: *const ares_dns_rr_t, key: c_int, len: *mut usize) -> *const u8;
 }
 
 /// Rust-owned TLSA reply node; shaped like the other `struct_ares_*_reply`
@@ -1231,14 +1227,8 @@ impl AresReply for struct_ares_tlsa_reply {
         let mut dnsrec: *mut ares_dns_record_t = ptr::null_mut();
         // SAFETY: caller upholds the `AresReply::parse` contract; `abuf[..alen]`
         // is the c-ares response buffer and `&mut dnsrec` is a valid out-param.
-        let status = unsafe {
-            ares_dns_parse(
-                abuf,
-                usize::try_from(alen).unwrap_or(0),
-                0,
-                &raw mut dnsrec,
-            )
-        };
+        let status =
+            unsafe { ares_dns_parse(abuf, usize::try_from(alen).unwrap_or(0), 0, &raw mut dnsrec) };
         if status != ARES_SUCCESS {
             // SAFETY: c-ares accepts null here.
             unsafe { ares_dns_record_destroy(dnsrec) };
@@ -1269,8 +1259,7 @@ impl AresReply for struct_ares_tlsa_reply {
             }
             // SAFETY: c-ares guarantees `data_ptr[..data_len]` is readable while
             // `dnsrec` is live; we copy into a Rust-owned buffer before destroy.
-            let data: Box<[u8]> =
-                unsafe { core::slice::from_raw_parts(data_ptr, data_len) }.into();
+            let data: Box<[u8]> = unsafe { core::slice::from_raw_parts(data_ptr, data_len) }.into();
             let node = Box::into_raw(Box::new(Self {
                 next: ptr::null_mut(),
                 // SAFETY: `rr` is a valid TLSA record; keys are `ARES_DATATYPE_U8`.

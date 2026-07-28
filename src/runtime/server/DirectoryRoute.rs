@@ -400,7 +400,28 @@ fn resolve_subpath(
     scratch: &mut [u8],
     out: &mut [u8],
 ) -> Option<usize> {
-    // `req.url()` is uWS `getFullUrl()`, which includes the query string.
+    // `req.url()` is uWS `getFullUrl()`: the raw request-target. Strip an
+    // absolute-form scheme+authority (RFC 9112 §3.2.2) and the query string,
+    // mirroring what uWS `getUrlForRouting()` did to dispatch to this handler.
+    let url = if !url.is_empty() && url[0] != b'/' {
+        let skip = if strings::has_prefix_comptime(url, b"http://") {
+            7
+        } else if strings::has_prefix_comptime(url, b"https://") {
+            8
+        } else {
+            0
+        };
+        if skip > 0 {
+            match strings::index_of_char(&url[skip..], b'/') {
+                Some(i) => &url[skip + i as usize..],
+                None => b"/",
+            }
+        } else {
+            url
+        }
+    } else {
+        url
+    };
     let url = match strings::index_of_char(url, b'?') {
         Some(i) => &url[..i as usize],
         None => url,
@@ -494,6 +515,14 @@ mod tests {
         assert_eq!(
             resolve(b"/static?x", b"/static/").as_deref(),
             Some(&b""[..])
+        );
+        assert_eq!(
+            resolve(b"http://x/static/a.txt", b"/static/").as_deref(),
+            Some(&b"a.txt"[..])
+        );
+        assert_eq!(
+            resolve(b"https://x:8080/static/a.txt?v=1", b"/static/").as_deref(),
+            Some(&b"a.txt"[..])
         );
     }
 

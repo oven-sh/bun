@@ -553,6 +553,11 @@ describe("Bun.serve() directory routes", () => {
     expect(slashes.status).toBe(200);
     expect(slashes.body).toContain("ok");
 
+    // Absolute-form request-target (RFC 9112 §3.2.2).
+    const abs = await raw("http://x/static/ok.txt");
+    expect(abs.status).toBe(200);
+    expect(abs.body).toContain("ok");
+
     // Percent-encoded UTF-8 filename.
     const utf8 = await fetch(`${server.url}static/%C3%A9.txt`);
     expect(utf8.status).toBe(200);

@@ -205,7 +205,9 @@ test(
   async () => {
     using dir = tempDir("parallel-bail-panic", {
       "a-hang.test.js": `import {test} from "bun:test"; test("hang", async () => { await new Promise(() => {}); }, 999999);`,
-      "b-panic.test.js": `import {test} from "bun:test"; test("panic", () => { process.kill(process.pid, "SIGSEGV"); });`,
+      // A real segfault the OS delivers on every platform (SIGSEGV isn't a
+      // signal you can `process.kill` on Windows).
+      "b-panic.test.js": `import {test} from "bun:test"; import { crash_handler } from "bun:internal-for-testing"; test("panic", () => { crash_handler.segfault(); });`,
     });
     await using proc = Bun.spawn({
       cmd: [bunExe(), "test", "--parallel=2", "--bail=1"],

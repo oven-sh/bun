@@ -2302,7 +2302,7 @@ it("exec/run with an embedded NUL byte in the SQL string does not hang", async (
 it("exec with many statements in one SQL string scales linearly", async () => {
   const src = `
     const { Database } = require("bun:sqlite");
-    const n = 100_000;
+    const n = 200_000;
     const stmt = "insert into t values(0);";
     const sql = "begin;" + Buffer.alloc(n * stmt.length, stmt).toString() + "commit;";
     const db = new Database(":memory:");
@@ -2317,7 +2317,7 @@ it("exec with many statements in one SQL string scales linearly", async () => {
     env: bunEnv,
     stdout: "pipe",
     stderr: "pipe",
-    // Kill switch: quadratic prepare took minutes at this size.
+    // Kill switch: quadratic prepare took ~29s (release) / minutes (debug+ASAN) at this size.
     timeout: 15_000,
     killSignal: "SIGKILL",
   });
@@ -2325,7 +2325,7 @@ it("exec with many statements in one SQL string scales linearly", async () => {
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect({ stdout: stdout.trim(), stderr, signalCode: proc.signalCode, exitCode }).toEqual({
-    stdout: "100000",
+    stdout: "200000",
     stderr: "",
     signalCode: null,
     exitCode: 0,

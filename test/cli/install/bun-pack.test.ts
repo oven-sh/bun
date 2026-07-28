@@ -1707,6 +1707,25 @@ describe("entry points", () => {
     ]);
   });
 
+  test('"main" or "bin" pointing at package.json does not duplicate it', async () => {
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "pack-entry-pkgjson",
+          version: "1.0.0",
+          main: "./package.json",
+          bin: "./package.json",
+        }),
+      ),
+    ]);
+
+    await pack(packageDir, bunEnv);
+
+    const tarball = readTarball(join(packageDir, "pack-entry-pkgjson-1.0.0.tgz"));
+    expect(tarball.entries).toMatchObject([{ pathname: "package/package.json" }]);
+  });
+
   test('"main" that names a directory is skipped', async () => {
     await Promise.all([
       write(

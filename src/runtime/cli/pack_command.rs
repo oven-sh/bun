@@ -1489,7 +1489,7 @@ fn get_package_bins(json: &Expr) -> Result<Vec<BinInfo>, AllocError> {
                 bin_str,
                 &mut path_buf,
             );
-            if !bin_path_escapes_root(normalized) {
+            if normalized != b"package.json" && !bin_path_escapes_root(normalized) {
                 bins.push(BinInfo {
                     path: ZBox::from_bytes(normalized),
                     ty: BinType::File,
@@ -1510,7 +1510,7 @@ fn get_package_bins(json: &Expr) -> Result<Vec<BinInfo>, AllocError> {
                             bin_str,
                             &mut path_buf,
                         );
-                        if !bin_path_escapes_root(normalized) {
+                        if normalized != b"package.json" && !bin_path_escapes_root(normalized) {
                             bins.push(BinInfo {
                                 path: ZBox::from_bytes(normalized),
                                 ty: BinType::File,
@@ -1565,7 +1565,10 @@ fn get_package_entry_points(json: &Expr, bins: &[BinInfo]) -> Result<Vec<ZBox>, 
         };
         let normalized =
             resolve_path::normalize_buf::<resolve_path::platform::Posix>(value, &mut path_buf);
-        if normalized.is_empty() || bin_path_escapes_root(normalized) {
+        if normalized.is_empty()
+            || normalized == b"package.json"
+            || bin_path_escapes_root(normalized)
+        {
             return Ok(());
         }
         for bin in bins {

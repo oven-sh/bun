@@ -34,7 +34,6 @@ extern "C" void Bun__JSC_onBeforeWait(JSC::VM* _Nonnull vm, uint64_t nowNs)
         // JSLock::didAcquireLock normally resets m_lastStackTop, but this loop keeps the lock across tasks; sanitize here at the shallow park depth so the next vmEntry can zero the prior task's dispatch-frame slots instead of leaving them as conservative roots. No-op when sp is unchanged.
         JSC::sanitizeStackForVM(*vm);
 
-
         // Releasing heap access is a balance between:
         // 1. CPU usage
         // 2. Memory usage
